@@ -78,6 +78,7 @@ def dispatch(
 def _orchestrator(db_path: Path) -> OrchestratorCore:
     store = RegistryStore(db_path)
     store.migrate()
+    StoreManager(db_path).migrate()
     secret = secrets.token_bytes(16)
     return OrchestratorCore(store, StubBroker(secret), secret)
 
@@ -621,9 +622,9 @@ class TestDispatchSupervise(unittest.TestCase):
         db.parent.mkdir(parents=True)
         self._env = patch.dict("os.environ", {
             "BOT_BOTTLE_ROOT": str(root),
-            "SUPERVISE_DB_PATH": str(db),
         })
         self._env.start()
+        self.db = db
         self.store = RegistryStore(db)
         self.store.migrate()
         StoreManager(db).migrate()
@@ -640,7 +641,7 @@ class TestDispatchSupervise(unittest.TestCase):
         p = Proposal.new(
             bottle_slug=slug, tool=TOOL_EGRESS_ALLOW, proposed_file=proposed,
             justification="need it")
-        Supervisor().write_proposal(p)
+        Supervisor(self.db).write_proposal(p)
         return p.id
 
     def test_list_pending(self) -> None:
@@ -688,9 +689,9 @@ class TestDispatchSuperviseAgentRpc(unittest.TestCase):
         db.parent.mkdir(parents=True)
         self._env = patch.dict("os.environ", {
             "BOT_BOTTLE_ROOT": str(root),
-            "SUPERVISE_DB_PATH": str(db),
         })
         self._env.start()
+        self.db = db
         self.store = RegistryStore(db)
         self.store.migrate()
         StoreManager(db).migrate()

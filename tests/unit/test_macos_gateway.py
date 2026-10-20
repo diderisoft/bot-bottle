@@ -115,8 +115,6 @@ class TestMacosGatewayConnect(unittest.TestCase):
     def test_injects_the_pre_minted_gateway_token(self) -> None:
         # The gateway presents the token it was handed — it never mints (holds no
         # signing key). The value rides the env, not argv.
-        from bot_bottle.paths import ORCHESTRATOR_AUTH_JWT_ENV
-
         run = self._connect()
         env = run.call_args.kwargs["env"]
         self.assertEqual(_TOKEN, env[ORCHESTRATOR_AUTH_JWT_ENV])

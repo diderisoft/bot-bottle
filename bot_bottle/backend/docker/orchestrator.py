@@ -31,10 +31,8 @@ from .util import tag_image as docker_tag_image
 from ...image_registry import RegistryError
 from ...infra_image import pinned_infra_artifact, pull_pinned_image
 from ...published_artifacts import FORMAT_OCI
-from ...paths import (
-    ORCHESTRATOR_TOKEN_ENV,
-    bot_bottle_root,
-)
+from ...contract.identity import ORCHESTRATOR_TOKEN_ENV
+from ...paths import HOST_DB_FILENAME, bot_bottle_root
 from ...control.gateway import GatewayError
 from ...control.lifecycle import (
     DEFAULT_PORT,
@@ -67,9 +65,10 @@ ORCHESTRATOR_DOCKERFILE = "Dockerfile.orchestrator"
 ORCHESTRATOR_SOURCE_HASH_LABEL = "bot-bottle-orchestrator-source-hash"
 
 # Bot-bottle host-root bind-mount (DB + state) inside the orchestrator. The
-# control plane opens bot-bottle.db under here (via BOT_BOTTLE_ROOT ->
-# host_db_path()); it is the ONLY container with a handle on it (issue #469).
+# control plane opens bot-bottle.db under here (passed as `--db`); it is the
+# ONLY container with a handle on it (issue #469).
 _ROOT_IN_CONTAINER = "/bot-bottle-root"
+_DB_IN_CONTAINER = f"{_ROOT_IN_CONTAINER}/db/{HOST_DB_FILENAME}"
 
 _HEALTH_POLL_SECONDS = 0.25
 
@@ -291,7 +290,6 @@ class DockerOrchestrator(Orchestrator):
             # Orchestrator registry DB on the host (sole writer: control plane).
             # `root_mount_source` may be a host path or a named Docker volume.
             "--volume", f"{self._root_mount_source}:{_ROOT_IN_CONTAINER}",
-            "--env", f"BOT_BOTTLE_ROOT={_ROOT_IN_CONTAINER}",
             # The signing key — held ONLY by the orchestrator (it verifies
             # tokens); the gateway gets the pre-minted `gateway` JWT, never the
             # key (issue #469). Bare `--env NAME` keeps the value off argv.
@@ -300,6 +298,7 @@ class DockerOrchestrator(Orchestrator):
             # Dockerfile.orchestrator ENTRYPOINT is `python3 -m bot_bottle.orchestrator`;
             # these are its args.
             "--host", "0.0.0.0", "--port", str(DEFAULT_PORT), "--broker", "stub",
+            "--db", _DB_IN_CONTAINER,
         ], env={**os.environ, ORCHESTRATOR_TOKEN_ENV: _signing_key})
         if proc.returncode != 0:
             raise OrchestratorStartError(

@@ -6,12 +6,11 @@ import unittest
 from unittest.mock import patch
 
 from bot_bottle.contract import auth as orchestrator_auth
-from bot_bottle.contract.auth import ROLE_CLI, ROLE_GATEWAY
+from bot_bottle.contract.auth import CONTROL_PLANE, ROLE_CLI, ROLE_GATEWAY, TrustDomain
 from bot_bottle.trust_domain import (
-    CONTROL_PLANE,
     ControlPlaneProvisioning,
     ProvisioningError,
-    TrustDomain,
+    mint,
 )
 
 # A second, unrelated domain — the shape #468's host controller would take: its
@@ -28,7 +27,7 @@ _HOST_CTRL = TrustDomain(
 class TestTrustDomainMintVerify(unittest.TestCase):
     def test_mint_verify_round_trips_within_a_domain(self) -> None:
         with patch("bot_bottle.trust_domain.host_signing_key", return_value="k"):
-            tok = CONTROL_PLANE.mint(ROLE_GATEWAY)
+            tok = mint(CONTROL_PLANE, ROLE_GATEWAY)
         self.assertEqual(ROLE_GATEWAY, CONTROL_PLANE.verify(tok, "k"))
 
     def test_mint_rejects_a_role_outside_the_domain(self) -> None:
@@ -36,11 +35,11 @@ class TestTrustDomainMintVerify(unittest.TestCase):
         # the control-plane key must refuse to mint it.
         with patch("bot_bottle.trust_domain.host_signing_key", return_value="k"):
             with self.assertRaises(ValueError):
-                CONTROL_PLANE.mint("host")
+                mint(CONTROL_PLANE, "host")
 
     def test_a_custom_role_set_verifies_its_own_role(self) -> None:
         with patch("bot_bottle.trust_domain.host_signing_key", return_value="k"):
-            tok = _HOST_CTRL.mint("host")
+            tok = mint(_HOST_CTRL, "host")
         self.assertEqual("host", _HOST_CTRL.verify(tok, "k"))
 
     def test_key_from_env_reads_the_domains_env_var(self) -> None:

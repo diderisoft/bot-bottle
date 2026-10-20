@@ -15,3 +15,10 @@ IDENTITY_HEADER = "x-bot-bottle-identity"
 # git daemon (--timeout/--init-timeout), the access-hook subprocess in
 # git_http_backend, and the git http-backend CGI subprocess.
 GIT_GATE_TIMEOUT_SECS = 15
+
+# The orchestrator's control-plane signing key. Held only by the orchestrator
+# (to verify tokens) and the host CLI (to mint its own); never by the data plane.
+ORCHESTRATOR_TOKEN_ENV = "BOT_BOTTLE_ORCHESTRATOR_TOKEN"
+# The data plane's pre-minted `gateway`-role token. The gateway presents it on
+# /resolve and /supervise/{propose,poll}; it never holds the signing key.
+ORCHESTRATOR_AUTH_JWT_ENV = "BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT"

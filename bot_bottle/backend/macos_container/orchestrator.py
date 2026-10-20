@@ -18,7 +18,8 @@ from pathlib import Path
 
 from ...lib import log
 from ... import resources
-from ...paths import ORCHESTRATOR_TOKEN_ENV
+from ...contract.identity import ORCHESTRATOR_TOKEN_ENV
+from ...paths import HOST_DB_FILENAME
 from ...control.lifecycle import (
     DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
@@ -41,9 +42,10 @@ ORCHESTRATOR_LABEL = "bot-bottle-mac-orchestrator=1"
 # orchestrator. One kernel writes it (never host-shared or cross-guest).
 ORCHESTRATOR_DB_VOLUME = "bot-bottle-mac-db"
 
-# BOT_BOTTLE_ROOT inside the orchestrator; host_db_path() resolves the DB to
-# <root>/db/<filename>.
+# Where the DB volume mounts inside the orchestrator; the DB itself is at
+# <root>/db/<filename>, passed as `--db`.
 _DB_ROOT_IN_CONTAINER = "/var/lib/bot-bottle"
+_DB_IN_CONTAINER = f"{_DB_ROOT_IN_CONTAINER}/db/{HOST_DB_FILENAME}"
 _SRC_IN_CONTAINER = "/bot-bottle-src"
 
 _HEALTH_POLL_SECONDS = 0.25
@@ -155,7 +157,6 @@ class MacosOrchestrator(Orchestrator):
             container_mod.bind_mount_spec(
                 str(self._repo_root), _SRC_IN_CONTAINER, readonly=True),
             "--env", f"PYTHONPATH={_SRC_IN_CONTAINER}",
-            "--env", f"BOT_BOTTLE_ROOT={_DB_ROOT_IN_CONTAINER}",
             # Detect a real control-plane code change and recreate.
             "--env", f"BOT_BOTTLE_SOURCE_HASH={current_hash}",
             # The signing key — held ONLY by the orchestrator (issue #469). Bare
@@ -165,6 +166,7 @@ class MacosOrchestrator(Orchestrator):
             self.image_ref,
             # Dockerfile.orchestrator ENTRYPOINT is `-m bot_bottle.orchestrator`.
             "--host", "0.0.0.0", "--port", str(self.port), "--broker", "stub",
+            "--db", _DB_IN_CONTAINER,
         ]
         result = container_mod.run_container_argv(
             argv, env={**os.environ, ORCHESTRATOR_TOKEN_ENV: _signing_key})

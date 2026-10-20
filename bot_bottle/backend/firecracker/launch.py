@@ -53,6 +53,7 @@ from . import firecracker_vm, image_builder, isolation_probe, lifecycle_lock, ne
 from .bottle import FirecrackerBottle
 from .bottle_plan import FirecrackerBottlePlan
 from ...orchestrator.store.config_store import resolve_teardown_timeout
+from ...paths import host_db_path
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from .consolidated_launch import (
     launch_consolidated,
@@ -114,7 +115,7 @@ def launch(
         token_values = Egress().resolve_token_values(
             plan.egress_plan.token_env_map, effective_env,
         )
-        teardown_timeout = resolve_teardown_timeout()
+        teardown_timeout = resolve_teardown_timeout(host_db_path())
         ctx = launch_consolidated(
             plan.egress_plan, git_gate_plan,
             guest_ip=slot.guest_ip,

@@ -61,6 +61,7 @@ from .compose import (
 )
 from .consolidated_compose import consolidated_agent_compose
 from ...orchestrator.store.config_store import resolve_teardown_timeout
+from ...paths import host_db_path
 from .consolidated_launch import launch_consolidated, deprovision_consolidated
 from .infra import INFRA_NAME
 from .gateway import DockerGateway
@@ -160,7 +161,7 @@ def launch(
         token_values = Egress().resolve_token_values(
             plan.egress_plan.token_env_map, effective_env,
         )
-        teardown_timeout = resolve_teardown_timeout()
+        teardown_timeout = resolve_teardown_timeout(host_db_path())
         ctx = launch_consolidated(
             plan.egress_plan, git_gate_plan, image_ref=plan.image, tokens=token_values,
         )

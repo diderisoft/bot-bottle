@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from pathlib import Path
 
 from ...contract.supervise import Proposal, Response
-from ...paths import host_db_path
 from ...lib.db_store import DbStore
 from ...lib.migrations import TableMigrations
 
@@ -15,16 +13,8 @@ from ...lib.migrations import TableMigrations
 class QueueStore(DbStore):
     """SQLite-backed persistent store for supervise proposals and responses."""
 
-    def __init__(self, queue_key: str, db_path: Path | None = None) -> None:
+    def __init__(self, queue_key: str, db_path: Path) -> None:
         self.queue_key = queue_key
-        if db_path is not None:
-            resolved = db_path
-        else:
-            # In the gateway container SUPERVISE_DB_PATH points at the
-            # bind-mounted host DB. On the host this env var is never set,
-            # so we always fall through to host_db_path().
-            env_path = os.environ.get("SUPERVISE_DB_PATH", "").strip()
-            resolved = Path(env_path) if env_path else host_db_path()
         # One entry per schema version: migrations[0] brings a fresh DB to
         # version 1, [1] to version 2, etc.  Add new entries at the end; never
         # edit existing ones.
@@ -57,7 +47,7 @@ class QueueStore(DbStore):
             )
             """,
         ])
-        super().__init__(resolved, migrations)
+        super().__init__(db_path, migrations)
 
     def write_proposal(self, proposal: Proposal) -> Path:
         with self._connection() as conn:

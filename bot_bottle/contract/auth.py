@@ -31,6 +31,11 @@ import binascii
 import hashlib
 import hmac
 import json
+import os
+from collections.abc import Mapping
+from dataclasses import dataclass
+
+from .identity import ORCHESTRATOR_AUTH_JWT_ENV, ORCHESTRATOR_TOKEN_ENV
 
 ROLE_GATEWAY = "gateway"
 ROLE_CLI = "cli"
@@ -65,7 +70,7 @@ def mint(role: str, secret: str, *, roles: frozenset[str] = ROLES) -> str:
     `roles` is the set the signing key is allowed to sign (default: the
     orchestrator's `{gateway, cli}`). A separate service (e.g. the host
     controller) passes its own key + role set so its tokens can't be forged with
-    the orchestrator's key — see `trust_domain.py`, issues #476/#468.
+    the orchestrator's key — see `TrustDomain`, issues #476/#468.
 
     Raises ValueError for a role outside `roles`, or an empty signing key (an
     unsigned credential is never valid)."""
@@ -103,4 +108,65 @@ def verify(token: str, secret: str, *, roles: frozenset[str] = ROLES) -> str | N
     return role if isinstance(role, str) and role in roles else None
 
 
-__all__ = ["ROLE_GATEWAY", "ROLE_CLI", "ROLES", "mint", "verify"]
+@dataclass(frozen=True)
+class TrustDomain:
+    """One service's signing material: the name of its host-canonical key file,
+    the roles that key may sign, and the env vars its key and a minted token
+    ride in.
+
+    The service that owns the domain (e.g. the orchestrator) receives the raw
+    key via `key_env`; a delegate (e.g. the gateway) receives only a pre-minted,
+    role-scoped token via `token_env`. `mint`/`verify` are scoped to `roles`, so
+    one service's key can neither sign nor accept another service's role.
+    Reading the key file is host-side (`bot_bottle.trust_domain`)."""
+
+    name: str
+    key_filename: str
+    roles: frozenset[str]
+    key_env: str
+    token_env: str
+
+    def key_from_env(self, environ: Mapping[str, str] | None = None) -> str:
+        """The signing key as the owning process sees it, read from `key_env`
+        (default `os.environ`). ``""`` when unset; owning services reject that
+        value rather than start without authentication."""
+        env = os.environ if environ is None else environ
+        return env.get(self.key_env, "").strip()
+
+    def mint(self, role: str, key: str) -> str:
+        """A role-scoped token signed with `key`. Raises ValueError for a role
+        this domain doesn't sign."""
+        if role not in self.roles:
+            raise ValueError(f"role {role!r} is not in trust domain {self.name!r}")
+        return mint(role, key, roles=self.roles)
+
+    def verify(self, token: str, key: str) -> str | None:
+        """The role `token` carries under `key`, or None."""
+        return verify(token, key, roles=self.roles)
+
+
+# The orchestrator's key file under the host app-data root.
+ORCHESTRATOR_TOKEN_FILENAME = "orchestrator-token"
+
+# The orchestrator's domain: the key the orchestrator (and host CLI) holds, the
+# `gateway` token it mints for the data plane, and the `cli` token the CLI mints
+# for itself.
+CONTROL_PLANE = TrustDomain(
+    name="control-plane",
+    key_filename=ORCHESTRATOR_TOKEN_FILENAME,
+    roles=ROLES,
+    key_env=ORCHESTRATOR_TOKEN_ENV,
+    token_env=ORCHESTRATOR_AUTH_JWT_ENV,
+)
+
+
+__all__ = [
+    "ROLE_GATEWAY",
+    "ROLE_CLI",
+    "ROLES",
+    "mint",
+    "verify",
+    "TrustDomain",
+    "ORCHESTRATOR_TOKEN_FILENAME",
+    "CONTROL_PLANE",
+]

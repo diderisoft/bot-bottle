@@ -1,7 +1,7 @@
 """Run the orchestrator control plane as a plain process (PRD 0070 dev-harness).
 
     BOT_BOTTLE_ORCHESTRATOR_TOKEN=<signing-key> \
-        python -m bot_bottle.orchestrator [--host H] [--port P] [--db PATH]
+        python -m bot_bottle.orchestrator --db PATH [--host H] [--port P]
 
 The PRD sequences the orchestrator as a plain-process dev-harness first, so
 the consolidation core (registry + attribution + HTTP control plane + live
@@ -17,13 +17,13 @@ import secrets
 from pathlib import Path
 
 from ..lib import log
-from ..trust_domain import CONTROL_PLANE
+from ..contract.auth import CONTROL_PLANE
 from .broker import LaunchBroker, StubBroker
 from ..control.docker_broker import DockerBroker
 from .server import make_server
 from .service import OrchestratorCore
 from .store.store_manager import StoreManager
-from .store.registry_store import RegistryStore, default_db_path
+from .store.registry_store import RegistryStore
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -32,8 +32,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1", help="bind address")
     parser.add_argument("--port", type=int, default=8080, help="bind port (0 = ephemeral)")
     parser.add_argument(
-        "--db", type=Path, default=None,
-        help=f"registry DB path (default: {default_db_path()})",
+        "--db", type=Path, required=True,
+        help="the shared state DB (registry, supervise queue + audit)",
     )
     parser.add_argument(
         "--broker", choices=("stub", "docker"), default="stub",
