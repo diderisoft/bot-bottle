@@ -60,7 +60,7 @@ _READY_GATED_DAEMONS: tuple[str, ...] = ("git-gate", "git-http")
 # key from every daemon's env as defense-in-depth, so a compromised data-plane
 # daemon can't read it and mint a `cli` token even if it somehow leaked into the
 # gateway container (issue #469 review). Value matches
-# paths.ORCHESTRATOR_TOKEN_ENV; hardcoded here so this supervisor stays
+# contract.identity.ORCHESTRATOR_TOKEN_ENV; hardcoded here so this supervisor stays
 # import-light.
 _SIGNING_KEY_ENV = "BOT_BOTTLE_ORCHESTRATOR_TOKEN"
 

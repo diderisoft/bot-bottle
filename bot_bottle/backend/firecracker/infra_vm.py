@@ -46,11 +46,12 @@ from typing import Generator
 
 from ... import image_registry, resources
 from ...lib.log import die, info
+from ...paths import HOST_DB_FILENAME
 from ..docker import util as docker_mod
 from . import firecracker_vm, infra_rootfs, netpool, util
 
 # The orchestrator VM's signing-key path on its persistent /dev/vdb volume
-# (mounted at BOT_BOTTLE_ROOT=/var/lib/bot-bottle). The launcher seeds this
+# (mounted at /var/lib/bot-bottle). The launcher seeds this
 # file with the host-canonical key AFTER boot (over SSH), so the VM verifies
 # tokens with the same key the host CLI signs with — the host token file stays
 # the single source of truth, never clobbered per-backend (issue #469 review).
@@ -539,7 +540,8 @@ if [ -z "$CP_KEY" ]; then
     echo "infra: control-plane signing key never arrived; refusing to start the control plane (would run OPEN)" >&2
 else
     chmod 600 {_GUEST_SIGNING_KEY_PATH} 2>/dev/null || true
-    BOT_BOTTLE_ROOT=/var/lib/bot-bottle BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator \\
-        --host 0.0.0.0 --port {ORCHESTRATOR_PORT} --broker stub &
+    BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator \\
+        --host 0.0.0.0 --port {ORCHESTRATOR_PORT} --broker stub \\
+        --db /var/lib/bot-bottle/db/{HOST_DB_FILENAME} &
 fi
 """ + _INIT_TAIL

@@ -58,6 +58,7 @@ class TestRoleInits(unittest.TestCase):
         self.assertIn("refusing to start the control plane", init)     # no open mode
         self.assertIn('BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator',
                       init)  # key -> orchestrator only
+        self.assertIn("--db /var/lib/bot-bottle/db/bot-bottle.db", init)
 
     def test_gateway_init_starts_only_the_data_plane(self):
         init = infra_vm.role_init("gateway")

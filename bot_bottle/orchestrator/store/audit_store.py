@@ -5,16 +5,15 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from ..contract.supervise import AuditEntry
-from ..paths import host_db_path
-from ..lib.db_store import DbStore
-from ..lib.migrations import TableMigrations
+from ...contract.supervise import AuditEntry
+from ...lib.db_store import DbStore
+from ...lib.migrations import TableMigrations
 
 
 class AuditStore(DbStore):
     """SQLite-backed persistent store for supervise audit entries."""
 
-    def __init__(self, db_path: Path | None = None) -> None:
+    def __init__(self, db_path: Path) -> None:
         # One entry per schema version: migrations[0] brings a fresh DB to
         # version 1, [1] to version 2, etc.  Add new entries at the end; never
         # edit existing ones.
@@ -33,7 +32,7 @@ class AuditStore(DbStore):
             )
             """,
         ])
-        super().__init__(db_path or host_db_path(), migrations)
+        super().__init__(db_path, migrations)
 
     def write_audit_entry(self, entry: AuditEntry) -> Path:
         with self._connection() as conn:

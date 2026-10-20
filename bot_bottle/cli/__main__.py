@@ -15,6 +15,7 @@ from ..errors import MissingEnvVarError
 from ..lib.log import Die, die, error
 from ..manifest import ManifestError
 from ..orchestrator.store.store_manager import StoreManager
+from ..paths import host_db_path
 from .commands import COMMANDS, NO_MIGRATION_COMMANDS
 from .commands.help import cmd_help
 
@@ -34,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     if handler is None:
         cmd_help()
         die(f"unknown command: {command}")
-    mgr = StoreManager.instance()
+    mgr = StoreManager(host_db_path())
     if command not in NO_MIGRATION_COMMANDS and not mgr.is_migrated():
         sys.stderr.write("bot-bottle: database schema is out of date\n")
         sys.stderr.write("Migrate now? [y/N] ")

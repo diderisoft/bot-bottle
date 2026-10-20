@@ -13,7 +13,6 @@ from pathlib import Path
 
 from ...lib.db_store import DbStore
 from ...lib.migrations import TableMigrations
-from ...paths import host_db_path
 
 TEARDOWN_TIMEOUT_ENV = "BOT_BOTTLE_ORCHESTRATOR_TEARDOWN_TIMEOUT_SECONDS"
 DEFAULT_TEARDOWN_TIMEOUT_SECONDS = 30.0
@@ -34,8 +33,8 @@ _MIGRATIONS = TableMigrations(
 class OrchestratorConfigStore(DbStore):
     """Orchestrator settings in the shared host DB."""
 
-    def __init__(self, db_path: Path | None = None) -> None:
-        super().__init__(db_path or host_db_path(), _MIGRATIONS)
+    def __init__(self, db_path: Path) -> None:
+        super().__init__(db_path, _MIGRATIONS)
 
     def _connect(self) -> sqlite3.Connection:
         conn = super()._connect()
@@ -73,7 +72,7 @@ class OrchestratorConfigStore(DbStore):
         return cur.rowcount > 0
 
 
-def resolve_teardown_timeout(db_path: Path | None = None) -> float:
+def resolve_teardown_timeout(db_path: Path) -> float:
     """Return the teardown timeout to use, in priority order:
 
     1. ``BOT_BOTTLE_ORCHESTRATOR_TEARDOWN_TIMEOUT_SECONDS`` env var

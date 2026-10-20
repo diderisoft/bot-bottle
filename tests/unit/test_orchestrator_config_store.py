@@ -124,21 +124,21 @@ class TestTeardownTimeoutResolvedBeforeRegistration(unittest.TestCase):
     def test_docker_resolves_timeout_before_launch_consolidated(self) -> None:
         from bot_bottle.backend.docker import launch
         src = self._src(launch)
-        resolve_at = src.index("teardown_timeout = resolve_teardown_timeout()")
+        resolve_at = src.index("teardown_timeout = resolve_teardown_timeout(host_db_path())")
         launch_at = src.index("ctx = launch_consolidated(")
         self.assertLess(resolve_at, launch_at)
 
     def test_firecracker_resolves_timeout_before_launch_consolidated(self) -> None:
         from bot_bottle.backend.firecracker import launch
         src = self._src(launch)
-        resolve_at = src.index("teardown_timeout = resolve_teardown_timeout()")
+        resolve_at = src.index("teardown_timeout = resolve_teardown_timeout(host_db_path())")
         launch_at = src.index("ctx = launch_consolidated(")
         self.assertLess(resolve_at, launch_at)
 
     def test_macos_resolves_timeout_before_register_agent(self) -> None:
         from bot_bottle.backend.macos_container import launch
         src = self._src(launch)
-        resolve_at = src.index("teardown_timeout = resolve_teardown_timeout()")
+        resolve_at = src.index("teardown_timeout = resolve_teardown_timeout(host_db_path())")
         register_at = src.index("ctx = register_agent(")
         self.assertLess(resolve_at, register_at)
 

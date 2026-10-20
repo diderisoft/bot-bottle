@@ -1,49 +1,26 @@
 """The orchestrator's store manager (PRD 0013 / 0070).
 
-One store manager per service. Post-PRD-0070 the orchestrator is the sole
-opener of `bot-bottle.db`, so it owns migrating every table in it: the supervise
-`queue_store` (local to `orchestrator.store`) plus the `audit_store` and
-`config_store` from the shared `bot_bottle.store` base. The data plane never
-touches these — it reaches state over the control-plane RPC.
+The orchestrator is the sole opener of `bot-bottle.db`, so it owns migrating
+every table in it: the supervise `queue_store` and `audit_store` plus the host
+settings `config_store`. The data plane never touches these; it reaches state
+over the control-plane RPC.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from .audit_store import AuditStore
 from .queue_store import QueueStore
-from ...store.audit_store import AuditStore
-from ...store.config_store import ConfigStore
-
-_instance: StoreManager | None = None
+from ...lib.config_store import ConfigStore
 
 
 class StoreManager:
     """Owns db_path and delegates migrate/is_migrated across the orchestrator's
-    stores.
+    stores."""
 
-    Use instance() for normal access. Call reset(db_path) in tests to swap the
-    singleton to a temp path, then reset() with no args to restore the
-    default."""
-
-    def __init__(self, db_path: Path | None = None) -> None:
-        if db_path is None:
-            from ...paths import host_db_path
-            db_path = host_db_path()
+    def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
-
-    @classmethod
-    def instance(cls) -> StoreManager:
-        global _instance
-        if _instance is None:
-            _instance = cls()
-        return _instance
-
-    @classmethod
-    def reset(cls, db_path: Path | None = None) -> None:
-        """Replace the singleton. Pass db_path for test isolation; omit to restore default."""
-        global _instance
-        _instance = cls(db_path)
 
     def is_migrated(self) -> bool:
         return (

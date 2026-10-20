@@ -24,10 +24,8 @@ from ...control.gateway import (
     GatewayError,
     GatewayTransport,
 )
-from ...paths import (
-    ORCHESTRATOR_AUTH_JWT_ENV,
-    host_gateway_ca_dir,
-)
+from ...contract.identity import ORCHESTRATOR_AUTH_JWT_ENV
+from ...paths import host_gateway_ca_dir
 from ... import resources
 from .. import util as backend_util
 from . import util as container_mod

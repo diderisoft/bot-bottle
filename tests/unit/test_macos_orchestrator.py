@@ -48,6 +48,8 @@ class TestMacosOrchestratorRun(unittest.TestCase):
         self.assertIn("--broker", argv)
         self.assertIn("stub", argv)
         self.assertIn("bot-bottle-orchestrator:latest", argv)
+        self.assertEqual("/var/lib/bot-bottle/db/bot-bottle.db",
+                         argv[argv.index("--db") + 1])
 
     def test_db_is_a_container_only_volume(self) -> None:
         argv = self._run()

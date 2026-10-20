@@ -19,23 +19,16 @@ orchestrator its key and the gateway its token, instead of re-deriving that
 wiring per backend (the bug class behind PR #471 — see
 `docs/prds/0079-control-plane-auth-provisioning.md`).
 
-Stdlib-only: the HMAC lives in `contract.auth`, the key file in `paths`.
+The domain descriptions (`TrustDomain`, `CONTROL_PLANE`) and token mint/verify
+are in `contract.auth`; this module is the host half that reads the key files.
 """
 
 from __future__ import annotations
 
-import os
-from collections.abc import Mapping
 from dataclasses import dataclass
 
-from .contract import auth as orchestrator_auth
-from .contract.auth import ROLE_GATEWAY
-from .paths import (
-    ORCHESTRATOR_AUTH_JWT_ENV,
-    ORCHESTRATOR_TOKEN_ENV,
-    ORCHESTRATOR_TOKEN_FILENAME,
-    host_signing_key,
-)
+from .contract.auth import CONTROL_PLANE, ROLE_GATEWAY, TrustDomain
+from .paths import host_signing_key
 
 
 class ProvisioningError(RuntimeError):
@@ -43,59 +36,16 @@ class ProvisioningError(RuntimeError):
     orchestrator without its signing key)."""
 
 
-@dataclass(frozen=True)
-class TrustDomain:
-    """One service's signing material: a host-canonical key file, the roles that
-    key may sign, and the env vars its key and a minted token ride in.
-
-    The service that *owns* the domain (e.g. the orchestrator) receives the raw
-    key via `key_env`; a delegate (e.g. the gateway) receives only a pre-minted,
-    role-scoped token via `token_env` it cannot rewrite. `mint`/`verify` are
-    scoped to `roles`, so this service's key can neither sign nor accept another
-    service's role."""
-
-    name: str
-    key_filename: str
-    roles: frozenset[str]
-    key_env: str
-    token_env: str
-
-    def signing_key(self) -> str:
-        """This service's host-canonical signing key (minted 0600 on first use).
-        Host-side only — the value is injected into the owning process."""
-        return host_signing_key(self.key_filename)
-
-    def key_from_env(self, environ: Mapping[str, str] | None = None) -> str:
-        """The signing key as the owning process sees it — read from `key_env`
-        (default `os.environ`). ``""`` when unset; owning services reject that
-        value rather than start without authentication."""
-        env = os.environ if environ is None else environ
-        return env.get(self.key_env, "").strip()
-
-    def mint(self, role: str) -> str:
-        """A role-scoped token for a delegate, signed with this service's key.
-        Raises ValueError for a role this service doesn't sign."""
-        if role not in self.roles:
-            raise ValueError(f"role {role!r} is not in trust domain {self.name!r}")
-        return orchestrator_auth.mint(role, self.signing_key(), roles=self.roles)
-
-    def verify(self, token: str, key: str) -> str | None:
-        """The role `token` carries under `key`, or None. `key` is passed in
-        (not read from disk) because the verifier — the control-plane process —
-        holds it in `key_env`, not on disk in its guest."""
-        return orchestrator_auth.verify(token, key, roles=self.roles)
+def signing_key(domain: TrustDomain) -> str:
+    """`domain`'s host-canonical signing key (minted 0600 on first use).
+    Host-side only; the value is injected into the owning process."""
+    return host_signing_key(domain.key_filename)
 
 
-# The orchestrator's domain: the key the orchestrator (and host CLI) holds, the
-# `gateway` token it mints for the data plane, and the `cli` token the CLI mints
-# for itself. #468's host controller will add a second, separate domain.
-CONTROL_PLANE = TrustDomain(
-    name="control-plane",
-    key_filename=ORCHESTRATOR_TOKEN_FILENAME,
-    roles=orchestrator_auth.ROLES,
-    key_env=ORCHESTRATOR_TOKEN_ENV,
-    token_env=ORCHESTRATOR_AUTH_JWT_ENV,
-)
+def mint(domain: TrustDomain, role: str) -> str:
+    """A role-scoped token for a delegate, signed with `domain`'s host key.
+    Raises ValueError for a role the domain doesn't sign."""
+    return domain.mint(role, signing_key(domain))
 
 
 @dataclass(frozen=True)
@@ -115,7 +65,7 @@ class ControlPlaneProvisioning:
         empty key runs the server open — and being on a separate host does not
         stop the gateway from reaching the control plane (it must, for
         `/resolve`), so an open orchestrator would treat that gateway as `cli`."""
-        key = self.domain.signing_key()
+        key = signing_key(self.domain)
         if not key:
             raise ProvisioningError(
                 f"refusing to start the {self.domain.name} orchestrator without "
@@ -128,12 +78,12 @@ class ControlPlaneProvisioning:
         """The `gateway`-role token the gateway receives (carry it in
         `domain.token_env`) — minted from the key, never the key itself, so a
         compromised gateway cannot forge a `cli` token."""
-        return self.domain.mint(ROLE_GATEWAY)
+        return mint(self.domain, ROLE_GATEWAY)
 
 
 __all__ = [
     "ProvisioningError",
-    "TrustDomain",
-    "CONTROL_PLANE",
+    "signing_key",
+    "mint",
     "ControlPlaneProvisioning",
 ]

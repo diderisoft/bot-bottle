@@ -18,7 +18,8 @@ from bot_bottle.control.gateway import (
     GatewayError,
     rotate_gateway_ca,
 )
-from bot_bottle.paths import ORCHESTRATOR_AUTH_JWT_ENV, GATEWAY_CA_DIRNAME, host_gateway_ca_dir
+from bot_bottle.contract.identity import ORCHESTRATOR_AUTH_JWT_ENV
+from bot_bottle.paths import GATEWAY_CA_DIRNAME, host_gateway_ca_dir
 from tests.unit import use_bottle_root
 
 
@@ -214,7 +215,6 @@ class TestDockerGateway(unittest.TestCase):
         # The gateway presents the token the orchestrator handed it — it never
         # mints (holds no signing key). The value rides the env (bare `--env
         # NAME` on argv keeps it off `docker inspect`), not argv itself.
-        from bot_bottle.paths import ORCHESTRATOR_AUTH_JWT_ENV
 
         run_env: dict[str, str] = {}
 

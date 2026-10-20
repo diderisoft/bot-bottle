@@ -13,10 +13,8 @@ from ...image_registry import RegistryError
 from ...infra_image import pinned_infra_artifact, pull_pinned_image
 from ...published_artifacts import FORMAT_OCI
 from .gateway_transport import DockerGatewayTransport
-from ...paths import (
-    ORCHESTRATOR_AUTH_JWT_ENV,
-    host_gateway_ca_dir,
-)
+from ...contract.identity import ORCHESTRATOR_AUTH_JWT_ENV
+from ...paths import host_gateway_ca_dir
 from ... import resources
 from ...control.gateway import (
   Gateway, GatewayTransport, GATEWAY_IMAGE, GATEWAY_NAME, GATEWAY_NETWORK,
