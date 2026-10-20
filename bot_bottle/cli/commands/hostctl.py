@@ -5,9 +5,10 @@ from __future__ import annotations
 import sys
 
 from ...control.hostctl import runner
+from ...control.hostctl.client import HostControlClient
 from ..constants import PROG
 
-_USAGE = f"usage: {PROG} hostctl {{status|start|stop}}\n"
+_USAGE = f"usage: {PROG} hostctl {{status|start|stop|jobs}}\n"
 
 
 def _describe(state: runner.HostControlState) -> str:
@@ -22,6 +23,14 @@ def _run(action: str) -> int:
     if action == "start":
         print(_describe(runner.ensure_running()))
         return 0
+    if action == "jobs":
+        state = runner.running()
+        if state is None:
+            print("host controller: not running")
+            return 1
+        for job in HostControlClient(state, runner.cli_token()).jobs():
+            print(f"{job['id']}\t{job['kind']}\t{job['state']}")
+        return 0
     print("host controller: stopped" if runner.stop() else "host controller: not running")
     return 0
 
@@ -31,7 +40,7 @@ def cmd_hostctl(argv: list[str]) -> int:
         sys.stderr.write(_USAGE)
         sys.stderr.write("\nThe per-host daemon behind bottle and orchestrator management.\n")
         return 0
-    if len(argv) != 1 or argv[0] not in ("status", "start", "stop"):
+    if len(argv) != 1 or argv[0] not in ("status", "start", "stop", "jobs"):
         sys.stderr.write(_USAGE)
         return 2
     try:

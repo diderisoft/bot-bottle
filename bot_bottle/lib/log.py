@@ -1,4 +1,4 @@
-"""Tiny logging wrappers. All output goes to stderr.
+"""Tiny logging wrappers. Output goes to stderr unless redirected (`redirect`).
 
 Two capabilities layer onto the bare wrappers (issue #252):
 
@@ -22,8 +22,11 @@ unaffected.
 
 from __future__ import annotations
 
+import contextvars
 import os
 import sys
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from typing import Mapping, NoReturn
 
 # Ordered severities. Gaps left between values so intermediate levels
@@ -45,6 +48,36 @@ _LEVEL_NAMES: dict[str, int] = {
 _DEFAULT_THRESHOLD = INFO
 
 _LOG_LEVEL_ENV = "BOT_BOTTLE_LOG_LEVEL"
+
+# Where this context's output lines go; None means stderr. A host controller
+# job routes its lines to its own event stream.
+_SINK: contextvars.ContextVar[Callable[[str], None] | None] = contextvars.ContextVar(
+    "bot_bottle_log_sink", default=None
+)
+
+
+@contextmanager
+def redirect(sink: Callable[[str], None]) -> Generator[None]:
+    """Send this context's output lines to `sink` instead of stderr."""
+    token = _SINK.set(sink)
+    try:
+        yield
+    finally:
+        _SINK.reset(token)
+
+
+def redirected() -> bool:
+    """True when this context's output goes to a sink rather than stderr."""
+    return _SINK.get() is not None
+
+
+def write_line(line: str) -> None:
+    """Write one output line (no trailing newline) to this context's sink."""
+    sink = _SINK.get()
+    if sink is None:
+        sys.stderr.write(line + "\n")
+    else:
+        sink(line)
 
 
 def _threshold() -> int:
@@ -85,7 +118,7 @@ def _emit(
     if level < _threshold():
         return
     prefix = f"{label}: " if label else ""
-    sys.stderr.write(f"bot-bottle: {prefix}{msg}{_format_context(context)}\n")
+    write_line(f"bot-bottle: {prefix}{msg}{_format_context(context)}")
 
 
 def debug(msg: str, *, context: Mapping[str, object] | None = None) -> None:
