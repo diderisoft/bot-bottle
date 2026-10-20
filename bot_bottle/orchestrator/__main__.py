@@ -19,7 +19,7 @@ from pathlib import Path
 from ..lib import log
 from ..trust_domain import CONTROL_PLANE
 from .broker import LaunchBroker, StubBroker
-from .docker_broker import DockerBroker
+from ..control.docker_broker import DockerBroker
 from .server import make_server
 from .service import OrchestratorCore
 from .store.store_manager import StoreManager

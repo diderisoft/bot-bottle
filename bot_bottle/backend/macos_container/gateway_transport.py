@@ -8,7 +8,7 @@ logic that drives it lives in `backend.provision_gateway`; Docker uses
 
 from __future__ import annotations
 
-from ...gateway import GatewayProvisionError
+from ...control.gateway import GatewayProvisionError
 from . import util as container_mod
 from .gateway import GATEWAY_NAME
 

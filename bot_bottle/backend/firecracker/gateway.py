@@ -24,7 +24,7 @@ import tarfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-from ...gateway import (
+from ...control.gateway import (
     DEFAULT_CA_TIMEOUT_SECONDS,
     GATEWAY_CA_GLOB,
     MITMPROXY_HOME,

@@ -129,7 +129,7 @@ class BackendsPullOrBuild(unittest.TestCase):
 
     def test_registry_failure_is_a_clean_error(self) -> None:
         from bot_bottle.backend.docker import gateway as dgw
-        from bot_bottle.gateway import GatewayError
+        from bot_bottle.control.gateway import GatewayError
         from bot_bottle.image_registry import RegistryError
         with patch.object(dgw, "pinned_infra_artifact", return_value=_ART), \
              patch.object(dgw, "pull_pinned_image", side_effect=RegistryError("tag moved")), \
@@ -139,7 +139,7 @@ class BackendsPullOrBuild(unittest.TestCase):
     def test_orchestrator_registry_failure_is_an_orchestrator_error(self) -> None:
         from bot_bottle.backend.docker import orchestrator as dorch
         from bot_bottle.image_registry import RegistryError
-        from bot_bottle.orchestrator.lifecycle import OrchestratorStartError
+        from bot_bottle.control.lifecycle import OrchestratorStartError
         with patch.object(dorch, "pinned_infra_artifact", return_value=_ART), \
              patch.object(dorch, "pull_pinned_image", side_effect=RegistryError("401")), \
              self.assertRaises(OrchestratorStartError):

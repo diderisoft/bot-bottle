@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from bot_bottle.gateway import GatewayError, GatewayProvisionError
-from bot_bottle.orchestrator import rotate_ca
+from bot_bottle.control.gateway import GatewayError, GatewayProvisionError
+from bot_bottle.control import rotate_ca
 
 
 def _service(ca_dir: Path | None, *, running: bool = False, stays_running: bool = False,

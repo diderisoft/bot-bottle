@@ -14,7 +14,7 @@ from bot_bottle.backend.docker.consolidated_launch import (
 )
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan
-from bot_bottle.orchestrator.client import RegisteredBottle
+from bot_bottle.control.client import RegisteredBottle
 
 _MOD = "bot_bottle.backend.docker.consolidated_launch"
 _UTIL = "bot_bottle.backend.provision_bottle"
@@ -111,7 +111,7 @@ class TestTeardownConsolidated(unittest.TestCase):
         deprov.assert_called_once()
 
     def test_a_stopped_orchestrator_is_a_clear_error(self) -> None:
-        from bot_bottle.orchestrator.client import OrchestratorClientError
+        from bot_bottle.control.client import OrchestratorClientError
         service = MagicMock()
         service.orchestrator.return_value.url.return_value = ""
         with patch(f"{_UTIL}.deprovision_git_gate"), \

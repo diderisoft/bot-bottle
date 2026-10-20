@@ -29,8 +29,8 @@ from bot_bottle.backend.docker.gateway_net import next_free_ip
 from bot_bottle.backend.docker.infra import DockerInfraService
 from bot_bottle.backend.docker.orchestrator import ORCHESTRATOR_NAME
 from bot_bottle.backend.util import AGENT_CA_PATH
-from bot_bottle.gateway import GATEWAY_IMAGE, GATEWAY_NAME, GATEWAY_NETWORK
-from bot_bottle.orchestrator.client import OrchestratorClient
+from bot_bottle.control.gateway import GATEWAY_IMAGE, GATEWAY_NAME, GATEWAY_NETWORK
+from bot_bottle.control.client import OrchestratorClient
 from bot_bottle.orchestrator.store.secret_store import ENV_VAR_SECRET_NAME, new_env_var_secret
 from tests._backend import skip_unless_backend
 

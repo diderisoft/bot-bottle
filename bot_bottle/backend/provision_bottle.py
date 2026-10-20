@@ -14,13 +14,13 @@ from typing import TYPE_CHECKING
 
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
-from ..orchestrator.client import OrchestratorClient, OrchestratorClientError, RegisteredBottle
-from ..orchestrator.registration import registration_inputs
+from ..control.client import OrchestratorClient, OrchestratorClientError, RegisteredBottle
+from ..control.registration import registration_inputs
 from ..orchestrator.store.secret_store import new_env_var_secret
 from .provision_gateway import GatewayTransport, deprovision_git_gate, provision_git_gate
 
 if TYPE_CHECKING:
-    from ..orchestrator.lifecycle import Orchestrator
+    from ..control.lifecycle import Orchestrator
 
 
 def provision_bottle(

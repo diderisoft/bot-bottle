@@ -12,7 +12,7 @@ import subprocess
 import unittest
 
 from bot_bottle.orchestrator.broker import LaunchRequest, sign_request
-from bot_bottle.orchestrator.docker_broker import DockerBroker, container_name
+from bot_bottle.control.docker_broker import DockerBroker, container_name
 from tests._backend import skip_unless_backend
 
 IMAGE = "busybox"

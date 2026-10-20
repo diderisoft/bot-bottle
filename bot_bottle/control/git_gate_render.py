@@ -14,9 +14,9 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
-from ...contract.identity import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
-from ...manifest import ManifestBottle, ManifestGitEntry
-from ..egress.dlp_detectors import TOKEN_PATTERNS
+from ..contract.identity import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
+from ..manifest import ManifestBottle, ManifestGitEntry
+from ..gateway.egress.dlp_detectors import TOKEN_PATTERNS
 
 # Short network alias for git-gate inside the gateway. The
 # agent's `.gitconfig` insteadOf rewrites resolve through this name.

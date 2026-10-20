@@ -15,7 +15,7 @@ import stat
 import subprocess
 from pathlib import Path
 
-from ...gateway import GatewayProvisionError
+from ...control.gateway import GatewayProvisionError
 from . import util
 
 

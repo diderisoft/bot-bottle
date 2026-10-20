@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ... import resources
-from ...orchestrator.lifecycle import (
+from ...control.lifecycle import (
     DEFAULT_PORT,
     OrchestratorStartError,
 )

@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 
 from ..git_gate import GitGatePlan, git_gate_render_provision
-from ..gateway import GatewayProvisionError, GatewayTransport
+from ..control.gateway import GatewayProvisionError, GatewayTransport
 
 # bottle ids index the gateway's per-bottle repo + creds dirs; they land in
 # exec/cp path arguments, so validate before any path is built (a traversal

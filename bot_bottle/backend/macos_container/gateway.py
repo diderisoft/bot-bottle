@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from ...gateway import (
+from ...control.gateway import (
     DEFAULT_CA_TIMEOUT_SECONDS,
     GATEWAY_CA_CERT,
     MITMPROXY_HOME,

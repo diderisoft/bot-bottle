@@ -1,6 +1,6 @@
 """Rotate every backend's gateway mitmproxy CA (issue #450, PRD 0090).
 
-    python -m bot_bottle.orchestrator.rotate_ca
+    python -m bot_bottle.control.rotate_ca
 
 Under every backend's bring-up lock, backends are grouped by the CA dir their
 gateways share (docker and macOS share one). For a group with a running
@@ -20,7 +20,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..gateway import GatewayError, rotate_gateway_ca
+from .gateway import GatewayError, rotate_gateway_ca
 
 if TYPE_CHECKING:
     from ..backend.infra_service import InfraService

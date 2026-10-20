@@ -21,7 +21,7 @@ from pathlib import Path
 
 from ...paths import bot_bottle_root
 from ...lib.log import Die, error, info
-from ...orchestrator.client import (
+from ...control.client import (
     OrchestratorClient,
     OrchestratorClientError,
     discover_orchestrator_url,

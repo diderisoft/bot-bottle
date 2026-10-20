@@ -19,9 +19,9 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
-from ..gateway import Gateway
+from ..control.gateway import Gateway
 from ..lib.log import die
-from ..orchestrator.lifecycle import DEFAULT_STARTUP_TIMEOUT_SECONDS, Orchestrator
+from ..control.lifecycle import DEFAULT_STARTUP_TIMEOUT_SECONDS, Orchestrator
 from ..paths import bot_bottle_root
 from .gateway_attach import (
     AttachPolicy,

@@ -14,7 +14,7 @@ from bot_bottle.backend.macos_container.consolidated_launch import (
 )
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan
-from bot_bottle.orchestrator.client import RegisteredBottle
+from bot_bottle.control.client import RegisteredBottle
 
 _MOD = "bot_bottle.backend.macos_container.consolidated_launch"
 _UTIL = "bot_bottle.backend.provision_bottle"
@@ -220,7 +220,7 @@ class TestRegisterAgentReconciles(unittest.TestCase):
         client.reconcile.assert_called_once_with(["10.0.0.7"])
 
     def test_a_reconcile_failure_does_not_block_the_launch(self) -> None:
-        from bot_bottle.orchestrator.client import OrchestratorClientError
+        from bot_bottle.control.client import OrchestratorClientError
         client = _client()
         client.reconcile.side_effect = OrchestratorClientError("unreachable")
         self._register(client)

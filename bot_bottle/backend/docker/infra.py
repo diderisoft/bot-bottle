@@ -35,13 +35,13 @@ from .orchestrator import (
     ORCHESTRATOR_NETWORK,
 )
 from ... import resources
-from ...gateway import (
+from ...control.gateway import (
     GATEWAY_IMAGE,
     GATEWAY_NAME,
     GATEWAY_NETWORK,
 )
 from ..infra_service import InfraService
-from ...orchestrator.lifecycle import (
+from ...control.lifecycle import (
     DEFAULT_PORT,
 )
 

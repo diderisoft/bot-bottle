@@ -18,7 +18,7 @@ from ...paths import (
     host_gateway_ca_dir,
 )
 from ... import resources
-from ...gateway import (
+from ...control.gateway import (
   Gateway, GatewayTransport, GATEWAY_IMAGE, GATEWAY_NAME, GATEWAY_NETWORK,
   GATEWAY_DOCKERFILE, GATEWAY_LABEL, MITMPROXY_HOME,
   DEFAULT_CA_TIMEOUT_SECONDS, CA_POLL_SECONDS, GATEWAY_CA_CERT, GatewayError

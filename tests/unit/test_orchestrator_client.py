@@ -10,7 +10,7 @@ import urllib.error
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.contract.auth import ROLE_CLI, verify
-from bot_bottle.orchestrator.client import (
+from bot_bottle.control.client import (
     OrchestratorClient,
     OrchestratorClientError,
     RegisteredBottle,
@@ -19,7 +19,7 @@ from bot_bottle.orchestrator.client import (
     _probe_failure,
 )
 
-_URLOPEN = "bot_bottle.orchestrator.client.urllib.request.urlopen"
+_URLOPEN = "bot_bottle.control.client.urllib.request.urlopen"
 
 
 class TestImportBoundary(unittest.TestCase):
@@ -35,7 +35,7 @@ class BlockServerDependencies(importlib.abc.MetaPathFinder):
         return None
 
 sys.meta_path.insert(0, BlockServerDependencies())
-import bot_bottle.orchestrator.client
+import bot_bottle.control.client
 """
         result = subprocess.run(
             [sys.executable, "-c", script],
@@ -63,7 +63,7 @@ class TestHostAuthToken(unittest.TestCase):
 
 class TestBackendProbeFailure(unittest.TestCase):
     def test_records_safe_typed_diagnostic(self) -> None:
-        with patch("bot_bottle.orchestrator.client.debug") as debug:
+        with patch("bot_bottle.control.client.debug") as debug:
             result = _probe_failure("firecracker", RuntimeError("secret detail"))
         self.assertEqual(BackendProbeFailure("firecracker", "RuntimeError"), result)
         rendered = repr(debug.call_args)

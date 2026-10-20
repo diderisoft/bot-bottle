@@ -15,8 +15,8 @@ from bot_bottle.backend.gateway_attach import (
     AttachPolicy, GatewayAttachError, GatewayAttacher, RunningBottle,
 )
 from bot_bottle.backend.util import ROOT_EXEC_PATH
-from bot_bottle.gateway import GatewayError
-from bot_bottle.orchestrator.client import OrchestratorClientError
+from bot_bottle.control.gateway import GatewayError
+from bot_bottle.control.client import OrchestratorClientError
 
 _A = RunningBottle(ref="ref-a", slug="a", source_ip="10.0.0.2")
 _B = RunningBottle(ref="ref-b", slug="b", source_ip="10.0.0.3")
