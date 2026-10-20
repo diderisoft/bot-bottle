@@ -14,6 +14,7 @@ No network and no container runtime: HTTP is mocked at `urlopen`.
 
 from __future__ import annotations
 
+import email.message
 import hashlib
 import io
 import json
@@ -21,6 +22,7 @@ import subprocess
 import tempfile
 import unittest
 import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -311,6 +313,43 @@ class TagVerification(unittest.TestCase):
                         side_effect=urllib.error.URLError("down")):
             with self.assertRaises(ir.RegistryError):
                 ir.verify_tag(self.artifact)
+
+    def test_a_bearer_challenge_is_answered_with_a_pull_token(self) -> None:
+        # The standard registry token flow, which public registries use even
+        # for anonymous reads: 401 + challenge, token from the realm, retry.
+        hdrs = email.message.Message()
+        hdrs["WWW-Authenticate"] = ('Bearer realm="https://gitea.dideric.is/v2/token",'
+                                    'service="container_registry",scope="*"')
+        challenge = urllib.error.HTTPError("u", 401, "unauthorized", hdrs, None)
+        token = mock.MagicMock()
+        token.__enter__.return_value = io.BytesIO(b'{"token": "anon-tok"}')
+        seen: list[urllib.request.Request] = []
+        answers: list[object] = [challenge, token, _Resp(_A)]
+
+        def urlopen(req: urllib.request.Request, **_: object) -> object:
+            seen.append(req)
+            answer = answers.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+        with mock.patch.dict("os.environ", {}, clear=True), \
+             mock.patch("urllib.request.urlopen", side_effect=urlopen):
+            ir.verify_tag(self.artifact)
+        token_url = seen[1].full_url
+        self.assertTrue(token_url.startswith("https://gitea.dideric.is/v2/token?"))
+        self.assertIn("scope=repository%3Adidericis%2Fbot-bottle-gateway%3Apull", token_url)
+        self.assertIsNone(seen[1].get_header("Authorization"))  # anonymous
+        self.assertEqual("Bearer anon-tok", seen[2].get_header("Authorization"))
+
+    def test_a_401_without_a_bearer_challenge_fails_closed(self) -> None:
+        hdrs = email.message.Message()
+        hdrs["WWW-Authenticate"] = 'Basic realm="Gitea Container Registry"'
+        err = urllib.error.HTTPError("u", 401, "unauthorized", hdrs, None)
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            with self.assertRaises(ir.RegistryError) as ctx:
+                ir.verify_tag(self.artifact)
+        self.assertIn("401", str(ctx.exception))
 
     def test_pinned_reference_omits_the_tag(self) -> None:
         """The tag has done its job by this point; including it would suggest

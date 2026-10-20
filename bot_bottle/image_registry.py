@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import shutil
 import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -105,6 +107,52 @@ def _request(url: str) -> urllib.request.Request:
     return req
 
 
+def _head_digest(url: str, repo: str) -> str:
+    """HEAD a manifest and return its `Docker-Content-Digest`. A registry that
+    answers 401 with a Bearer challenge (the standard token flow, used even
+    for anonymous reads) gets one pull-scoped token request and a retry."""
+    req = _request(url)
+    req.get_method = lambda: "HEAD"  # type: ignore[method-assign]
+    try:
+        with urllib.request.urlopen(req, timeout=REGISTRY_HTTP_TIMEOUT_SECONDS) as resp:
+            return resp.headers.get("Docker-Content-Digest", "").strip()
+    except urllib.error.HTTPError as e:
+        # `headers` is None when an HTTPError is raised without any.
+        get_all = getattr(e.headers, "get_all", None)
+        challenge = _bearer_challenge((get_all("WWW-Authenticate") if get_all else None) or [])
+        if e.code != 401 or challenge is None:
+            raise
+    retry = urllib.request.Request(url, method="HEAD", headers={
+        "Accept": _ACCEPT, "Authorization": f"Bearer {_bearer_token(challenge, repo)}"})
+    with urllib.request.urlopen(retry, timeout=REGISTRY_HTTP_TIMEOUT_SECONDS) as resp:
+        return resp.headers.get("Docker-Content-Digest", "").strip()
+
+
+def _bearer_challenge(headers: list[str]) -> dict[str, str] | None:
+    """The parameters of a `Bearer realm="…",service="…"` challenge, if any."""
+    for header in headers:
+        scheme, _, params = header.partition(" ")
+        if scheme.lower() == "bearer":
+            return {k.strip().lower(): v.strip().strip('"') for k, _, v in
+                    (p.partition("=") for p in params.split(",")) if k.strip()}
+    return None
+
+
+def _bearer_token(challenge: dict[str, str], repo: str) -> str:
+    """A pull token for `repo` from the challenge's realm: anonymous, or with
+    the artifact token as Basic credentials when one is set."""
+    query = urllib.parse.urlencode({
+        "service": challenge.get("service", ""), "scope": f"repository:{repo}:pull"})
+    req = _request(f"{challenge['realm']}?{query}")
+    req.remove_header("Accept")
+    with urllib.request.urlopen(req, timeout=REGISTRY_HTTP_TIMEOUT_SECONDS) as resp:
+        body = json.load(resp)
+    token = body.get("token") or body.get("access_token")
+    if not token:
+        raise RegistryError(f"{challenge['realm']} returned no token")
+    return str(token)
+
+
 def resolve_tag_digest(ref: str, tag: str, *, scheme: str = "https") -> str:
     """Ask the registry what `tag` currently resolves to, without pulling.
 
@@ -112,13 +160,8 @@ def resolve_tag_digest(ref: str, tag: str, *, scheme: str = "https") -> str:
     `Docker-Content-Digest`, so this costs one round trip and no image bytes."""
     host, repo = _registry_host(ref), _repository(ref)
     url = f"{scheme}://{host}/v2/{repo}/manifests/{tag}"
-    req = _request(url)
-    req.get_method = lambda: "HEAD"  # type: ignore[method-assign]
     try:
-        with urllib.request.urlopen(
-            req, timeout=REGISTRY_HTTP_TIMEOUT_SECONDS,
-        ) as resp:
-            digest = resp.headers.get("Docker-Content-Digest", "").strip()
+        digest = _head_digest(url, repo)
     except urllib.error.HTTPError as e:
         if e.code == 404:
             raise RegistryError(
@@ -127,6 +170,8 @@ def resolve_tag_digest(ref: str, tag: str, *, scheme: str = "https") -> str:
         raise RegistryError(f"resolving {ref}:{tag} failed (HTTP {e.code})") from e
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise RegistryError(f"registry unreachable: {url} ({e})") from e
+    except ValueError as e:  # a token endpoint that didn't answer JSON
+        raise RegistryError(f"registry token request for {ref} failed ({e})") from e
     if not digest:
         raise RegistryError(
             f"registry did not return a Docker-Content-Digest for {ref}:{tag}; "
