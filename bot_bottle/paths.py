@@ -15,8 +15,7 @@ suite points it at a throwaway dir instead of monkey-patching the function
 (every module and every flat/package copy reads the same env var, so one
 override covers them all), and operators can relocate the root if needed.
 
-This module has no bot-bottle imports, so it is safe to import from any
-layer (and to COPY flat into the gateway).
+Host-side only: the services are handed the paths they need at startup.
 """
 
 from __future__ import annotations
@@ -26,26 +25,12 @@ import secrets
 import stat
 from pathlib import Path
 
+from .contract.auth import ORCHESTRATOR_TOKEN_FILENAME
+
 # The single shared host state DB. All bot-bottle SQLite stores (supervise
 # queue, audit, the orchestrator registry) co-tenant this one file — the
 # TableMigrations schema_key namespaces each store's tables.
 HOST_DB_FILENAME = "bot-bottle.db"
-
-# The per-host control-plane secret file, and the env var the launchers inject
-# its value into. The control plane requires this secret on every mutating /
-# reading route (see orchestrator/server.py); it is held only by the
-# trusted callers (control plane, gateway, host CLI) and never handed to an
-# agent, so an agent that can reach the control-plane port still can't drive it.
-ORCHESTRATOR_TOKEN_FILENAME = "orchestrator-token"
-# The env var carrying the orchestrator's *signing key* — held only by the
-# orchestrator (to verify tokens) and the host CLI (to mint its own), never by
-# the data plane. Same value as the host token file.
-ORCHESTRATOR_TOKEN_ENV = "BOT_BOTTLE_ORCHESTRATOR_TOKEN"
-# The env var carrying the data plane's pre-minted `gateway`-role token (a
-# signed JWT the launcher mints from the signing key). The gateway presents this
-# on /resolve + /supervise/{propose,poll}; it never holds the signing key, so it
-# cannot forge a higher-privilege `cli` token (issue #469 review).
-ORCHESTRATOR_AUTH_JWT_ENV = "BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT"
 
 # The host directory holding the gateway's persistent mitmproxy CA. Bind-mounted
 # into the infra/gateway container at mitmproxy's confdir so the self-generated
@@ -102,7 +87,7 @@ def host_signing_key(filename: str) -> str:
     and persisted 0600 on first use, then reused.
 
     The generic form of `host_orchestrator_token()`: each service names its own
-    key file (`trust_domain.py`), so the orchestrator and a separate service like
+    key file (`contract.auth.TrustDomain`), so the orchestrator and a separate service like
     the host controller (#468) get distinct keys neither can read. It is a *host*
     artifact — the file lives under the root the agent never mounts, and its value
     is injected only into the trusted control-plane process — so reading it here
@@ -152,9 +137,6 @@ def host_artifact_cache_dir() -> Path:
 __all__ = [
     "HOST_DB_FILENAME",
     "host_artifact_cache_dir",
-    "ORCHESTRATOR_TOKEN_FILENAME",
-    "ORCHESTRATOR_TOKEN_ENV",
-    "ORCHESTRATOR_AUTH_JWT_ENV",
     "GATEWAY_CA_DIRNAME",
     "bot_bottle_root",
     "host_db_path",

@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .store.config_store import ConfigStore
+from .lib.config_store import ConfigStore
+from .paths import host_db_path
 
 
 class StaleImageError(Exception):
@@ -17,7 +18,7 @@ class StaleImageError(Exception):
 def check_stale(label: str, created_at: datetime) -> None:
     """Raise StaleImageError if `created_at` is older than the configured
     stale-warning threshold. Negative threshold disables the check."""
-    threshold_days = ConfigStore().cached_image_stale_warning_days()
+    threshold_days = ConfigStore(host_db_path()).cached_image_stale_warning_days()
     if threshold_days < 0:
         return
     now = datetime.now(timezone.utc)

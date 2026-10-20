@@ -41,6 +41,7 @@ class TestOrchestrator(unittest.TestCase):
         self.secret = secrets.token_bytes(16)
         self.store = RegistryStore(Path(self._tmp.name) / "r.db")
         self.store.migrate()
+        StoreManager(self.store.db_path).migrate()
         self.broker = StubBroker(self.secret)
         self.orch = OrchestratorCore(self.store, self.broker, self.secret)
 
@@ -188,9 +189,9 @@ class TestOrchestratorSupervise(unittest.TestCase):
         # One DB for registry + supervise queue + audit (as in the VM).
         self._env = patch.dict("os.environ", {
             "BOT_BOTTLE_ROOT": str(root),
-            "SUPERVISE_DB_PATH": str(db),
         })
         self._env.start()
+        self.db = db
         self.store = RegistryStore(db)
         self.store.migrate()
         StoreManager(db).migrate()
@@ -210,7 +211,7 @@ class TestOrchestratorSupervise(unittest.TestCase):
         p = Proposal.new(
             bottle_slug=slug, tool=TOOL_EGRESS_ALLOW, proposed_file=proposed,
             justification="need it")
-        Supervisor().write_proposal(p)
+        Supervisor(self.db).write_proposal(p)
         return p.id
 
     def test_pending_lists_queued_proposal(self) -> None:
@@ -233,7 +234,7 @@ class TestOrchestratorSupervise(unittest.TestCase):
         assert rec is not None
         self.assertEqual(new_routes, rec.policy)
         # response written -> agent unblocks, proposal no longer pending
-        self.assertEqual(STATUS_APPROVED, Supervisor().read_response("demo", pid).status)
+        self.assertEqual(STATUS_APPROVED, Supervisor(self.db).read_response("demo", pid).status)
         self.assertEqual([], self.orch.supervise_pending())
 
     def test_pending_carries_human_label(self) -> None:
@@ -286,7 +287,7 @@ class TestOrchestratorSupervise(unittest.TestCase):
         rec = self.store.get(bottle_id)
         assert rec is not None
         self.assertEqual("routes:\n  - host: existing.com\n", rec.policy)
-        self.assertEqual("rejected", Supervisor().read_response("demo", pid).status)
+        self.assertEqual("rejected", Supervisor(self.db).read_response("demo", pid).status)
 
     def test_unknown_proposal_is_error(self) -> None:
         ok, err = self.orch.supervise_respond(
@@ -386,6 +387,7 @@ class TestOrchestratorReconcile(unittest.TestCase):
         self.db = Path(self._tmp.name) / "r.db"
         self.store = RegistryStore(self.db)
         self.store.migrate()
+        StoreManager(self.db).migrate()
         self.broker = StubBroker(self.secret)
         self.orch = OrchestratorCore(self.store, self.broker, self.secret)
 

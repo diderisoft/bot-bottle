@@ -21,17 +21,6 @@ STDLIB_ONLY = ("contract", "lib")
 # modules move; never add one.
 ALLOWED: frozenset[tuple[str, str]] = frozenset({
     ("bot_bottle.orchestrator.__main__", "bot_bottle.control.docker_broker"),
-    ("bot_bottle.orchestrator.__main__", "bot_bottle.trust_domain"),
-    ("bot_bottle.orchestrator.api", "bot_bottle.trust_domain"),
-    ("bot_bottle.orchestrator.server", "bot_bottle.trust_domain"),
-    ("bot_bottle.orchestrator.store.config_store", "bot_bottle.paths"),
-    ("bot_bottle.orchestrator.store.queue_store", "bot_bottle.paths"),
-    ("bot_bottle.orchestrator.store.registry_store", "bot_bottle.paths"),
-    ("bot_bottle.orchestrator.store.store_manager", "bot_bottle.paths"),
-    ("bot_bottle.orchestrator.store.store_manager", "bot_bottle.store.audit_store"),
-    ("bot_bottle.orchestrator.store.store_manager", "bot_bottle.store.config_store"),
-    ("bot_bottle.orchestrator.supervisor", "bot_bottle.store.audit_store"),
-    ("bot_bottle.orchestrator.supervisor", "bot_bottle.supervisor.plan"),
 })
 
 

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bot_bottle.store.config_store import (
+from bot_bottle.lib.config_store import (
     DEFAULT_CACHED_IMAGE_STALE_WARNING_DAYS,
     ConfigStore,
 )

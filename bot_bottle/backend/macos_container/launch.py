@@ -59,6 +59,7 @@ from .gateway_hosts import GATEWAY_HOSTNAME, set_gateway_host
 from . import nested_containers as nested_containers_mod
 from .bottle_plan import MacosContainerBottlePlan
 from ...orchestrator.store.config_store import resolve_teardown_timeout
+from ...paths import host_db_path
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME, new_env_var_secret
 from .consolidated_launch import (
     GatewayEndpoint,
@@ -206,7 +207,7 @@ def launch(
         token_values = Egress().resolve_token_values(
             plan.egress_plan.token_env_map, effective_env,
         )
-        teardown_timeout = resolve_teardown_timeout()
+        teardown_timeout = resolve_teardown_timeout(host_db_path())
         ctx = register_agent(
             plan.egress_plan,
             plan.git_gate_plan,
