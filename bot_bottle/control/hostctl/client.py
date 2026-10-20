@@ -1,0 +1,58 @@
+"""The CLI's client for the host controller's routes."""
+
+from __future__ import annotations
+
+import json
+import urllib.error
+import urllib.request
+from collections.abc import Callable, Iterator
+
+from ...contract.hostctl import JOBS_PATH, bearer
+from .runner import HostControlError, HostControlState
+
+
+class HostControlClient:
+    def __init__(self, state: HostControlState, token: str) -> None:
+        self._base = state.url
+        self._headers = bearer(token)
+
+    def _open(self, path: str, timeout: float | None):  # type: ignore[no-untyped-def]
+        req = urllib.request.Request(self._base + path, headers=self._headers)
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace")[:300]
+            raise HostControlError(f"host controller: {e.code} on {path}: {detail}") from None
+        except OSError as e:
+            raise HostControlError(f"host controller unreachable: {e}") from None
+
+    def get(self, path: str) -> dict[str, object]:
+        with self._open(path, timeout=10) as resp:
+            return json.loads(resp.read())
+
+    def jobs(self) -> list[dict[str, object]]:
+        return list(self.get(JOBS_PATH)["jobs"])  # type: ignore[arg-type]
+
+    def events(self, job_id: str, start: int = 0) -> Iterator[dict[str, object]]:
+        """A job's events from `start` until it finishes. No read timeout:
+        a build step can be quiet for minutes."""
+        with self._open(f"{JOBS_PATH}/{job_id}/events?from={start}", timeout=None) as resp:
+            for line in resp:
+                if line.strip():
+                    yield json.loads(line)
+
+    def follow(self, job_id: str, write: Callable[[str], None]) -> dict[str, object] | None:
+        """Write a job's log lines as they arrive and return its final
+        (`result` or `error`) event. On Ctrl-C, return None; the job keeps running."""
+        try:
+            for event in self.events(job_id):
+                if event.get("type") == "log":
+                    write(str(event.get("line", "")))
+                elif event.get("type") in ("result", "error"):
+                    return event
+        except KeyboardInterrupt:
+            return None
+        raise HostControlError(f"host controller: job {job_id} ended without a result")
+
+
+__all__ = ["HostControlClient"]

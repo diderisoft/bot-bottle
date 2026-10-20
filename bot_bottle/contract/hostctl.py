@@ -19,6 +19,8 @@ SERVICE_NAME = "bot-bottle-hostctl"
 PORT_ENV = "BOT_BOTTLE_HOSTCTL_PORT"
 
 STATUS_PATH = "/status"
+# GET /jobs, /jobs/{id}, /jobs/{id}/events (newline-delimited JSON, streamed).
+JOBS_PATH = "/jobs"
 
 # Callers authenticate with `Authorization: Bearer <token>`.
 AUTH_HEADER = "Authorization"
@@ -160,6 +162,6 @@ def bearer(token: str) -> dict[str, str]:
 __all__ = [
     "AUTH_HEADER", "AUTH_SCHEME", "DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS",
     "DEFAULT_EGRESS_PORT", "DEFAULT_GATEWAY_IMAGE", "DEFAULT_ORCHESTRATOR_IMAGE",
-    "HOST_CONTROL", "InfraSettings", "OperationSettings", "PORT_ENV", "ROLE_ORCHESTRATOR",
-    "SERVICE_NAME", "STATUS_PATH", "Settings", "bearer", "status_body",
+    "HOST_CONTROL", "InfraSettings", "JOBS_PATH", "OperationSettings", "PORT_ENV",
+    "ROLE_ORCHESTRATOR", "SERVICE_NAME", "STATUS_PATH", "Settings", "bearer", "status_body",
 ]

@@ -28,7 +28,7 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w("  doctor    check host prerequisites (Python, backend, config dir)\n")
     w("  edit      open an agent in vim for editing\n")
     w("  help      show this command list\n")
-    w("  hostctl   start / stop / check the host controller daemon (status|start|stop)\n")
+    w("  hostctl   start / stop / check the host controller daemon (status|start|stop|jobs)\n")
     w("  init      interactively create a new agent and add it to bot-bottle.json\n")
     w("  list      list available agents from bot-bottle.json\n")
     w("  login     register this host with a bot-bottle console\n")
