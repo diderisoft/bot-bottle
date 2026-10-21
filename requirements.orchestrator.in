@@ -1,3 +1,5 @@
 # Runtime dependencies baked only into the orchestrator images.
 fastapi==0.140.0
 uvicorn==0.51.0
+# uvicorn's WebSocket protocol (the remote attach relay); pure Python on h11.
+wsproto==1.3.2
