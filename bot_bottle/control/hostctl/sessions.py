@@ -125,6 +125,7 @@ class SessionManager:
         self._finishers = finishers
         self._specs: dict[str, tuple[list[str], dict[str, str]]] = {}
         self._exits: dict[str, ExitStatus] = {}
+        self._finishing: set[str] = set()
         self._cond = threading.Condition()
 
     # -- records -------------------------------------------------------------
@@ -177,9 +178,16 @@ class SessionManager:
             return self._specs.pop(session_id, None)
 
     def died(self, session_id: str, exit_status: ExitStatus) -> None:
-        """The agent in `session_id` exited: run its finisher, kill the session."""
+        """The agent in `session_id` exited: run its finisher, kill the session.
+        Reported by both the launcher and the `pane-died` hook; the first wins."""
+        with self._cond:
+            if session_id in self._finishing or session_id in self._exits:
+                return
+            self._finishing.add(session_id)
         record = self.record(session_id)
         if record is None:
+            with self._cond:
+                self._finishing.discard(session_id)
             log.warn(f"tmux session {session_id} died but has no record; leaving it")
             return
         finisher = self._finishers.get(record.kind)
@@ -194,6 +202,7 @@ class SessionManager:
             self._record_path(session_id).unlink(missing_ok=True)
             with self._cond:
                 self._exits[session_id] = exit_status
+                self._finishing.discard(session_id)
                 self._cond.notify_all()
 
     def wait_exit(self, session_id: str, timeout: float | None = None) -> ExitStatus | None:

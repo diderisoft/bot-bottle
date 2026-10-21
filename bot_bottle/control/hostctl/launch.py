@@ -1,9 +1,9 @@
 """A session's pane command: fetch the real command and environment from the
 host controller, run it, and exit as it did. usage: launch <socket> <session-id>
 
-It waits for the agent instead of exec'ing it: tmux 3.4 doesn't reap a pane
-process that exits straight after reading EOF, so `pane-died` never fires;
-a waiting parent is always reaped.
+It waits for the agent instead of exec'ing it, and reports the exit itself:
+tmux 3.4 doesn't always reap a pane process that exits straight after reading
+EOF, so its `pane-died` hook can't be the only signal.
 """
 
 from __future__ import annotations
@@ -40,6 +40,14 @@ def main(argv: list[str]) -> int:
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, lambda s, _f: proc.send_signal(s))
     code = proc.wait()
+    # Report the exit ourselves; the pane-died hook is the backup for when
+    # this launcher is killed outright.
+    status, sig = (0, signal.Signals(-code).name) if code < 0 else (code, "")
+    try:
+        request(Path(sock), {"op": "died", "session": session_id,
+                             "status": str(status), "signal": sig})
+    except OSError:
+        pass  # the daemon is down; it finishes the session when it re-adopts
     if code < 0:  # killed by a signal: die the same way so tmux reports it
         signal.signal(-code, signal.SIG_DFL)
         os.kill(os.getpid(), -code)
