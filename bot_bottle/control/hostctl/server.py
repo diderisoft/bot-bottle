@@ -132,7 +132,8 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError as e:
             self._send(400, {"error": str(e)})
             return
-        job = server.jobs.start("bottle.launch", role, lambda: server.bottles.launch(request))
+        job = server.jobs.start("bottle.launch", role,
+                                lambda: server.bottles.launch(request, role))
         self._send(202, {"job": job.id})
 
     def do_POST(self) -> None:  # pylint: disable=invalid-name

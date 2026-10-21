@@ -12,6 +12,7 @@ re-adopted after a daemon restart has no holder, so its bottle is left for
 from __future__ import annotations
 
 import contextvars
+import dataclasses
 import queue
 import shutil
 import sys
@@ -24,7 +25,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...bottle_state import capture_claude_session_state, settle_state
-from ...contract.hostctl import CONFIRM_ERROR, LaunchRequest, Settings, exit_code
+from ...contract.auth import ROLE_CLI
+from ...contract.hostctl import CONFIRM_ERROR, InfraSettings, LaunchRequest, Settings, exit_code
 from ...lib import log
 from ...paths import host_secrets_path
 from ...util import slugify
@@ -73,6 +75,23 @@ def _default_backend(settings: Settings) -> "BottleBackend[Any, Any]":
     return get_bottle_backend(settings, prompt=False)
 
 
+def _recorded_infra(backend: str) -> InfraSettings | None:
+    from ...backend.infra_service import recorded_infra_settings  # pylint: disable=import-outside-toplevel
+    return recorded_infra_settings(backend)
+
+
+def with_recorded_infra(settings: Settings, backend: str,
+                        recorded: Callable[[str], InfraSettings | None] = _recorded_infra,
+                        ) -> Settings:
+    """`settings` for `backend` with the infra settings its last bring-up
+    recorded (defaults when none): only `cli` may set those."""
+    return dataclasses.replace(
+        settings,
+        operation=dataclasses.replace(settings.operation, backend=backend),
+        infra=recorded(backend) or InfraSettings(),
+    )
+
+
 def _default_manifest(cwd: str) -> "ManifestIndex":
     from ...manifest import ManifestIndex  # pylint: disable=import-outside-toplevel
     return ManifestIndex.resolve(cwd)
@@ -100,10 +119,12 @@ class BottleService:
         backend_for: Callable[[Settings], "BottleBackend[Any, Any]"] = _default_backend,
         manifest_for: Callable[[str], "ManifestIndex"] = _default_manifest,
         secrets_file: Path | None = None,
+        recorded_infra: Callable[[str], InfraSettings | None] = _recorded_infra,
     ) -> None:
         self._sessions = sessions
         self._backend_for = backend_for
         self._manifest_for = manifest_for
+        self._recorded_infra = recorded_infra
         self._secrets_file = secrets_file
         self._held: dict[str, _Held] = {}
         self._lock = threading.Lock()
@@ -111,9 +132,10 @@ class BottleService:
 
     # -- launch --------------------------------------------------------------
 
-    def launch(self, request: LaunchRequest) -> dict[str, object]:
+    def launch(self, request: LaunchRequest, role: str = ROLE_CLI) -> dict[str, object]:
         """A `bottle.launch` job: prepare without prompting, hand the bottle
-        to a holder, and return once its agent runs in a tmux session."""
+        to a holder, and return once its agent runs in a tmux session. A
+        non-`cli` request runs on the backend's recorded infra settings."""
         # pylint: disable=import-outside-toplevel
         from ...backend import BottleSpec
         from ...secret_source import ChainSecrets, FileSecrets, MappingSecrets
@@ -122,6 +144,10 @@ class BottleService:
         if wanted and self._running(wanted):
             log.die(f"bottle {wanted} is already running")
         backend = self._backend_for(request.settings)
+        if role != ROLE_CLI:
+            request = dataclasses.replace(request, settings=with_recorded_infra(
+                request.settings, backend.name, self._recorded_infra))
+            backend = self._backend_for(request.settings)
         cwd = request.cwd or str(Path.home())
         index = self._manifest_for(cwd)
         index.require_agent(request.agent)
@@ -317,4 +343,5 @@ class BottleService:
         return {"bottle": bottle_id, "exit": {"status": status.status, "signal": status.signal}}
 
 
-__all__ = ["BottleService", "ConfirmationNeeded", "SESSION_KIND", "agent_args"]
+__all__ = ["BottleService", "ConfirmationNeeded", "SESSION_KIND", "agent_args",
+           "with_recorded_infra"]

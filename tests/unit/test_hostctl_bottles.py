@@ -25,7 +25,7 @@ from bot_bottle import bottle_state
 from bot_bottle.contract.auth import ROLE_CLI, ROLE_GATEWAY
 from bot_bottle.contract.hostctl import (
     BOTTLES_PATH, CONFIRM_ERROR, HOST_CONTROL, LAUNCH_CLI_ONLY, ROLE_ORCHESTRATOR,
-    SESSIONS_PATH, LaunchRequest, Settings, bearer, exit_code,
+    SESSIONS_PATH, InfraSettings, LaunchRequest, Settings, bearer, exit_code,
 )
 from bot_bottle.control.hostctl import localsock, sessions
 from bot_bottle.control.hostctl.bottles import BottleService, ConfirmationNeeded
@@ -357,6 +357,77 @@ class TestSettingsReachTheBackend(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             service.launch(LaunchRequest(agent="demo", settings=settings))
         self.assertEqual([settings], seen)
+
+
+class TestOrchestratorLaunchSettings(_Root):
+    """An `orchestrator` launch runs on the backend's recorded infra settings
+    and resolves its secrets from the host secrets file."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.seen: list[Settings] = []
+        self.recorded: InfraSettings | None = None
+
+        def backend_for(settings: Settings) -> Any:
+            self.seen.append(settings)
+            return self.backend
+
+        self.service = BottleService(
+            self.manager, backend_for=backend_for, manifest_for=lambda _cwd: self.index,
+            secrets_file=self.secrets_file(), recorded_infra=lambda _name: self.recorded)
+
+    def secrets_file(self) -> Path:
+        path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "secrets"
+        path.write_text("MY_TOKEN=from-file\n", encoding="utf-8")
+        path.chmod(0o600)
+        return path
+
+    def launch(self, role: str) -> None:
+        request = LaunchRequest(agent="demo", label="o1", settings=Settings.from_json({
+            "operation": {"no_cache": True}, "infra": {"egress_port": 5555}}))
+        with mock.patch("bot_bottle.manifest.preview.manifest_to_yaml", return_value=""), \
+             self.assertRaises(ConfirmationNeeded):
+            self.service.launch(request, role)
+
+    def test_recorded_infra_replaces_the_requests(self) -> None:
+        self.recorded = InfraSettings(egress_port=7777, fc_pool_size=3)
+        self.launch(ROLE_ORCHESTRATOR)
+        used = self.seen[-1]
+        self.assertEqual(self.recorded, used.infra)
+        # Operation settings stay; the backend is pinned to the one resolved.
+        self.assertTrue(used.operation.no_cache)
+        self.assertEqual("fake", used.operation.backend)
+
+    def test_defaults_when_nothing_is_recorded(self) -> None:
+        self.launch(ROLE_ORCHESTRATOR)
+        self.assertEqual(InfraSettings(), self.seen[-1].infra)
+
+    def test_cli_launch_keeps_its_infra(self) -> None:
+        self.recorded = InfraSettings(egress_port=7777)
+        self.launch(ROLE_CLI)
+        self.assertEqual([5555], [s.infra.egress_port for s in self.seen])
+
+    def test_token_ref_resolves_from_the_secrets_file(self) -> None:
+        from bot_bottle.egress import Egress  # pylint: disable=import-outside-toplevel
+        self.launch(ROLE_ORCHESTRATOR)
+        self.assertEqual({"EGRESS_TOKEN_0": "from-file"}, Egress().resolve_token_values(
+            {"EGRESS_TOKEN_0": "MY_TOKEN"}, self.backend.secrets[-1]))
+
+
+class TestRecordedInfraSettings(unittest.TestCase):
+    def test_reads_what_bring_up_recorded(self) -> None:
+        from bot_bottle.backend.infra_service import (  # pylint: disable=import-outside-toplevel
+            infra_settings_record, recorded_infra_settings)
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.addCleanup(use_bottle_root(root))
+        self.assertIsNone(recorded_infra_settings("docker"))
+        path = infra_settings_record("docker")
+        path.parent.mkdir(parents=True)
+        infra = InfraSettings(egress_port=7777)
+        path.write_text(json.dumps({"infra": Settings(infra=infra).to_json()["infra"]}))
+        self.assertEqual(infra, recorded_infra_settings("docker"))
+        path.write_text(json.dumps({"infra": {"retired_knob": 1}}))
+        self.assertIsNone(recorded_infra_settings("docker"))
 
 
 if __name__ == "__main__":
