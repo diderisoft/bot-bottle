@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import unittest
 
-from unittest.mock import patch
-
 from bot_bottle.env import resolve_env
 from bot_bottle.errors import MissingEnvVarError
 from bot_bottle.manifest import Manifest, ManifestBottle, ManifestIndex
@@ -20,6 +18,7 @@ from bot_bottle.manifest.agent import (
     _parse_provider_settings,
 )
 from bot_bottle.manifest.util import ManifestError
+from bot_bottle.secret_source import MappingSecrets
 
 
 def _idx(obj: dict[str, object]) -> ManifestIndex:
@@ -390,11 +389,8 @@ class TestResolveEnv(unittest.TestCase):
 
     def test_missing_interpolated_host_var_raises(self):
         manifest = self._manifest({"API_KEY": "${HOST_API_KEY}"})
-        with patch.dict("os.environ", {}, clear=False):
-            import os
-            os.environ.pop("HOST_API_KEY", None)
-            with self.assertRaises(MissingEnvVarError) as cm:
-                resolve_env(manifest)
+        with self.assertRaises(MissingEnvVarError) as cm:
+            resolve_env(manifest, MappingSecrets({}))
         self.assertIn("HOST_API_KEY", str(cm.exception))
 
 

@@ -175,7 +175,8 @@ def launch(
         except BaseException as exc:  # noqa: W0718 - teardown must continue
             teardown_exc = exc
             warn(f"macos-container teardown failed: {exc!r}")
-        GitGate().revoke_provisioned_keys(bottle_for_revoke, git_gate_dir_for_revoke)
+        GitGate().revoke_provisioned_keys(
+            bottle_for_revoke, git_gate_dir_for_revoke, plan.secrets)
         if teardown_exc is not None:
             raise teardown_exc
 
@@ -215,9 +216,8 @@ def launch(
                 f"agent {plan.container_name} never got an address on "
                 f"{endpoint.network}"
             )
-        effective_env = {**os.environ, **plan.agent_provision.provisioned_env}
         token_values = Egress().resolve_token_values(
-            plan.egress_plan.token_env_map, effective_env,
+            plan.egress_plan.token_env_map, plan.egress_secrets,
         )
         teardown_timeout = resolve_teardown_timeout(host_db_path())
         ctx = register_agent(
@@ -305,6 +305,7 @@ def _provision_git_gate_keys(
         plan.manifest.bottle,
         plan.git_gate_plan,
         git_gate_state_dir(plan.slug),
+        plan.secrets,
     )
     return dataclasses.replace(plan, git_gate_plan=git_gate_plan)
 

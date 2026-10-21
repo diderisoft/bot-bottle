@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..manifest import Manifest, ManifestBottle
+from ..secret_source import SecretSource
 from ..control.git_gate_render import (
     GitGateUpstream,
     git_gate_known_hosts_line,
@@ -111,14 +112,18 @@ class GitGate:
 
     def provision_dynamic_keys(
         self, bottle: ManifestBottle, plan: GitGatePlan, stage_dir: Path,
+        secrets: SecretSource,
     ) -> GitGatePlan:
         """Mint the `gitea` upstreams' ephemeral deploy keys via the forge API
-        and return the plan with their identity files filled in."""
-        return _provision.provision_git_gate_dynamic_keys(bottle, plan, stage_dir)
+        (forge tokens from `secrets`) and return the plan with their identity
+        files filled in."""
+        return _provision.provision_git_gate_dynamic_keys(bottle, plan, stage_dir, secrets)
 
-    def revoke_provisioned_keys(self, bottle: ManifestBottle, stage_dir: Path) -> None:
+    def revoke_provisioned_keys(
+        self, bottle: ManifestBottle, stage_dir: Path, secrets: SecretSource,
+    ) -> None:
         """Revoke every deploy key provisioned for `bottle` (teardown)."""
-        _provision.revoke_git_gate_provisioned_keys(bottle, stage_dir)
+        _provision.revoke_git_gate_provisioned_keys(bottle, stage_dir, secrets)
 
     def preflight_host_keys(
         self, manifest: Manifest, *, headless: bool, home_md: Path | None,

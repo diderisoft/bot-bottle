@@ -40,8 +40,10 @@ from ...bottle_state import (
 from ...image_cache import StaleImageError
 from ...lib.log import info, die
 from ...manifest import Manifest, ManifestIndex
+from ...secret_source import SecretSource
 from ..constants import PROG
 from ...control.hostctl.orchestrator import ensure_via_daemon
+from ..secrets_env import secrets_from_env
 from ..settings import settings_from_env
 from ...util import read_tty_line, slugify
 from .. import tui
@@ -119,11 +121,12 @@ def cmd_start(argv: list[str]) -> int:
         settings = replace(
             settings, operation=replace(settings.operation, no_cache=True))
 
+    secrets = secrets_from_env()
     manifest = ManifestIndex.resolve(os.getcwd())
 
     if args.headless:
         return _start_headless(
-            manifest, args, settings, dry_run=dry_run
+            manifest, args, settings, secrets, dry_run=dry_run
         )
 
     agent_name: str | None = args.name
@@ -179,6 +182,7 @@ def cmd_start(argv: list[str]) -> int:
     return _launch_bottle(
         spec,
         settings,
+        secrets,
         dry_run=dry_run,
     )
 
@@ -190,6 +194,7 @@ def _start_headless(
     manifest: ManifestIndex,
     args: argparse.Namespace,
     settings: Settings,
+    secrets: SecretSource,
     *,
     dry_run: bool,
 ) -> int:
@@ -250,6 +255,7 @@ def _start_headless(
     return _launch_bottle(
         spec,
         settings,
+        secrets,
         dry_run=dry_run,
         assume_yes=True,
         headless_prompt_text=prompt,
@@ -278,6 +284,7 @@ def _uniquify_label_headless(settings: Settings, label: str) -> str:
 def prepare_with_preflight(
     spec: BottleSpec,
     settings: Settings,
+    secrets: SecretSource,
     *,
     stage_dir: Path,
     render_preflight: Callable[[BottlePlan, str], None],
@@ -301,7 +308,7 @@ def prepare_with_preflight(
     `settle_state(identity)` in their finally — exactly the existing
     semantics."""
     backend = get_bottle_backend(settings, backend_name, prompt=not spec.headless)
-    plan = backend.prepare(spec, stage_dir=stage_dir)
+    plan = backend.prepare(spec, stage_dir=stage_dir, secrets=secrets)
     identity = _identity_from_plan(plan)
 
     render_preflight(plan, backend.name)
@@ -551,6 +558,7 @@ def _manifest_to_yaml(manifest: Manifest) -> str:
 def _launch_bottle(
     spec: BottleSpec,
     settings: Settings,
+    secrets: SecretSource,
     *,
     dry_run: bool,
     backend_name: str | None = None,
@@ -573,6 +581,7 @@ def _launch_bottle(
         plan, identity = prepare_with_preflight(
             spec,
             settings,
+            secrets,
             stage_dir=stage_dir,
             render_preflight=_text_render_preflight(),
             prompt_yes=(lambda: True) if assume_yes else _text_prompt_yes,

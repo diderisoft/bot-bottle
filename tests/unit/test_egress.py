@@ -20,6 +20,7 @@ from bot_bottle.egress import (
 )
 from bot_bottle.egress.service import _yaml_str_escape
 from bot_bottle.errors import MissingEnvVarError
+from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.manifest import ManifestIndex
 from bot_bottle.contract.yaml_subset import parse_yaml_subset
 
@@ -531,10 +532,10 @@ class TestRenderRoutesEscaping(unittest.TestCase):
 
 
 class TestResolveTokenValues(unittest.TestCase):
-    def test_reads_host_env(self):
+    def test_reads_secret_source(self):
         out = egress_resolve_token_values(
             {"EGRESS_TOKEN_0": "GH_PAT"},
-            {"GH_PAT": "the-value"},
+            MappingSecrets({"GH_PAT": "the-value"}),
         )
         self.assertEqual({"EGRESS_TOKEN_0": "the-value"}, out)
 
@@ -542,20 +543,20 @@ class TestResolveTokenValues(unittest.TestCase):
         with self.assertRaises(MissingEnvVarError):
             egress_resolve_token_values(
                 {"EGRESS_TOKEN_0": "GH_PAT"},
-                {},
+                MappingSecrets({}),
             )
 
     def test_empty_token_ref_dies(self):
         with self.assertRaises(MissingEnvVarError):
             egress_resolve_token_values(
                 {"EGRESS_TOKEN_0": "GH_PAT"},
-                {"GH_PAT": ""},
+                MappingSecrets({"GH_PAT": ""}),
             )
 
     def test_codex_host_credential_ref_resolved_via_provisioned_env(self):
         out = egress_resolve_token_values(
             {"EGRESS_TOKEN_0": CODEX_HOST_CREDENTIAL_TOKEN_REF},
-            {CODEX_HOST_CREDENTIAL_TOKEN_REF: "codex-access-token"},
+            MappingSecrets({CODEX_HOST_CREDENTIAL_TOKEN_REF: "codex-access-token"}),
         )
         self.assertEqual({"EGRESS_TOKEN_0": "codex-access-token"}, out)
 

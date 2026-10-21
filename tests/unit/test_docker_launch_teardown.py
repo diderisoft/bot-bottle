@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 from bot_bottle.contract.hostctl import Settings
+from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.agent_provider import AgentProvisionPlan
 from bot_bottle.backend import BottleImages, BottleSpec
 from bot_bottle.backend.docker import launch as launch_mod
@@ -75,6 +76,7 @@ def _plan(tmp: str) -> DockerBottlePlan:
         forwarded_env={},
         use_runsc=False,
         settings=Settings(),
+        secrets=MappingSecrets({}),
     )
 
 

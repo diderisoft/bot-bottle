@@ -13,6 +13,7 @@ from typing import Any
 from unittest import mock
 
 from bot_bottle.contract.hostctl import Settings
+from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.agent_provider import AgentProvisionPlan
 from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.docker import launch as launch_mod
@@ -65,6 +66,7 @@ def _plan(tmp: str) -> DockerBottlePlan:
         ),
         slug=_SLUG, forwarded_env={}, use_runsc=False,
         settings=Settings(),
+        secrets=MappingSecrets({}),
     )
 
 

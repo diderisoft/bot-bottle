@@ -16,3 +16,8 @@ class MissingEnvVarError(Exception):
     def __init__(self, var_name: str, message: str) -> None:
         self.var_name = var_name
         super().__init__(message)
+
+
+class SecretsFileError(Exception):
+    """Raised when the host secrets file can't be trusted or parsed. The
+    message names the file and line, never a value."""

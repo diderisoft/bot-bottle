@@ -10,6 +10,7 @@ from ...egress import EgressPlan
 from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
 from ...manifest import Manifest
+from ...secret_source import SecretSource
 from ...supervisor.plan import SupervisePlan
 from .. import BottleSpec
 from . import util
@@ -35,6 +36,7 @@ def resolve_plan(
     git_gate_plan: GitGatePlan,
     stage_dir: Path,
     settings: Settings,
+    secrets: SecretSource,
 ) -> FirecrackerBottlePlan:
     return FirecrackerBottlePlan(
         spec=spec,
@@ -47,4 +49,5 @@ def resolve_plan(
         supervise_plan=supervise_plan,
         agent_provision=agent_provision_plan,
         settings=settings,
+        secrets=secrets,
     )

@@ -30,6 +30,7 @@ from pathlib import Path
 
 from bot_bottle.backend import BottleSpec, get_bottle_backend
 from bot_bottle.bottle_state import cleanup_state
+from bot_bottle.cli.secrets_env import secrets_from_env
 from bot_bottle.cli.settings import settings_from_env
 from bot_bottle.manifest import ManifestIndex
 from tests._backend import skip_unless_selected_backend_available
@@ -151,7 +152,7 @@ class TestSandboxEscape(unittest.TestCase):
         cls._stage_dir = Path(tempfile.mkdtemp(prefix="sandbox-escape-stage."))
         try:
             backend = get_bottle_backend(settings_from_env(), cls._backend_name)
-            plan = backend.prepare(spec, stage_dir=cls._stage_dir)
+            plan = backend.prepare(spec, stage_dir=cls._stage_dir, secrets=secrets_from_env())
             cls._identity = plan.slug
 
             cls._launch_cm = backend.launch(plan)

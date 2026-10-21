@@ -18,6 +18,7 @@ from ...egress import EgressPlan
 from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
 from ...manifest import Manifest
+from ...secret_source import SecretSource
 from ...supervisor.plan import SupervisePlan
 from .. import ActiveAgent, BottleBackend, BottleImages, BottleSpec
 from . import cleanup as _cleanup
@@ -83,6 +84,7 @@ class FirecrackerBottleBackend(
         git_gate_plan: GitGatePlan,
         supervise_plan: SupervisePlan | None,
         stage_dir: Path,
+        secrets: SecretSource,
     ) -> FirecrackerBottlePlan:
         return _resolve_plan.resolve_plan(
             spec,
@@ -95,6 +97,7 @@ class FirecrackerBottleBackend(
             git_gate_plan=git_gate_plan,
             stage_dir=stage_dir,
             settings=self.settings,
+            secrets=secrets,
         )
 
     def _build_or_load_images(self, plan: FirecrackerBottlePlan) -> BottleImages:

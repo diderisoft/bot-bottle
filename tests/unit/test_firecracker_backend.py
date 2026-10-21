@@ -17,6 +17,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.contract.hostctl import Settings
+from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.backend.firecracker import firecracker_vm, netpool
 from bot_bottle.contract.hostctl import InfraSettings, Settings
 from bot_bottle.backend.firecracker.bottle import FirecrackerBottle
@@ -468,6 +469,7 @@ class TestBottlePlanProperties(unittest.TestCase):
             egress_plan=egress_plan, supervise_plan=None,
             agent_provision=ap, slug="demo-x", forwarded_env={},
             settings=Settings(),
+            secrets=MappingSecrets({}),
         )
         fields.update(overrides)
         return FirecrackerBottlePlan(**fields)  # type: ignore[arg-type]

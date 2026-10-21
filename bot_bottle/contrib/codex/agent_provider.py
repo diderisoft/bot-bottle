@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import os
 import shlex
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -146,7 +147,7 @@ class CodexAgentProvider(AgentProvider):
         guest_env: dict[str, str] | None = None,
         auth_token: str = "",
         forward_host_credentials: bool = False,
-        host_env: dict[str, str] | None = None,
+        host_env: Mapping[str, str] | None = None,
         trusted_project_path: str = "",
         label: str = "",
         color: str = "",
@@ -195,12 +196,11 @@ class CodexAgentProvider(AgentProvider):
             ))
 
         if forward_host_credentials:
-            _host_env = host_env or dict(os.environ)
             provisioned_env[CODEX_HOST_CREDENTIAL_TOKEN_REF] = (
-                codex_host_access_token(_host_env)
+                codex_host_access_token(host_env)
             )
             auth_file = state_dir / "codex-auth.json"
-            write_codex_dummy_auth_file(auth_file, _host_env)
+            write_codex_dummy_auth_file(auth_file, host_env)
             files.append(AgentProvisionFile(auth_file, f"{auth_dir}/auth.json"))
             pre_copy.append(AgentProvisionCommand((
                 "find", auth_dir,

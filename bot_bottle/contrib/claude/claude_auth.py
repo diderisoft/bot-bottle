@@ -15,6 +15,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,7 +25,7 @@ from ...lib.log import die
 _KEYCHAIN_SERVICE = "Claude Code-credentials"
 
 
-def claude_auth_path(host_env: dict[str, str] | None = None) -> Path:
+def claude_auth_path(host_env: Mapping[str, str] | None = None) -> Path:
     env = os.environ if host_env is None else host_env
     home = env.get("HOME")
     if home:
@@ -55,7 +56,7 @@ def _read_keychain() -> dict[str, object] | None:
 
 
 def claude_host_access_token(
-    host_env: dict[str, str] | None = None,
+    host_env: Mapping[str, str] | None = None,
     *,
     now: datetime | None = None,
 ) -> str:

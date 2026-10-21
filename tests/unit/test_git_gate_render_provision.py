@@ -15,6 +15,7 @@ from typing import Any, cast
 from unittest.mock import patch
 
 from bot_bottle.errors import MissingEnvVarError
+from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.git_gate import (
     _gitconfig_validate_value,
     _provision_dynamic_key,
@@ -110,6 +111,9 @@ class TestRenderGitconfig(unittest.TestCase):
             git_gate_render_gitconfig((_entry(Upstream="a\nb"),), "git-gate")
 
 
+_TOKEN = MappingSecrets({"GITEA_TOK": "secret-token"})
+
+
 # ---------------------------------------------------------------------------
 # _provision_dynamic_key
 # ---------------------------------------------------------------------------
@@ -119,10 +123,9 @@ class TestProvisionDynamicKey(unittest.TestCase):
     def test_happy_path_writes_key_and_id(self) -> None:
         fake = _FakeProvisioner()
         with tempfile.TemporaryDirectory() as d, \
-                patch.dict("os.environ", {"GITEA_TOK": "secret-token"}), \
                 patch("bot_bottle.deploy_key_provisioner.get_provisioner", return_value=fake), \
                 patch("sys.stderr"):
-            path = _provision_dynamic_key(_gitea_entry(), "myslug", Path(d))
+            path = _provision_dynamic_key(_gitea_entry(), "myslug", Path(d), _TOKEN)
             key_file = Path(path)
             self.assertEqual(b"PRIVATE-KEY-BYTES", key_file.read_bytes())
             id_file = Path(d) / "repo-deploy-key-id"
@@ -132,12 +135,9 @@ class TestProvisionDynamicKey(unittest.TestCase):
         self.assertEqual([("o/r", f"bot-bottle:{hostname}-myslug:repo")], fake.created)
 
     def test_missing_token_raises(self) -> None:
-        with tempfile.TemporaryDirectory() as d, \
-                patch.dict("os.environ", {}, clear=False):
-            import os
-            os.environ.pop("GITEA_TOK", None)
+        with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(MissingEnvVarError):
-                _provision_dynamic_key(_gitea_entry(), "s", Path(d))
+                _provision_dynamic_key(_gitea_entry(), "s", Path(d), MappingSecrets({}))
 
 
 # ---------------------------------------------------------------------------
@@ -153,11 +153,10 @@ class TestRevokeProvisionedKeys(unittest.TestCase):
     def test_revokes_gitea_key_when_id_present(self) -> None:
         fake = _FakeProvisioner()
         with tempfile.TemporaryDirectory() as d, \
-                patch.dict("os.environ", {"GITEA_TOK": "secret-token"}), \
                 patch("bot_bottle.deploy_key_provisioner.get_provisioner", return_value=fake), \
                 patch("sys.stderr"):
             (Path(d) / "repo-deploy-key-id").write_text("kid123")
-            revoke_git_gate_provisioned_keys(_bottle(_gitea_entry()), Path(d))
+            revoke_git_gate_provisioned_keys(_bottle(_gitea_entry()), Path(d), _TOKEN)
         self.assertEqual([("o/r", "kid123")], fake.deleted)
 
     def test_skips_non_gitea_entry(self) -> None:
@@ -165,7 +164,7 @@ class TestRevokeProvisionedKeys(unittest.TestCase):
         static_entry = _entry(Key=ManifestKeyConfig(provider="static", path="/k"))
         with tempfile.TemporaryDirectory() as d, \
                 patch("bot_bottle.deploy_key_provisioner.get_provisioner", return_value=fake):
-            revoke_git_gate_provisioned_keys(_bottle(static_entry), Path(d))
+            revoke_git_gate_provisioned_keys(_bottle(static_entry), Path(d), _TOKEN)
         self.assertEqual([], fake.deleted)
 
     def test_skips_when_id_file_missing(self) -> None:
@@ -173,17 +172,15 @@ class TestRevokeProvisionedKeys(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, \
                 patch("bot_bottle.deploy_key_provisioner.get_provisioner", return_value=fake):
             # no id file written -> entry skipped
-            revoke_git_gate_provisioned_keys(_bottle(_gitea_entry()), Path(d))
+            revoke_git_gate_provisioned_keys(_bottle(_gitea_entry()), Path(d), _TOKEN)
         self.assertEqual([], fake.deleted)
 
     def test_missing_token_raises(self) -> None:
-        with tempfile.TemporaryDirectory() as d, \
-                patch.dict("os.environ", {}, clear=False):
-            import os
-            os.environ.pop("GITEA_TOK", None)
+        with tempfile.TemporaryDirectory() as d:
             (Path(d) / "repo-deploy-key-id").write_text("kid123")
             with self.assertRaises(MissingEnvVarError):
-                revoke_git_gate_provisioned_keys(_bottle(_gitea_entry()), Path(d))
+                revoke_git_gate_provisioned_keys(
+                    _bottle(_gitea_entry()), Path(d), MappingSecrets({}))
 
 
 if __name__ == "__main__":

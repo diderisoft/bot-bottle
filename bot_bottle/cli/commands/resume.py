@@ -22,6 +22,7 @@ from ...bottle_state import read_metadata
 from ...lib.log import die
 from ...manifest import ManifestIndex
 from ..constants import PROG
+from ..secrets_env import secrets_from_env
 from ..settings import settings_from_env
 from .start import _launch_bottle
 
@@ -57,6 +58,7 @@ def cmd_resume(argv: list[str]) -> int:
     return _launch_bottle(
         spec,
         settings_from_env(),
+        secrets_from_env(),
         dry_run=args.dry_run,
         backend_name=backend_name,
     )

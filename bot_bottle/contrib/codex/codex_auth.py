@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+from collections.abc import Mapping
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,7 +20,7 @@ from ...lib.log import die
 from ...util import expand_tilde
 
 
-def codex_auth_path(host_env: dict[str, str] | None = None) -> Path:
+def codex_auth_path(host_env: Mapping[str, str] | None = None) -> Path:
     env = os.environ if host_env is None else host_env
     home = env.get("CODEX_HOME")
     if home:
@@ -28,7 +29,7 @@ def codex_auth_path(host_env: dict[str, str] | None = None) -> Path:
 
 
 def codex_host_access_token(
-    host_env: dict[str, str] | None = None,
+    host_env: Mapping[str, str] | None = None,
     *,
     now: datetime | None = None,
 ) -> str:
@@ -72,7 +73,7 @@ def codex_host_access_token(
 
 
 def codex_dummy_auth_json(
-    host_env: dict[str, str] | None = None,
+    host_env: Mapping[str, str] | None = None,
     *,
     now: datetime | None = None,
 ) -> str:
@@ -98,7 +99,7 @@ def codex_dummy_auth_json(
 
 def write_codex_dummy_auth_file(
     path: Path,
-    host_env: dict[str, str] | None = None,
+    host_env: Mapping[str, str] | None = None,
     *,
     now: datetime | None = None,
 ) -> None:

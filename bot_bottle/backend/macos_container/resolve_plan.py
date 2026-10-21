@@ -11,6 +11,7 @@ from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
 from ...supervisor.plan import SupervisePlan
 from ...manifest import Manifest
+from ...secret_source import SecretSource
 from .. import BottleSpec
 from . import util as container_mod
 from .bottle_plan import MacosContainerBottlePlan
@@ -35,6 +36,7 @@ def resolve_plan(
     git_gate_plan: GitGatePlan,
     stage_dir: Path,
     settings: Settings,
+    secrets: SecretSource,
 ) -> MacosContainerBottlePlan:
     return MacosContainerBottlePlan(
         spec=spec,
@@ -48,4 +50,5 @@ def resolve_plan(
         agent_provision=agent_provision_plan,
         nested_containers=manifest.bottle.nested_containers,
         settings=settings,
+        secrets=secrets,
     )

@@ -13,6 +13,7 @@ from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
 from ...supervisor.plan import SupervisePlan
 from ...manifest import Manifest
+from ...secret_source import SecretSource
 from .. import ActiveAgent, BottleBackend, BottleImages, BottleSpec
 from . import cleanup as _cleanup
 from . import enumerate as _enumerate
@@ -74,6 +75,7 @@ class MacosContainerBottleBackend(
         git_gate_plan: GitGatePlan,
         supervise_plan: SupervisePlan | None,
         stage_dir: Path,
+        secrets: SecretSource,
     ) -> MacosContainerBottlePlan:
         return _resolve_plan.resolve_plan(
             spec,
@@ -86,6 +88,7 @@ class MacosContainerBottleBackend(
             git_gate_plan=git_gate_plan,
             stage_dir=stage_dir,
             settings=self.settings,
+            secrets=secrets,
         )
 
     def prelaunch_checks(self, plan: MacosContainerBottlePlan) -> None:

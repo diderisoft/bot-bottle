@@ -20,6 +20,7 @@ from ...env import ResolvedEnv
 from ...agent_provider import AgentProvisionPlan
 from ...egress import EgressPlan
 from ...manifest import Manifest
+from ...secret_source import SecretSource
 from ...supervisor.plan import SupervisePlan
 from ...git_gate import GitGatePlan
 
@@ -42,6 +43,7 @@ def resolve_plan(
     git_gate_plan: GitGatePlan,
     stage_dir: Path,
     settings: Settings,
+    secrets: SecretSource,
 ) -> DockerBottlePlan:
     """Resolve Docker-specific names and write scratch files. Trusts
     that the agent and its skills/git-gate keys are present —
@@ -62,4 +64,5 @@ def resolve_plan(
         use_runsc=use_runsc,
         agent_provision=agent_provision_plan,
         settings=settings,
+        secrets=secrets,
     )

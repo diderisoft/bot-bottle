@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -206,7 +207,7 @@ class PiAgentProvider(AgentProvider):
         guest_env: dict[str, str] | None = None,
         auth_token: str = "",
         forward_host_credentials: bool = False,
-        host_env: dict[str, str] | None = None,
+        host_env: Mapping[str, str] | None = None,
         trusted_project_path: str = "",
         label: str = "",
         color: str = "",

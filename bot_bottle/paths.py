@@ -39,11 +39,19 @@ HOST_DB_FILENAME = "bot-bottle.db"
 # host_gateway_ca_dir() for why this is a host bind-mount, not a named volume.
 GATEWAY_CA_DIRNAME = "gateway-ca"
 
+# The host secrets file (`NAME=value` lines, mode 0600) under the root.
+SECRETS_FILENAME = "secrets"
+
 
 def bot_bottle_root() -> Path:
     """The app data root — `$BOT_BOTTLE_ROOT` if set, else `~/.bot-bottle`."""
     override = os.environ.get("BOT_BOTTLE_ROOT")
     return Path(override) if override else Path.home() / ".bot-bottle"
+
+
+def host_secrets_path() -> Path:
+    """The host secrets file, `<root>/secrets`."""
+    return bot_bottle_root() / SECRETS_FILENAME
 
 
 def host_db_path() -> Path:
@@ -155,4 +163,6 @@ __all__ = [
     "host_gateway_ca_dir",
     "host_signing_key",
     "host_orchestrator_token",
+    "host_secrets_path",
+    "SECRETS_FILENAME",
 ]

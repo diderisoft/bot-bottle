@@ -12,9 +12,10 @@ each variable:
     (an env-file, an API payload, etc.).
 
 Each env entry is a string. Mode is selected by sentinel prefix:
-  "?"           -> secret (prompt at runtime). Bare "?" uses default prompt;
+  "?"           -> secret: the entry's name looked up in the SecretSource,
+                  else prompted at runtime. Bare "?" uses default prompt;
                   "?<message>" uses <message> as the prompt body.
-  "${HOST_VAR}" -> interpolated from $HOST_VAR in the host process env
+  "${HOST_VAR}" -> interpolated: HOST_VAR looked up in the SecretSource
   any other str -> literal (the string is the value verbatim)
 
 Critical rules:
@@ -22,15 +23,14 @@ Critical rules:
     interpolated env var. Both are treated as potentially sensitive:
     nothing about their value (other than presence) ever lands on
     disk, in a log line, or on argv.
-  - resolve_env does NOT mutate the host process's os.environ; the
-    backend builds a child env dict and passes it to its launcher.
+  - resolve_env reads no environment; values come from the SecretSource
+    and the backend passes them to its launcher in a child env dict.
   - Errors mention only the variable NAME, never any portion of the value.
 """
 
 from __future__ import annotations
 
 import getpass
-import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from .errors import MissingEnvVarError
 from .lib.log import die
 from .manifest import Manifest
+from .secret_source import SecretSource
 
 _INTERPOLATED_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 
@@ -115,14 +116,14 @@ def _read_secret_silent(name: str, prompt_body: str) -> str:
     return value
 
 
-def resolve_env(manifest: Manifest) -> ResolvedEnv:
+def resolve_env(
+    manifest: Manifest, secrets: SecretSource, *, prompt: bool = True,
+) -> ResolvedEnv:
     """Iterate the agent's env entries:
-      - secret:       prompt at runtime; carry value in forwarded
-      - interpolated: read $HOST_VAR from os.environ; carry value in forwarded
-      - literal:      include in the literals map verbatim
-
-    The host process's os.environ is read but never mutated; the
-    backend injects forwarded values via its launcher's env parameter."""
+      - secret:       the entry's name from `secrets`; when absent or empty,
+                      prompt (if `prompt`) or raise MissingEnvVarError
+      - interpolated: $HOST_VAR from `secrets`; carry value in forwarded
+      - literal:      include in the literals map verbatim"""
     forwarded: dict[str, str] = {}
     literals: dict[str, str] = {}
     bottle = manifest.bottle
@@ -131,16 +132,23 @@ def resolve_env(manifest: Manifest) -> ResolvedEnv:
             continue
         kind = env_entry_kind(raw)
         if kind == "secret":
-            prompt_body = env_entry_secret_prompt(raw)
-            forwarded[name] = _read_secret_silent(name, prompt_body)
+            value = secrets.get(name)
+            if not value:
+                if not prompt:
+                    raise MissingEnvVarError(
+                        name, f"env entry {name} is a secret with no value and "
+                        "prompting is not allowed.")
+                value = _read_secret_silent(name, env_entry_secret_prompt(raw))
+            forwarded[name] = value
         elif kind == "interpolated":
             host_var = env_entry_interpolated_from(raw)
-            host_value = os.environ.get(host_var, "")
+            host_value = secrets.get(host_var)
             if not host_value:
                 raise MissingEnvVarError(
                     host_var,
                     f"env entry {name} is interpolated from ${host_var}, "
-                    f"but ${host_var} is unset or empty in the host environment.",
+                    f"but ${host_var} is unset or empty in the host environment "
+                    f"and the secrets file.",
                 )
             forwarded[name] = host_value
         else:  # literal

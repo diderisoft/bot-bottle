@@ -9,7 +9,6 @@ imported (`deploy_key_provisioner`) to keep its cost off the host path.
 from __future__ import annotations
 
 import json
-import os
 import dataclasses
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -18,6 +17,7 @@ from ..bottle_state import globalize_slug
 from ..errors import MissingEnvVarError
 from ..lib.log import info
 from ..manifest import ManifestBottle, ManifestGitEntry
+from ..secret_source import SecretSource
 from ..control.git_gate_render import GitGateUpstream
 
 if TYPE_CHECKING:
@@ -27,6 +27,7 @@ def _provision_dynamic_key(
     entry: ManifestGitEntry,
     slug: str,
     stage_dir: Path,
+    secrets: SecretSource,
 ) -> str:
     """Generate a fresh ed25519 keypair, register the public half with
     the forge, and persist the private key + key ID under `stage_dir`.
@@ -35,12 +36,12 @@ def _provision_dynamic_key(
     can inject it into the GitGateUpstream as `identity_file`."""
     from ..deploy_key_provisioner import get_provisioner
     pk = entry.Key
-    token = os.environ.get(pk.forge_token_env)
+    token = secrets.get(pk.forge_token_env)
     if token is None:
         raise MissingEnvVarError(
             pk.forge_token_env,
             f"git-gate.repos[{entry.Name!r}] key.forge_token_env"
-            f" = {pk.forge_token_env!r}: env var is not set",
+            f" = {pk.forge_token_env!r}: secret is not set",
         )
     api_url = pk.api_url or f"https://{entry.UpstreamHost}"
     provisioner = get_provisioner(pk.provider, token, api_url)
@@ -65,7 +66,9 @@ def _provision_dynamic_key(
     return str(key_file)
 
 
-def revoke_git_gate_provisioned_keys(bottle: ManifestBottle, stage_dir: Path) -> None:
+def revoke_git_gate_provisioned_keys(
+    bottle: ManifestBottle, stage_dir: Path, secrets: SecretSource,
+) -> None:
     """Revoke all deploy keys provisioned for `bottle` during prepare.
 
     Called at teardown after containers stop. Raises if any revocation
@@ -80,12 +83,12 @@ def revoke_git_gate_provisioned_keys(bottle: ManifestBottle, stage_dir: Path) ->
         if not id_file.exists():
             continue
         key_id = id_file.read_text().strip()
-        token = os.environ.get(pk.forge_token_env)
+        token = secrets.get(pk.forge_token_env)
         if token is None:
             raise MissingEnvVarError(
                 pk.forge_token_env,
                 f"git-gate.repos[{entry.Name!r}] key.forge_token_env"
-                f" = {pk.forge_token_env!r}: env var is not set;"
+                f" = {pk.forge_token_env!r}: secret is not set;"
                 f" cannot revoke deploy key {key_id}",
             )
         api_url = pk.api_url or f"https://{entry.UpstreamHost}"
@@ -98,11 +101,13 @@ def revoke_git_gate_provisioned_keys(bottle: ManifestBottle, stage_dir: Path) ->
         info(f"revoked deploy key {key_id} for git-gate.repos[{entry.Name!r}]")
 
 
-def _resolve_identity_file(entry: ManifestGitEntry, slug: str, stage_dir: Path) -> str:
+def _resolve_identity_file(
+    entry: ManifestGitEntry, slug: str, stage_dir: Path, secrets: SecretSource,
+) -> str:
     """Return the host-side SSH identity file path for this entry.
     For gitea entries, provisions a fresh deploy key first."""
     if entry.Key.provider == "gitea":
-        return _provision_dynamic_key(entry, slug, stage_dir)
+        return _provision_dynamic_key(entry, slug, stage_dir, secrets)
     return entry.IdentityFile
 
 
@@ -110,6 +115,7 @@ def provision_git_gate_dynamic_keys(
     bottle: ManifestBottle,
     plan: "GitGatePlan",
     stage_dir: Path,
+    secrets: SecretSource,
 ) -> "GitGatePlan":
     """Provision dynamic git-gate keys and return an updated plan.
 
@@ -129,7 +135,7 @@ def provision_git_gate_dynamic_keys(
         if upstream is None:
             continue
         if entry.Key.provider == "gitea":
-            identity_file = _provision_dynamic_key(entry, plan.slug, stage_dir)
+            identity_file = _provision_dynamic_key(entry, plan.slug, stage_dir, secrets)
             upstream = dataclasses.replace(upstream, identity_file=identity_file)
         updated.append(upstream)
 

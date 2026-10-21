@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 from bot_bottle.contract.hostctl import Settings
+from bot_bottle.secret_source import MappingSecrets
 from bot_bottle import bottle_state
 from tests.unit import use_bottle_root
 from bot_bottle.backend import Bottle, BottleSpec, ExecResult
@@ -76,7 +77,7 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
                 return_value=False,
             ),
         ):
-            plan = backend.prepare(_spec(self.tmp), self.tmp / "stage")
+            plan = backend.prepare(_spec(self.tmp), self.tmp / "stage", MappingSecrets({}))
 
         bottle = _bottle()
         backend.provision_workspace(plan, bottle)
@@ -106,7 +107,8 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
                 return_value=False,
             ),
         ):
-            plan = backend.prepare(_spec(self.tmp, copy_cwd=False), self.tmp / "stage")
+            plan = backend.prepare(
+                _spec(self.tmp, copy_cwd=False), self.tmp / "stage", MappingSecrets({}))
 
         bottle = _bottle()
         backend.provision_workspace(plan, bottle)
@@ -122,6 +124,7 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
             plan = backend.prepare(
                 _spec(self.tmp, identity="demo-fc-work"),
                 self.tmp / "stage",
+                MappingSecrets({}),
             )
 
         bottle = _bottle()
@@ -145,7 +148,7 @@ class TestWorkspaceTrustPath(_FakeStateMixin, unittest.TestCase):
                 return_value=False,
             ),
         ):
-            plan = backend.prepare(_spec(self.tmp), self.tmp / "stage")
+            plan = backend.prepare(_spec(self.tmp), self.tmp / "stage", MappingSecrets({}))
 
         claude_config = self.root / "state" / "demo-work" / "agent" / "claude.json"
         config = claude_config.read_text()

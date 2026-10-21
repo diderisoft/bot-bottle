@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -130,7 +131,7 @@ class ClaudeAgentProvider(AgentProvider):
         guest_env: dict[str, str] | None = None,
         auth_token: str = "",
         forward_host_credentials: bool = False,
-        host_env: dict[str, str] | None = None,
+        host_env: Mapping[str, str] | None = None,
         trusted_project_path: str = "",
         label: str = "",
         color: str = "",
@@ -199,9 +200,8 @@ class ClaudeAgentProvider(AgentProvider):
             ))
         provisioned_env: dict[str, str] = {}
         if forward_host_credentials:
-            _host_env = host_env or dict(os.environ)
             provisioned_env[CLAUDE_HOST_CREDENTIAL_TOKEN_REF] = (
-                claude_host_access_token(_host_env)
+                claude_host_access_token(host_env)
             )
 
         cred_token_ref = (

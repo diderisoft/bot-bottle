@@ -1,7 +1,8 @@
 """PRD 0092: daemon-side host code reads no environment to decide what to do.
 
 Behaviour knobs arrive as `Settings` (built by the CLI's loader,
-`bot_bottle/cli/settings.py`). Every remaining `os.environ` / `os.getenv` read
+`bot_bottle/cli/settings.py`) and secret values from a `SecretSource`
+(`bot_bottle/cli/secrets_env.py`). Every remaining `os.environ` / `os.getenv` read
 in the scanned modules must be in `ALLOWED`, keyed by file and what it reads
 (the variable name, the name of the constant or variable holding it, or
 `os.environ` for the whole environment). Entries only ever shrink: a stale one
@@ -16,31 +17,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PKG = ROOT / "bot_bottle"
 
-SCANNED_DIRS = ("backend", "control")
+SCANNED_DIRS = ("backend", "contrib", "control", "egress", "git_gate")
 SCANNED_FILES = (
-    "agent_image.py", "agent_overlay.py", "bottle_state.py", "image_cache.py",
-    "image_inputs.py", "image_registry.py", "infra_image.py", "paths.py",
-    "published_artifacts.py", "resources.py", "util.py", "workspace.py",
+    "agent_image.py", "agent_overlay.py", "agent_provider.py", "bottle_state.py",
+    "env.py", "image_cache.py", "image_inputs.py", "image_registry.py",
+    "infra_image.py", "paths.py", "published_artifacts.py", "resources.py",
+    "secret_source.py", "util.py", "workspace.py",
 )
 
-_SECRET = "secret / bottle env forwarding (PRD 0092 open question 1)"
+_REGISTRY_TOKEN = "optional registry token for private registries; deferred"
 _CHILD_ENV = "process plumbing: the child process inherits this process's env"
+_FORWARDED_BASE = (
+    f"{_CHILD_ENV}; forwarded secret values come from the plan, not this env")
+_CREDENTIAL_PATHS = "process plumbing: HOME / CODEX_HOME locate the user's credential files"
 
 # (file relative to bot_bottle/, what it reads) -> why it may.
 ALLOWED: dict[tuple[str, str], str] = {
-    # Secrets and the bottle's forwarded env: decided with the daemon's secret
-    # source, before the bottles API.
-    ("image_registry.py", "TOKEN_ENV"): f"{_SECRET}: registry auth token",
+    # Registry auth tokens.
+    ("image_registry.py", "TOKEN_ENV"): _REGISTRY_TOKEN,
     ("backend/firecracker/image_builder.py", "_ARTIFACT_TOKEN_ENV"):
-        f"{_SECRET}: registry auth token for overlay base pulls",
-    ("backend/preparation.py", "os.environ"):
-        f"{_SECRET}: resolves the provider's auth_token / host credentials",
-    ("backend/docker/launch.py", "os.environ"):
-        f"{_SECRET}: egress token_ref values; forwarded env for compose",
-    ("backend/firecracker/launch.py", "os.environ"): f"{_SECRET}: egress token_ref values",
-    ("backend/firecracker/launch.py", "name"): f"{_SECRET}: forwarded env values",
-    ("backend/macos_container/launch.py", "os.environ"):
-        f"{_SECRET}: egress token_ref values; forwarded env for `container run`",
+        f"{_REGISTRY_TOKEN} (overlay base pulls)",
+    # Bottle launch: the base env for `docker compose` / `container run`.
+    ("backend/docker/launch.py", "os.environ"): _FORWARDED_BASE,
+    ("backend/macos_container/launch.py", "os.environ"): _FORWARDED_BASE,
+    ("contrib/claude/claude_auth.py", "os.environ"): _CREDENTIAL_PATHS,
+    ("contrib/codex/codex_auth.py", "os.environ"): _CREDENTIAL_PATHS,
     # Process plumbing.
     ("paths.py", "BOT_BOTTLE_ROOT"): "process plumbing: relocates the state root",
     ("paths.py", "BOT_BOTTLE_FC_CACHE"): "process plumbing: relocates the firecracker cache root",
@@ -123,7 +124,8 @@ class TestNoEnvReads(unittest.TestCase):
         self.assertEqual(
             [], new,
             "host code reads the environment; take the value from `Settings` "
-            "(bot_bottle/cli/settings.py fills it) instead:\n" + "\n".join(new),
+            "(bot_bottle/cli/settings.py fills it) or, for a secret, from the "
+            "plan's `SecretSource` instead:\n" + "\n".join(new),
         )
 
     def test_allowed_has_no_stale_entries(self) -> None:

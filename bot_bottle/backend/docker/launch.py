@@ -145,7 +145,7 @@ def launch(
                 f" (compose-down): {exc!r}"
             )
         GitGate().revoke_provisioned_keys(
-            _bottle_for_revoke, _git_gate_dir_for_revoke
+            _bottle_for_revoke, _git_gate_dir_for_revoke, plan.secrets,
         )
 
     try:
@@ -155,17 +155,17 @@ def launch(
         if git_gate_plan.upstreams:
             git_gate_plan = GitGate().provision_dynamic_keys(
                 plan.manifest.bottle, git_gate_plan, git_gate_state_dir(plan.slug),
+                plan.secrets,
             )
 
         # Step 3: register on the orchestrator + provision this bottle's
         # git-gate state into the shared gateway; get the agent's attach
         # context (pinned source IP, gateway address, shared network). The
-        # per-bottle egress auth tokens are resolved from the host env now and
-        # handed to the orchestrator (in memory) for the gateway to inject —
-        # the agent never sees them.
-        effective_env = {**os.environ, **plan.agent_provision.provisioned_env}
+        # per-bottle egress auth tokens are resolved from the plan's secrets
+        # now and handed to the orchestrator (in memory) for the gateway to
+        # inject — the agent never sees them.
         token_values = Egress().resolve_token_values(
-            plan.egress_plan.token_env_map, effective_env,
+            plan.egress_plan.token_env_map, plan.egress_secrets,
         )
         teardown_timeout = resolve_teardown_timeout(host_db_path())
         service = DockerInfraService(plan.settings)

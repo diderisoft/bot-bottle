@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import bot_bottle.cli.commands.start as start_mod
 import bot_bottle.cli.tui as tui_mod
 from bot_bottle.contract.hostctl import Settings
+from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.backend import ActiveAgent
 from bot_bottle.lib.log import Die
 from bot_bottle.manifest import ManifestError
@@ -207,9 +208,12 @@ class TestPrepareWithPreflight(unittest.TestCase):
         with patch("bot_bottle.cli.commands.start.get_bottle_backend", return_value=mock_backend), \
              patch("bot_bottle.cli.commands.start._identity_from_plan", return_value="id"), \
              patch("bot_bottle.cli.commands.start.info"):
+            secrets = MappingSecrets({})
+            spec = MagicMock()
             start_mod.prepare_with_preflight(
-                MagicMock(),
+                spec,
                 Settings(),
+                secrets,
                 stage_dir=Path("/tmp"),
                 render_preflight=render,
                 prompt_yes=MagicMock(),
@@ -217,6 +221,8 @@ class TestPrepareWithPreflight(unittest.TestCase):
             )
 
         render.assert_called_once_with(mock_plan, "test-backend")
+        mock_backend.prepare.assert_called_once_with(
+            spec, stage_dir=Path("/tmp"), secrets=secrets)
 
 
 class TestNoAgentsDefined(unittest.TestCase):

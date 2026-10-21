@@ -16,6 +16,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.contract.hostctl import Settings
+from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.image_cache import StaleImageError
 from bot_bottle.lib.log import Die
 
@@ -67,6 +68,7 @@ class TestLaunchBottleStaleHandling(unittest.TestCase):
             return start_mod._launch_bottle(
                 spec,
                 Settings(),
+                MappingSecrets({}),
                 dry_run=False,
                 backend_name="docker",
                 **patch_kwargs,

@@ -25,6 +25,7 @@ import os
 import shlex
 import tempfile
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -192,7 +193,7 @@ class AgentProvider(ABC):
         guest_env: dict[str, str] | None = None,
         auth_token: str = "",
         forward_host_credentials: bool = False,
-        host_env: dict[str, str] | None = None,
+        host_env: Mapping[str, str] | None = None,
         trusted_project_path: str = "",
         label: str = "",
         color: str = "",
@@ -200,7 +201,11 @@ class AgentProvider(ABC):
     ) -> AgentProvisionPlan:
         """Build the declarative AgentProvisionPlan for one launch.
         Backends call this during `prepare` and consume the result as
-        before."""
+        before.
+
+        `auth_token` is a secret's name (an egress token_ref), never its
+        value. `host_env` only locates the host's credential files (`HOME`,
+        `CODEX_HOME`); None means this process's environment."""
 
     @abstractmethod
     def provision_skills(self, plan: "BottlePlan", bottle: "Bottle") -> None:
@@ -424,7 +429,7 @@ def build_agent_provision_plan(
     guest_env: dict[str, str] | None = None,
     auth_token: str = "",
     forward_host_credentials: bool = False,
-    host_env: dict[str, str] | None = None,
+    host_env: Mapping[str, str] | None = None,
     trusted_project_path: str = "",
     label: str = "",
     color: str = "",

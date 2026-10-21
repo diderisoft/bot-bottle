@@ -20,6 +20,9 @@ from bot_bottle.backend.docker import DockerBottleBackend
 from bot_bottle.backend.resolve_common import mint_slug
 from bot_bottle.backend.firecracker import FirecrackerBottleBackend
 from bot_bottle.manifest import ManifestIndex
+from bot_bottle.secret_source import MappingSecrets
+
+_SECRETS = MappingSecrets({"HOST_SECRET_ENV": "secret-value"})
 
 
 def _manifest(*, nested_containers: bool = False) -> ManifestIndex:
@@ -72,7 +75,6 @@ class TestDockerPrepare(_FakeStateMixin, unittest.TestCase):
         spec = _spec(Path(self.tmp.name), identity="demo-docker")
 
         with (
-            patch.dict("os.environ", {"HOST_SECRET_ENV": "secret-value"}),
             patch(
                 "bot_bottle.backend.docker.resolve_plan.docker_mod.require_docker",
             ) as require_docker,
@@ -81,7 +83,7 @@ class TestDockerPrepare(_FakeStateMixin, unittest.TestCase):
                 return_value=False,
             ),
         ):
-            plan = backend.prepare(spec, Path(self.tmp.name) / "stage")
+            plan = backend.prepare(spec, Path(self.tmp.name) / "stage", _SECRETS)
 
         require_docker.assert_called_once_with()
         metadata = bottle_state.read_metadata("demo-docker")
@@ -89,6 +91,7 @@ class TestDockerPrepare(_FakeStateMixin, unittest.TestCase):
         assert metadata is not None
         self.assertEqual("docker", metadata.backend)
         self.assertEqual({"FORWARDED_ENV": "secret-value"}, plan.forwarded_env)
+        self.assertIs(_SECRETS, plan.secrets)
         self.assertEqual("literal-value", plan.agent_provision.guest_env["LITERAL_ENV"])
         self.assertNotIn("FORWARDED_ENV", plan.agent_provision.guest_env)
 
@@ -99,12 +102,11 @@ class TestFirecrackerPrepare(_FakeStateMixin, unittest.TestCase):
         spec = _spec(Path(self.tmp.name), identity="demo-fc")
 
         with (
-            patch.dict("os.environ", {"HOST_SECRET_ENV": "secret-value"}),
             patch(
                 "bot_bottle.backend.firecracker.resolve_plan.util.require_firecracker",
             ) as preflight,
         ):
-            plan = backend.prepare(spec, Path(self.tmp.name) / "stage")
+            plan = backend.prepare(spec, Path(self.tmp.name) / "stage", _SECRETS)
 
         preflight.assert_called_once_with(backend.settings.infra)
         metadata = bottle_state.read_metadata("demo-fc")
@@ -136,7 +138,7 @@ class TestNestedContainersRejection(_FakeStateMixin, unittest.TestCase):
             ) as die,
             self.assertRaises(RuntimeError),
         ):
-            backend.prepare(spec, Path(self.tmp.name) / "stage")
+            backend.prepare(spec, Path(self.tmp.name) / "stage", _SECRETS)
         self.assertIn("nested_containers", die.call_args.args[0])
         self.assertIn("docker", die.call_args.args[0])
 
@@ -149,7 +151,7 @@ class TestNestedContainersRejection(_FakeStateMixin, unittest.TestCase):
             ) as die,
             self.assertRaises(RuntimeError),
         ):
-            backend.prepare(spec, Path(self.tmp.name) / "stage")
+            backend.prepare(spec, Path(self.tmp.name) / "stage", _SECRETS)
         self.assertIn("firecracker", die.call_args.args[0])
 
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sys
 
-from ..errors import MissingEnvVarError
+from ..errors import MissingEnvVarError, SecretsFileError
 from ..lib.log import Die, die, error
 from ..manifest import ManifestError
 from ..orchestrator.store.store_manager import StoreManager
@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         mgr.migrate()
     try:
         return handler(rest) or 0
-    except MissingEnvVarError as e:
+    except (MissingEnvVarError, SecretsFileError) as e:
         error(str(e))
         return 1
     except ManifestError as e:

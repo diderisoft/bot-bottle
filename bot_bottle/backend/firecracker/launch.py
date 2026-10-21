@@ -26,7 +26,6 @@ TAP IP) and nothing else — not even the orchestrator control plane.
 from __future__ import annotations
 
 import dataclasses
-import os
 import shlex
 import shutil
 from contextlib import ExitStack, contextmanager
@@ -85,7 +84,8 @@ def launch(
         except BaseException as exc:  # noqa: W0718 - teardown must continue
             teardown_exc = exc
             warn(f"firecracker teardown failed: {exc!r}")
-        GitGate().revoke_provisioned_keys(bottle_for_revoke, git_gate_dir_for_revoke)
+        GitGate().revoke_provisioned_keys(
+            bottle_for_revoke, git_gate_dir_for_revoke, plan.secrets)
         if teardown_exc is not None:
             raise teardown_exc
 
@@ -98,6 +98,7 @@ def launch(
         if git_gate_plan.upstreams:
             git_gate_plan = GitGate().provision_dynamic_keys(
                 plan.manifest.bottle, git_gate_plan, git_gate_state_dir(plan.slug),
+                plan.secrets,
             )
 
         # Step 3: claim a TAP slot; the flock is held until teardown.
@@ -108,12 +109,12 @@ def launch(
 
         # Step 4: register on the orchestrator + provision this bottle's
         # git-gate state into the shared gateway. The per-bottle egress tokens
-        # are resolved from the host env now and handed to the orchestrator
-        # (in memory) for the gateway to inject — the agent never sees them.
+        # are resolved from the plan's secrets now and handed to the
+        # orchestrator (in memory) for the gateway to inject — the agent never
+        # sees them.
         # Attribution is by the VM's guest IP (unspoofable via /31 TAP + nft).
-        effective_env = {**os.environ, **plan.agent_provision.provisioned_env}
         token_values = Egress().resolve_token_values(
-            plan.egress_plan.token_env_map, effective_env,
+            plan.egress_plan.token_env_map, plan.egress_secrets,
         )
         teardown_timeout = resolve_teardown_timeout(host_db_path())
         service = FirecrackerInfraService(plan.settings)
@@ -361,10 +362,7 @@ def _agent_guest_env(plan: FirecrackerBottlePlan, host_ip: str) -> dict[str, str
         key, _, value = entry.partition("=")
         env[key] = value
     env.update(plan.agent_provision.guest_env)
-    # Forwarded (bare-name) env: resolve host values now, since the VM
-    # can't inherit them from a `docker run --env NAME`.
-    for name in plan.forwarded_env:
-        value = os.environ.get(name)
-        if value is not None:
-            env[name] = value
+    # Forwarded env carries resolved values; the VM can't inherit them from
+    # a `docker run --env NAME`.
+    env.update(plan.forwarded_env)
     return env

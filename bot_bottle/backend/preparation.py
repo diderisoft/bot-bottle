@@ -8,7 +8,6 @@ backend-specific final resolution.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -17,6 +16,7 @@ from ..egress import EgressPlan
 from ..env import ResolvedEnv, resolve_env
 from ..git_gate import GitGate, GitGatePlan
 from ..manifest import Manifest
+from ..secret_source import SecretSource
 from ..supervisor.plan import SupervisePlan
 from ..workspace import workspace_plan
 from .resolve_common import (
@@ -65,7 +65,7 @@ class BottlePreparationPlanner:
     def __init__(self, backend: PreparationBackend) -> None:
         self._backend = backend
 
-    def prepare(self, spec: BottleSpec) -> PreparedBottle:
+    def prepare(self, spec: BottleSpec, secrets: SecretSource) -> PreparedBottle:
         backend = self._backend
         # These are deliberately protected backend hooks: only this shared
         # planner orchestrates them, while concrete backends provide the
@@ -84,7 +84,7 @@ class BottlePreparationPlanner:
         bottle = manifest.bottle
         provider_config = bottle.agent_provider
         provider = get_provider(provider_config.template)
-        resolved_env = resolve_env(manifest)
+        resolved_env = resolve_env(manifest, secrets)
         workspace = workspace_plan(spec, guest_home=provider.guest_home)
         slug = mint_slug(spec)
         write_launch_metadata(slug, spec, compose_project="", backend=backend.name)
@@ -106,7 +106,6 @@ class BottlePreparationPlanner:
             ),
             forward_host_credentials=provider_config.forward_host_credentials,
             auth_token=provider_config.auth_token,
-            host_env=dict(os.environ),
             trusted_project_path=workspace.workdir,
             label=spec.label,
             color=spec.color,

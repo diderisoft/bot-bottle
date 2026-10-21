@@ -21,6 +21,7 @@ from bot_bottle.git_gate import (
     git_gate_upstreams_for_bottle,
 )
 from bot_bottle.errors import MissingEnvVarError
+from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.manifest import ManifestIndex
 from tests.fixtures import fixture_minimal, fixture_with_git
 
@@ -497,12 +498,14 @@ class TestDynamicKeyProvisioning(unittest.TestCase):
 
     def test_resolve_identity_file_static_uses_entry_path(self):
         entry = fixture_with_git().bottles["dev"].git[0]
-        self.assertEqual(entry.IdentityFile, _resolve_identity_file(entry, "demo", self.stage))
+        self.assertEqual(entry.IdentityFile, _resolve_identity_file(
+                entry, "demo", self.stage, MappingSecrets({})))
 
     def test_resolve_identity_file_gitea_provisions_key(self):
         entry = self._gitea_manifest().bottles["dev"].git[0]
         with patch("bot_bottle.git_gate.provision._provision_dynamic_key", return_value="/tmp/provisioned-key") as mock_provision:
-            self.assertEqual("/tmp/provisioned-key", _resolve_identity_file(entry, "demo", self.stage))
+            self.assertEqual("/tmp/provisioned-key", _resolve_identity_file(
+                entry, "demo", self.stage, MappingSecrets({})))
         mock_provision.assert_called_once()
 
     def test_prepare_defers_gitea_key_provisioning(self):
@@ -521,31 +524,34 @@ class TestDynamicKeyProvisioning(unittest.TestCase):
             "bot_bottle.git_gate.provision._provision_dynamic_key",
             return_value="/tmp/provisioned-key",
         ) as mock_provision:
-            updated = provision_git_gate_dynamic_keys(bottle, plan, self.stage)
+            secrets = MappingSecrets({"GITEA_TOKEN": "token"})
+            updated = provision_git_gate_dynamic_keys(bottle, plan, self.stage, secrets)
 
-        mock_provision.assert_called_once_with(bottle.git[0], "demo", self.stage)
+        mock_provision.assert_called_once_with(bottle.git[0], "demo", self.stage, secrets)
         self.assertEqual("/tmp/provisioned-key", updated.upstreams[0].identity_file)
 
     def test_revoke_skips_non_gitea_and_missing_id_file(self):
-        revoke_git_gate_provisioned_keys(fixture_with_git().bottles["dev"], self.stage)
+        revoke_git_gate_provisioned_keys(
+            fixture_with_git().bottles["dev"], self.stage, MappingSecrets({}))
 
     def test_revoke_calls_delete_for_gitea_entry(self):
         bottle = self._gitea_manifest().bottles["dev"]
         (self.stage / "repo-deploy-key-id").write_text("123\n")
-        with patch.dict("os.environ", {"GITEA_TOKEN": "token"}), patch(
+        with patch(
             "bot_bottle.deploy_key_provisioner.get_provisioner"
         ) as mock_get_provisioner:
             provisioner = mock_get_provisioner.return_value
-            revoke_git_gate_provisioned_keys(bottle, self.stage)
+            revoke_git_gate_provisioned_keys(
+                bottle, self.stage, MappingSecrets({"GITEA_TOKEN": "token"}))
         mock_get_provisioner.assert_called_once()
         provisioner.delete.assert_called_once_with("org/repo", "123")
 
     def test_revoke_missing_token_raises(self):
         bottle = self._gitea_manifest().bottles["dev"]
         (self.stage / "repo-deploy-key-id").write_text("123\n")
-        with patch.dict("os.environ", {}, clear=True), self.assertRaises(MissingEnvVarError) as cm:
-            revoke_git_gate_provisioned_keys(bottle, self.stage)
-        self.assertIn("env var is not set", str(cm.exception))
+        with self.assertRaises(MissingEnvVarError) as cm:
+            revoke_git_gate_provisioned_keys(bottle, self.stage, MappingSecrets({}))
+        self.assertIn("secret is not set", str(cm.exception))
 
 
 class TestShellEscaping(unittest.TestCase):

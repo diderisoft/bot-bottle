@@ -23,6 +23,7 @@ from ..gateway.egress.types import (
 )
 from ..errors import MissingEnvVarError
 from ..lib.log import die
+from ..secret_source import SecretSource
 from .plan import EgressPlan, EgressRoute
 
 if TYPE_CHECKING:
@@ -333,22 +334,22 @@ def egress_render_routes(
 
 def egress_resolve_token_values(
     token_env_map: dict[str, str],
-    host_env: dict[str, str],
+    source: SecretSource,
 ) -> dict[str, str]:
     out: dict[str, str] = {}
     for token_env, token_ref in token_env_map.items():
-        value = host_env.get(token_ref)
+        value = source.get(token_ref)
         if value is None:
             raise MissingEnvVarError(
                 token_ref,
-                f"egress: host env var '{token_ref}' is unset. Set it "
-                f"before launching, or remove the corresponding auth block "
-                f"from bottle.egress.routes.",
+                f"egress: secret '{token_ref}' is unset. Set it in the host "
+                f"env or the secrets file before launching, or remove the "
+                f"corresponding auth block from bottle.egress.routes.",
             )
         if not value:
             raise MissingEnvVarError(
                 token_ref,
-                f"egress: host env var '{token_ref}' is empty. The "
+                f"egress: secret '{token_ref}' is empty. The "
                 f"egress will not inject an empty token; set it to "
                 f"the real value or remove the route's auth block.",
             )
@@ -388,11 +389,11 @@ class Egress:
         )
 
     def resolve_token_values(
-        self, token_env_map: dict[str, str], host_env: dict[str, str],
+        self, token_env_map: dict[str, str], source: SecretSource,
     ) -> dict[str, str]:
-        """Resolve each route's upstream credential from the host env at launch.
-        Raises `MissingEnvVarError` for an unset/empty referenced host var."""
-        return egress_resolve_token_values(token_env_map, host_env)
+        """Resolve each route's upstream credential from `source` at launch.
+        Raises `MissingEnvVarError` for an unset/empty referenced secret."""
+        return egress_resolve_token_values(token_env_map, source)
 
     def agent_env_entries(self, plan: EgressPlan) -> tuple[str, ...]:
         """The agent-visible egress env entries (the exfil canary)."""

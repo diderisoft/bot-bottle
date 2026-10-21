@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from bot_bottle.contract.hostctl import Settings
+from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.agent_provider import (
     AgentProvider,
     AgentProvisionPlan,
@@ -97,6 +98,7 @@ def _plan(*, git_user: dict | None = None,  # type: ignore
             guest_env={},
         ),
         settings=Settings(),
+        secrets=MappingSecrets({}),
     )
 
 

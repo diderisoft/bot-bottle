@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.contract.hostctl import Settings
+from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.agent_provider import (
     AgentProvisionCommand,
     AgentProvisionDir,
@@ -112,6 +113,7 @@ def _plan(
             guest_env={},
         ),
         settings=Settings(),
+        secrets=MappingSecrets({}),
     )
 
 

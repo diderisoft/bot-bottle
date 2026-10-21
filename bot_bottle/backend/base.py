@@ -19,7 +19,7 @@ import shlex
 import sys
 from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator, Generic, Sequence, TypeVar
 
@@ -30,6 +30,7 @@ from ..git_gate import GitGatePlan
 from ..lib.log import die, info
 from ..util import expand_tilde
 from ..manifest import Manifest, ManifestIndex
+from ..secret_source import ChainSecrets, MappingSecrets, SecretSource
 from ..supervisor.plan import SupervisePlan
 from ..env import ResolvedEnv
 from ..workspace import WorkspacePlan, workspace_plan
@@ -110,10 +111,19 @@ class BottlePlan(ABC):
     supervise_plan: SupervisePlan | None
     agent_provision: AgentProvisionPlan
     settings: Settings
+    # Where launch resolves egress token_refs and forge tokens.
+    secrets: SecretSource = field(repr=False)
 
     @property
     def workspace_plan(self) -> WorkspacePlan:
         return workspace_plan(self.spec, guest_home=self.guest_home)
+
+    @property
+    def egress_secrets(self) -> SecretSource:
+        """Where egress token_refs resolve: the provider's provisioned
+        values (host credentials it read), then `secrets`."""
+        return ChainSecrets(
+            MappingSecrets(self.agent_provision.provisioned_env), self.secrets)
 
     def print(self) -> None:
         """Render the y/N preflight summary to stderr."""
@@ -306,14 +316,15 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def prepare(self, spec: BottleSpec, stage_dir: Path) -> PlanT:
+    def prepare(self, spec: BottleSpec, stage_dir: Path, secrets: SecretSource) -> PlanT:
         """Template method: run cross-backend host-side validation, then
         delegate to the subclass's `_resolve_plan` for the
         backend-specific resolution (names, scratch files, etc.). The
         validation step is enforced here so a future backend cannot
-        accidentally skip it. No remote/runtime resources are created."""
+        accidentally skip it. No remote/runtime resources are created.
+        `secrets` supplies the bottle's secret values, now and at launch."""
         from .preparation import BottlePreparationPlanner
-        prepared = BottlePreparationPlanner(self).prepare(spec)
+        prepared = BottlePreparationPlanner(self).prepare(spec, secrets)
 
         return self._resolve_plan(
             spec,
@@ -325,6 +336,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
             supervise_plan=prepared.supervise_plan,
             git_gate_plan=prepared.git_gate_plan,
             stage_dir=stage_dir,
+            secrets=secrets,
         )
 
     def _build_guest_env(self, resolved_env: ResolvedEnv) -> dict[str, str]:
@@ -389,7 +401,8 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
                       egress_plan: EgressPlan,
                       git_gate_plan: GitGatePlan,
                       supervise_plan: SupervisePlan | None,
-                      stage_dir: Path) -> PlanT:
+                      stage_dir: Path,
+                      secrets: SecretSource) -> PlanT:
         """Backend-specific plan resolution: image/container names,
         env-file, prompt-file, proxy plan, runtime detection. Called by
         `prepare` after `_validate` succeeds. Instance name, image,
