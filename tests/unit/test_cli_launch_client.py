@@ -48,6 +48,17 @@ class TestSecrets(unittest.TestCase):
         self.assertEqual({"HOST_A": "a", "B": "b", "TOK": "t", "FORGE": "f"},
                          launch_client.resolve_secrets(manifest, source, prompt=False))
 
+    def test_the_provider_token_names_are_sent_too(self) -> None:
+        for provider, name in (
+            ({"template": "claude", "auth_token": "CLAUDE_TOK"}, "CLAUDE_TOK"),
+            ({"template": "pi", "settings": {"api_key_env": "PI_KEY"}}, "PI_KEY"),
+        ):
+            index = ManifestIndex.from_json_obj({
+                "bottles": {"dev": {"env": {}, "agent_provider": provider}},
+                "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            })
+            self.assertIn(name, launch_client.needed_secrets(index.load_for_agent("demo")))
+
     def test_missing_question_entries_are_prompted_only_when_interactive(self) -> None:
         manifest = _index({"B": "?Your B", "A": "${HOST_A}"}).load_for_agent("demo")
         with mock.patch.object(launch_client, "prompt_secret", return_value="typed") as ask:

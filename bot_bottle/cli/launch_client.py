@@ -48,6 +48,11 @@ def needed_secrets(manifest: Manifest) -> dict[str, str]:
     for entry in bottle.git:
         if entry.Key.forge_token_env:
             names.setdefault(entry.Key.forge_token_env, "")
+    # The provider's own egress routes take their tokens from these names.
+    provider = bottle.agent_provider
+    for name in (provider.auth_token, str(provider.settings.get("api_key_env", ""))):
+        if name:
+            names.setdefault(name, "")
     return names
 
 
