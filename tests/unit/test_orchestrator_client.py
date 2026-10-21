@@ -210,26 +210,27 @@ class TestReconcile(unittest.TestCase):
     def setUp(self) -> None:
         self.c = OrchestratorClient("http://orch:8080")
 
-    def test_posts_live_ips_and_returns_reaped(self) -> None:
+    def test_posts_and_returns_reaped(self) -> None:
+        """The orchestrator finds the live set itself; the body carries none."""
         with patch(_URLOPEN, return_value=_resp(200, {"reaped": ["b1", "b2"]})) as m:
-            got = self.c.reconcile(["10.0.0.2", "10.0.0.3"])
+            got = self.c.reconcile()
         self.assertEqual(["b1", "b2"], got)
-        sent = json.loads(m.call_args.args[0].data)
-        self.assertEqual(["10.0.0.2", "10.0.0.3"], sent["live_source_ips"])
-        self.assertNotIn("grace_seconds", sent)  # omitted -> server default
+        self.assertEqual({}, json.loads(m.call_args.args[0].data))  # server-default grace
 
     def test_grace_seconds_is_forwarded_when_given(self) -> None:
         with patch(_URLOPEN, return_value=_resp(200, {"reaped": []})) as m:
-            self.c.reconcile([], grace_seconds=30)
-        self.assertEqual(30, json.loads(m.call_args.args[0].data)["grace_seconds"])
+            self.c.reconcile(grace_seconds=30)
+        self.assertEqual({"grace_seconds": 30}, json.loads(m.call_args.args[0].data))
 
     def test_malformed_reaped_is_tolerated(self) -> None:
         with patch(_URLOPEN, return_value=_resp(200, {"reaped": ["ok", 5, None]})):
-            self.assertEqual(["ok"], self.c.reconcile([]))
+            self.assertEqual(["ok"], self.c.reconcile())
         with patch(_URLOPEN, return_value=_resp(200, {})):
-            self.assertEqual([], self.c.reconcile([]))
+            self.assertEqual([], self.c.reconcile())
 
     def test_error_status_raises(self) -> None:
-        with patch(_URLOPEN, side_effect=_http_error(500)):
-            with self.assertRaises(OrchestratorClientError):
-                self.c.reconcile([])
+        # 503: the orchestrator couldn't learn the live set and reaped nothing.
+        for code in (500, 503):
+            with patch(_URLOPEN, side_effect=_http_error(code)):
+                with self.assertRaises(OrchestratorClientError):
+                    self.c.reconcile()

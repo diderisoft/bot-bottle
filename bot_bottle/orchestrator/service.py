@@ -10,15 +10,18 @@ controller (PRD 0092); the host registers each one here during its launch.
   * `reconcile` sweeps rows whose bottle is no longer running — the
     self-heal for the teardown paths that never got to run (a hard-killed
     launcher), since an orphan row at a recycled source IP bricks the next
-    bottle that lands on it.
+    bottle that lands on it. It asks the host controller which bottles
+    are live, and runs on a timer as well as on request.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
 from datetime import datetime, timezone
+from typing import Protocol
 
+from ..lib import log
+from .hostctl_relay import LiveBottlesUnknown
 from .store.registry_store import DEFAULT_REAP_GRACE_SECONDS, BottleRecord, RegistryStore
 from .supervisor import (
     AuditEntry,
@@ -45,6 +48,12 @@ _RESPOND_STATUS = {
     "reject": STATUS_REJECTED,
 }
 _APPLY_TOOLS = (TOOL_EGRESS_ALLOW, TOOL_EGRESS_BLOCK)
+
+
+class LiveSource(Protocol):
+    """Where `reconcile` learns which bottles run (`HostControlRelay`)."""
+
+    def live_source_ips(self) -> list[str]: ...
 
 
 class OrchestratorCore:
@@ -102,22 +111,34 @@ class OrchestratorCore:
 
     def reconcile(
         self,
-        live_source_ips: Iterable[str],
+        hostctl: LiveSource | None,
         *,
         grace_seconds: float = DEFAULT_REAP_GRACE_SECONDS,
     ) -> list[str]:
         """Drop registry rows for bottles that are no longer running, and
         forget their in-memory egress tokens. Returns the reaped bottle ids.
 
-        The caller supplies the live set because only the host can enumerate
-        its own containers — the orchestrator runs *inside* the infra
-        container and has no view of the backend. The bottles are already
-        gone, so there is nothing to stop.
+        The live set comes from the host controller (`hostctl`, PRD 0092):
+        the orchestrator runs *inside* the infra container and has no view
+        of the backend. The bottles are already gone, so there is nothing to
+        stop.
+
+        Without a complete live set nothing is reaped: with no host
+        controller (an orchestrator brought up outside one), one that doesn't
+        answer, or one that couldn't list a backend, this logs and raises
+        `LiveBottlesUnknown`. A missing answer must never read as "nothing is
+        running", which would reap every healthy bottle.
 
         See `RegistryStore.reap_absent` for why orphans accumulate and why
         they are harmful rather than merely untidy."""
-        reaped = self.registry.reap_absent(
-            live_source_ips, grace_seconds=grace_seconds)
+        try:
+            if hostctl is None:
+                raise LiveBottlesUnknown("no host controller to ask")
+            live = hostctl.live_source_ips()
+        except LiveBottlesUnknown as e:
+            log.warn(f"registry reconciliation skipped: {e}")
+            raise
+        reaped = self.registry.reap_absent(live, grace_seconds=grace_seconds)
         for rec in reaped:
             self._tokens.pop(rec.bottle_id, None)
             # Reap any supervise proposals the gone bottle never acknowledged.

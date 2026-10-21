@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import math
 import re
 import sys
+from collections.abc import AsyncGenerator
 from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -21,9 +23,20 @@ from ..contract.http import (
     ORCHESTRATOR_AUTH_HEADER,
     REQUEST_BODY_TIMEOUT_SECONDS,
 )
-from .hostctl_relay import HostControlRefused, HostControlRelay, HostControlUnreachable
+from ..lib import log
+from .hostctl_relay import (
+    HostControlRefused, HostControlRelay, HostControlUnreachable, LiveBottlesUnknown,
+)
 from .relay_attach import pump_attach
-from .service import OrchestratorCore
+from .service import LiveSource, OrchestratorCore
+
+# How often the orchestrator reconciles its registry against the host
+# controller's live bottles when a host controller brought it up.
+RECONCILE_INTERVAL_SECONDS = 60.0
+# The timer's grace window. Docker and firecracker register a bottle before
+# its container or VM exists, so a scheduled round must leave a slow launch
+# well alone; nothing waits on the timer, so being late costs little.
+RECONCILE_TIMER_GRACE_SECONDS = 600.0
 
 _GATEWAY_ROUTES = frozenset({
     ("POST", "/resolve"),
@@ -73,7 +86,6 @@ class SecretBody(_StrictModel):
 
 
 class ReconcileBody(_StrictModel):
-    live_source_ips: list[StrictStr]
     grace_seconds: float | None = None
 
 
@@ -240,23 +252,60 @@ def _id(value: str, name: str) -> str:
     return value
 
 
+async def reconcile_periodically(
+    orch: OrchestratorCore, hostctl: LiveSource, interval: float,
+) -> None:
+    """Reconcile every `interval` seconds until cancelled, so orphans are
+    reaped without a CLI running. A failed round is logged and the next
+    one tries again."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            reaped = await asyncio.to_thread(
+                orch.reconcile, hostctl, grace_seconds=RECONCILE_TIMER_GRACE_SECONDS)
+        except LiveBottlesUnknown:
+            continue  # reconcile logged why
+        except Exception as exc:  # noqa: BLE001 - the timer must outlive one bad round
+            log.warn(f"registry reconciliation failed [error_type={type(exc).__name__}]")
+            continue
+        if reaped:
+            log.info(f"reaped {len(reaped)} orphaned bottle(s): {', '.join(reaped)}")
+
+
 def create_app(
     orch: OrchestratorCore, *, signing_key: str, hostctl: HostControlRelay | None = None,
+    reconcile_interval: float = RECONCILE_INTERVAL_SECONDS,
 ) -> FastAPI:
     """Build the authenticated orchestrator ASGI application. `hostctl` is
-    the host controller remote launches go to; None when this orchestrator
-    wasn't brought up by one."""
+    the host controller remote launches go to and reconcile asks which
+    bottles are live; None when this orchestrator wasn't brought up by one.
+    With it, the app reconciles every `reconcile_interval` seconds while it
+    runs."""
     key = signing_key.strip()
     if not key:
         raise ValueError(
             "orchestrator control-plane signing key is required; "
             "refusing to start without caller authentication"
         )
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
+        timer = (asyncio.create_task(reconcile_periodically(orch, hostctl, reconcile_interval))
+                 if hostctl is not None else None)
+        try:
+            yield
+        finally:
+            if timer is not None:
+                timer.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await timer
+
     app = FastAPI(
         title="bot-bottle orchestrator",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        lifespan=lifespan,
     )
     app.add_middleware(ControlPlaneBoundary, signing_key=key)
 
@@ -332,8 +381,6 @@ def create_app(
 
     @app.post("/reconcile")
     def reconcile(body: ReconcileBody) -> dict[str, object]:
-        if any(not ip for ip in body.live_source_ips):
-            raise HTTPException(400, "live_source_ips must contain non-empty strings")
         kwargs: dict[str, float] = {}
         if body.grace_seconds is not None:
             if not math.isfinite(body.grace_seconds) or body.grace_seconds < 0:
@@ -341,7 +388,10 @@ def create_app(
                     400, "grace_seconds must be a non-negative finite number",
                 )
             kwargs["grace_seconds"] = body.grace_seconds
-        return {"reaped": orch.reconcile(body.live_source_ips, **kwargs)}
+        try:
+            return {"reaped": orch.reconcile(hostctl, **kwargs)}
+        except LiveBottlesUnknown as e:
+            raise HTTPException(503, f"reconciliation skipped: {e}") from None
 
     @app.post("/attribute")
     def attribute(body: AttributeBody) -> dict[str, str]:
@@ -464,5 +514,8 @@ __all__ = [
     "ControlPlaneBoundary",
     "MAX_BODY_BYTES",
     "ORCHESTRATOR_AUTH_HEADER",
+    "RECONCILE_INTERVAL_SECONDS",
+    "RECONCILE_TIMER_GRACE_SECONDS",
     "create_app",
+    "reconcile_periodically",
 ]

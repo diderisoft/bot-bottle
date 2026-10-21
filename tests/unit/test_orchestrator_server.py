@@ -14,6 +14,7 @@ import json
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -21,11 +22,15 @@ import httpx
 from contextlib import closing
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
+
+from starlette.testclient import TestClient
 
 from bot_bottle.contract.auth import ROLE_CLI, ROLE_GATEWAY, mint
 from bot_bottle.orchestrator import api as orchestrator_api
 from bot_bottle.contract.http import ORCHESTRATOR_AUTH_HEADER
+from bot_bottle.orchestrator.hostctl_relay import LiveBottlesUnknown
 from bot_bottle.orchestrator.server import MAX_BODY_BYTES, create_app, make_server
 from bot_bottle.orchestrator.store.registry_store import BottleRecord, RegistryStore
 from bot_bottle.orchestrator.service import OrchestratorCore
@@ -48,6 +53,7 @@ def dispatch(
     body: bytes,
     *,
     role: str | None = ROLE_CLI,
+    hostctl: Any = None,
 ) -> tuple[int, dict[str, object]]:
     """Exercise the real ASGI application without a network socket."""
     key = "in-process-dispatch-key"
@@ -56,7 +62,8 @@ def dispatch(
         headers[ORCHESTRATOR_AUTH_HEADER] = mint(role, key)
 
     async def request() -> httpx.Response:
-        transport = httpx.ASGITransport(app=create_app(orchestrator, signing_key=key))
+        transport = httpx.ASGITransport(
+            app=create_app(orchestrator, signing_key=key, hostctl=hostctl))
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://orchestrator",
@@ -517,7 +524,7 @@ class TestOrchestratorAuth(unittest.TestCase):
         ("POST", "/bottles", _body({"source_ip": "10.0.0.1"})),
         ("PUT", "/bottles/x/policy", _body({"policy": "routes: []"})),
         ("DELETE", "/bottles/x", b""),
-        ("POST", "/reconcile", _body({"live_source_ips": []})),
+        ("POST", "/reconcile", _body({})),
         ("POST", "/attribute", _body({"source_ip": "10.0.0.1", "identity_token": "t"})),
         ("GET", "/supervise/proposals", b""),
         ("POST", "/supervise/respond",
@@ -815,14 +822,25 @@ class TestDispatchSuperviseAgentRpc(unittest.TestCase):
         self.assertIn("unattributed", str(payload["error"]))
 
 
-if __name__ == "__main__":
-    unittest.main()
+class _Live:
+    """A host controller's live set, or the reason it has none."""
+
+    def __init__(self, ips: list[str] | None = None, error: str = "") -> None:
+        self.ips = ips or []
+        self.error = error
+        self.calls = 0
+
+    def live_source_ips(self) -> list[str]:
+        self.calls += 1
+        if self.error:
+            raise LiveBottlesUnknown(self.error)
+        return list(self.ips)
 
 
 class TestReconcileRoute(unittest.TestCase):
-    """`POST /reconcile` — the host tells the orchestrator which bottles are
-    actually up, since the orchestrator can't see the backend from inside the
-    infra container."""
+    """`POST /reconcile` — the orchestrator asks the host controller which
+    bottles are actually up, since it can't see the backend from inside the
+    infra container. Without an answer it reaps nothing."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -840,47 +858,118 @@ class TestReconcileRoute(unittest.TestCase):
             conn.commit()
         return rec.bottle_id
 
+    def _reconcile(self, live: _Live | None, body: object | None = None
+                   ) -> tuple[int, dict[str, object]]:
+        return dispatch(self.orch, "POST", "/reconcile", _body({} if body is None else body),
+                        hostctl=live)
+
     def test_reaps_absent_and_reports_ids(self) -> None:
         dead = self._old("10.0.0.1")
         alive = self._old("10.0.0.2")
-        status, payload = dispatch(
-            self.orch, "POST", "/reconcile", _body({"live_source_ips": ["10.0.0.2"]}))
+        status, payload = self._reconcile(_Live(["10.0.0.2"]))
         self.assertEqual(200, status)
         self.assertEqual([dead], payload["reaped"])
         self.assertIsNone(self.orch.registry.get(dead))
         self.assertIsNotNone(self.orch.registry.get(alive))
 
-    def test_missing_live_source_ips_is_400(self) -> None:
-        status, _ = dispatch(self.orch, "POST", "/reconcile", _body({}))
-        self.assertEqual(400, status)
+    def test_without_a_host_controller_nothing_is_reaped(self) -> None:
+        dead = self._old("10.0.0.1")
+        status, payload = self._reconcile(None)
+        self.assertEqual(503, status)
+        self.assertIn("no host controller", str(payload["error"]))
+        self.assertIsNotNone(self.orch.registry.get(dead))
+
+    def test_an_unknown_live_set_reaps_nothing(self) -> None:
+        dead = self._old("10.0.0.1")
+        status, payload = self._reconcile(_Live(error="host controller unreachable"))
+        self.assertEqual(503, status)
+        self.assertIn("unreachable", str(payload["error"]))
+        self.assertIsNotNone(self.orch.registry.get(dead))
+
+    def test_live_source_ips_in_the_body_are_ignored(self) -> None:
+        """The caller no longer supplies the live set; an old caller's is dropped."""
+        dead = self._old("10.0.0.1")
+        status, payload = self._reconcile(_Live([]), {"live_source_ips": ["10.0.0.1"]})
+        self.assertEqual((200, [dead]), (status, payload["reaped"]))
 
     def test_grace_seconds_is_honoured(self) -> None:
         """A grace window wide enough to cover the row protects it."""
         self.orch.registry.register("10.0.0.3")
-        status, payload = dispatch(
-            self.orch, "POST", "/reconcile",
-            _body({"live_source_ips": [], "grace_seconds": 3600}))
+        status, payload = self._reconcile(_Live([]), {"grace_seconds": 3600})
         self.assertEqual(200, status)
         self.assertEqual([], payload["reaped"])
-
-    def test_non_string_entries_are_rejected(self) -> None:
-        status, payload = dispatch(
-            self.orch, "POST", "/reconcile",
-            _body({"live_source_ips": [None, 7, "10.0.0.9"]}))
-        self.assertEqual(400, status)
-        self.assertIn("live_source_ips", str(payload["error"]))
-
-    def test_empty_live_source_ip_is_rejected(self) -> None:
-        status, payload = dispatch(
-            self.orch, "POST", "/reconcile", _body({"live_source_ips": [""]}))
-        self.assertEqual(400, status)
-        self.assertIn("live_source_ips", str(payload["error"]))
 
     def test_invalid_grace_seconds_is_rejected(self) -> None:
         for value in (True, "30", -1, float("inf"), float("nan")):
             with self.subTest(value=value):
-                status, payload = dispatch(
-                    self.orch, "POST", "/reconcile",
-                    _body({"live_source_ips": [], "grace_seconds": value}))
+                live = _Live([])
+                status, payload = self._reconcile(live, {"grace_seconds": value})
                 self.assertEqual(400, status)
                 self.assertIn("grace_seconds", str(payload["error"]))
+                self.assertEqual(0, live.calls)
+
+
+class TestReconcileTimer(unittest.TestCase):
+    """The orchestrator reconciles on a timer when a host controller brought
+    it up, so orphans are reaped without a CLI running."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.orch = _orchestrator(Path(self._tmp.name) / "r.db")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _run_rounds(self, live: _Live, rounds: int) -> None:
+        async def run() -> None:
+            task = asyncio.create_task(
+                orchestrator_api.reconcile_periodically(self.orch, live, 0.01))
+            while live.calls < rounds:
+                await asyncio.sleep(0.01)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        asyncio.run(asyncio.wait_for(run(), timeout=5))
+
+    def test_reaps_past_the_timer_grace(self) -> None:
+        rec = self.orch.registry.register("10.0.0.1")
+        with closing(sqlite3.connect(self.orch.registry.db_path)) as conn:
+            conn.execute("UPDATE orchestrator_bottles SET created_at = 0.0")
+            conn.commit()
+        self._run_rounds(_Live([]), 2)
+        self.assertIsNone(self.orch.registry.get(rec.bottle_id))
+
+    def test_spares_a_bottle_inside_the_timer_grace(self) -> None:
+        """Docker and firecracker register a bottle before its container or
+        VM exists; the timer's wide grace leaves it alone meanwhile."""
+        rec = self.orch.registry.register("10.0.0.1")
+        self._run_rounds(_Live([]), 2)
+        self.assertIsNotNone(self.orch.registry.get(rec.bottle_id))
+
+    def test_keeps_going_after_a_failed_round(self) -> None:
+        live = _Live(error="host controller unreachable")
+        self._run_rounds(live, 3)
+        self.assertGreaterEqual(live.calls, 3)
+
+    def test_runs_only_with_a_host_controller_and_stops_with_the_app(self) -> None:
+        with patch.object(orchestrator_api, "reconcile_periodically") as periodic, \
+                TestClient(create_app(self.orch, signing_key="k")):
+            pass
+        periodic.assert_not_called()
+        live = _Live([])
+        with TestClient(create_app(self.orch, signing_key="k",
+                                   hostctl=live,  # type: ignore[arg-type]
+                                   reconcile_interval=0.01)):
+            deadline = time.monotonic() + 5
+            while live.calls == 0 and time.monotonic() < deadline:
+                time.sleep(0.01)
+        self.assertGreater(live.calls, 0)
+        calls = live.calls
+        time.sleep(0.05)
+        self.assertEqual(calls, live.calls)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+

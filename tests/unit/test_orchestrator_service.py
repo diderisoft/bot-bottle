@@ -20,6 +20,20 @@ from bot_bottle.orchestrator.supervisor import (
     TOOL_EGRESS_ALLOW,
     Supervisor,
 )
+from bot_bottle.orchestrator.hostctl_relay import LiveBottlesUnknown
+
+
+class _Live:
+    """The host controller's live set (stands in for `HostControlRelay`)."""
+
+    def __init__(self, *ips: str, error: str = "") -> None:
+        self.ips = list(ips)
+        self.error = error
+
+    def live_source_ips(self) -> list[str]:
+        if self.error:
+            raise LiveBottlesUnknown(self.error)
+        return self.ips
 
 
 class TestOrchestrator(unittest.TestCase):
@@ -332,7 +346,7 @@ class TestOrchestratorSupervise(unittest.TestCase):
             rec.bottle_id, tool=TOOL_EGRESS_ALLOW,
             proposed_file="routes:\n  - host: google.com\n", justification="j")
         # No live source IPs -> the bottle is reaped (grace 0 so it's immediate).
-        self.assertEqual([rec.bottle_id], self.orch.reconcile([], grace_seconds=0))
+        self.assertEqual([rec.bottle_id], self.orch.reconcile(_Live(), grace_seconds=0))
         self.assertEqual(
             {"status": "unknown"}, self.orch.supervise_poll_response(rec.bottle_id, pid))
 
@@ -376,7 +390,7 @@ class TestOrchestratorReconcile(unittest.TestCase):
         live = self.orch.register_bottle("10.243.0.2", tokens={"EGRESS_TOKEN_0": "keep"})
         self._age_all(600)
 
-        self.assertEqual([dead.bottle_id], self.orch.reconcile(["10.243.0.2"]))
+        self.assertEqual([dead.bottle_id], self.orch.reconcile(_Live("10.243.0.2")))
         self.assertIsNone(self.store.get(dead.bottle_id))
         self.assertIsNotNone(self.store.get(live.bottle_id))
         # The in-memory egress credential goes with the row.
@@ -387,6 +401,20 @@ class TestOrchestratorReconcile(unittest.TestCase):
         a = self.orch.register_bottle("10.243.0.1")
         b = self.orch.register_bottle("10.243.0.2")
         self._age_all(600)
-        self.assertEqual([], self.orch.reconcile(["10.243.0.1", "10.243.0.2"]))
+        self.assertEqual([], self.orch.reconcile(_Live("10.243.0.1", "10.243.0.2")))
         self.assertIsNotNone(self.store.get(a.bottle_id))
         self.assertIsNotNone(self.store.get(b.bottle_id))
+
+    def test_no_live_set_reaps_nothing(self) -> None:
+        """No host controller, or one that can't answer, is never read as
+        "nothing is running": reconcile logs, raises and keeps every row."""
+        rec = self.orch.register_bottle("10.243.0.1", tokens={"EGRESS_TOKEN_0": "keep"})
+        self._age_all(600)
+        for source in (None, _Live(error="host controller unreachable")):
+            with self.subTest(source=source), \
+                    patch("bot_bottle.orchestrator.service.log.warn") as warn:
+                with self.assertRaises(LiveBottlesUnknown):
+                    self.orch.reconcile(source, grace_seconds=0)
+                self.assertIn("reconciliation skipped", warn.call_args.args[0])
+        self.assertIsNotNone(self.store.get(rec.bottle_id))
+        self.assertEqual({"EGRESS_TOKEN_0": "keep"}, self.orch.tokens_for(rec.bottle_id))

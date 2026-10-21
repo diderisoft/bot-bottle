@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from collections.abc import Iterable
 from dataclasses import dataclass
 
 from ..lib.log import debug
@@ -214,14 +213,12 @@ class OrchestratorClient:
             raise OrchestratorClientError(f"teardown {bottle_id}: HTTP {status}")
         return True
 
-    def reconcile(
-        self, live_source_ips: Iterable[str], *, grace_seconds: float | None = None,
-    ) -> list[str]:
+    def reconcile(self, *, grace_seconds: float | None = None) -> list[str]:
         """Drop registry rows for bottles that are no longer running
-        (`POST /reconcile`), returning the reaped bottle ids. `live_source_ips`
-        is the caller's enumeration of its live bottles — the orchestrator
-        can't see the backend from inside the orchestrator container/VM."""
-        body: dict[str, object] = {"live_source_ips": list(live_source_ips)}
+        (`POST /reconcile`), returning the reaped bottle ids. The orchestrator
+        asks the host controller which bottles are live; when it can't, it
+        reaps nothing and answers 503, raised here."""
+        body: dict[str, object] = {}
         if grace_seconds is not None:
             body["grace_seconds"] = grace_seconds
         payload = self._ok("POST", "/reconcile", body)

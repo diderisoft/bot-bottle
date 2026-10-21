@@ -41,8 +41,6 @@ from ...git_gate import GitGatePlan
 from ...lib.log import info
 from ...control.client import OrchestratorClient, OrchestratorClientError
 from ..provision_bottle import deprovision_bottle, provision_bottle
-from . import util as container_mod
-from .enumerate import CONTAINER_NAME_PREFIX, EnumerationError, enumerate_active
 from .gateway import GATEWAY_NETWORK
 from .gateway_transport import MacosGatewayTransport
 from .infra import MacosInfraService, OrchestratorStartError
@@ -91,32 +89,6 @@ def ensure_gateway(*, service: MacosInfraService) -> GatewayEndpoint:
     return endpoint
 
 
-def live_source_ips(network: str) -> list[str]:
-    """Every running agent container's address on `network`.
-
-    The reconciliation input: the orchestrator lives inside the infra
-    container and cannot enumerate the host's containers, so the host has to
-    tell it which bottles are actually up. Containers that have not been
-    assigned an address yet contribute nothing — the reap's grace window, not
-    this list, is what protects an in-flight launch.
-
-    Raises `EnumerationError` when the live set cannot be determined
-    authoritatively: either the container listing fails or any individual
-    inspect fails. Callers must skip reconciliation in that case to avoid
-    unregistering healthy bottles."""
-    ips: list[str] = []
-    for agent in enumerate_active():
-        name = f"{CONTAINER_NAME_PREFIX}{agent.slug}"
-        ip = container_mod.inspect_container_network_ip(name, network)
-        if ip is None:
-            raise EnumerationError(
-                f"container inspect {name!r} failed; live set is not authoritative"
-            )
-        if ip:
-            ips.append(ip)
-    return ips
-
-
 def register_agent(
     egress_plan: EgressPlan,
     git_gate_plan: GitGatePlan,
@@ -135,11 +107,12 @@ def register_agent(
     # terminal, host sleep) never ran its teardown callback, leaving an active
     # row with no container. vmnet recycles addresses, so such a row can
     # collide with this bottle's — and `by_source_ip` fail-closes on ambiguity,
-    # which would resolve no policy at all and deny every host. Best-effort: a
-    # reconciliation failure must not block an otherwise-fine launch.
+    # which would resolve no policy at all and deny every host. The
+    # orchestrator asks the host controller which bottles are live. Best-effort:
+    # a reconciliation failure must not block an otherwise-fine launch.
     try:
-        client.reconcile(live_source_ips(endpoint.network))
-    except (OrchestratorClientError, EnumerationError) as e:
+        client.reconcile()
+    except OrchestratorClientError as e:
         info(f"registry reconciliation skipped: {e}")
     reg = provision_bottle(
         client, source_ip, egress_plan, git_gate_plan, MacosGatewayTransport(),
@@ -171,7 +144,6 @@ __all__ = [
     "GatewayEndpoint",
     "LaunchContext",
     "ensure_gateway",
-    "live_source_ips",
     "register_agent",
     "deprovision_consolidated",
     "ConsolidatedLaunchError",
