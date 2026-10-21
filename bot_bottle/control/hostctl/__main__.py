@@ -25,6 +25,7 @@ from . import localsock
 from .bottles import BottleService
 from .jobs import JobRegistry
 from .listeners import GuestListeners
+from .live import LiveBottles
 from .server import HostControlServer
 from .sessions import SessionManager, control_socket_path, tmux_version, write_config
 
@@ -64,11 +65,14 @@ def main() -> int:
         write_config()
         sessions.adopt()
     build_id, key, jobs = current_build_id(), signing_key(HOST_CONTROL), JobRegistry()
-    server = HostControlServer(("127.0.0.1", port), build_id, key, sessions, bottles, jobs=jobs)
+    live = LiveBottles()
+    server = HostControlServer(("127.0.0.1", port), build_id, key, sessions, bottles,
+                               jobs=jobs, live=live)
 
     def guest_server(link: HostLink) -> HostControlServer:
         return HostControlServer((link.address, GUEST_PORT), build_id, key, sessions, bottles,
-                                 jobs=jobs, peers=link.network, roles=GUEST_ROLES)
+                                 jobs=jobs, live=live, peers=link.network, roles=GUEST_ROLES,
+                                 backend=link.backend)
 
     guests = GuestListeners(guest_server)
     # Every orchestrator this process brings up gets this daemon's URL on its

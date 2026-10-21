@@ -86,7 +86,7 @@ class TestDocker(_Provisioned):
         orch = DockerOrchestrator(settings=Settings(), repo_root=Path("/r"))
         with patch("bot_bottle.backend.docker.orchestrator.run_docker",
                    side_effect=self._fake("fd00::1 fd00::/64 172.30.0.1 172.30.0.0/16 ")):
-            self.assertEqual(HostLink("172.30.0.1", "172.30.0.0/16"), orch.host_link())
+            self.assertEqual(HostLink("172.30.0.1", "172.30.0.0/16", "docker"), orch.host_link())
         with patch("bot_bottle.backend.docker.orchestrator.run_docker",
                    return_value=Mock(returncode=1, stdout="", stderr="no such network")):
             self.assertIsNone(orch.host_link())
@@ -102,7 +102,7 @@ class TestDocker(_Provisioned):
             self.assertEqual("--env", argv[argv.index(name) - 1])  # by name: value off argv
         self.assert_provisioned(env, "172.30.0.1")
         self.assertNotIn(env[HOST_CONTROL.token_env], argv)
-        self.assertEqual([HostLink("172.30.0.1", "172.30.0.0/16")], self.listened)
+        self.assertEqual([HostLink("172.30.0.1", "172.30.0.0/16", "docker")], self.listened)
 
 
 class TestMacos(_Provisioned):
@@ -132,14 +132,16 @@ class TestMacos(_Provisioned):
         for name in (HOSTCTL_URL_ENV, HOST_CONTROL.token_env):
             self.assertEqual("--env", argv[argv.index(name) - 1])
         self.assert_provisioned(env, "192.168.129.1")
-        self.assertEqual([HostLink("192.168.129.1", "192.168.129.0/24")], self.listened)
+        self.assertEqual([HostLink("192.168.129.1", "192.168.129.0/24", "macos-container")],
+                         self.listened)
 
 
 class TestFirecracker(_Provisioned):
     def test_host_link_is_the_orchestrator_taps_host_end(self) -> None:
         orch = FirecrackerOrchestrator(Settings())
         slot = infra_vm.netpool.from_settings(Settings().infra).orch_slot()
-        self.assertEqual(HostLink(slot.host_ip, f"{slot.guest_ip}/32"), orch.host_link())
+        self.assertEqual(HostLink(slot.host_ip, f"{slot.guest_ip}/32", "firecracker"),
+                         orch.host_link())
         self.assertEqual("10.243.255.0", slot.host_ip)
 
     def test_pushes_url_and_token_after_the_key(self) -> None:

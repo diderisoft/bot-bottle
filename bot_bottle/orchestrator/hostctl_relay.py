@@ -18,7 +18,9 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import BinaryIO
 
-from ..contract.hostctl import HOST_CONTROL, HOSTCTL_URL_ENV, SESSIONS_PATH, bearer
+from ..contract.hostctl import (
+    HOST_CONTROL, HOSTCTL_URL_ENV, LIVE_BOTTLES_PATH, SESSIONS_PATH, bearer,
+)
 from ..lib import websocket as ws
 
 REQUEST_TIMEOUT_SECONDS = 30.0
@@ -26,6 +28,10 @@ REQUEST_TIMEOUT_SECONDS = 30.0
 
 class HostControlUnreachable(Exception):
     """The host controller didn't answer."""
+
+
+class LiveBottlesUnknown(Exception):
+    """The host controller couldn't say which bottles are running."""
 
 
 class HostControlRefused(Exception):
@@ -69,6 +75,24 @@ class HostControlRelay:
         except OSError as e:
             raise HostControlUnreachable(f"host controller unreachable: {e}") from None
 
+    def live_source_ips(self) -> list[str]:
+        """The source IPs of the bottles running on this orchestrator's
+        backend (`GET /bottles/live`; its listener narrows it to that
+        backend). Raises `LiveBottlesUnknown` unless the answer is complete:
+        an unreachable daemon, an error status or a backend it couldn't list."""
+        try:
+            status, body = self.request("GET", LIVE_BOTTLES_PATH)
+        except HostControlUnreachable as e:
+            raise LiveBottlesUnknown(str(e)) from None
+        bottles, errors = body.get("bottles"), body.get("errors")
+        if status != 200 or not isinstance(bottles, list):
+            raise LiveBottlesUnknown(
+                f"host controller: {status}: {body.get('error', 'no bottle list')}")
+        if errors:
+            raise LiveBottlesUnknown(f"host controller couldn't list bottles: {errors}")
+        return [b["source_ip"] for b in bottles
+                if isinstance(b, dict) and isinstance(b.get("source_ip"), str) and b["source_ip"]]
+
     def stream(self, path: str) -> Iterator[bytes]:
         """The lines of a streamed response, as they arrive (no read timeout:
         a build step can be quiet for minutes). Opens it before returning, so
@@ -110,4 +134,5 @@ def _json(raw: bytes) -> dict[str, object]:
     return body if isinstance(body, dict) else {"value": body}
 
 
-__all__ = ["HostControlRefused", "HostControlRelay", "HostControlUnreachable"]
+__all__ = ["HostControlRefused", "HostControlRelay", "HostControlUnreachable",
+           "LiveBottlesUnknown"]

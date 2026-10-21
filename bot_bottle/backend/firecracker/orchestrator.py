@@ -96,7 +96,8 @@ class FirecrackerOrchestrator(Orchestrator):
         """The host end of the orchestrator's TAP. The isolation table drops
         agent VMs' input, and the host controller accepts only the
         orchestrator VM's address here."""
-        return HostLink(address=self._slot.host_ip, network=f"{self._slot.guest_ip}/32")
+        return HostLink(address=self._slot.host_ip, network=f"{self._slot.guest_ip}/32",
+                        backend="firecracker")
 
     def ssh_target(self) -> tuple[Path, str]:
         """(private key, guest IP) for SSHing into the orchestrator VM. In-VM

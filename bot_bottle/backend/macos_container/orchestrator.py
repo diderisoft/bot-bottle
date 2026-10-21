@@ -95,7 +95,9 @@ class MacosOrchestrator(Orchestrator):
         to that address too, so the host controller accepts only peers on
         this network (the orchestrator and gateway)."""
         found = container_mod.network_ipv4(self.control_network)
-        return HostLink(address=found[0], network=found[1]) if found else None
+        if found is None:
+            return None
+        return HostLink(address=found[0], network=found[1], backend="macos-container")
 
     def is_running(self) -> bool:
         return container_mod.container_is_running(self.name)

@@ -13,8 +13,9 @@ from urllib.parse import parse_qs, urlsplit
 
 from ...contract.auth import ROLE_CLI
 from ...contract.hostctl import (
-    AUTH_HEADER, AUTH_SCHEME, BOTTLES_PATH, HOST_CONTROL, JOBS_PATH, ORCHESTRATOR_PATH,
-    ROLE_ORCHESTRATOR, SESSIONS_PATH, STATUS_PATH, LaunchRequest, Settings, status_body,
+    AUTH_HEADER, AUTH_SCHEME, BOTTLES_PATH, HOST_CONTROL, JOBS_PATH, LIVE_BOTTLES_PATH,
+    ORCHESTRATOR_PATH, ROLE_ORCHESTRATOR, SESSIONS_PATH, STATUS_PATH, LaunchRequest, Settings,
+    status_body,
 )
 from ...lib import websocket as ws
 from ...lib.log import debug
@@ -22,6 +23,7 @@ from . import orchestrator
 from .attach import Viewer
 from .bottles import BottleService
 from .jobs import JobRegistry
+from .live import LiveBottles
 from .sessions import SessionManager
 
 MAX_BODY_BYTES = 1 << 20
@@ -33,15 +35,17 @@ class HostControlServer(ThreadingHTTPServer):
     """Serves the host controller's routes. `build_id` is what `/status`
     reports; `key` verifies callers' `HOST_CONTROL` tokens. A listener on a
     guest network passes `peers` (only those addresses may connect) and the
-    `roles` it accepts; listeners share `jobs`, `sessions` and `bottles`."""
+    `roles` it accepts, and the `backend` whose live bottles it reports;
+    listeners share `jobs`, `sessions`, `bottles` and `live`."""
 
     daemon_threads = True
 
     def __init__(self, address: tuple[str, int], build_id: str, key: str,
                  sessions: SessionManager | None = None,
                  bottles: BottleService | None = None, *,
-                 jobs: JobRegistry | None = None, peers: str = "",
-                 roles: frozenset[str] = HOST_CONTROL.roles) -> None:
+                 jobs: JobRegistry | None = None, live: LiveBottles | None = None,
+                 peers: str = "", roles: frozenset[str] = HOST_CONTROL.roles,
+                 backend: str = "") -> None:
         if not key:
             raise ValueError("host controller needs its signing key")
         super().__init__(address, _Handler)
@@ -49,9 +53,11 @@ class HostControlServer(ThreadingHTTPServer):
         self.key = key
         self.peers = ipaddress.ip_network(peers) if peers else None
         self.roles = roles
+        self.backend = backend
         self.jobs = jobs if jobs is not None else JobRegistry()
         self.sessions = sessions if sessions is not None else SessionManager({})
         self.bottles = bottles if bottles is not None else BottleService(self.sessions)
+        self.live = live if live is not None else LiveBottles()
 
     def verify_request(self, request: socket.socket | tuple[bytes, socket.socket],
                        client_address: tuple[str, int] | str) -> bool:
@@ -96,8 +102,20 @@ class _Handler(BaseHTTPRequestHandler):
         elif url.path == BOTTLES_PATH:
             if self._allowed(_BOTTLE_ROLES):
                 self._send(200, {"bottles": server.bottles.list()})
+        elif url.path == LIVE_BOTTLES_PATH:
+            if self._allowed(_BOTTLE_ROLES):
+                self._live(server, parse_qs(url.query))
         else:
             self._send(404, {"error": f"no route {url.path}"})
+
+    def _live(self, server: HostControlServer, query: dict[str, list[str]]) -> None:
+        """The bottles running on the backends: a guest listener's own
+        backend, else the `backend` asked for, else all of them."""
+        backend = server.backend or query.get("backend", [""])[0]
+        if backend and not server.live.known(backend):
+            self._send(400, {"error": f"unknown backend {backend!r}"})
+            return
+        self._send(200, server.live.list(backend))
 
     def _attach(self, server: HostControlServer, session_id: str,
                 query: dict[str, list[str]]) -> None:

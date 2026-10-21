@@ -87,10 +87,12 @@ class ControlPlaneProvisioning:
 class HostLink:
     """The host's address on an orchestrator's network, and that network
     (CIDR): where the host controller listens for the orchestrator, and the
-    only peers it accepts there."""
+    only peers it accepts there. `backend` names the orchestrator's backend,
+    whose bottles that listener reports as live."""
 
     address: str
     network: str
+    backend: str = ""
 
 
 @dataclass(frozen=True)

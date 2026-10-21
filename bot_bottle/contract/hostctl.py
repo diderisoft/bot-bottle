@@ -39,6 +39,11 @@ SESSIONS_PATH = "/sessions"
 # {"bottle": id, "session": id}; GET /bottles lists the bottles the daemon holds;
 # DELETE /bottles/{id} starts a `bottle.teardown` job.
 BOTTLES_PATH = "/bottles"
+# GET /bottles/live: {"bottles": [{"backend", "slug", "source_ip"}], "errors":
+# {backend: message}}, the bottles running on the backends whoever launched
+# them. `?backend=` narrows the cli's view; a guest listener answers only for
+# its own backend. A backend under `errors` couldn't be listed.
+LIVE_BOTTLES_PATH = "/bottles/live"
 
 # A job `error` event with this `code` stopped for a yes/no the caller can give:
 # resend the request with `assume_yes` to go ahead.
@@ -301,6 +306,6 @@ __all__ = [
     "LaunchRequest", "exit_code",
     "DEFAULT_EGRESS_PORT", "DEFAULT_GATEWAY_IMAGE", "DEFAULT_ORCHESTRATOR_IMAGE", "GUEST_PORT",
     "HOSTCTL_URL_ENV",
-    "HOST_CONTROL", "InfraSettings", "JOBS_PATH", "ORCHESTRATOR_PATH", "OperationSettings", "PORT_ENV",
+    "HOST_CONTROL", "InfraSettings", "JOBS_PATH", "LIVE_BOTTLES_PATH", "ORCHESTRATOR_PATH", "OperationSettings", "PORT_ENV",
     "ROLE_ORCHESTRATOR", "SERVICE_NAME", "SESSIONS_PATH", "STATUS_PATH", "Settings", "bearer", "status_body",
 ]

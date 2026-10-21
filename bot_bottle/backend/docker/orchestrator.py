@@ -184,7 +184,7 @@ class DockerOrchestrator(Orchestrator):
         for gateway, subnet in zip(words[::2], words[1::2]):
             try:
                 if ipaddress.ip_address(gateway) in ipaddress.IPv4Network(subnet):
-                    return HostLink(address=gateway, network=subnet)
+                    return HostLink(address=gateway, network=subnet, backend="docker")
             except ValueError:
                 continue
         return None
