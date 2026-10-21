@@ -77,7 +77,6 @@ def launch_consolidated(
     *,
     service: FirecrackerInfraService,
     guest_ip: str,
-    image_ref: str = "",
     tokens: dict[str, str] | None = None,
 ) -> LaunchContext:
     """Ensure the infra VM is up, register the bottle by its guest IP, and
@@ -91,7 +90,7 @@ def launch_consolidated(
     transport = gateway.provisioning_transport()
     reg = provision_bottle(
         client, guest_ip, egress_plan, git_gate_plan, transport,
-        image_ref=image_ref, tokens=tokens,
+        tokens=tokens,
     )
     # The shared gateway CA every agent on this host trusts for TLS
     # interception — fetched from the gateway VM over SSH.

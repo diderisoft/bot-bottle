@@ -1,18 +1,12 @@
 """The per-host orchestrator core (PRD 0070).
 
 `OrchestratorCore` is the single backend-neutral object the control plane talks
-to: it owns the registry (runtime state) and brokers agent launches. It
-never branches on backend — the `LaunchBroker` abstracts the backend-native
-launch, so this same object drives docker / firecracker / apple once a real
-broker is wired in.
+to: it owns the registry (runtime state). Bottles are launched by the host
+controller (PRD 0092); the host registers each one here during its launch.
 
-Launch lifecycle:
-
-  * `launch_bottle` mints the bottle (registry: source IP + identity
-    token), sends a *signed, structured* launch request through the broker,
-    and returns the record. If the broker rejects/fails, the registry entry
-    is rolled back so a failed launch leaves no orphan.
-  * `teardown_bottle` sends a signed teardown request, then deregisters.
+  * `register_bottle` mints the bottle (registry: source IP + identity token)
+    with its gateway policy and egress tokens.
+  * `deregister_bottle` drops it.
   * `reconcile` sweeps rows whose bottle is no longer running — the
     self-heal for the teardown paths that never got to run (a hard-killed
     launcher), since an orphan row at a recycled source IP bricks the next
@@ -25,7 +19,6 @@ import json
 from collections.abc import Iterable
 from datetime import datetime, timezone
 
-from .broker import LaunchBroker, LaunchRequest, sign_request
 from .store.registry_store import DEFAULT_REAP_GRACE_SECONDS, BottleRecord, RegistryStore
 from .supervisor import (
     AuditEntry,
@@ -55,20 +48,14 @@ _APPLY_TOOLS = (TOOL_EGRESS_ALLOW, TOOL_EGRESS_BLOCK)
 
 
 class OrchestratorCore:
-    """Owns the registry + brokers launches, and manages the single
-    consolidated per-host gateway. Backend-neutral (broker and gateway
-    abstract the backend-native pieces)."""
+    """Owns the registry of bottles and the supervise queue. Backend-neutral."""
 
     def __init__(
         self,
         registry: RegistryStore,
-        broker: LaunchBroker,
-        sign_secret: bytes,
         supervisor: Supervisor | None = None,
     ) -> None:
         self.registry = registry
-        self._broker = broker
-        self._secret = sign_secret
         # The supervise service (queue + audit I/O). Injectable for tests;
         # defaults to the registry's DB, which co-tenants the supervise tables.
         self._supervisor = supervisor or Supervisor(registry.db_path)
@@ -79,20 +66,17 @@ class OrchestratorCore:
         # SecretProvider (#355) replaces this with per-request minting.
         self._tokens: dict[str, dict[str, str]] = {}
 
-    def launch_bottle(
+    def register_bottle(
         self,
         source_ip: str,
         *,
-        image_ref: str = "",
-        slot: int | None = None,
         metadata: str = "",
         policy: str = "",
         tokens: dict[str, str] | None = None,
         env_var_secret: str = "",
     ) -> BottleRecord:
-        """Register a bottle (with its gateway policy + in-memory egress auth
-        tokens) and broker its launch. Rolls the registry entry back if the
-        launch doesn't take, so a failure leaves no orphan.
+        """Register a bottle with its gateway policy and in-memory egress auth
+        tokens.
 
         When *env_var_secret* is provided alongside *tokens*, the token values
         are also encrypted and written to ``bottled_agent_secrets`` so they can
@@ -104,30 +88,12 @@ class OrchestratorCore:
                 from .store.secret_store import encrypt_value
                 encrypted = {k: encrypt_value(env_var_secret, v) for k, v in tokens.items()}
                 self.registry.store_agent_secrets(rec.bottle_id, encrypted)
-        req = LaunchRequest(
-            op="launch",
-            bottle_id=rec.bottle_id,
-            source_ip=source_ip,
-            image_ref=image_ref,
-            slot=slot,
-        )
-        launched = False
-        try:
-            self._broker.submit(sign_request(req, self._secret))
-            launched = True
-        finally:
-            if not launched:
-                self.registry.deregister(rec.bottle_id)
-                self._tokens.pop(rec.bottle_id, None)
         return rec
 
-    def teardown_bottle(self, bottle_id: str) -> bool:
-        """Broker teardown then deregister. False if the bottle is unknown."""
-        rec = self.registry.get(bottle_id)
-        if rec is None:
+    def deregister_bottle(self, bottle_id: str) -> bool:
+        """Drop a bottle's registration. False if the bottle is unknown."""
+        if self.registry.get(bottle_id) is None:
             return False
-        req = LaunchRequest(op="teardown", bottle_id=bottle_id, source_ip=rec.source_ip)
-        self._broker.submit(sign_request(req, self._secret))
         self.registry.deregister(bottle_id)
         self._tokens.pop(bottle_id, None)
         # Reap any supervise proposals the gone bottle never acknowledged.
@@ -145,10 +111,8 @@ class OrchestratorCore:
 
         The caller supplies the live set because only the host can enumerate
         its own containers — the orchestrator runs *inside* the infra
-        container and has no view of the backend. Deliberately does not
-        broker a teardown: the container is already gone, so there is nothing
-        to stop, and a broker error must not stop the sweep from clearing
-        the row that would otherwise brick the next bottle at that address.
+        container and has no view of the backend. The bottles are already
+        gone, so there is nothing to stop.
 
         See `RegistryStore.reap_absent` for why orphans accumulate and why
         they are harmful rather than merely untidy."""

@@ -7,19 +7,11 @@ backend-neutral "consolidation core" that needs no VM packaging:
 
   * `store.registry_store` — the SQLite runtime-state store + fail-closed
                       attribution (source IP + per-bottle identity token).
-  * `broker`        — the signed, structured launch-request contract + a
-                      `LaunchBroker` (stub for the harness) that verifies
-                      provenance before acting.
-  * `service`       — the `OrchestratorCore`: owns the registry, brokers the
-                      launch lifecycle (launch/teardown), manages the
-                      shared gateway, attributes.
-  * `server` — the HTTP control-plane RPC (launch / teardown /
-                      list / attribute / gateway / health).
-
-The actual backend-native launch (a real docker/firecracker broker) and
-the egress/git/supervise data plane land in later slices once this core is
-proven (see the PRD sequencing: plain-process dev-harness -> docker
-orchestrator -> firecracker).
+  * `service`       — the `OrchestratorCore`: owns the registry
+                      (register/deregister), the supervise queue, attributes.
+  * `server` — the HTTP control-plane RPC (register / deregister /
+                      list / attribute / gateway / health), plus remote
+                      launches relayed to the host controller (PRD 0092).
 """
 
 from __future__ import annotations
@@ -28,14 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .store.registry_store import BottleRecord, RegistryStore, new_identity_token
-    from .broker import (
-        BrokerAuthError,
-        LaunchBroker,
-        LaunchRequest,
-        StubBroker,
-        sign_request,
-        verify_request,
-    )
     from .service import OrchestratorCore
     from .server import OrchestratorServer, create_app, make_server
 
@@ -48,12 +32,6 @@ _LAZY: dict[str, str] = {
     "BottleRecord": ".store.registry_store",
     "RegistryStore": ".store.registry_store",
     "new_identity_token": ".store.registry_store",
-    "BrokerAuthError": ".broker",
-    "LaunchBroker": ".broker",
-    "LaunchRequest": ".broker",
-    "StubBroker": ".broker",
-    "sign_request": ".broker",
-    "verify_request": ".broker",
     "OrchestratorCore": ".service",
     "create_app": ".server",
     "OrchestratorServer": ".server",
@@ -76,12 +54,6 @@ __all__ = [
     "BottleRecord",
     "RegistryStore",
     "new_identity_token",
-    "BrokerAuthError",
-    "LaunchBroker",
-    "LaunchRequest",
-    "StubBroker",
-    "sign_request",
-    "verify_request",
     "OrchestratorCore",
     "create_app",
     "OrchestratorServer",

@@ -80,7 +80,6 @@ def launch_consolidated(
     git_gate_plan: GitGatePlan,
     *,
     service: DockerInfraService,
-    image_ref: str = "",
     tokens: dict[str, str] | None = None,
     infra_name: str = INFRA_NAME,
     network: str = GATEWAY_NETWORK,
@@ -103,7 +102,7 @@ def launch_consolidated(
     transport = gateway.provisioning_transport()
     reg = provision_bottle(
         client, source_ip, egress_plan, git_gate_plan, transport,
-        image_ref=image_ref, tokens=tokens,
+        tokens=tokens,
     )
     return LaunchContext(
         bottle_id=reg.bottle_id,

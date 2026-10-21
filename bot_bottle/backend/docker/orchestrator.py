@@ -293,7 +293,7 @@ class DockerOrchestrator(Orchestrator):
             self.image_ref,
             # Dockerfile.orchestrator ENTRYPOINT is `python3 -m bot_bottle.orchestrator`;
             # these are its args.
-            "--host", "0.0.0.0", "--port", str(DEFAULT_PORT), "--broker", "stub",
+            "--host", "0.0.0.0", "--port", str(DEFAULT_PORT),
             "--db", _DB_IN_CONTAINER,
         ], env={**os.environ, ORCHESTRATOR_TOKEN_ENV: _signing_key})
         if proc.returncode != 0:

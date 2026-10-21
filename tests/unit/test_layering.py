@@ -19,9 +19,7 @@ STDLIB_ONLY = ("contract", "lib")
 
 # (importer, imported) pairs that break the rules today. Remove entries as the
 # modules move; never add one.
-ALLOWED: frozenset[tuple[str, str]] = frozenset({
-    ("bot_bottle.orchestrator.__main__", "bot_bottle.control.docker_broker"),
-})
+ALLOWED: frozenset[tuple[str, str]] = frozenset()
 
 
 def module_name(path: Path) -> str:

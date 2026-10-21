@@ -11,7 +11,6 @@ import base64
 import http.client
 import io
 import json
-import secrets
 import sqlite3
 import tempfile
 import threading
@@ -26,7 +25,6 @@ from unittest.mock import MagicMock, patch
 
 from bot_bottle.contract.auth import ROLE_CLI, ROLE_GATEWAY, mint
 from bot_bottle.orchestrator import api as orchestrator_api
-from bot_bottle.orchestrator.broker import StubBroker
 from bot_bottle.contract.http import ORCHESTRATOR_AUTH_HEADER
 from bot_bottle.orchestrator.server import MAX_BODY_BYTES, create_app, make_server
 from bot_bottle.orchestrator.store.registry_store import BottleRecord, RegistryStore
@@ -79,8 +77,7 @@ def _orchestrator(db_path: Path) -> OrchestratorCore:
     store = RegistryStore(db_path)
     store.migrate()
     StoreManager(db_path).migrate()
-    secret = secrets.token_bytes(16)
-    return OrchestratorCore(store, StubBroker(secret), secret)
+    return OrchestratorCore(store)
 
 
 class TestDispatch(unittest.TestCase):
@@ -628,8 +625,7 @@ class TestDispatchSupervise(unittest.TestCase):
         self.store = RegistryStore(db)
         self.store.migrate()
         StoreManager(db).migrate()
-        secret = secrets.token_bytes(16)
-        self.orch = OrchestratorCore(self.store, StubBroker(secret), secret)
+        self.orch = OrchestratorCore(self.store)
 
     def tearDown(self) -> None:
         self._env.stop()
@@ -695,8 +691,7 @@ class TestDispatchSuperviseAgentRpc(unittest.TestCase):
         self.store = RegistryStore(db)
         self.store.migrate()
         StoreManager(db).migrate()
-        secret = secrets.token_bytes(16)
-        self.orch = OrchestratorCore(self.store, StubBroker(secret), secret)
+        self.orch = OrchestratorCore(self.store)
 
     def tearDown(self) -> None:
         self._env.stop()

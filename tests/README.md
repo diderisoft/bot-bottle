@@ -101,7 +101,7 @@ BOT_BOTTLE_RUN_CANARIES=1 python -m scripts.unittest_gate \
      runs against whichever backend `BOT_BOTTLE_BACKEND` selects and skips
      unless that backend is available (checking, e.g., Linux + `/dev/kvm`
      for Firecracker rather than unrelated Docker availability).
-   - Backend-specific tests (exercise `DockerBroker`, `DockerGateway`,
+   - Backend-specific tests (exercise `DockerGateway`,
      `backend.docker.*`, …) decorate with `@skip_unless_backend("docker")`
      so they no-op under a run targeting a different backend.
 

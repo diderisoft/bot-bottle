@@ -123,7 +123,6 @@ def register_agent(
     *,
     source_ip: str,
     endpoint: GatewayEndpoint,
-    image_ref: str = "",
     tokens: dict[str, str] | None = None,
     env_var_secret: str | None = None,
 ) -> LaunchContext:
@@ -144,7 +143,7 @@ def register_agent(
         info(f"registry reconciliation skipped: {e}")
     reg = provision_bottle(
         client, source_ip, egress_plan, git_gate_plan, MacosGatewayTransport(),
-        image_ref=image_ref, tokens=tokens,
+        tokens=tokens,
         env_var_secret=env_var_secret,
     )
     return LaunchContext(

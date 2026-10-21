@@ -94,11 +94,11 @@ class TestRegister(unittest.TestCase):
 
     def test_register_posts_source_ip_and_policy(self) -> None:
         with patch(_URLOPEN, return_value=_resp(201, {"bottle_id": "b", "identity_token": "t"})) as m:
-            self.c.register_bottle("10.0.0.9", policy="P", metadata="M", image_ref="img")
+            self.c.register_bottle("10.0.0.9", policy="P", metadata="M")
         sent = json.loads(m.call_args.args[0].data)
         self.assertEqual("10.0.0.9", sent["source_ip"])
         self.assertEqual("P", sent["policy"])
-        self.assertEqual("img", sent["image_ref"])
+        self.assertNotIn("image_ref", sent)
 
     def test_register_missing_fields_raises(self) -> None:
         with patch(_URLOPEN, return_value=_resp(201, {"bottle_id": "b1"})):

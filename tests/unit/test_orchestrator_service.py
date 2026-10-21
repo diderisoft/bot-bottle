@@ -1,4 +1,4 @@
-"""Unit tests for the OrchestratorCore launch lifecycle (PRD 0070)."""
+"""Unit tests for the OrchestratorCore registration lifecycle (PRD 0070)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from bot_bottle.orchestrator.broker import LaunchBroker, LaunchRequest, StubBroker
 from bot_bottle.orchestrator.store.registry_store import RegistryStore
 from bot_bottle.orchestrator.service import OrchestratorCore
 from bot_bottle.orchestrator.store.secret_store import new_env_var_secret
@@ -24,78 +23,59 @@ from bot_bottle.orchestrator.supervisor import (
 )
 
 
-class _FailingBroker(LaunchBroker):
-    """Verifies the token like any broker, then fails the launch — to
-    exercise the orchestrator's registry rollback."""
-
-    def _launch(self, req: LaunchRequest) -> None:
-        raise RuntimeError("launch failed")
-
-    def _teardown(self, req: LaunchRequest) -> None:
-        pass
-
-
 class TestOrchestrator(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self.secret = secrets.token_bytes(16)
         self.store = RegistryStore(Path(self._tmp.name) / "r.db")
         self.store.migrate()
         StoreManager(self.store.db_path).migrate()
-        self.broker = StubBroker(self.secret)
-        self.orch = OrchestratorCore(self.store, self.broker, self.secret)
+        self.orch = OrchestratorCore(self.store)
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def test_launch_registers_and_brokers_signed_request(self) -> None:
-        rec = self.orch.launch_bottle("10.243.0.1", image_ref="sha256:abc", slot=2)
-        self.assertIsNotNone(self.store.get(rec.bottle_id))
-        self.assertEqual(1, len(self.broker.launched))
-        req = self.broker.launched[0]
-        self.assertEqual("launch", req.op)
-        self.assertEqual(rec.bottle_id, req.bottle_id)
-        self.assertEqual("10.243.0.1", req.source_ip)
-        self.assertEqual("sha256:abc", req.image_ref)
-        self.assertEqual(2, req.slot)
+    def test_register_records_the_bottle(self) -> None:
+        rec = self.orch.register_bottle("10.243.0.1")
+        got = self.store.get(rec.bottle_id)
+        assert got is not None
+        self.assertEqual("10.243.0.1", got.source_ip)
 
     def test_launch_then_attribute(self) -> None:
-        rec = self.orch.launch_bottle("10.243.0.3")
+        rec = self.orch.register_bottle("10.243.0.3")
         got = self.orch.attribute("10.243.0.3", rec.identity_token)
         assert got is not None
         self.assertEqual(rec.bottle_id, got.bottle_id)
         self.assertIsNone(self.orch.attribute("10.243.0.3", "wrong-token"))
 
-    def test_teardown_brokers_and_deregisters(self) -> None:
-        rec = self.orch.launch_bottle("10.243.0.1")
-        self.assertTrue(self.orch.teardown_bottle(rec.bottle_id))
+    def test_deregister_drops_the_bottle(self) -> None:
+        rec = self.orch.register_bottle("10.243.0.1")
+        self.assertTrue(self.orch.deregister_bottle(rec.bottle_id))
         self.assertIsNone(self.store.get(rec.bottle_id))
-        self.assertEqual(["teardown"], [r.op for r in self.broker.torn_down])
 
-    def test_teardown_unknown_is_false(self) -> None:
-        self.assertFalse(self.orch.teardown_bottle("ghost"))
+    def test_deregister_unknown_is_false(self) -> None:
+        self.assertFalse(self.orch.deregister_bottle("ghost"))
 
     def test_launch_with_policy_is_resolvable(self) -> None:
-        rec = self.orch.launch_bottle("10.243.0.1", policy='{"routes":[]}')
+        rec = self.orch.register_bottle("10.243.0.1", policy='{"routes":[]}')
         got = self.orch.attribute("10.243.0.1", rec.identity_token)
         assert got is not None
         self.assertEqual('{"routes":[]}', got.policy)
 
     def test_tokens_held_in_memory_and_cleared_on_teardown(self) -> None:
-        rec = self.orch.launch_bottle("10.243.0.5", tokens={"EGRESS_TOKEN_0": "sk"})
+        rec = self.orch.register_bottle("10.243.0.5", tokens={"EGRESS_TOKEN_0": "sk"})
         self.assertEqual({"EGRESS_TOKEN_0": "sk"}, self.orch.tokens_for(rec.bottle_id))
         # not persisted in the registry (redacted record has no tokens field)
         self.assertNotIn("tokens", rec.redacted())
-        self.orch.teardown_bottle(rec.bottle_id)
+        self.orch.deregister_bottle(rec.bottle_id)
         self.assertEqual({}, self.orch.tokens_for(rec.bottle_id))
 
     def test_tokens_default_empty(self) -> None:
-        rec = self.orch.launch_bottle("10.243.0.6")
+        rec = self.orch.register_bottle("10.243.0.6")
         self.assertEqual({}, self.orch.tokens_for(rec.bottle_id))
 
     def test_encrypted_tokens_can_be_reprovisioned_after_memory_loss(self) -> None:
         key = new_env_var_secret()
-        rec = self.orch.launch_bottle(
+        rec = self.orch.register_bottle(
             "10.243.0.12", tokens={"EGRESS_TOKEN_0": "secret"},
             env_var_secret=key,
         )
@@ -106,7 +86,7 @@ class TestOrchestrator(unittest.TestCase):
 
     def test_update_agent_secret_refreshes_one_token_in_place(self) -> None:
         key = new_env_var_secret()
-        rec = self.orch.launch_bottle(
+        rec = self.orch.register_bottle(
             "10.243.0.20", tokens={"A": "old-a", "B": "keep-b"}, env_var_secret=key,
         )
         self.assertTrue(self.orch.update_agent_secret(rec.bottle_id, "A", "new-a", key))
@@ -133,14 +113,14 @@ class TestOrchestrator(unittest.TestCase):
             "bot_bottle.orchestrator.store.secret_store.secrets.token_bytes",
             return_value=b"\0" * 16,
         ):
-            rec = self.orch.launch_bottle(
+            rec = self.orch.register_bottle(
                 "10.243.0.13", tokens={"K": "value"},
                 env_var_secret=key,
             )
         self.assertFalse(self.orch.reprovision_from_secret(rec.bottle_id, wrong_key))
 
     def test_set_policy_live_reload(self) -> None:
-        rec = self.orch.launch_bottle("10.243.0.3")
+        rec = self.orch.register_bottle("10.243.0.3")
         self.assertTrue(self.orch.set_policy(rec.bottle_id, '{"x":1}'))
         got = self.orch.attribute("10.243.0.3", rec.identity_token)
         assert got is not None
@@ -151,7 +131,7 @@ class TestOrchestrator(unittest.TestCase):
 
     def test_resolve_requires_matching_token(self) -> None:
         # Mandatory (source_ip, token) pair — no source-IP-only fallback.
-        rec = self.orch.launch_bottle("10.243.0.1", policy="P")
+        rec = self.orch.register_bottle("10.243.0.1", policy="P")
         self.assertIsNone(self.orch.resolve("10.243.0.1", ""))  # empty token denies
         self.assertIsNone(self.orch.resolve("10.243.0.1", "wrong"))  # mismatch denies
         got = self.orch.resolve("10.243.0.1", rec.identity_token)  # exact pair
@@ -160,15 +140,9 @@ class TestOrchestrator(unittest.TestCase):
         self.assertEqual("P", got.policy)
 
     def test_resolve_with_token_stays_strict(self) -> None:
-        rec = self.orch.launch_bottle("10.243.0.3")
+        rec = self.orch.register_bottle("10.243.0.3")
         self.assertIsNotNone(self.orch.resolve("10.243.0.3", rec.identity_token))
         self.assertIsNone(self.orch.resolve("10.243.0.3", "wrong-token"))
-
-    def test_launch_rolls_back_registry_on_broker_failure(self) -> None:
-        orch = OrchestratorCore(self.store, _FailingBroker(self.secret), self.secret)
-        with self.assertRaises(RuntimeError):
-            orch.launch_bottle("10.243.0.9")
-        self.assertEqual([], self.store.all())  # no orphan
 
     def test_gateway_status_reports_unconfigured(self) -> None:
         # The orchestrator no longer owns a standalone gateway lifecycle; the
@@ -195,8 +169,7 @@ class TestOrchestratorSupervise(unittest.TestCase):
         self.store = RegistryStore(db)
         self.store.migrate()
         StoreManager(db).migrate()
-        secret = secrets.token_bytes(16)
-        self.orch = OrchestratorCore(self.store, StubBroker(secret), secret)
+        self.orch = OrchestratorCore(self.store)
 
     def tearDown(self) -> None:
         self._env.stop()
@@ -348,7 +321,7 @@ class TestOrchestratorSupervise(unittest.TestCase):
             proposed_file="routes:\n  - host: google.com\n", justification="j")
         self.orch.supervise_respond(
             pid, bottle_slug=rec.bottle_id, decision="approve", notes="ok")
-        self.assertTrue(self.orch.teardown_bottle(rec.bottle_id))
+        self.assertTrue(self.orch.deregister_bottle(rec.bottle_id))
         # The gone bottle's decided-but-unconsumed proposal is archived, so a
         # late poll returns 'unknown' rather than lingering forever.
         self.assertEqual(
@@ -383,13 +356,11 @@ class TestOrchestratorReconcile(unittest.TestCase):
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self.secret = secrets.token_bytes(16)
         self.db = Path(self._tmp.name) / "r.db"
         self.store = RegistryStore(self.db)
         self.store.migrate()
         StoreManager(self.db).migrate()
-        self.broker = StubBroker(self.secret)
-        self.orch = OrchestratorCore(self.store, self.broker, self.secret)
+        self.orch = OrchestratorCore(self.store)
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -402,8 +373,8 @@ class TestOrchestratorReconcile(unittest.TestCase):
             conn.commit()
 
     def test_reaps_dead_bottle_and_forgets_its_tokens(self) -> None:
-        dead = self.orch.launch_bottle("10.243.0.1", tokens={"EGRESS_TOKEN_0": "s3cret"})
-        live = self.orch.launch_bottle("10.243.0.2", tokens={"EGRESS_TOKEN_0": "keep"})
+        dead = self.orch.register_bottle("10.243.0.1", tokens={"EGRESS_TOKEN_0": "s3cret"})
+        live = self.orch.register_bottle("10.243.0.2", tokens={"EGRESS_TOKEN_0": "keep"})
         self._age_all(600)
 
         self.assertEqual([dead.bottle_id], self.orch.reconcile(["10.243.0.2"]))
@@ -413,18 +384,9 @@ class TestOrchestratorReconcile(unittest.TestCase):
         self.assertEqual({}, self.orch.tokens_for(dead.bottle_id))
         self.assertEqual({"EGRESS_TOKEN_0": "keep"}, self.orch.tokens_for(live.bottle_id))
 
-    def test_reconcile_does_not_broker_a_teardown(self) -> None:
-        """The container is already gone — there is nothing to stop, and a
-        broker error must not stop the sweep clearing the row."""
-        self.orch.launch_bottle("10.243.0.1")
-        self._age_all(600)
-        self.broker.launched.clear()
-        self.orch.reconcile([])
-        self.assertEqual([], self.broker.torn_down)
-
     def test_reconcile_keeps_everything_when_all_are_live(self) -> None:
-        a = self.orch.launch_bottle("10.243.0.1")
-        b = self.orch.launch_bottle("10.243.0.2")
+        a = self.orch.register_bottle("10.243.0.1")
+        b = self.orch.register_bottle("10.243.0.2")
         self._age_all(600)
         self.assertEqual([], self.orch.reconcile(["10.243.0.1", "10.243.0.2"]))
         self.assertIsNotNone(self.store.get(a.bottle_id))

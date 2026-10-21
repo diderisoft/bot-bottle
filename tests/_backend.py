@@ -35,7 +35,7 @@ def skip_unless_backend(backend: str):
     """Skip a backend-specific test unless the selected backend matches AND
     that backend is fully ready.
 
-    Docker-implementation tests (``DockerBroker``, ``DockerGateway``,
+    Docker-implementation tests (``DockerGateway``,
     ``backend.docker.*``) use ``skip_unless_backend("docker")`` so they no-op
     under a run targeting a different backend instead of testing Docker
     internals that run doesn't exercise — the guard reads

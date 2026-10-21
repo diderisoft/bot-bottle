@@ -546,7 +546,7 @@ if [ -z "$CP_KEY" ]; then
 else
     chmod 600 {_GUEST_SIGNING_KEY_PATH} 2>/dev/null || true
     BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator \\
-        --host 0.0.0.0 --port {ORCHESTRATOR_PORT} --broker stub \\
+        --host 0.0.0.0 --port {ORCHESTRATOR_PORT} \\
         --db /var/lib/bot-bottle/db/{HOST_DB_FILENAME} &
 fi
 """ + _INIT_TAIL

@@ -141,13 +141,12 @@ class OrchestratorClient:
         self,
         source_ip: str,
         *,
-        image_ref: str = "",
         metadata: str = "",
         policy: str = "",
         tokens: dict[str, str] | None = None,
         env_var_secret: str = "",
     ) -> RegisteredBottle:
-        """Register a bottle and broker its launch (`POST /bottles`). `tokens`
+        """Register a bottle the host is launching (`POST /bottles`). `tokens`
         are the per-bottle egress auth values (env_name -> value) the
         orchestrator holds in memory for the gateway to inject. When
         *env_var_secret* is provided, the orchestrator also encrypts the token
@@ -155,7 +154,6 @@ class OrchestratorClient:
         recovery. Returns the minted id + identity token."""
         payload = self._ok("POST", "/bottles", {
             "source_ip": source_ip,
-            "image_ref": image_ref,
             "metadata": metadata,
             "policy": policy,
             "tokens": tokens or {},

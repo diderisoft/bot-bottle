@@ -169,7 +169,7 @@ class MacosOrchestrator(Orchestrator):
             "--env", ORCHESTRATOR_TOKEN_ENV,
             self.image_ref,
             # Dockerfile.orchestrator ENTRYPOINT is `-m bot_bottle.orchestrator`.
-            "--host", "0.0.0.0", "--port", str(self.port), "--broker", "stub",
+            "--host", "0.0.0.0", "--port", str(self.port),
             "--db", _DB_IN_CONTAINER,
         ]
         result = container_mod.run_container_argv(

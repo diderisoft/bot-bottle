@@ -122,7 +122,6 @@ def launch(
             plan.egress_plan, git_gate_plan,
             service=service,
             guest_ip=slot.guest_ip,
-            image_ref=plan.image,
             tokens=token_values,
         )
         stack.callback(deprovision_consolidated, ctx.bottle_id, service=service,

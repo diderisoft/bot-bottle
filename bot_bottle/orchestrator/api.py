@@ -32,9 +32,8 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="ignore", strict=True)
 
 
-class LaunchBody(_StrictModel):
+class RegisterBody(_StrictModel):
     source_ip: StrictStr
-    image_ref: StrictStr = ""
     metadata: StrictStr = ""
     policy: StrictStr = ""
     tokens: dict[StrictStr, StrictStr] = {}
@@ -240,10 +239,9 @@ def create_app(orch: OrchestratorCore, *, signing_key: str) -> FastAPI:
         return {"bottles": [record.redacted() for record in orch.registry.all()]}
 
     @app.post("/bottles", status_code=201)
-    def launch(body: LaunchBody) -> dict[str, str]:
-        rec = orch.launch_bottle(
+    def register(body: RegisterBody) -> dict[str, str]:
+        rec = orch.register_bottle(
             _required(body.source_ip, "source_ip"),
-            image_ref=body.image_ref,
             metadata=body.metadata,
             policy=body.policy,
             tokens=dict(body.tokens),
@@ -280,8 +278,8 @@ def create_app(orch: OrchestratorCore, *, signing_key: str) -> FastAPI:
         raise HTTPException(404, "no such bottle")
 
     @app.delete("/bottles/{bottle_id}")
-    def teardown(bottle_id: str) -> dict[str, object]:
-        if orch.teardown_bottle(bottle_id):
+    def deregister(bottle_id: str) -> dict[str, object]:
+        if orch.deregister_bottle(bottle_id):
             return {"torn_down": True}
         raise HTTPException(404, "no such bottle")
 

@@ -13,13 +13,10 @@ container packaging. Wrapping this exact service in a backend-native unit
 from __future__ import annotations
 
 import argparse
-import secrets
 from pathlib import Path
 
 from ..lib import log
 from ..contract.auth import CONTROL_PLANE
-from .broker import LaunchBroker, StubBroker
-from ..control.docker_broker import DockerBroker
 from .server import make_server
 from .service import OrchestratorCore
 from .store.store_manager import StoreManager
@@ -34,10 +31,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--db", type=Path, required=True,
         help="the shared state DB (registry, supervise queue + audit)",
-    )
-    parser.add_argument(
-        "--broker", choices=("stub", "docker"), default="stub",
-        help="launch broker: 'stub' records requests; 'docker' runs containers",
     )
     args = parser.parse_args(argv)
     if not CONTROL_PLANE.key_from_env():
@@ -54,12 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     # operator reaches it over HTTP (never a second, disconnected DB).
     StoreManager(registry.db_path).migrate()
 
-    # An ephemeral signing secret ties the orchestrator (signer) to its
-    # broker (verifier). 'stub' records launches instead of starting
-    # anything; 'docker' runs real containers (firecracker drops in later).
-    secret = secrets.token_bytes(32)
-    broker: LaunchBroker = DockerBroker(secret) if args.broker == "docker" else StubBroker(secret)
-    orchestrator = OrchestratorCore(registry, broker, secret)
+    orchestrator = OrchestratorCore(registry)
 
     server = make_server(orchestrator, host=args.host, port=args.port)
     log.info(

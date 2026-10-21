@@ -30,7 +30,6 @@ def provision_bottle(
     git_gate_plan: GitGatePlan,
     transport: GatewayTransport,
     *,
-    image_ref: str = "",
     tokens: dict[str, str] | None = None,
     env_var_secret: str | None = None,
 ) -> RegisteredBottle:
@@ -44,7 +43,7 @@ def provision_bottle(
     inputs = registration_inputs(egress_plan)
     env_var_secret = env_var_secret or new_env_var_secret()
     reg = client.register_bottle(
-        source_ip, image_ref=image_ref, policy=inputs.policy,
+        source_ip, policy=inputs.policy,
         metadata=inputs.metadata, tokens=tokens, env_var_secret=env_var_secret,
     )
     try:

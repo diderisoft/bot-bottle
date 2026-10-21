@@ -90,7 +90,7 @@ class TestRegisterAgent(unittest.TestCase):
                 patch(f"{_MOD}.live_source_ips", return_value=[]):
             return register_agent(
                 _egress_plan(), _git_plan(),
-                source_ip=source_ip, endpoint=_endpoint(), image_ref="img:1",
+                source_ip=source_ip, endpoint=_endpoint(),
             )
 
     def test_registers_by_the_address_read_from_the_live_container(self) -> None:

@@ -170,7 +170,7 @@ def launch(
         teardown_timeout = resolve_teardown_timeout(host_db_path())
         service = DockerInfraService(plan.settings)
         ctx = launch_consolidated(
-            plan.egress_plan, git_gate_plan, service=service, image_ref=plan.image,
+            plan.egress_plan, git_gate_plan, service=service,
             tokens=token_values,
         )
         stack.callback(deprovision_consolidated, ctx.bottle_id, service=service,

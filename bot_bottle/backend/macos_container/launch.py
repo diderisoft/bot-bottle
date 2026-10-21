@@ -225,7 +225,6 @@ def launch(
             plan.git_gate_plan,
             source_ip=source_ip,
             endpoint=endpoint,
-            image_ref=plan.image,
             tokens=token_values,
             env_var_secret=plan.env_var_secret,
         )

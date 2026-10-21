@@ -46,8 +46,7 @@ class TestMacosOrchestratorRun(unittest.TestCase):
         nets = [argv[i + 1] for i, a in enumerate(argv) if a == "--network"]
         self.assertEqual(["bot-bottle-mac-control"], nets)
         # Image ENTRYPOINT is `-m bot_bottle.orchestrator`; these are its args.
-        self.assertIn("--broker", argv)
-        self.assertIn("stub", argv)
+        self.assertNotIn("--broker", argv)
         self.assertIn("bot-bottle-orchestrator:latest", argv)
         self.assertEqual("/var/lib/bot-bottle/db/bot-bottle.db",
                          argv[argv.index("--db") + 1])

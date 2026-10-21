@@ -10,7 +10,7 @@ composes it with the `Gateway` service.
 This module also holds the backend-neutral constants those impls build on: the
 control-plane port, the startup timeout, the start-error, and the `source_hash`
 used to detect a code change. (The in-guest control-plane *core* — the registry
-+ broker object the running process wraps — is `service.OrchestratorCore`.)
++ supervise object the running process wraps — is `service.OrchestratorCore`.)
 """
 
 from __future__ import annotations
