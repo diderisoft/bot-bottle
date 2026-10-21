@@ -17,6 +17,7 @@ import argparse
 import sys
 
 from ...backend import get_bottle_backend, known_backend_names
+from ...control.hostctl import service_unit
 from ...control.hostctl.sessions import MIN_TMUX_VERSION, tmux_version
 from ..constants import PROG
 from ..settings import settings_from_env
@@ -30,6 +31,14 @@ def _note_tmux() -> None:
         sys.stderr.write(
             f"{PROG}: tmux {MIN_TMUX_VERSION[0]}.{MIN_TMUX_VERSION[1]}+ is required for agent "
             f"sessions ({found}); install it with brew, apt or nix\n")
+
+
+def _note_service() -> None:
+    """Point at the optional service that keeps the host controller running."""
+    if not service_unit.installed():
+        sys.stderr.write(
+            f"{PROG}: optional: `{PROG} hostctl service install` keeps the host controller "
+            "running across reboots\n")
 
 
 def cmd_backend(args: list[str]) -> int:
@@ -54,6 +63,7 @@ def cmd_backend(args: list[str]) -> int:
     backend = get_bottle_backend(settings_from_env(), ns.backend)
     if ns.action == "setup":
         _note_tmux()
+        _note_service()
         return backend.setup()
     if ns.action == "teardown":
         return backend.teardown()

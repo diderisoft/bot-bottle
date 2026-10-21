@@ -4,10 +4,11 @@ orchestrator through it (PRD 0092)."""
 from __future__ import annotations
 
 import dataclasses
+import os
 import sys
 
 from ...contract.hostctl import ORCHESTRATOR_PATH
-from ...control.hostctl import runner
+from ...control.hostctl import runner, service_unit
 from ...control.hostctl.client import HostControlClient
 from ...control.hostctl.orchestrator import ensure_via_daemon
 from ..constants import PROG
@@ -16,9 +17,30 @@ from ..settings import settings_from_env
 _USAGE = (
     f"usage: {PROG} hostctl {{status|start|stop [--force]|jobs}}\n"
     f"       {PROG} hostctl orchestrator {{status|ensure|restart}}\n"
+    f"       {PROG} hostctl service {{install|uninstall|status}}\n"
 )
 _DAEMON_ACTIONS = ("status", "start", "stop", "jobs")
 _ORCHESTRATOR_ACTIONS = ("status", "ensure", "restart")
+_SERVICE_ACTIONS = ("install", "uninstall", "status")
+
+
+def _service(action: str) -> int:
+    """The optional user service that keeps the daemon running across reboots."""
+    if action == "status":
+        state = "installed" if service_unit.installed() else "not installed"
+        print(f"host controller service: {state} ({service_unit.unit_path()})")
+        return 0
+    if action == "uninstall":
+        print("host controller service: removed" if service_unit.uninstall()
+              else "host controller service: not installed")
+        return 0
+    # A daemon the CLI started would run beside the service's; hand over to it.
+    runner.stop()
+    spec = service_unit.ServiceSpec(python=sys.executable, path_env=os.environ.get("PATH", ""))
+    path = service_unit.install(spec)
+    print(f"host controller service: installed ({path})")
+    print(_describe(runner.ensure_running()))
+    return 0
 
 
 def _describe(state: runner.HostControlState) -> str:
@@ -71,10 +93,13 @@ def cmd_hostctl(argv: list[str]) -> int:
     force = argv == ["stop", "--force"]
     daemon = (len(argv) == 1 and argv[0] in _DAEMON_ACTIONS) or force
     orch = len(argv) == 2 and argv[0] == "orchestrator" and argv[1] in _ORCHESTRATOR_ACTIONS
-    if not (daemon or orch):
+    service = len(argv) == 2 and argv[0] == "service" and argv[1] in _SERVICE_ACTIONS
+    if not (daemon or orch or service):
         sys.stderr.write(_USAGE)
         return 2
     try:
+        if service:
+            return _service(argv[1])
         return _daemon(argv[0], force=force) if daemon else _orchestrator(argv[1])
     except runner.HostControlError as e:
         sys.stderr.write(f"{PROG}: {e}\n")

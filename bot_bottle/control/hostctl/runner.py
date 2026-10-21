@@ -161,6 +161,12 @@ def stop(*, force: bool = False) -> bool:
 
 
 def _start(timeout: float) -> HostControlState:
+    from . import service_unit  # pylint: disable=import-outside-toplevel
+
+    if service_unit.installed():
+        # The service manager owns the daemon; ask it, then wait as usual.
+        service_unit.start()
+        return _await_state(None, timeout)
     directory = state_dir()
     log_path = directory / "hostctl.log"
     env = dict(os.environ)
@@ -178,18 +184,28 @@ def _start(timeout: float) -> HostControlState:
         ],
         setsid=True,
     )
+    try:
+        return _await_state(pid, timeout)
+    except HostControlError:
+        os.kill(pid, signal.SIGTERM)
+        raise
+
+
+def _await_state(pid: int | None, timeout: float) -> HostControlState:
+    """Wait for a live daemon to publish its state: the one with `pid`, or
+    (under a service manager) any. Raises if `pid` exits or time runs out."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         state = read_state()
-        if state is not None and state.pid == pid and probe(state):
+        if state is not None and (pid is None or state.pid == pid) and probe(state):
             return state
-        done, status = os.waitpid(pid, os.WNOHANG)
-        if done == pid:
-            raise HostControlError(
-                f"host controller exited with {os.waitstatus_to_exitcode(status)}; see {log_path}"
-            )
+        if pid is not None:
+            done, status = os.waitpid(pid, os.WNOHANG)
+            if done == pid:
+                raise HostControlError(
+                    f"host controller exited with {os.waitstatus_to_exitcode(status)}; "
+                    f"see {state_dir() / 'hostctl.log'}")
         time.sleep(_POLL_SECONDS)
-    os.kill(pid, signal.SIGTERM)
     raise HostControlError(f"host controller didn't answer within {timeout:.0f}s")
 
 
