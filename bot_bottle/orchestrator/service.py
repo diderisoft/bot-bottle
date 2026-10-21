@@ -229,6 +229,11 @@ class OrchestratorCore:
             out.append(d)
         return out
 
+    def session_for(self, bottle_id: str) -> str:
+        """The host controller's name for a bottle: the slug a registry
+        bottle registered with, or `bottle_id` itself."""
+        return self._label_for(bottle_id)
+
     def _label_for(self, bottle_slug: str) -> str:
         """The human slug recorded in registry metadata for a proposal's
         bottle, or the bottle_slug unchanged when the bottle is gone or has no

@@ -5,20 +5,24 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 import sys
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, StrictStr
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ..contract.auth import CONTROL_PLANE, ROLE_CLI, ROLES
+from ..contract.hostctl import BOTTLES_PATH, JOBS_PATH, ROLE_ORCHESTRATOR, LaunchRequest
 from ..contract.supervise import TOOLS
 from ..contract.http import (
     MAX_BODY_BYTES,
     ORCHESTRATOR_AUTH_HEADER,
     REQUEST_BODY_TIMEOUT_SECONDS,
 )
+from .hostctl_relay import HostControlRefused, HostControlRelay, HostControlUnreachable
+from .relay_attach import pump_attach
 from .service import OrchestratorCore
 
 _GATEWAY_ROUTES = frozenset({
@@ -38,6 +42,20 @@ class RegisterBody(_StrictModel):
     policy: StrictStr = ""
     tokens: dict[StrictStr, StrictStr] = {}
     env_var_secret: StrictStr = ""
+
+
+class LaunchesBody(_StrictModel):
+    """`POST /launches`: what a remote caller may ask the host controller for.
+    Unknown fields (a path, secret values) are dropped, never forwarded."""
+
+    agent: StrictStr
+    bottles: list[StrictStr] = []
+    label: StrictStr = ""
+    color: StrictStr = ""
+    prompt: StrictStr = ""
+    headless: StrictBool = False
+    image_policy: StrictStr = "fresh"
+    assume_yes: StrictBool = False
 
 
 class PolicyBody(_StrictModel):
@@ -94,18 +112,32 @@ class ControlPlaneBoundary:
         self.app = app
         self.signing_key = signing_key
 
+    def _role(self, scope: Scope) -> str | None:
+        presented = dict(scope["headers"]).get(
+            ORCHESTRATOR_AUTH_HEADER.encode(), b"",
+        ).decode(errors="ignore")
+        return CONTROL_PLANE.verify(presented, self.signing_key)
+
+    async def _websocket(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Every WebSocket route is the cli role's; refuse before accepting."""
+        role = self._role(scope)
+        if role != ROLE_CLI:
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        scope.setdefault("state", {})["role"] = role
+        await self.app(scope, receive, send)
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
-            await self.app(scope, receive, send)
+            if scope["type"] == "websocket":
+                await self._websocket(scope, receive, send)
+            else:
+                await self.app(scope, receive, send)
             return
         method = scope["method"]
         route = scope["path"].rstrip("/") or "/"
         if not (method == "GET" and route == "/health"):
-            headers = dict(scope["headers"])
-            presented = headers.get(
-                ORCHESTRATOR_AUTH_HEADER.encode(), b"",
-            ).decode(errors="ignore")
-            role = CONTROL_PLANE.verify(presented, self.signing_key)
+            role = self._role(scope)
             if role is None:
                 await self._reject(
                     scope, send, 401, "control-plane authentication required",
@@ -138,7 +170,7 @@ class ControlPlaneBoundary:
             await self._reject(scope, send, 408, "request body read timed out")
             return
         try:
-            await self.app(scope, self._replay_body(body), send)
+            await self.app(scope, self._replay_body(body, receive), send)
         except Exception as exc:  # noqa: BLE001 - redact control-plane failures
             sys.stderr.write(
                 f"orchestrator: {method} {route} failed "
@@ -174,13 +206,15 @@ class ControlPlaneBoundary:
         return bytes(body)
 
     @staticmethod
-    def _replay_body(body: bytes) -> Receive:
+    def _replay_body(body: bytes, receive: Receive) -> Receive:
+        """The body already read, then the client's own messages, so a
+        streamed response still learns when the client goes away."""
         sent = False
 
         async def replay() -> Message:
             nonlocal sent
             if sent:
-                return {"type": "http.disconnect"}
+                return await receive()
             sent = True
             return {"type": "http.request", "body": body, "more_body": False}
 
@@ -197,8 +231,21 @@ def _required(value: str, name: str) -> str:
     return value
 
 
-def create_app(orch: OrchestratorCore, *, signing_key: str) -> FastAPI:
-    """Build the authenticated orchestrator ASGI application."""
+_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _id(value: str, name: str) -> str:
+    if not _ID.match(value):
+        raise HTTPException(400, f"invalid {name}")
+    return value
+
+
+def create_app(
+    orch: OrchestratorCore, *, signing_key: str, hostctl: HostControlRelay | None = None,
+) -> FastAPI:
+    """Build the authenticated orchestrator ASGI application. `hostctl` is
+    the host controller remote launches go to; None when this orchestrator
+    wasn't brought up by one."""
     key = signing_key.strip()
     if not key:
         raise ValueError(
@@ -346,6 +393,56 @@ def create_app(orch: OrchestratorCore, *, signing_key: str) -> FastAPI:
         return orch.supervise_poll_response(
             rec.bottle_id, _required(body.proposal_id, "proposal_id"),
         )
+
+    # --- remote launch and attach, through the host controller (PRD 0092) ----
+
+    def relay() -> HostControlRelay:
+        if hostctl is None:
+            raise HTTPException(503, "host controller not available")
+        return hostctl
+
+    def relayed(method: str, path: str, body: dict[str, object] | None = None) -> JSONResponse:
+        try:
+            status, reply = relay().request(method, path, body)
+        except HostControlUnreachable as e:
+            raise HTTPException(502, str(e)) from None
+        return JSONResponse(reply, status_code=status)
+
+    @app.post("/launches")
+    def launch(body: LaunchesBody) -> JSONResponse:
+        fields: dict[str, object] = body.model_dump()
+        try:
+            # The host controller's own rules, checked here first.
+            LaunchRequest.from_json(fields, ROLE_ORCHESTRATOR)
+        except (ValueError, PermissionError) as e:
+            raise HTTPException(400, str(e)) from None
+        return relayed("POST", BOTTLES_PATH, fields)
+
+    @app.get("/launches/{job_id}")
+    def launch_status(job_id: str) -> JSONResponse:
+        return relayed("GET", f"{JOBS_PATH}/{_id(job_id, 'job id')}")
+
+    @app.get("/launches/{job_id}/events")
+    def launch_events(job_id: str) -> StreamingResponse:
+        path = f"{JOBS_PATH}/{_id(job_id, 'job id')}/events"
+        try:
+            lines = relay().stream(path)
+        except HostControlRefused as e:
+            raise HTTPException(e.status, str(e.body.get("error", e))) from None
+        except HostControlUnreachable as e:
+            raise HTTPException(502, str(e)) from None
+        return StreamingResponse(lines, media_type="application/x-ndjson")
+
+    @app.websocket("/bottles/{bottle_id}/attach")
+    async def attach(websocket: WebSocket, bottle_id: str, cols: int = 80,
+                     rows: int = 24) -> None:
+        # A registry bottle id names its session by the slug it registered.
+        session = orch.session_for(bottle_id)
+        if hostctl is None or not _ID.match(session):
+            await websocket.close(code=1011, reason="host controller not available"
+                                  if hostctl is None else "invalid bottle id")
+            return
+        await pump_attach(websocket, hostctl, session, cols=cols, rows=rows)
 
     @app.post("/resolve")
     def resolve(body: IdentityBody) -> dict[str, object]:

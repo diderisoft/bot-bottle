@@ -10,6 +10,7 @@ import uvicorn
 
 from ..contract.auth import CONTROL_PLANE
 from .api import create_app
+from .hostctl_relay import HostControlRelay
 from ..contract.http import MAX_BODY_BYTES, ORCHESTRATOR_AUTH_HEADER
 from .service import OrchestratorCore
 
@@ -52,10 +53,13 @@ def make_server(
     port: int = 0,
     *,
     signing_key: str | None = None,
+    hostctl: HostControlRelay | None = None,
 ) -> OrchestratorServer:
-    """Build a bounded Uvicorn server around the orchestrator application."""
+    """Build a bounded Uvicorn server around the orchestrator application.
+    The host controller relay defaults to the one bring-up provisioned."""
     key = CONTROL_PLANE.key_from_env() if signing_key is None else signing_key
-    app = create_app(orchestrator, signing_key=key)
+    app = create_app(orchestrator, signing_key=key,
+                     hostctl=hostctl if hostctl is not None else HostControlRelay.from_env())
     config = uvicorn.Config(
         app,
         host=host,
