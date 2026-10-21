@@ -55,7 +55,7 @@ def ensure_via_daemon(settings: Settings, backend: str, *, restart: bool = False
     job_id = str(client.post(f"{ORCHESTRATOR_PATH}/{action}", {"settings": request.to_json()})["job"])
     final = client.follow(job_id, log.write_line)
     if final is None:
-        log.die(f"detached; the bring-up continues as job {job_id} (see `hostctl jobs`)")
+        log.die(f"detached; the bring-up continues as job {job_id} (see `bot-bottle jobs`)")
     if final.get("type") == "error":
         log.die(str(final.get("message", "orchestrator bring-up failed")))
     value = final.get("value")
