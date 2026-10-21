@@ -104,13 +104,16 @@ class TestAttachCommand(unittest.TestCase):
     def test_execs_a_writable_tmux_attach(self) -> None:
         with mock.patch.object(attach_cmd.shutil, "which", return_value="/usr/bin/tmux"), \
              mock.patch.object(attach_cmd.SessionManager, "exists", return_value=True), \
-             mock.patch.object(attach_cmd.os, "execv") as execv:
+             mock.patch.dict(attach_cmd.os.environ, {"TMUX": "/tmp/user-tmux,1,0"}), \
+             mock.patch.object(attach_cmd.os, "execve") as execve:
             attach_cmd.cmd_attach(["s1"])
-        argv = execv.call_args.args[1]
+        argv, env = execve.call_args.args[1:]
         self.assertEqual("/usr/bin/tmux", argv[0])
         self.assertIn("attach-session", argv)
         self.assertNotIn("-r", argv)
         self.assertEqual("=s1", argv[-1])
+        # bot-bottle's tmux server is its own: attaching from the user's tmux isn't nesting.
+        self.assertNotIn("TMUX", env)
 
 
 class TestTmuxChecks(unittest.TestCase):

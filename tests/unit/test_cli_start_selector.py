@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import bot_bottle.cli.commands.start as start_mod
 import bot_bottle.cli.tui as tui_mod
+from bot_bottle.manifest.preview import manifest_to_yaml
 from bot_bottle.backend import ActiveAgent
 
 
@@ -138,7 +139,7 @@ class TestCmdStartSelector(unittest.TestCase):
         start_mod.cmd_start(["researcher"])
         self._launch_mock.assert_called_once()
         spec = self._launch_mock.call_args[0][0]
-        self.assertEqual(("claude", "dev"), spec.bottle_names)
+        self.assertEqual(("claude", "dev"), spec.bottles)
 
     def test_image_policy_forwarded_to_spec(self):
         with patch("bot_bottle.cli.commands.start._select_image_policy", return_value="cached"):
@@ -158,7 +159,7 @@ class TestCmdStartSelector(unittest.TestCase):
         start_mod.cmd_start(["researcher"])
         self._launch_mock.assert_called_once()
         spec = self._launch_mock.call_args[0][0]
-        self.assertEqual((), spec.bottle_names)
+        self.assertEqual((), spec.bottles)
 
     # ------------------------------------------------------------------
     # Agent default bottle pre-populates the picker
@@ -325,7 +326,7 @@ class TestBottleLineage(unittest.TestCase):
 
 
 class TestManifestToYaml(unittest.TestCase):
-    """Unit tests for _manifest_to_yaml."""
+    """Unit tests for manifest_to_yaml."""
 
     def _make_manifest_obj(
         self,
@@ -348,31 +349,31 @@ class TestManifestToYaml(unittest.TestCase):
 
     def test_includes_agent_section(self):
         m = self._make_manifest_obj(skills=["researcher"])
-        yaml = start_mod._manifest_to_yaml(m)
+        yaml = manifest_to_yaml(m)
         self.assertIn("agent:", yaml)
         self.assertIn("- researcher", yaml)
 
     def test_includes_bottle_section(self):
         m = self._make_manifest_obj(env={"FOO": "bar"})
-        yaml = start_mod._manifest_to_yaml(m)
+        yaml = manifest_to_yaml(m)
         self.assertIn("bottle:", yaml)
         self.assertIn("FOO: bar", yaml)
 
     def test_supervise_rendered(self):
         m_true = self._make_manifest_obj(supervise=True)
         m_false = self._make_manifest_obj(supervise=False)
-        self.assertIn("supervise: true", start_mod._manifest_to_yaml(m_true))
-        self.assertIn("supervise: false", start_mod._manifest_to_yaml(m_false))
+        self.assertIn("supervise: true", manifest_to_yaml(m_true))
+        self.assertIn("supervise: false", manifest_to_yaml(m_false))
 
     def test_non_claude_provider_shown(self):
         m = self._make_manifest_obj(agent_provider_template="codex")
-        yaml = start_mod._manifest_to_yaml(m)
+        yaml = manifest_to_yaml(m)
         self.assertIn("agent_provider:", yaml)
         self.assertIn("template: codex", yaml)
 
     def test_default_claude_provider_omitted(self):
         m = self._make_manifest_obj(agent_provider_template="claude")
-        yaml = start_mod._manifest_to_yaml(m)
+        yaml = manifest_to_yaml(m)
         self.assertNotIn("agent_provider:", yaml)
 
 

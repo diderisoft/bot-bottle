@@ -2,7 +2,7 @@
 
 Headless is the keystone for orchestrators, CI, and webhook
 dispatch: agent/bottles/label come from flags + manifest defaults, no
-TUI selectors fire, and the preflight y/N is auto-confirmed
+TUI selectors fire, and the request is auto-confirmed
 (`assume_yes=True`). All actual launch work is stubbed so no container
 is created.
 """
@@ -17,7 +17,6 @@ from unittest.mock import MagicMock, patch
 import bot_bottle.cli.commands.start as start_mod
 import bot_bottle.cli.tui as tui_mod
 from bot_bottle.contract.hostctl import Settings
-from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.backend import ActiveAgent
 from bot_bottle.lib.log import Die
 from bot_bottle.manifest import ManifestError
@@ -95,7 +94,8 @@ class TestCmdStartHeadless(unittest.TestCase):
         start_mod.cmd_start(
             ["--headless", "researcher", "--bottle", "claude", "--prompt", "Do it"]
         )
-        self.assertTrue(self._launch_mock.call_args[1]["assume_yes"])
+        self.assertTrue(self._spec().assume_yes)
+        self.assertTrue(self._spec().headless)
 
     # -- prompt --------------------------------------------------------
 
@@ -109,10 +109,7 @@ class TestCmdStartHeadless(unittest.TestCase):
             ["--headless", "researcher", "--bottle", "claude",
              "--prompt", "Implement issue #42"]
         )
-        self.assertEqual(
-            "Implement issue #42",
-            self._launch_mock.call_args[1]["headless_prompt_text"],
-        )
+        self.assertEqual("Implement issue #42", self._spec().prompt)
 
     # -- bottle resolution ---------------------------------------------
 
@@ -121,11 +118,11 @@ class TestCmdStartHeadless(unittest.TestCase):
             ["--headless", "researcher", "--bottle", "dev", "--bottle", "claude",
              "--prompt", "Do it"]
         )
-        self.assertEqual(("dev", "claude"), self._spec().bottle_names)
+        self.assertEqual(("dev", "claude"), self._spec().bottles)
 
     def test_omitted_bottle_falls_back_to_agent_default(self):
         start_mod.cmd_start(["--headless", "implementer", "--prompt", "Do it"])
-        self.assertEqual(("claude",), self._spec().bottle_names)
+        self.assertEqual(("claude",), self._spec().bottles)
 
     def test_no_bottle_and_no_default_dies(self):
         manifest = _make_manifest(["researcher"], ["claude"], agent_bottle="")
@@ -194,35 +191,51 @@ class TestCmdStartHeadless(unittest.TestCase):
         self._launch_mock.assert_not_called()
 
 
-class TestPrepareWithPreflight(unittest.TestCase):
-    """prepare_with_preflight calls render_preflight with the plan and backend name."""
+class TestDryRun(unittest.TestCase):
+    """--dry-run prepares locally, prints the preflight and starts nothing."""
 
-    def test_render_preflight_called(self):
-        from pathlib import Path
+    def test_prepares_renders_and_settles_without_the_daemon(self):
+        from bot_bottle.contract.hostctl import LaunchRequest
         mock_backend = MagicMock()
-        mock_plan = MagicMock()
-        mock_backend.prepare.return_value = mock_plan
+        mock_backend.prepare.return_value = MagicMock(slug="demo-abc")
         mock_backend.name = "test-backend"
         render = MagicMock()
+        request = LaunchRequest(agent="demo", bottles=("dev",), cwd="/tmp", settings=Settings())
 
-        with patch("bot_bottle.cli.commands.start.get_bottle_backend", return_value=mock_backend), \
-             patch("bot_bottle.cli.commands.start._identity_from_plan", return_value="id"), \
-             patch("bot_bottle.cli.commands.start.info"):
-            secrets = MappingSecrets({})
-            spec = MagicMock()
-            start_mod.prepare_with_preflight(
-                spec,
-                Settings(),
-                secrets,
-                stage_dir=Path("/tmp"),
-                render_preflight=render,
-                prompt_yes=MagicMock(),
-                dry_run=True,
-            )
+        with patch("bot_bottle.backend.get_bottle_backend", return_value=mock_backend), \
+             patch.object(start_mod, "_text_render_preflight", return_value=render), \
+             patch.object(start_mod, "settle_state") as settle, \
+             patch.object(start_mod, "launch") as launch, \
+             patch.object(start_mod, "info"):
+            rc = start_mod._launch_bottle(request, MagicMock(), dry_run=True)
 
-        render.assert_called_once_with(mock_plan, "test-backend")
-        mock_backend.prepare.assert_called_once_with(
-            spec, stage_dir=Path("/tmp"), secrets=secrets)
+        self.assertEqual(0, rc)
+        render.assert_called_once_with(mock_backend.prepare.return_value, "test-backend")
+        spec = mock_backend.prepare.call_args.args[0]
+        self.assertEqual(("demo", ("dev",)), (spec.agent_name, spec.bottle_names))
+        settle.assert_called_once_with("demo-abc")
+        launch.assert_not_called()
+
+
+class TestLaunchSendsTheRequest(unittest.TestCase):
+    def test_interactive_launch_resolves_secrets_then_launches(self):
+        from bot_bottle.contract.hostctl import LaunchRequest
+        request = LaunchRequest(agent="demo", cwd="/tmp")
+        prepared = LaunchRequest(agent="demo", cwd="/tmp", secrets={"T": "v"})
+        manifest = MagicMock()
+        with patch.object(start_mod, "prepare_request", return_value=prepared) as prep, \
+             patch.object(start_mod, "launch", return_value=4) as launch:
+            self.assertEqual(4, start_mod._launch_bottle(request, manifest, dry_run=False))
+        prep.assert_called_once_with(request, manifest, interactive=True)
+        launch.assert_called_once_with(prepared)
+
+    def test_invalid_color_dies_before_launch(self):
+        from bot_bottle.contract.hostctl import LaunchRequest
+        with patch.object(start_mod, "launch") as launch, patch("sys.stderr", io.StringIO()):
+            with self.assertRaises(Die):
+                start_mod._launch_bottle(LaunchRequest(agent="demo", color="teal"),
+                                         MagicMock(), dry_run=False)
+        launch.assert_not_called()
 
 
 class TestNoAgentsDefined(unittest.TestCase):
@@ -244,7 +257,7 @@ class TestTextRenderPreflight(unittest.TestCase):
     def test_backend_name_in_output(self):
         render = start_mod._text_render_preflight()
         plan = MagicMock()
-        with patch("bot_bottle.cli.commands.start._manifest_to_yaml", return_value=""), \
+        with patch("bot_bottle.cli.commands.start.manifest_to_yaml", return_value=""), \
              patch("sys.stderr", io.StringIO()) as err:
             render(plan, "my-backend")
         self.assertIn("my-backend", err.getvalue())

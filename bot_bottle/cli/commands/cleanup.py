@@ -1,5 +1,8 @@
 """cleanup: stop and remove all orphaned bot-bottle resources.
 
+First the host controller tears down the bottles it holds (their agents are
+stopped), then each backend reaps whatever is left.
+
 Walks every registered backend (docker, firecracker, macos-container)
 so a single `bot-bottle cleanup` reaps every backend's leftovers — a
 firecracker bottle's VM processes and run dirs won't survive a
@@ -23,9 +26,14 @@ import sys
 
 from ...backend import get_bottle_backend, has_backend, known_backend_names
 from ...backend.cleanup_control import CleanupError
+from ...contract.hostctl import BOTTLES_PATH
+from ...control.hostctl import runner
+from ...control.hostctl.client import HostControlClient
+from ...lib import log
 from ...lib.log import info
 from ...util import read_tty_line
 from ..settings import settings_from_env
+from .active import held_bottles
 
 
 def cmd_cleanup(_argv: list[str]) -> int:
@@ -40,11 +48,16 @@ def cmd_cleanup(_argv: list[str]) -> int:
         if has_backend(settings, name)
     ]
     prepared = [(name, b, b.prepare_cleanup()) for name, b in plans]
+    held = sorted(held_bottles())
 
-    if all(p.empty for _, _, p in prepared):
+    if all(p.empty for _, _, p in prepared) and not held:
         info("no bot-bottle resources to clean up")
         return 0
 
+    if held:
+        info("--- host controller (agents are stopped) ---")
+        for bottle_id in held:
+            info(f"  bottle {bottle_id}")
     for name, _, plan in prepared:
         if plan.empty:
             continue
@@ -55,9 +68,9 @@ def cmd_cleanup(_argv: list[str]) -> int:
         info("cleanup: skipped")
         return 0
 
+    failures = _teardown_held(held)
     # Confirmation authorizes a fresh authoritative snapshot, not blind use of
     # identities that may have changed while the operator reviewed the preview.
-    failures: list[str] = []
     for name, backend, displayed in prepared:
         current = backend.prepare_cleanup()
         approved = displayed.intersect(current)
@@ -71,6 +84,30 @@ def cmd_cleanup(_argv: list[str]) -> int:
         raise CleanupError("cleanup incomplete: " + "; ".join(failures))
     info("cleanup: done")
     return 0
+
+
+def _teardown_held(bottle_ids: list[str]) -> list[str]:
+    """Ask the host controller to tear down each of `bottle_ids`, streaming
+    its output; one failure message per bottle that didn't go."""
+    if not bottle_ids:
+        return []
+    state = runner.running()
+    if state is None:
+        return [f"host controller: not running; can't stop {', '.join(bottle_ids)}"]
+    client = HostControlClient(state, runner.cli_token())
+    failures: list[str] = []
+    for bottle_id in bottle_ids:
+        try:
+            job = str(client.delete(f"{BOTTLES_PATH}/{bottle_id}")["job"])
+            final = client.follow(job, log.write_line)
+        except runner.HostControlError as e:
+            failures.append(f"{bottle_id}: {e}")
+            continue
+        if final is None:
+            failures.append(f"{bottle_id}: detached; its teardown continues as job {job}")
+        elif final.get("type") == "error":
+            failures.append(f"{bottle_id}: {final.get('message')}")
+    return failures
 
 
 def _prompt_yes(message: str) -> bool:

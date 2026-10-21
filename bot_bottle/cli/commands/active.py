@@ -1,4 +1,6 @@
-"""active: list currently-running bot-bottle bottles."""
+"""active: list currently-running bot-bottle bottles: the ones the host
+controller holds, with their session state, and whatever else the backends
+find running."""
 
 from __future__ import annotations
 
@@ -6,6 +8,10 @@ import os
 import sys
 
 from ...backend import enumerate_active_agents
+from ...contract.hostctl import BOTTLES_PATH
+from ...control.hostctl import runner
+from ...control.hostctl.client import HostControlClient
+from ...lib.log import warn
 from ..constants import PROG
 from ..settings import settings_from_env
 
@@ -33,22 +39,56 @@ def _ansi_label(text: str, color: str) -> str:
     return f"{code}{text}{_ANSI_RESET}"
 
 
+def held_bottles() -> dict[str, dict[str, object]]:
+    """The host controller's bottles by id; empty when it isn't running."""
+    state = runner.running()
+    if state is None:
+        return {}
+    try:
+        body = HostControlClient(state, runner.cli_token()).get(BOTTLES_PATH)
+    except runner.HostControlError as e:
+        warn(f"can't list the host controller's bottles: {e}")
+        return {}
+    bottles = body.get("bottles")
+    if not isinstance(bottles, list):
+        return {}
+    return {str(b["id"]): b for b in bottles if isinstance(b, dict) and "id" in b}
+
+
+def _session_column(held: dict[str, object] | None) -> str:
+    """`running` / `exited` for a session the host controller has, else `-`."""
+    if held is None:
+        return "-"
+    session = held.get("session")
+    running = isinstance(session, dict) and bool(session.get("running"))
+    return "running" if running else "exited"
+
+
 def cmd_active(argv: list[str]) -> int:
     if argv and argv[0] in ("-h", "--help"):
         sys.stderr.write(f"usage: {PROG} active\n")
         sys.stderr.write("\nList all currently-running bot-bottle bottles.\n")
-        sys.stderr.write("Output: <backend>\\t<slug>\\t<label>\\t<services>\n")
+        sys.stderr.write("Output: <backend>\\t<slug>\\t<label>\\t<services>\\t<session>\n")
+        sys.stderr.write("<session> is the host controller's session state; "
+                         f"`{PROG} attach <slug>` joins a running one.\n")
         return 0
 
+    held = held_bottles()
     active = enumerate_active_agents(settings_from_env())
-    if not active:
+    if not active and not held:
         print("no active bot-bottle bottles", file=sys.stderr)
         return 0
-    # One line per bottle: `<backend>\t<slug>\t<label>\t<services>`.
+    # One line per bottle: `<backend>\t<slug>\t<label>\t<services>\t<session>`.
     # Tab-separated keeps the format stable for shell pipelines.
     for b in active:
         services = ",".join(b.services) if b.services else "-"
         display_name = f"{b.label} ({b.agent_name})" if b.label else b.agent_name
         colored_name = _ansi_label(display_name, b.color)
-        print(f"{b.backend_name}\t{b.slug}\t{colored_name}\t{services}")
+        session = _session_column(held.pop(b.slug, None))
+        print(f"{b.backend_name}\t{b.slug}\t{colored_name}\t{services}\t{session}")
+    # Held, but not (or no longer) seen by its backend.
+    for slug, h in held.items():
+        label, agent = str(h.get("label") or ""), str(h.get("agent") or "?")
+        display_name = f"{label} ({agent})" if label else agent
+        print(f"{h.get('backend') or '?'}\t{slug}\t{display_name}\t-\t{_session_column(h)}")
     return 0

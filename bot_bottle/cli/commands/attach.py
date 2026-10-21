@@ -12,6 +12,7 @@ import sys
 
 from ...control.hostctl.sessions import SessionManager
 from ..constants import PROG
+from ..launch_client import tmux_attach
 
 
 def cmd_attach(argv: list[str]) -> int:
@@ -20,15 +21,12 @@ def cmd_attach(argv: list[str]) -> int:
         sys.stderr.write("\nJoin a running agent session; Ctrl-] detaches.\n")
         return 0 if argv[:1] in (["-h"], ["--help"]) else 2
     session = argv[0]
-    tmux_bin = shutil.which("tmux")
-    if tmux_bin is None:
+    if shutil.which("tmux") is None:
         sys.stderr.write(f"{PROG}: tmux is not installed\n")
         return 1
-    manager = SessionManager({})
-    if not manager.exists(session):
+    if not SessionManager({}).exists(session):
         sys.stderr.write(f"{PROG}: no running session {session!r}\n")
         return 1
-    argv_attach = manager.attach_argv(session, read_only=False)
-    argv_attach[0] = tmux_bin
-    os.execv(tmux_bin, argv_attach)
+    argv_attach, env = tmux_attach(session)
+    os.execve(argv_attach[0], argv_attach, env)
     return 1  # not reached

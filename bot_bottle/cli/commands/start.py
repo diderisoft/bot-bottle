@@ -1,14 +1,16 @@
-"""start: boot a sandboxed container for a named agent and attach an
-interactive claude-code session. The container is torn down when the
-session ends.
+"""start: launch a sandboxed bottle for a named agent and attach to its
+interactive session (PRD 0092).
 
-`--headless` selects a non-interactive launch (agent/bottles/label from
-flags, no TUI selectors, no y/N prompt) for orchestrators,
-CI, and webhook dispatch. The agent still execs on the inherited
-stdio/PTY, so an orchestrator that allocates the PTY drives the session.
+The CLI resolves everything interactive (agent and bottle pickers, label
+and color, secret prompts, host-key and launch confirmations), then asks
+the host controller to launch. The agent runs in a tmux session the
+controller owns; this terminal attaches to it. Ctrl-] detaches and leaves
+the agent running (`bot-bottle attach <id>` rejoins); the bottle is torn
+down when the agent exits, and `start` exits with the agent's code.
 
-The launch core is shared with `cli.py resume <identity>` through
-the private orchestrator `_launch_bottle`.
+`--headless` takes agent/bottles/label from flags and skips every prompt,
+for orchestrators, CI and webhooks; it still attaches on the inherited PTY.
+`--dry-run` prepares locally and prints the preflight without the daemon.
 """
 
 from __future__ import annotations
@@ -21,31 +23,18 @@ import sys
 import tempfile
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable
 
-from ...agent_provider import get_provider, runtime_for
-from ...backend import (
-    Bottle,
-    BottlePlan,
-    BottleSpec,
-    enumerate_active_agents,
-    get_bottle_backend,
-)
-from ...contract.hostctl import Settings
-from ...bottle_state import (
-    cleanup_state,
-    is_preserved,
-    mark_preserved,
-)
-from ...image_cache import StaleImageError
+from ...backend import BottlePlan, enumerate_active_agents
+from ...bottle_state import settle_state
+from ...contract.hostctl import LaunchRequest, Settings
 from ...lib.log import info, die
-from ...manifest import Manifest, ManifestIndex
-from ...secret_source import SecretSource
+from ...manifest import ManifestIndex
+from ...manifest.preview import manifest_to_yaml
 from ..constants import PROG
-from ...control.hostctl.orchestrator import ensure_via_daemon
+from ..launch_client import launch, prepare_request
 from ..secrets_env import secrets_from_env
 from ..settings import settings_from_env
-from ...util import read_tty_line, slugify
+from ...util import slugify
 from .. import tui
 
 
@@ -121,13 +110,10 @@ def cmd_start(argv: list[str]) -> int:
         settings = replace(
             settings, operation=replace(settings.operation, no_cache=True))
 
-    secrets = secrets_from_env()
     manifest = ManifestIndex.resolve(os.getcwd())
 
     if args.headless:
-        return _start_headless(
-            manifest, args, settings, secrets, dry_run=dry_run
-        )
+        return _start_headless(manifest, args, settings, dry_run=dry_run)
 
     agent_name: str | None = args.name
     if agent_name is None:
@@ -169,22 +155,17 @@ def cmd_start(argv: list[str]) -> int:
     if image_policy is None:
         return 0
 
-    spec = BottleSpec(
-        manifest=manifest,
-        agent_name=agent_name,
-        copy_cwd=args.cwd,
-        user_cwd=os.getcwd(),
+    request = LaunchRequest(
+        agent=agent_name,
+        bottles=bottle_names,
         label=label,
         color=color,
-        bottle_names=bottle_names,
         image_policy=image_policy,
+        settings=settings,
+        cwd=os.getcwd(),
+        copy_cwd=args.cwd,
     )
-    return _launch_bottle(
-        spec,
-        settings,
-        secrets,
-        dry_run=dry_run,
-    )
+    return _launch_bottle(request, manifest, dry_run=dry_run)
 
 
 # --- Headless launch -----------------------------------------------------
@@ -194,7 +175,6 @@ def _start_headless(
     manifest: ManifestIndex,
     args: argparse.Namespace,
     settings: Settings,
-    secrets: SecretSource,
     *,
     dry_run: bool,
 ) -> int:
@@ -202,10 +182,8 @@ def _start_headless(
 
     Resolves agent, bottles, label, and color from flags + manifest
     defaults instead of the TUI selectors, and auto-confirms the
-    preflight. Otherwise runs the same launch core as the interactive
-    path, so the agent still execs on the inherited stdio/PTY — an
-    orchestrator allocates that PTY and relays it to its
-    desktop/mobile clients."""
+    preflight. The session is still attached on the inherited PTY, which
+    an orchestrator allocates and relays to its clients."""
     try:
         stdin_fd = sys.stdin.fileno()
     except io.UnsupportedOperation:
@@ -241,25 +219,20 @@ def _start_headless(
 
     label = _uniquify_label_headless(settings, args.label or agent_name)
 
-    spec = BottleSpec(
-        manifest=manifest,
-        agent_name=agent_name,
-        copy_cwd=args.cwd,
-        user_cwd=os.getcwd(),
+    request = LaunchRequest(
+        agent=agent_name,
+        bottles=bottle_names,
         label=label,
         color=args.color or "",
-        bottle_names=bottle_names,
+        prompt=prompt,
         headless=True,
         image_policy="cached" if args.cached_images else "fresh",
-    )
-    return _launch_bottle(
-        spec,
-        settings,
-        secrets,
-        dry_run=dry_run,
         assume_yes=True,
-        headless_prompt_text=prompt,
+        settings=settings,
+        cwd=os.getcwd(),
+        copy_cwd=args.cwd,
     )
+    return _launch_bottle(request, manifest, dry_run=dry_run)
 
 
 def _uniquify_label_headless(settings: Settings, label: str) -> str:
@@ -279,106 +252,6 @@ def _uniquify_label_headless(settings: Settings, label: str) -> str:
 
 
 # --- Launch helpers ------------------------------------------------------
-
-
-def prepare_with_preflight(
-    spec: BottleSpec,
-    settings: Settings,
-    secrets: SecretSource,
-    *,
-    stage_dir: Path,
-    render_preflight: Callable[[BottlePlan, str], None],
-    prompt_yes: Callable[[], bool],
-    dry_run: bool = False,
-    backend_name: str | None = None,
-) -> tuple[BottlePlan | None, str]:
-    """Run `backend.prepare`, render the preflight summary via the
-    injected callable, prompt y/N via the injected callable.
-
-    `backend_name` selects which backend prepares the plan
-    (`None` → `settings.operation.backend` → host auto-selection).
-
-    When `spec.headless` is True the docker-fallback prompt is suppressed:
-    auto-selection dies with an actionable message rather than blocking
-    on a TTY read (which would hang CI, webhook dispatch, and orchestrators).
-
-    Returns `(plan, identity)`. `plan` is None on dry-run or
-    operator-N, but `identity` is set as soon as `backend.prepare`
-    returns so callers can reap the prepare-time state dir via
-    `settle_state(identity)` in their finally — exactly the existing
-    semantics."""
-    backend = get_bottle_backend(settings, backend_name, prompt=not spec.headless)
-    plan = backend.prepare(spec, stage_dir=stage_dir, secrets=secrets)
-    identity = _identity_from_plan(plan)
-
-    render_preflight(plan, backend.name)
-
-    if dry_run:
-        info("dry-run requested; not starting container.")
-        return None, identity
-    if not prompt_yes():
-        info("aborted by user")
-        return None, identity
-    return plan, identity
-
-
-def attach_agent(
-    bottle: Bottle, *, resume: bool = False,
-    agent_provider_template: str = "claude",
-    startup_args: tuple[str, ...] = (),
-) -> int:
-    """Run the selected provider CLI inside `bottle` as an
-    interactive session. Blocks until the session ends; returns the
-    agent process's exit code.
-
-    `resume=True` adds `--continue` so claude picks up its most
-    recent session non-interactively (no session-picker prompt).
-    First-attach paths (`bot-bottle start`) leave it False.
-
-    Used as the inner step of `bot-bottle start`."""
-    runtime = runtime_for(agent_provider_template)
-    info(
-        f"attaching interactive {agent_provider_template} session "
-        "(Ctrl-D or 'exit' to leave; container will be removed)"
-    )
-    agent_args = list(runtime.bypass_args)
-    agent_args.extend(startup_args)
-    if resume:
-        agent_args.extend(runtime.resume_args)
-    return bottle.exec_agent(agent_args, tty=True)
-
-
-def capture_claude_session_state(identity: str, exit_code: int) -> None:
-    """Inside the launch context, while the container is still
-    alive: snapshot the transcript and mark for preservation if
-    claude crashed."""
-    # FIXME: this captures Claude-specific session state. A follow-up
-    # spike should explore freezing provider-neutral container state
-    # instead of relying on each agent's transcript layout.
-    if not identity:
-        return
-    # snapshot_transcript(identity)
-    if exit_code != 0:
-        mark_preserved(identity)
-
-
-def settle_state(identity: str) -> None:
-    """Post-teardown housekeeping: print the resume hint if the
-    state was preserved, otherwise reap the per-bottle state dir."""
-    if not identity:
-        return
-    if is_preserved(identity):
-        info(f"to resume this bottle: bot-bottle resume {identity}")
-        return
-    cleanup_state(identity)
-
-
-def _identity_from_plan(plan: object) -> str:
-    """Backend-specific: the docker plan exposes the identity as
-    `.slug`. Other backends in the future would expose their own
-    identity attribute; for now we duck-type to keep this layer
-    backend-agnostic."""
-    return getattr(plan, "slug", "")
 
 
 def _peek_agent_bottle(manifest: ManifestIndex, agent_name: str) -> str:
@@ -428,15 +301,6 @@ def _resolve_unique_label(settings: Settings, label: str, color: str) -> tuple[s
         )
 
 
-def _text_prompt_yes() -> bool:
-    """Default `prompt_yes` for CLI use: reads y/N from the
-    controlling tty via stderr prompt + tty-line read."""
-    sys.stderr.write("bot-bottle: launch this agent? [y/N] ")
-    sys.stderr.flush()
-    reply = read_tty_line()
-    return reply in ("y", "Y", "yes", "YES")
-
-
 def _select_image_policy() -> str | None:
     return tui.filter_select(
         ["fresh", "cached"],
@@ -448,7 +312,7 @@ def _text_render_preflight():
     def _render(plan: BottlePlan, backend_name: str) -> None:
         print(file=sys.stderr)
         print(f"backend: {backend_name}", file=sys.stderr)
-        print(_manifest_to_yaml(plan.manifest), file=sys.stderr)
+        print(manifest_to_yaml(plan.manifest), file=sys.stderr)
     return _render
 
 
@@ -492,144 +356,47 @@ def _bottle_lineage(manifest: ManifestIndex) -> dict[str, str]:
     return labels
 
 
-def _manifest_to_yaml(manifest: Manifest) -> str:
-    """Serialize the resolved Manifest to a YAML string for preflight display."""
-    lines: list[str] = []
-
-    agent = manifest.agent
-    lines.append("agent:")
-    if agent.skills:
-        lines.append("  skills:")
-        for s in agent.skills:
-            lines.append(f"    - {s}")
-    if not agent.git_user.is_empty():
-        lines.append("  git-gate:")
-        lines.append("    user:")
-        if agent.git_user.name:
-            lines.append(f"      name: {agent.git_user.name}")
-        if agent.git_user.email:
-            lines.append(f"      email: {agent.git_user.email}")
-
-    bottle = manifest.bottle
-    lines.append("bottle:")
-
-    if bottle.agent_provider.template != "claude" or bottle.agent_provider.dockerfile:
-        lines.append("  agent_provider:")
-        lines.append(f"    template: {bottle.agent_provider.template}")
-        if bottle.agent_provider.dockerfile:
-            lines.append(f"    dockerfile: {bottle.agent_provider.dockerfile}")
-
-    if bottle.env:
-        lines.append("  env:")
-        for k, v in sorted(bottle.env.items()):
-            lines.append(f"    {k}: {v}")
-
-    has_git_gate = not bottle.git_user.is_empty() or bottle.git
-    if has_git_gate:
-        lines.append("  git-gate:")
-        if not bottle.git_user.is_empty():
-            lines.append("    user:")
-            if bottle.git_user.name:
-                lines.append(f"      name: {bottle.git_user.name}")
-            if bottle.git_user.email:
-                lines.append(f"      email: {bottle.git_user.email}")
-        if bottle.git:
-            lines.append("    repos:")
-            for entry in bottle.git:
-                lines.append(f"      {entry.Name}:")
-                lines.append(f"        url: {entry.Upstream}")
-
-    if bottle.egress.routes:
-        lines.append("  egress:")
-        lines.append("    routes:")
-        for r in bottle.egress.routes:
-            lines.append(f"      - host: {r.Host}")
-            if r.AuthScheme:
-                lines.append(f"        auth:")
-                lines.append(f"          scheme: {r.AuthScheme}")
-
-    lines.append(f"  supervise: {'true' if bottle.supervise else 'false'}")
-    if bottle.nested_containers:
-        lines.append("  nested_containers: true")
-
-    return "\n".join(lines)
+def _launch_bottle(request: LaunchRequest, manifest: ManifestIndex, *, dry_run: bool) -> int:
+    """Shared launch core for `start` and `resume`: a local dry run, or the
+    request (with its secrets and confirmed host keys) sent to the host
+    controller, then attached."""
+    try:
+        request.check()
+    except ValueError as e:
+        die(str(e))
+    if dry_run:
+        return _dry_run(request, manifest)
+    interactive = not request.headless
+    return launch(prepare_request(request, manifest, interactive=interactive))
 
 
-def _launch_bottle(
-    spec: BottleSpec,
-    settings: Settings,
-    secrets: SecretSource,
-    *,
-    dry_run: bool,
-    backend_name: str | None = None,
-    assume_yes: bool = False,
-    headless_prompt_text: str = "",
-) -> int:
-    """Shared launch core for `start` and `resume`. Builds the plan,
-    prints / dry-runs / prompts as appropriate, brings the bottle up,
-    attaches claude, and prints the resume hint on session end.
+def _dry_run(request: LaunchRequest, manifest: ManifestIndex) -> int:
+    """Prepare locally and print the preflight; nothing starts and the
+    host controller isn't involved."""
+    # pylint: disable=import-outside-toplevel
+    from ...backend import BottleSpec, get_bottle_backend
 
-    `assume_yes` skips the interactive y/N confirmation (headless /
-    orchestrator launches), where there is no human at the prompt.
-
-    `headless_prompt_text` is passed to the provider's `headless_prompt`
-    method and the resulting args are appended to startup_args so the
-    agent receives the initial task without interactive input."""
+    spec = BottleSpec(
+        manifest=manifest,
+        agent_name=request.agent,
+        copy_cwd=request.copy_cwd,
+        user_cwd=request.cwd or os.getcwd(),
+        identity=request.identity,
+        label=request.label,
+        color=request.color,
+        bottle_names=request.bottles,
+        headless=request.headless,
+        image_policy=request.image_policy,
+    )
+    backend = get_bottle_backend(request.settings, prompt=not request.headless)
     stage_dir = Path(tempfile.mkdtemp(prefix="bot-bottle-stage."))
     identity = ""
     try:
-        plan, identity = prepare_with_preflight(
-            spec,
-            settings,
-            secrets,
-            stage_dir=stage_dir,
-            render_preflight=_text_render_preflight(),
-            prompt_yes=(lambda: True) if assume_yes else _text_prompt_yes,
-            dry_run=dry_run,
-            backend_name=backend_name,
-        )
-        if plan is None:
-            return 0
-
-        backend = get_bottle_backend(settings, backend_name)
-        try:
-            backend.prelaunch_checks(plan)
-        except StaleImageError as exc:
-            if assume_yes:
-                die(str(exc))
-            sys.stderr.write(f"bot-bottle: {exc}\nLaunch anyway? [y/N] ")
-            sys.stderr.flush()
-            if read_tty_line() not in ("y", "Y", "yes", "YES"):
-                return 0
-        # The host controller brings the orchestrator up; launch then adopts it.
-        ensure_via_daemon(settings, backend.name)
-        with backend.launch(plan) as bottle:
-            agent_provider_template = getattr(plan, "agent_provider_template", "claude")
-            extra_args: tuple[str, ...] = ()
-            if headless_prompt_text:
-                extra_args = tuple(
-                    get_provider(agent_provider_template).headless_prompt(
-                        headless_prompt_text
-                    )
-                )
-            exit_code = attach_agent(
-                bottle,
-                agent_provider_template=agent_provider_template,
-                startup_args=plan.agent_provision.startup_args + extra_args,
-            )
-            info(
-                f"session ended (exit {exit_code}); "
-                f"container {bottle.name} will be removed"
-            )
-            if agent_provider_template == "claude":
-                capture_claude_session_state(identity, exit_code)
+        plan = backend.prepare(spec, stage_dir=stage_dir, secrets=secrets_from_env())
+        identity = str(getattr(plan, "slug", ""))
+        _text_render_preflight()(plan, backend.name)
+        info("dry-run requested; not starting container.")
         return 0
     finally:
-        # PRD 0018 chunk 2: prepare now writes the bottle's bind-mount
-        # sources under state/<slug>/. If we never reached the
-        # launch context (dry-run, preflight-N, prepare exception), or
-        # we did but nothing requested preservation, reap them along
-        # with everything else. `settle_state` subsumes the prior
-        # post-launch settlement and the new pre-launch cleanup.
         settle_state(identity)
         shutil.rmtree(stage_dir, ignore_errors=True)
