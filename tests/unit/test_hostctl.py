@@ -9,11 +9,9 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
-from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from bot_bottle.cli.commands.hostctl import cmd_hostctl
 from bot_bottle.contract.auth import CONTROL_PLANE, ROLE_CLI, ROLE_GATEWAY
 from bot_bottle.contract.hostctl import HOST_CONTROL, ROLE_ORCHESTRATOR, SERVICE_NAME, bearer
 from bot_bottle.control.hostctl import runner
@@ -147,22 +145,6 @@ class TestEnsureRunning(unittest.TestCase):
             self.assertTrue(runner.probe(first))
             self.assertTrue(runner.stop(force=True))
         self.assertIsNone(runner.running())
-
-
-class TestCommand(unittest.TestCase):
-    def setUp(self) -> None:
-        self.addCleanup(use_bottle_root(Path(self.enterContext(tempfile.TemporaryDirectory()))))
-
-    def test_bad_usage_exits_2(self) -> None:
-        with mock.patch("sys.stderr", io.StringIO()):
-            self.assertEqual(2, cmd_hostctl([]))
-            self.assertEqual(2, cmd_hostctl(["bogus"]))
-
-    def test_status_when_not_running_exits_1(self) -> None:
-        out = io.StringIO()
-        with redirect_stdout(out):
-            self.assertEqual(1, cmd_hostctl(["status"]))
-        self.assertIn("not running", out.getvalue())
 
 
 if __name__ == "__main__":

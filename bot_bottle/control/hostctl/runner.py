@@ -155,7 +155,7 @@ def stop(*, force: bool = False) -> bool:
             raise HostControlError(
                 f"the host controller holds {len(held)} bottle(s) ({', '.join(held)}); "
                 "stopping it would orphan them. Tear them down first (`cleanup`) "
-                "or stop it anyway with `hostctl stop --force`")
+                "or stop it anyway with `down --force`")
         _stop(state)
         return True
 

@@ -37,8 +37,8 @@ def _note_service() -> None:
     """Point at the optional service that keeps the host controller running."""
     if not service_unit.installed():
         sys.stderr.write(
-            f"{PROG}: optional: `{PROG} hostctl service install` keeps the host controller "
-            "running across reboots\n")
+            f"{PROG}: tip: `{PROG} install` also sets up autostart, which keeps the host "
+            "controller running across reboots\n")
 
 
 def cmd_backend(args: list[str]) -> int:

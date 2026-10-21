@@ -106,7 +106,7 @@ def launch(request: LaunchRequest) -> int:
             job = str(client.post(BOTTLES_PATH, request.to_json())["job"])
             final = client.follow(job, log.write_line)
             if final is None:
-                die(f"detached; the launch continues as job {job} (see `{PROG} hostctl jobs`)")
+                die(f"detached; the launch continues as job {job} (see `{PROG} jobs`)")
             if final.get("type") != "error":
                 break
             message = str(final.get("message") or "launch failed")

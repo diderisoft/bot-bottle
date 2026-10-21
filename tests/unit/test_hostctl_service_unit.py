@@ -12,7 +12,6 @@ from pathlib import Path
 from unittest import mock
 
 from bot_bottle.cli.commands import backend as backend_cmd
-from bot_bottle.cli.commands.hostctl import cmd_hostctl
 from bot_bottle.control.hostctl import runner, service_unit
 
 from . import use_bottle_root
@@ -101,16 +100,11 @@ class TestRunnerAndCli(_Isolated):
         start.assert_called_once()
         self.assertIsNone(wait.call_args.args[0])
 
-    def test_cli_status_uninstall_and_backend_setup_hint(self) -> None:
+    def test_backend_setup_hint(self) -> None:
         self.use("launchd")
-        out = io.StringIO()
-        with mock.patch("sys.stdout", out):
-            self.assertEqual(0, cmd_hostctl(["service", "status"]))
-            self.assertEqual(0, cmd_hostctl(["service", "uninstall"]))
-        self.assertIn("not installed", out.getvalue())
         with mock.patch("sys.stderr", io.StringIO()) as err:
             backend_cmd._note_service()  # pyright: ignore[reportPrivateUsage]
-        self.assertIn("hostctl service install", err.getvalue())
+        self.assertIn("install` also sets up autostart", err.getvalue())
 
 
 if __name__ == "__main__":

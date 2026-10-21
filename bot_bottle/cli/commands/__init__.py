@@ -22,16 +22,21 @@ _HANDLERS: dict[str, str] = {
     "backend": "backend:cmd_backend",
     "cleanup": "cleanup:cmd_cleanup",
     "commit": "commit:cmd_commit",
+    "down": "lifecycle:cmd_down",
     "doctor": "doctor:cmd_doctor",
     "edit": "edit:cmd_edit",
     "help": "help:cmd_help",
-    "hostctl": "hostctl:cmd_hostctl",
+    "install": "lifecycle:cmd_install",
+    "jobs": "lifecycle:cmd_jobs",
     "init": "init:cmd_init",
     "list": "list:cmd_list",
     "login": "login:cmd_login",
     "resume": "resume:cmd_resume",
     "start": "start:cmd_start",
+    "status": "lifecycle:cmd_status",
     "supervise": "supervise:cmd_supervise",
+    "uninstall": "lifecycle:cmd_uninstall",
+    "up": "lifecycle:cmd_up",
 }
 
 
@@ -55,7 +60,10 @@ COMMANDS = {name: _lazy(spec) for name, spec in _HANDLERS.items()}
 # the host (TAP pool, /dev/kvm, firecracker) and never opens the store, so
 # gating it on the schema breaks preflight on a fresh CI runner where stdin
 # isn't a TTY and the migration prompt can't be answered. `help` and `login`
-# likewise never touch the store, nor does `hostctl`.
-NO_MIGRATION_COMMANDS = frozenset({"attach", "backend", "doctor", "help", "hostctl", "login"})
+# likewise never touch the store, nor do the host-service commands.
+NO_MIGRATION_COMMANDS = frozenset({
+    "attach", "backend", "doctor", "down", "help", "install", "jobs", "login",
+    "status", "uninstall", "up",
+})
 
 __all__ = ["COMMANDS", "NO_MIGRATION_COMMANDS"]
