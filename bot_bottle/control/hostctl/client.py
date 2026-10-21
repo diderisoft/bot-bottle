@@ -17,12 +17,13 @@ class HostControlClient:
         self._headers = bearer(token)
 
     def _open(self, path: str, timeout: float | None,  # type: ignore[no-untyped-def]
-              body: dict[str, object] | None = None):
+              body: dict[str, object] | None = None, method: str | None = None):
         data = None if body is None else json.dumps(body).encode()
         headers = dict(self._headers)
         if body is not None:
             headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(self._base + path, data=data, headers=headers)
+        req = urllib.request.Request(self._base + path, data=data, headers=headers,
+                                     method=method)
         try:
             return urllib.request.urlopen(req, timeout=timeout)
         except urllib.error.HTTPError as e:
@@ -37,6 +38,10 @@ class HostControlClient:
 
     def post(self, path: str, body: dict[str, object]) -> dict[str, object]:
         with self._open(path, timeout=30, body=body) as resp:
+            return json.loads(resp.read())
+
+    def delete(self, path: str) -> dict[str, object]:
+        with self._open(path, timeout=30, method="DELETE") as resp:
             return json.loads(resp.read())
 
     def jobs(self) -> list[dict[str, object]]:

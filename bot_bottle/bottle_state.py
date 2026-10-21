@@ -355,8 +355,30 @@ def cleanup_state(identity: str) -> None:
         shutil.rmtree(state_dir, ignore_errors=True)
 
 
+def capture_claude_session_state(identity: str, exit_code: int) -> None:
+    """After a claude session ends, while the bottle is still up: mark its
+    state for preservation if claude exited non-zero."""
+    # FIXME: Claude-specific; a follow-up should freeze provider-neutral state.
+    if identity and exit_code != 0:
+        mark_preserved(identity)
+
+
+def settle_state(identity: str) -> None:
+    """After teardown: print the resume hint if the state was preserved,
+    otherwise remove the per-bottle state dir."""
+    from .lib.log import info  # pylint: disable=import-outside-toplevel
+    if not identity:
+        return
+    if is_preserved(identity):
+        info(f"to resume this bottle: bot-bottle resume {identity}")
+        return
+    cleanup_state(identity)
+
+
 __all__ = [
     "BottleMetadata",
+    "capture_claude_session_state",
+    "settle_state",
     "agent_state_dir",
     "bottle_identity",
     "globalize_slug",

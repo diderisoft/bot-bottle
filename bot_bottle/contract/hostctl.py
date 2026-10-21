@@ -7,6 +7,8 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import re
+import signal
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
@@ -24,8 +26,17 @@ JOBS_PATH = "/jobs"
 # POST /orchestrator/{ensure,restart} start jobs; POST /orchestrator/status answers.
 # Each takes {"settings": Settings.to_json()}.
 ORCHESTRATOR_PATH = "/orchestrator"
+# GET /sessions/{id}: {"running": bool, "exit": {"status", "signal"} | null}.
 # GET /sessions/{id}/attach upgrades to the attach WebSocket (see control/hostctl/attach).
 SESSIONS_PATH = "/sessions"
+# POST /bottles (a `LaunchRequest`) starts a `bottle.launch` job whose result is
+# {"bottle": id, "session": id}; GET /bottles lists the bottles the daemon holds;
+# DELETE /bottles/{id} starts a `bottle.teardown` job.
+BOTTLES_PATH = "/bottles"
+
+# A job `error` event with this `code` stopped for a yes/no the caller can give:
+# resend the request with `assume_yes` to go ahead.
+CONFIRM_ERROR = "confirm"
 
 # Callers authenticate with `Authorization: Bearer <token>`.
 AUTH_HEADER = "Authorization"
@@ -154,6 +165,120 @@ def _section_from_json(cls: type[_SectionT], data: object, where: str) -> _Secti
     return cls(**values)  # type: ignore[arg-type]
 
 
+BOTTLE_COLORS = ("red", "green", "yellow", "blue", "magenta")
+IMAGE_POLICIES = ("fresh", "cached")
+_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_IDENTITY = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+_MAP_FIELDS = ("secrets", "host_keys")
+
+
+@dataclass(frozen=True)
+class LaunchRequest:
+    """`POST /bottles`: a fully resolved, non-interactive launch.
+
+    `cwd`, `copy_cwd`, `secrets` and `host_keys` are `cli`-only: a path on
+    the host, and values the CLI resolved or its user confirmed."""
+
+    agent: str
+    bottles: tuple[str, ...] = ()
+    label: str = ""
+    color: str = ""
+    # The headless initial task; empty for an interactive session.
+    prompt: str = ""
+    headless: bool = False
+    # Resume this bottle identity; empty mints a fresh one.
+    identity: str = ""
+    image_policy: str = "fresh"
+    # Go ahead without the yes/no a `CONFIRM_ERROR` would ask for.
+    assume_yes: bool = False
+    settings: Settings = field(default_factory=Settings)
+    cwd: str = ""
+    copy_cwd: bool = False
+    secrets: dict[str, str] = field(default_factory=dict, repr=False)
+    # Repo name -> the upstream host key the user confirmed for this launch.
+    host_keys: dict[str, str] = field(default_factory=dict)
+
+    def to_json(self) -> dict[str, object]:
+        body = dataclasses.asdict(self)
+        body["bottles"] = list(self.bottles)
+        body["settings"] = self.settings.to_json()
+        return body
+
+    @classmethod
+    def from_json(cls, data: object, role: str) -> "LaunchRequest":
+        """Parse and validate a request from `role`. ValueError for a
+        malformed one; PermissionError when a non-`cli` role sets a
+        `cli`-only field."""
+        body = _mapping(data, "launch")
+        names = {f.name for f in dataclasses.fields(cls)}
+        _reject_unknown(body, names, "launch")
+        forbidden = sorted(set(body) & set(LAUNCH_CLI_ONLY))
+        if role != ROLE_CLI and forbidden:
+            raise PermissionError(f"launch: {', '.join(forbidden)} only for the cli role")
+        values: dict[str, Any] = {}
+        for name in sorted((names - {"bottles", "settings", *_MAP_FIELDS}) & set(body)):
+            expected = type(getattr(_DEFAULT_LAUNCH, name))
+            # Exact types: a bool is not a str here, nor an int a bool.
+            if not isinstance(body[name], expected) or \
+                    isinstance(body[name], bool) != (expected is bool):
+                raise ValueError(f"launch.{name}: expected {expected.__name__}")
+            values[name] = body[name]
+        if "bottles" in body:
+            bottles = body["bottles"]
+            if not isinstance(bottles, list) or not all(isinstance(b, str) for b in bottles):
+                raise ValueError("launch.bottles: expected a list of names")
+            values["bottles"] = tuple(bottles)
+        for name in set(_MAP_FIELDS) & set(body):
+            values[name] = _str_map(body[name], f"launch.{name}")
+        if "settings" in body:
+            values["settings"] = Settings.from_json(body["settings"])
+        if "agent" not in values:
+            raise ValueError("launch.agent: required")
+        request = cls(**values)
+        request.check()
+        return request
+
+    def check(self) -> None:
+        """ValueError unless every field holds an allowed value."""
+        for name in (self.agent, *self.bottles):
+            if not _NAME.match(name):
+                raise ValueError(f"launch: invalid agent or bottle name {name!r}")
+        if self.identity and not _IDENTITY.match(self.identity):
+            raise ValueError(f"launch.identity: invalid identity {self.identity!r}")
+        if self.color and self.color not in BOTTLE_COLORS:
+            raise ValueError(f"launch.color: one of {', '.join(BOTTLE_COLORS)}")
+        if self.image_policy not in IMAGE_POLICIES:
+            raise ValueError(f"launch.image_policy: one of {', '.join(IMAGE_POLICIES)}")
+        if self.cwd and not self.cwd.startswith("/"):
+            raise ValueError("launch.cwd: expected an absolute path")
+        if self.copy_cwd and not self.cwd:
+            raise ValueError("launch.copy_cwd needs cwd")
+        if self.headless and not self.prompt:
+            raise ValueError("launch: headless needs a prompt")
+
+
+LAUNCH_CLI_ONLY = ("cwd", "copy_cwd", "secrets", "host_keys")
+_DEFAULT_LAUNCH = LaunchRequest(agent="")
+
+
+def _str_map(data: object, where: str) -> dict[str, str]:
+    body = _mapping(data, where)
+    if not all(isinstance(v, str) for v in body.values()):
+        raise ValueError(f"{where}: values must be strings")
+    return dict(body)
+
+
+def exit_code(status: int, signal_name: str = "") -> int:
+    """A shell-style exit code for an agent that exited with `status`, or
+    was killed by `signal_name` (128 + its number)."""
+    if signal_name:
+        try:
+            return 128 + int(signal.Signals[signal_name])
+        except KeyError:
+            return 128
+    return status
+
+
 def status_body(*, build_id: str, pid: int) -> dict[str, object]:
     """`GET /status` response: which code the daemon runs and its pid."""
     return {"service": SERVICE_NAME, "build_id": build_id, "pid": pid}
@@ -165,7 +290,9 @@ def bearer(token: str) -> dict[str, str]:
 
 
 __all__ = [
-    "AUTH_HEADER", "AUTH_SCHEME", "DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS",
+    "AUTH_HEADER", "AUTH_SCHEME", "BOTTLES_PATH", "BOTTLE_COLORS", "CONFIRM_ERROR",
+    "DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS", "IMAGE_POLICIES", "LAUNCH_CLI_ONLY",
+    "LaunchRequest", "exit_code",
     "DEFAULT_EGRESS_PORT", "DEFAULT_GATEWAY_IMAGE", "DEFAULT_ORCHESTRATOR_IMAGE",
     "HOST_CONTROL", "InfraSettings", "JOBS_PATH", "ORCHESTRATOR_PATH", "OperationSettings", "PORT_ENV",
     "ROLE_ORCHESTRATOR", "SERVICE_NAME", "SESSIONS_PATH", "STATUS_PATH", "Settings", "bearer", "status_body",

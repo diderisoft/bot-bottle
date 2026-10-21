@@ -13,6 +13,7 @@ from __future__ import annotations
 import dataclasses
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
@@ -182,6 +183,20 @@ def prompt_tty(message: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def with_host_keys(manifest: Manifest, keys: Mapping[str, str]) -> Manifest:
+    """`manifest` with each repo that has no host key given the one in
+    `keys` (repo name -> key), if any."""
+    bottle = manifest.bottle
+    entries = tuple(
+        dataclasses.replace(e, KnownHostKey=keys[e.Name])
+        if not e.KnownHostKey and keys.get(e.Name) else e
+        for e in bottle.git
+    )
+    if entries == tuple(bottle.git):
+        return manifest
+    return dataclasses.replace(manifest, bottle=dataclasses.replace(bottle, git=entries))
+
+
 def preflight_host_keys(
     manifest: Manifest,
     *,
@@ -261,6 +276,7 @@ def preflight_host_keys(
 __all__ = [
     "fetch_host_key",
     "preflight_host_keys",
+    "with_host_keys",
     "add_host_key_to_frontmatter",
     "find_repo_bottle_file",
     "find_and_update_bottle_file",

@@ -128,7 +128,19 @@ class SessionManager:
         self._finishing: set[str] = set()
         self._cond = threading.Condition()
 
+    def register(self, kind: str,
+                 finisher: Callable[[SessionRecord, ExitStatus], None]) -> None:
+        """Run `finisher` when a session of `kind` ends."""
+        self._finishers[kind] = finisher
+
     # -- records -------------------------------------------------------------
+
+    def records(self) -> list[SessionRecord]:
+        """Every session record on disk."""
+        directory = state_dir() / "sessions"
+        found = (self.record(p.stem) for p in sorted(directory.glob("*.json"))) \
+            if directory.is_dir() else iter(())
+        return [r for r in found if r is not None]
 
     def _record_path(self, session_id: str) -> Path:
         return state_dir() / "sessions" / f"{session_id}.json"
@@ -213,6 +225,12 @@ class SessionManager:
     def exit_status(self, session_id: str) -> ExitStatus | None:
         with self._cond:
             return self._exits.get(session_id)
+
+    def kill(self, session_id: str) -> None:
+        """Kill the tmux session; its agent gets SIGHUP and the exit is
+        reported as usual."""
+        subprocess.run(tmux("kill-session", "-t", f"={session_id}"),
+                       capture_output=True, check=False)
 
     def exists(self, session_id: str) -> bool:
         return subprocess.run(tmux("has-session", "-t", f"={session_id}"),

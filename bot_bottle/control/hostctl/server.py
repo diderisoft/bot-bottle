@@ -11,17 +11,20 @@ from urllib.parse import parse_qs, urlsplit
 
 from ...contract.auth import ROLE_CLI
 from ...contract.hostctl import (
-    AUTH_HEADER, AUTH_SCHEME, HOST_CONTROL, JOBS_PATH, ORCHESTRATOR_PATH, ROLE_ORCHESTRATOR,
-    SESSIONS_PATH, STATUS_PATH, Settings, status_body,
+    AUTH_HEADER, AUTH_SCHEME, BOTTLES_PATH, HOST_CONTROL, JOBS_PATH, ORCHESTRATOR_PATH,
+    ROLE_ORCHESTRATOR, SESSIONS_PATH, STATUS_PATH, LaunchRequest, Settings, status_body,
 )
 from ...lib import websocket as ws
 from ...lib.log import debug
 from . import orchestrator
 from .attach import Viewer
+from .bottles import BottleService
 from .jobs import JobRegistry
 from .sessions import SessionManager
 
 MAX_BODY_BYTES = 1 << 20
+# Roles that may launch, list, tear down and watch bottles.
+_BOTTLE_ROLES = (ROLE_CLI, ROLE_ORCHESTRATOR)
 
 
 class HostControlServer(ThreadingHTTPServer):
@@ -31,7 +34,8 @@ class HostControlServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, address: tuple[str, int], build_id: str, key: str,
-                 sessions: SessionManager | None = None) -> None:
+                 sessions: SessionManager | None = None,
+                 bottles: BottleService | None = None) -> None:
         if not key:
             raise ValueError("host controller needs its signing key")
         super().__init__(address, _Handler)
@@ -39,6 +43,7 @@ class HostControlServer(ThreadingHTTPServer):
         self.key = key
         self.jobs = JobRegistry()
         self.sessions = sessions if sessions is not None else SessionManager({})
+        self.bottles = bottles if bottles is not None else BottleService(self.sessions)
 
     def role_of(self, authorization: str | None) -> str | None:
         """The `HOST_CONTROL` role an `Authorization` header carries, or None."""
@@ -64,6 +69,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._jobs_route(server, parts[1:], parse_qs(url.query))
         elif len(parts) == 3 and f"/{parts[0]}" == SESSIONS_PATH and parts[2] == "attach":
             self._attach(server, parts[1], parse_qs(url.query))
+        elif len(parts) == 2 and f"/{parts[0]}" == SESSIONS_PATH:
+            if self._allowed(_BOTTLE_ROLES):
+                self._send(200, server.bottles.session_state(parts[1]))
+        elif url.path == BOTTLES_PATH:
+            if self._allowed(_BOTTLE_ROLES):
+                self._send(200, {"bottles": server.bottles.list()})
         else:
             self._send(404, {"error": f"no route {url.path}"})
 
@@ -92,9 +103,44 @@ class _Handler(BaseHTTPRequestHandler):
                    cols=_int_param(query, "cols", 80), rows=_int_param(query, "rows", 24))
         self.close_connection = True
 
+    def do_DELETE(self) -> None:  # pylint: disable=invalid-name
+        server = cast(HostControlServer, self.server)
+        parts = [p for p in urlsplit(self.path).path.split("/") if p]
+        if len(parts) != 2 or f"/{parts[0]}" != BOTTLES_PATH:
+            self._send(404, {"error": f"no route {self.path}"})
+            return
+        role = self._allowed(_BOTTLE_ROLES)
+        if role is None:
+            return
+        bottle_id = parts[1]
+        if not server.bottles.known(bottle_id):
+            self._send(404, {"error": f"no bottle {bottle_id}"})
+            return
+        job = server.jobs.start("bottle.teardown", role,
+                                lambda: server.bottles.teardown(bottle_id))
+        self._send(202, {"job": job.id})
+
+    def _launch(self, server: HostControlServer) -> None:
+        role = self._allowed(_BOTTLE_ROLES)
+        if role is None:
+            return
+        try:
+            request = LaunchRequest.from_json(self._json_body(), role)
+        except PermissionError as e:
+            self._send(403, {"error": str(e)})
+            return
+        except ValueError as e:
+            self._send(400, {"error": str(e)})
+            return
+        job = server.jobs.start("bottle.launch", role, lambda: server.bottles.launch(request))
+        self._send(202, {"job": job.id})
+
     def do_POST(self) -> None:  # pylint: disable=invalid-name
         server = cast(HostControlServer, self.server)
         path = urlsplit(self.path).path
+        if path == BOTTLES_PATH:
+            self._launch(server)
+            return
         action = path.removeprefix(ORCHESTRATOR_PATH + "/")
         if not path.startswith(ORCHESTRATOR_PATH + "/") or \
                 action not in ("ensure", "restart", "status"):
@@ -150,6 +196,17 @@ class _Handler(BaseHTTPRequestHandler):
             self._stream(job.follow(int(start) if start.isdigit() else 0))
         else:
             self._send(404, {"error": "no such job route"})
+
+    def _allowed(self, roles: tuple[str, ...]) -> str | None:
+        """The caller's role if it's one of `roles`; otherwise send 401/403 and
+        return None."""
+        role = self._role()
+        if role is None:
+            self._send(401, {"error": "missing or invalid token"})
+        elif role not in roles:
+            self._send(403, {"error": f"not for the {role} role"})
+            return None
+        return role
 
     def _role(self) -> str | None:
         """The caller's `HOST_CONTROL` role, from its bearer token."""

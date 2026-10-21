@@ -72,7 +72,8 @@ class JobRegistry:
 
     def start(self, kind: str, owner: str, work: Callable[[], dict[str, object]]) -> Job:
         """Run `work` as a job owned by role `owner`. Its return value is the
-        `result` event; an exception (including `log.die`) is the `error` event."""
+        `result` event; an exception (including `log.die`) is the `error` event,
+        carrying the exception's `job_error_code` as `code` when it has one."""
         job = Job(id=uuid.uuid4().hex[:12], kind=kind, owner=owner)
         with self._lock:
             self._prune()
@@ -88,8 +89,12 @@ class JobRegistry:
                 except log.Die as e:
                     job.record({"type": "error", "message": e.message or "failed"}, final=FAILED)
                 except Exception as e:  # pylint: disable=broad-exception-caught
-                    message = f"{type(e).__name__}: {e}"
-                    job.record({"type": "error", "message": message}, final=FAILED)
+                    code = getattr(e, "job_error_code", "")
+                    event: dict[str, object] = {
+                        "type": "error", "message": str(e) if code else f"{type(e).__name__}: {e}"}
+                    if code:
+                        event["code"] = code
+                    job.record(event, final=FAILED)
                 else:
                     job.record({"type": "result", "value": value}, final=SUCCEEDED)
 

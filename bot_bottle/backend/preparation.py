@@ -15,6 +15,7 @@ from ..agent_provider import AgentProvisionPlan, build_agent_provision_plan, get
 from ..egress import EgressPlan
 from ..env import ResolvedEnv, resolve_env
 from ..git_gate import GitGate, GitGatePlan
+from ..git_gate.host_key import with_host_keys
 from ..manifest import Manifest
 from ..secret_source import SecretSource
 from ..supervisor.plan import SupervisePlan
@@ -76,7 +77,7 @@ class BottlePreparationPlanner:
 
         backend._preflight()  # pylint: disable=protected-access
         manifest = GitGate().preflight_host_keys(
-            manifest,
+            with_host_keys(manifest, dict(spec.host_keys)),
             headless=spec.headless,
             home_md=spec.manifest.home_md,
         )
@@ -84,7 +85,7 @@ class BottlePreparationPlanner:
         bottle = manifest.bottle
         provider_config = bottle.agent_provider
         provider = get_provider(provider_config.template)
-        resolved_env = resolve_env(manifest, secrets)
+        resolved_env = resolve_env(manifest, secrets, prompt=not spec.headless)
         workspace = workspace_plan(spec, guest_home=provider.guest_home)
         slug = mint_slug(spec)
         write_launch_metadata(slug, spec, compose_project="", backend=backend.name)

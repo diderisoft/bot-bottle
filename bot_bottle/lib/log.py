@@ -71,6 +71,17 @@ def redirected() -> bool:
     return _SINK.get() is not None
 
 
+def current_sink() -> Callable[[str], None]:
+    """Where this context's output lines go now, as a callable usable from
+    another thread."""
+    sink = _SINK.get()
+    return sink if sink is not None else _stderr_line
+
+
+def _stderr_line(line: str) -> None:
+    sys.stderr.write(line + "\n")
+
+
 def write_line(line: str) -> None:
     """Write one output line (no trailing newline) to this context's sink."""
     sink = _SINK.get()

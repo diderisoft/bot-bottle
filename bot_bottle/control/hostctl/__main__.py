@@ -18,6 +18,7 @@ from ...trust_domain import signing_key
 from .build import current_build_id
 from .runner import HostControlState, clear_state, write_state
 from . import localsock
+from .bottles import BottleService
 from .server import HostControlServer
 from .sessions import SessionManager, control_socket_path, tmux_version, write_config
 
@@ -25,12 +26,14 @@ from .sessions import SessionManager, control_socket_path, tmux_version, write_c
 def main() -> int:
     port = int(os.environ.get(PORT_ENV, "0") or "0")
     sessions = SessionManager({})
+    # Registers the `bottle` finisher, so it must exist before adopting.
+    bottles = BottleService(sessions)
     local = localsock.serve(control_socket_path(), sessions)
     if tmux_version() is not None:
         write_config()
         sessions.adopt()
     server = HostControlServer(("127.0.0.1", port), current_build_id(), signing_key(HOST_CONTROL),
-                               sessions)
+                               sessions, bottles)
     state = HostControlState(
         pid=os.getpid(), port=server.server_address[1], build_id=server.build_id
     )

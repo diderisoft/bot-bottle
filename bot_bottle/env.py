@@ -154,3 +154,9 @@ def resolve_env(
         else:  # literal
             literals[name] = raw
     return ResolvedEnv(forwarded=forwarded, literals=literals)
+
+
+def prompt_secret(name: str, raw: str) -> str:
+    """Ask the controlling tty for secret entry `name` (whose manifest value
+    is `raw`, e.g. `?Your token`), without echoing."""
+    return _read_secret_silent(name, env_entry_secret_prompt(raw))
