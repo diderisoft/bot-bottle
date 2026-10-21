@@ -107,6 +107,14 @@ class TestEnsureViaDaemon(_Daemon):
             orchestrator.ensure_via_daemon(Settings(), "docker")
         self.assertEqual("orchestrator did not become healthy", cm.exception.message)
 
+    def test_detaching_points_at_the_jobs_command(self) -> None:
+        with mock.patch("bot_bottle.control.hostctl.client.HostControlClient.follow",
+                        return_value=None), \
+             mock.patch.object(orchestrator, "ensure", return_value={}), \
+             self.assertRaises(log.Die) as cm:
+            orchestrator.ensure_via_daemon(Settings(), "docker")
+        self.assertIn("see `bot-bottle jobs`", cm.exception.message)
+
 
 class TestDaemonSide(unittest.TestCase):
     def _backend(self) -> mock.MagicMock:
