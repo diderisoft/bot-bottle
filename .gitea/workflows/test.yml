@@ -66,6 +66,15 @@ jobs:
       - name: Install dev requirements
         run: python3 -m pip install --break-system-packages -r requirements-dev.txt
 
+      # The host controller's session tests drive a real tmux (PRD 0092).
+      - name: Install tmux
+        run: |
+          command -v tmux || {
+            SUDO=$(command -v sudo || true)
+            $SUDO apt-get update -qq && DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq tmux
+          }
+          tmux -V
+
       - name: Run unit tests with coverage
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage.unit

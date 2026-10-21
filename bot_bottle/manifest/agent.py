@@ -249,6 +249,9 @@ class ManifestAgent:
     # `user` is allowed at the agent level; `repos` stays bottle-only
     # because it carries credentials and host trust.
     git_user: ManifestGitUser = ManifestGitUser()
+    # `remote.writable`: whether remote viewers of this agent's session may
+    # type (PRD 0092). They're read-only otherwise.
+    remote_writable: bool = False
 
     @classmethod
     def from_dict(cls, name: str, raw: object, bottle_names: set[str]) -> "ManifestAgent":
@@ -333,7 +336,25 @@ class ManifestAgent:
             if "user" in gd:
                 git_user = ManifestGitUser.from_dict(name, gd["user"])
 
-        return cls(bottle=bottle, skills=skills, prompt=prompt, git_user=git_user)
+        remote_writable = False
+        remote_raw = d.get("remote")
+        if remote_raw is not None:
+            rd = as_json_object(remote_raw, f"agent '{name}' remote")
+            for k in rd:
+                if k != "writable":
+                    raise ManifestError(
+                        f"agent '{name}' remote has unknown key {k!r}; allowed: writable"
+                    )
+            writable = rd.get("writable", False)
+            if not isinstance(writable, bool):
+                raise ManifestError(
+                    f"agent '{name}' remote.writable must be a boolean "
+                    f"(was {type(writable).__name__})"
+                )
+            remote_writable = writable
+
+        return cls(bottle=bottle, skills=skills, prompt=prompt, git_user=git_user,
+                   remote_writable=remote_writable)
 
 
 def _parse_provider_settings(

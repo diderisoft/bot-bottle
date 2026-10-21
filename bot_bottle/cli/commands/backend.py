@@ -14,10 +14,22 @@ the host default).
 from __future__ import annotations
 
 import argparse
+import sys
 
 from ...backend import get_bottle_backend, known_backend_names
+from ...control.hostctl.sessions import MIN_TMUX_VERSION, tmux_version
 from ..constants import PROG
 from ..settings import settings_from_env
+
+
+def _note_tmux() -> None:
+    """Agent sessions run in tmux (PRD 0092); say so if it's missing or too old."""
+    version = tmux_version()
+    if version is None or version < MIN_TMUX_VERSION:
+        found = "not installed" if version is None else f"{version[0]}.{version[1]}"
+        sys.stderr.write(
+            f"{PROG}: tmux {MIN_TMUX_VERSION[0]}.{MIN_TMUX_VERSION[1]}+ is required for agent "
+            f"sessions ({found}); install it with brew, apt or nix\n")
 
 
 def cmd_backend(args: list[str]) -> int:
@@ -41,6 +53,7 @@ def cmd_backend(args: list[str]) -> int:
 
     backend = get_bottle_backend(settings_from_env(), ns.backend)
     if ns.action == "setup":
+        _note_tmux()
         return backend.setup()
     if ns.action == "teardown":
         return backend.teardown()

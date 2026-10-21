@@ -22,7 +22,7 @@ BOTTLE_KEYS = frozenset(
     }
 )
 AGENT_KEYS_REQUIRED: frozenset[str] = frozenset()
-AGENT_KEYS_OPTIONAL = frozenset({"bottle", "skills", "git-gate"})
+AGENT_KEYS_OPTIONAL = frozenset({"bottle", "skills", "git-gate", "remote"})
 
 # Claude Code subagent fields bot-bottle ignores at launch but does
 # not reject. This lets the same file double as

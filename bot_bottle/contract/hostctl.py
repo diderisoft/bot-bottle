@@ -24,6 +24,8 @@ JOBS_PATH = "/jobs"
 # POST /orchestrator/{ensure,restart} start jobs; POST /orchestrator/status answers.
 # Each takes {"settings": Settings.to_json()}.
 ORCHESTRATOR_PATH = "/orchestrator"
+# GET /sessions/{id}/attach upgrades to the attach WebSocket (see control/hostctl/attach).
+SESSIONS_PATH = "/sessions"
 
 # Callers authenticate with `Authorization: Bearer <token>`.
 AUTH_HEADER = "Authorization"
@@ -166,5 +168,5 @@ __all__ = [
     "AUTH_HEADER", "AUTH_SCHEME", "DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS",
     "DEFAULT_EGRESS_PORT", "DEFAULT_GATEWAY_IMAGE", "DEFAULT_ORCHESTRATOR_IMAGE",
     "HOST_CONTROL", "InfraSettings", "JOBS_PATH", "ORCHESTRATOR_PATH", "OperationSettings", "PORT_ENV",
-    "ROLE_ORCHESTRATOR", "SERVICE_NAME", "STATUS_PATH", "Settings", "bearer", "status_body",
+    "ROLE_ORCHESTRATOR", "SERVICE_NAME", "SESSIONS_PATH", "STATUS_PATH", "Settings", "bearer", "status_body",
 ]

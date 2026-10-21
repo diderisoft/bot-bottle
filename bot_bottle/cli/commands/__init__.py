@@ -18,6 +18,7 @@ from typing import Callable
 # the registry imports nothing; the module loads only when dispatched.
 _HANDLERS: dict[str, str] = {
     "active": "active:cmd_active",
+    "attach": "attach:cmd_attach",
     "backend": "backend:cmd_backend",
     "cleanup": "cleanup:cmd_cleanup",
     "commit": "commit:cmd_commit",
@@ -55,6 +56,6 @@ COMMANDS = {name: _lazy(spec) for name, spec in _HANDLERS.items()}
 # gating it on the schema breaks preflight on a fresh CI runner where stdin
 # isn't a TTY and the migration prompt can't be answered. `help` and `login`
 # likewise never touch the store, nor does `hostctl`.
-NO_MIGRATION_COMMANDS = frozenset({"backend", "doctor", "help", "hostctl", "login"})
+NO_MIGRATION_COMMANDS = frozenset({"attach", "backend", "doctor", "help", "hostctl", "login"})
 
 __all__ = ["COMMANDS", "NO_MIGRATION_COMMANDS"]

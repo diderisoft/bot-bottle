@@ -17,12 +17,20 @@ from ...lib.log import info
 from ...trust_domain import signing_key
 from .build import current_build_id
 from .runner import HostControlState, clear_state, write_state
+from . import localsock
 from .server import HostControlServer
+from .sessions import SessionManager, control_socket_path, tmux_version, write_config
 
 
 def main() -> int:
     port = int(os.environ.get(PORT_ENV, "0") or "0")
-    server = HostControlServer(("127.0.0.1", port), current_build_id(), signing_key(HOST_CONTROL))
+    sessions = SessionManager({})
+    local = localsock.serve(control_socket_path(), sessions)
+    if tmux_version() is not None:
+        write_config()
+        sessions.adopt()
+    server = HostControlServer(("127.0.0.1", port), current_build_id(), signing_key(HOST_CONTROL),
+                               sessions)
     state = HostControlState(
         pid=os.getpid(), port=server.server_address[1], build_id=server.build_id
     )
@@ -40,6 +48,7 @@ def main() -> int:
         server.serve_forever()
     finally:
         server.server_close()
+        local.close()
         clear_state(state.pid)
     return 0
 

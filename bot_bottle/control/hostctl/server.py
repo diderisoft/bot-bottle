@@ -11,12 +11,15 @@ from urllib.parse import parse_qs, urlsplit
 
 from ...contract.auth import ROLE_CLI
 from ...contract.hostctl import (
-    AUTH_HEADER, AUTH_SCHEME, HOST_CONTROL, JOBS_PATH, ORCHESTRATOR_PATH, STATUS_PATH,
-    Settings, status_body,
+    AUTH_HEADER, AUTH_SCHEME, HOST_CONTROL, JOBS_PATH, ORCHESTRATOR_PATH, ROLE_ORCHESTRATOR,
+    SESSIONS_PATH, STATUS_PATH, Settings, status_body,
 )
+from ...lib import websocket as ws
 from ...lib.log import debug
 from . import orchestrator
+from .attach import Viewer
 from .jobs import JobRegistry
+from .sessions import SessionManager
 
 MAX_BODY_BYTES = 1 << 20
 
@@ -27,13 +30,15 @@ class HostControlServer(ThreadingHTTPServer):
 
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], build_id: str, key: str) -> None:
+    def __init__(self, address: tuple[str, int], build_id: str, key: str,
+                 sessions: SessionManager | None = None) -> None:
         if not key:
             raise ValueError("host controller needs its signing key")
         super().__init__(address, _Handler)
         self.build_id = build_id
         self.key = key
         self.jobs = JobRegistry()
+        self.sessions = sessions if sessions is not None else SessionManager({})
 
     def role_of(self, authorization: str | None) -> str | None:
         """The `HOST_CONTROL` role an `Authorization` header carries, or None."""
@@ -41,6 +46,11 @@ class HostControlServer(ThreadingHTTPServer):
         if scheme != AUTH_SCHEME or not token:
             return None
         return HOST_CONTROL.verify(token.strip(), self.key)
+
+
+def _int_param(query: dict[str, list[str]], name: str, default: int) -> int:
+    value = query.get(name, [""])[0]
+    return int(value) if value.isdigit() else default
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -52,14 +62,42 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(200, status_body(build_id=server.build_id, pid=os.getpid()))
         elif parts and f"/{parts[0]}" == JOBS_PATH:
             self._jobs_route(server, parts[1:], parse_qs(url.query))
+        elif len(parts) == 3 and f"/{parts[0]}" == SESSIONS_PATH and parts[2] == "attach":
+            self._attach(server, parts[1], parse_qs(url.query))
         else:
             self._send(404, {"error": f"no route {url.path}"})
+
+    def _attach(self, server: HostControlServer, session_id: str,
+                query: dict[str, list[str]]) -> None:
+        """Upgrade to a WebSocket and pump a read-only viewer of `session_id`."""
+        if self._role() not in (ROLE_CLI, ROLE_ORCHESTRATOR):
+            self._send(401, {"error": "missing or invalid token"})
+            return
+        key = self.headers.get("Sec-WebSocket-Key", "")
+        if self.headers.get("Upgrade", "").lower() != "websocket" or not key:
+            self._send(400, {"error": "expected a WebSocket upgrade"})
+            return
+        record = server.sessions.record(session_id)
+        if record is None or not server.sessions.exists(session_id):
+            self._send(404, {"error": f"no session {session_id}"})
+            return
+        self.send_response(101)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", ws.accept_key(key))
+        self.end_headers()
+        self.wfile.flush()
+        Viewer(server.sessions, session_id, self.rfile, self.wfile,  # type: ignore[arg-type]
+               writable_allowed=record.writable_allowed).run(
+                   cols=_int_param(query, "cols", 80), rows=_int_param(query, "rows", 24))
+        self.close_connection = True
 
     def do_POST(self) -> None:  # pylint: disable=invalid-name
         server = cast(HostControlServer, self.server)
         path = urlsplit(self.path).path
         action = path.removeprefix(ORCHESTRATOR_PATH + "/")
-        if not path.startswith(ORCHESTRATOR_PATH + "/") or action not in ("ensure", "restart", "status"):
+        if not path.startswith(ORCHESTRATOR_PATH + "/") or \
+                action not in ("ensure", "restart", "status"):
             self._send(404, {"error": f"no route {path}"})
             return
         role = self._role()

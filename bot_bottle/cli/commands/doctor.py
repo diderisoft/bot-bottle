@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from ...backend import is_backend_ready, known_backend_names
+from ...control.hostctl.sessions import MIN_TMUX_VERSION, tmux_version
 from ..constants import PROG
 from ..settings import settings_from_env
 
@@ -69,6 +70,20 @@ def _check_backends() -> bool:
     return False
 
 
+def _check_tmux() -> bool:
+    """Agent sessions run in tmux (PRD 0092); 3.1 added `window-size latest`."""
+    version = tmux_version()
+    if version is None:
+        _fail("tmux", "not installed; install tmux 3.1 or newer (brew/apt/nix install tmux)")
+        return False
+    detail = f"{version[0]}.{version[1]}"
+    if version < MIN_TMUX_VERSION:
+        _fail("tmux", f"{detail}; need {MIN_TMUX_VERSION[0]}.{MIN_TMUX_VERSION[1]} or newer")
+        return False
+    _ok("tmux", detail)
+    return True
+
+
 def _check_config_dir() -> None:
     config = Path.home() / CONFIG_DIR
     if config.is_dir():
@@ -85,6 +100,6 @@ def cmd_doctor(argv: list[str]) -> int:
     parser.parse_args(argv)
 
     # Hard requirements gate the exit code; the config note is advisory.
-    required = [_check_python(), _check_backends()]
+    required = [_check_python(), _check_backends(), _check_tmux()]
     _check_config_dir()
     return 0 if all(required) else 1
