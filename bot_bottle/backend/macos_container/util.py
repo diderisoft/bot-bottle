@@ -621,6 +621,21 @@ def try_container_ipv4_on_network(name: str, network: str) -> str:
     return ""
 
 
+def network_ipv4(network: str) -> tuple[str, str] | None:
+    """(the host's gateway address, the IPv4 subnet) of `network`, or None
+    when it can't be read."""
+    status = _inspect_first([_CONTAINER, "network", "inspect", network]).get("status")
+    if not isinstance(status, dict):
+        return None
+    gateway, subnet = status.get("ipv4Gateway"), status.get("ipv4Subnet")
+    try:
+        if not ipaddress.ip_address(str(gateway)) in ipaddress.ip_network(str(subnet)):
+            return None
+    except ValueError:
+        return None
+    return str(gateway), str(subnet)
+
+
 def inspect_container_network_ip(name: str, network: str) -> str | None:
     """IP of `name` on `network`, distinguishing inspect failure from "not yet".
 

@@ -24,6 +24,7 @@ from ...paths import HOST_DB_FILENAME
 from ...control.lifecycle import (
     DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
+    HostLink,
     Orchestrator,
     OrchestratorStartError,
     source_hash,
@@ -89,6 +90,13 @@ class MacosOrchestrator(Orchestrator):
         control-network IP (Apple has no container DNS)."""
         return self.url()
 
+    def host_link(self) -> HostLink | None:
+        """The host's vmnet gateway on the control network. Agents can route
+        to that address too, so the host controller accepts only peers on
+        this network (the orchestrator and gateway)."""
+        found = container_mod.network_ipv4(self.control_network)
+        return HostLink(address=found[0], network=found[1]) if found else None
+
     def is_running(self) -> bool:
         return container_mod.container_is_running(self.name)
 
@@ -146,6 +154,7 @@ class MacosOrchestrator(Orchestrator):
         # The signing key comes through the shared provisioning contract (#476),
         # which fail-closes rather than yield an empty key that would run OPEN.
         _signing_key = self.control_plane_key()
+        host_env = self.host_control_env()
         argv = [
             "container", "run", "--detach",
             "--name", self.name,
@@ -167,13 +176,16 @@ class MacosOrchestrator(Orchestrator):
             # `--env NAME` keeps the value off argv; it is still in the config
             # `container inspect` shows, readable only by the host user.
             "--env", ORCHESTRATOR_TOKEN_ENV,
+            # The host controller's URL and an `orchestrator` token, when it is
+            # the one bringing this up (never its key).
+            *[arg for name in sorted(host_env) for arg in ("--env", name)],
             self.image_ref,
             # Dockerfile.orchestrator ENTRYPOINT is `-m bot_bottle.orchestrator`.
             "--host", "0.0.0.0", "--port", str(self.port),
             "--db", _DB_IN_CONTAINER,
         ]
         result = container_mod.run_container_argv(
-            argv, env={**os.environ, ORCHESTRATOR_TOKEN_ENV: _signing_key})
+            argv, env={**os.environ, ORCHESTRATOR_TOKEN_ENV: _signing_key, **host_env})
         if result.returncode != 0:
             raise OrchestratorStartError(
                 f"orchestrator container failed to start: "

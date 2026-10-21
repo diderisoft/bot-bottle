@@ -21,7 +21,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from ..trust_domain import ControlPlaneProvisioning
+from ..trust_domain import ControlPlaneProvisioning, HostControlProvisioning, HostLink
 
 DEFAULT_PORT = 8099
 DEFAULT_STARTUP_TIMEOUT_SECONDS = 45.0
@@ -62,6 +62,10 @@ class Orchestrator(abc.ABC):
     # re-deriving the wiring; it is fail-closed for every backend — the
     # orchestrator never starts without its signing key.
     provisioning: ControlPlaneProvisioning = ControlPlaneProvisioning()
+    # Set in the host controller's process (PRD 0092), so every orchestrator it
+    # brings up can reach it. None elsewhere: that orchestrator has no host
+    # controller to relay launches to.
+    host_control: HostControlProvisioning | None = None
 
     def ensure_built(self) -> None:
         """Ensure the orchestrator's image / rootfs exists, building it if
@@ -126,6 +130,28 @@ class Orchestrator(abc.ABC):
         the same host token file is the single source of truth across backends."""
         return self.provisioning.gateway_token()
 
+    def host_link(self) -> HostLink | None:
+        """The host's address on this orchestrator's network, where the host
+        controller listens for it; None when there isn't one (yet)."""
+        return None
+
+    def host_control_env(self) -> dict[str, str]:
+        """The host controller's URL and an `orchestrator` token for the
+        control-plane process, when started by the host controller."""
+        provisioning = self.host_control
+        link = self.host_link() if provisioning is not None else None
+        if provisioning is None or link is None:
+            return {}
+        return provisioning.orchestrator_env(link)
+
+    def serve_host_control(self) -> None:
+        """Have the host controller listen on this orchestrator's link (for
+        one it adopted rather than started)."""
+        provisioning = self.host_control
+        link = self.host_link() if provisioning is not None else None
+        if provisioning is not None and link is not None:
+            provisioning.listen(link)
+
     def control_plane_key(self) -> str:
         """The raw signing key the control-plane *process* must receive — the ONE
         place a backend obtains it (docker/macOS inject it as `key_env`;
@@ -143,4 +169,6 @@ __all__ = [
     "source_hash",
     "Orchestrator",
     "ControlPlaneProvisioning",
+    "HostControlProvisioning",
+    "HostLink",
 ]

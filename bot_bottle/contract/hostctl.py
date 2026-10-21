@@ -19,6 +19,12 @@ SERVICE_NAME = "bot-bottle-hostctl"
 
 # Port the daemon binds; unset means an ephemeral port, published in its state file.
 PORT_ENV = "BOT_BOTTLE_HOSTCTL_PORT"
+# The port it listens on at each backend's host address for the orchestrator.
+# Fixed, so the URL an orchestrator was given survives a daemon restart.
+GUEST_PORT = 8098
+# Carries that URL into the orchestrator; its `orchestrator` token rides in
+# `HOST_CONTROL.token_env`. Unset: no host controller to relay launches to.
+HOSTCTL_URL_ENV = "BOT_BOTTLE_HOSTCTL_URL"
 
 STATUS_PATH = "/status"
 # GET /jobs, /jobs/{id}, /jobs/{id}/events (newline-delimited JSON, streamed).
@@ -293,7 +299,8 @@ __all__ = [
     "AUTH_HEADER", "AUTH_SCHEME", "BOTTLES_PATH", "BOTTLE_COLORS", "CONFIRM_ERROR",
     "DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS", "IMAGE_POLICIES", "LAUNCH_CLI_ONLY",
     "LaunchRequest", "exit_code",
-    "DEFAULT_EGRESS_PORT", "DEFAULT_GATEWAY_IMAGE", "DEFAULT_ORCHESTRATOR_IMAGE",
+    "DEFAULT_EGRESS_PORT", "DEFAULT_GATEWAY_IMAGE", "DEFAULT_ORCHESTRATOR_IMAGE", "GUEST_PORT",
+    "HOSTCTL_URL_ENV",
     "HOST_CONTROL", "InfraSettings", "JOBS_PATH", "ORCHESTRATOR_PATH", "OperationSettings", "PORT_ENV",
     "ROLE_ORCHESTRATOR", "SERVICE_NAME", "SESSIONS_PATH", "STATUS_PATH", "Settings", "bearer", "status_body",
 ]

@@ -25,9 +25,11 @@ are in `contract.auth`; this module is the host half that reads the key files.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from .contract.auth import CONTROL_PLANE, ROLE_GATEWAY, TrustDomain
+from .contract.hostctl import GUEST_PORT, HOST_CONTROL, HOSTCTL_URL_ENV, ROLE_ORCHESTRATOR
 from .paths import host_signing_key
 
 
@@ -81,7 +83,42 @@ class ControlPlaneProvisioning:
         return mint(self.domain, ROLE_GATEWAY)
 
 
+@dataclass(frozen=True)
+class HostLink:
+    """The host's address on an orchestrator's network, and that network
+    (CIDR): where the host controller listens for the orchestrator, and the
+    only peers it accepts there."""
+
+    address: str
+    network: str
+
+
+@dataclass(frozen=True)
+class HostControlProvisioning:
+    """What the host controller hands an orchestrator it brings up (PRD 0092):
+    the daemon's URL on the orchestrator's link and an `orchestrator`-role
+    token. Never the `HOST_CONTROL` key, so the orchestrator can't mint itself
+    a `cli` token. `listen` has the daemon serve a link (idempotent)."""
+
+    listen: Callable[[HostLink], None]
+    port: int = GUEST_PORT
+    domain: TrustDomain = HOST_CONTROL
+
+    def url(self, link: HostLink) -> str:
+        """The daemon's URL as the orchestrator on `link` reaches it."""
+        return f"http://{link.address}:{self.port}"
+
+    def orchestrator_env(self, link: HostLink) -> dict[str, str]:
+        """The env the orchestrator process gets: the URL in `HOSTCTL_URL_ENV`
+        and its token in `domain.token_env`. Starts serving `link`."""
+        self.listen(link)
+        return {HOSTCTL_URL_ENV: self.url(link),
+                self.domain.token_env: mint(self.domain, ROLE_ORCHESTRATOR)}
+
+
 __all__ = [
+    "HostControlProvisioning",
+    "HostLink",
     "ProvisioningError",
     "signing_key",
     "mint",

@@ -56,8 +56,8 @@ class TestRoleInits(unittest.TestCase):
         self.assertIn(f"mount -t ext4 /dev/vdc {infra_vm.GUEST_BUILD_STORE}", init)
         self.assertIn(f"cat {infra_vm._GUEST_SIGNING_KEY_PATH}", init)  # host-seeded key
         self.assertIn("refusing to start the control plane", init)     # no open mode
-        self.assertIn('BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator',
-                      init)  # key -> orchestrator only
+        self.assertIn('BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" \\\n', init)  # key -> orchestrator only
+        self.assertIn("python3 -m bot_bottle.orchestrator", init)
         self.assertIn("--db /var/lib/bot-bottle/db/bot-bottle.db", init)
 
     def test_gateway_init_starts_only_the_data_plane(self):

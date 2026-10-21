@@ -26,7 +26,10 @@ def ensure(settings: Settings, *, restart: bool = False) -> dict[str, object]:
     if restart:
         log.info(f"stopping the {name} orchestrator and gateway")
         service.stop()
-    return {"backend": name, "url": service.ensure_running()}
+    url = service.ensure_running()
+    # One it adopted (e.g. from before a daemon restart) still needs a listener.
+    service.orchestrator().serve_host_control()
+    return {"backend": name, "url": url}
 
 
 def status(settings: Settings) -> dict[str, object]:

@@ -23,9 +23,10 @@ from pathlib import Path
 from ...lib.log import die, info
 from ...control.lifecycle import (
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
+    HostLink,
     Orchestrator,
 )
-from ...contract.hostctl import Settings
+from ...contract.hostctl import HOST_CONTROL, HOSTCTL_URL_ENV, Settings
 from . import firecracker_vm, infra_vm, netpool, util
 from .infra_vm import ORCHESTRATOR_PORT
 
@@ -91,6 +92,12 @@ class FirecrackerOrchestrator(Orchestrator):
         `bb_orch=<guest_ip>` off its cmdline."""
         return self.url()
 
+    def host_link(self) -> HostLink:
+        """The host end of the orchestrator's TAP. The isolation table drops
+        agent VMs' input, and the host controller accepts only the
+        orchestrator VM's address here."""
+        return HostLink(address=self._slot.host_ip, network=f"{self._slot.guest_ip}/32")
+
     def ssh_target(self) -> tuple[Path, str]:
         """(private key, guest IP) for SSHing into the orchestrator VM. In-VM
         agent-image builds (buildah) run here — the build host drives them over
@@ -144,6 +151,14 @@ class FirecrackerOrchestrator(Orchestrator):
             vm, self.control_plane_key(), infra_vm._GUEST_SIGNING_KEY_PATH,
             "the control-plane signing key to the orchestrator VM "
             "(its control plane will not start)",
+        )
+        # The host controller's URL and `orchestrator` token (empty lines when
+        # it isn't the one bringing this up). The init waits for this file.
+        host_env = self.host_control_env()
+        lines = (host_env.get(HOSTCTL_URL_ENV, ""), host_env.get(HOST_CONTROL.token_env, ""))
+        infra_vm.push_secret(
+            vm, "".join(f"{line}\n" for line in lines), infra_vm.GUEST_HOSTCTL_PATH,
+            "the host controller's address to the orchestrator VM",
         )
         self._vm = vm
         self._wait_for_health(vm, timeout=startup_timeout)

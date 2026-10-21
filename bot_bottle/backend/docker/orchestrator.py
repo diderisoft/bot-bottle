@@ -19,6 +19,7 @@ network.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import time
 from pathlib import Path
@@ -38,6 +39,7 @@ from ...control.gateway import GatewayError
 from ...control.lifecycle import (
     DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
+    HostLink,
     Orchestrator,
     OrchestratorStartError,
     source_hash,
@@ -170,6 +172,23 @@ class DockerOrchestrator(Orchestrator):
             raise GatewayError(
                 f"{self._dockerfile} build failed: {proc.stderr.strip()}")
 
+    def host_link(self) -> HostLink | None:
+        """The publish network's bridge address on the host. Only the
+        orchestrator is on that network; agents can route to the address, so
+        the host controller accepts only peers from this network."""
+        proc = run_docker([
+            "docker", "network", "inspect", "--format",
+            "{{range .IPAM.Config}}{{.Gateway}} {{.Subnet}} {{end}}", self.publish_network,
+        ])
+        words = proc.stdout.split() if proc.returncode == 0 else []
+        for gateway, subnet in zip(words[::2], words[1::2]):
+            try:
+                if ipaddress.ip_address(gateway) in ipaddress.IPv4Network(subnet):
+                    return HostLink(address=gateway, network=subnet)
+            except ValueError:
+                continue
+        return None
+
     def is_running(self) -> bool:
         proc = run_docker([
             "docker", "ps", "--filter", f"name=^/{self.name}$", "--format", "{{.Names}}",
@@ -262,6 +281,7 @@ class DockerOrchestrator(Orchestrator):
         # The signing key comes through the shared provisioning contract (#476),
         # which fail-closes rather than yield an empty key that would run OPEN.
         _signing_key = self.control_plane_key()
+        host_env = self.host_control_env()
         proc = run_docker([
             "docker", "run", "--detach",
             "--name", self.name,
@@ -290,12 +310,15 @@ class DockerOrchestrator(Orchestrator):
             # tokens); the gateway gets the pre-minted `gateway` JWT, never the
             # key (issue #469). Bare `--env NAME` keeps the value off argv.
             "--env", ORCHESTRATOR_TOKEN_ENV,
+            # The host controller's URL and an `orchestrator` token, when it is
+            # the one bringing this up (never its key).
+            *[arg for name in sorted(host_env) for arg in ("--env", name)],
             self.image_ref,
             # Dockerfile.orchestrator ENTRYPOINT is `python3 -m bot_bottle.orchestrator`;
             # these are its args.
             "--host", "0.0.0.0", "--port", str(DEFAULT_PORT),
             "--db", _DB_IN_CONTAINER,
-        ], env={**os.environ, ORCHESTRATOR_TOKEN_ENV: _signing_key})
+        ], env={**os.environ, ORCHESTRATOR_TOKEN_ENV: _signing_key, **host_env})
         if proc.returncode != 0:
             raise OrchestratorStartError(
                 f"orchestrator container failed to start: {proc.stderr.strip()}"

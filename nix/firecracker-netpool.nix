@@ -183,6 +183,11 @@ in
     # VM->gateway traffic is DNAT'd and forwarded, so forwarding must be on.
     boot.kernel.sysctl."net.ipv4.ip_forward" = 1;
 
+    # The orchestrator VM reaches the host controller on the host end of its
+    # own TAP (PRD 0092; contract.hostctl.GUEST_PORT). Opened on that one
+    # interface only; agent VMs' input stays dropped by the isolation table.
+    networking.firewall.interfaces.${cfg.orchIface}.allowedTCPPorts = [ 8098 ];
+
     # One oneshot brings up the whole pool (TAPs + independent nft table)
     # by running the shared bring-up script. No networking.nftables.enable
     # / systemd.network.enable — see header.

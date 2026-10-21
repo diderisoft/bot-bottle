@@ -58,8 +58,10 @@ class TestEnsureRunning(unittest.TestCase):
         # DB volume (/dev/vdb), then the buildah store (/dev/vdc).
         self.assertEqual((Path("/reg"), Path("/bs")), kw["data_drives"])
         # The host-canonical signing key is pushed to the guest signing-key path.
-        self.assertEqual("host-key", push.call_args.args[1])
-        self.assertEqual(infra_vm._GUEST_SIGNING_KEY_PATH, push.call_args.args[2])
+        self.assertEqual("host-key", push.call_args_list[0].args[1])
+        self.assertEqual(infra_vm._GUEST_SIGNING_KEY_PATH, push.call_args_list[0].args[2])
+        # Then the host controller file, empty outside the host controller.
+        self.assertEqual(("\n\n", infra_vm.GUEST_HOSTCTL_PATH), push.call_args.args[1:3])
 
     def test_noop_when_running_and_healthy(self) -> None:
         orch = FirecrackerOrchestrator(Settings())

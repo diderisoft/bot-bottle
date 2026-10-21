@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import Generator
 
 from ... import resources
-from ...contract.hostctl import InfraSettings, Settings
+from ...contract.hostctl import HOST_CONTROL, HOSTCTL_URL_ENV, InfraSettings, Settings
 from ...lib.log import die, info
 from ...paths import HOST_DB_FILENAME
 from ..docker import util as docker_mod
@@ -61,6 +61,11 @@ _GUEST_SIGNING_KEY_PATH = "/var/lib/bot-bottle/orchestrator-token"
 # data plane has no registry volume and never opens the DB). Pushed post-boot;
 # the gateway daemons present it to the orchestrator, and never see the key.
 _GUEST_GATEWAY_JWT_PATH = "/var/lib/bot-bottle/gateway-jwt"
+# The orchestrator VM's host-controller URL and `orchestrator` token, one per
+# line (empty when no host controller brought it up). On the rootfs, not the
+# registry volume, so a file from an earlier boot is never read. Pushed after
+# the signing key; the init starts the control plane once it arrives.
+GUEST_HOSTCTL_PATH = "/run/bot-bottle-hostctl"
 
 # The two per-plane rootfs source images. The orchestrator VM boots a control
 # plane + buildah rootfs (Dockerfile.orchestrator.fc, FROM orchestrator); the
@@ -541,11 +546,20 @@ while [ "$i" -lt 600 ]; do
     i=$((i + 1))
     sleep 0.1
 done
+i=0
+while [ "$i" -lt 600 ] && [ ! -f {GUEST_HOSTCTL_PATH} ]; do
+    i=$((i + 1))
+    sleep 0.1
+done
+HC_URL=$(sed -n 1p {GUEST_HOSTCTL_PATH} 2>/dev/null)
+HC_JWT=$(sed -n 2p {GUEST_HOSTCTL_PATH} 2>/dev/null)
 if [ -z "$CP_KEY" ]; then
     echo "infra: control-plane signing key never arrived; refusing to start the control plane (would run OPEN)" >&2
 else
     chmod 600 {_GUEST_SIGNING_KEY_PATH} 2>/dev/null || true
-    BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" python3 -m bot_bottle.orchestrator \\
+    BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" \\
+    {HOSTCTL_URL_ENV}="$HC_URL" {HOST_CONTROL.token_env}="$HC_JWT" \\
+        python3 -m bot_bottle.orchestrator \\
         --host 0.0.0.0 --port {ORCHESTRATOR_PORT} \\
         --db /var/lib/bot-bottle/db/{HOST_DB_FILENAME} &
 fi

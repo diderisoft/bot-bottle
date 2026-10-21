@@ -121,6 +121,9 @@ class TestDaemonSide(unittest.TestCase):
         with mock.patch("bot_bottle.backend.get_bottle_backend", return_value=backend) as get:
             self.assertEqual({"backend": "docker", "url": "http://o"}, orchestrator.ensure(Settings()))
             backend.infra_service.return_value.stop.assert_not_called()
+            # An adopted orchestrator still gets its listener.
+            backend.infra_service.return_value.orchestrator.return_value \
+                .serve_host_control.assert_called_once_with()
             orchestrator.ensure(Settings(), restart=True)
             backend.infra_service.return_value.stop.assert_called_once()
             self.assertEqual({"backend": "docker", "running": False, "url": ""},

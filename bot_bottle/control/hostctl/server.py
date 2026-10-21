@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+import socket
 from collections.abc import Iterable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import cast
@@ -29,28 +31,47 @@ _BOTTLE_ROLES = (ROLE_CLI, ROLE_ORCHESTRATOR)
 
 class HostControlServer(ThreadingHTTPServer):
     """Serves the host controller's routes. `build_id` is what `/status`
-    reports; `key` verifies callers' `HOST_CONTROL` tokens."""
+    reports; `key` verifies callers' `HOST_CONTROL` tokens. A listener on a
+    guest network passes `peers` (only those addresses may connect) and the
+    `roles` it accepts; listeners share `jobs`, `sessions` and `bottles`."""
 
     daemon_threads = True
 
     def __init__(self, address: tuple[str, int], build_id: str, key: str,
                  sessions: SessionManager | None = None,
-                 bottles: BottleService | None = None) -> None:
+                 bottles: BottleService | None = None, *,
+                 jobs: JobRegistry | None = None, peers: str = "",
+                 roles: frozenset[str] = HOST_CONTROL.roles) -> None:
         if not key:
             raise ValueError("host controller needs its signing key")
         super().__init__(address, _Handler)
         self.build_id = build_id
         self.key = key
-        self.jobs = JobRegistry()
+        self.peers = ipaddress.ip_network(peers) if peers else None
+        self.roles = roles
+        self.jobs = jobs if jobs is not None else JobRegistry()
         self.sessions = sessions if sessions is not None else SessionManager({})
         self.bottles = bottles if bottles is not None else BottleService(self.sessions)
 
+    def verify_request(self, request: socket.socket | tuple[bytes, socket.socket],
+                       client_address: tuple[str, int] | str) -> bool:
+        """Drop a connection from outside `peers` before reading anything."""
+        if self.peers is None:
+            return True
+        try:
+            host = client_address[0] if isinstance(client_address, tuple) else client_address
+            return ipaddress.ip_address(host) in self.peers
+        except ValueError:
+            return False
+
     def role_of(self, authorization: str | None) -> str | None:
-        """The `HOST_CONTROL` role an `Authorization` header carries, or None."""
+        """The `HOST_CONTROL` role an `Authorization` header carries, if this
+        listener accepts it; otherwise None."""
         scheme, _, token = (authorization or "").partition(" ")
         if scheme != AUTH_SCHEME or not token:
             return None
-        return HOST_CONTROL.verify(token.strip(), self.key)
+        role = HOST_CONTROL.verify(token.strip(), self.key)
+        return role if role in self.roles else None
 
 
 def _int_param(query: dict[str, list[str]], name: str, default: int) -> int:
