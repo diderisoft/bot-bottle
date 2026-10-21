@@ -9,7 +9,7 @@ from typing import Callable, cast
 
 from ...agent_provider import PromptMode, prompt_args
 from .. import Bottle, ExecResult
-from ..terminal import exec_shell_script
+from ..terminal import agent_shell_command
 from . import pty_forward as _pty_forward
 
 
@@ -58,7 +58,7 @@ class MacosContainerBottle(Bottle):
         self._teardown = teardown
         self.prompt_path = prompt_path_in_container
         self._agent_prompt_mode = agent_prompt_mode
-        self.agent_command = agent_command
+        self.agent_executable = agent_command
         self.terminal_title = terminal_title
         self.terminal_color = terminal_color
         self.agent_provider_template = agent_provider_template
@@ -104,7 +104,7 @@ class MacosContainerBottle(Bottle):
                 container_exec.extend(["--env", name])
         if self.agent_workdir and self.agent_workdir != "/home/node":
             container_exec.extend(["--workdir", self.agent_workdir])
-        container_exec.extend([self.name, self.agent_command, *full_argv])
+        container_exec.extend([self.name, self.agent_executable, *full_argv])
         if tty:
             # Wrap with the raw-mode forwarder: container exec does not put
             # the host terminal into raw mode itself, so the line discipline
@@ -113,19 +113,20 @@ class MacosContainerBottle(Bottle):
             return [sys.executable, _PTY_FORWARD_SCRIPT, "--", *container_exec]
         return container_exec
 
+    def agent_command(self, argv: list[str]) -> tuple[list[str], dict[str, str]]:
+        # The env carries the values behind the bare `--env` names in
+        # `agent_argv`; `sh -lc` passes it through to `container exec`.
+        command = agent_shell_command(
+            self.agent_argv(argv, tty=True), self.terminal_title, self.terminal_color)
+        return command, dict(self._exec_env)
+
     def exec_agent(self, argv: list[str], *, tty: bool = True) -> int:
-        agent_argv = self.agent_argv(argv, tty=tty)
-        # The values behind the bare `--env` names in `agent_argv`. `sh -lc`
-        # below is in this process tree, so the child env reaches `container
-        # exec` either way.
-        env = {**os.environ, **self._exec_env} if self._exec_env else None
-        script = (
-            exec_shell_script(agent_argv, self.terminal_title, self.terminal_color)
-            if tty else None
-        )
-        if script is None:
-            return subprocess.run(agent_argv, env=env, check=False).returncode
-        return subprocess.run(["sh", "-lc", script], env=env, check=False).returncode
+        if tty:
+            command, extra = self.agent_command(argv)
+        else:
+            command, extra = self.agent_argv(argv, tty=False), dict(self._exec_env)
+        env = {**os.environ, **extra} if extra else None
+        return subprocess.run(command, env=env, check=False).returncode
 
     def exec(self, script: str, *, user: str = "node") -> ExecResult:
         # Carry the same exec env the agent gets: provisioning steps run

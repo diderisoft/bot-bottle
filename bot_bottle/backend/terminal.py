@@ -69,3 +69,14 @@ def exec_shell_script(
         parts.append(f"exec {shlex.join(agent_argv)}")
 
     return "; ".join(parts)
+
+
+def agent_shell_command(
+    agent_argv: list[str],
+    terminal_title: str = "",
+    terminal_color: str = "",
+) -> list[str]:
+    """*agent_argv*, wrapped in `sh -lc` when the terminal needs a title
+    or palette set first (see `exec_shell_script`)."""
+    script = exec_shell_script(agent_argv, terminal_title, terminal_color)
+    return list(agent_argv) if script is None else ["sh", "-lc", script]

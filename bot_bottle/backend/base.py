@@ -62,19 +62,19 @@ class BottleSpec:
     agent_name: str
     copy_cwd: bool
     user_cwd: str
-    # PRD 0016 follow-up: when set, the backend's prepare step uses
-    # this identity instead of minting a fresh one — the resume path
-    # (`cli.py resume <identity>`) sets this to continue an existing
-    # bottle's state. Empty string for a fresh `start`.
+    # Resume: prepare uses this identity instead of minting a fresh one, to
+    # continue an existing bottle's state. Empty for a fresh `start`.
     identity: str = ""
     label: str = ""
     color: str = ""
     # Ordered bottle names selected at launch (issue #269). When non-empty
     # they are merged in order and replace the agent's `bottle:` field.
     bottle_names: tuple[str, ...] = ()
-    # True when launched via --headless (no TTY, no interactive prompts).
-    # The git-gate host-key preflight uses this to error rather than prompt.
+    # No TTY, no interactive prompts: the host-key preflight and secret
+    # resolution error rather than prompt. Every host-controller launch.
     headless: bool = False
+    # Repo name -> upstream host key the operator confirmed for this launch.
+    host_keys: tuple[tuple[str, str], ...] = ()
     # Image startup policy. "fresh" preserves the normal build path;
     # "cached" reuses the current local image/artifact without rebuilding.
     image_policy: str = "fresh"
@@ -245,15 +245,16 @@ class Bottle(ABC):
         self, argv: list[str], *, tty: bool = True,
     ) -> list[str]:
         """Return the host-side argv that runs the selected agent
-        inside the bottle. Used by `exec_agent` for foreground
-        handoffs and by the dashboard's tmux `respawn-pane` flow,
-        which needs the argv up front (it spawns claude in a tmux
-        pane rather than as a child of the current process).
-
-        Implementations transparently inject
+        inside the bottle. Implementations transparently inject
         `--append-system-prompt-file` when the bottle was launched
         with a provisioned prompt path."""
         ...
+
+    @abstractmethod
+    def agent_command(self, argv: list[str]) -> tuple[list[str], dict[str, str]]:
+        """The host command `exec_agent(argv, tty=True)` runs, terminal
+        title/color wrapper included, and the env it adds to this
+        process's. The host controller runs it in a tmux session."""
 
     @abstractmethod
     def exec_agent(self, argv: list[str], *, tty: bool = True) -> int: ...
@@ -279,8 +280,6 @@ class Bottle(ABC):
 
     @abstractmethod
     def close(self) -> None: ...
-
-
 
 
 PlanT = TypeVar("PlanT", bound=BottlePlan)

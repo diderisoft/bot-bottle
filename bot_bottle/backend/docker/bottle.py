@@ -9,7 +9,7 @@ from typing import cast
 
 from ...agent_provider import PromptMode, prompt_args
 from .. import Bottle, ExecResult
-from ..terminal import exec_shell_script
+from ..terminal import agent_shell_command
 
 
 class DockerBottle(Bottle):
@@ -32,7 +32,7 @@ class DockerBottle(Bottle):
         self._teardown = teardown
         self.prompt_path = prompt_path_in_container
         self._agent_prompt_mode = agent_prompt_mode
-        self.agent_command = agent_command
+        self.agent_executable = agent_command
         self.terminal_title = terminal_title
         self.terminal_color = terminal_color
         self.agent_provider_template = agent_provider_template
@@ -51,15 +51,17 @@ class DockerBottle(Bottle):
             cmd.append("-it")
         if self.agent_workdir and self.agent_workdir != "/home/node":
             cmd.extend(["-w", self.agent_workdir])
-        cmd.extend([self.name, self.agent_command, *full_argv])
+        cmd.extend([self.name, self.agent_executable, *full_argv])
         return cmd
 
+    def agent_command(self, argv: list[str]) -> tuple[list[str], dict[str, str]]:
+        command = agent_shell_command(
+            self.agent_argv(argv, tty=True), self.terminal_title, self.terminal_color)
+        return command, {}
+
     def exec_agent(self, argv: list[str], *, tty: bool = True) -> int:
-        agent_argv = self.agent_argv(argv, tty=tty)
-        script = exec_shell_script(agent_argv, self.terminal_title, self.terminal_color) if tty else None
-        if script is None:
-            return subprocess.run(agent_argv, check=False).returncode
-        return subprocess.run(["sh", "-lc", script], check=False).returncode
+        command = self.agent_command(argv)[0] if tty else self.agent_argv(argv, tty=False)
+        return subprocess.run(command, check=False).returncode
 
     def exec(self, script: str, *, user: str = "node") -> ExecResult:
         # Pipe via stdin to `sh -s` so the caller never has to worry
