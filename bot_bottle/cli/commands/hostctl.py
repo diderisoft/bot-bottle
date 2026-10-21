@@ -14,7 +14,7 @@ from ..constants import PROG
 from ..settings import settings_from_env
 
 _USAGE = (
-    f"usage: {PROG} hostctl {{status|start|stop|jobs}}\n"
+    f"usage: {PROG} hostctl {{status|start|stop [--force]|jobs}}\n"
     f"       {PROG} hostctl orchestrator {{status|ensure|restart}}\n"
 )
 _DAEMON_ACTIONS = ("status", "start", "stop", "jobs")
@@ -25,12 +25,13 @@ def _describe(state: runner.HostControlState) -> str:
     return f"host controller: running at {state.url} (pid {state.pid}, build {state.build_id})"
 
 
-def _daemon(action: str) -> int:
+def _daemon(action: str, *, force: bool = False) -> int:
     if action == "start":
         print(_describe(runner.ensure_running()))
         return 0
     if action == "stop":
-        print("host controller: stopped" if runner.stop() else "host controller: not running")
+        stopped = runner.stop(force=force)
+        print("host controller: stopped" if stopped else "host controller: not running")
         return 0
     state = runner.running()
     if state is None:
@@ -67,13 +68,14 @@ def cmd_hostctl(argv: list[str]) -> int:
         sys.stderr.write(_USAGE)
         sys.stderr.write("\nThe per-host daemon behind bottle and orchestrator management.\n")
         return 0
-    daemon = len(argv) == 1 and argv[0] in _DAEMON_ACTIONS
+    force = argv == ["stop", "--force"]
+    daemon = (len(argv) == 1 and argv[0] in _DAEMON_ACTIONS) or force
     orch = len(argv) == 2 and argv[0] == "orchestrator" and argv[1] in _ORCHESTRATOR_ACTIONS
     if not (daemon or orch):
         sys.stderr.write(_USAGE)
         return 2
     try:
-        return _daemon(argv[0]) if daemon else _orchestrator(argv[1])
+        return _daemon(argv[0], force=force) if daemon else _orchestrator(argv[1])
     except runner.HostControlError as e:
         sys.stderr.write(f"{PROG}: {e}\n")
         return 1

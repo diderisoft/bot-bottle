@@ -127,13 +127,19 @@ def launch(request: LaunchRequest) -> int:
 def tmux_attach(session_id: str) -> tuple[list[str], dict[str, str]]:
     """The writable local `tmux attach` command for `session_id` and its
     env. `TMUX` is dropped: bot-bottle's server is separate, so attaching
-    from inside the user's own tmux isn't nesting."""
+    from inside the user's own tmux isn't nesting. A missing or `dumb` TERM
+    becomes `xterm-256color`."""
     tmux_bin = shutil.which("tmux")
     if tmux_bin is None:
         die("tmux is not installed")
     argv = SessionManager({}).attach_argv(session_id, read_only=False)
     argv[0] = tmux_bin
-    return argv, {k: v for k, v in os.environ.items() if k != "TMUX"}
+    env = {k: v for k, v in os.environ.items() if k != "TMUX"}
+    # tmux won't attach to a terminal it can't drive (headless runs often
+    # have no TERM, or "dumb").
+    if env.get("TERM", "dumb") == "dumb":
+        env["TERM"] = "xterm-256color"
+    return argv, env
 
 
 def attach(client: HostControlClient, session_id: str) -> int:

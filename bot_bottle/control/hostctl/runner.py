@@ -22,8 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...contract.auth import ROLE_CLI
-from ...contract.hostctl import HOST_CONTROL, SERVICE_NAME, STATUS_PATH
-from ...lib.log import info
+from ...contract.hostctl import BOTTLES_PATH, HOST_CONTROL, SERVICE_NAME, STATUS_PATH, bearer
+from ...lib.log import info, warn
 from ...paths import bot_bottle_root
 from ...trust_domain import mint
 from .build import PACKAGE_ROOT, current_build_id
@@ -109,15 +109,33 @@ def _lock() -> Generator[None]:
 
 def ensure_running(timeout: float = START_TIMEOUT_SECONDS) -> HostControlState:
     """Return the live host controller, starting it (or replacing one that
-    runs different code) first if needed."""
+    runs different code) first if needed. One that holds bottles is kept:
+    replacing it would orphan them."""
     with _lock():
         state = running()
         if state is not None and state.build_id == current_build_id():
             return state
         if state is not None:
+            held = held_bottles(state)
+            if held:
+                warn(f"host controller runs different code but holds {len(held)} bottle(s) "
+                     f"({', '.join(held)}); using it until they're done")
+                return state
             info("host controller runs different code; restarting it")
             _stop(state)
         return _start(timeout)
+
+
+def held_bottles(state: HostControlState) -> list[str]:
+    """Ids of the bottles the daemon at `state` holds open; [] if it can't say."""
+    req = urllib.request.Request(state.url + BOTTLES_PATH, headers=bearer(cli_token()))
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = json.loads(resp.read())
+    except (OSError, ValueError, urllib.error.URLError):
+        return []
+    bottles = body.get("bottles") if isinstance(body, dict) else None
+    return [str(b.get("id")) for b in bottles or [] if isinstance(b, dict) and b.get("held")]
 
 
 def cli_token() -> str:
@@ -125,12 +143,19 @@ def cli_token() -> str:
     return mint(HOST_CONTROL, ROLE_CLI)
 
 
-def stop() -> bool:
-    """Stop the live host controller. False if none was running."""
+def stop(*, force: bool = False) -> bool:
+    """Stop the live host controller. False if none was running. Refuses
+    while it holds bottles, which would be orphaned, unless `force`."""
     with _lock():
         state = running()
         if state is None:
             return False
+        held = held_bottles(state)
+        if held and not force:
+            raise HostControlError(
+                f"the host controller holds {len(held)} bottle(s) ({', '.join(held)}); "
+                "stopping it would orphan them. Tear them down first (`cleanup`) "
+                "or stop it anyway with `hostctl stop --force`")
         _stop(state)
         return True
 

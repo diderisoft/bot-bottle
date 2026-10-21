@@ -48,6 +48,17 @@ class TestSecrets(unittest.TestCase):
         self.assertEqual({"HOST_A": "a", "B": "b", "TOK": "t", "FORGE": "f"},
                          launch_client.resolve_secrets(manifest, source, prompt=False))
 
+    def test_tmux_attach_env_drops_tmux_and_needs_a_usable_term(self) -> None:
+        with mock.patch.object(launch_client.shutil, "which", return_value="/usr/bin/tmux"):
+            for term, expected in ((None, "xterm-256color"), ("dumb", "xterm-256color"),
+                                   ("screen-256color", "screen-256color")):
+                env = {"TMUX": "/tmp/x", **({"TERM": term} if term else {})}
+                with mock.patch.dict(launch_client.os.environ, env, clear=True):
+                    argv, out = launch_client.tmux_attach("s1")
+                self.assertEqual(expected, out["TERM"])
+                self.assertNotIn("TMUX", out)
+                self.assertEqual("/usr/bin/tmux", argv[0])
+
     def test_the_provider_token_names_are_sent_too(self) -> None:
         for provider, name in (
             ({"template": "claude", "auth_token": "CLAUDE_TOK"}, "CLAUDE_TOK"),

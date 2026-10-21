@@ -134,6 +134,20 @@ class TestEnsureRunning(unittest.TestCase):
         self.assertIsNone(runner.read_state())
         self.assertFalse(runner.stop())
 
+    def test_a_daemon_holding_bottles_is_kept_and_only_force_stops_it(self) -> None:
+        first = runner.ensure_running()
+        self.assertEqual([], runner.held_bottles(first))  # the real route: nothing held
+        with mock.patch.object(runner, "held_bottles", return_value=["b1"]), \
+             mock.patch("sys.stderr", io.StringIO()):
+            with mock.patch.object(runner, "current_build_id", return_value="other-code"):
+                self.assertEqual(first, runner.ensure_running())
+            with self.assertRaises(runner.HostControlError) as cm:
+                runner.stop()
+            self.assertIn("b1", str(cm.exception))
+            self.assertTrue(runner.probe(first))
+            self.assertTrue(runner.stop(force=True))
+        self.assertIsNone(runner.running())
+
 
 class TestCommand(unittest.TestCase):
     def setUp(self) -> None:
