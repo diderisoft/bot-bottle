@@ -198,7 +198,8 @@ class TestAttachRoute(_TmuxTest):
         self.send(writer, ws.TEXT, json.dumps({"type": "writable", "value": True}).encode())
         time.sleep(0.3)
         self.send(writer, ws.BINARY, b"typed\r")
-        self.assertTrue(_until(lambda: "typed" in self.pane("a1")))
+        # Typed once by the terminal's echo and once by cat: the line was read.
+        self.assertTrue(_until(lambda: self.pane("a1").count("typed") >= 2))
         self.send(writer, ws.BINARY, b"\x04")  # EOF to cat: the agent exits 0
         self.assertTrue(_until(lambda: received.text))
         self.assertEqual({"type": "exit", "status": 0, "signal": ""}, received.text[0])
