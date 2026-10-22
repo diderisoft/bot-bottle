@@ -267,8 +267,15 @@ jobs:
           docker build --build-arg "NODE_BASE_IMAGE=$node_base" \
             -t "$pi" -f bot_bottle/contrib/pi/Dockerfile .
 
-          docker run --rm --entrypoint python3 "$orchestrator" -c \
-            'import bot_bottle.orchestrator'
+          # The infra images bake only their slice of the package (PRD 0087):
+          # every module in it must import with nothing else present.
+          import_all='import importlib, pkgutil, bot_bottle
+          for m in pkgutil.walk_packages(bot_bottle.__path__, "bot_bottle."):
+              importlib.import_module(m.name)'
+          docker run --rm --entrypoint python3 "$orchestrator" -c "$import_all"
+          # The egress addon builds itself at import and needs an orchestrator.
+          docker run --rm -e BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:9 \
+            --entrypoint python3 "$gateway" -c "$import_all"
           docker run --rm --entrypoint mitmdump "$gateway" --version
           docker run --rm "$claude" claude --version
           docker run --rm "$codex" codex --version

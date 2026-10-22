@@ -21,6 +21,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from ..image_inputs import package_files
 from ..trust_domain import ControlPlaneProvisioning, HostControlProvisioning, HostLink
 
 DEFAULT_PORT = 8099
@@ -35,14 +36,17 @@ class OrchestratorStartError(RuntimeError):
 
 
 def source_hash(repo_root: Path) -> str:
-    """Content hash of the orchestrator's bind-mounted Python source (the
-    `bot_bottle` package the control-plane process imports). Changes only
-    when the code that would actually run changes — a backend's `ensure_running`
-    recreates the container on a mismatch so a code change takes effect,
-    but leaves a healthy up-to-date container alone to preserve in-memory
-    egress tokens."""
+    """Content hash of the orchestrator's Python source: the slice of the
+    `bot_bottle` package its image bakes (`image_inputs.PACKAGE_PATHS`), which
+    is all the control-plane process imports. Changes only when the code that
+    would actually run changes — a backend's `ensure_running` recreates the
+    container on a mismatch so a code change takes effect, but leaves a healthy
+    up-to-date container alone (preserving in-memory egress tokens) across
+    host-only edits."""
     h = hashlib.sha256()
-    for path in sorted((repo_root / "bot_bottle").rglob("*.py")):
+    for path in package_files("bot-bottle-orchestrator", repo_root):
+        if path.suffix != ".py":
+            continue
         h.update(str(path.relative_to(repo_root)).encode())
         h.update(path.read_bytes())
     return h.hexdigest()

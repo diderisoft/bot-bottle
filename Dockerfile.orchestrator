@@ -1,7 +1,7 @@
 # Orchestrator control-plane image (PRD 0070, #384).
 #
-# This is the **single definition of the orchestrator's content** — the
-# `bot_bottle` package baked onto a Python runtime — referenced by BOTH:
+# This is the **single definition of the orchestrator's content** — its slice
+# of the `bot_bottle` package baked onto a Python runtime — referenced by BOTH:
 #   * the docker backend, which runs this image directly as the lean
 #     control-plane container; and
 #   * the firecracker orchestrator VM image (Dockerfile.orchestrator.fc),
@@ -27,12 +27,16 @@ RUN pip install --no-cache-dir --require-hashes \
         -r /tmp/requirements.orchestrator.lock \
     && rm /tmp/requirements.orchestrator.lock
 
-# The orchestrator content. Baked so the image is self-contained (runs from
-# a built image, no runtime bind-mount); the docker backend may still
-# bind-mount /app for dev live-reload, which simply overlays this copy.
-# `.dockerignore` keeps .git/docs/*.md out of the context. (Future deps like
-# iroh go here too — a shared requirements installed on this same base.)
-COPY bot_bottle /app/bot_bottle
+# The orchestrator content: the contract, the shared lib and the service
+# itself (PRD 0087), never the host CLI or backends. Baked so the image is
+# self-contained (runs from a built image, no runtime bind-mount); the docker
+# backend may still bind-mount /app for dev live-reload, which simply overlays
+# this copy. `image_inputs.PACKAGE_PATHS` hashes exactly these paths; a unit
+# test keeps the two in step.
+COPY bot_bottle/__init__.py /app/bot_bottle/__init__.py
+COPY bot_bottle/contract /app/bot_bottle/contract
+COPY bot_bottle/lib /app/bot_bottle/lib
+COPY bot_bottle/orchestrator /app/bot_bottle/orchestrator
 
 # Documentation only; lifecycle.py overrides the entrypoint to
 # `python3 -m bot_bottle.orchestrator` with the runtime flags.

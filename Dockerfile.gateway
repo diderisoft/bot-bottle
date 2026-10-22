@@ -4,7 +4,7 @@
 # the consolidated per-host gateway (PRD 0070). It is NOT the
 # orchestrator control plane: that is the separate, lean
 # `bot-bottle-orchestrator` image (Dockerfile.orchestrator, #384), which
-# ships only python + the stdlib-only `bot_bottle` package and none of
+# ships only python + its slice of the `bot_bottle` package and none of
 # this image's mitmproxy / git / gitleaks payload.
 #
 # Collapses the prior per-daemon images (egress, git-gate,
@@ -18,7 +18,7 @@
 #   /usr/bin/gitleaks                    gitleaks binary
 #   /app/egress_addon.py                 mitmproxy addon entry point
 #   /app/egress-entrypoint.sh            mitmdump launcher
-#   /usr/local/lib/python*/bot_bottle/   installed package (all daemons + shared modules)
+#   /usr/local/lib/python*/bot_bottle/   installed package (contract, lib, gateway daemons)
 #   /app/egress_addon.py                 one-line shim: re-exports addons from package
 #                                        (mitmdump -s requires a file path, not a module)
 #   /etc/egress/routes.yaml              bind-mounted at run time
@@ -103,10 +103,15 @@ RUN arch="${TARGETARCH:-$(dpkg --print-architecture)}" \
  && rm /tmp/gitleaks.tar.gz
 
 # Install bot_bottle as a proper package so entry-point scripts can use
-# `from bot_bottle.X import Y` absolute imports. A rename or a missing
-# module is caught at pip-install time — not at container runtime.
+# `from bot_bottle.X import Y` absolute imports. Only the contract, the shared
+# lib and the gateway service go in (PRD 0087), never the host CLI or
+# backends; `image_inputs.PACKAGE_PATHS` hashes exactly these paths and a unit
+# test keeps the two in step.
 COPY pyproject.toml /src/
-COPY bot_bottle/    /src/bot_bottle/
+COPY bot_bottle/__init__.py /src/bot_bottle/__init__.py
+COPY bot_bottle/contract    /src/bot_bottle/contract
+COPY bot_bottle/lib         /src/bot_bottle/lib
+COPY bot_bottle/gateway     /src/bot_bottle/gateway
 RUN pip install --no-cache-dir /src/
 
 # mitmdump -s requires a file path, not a module. Write a one-line shim that

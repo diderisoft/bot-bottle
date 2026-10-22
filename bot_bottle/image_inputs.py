@@ -21,8 +21,8 @@ from . import resources
 # artifact answer to a new hash.
 _SCHEMA = "image-inputs-v1"
 
-# Per-image build inputs, relative to the build root. The `bot_bottle` package
-# is added separately for images that bake it (see `_BAKES_PACKAGE`).
+# Per-image build inputs, relative to the build root. The `bot_bottle` paths an
+# image bakes are added separately (see `PACKAGE_PATHS`).
 BUILD_INPUTS: dict[str, tuple[str, ...]] = {
     "bot-bottle-gateway": (
         "image-build-args.json",
@@ -54,10 +54,21 @@ BUILD_INPUTS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# Images that bake the shipped `bot_bottle` package (the orchestrator COPYs it,
-# the gateway pip-installs it), so a change anywhere under the package must bump
-# their hash. Agent images carry a harness, not our package.
-_BAKES_PACKAGE = frozenset({"bot-bottle-gateway", "bot-bottle-orchestrator"})
+# The slice of the `bot_bottle` package each infrastructure image bakes (the
+# orchestrator COPYs it, the gateway pip-installs it): the contract, the shared
+# lib and the image's own service, never host code (PRD 0087). Each entry is a
+# file or a directory taken whole, and must match the Dockerfile's `COPY` lines
+# (a unit test checks), so a host-only change leaves both hashes alone. Agent
+# images carry a harness, not our package.
+_SHARED_PACKAGE_PATHS = (
+    "bot_bottle/__init__.py",
+    "bot_bottle/contract",
+    "bot_bottle/lib",
+)
+PACKAGE_PATHS: dict[str, tuple[str, ...]] = {
+    "bot-bottle-gateway": (*_SHARED_PACKAGE_PATHS, "bot_bottle/gateway"),
+    "bot-bottle-orchestrator": (*_SHARED_PACKAGE_PATHS, "bot_bottle/orchestrator"),
+}
 
 # The Dockerfile each image builds from, named explicitly rather than positioned
 # inside BUILD_INPUTS: the input list is a hashing concern and its order must
@@ -121,18 +132,27 @@ class UnknownImageError(KeyError):
     """No build-input list is registered for this image name."""
 
 
-def _hash_package(h: "hashlib._Hash", repo_root: Path) -> None:
-    """Fold every regular file under `bot_bottle/` into `h`.
+def package_files(image: str, repo_root: Path) -> list[Path]:
+    """Every regular file under `image`'s `PACKAGE_PATHS`, sorted.
 
-    All files, not just `*.py` — the package is baked in wholesale, shell
-    scripts and data included. `__pycache__`/`.pyc` are excluded as build
-    artifacts that are never copied."""
-    pkg = repo_root / "bot_bottle"
-    for path in sorted(pkg.rglob("*")):
-        if not path.is_file():
-            continue
-        if "__pycache__" in path.parts or path.suffix == ".pyc":
-            continue
+    All files, not just `*.py` — each path is baked in wholesale, shell scripts
+    and data included. `__pycache__`/`.pyc` are excluded as build artifacts
+    that are never copied (`.dockerignore`)."""
+    files: set[Path] = set()
+    for name in PACKAGE_PATHS.get(image, ()):
+        root = repo_root / name
+        candidates = [root] if root.is_file() else root.rglob("*")
+        files.update(
+            path for path in candidates
+            if path.is_file()
+            and "__pycache__" not in path.parts and path.suffix != ".pyc"
+        )
+    return sorted(files)
+
+
+def _hash_package(h: "hashlib._Hash", image: str, repo_root: Path) -> None:
+    """Fold the package files `image` bakes into `h`."""
+    for path in package_files(image, repo_root):
         h.update(str(path.relative_to(repo_root)).encode())
         h.update(b"\0")
         h.update(path.read_bytes())
@@ -156,8 +176,7 @@ def inputs_hash(image: str, *, repo_root: Path | None = None) -> str:
     h = hashlib.sha256()
     # Frame every field so a value can never be confused for a boundary.
     h.update(f"schema={_SCHEMA}\nimage={image}\n".encode())
-    if image in _BAKES_PACKAGE:
-        _hash_package(h, repo_root)
+    _hash_package(h, image, repo_root)
     for name in inputs:
         path = repo_root / name
         h.update(name.encode())
@@ -173,6 +192,8 @@ __all__ = [
     "DOCKERFILES",
     "IMAGES",
     "INFRA_ROLES",
+    "PACKAGE_PATHS",
     "UnknownImageError",
     "inputs_hash",
+    "package_files",
 ]
