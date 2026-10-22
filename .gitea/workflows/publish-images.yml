@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       images:
-        description: "Images to publish (space-separated). Default: all."
+        description: "Images to publish (space-separated). Blank or `all` publishes every image."
         required: false
       owner:
         description: >-
@@ -73,6 +73,7 @@ jobs:
           VERSION: ${{ github.event.inputs.version }}
         run: |
           set -- --work-dir candidate --platform linux/amd64 --platform linux/arm64
+          if [ "$IMAGES" = all ]; then IMAGES=; fi
           for i in $IMAGES; do set -- "$@" --image "$i"; done
           if [ -n "$VERSION" ]; then set -- "$@" --version "$VERSION"; fi
           python3 -m bot_bottle.publish_images "$@"
