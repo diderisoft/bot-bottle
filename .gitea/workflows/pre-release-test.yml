@@ -329,7 +329,11 @@ jobs:
       # cannot leave `bot-bottle-mac-infra` wedged for the next job.
       - name: Teardown infra singleton
         if: always()
-        run: python3 -c 'from bot_bottle.backend.macos_container.infra import MacosInfraService; MacosInfraService().stop()'
+        run: |
+          python3 -c '
+          from bot_bottle.backend.macos_container.infra import MacosInfraService
+          from bot_bottle.cli.settings import settings_from_env
+          MacosInfraService(settings_from_env()).stop()'
 
   # Combined coverage gate: aggregates .coverage.* artifacts uploaded by each
   # test job, then runs the diff-coverage gate (new/changed lines >= 90%).
