@@ -10,7 +10,7 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from bot_bottle.git_gate import GIT_GATE_TIMEOUT_SECS
+from bot_bottle.contract.identity import GIT_GATE_TIMEOUT_SECS
 from bot_bottle.gateway.git_gate.http_backend import GitHttpHandler, MAX_BODY_BYTES
 
 

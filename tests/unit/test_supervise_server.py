@@ -19,7 +19,8 @@ from pathlib import Path
 
 from tests.unit import use_bottle_root
 
-from bot_bottle.orchestrator import supervisor as _sv
+from bot_bottle.contract import supervise as _sv
+from bot_bottle.orchestrator.supervisor import Supervisor
 from bot_bottle.orchestrator.store import queue_store as _qs
 from bot_bottle.orchestrator.store import audit_store as _as
 from bot_bottle.paths import host_db_path
@@ -56,9 +57,9 @@ from bot_bottle.gateway.supervisor.server import (
 # The orchestrator's supervise service, backing the fake resolver's queue reads
 # and writes (the fake stands in for the RPC; state still goes through the real
 # queue store).
-def _supervisor() -> _sv.Supervisor:
+def _supervisor() -> Supervisor:
     """A `Supervisor` on the host DB under the current (test) root."""
-    return _sv.Supervisor(host_db_path())
+    return Supervisor(host_db_path())
 
 # Fixed caller identity for the handler tests. The control plane attributes by
 # (source_ip, identity_token); the fake resolver ignores them and answers for a

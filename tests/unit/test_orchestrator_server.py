@@ -35,11 +35,11 @@ from bot_bottle.orchestrator.server import MAX_BODY_BYTES, create_app, make_serv
 from bot_bottle.orchestrator.store.registry_store import BottleRecord, RegistryStore
 from bot_bottle.orchestrator.service import OrchestratorCore
 from bot_bottle.orchestrator.store.store_manager import StoreManager
-from bot_bottle.orchestrator.supervisor import (
+from bot_bottle.contract.supervise import (
     Proposal,
     TOOL_EGRESS_ALLOW,
-    Supervisor,
 )
+from bot_bottle.orchestrator.supervisor import Supervisor
 
 
 def _body(obj: object) -> bytes:

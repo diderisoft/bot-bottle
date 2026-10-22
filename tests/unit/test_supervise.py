@@ -9,23 +9,23 @@ from typing import cast
 
 from bot_bottle.backend.resolve_common import prepare_supervise
 from bot_bottle.manifest import ManifestBottle
-from bot_bottle.orchestrator import supervisor as supervise
+from bot_bottle.contract import supervise
 from bot_bottle.paths import host_db_path
 from bot_bottle.lib.text import render_diff, sha256_hex
 from tests.unit import use_bottle_root
 from bot_bottle.orchestrator.store.audit_store import AuditStore
 from bot_bottle.orchestrator.store.queue_store import QueueStore
-from bot_bottle.orchestrator.supervisor import (
+from bot_bottle.contract.supervise import (
     AuditEntry,
     Proposal,
     Response,
     STATUS_APPROVED,
     STATUS_MODIFIED,
     STATUS_REJECTED,
-    Supervisor,
     TOOL_EGRESS_ALLOW,
     TOOL_GITLEAKS_ALLOW,
 )
+from bot_bottle.orchestrator.supervisor import Supervisor
 
 def _supervisor() -> Supervisor:
     """A `Supervisor` on the host DB under the current (test) root."""

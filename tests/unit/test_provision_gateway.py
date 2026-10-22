@@ -12,7 +12,8 @@ from bot_bottle.backend.provision_gateway import (
     provision_git_gate,
 )
 from bot_bottle.backend.docker.gateway_transport import DockerGatewayTransport
-from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
+from bot_bottle.control.git_gate_render import GitGateUpstream
+from bot_bottle.git_gate import GitGatePlan
 
 _RUN = "bot_bottle.backend.docker.gateway_transport.run_docker"
 

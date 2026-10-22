@@ -307,7 +307,7 @@ class AgentProvider(ABC):
 
         manifest_bottle = plan.manifest.bottle
         if manifest_bottle.git:
-            from .git_gate import GIT_GATE_HOSTNAME, git_gate_render_gitconfig
+            from .control.git_gate_render import GIT_GATE_HOSTNAME, git_gate_render_gitconfig
             gate_host = getattr(plan, "git_gate_insteadof_host", GIT_GATE_HOSTNAME)
             gate_scheme = getattr(plan, "git_gate_insteadof_scheme", "git")
             content = git_gate_render_gitconfig(

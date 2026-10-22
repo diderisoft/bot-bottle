@@ -9,17 +9,17 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from bot_bottle.orchestrator import supervisor as supervise
+from bot_bottle.contract import supervise
 from bot_bottle.orchestrator.store.audit_store import AuditStore
 from bot_bottle.paths import bot_bottle_root, host_db_path
 from bot_bottle.orchestrator.store.queue_store import QueueStore
-from bot_bottle.orchestrator.supervisor import (
+from bot_bottle.contract.supervise import (
     AuditEntry,
     Proposal,
     STATUS_APPROVED,
-    Supervisor,
     TOOL_EGRESS_ALLOW,
 )
+from bot_bottle.orchestrator.supervisor import Supervisor
 
 def _supervisor() -> Supervisor:
     """A `Supervisor` on the host DB under the current (test) root."""

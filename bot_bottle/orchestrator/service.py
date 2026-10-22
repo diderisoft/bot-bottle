@@ -20,10 +20,7 @@ import json
 from datetime import datetime, timezone
 from typing import Protocol
 
-from ..lib import log
-from .hostctl_relay import LiveBottlesUnknown
-from .store.registry_store import DEFAULT_REAP_GRACE_SECONDS, BottleRecord, RegistryStore
-from .supervisor import (
+from ..contract.supervise import (
     AuditEntry,
     COMPONENT_FOR_TOOL,
     POLL_STATUS_PENDING,
@@ -35,8 +32,11 @@ from .supervisor import (
     STATUS_REJECTED,
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,
-    Supervisor,
 )
+from ..lib import log
+from .hostctl_relay import LiveBottlesUnknown
+from .store.registry_store import DEFAULT_REAP_GRACE_SECONDS, BottleRecord, RegistryStore
+from .supervisor import Supervisor
 from ..lib.text import render_diff
 
 

@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import re
 
-from ..git_gate import GitGatePlan, git_gate_render_provision
+from ..control.git_gate_render import git_gate_render_provision
+from ..git_gate import GitGatePlan
 from ..control.gateway import GatewayProvisionError, GatewayTransport
 
 # bottle ids index the gateway's per-bottle repo + creds dirs; they land in

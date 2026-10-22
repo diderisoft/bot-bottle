@@ -6,7 +6,7 @@ original consumer."""
 
 import unittest
 
-from bot_bottle.git_gate import (
+from bot_bottle.control.git_gate_render import (
     GIT_GATE_HOSTNAME,
     _gitconfig_validate_value,
     git_gate_render_gitconfig,

@@ -16,7 +16,8 @@ from bot_bottle.agent_provider import AgentProvisionPlan
 from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.egress import EgressPlan, EgressRoute
-from bot_bottle.git_gate import GitGatePlan, GitGateUpstream
+from bot_bottle.control.git_gate_render import GitGateUpstream
+from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import ManifestIndex
 from bot_bottle.supervisor.plan import SupervisePlan
 

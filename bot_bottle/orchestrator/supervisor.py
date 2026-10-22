@@ -6,22 +6,18 @@ write audit entries). Binding those operations to one object scoped to a
 `db_path` makes the orchestrator's supervise dependency explicit and injectable
 in tests.
 
-For convenience this module also re-exports the neutral vocabulary
-(`bot_bottle.contract.supervise`), so orchestrator-side callers import from one
-place. (Generic helpers like `render_diff` /
-`sha256_hex` live in `bot_bottle.lib.text`.) The data plane must NOT import this
-module; it imports `bot_bottle.contract.supervise` directly and reaches the
-queue over the control-plane RPC.
+The vocabulary it speaks (`Proposal`, `Response`, the tool and status names) is
+`bot_bottle.contract.supervise`; callers import it from there. The data plane
+must NOT import this module; it reaches the queue over the control-plane RPC.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from ..contract.supervise import *  # noqa: F401,F403 — re-export the neutral vocabulary
+from ..contract.supervise import AuditEntry, Proposal, Response
 from .store.audit_store import AuditStore
 from .store.queue_store import QueueStore
-from ..contract.supervise import AuditEntry, Proposal, Response
 
 
 class Supervisor:

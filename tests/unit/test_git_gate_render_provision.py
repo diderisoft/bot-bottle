@@ -16,10 +16,12 @@ from unittest.mock import patch
 
 from bot_bottle.errors import MissingEnvVarError
 from bot_bottle.secret_source import MappingSecrets
-from bot_bottle.git_gate import (
+from bot_bottle.control.git_gate_render import (
     _gitconfig_validate_value,
-    _provision_dynamic_key,
     git_gate_render_gitconfig,
+)
+from bot_bottle.git_gate import (
+    _provision_dynamic_key,
     revoke_git_gate_provisioned_keys,
 )
 from bot_bottle.manifest.git import ManifestGitEntry, ManifestKeyConfig

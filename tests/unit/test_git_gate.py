@@ -6,19 +6,21 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from bot_bottle.git_gate import (
-    GitGate,
-    GitGatePlan,
+from bot_bottle.control.git_gate_render import (
     GitGateUpstream,
     git_gate_known_hosts_line,
     git_gate_render_access_hook,
     git_gate_render_entrypoint,
     git_gate_render_gitleaks_config,
     git_gate_render_hook,
+    git_gate_upstreams_for_bottle,
+)
+from bot_bottle.git_gate import (
+    GitGate,
+    GitGatePlan,
     provision_git_gate_dynamic_keys,
     revoke_git_gate_provisioned_keys,
     _resolve_identity_file,
-    git_gate_upstreams_for_bottle,
 )
 from bot_bottle.errors import MissingEnvVarError
 from bot_bottle.secret_source import MappingSecrets

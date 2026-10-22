@@ -14,12 +14,12 @@ from bot_bottle.orchestrator.store.registry_store import RegistryStore
 from bot_bottle.orchestrator.service import OrchestratorCore
 from bot_bottle.orchestrator.store.secret_store import new_env_var_secret
 from bot_bottle.orchestrator.store.store_manager import StoreManager
-from bot_bottle.orchestrator.supervisor import (
+from bot_bottle.contract.supervise import (
     Proposal,
     STATUS_APPROVED,
     TOOL_EGRESS_ALLOW,
-    Supervisor,
 )
+from bot_bottle.orchestrator.supervisor import Supervisor
 from bot_bottle.orchestrator.hostctl_relay import LiveBottlesUnknown
 
 

@@ -4,8 +4,7 @@ Builds the agent's `.gitconfig` insteadOf rewrites, the known_hosts
 line, and the entrypoint / pre-receive / access-hook scripts the gateway
 runs. No docker or forge calls — exposed for tests and reuse across
 backends. The host-side service (`git_gate.GitGate`) and the deploy-key
-lifecycle (`git_gate.provision`) each read on their own; `git_gate`
-re-exports these names for API stability."""
+lifecycle (`git_gate.provision`) each read on their own."""
 
 from __future__ import annotations
 

@@ -14,10 +14,10 @@ Layout:
     service delegates to.
 
 The rendering, including the hook scripts the gateway runs, lives in
-`bot_bottle.control.git_gate_render`. The public names are re-exported lazily
-via `__getattr__`, so `from bot_bottle.git_gate import …` keeps working and
-importing `git_gate.plan` (the contract's dependency) doesn't drag in the
-provisioning / forge-API code.
+`bot_bottle.control.git_gate_render`; import it from there. This package's
+public names are re-exported lazily via `__getattr__`, so importing
+`git_gate.plan` (the contract's dependency) doesn't drag in the provisioning /
+forge-API code.
 """
 
 from __future__ import annotations
@@ -31,24 +31,9 @@ if TYPE_CHECKING:
         provision_git_gate_dynamic_keys,
         revoke_git_gate_provisioned_keys,
     )
-    from ..control.git_gate_render import (
-        GIT_GATE_HOSTNAME,
-        GIT_GATE_TIMEOUT_SECS,
-        GitGateUpstream,
-        git_gate_known_hosts_line,
-        git_gate_render_access_hook,
-        git_gate_render_entrypoint,
-        git_gate_render_gitconfig,
-        git_gate_render_gitleaks_config,
-        git_gate_render_hook,
-        git_gate_render_provision,
-        git_gate_upstreams_for_bottle,
-    )
 
 
-# Public name -> relative module that defines it. Render/hook names come from
-# the gateway (where the in-gateway execution lives); the service, plan, and
-# provisioning are this package's own submodules.
+# Public name -> this package's submodule that defines it.
 _LAZY: dict[str, str] = {
     "GitGate": ".service",
     "GitGatePlan": ".plan",
@@ -56,18 +41,6 @@ _LAZY: dict[str, str] = {
     "revoke_git_gate_provisioned_keys": ".provision",
     "_provision_dynamic_key": ".provision",
     "_resolve_identity_file": ".provision",
-    "GIT_GATE_HOSTNAME": "..control.git_gate_render",
-    "GIT_GATE_TIMEOUT_SECS": "..control.git_gate_render",
-    "GitGateUpstream": "..control.git_gate_render",
-    "git_gate_upstreams_for_bottle": "..control.git_gate_render",
-    "git_gate_render_gitconfig": "..control.git_gate_render",
-    "git_gate_render_gitleaks_config": "..control.git_gate_render",
-    "git_gate_known_hosts_line": "..control.git_gate_render",
-    "git_gate_render_entrypoint": "..control.git_gate_render",
-    "git_gate_render_provision": "..control.git_gate_render",
-    "git_gate_render_hook": "..control.git_gate_render",
-    "git_gate_render_access_hook": "..control.git_gate_render",
-    "_gitconfig_validate_value": "..control.git_gate_render",
 }
 
 
@@ -85,17 +58,6 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "GitGate",
     "GitGatePlan",
-    "GitGateUpstream",
-    "GIT_GATE_HOSTNAME",
-    "GIT_GATE_TIMEOUT_SECS",
-    "git_gate_upstreams_for_bottle",
-    "git_gate_render_gitconfig",
-    "git_gate_render_gitleaks_config",
-    "git_gate_known_hosts_line",
-    "git_gate_render_entrypoint",
-    "git_gate_render_provision",
-    "git_gate_render_hook",
-    "git_gate_render_access_hook",
     "provision_git_gate_dynamic_keys",
     "revoke_git_gate_provisioned_keys",
 ]
