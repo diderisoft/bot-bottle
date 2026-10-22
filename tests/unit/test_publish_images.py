@@ -595,6 +595,33 @@ class Promotion(unittest.TestCase):
         self.assertIn("untested bytes", str(ctx.exception))
 
 
+class NextReleaseVersion(unittest.TestCase):
+    """A release picks its own number instead of needing a bump commit first."""
+
+    def test_skips_every_taken_version(self) -> None:
+        taken = {"0.1.2", "0.1.3"}
+        with mock.patch.object(
+            pi, "already_published",
+            side_effect=lambda _i, _p, v, _t: ["x"] if v in taken else [],
+        ):
+            self.assertEqual(pi.next_release_version("0.1.2", "tok"), "0.1.4")
+
+    def test_a_free_start_is_kept(self) -> None:
+        with mock.patch.object(pi, "already_published", return_value=[]):
+            self.assertEqual(pi.next_release_version("0.2.0", "tok"), "0.2.0")
+
+    def test_checks_every_image_on_both_arches(self) -> None:
+        with mock.patch.object(pi, "already_published", return_value=[]) as check:
+            pi.next_release_version("0.1.0", "tok")
+        images, platforms, _, _ = check.call_args.args
+        self.assertEqual(images, list(pi.image_inputs.IMAGES))
+        self.assertEqual(platforms, ["linux/amd64", "linux/arm64"])
+
+    def test_a_non_release_version_is_a_publish_error(self) -> None:
+        with self.assertRaises(pi.PublishError):
+            pi.next_release_version("0.0.0-dev", "tok")
+
+
 class Cli(unittest.TestCase):
     def test_publish_without_a_token_aborts_before_building(self) -> None:
         """An OCI push cannot be undone, so a missing token has to stop the run
@@ -605,6 +632,28 @@ class Cli(unittest.TestCase):
         self.assertEqual(rc, 2)
         build.assert_not_called()
 
+
+    def test_promote_without_a_version_picks_the_next_free_one(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.dict("os.environ", {pi.TOKEN_ENV: "tok"}), \
+             mock.patch.object(pi, "repo_version", return_value="0.1.2"), \
+             mock.patch.object(pi, "next_release_version", return_value="0.1.4") as pick, \
+             mock.patch.object(pi, "promote", return_value=[]) as promote, \
+             mock.patch.object(pi, "write_artifacts_manifest"), \
+             mock.patch.object(pi, "link_to_repo"):
+            rc = pi.main(["--promote", "m.json", "--work-dir", tmp])
+        self.assertEqual(rc, 0)
+        self.assertEqual(pick.call_args.args[0], "0.1.2")
+        self.assertEqual(promote.call_args.args[1], "0.1.4")
+
+    def test_promote_to_a_taken_version_aborts(self) -> None:
+        """`docker tag` + push would overwrite the old release without a word."""
+        with mock.patch.dict("os.environ", {pi.TOKEN_ENV: "tok"}), \
+             mock.patch.object(pi, "already_published", return_value=["x"]), \
+             mock.patch.object(pi, "promote") as promote:
+            rc = pi.main(["--promote", "m.json", "--version", "0.1.2"])
+        self.assertEqual(rc, 2)
+        promote.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

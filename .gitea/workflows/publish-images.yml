@@ -1,5 +1,7 @@
-# Build and publish the fixed images to the Gitea OCI registry, on release.
-# Development builds locally (BOT_BOTTLE_INFRA_BUILD=local).
+# Build and publish the fixed images to the Gitea OCI registry, by hand, to
+# rehearse a publish. Releases go through pre-release-test.yml, which tests the
+# images, promotes them to a release version and pins them on main; nothing
+# here is pinned. Development builds locally (BOT_BOTTLE_INFRA_BUILD=local).
 #
 # One machine builds both architectures; emulation measured at 1.1-1.8x. delphi
 # runs it because rootfs packaging needs e2fsprogs `mke2fs`.
@@ -7,9 +9,6 @@
 name: publish-images
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       images:
@@ -23,8 +22,8 @@ on:
         default: didericis
       version:
         description: >-
-          Publish under this version instead of pyproject's. For rehearsals:
-          use a throwaway like 0.0.0-dev so a trial can't be taken for a release.
+          Version to publish under. Blank uses 0.0.0-dev-<run number>, so a
+          rehearsal can't be taken for a release or collide with one.
         required: false
 
 jobs:
@@ -75,7 +74,7 @@ jobs:
           set -- --work-dir candidate --platform linux/amd64 --platform linux/arm64
           if [ "$IMAGES" = all ]; then IMAGES=; fi
           for i in $IMAGES; do set -- "$@" --image "$i"; done
-          if [ -n "$VERSION" ]; then set -- "$@" --version "$VERSION"; fi
+          set -- "$@" --version "${VERSION:-0.0.0-dev-${{ github.run_number }}}"
           python3 -m bot_bottle.publish_images "$@"
 
       - name: Verify the manifest

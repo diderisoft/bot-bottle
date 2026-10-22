@@ -19,6 +19,12 @@ name: pre-release-test
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Release version. Blank picks the first unpublished one at or above
+          pyproject's, and the release commit bumps pyproject to match.
+        required: false
 
 jobs:
   unit:
@@ -174,7 +180,7 @@ jobs:
       # through a code path that exists only for candidates, so what passes is
       # not what production runs; here the integration suite resolves, downloads
       # and verifies exactly as a release would. What passes gets promoted.
-      # Build both arches, exactly as the release (publish-images.yml) does —
+      # Build both arches, exactly as publish-images.yml does —
       # otherwise this path builds only the runner's arch, promote ships an
       # arm64-less release, and an arm64 host resolving it gets "no artifact for
       # linux-arm64". Prove emulation works before spending a build on it.
@@ -404,12 +410,15 @@ jobs:
       - name: Promote the tested dev version to the release version
         env:
           BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
+          # Via env, never interpolated into the script text.
+          VERSION: ${{ github.event.inputs.version }}
         run: |
           printf '%s' "$BOT_BOTTLE_INFRA_ARTIFACT_TOKEN" \
             | docker login gitea.dideric.is -u didericis --password-stdin
-          python3 -m bot_bottle.publish_images \
-            --promote tested/published-artifacts.json \
+          set -- --promote tested/published-artifacts.json \
             --work-dir "${{ github.workspace }}/released"
+          if [ -n "$VERSION" ]; then set -- "$@" --version "$VERSION"; fi
+          python3 -m bot_bottle.publish_images "$@"
 
       - name: Verify the released manifest
         run: |
@@ -429,7 +438,8 @@ jobs:
       # (bot_bottle/infra_image.py), so the pins stay safe as main moves.
       # Needs the BOT_BOTTLE_RELEASE_PUSH_TOKEN secret: a token for a user on
       # main's push allowlist. It reaches git through a credential helper that
-      # reads the environment, never the command line.
+      # reads the environment, never the command line. The same commit bumps
+      # pyproject to the released version, so the next release starts above it.
       - name: Commit the released manifest to main
         env:
           RELEASE_PUSH_TOKEN: ${{ secrets.BOT_BOTTLE_RELEASE_PUSH_TOKEN }}
@@ -448,12 +458,13 @@ jobs:
             git -c credential.helper="$helper" fetch "$remote" main
             git checkout -B release-pins FETCH_HEAD
             cp released/published-artifacts.json published-artifacts.json
-            git add published-artifacts.json
+            sed -i "s/^version = \".*\"$/version = \"$version\"/" pyproject.toml
+            git add published-artifacts.json pyproject.toml
             if git diff --cached --quiet; then
               echo "main already pins $version"
               exit 0
             fi
-            git commit -m "chore(release): pin $version published artifacts"
+            git commit -m "chore(release): release $version"
             if git -c credential.helper="$helper" push "$remote" HEAD:main; then
               exit 0
             fi

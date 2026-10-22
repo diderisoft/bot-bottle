@@ -45,6 +45,13 @@ report; macOS reports advisory coverage in its own job. The macOS infra
 container is a singleton, so its job uses a concurrency group and always tears
 the service down.
 
+When every job passes, it releases: it promotes the tested images to a release
+version and commits their pins (`published-artifacts.json`) to `main`, with
+`pyproject.toml` bumped to that version in the same commit. Leave the `version`
+input blank to take the first unpublished version at or above `pyproject.toml`'s.
+[`publish-images.yml`](../.gitea/workflows/publish-images.yml) only rehearses a
+publish: it defaults to a `0.0.0-dev-<run>` version and pins nothing.
+
 ## Scheduled canary
 
 [`.gitea/workflows/canaries.yml`](../.gitea/workflows/canaries.yml) runs weekly

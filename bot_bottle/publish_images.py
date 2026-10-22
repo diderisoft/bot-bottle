@@ -27,6 +27,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -287,6 +288,29 @@ def already_published(
             if _head(manifest, token, basic=True) == 200:
                 found.append(f"{oci_ref(image)}:{oci_tag(version, plat)}")
     return found
+
+
+_RELEASE_VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+_RELEASE_PLATFORMS = ["linux/amd64", "linux/arm64"]
+
+
+def next_release_version(start: str, token: str) -> str:
+    """The first version from `start` up, bumping the patch, that nothing is
+    published at.
+
+    A release picks its own number, so nobody has to commit a version bump
+    before cutting one. Every image and both arches are checked: a release
+    ships all of them, so any one existing means the number is taken."""
+    match = _RELEASE_VERSION.match(start)
+    if not match:
+        raise PublishError(f"{start!r} is not a MAJOR.MINOR.PATCH release version")
+    major, minor, patch = (int(g) for g in match.groups())
+    images = list(image_inputs.IMAGES)
+    while True:
+        version = f"{major}.{minor}.{patch}"
+        if not already_published(images, _RELEASE_PLATFORMS, version, token):
+            return version
+        patch += 1
 
 
 def delete_published(
@@ -653,7 +677,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--promote", type=Path, default=None, metavar="MANIFEST",
         help="promote the artifacts in MANIFEST to --version by copying them; "
-             "never rebuilds, so what ships is what was tested",
+             "never rebuilds, so what ships is what was tested. Without "
+             "--version, promotes to the first unpublished version at or above "
+             "pyproject.toml's",
     )
     parser.add_argument(
         "--force", action="store_true",
@@ -758,6 +784,18 @@ def main(argv: list[str] | None = None) -> int:
     version = args.version or repo_version(repo_root)
 
     if args.promote:
+        if args.version is None:
+            version = next_release_version(version, token)
+        elif existing := already_published(
+                list(image_inputs.IMAGES), _RELEASE_PLATFORMS, version, token):
+            # `docker tag` + push overwrites silently, so check up front.
+            print(
+                f"{len(existing)} artifact(s) already published at {version}; "
+                f"pick a free version or omit --version",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"promoting to {version}")
         promoted = promote(args.promote, version, token, runtime=args.runtime)
         dest = args.work_dir / ARTIFACTS_MANIFEST_NAME
         dest.parent.mkdir(parents=True, exist_ok=True)
