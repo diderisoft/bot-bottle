@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +24,41 @@ class AuditForward:
     url: str
     secret: str
     format: str  # native | ocsf
+
+
+@dataclass(frozen=True)
+class FirehoseSink:
+    """Where the request firehose goes: `exec` writes JSONL to `command`'s
+    stdin; `https` POSTs NDJSON batches to `url`, with the secrets-file entry
+    `secret` as a bearer token."""
+
+    type: str  # exec | https
+    command: tuple[str, ...] = ()
+    url: str = ""
+    secret: str = ""
+
+    def to_json(self) -> dict[str, object]:
+        if self.type == "exec":
+            return {"type": "exec", "command": list(self.command)}
+        return {"type": "https", "url": self.url, "secret": self.secret}
+
+    @classmethod
+    def from_json(cls, raw: object) -> "FirehoseSink | None":
+        if not isinstance(raw, dict):
+            return None
+        if raw.get("type") == "exec" and isinstance(raw.get("command"), list) and raw["command"]:
+            return cls("exec", command=tuple(str(c) for c in raw["command"]))
+        if raw.get("type") == "https" and isinstance(raw.get("url"), str) and raw["url"]:
+            return cls("https", url=raw["url"], secret=str(raw.get("secret") or ""))
+        return None
+
+
+@dataclass(frozen=True)
+class FirehoseSettings:
+    sinks: tuple[FirehoseSink, ...] = ()
+    request_bodies: bool = True
+    response_bodies: bool = False
+    max_body_bytes: int = 65536
 
 
 class ConfigStore(DbStore):
@@ -54,6 +90,23 @@ class ConfigStore(DbStore):
             """
             ALTER TABLE bot_bottle_config
             ADD COLUMN audit_forward_format TEXT NOT NULL DEFAULT 'native'
+            """,
+            # v6-9 — the request firehose: its sinks and what it captures
+            """
+            ALTER TABLE bot_bottle_config
+            ADD COLUMN firehose_sinks TEXT NOT NULL DEFAULT '[]'
+            """,
+            """
+            ALTER TABLE bot_bottle_config
+            ADD COLUMN firehose_request_bodies INTEGER NOT NULL DEFAULT 1
+            """,
+            """
+            ALTER TABLE bot_bottle_config
+            ADD COLUMN firehose_response_bodies INTEGER NOT NULL DEFAULT 0
+            """,
+            """
+            ALTER TABLE bot_bottle_config
+            ADD COLUMN firehose_max_body_bytes INTEGER NOT NULL DEFAULT 65536
             """,
         ])
         super().__init__(db_path, migrations)
@@ -126,6 +179,49 @@ class ConfigStore(DbStore):
         self._chmod()
         return self.db_path
 
+    def firehose(self) -> FirehoseSettings:
+        """The request firehose's sinks and capture settings."""
+        if not self.db_path.is_file():
+            return FirehoseSettings()
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT firehose_sinks, firehose_request_bodies, firehose_response_bodies, "
+                    "firehose_max_body_bytes FROM bot_bottle_config WHERE id = 1",
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return FirehoseSettings()  # not migrated yet
+        if row is None:
+            return FirehoseSettings()
+        try:
+            raw = json.loads(row["firehose_sinks"] or "[]")
+        except ValueError:
+            raw = []
+        sinks = tuple(s for s in (FirehoseSink.from_json(r) for r in raw) if s is not None) \
+            if isinstance(raw, list) else ()
+        return FirehoseSettings(sinks=sinks, request_bodies=bool(row["firehose_request_bodies"]),
+                                response_bodies=bool(row["firehose_response_bodies"]),
+                                max_body_bytes=int(row["firehose_max_body_bytes"]))
+
+    def set_firehose(self, settings: FirehoseSettings) -> Path:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO bot_bottle_config (id, firehose_sinks, firehose_request_bodies,
+                    firehose_response_bodies, firehose_max_body_bytes)
+                VALUES (1, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    firehose_sinks = excluded.firehose_sinks,
+                    firehose_request_bodies = excluded.firehose_request_bodies,
+                    firehose_response_bodies = excluded.firehose_response_bodies,
+                    firehose_max_body_bytes = excluded.firehose_max_body_bytes
+                """,
+                (json.dumps([s.to_json() for s in settings.sinks]), int(settings.request_bodies),
+                 int(settings.response_bodies), settings.max_body_bytes),
+            )
+        self._chmod()
+        return self.db_path
+
     def set_audit_delivery(self, delivery: str) -> Path:
         with self._connect() as conn:
             conn.execute(
@@ -156,6 +252,8 @@ class ConfigStore(DbStore):
 
 __all__ = [
     "AuditForward",
+    "FirehoseSettings",
+    "FirehoseSink",
     "DEFAULT_AUDIT_DELIVERY",
     "DEFAULT_CACHED_IMAGE_STALE_WARNING_DAYS",
     "ConfigStore",

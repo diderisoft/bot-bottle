@@ -81,6 +81,17 @@ def start_forwarder(audit: HostAudit) -> "AuditForwarder | None":
         return None
 
 
+def start_firehose() -> FirehoseHub:
+    """The request firehose's hub, reading its sinks from the host settings."""
+    # pylint: disable=import-outside-toplevel
+    from ...lib.config_store import ConfigStore
+    from ...paths import host_db_path, host_secrets_path
+    from ...secret_source import FileSecrets
+    from .firehose_sinks import SinkSet
+    return FirehoseHub(settings=ConfigStore(host_db_path()).firehose,
+                       sinks=SinkSet(FileSecrets(host_secrets_path()).get))
+
+
 def main() -> int:
     port = int(os.environ.get(PORT_ENV, "0") or "0")
     sessions = SessionManager({})
@@ -98,7 +109,7 @@ def main() -> int:
         write_config()
         sessions.adopt()
     build_id, key, jobs = current_build_id(), signing_key(HOST_CONTROL), JobRegistry()
-    live, firehose = LiveBottles(), FirehoseHub()
+    live, firehose = LiveBottles(), start_firehose()
     server = HostControlServer(("127.0.0.1", port), build_id, key, sessions, bottles,
                                jobs=jobs, live=live, firehose=firehose)
 
@@ -134,6 +145,7 @@ def main() -> int:
         remote_link.close()
         if forwarder is not None:
             forwarder.close()
+        firehose.close()
         audit.close()
         clear_state(state.pid)
     return 0

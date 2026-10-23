@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,7 +21,7 @@ from ...control.hostctl.audit_index import (
 )
 from ...control.hostctl.audit_ocsf import to_ocsf
 from ...control.hostctl.audit_verify import verify
-from ...lib.config_store import AuditForward, ConfigStore
+from ...lib.config_store import AuditForward, ConfigStore, FirehoseSink
 from ...manifest.bottle import AUDIT_DELIVERIES
 from ...paths import host_audit_dir, host_db_path
 from ..constants import PROG
@@ -200,6 +202,44 @@ def _tail(ns: argparse.Namespace) -> int:
     return 0
 
 
+def _firehose(ns: argparse.Namespace) -> int:
+    store = ConfigStore(host_db_path())
+    settings = store.firehose()
+    sinks = list(settings.sinks)
+    if ns.clear:
+        sinks = []
+    if ns.remove is not None:
+        if not 1 <= ns.remove <= len(sinks):
+            sys.stderr.write(f"{PROG}: no sink {ns.remove}\n")
+            return 1
+        del sinks[ns.remove - 1]
+    if ns.exec:
+        sinks.append(FirehoseSink("exec", command=tuple(shlex.split(ns.exec))))
+    if ns.https:
+        sinks.append(FirehoseSink("https", url=ns.https, secret=ns.secret or ""))
+    changed = dataclasses.replace(
+        settings, sinks=tuple(sinks),
+        request_bodies=settings.request_bodies if ns.request_bodies is None
+        else ns.request_bodies == "on",
+        response_bodies=settings.response_bodies if ns.response_bodies is None
+        else ns.response_bodies == "on",
+        max_body_bytes=settings.max_body_bytes if ns.max_body_bytes is None
+        else ns.max_body_bytes)
+    if changed != settings:
+        store.migrate()
+        store.set_firehose(changed)
+    on = {True: "on", False: "off"}
+    sys.stdout.write(f"request bodies {on[changed.request_bodies]}, response bodies "
+                     f"{on[changed.response_bodies]}, up to {changed.max_body_bytes} bytes\n")
+    if not changed.sinks:
+        sys.stdout.write("no sinks (only `audit tail` sees the stream)\n")
+    for i, sink in enumerate(changed.sinks, start=1):
+        target = shlex.join(sink.command) if sink.type == "exec" else sink.url
+        token = f" (bearer token from secret {sink.secret})" if sink.secret else ""
+        sys.stdout.write(f"{i}. {sink.type}: {target}{token}\n")
+    return 0
+
+
 def cmd_audit(args: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog=f"{PROG} audit",
@@ -258,5 +298,17 @@ def cmd_audit(args: list[str]) -> int:
     tail.add_argument("--host", help="only requests to this host")
     tail.add_argument("--json", action="store_true", help="each record as OCSF JSON")
     tail.set_defaults(run=_tail)
+    firehose = sub.add_parser("firehose", help="show or set the request firehose's sinks")
+    firehose.add_argument("--exec", metavar="COMMAND",
+                          help="add a sink: a command whose stdin gets each record as JSON")
+    firehose.add_argument("--https", metavar="URL", help="add a sink: an NDJSON endpoint")
+    firehose.add_argument("--secret", help="for --https: the secrets-file entry sent as a "
+                                           "bearer token")
+    firehose.add_argument("--remove", type=int, metavar="N", help="remove sink N")
+    firehose.add_argument("--clear", action="store_true", help="remove every sink")
+    firehose.add_argument("--request-bodies", choices=("on", "off"))
+    firehose.add_argument("--response-bodies", choices=("on", "off"))
+    firehose.add_argument("--max-body-bytes", type=int)
+    firehose.set_defaults(run=_firehose)
     ns = parser.parse_args(args)
     return ns.run(ns)

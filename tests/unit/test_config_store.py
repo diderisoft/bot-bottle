@@ -11,6 +11,8 @@ from bot_bottle.lib.config_store import (
     DEFAULT_CACHED_IMAGE_STALE_WARNING_DAYS,
     AuditForward,
     ConfigStore,
+    FirehoseSettings,
+    FirehoseSink,
 )
 from bot_bottle.orchestrator.store.store_manager import StoreManager
 
@@ -49,7 +51,23 @@ class TestConfigStore(unittest.TestCase):
                 "audit_forward_url",
                 "audit_forward_secret",
                 "audit_forward_format",
+                "firehose_sinks",
+                "firehose_request_bodies",
+                "firehose_response_bodies",
+                "firehose_max_body_bytes",
             ], columns)
+
+    def test_firehose_settings_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
+            store = ConfigStore(Path(tmp) / "bot-bottle.db")
+            self.assertEqual(FirehoseSettings(), store.firehose())  # no DB yet
+            store.migrate()
+            settings = FirehoseSettings(
+                sinks=(FirehoseSink("exec", command=("vector", "--config", "x.toml")),
+                       FirehoseSink("https", url="https://siem.example/in", secret="SIEM")),
+                request_bodies=False, response_bodies=True, max_body_bytes=1024)
+            store.set_firehose(settings)
+            self.assertEqual(settings, store.firehose())
 
     def test_audit_forward_round_trips_and_clears(self) -> None:
         with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:

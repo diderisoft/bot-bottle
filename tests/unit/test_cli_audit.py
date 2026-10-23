@@ -53,6 +53,20 @@ class AuditCommand(unittest.TestCase):
         self.assertIn("secret SIEM_TOKEN", out)
         self.assertEqual((0, "not forwarding\n"), self.run_cmd("forward", "--off"))
 
+    def test_firehose_shows_and_edits_sinks(self) -> None:
+        rc, out = self.run_cmd("firehose")
+        self.assertEqual(0, rc)
+        self.assertIn("no sinks", out)
+        rc, out = self.run_cmd("firehose", "--exec", "vector --config /etc/v.toml",
+                               "--https", "https://siem.example/in", "--secret", "SIEM",
+                               "--response-bodies", "on")
+        self.assertIn("1. exec: vector --config /etc/v.toml", out)
+        self.assertIn("2. https: https://siem.example/in (bearer token from secret SIEM)", out)
+        self.assertIn("response bodies on", out)
+        rc, out = self.run_cmd("firehose", "--remove", "1")
+        self.assertNotIn("exec", out)
+        self.assertEqual(1, self.run_cmd("firehose", "--remove", "5")[0])
+
     def test_no_journal_is_not_an_error(self) -> None:
         for action in ("verify", "query", "rebuild"):
             rc, out = self.run_cmd(action)
