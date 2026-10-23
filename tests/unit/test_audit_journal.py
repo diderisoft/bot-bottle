@@ -158,6 +158,22 @@ class SingleWriter(_JournalCase):
         _assert_chained(self, _records(self.dir))
 
 
+class Idempotency(_JournalCase):
+    def test_a_retried_event_is_written_once(self) -> None:
+        j = self.journal()
+        event = _event()
+        self.assertIsNotNone(j.append(event, producer="egress"))
+        self.assertIsNone(j.append(event, producer="egress"))
+        self.assertEqual(len(_records(self.dir)), 2)
+
+    def test_a_retry_after_a_restart_is_still_dropped(self) -> None:
+        event = _event()
+        first = self.journal()
+        first.append(event, producer="egress")
+        self.assertIsNone(self.restart(first).append(event, producer="egress"))
+        _assert_chained(self, _records(self.dir))
+
+
 class Redaction(unittest.TestCase):
     def test_a_credential_shaped_key_is_refused(self) -> None:
         for key in ("token", "Authorization", "api_key", "github_token", "db_password"):

@@ -10,6 +10,10 @@ its `epoch + 1` as the new epoch, and resets `seq`. A torn final line (a crash
 mid-append) is cut back to the last intact record before appending, since a
 line glued onto it would corrupt the next record too.
 
+`id` is the idempotency key: a producer retrying an event reuses it, and the
+writer drops an id it has already written. The ids are read from the journal
+on start, which holds every record while no segment is ever pruned.
+
 Redaction runs here, before anything is written: a credential-shaped key is
 refused, and token-shaped values in the producer-supplied fields (`resource`,
 `payload`, `untrusted`) are scrubbed.
@@ -137,6 +141,14 @@ def _hold_writer_lock(directory: Path) -> int:
     return fd
 
 
+def _ids(segments: list[Path]) -> set[str]:
+    ids: set[str] = set()
+    for path in segments:
+        for raw in path.read_bytes().splitlines():
+            ids.add(str(json.loads(raw).get("id")))
+    return ids
+
+
 def _last_record(path: Path) -> dict[str, Any] | None:
     lines = path.read_bytes().splitlines()
     return json.loads(lines[-1]) if lines else None
@@ -172,6 +184,7 @@ class AuditJournal:
                 last = _last_record(path)
                 if last is not None:
                     break
+        self._ids = _ids(segments)
         self._seq = 0
         if last is None:
             self._epoch = 0
@@ -201,10 +214,13 @@ class AuditJournal:
             payload={"segment": self._segment},
         ), producer="audit")
 
-    def append(self, event: AuditEvent, *, producer: str) -> dict[str, Any]:
-        """Seal `event` onto the chain and write it. Returns the record."""
+    def append(self, event: AuditEvent, *, producer: str) -> dict[str, Any] | None:
+        """Seal `event` onto the chain and write it. Returns the record, or
+        None when an event with its id was already written (a retry)."""
         event = redact(event)
         with self._lock:
+            if event.id in self._ids:
+                return None
             return self._write(event, producer=producer)
 
     def _write(self, event: AuditEvent, *, producer: str) -> dict[str, Any]:
@@ -232,6 +248,7 @@ class AuditJournal:
             os.close(fd)
         self._prev = record["hash"]
         self._seq += 1
+        self._ids.add(event.id)
         return record
 
 
