@@ -42,6 +42,10 @@ GATEWAY_CA_DIRNAME = "gateway-ca"
 # The host secrets file (`NAME=value` lines, mode 0600) under the root.
 SECRETS_FILENAME = "secrets"
 
+# The audit journal's segment files (PRD 0089). Its own directory, not `db/`,
+# because `db/` is bind-mounted into the gateway and the journal must not be.
+AUDIT_DIRNAME = "audit"
+
 
 def bot_bottle_root() -> Path:
     """The app data root — `$BOT_BOTTLE_ROOT` if set, else `~/.bot-bottle`."""
@@ -71,6 +75,12 @@ def host_db_dir() -> Path:
     db_dir = host_db_path().parent
     db_dir.mkdir(parents=True, exist_ok=True)
     return db_dir
+
+
+def host_audit_dir() -> Path:
+    """The audit journal's directory, `<root>/audit/`. Only the host
+    controller writes here."""
+    return bot_bottle_root() / AUDIT_DIRNAME
 
 
 def host_gateway_ca_dir() -> Path:
@@ -153,7 +163,9 @@ def host_firecracker_cache_dir() -> Path:
 
 
 __all__ = [
+    "AUDIT_DIRNAME",
     "HOST_DB_FILENAME",
+    "host_audit_dir",
     "host_artifact_cache_dir",
     "host_firecracker_cache_dir",
     "GATEWAY_CA_DIRNAME",

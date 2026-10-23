@@ -12,12 +12,11 @@ place an agent's or a remote's claims may go.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Mapping
-
-from ..lib.text import sha256_hex
 
 
 SCHEMA_VERSION = 1
@@ -37,7 +36,8 @@ def record_hash(prev: str, record: Mapping[str, Any]) -> str:
 
     `hash` is present and empty, never omitted, so the key set is the same
     before and after sealing."""
-    return sha256_hex(prev + canonical({**record, "hash": ""}))
+    data = prev + canonical({**record, "hash": ""})
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
