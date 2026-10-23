@@ -516,10 +516,16 @@ class TestSandboxEscape(unittest.TestCase):
 
     # ---- attack 6: secrets the bottle holds --------------------------
 
-    # Prints the bottle's exfil canary: the env var named WORD_WORD_SECRET.
+    # Sets $canary to the bottle's exfil canary: the one env var named
+    # WORD_WORD_SECRET that isn't a test fixture. TEST_HELD_SECRET has the same
+    # shape, so fixtures are excluded and anything but exactly one candidate
+    # fails loudly instead of silently testing the wrong value.
     _CANARY_SH = (
-        "canary=$(env | sed -n 's/^[A-Z][A-Z]*_[A-Z][A-Z]*_SECRET=//p' | head -n1)\n"
-        '[ -n "$canary" ] || { echo "no canary in env" >&2; exit 99; }\n'
+        "names=$(env | sed -n 's/^\\([A-Z][A-Z]*_[A-Z][A-Z]*_SECRET\\)=.*/\\1/p'"
+        " | grep -v '^TEST_')\n"
+        '[ "$(printf "%s\\n" "$names" | grep -c .)" = 1 ] || '
+        '{ echo "expected one canary env var, got: $names" >&2; exit 99; }\n'
+        'canary=$(printenv "$names")\n'
     )
 
     def _push_script(self, value_expr: str) -> str:
