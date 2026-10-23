@@ -52,6 +52,11 @@ def _close_quietly(j: AuditJournal) -> None:
         pass  # already closed by the test
 
 
+def _sealed(record: dict[str, Any] | None) -> dict[str, Any]:
+    """The record `append` returned; None would mean it was dropped as a retry."""
+    assert record is not None
+    return record
+
 class _JournalCase(unittest.TestCase):
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
@@ -90,7 +95,7 @@ class FreshJournal(_JournalCase):
         _assert_chained(self, records)
 
     def test_the_writer_sets_attribution_not_the_producer(self) -> None:
-        record = self.journal().append(_event(), producer="egress")
+        record = _sealed(self.journal().append(_event(), producer="egress"))
         self.assertEqual(record["producer"], "egress")
         self.assertEqual(record["host"], "mac-studio-1")
         self.assertEqual(record["engine"], "bot-bottle/0.1.4")
@@ -113,7 +118,7 @@ class Restart(_JournalCase):
         first = self.journal()
         first.append(_event(), producer="egress")
         second = self.restart(first)
-        record = second.append(_event(), producer="egress")
+        record = _sealed(second.append(_event(), producer="egress"))
         self.assertEqual((record["epoch"], record["seq"]), (1, 0))
         self.assertEqual(second.path, first.path)  # no new segment on restart
         _assert_chained(self, _records(self.dir))
@@ -123,13 +128,13 @@ class Restart(_JournalCase):
         for _ in range(3):
             j.append(_event(), producer="egress")
             j = self.restart(j)
-        record = j.append(_event(), producer="egress")
+        record = _sealed(j.append(_event(), producer="egress"))
         self.assertEqual(record["epoch"], 3)
 
     def test_a_boot_that_wrote_nothing_does_not_use_up_an_epoch(self) -> None:
         """Nothing was written in it, so reusing its number can't collide."""
         j = self.restart(self.restart(self.journal()))
-        record = j.append(_event(), producer="egress")
+        record = _sealed(j.append(_event(), producer="egress"))
         self.assertEqual(record["epoch"], 1)
 
     def test_a_torn_final_line_is_cut_before_appending(self) -> None:
@@ -137,7 +142,7 @@ class Restart(_JournalCase):
         j.append(_event(), producer="egress")
         with j.path.open("a") as f:
             f.write('{"id":"half-writ')  # a crash mid-append
-        record = self.restart(j).append(_event(), producer="egress")
+        record = _sealed(self.restart(j).append(_event(), producer="egress"))
         records = _records(self.dir)
         self.assertEqual(records[-1], record)
         _assert_chained(self, records)
@@ -149,7 +154,7 @@ class SingleWriter(_JournalCase):
         first = self.journal()
         with self.assertRaises(AuditJournalBusy):
             self.journal()
-        record = first.append(_event(), producer="egress")
+        record = _sealed(first.append(_event(), producer="egress"))
         self.assertEqual((record["epoch"], record["seq"]), (0, 1))
         _assert_chained(self, _records(self.dir))
 

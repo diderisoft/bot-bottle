@@ -30,7 +30,9 @@ class Index(unittest.TestCase):
         self.journal = AuditJournal(self.dir, host="h", engine="e")
 
     def append(self, **overrides: Any) -> dict[str, Any]:
-        return self.journal.append(_event(**overrides), producer="egress")
+        record = self.journal.append(_event(**overrides), producer="egress")
+        assert record is not None
+        return record
 
     def ids(self, **filters: Any) -> list[str]:
         index = AuditIndex(self.dir)
