@@ -9,6 +9,7 @@ from pathlib import Path
 
 from bot_bottle.lib.config_store import (
     DEFAULT_CACHED_IMAGE_STALE_WARNING_DAYS,
+    AuditForward,
     ConfigStore,
 )
 from bot_bottle.orchestrator.store.store_manager import StoreManager
@@ -45,7 +46,22 @@ class TestConfigStore(unittest.TestCase):
                 "id",
                 "cached_image_stale_warning_days",
                 "audit_delivery",
+                "audit_forward_url",
+                "audit_forward_secret",
+                "audit_forward_format",
             ], columns)
+
+    def test_audit_forward_round_trips_and_clears(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
+            store = ConfigStore(Path(tmp) / "bot-bottle.db")
+            store.migrate()
+            self.assertIsNone(store.audit_forward())
+            forward = AuditForward(url="https://siem.example/in", secret="SIEM_TOKEN",
+                                   format="ocsf")
+            store.set_audit_forward(forward)
+            self.assertEqual(forward, store.audit_forward())
+            store.set_audit_forward(None)
+            self.assertIsNone(store.audit_forward())
 
     def test_audit_delivery_defaults_to_best_effort_and_can_be_set(self) -> None:
         with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:

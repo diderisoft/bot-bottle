@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import signal
+import sqlite3
 import sys
 import threading
 from types import FrameType
@@ -17,12 +18,13 @@ from types import FrameType
 from ...contract.auth import ROLE_GATEWAY
 from ...contract.hostctl import GUEST_PORT, HOST_CONTROL, PORT_ENV, ROLE_ORCHESTRATOR
 from ...control.lifecycle import Orchestrator
-from ...lib.log import debug, info
+from ...lib.log import debug, info, warn
 from ...trust_domain import HostControlProvisioning, HostLink, signing_key
 from .build import current_build_id
 from .runner import HostControlState, clear_state, write_state
 from . import localsock
 from .audit_events import HostAudit
+from .audit_forward import AuditForwarder
 from .bottles import BottleService
 from .jobs import JobRegistry
 from .listeners import GuestListeners
@@ -57,11 +59,34 @@ def serve_running_orchestrators() -> None:
             debug(f"host controller: no {name} orchestrator to listen for: {e}")
 
 
+def start_forwarder(audit: HostAudit) -> "AuditForwarder | None":
+    """The journal forwarder, or None if it can't start."""
+    # pylint: disable=import-outside-toplevel
+    import time
+    from ...contract.audit import utc_iso
+    from ...lib.config_store import ConfigStore
+    from ...paths import host_audit_dir, host_db_path, host_secrets_path
+    from ...secret_source import FileSecrets
+    from .audit_forward import ForwardCursors
+    try:
+        return AuditForwarder(
+            host_audit_dir(), cursors=ForwardCursors(host_db_path()),
+            config=ConfigStore(host_db_path()).audit_forward,
+            secrets=FileSecrets(host_secrets_path()),
+            record_failure=audit.record, now=lambda: utc_iso(time.time()),
+        ).start()
+    except (OSError, PermissionError, sqlite3.Error) as e:
+        warn(f"audit forwarding unavailable: {e}")
+        return None
+
+
 def main() -> int:
     port = int(os.environ.get(PORT_ENV, "0") or "0")
     sessions = SessionManager({})
-    # The host's single audit writer lives as long as this daemon.
+    # The host's single audit writer lives as long as this daemon, and so
+    # does forwarding the journal to wherever the user configured.
     audit = HostAudit.open()
+    forwarder = start_forwarder(audit)
     # Registers the `bottle` finisher, so it must exist before adopting.
     bottles = BottleService(sessions, audit=audit)
     # The console link (ADR 0007): runs only while `bot-bottle remote enable`d.
@@ -106,6 +131,8 @@ def main() -> int:
         guests.close()
         local.close()
         remote_link.close()
+        if forwarder is not None:
+            forwarder.close()
         audit.close()
         clear_state(state.pid)
     return 0

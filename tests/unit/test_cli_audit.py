@@ -44,6 +44,15 @@ class AuditCommand(unittest.TestCase):
         self.assertEqual((0, "required\n"), self.run_cmd("delivery", "required"))
         self.assertEqual((0, "required\n"), self.run_cmd("delivery"))
 
+    def test_forward_shows_sets_and_turns_off(self) -> None:
+        self.assertEqual((0, "not forwarding\n"), self.run_cmd("forward"))
+        rc, out = self.run_cmd("forward", "--url", "https://siem.example/in",
+                               "--secret", "SIEM_TOKEN", "--format", "ocsf")
+        self.assertEqual(0, rc)
+        self.assertIn("forwarding ocsf to https://siem.example/in", out)
+        self.assertIn("secret SIEM_TOKEN", out)
+        self.assertEqual((0, "not forwarding\n"), self.run_cmd("forward", "--off"))
+
     def test_no_journal_is_not_an_error(self) -> None:
         for action in ("verify", "query", "rebuild"):
             rc, out = self.run_cmd(action)
@@ -74,6 +83,15 @@ class AuditCommand(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(out, j.path.read_text().splitlines()[-1] + "\n")
         self.assertEqual(out.strip(), canonical(json.loads(out)))
+
+    def test_export_writes_native_or_ocsf_jsonl(self) -> None:
+        j = self.journal()
+        rc, out = self.run_cmd("export", "--type", "egress.*")
+        self.assertEqual((0, j.path.read_text().splitlines()[-1] + "\n"), (rc, out))
+        rc, out = self.run_cmd("export", "--type", "egress.*", "--format", "ocsf")
+        event = json.loads(out)
+        self.assertEqual((0, 4002, "1.9.0"), (rc, event["class_uid"], event["metadata"]["version"]))
+        self.assertEqual(j.path.read_text().splitlines()[-1], event["raw_data"])
 
     def test_query_refuses_a_broken_journal(self) -> None:
         j = self.journal()

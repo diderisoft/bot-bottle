@@ -16,8 +16,9 @@ from ...control.hostctl.audit_index import (
     Query,
     imported_chains,
 )
+from ...control.hostctl.audit_ocsf import to_ocsf
 from ...control.hostctl.audit_verify import verify
-from ...lib.config_store import ConfigStore
+from ...lib.config_store import AuditForward, ConfigStore
 from ...manifest.bottle import AUDIT_DELIVERIES
 from ...paths import host_audit_dir, host_db_path
 from ..constants import PROG
@@ -63,26 +64,45 @@ def _table(records: list[dict[str, Any]]) -> None:
         sys.stdout.write("  ".join(v.ljust(w) for v, w in zip(row, widths)).rstrip() + "\n")
 
 
-def _query(ns: argparse.Namespace) -> int:
+def _matching(ns: argparse.Namespace) -> list[dict[str, Any]] | None:
+    """The indexed records `ns`'s filters select, after syncing the index;
+    None (already reported) when there's no journal or it doesn't chain."""
     index = _index()
     if index is None:
-        return 0
+        return None
     try:
         index.sync()
     except IndexBreak as e:
         sys.stderr.write(f"{PROG}: {e}; run `{PROG} audit verify`\n")
-        return 1
-    records = index.query(Query(
+        return None
+    return index.query(Query(
         since=ns.since, until=ns.until, type=ns.type, host=ns.host,
         bottle=ns.bottle, activation=ns.activation, bottled_agent=ns.agent,
         actor=ns.actor, outcome=ns.outcome, repository=ns.repository,
         correlation_id=ns.correlation_id, commit_sha=ns.commit, limit=ns.limit,
     ))
+
+
+def _query(ns: argparse.Namespace) -> int:
+    records = _matching(ns)
+    if records is None:
+        return 0 if not host_audit_dir().is_dir() else 1
     if ns.json:
         for record in records:
             sys.stdout.write(canonical(record) + "\n")
     else:
         _table(records)
+    return 0
+
+
+def _export(ns: argparse.Namespace) -> int:
+    """JSONL on stdout: the journal's own lines, or their OCSF 1.9.0 events."""
+    records = _matching(ns)
+    if records is None:
+        return 0 if not host_audit_dir().is_dir() else 1
+    for record in records:
+        out = to_ocsf(record) if ns.format == "ocsf" else record
+        sys.stdout.write(canonical(out) + "\n")
     return 0
 
 
@@ -126,6 +146,22 @@ def _delivery(ns: argparse.Namespace) -> int:
     return 0
 
 
+def _forward(ns: argparse.Namespace) -> int:
+    store = ConfigStore(host_db_path())
+    if ns.off or ns.url:
+        store.migrate()
+        store.set_audit_forward(
+            None if ns.off else AuditForward(url=ns.url, secret=ns.secret or "",
+                                             format=ns.format))
+    forward = store.audit_forward()
+    if forward is None:
+        sys.stdout.write("not forwarding\n")
+    else:
+        token = f", bearer token from secret {forward.secret}" if forward.secret else ""
+        sys.stdout.write(f"forwarding {forward.format} to {forward.url}{token}\n")
+    return 0
+
+
 def cmd_audit(args: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog=f"{PROG} audit",
@@ -137,6 +173,9 @@ def cmd_audit(args: list[str]) -> int:
         help="check the journal's hash chain; exits non-zero on any break",
     ).set_defaults(run=_verify)
     query = sub.add_parser("query", help="list matching events, oldest first")
+    export = sub.add_parser("export", help="matching events as JSONL, for a SIEM or a file")
+    export.add_argument("--format", choices=("native", "ocsf"), default="native",
+                        help="native: the journal's own lines; ocsf: OCSF 1.9.0 events")
     for flag, dest, text in (
         ("--since", "since", "events at or after this ISO time"),
         ("--until", "until", "events before this ISO time"),
@@ -150,7 +189,10 @@ def cmd_audit(args: list[str]) -> int:
         ("--commit", "commit", "commit SHA"),
     ):
         query.add_argument(flag, dest=dest, help=text)
+        export.add_argument(flag, dest=dest, help=text)
     query.add_argument("--limit", type=int, default=None)
+    export.add_argument("--limit", type=int, default=None)
+    export.set_defaults(run=_export)
     query.add_argument("--json", action="store_true",
                        help="each record exactly as the journal holds it")
     query.set_defaults(run=_query)
@@ -166,5 +208,12 @@ def cmd_audit(args: list[str]) -> int:
         help="show or set the default audit.delivery for bottles that don't set it")
     delivery.add_argument("mode", nargs="?", choices=AUDIT_DELIVERIES)
     delivery.set_defaults(run=_delivery)
+    forward = sub.add_parser(
+        "forward", help="show or set where the host controller forwards the journal")
+    forward.add_argument("--url", help="an https endpoint that accepts NDJSON POSTs")
+    forward.add_argument("--secret", help="name of the secrets-file entry sent as a bearer token")
+    forward.add_argument("--format", choices=("native", "ocsf"), default="native")
+    forward.add_argument("--off", action="store_true", help="stop forwarding")
+    forward.set_defaults(run=_forward)
     ns = parser.parse_args(args)
     return ns.run(ns)
