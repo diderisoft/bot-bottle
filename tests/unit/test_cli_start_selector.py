@@ -300,7 +300,7 @@ class TestCmdStartDefaults(unittest.TestCase):
         request = self.start("pi")
         for picker in (self._bottles, self._modal, self._policy):
             picker.assert_not_called()
-        self.assertEqual((("pi",), "pi", "", "fresh", True),
+        self.assertEqual((("pi",), "pi", "", "prefer-cached", True),
                          (request.bottles, request.label, request.color,
                           request.image_policy, request.assume_yes))
 

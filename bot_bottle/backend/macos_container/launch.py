@@ -111,6 +111,9 @@ def _agent_image(plan: MacosContainerBottlePlan) -> str:
     )
     if published is not None:
         return published
+    if plan.spec.image_policy == "prefer-cached" and container_mod.image_exists(plan.image):
+        info(f"using cached agent image {plan.image!r}")
+        return plan.image
     if plan.spec.image_policy == "cached":
         if not container_mod.image_exists(plan.image):
             die(
@@ -136,6 +139,9 @@ def _layer_nested_containers(
         return agent_image
     pinned_base = container_mod.pinned_local_image_ref(agent_image)
     derived = f"{pinned_base}{nested_containers_mod.IMAGE_SUFFIX}"
+    if plan.spec.image_policy == "prefer-cached" and container_mod.image_exists(derived):
+        info(f"using cached nested-container image {derived!r}")
+        return derived
     if plan.spec.image_policy == "cached":
         if not container_mod.image_exists(derived):
             die(
@@ -263,7 +269,7 @@ def stale_checks(plan: MacosContainerBottlePlan) -> None:
     """Raise StaleImageError if a cached image is older than the configured
     threshold. Only runs when image_policy is 'cached'. Called by the backend
     class's _image_stale_checks before _launch_impl starts any resources."""
-    if plan.spec.image_policy != "cached":
+    if plan.spec.image_policy not in ("cached", "prefer-cached"):
         return
     committed = read_committed_image(plan.slug)
     if committed and container_mod.image_exists(committed):

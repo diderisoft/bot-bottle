@@ -80,6 +80,16 @@ class Progress(unittest.TestCase):
                           "bot-bottle: pulled bot-bottle-pi"], progress.since_stage())
         progress.close()
 
+    def test_nothing_redraws_over_a_question(self) -> None:
+        progress, out = self.progress(tty=True)
+        progress.stage("prepare", "Reading the bottle")
+        progress.pause()
+        before = out.getvalue()
+        progress._draw("x")  # pylint: disable=protected-access  # what the spinner calls
+        progress.line("bot-bottle: warning: shown as plain text")
+        self.assertNotIn("Reading the bottle", out.getvalue()[len(before):])
+        progress.close()
+
     def test_a_terminal_redraws_in_place(self) -> None:
         progress, out = self.progress(tty=True)
         self.run_launch(progress)

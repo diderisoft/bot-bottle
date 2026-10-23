@@ -215,6 +215,11 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
     if committed and committed_tar.is_file():
         info(f"resuming from committed rootfs {committed_tar}")
         return util.build_committed_rootfs_dir(committed_tar, plan.settings.infra)
+    cached_base = (_cached_agent_base(plan)
+                   if plan.spec.image_policy == "prefer-cached" else None)
+    if cached_base is not None:
+        info(f"using cached agent rootfs {cached_base.name}")
+        return cached_base
     if plan.spec.image_policy == "cached":
         cached = _cached_agent_base(plan)
         if cached is None:
@@ -277,7 +282,7 @@ def _cached_agent_base(plan: FirecrackerBottlePlan) -> Path | None:
 
 def stale_checks(plan: FirecrackerBottlePlan) -> None:
     """Raise when the cached base selected by this plan is stale."""
-    if plan.spec.image_policy != "cached":
+    if plan.spec.image_policy not in ("cached", "prefer-cached"):
         return
     committed = read_committed_image(plan.slug)
     committed_tar = committed_rootfs_path(plan.slug)

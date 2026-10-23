@@ -137,8 +137,8 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
             return 0
 
     # An agent that names its bottle starts on it with no more questions
-    # (PRD 0094): its own label (deduplicated), no color, images as
-    # published, no launch confirmation. `--pick` brings back the pickers to
+    # (PRD 0094): its own label (deduplicated), no color, local images when
+    # present (else pulled or built), no launch confirmation. `--pick` brings back the pickers to
     # compose bottles or set a label and color.
     default_bottle = _peek_agent_bottle(manifest, agent_name)
     if default_bottle and not args.pick:
@@ -146,6 +146,7 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
             agent=agent_name,
             bottles=(default_bottle,),
             label=_uniquify_label(settings, agent_name),
+            image_policy="prefer-cached",
             assume_yes=True,
             settings=settings,
             cwd=os.getcwd(),
@@ -178,7 +179,7 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
         if image_policy is None:
             return 0
     else:
-        label, color, image_policy = _uniquify_label(settings, agent_name), "", "fresh"
+        label, color, image_policy = _uniquify_label(settings, agent_name), "", "prefer-cached"
 
     request = LaunchRequest(
         agent=agent_name,

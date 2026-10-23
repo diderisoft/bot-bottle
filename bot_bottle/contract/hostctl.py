@@ -182,7 +182,9 @@ def _section_from_json(cls: type[_SectionT], data: object, where: str) -> _Secti
 
 
 BOTTLE_COLORS = ("red", "green", "yellow", "blue", "magenta")
-IMAGE_POLICIES = ("fresh", "cached")
+# "prefer-cached" (the interactive default): use local images when they're
+# there, else build or pull like "fresh". "cached" fails when one is missing.
+IMAGE_POLICIES = ("fresh", "cached", "prefer-cached")
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _IDENTITY = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _MAP_FIELDS = ("secrets", "host_keys")

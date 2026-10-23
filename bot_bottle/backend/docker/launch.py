@@ -93,6 +93,9 @@ def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
     )
     if published is not None:
         return BottleImages(agent=published)
+    if plan.spec.image_policy == "prefer-cached" and docker_mod.image_exists(plan.image):
+        info(f"using cached agent image {plan.image!r}")
+        return BottleImages(agent=plan.image)
     if plan.spec.image_policy == "cached":
         if not docker_mod.image_exists(plan.image):
             die(
@@ -222,7 +225,7 @@ def stale_checks(plan: DockerBottlePlan) -> None:
     """Raise StaleImageError if a cached image is older than the configured
     threshold. Only runs when image_policy is 'cached'. Called by the backend
     class's _image_stale_checks before _launch_impl starts any resources."""
-    if plan.spec.image_policy != "cached":
+    if plan.spec.image_policy not in ("cached", "prefer-cached"):
         return
     committed = read_committed_image(plan.slug)
     if committed and docker_mod.image_exists(committed):

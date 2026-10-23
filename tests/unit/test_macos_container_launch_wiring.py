@@ -174,6 +174,32 @@ class TestBuildOrLoadImages(unittest.TestCase):
             with self.assertRaises(Die):
                 build_or_load_images(plan)
 
+    def test_prefer_cached_uses_a_present_image(self) -> None:
+        plan = _plan(Path(self._tmp.name), image_policy="prefer-cached")
+        with (
+            patch("bot_bottle.backend.macos_container.launch.read_committed_image",
+                  return_value=None),
+            patch("bot_bottle.backend.macos_container.launch.container_mod.image_exists",
+                  return_value=True),
+            patch("bot_bottle.backend.macos_container.launch.container_mod.build_image") as build,
+        ):
+            images = build_or_load_images(plan)
+        self.assertEqual(plan.image, images.agent)
+        build.assert_not_called()
+
+    def test_prefer_cached_builds_a_missing_image(self) -> None:
+        plan = _plan(Path(self._tmp.name), image_policy="prefer-cached")
+        with (
+            patch("bot_bottle.backend.macos_container.launch.read_committed_image",
+                  return_value=None),
+            patch("bot_bottle.backend.macos_container.launch.container_mod.image_exists",
+                  return_value=False),
+            patch("bot_bottle.backend.macos_container.launch.container_mod.build_image") as build,
+        ):
+            images = build_or_load_images(plan)
+        self.assertEqual(plan.image, images.agent)
+        build.assert_called_once()
+
     def test_fresh_policy_builds_image(self) -> None:
         with (
             patch(

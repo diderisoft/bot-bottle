@@ -50,6 +50,8 @@ class LaunchProgress:
         self._started = 0.0
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        # Set while a question is on screen: nothing may redraw over it.
+        self._paused = False
         self._spinner: threading.Thread | None = None
 
     # -- events ----------------------------------------------------------------
@@ -70,6 +72,7 @@ class LaunchProgress:
             self._log.write(f"== {title}\n")
             self._title, self._started = title, time.monotonic()
             self._since_stage = []
+            self._paused = False
             self._draw()
         if self.tty and not self.verbose and self._spinner is None:
             self._spinner = threading.Thread(target=self._spin, daemon=True)
@@ -99,8 +102,10 @@ class LaunchProgress:
             return list(self._since_stage)
 
     def pause(self) -> None:
-        """Clear the progress line so a prompt can use the terminal."""
+        """Clear the progress line and stop redrawing it, so a prompt can use
+        the terminal. The next stage resumes drawing."""
         with self._lock:
+            self._paused = True
             if self.tty and self._title and not self.verbose:
                 self.out.write("\r\x1b[K")
                 self.out.flush()
@@ -119,7 +124,7 @@ class LaunchProgress:
         return f"{time.monotonic() - self._started:.0f}s"
 
     def _draw(self, frame: str = "…") -> None:
-        if self.verbose or not self._title:
+        if self.verbose or not self._title or self._paused:
             return
         if self.tty:
             self.out.write(f"\r\x1b[K{frame} {self._title}  {self._elapsed()}")
@@ -134,7 +139,7 @@ class LaunchProgress:
         self._title = ""
 
     def _print_above(self, text: str) -> None:
-        if self.tty and self._title and not self.verbose:
+        if self.tty and self._title and not self.verbose and not self._paused:
             self.out.write(f"\r\x1b[K{text}\n")
             self._draw()
         else:

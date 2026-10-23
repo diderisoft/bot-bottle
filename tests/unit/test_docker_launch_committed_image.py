@@ -185,6 +185,14 @@ class TestLaunchCommittedImage(unittest.TestCase):
         with self.assertRaises(Die):
             self._run_launch(plan, committed_tag=None, image_present=False)
 
+    def test_prefer_cached_skips_build_when_present_and_builds_when_missing(self) -> None:
+        base = _plan(self._tmp)
+        plan = dataclasses.replace(
+            base, spec=dataclasses.replace(base.spec, image_policy="prefer-cached"))
+        self.assertEqual([], self._run_launch(plan, committed_tag=None, image_present=True))
+        self.assertEqual([_DEFAULT_IMAGE],
+                         self._run_launch(plan, committed_tag=None, image_present=False))
+
     def test_falls_back_to_build_when_committed_image_missing_from_daemon(self) -> None:
         built = self._run_launch(_plan(self._tmp), committed_tag=_COMMITTED_TAG, image_present=False)
         self.assertEqual([_DEFAULT_IMAGE], built)
