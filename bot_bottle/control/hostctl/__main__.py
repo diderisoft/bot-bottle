@@ -22,6 +22,7 @@ from ...trust_domain import HostControlProvisioning, HostLink, signing_key
 from .build import current_build_id
 from .runner import HostControlState, clear_state, write_state
 from . import localsock
+from .audit_events import HostAudit
 from .bottles import BottleService
 from .jobs import JobRegistry
 from .listeners import GuestListeners
@@ -58,8 +59,10 @@ def serve_running_orchestrators() -> None:
 def main() -> int:
     port = int(os.environ.get(PORT_ENV, "0") or "0")
     sessions = SessionManager({})
+    # The host's single audit writer lives as long as this daemon.
+    audit = HostAudit.open()
     # Registers the `bottle` finisher, so it must exist before adopting.
-    bottles = BottleService(sessions)
+    bottles = BottleService(sessions, audit=audit)
     local = localsock.serve(control_socket_path(), sessions)
     if tmux_version() is not None:
         write_config()
@@ -98,6 +101,7 @@ def main() -> int:
         server.server_close()
         guests.close()
         local.close()
+        audit.close()
         clear_state(state.pid)
     return 0
 

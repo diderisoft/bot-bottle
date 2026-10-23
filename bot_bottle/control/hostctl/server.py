@@ -21,6 +21,7 @@ from ...lib import websocket as ws
 from ...lib.log import debug
 from . import orchestrator
 from .attach import Viewer
+from .audit_events import digest_request
 from .bottles import BottleService
 from .jobs import JobRegistry
 from .live import LiveBottles
@@ -121,6 +122,7 @@ class _Handler(BaseHTTPRequestHandler):
                 query: dict[str, list[str]]) -> None:
         """Upgrade to a WebSocket and pump a read-only viewer of `session_id`."""
         if self._role() not in (ROLE_CLI, ROLE_ORCHESTRATOR):
+            self._reject(self._role())
             self._send(401, {"error": "missing or invalid token"})
             return
         key = self.headers.get("Sec-WebSocket-Key", "")
@@ -156,7 +158,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": f"no bottle {bottle_id}"})
             return
         job = server.jobs.start("bottle.teardown", role,
-                                lambda: server.bottles.teardown(bottle_id))
+                                lambda: server.bottles.teardown(bottle_id, role))
         self._send(202, {"job": job.id})
 
     def _launch(self, server: HostControlServer) -> None:
@@ -166,6 +168,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             request = LaunchRequest.from_json(self._json_body(), role)
         except PermissionError as e:
+            self._reject(role)
             self._send(403, {"error": str(e)})
             return
         except ValueError as e:
@@ -188,9 +191,11 @@ class _Handler(BaseHTTPRequestHandler):
             return
         role = self._role()
         if role is None:
+            self._reject(role)
             self._send(401, {"error": "missing or invalid token"})
             return
         if role != ROLE_CLI:
+            self._reject(role)
             self._send(403, {"error": f"{path} is for the cli role"})
             return
         try:
@@ -221,6 +226,7 @@ class _Handler(BaseHTTPRequestHandler):
                     query: dict[str, list[str]]) -> None:
         role = self._role()
         if role is None:
+            self._reject(role)
             self._send(401, {"error": "missing or invalid token"})
             return
         if not rest:
@@ -242,11 +248,19 @@ class _Handler(BaseHTTPRequestHandler):
         return None."""
         role = self._role()
         if role is None:
+            self._reject(role)
             self._send(401, {"error": "missing or invalid token"})
         elif role not in roles:
+            self._reject(role)
             self._send(403, {"error": f"not for the {role} role"})
             return None
         return role
+
+    def _reject(self, role: str | None) -> None:
+        """Record a call refused for its token or role."""
+        op = f"{self.command} {urlsplit(self.path).path}"
+        cast(HostControlServer, self.server).bottles.audit.rejected(
+            op, role=role, request_digest=digest_request({"op": op}))
 
     def _role(self) -> str | None:
         """The caller's `HOST_CONTROL` role, from its bearer token."""

@@ -102,7 +102,8 @@ def redact(event: AuditEvent) -> AuditEvent:
     return AuditEvent.from_json({**body, **scrubbed})
 
 
-def _utc_iso(ts: float) -> str:
+def utc_iso(ts: float) -> str:
+    """`ts` as the journal writes times: UTC, millisecond precision."""
     return datetime.fromtimestamp(ts, timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%S.") + f"{int(ts * 1000) % 1000:03d}Z"
 
@@ -210,7 +211,7 @@ class AuditJournal:
         self._path = self._dir / f"{self._segment}{SEGMENT_SUFFIX}"
         self._write(AuditEvent(
             type="audit.segment_open", actor="host", action="audit.segment_open",
-            outcome="success", sensitivity="security", ts_event=_utc_iso(now),
+            outcome="success", sensitivity="security", ts_event=utc_iso(now),
             payload={"segment": self._segment},
         ), producer="audit")
 
@@ -232,7 +233,7 @@ class AuditJournal:
             "segment": self._segment,
             "prev": self._prev,
             "hash": "",
-            "ts_recorded": _utc_iso(self._clock()),
+            "ts_recorded": utc_iso(self._clock()),
             "ts_mono": round(self._monotonic() - self._boot, 3),
             "producer": producer,
             "host": self._host,
@@ -258,4 +259,5 @@ __all__ = [
     "AuditRedactionError",
     "SEGMENT_SUFFIX",
     "redact",
+    "utc_iso",
 ]

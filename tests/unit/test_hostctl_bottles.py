@@ -28,6 +28,8 @@ from bot_bottle.contract.hostctl import (
     SESSIONS_PATH, InfraSettings, LaunchRequest, Settings, bearer, exit_code,
 )
 from bot_bottle.control.hostctl import localsock, sessions
+from bot_bottle.control.hostctl.audit_events import HostAudit
+from bot_bottle.control.hostctl.audit_journal import AuditJournal
 from bot_bottle.control.hostctl.bottles import BottleService, ConfirmationNeeded
 from bot_bottle.control.hostctl.jobs import JobRegistry
 from bot_bottle.control.hostctl.server import HostControlServer
@@ -145,9 +147,20 @@ class _Root(unittest.TestCase):
         self.manager = sessions.SessionManager({})
         self.backend = FakeBackend()
         self.index = mock.MagicMock()
+        self.journal = AuditJournal(root / "audit", host="h", engine="e")
+        self.addCleanup(self.journal.close)
         self.service = BottleService(self.manager, backend_for=lambda _s: cast(Any, self.backend),
                                      manifest_for=lambda _cwd: self.index,
-                                     secrets_file=root / "secrets")
+                                     secrets_file=root / "secrets",
+                                     audit=HostAudit(self.journal))
+
+    def audited(self) -> list[dict[str, Any]]:
+        """Every journal record after the segment's opening one."""
+        lines = self.journal.path.read_text().splitlines()[1:]
+        return [json.loads(line) for line in lines]
+
+    def types(self) -> list[str]:
+        return [r["type"] for r in self.audited()]
 
 
 class TestLaunchConfirmation(_Root):
@@ -207,6 +220,24 @@ class TestLaunchConfirmation(_Root):
         self.assertFalse(bottle_state.bottle_state_dir("f1").exists())
         self.assertEqual([], self.service.list())
 
+
+class TestLaunchAudit(_Root):
+    def test_a_launch_waiting_for_confirmation_records_nothing(self) -> None:
+        with mock.patch("bot_bottle.manifest.preview.manifest_to_yaml", return_value=""), \
+             self.assertRaises(ConfirmationNeeded):
+            self.service.launch(LaunchRequest(agent="demo", label="a1"))
+        self.assertEqual([], self.types())
+
+    def test_a_failed_launch_is_a_failed_broker_launch(self) -> None:
+        self.backend.fail_launch = True
+        with self.assertRaises(RuntimeError):
+            self.service.launch(LaunchRequest(agent="demo", label="a2", assume_yes=True,
+                                              secrets={"TOKEN": "not-a-real-secret-value"}))
+        [record] = self.audited()  # pylint: disable=unbalanced-tuple-unpacking
+        self.assertEqual(("hostctl.broker_launch", "failure", "role:cli"),
+                         (record["type"], record["outcome"], record["actor"]))
+        self.assertIn("no network", record["payload"]["detail"])
+        self.assertNotIn("not-a-real-secret-value", self.journal.path.read_text())
 
 @unittest.skipUnless(_TMUX_OK, "needs tmux 3.1+")
 class TestHeldBottles(_Root):
@@ -317,6 +348,13 @@ class TestBottleRoutes(_Root):
         self.assertEqual(403, self.call("GET", BOTTLES_PATH, ROLE_GATEWAY)[0])
         self.assertEqual(403, self.call("GET", f"{SESSIONS_PATH}/x", ROLE_GATEWAY)[0])
         self.assertEqual(404, self.call("DELETE", f"{BOTTLES_PATH}/nope")[0])
+        rejects = [r for r in self.audited() if r["type"] == "hostctl.broker_reject"]
+        self.assertEqual(
+            [("unauthenticated", f"POST {BOTTLES_PATH}"), ("role:gateway", f"POST {BOTTLES_PATH}"),
+             ("role:orchestrator", f"POST {BOTTLES_PATH}"), ("role:gateway", f"GET {BOTTLES_PATH}"),
+             ("role:gateway", f"GET {SESSIONS_PATH}/x")],
+            [(r["actor"], r["payload"]["op"]) for r in rejects])
+        self.assertTrue(all(r["outcome"] == "blocked" for r in rejects))
 
     def test_launch_exit_code_and_delete_over_http(self) -> None:
         code, body = self.call("POST", BOTTLES_PATH, ROLE_ORCHESTRATOR,
@@ -428,6 +466,50 @@ class TestRecordedInfraSettings(unittest.TestCase):
         self.assertEqual(infra, recorded_infra_settings("docker"))
         path.write_text(json.dumps({"infra": {"retired_knob": 1}}))
         self.assertIsNone(recorded_infra_settings("docker"))
+
+
+
+@unittest.skipUnless(_TMUX_OK, "needs tmux 3.1+")
+class TestLifecycleAudit(_Root):
+    def setUp(self) -> None:
+        super().setUp()
+        self.local = localsock.serve(sessions.control_socket_path(), self.manager)
+        self.addCleanup(self.local.close)
+
+    def launch(self, label: str) -> None:
+        with mock.patch("bot_bottle.manifest.preview.manifest_to_yaml", return_value="agent:"):
+            self.service.launch(LaunchRequest(agent="demo", label=label, assume_yes=True))
+
+    def test_an_agent_that_exits_non_zero_crashed(self) -> None:
+        self.launch("l1")
+        self.manager.wait_exit("l1", timeout=15)
+        self.assertEqual(["lifecycle.bottled_agent_start", "hostctl.broker_launch",
+                          "lifecycle.bottled_agent_crash"], self.types())
+        start, _, crash = self.audited()
+        self.assertEqual(start["activation"], crash["activation"])
+        self.assertTrue(start["manifest_digest"].startswith("sha256:"))
+        self.assertEqual(start["manifest_digest"], crash["manifest_digest"])
+        self.assertEqual((4, "failure"), (crash["payload"]["exit"], crash["outcome"]))
+
+    def test_a_requested_stop_is_a_stop(self) -> None:
+        self.backend.bottle.script = "sleep 30"
+        self.launch("l2")
+        self.service.teardown("l2")
+        self.assertEqual(["lifecycle.bottled_agent_start", "hostctl.broker_launch",
+                          "lifecycle.bottled_agent_stop", "hostctl.broker_teardown"],
+                         self.types())
+        stop = self.audited()[2]
+        self.assertTrue(stop["payload"]["stop_requested"])
+        self.assertEqual("success", stop["outcome"])
+
+    def test_each_run_is_its_own_activation(self) -> None:
+        self.launch("l3")
+        self.manager.wait_exit("l3", timeout=15)
+        self.launch("l3")
+        self.manager.wait_exit("l3", timeout=15)
+        starts = [r for r in self.audited() if r["type"] == "lifecycle.bottled_agent_start"]
+        self.assertEqual(2, len(starts))
+        self.assertNotEqual(starts[0]["activation"], starts[1]["activation"])
 
 
 if __name__ == "__main__":

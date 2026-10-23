@@ -19,6 +19,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,6 +31,7 @@ from ...contract.hostctl import CONFIRM_ERROR, InfraSettings, LaunchRequest, Set
 from ...lib import log
 from ...paths import host_secrets_path
 from ...util import slugify
+from .audit_events import HostAudit, digest_manifest, digest_request
 from .sessions import ExitStatus, SessionManager, SessionRecord
 
 if TYPE_CHECKING:
@@ -56,6 +58,7 @@ class _Held:
     exited: threading.Event = field(default_factory=threading.Event)
     done: threading.Event = field(default_factory=threading.Event)
     exit_status: ExitStatus | None = None
+    stop_requested: bool = False
 
 
 def agent_args(template: str, startup_args: tuple[str, ...], prompt: str) -> list[str]:
@@ -120,7 +123,9 @@ class BottleService:
         manifest_for: Callable[[str], "ManifestIndex"] = _default_manifest,
         secrets_file: Path | None = None,
         recorded_infra: Callable[[str], InfraSettings | None] = _recorded_infra,
+        audit: HostAudit | None = None,
     ) -> None:
+        self.audit = audit if audit is not None else HostAudit()
         self._sessions = sessions
         self._backend_for = backend_for
         self._manifest_for = manifest_for
@@ -136,6 +141,21 @@ class BottleService:
         """A `bottle.launch` job: prepare without prompting, hand the bottle
         to a holder, and return once its agent runs in a tmux session. A
         non-`cli` request runs on the backend's recorded infra settings."""
+        digest = digest_request(request.to_json())
+        try:
+            result = self._launch(request, role)
+        except ConfirmationNeeded:
+            raise  # nothing happened yet; the caller is asked first
+        except BaseException as e:
+            self.audit.brokered("broker_launch", "bottle.launch", role=role, success=False,
+                                request_digest=digest, bottle=request.identity or None,
+                                detail=str(e)[:200])
+            raise
+        self.audit.brokered("broker_launch", "bottle.launch", role=role, success=True,
+                            request_digest=digest, bottle=str(result.get("bottle", "")) or None)
+        return result
+
+    def _launch(self, request: LaunchRequest, role: str) -> dict[str, object]:
         # pylint: disable=import-outside-toplevel
         from ...backend import BottleSpec
         from ...secret_source import ChainSecrets, FileSecrets, MappingSecrets
@@ -212,6 +232,8 @@ class BottleService:
         is_ready = threading.Event()
         held = _Held(identity, backend.name)
         template = str(getattr(plan, "agent_provider_template", "claude"))
+        activation = str(uuid.uuid4())
+        policy = digest_manifest(plan.manifest)
 
         def sink(line: str) -> None:
             # Into the launch job until it has returned, then the daemon's log.
@@ -228,15 +250,22 @@ class BottleService:
                     self._sessions.start(SessionRecord(
                         id=identity, kind=SESSION_KIND,
                         meta={"backend": backend.name, "agent": request.agent,
-                              "label": request.label, "provider": template},
+                              "label": request.label, "provider": template,
+                              "activation": activation, "manifest_digest": policy},
                         writable_allowed=plan.manifest.agent.remote_writable,
                     ), command, env)
                     log.info(f"agent running in session {identity}")
+                    self.audit.bottled_agent_start(
+                        bottle=identity, activation=activation, manifest_digest=policy,
+                        backend=backend.name, agent=request.agent)
                     ready.put(("ready", {"bottle": identity, "session": identity}))
                     is_ready.set()
                     held.exited.wait()
                     code = exit_code(held.exit_status.status, held.exit_status.signal) \
                         if held.exit_status else 0
+                    self.audit.bottled_agent_exit(
+                        bottle=identity, activation=activation, manifest_digest=policy,
+                        exit_code=code, stop_requested=held.stop_requested)
                     log.info(f"session {identity} ended (exit {code}); "
                              f"removing {bottle.name}")
                     if template == "claude":
@@ -267,6 +296,10 @@ class BottleService:
             held.done.wait()
             return
         code = exit_code(exit_status.status, exit_status.signal)
+        self.audit.bottled_agent_exit(
+            bottle=record.id, activation=str(record.meta.get("activation", "")),
+            manifest_digest=str(record.meta.get("manifest_digest", "")),
+            exit_code=code, stop_requested=False)
         log.warn(f"bottle {record.id} ({record.meta.get('backend', '?')}): its agent exited "
                  f"(exit {code}) with nothing holding the bottle; run `bot-bottle cleanup` "
                  f"to remove it")
@@ -319,13 +352,27 @@ class BottleService:
                 return False
         return True
 
-    def teardown(self, bottle_id: str) -> dict[str, object]:
+    def teardown(self, bottle_id: str, role: str = ROLE_CLI) -> dict[str, object]:
         """A `bottle.teardown` job: stop the agent, then wait until its bottle
         is torn down. An agent that ignores the hangup is finished anyway."""
+        digest = digest_request({"bottle": bottle_id})
+        try:
+            result = self._teardown(bottle_id)
+        except BaseException as e:
+            self.audit.brokered("broker_teardown", "bottle.teardown", role=role, success=False,
+                                request_digest=digest, bottle=bottle_id, detail=str(e)[:200])
+            raise
+        self.audit.brokered("broker_teardown", "bottle.teardown", role=role, success=True,
+                            request_digest=digest, bottle=bottle_id)
+        return result
+
+    def _teardown(self, bottle_id: str) -> dict[str, object]:
         with self._lock:
             held = self._held.get(bottle_id)
         if held is None and not self.known(bottle_id):
             log.die(f"no bottle {bottle_id}")
+        if held is not None:
+            held.stop_requested = True
         log.info(f"stopping the agent in {bottle_id}")
         self._sessions.kill(bottle_id)
         forced = ExitStatus(0, "SIGHUP")
