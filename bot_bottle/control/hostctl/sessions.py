@@ -90,10 +90,30 @@ def _python_command(module: str, *args: str) -> str:
     return shlex.join(argv)
 
 
+# The status bar: copper "bot-bottle", the session (its label) and agent on the
+# left, the detach key on the right, no window list. `@bb_agent` is set per
+# session at start, and left empty when the label already is the agent.
+_STATUS_BAR = (
+    "set -g status on",
+    "set -g status-position bottom",
+    'set -g status-style "bg=colour235,fg=colour250"',
+    "set -g status-left-length 100",
+    "set -g status-right-length 40",
+    'set -g status-left "#[fg=colour173,bold] ▣ bot-bottle #[default]· #{session_name}'
+    '#{?@bb_agent, · #{@bb_agent} agent,} "',
+    'set -g status-right "#[fg=colour244]Ctrl-] detach "',
+    'set -g window-status-format ""',
+    'set -g window-status-current-format ""',
+)
+
+
 def write_config() -> Path:
-    """bot-bottle's tmux config: no status bar or prefix, Ctrl-] detaches,
-    the most recently active client sets the size, and dead panes stay until
-    the `pane-died` hook has reported them."""
+    """bot-bottle's tmux config: no prefix, Ctrl-] detaches, the most
+    recently active client sets the size, and dead panes stay until the
+    `pane-died` hook has reported them. A one-line status bar at the bottom
+    says this is a bot-bottle session (which one, and its agent) and how to
+    detach. tmux draws it outside the agent's pane, so the agent can't
+    draw over it or fake it."""
     # The hook runs a wrapper script so the config line holds one quoted path.
     notify = state_dir() / "notify"
     notify.parent.mkdir(parents=True, exist_ok=True)
@@ -103,7 +123,7 @@ def write_config() -> Path:
     notify.chmod(0o700)
     hook = shlex.quote(str(notify)) + " #{q:session_name} #{pane_dead_status} #{pane_dead_signal}"
     lines = [
-        "set -g status off",
+        *_STATUS_BAR,
         "set -g prefix None",
         "set -g prefix2 None",
         "unbind C-b",
@@ -183,6 +203,11 @@ class SessionManager:
                 self._specs.pop(record.id, None)
             self._record_path(record.id).unlink(missing_ok=True)
             raise SessionError(f"tmux new-session failed: {proc.stderr.strip()}")
+        agent = str(record.meta.get("agent", ""))
+        if agent and agent != record.id:
+            # Only for the status bar; a failure here doesn't stop the agent.
+            subprocess.run(tmux("set-option", "-t", f"={record.id}:", "@bb_agent", agent),
+                           capture_output=True, check=False)
 
     def spec(self, session_id: str) -> tuple[list[str], dict[str, str]] | None:
         """The command and environment for a starting session, handed out once."""
