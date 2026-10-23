@@ -259,7 +259,10 @@ class TestHeldBottles(_Root):
         return self.service.launch(LaunchRequest(agent="demo", label=label, assume_yes=True))
 
     def test_agent_exit_tears_down_and_reports_its_code(self) -> None:
-        self.assertEqual({"bottle": "b1", "session": "b1"}, self.launch("b1"))
+        launched = self.launch("b1")
+        # The run's activation id rides along (the console scopes its audit query by it).
+        self.assertTrue(launched.pop("activation"))
+        self.assertEqual({"bottle": "b1", "session": "b1"}, launched)
         self.assertEqual(sessions.ExitStatus(4), self.manager.wait_exit("b1", timeout=15))
         # The exit is recorded only after the holder tore the bottle down.
         self.assertTrue(self.backend.torn_down.is_set())
@@ -394,6 +397,7 @@ class TestBottleRoutes(_Root):
                                {"agent": "demo", "label": "h1", "assume_yes": True})
         self.assertEqual(202, code)
         final = self.final(str(body["job"]), ROLE_ORCHESTRATOR)
+        self.assertTrue(final["value"].pop("activation"))
         self.assertEqual({"bottle": "h1", "session": "h1"}, final["value"])
         self.assertEqual(sessions.ExitStatus(4), self.manager.wait_exit("h1", timeout=15))
         self.assertEqual((200, {"running": False, "exit": {"status": 4, "signal": ""}}),

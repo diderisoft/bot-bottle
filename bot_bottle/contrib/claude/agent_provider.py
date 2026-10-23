@@ -384,6 +384,10 @@ class ClaudeAgentProvider(AgentProvider):
                 f"supervise {supervise_url}{manual_header}"
             )
 
+    def interactive_prompt(self, prompt: str) -> list[str] | None:
+        # `claude <prompt>`: the interactive UI, with the prompt as its first message.
+        return [prompt]
+
     def headless_prompt(self, prompt: str) -> list[str]:
         return ["-p", prompt]
 

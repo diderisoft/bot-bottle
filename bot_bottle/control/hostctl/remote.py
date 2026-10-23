@@ -14,8 +14,18 @@ On the console's control stream (JSON lines) the host serves:
   `BottleService`, as role `remote`, and reports `agent_started` or
   `agent_errored`. Console-supplied agent content is refused: bottles and the
   agents that pick them come from this host, never from a remote party.
+  The launch may carry `prompt` (the first message of an interactive
+  session), `bottles` (names of this host's bottles) and `label`.
+  `agent_started` reports the bottle, the run's `activation` and whether the
+  console may type into the session (`writable`, the agent's
+  `remote.writable`).
 - `stop` -> tears the bottle down; `agent_stopped` follows. An agent that
   exits on its own is reported `agent_stopped` too.
+- The session's terminal is relayed to the console on a uni stream (see
+  `console_terminal`); `input` types into it when the agent allows remote
+  typing, and `resize` sizes the console's tmux client.
+- `audit_query` -> `audit_events`: the audit journal records for a bottle this
+  link launched, filtered like `audit query` (bottle, activation, limit).
 
 `iroh` is an optional dependency (`bot-bottle[remote]`), imported only here
 and only when the link runs.
@@ -26,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import tempfile
 import threading
 import time
@@ -37,6 +48,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from ...contract.hostctl import LaunchRequest
 from ...lib import log
 from ...paths import bot_bottle_root
+from .console_terminal import valid_size
 
 if TYPE_CHECKING:
     import iroh  # pyright: ignore[reportMissingImports]  # the optional `remote` extra
@@ -53,6 +65,12 @@ BACKOFF_SECONDS = (1.0, 2.0, 5.0, 10.0, 30.0)
 # How often the link checks whether launched agents are still running.
 WATCH_SECONDS = 2.0
 _REFUSED = 1  # application close code
+# Bounds on what a console launch may carry.
+MAX_PROMPT_CHARS = 20_000
+MAX_BOTTLES = 8
+MAX_LABEL_CHARS = 128
+MAX_AUDIT_EVENTS = 500
+_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 class RemoteError(Exception):
@@ -196,17 +214,89 @@ def local_agents() -> list[str]:
         return []
 
 
+class Terminal(Protocol):
+    """The relay of one session's terminal (`console_terminal.ConsoleTerminal`)."""
+
+    writable: bool
+
+    def write(self, data: bytes) -> bool: ...
+    def resize(self, cols: int, rows: int) -> None: ...
+    def close(self) -> None: ...
+
+
+# console agent id, bottle id -> a started relay, or None if there's no session.
+TerminalFactory = Callable[[str, str], Awaitable["Terminal | None"]]
+
+
+def _launch_extras(msg: dict[str, Any]) -> tuple[str, tuple[str, ...], str] | str:
+    """A console launch's optional prompt, bottles and label, or the reason
+    they're refused."""
+    prompt = msg.get("prompt", "")
+    if not isinstance(prompt, str) or len(prompt) > MAX_PROMPT_CHARS:
+        return f"the prompt must be text of at most {MAX_PROMPT_CHARS} characters"
+    bottles = msg.get("bottles", [])
+    if (not isinstance(bottles, list) or len(bottles) > MAX_BOTTLES
+            or not all(isinstance(b, str) and _NAME.match(b) for b in bottles)):
+        return f"bottles must be a list of at most {MAX_BOTTLES} bottle names"
+    label = msg.get("label", "")
+    if not isinstance(label, str) or len(label) > MAX_LABEL_CHARS:
+        return f"the label must be text of at most {MAX_LABEL_CHARS} characters"
+    return prompt, tuple(bottles), label
+
+
+def query_audit(bottle: str, activation: str | None, limit: int) -> list[dict[str, Any]]:
+    """`audit query --bottle --activation --limit` against this host's journal;
+    empty when there's no journal yet."""
+    # pylint: disable=import-outside-toplevel
+    from ...paths import host_audit_dir, host_db_path
+    from .audit_index import AuditIndex, Query
+
+    directory = host_audit_dir()
+    if not directory.is_dir():
+        return []
+    index = AuditIndex(directory, host_db_path())
+    index.sync()
+    return index.query(Query(bottle=bottle, activation=activation, limit=limit))
+
+
+def session_terminals(conn: "iroh.Connection", sessions: Any) -> TerminalFactory:
+    """Relays for this connection: each opens a uni stream to the console and
+    attaches to the agent's tmux session."""
+    from .console_terminal import ConsoleTerminal  # pylint: disable=import-outside-toplevel
+
+    async def start(agent_id: str, bottle: str) -> Terminal | None:
+        record = sessions.record(bottle)
+        if record is None or not sessions.exists(bottle):
+            return None
+        terminal = ConsoleTerminal(sessions, bottle, agent_id,
+                                   writable_allowed=record.writable_allowed)
+        await terminal.start(conn.open_uni)
+        return terminal
+
+    return start
+
+
 class ConsoleLink:
     """Serves the console's commands for one connection. Transport-free: `send`
     writes one message to the console."""
 
     def __init__(self, bottles: Bottles, send: Callable[[dict[str, Any]], Awaitable[None]],
-                 agents: Callable[[], list[str]] | None = None) -> None:
+                 agents: Callable[[], list[str]] | None = None, *,
+                 terminals: TerminalFactory | None = None,
+                 audit: Callable[[str, str | None, int], list[dict[str, Any]]] | None = None,
+                 ) -> None:
         self._bottles = bottles
         self._send = send
         self._agents = agents if agents is not None else local_agents
+        self._terminal_factory = terminals
+        self._audit = audit if audit is not None else query_audit
         # console agent id -> bottle id, for the agents this link launched.
         self.running: dict[str, str] = {}
+        # Every bottle this link launched, running or not: the console may
+        # read the journal of these, and only these.
+        self.launched: set[str] = set()
+        # console agent id -> the relay of its session's terminal.
+        self.terminals: dict[str, Terminal] = {}
 
     async def handle(self, msg: dict[str, Any]) -> None:
         kind = msg.get("type")
@@ -214,16 +304,22 @@ class ConsoleLink:
             await self._send({"type": "local_definitions", "request_id": msg.get("request_id"),
                               "definitions": [{"name": n} for n in self._agents()]})
         elif kind == "launch":
-            await self._launch(str(msg.get("agent_id", "")), msg.get("definition"))
+            await self._launch(str(msg.get("agent_id", "")), msg.get("definition"), msg)
         elif kind == "stop":
             await self._stop(str(msg.get("agent_id", "")))
+        elif kind == "input":
+            self._input(str(msg.get("agent_id", "")), msg.get("data"))
+        elif kind == "resize":
+            self._resize(str(msg.get("agent_id", "")), msg.get("cols"), msg.get("rows"))
+        elif kind == "audit_query":
+            await self._audit_query(msg)
         else:
             log.debug(f"remote: ignoring console message {kind!r}")
 
     async def _errored(self, agent_id: str, message: str) -> None:
         await self._send({"type": "agent_errored", "agent_id": agent_id, "message": message})
 
-    async def _launch(self, agent_id: str, definition: object) -> None:
+    async def _launch(self, agent_id: str, definition: object, msg: dict[str, Any]) -> None:
         if not agent_id:
             return
         definition = definition if isinstance(definition, dict) else {}
@@ -235,21 +331,90 @@ class ConsoleLink:
         if not isinstance(name, str) or name not in self._agents():
             await self._errored(agent_id, f"no local agent named {name!r} on this host")
             return
+        extras = _launch_extras(msg)
+        if isinstance(extras, str):
+            await self._errored(agent_id, extras)
+            return
+        prompt, bottles, label = extras
         # The operator chose this local agent in the console: that click is the
-        # launch confirmation a terminal would otherwise ask for.
-        request = LaunchRequest(agent=name, assume_yes=True)
+        # launch confirmation a terminal would otherwise ask for. A prompt
+        # starts an interactive session with it as the first message.
+        request = LaunchRequest(agent=name, assume_yes=True, prompt=prompt,
+                                bottles=bottles, label=label, headless=False)
         try:
             result = await asyncio.to_thread(self._bottles.launch, request, ROLE_REMOTE)
         except (Exception, SystemExit) as e:  # pylint: disable=broad-exception-caught
             message = getattr(e, "message", "") or str(e) or type(e).__name__
             await self._errored(agent_id, f"launch failed: {message}"[:500])
             return
-        self.running[agent_id] = str(result.get("bottle", ""))
-        await self._send({"type": "agent_started", "agent_id": agent_id,
-                          "bottle": self.running[agent_id]})
+        bottle = str(result.get("bottle", ""))
+        self.running[agent_id] = bottle
+        self.launched.add(bottle)
+        terminal = await self._open_terminal(agent_id, bottle)
+        started: dict[str, Any] = {"type": "agent_started", "agent_id": agent_id,
+                                   "bottle": bottle,
+                                   "writable": bool(terminal and terminal.writable)}
+        if result.get("activation"):
+            started["activation"] = str(result["activation"])
+        await self._send(started)
+
+    async def _open_terminal(self, agent_id: str, bottle: str) -> "Terminal | None":
+        if self._terminal_factory is None:
+            return None
+        try:
+            terminal = await self._terminal_factory(agent_id, bottle)
+        except Exception as e:  # pylint: disable=broad-exception-caught  # the agent still runs
+            log.warn(f"remote: can't relay {bottle}'s terminal: {e}")
+            return None
+        if terminal is not None:
+            self.terminals[agent_id] = terminal
+        return terminal
+
+    def _close_terminal(self, agent_id: str) -> None:
+        terminal = self.terminals.pop(agent_id, None)
+        if terminal is not None:
+            terminal.close()
+
+    def close(self) -> None:
+        """The console went away: detach every relay (the agents keep running)."""
+        for agent_id in list(self.terminals):
+            self._close_terminal(agent_id)
+
+    def _input(self, agent_id: str, data: object) -> None:
+        terminal = self.terminals.get(agent_id)
+        if terminal is None or not isinstance(data, str) or not data:
+            return
+        if not terminal.write(data.encode()):
+            log.debug(f"remote: dropped input for {agent_id}: "
+                      "the agent doesn't allow remote typing")
+
+    def _resize(self, agent_id: str, cols: object, rows: object) -> None:
+        terminal = self.terminals.get(agent_id)
+        size = valid_size(cols, rows)
+        if terminal is not None and size is not None:
+            terminal.resize(*size)
+
+    async def _audit_query(self, msg: dict[str, Any]) -> None:
+        bottle, activation = msg.get("bottle"), msg.get("activation")
+        limit = msg.get("limit")
+        if type(limit) is not int or limit <= 0:  # pylint: disable=unidiomatic-typecheck
+            limit = MAX_AUDIT_EVENTS
+        limit = min(limit, MAX_AUDIT_EVENTS)
+        events: list[dict[str, Any]] = []
+        # Only the journal of agents this console launched; anything else is
+        # answered with nothing rather than an error that confirms it exists.
+        if isinstance(bottle, str) and bottle in self.launched:
+            activation = activation if isinstance(activation, str) and activation else None
+            try:
+                events = await asyncio.to_thread(self._audit, bottle, activation, limit)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                log.warn(f"remote: audit query for {bottle} failed: {e}")
+        await self._send({"type": "audit_events", "request_id": msg.get("request_id"),
+                          "events": events})
 
     async def _stop(self, agent_id: str) -> None:
         bottle = self.running.pop(agent_id, "")
+        self._close_terminal(agent_id)
         if not bottle:
             return
         exit_code = 0
@@ -272,6 +437,7 @@ class ConsoleLink:
             if state.get("running"):
                 continue
             self.running.pop(agent_id, None)
+            self._close_terminal(agent_id)
             exit_info = state.get("exit")
             code = int(exit_info.get("status", 0) or 0) if isinstance(exit_info, dict) else 0  # type: ignore[arg-type]
             await self._send({"type": "agent_stopped", "agent_id": agent_id, "exit_code": code})
@@ -303,7 +469,9 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
     async def send(message: dict[str, Any]) -> None:
         await send_stream.write_all(json.dumps(message).encode() + b"\n")
 
-    link = ConsoleLink(bottles, send, agents)
+    sessions = getattr(bottles, "sessions", None)
+    link = ConsoleLink(bottles, send, agents,
+                       terminals=session_terminals(conn, sessions) if sessions else None)
 
     async def watch() -> None:
         while True:
@@ -322,6 +490,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
                 await link.handle(msg)
     finally:
         watcher.cancel()
+        link.close()
 
 
 async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> None:

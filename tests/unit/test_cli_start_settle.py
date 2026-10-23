@@ -94,6 +94,30 @@ class TestAgentArgs(unittest.TestCase):
         self.assertEqual("--x", args[args.index("--x")])
         self.assertIn("Do it", args[args.index("--x") + 1:])
 
+    def test_headless_prompt_runs_to_completion(self):
+        self.assertEqual(["-p", "Do it"], agent_args("claude", (), "Do it")[-2:])
+
+    def test_interactive_prompt_is_the_first_message(self):
+        # A console launch: the session stays open after the first turn.
+        for template in ("claude", "pi", "codex"):
+            with self.subTest(template=template):
+                args = agent_args(template, (), "Do it", headless=False)
+                self.assertEqual("Do it", args[-1])
+                self.assertNotIn("-p", args)
+
+    def test_an_agent_without_interactive_prompts_is_refused(self):
+        from unittest import mock
+
+        from bot_bottle.control.hostctl.bottles import PromptUnsupported
+
+        provider = mock.Mock()
+        provider.interactive_prompt.return_value = None
+        with mock.patch("bot_bottle.agent_provider.get_provider", return_value=provider), \
+             mock.patch("bot_bottle.agent_provider.runtime_for",
+                        return_value=mock.Mock(bypass_args=())):
+            with self.assertRaises(PromptUnsupported):
+                agent_args("other", (), "Do it", headless=False)
+
 
 if __name__ == "__main__":
     unittest.main()

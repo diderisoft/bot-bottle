@@ -376,6 +376,10 @@ class PiAgentProvider(AgentProvider):
     ) -> None:
         del plan, bottle, supervise_url
 
+    def interactive_prompt(self, prompt: str) -> list[str] | None:
+        # `pi <prompt>`: the interactive UI, with the prompt as its first message.
+        return [prompt]
+
     def headless_prompt(self, prompt: str) -> list[str]:
         return ["-p", prompt]
 

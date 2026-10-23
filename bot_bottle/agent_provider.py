@@ -283,6 +283,15 @@ class AgentProvider(ABC):
         ``bot-bottle start --headless``; the returned args are appended
         after the provider's ``bypass_args`` and ``startup_args``."""
 
+    def interactive_prompt(self, prompt: str) -> list[str] | None:
+        """Return the agent CLI args that start a normal interactive session
+        with `prompt` as its first message, or None if the agent CLI can't.
+
+        Used for a launch that carries a prompt but isn't headless (a console
+        launch): the session stays open for the operator after the first
+        turn. Appended after ``bypass_args`` and ``startup_args``."""
+        del prompt  # an agent CLI that can't returns None
+
     def provision_ca(self, bottle: "Bottle", plan: "BottlePlan") -> None:
         """Install the egress MITM CA into the agent's trust store.
 

@@ -62,15 +62,27 @@ class _Held:
     stop_requested: bool = False
 
 
-def agent_args(template: str, startup_args: tuple[str, ...], prompt: str) -> list[str]:
+class PromptUnsupported(ValueError):
+    """The agent CLI can't start an interactive session with a first message."""
+
+
+def agent_args(template: str, startup_args: tuple[str, ...], prompt: str,
+               headless: bool = True) -> list[str]:
     """The agent CLI's arguments: the provider's bypass flags, its startup
-    args, then the initial task when there is one."""
+    args, then the initial task when there is one: run to completion when
+    `headless`, else as the first message of an interactive session."""
     # pylint: disable=import-outside-toplevel
     from ...agent_provider import get_provider, runtime_for
 
     args = [*runtime_for(template).bypass_args, *startup_args]
-    if prompt:
+    if prompt and headless:
         args.extend(get_provider(template).headless_prompt(prompt))
+    elif prompt:
+        interactive = get_provider(template).interactive_prompt(prompt)
+        if interactive is None:
+            raise PromptUnsupported(
+                f"the {template} agent can't start an interactive session with a prompt")
+        args.extend(interactive)
     return args
 
 
@@ -159,6 +171,11 @@ class BottleService:
         sessions.register(SESSION_KIND, self._finish)
 
     # -- launch --------------------------------------------------------------
+
+    @property
+    def sessions(self) -> SessionManager:
+        """The tmux sessions the agents run in (the console link relays them)."""
+        return self._sessions
 
     def launch(self, request: LaunchRequest, role: str = ROLE_CLI) -> dict[str, object]:
         """A `bottle.launch` job: prepare without prompting, hand the bottle
@@ -272,7 +289,8 @@ class BottleService:
                     # in the journal; a backend that didn't register gets one.
                     activation = bottle.registry_id or str(uuid.uuid4())
                     command, env = bottle.agent_command(agent_args(
-                        template, plan.agent_provision.startup_args, request.prompt))
+                        template, plan.agent_provision.startup_args, request.prompt,
+                        headless=request.headless))
                     with self._lock:
                         self._held[identity] = held
                     self._sessions.start(SessionRecord(
@@ -286,7 +304,8 @@ class BottleService:
                     self.audit.bottled_agent_start(
                         bottle=identity, activation=activation, manifest_digest=policy,
                         backend=backend.name, agent=request.agent)
-                    ready.put(("ready", {"bottle": identity, "session": identity}))
+                    ready.put(("ready", {"bottle": identity, "session": identity,
+                                         "activation": activation}))
                     is_ready.set()
                     held.exited.wait()
                     code = exit_code(held.exit_status.status, held.exit_status.signal) \

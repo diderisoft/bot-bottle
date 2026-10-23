@@ -395,6 +395,10 @@ class CodexAgentProvider(AgentProvider):
                 f"{(r.stderr or r.stdout or '').strip()}"
             )
 
+    def interactive_prompt(self, prompt: str) -> list[str] | None:
+        # `codex <prompt>`: the interactive UI, with the prompt as its first message.
+        return [prompt]
+
     def headless_prompt(self, prompt: str) -> list[str]:
         return [prompt]
 

@@ -83,8 +83,9 @@ class TestConsoleLink(unittest.TestCase):
         request, role = bottles.launched[0]
         self.assertEqual(("implementer", True, "remote"),
                          (request.agent, request.assume_yes, role))
-        self.assertEqual([{"type": "agent_started", "agent_id": "a1", "bottle": "bottle-1"}],
-                         sent)
+        # No terminal relay in this link, so the console can't type into it.
+        self.assertEqual([{"type": "agent_started", "agent_id": "a1", "bottle": "bottle-1",
+                           "writable": False}], sent)
 
     def test_refuses_console_supplied_agent_content(self) -> None:
         # Agents and the bottles they pick come from this host (ADR 0007).
@@ -142,6 +143,205 @@ class _RootCase(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp(prefix="remote-root."))
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.addCleanup(use_bottle_root(self.root))
+
+
+class _Terminal:
+    """A stand-in for ConsoleTerminal."""
+
+    def __init__(self, writable: bool) -> None:
+        self.writable = writable
+        self.written: list[bytes] = []
+        self.sizes: list[tuple[int, int]] = []
+        self.closed = False
+
+    def write(self, data: bytes) -> bool:
+        if not self.writable:
+            return False
+        self.written.append(data)
+        return True
+
+    def resize(self, cols: int, rows: int) -> None:
+        self.sizes.append((cols, rows))
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _ActivationBottles(_Bottles):
+    def launch(self, request: LaunchRequest, role: str = "cli") -> dict[str, object]:
+        result = super().launch(request, role)
+        return {**result, "activation": "act-1"}
+
+
+class TestConsoleSession(unittest.TestCase):
+    """Prompt-first launches, the terminal relay's input/resize, and the
+    audit journal query (the console's sidebar-first layout PRD)."""
+
+    def _link(self, *, writable: bool = True,
+              audit: Any = None) -> tuple[remote.ConsoleLink, _ActivationBottles,
+                                          list[dict[str, Any]]]:
+        bottles = _ActivationBottles()
+        sent: list[dict[str, Any]] = []
+        self.terms: dict[str, _Terminal] = {}
+
+        async def send(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+        async def terminals(agent_id: str, bottle: str) -> _Terminal:
+            self.terms[agent_id] = _Terminal(writable)
+            return self.terms[agent_id]
+
+        link = remote.ConsoleLink(bottles, send, agents=lambda: ["implementer"],
+                                  terminals=terminals, audit=audit)
+        return link, bottles, sent
+
+    def _launch(self, link: remote.ConsoleLink, **extra: Any) -> None:
+        asyncio.run(link.handle({"type": "launch", "agent_id": "a1",
+                                 "definition": {"name": "implementer"}, **extra}))
+
+    def test_prompt_bottles_and_label_reach_the_launch(self) -> None:
+        link, bottles, sent = self._link()
+        self._launch(link, prompt="Fix the flaky test", bottles=["python-dev"], label="fix-it")
+        request, _role = bottles.launched[0]
+        self.assertEqual(("Fix the flaky test", ("python-dev",), "fix-it", False),
+                         (request.prompt, request.bottles, request.label, request.headless))
+        self.assertEqual({"type": "agent_started", "agent_id": "a1", "bottle": "bottle-1",
+                          "activation": "act-1", "writable": True}, sent[-1])
+
+    def test_bad_launch_extras_are_refused(self) -> None:
+        for extra in ({"prompt": 5}, {"prompt": "x" * 20_001}, {"bottles": "python-dev"},
+                      {"bottles": ["../etc"]}, {"bottles": ["b"] * 9}, {"label": ["x"]}):
+            with self.subTest(extra=extra):
+                link, bottles, sent = self._link()
+                self._launch(link, **extra)
+                self.assertEqual([], bottles.launched)
+                self.assertEqual("agent_errored", sent[-1]["type"])
+
+    def test_input_types_into_a_writable_session(self) -> None:
+        link, _bottles, _sent = self._link()
+        self._launch(link)
+        asyncio.run(link.handle({"type": "input", "agent_id": "a1", "data": "yes\r"}))
+        self.assertEqual([b"yes\r"], self.terms["a1"].written)
+
+    def test_input_is_dropped_when_the_agent_disallows_it(self) -> None:
+        link, _bottles, sent = self._link(writable=False)
+        self._launch(link)
+        self.assertFalse(sent[-1]["writable"])
+        asyncio.run(link.handle({"type": "input", "agent_id": "a1", "data": "rm -rf /\r"}))
+        self.assertEqual([], self.terms["a1"].written)
+
+    def test_input_for_unknown_agents_and_non_text_is_ignored(self) -> None:
+        link, _bottles, _sent = self._link()
+        self._launch(link)
+        asyncio.run(link.handle({"type": "input", "agent_id": "other", "data": "x"}))
+        asyncio.run(link.handle({"type": "input", "agent_id": "a1", "data": ["x"]}))
+        self.assertEqual([], self.terms["a1"].written)
+
+    def test_resize_is_validated(self) -> None:
+        link, _bottles, _sent = self._link()
+        self._launch(link)
+        for cols, rows in ((46, 30), (5, 30), ("80", 24), (True, 24), (80, 999)):
+            asyncio.run(link.handle({"type": "resize", "agent_id": "a1", "cols": cols, "rows": rows}))
+        self.assertEqual([(46, 30)], self.terms["a1"].sizes)
+
+    def test_stop_and_disconnect_close_the_relay(self) -> None:
+        link, _bottles, _sent = self._link()
+        self._launch(link)
+        asyncio.run(link.handle({"type": "stop", "agent_id": "a1"}))
+        self.assertTrue(self.terms["a1"].closed)
+        self._launch(link)
+        link.close()
+        self.assertTrue(self.terms["a1"].closed)
+
+    def test_an_agent_that_exits_closes_its_relay(self) -> None:
+        link, bottles, _sent = self._link()
+        self._launch(link)
+        bottles.running.clear()
+        asyncio.run(link.reap())
+        self.assertTrue(self.terms["a1"].closed)
+
+    def test_audit_query_answers_for_launched_bottles_only(self) -> None:
+        calls: list[tuple[str, str | None, int]] = []
+
+        def audit(bottle: str, activation: str | None, limit: int) -> list[dict[str, Any]]:
+            calls.append((bottle, activation, limit))
+            return [{"id": "e1", "bottle": bottle}]
+
+        link, _bottles, sent = self._link(audit=audit)
+        asyncio.run(link.handle({"type": "audit_query", "request_id": "r0", "bottle": "bottle-1"}))
+        self.assertEqual({"type": "audit_events", "request_id": "r0", "events": []}, sent[-1])
+        self.assertEqual([], calls)  # not launched by this console: nothing, not an error
+        self._launch(link)
+        asyncio.run(link.handle({"type": "audit_query", "request_id": "r1", "bottle": "bottle-1",
+                                 "activation": "act-1", "limit": 10_000}))
+        self.assertEqual([("bottle-1", "act-1", 500)], calls)
+        self.assertEqual([{"id": "e1", "bottle": "bottle-1"}], sent[-1]["events"])
+
+    def test_audit_query_failure_answers_empty(self) -> None:
+        def audit(*_args: Any) -> list[dict[str, Any]]:
+            raise RuntimeError("index broke")
+
+        link, _bottles, sent = self._link(audit=audit)
+        self._launch(link)
+        asyncio.run(link.handle({"type": "audit_query", "request_id": "r1", "bottle": "bottle-1"}))
+        self.assertEqual([], sent[-1]["events"])
+
+
+@unittest.skipUnless(shutil.which("tmux"), "needs tmux")
+class TestConsoleTerminal(unittest.TestCase):
+    """A real relay against a real tmux session running `cat`."""
+
+    def setUp(self) -> None:
+        from bot_bottle.control.hostctl import sessions as sessions_mod
+
+        self._tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self._tmp, True)
+        self.addCleanup(use_bottle_root(Path(self._tmp)))
+        sessions_mod.write_config()
+        self.tmux = sessions_mod.tmux
+        import subprocess
+        subprocess.run(self.tmux("new-session", "-d", "-s", "s1", "-x", "80", "-y", "24", "cat"),
+                       check=True)
+        self.addCleanup(subprocess.run, self.tmux("kill-server"), capture_output=True)
+        self.manager = sessions_mod.SessionManager({})
+
+    def _run(self, writable: bool) -> bytes:
+        from bot_bottle.control.hostctl.console_terminal import ConsoleTerminal
+
+        received = bytearray()
+
+        class _Stream:
+            async def write_all(self, data: bytes) -> None:
+                received.extend(data)
+
+            async def finish(self) -> None:
+                pass
+
+        async def scenario() -> None:
+            async def open_stream() -> _Stream:
+                return _Stream()
+
+            term = ConsoleTerminal(self.manager, "s1", "agent-9", writable_allowed=writable)
+            await term.start(open_stream, cols=80, rows=24)
+            await asyncio.sleep(1.0)  # the client attaches (and turns writable)
+            term.write(b"hello-from-console\r")
+            term.resize(46, 30)
+            await asyncio.sleep(1.0)
+            term.close()
+            await asyncio.sleep(0.5)
+
+        asyncio.run(scenario())
+        return bytes(received)
+
+    def test_writable_session_echoes_typing(self) -> None:
+        out = self._run(writable=True)
+        self.assertTrue(out.startswith(b"agent-9\n"))
+        self.assertIn(b"hello-from-console", out)
+
+    def test_read_only_session_drops_typing(self) -> None:
+        out = self._run(writable=False)
+        self.assertTrue(out.startswith(b"agent-9\n"))
+        self.assertNotIn(b"hello-from-console", out)
 
 
 class TestConfig(_RootCase):
@@ -423,6 +623,70 @@ class TestOverRealIroh(_RootCase):
         outcome = self._session(pin_console=False)
         self.assertNotIn("reply", outcome)
         self.assertIn("pinned", outcome["status"].get("error", ""))
+
+    @unittest.skipUnless(shutil.which("tmux"), "needs tmux")
+    def test_a_launched_session_streams_and_takes_typing(self) -> None:
+        """Launch over the link, then read the session's terminal stream and
+        type into it: a real tmux session running `cat`, over real iroh."""
+        import subprocess
+
+        from bot_bottle.control.hostctl import sessions as sessions_mod
+
+        sessions_mod.write_config()
+        subprocess.run(sessions_mod.tmux("new-session", "-d", "-s", "bottle-1", "-x", "80",
+                                         "-y", "24", "cat"), check=True)
+        self.addCleanup(subprocess.run, sessions_mod.tmux("kill-server"), capture_output=True)
+        manager = sessions_mod.SessionManager({})
+        manager._write_record(sessions_mod.SessionRecord(  # pylint: disable=protected-access
+            id="bottle-1", kind="bottle", writable_allowed=True))
+
+        class _SessionBottles(_Bottles):
+            sessions = manager
+
+        outcome: dict[str, Any] = {}
+        lib: Any = iroh
+
+        async def console_side() -> None:
+            ep = await lib.Endpoint.bind(lib.EndpointOptions(
+                preset=lib.preset_n0(), secret_key=os.urandom(32), alpns=[remote.ALPN]))
+            remote.save_config(remote.RemoteConfig(
+                True, str(ep.id()), str(lib.EndpointTicket.from_addr(ep.addr()))))
+            stop = threading.Event()
+            host = threading.Thread(target=lambda: asyncio.run(
+                remote.run(remote.load_config(), _SessionBottles(), stop)), daemon=True)
+            host.start()
+            try:
+                incoming = await asyncio.wait_for(ep.accept_next(), 15)
+                conn = await (await incoming.accept()).connect()
+                bi = await conn.open_bi()
+                send = bi.send()
+                await send.write_all(json.dumps({
+                    "type": "launch", "agent_id": "a1", "definition": {"name": "implementer"},
+                    "prompt": "go"}).encode() + b"\n")
+                outcome["started"] = json.loads(await asyncio.wait_for(bi.recv().read(4096), 10))
+                uni = await asyncio.wait_for(conn.accept_uni(), 10)
+                await asyncio.sleep(1.0)  # the relay's client attaches and turns writable
+                await send.write_all(json.dumps({"type": "input", "agent_id": "a1",
+                                                 "data": "typed-over-iroh\r"}).encode() + b"\n")
+                received = b""
+                deadline = asyncio.get_running_loop().time() + 10
+                while b"typed-over-iroh" not in received and asyncio.get_running_loop().time() < deadline:
+                    chunk = await asyncio.wait_for(uni.read(65536), 10)
+                    if not chunk:
+                        break
+                    received += chunk
+                outcome["terminal"] = received
+            finally:
+                stop.set()
+                host.join(timeout=15)
+                await ep.close()
+
+        with mock.patch.object(remote, "local_agents", return_value=["implementer"]):
+            asyncio.run(console_side())
+        self.assertEqual("agent_started", outcome["started"]["type"])
+        self.assertTrue(outcome["started"]["writable"])
+        self.assertTrue(outcome["terminal"].startswith(b"a1\n"))
+        self.assertIn(b"typed-over-iroh", outcome["terminal"])
 
 
 if __name__ == "__main__":
