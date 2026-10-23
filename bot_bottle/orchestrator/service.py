@@ -239,7 +239,9 @@ class OrchestratorCore:
         """All pending proposals across bottles, FIFO, as JSON dicts
         (`Proposal.to_dict`, round-trippable via `Proposal.from_dict`).
 
-        Each dict carries an extra `bottle_label`: the bottle's human slug
+        Each dict carries an extra `bottle_label`, and for an egress tool a
+        `current_file` (the policy it would replace). `bottle_label` is the
+        bottle's human slug
         resolved from the registry (the proposal itself is keyed by the
         orchestrator-assigned bottle_id, which is opaque to an operator). The
         CLI renders the label but still responds against `bottle_slug`."""
@@ -247,6 +249,11 @@ class OrchestratorCore:
         for p in self._supervisor.list_all_pending_proposals():
             d = p.to_dict()
             d["bottle_label"] = self._label_for(p.bottle_slug)
+            if p.tool in _APPLY_TOOLS:
+                # What the proposal would replace, so a reviewer can see just
+                # the change (an egress proposal carries the whole policy).
+                rec = self.registry.get(p.bottle_slug)
+                d["current_file"] = rec.policy if rec is not None else ""
             out.append(d)
         return out
 

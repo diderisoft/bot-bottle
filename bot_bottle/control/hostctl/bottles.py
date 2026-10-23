@@ -338,6 +338,11 @@ class BottleService:
 
     # -- list / teardown -----------------------------------------------------
 
+    def held_ids(self) -> list[str]:
+        """The sessions of the bottles this daemon holds."""
+        with self._lock:
+            return list(self._held)
+
     def _running(self, bottle_id: str) -> bool:
         with self._lock:
             if bottle_id in self._held:

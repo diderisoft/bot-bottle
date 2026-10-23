@@ -18,6 +18,7 @@ from typing import Callable
 # the registry imports nothing; the module loads only when dispatched.
 _HANDLERS: dict[str, str] = {
     "active": "active:cmd_active",
+    "approve": "approve:cmd_approve",
     "attach": "attach:cmd_attach",
     "audit": "audit:cmd_audit",
     "backend": "backend:cmd_backend",
@@ -67,7 +68,7 @@ COMMANDS = {name: _lazy(spec) for name, spec in _HANDLERS.items()}
 # isn't a TTY and the migration prompt can't be answered. `help` and `login`
 # likewise never touch the store, nor do the host-service commands.
 NO_MIGRATION_COMMANDS = frozenset({
-    "attach", "audit", "backend", "doctor", "down", "help", "install", "jobs", "login",
+    "approve", "attach", "audit", "backend", "doctor", "down", "help", "install", "jobs", "login",
     "pair", "remote", "setup", "trust", "status", "uninstall", "up",
 })
 

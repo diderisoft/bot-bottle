@@ -31,6 +31,7 @@ from .jobs import JobRegistry
 from .listeners import GuestListeners
 from .live import LiveBottles
 from .remote import Supervisor
+from .requests import RequestNotifier, orchestrator_pending
 from .server import HostControlServer
 from .sessions import SessionManager, control_socket_path, tmux_version, write_config
 
@@ -104,6 +105,9 @@ def main() -> int:
     # The console link (ADR 0007): runs only while `bot-bottle remote enable`d.
     remote_link = Supervisor(bottles)
     remote_link.start()
+    # Agents' pending requests, in their sessions' status bars.
+    requests = RequestNotifier(bottles.held_ids, orchestrator_pending)
+    requests.start()
     local = localsock.serve(control_socket_path(), sessions)
     if tmux_version() is not None:
         write_config()
@@ -143,6 +147,7 @@ def main() -> int:
         guests.close()
         local.close()
         remote_link.close()
+        requests.stop()
         if forwarder is not None:
             forwarder.close()
         firehose.close()

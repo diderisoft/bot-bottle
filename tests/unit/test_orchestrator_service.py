@@ -232,6 +232,12 @@ class TestOrchestratorSupervise(unittest.TestCase):
         self.assertEqual(bottle_id, pending[0]["bottle_slug"])
         self.assertEqual("codex-dev-a1b2c", pending[0]["bottle_label"])
 
+    def test_pending_carries_the_policy_it_would_replace(self) -> None:
+        bottle_id = self._register("demo-a1b2c", "routes:\n  - host: existing.com\n")
+        self._queue(bottle_id, "routes:\n  - host: google.com\n")
+        self.assertEqual("routes:\n  - host: existing.com\n",
+                         self.orch.supervise_pending()[0]["current_file"])
+
     def test_pending_label_falls_back_to_slug_when_bottle_gone(self) -> None:
         # No registry record (torn down): label is the id, never empty.
         self._queue("ghost-id", "routes:\n  - host: google.com\n")

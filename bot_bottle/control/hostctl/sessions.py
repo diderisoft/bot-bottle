@@ -98,10 +98,16 @@ _STATUS_BAR = (
     "set -g status-position bottom",
     'set -g status-style "bg=colour235,fg=colour250"',
     "set -g status-left-length 100",
-    "set -g status-right-length 40",
+    "set -g status-right-length 120",
+    # Requests arrive as an option change; redraw at least every second.
+    "set -g status-interval 1",
     'set -g status-left "#[fg=colour173,bold] ▣ bot-bottle #[default]· #{session_name}'
     '#{?@bb_agent, · #{@bb_agent} agent,} "',
-    'set -g status-right "#[fg=colour244]Ctrl-] detach "',
+    # An agent's pending request (`@bb_request`, set by the host controller)
+    # turns the right side copper, with the key that reviews it.
+    'set -g status-right "#{?@bb_request,'
+    '#[bg=colour173#,fg=colour232#,bold] #{@bb_request} · Ctrl-\\\\ review ,'
+    '#[fg=colour244]Ctrl-] detach }"',
     'set -g window-status-format ""',
     'set -g window-status-current-format ""',
 )
@@ -122,12 +128,21 @@ def write_config() -> Path:
         encoding="utf-8")
     notify.chmod(0o700)
     hook = shlex.quote(str(notify)) + " #{q:session_name} #{pane_dead_status} #{pane_dead_signal}"
+    approve = state_dir() / "approve"
+    approve.write_text("#!/bin/sh\nexec " + _python_command("bot_bottle.cli", "approve")
+                       + ' "$@"\n', encoding="utf-8")
+    approve.chmod(0o700)
     lines = [
         *_STATUS_BAR,
         "set -g prefix None",
         "set -g prefix2 None",
         "unbind C-b",
         "bind -n C-] detach-client",
+        # Ctrl-\ reviews a pending request in a popup over the agent; with
+        # none pending the key goes to the agent as usual.
+        "bind -n 'C-\\' if-shell -F '#{@bb_request}' "
+        + '"display-popup -E -w 90% -h 70% -T \' bot-bottle request \' '
+        + "'" + str(approve) + " #{session_name}'\" 'send-keys C-\\'",
         "set -g window-size latest",
         "set -g remain-on-exit on",
         "set -g default-terminal tmux-256color",

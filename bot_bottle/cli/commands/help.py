@@ -23,6 +23,7 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w(f"       {PROG} <command> [args...]\n\n")
     w("Commands:\n")
     w("  active    list currently-running bot-bottle bottles\n")
+    w("  approve   answer an agent's requests (Ctrl-\\ in its session)\n")
     w("  attach    join a running agent session in this terminal (Ctrl-] detaches)\n")
     w("  audit     check, search and configure the audit journal "
       "(tail|verify|query|export|rebuild|import|delivery|forward|firehose)\n")
