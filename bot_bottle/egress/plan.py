@@ -48,3 +48,5 @@ class EgressPlan:
     canary_env: str = ""
     # `audit.delivery` for this bottle, the host default filled in.
     audit_delivery: str = "best_effort"
+    # `audit.firehose`: `full`, or `metadata` to keep bodies and headers out.
+    firehose: str = "full"

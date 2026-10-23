@@ -29,31 +29,39 @@ def _empty_str_dict() -> dict[str, str]:
 
 
 AUDIT_DELIVERIES = ("best_effort", "required")
+FIREHOSE_MODES = ("full", "metadata")
 
 
 @dataclass(frozen=True)
 class ManifestAudit:
-    """`audit:` in a bottle. `delivery` is what happens when an audit event
-    can't be written: `best_effort` goes ahead and records the gap,
-    `required` refuses the action. Empty: the host-wide default."""
+    """`audit:` in a bottle. Empty fields weren't set.
+
+    - `delivery`: what happens when an audit event can't be written.
+      `best_effort` goes ahead and records the gap, `required` refuses the
+      action. Unset: the host-wide default.
+    - `firehose`: what the request firehose carries for this bottle. `full`
+      (the default) is each request as sent, bodies included; `metadata` is
+      only the method, host, port, decision, status, size and timing, for a
+      bottle whose data must not leave the host even to the user's own sink."""
 
     delivery: str = ""
+    firehose: str = ""
 
     @classmethod
     def from_dict(cls, name: str, raw: object) -> "ManifestAudit":
         d = as_json_object(raw, f"bottle '{name}' audit")
-        unknown = set(d) - {"delivery"}
+        unknown = set(d) - {"delivery", "firehose"}
         if unknown:
             raise ManifestError(
                 f"bottle '{name}' audit has unknown key(s) {sorted(unknown)}; "
-                f"the accepted key is 'delivery'"
+                f"the accepted keys are 'delivery' and 'firehose'"
             )
-        delivery = d.get("delivery", "")
-        if delivery not in AUDIT_DELIVERIES:
-            raise ManifestError(
-                f"bottle '{name}' audit.delivery must be one of {', '.join(AUDIT_DELIVERIES)}"
-            )
-        return cls(delivery=str(delivery))
+        for key, allowed in (("delivery", AUDIT_DELIVERIES), ("firehose", FIREHOSE_MODES)):
+            if key in d and d[key] not in allowed:
+                raise ManifestError(
+                    f"bottle '{name}' audit.{key} must be one of {', '.join(allowed)}"
+                )
+        return cls(delivery=str(d.get("delivery", "")), firehose=str(d.get("firehose", "")))
 
 
 @dataclass(frozen=True)

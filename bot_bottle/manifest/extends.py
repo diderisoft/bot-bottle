@@ -9,8 +9,11 @@ from .util import ManifestError, as_json_object
 
 
 def _overlay_audit(base: ManifestBottle, override: ManifestBottle) -> ManifestAudit:
-    """The later bottle's `audit:` when it declared one, else the earlier's."""
-    return override.audit if "audit" in override.declared_fields else base.audit
+    """Each `audit:` field the later bottle set, else the earlier's."""
+    if "audit" not in override.declared_fields:
+        return base.audit
+    return ManifestAudit(delivery=override.audit.delivery or base.audit.delivery,
+                         firehose=override.audit.firehose or base.audit.firehose)
 
 
 def _overlay_declared_bool(

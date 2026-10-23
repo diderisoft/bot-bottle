@@ -66,6 +66,9 @@ class Config:
     # The bottle's `audit.delivery`: `required` holds an allowed request
     # until its audit event is written, and refuses it if it can't be.
     audit_delivery: str = "best_effort"
+    # The bottle's `audit.firehose`: `metadata` keeps its request records to
+    # method, host, port, decision, status, size and timing.
+    firehose: str = "full"
 
 
 @dataclass(frozen=True)

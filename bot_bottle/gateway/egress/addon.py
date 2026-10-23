@@ -414,8 +414,8 @@ class EgressAddon:
         host = flow.request.pretty_host
         route = match_route(config.routes, host)
         if route is not None and not route.inspect:
-            if self._firehose is not None:
-                self._firehose.begin(flow, env)  # the tunnel is all there is to record
+            if self._firehose is not None:  # the tunnel is all there is to record
+                self._firehose.begin(flow, env, metadata_only=config.firehose == "metadata")
             decision = decide(config.routes, host, "/", env, deny_reason=config.deny_reason)
             if decision.action == "block":
                 self._firehose_end(flow, "blocked", decision.reason)
@@ -461,7 +461,7 @@ class EgressAddon:
             self._serve_introspection(flow, request_path, config)
             return
         if self._firehose is not None:
-            self._firehose.begin(flow, env)
+            self._firehose.begin(flow, env, metadata_only=config.firehose == "metadata")
 
         # DLP outbound scan BEFORE stripping auth — catches tokens the
         # agent tried to smuggle in any header, path, query param, or body.

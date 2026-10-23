@@ -61,18 +61,24 @@ def body_capture(raw: bytes, limit: int, env: typing.Mapping[str, str]) -> dict[
 
 
 def snapshot(flow: typing.Any, env: typing.Mapping[str, str],
-             capture: Capture) -> dict[str, object]:
-    """The request as the agent sent it, made safe to stream."""
+             capture: Capture, *, metadata_only: bool = False) -> dict[str, object]:
+    """The request as the agent sent it, made safe to stream. `metadata_only`
+    (the bottle's `audit.firehose: metadata`) keeps just where it went: no
+    path, query, headers or body."""
     req = flow.request
-    path, _, query = str(req.path).partition("?")
     snap: dict[str, object] = {
         "method": req.method, "scheme": getattr(req, "scheme", "") or "",
-        "host": req.pretty_host, "port": req.port,
+        "host": req.pretty_host, "port": req.port, "started": time.monotonic(),
+    }
+    if metadata_only:
+        snap["metadata_only"] = True
+        return snap
+    path, _, query = str(req.path).partition("?")
+    snap.update({
         "path": redact_tokens(path, env=env), "query": redact_tokens(query, env=env),
         "headers": [{"name": k, "value": redact_tokens(v, env=env)}
                     for k, v in req.headers.items() if k.lower() not in STRIPPED_HEADERS],
-        "started": time.monotonic(),
-    }
+    })
     if capture.request_bodies:
         raw = req.get_content(strict=False) if hasattr(req, "get_content") else \
             (req.get_text(strict=False) or "").encode("utf-8")
@@ -112,6 +118,8 @@ def http_activity(snap: typing.Mapping[str, typing.Any], *, slug: str, src_ip: s
     if status is not None:
         record["http_response"] = {"code": status, "length": response_bytes}
     unmapped: dict[str, object] = {"decision": decision}
+    if snap.get("metadata_only"):
+        unmapped["firehose"] = "metadata"  # the bottle withheld path, headers and bodies
     if reason:
         unmapped["reason"] = reason
     if "body" in snap:
@@ -188,12 +196,14 @@ class EgressFirehose:
     def __init__(self, client: FirehoseClient) -> None:
         self._client = client
 
-    def begin(self, flow: typing.Any, env: typing.Mapping[str, str]) -> None:
+    def begin(self, flow: typing.Any, env: typing.Mapping[str, str], *,
+              metadata_only: bool = False) -> None:
         capture = self._client.capture
         meta = getattr(flow, "metadata", None)
         if capture.wanted and isinstance(meta, dict):
-            meta[_SNAPSHOT_KEY] = {"snap": snapshot(flow, env, capture), "capture": capture,
-                                   "env": env}
+            meta[_SNAPSHOT_KEY] = {
+                "snap": snapshot(flow, env, capture, metadata_only=metadata_only),
+                "capture": capture, "env": env, "metadata_only": metadata_only}
 
     def mark(self, flow: typing.Any, decision: str) -> None:
         """Note a decision that isn't the default `allowed` (e.g. redacted)."""
@@ -215,7 +225,7 @@ class EgressFirehose:
             raw = resp.get_content(strict=False) if hasattr(resp, "get_content") else None
             raw = raw if isinstance(raw, bytes) else (resp.get_text(strict=False) or "").encode()
             response_bytes = len(raw)
-            if entry["capture"].response_bodies:
+            if entry["capture"].response_bodies and not entry["metadata_only"]:
                 response_body = body_capture(raw, entry["capture"].max_body_bytes,
                                              entry["env"])
         self._client.submit(http_activity(

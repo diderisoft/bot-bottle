@@ -67,6 +67,18 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(64, len(str(captured["sha256"])))
         self.assertNotIn("truncated", body_capture(b"short", 10, {}))
 
+    def test_a_metadata_only_bottle_keeps_just_where_it_went(self) -> None:
+        flow = _flow(headers={"X-Note": "hi"}, path="/private/report?id=7", body=b"data")
+        snap = snapshot(flow, {}, Capture(wanted=True, response_bodies=True),
+                        metadata_only=True)
+        self.assertEqual({"method", "scheme", "host", "port", "started", "metadata_only"},
+                         set(snap))
+        record = http_activity(snap, slug="amber-fox", src_ip="", decision="allowed",
+                               status=200)
+        extra = cast(dict[str, dict[str, object]], record["unmapped"])["bot_bottle"]
+        self.assertEqual("metadata", extra["firehose"])
+        self.assertNotIn("private", json.dumps(record))
+
     def test_bodies_can_be_left_out(self) -> None:
         snap = snapshot(_flow(body=b"x"), {}, Capture(wanted=True, request_bodies=False))
         self.assertNotIn("body", snap)
@@ -125,6 +137,17 @@ class Hooks(unittest.TestCase):
         firehose.end(flow, "amber-fox", "blocked")  # e.g. the response hook after a block
         [record] = client.records  # pylint: disable=unbalanced-tuple-unpacking
         self.assertEqual("redacted", record["unmapped"]["bot_bottle"]["decision"])
+
+    def test_a_metadata_only_bottle_never_ships_a_response_body(self) -> None:
+        client = _Client(Capture(wanted=True, response_bodies=True))
+        firehose = EgressFirehose(client)  # type: ignore[arg-type]
+        flow = _flow()
+        firehose.begin(flow, {}, metadata_only=True)
+        flow.response = types.SimpleNamespace(
+            status_code=200, get_content=lambda strict=False: b"secret report")
+        firehose.end(flow, "amber-fox")
+        self.assertNotIn("response_body", client.records[0]["unmapped"]["bot_bottle"])
+        self.assertEqual(13, client.records[0]["http_response"]["length"])
 
     def test_response_bodies_only_when_asked(self) -> None:
         for wanted in (False, True):

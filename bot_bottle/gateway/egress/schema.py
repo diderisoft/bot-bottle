@@ -340,8 +340,13 @@ def parse_config(payload: object) -> "Config":
     if delivery not in ("best_effort", "required"):
         raise ValueError("routes payload: 'audit_delivery' must be best_effort or required")
 
+    firehose = payload_dict.get("firehose", "full")
+    if firehose not in ("full", "metadata"):
+        raise ValueError("routes payload: 'firehose' must be full or metadata")
+
     routes = parse_routes(payload)
-    return Config(routes=routes, log=log_raw, audit_delivery=str(delivery))
+    return Config(routes=routes, log=log_raw, audit_delivery=str(delivery),
+                  firehose=str(firehose))
 
 
 def load_config(text: str) -> "Config":

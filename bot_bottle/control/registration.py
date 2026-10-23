@@ -42,7 +42,7 @@ def egress_policy(plan: EgressPlan) -> str:
     `routes.yaml` render, so the consolidated path applies the same
     allow-list."""
     return egress_render_routes(plan.routes, log=plan.log,
-                                audit_delivery=plan.audit_delivery)
+                                audit_delivery=plan.audit_delivery, firehose=plan.firehose)
 
 
 def registration_inputs(plan: EgressPlan) -> RegistrationInputs:

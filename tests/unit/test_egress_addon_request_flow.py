@@ -270,6 +270,7 @@ def _config_to_policy(config: Config) -> str:
     return _emit_yaml({
         "log": config.log,
         "audit_delivery": config.audit_delivery,
+        "firehose": config.firehose,
         "routes": [route_to_yaml_dict(r) for r in config.routes],
     }) + "\n"
 
@@ -1461,6 +1462,20 @@ class TestFirehoseHooks(unittest.TestCase):
         addon.response(flow)  # type: ignore[arg-type]
         [record] = client.records  # pylint: disable=unbalanced-tuple-unpacking
         self.assertEqual("blocked", record["unmapped"]["bot_bottle"]["decision"])
+
+    def test_a_metadata_only_bottle_is_captured_without_its_contents(self) -> None:
+        addon = _addon(Config(routes=(Route(host="api.example.com"),), firehose="metadata"),
+                       slug="amber-fox")
+        client = _FirehoseClient()
+        addon._firehose = EgressFirehose(cast(Any, client))
+        flow = _with_client_ip(_Flow(_Request(host="api.example.com", path="/private?q=1",
+                                              body="payload")), "10.243.0.9")
+        _run_request(addon, flow)
+        flow.response = _Response(200, content="ok")
+        addon.response(flow)  # type: ignore[arg-type]
+        [record] = client.records  # pylint: disable=unbalanced-tuple-unpacking
+        self.assertNotIn("private", json.dumps(record))
+        self.assertNotIn("payload", json.dumps(record))
 
     def test_nothing_is_captured_while_nobody_listens(self) -> None:
         addon, client = self.addon(Route(host="api.example.com"), wanted=False)
