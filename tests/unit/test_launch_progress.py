@@ -175,6 +175,35 @@ class Screen(unittest.TestCase):
         for expected in ("✗ Getting images", "pulled half", "pull failed", "full log:"):
             self.assertIn(expected, after)
 
+    def test_the_bottle_cursor_blinks(self) -> None:
+        from bot_bottle.cli import logo  # pylint: disable=import-outside-toplevel
+        from bot_bottle.cli.progress import logo_rows  # pylint: disable=import-outside-toplevel
+
+        on, off = logo_rows(truecolor=True), logo_rows(truecolor=True, cursor=False)
+        self.assertEqual([logo.CURSOR[0] // 2], [i for i, (a, b) in enumerate(zip(on, off))
+                                                 if a != b])
+        progress, _ = self.progress()
+        progress.stage("image", "Getting images")
+        lit = progress._layout()  # pylint: disable=protected-access
+        progress._frame = 5  # pylint: disable=protected-access  # half a second later
+        dark = progress._layout()  # pylint: disable=protected-access
+        progress.close()
+        self.assertTrue(any(on[logo.CURSOR[0] // 2] in line for line in lit))
+        self.assertTrue(any(off[logo.CURSOR[0] // 2] in line for line in dark))
+
+    def test_the_block_is_centered(self) -> None:
+        from bot_bottle.cli import logo  # pylint: disable=import-outside-toplevel
+
+        progress, _ = self.progress()
+        progress.stage("image", "Getting images")
+        lines = progress._layout()  # pylint: disable=protected-access
+        progress.close()
+        block = 40 + 4 + len(logo.ART[0])  # stage column, gap, bottle
+        stage = next(line for line in lines if "Getting images" in line)
+        self.assertEqual((100 - block) // 2, len(stage) - len(stage.lstrip()))
+        top = next(i for i, line in enumerate(lines) if line.strip())
+        self.assertEqual((30 - (len(logo.ART) + 1) // 2) // 2, top)  # vertically too
+
     def test_no_color_means_no_bottle(self) -> None:
         progress, out = self.progress(color=False)
         progress.stage("image", "Getting images")

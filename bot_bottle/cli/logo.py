@@ -85,3 +85,8 @@ ART: tuple[str, ...] = (
     "......offfgjjjjjjgfffn......",
     "........effffffffffe........",
 )
+
+# The prompt's blinking cursor: (row, first column, last column), and
+# the pixel it shows when off.
+CURSOR: tuple[int, int, int] = (21, 15, 19)
+CURSOR_OFF = "d"

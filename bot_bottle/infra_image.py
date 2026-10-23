@@ -57,7 +57,7 @@ def local_build_tag(image: str, local_ref: str) -> str:
 
 def note_local_build() -> None:
     """Mark the launch stage for a service image that's actually being built."""
-    log.stage("services", "Rebuilding bot-bottle services for this code (once per change)")
+    log.stage("services", "Rebuilding bot-bottle services")
 
 
 def pull_pinned_image(

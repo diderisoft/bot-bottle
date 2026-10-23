@@ -39,11 +39,14 @@ _TAIL_LINES = 12
 # Log lines the user should see even when the rest is hidden.
 _SHOWN = ("bot-bottle: warning:", "bot-bottle: error:")
 _RESET = "\x1b[0m"
-# Screen layout: a margin, the stage column, a gap, then the bottle.
+# Screen layout, centered: the stage column, a gap, then the bottle. The
+# column has a fixed width so the block doesn't shift as stages arrive.
 _MARGIN = 2
 _GAP = 4
 _MIN_STAGE_WIDTH = 30
-_MAX_STAGE_WIDTH = 60
+_STAGE_WIDTH = 40
+# The bottle's cursor blinks every this many spinner ticks (0.1 s each).
+_BLINK_TICKS = 5
 # Alternate screen + hidden cursor, and back. Synchronized output (DEC 2026)
 # makes a terminal show a whole frame at once; others ignore it.
 _ENTER = "\x1b[?1049h\x1b[?25l\x1b[2J"
@@ -103,10 +106,15 @@ def _sgr(hex6: str, *, background: bool, truecolor: bool) -> str:
     return f"\x1b[{48 if background else 38};5;{_xterm256(r, g, b)}m"
 
 
-def logo_rows(*, truecolor: bool) -> list[str]:
+def logo_rows(*, truecolor: bool, cursor: bool = True) -> list[str]:
     """The bottle as terminal rows (half blocks, two pixels per cell), each
-    `logo.ART` columns wide."""
+    `logo.ART` columns wide. ``cursor=False`` draws the prompt without its
+    `_`, for the blink."""
     art: list[str] = list(logo.ART)
+    if not cursor:
+        row, first, last = logo.CURSOR
+        line = art[row]
+        art[row] = line[:first] + logo.CURSOR_OFF * (last - first + 1) + line[last + 1:]
     if len(art) % 2:
         art.append("." * len(art[0]))
     rows: list[str] = []
@@ -159,7 +167,9 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
         # Full-screen drawing on the alternate screen; else plain lines.
         self.screen = (self.tty and not verbose) if screen is None else screen
         truecolor = os.environ.get("COLORTERM", "") in ("truecolor", "24bit")
-        self._logo = logo_rows(truecolor=truecolor) if self.screen and self.color else []
+        drawn = self.screen and self.color
+        self._logo = logo_rows(truecolor=truecolor) if drawn else []
+        self._logo_blink = logo_rows(truecolor=truecolor, cursor=False) if drawn else []
         log_path.parent.mkdir(parents=True, exist_ok=True)
         self._log = log_path.open("a", encoding="utf-8")
         self._tail: collections.deque[str] = collections.deque(maxlen=_TAIL_LINES)
@@ -355,28 +365,31 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
         self._resized.set()  # a signal handler only sets a flag; drawing takes the lock
 
     def _layout(self) -> list[str]:
-        """The whole screen as lines, for the current terminal size."""
+        """The whole screen as lines, for the current terminal size: the
+        stages and the bottle, centered as one block."""
         columns, rows = _size()
-        stage_width = min(_MAX_STAGE_WIDTH, columns - 2 * _MARGIN)
-        art = self._logo
-        if art and (columns < _MARGIN + _MIN_STAGE_WIDTH + _GAP + len(logo.ART[0]) + _MARGIN
+        art = self._logo_blink if (self._frame // _BLINK_TICKS) % 2 else self._logo
+        art_width = len(logo.ART[0])
+        if art and (columns < _MARGIN + _MIN_STAGE_WIDTH + _GAP + art_width + _MARGIN
                     or rows < len(art) + 2):
             art = []  # no room for the bottle
-        if art:
-            stage_width = min(stage_width, columns - 2 * _MARGIN - _GAP - len(logo.ART[0]))
+        room = columns - 2 * _MARGIN - (_GAP + art_width if art else 0)
+        stage_width = max(min(_STAGE_WIDTH, room), 1)
         left = [self._stage_text(s, stage_width) for s in self._stages]
         if self._notes:
             left.append("")
             left.extend(note[:stage_width] for note in self._notes[-3:])
         height = min(max(len(left), len(art)), max(rows - 2, 1))
-        pad = " " * _MARGIN
-        lines = [""]
+        block_width = stage_width + (_GAP + art_width if art else 0)
+        pad = " " * max((columns - block_width) // 2, _MARGIN)
+        # Stages sit level with the bottle's body, below its cap.
+        top = max((len(art) - len(left)) // 2, 0) if art else 0
+        lines = [""] * max((rows - height) // 2, 1)
         for i in range(height):
-            text = left[i] if i < len(left) else ""
+            text = left[i - top] if 0 <= i - top < len(left) else ""
             line = pad + text
             if art and i < len(art):
-                visible = len(_strip(text))
-                line += " " * (stage_width - visible + _GAP) + art[i]
+                line += " " * (stage_width - len(_strip(text)) + _GAP) + art[i]
             lines.append(line)
         return lines
 
@@ -412,7 +425,7 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
             with self._lock:
                 self._frame += 1
                 if self._current() is not None:
-                    self._draw()
+                    self._draw()  # the spinner, and every _BLINK_TICKS the bottle's cursor
 
 
 def _strip(text: str) -> str:
