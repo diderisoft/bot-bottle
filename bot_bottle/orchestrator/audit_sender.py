@@ -53,6 +53,17 @@ class AuditSender:
     def submit(self, event: AuditEvent, producer: str = "orchestrator") -> None:
         self._queue.put(_Queued(event, producer))
 
+    def send_now(self, event: AuditEvent, producer: str = "orchestrator") -> bool:
+        """Deliver one event now, outside the queue, for a bottle whose
+        `audit.delivery` is `required`. True only once it's written (or was
+        already); the caller refuses the action otherwise."""
+        try:
+            status, _ = self._relay.request(
+                "POST", AUDIT_APPEND_PATH, {"producer": producer, "event": event.to_json()})
+        except HostControlUnreachable:
+            return False
+        return status == 200
+
     def pending(self) -> int:
         return self._queue.pending()
 

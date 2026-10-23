@@ -336,8 +336,12 @@ def parse_config(payload: object) -> "Config":
             f"routes payload: 'log' must be {LOG_OFF}, {LOG_BLOCKS}, or {LOG_FULL}"
         )
 
+    delivery = payload_dict.get("audit_delivery", "best_effort")
+    if delivery not in ("best_effort", "required"):
+        raise ValueError("routes payload: 'audit_delivery' must be best_effort or required")
+
     routes = parse_routes(payload)
-    return Config(routes=routes, log=log_raw)
+    return Config(routes=routes, log=log_raw, audit_delivery=str(delivery))
 
 
 def load_config(text: str) -> "Config":

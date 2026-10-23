@@ -44,7 +44,17 @@ class TestConfigStore(unittest.TestCase):
             self.assertEqual([
                 "id",
                 "cached_image_stale_warning_days",
+                "audit_delivery",
             ], columns)
+
+    def test_audit_delivery_defaults_to_best_effort_and_can_be_set(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
+            store = ConfigStore(Path(tmp) / "bot-bottle.db")
+            self.assertEqual("best_effort", store.audit_delivery())  # no DB yet
+            store.migrate()
+            self.assertEqual("best_effort", store.audit_delivery())
+            store.set_audit_delivery("required")
+            self.assertEqual("required", store.audit_delivery())
 
     def test_store_manager_includes_config_store(self) -> None:
         with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:

@@ -255,6 +255,17 @@ class OrchestratorCore:
         bottle registered with, or `bottle_id` itself."""
         return self._label_for(bottle_id)
 
+    def audit_delivery(self, bottle_id: str) -> str:
+        """The bottle's `audit.delivery` from its registration metadata;
+        `best_effort` for an unknown bottle or one registered without it."""
+        rec = self.registry.get(bottle_id)
+        try:
+            meta = json.loads(rec.metadata) if rec is not None and rec.metadata else {}
+        except ValueError:
+            meta = {}
+        value = meta.get("audit_delivery") if isinstance(meta, dict) else None
+        return "required" if value == "required" else "best_effort"
+
     def _label_for(self, bottle_slug: str) -> str:
         """The human slug recorded in registry metadata for a proposal's
         bottle, or the bottle_slug unchanged when the bottle is gone or has no

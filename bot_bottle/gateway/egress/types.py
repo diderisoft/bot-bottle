@@ -63,6 +63,9 @@ class Config:
     routes: tuple[Route, ...]
     log: int = LOG_OFF
     deny_reason: str = ""
+    # The bottle's `audit.delivery`: `required` holds an allowed request
+    # until its audit event is written, and refuses it if it can't be.
+    audit_delivery: str = "best_effort"
 
 
 @dataclass(frozen=True)

@@ -53,20 +53,35 @@ class GatewayAudit:
     def submit(self, event: AuditEvent) -> None:
         self._queue.put(event)
 
+    def send_now(self, event: AuditEvent) -> bool:
+        """Deliver one event now, outside the queue, for a bottle whose
+        `audit.delivery` is `required`. True only once it's written."""
+        try:
+            self._post(event, required=True)
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return False
+        return True
+
     def pending(self) -> int:
         return self._queue.pending()
 
     def _gap(self, dropped: int, first: AuditEvent, last: AuditEvent) -> AuditEvent:
         return truncation_event(self._producer, dropped, first, last, self.now())
 
-    def _send(self, event: AuditEvent) -> str:
-        body = json.dumps({"producer": self._producer, "event": event.to_json()}).encode()
+    def _post(self, event: AuditEvent, *, required: bool) -> None:
+        """POST one event; raises on any failure, including an error status."""
+        body: dict[str, object] = {"producer": self._producer, "event": event.to_json()}
+        if required:
+            body["required"] = True
         req = urllib.request.Request(
-            self._url, data=body, method="POST",
+            self._url, data=json.dumps(body).encode(), method="POST",
             headers={"Content-Type": "application/json", **orchestrator_auth_headers()})
+        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS):
+            pass
+
+    def _send(self, event: AuditEvent) -> str:
         try:
-            with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS):
-                return DONE
+            self._post(event, required=False)
         except urllib.error.HTTPError as e:
             if 400 <= e.code < 500 and e.code not in (408, 429):
                 sys.stderr.write(f"{self._producer}: audit event {event.type} refused "
@@ -75,6 +90,7 @@ class GatewayAudit:
             return RETRY
         except (urllib.error.URLError, TimeoutError, OSError):
             return RETRY
+        return DONE
 
 
 __all__ = ["GatewayAudit", "QUEUE_LIMIT"]

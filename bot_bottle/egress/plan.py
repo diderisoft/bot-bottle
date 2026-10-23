@@ -46,3 +46,5 @@ class EgressPlan:
     log: int = 0
     canary: str = ""
     canary_env: str = ""
+    # `audit.delivery` for this bottle, the host default filled in.
+    audit_delivery: str = "best_effort"

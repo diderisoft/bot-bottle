@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -9,9 +10,11 @@ import sys
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from bot_bottle.contract.audit import AUDIT_EVENTS_PATH
 from bot_bottle.control.git_gate_render import git_gate_render_hook
@@ -24,17 +27,25 @@ class _Orchestrator(ThreadingHTTPServer):
     def __init__(self) -> None:
         super().__init__(("127.0.0.1", 0), _Handler)
         self.received: list[dict[str, Any]] = []
+        self.delivery = "best_effort"
+        self.append_status = 200
 
 
 class _Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # pylint: disable=invalid-name
         server: Any = self.server
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        status, reply = 200, {}
         if self.path == AUDIT_EVENTS_PATH:
-            server.received.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
-        self.send_response(200)
-        self.send_header("Content-Length", "2")
+            server.received.append(body)
+            status = server.append_status
+        elif self.path == "/resolve":
+            reply = {"bottle_id": "b", "audit_delivery": server.delivery}
+        data = json.dumps(reply).encode()
+        self.send_response(status)
+        self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(b"{}")
+        self.wfile.write(data)
 
     def log_message(self, format: str, *args: object) -> None:  # pylint: disable=redefined-builtin
         del format, args
@@ -99,6 +110,46 @@ class HookSendsEvents(unittest.TestCase):
         self.assertEqual({"repository": "app", "ref": "refs/for/main", "detail": "AGit review ref"},
                          {k: event["payload"][k] for k in ("repository", "ref", "detail")})
 
+
+
+class RequiredDelivery(unittest.TestCase):
+    def setUp(self) -> None:
+        self.server = _Orchestrator()
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        env = mock.patch.dict(os.environ, {
+            "BOT_BOTTLE_ORCHESTRATOR_URL": f"http://127.0.0.1:{self.server.server_address[1]}",
+            "SUPERVISE_SOURCE_IP": "10.243.0.9"})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def run_main(self, *args: str) -> tuple[int, str]:
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            rc = audit.main(list(args))
+        return rc, out.getvalue().strip()
+
+    def test_delivery_prints_the_bottles_mode(self) -> None:
+        self.assertEqual((0, "best_effort"), self.run_main("delivery"))
+        self.server.delivery = "required"
+        self.assertEqual((0, "required"), self.run_main("delivery"))
+
+    def test_an_unresolvable_bottle_is_treated_as_required(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.assertEqual((0, "required"), self.run_main("delivery"))
+
+    def test_required_fails_unless_written(self) -> None:
+        args = ("--required", "forge.push_accepted", "success", "refs/heads/main")
+        self.assertEqual(0, self.run_main(*args)[0])
+        self.assertTrue(self.server.received[-1]["required"])
+        self.server.append_status = 503
+        self.assertEqual(1, self.run_main(*args)[0])
+
+    def test_best_effort_never_fails_the_push(self) -> None:
+        self.server.append_status = 503
+        self.assertEqual(0, self.run_main("forge.push_accepted", "success", "refs/heads/main")[0])
 
 if __name__ == "__main__":
     unittest.main()

@@ -18,7 +18,7 @@ _FILENAME_RX = re.compile(r"^[a-z][a-z0-9-]*$")
 BOTTLE_KEYS = frozenset(
     {
         "env", "extends", "agent_provider", "git-gate", "egress",
-        "supervise", "nested_containers",
+        "supervise", "nested_containers", "audit",
     }
 )
 AGENT_KEYS_REQUIRED: frozenset[str] = frozenset()

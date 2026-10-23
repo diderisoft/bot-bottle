@@ -15,9 +15,9 @@ import typing
 
 from mitmproxy import http  # type: ignore[import-not-found]  # pylint: disable=import-error
 
-from bot_bottle.contract.audit import AuditEvent
 from bot_bottle.contract.identity import IDENTITY_HEADER
 from bot_bottle.gateway.audit_client import GatewayAudit
+from bot_bottle.gateway.egress.audit_hooks import AUDIT_REFUSED, EgressAudit
 from bot_bottle.gateway.egress.dlp_detectors import redact_tokens
 from bot_bottle.gateway.egress.dlp_config import (
     DEFAULT_OUTBOUND_ON_MATCH,
@@ -102,8 +102,6 @@ DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS = 300.0
 DEFAULT_INBOUND_SCAN_LIMIT_BYTES = 1 * 1024 * 1024  # 1 MiB
 # Filesystem poll cadence while awaiting the operator's response.
 TOKEN_ALLOW_POLL_INTERVAL_SECONDS = 0.5
-# Most (bottle, host, port) first contacts remembered before starting over.
-_CONTACTED_LIMIT = 50_000
 
 # Fixed operator guidance attached to every token-allow proposal.
 _TOKEN_ALLOW_JUSTIFICATION = (
@@ -128,7 +126,7 @@ class EgressAddon:
     _passthrough_conns: "set[str]" = set()
     _inbound_scan_limit: int = DEFAULT_INBOUND_SCAN_LIMIT_BYTES
     # None (the class default, for __new__-built addons): record nothing.
-    _audit: "GatewayAudit | None" = None
+    _audit: "EgressAudit | None" = None
 
     def __init__(self) -> None:
         # Resolver-only: the gateway is always multi-tenant, resolving each
@@ -143,11 +141,7 @@ class EgressAddon:
                 "no static routes file to fall back to."
             )
         self._resolver = PolicyResolver(orch_url)
-        self._audit = GatewayAudit(orch_url, "egress").start()
-        # (bottle, host, port) each bottle has reached: an allowed request is
-        # recorded only the first time, so the journal shows everywhere an
-        # agent went without one record per request.
-        self._contacted: set[tuple[str, str, int]] = set()
+        self._audit = EgressAudit(GatewayAudit(orch_url, "egress").start())
         # Tokens the operator has approved this session, keyed by
         # bottle so the shared gateway keeps each bottle's safelist separate —
         # a global set would let bottle A's approved secret pass bottle B's DLP
@@ -218,36 +212,41 @@ class EgressAddon:
         }
 
     def _audit_egress(self, flow: http.HTTPFlow, kind: str, outcome: str,
-                      reason: str = "") -> None:
-        """Record an egress decision or DLP anomaly for the calling bottle."""
+                      reason: str = "", *, hold: bool = True) -> bool:
+        """Record a decision; see `audit_hooks`. `hold` (an allowed action)
+        honors `audit.delivery: required`."""
         if self._audit is None:
-            return
-        slug = self._flow_ctx(flow)[1]
-        conn = flow.client_conn
-        src_ip = conn.peername[0] if conn is not None and conn.peername else ""
-        host, port, method = flow.request.pretty_host, flow.request.port, flow.request.method
-        payload: dict[str, object] = {"method": method, "host": host, "port": port,
-                                      "src_ip": src_ip}
-        if reason:
-            payload["reason"] = reason
-        self._audit.submit(AuditEvent(
-            type=kind, actor=f"bottled-agent:{slug}" if slug else "unattributed",
-            action=f"egress.{method.lower()}", outcome=outcome, sensitivity="security",
-            ts_event=self._audit.now(), resource=f"{host}:{port}",
-            bottle=slug or None, bottled_agent=slug or None, payload=payload,
-        ))
+            return True
+        config, slug, _ = self._flow_ctx(flow)
+        return self._audit.record(flow, slug, kind, outcome, reason,
+                                  required=hold and config.audit_delivery == "required")
 
-    def _first_contact(self, flow: http.HTTPFlow) -> None:
-        """Record an allowed request the first time its bottle reaches its host."""
+    def _first_contact(self, flow: http.HTTPFlow) -> bool:
         if self._audit is None:
-            return
-        key = (self._flow_ctx(flow)[1], flow.request.pretty_host, flow.request.port)
-        if key in self._contacted:
-            return
-        if len(self._contacted) >= _CONTACTED_LIMIT:
-            self._contacted.clear()  # bounded; a host may be recorded again
-        self._contacted.add(key)
-        self._audit_egress(flow, "egress.decision", "allowed")
+            return True
+        config, slug, _ = self._flow_ctx(flow)
+        return self._audit.first_contact(flow, slug,
+                                         required=config.audit_delivery == "required")
+
+    async def _allowed_and_recorded(
+        self, flow: http.HTTPFlow, check: "typing.Callable[[], bool]",
+    ) -> bool:
+        """Run `check` (recording an allowed action), off the event loop when a
+        `required` send may block; 403 if the record wasn't written."""
+        if self._flow_ctx(flow)[0].audit_delivery == "required":
+            recorded = await asyncio.to_thread(check)
+        else:
+            recorded = check()
+        if not recorded:
+            self._refuse_unrecorded(flow)
+        return recorded
+
+    def _refuse_unrecorded(self, flow: http.HTTPFlow) -> None:
+        """403 for a `required` action whose record wasn't written."""
+        flow.response = http.Response.make(
+            403, AUDIT_REFUSED.encode("utf-8"),
+            {"Content-Type": "text/plain; charset=utf-8"},
+        )
 
     def _block(
         self,
@@ -260,7 +259,7 @@ class EgressAddon:
         """Answer 403 and record it: a DLP hit (`anomaly`) as `egress.anomaly`,
         any other refusal as a blocked `egress.decision`."""
         self._audit_egress(flow, "egress.anomaly" if anomaly else "egress.decision",
-                           "blocked", reason)
+                           "blocked", reason, hold=False)
         if self._flow_log(flow) >= LOG_BLOCKS:
             entry: dict[str, object] = {"event": "egress_block", "reason": reason}
             if ctx:
@@ -414,14 +413,19 @@ class EgressAddon:
         if route is not None and not route.inspect:
             decision = decide(config.routes, host, "/", env, deny_reason=config.deny_reason)
             if decision.action == "block":
-                self._audit_egress(flow, "egress.decision", "blocked", decision.reason)
+                self._audit_egress(flow, "egress.decision", "blocked", decision.reason,
+                                   hold=False)
                 flow.response = http.Response.make(
                     403,
                     decision.reason.encode("utf-8"),
                     {"Content-Type": "text/plain; charset=utf-8"},
                 )
                 return
-            self._first_contact(flow)  # its inner requests never reach request()
+            # Its inner requests never reach request(). A `required` send blocks
+            # here, but only on a bottle's first contact with a host.
+            if not self._first_contact(flow):
+                self._refuse_unrecorded(flow)
+                return
             if conn_id:
                 self._passthrough_conns.add(conn_id)
 
@@ -467,6 +471,8 @@ class EgressAddon:
             return
 
         self._apply_route_policy(flow, config, route, request_path, env)
+        if flow.response is None:
+            await self._allowed_and_recorded(flow, lambda: self._first_contact(flow))
 
     def _request_context(
         self, flow: http.HTTPFlow,
@@ -521,7 +527,6 @@ class EgressAddon:
 
         if result.inject_authorization is not None:
             flow.request.headers["authorization"] = result.inject_authorization
-        self._first_contact(flow)
 
         if result.log_request:
             self._log_request(flow, env)
@@ -564,15 +569,17 @@ class EgressAddon:
             # canary hit is an exfil attempt by definition: never redacted.
             if policy == ON_MATCH_REDACT and not result.canary:
                 if redact_request(flow.request, route, env):
-                    self._audit_egress(flow, "egress.anomaly", "allowed",
-                                       f"egress DLP: {result.reason}; redacted")
-                    if self._flow_log(flow) >= LOG_BLOCKS:
+                    reason = f"egress DLP: {result.reason}; redacted"
+                    recorded = await self._allowed_and_recorded(
+                        flow, lambda: self._audit_egress(
+                            flow, "egress.anomaly", "allowed", reason))
+                    if recorded and self._flow_log(flow) >= LOG_BLOCKS:
                         sys.stderr.write(json.dumps({
                             "event": "egress_redacted",
                             "reason": f"egress DLP: {result.reason}",
                             **self._req_ctx(flow),
                         }) + "\n")
-                    return True
+                    return recorded
                 self._block(
                     flow,
                     f"egress DLP: {result.reason}; redaction could not remove "
@@ -787,7 +794,7 @@ class EgressAddon:
             if result is not None and result.severity == "block":
                 sys.stderr.write(f"egress DLP: {result.reason}\n")
                 self._audit_egress(flow, "egress.anomaly", "blocked",
-                                   f"egress DLP: {result.reason} (websocket)")
+                                   f"egress DLP: {result.reason} (websocket)", hold=False)
                 flow.kill()  # type: ignore[union-attr]
         else:
             result = scan_inbound(route, content)
@@ -795,7 +802,7 @@ class EgressAddon:
                 if result.severity == "block":
                     sys.stderr.write(f"egress DLP: {result.reason}\n")
                     self._audit_egress(flow, "egress.anomaly", "blocked",
-                                       f"egress DLP: {result.reason} (websocket)")
+                                       f"egress DLP: {result.reason} (websocket)", hold=False)
                     flow.kill()  # type: ignore[union-attr]
                 elif result.severity == "warn":
                     sys.stderr.write(f"egress DLP warn: {result.reason}\n")

@@ -26,6 +26,7 @@ from ..bottle_state import (
 )
 from ..egress import Egress, EgressPlan
 from ..git_gate import GitGate, GitGatePlan
+from ..lib.config_store import ConfigStore
 from ..lib.log import die
 from ..manifest import Manifest, ManifestBottle
 from ..orchestrator.store.store_manager import StoreManager
@@ -93,7 +94,9 @@ def prepare_egress(
 ) -> EgressPlan:
     egress_dir = egress_state_dir(slug)
     egress_dir.mkdir(parents=True, exist_ok=True)
-    return Egress().prepare(bottle, slug, egress_dir, provision.egress_routes)
+    return Egress().prepare(
+        bottle, slug, egress_dir, provision.egress_routes,
+        default_audit_delivery=ConfigStore(host_db_path()).audit_delivery())
 
 
 def prepare_supervise(bottle: ManifestBottle, slug: str) -> SupervisePlan | None:

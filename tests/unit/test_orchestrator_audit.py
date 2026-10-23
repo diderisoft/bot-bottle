@@ -32,10 +32,17 @@ class _Sink:
     def __init__(self) -> None:
         self.events: list[AuditEvent] = []
         self.producers: list[str] = []
+        self.sent_now: list[AuditEvent] = []
+        self.writes = True
 
     def submit(self, event: AuditEvent, producer: str = "orchestrator") -> None:
         self.events.append(event)
         self.producers.append(producer)
+
+    def send_now(self, event: AuditEvent, producer: str = "orchestrator") -> bool:
+        del producer
+        self.sent_now.append(event)
+        return self.writes
 
     def types(self) -> list[str]:
         return [e.type for e in self.events]
@@ -139,6 +146,47 @@ class ApiEvents(unittest.TestCase):
                                   role=ROLE_GATEWAY)
             self.assertEqual(400, status)
         self.assertEqual([], self.sink.events)
+
+    def policy(self, bottle_id: str) -> str:
+        rec = self.store.get(bottle_id)
+        assert rec is not None
+        return rec.policy
+
+    def register(self, slug: str, delivery: str) -> Any:
+        return self.store.register("10.243.0.9", policy="routes: []\n",
+                                   metadata=json.dumps({"slug": slug, "audit_delivery": delivery}))
+
+    def test_resolve_reports_the_bottles_delivery(self) -> None:
+        rec = self.register("amber-fox", "required")
+        status, body = self.call("POST", "/resolve", {
+            "source_ip": rec.source_ip, "identity_token": rec.identity_token}, role=ROLE_GATEWAY)
+        self.assertEqual((200, "required"), (status, body["audit_delivery"]))
+
+    def test_a_required_relay_is_written_now_or_refused(self) -> None:
+        event = {"type": "egress.decision", "actor": "a", "action": "x", "outcome": "allowed",
+                 "sensitivity": "security", "ts_event": "t"}
+        body = {"producer": "egress", "event": event, "required": True}
+        self.assertEqual((200, {"written": True}),
+                         self.call("POST", "/audit/events", body, role=ROLE_GATEWAY))
+        self.sink.writes = False
+        self.assertEqual(503, self.call("POST", "/audit/events", body, role=ROLE_GATEWAY)[0])
+        self.assertEqual([], self.sink.events)  # never queued
+
+    def test_a_required_decision_is_not_applied_unless_recorded(self) -> None:
+        rec = self.register("amber-fox", "required")
+        _, body = self.call("POST", "/supervise/propose", {
+            "source_ip": rec.source_ip, "identity_token": rec.identity_token,
+            "tool": TOOL_EGRESS_ALLOW, "proposed_file": "routes:\n  - host: g.com\n",
+            "justification": "need it"}, role=ROLE_GATEWAY)
+        respond = {"proposal_id": body["proposal_id"], "bottle_slug": rec.bottle_id,
+                   "decision": "approve"}
+        self.sink.writes = False
+        self.assertEqual(503, self.call("POST", "/supervise/respond", respond)[0])
+        self.assertEqual("routes: []\n", self.policy(rec.bottle_id))  # not applied
+        self.sink.writes = True
+        self.assertEqual(200, self.call("POST", "/supervise/respond", respond)[0])
+        self.assertIn("g.com", self.policy(rec.bottle_id))
+        self.assertEqual("decision.resolved", self.sink.sent_now[-1].type)
 
     def test_a_proposal_and_its_decision(self) -> None:
         rec = self.store.register("10.243.0.9", metadata=json.dumps({"slug": "demo"}),

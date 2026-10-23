@@ -24,6 +24,8 @@ from ..contract.audit import AuditEvent, utc_iso
 class _Sink(Protocol):
     def submit(self, event: AuditEvent, producer: str = "orchestrator") -> None: ...
 
+    def send_now(self, event: AuditEvent, producer: str = "orchestrator") -> bool: ...
+
 
 def fingerprint(secret: str) -> str:
     """A token's id for the record: a short SHA-256 prefix, never the token."""
@@ -70,15 +72,20 @@ class OrchestratorAudit:
             body["actor"] = f"bottled-agent:{slug}"
         return AuditEvent.from_json(body)
 
-    def relay(self, event: AuditEvent, *, producer: str) -> None:
-        """Pass on an event a gateway component produced, named by slug."""
-        if self._sink is not None:
-            self._sink.submit(self.named(event), producer)
-
-    def _record(self, **fields: Any) -> None:
+    def relay(self, event: AuditEvent, *, producer: str, required: bool = False) -> bool:
+        """Pass on an event a gateway component produced, named by slug.
+        `required`: deliver it now and say whether it was written; without a
+        host controller to write it, it wasn't."""
         if self._sink is None:
-            return
-        self._sink.submit(self.named(AuditEvent(ts_event=utc_iso(self._clock()), **fields)))
+            return not required
+        if required:
+            return self._sink.send_now(self.named(event), producer)
+        self._sink.submit(self.named(event), producer)
+        return True
+
+    def _record(self, *, required: bool = False, **fields: Any) -> bool:
+        event = AuditEvent(ts_event=utc_iso(self._clock()), **fields)
+        return self.relay(event, producer="orchestrator", required=required)
 
     # -- auth.* --------------------------------------------------------------
 
@@ -120,9 +127,10 @@ class OrchestratorAudit:
                      untrusted={"agent_rationale": justification})
 
     def resolved(self, *, bottle_id: str, proposal_id: str, decision: str,
-                 notes: str) -> None:
-        """The operator's answer: approve or modify allows, reject blocks."""
-        self._record(type="decision.resolved", actor="role:cli",
+                 notes: str, required: bool = False) -> bool:
+        """The operator's answer: approve or modify allows, reject blocks.
+        `required`: recorded before it's applied; False means it wasn't."""
+        return self._record(required=required, type="decision.resolved", actor="role:cli",
                      action=f"supervise.{decision}",
                      outcome="blocked" if decision == "reject" else "allowed",
                      sensitivity="security", resource=bottle_id, bottle=bottle_id,

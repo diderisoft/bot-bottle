@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from .bottle import ManifestBottle
+from .bottle import ManifestAudit, ManifestBottle
 from .egress import ManifestEgressConfig, validate_egress_routes
 from .git import ManifestGitUser, parse_git_gate_config
 from .util import ManifestError, as_json_object
+
+
+def _overlay_audit(base: ManifestBottle, override: ManifestBottle) -> ManifestAudit:
+    """The later bottle's `audit:` when it declared one, else the earlier's."""
+    return override.audit if "audit" in override.declared_fields else base.audit
 
 
 def _overlay_declared_bool(
@@ -74,6 +79,7 @@ def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle
         nested_containers=_overlay_declared_bool(
             base, override, "nested_containers"
         ),
+        audit=_overlay_audit(base, override),
         declared_fields=base.declared_fields | override.declared_fields,
     )
 
@@ -230,6 +236,7 @@ def _fold_two_bottles(
         nested_containers=_overlay_declared_bool(
             earlier, later, "nested_containers"
         ),
+        audit=_overlay_audit(earlier, later),
         declared_fields=earlier.declared_fields | later.declared_fields,
     ), merged_repos_raw
 
@@ -302,6 +309,7 @@ def _merge_bottles(
         egress=merged_egress,
         supervise=merged_supervise,
         nested_containers=merged_nested_containers,
+        audit=_overlay_audit(parent, child),
         declared_fields=parent.declared_fields | child.declared_fields,
     )
 

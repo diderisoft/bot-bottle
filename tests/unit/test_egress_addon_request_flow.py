@@ -212,6 +212,7 @@ from bot_bottle.gateway.egress.addon_core import (  # noqa: E402
     route_to_yaml_dict,
 )
 from bot_bottle.gateway.policy_resolver import PolicyResolveError  # noqa: E402
+from bot_bottle.gateway.egress.audit_hooks import EgressAudit  # noqa: E402
 from bot_bottle.contract.held_secrets import CANARY_KEY  # noqa: E402
 
 
@@ -266,6 +267,7 @@ def _config_to_policy(config: Config) -> str:
     addon exactly the Config a test wants, through the real parse path."""
     return _emit_yaml({
         "log": config.log,
+        "audit_delivery": config.audit_delivery,
         "routes": [route_to_yaml_dict(r) for r in config.routes],
     }) + "\n"
 
@@ -1310,10 +1312,13 @@ class TestInboundBodyScanCap(unittest.TestCase):
 
 
 class _AuditSink:
-    """Stands in for GatewayAudit: keeps what the addon submits."""
+    """Stands in for GatewayAudit: keeps what the addon submits, and what it
+    sends now for a `required` bottle (`writes` says whether those succeed)."""
 
     def __init__(self) -> None:
         self.events: list[Any] = []
+        self.sent_now: list[Any] = []
+        self.writes = True
 
     def now(self) -> str:
         return "2026-10-23T00:00:00.000Z"
@@ -1321,13 +1326,17 @@ class _AuditSink:
     def submit(self, event: Any) -> None:
         self.events.append(event)
 
+    def send_now(self, event: Any) -> bool:
+        self.sent_now.append(event)
+        return self.writes
 
-class TestAuditTrail(unittest.TestCase):
-    def addon(self, *routes: Route) -> tuple[EgressAddon, _AuditSink]:
-        addon = _addon(Config(routes=routes), slug="amber-fox")
+
+class _AuditCase(unittest.TestCase):
+    def addon(self, *routes: Route, delivery: str = "best_effort",
+              ) -> tuple[EgressAddon, _AuditSink]:
+        addon = _addon(Config(routes=routes, audit_delivery=delivery), slug="amber-fox")
         sink = _AuditSink()
-        addon._audit = cast(Any, sink)
-        addon._contacted = set()
+        addon._audit = EgressAudit(cast(Any, sink))
         return addon, sink
 
     def request(self, addon: EgressAddon, **kwargs: Any) -> _Flow:
@@ -1335,6 +1344,8 @@ class TestAuditTrail(unittest.TestCase):
         _run_request(addon, flow)
         return flow
 
+
+class TestAuditTrail(_AuditCase):
     def test_a_host_is_recorded_on_first_contact_only(self) -> None:
         addon, sink = self.addon(Route(host="api.example.com"))
         for _ in range(3):
@@ -1372,6 +1383,44 @@ class TestAuditTrail(unittest.TestCase):
             Config(routes=(Route(host="api.example.com"),)), bottle_id="other"))
         self.request(addon, host="api.example.com")
         self.assertEqual(["amber-fox", "other"], [e.bottle for e in sink.events])
+
+class TestRequiredDelivery(_AuditCase):
+    def test_a_first_contact_is_written_before_it_goes_out(self) -> None:
+        addon, sink = self.addon(Route(host="api.example.com"), delivery="required")
+        flow = self.request(addon, host="api.example.com")
+        self.assertIsNone(flow.response)  # forwarded
+        self.assertEqual(["egress.decision"], [e.type for e in sink.sent_now])
+        self.assertEqual([], sink.events)
+
+    def test_a_first_contact_that_cant_be_written_is_refused_and_retried(self) -> None:
+        addon, sink = self.addon(Route(host="api.example.com"), delivery="required")
+        sink.writes = False
+        flow = self.request(addon, host="api.example.com")
+        assert flow.response is not None
+        self.assertEqual(403, flow.response.status_code)
+        self.assertIn("audit record", flow.response.get_text())
+        # Not remembered as contacted, so the next request tries again.
+        sink.writes = True
+        self.assertIsNone(self.request(addon, host="api.example.com").response)
+        self.assertEqual(2, len(sink.sent_now))
+
+    def test_a_redacted_request_is_refused_if_its_anomaly_isnt_written(self) -> None:
+        addon, sink = self.addon(
+            Route(host="api.example.com", outbound_on_match="redact"), delivery="required")
+        sink.writes = False
+        flow = self.request(addon, host="api.example.com", method="POST",
+                            body=f"key={_OPENAI_KEY}")
+        assert flow.response is not None
+        self.assertEqual(403, flow.response.status_code)
+
+    def test_a_block_is_queued_not_held(self) -> None:
+        addon, sink = self.addon(Route(host="api.example.com"), delivery="required")
+        sink.writes = False
+        flow = self.request(addon, host="evil.example.com")
+        assert flow.response is not None
+        self.assertIn("allowlist", flow.response.get_text())
+        self.assertEqual(["egress.decision"], [e.type for e in sink.events])
+        self.assertEqual([], sink.sent_now)
 
 if __name__ == "__main__":
     unittest.main()

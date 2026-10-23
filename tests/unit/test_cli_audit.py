@@ -39,6 +39,11 @@ class AuditCommand(unittest.TestCase):
                  producer="egress")
         return j
 
+    def test_delivery_shows_and_sets_the_host_default(self) -> None:
+        self.assertEqual((0, "best_effort\n"), self.run_cmd("delivery"))
+        self.assertEqual((0, "required\n"), self.run_cmd("delivery", "required"))
+        self.assertEqual((0, "required\n"), self.run_cmd("delivery"))
+
     def test_no_journal_is_not_an_error(self) -> None:
         for action in ("verify", "query", "rebuild"):
             rc, out = self.run_cmd(action)

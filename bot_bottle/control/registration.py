@@ -41,7 +41,8 @@ def egress_policy(plan: EgressPlan) -> str:
     and the addon parses with `load_config`. Identical to the per-bottle
     `routes.yaml` render, so the consolidated path applies the same
     allow-list."""
-    return egress_render_routes(plan.routes, log=plan.log)
+    return egress_render_routes(plan.routes, log=plan.log,
+                                audit_delivery=plan.audit_delivery)
 
 
 def registration_inputs(plan: EgressPlan) -> RegistrationInputs:
@@ -50,7 +51,7 @@ def registration_inputs(plan: EgressPlan) -> RegistrationInputs:
     bottle id back to its human name."""
     return RegistrationInputs(
         policy=egress_policy(plan),
-        metadata=json.dumps({"slug": plan.slug}),
+        metadata=json.dumps({"slug": plan.slug, "audit_delivery": plan.audit_delivery}),
     )
 
 

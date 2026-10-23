@@ -287,10 +287,13 @@ def egress_render_routes(
     routes: tuple[EgressRoute, ...],
     *,
     log: int = 0,
+    audit_delivery: str = "best_effort",
 ) -> str:
     lines: list[str] = []
     if log:
         lines.append(f"log: {log}")
+    if audit_delivery == "required":
+        lines.append("audit_delivery: required")
     lines.append("routes:")
     if not routes:
         lines[-1] = "routes: []"
@@ -368,11 +371,14 @@ class Egress:
         slug: str,
         stage_dir: Path,
         provider_routes: tuple[EgressRoute, ...] = (),
+        default_audit_delivery: str = "best_effort",
     ) -> EgressPlan:
         routes = egress_routes_for_bottle(bottle, provider_routes)
         log = bottle.egress.Log
+        audit_delivery = bottle.audit.delivery or default_audit_delivery
         routes_path = stage_dir / EGRESS_ROUTES_FILENAME
-        routes_path.write_text(egress_render_routes(routes, log=log))
+        routes_path.write_text(
+            egress_render_routes(routes, log=log, audit_delivery=audit_delivery))
         routes_path.chmod(0o600)
         # Generate a per-session fake secret under a plausible random env name.
         # The gateway marks that exact env name as sensitive for known-secret
@@ -386,6 +392,7 @@ class Egress:
             log=log,
             canary=canary,
             canary_env=_random_canary_env(),
+            audit_delivery=audit_delivery,
         )
 
     def resolve_token_values(

@@ -259,6 +259,10 @@ audit_push() {
   python3 -m bot_bottle.gateway.git_gate.audit "$@" >/dev/null 2>&1 || :
 }
 
+# The bottle's audit.delivery. Under `required` each ref is recorded before
+# it's forwarded, and the push is refused if the record can't be written.
+audit_delivery=$(python3 -m bot_bottle.gateway.git_gate.audit delivery 2>/dev/null || echo required)
+
 # Phase 0: reject Gitea AGit review refs before scanning or forwarding.
 # A push to refs/for/*, refs/draft/*, or refs/for-review/* asks Gitea to
 # open a pull request backed by a server-managed refs/pull/<n>/head rather
@@ -533,16 +537,28 @@ while IFS=' ' read -r old new ref; do
   else
     refspec="$new:$ref"
   fi
+  if [ "$new" = "$zero" ]; then
+    accepted="--detail ref-deleted"
+  else
+    accepted="--findings 0"
+  fi
+  if [ "$audit_delivery" = required ]; then
+    # shellcheck disable=SC2086 # $accepted is two words on purpose
+    if ! python3 -m bot_bottle.gateway.git_gate.audit --required \
+        forge.push_accepted success "$ref" $accepted 1>&2; then
+      echo "git-gate: refusing push to $ref: its audit record could not be written" >&2
+      exit 1
+    fi
+  fi
   echo "git-gate: forwarding $ref to origin" >&2
   if ! GIT_SSH_COMMAND="$ssh_cmd" git push "$@" origin "$refspec" 1>&2; then
     echo "git-gate: upstream push failed for $ref" >&2
     audit_push forge.push_rejected failure "$ref" --detail "upstream push failed"
     exit 1
   fi
-  if [ "$new" = "$zero" ]; then
-    audit_push forge.push_accepted success "$ref" --detail "ref deleted"
-  else
-    audit_push forge.push_accepted success "$ref" --findings 0
+  if [ "$audit_delivery" != required ]; then
+    # shellcheck disable=SC2086
+    audit_push forge.push_accepted success "$ref" $accepted
   fi
 done < "$refs_file"
 

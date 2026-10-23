@@ -170,6 +170,14 @@ class PolicyResolver:
         bottle_id = payload.get("bottle_id")
         return bottle_id if isinstance(bottle_id, str) and bottle_id else None
 
+    def resolve_audit_delivery(self, source_ip: str, identity_token: str = "") -> str | None:
+        """The calling bottle's `audit.delivery` (`best_effort` or `required`),
+        or None if unattributed. Same fail-closed contract as `resolve`."""
+        payload = self._post_resolve(source_ip, identity_token)
+        if payload is None:
+            return None
+        return "required" if payload.get("audit_delivery") == "required" else "best_effort"
+
     def resolve_policy_and_bottle_id(
         self, source_ip: str, identity_token: str = "",
     ) -> tuple[str | None, str | None, dict[str, str]]:

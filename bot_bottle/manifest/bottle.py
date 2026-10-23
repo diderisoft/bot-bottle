@@ -28,6 +28,34 @@ def _empty_str_dict() -> dict[str, str]:
     return {}
 
 
+AUDIT_DELIVERIES = ("best_effort", "required")
+
+
+@dataclass(frozen=True)
+class ManifestAudit:
+    """`audit:` in a bottle. `delivery` is what happens when an audit event
+    can't be written: `best_effort` goes ahead and records the gap,
+    `required` refuses the action. Empty: the host-wide default."""
+
+    delivery: str = ""
+
+    @classmethod
+    def from_dict(cls, name: str, raw: object) -> "ManifestAudit":
+        d = as_json_object(raw, f"bottle '{name}' audit")
+        unknown = set(d) - {"delivery"}
+        if unknown:
+            raise ManifestError(
+                f"bottle '{name}' audit has unknown key(s) {sorted(unknown)}; "
+                f"the accepted key is 'delivery'"
+            )
+        delivery = d.get("delivery", "")
+        if delivery not in AUDIT_DELIVERIES:
+            raise ManifestError(
+                f"bottle '{name}' audit.delivery must be one of {', '.join(AUDIT_DELIVERIES)}"
+            )
+        return cls(delivery=str(delivery))
+
+
 @dataclass(frozen=True)
 class ManifestBottle:
     env: Mapping[str, str] = field(default_factory=_empty_str_dict)
@@ -49,6 +77,7 @@ class ManifestBottle:
     # costs image weight, a resident service, and relaxed guest device modes
     # that the majority of bottles never need.
     nested_containers: bool = False
+    audit: ManifestAudit = field(default_factory=ManifestAudit)
     # Source fields retained across extends/runtime composition. Boolean
     # defaults otherwise erase the distinction between "omitted" and an
     # explicitly declared value (especially False).
@@ -139,9 +168,11 @@ class ManifestBottle:
                 f"(was {type(nested_raw).__name__})"
             )
 
+        audit = ManifestAudit.from_dict(name, d["audit"]) if "audit" in d else ManifestAudit()
+
         return cls(
             env=env, agent_provider=agent_provider, git=git,
             git_user=git_user, egress=egress, supervise=supervise_raw,
-            nested_containers=nested_raw,
+            nested_containers=nested_raw, audit=audit,
             declared_fields=frozenset(d),
         )

@@ -17,6 +17,8 @@ from ...control.hostctl.audit_index import (
     imported_chains,
 )
 from ...control.hostctl.audit_verify import verify
+from ...lib.config_store import ConfigStore
+from ...manifest.bottle import AUDIT_DELIVERIES
 from ...paths import host_audit_dir, host_db_path
 from ..constants import PROG
 
@@ -115,6 +117,15 @@ def _import(ns: argparse.Namespace) -> int:
     return 0
 
 
+def _delivery(ns: argparse.Namespace) -> int:
+    store = ConfigStore(host_db_path())
+    if ns.mode:
+        store.migrate()
+        store.set_audit_delivery(ns.mode)
+    sys.stdout.write(f"{store.audit_delivery()}\n")
+    return 0
+
+
 def cmd_audit(args: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog=f"{PROG} audit",
@@ -150,5 +161,10 @@ def cmd_audit(args: list[str]) -> int:
         "import", help="add a segment from another host or a backup, kept as its own chain")
     imp.add_argument("segment", help="a journal segment file (.jsonl)")
     imp.set_defaults(run=_import)
+    delivery = sub.add_parser(
+        "delivery",
+        help="show or set the default audit.delivery for bottles that don't set it")
+    delivery.add_argument("mode", nargs="?", choices=AUDIT_DELIVERIES)
+    delivery.set_defaults(run=_delivery)
     ns = parser.parse_args(args)
     return ns.run(ns)

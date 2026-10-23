@@ -97,6 +97,9 @@ class ReconcileBody(_StrictModel):
 class AuditEventsBody(_StrictModel):
     producer: StrictStr
     event: dict[StrictStr, Any]
+    # The bottle's `audit.delivery` is `required`: write it now, and fail
+    # unless it was written, so the gateway can refuse the action.
+    required: StrictBool = False
 
 
 class IdentityBody(_StrictModel):
@@ -438,17 +441,26 @@ def create_app(
 
     @app.post("/supervise/respond")
     def respond(body: RespondBody) -> dict[str, object]:
+        bottle_slug = _required(body.bottle_slug, "bottle_slug")
+        # No record, no action: a `required` bottle's decision is written
+        # before it's applied, and not applied if it can't be.
+        required = orch.audit_delivery(bottle_slug) == "required"
+        if required and not audit.resolved(
+                bottle_id=bottle_slug, proposal_id=body.proposal_id,
+                decision=body.decision, notes=body.notes, required=True):
+            raise HTTPException(503, "audit event not written; decision not applied")
         ok, error = orch.supervise_respond(
             _required(body.proposal_id, "proposal_id"),
-            bottle_slug=_required(body.bottle_slug, "bottle_slug"),
+            bottle_slug=bottle_slug,
             decision=_required(body.decision, "decision"),
             notes=body.notes,
             final_file=body.final_file,
         )
         if not ok:
             raise HTTPException(409, error)
-        audit.resolved(bottle_id=body.bottle_slug, proposal_id=body.proposal_id,
-                       decision=body.decision, notes=body.notes)
+        if not required:
+            audit.resolved(bottle_id=bottle_slug, proposal_id=body.proposal_id,
+                           decision=body.decision, notes=body.notes)
         return {"responded": True}
 
     @app.post("/supervise/propose", status_code=201)
@@ -543,8 +555,9 @@ def create_app(
             event = AuditEvent.from_json(body.event)
         except (ValueError, TypeError) as e:
             raise HTTPException(400, f"invalid audit event: {e}") from None
-        audit.relay(event, producer=body.producer)
-        return {"queued": True}
+        if not audit.relay(event, producer=body.producer, required=body.required):
+            raise HTTPException(503, "audit event not written")
+        return {"written": True} if body.required else {"queued": True}
 
     @app.post("/resolve")
     def resolve(body: IdentityBody) -> dict[str, object]:
@@ -557,6 +570,7 @@ def create_app(
         return {
             "bottle_id": rec.bottle_id,
             "policy": rec.policy,
+            "audit_delivery": orch.audit_delivery(rec.bottle_id),
             "tokens": orch.tokens_for(rec.bottle_id),
         }
 
