@@ -179,10 +179,14 @@ class Screen(unittest.TestCase):
         from bot_bottle.cli import logo  # pylint: disable=import-outside-toplevel
         from bot_bottle.cli.progress import logo_rows  # pylint: disable=import-outside-toplevel
 
-        on, off = logo_rows(truecolor=True), logo_rows(truecolor=True, cursor=False)
-        self.assertEqual([logo.CURSOR[0] // 2], [i for i, (a, b) in enumerate(zip(on, off))
-                                                 if a != b])
+        for truecolor in (True, False):
+            on = logo_rows(truecolor=truecolor)
+            off = logo_rows(truecolor=truecolor, cursor=False)
+            self.assertEqual([logo.CURSOR[0] // 2],
+                             [i for i, (a, b) in enumerate(zip(on, off)) if a != b])
         progress, _ = self.progress()
+        # The screen picks 24-bit or 256 colors from COLORTERM; use its own rows.
+        on, off = progress._logo, progress._logo_blink  # pylint: disable=protected-access
         progress.stage("image", "Getting images")
         lit = progress._layout()  # pylint: disable=protected-access
         progress._frame = 5  # pylint: disable=protected-access  # half a second later

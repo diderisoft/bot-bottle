@@ -508,9 +508,15 @@ class TestLifecycleAudit(_Root):
     def test_an_agent_that_exits_non_zero_crashed(self) -> None:
         self.launch("l1")
         self.manager.wait_exit("l1", timeout=15)
-        self.assertEqual(["lifecycle.bottled_agent_start", "hostctl.broker_launch",
-                          "lifecycle.bottled_agent_crash"], self.types())
-        start, _, crash = self.audited()
+        # An agent that exits at once can crash before the launch call has
+        # returned and recorded itself, so only the start's place is fixed.
+        types = self.types()
+        self.assertEqual("lifecycle.bottled_agent_start", types[0])
+        self.assertEqual(["hostctl.broker_launch", "lifecycle.bottled_agent_crash"],
+                         sorted(types[1:]))
+        by_type = {r["type"]: r for r in self.audited()}
+        start = by_type["lifecycle.bottled_agent_start"]
+        crash = by_type["lifecycle.bottled_agent_crash"]
         self.assertEqual(start["activation"], crash["activation"])
         self.assertTrue(start["manifest_digest"].startswith("sha256:"))
         self.assertEqual(start["manifest_digest"], crash["manifest_digest"])

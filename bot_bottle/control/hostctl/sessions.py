@@ -194,8 +194,13 @@ class SessionManager:
             self._exits.pop(record.id, None)
         launcher = _python_command(
             "bot_bottle.control.hostctl.launch", str(control_socket_path()), record.id)
+        # The agent's name for the status bar rides along in the same tmux
+        # command, so starting a session costs no extra round trip.
+        agent = str(record.meta.get("agent", ""))
+        shown = [";", "set-option", "-t", f"={record.id}:", "@bb_agent", agent] \
+            if agent and agent != record.id else []
         proc = subprocess.run(
-            tmux("new-session", "-d", "-s", record.id, "-x", "120", "-y", "40", launcher),
+            tmux("new-session", "-d", "-s", record.id, "-x", "120", "-y", "40", launcher, *shown),
             capture_output=True, text=True, check=False,
         )
         if proc.returncode != 0:
@@ -203,11 +208,6 @@ class SessionManager:
                 self._specs.pop(record.id, None)
             self._record_path(record.id).unlink(missing_ok=True)
             raise SessionError(f"tmux new-session failed: {proc.stderr.strip()}")
-        agent = str(record.meta.get("agent", ""))
-        if agent and agent != record.id:
-            # Only for the status bar; a failure here doesn't stop the agent.
-            subprocess.run(tmux("set-option", "-t", f"={record.id}:", "@bb_agent", agent),
-                           capture_output=True, check=False)
 
     def spec(self, session_id: str) -> tuple[list[str], dict[str, str]] | None:
         """The command and environment for a starting session, handed out once."""
