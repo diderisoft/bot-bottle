@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.contract.hostctl import Settings
+from bot_bottle.contract.identity import IDENTITY_HEADER
 from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.agent_provider import (
     AgentProvisionDir,
@@ -208,10 +212,39 @@ class TestPiProvision(unittest.TestCase):
 
 
 class TestPiSuperviseMcp(unittest.TestCase):
-    def test_noop(self):
+    def test_noop_without_supervise(self):
         bottle = _make_bottle()
         PiAgentProvider().provision_supervise_mcp(_plan(), bottle, _URL)
         bottle.exec.assert_not_called()
+
+    def test_installs_the_extension_and_its_config(self):
+        with tempfile.TemporaryDirectory() as home:
+            plan = SimpleNamespace(supervise_plan=object(), identity_token="tok-1",
+                                   guest_home=home)
+            bottle = _make_bottle()
+
+            def run(script: str, user: str) -> ExecResult:
+                del user
+                return ExecResult(subprocess.run(["sh", "-c", script], check=False).returncode,
+                                  "", "")
+
+            bottle.exec.side_effect = run
+            PiAgentProvider().provision_supervise_mcp(plan, bottle, _URL)  # type: ignore[arg-type]
+            agent = Path(home, ".pi/agent")
+            self.assertEqual(
+                {"url": _URL, "header": IDENTITY_HEADER, "token": "tok-1"},
+                json.loads((agent / "bot-bottle-supervise.json").read_text()))
+            self.assertEqual(0o600, (agent / "bot-bottle-supervise.json").stat().st_mode & 0o777)
+            self.assertEqual(
+                _PI_DOCKERFILE.with_name("supervise.ts").read_text(),
+                (agent / "extensions/bot-bottle-supervise.ts").read_text())
+            self.assertEqual("node", bottle.exec.call_args.kwargs["user"])
+
+    def test_dies_when_it_cannot_install(self):
+        plan = SimpleNamespace(supervise_plan=object(), identity_token="", guest_home="/x")
+        bottle = _make_bottle(exec_result=ExecResult(1, "", "denied\n"))
+        with self.assertRaises(SystemExit):
+            PiAgentProvider().provision_supervise_mcp(plan, bottle, _URL)  # type: ignore[arg-type]
 
 
 class TestPiDockerfile(unittest.TestCase):

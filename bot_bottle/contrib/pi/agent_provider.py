@@ -8,6 +8,7 @@ agent_provider.settings.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shlex
@@ -25,6 +26,7 @@ from ...agent_provider import (
     HostDetection,
     provider_startup_args,
 )
+from ...contract.identity import IDENTITY_HEADER
 from ...egress import EgressRoute
 from ...starter import GENERAL_PROMPT, starter_agent, starter_bottle
 from .starter import has_secret, local_starter_settings, read_local_model
@@ -56,6 +58,16 @@ def _append_system_path(guest_home: str) -> str:
 
 def _models_path(guest_home: str) -> str:
     return f"{guest_home}/.pi/agent/models.json"
+
+
+# pi has no MCP client: this extension lists the supervise tools at startup
+# and forwards calls, reading the URL and identity token from its config.
+_SUPERVISE_EXTENSION = Path(__file__).with_name("supervise.ts")
+
+
+def _supervise_paths(guest_home: str) -> tuple[str, str]:
+    agent = f"{guest_home}/.pi/agent"
+    return f"{agent}/extensions/bot-bottle-supervise.ts", f"{agent}/bot-bottle-supervise.json"
 
 
 def _runtime_state_repair_script(guest_home: str) -> str:
@@ -374,7 +386,26 @@ class PiAgentProvider(AgentProvider):
         bottle: "Bottle",
         supervise_url: str,
     ) -> None:
-        del plan, bottle, supervise_url
+        """Install the supervise extension and its config (URL and identity
+        token, 0600) in pi's agent dir. Fatal when it fails, as for Codex:
+        without it the agent can't ask for anything."""
+        if plan.supervise_plan is None:
+            return
+        info(f"installing supervise tools for pi → {supervise_url}")
+        config = json.dumps({"url": supervise_url, "header": IDENTITY_HEADER,
+                             "token": getattr(plan, "identity_token", "")})
+        extension_path, config_path = _supervise_paths(plan.guest_home)
+        script = " && ".join((
+            f"mkdir -p {shlex.quote(os.path.dirname(extension_path))}",
+            f"umask 077 && printf %s {shlex.quote(base64.b64encode(config.encode()).decode())}"
+            f" | base64 -d > {shlex.quote(config_path)}",
+            f"printf %s {shlex.quote(base64.b64encode(_SUPERVISE_EXTENSION.read_bytes()).decode())}"
+            f" | base64 -d > {shlex.quote(extension_path)}",
+        ))
+        r = bottle.exec(script, user="node")
+        if r.returncode != 0:
+            die("agent provider provisioning: could not install pi's supervise tools: "
+                f"{(r.stderr or r.stdout or '').strip()}")
 
     def interactive_prompt(self, prompt: str) -> list[str] | None:
         # `pi <prompt>`: the interactive UI, with the prompt as its first message.
