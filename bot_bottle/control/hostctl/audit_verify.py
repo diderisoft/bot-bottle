@@ -84,10 +84,15 @@ def _check(record: dict[str, Any], before: dict[str, Any] | None,
 
 
 def verify(directory: Path) -> VerifyReport:
+    """Check every segment in `directory` as one chain."""
+    return verify_segments(sorted(directory.glob(f"*{SEGMENT_SUFFIX}")))
+
+
+def verify_segments(segments: list[Path]) -> VerifyReport:
+    """Check `segments`, in the order given, as one chain."""
     report = VerifyReport()
     gap_epochs: list[tuple[int, Any]] = []  # (index into problems, epoch)
     reordered: set[Any] = set()
-    segments = sorted(directory.glob(f"*{SEGMENT_SUFFIX}"))
     report.segments = len(segments)
     prev = ""
     before: dict[str, Any] | None = None
@@ -131,4 +136,4 @@ def verify(directory: Path) -> VerifyReport:
     return report
 
 
-__all__ = ["Problem", "VerifyReport", "verify"]
+__all__ = ["Problem", "VerifyReport", "verify", "verify_segments"]

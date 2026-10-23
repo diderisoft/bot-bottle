@@ -52,6 +52,16 @@ class AuditCommand(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("edited", out)
 
+    def test_import_then_verify_covers_the_imported_chain(self) -> None:
+        other = AuditJournal(self.dir.parent / "other", host="there", engine="e")
+        self.journal()
+        rc, out = self.run_cmd("import", str(other.path))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("new chain", out)
+        rc, out = self.run_cmd("verify")
+        self.assertEqual(rc, 0)
+        self.assertIn("imported there/", out)
+
     def test_query_json_prints_journal_lines_verbatim(self) -> None:
         j = self.journal()
         rc, out = self.run_cmd("query", "--type", "egress.*", "--json")

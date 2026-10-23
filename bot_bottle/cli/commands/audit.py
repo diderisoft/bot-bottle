@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 from typing import Any
 
 from ...contract.audit import canonical
-from ...control.hostctl.audit_index import AuditIndex, IndexBreak, Query
+from ...control.hostctl.audit_import import AuditImportError, import_segment
+from ...control.hostctl.audit_index import (
+    IMPORTED_DIRNAME,
+    AuditIndex,
+    IndexBreak,
+    Query,
+    imported_chains,
+)
 from ...control.hostctl.audit_verify import verify
 from ...paths import host_audit_dir
 from ..constants import PROG
@@ -18,15 +26,20 @@ def _verify(_ns: argparse.Namespace) -> int:
     if not directory.is_dir():
         sys.stdout.write(f"no audit journal at {directory}\n")
         return 0
-    report = verify(directory)
-    for problem in report.problems:
-        sys.stdout.write(f"{problem}\n")
-    if report.starts_after:
-        sys.stdout.write("journal starts mid-chain (older segments were removed)\n")
-    verdict = "ok" if report.ok else f"BROKEN ({len(report.breaks)} break(s))"
-    sys.stdout.write(f"{verdict}: {report.records} record(s) in {report.segments} "
-                     f"segment(s), head {report.head[:16] or '-'}\n")
-    return 0 if report.ok else 1
+    ok = True
+    for chain in [directory, *imported_chains(directory)]:
+        label = ("local" if chain == directory
+                 else f"imported {chain.relative_to(directory / IMPORTED_DIRNAME)}")
+        report = verify(chain)
+        ok = ok and report.ok
+        for problem in report.problems:
+            sys.stdout.write(f"{problem}\n")
+        if report.starts_after:
+            sys.stdout.write(f"{label}: starts mid-chain (older segments were removed)\n")
+        verdict = "ok" if report.ok else f"BROKEN ({len(report.breaks)} break(s))"
+        sys.stdout.write(f"{label}: {verdict}: {report.records} record(s) in "
+                         f"{report.segments} segment(s), head {report.head[:16] or '-'}\n")
+    return 0 if ok else 1
 
 
 def _index() -> AuditIndex | None:
@@ -84,6 +97,24 @@ def _rebuild(_ns: argparse.Namespace) -> int:
     return 0
 
 
+def _import(ns: argparse.Namespace) -> int:
+    directory = host_audit_dir()
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    index = AuditIndex(directory)
+    try:
+        result = import_segment(directory, Path(ns.segment), index)
+    except (AuditImportError, IndexBreak, OSError) as e:
+        sys.stderr.write(f"{PROG}: can't import {ns.segment}: {e}\n")
+        return 1
+    where = result.chain.relative_to(directory)
+    if result.already_imported:
+        sys.stdout.write(f"already imported into {where}\n")
+    else:
+        how = "extended" if result.extended else "new chain"
+        sys.stdout.write(f"imported {result.records} record(s) into {where} ({how})\n")
+    return 0
+
+
 def cmd_audit(args: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog=f"{PROG} audit",
@@ -115,5 +146,9 @@ def cmd_audit(args: list[str]) -> int:
     sub.add_parser(
         "rebuild", help="re-create the search index from the journal",
     ).set_defaults(run=_rebuild)
+    imp = sub.add_parser(
+        "import", help="add a segment from another host or a backup, kept as its own chain")
+    imp.add_argument("segment", help="a journal segment file (.jsonl)")
+    imp.set_defaults(run=_import)
     ns = parser.parse_args(args)
     return ns.run(ns)

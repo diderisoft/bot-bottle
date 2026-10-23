@@ -27,7 +27,28 @@ from .audit_journal import SEGMENT_SUFFIX
 from .audit_verify import verify
 
 
+IMPORTED_DIRNAME = "imported"
+
+
 INDEX_FILENAME = "index.db"
+
+
+def imported_chains(journal_dir: Path) -> list[Path]:
+    """Each imported chain's directory, `imported/<host>/<chain>/`."""
+    root = journal_dir / IMPORTED_DIRNAME
+    if not root.is_dir():
+        return []
+    return sorted(c for host in root.iterdir() if host.is_dir()
+                  for c in host.iterdir() if c.is_dir())
+
+
+def read_chain(directory: Path) -> list[tuple[dict[str, Any], str]]:
+    """Every record in a chain directory, with its line as stored."""
+    out: list[tuple[dict[str, Any], str]] = []
+    for path in sorted(directory.glob(f"*{SEGMENT_SUFFIX}")):
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            out.append((json.loads(raw), raw))
+    return out
 
 # Columns copied straight from a record.
 _FIELDS = (
@@ -139,14 +160,37 @@ class AuditIndex(DbStore):
         return added
 
     def rebuild(self) -> int:
-        """Drop every row and replay the journal. Refuses a broken journal."""
-        report = verify(self._journal_dir)
-        if not report.ok:
-            raise IndexBreak("the journal's chain is broken; run `audit verify`")
+        """Drop every row and replay the journal and every imported chain.
+        Refuses if any of them is broken."""
+        chains = imported_chains(self._journal_dir)
+        for directory in [self._journal_dir, *chains]:
+            if not verify(directory).ok:
+                raise IndexBreak(f"the chain in {directory} is broken; run `audit verify`")
         with self._connection() as conn:
             conn.execute("DELETE FROM audit_events")
             conn.execute("DELETE FROM audit_index_cursor")
-        return self.sync()
+        count = self.sync()
+        for directory in chains:
+            count += self.add_records(read_chain(directory))
+        return count
+
+    def add_records(self, records: list[tuple[dict[str, Any], str]]) -> int:
+        """Index already-verified records from outside the local journal, all
+        or none. A record whose id is already indexed is skipped; one that
+        takes an indexed record's (host, epoch, seq) is refused."""
+        before = self._count()
+        try:
+            with self._connection() as conn:
+                for record, raw in records:
+                    self._insert(conn, record, raw)
+        except sqlite3.IntegrityError as e:
+            raise IndexBreak(f"a record collides with one already indexed: {e}") from e
+        self._chmod()
+        return self._count() - before
+
+    def _count(self) -> int:
+        with self._connection() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0])
 
     @staticmethod
     def _insert(conn: sqlite3.Connection, record: dict[str, Any], raw: str) -> None:
@@ -196,4 +240,12 @@ class AuditIndex(DbStore):
             return [json.loads(row["raw"]) for row in conn.execute(sql, args)]
 
 
-__all__ = ["AuditIndex", "INDEX_FILENAME", "IndexBreak", "Query"]
+__all__ = [
+    "AuditIndex",
+    "IMPORTED_DIRNAME",
+    "INDEX_FILENAME",
+    "IndexBreak",
+    "Query",
+    "imported_chains",
+    "read_chain",
+]
