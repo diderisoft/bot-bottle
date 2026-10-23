@@ -12,16 +12,18 @@ from typing import cast
 from urllib.parse import parse_qs, urlsplit
 
 from ...contract.auth import ROLE_CLI
+from ...contract.audit import AuditEvent
 from ...contract.hostctl import (
-    AUTH_HEADER, AUTH_SCHEME, BOTTLES_PATH, HOST_CONTROL, JOBS_PATH, LIVE_BOTTLES_PATH,
-    ORCHESTRATOR_PATH, ROLE_ORCHESTRATOR, SESSIONS_PATH, STATUS_PATH, LaunchRequest, Settings,
-    status_body,
+    AUDIT_APPEND_PATH, AUDIT_PRODUCERS, AUTH_HEADER, AUTH_SCHEME, BOTTLES_PATH, HOST_CONTROL,
+    JOBS_PATH, LIVE_BOTTLES_PATH, ORCHESTRATOR_PATH, ROLE_ORCHESTRATOR, SESSIONS_PATH,
+    STATUS_PATH, LaunchRequest, Settings, status_body,
 )
 from ...lib import websocket as ws
 from ...lib.log import debug
 from . import orchestrator
 from .attach import Viewer
-from .audit_events import digest_request
+from .audit_events import AuditUnavailable, digest_request
+from .audit_journal import AuditRedactionError
 from .bottles import BottleService
 from .jobs import JobRegistry
 from .live import LiveBottles
@@ -178,11 +180,38 @@ class _Handler(BaseHTTPRequestHandler):
                                 lambda: server.bottles.launch(request, role))
         self._send(202, {"job": job.id})
 
+    def _audit_append(self, server: HostControlServer) -> None:
+        """Write one event the orchestrator relays, its own or the gateway's."""
+        if self._allowed((ROLE_ORCHESTRATOR,)) is None:
+            return
+        try:
+            body = self._json_body()
+            producer = body.get("producer")
+            if producer not in AUDIT_PRODUCERS:
+                raise ValueError(f"producer must be one of {sorted(AUDIT_PRODUCERS)}")
+            raw = body.get("event")
+            if not isinstance(raw, dict):
+                raise ValueError("event must be an object")
+            event = AuditEvent.from_json(cast(dict[str, object], raw))
+        except (ValueError, TypeError) as e:
+            self._send(400, {"error": str(e)})
+            return
+        try:
+            written = server.bottles.audit.append(event, producer=str(producer))
+        except AuditRedactionError as e:
+            self._send(422, {"error": str(e)})
+            return
+        except AuditUnavailable as e:
+            self._send(503, {"error": str(e)})
+            return
+        self._send(200, {"written": written})
+
     def do_POST(self) -> None:  # pylint: disable=invalid-name
         server = cast(HostControlServer, self.server)
         path = urlsplit(self.path).path
-        if path == BOTTLES_PATH:
-            self._launch(server)
+        route = {BOTTLES_PATH: self._launch, AUDIT_APPEND_PATH: self._audit_append}.get(path)
+        if route is not None:
+            route(server)
             return
         action = path.removeprefix(ORCHESTRATOR_PATH + "/")
         if not path.startswith(ORCHESTRATOR_PATH + "/") or \

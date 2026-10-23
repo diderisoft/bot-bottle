@@ -44,6 +44,11 @@ BOTTLES_PATH = "/bottles"
 # them. `?backend=` narrows the cli's view; a guest listener answers only for
 # its own backend. A backend under `errors` couldn't be listed.
 LIVE_BOTTLES_PATH = "/bottles/live"
+# `POST`: append one audit event, `{"producer": ..., "event": {...}}`. Only the
+# orchestrator calls it; it relays the gateway's events too, naming which
+# component produced each one.
+AUDIT_APPEND_PATH = "/audit/append"
+AUDIT_PRODUCERS = frozenset({"orchestrator", "egress", "git-gate", "supervise"})
 
 # A job `error` event with this `code` stopped for a yes/no the caller can give:
 # resend the request with `assume_yes` to go ahead.
@@ -301,6 +306,7 @@ def bearer(token: str) -> dict[str, str]:
 
 
 __all__ = [
+    "AUDIT_APPEND_PATH", "AUDIT_PRODUCERS",
     "AUTH_HEADER", "AUTH_SCHEME", "BOTTLES_PATH", "BOTTLE_COLORS", "CONFIRM_ERROR",
     "DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS", "IMAGE_POLICIES", "LAUNCH_CLI_ONLY",
     "LaunchRequest", "exit_code",

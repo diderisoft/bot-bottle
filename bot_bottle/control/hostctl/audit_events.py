@@ -16,9 +16,9 @@ import time
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
-from ...contract.audit import AuditEvent, canonical
+from ...contract.audit import AuditEvent, canonical, utc_iso
 from ...lib.log import warn
-from .audit_journal import AuditJournal, AuditJournalBusy, utc_iso
+from .audit_journal import AuditJournal, AuditJournalBusy
 
 if TYPE_CHECKING:
     from ...manifest import Manifest
@@ -45,6 +45,10 @@ def digest_request(body: Mapping[str, Any]) -> str:
     if isinstance(scrubbed.get("secrets"), Mapping):
         scrubbed["secrets"] = sorted(scrubbed["secrets"])
     return "sha256:" + hashlib.sha256(canonical(scrubbed).encode("utf-8")).hexdigest()
+
+
+class AuditUnavailable(Exception):
+    """This host controller has no journal open."""
 
 
 class HostAudit:
@@ -78,6 +82,13 @@ class HostAudit:
             self._journal.append(event, producer=PRODUCER)
         except Exception as e:  # pylint: disable=broad-exception-caught
             warn(f"audit: couldn't record {event.type}: {e}")
+
+    def append(self, event: AuditEvent, *, producer: str) -> bool:
+        """Write an event another component sent. False for a retry of one
+        already written; AuditRedactionError for a credential-shaped key."""
+        if self._journal is None:
+            raise AuditUnavailable("audit journal unavailable")
+        return self._journal.append(event, producer=producer) is not None
 
     def _now(self) -> str:
         return utc_iso(self._clock())
@@ -133,4 +144,4 @@ class HostAudit:
         ))
 
 
-__all__ = ["HostAudit", "PRODUCER", "digest_manifest", "digest_request"]
+__all__ = ["AuditUnavailable", "HostAudit", "PRODUCER", "digest_manifest", "digest_request"]

@@ -16,6 +16,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import asdict, dataclass, field, fields
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 
@@ -23,6 +24,12 @@ SCHEMA_VERSION = 1
 
 OUTCOMES = frozenset({"allowed", "blocked", "deferred", "success", "failure"})
 SENSITIVITIES = ("normal", "security", "restricted")  # ascending
+
+
+def utc_iso(ts: float) -> str:
+    """`ts` as audit records write times: UTC, millisecond precision."""
+    return datetime.fromtimestamp(ts, timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%S.") + f"{int(ts * 1000) % 1000:03d}Z"
 
 
 def canonical(record: Mapping[str, Any]) -> str:
@@ -90,4 +97,5 @@ __all__ = [
     "SENSITIVITIES",
     "canonical",
     "record_hash",
+    "utc_iso",
 ]

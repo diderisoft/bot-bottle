@@ -24,6 +24,8 @@ from ..contract.http import (
     REQUEST_BODY_TIMEOUT_SECONDS,
 )
 from ..lib import log
+from .audit_events import OrchestratorAudit
+from .audit_sender import AuditSender
 from .hostctl_relay import (
     HostControlRefused, HostControlRelay, HostControlUnreachable, LiveBottlesUnknown,
 )
@@ -120,9 +122,11 @@ class PollBody(IdentityBody):
 class ControlPlaneBoundary:
     """Reject unauthenticated and oversized requests before reading a body."""
 
-    def __init__(self, app: ASGIApp, signing_key: str) -> None:
+    def __init__(self, app: ASGIApp, signing_key: str,
+                 audit: OrchestratorAudit | None = None) -> None:
         self.app = app
         self.signing_key = signing_key
+        self.audit = audit if audit is not None else OrchestratorAudit()
 
     def _role(self, scope: Scope) -> str | None:
         presented = dict(scope["headers"]).get(
@@ -134,6 +138,11 @@ class ControlPlaneBoundary:
         """Every WebSocket route is the cli role's; refuse before accepting."""
         role = self._role(scope)
         if role != ROLE_CLI:
+            op = f"WEBSOCKET {scope['path']}"
+            if role is None:
+                self.audit.token_rejected(op, reason_code="invalid_token")
+            else:
+                self.audit.authz_denied(op, role=role)
             await send({"type": "websocket.close", "code": 1008})
             return
         scope.setdefault("state", {})["role"] = role
@@ -151,12 +160,14 @@ class ControlPlaneBoundary:
         if not (method == "GET" and route == "/health"):
             role = self._role(scope)
             if role is None:
+                self.audit.token_rejected(f"{method} {route}", reason_code="invalid_token")
                 await self._reject(
                     scope, send, 401, "control-plane authentication required",
                 )
                 return
             allowed = ROLES if (method, route) in _GATEWAY_ROUTES else {ROLE_CLI}
             if role not in allowed:
+                self.audit.authz_denied(f"{method} {route}", role=role)
                 await self._reject(scope, send, 403, "insufficient role for this route")
                 return
             scope.setdefault("state", {})["role"] = role
@@ -275,12 +286,13 @@ async def reconcile_periodically(
 def create_app(
     orch: OrchestratorCore, *, signing_key: str, hostctl: HostControlRelay | None = None,
     reconcile_interval: float = RECONCILE_INTERVAL_SECONDS,
+    audit: OrchestratorAudit | None = None,
 ) -> FastAPI:
     """Build the authenticated orchestrator ASGI application. `hostctl` is
-    the host controller remote launches go to and reconcile asks which
-    bottles are live; None when this orchestrator wasn't brought up by one.
-    With it, the app reconciles every `reconcile_interval` seconds while it
-    runs."""
+    the host controller remote launches go to, reconcile asks which bottles
+    are live, and audit events go to; None when this orchestrator wasn't
+    brought up by one. With it, the app reconciles every `reconcile_interval`
+    seconds while it runs. `audit` overrides where events go (tests)."""
     key = signing_key.strip()
     if not key:
         raise ValueError(
@@ -288,13 +300,21 @@ def create_app(
             "refusing to start without caller authentication"
         )
 
+    sender = AuditSender(hostctl) if audit is None and hostctl is not None else None
+    if audit is None:
+        audit = OrchestratorAudit(sender)
+
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         timer = (asyncio.create_task(reconcile_periodically(orch, hostctl, reconcile_interval))
                  if hostctl is not None else None)
+        if sender is not None:
+            sender.start()
         try:
             yield
         finally:
+            if sender is not None:
+                await asyncio.to_thread(sender.close)
             if timer is not None:
                 timer.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -307,7 +327,7 @@ def create_app(
         openapi_url=None,
         lifespan=lifespan,
     )
-    app.add_middleware(ControlPlaneBoundary, signing_key=key)
+    app.add_middleware(ControlPlaneBoundary, signing_key=key, audit=audit)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(
@@ -336,13 +356,15 @@ def create_app(
 
     @app.post("/bottles", status_code=201)
     def register(body: RegisterBody) -> dict[str, str]:
+        source_ip = _required(body.source_ip, "source_ip")
         rec = orch.register_bottle(
-            _required(body.source_ip, "source_ip"),
+            source_ip,
             metadata=body.metadata,
             policy=body.policy,
             tokens=dict(body.tokens),
             env_var_secret=body.env_var_secret,
         )
+        audit.token_minted(bottle_id=rec.bottle_id, token=rec.identity_token, src_ip=source_ip)
         return {"bottle_id": rec.bottle_id, "identity_token": rec.identity_token}
 
     @app.put("/bottles/{bottle_id}/policy")
@@ -397,6 +419,8 @@ def create_app(
     def attribute(body: AttributeBody) -> dict[str, str]:
         rec = orch.attribute(body.source_ip, body.identity_token)
         if rec is None:
+            audit.token_rejected("POST /attribute", reason_code="unattributed",
+                                 src_ip=body.source_ip or "")
             raise HTTPException(403, "unattributed")
         return {"bottle_id": rec.bottle_id}
 
@@ -415,6 +439,8 @@ def create_app(
         )
         if not ok:
             raise HTTPException(409, error)
+        audit.resolved(bottle_id=body.bottle_slug, proposal_id=body.proposal_id,
+                       decision=body.decision, notes=body.notes)
         return {"responded": True}
 
     @app.post("/supervise/propose", status_code=201)
@@ -424,21 +450,26 @@ def create_app(
             raise HTTPException(400, f"tool (string) must be one of {TOOLS}")
         rec = orch.resolve(source_ip, body.identity_token)
         if rec is None:
+            audit.token_rejected("POST /supervise/propose", reason_code="unattributed",
+                                 src_ip=source_ip)
             raise HTTPException(403, "unattributed")
+        proposed_file = _required(body.proposed_file, "proposed_file")
+        justification = _required(body.justification, "justification")
         proposal_id = orch.supervise_queue_proposal(
-            rec.bottle_id,
-            tool=body.tool,
-            proposed_file=_required(body.proposed_file, "proposed_file"),
-            justification=_required(body.justification, "justification"),
+            rec.bottle_id, tool=body.tool, proposed_file=proposed_file,
+            justification=justification,
         )
+        audit.proposed(bottle_id=rec.bottle_id, proposal_id=proposal_id, tool=body.tool,
+                       proposed_file=proposed_file, justification=justification)
         return {"proposal_id": proposal_id}
 
     @app.post("/supervise/poll")
     def poll(body: PollBody) -> dict[str, object]:
-        rec = orch.resolve(
-            _required(body.source_ip, "source_ip"), body.identity_token,
-        )
+        source_ip = _required(body.source_ip, "source_ip")
+        rec = orch.resolve(source_ip, body.identity_token)
         if rec is None:
+            audit.token_rejected("POST /supervise/poll", reason_code="unattributed",
+                                 src_ip=source_ip)
             raise HTTPException(403, "unattributed")
         return orch.supervise_poll_response(
             rec.bottle_id, _required(body.proposal_id, "proposal_id"),
@@ -496,10 +527,11 @@ def create_app(
 
     @app.post("/resolve")
     def resolve(body: IdentityBody) -> dict[str, object]:
-        rec = orch.resolve(
-            _required(body.source_ip, "source_ip"), body.identity_token,
-        )
+        source_ip = _required(body.source_ip, "source_ip")
+        rec = orch.resolve(source_ip, body.identity_token)
         if rec is None:
+            audit.token_rejected("POST /resolve", reason_code="unattributed",
+                                 src_ip=source_ip)
             raise HTTPException(403, "unattributed")
         return {
             "bottle_id": rec.bottle_id,

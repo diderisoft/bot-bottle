@@ -24,8 +24,8 @@ from unittest import mock
 from bot_bottle import bottle_state
 from bot_bottle.contract.auth import ROLE_CLI, ROLE_GATEWAY
 from bot_bottle.contract.hostctl import (
-    BOTTLES_PATH, CONFIRM_ERROR, HOST_CONTROL, LAUNCH_CLI_ONLY, ROLE_ORCHESTRATOR,
-    SESSIONS_PATH, InfraSettings, LaunchRequest, Settings, bearer, exit_code,
+    AUDIT_APPEND_PATH, BOTTLES_PATH, CONFIRM_ERROR, HOST_CONTROL, LAUNCH_CLI_ONLY,
+    ROLE_ORCHESTRATOR, SESSIONS_PATH, InfraSettings, LaunchRequest, Settings, bearer, exit_code,
 )
 from bot_bottle.control.hostctl import localsock, sessions
 from bot_bottle.control.hostctl.audit_events import HostAudit
@@ -355,6 +355,30 @@ class TestBottleRoutes(_Root):
              ("role:gateway", f"GET {SESSIONS_PATH}/x")],
             [(r["actor"], r["payload"]["op"]) for r in rejects])
         self.assertTrue(all(r["outcome"] == "blocked" for r in rejects))
+
+    def test_audit_append(self) -> None:
+        event = {"type": "auth.token_rejected", "actor": "unauthenticated",
+                 "action": "GET /x", "outcome": "blocked", "sensitivity": "security",
+                 "ts_event": "2026-10-23T00:00:00.000Z", "id": "e-1"}
+        body = {"producer": "egress", "event": event}
+        self.assertEqual((200, {"written": True}),
+                         self.call("POST", AUDIT_APPEND_PATH, ROLE_ORCHESTRATOR, body))
+        # A retry with the same id isn't written twice.
+        self.assertEqual((200, {"written": False}),
+                         self.call("POST", AUDIT_APPEND_PATH, ROLE_ORCHESTRATOR, body))
+        [record] = [r for r in self.audited() if r["id"] == "e-1"]
+        self.assertEqual("egress", record["producer"])
+        # Only the orchestrator appends; it relays the gateway's events.
+        self.assertEqual(403, self.call("POST", AUDIT_APPEND_PATH, ROLE_GATEWAY, body)[0])
+        self.assertEqual(400, self.call("POST", AUDIT_APPEND_PATH, ROLE_ORCHESTRATOR,
+                                        {"producer": "hostctl", "event": event})[0])
+        self.assertEqual(400, self.call("POST", AUDIT_APPEND_PATH, ROLE_ORCHESTRATOR,
+                                        {"producer": "egress",
+                                         "event": {**event, "host": "spoofed"}})[0])
+        self.assertEqual(422, self.call("POST", AUDIT_APPEND_PATH, ROLE_ORCHESTRATOR,
+                                        {"producer": "egress",
+                                         "event": {**event, "id": "e-2",
+                                                   "payload": {"api_key": "x"}}})[0])
 
     def test_launch_exit_code_and_delete_over_http(self) -> None:
         code, body = self.call("POST", BOTTLES_PATH, ROLE_ORCHESTRATOR,

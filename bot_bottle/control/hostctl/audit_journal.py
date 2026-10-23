@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ...contract.audit import SCHEMA_VERSION, AuditEvent, canonical, record_hash
+from ...contract.audit import SCHEMA_VERSION, AuditEvent, canonical, record_hash, utc_iso
 from ...gateway.egress.dlp_detectors import redact_tokens
 from ...lib.log import warn
 
@@ -100,12 +100,6 @@ def redact(event: AuditEvent) -> AuditEvent:
     if all(scrubbed[name] == body[name] for name in _SCRUBBED_FIELDS):
         return event
     return AuditEvent.from_json({**body, **scrubbed})
-
-
-def utc_iso(ts: float) -> str:
-    """`ts` as the journal writes times: UTC, millisecond precision."""
-    return datetime.fromtimestamp(ts, timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%S.") + f"{int(ts * 1000) % 1000:03d}Z"
 
 
 def _segment_id(ts: float) -> str:
@@ -259,5 +253,4 @@ __all__ = [
     "AuditRedactionError",
     "SEGMENT_SUFFIX",
     "redact",
-    "utc_iso",
 ]
