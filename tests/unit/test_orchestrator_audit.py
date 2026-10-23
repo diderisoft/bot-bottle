@@ -116,6 +116,20 @@ class ApiEvents(unittest.TestCase):
         self.assertEqual((["egress.decision"], ["egress"]),
                          (self.sink.types(), self.sink.producers))
 
+    def test_a_relayed_event_is_renamed_to_the_bottles_slug(self) -> None:
+        rec = self.store.register("10.243.0.9", metadata=json.dumps({"slug": "amber-fox"}),
+                                  policy="routes: []\n")
+        event = {"type": "egress.decision", "actor": f"bottled-agent:{rec.bottle_id}",
+                 "action": "egress.get", "outcome": "allowed", "sensitivity": "security",
+                 "ts_event": "t", "bottle": rec.bottle_id, "bottled_agent": rec.bottle_id,
+                 "payload": {"host": "x"}}
+        self.call("POST", "/audit/events", {"producer": "egress", "event": event},
+                  role=ROLE_GATEWAY)
+        [relayed] = self.sink.events  # pylint: disable=unbalanced-tuple-unpacking
+        self.assertEqual(("amber-fox", "amber-fox", "bottled-agent:amber-fox"),
+                         (relayed.bottle, relayed.bottled_agent, relayed.actor))
+        self.assertEqual({"host": "x", "registry_id": rec.bottle_id}, relayed.payload)
+
     def test_a_relayed_event_must_name_a_gateway_component(self) -> None:
         event = {"type": "egress.decision", "actor": "a", "action": "x", "outcome": "allowed",
                  "sensitivity": "security", "ts_event": "t"}
