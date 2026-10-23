@@ -283,6 +283,13 @@ class AgentProvider(ABC):
         ``bot-bottle start --headless``; the returned args are appended
         after the provider's ``bypass_args`` and ``startup_args``."""
 
+    @staticmethod
+    def positional_prompt(prompt: str) -> str:
+        """`prompt` made safe as a positional CLI argument: one starting with
+        `-` would parse as an option, and pi reads a leading `@` as a file
+        reference. A leading space changes neither for the model."""
+        return " " + prompt if prompt[:1] in ("-", "@") else prompt
+
     def interactive_prompt(self, prompt: str) -> list[str] | None:
         """Return the agent CLI args that start a normal interactive session
         with `prompt` as its first message, or None if the agent CLI can't.

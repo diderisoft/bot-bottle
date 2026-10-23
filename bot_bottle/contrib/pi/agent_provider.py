@@ -378,7 +378,7 @@ class PiAgentProvider(AgentProvider):
 
     def interactive_prompt(self, prompt: str) -> list[str] | None:
         # `pi <prompt>`: the interactive UI, with the prompt as its first message.
-        return [prompt]
+        return [self.positional_prompt(prompt)]
 
     def headless_prompt(self, prompt: str) -> list[str]:
         return ["-p", prompt]

@@ -105,6 +105,13 @@ class TestAgentArgs(unittest.TestCase):
                 self.assertEqual("Do it", args[-1])
                 self.assertNotIn("-p", args)
 
+    def test_a_prompt_that_looks_like_an_option_stays_a_prompt(self):
+        for template in ("claude", "pi", "codex"):
+            for prompt in ("-v is broken, fix it", "@README.md says otherwise"):
+                with self.subTest(template=template, prompt=prompt):
+                    self.assertEqual(" " + prompt,
+                                     agent_args(template, (), prompt, headless=False)[-1])
+
     def test_an_agent_without_interactive_prompts_is_refused(self):
         from unittest import mock
 

@@ -397,7 +397,7 @@ class CodexAgentProvider(AgentProvider):
 
     def interactive_prompt(self, prompt: str) -> list[str] | None:
         # `codex <prompt>`: the interactive UI, with the prompt as its first message.
-        return [prompt]
+        return [self.positional_prompt(prompt)]
 
     def headless_prompt(self, prompt: str) -> list[str]:
         return [prompt]
