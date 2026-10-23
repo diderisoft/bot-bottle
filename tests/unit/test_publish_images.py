@@ -600,10 +600,13 @@ class NextReleaseVersion(unittest.TestCase):
 
     def test_skips_every_taken_version(self) -> None:
         taken = {"0.1.2", "0.1.3"}
-        with mock.patch.object(
-            pi, "already_published",
-            side_effect=lambda _i, _p, v, _t: ["x"] if v in taken else [],
-        ):
+
+        def already_published(
+            _images: list[str], _platforms: list[str], version: str, _token: str,
+        ) -> list[str]:
+            return ["x"] if version in taken else []
+
+        with mock.patch.object(pi, "already_published", side_effect=already_published):
             self.assertEqual(pi.next_release_version("0.1.2", "tok"), "0.1.4")
 
     def test_a_free_start_is_kept(self) -> None:
