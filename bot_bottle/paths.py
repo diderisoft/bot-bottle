@@ -42,7 +42,7 @@ GATEWAY_CA_DIRNAME = "gateway-ca"
 # The host secrets file (`NAME=value` lines, mode 0600) under the root.
 SECRETS_FILENAME = "secrets"
 
-# The audit journal's segment files (PRD 0089). Its own directory, not `db/`,
+# The audit journal's segment files. Its own directory, not `db/`,
 # because `db/` is bind-mounted into the gateway and the journal must not be.
 AUDIT_DIRNAME = "audit"
 

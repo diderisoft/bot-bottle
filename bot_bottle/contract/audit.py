@@ -1,4 +1,4 @@
-"""The audit-event envelope and hash chain (PRD 0089).
+"""The audit-event envelope and hash chain.
 
 Producers (the gateway, the orchestrator, the host controller itself) build an
 `AuditEvent`. The host controller's single writer seals it into a journal

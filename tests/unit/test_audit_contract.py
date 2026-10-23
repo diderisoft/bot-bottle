@@ -1,4 +1,4 @@
-"""Unit: the audit-event envelope and hash chain (PRD 0089)."""
+"""Unit: the audit-event envelope and hash chain."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import unittest
 from bot_bottle.contract.audit import AuditEvent, canonical, record_hash
 
 
-# PRD 0089's normative vectors: an implementation is conformant iff it
+# The audit spec's normative vectors: an implementation is conformant iff it
 # reproduces these bytes and hashes.
 _RECORD0 = {"hash": "", "id": "11111111-1111-4111-8111-111111111111",
             "prev": "", "seq": 0, "type": "audit.segment_open"}
@@ -46,10 +46,10 @@ class ChainVectors(unittest.TestCase):
 
 
 def _event(**overrides: object) -> AuditEvent:
-    base: dict[str, object] = dict(
-        type="egress.decision", actor="bottled-agent:amber-fox-12",
-        action="egress.connect", outcome="blocked", sensitivity="security",
-        ts_event="2026-07-26T18:22:04.061Z")
+    base: dict[str, object] = {
+        "type": "egress.decision", "actor": "bottled-agent:amber-fox-12",
+        "action": "egress.connect", "outcome": "blocked", "sensitivity": "security",
+        "ts_event": "2026-07-26T18:22:04.061Z"}
     base.update(overrides)
     return AuditEvent(**base)  # type: ignore[arg-type]
 

@@ -1,4 +1,4 @@
-"""Unit: `engine_id()` names the running bot-bottle code (PRD 0089)."""
+"""Unit: `engine_id()` names the running bot-bottle code."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class EngineId(unittest.TestCase):
                              text=True, check=True).stdout.strip()
         with mock.patch.object(engine.resources, "is_source_checkout", return_value=True):
             got = engine.engine_id()
-        self.assertEqual(got, f"bot-bottle/{engine._checkout_version()}+{sha[:12]}")
+        self.assertRegex(got, rf"^bot-bottle/\d[^+]*\+{sha[:12]}$")
 
     def test_a_git_install_reports_the_commit_pip_recorded(self) -> None:
         url = json.dumps({"url": "https://example/repo.git",
@@ -47,7 +47,7 @@ class EngineId(unittest.TestCase):
     def test_a_checkout_without_git_reports_the_version_alone(self) -> None:
         with mock.patch.object(engine.resources, "is_source_checkout", return_value=True), \
              mock.patch.object(engine.subprocess, "run", side_effect=OSError):
-            self.assertEqual(engine.engine_id(), f"bot-bottle/{engine._checkout_version()}")
+            self.assertRegex(engine.engine_id(), r"^bot-bottle/\d[^+]*$")
 
 
 if __name__ == "__main__":

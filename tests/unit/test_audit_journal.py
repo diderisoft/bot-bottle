@@ -1,4 +1,4 @@
-"""Unit: the host's single audit writer (PRD 0089)."""
+"""Unit: the host's single audit writer."""
 
 from __future__ import annotations
 
@@ -21,10 +21,10 @@ _FAKE_TOKEN = "ghp_" + "a" * 36
 
 
 def _event(**overrides: Any) -> AuditEvent:
-    base: dict[str, Any] = dict(
-        type="egress.decision", actor="bottled-agent:amber-fox-12",
-        action="egress.connect", outcome="blocked", sensitivity="security",
-        ts_event="2026-07-26T18:22:04.061Z", bottle="amber-fox")
+    base: dict[str, Any] = {
+        "type": "egress.decision", "actor": "bottled-agent:amber-fox-12",
+        "action": "egress.connect", "outcome": "blocked", "sensitivity": "security",
+        "ts_event": "2026-07-26T18:22:04.061Z", "bottle": "amber-fox"}
     base.update(overrides)
     return AuditEvent(**base)
 
@@ -46,12 +46,10 @@ def _assert_chained(case: unittest.TestCase, records: list[dict[str, Any]]) -> N
 
 class _JournalCase(unittest.TestCase):
     def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
-        self.dir = Path(self._tmp.name) / "audit"
+        tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name) / "audit"
         self.now = 1_785_000_000.0
-
-    def tearDown(self) -> None:
-        self._tmp.cleanup()
 
     def journal(self) -> AuditJournal:
         return AuditJournal(self.dir, host="mac-studio-1", engine="bot-bottle/0.1.4",
@@ -61,7 +59,9 @@ class _JournalCase(unittest.TestCase):
 class FreshJournal(_JournalCase):
     def test_opens_a_segment_with_a_genesis_record(self) -> None:
         self.journal()
-        [genesis] = _records(self.dir)
+        records = _records(self.dir)
+        self.assertEqual(len(records), 1)
+        genesis = records[0]
         self.assertEqual(genesis["type"], "audit.segment_open")
         self.assertEqual((genesis["epoch"], genesis["seq"], genesis["prev"]), (0, 0, ""))
         self.assertEqual(genesis["payload"], {"segment": genesis["segment"]})

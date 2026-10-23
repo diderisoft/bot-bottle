@@ -1,4 +1,4 @@
-"""The host's single audit writer (PRD 0089).
+"""The host's single audit writer.
 
 One append-only JSONL journal per host, split into segment files under
 `host_audit_dir()`. Every record chains onto the one before it, across

@@ -1,6 +1,6 @@
 """Which bot-bottle code is running: `bot-bottle/<version>+<short sha>`.
 
-Stamped on every audit record as `engine` (PRD 0089). With a fixed manifest,
+Stamped on every audit record as `engine`. With a fixed manifest,
 the enforcing code is the only other thing that can change a decision, so a
 record has to say which code made it.
 
