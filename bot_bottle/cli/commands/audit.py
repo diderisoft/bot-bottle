@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 import sys
+from typing import Any
 
+from ...contract.audit import canonical
+from ...control.hostctl.audit_index import AuditIndex, IndexBreak, Query
 from ...control.hostctl.audit_verify import verify
 from ...paths import host_audit_dir
 from ..constants import PROG
@@ -26,6 +29,61 @@ def _verify(_ns: argparse.Namespace) -> int:
     return 0 if report.ok else 1
 
 
+def _index() -> AuditIndex | None:
+    directory = host_audit_dir()
+    if not directory.is_dir():
+        sys.stdout.write(f"no audit journal at {directory}\n")
+        return None
+    return AuditIndex(directory)
+
+
+_COLUMNS = ("ts_event", "type", "outcome", "bottle", "actor", "resource")
+
+
+def _table(records: list[dict[str, Any]]) -> None:
+    rows = [[str(r.get(c) if r.get(c) is not None else "-") for c in _COLUMNS]
+            for r in records]
+    widths = [max([len(c)] + [len(row[i]) for row in rows]) for i, c in enumerate(_COLUMNS)]
+    for row in [list(_COLUMNS), *rows]:
+        sys.stdout.write("  ".join(v.ljust(w) for v, w in zip(row, widths)).rstrip() + "\n")
+
+
+def _query(ns: argparse.Namespace) -> int:
+    index = _index()
+    if index is None:
+        return 0
+    try:
+        index.sync()
+    except IndexBreak as e:
+        sys.stderr.write(f"{PROG}: {e}; run `{PROG} audit verify`\n")
+        return 1
+    records = index.query(Query(
+        since=ns.since, until=ns.until, type=ns.type, host=ns.host,
+        bottle=ns.bottle, activation=ns.activation, bottled_agent=ns.agent,
+        actor=ns.actor, outcome=ns.outcome, repository=ns.repository,
+        correlation_id=ns.correlation_id, commit_sha=ns.commit, limit=ns.limit,
+    ))
+    if ns.json:
+        for record in records:
+            sys.stdout.write(canonical(record) + "\n")
+    else:
+        _table(records)
+    return 0
+
+
+def _rebuild(_ns: argparse.Namespace) -> int:
+    index = _index()
+    if index is None:
+        return 0
+    try:
+        count = index.rebuild()
+    except IndexBreak as e:
+        sys.stderr.write(f"{PROG}: {e}\n")
+        return 1
+    sys.stdout.write(f"indexed {count} record(s)\n")
+    return 0
+
+
 def cmd_audit(args: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog=f"{PROG} audit",
@@ -36,5 +94,26 @@ def cmd_audit(args: list[str]) -> int:
         "verify",
         help="check the journal's hash chain; exits non-zero on any break",
     ).set_defaults(run=_verify)
+    query = sub.add_parser("query", help="list matching events, oldest first")
+    for flag, dest, text in (
+        ("--since", "since", "events at or after this ISO time"),
+        ("--until", "until", "events before this ISO time"),
+        ("--type", "type", "event type, or a group glob like egress.*"),
+        ("--host", "host", None), ("--bottle", "bottle", None),
+        ("--activation", "activation", None),
+        ("--agent", "agent", "bottled-agent slug"),
+        ("--actor", "actor", None), ("--outcome", "outcome", None),
+        ("--repository", "repository", None),
+        ("--correlation-id", "correlation_id", None),
+        ("--commit", "commit", "commit SHA"),
+    ):
+        query.add_argument(flag, dest=dest, help=text)
+    query.add_argument("--limit", type=int, default=None)
+    query.add_argument("--json", action="store_true",
+                       help="each record exactly as the journal holds it")
+    query.set_defaults(run=_query)
+    sub.add_parser(
+        "rebuild", help="re-create the search index from the journal",
+    ).set_defaults(run=_rebuild)
     ns = parser.parse_args(args)
     return ns.run(ns)
