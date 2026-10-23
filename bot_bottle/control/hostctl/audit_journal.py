@@ -11,11 +11,17 @@ mid-append) is cut back to the last intact record before appending, since a
 line glued onto it would corrupt the next record too.
 
 Redaction runs here, before anything is written: a credential-shaped key is
-refused, and token-shaped values in `untrusted` are scrubbed.
+refused, and token-shaped values in the producer-supplied fields (`resource`,
+`payload`, `untrusted`) are scrubbed.
+
+"One writer per host" is enforced, not assumed: the writer holds an exclusive
+lock on the journal directory for its lifetime, so a second writer (a second
+host controller, a stray CLI) is refused instead of forking the chain.
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import threading
@@ -31,6 +37,7 @@ from ...lib.log import warn
 
 
 SEGMENT_SUFFIX = ".jsonl"
+_LOCK_NAME = ".writer.lock"
 
 # Exact key names that only ever hold a credential, plus suffixes that do.
 _DENIED_KEYS = frozenset({
@@ -38,6 +45,11 @@ _DENIED_KEYS = frozenset({
     "api_key", "private_key",
 })
 _DENIED_SUFFIXES = ("_key", "_token", "_secret", "_password")
+
+
+class AuditJournalBusy(RuntimeError):
+    """Another writer holds the journal. Two writers would both chain onto
+    the same head and fork the chain, so the second one is refused."""
 
 
 class AuditRedactionError(ValueError):
@@ -67,16 +79,23 @@ def _scrub(value: Any) -> Any:
     return value
 
 
+# Producer-supplied fields that can carry free text: an egress URL, a reason,
+# a commit message. The rest are enums, ids and digests.
+_SCRUBBED_FIELDS = ("resource", "payload", "untrusted")
+
+
 def redact(event: AuditEvent) -> AuditEvent:
     """The event as it may be written: refused on a credential-shaped key,
-    with token-shaped values in `untrusted` scrubbed."""
+    with token-shaped values in `resource`, `payload` and `untrusted`
+    scrubbed (kept, not dropped, so a producer bug can't make an event
+    vanish)."""
     _check_keys(event.payload, "payload")
     _check_keys(event.untrusted, "untrusted")
-    if not event.untrusted:
-        return event
     body = event.to_json()
-    body["untrusted"] = _scrub(event.untrusted)
-    return AuditEvent.from_json(body)
+    scrubbed = {name: _scrub(body[name]) for name in _SCRUBBED_FIELDS}
+    if all(scrubbed[name] == body[name] for name in _SCRUBBED_FIELDS):
+        return event
+    return AuditEvent.from_json({**body, **scrubbed})
 
 
 def _utc_iso(ts: float) -> str:
@@ -104,6 +123,20 @@ def _cut_torn_tail(path: Path) -> None:
         f.truncate(keep)
 
 
+def _hold_writer_lock(directory: Path) -> int:
+    """An fd holding an exclusive lock on the journal directory. The kernel
+    releases it when the process exits, however it exits."""
+    fd = os.open(directory / _LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        raise AuditJournalBusy(
+            f"another audit writer holds {directory}; there is one per host"
+        ) from None
+    return fd
+
+
 def _last_record(path: Path) -> dict[str, Any] | None:
     lines = path.read_bytes().splitlines()
     return json.loads(lines[-1]) if lines else None
@@ -129,6 +162,7 @@ class AuditJournal:
         self._boot = monotonic()
         self._lock = threading.Lock()
         self._dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self._writer_lock = _hold_writer_lock(self._dir)
 
         segments = _segments(self._dir)
         last: dict[str, Any] | None = None
@@ -152,6 +186,10 @@ class AuditJournal:
     @property
     def path(self) -> Path:
         return self._path
+
+    def close(self) -> None:
+        """Release the writer lock. The journal can't be appended to after."""
+        os.close(self._writer_lock)
 
     def _open_segment(self) -> None:
         now = self._clock()
@@ -199,6 +237,7 @@ class AuditJournal:
 
 __all__ = [
     "AuditJournal",
+    "AuditJournalBusy",
     "AuditRedactionError",
     "SEGMENT_SUFFIX",
     "redact",

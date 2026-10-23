@@ -11,6 +11,7 @@ from typing import Any
 from bot_bottle.contract.audit import AuditEvent, canonical, record_hash
 from bot_bottle.control.hostctl.audit_journal import (
     AuditJournal,
+    AuditJournalBusy,
     AuditRedactionError,
     redact,
 )
@@ -44,6 +45,13 @@ def _assert_chained(case: unittest.TestCase, records: list[dict[str, Any]]) -> N
         prev = r["hash"]
 
 
+def _close_quietly(j: AuditJournal) -> None:
+    try:
+        j.close()
+    except OSError:
+        pass  # already closed by the test
+
+
 class _JournalCase(unittest.TestCase):
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
@@ -52,8 +60,15 @@ class _JournalCase(unittest.TestCase):
         self.now = 1_785_000_000.0
 
     def journal(self) -> AuditJournal:
-        return AuditJournal(self.dir, host="mac-studio-1", engine="bot-bottle/0.1.4",
-                            clock=lambda: self.now)
+        j = AuditJournal(self.dir, host="mac-studio-1", engine="bot-bottle/0.1.4",
+                         clock=lambda: self.now)
+        self.addCleanup(lambda: _close_quietly(j))
+        return j
+
+    def restart(self, previous: AuditJournal) -> AuditJournal:
+        """A new writer after `previous` exits, which releases its lock."""
+        previous.close()
+        return self.journal()
 
 
 class FreshJournal(_JournalCase):
@@ -97,23 +112,24 @@ class Restart(_JournalCase):
     def test_continues_the_chain_in_a_new_epoch(self) -> None:
         first = self.journal()
         first.append(_event(), producer="egress")
-        second = self.journal()
+        second = self.restart(first)
         record = second.append(_event(), producer="egress")
         self.assertEqual((record["epoch"], record["seq"]), (1, 0))
         self.assertEqual(second.path, first.path)  # no new segment on restart
         _assert_chained(self, _records(self.dir))
 
     def test_epoch_comes_from_the_last_written_record(self) -> None:
+        j = self.journal()
         for _ in range(3):
-            self.journal().append(_event(), producer="egress")
-        record = self.journal().append(_event(), producer="egress")
+            j.append(_event(), producer="egress")
+            j = self.restart(j)
+        record = j.append(_event(), producer="egress")
         self.assertEqual(record["epoch"], 3)
 
     def test_a_boot_that_wrote_nothing_does_not_use_up_an_epoch(self) -> None:
         """Nothing was written in it, so reusing its number can't collide."""
-        self.journal()
-        self.journal()
-        record = self.journal().append(_event(), producer="egress")
+        j = self.restart(self.restart(self.journal()))
+        record = j.append(_event(), producer="egress")
         self.assertEqual(record["epoch"], 1)
 
     def test_a_torn_final_line_is_cut_before_appending(self) -> None:
@@ -121,10 +137,25 @@ class Restart(_JournalCase):
         j.append(_event(), producer="egress")
         with j.path.open("a") as f:
             f.write('{"id":"half-writ')  # a crash mid-append
-        record = self.journal().append(_event(), producer="egress")
+        record = self.restart(j).append(_event(), producer="egress")
         records = _records(self.dir)
         self.assertEqual(records[-1], record)
         _assert_chained(self, records)
+
+
+class SingleWriter(_JournalCase):
+    def test_a_second_writer_is_refused_while_the_first_runs(self) -> None:
+        # Both would chain onto the same head and fork the chain.
+        first = self.journal()
+        with self.assertRaises(AuditJournalBusy):
+            self.journal()
+        record = first.append(_event(), producer="egress")
+        self.assertEqual((record["epoch"], record["seq"]), (0, 1))
+        _assert_chained(self, _records(self.dir))
+
+    def test_the_lock_is_released_when_the_writer_closes(self) -> None:
+        self.restart(self.journal()).append(_event(), producer="egress")
+        _assert_chained(self, _records(self.dir))
 
 
 class Redaction(unittest.TestCase):
@@ -147,12 +178,23 @@ class Redaction(unittest.TestCase):
         self.assertNotIn(_FAKE_TOKEN, event.untrusted["reason"])
         self.assertIn("********", event.untrusted["reason"])
 
+    def test_token_shaped_values_in_payload_and_resource_are_scrubbed(self) -> None:
+        # Host-established fields carry free text too, e.g. an egress URL.
+        event = redact(_event(
+            resource=f"https://api.example.com/x?access={_FAKE_TOKEN}",
+            payload={"url": f"https://api.example.com/x?access={_FAKE_TOKEN}"},
+        ))
+        assert event.resource is not None and event.payload is not None
+        self.assertNotIn(_FAKE_TOKEN, event.resource)
+        self.assertNotIn(_FAKE_TOKEN, event.payload["url"])
+
     def test_scrubbed_events_are_kept_not_dropped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             j = AuditJournal(Path(tmp), host="h", engine="e")
             j.append(_event(untrusted={"reason": _FAKE_TOKEN}), producer="egress")
             self.assertNotIn(_FAKE_TOKEN, j.path.read_text())
             self.assertEqual(len(j.path.read_text().splitlines()), 2)
+            j.close()
 
 
 if __name__ == "__main__":
