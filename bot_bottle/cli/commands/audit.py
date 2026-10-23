@@ -17,7 +17,7 @@ from ...control.hostctl.audit_index import (
     imported_chains,
 )
 from ...control.hostctl.audit_verify import verify
-from ...paths import host_audit_dir
+from ...paths import host_audit_dir, host_db_path
 from ..constants import PROG
 
 
@@ -47,7 +47,7 @@ def _index() -> AuditIndex | None:
     if not directory.is_dir():
         sys.stdout.write(f"no audit journal at {directory}\n")
         return None
-    return AuditIndex(directory)
+    return AuditIndex(directory, host_db_path())
 
 
 _COLUMNS = ("ts_event", "type", "outcome", "bottle", "actor", "resource")
@@ -100,7 +100,7 @@ def _rebuild(_ns: argparse.Namespace) -> int:
 def _import(ns: argparse.Namespace) -> int:
     directory = host_audit_dir()
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    index = AuditIndex(directory)
+    index = AuditIndex(directory, host_db_path())
     try:
         result = import_segment(directory, Path(ns.segment), index)
     except (AuditImportError, IndexBreak, OSError) as e:

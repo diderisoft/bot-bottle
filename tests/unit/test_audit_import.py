@@ -26,7 +26,7 @@ class Import(unittest.TestCase):
         root = Path(tmp.name)
         self.local = root / "local"
         AuditJournal(self.local, host="here", engine="e")
-        self.index = AuditIndex(self.local)
+        self.index = AuditIndex(self.local, root / "db" / "bot-bottle.db")
         self.index.sync()
         self.remote = AuditJournal(root / "remote", host="there", engine="e")
         self.remote.append(_event(), producer="egress")

@@ -1,10 +1,8 @@
 """A searchable SQLite index of the audit journal.
 
-A derived cache, not a second source of truth: every row comes from a journal
-line, and `rebuild` throws the rows away and replays the journal. It lives
-next to the journal rather than in the shared host DB, whose directory is
-mounted into the gateway: a gateway that could write here could make `audit
-query` show something the journal doesn't say.
+A derived cache in the shared host DB, not a second source of truth: every
+row comes from a journal line, and `rebuild` throws the rows away and replays
+the journal.
 
 `sync` indexes whatever the writer appended since the last call, checking
 each new record's hash and its link to the last indexed one, so a query never
@@ -28,9 +26,6 @@ from .audit_verify import verify
 
 
 IMPORTED_DIRNAME = "imported"
-
-
-INDEX_FILENAME = "index.db"
 
 
 def imported_chains(journal_dir: Path) -> list[Path]:
@@ -88,7 +83,7 @@ class Query:
 
 
 class AuditIndex(DbStore):
-    def __init__(self, journal_dir: Path) -> None:
+    def __init__(self, journal_dir: Path, db_path: Path) -> None:
         self._journal_dir = journal_dir
         migrations = TableMigrations("audit_index", [
             f"""
@@ -114,7 +109,7 @@ class AuditIndex(DbStore):
             *(f"CREATE INDEX audit_events_{name} ON audit_events ({name})"
               for name in _INDEXED),
         ])
-        super().__init__(journal_dir / INDEX_FILENAME, migrations)
+        super().__init__(db_path, migrations)
         self.migrate()
 
     def _cursor(self, conn: sqlite3.Connection) -> tuple[str, int, str]:
@@ -243,7 +238,6 @@ class AuditIndex(DbStore):
 __all__ = [
     "AuditIndex",
     "IMPORTED_DIRNAME",
-    "INDEX_FILENAME",
     "IndexBreak",
     "Query",
     "imported_chains",

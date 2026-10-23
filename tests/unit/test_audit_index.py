@@ -27,6 +27,7 @@ class Index(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         self.addCleanup(tmp.cleanup)
         self.dir = Path(tmp.name) / "audit"
+        self.db = Path(tmp.name) / "db" / "bot-bottle.db"
         self.journal = AuditJournal(self.dir, host="h", engine="e")
 
     def append(self, **overrides: Any) -> dict[str, Any]:
@@ -35,12 +36,12 @@ class Index(unittest.TestCase):
         return record
 
     def ids(self, **filters: Any) -> list[str]:
-        index = AuditIndex(self.dir)
+        index = AuditIndex(self.dir, self.db)
         index.sync()
         return [r["id"] for r in index.query(Query(**filters))]
 
     def test_sync_indexes_only_new_records(self) -> None:
-        index = AuditIndex(self.dir)
+        index = AuditIndex(self.dir, self.db)
         self.assertEqual(index.sync(), 1)  # the segment_open record
         self.append()
         self.append()
@@ -49,7 +50,7 @@ class Index(unittest.TestCase):
 
     def test_rows_hold_the_journal_record_verbatim(self) -> None:
         record = self.append(payload={"route_id": 4})
-        index = AuditIndex(self.dir)
+        index = AuditIndex(self.dir, self.db)
         self.assertEqual(index.query(Query(type="egress.decision")), [])  # until synced
         index.sync()
         self.assertEqual(index.query(Query(type="egress.decision")), [record])
@@ -71,7 +72,7 @@ class Index(unittest.TestCase):
         self.assertEqual(self.ids(type="egress_*"), [])
 
     def test_sync_stops_at_a_record_that_does_not_chain(self) -> None:
-        index = AuditIndex(self.dir)
+        index = AuditIndex(self.dir, self.db)
         index.sync()
         self.append()
         lines = self.journal.path.read_text().splitlines()
@@ -83,14 +84,14 @@ class Index(unittest.TestCase):
             index.sync()
 
     def test_a_torn_tail_is_left_for_the_next_sync(self) -> None:
-        index = AuditIndex(self.dir)
+        index = AuditIndex(self.dir, self.db)
         with self.journal.path.open("a") as f:
             f.write('{"id":"half')
         self.assertEqual(index.sync(), 1)
 
     def test_rebuild_replays_the_journal(self) -> None:
         self.append()
-        index = AuditIndex(self.dir)
+        index = AuditIndex(self.dir, self.db)
         index.sync()
         with index._connection() as conn:  # pylint: disable=protected-access
             conn.execute("UPDATE audit_events SET outcome = 'allowed'")
@@ -104,12 +105,13 @@ class Index(unittest.TestCase):
         lines.insert(1, lines[0])  # a duplicated record breaks the chain
         self.journal.path.write_text("\n".join(lines) + "\n")
         with self.assertRaises(IndexBreak):
-            AuditIndex(self.dir).rebuild()
+            AuditIndex(self.dir, self.db).rebuild()
 
-    def test_the_index_is_private(self) -> None:
-        index = AuditIndex(self.dir)
+    def test_the_index_lives_in_the_host_db(self) -> None:
+        index = AuditIndex(self.dir, self.db)
         index.sync()
-        self.assertEqual(index.db_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(index.db_path, self.db)
+        self.assertEqual(list(self.dir.glob("*.db")), [])
 
 
 if __name__ == "__main__":

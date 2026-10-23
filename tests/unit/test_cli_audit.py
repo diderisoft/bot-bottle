@@ -20,10 +20,11 @@ class AuditCommand(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         self.addCleanup(tmp.cleanup)
         self.dir = Path(tmp.name) / "audit"
-        patcher = mock.patch("bot_bottle.cli.commands.audit.host_audit_dir",
-                             return_value=self.dir)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        for name, value in (("host_audit_dir", self.dir),
+                            ("host_db_path", Path(tmp.name) / "db" / "bot-bottle.db")):
+            patcher = mock.patch(f"bot_bottle.cli.commands.audit.{name}", return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def run_cmd(self, *args: str) -> tuple[int, str]:
         out = io.StringIO()
