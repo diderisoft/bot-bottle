@@ -137,6 +137,26 @@ class Restart(_JournalCase):
         record = _sealed(j.append(_event(), producer="egress"))
         self.assertEqual(record["epoch"], 1)
 
+    def test_cutting_a_torn_line_is_itself_recorded(self) -> None:
+        j = self.journal()
+        j.append(_event(), producer="egress")
+        with j.path.open("a") as f:
+            f.write('{"id":"half-writ')
+        self.restart(j)
+        records = _records(self.dir)
+        cut = records[-1]
+        self.assertEqual(("audit.truncation_detected", 1, 0),
+                         (cut["type"], cut["epoch"], cut["seq"]))
+        self.assertEqual({"cause": "torn_tail", "segment": j.path.stem, "dropped_bytes": 16,
+                          "last_epoch": 0, "last_seq": 1}, cut["payload"])
+        _assert_chained(self, records)
+
+    def test_a_clean_restart_records_no_truncation(self) -> None:
+        j = self.journal()
+        j.append(_event(), producer="egress")
+        self.restart(j)
+        self.assertNotIn("audit.truncation_detected", [r["type"] for r in _records(self.dir)])
+
     def test_a_torn_final_line_is_cut_before_appending(self) -> None:
         j = self.journal()
         j.append(_event(), producer="egress")

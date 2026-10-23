@@ -41,6 +41,8 @@ from ...lib.log import warn
 
 
 SEGMENT_SUFFIX = ".jsonl"
+# `payload.cause` of the record the writer appends after cutting a torn tail.
+TORN_TAIL = "torn_tail"
 _LOCK_NAME = ".writer.lock"
 
 # Exact key names that only ever hold a credential, plus suffixes that do.
@@ -110,16 +112,18 @@ def _segments(directory: Path) -> list[Path]:
     return sorted(directory.glob(f"*{SEGMENT_SUFFIX}"))
 
 
-def _cut_torn_tail(path: Path) -> None:
-    """Drop a partial final line left by a crash mid-append."""
+def _cut_torn_tail(path: Path) -> int:
+    """Drop a partial final line left by a crash mid-append. Returns how many
+    bytes were cut (0: the file ended cleanly)."""
     data = path.read_bytes()
     if not data or data.endswith(b"\n"):
-        return
+        return 0
     keep = data.rfind(b"\n") + 1
     warn(f"audit journal {path.name}: dropping a torn final line "
          f"({len(data) - keep} bytes) left by an interrupted append")
     with path.open("r+b") as f:
         f.truncate(keep)
+    return len(data) - keep
 
 
 def _hold_writer_lock(directory: Path) -> int:
@@ -173,8 +177,10 @@ class AuditJournal:
 
         segments = _segments(self._dir)
         last: dict[str, Any] | None = None
+        cut, torn_segment = 0, ""
         if segments:
-            _cut_torn_tail(segments[-1])
+            cut = _cut_torn_tail(segments[-1])
+            torn_segment = segments[-1].name.removesuffix(SEGMENT_SUFFIX)
             for path in reversed(segments):
                 last = _last_record(path)
                 if last is not None:
@@ -190,6 +196,17 @@ class AuditJournal:
             self._prev = str(last["hash"])
             self._path = segments[-1]
             self._segment = self._path.name.removesuffix(SEGMENT_SUFFIX)
+        if cut:
+            # Once the bytes are gone, verify can't see that a crash happened,
+            # so the journal says so itself: power loss, not a trimmed log.
+            self._write(AuditEvent(
+                type="audit.truncation_detected", actor="host",
+                action="audit.truncation_detected", outcome="failure", sensitivity="security",
+                ts_event=utc_iso(self._clock()), resource=torn_segment,
+                payload={"cause": TORN_TAIL, "segment": torn_segment, "dropped_bytes": cut,
+                         "last_epoch": last["epoch"] if last else None,
+                         "last_seq": last["seq"] if last else None},
+            ), producer="audit")
 
     @property
     def path(self) -> Path:
@@ -237,7 +254,9 @@ class AuditJournal:
         line = (canonical(record) + "\n").encode("utf-8")
         fd = os.open(self._path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         try:
-            os.write(fd, line)
+            written = 0
+            while written < len(line):  # a write may be partial
+                written += os.write(fd, line[written:])
             os.fsync(fd)
         finally:
             os.close(fd)
@@ -252,5 +271,6 @@ __all__ = [
     "AuditJournalBusy",
     "AuditRedactionError",
     "SEGMENT_SUFFIX",
+    "TORN_TAIL",
     "redact",
 ]

@@ -6,8 +6,9 @@ deletion or reorder shows up at the record where the chain breaks.
 
 What it reports, and what each one means:
 
-- `truncated-tail`: the last segment ends in a partial line. A crash
-  mid-append, not tampering; the writer cuts it on its next start.
+- `truncated-tail`: the last segment ends in a partial line, or the writer
+  recorded cutting one (an `audit.truncation_detected` record with cause
+  `torn_tail`). A crash mid-append, not tampering.
 - `unreadable`: a complete line that isn't a JSON record.
 - `edited`: a record no longer hashes to its own `hash`.
 - `gap`: records are missing from inside an epoch (`seq` skipped forward,
@@ -32,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from ...contract.audit import record_hash
-from .audit_journal import SEGMENT_SUFFIX
+from .audit_journal import SEGMENT_SUFFIX, TORN_TAIL
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,12 @@ def verify_segments(segments: list[Path]) -> VerifyReport:
                 continue
             if before is None:
                 report.starts_after = str(record.get("prev", ""))
+            payload = record.get("payload") or {}
+            if record.get("type") == "audit.truncation_detected" and \
+                    isinstance(payload, dict) and payload.get("cause") == TORN_TAIL:
+                report.problems.append(Problem(
+                    "truncated-tail", name, number,
+                    f"the writer cut {payload.get('dropped_bytes')} torn bytes after a crash"))
             for kind, detail in _check(record, before, prev):
                 if kind == "gap":
                     gap_epochs.append((len(report.problems), record.get("epoch")))

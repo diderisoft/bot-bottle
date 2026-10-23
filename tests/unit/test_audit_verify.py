@@ -26,6 +26,7 @@ class Verify(unittest.TestCase):
         journal = AuditJournal(self.dir, host="h", engine="e")
         for _ in range(4):
             journal.append(_event(), producer="egress")
+        journal.close()
         self.path = journal.path
 
     def lines(self) -> list[str]:
@@ -85,6 +86,14 @@ class Verify(unittest.TestCase):
         self.assertEqual([p.kind for p in report.problems], ["truncated-tail"])
         self.assertTrue(report.ok)
         self.assertEqual(report.records, 5)
+
+    def test_a_cut_the_writer_recorded_is_a_truncated_tail_not_a_break(self) -> None:
+        with self.path.open("a") as f:
+            f.write('{"id":"half')
+        AuditJournal(self.dir, host="h", engine="e").close()  # restarts, cutting it
+        report = verify(self.dir)
+        self.assertEqual(["truncated-tail"], [p.kind for p in report.problems])
+        self.assertTrue(report.ok)
 
     def test_a_garbage_line_is_unreadable(self) -> None:
         lines = self.lines()
