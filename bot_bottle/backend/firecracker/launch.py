@@ -28,24 +28,25 @@ from __future__ import annotations
 import dataclasses
 import shlex
 import shutil
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Generator
 
 from ... import agent_image, agent_overlay
 from ...agent_provider import runtime_for
 from ...published_artifacts import FORMAT_EXT4, FORMAT_OCI, Artifact, ArtifactsManifestError
-from ...bottle_state import (
-    committed_rootfs_path,
-    egress_state_dir,
-    git_gate_state_dir,
-    read_committed_image,
-)
+from ...bottle_state import committed_rootfs_path, read_committed_image
 from ...egress import Egress
-from ...git_gate import GitGate
 from ...image_cache import check_stale_path
-from ...lib.log import die, info, warn
-from ...contract.supervise import SUPERVISE_PORT
+from ...lib.log import die, info
+from ..launch_common import (
+    LaunchTeardown,
+    egress_token_values,
+    gateway_agent_urls,
+    provision_git_gate_keys,
+    stage_gateway_ca,
+    terminal_title,
+)
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import firecracker_vm, image_builder, isolation_probe, lifecycle_lock, netpool, util
 from .bottle import FirecrackerBottle
@@ -61,8 +62,6 @@ from .consolidated_launch import (
 )
 
 
-_GIT_HTTP_PORT = 9420
-
 
 @contextmanager
 def launch(
@@ -73,33 +72,15 @@ def launch(
 ) -> Generator[FirecrackerBottle, None, None]:
     """Build, launch, and provision a Firecracker bottle via the consolidated
     orchestrator. Teardown on exit."""
-    stack = ExitStack()
-    bottle_for_revoke = plan.manifest.bottle
-    git_gate_dir_for_revoke = git_gate_state_dir(plan.slug)
-
-    def teardown() -> None:
-        teardown_exc: BaseException | None = None
-        try:
-            stack.close()
-        except BaseException as exc:  # noqa: W0718 - teardown must continue
-            teardown_exc = exc
-            warn(f"firecracker teardown failed: {exc!r}")
-        GitGate().revoke_provisioned_keys(
-            bottle_for_revoke, git_gate_dir_for_revoke, plan.secrets)
-        if teardown_exc is not None:
-            raise teardown_exc
+    teardown = LaunchTeardown(plan, "firecracker")
+    stack = teardown.stack
 
     try:
         # Step 1 (rootfs resolution/build) runs in BottleBackend.launch before
         # this context starts resources. ``agent_base`` is the selected cache,
         # fresh build, or committed snapshot.
         # Step 2: mint the git-gate dynamic (gitea) deploy keys, if any.
-        git_gate_plan = plan.git_gate_plan
-        if git_gate_plan.upstreams:
-            git_gate_plan = GitGate().provision_dynamic_keys(
-                plan.manifest.bottle, git_gate_plan, git_gate_state_dir(plan.slug),
-                plan.secrets,
-            )
+        git_gate_plan = provision_git_gate_keys(plan)
 
         # Step 3: claim a TAP slot; the flock is held until teardown.
         slot, lock = netpool.from_settings(plan.settings.infra).allocate(plan.slug)
@@ -108,14 +89,9 @@ def launch(
              f"guest={slot.guest_ip}")
 
         # Step 4: register on the orchestrator + provision this bottle's
-        # git-gate state into the shared gateway. The per-bottle egress tokens
-        # are resolved from the plan's secrets now and handed to the
-        # orchestrator (in memory) for the gateway to inject — the agent never
-        # sees them.
+        # git-gate state into the shared gateway.
         # Attribution is by the VM's guest IP (unspoofable via /31 TAP + nft).
-        token_values = Egress().resolve_token_values(
-            plan.egress_plan.token_env_map, plan.egress_secrets,
-        )
+        token_values = egress_token_values(plan)
         teardown_timeout = resolve_teardown_timeout(host_db_path())
         service = FirecrackerInfraService(plan.settings)
         ctx = launch_consolidated(
@@ -127,27 +103,14 @@ def launch(
         stack.callback(deprovision_consolidated, ctx.bottle_id, service=service,
                        timeout=teardown_timeout)
 
-        # Step 5: install the SHARED gateway CA (replaces the per-bottle CA).
-        # Write it to a stable host path so the provisioner can copy it over SSH.
-        ca_dir = egress_state_dir(plan.slug) / "gateway-ca"
-        ca_dir.mkdir(parents=True, exist_ok=True)
-        ca_file = ca_dir / "gateway-ca.pem"
-        ca_file.write_text(ctx.gateway_ca_pem)
-        egress_plan = dataclasses.replace(
-            plan.egress_plan,
-            mitmproxy_ca_host_path=ca_file,
-            mitmproxy_ca_cert_only_host_path=ca_file,
-        )
-        # Point the agent's git-gate insteadOf rewrites and supervise MCP URL
-        # at the shared gateway (reached at the slot's host TAP IP — the VM
-        # sends there and the nft netpool DNAT routes to the gateway VM).
-        git_gate_url = (
-            f"http://{slot.host_ip}:{_GIT_HTTP_PORT}" if git_gate_plan.upstreams else ""
-        )
-        supervise_url = (
-            f"http://{slot.host_ip}:{SUPERVISE_PORT}/"
-            if plan.supervise_plan is not None else ""
-        )
+        # Step 5: stage the shared gateway CA for the provisioner to copy
+        # over SSH, and point the agent's git-gate insteadOf rewrites and
+        # supervise MCP URL at the shared gateway (reached at the slot's host
+        # TAP IP — the VM sends there and the nft netpool DNAT routes to the
+        # gateway VM).
+        egress_plan = stage_gateway_ca(plan, ctx.gateway_ca_pem)
+        git_gate_url, supervise_url = gateway_agent_urls(
+            plan, slot.host_ip, git_gate_plan)
         plan = dataclasses.replace(
             plan,
             git_gate_plan=git_gate_plan,
@@ -207,10 +170,7 @@ def launch(
             agent_command=plan.agent_command,
             agent_prompt_mode=plan.agent_prompt_mode,
             agent_provider_template=plan.agent_provider_template,
-            terminal_title=(
-                f"{plan.spec.label} ({plan.spec.agent_name})"
-                if plan.spec.label else plan.spec.agent_name
-            ),
+            terminal_title=terminal_title(plan.spec),
             terminal_color=plan.spec.color,
             agent_workdir=plan.workspace_plan.workdir,
         )

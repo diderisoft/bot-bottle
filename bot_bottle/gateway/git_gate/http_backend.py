@@ -28,7 +28,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from bot_bottle.contract.identity import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
+from bot_bottle.contract.identity import GIT_GATE_TIMEOUT_SECS, GIT_HTTP_PORT, IDENTITY_HEADER
 from bot_bottle.gateway.bounded_http import (
     BodyReadError,
     BoundedThreadingHTTPServer,
@@ -37,7 +37,7 @@ from bot_bottle.gateway.bounded_http import (
 from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolver
 
 
-DEFAULT_PORT = 9420
+DEFAULT_PORT = GIT_HTTP_PORT
 
 # The per-host orchestrator control plane the backend attributes each request
 # to, serving from the *calling* bottle's repo namespace selected by source IP.

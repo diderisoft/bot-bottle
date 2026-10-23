@@ -36,23 +36,24 @@ import dataclasses
 import functools
 import os
 import subprocess
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from typing import Callable, Generator
 
 from ...contract.hostctl import Settings
-from ...bottle_state import (
-    egress_state_dir,
-    git_gate_state_dir,
-    read_committed_image,
-)
+from ...bottle_state import read_committed_image
 from ...egress import Egress
-from ...git_gate import GitGate
-from ...gateway.git_gate.http_backend import DEFAULT_PORT as _GIT_HTTP_PORT
 from ...image_cache import check_stale
-from ...lib.log import die, info, warn
+from ...lib.log import die, info
 from ... import resources
 from .. import BottleImages, oci_agent_image
-from ...contract.supervise import SUPERVISE_PORT
+from ..launch_common import (
+    LaunchTeardown,
+    egress_token_values,
+    gateway_agent_urls,
+    provision_git_gate_keys,
+    stage_gateway_ca,
+    terminal_title,
+)
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import util as container_mod
 from .bottle import MacosContainerBottle
@@ -159,26 +160,12 @@ def launch(
 ) -> Generator[MacosContainerBottle, None, None]:
     """Run, register, provision, and yield an Apple Container bottle on the
     shared per-host gateway."""
-    stack = ExitStack()
-    bottle_for_revoke = plan.manifest.bottle
-    git_gate_dir_for_revoke = git_gate_state_dir(plan.slug)
-
     plan = dataclasses.replace(
         plan,
         agent_provision=dataclasses.replace(plan.agent_provision, image=str(images.agent)),
     )
-
-    def teardown() -> None:
-        teardown_exc: BaseException | None = None
-        try:
-            stack.close()
-        except BaseException as exc:  # noqa: W0718 - teardown must continue
-            teardown_exc = exc
-            warn(f"macos-container teardown failed: {exc!r}")
-        GitGate().revoke_provisioned_keys(
-            bottle_for_revoke, git_gate_dir_for_revoke, plan.secrets)
-        if teardown_exc is not None:
-            raise teardown_exc
+    teardown = LaunchTeardown(plan, "macos-container")
+    stack = teardown.stack
 
     try:
         # Step 1: the per-host singletons. Must precede the agent run — its
@@ -216,9 +203,7 @@ def launch(
                 f"agent {plan.container_name} never got an address on "
                 f"{endpoint.network}"
             )
-        token_values = Egress().resolve_token_values(
-            plan.egress_plan.token_env_map, plan.egress_secrets,
-        )
+        token_values = egress_token_values(plan)
         teardown_timeout = resolve_teardown_timeout(host_db_path())
         ctx = register_agent(
             plan.egress_plan,
@@ -255,10 +240,7 @@ def launch(
             agent_command=plan.agent_command,
             agent_prompt_mode=plan.agent_prompt_mode,
             agent_provider_template=plan.agent_provider_template,
-            terminal_title=(
-                f"{plan.spec.label} ({plan.spec.agent_name})"
-                if plan.spec.label else plan.spec.agent_name
-            ),
+            terminal_title=terminal_title(plan.spec),
             terminal_color=plan.spec.color,
             agent_workdir=plan.workspace_plan.workdir,
             exec_env=exec_env,
@@ -298,33 +280,15 @@ def stale_checks(plan: MacosContainerBottlePlan) -> None:
 def _provision_git_gate_keys(
     plan: MacosContainerBottlePlan,
 ) -> MacosContainerBottlePlan:
-    if not plan.git_gate_plan.upstreams:
-        return plan
-    git_gate_plan = GitGate().provision_dynamic_keys(
-        plan.manifest.bottle,
-        plan.git_gate_plan,
-        git_gate_state_dir(plan.slug),
-        plan.secrets,
-    )
-    return dataclasses.replace(plan, git_gate_plan=git_gate_plan)
+    return dataclasses.replace(plan, git_gate_plan=provision_git_gate_keys(plan))
 
 
 def _install_gateway_ca(
     plan: MacosContainerBottlePlan, endpoint: GatewayEndpoint,
 ) -> MacosContainerBottlePlan:
-    """Stage the SHARED gateway's CA for the provisioner to install, replacing
-    the per-bottle CA the companion container used to mint. Every bottle on
-    this host trusts this one CA."""
-    ca_dir = egress_state_dir(plan.slug) / "gateway-ca"
-    ca_dir.mkdir(parents=True, exist_ok=True)
-    ca_file = ca_dir / "gateway-ca.pem"
-    ca_file.write_text(endpoint.gateway_ca_pem)
-    egress_plan = dataclasses.replace(
-        plan.egress_plan,
-        mitmproxy_ca_host_path=ca_file,
-        mitmproxy_ca_cert_only_host_path=ca_file,
-    )
-    return dataclasses.replace(plan, egress_plan=egress_plan)
+    """Stage the shared gateway's CA for the provisioner to install."""
+    return dataclasses.replace(
+        plan, egress_plan=stage_gateway_ca(plan, endpoint.gateway_ca_pem))
 
 
 def _stamp_agent_urls(
@@ -340,14 +304,8 @@ def _stamp_agent_urls(
     per connection through `/etc/hosts`, which stays rewritable while the
     bottle runs."""
     del endpoint  # addressed by name; the address reaches the bottle via /etc/hosts
-    git_gate_url = (
-        f"http://{GATEWAY_HOSTNAME}:{_GIT_HTTP_PORT}"
-        if plan.git_gate_plan.upstreams else ""
-    )
-    supervise_url = (
-        f"http://{GATEWAY_HOSTNAME}:{SUPERVISE_PORT}/"
-        if plan.supervise_plan is not None else ""
-    )
+    git_gate_url, supervise_url = gateway_agent_urls(
+        plan, GATEWAY_HOSTNAME, plan.git_gate_plan)
     return dataclasses.replace(
         plan,
         agent_git_gate_url=git_gate_url,

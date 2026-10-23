@@ -33,24 +33,25 @@ from __future__ import annotations
 import dataclasses
 import functools
 import os
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from typing import Callable, Generator
 
 from ...agent_provider import runtime_for
-from ...egress import Egress
-from ...git_gate import GitGate
 from ...image_cache import check_stale
-from ...lib.log import die, info, warn
+from ...lib.log import die, info
 from .. import BottleImages, oci_agent_image
+from ..launch_common import (
+    LaunchTeardown,
+    egress_token_values,
+    gateway_agent_urls,
+    provision_git_gate_keys,
+    stage_gateway_ca,
+    terminal_title,
+)
 from . import util as docker_mod
 from .bottle import DockerBottle
 from .bottle_plan import DockerBottlePlan
-from ...bottle_state import (
-    bottle_state_dir,
-    egress_state_dir,
-    git_gate_state_dir,
-    read_committed_image,
-)
+from ...bottle_state import bottle_state_dir, read_committed_image
 from .compose import (
     compose_down,
     compose_dump_logs,
@@ -124,8 +125,6 @@ def launch(
     provision: Callable[[DockerBottlePlan, "DockerBottle"], str | None],
 ) -> Generator[DockerBottle, None, None]:
     """Launch and provision a Docker bottle via compose. Teardown on exit."""
-    stack = ExitStack()
-
     # Stamp the resolved agent image ref into the plan so compose rendering
     # picks up the right image (may be a committed snapshot or cached ref).
     plan = dataclasses.replace(
@@ -133,40 +132,20 @@ def launch(
         agent_provision=dataclasses.replace(plan.agent_provision, image=str(images.agent)),
     )
 
-    _bottle_for_revoke = plan.manifest.bottle
-    _git_gate_dir_for_revoke = git_gate_state_dir(plan.slug)
-
-    def teardown() -> None:
-        try:
-            stack.close()
-        except BaseException as exc:  # noqa: W0718 — teardown must not fail
-            warn(
-                f"teardown failed for container {plan.container_name}"
-                f" (compose-down): {exc!r}"
-            )
-        GitGate().revoke_provisioned_keys(
-            _bottle_for_revoke, _git_gate_dir_for_revoke, plan.secrets,
-        )
+    # Docker teardown reports a failure but never raises it (issue #156).
+    teardown = LaunchTeardown(
+        plan, f"container {plan.container_name} (compose-down)", reraise=False)
+    stack = teardown.stack
 
     try:
         # Step 2: mint the git-gate dynamic (gitea) deploy keys, if any, before
         # provisioning the bottle's repos into the shared gateway.
-        git_gate_plan = plan.git_gate_plan
-        if git_gate_plan.upstreams:
-            git_gate_plan = GitGate().provision_dynamic_keys(
-                plan.manifest.bottle, git_gate_plan, git_gate_state_dir(plan.slug),
-                plan.secrets,
-            )
+        git_gate_plan = provision_git_gate_keys(plan)
 
         # Step 3: register on the orchestrator + provision this bottle's
         # git-gate state into the shared gateway; get the agent's attach
-        # context (pinned source IP, gateway address, shared network). The
-        # per-bottle egress auth tokens are resolved from the plan's secrets
-        # now and handed to the orchestrator (in memory) for the gateway to
-        # inject — the agent never sees them.
-        token_values = Egress().resolve_token_values(
-            plan.egress_plan.token_env_map, plan.egress_secrets,
-        )
+        # context (pinned source IP, gateway address, shared network).
+        token_values = egress_token_values(plan)
         teardown_timeout = resolve_teardown_timeout(host_db_path())
         service = DockerInfraService(plan.settings)
         ctx = launch_consolidated(
@@ -176,29 +155,14 @@ def launch(
         stack.callback(deprovision_consolidated, ctx.bottle_id, service=service,
                        timeout=teardown_timeout)
 
-        # Step 4: install the SHARED gateway CA into the agent (replaces the
-        # per-bottle CA) — read it out of the running gateway container
-        # (INFRA_NAME now aliases the gateway container name; the orchestrator,
-        # split into its own container, holds no CA).
-        ca_dir = egress_state_dir(plan.slug) / "gateway-ca"
-        ca_dir.mkdir(parents=True, exist_ok=True)
-        ca_file = ca_dir / "gateway-ca.pem"
-        ca_file.write_text(DockerGateway(settings=plan.settings, name=INFRA_NAME).ca_cert_pem())
-        egress_plan = dataclasses.replace(
-            plan.egress_plan,
-            mitmproxy_ca_host_path=ca_file,
-            mitmproxy_ca_cert_only_host_path=ca_file,
-        )
-        # Point the agent's git-gate insteadOf rewrites at the shared gateway's
-        # HTTP git endpoint (9420) instead of the dead per-bottle `git-gate`
-        # alias. git-http + supervise on the gateway bypass the egress proxy
-        # (NO_PROXY includes the gateway address).
-        git_gate_url = (
-            f"http://{ctx.gateway_ip}:9420" if git_gate_plan.upstreams else ""
-        )
-        supervise_url = (
-            f"http://{ctx.gateway_ip}:9100/" if plan.supervise_plan is not None else ""
-        )
+        # Step 4: stage the shared gateway CA for the agent — read out of the
+        # running gateway container (INFRA_NAME aliases the gateway container;
+        # the orchestrator holds no CA) — and point the agent's git-gate and
+        # supervise URLs at the gateway.
+        egress_plan = stage_gateway_ca(
+            plan, DockerGateway(settings=plan.settings, name=INFRA_NAME).ca_cert_pem())
+        git_gate_url, supervise_url = gateway_agent_urls(
+            plan, ctx.gateway_ip, git_gate_plan)
         plan = dataclasses.replace(
             plan,
             git_gate_plan=git_gate_plan,
@@ -243,7 +207,7 @@ def launch(
             agent_command=plan.agent_command,
             agent_prompt_mode=plan.agent_prompt_mode,
             agent_provider_template=plan.agent_provider_template,
-            terminal_title=f"{plan.spec.label} ({plan.spec.agent_name})" if plan.spec.label else plan.spec.agent_name,
+            terminal_title=terminal_title(plan.spec),
             terminal_color=plan.spec.color,
             agent_workdir=plan.workspace_plan.workdir,
         )

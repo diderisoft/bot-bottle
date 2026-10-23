@@ -16,6 +16,9 @@ IDENTITY_HEADER = "x-bot-bottle-identity"
 # git_http_backend, and the git http-backend CGI subprocess.
 GIT_GATE_TIMEOUT_SECS = 15
 
+# The gateway's git-gate smart-HTTP port, which agents push and fetch through.
+GIT_HTTP_PORT = 9420
+
 # The orchestrator's control-plane signing key. Held only by the orchestrator
 # (to verify tokens) and the host CLI (to mint its own); never by the data plane.
 ORCHESTRATOR_TOKEN_ENV = "BOT_BOTTLE_ORCHESTRATOR_TOKEN"
