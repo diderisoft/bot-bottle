@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -162,6 +163,43 @@ def _forward(ns: argparse.Namespace) -> int:
     return 0
 
 
+def tail_line(record: dict[str, Any]) -> str:
+    """One request record as a line a person can follow."""
+    if "firehose_dropped" in record:
+        return f"... {record['firehose_dropped']} record(s) dropped"
+    req = record.get("http_request") or {}
+    url = req.get("url") or {}
+    resp = record.get("http_response") or {}
+    extra = (record.get("unmapped") or {}).get("bot_bottle") or {}
+    bottle = (record.get("actor") or {}).get("app_name") or "-"
+    target = f"{url.get('scheme') or 'https'}://{url.get('hostname')}:{url.get('port')}" \
+             f"{url.get('path') or ''}"
+    status, decision = resp.get("code", "-"), extra.get("decision", "")
+    return f"{bottle}  {req.get('http_method', '?')} {target}  {status}  {decision}"
+
+
+def _tail(ns: argparse.Namespace) -> int:
+    # pylint: disable=import-outside-toplevel
+    from ...control.hostctl import runner
+    from ...control.hostctl.client import HostControlClient
+    state = runner.running()
+    if state is None:
+        sys.stderr.write(f"{PROG}: the host controller isn't running; start it with "
+                         f"`{PROG} up`\n")
+        return 1
+    try:
+        for record in HostControlClient(state, runner.cli_token()).firehose(
+                bottle=ns.bottle or "", host=ns.host or ""):
+            sys.stdout.write((json.dumps(record) if ns.json else tail_line(record)) + "\n")
+            sys.stdout.flush()
+    except KeyboardInterrupt:
+        return 0
+    except runner.HostControlError as e:
+        sys.stderr.write(f"{PROG}: {e}\n")
+        return 1
+    return 0
+
+
 def cmd_audit(args: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog=f"{PROG} audit",
@@ -215,5 +253,10 @@ def cmd_audit(args: list[str]) -> int:
     forward.add_argument("--format", choices=("native", "ocsf"), default="native")
     forward.add_argument("--off", action="store_true", help="stop forwarding")
     forward.set_defaults(run=_forward)
+    tail = sub.add_parser("tail", help="follow every egress request as it happens")
+    tail.add_argument("--bottle", help="only this bottle's requests")
+    tail.add_argument("--host", help="only requests to this host")
+    tail.add_argument("--json", action="store_true", help="each record as OCSF JSON")
+    tail.set_defaults(run=_tail)
     ns = parser.parse_args(args)
     return ns.run(ns)

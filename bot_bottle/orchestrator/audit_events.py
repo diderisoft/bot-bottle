@@ -46,7 +46,8 @@ class OrchestratorAudit:
         self._slugs: dict[str, str] = {}
         self._clock = clock
 
-    def _slug(self, registry_id: str) -> str | None:
+    def slug(self, registry_id: str) -> str | None:
+        """The bottle's slug for a registry id; None when unknown."""
         if registry_id in self._slugs:
             return self._slugs[registry_id]
         slug = self._slug_for(registry_id) if self._slug_for is not None else None
@@ -60,7 +61,7 @@ class OrchestratorAudit:
         """`event` with its bottle named by slug and the registry id as its
         `activation`. Unchanged when the id isn't a known bottle."""
         registry_id = event.bottle
-        slug = self._slug(registry_id) if registry_id else None
+        slug = self.slug(registry_id) if registry_id else None
         if not slug or slug == registry_id:
             return event
         body = event.to_json()

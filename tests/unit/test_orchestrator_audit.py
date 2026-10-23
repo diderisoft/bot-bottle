@@ -65,11 +65,11 @@ class ApiEvents(unittest.TestCase):
         self.sink = _Sink()
 
     def call(self, method: str, path: str, body: object = None,
-             role: str | None = ROLE_CLI) -> tuple[int, Any]:
+             role: str | None = ROLE_CLI, hostctl: Any = None) -> tuple[int, Any]:
         headers = {"content-type": "application/json"}
         if role is not None:
             headers[ORCHESTRATOR_AUTH_HEADER] = mint(role, _KEY)
-        app = create_app(self.orch, signing_key=_KEY,
+        app = create_app(self.orch, signing_key=_KEY, hostctl=hostctl,
                          audit=OrchestratorAudit(self.sink, slug_for=self.orch.session_for))
 
         async def request() -> httpx.Response:
@@ -188,6 +188,22 @@ class ApiEvents(unittest.TestCase):
         self.assertIn("g.com", self.policy(rec.bottle_id))
         self.assertEqual("decision.resolved", self.sink.sent_now[-1].type)
 
+    def test_the_firehose_relays_to_the_host_controller_named_by_slug(self) -> None:
+        rec = self.register("amber-fox", "best_effort")
+        relay = _FirehoseRelay()
+        record = {"class_uid": 4002, "actor": {"app_name": rec.bottle_id}}
+        status, reply = self.call("POST", "/firehose", {"records": [record], "dropped": 1},
+                                  role=ROLE_GATEWAY, hostctl=relay)
+        self.assertEqual((200, True), (status, reply["wanted"]))
+        [sent] = relay.sent  # pylint: disable=unbalanced-tuple-unpacking
+        self.assertEqual(1, sent["dropped"])
+        self.assertEqual({"app_name": "amber-fox", "session": {"uid": rec.bottle_id}},
+                         sent["records"][0]["actor"])
+
+    def test_without_a_host_controller_the_firehose_isnt_wanted(self) -> None:
+        status, reply = self.call("POST", "/firehose", {"records": []}, role=ROLE_GATEWAY)
+        self.assertEqual((200, False), (status, reply["wanted"]))
+
     def test_a_proposal_and_its_decision(self) -> None:
         rec = self.store.register("10.243.0.9", metadata=json.dumps({"slug": "demo"}),
                                   policy="routes: []\n")
@@ -211,6 +227,23 @@ class ApiEvents(unittest.TestCase):
         self.assertEqual(("decision.resolved", "blocked", "role:cli"),
                          (resolved.type, resolved.outcome, resolved.actor))
         self.assertEqual(proposed.correlation_id, resolved.correlation_id)
+
+
+class _FirehoseRelay:
+    """Stands in for HostControlRelay on the firehose route."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict[str, Any]] = []
+
+    def request(self, method: str, path: str,
+                body: dict[str, object] | None = None) -> tuple[int, dict[str, object]]:
+        del method, path
+        assert body is not None
+        self.sent.append(body)
+        return 200, {"wanted": True}
+
+    def live_source_ips(self) -> list[str]:
+        return []
 
 
 def _event(ts: str = "2026-10-23T00:00:00.000Z") -> AuditEvent:

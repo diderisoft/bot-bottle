@@ -24,7 +24,7 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w("  active    list currently-running bot-bottle bottles\n")
     w("  attach    join a running agent session in this terminal (Ctrl-] detaches)\n")
     w("  audit     check, search and configure the audit journal "
-      "(verify|query|export|rebuild|import|delivery|forward)\n")
+      "(tail|verify|query|export|rebuild|import|delivery|forward)\n")
     w("  backend   set up / check / undo a backend's host prerequisites (setup|status|teardown)\n")
     w("  cleanup   stop and remove all active bot-bottle containers\n")
     w("  commit    snapshot a running bottle's container state to a Docker image\n")

@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from ...contract.auth import ROLE_CLI
 from ...contract.audit import AuditEvent
+from ...contract.firehose import FIREHOSE_PATH, FIREHOSE_STREAM_PATH
 from ...contract.hostctl import (
     AUDIT_APPEND_PATH, AUDIT_PRODUCERS, AUTH_HEADER, AUTH_SCHEME, BOTTLES_PATH, HOST_CONTROL,
     JOBS_PATH, LIVE_BOTTLES_PATH, ORCHESTRATOR_PATH, ROLE_ORCHESTRATOR, SESSIONS_PATH,
@@ -25,6 +26,7 @@ from .attach import Viewer
 from .audit_events import AuditUnavailable, digest_request
 from .audit_journal import AuditRedactionError
 from .bottles import BottleService
+from .firehose import FirehoseHub
 from .jobs import JobRegistry
 from .live import LiveBottles
 from .sessions import SessionManager
@@ -48,7 +50,7 @@ class HostControlServer(ThreadingHTTPServer):
                  bottles: BottleService | None = None, *,
                  jobs: JobRegistry | None = None, live: LiveBottles | None = None,
                  peers: str = "", roles: frozenset[str] = HOST_CONTROL.roles,
-                 backend: str = "") -> None:
+                 backend: str = "", firehose: FirehoseHub | None = None) -> None:
         if not key:
             raise ValueError("host controller needs its signing key")
         super().__init__(address, _Handler)
@@ -61,6 +63,7 @@ class HostControlServer(ThreadingHTTPServer):
         self.sessions = sessions if sessions is not None else SessionManager({})
         self.bottles = bottles if bottles is not None else BottleService(self.sessions)
         self.live = live if live is not None else LiveBottles()
+        self.firehose = firehose if firehose is not None else FirehoseHub()
 
     def verify_request(self, request: socket.socket | tuple[bytes, socket.socket],
                        client_address: tuple[str, int] | str) -> bool:
@@ -108,6 +111,8 @@ class _Handler(BaseHTTPRequestHandler):
         elif url.path == LIVE_BOTTLES_PATH:
             if self._allowed(_BOTTLE_ROLES):
                 self._live(server, parse_qs(url.query))
+        elif url.path == FIREHOSE_STREAM_PATH:
+            self._firehose_stream(server, parse_qs(url.query))
         else:
             self._send(404, {"error": f"no route {url.path}"})
 
@@ -206,10 +211,47 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._send(200, {"written": written})
 
+    def _firehose_publish(self, server: HostControlServer) -> None:
+        """A batch of request records the orchestrator relays from the gateway."""
+        if self._allowed((ROLE_ORCHESTRATOR,)) is None:
+            return
+        try:
+            body = self._json_body()
+            records = body.get("records")
+            dropped = body.get("dropped", 0)
+            if not isinstance(records, list) or not isinstance(dropped, int):
+                raise ValueError("expected records (a list) and dropped (an int)")
+        except ValueError as e:
+            self._send(400, {"error": str(e)})
+            return
+        batch = [r for r in records if isinstance(r, dict)]
+        self._send(200, server.firehose.publish(batch, dropped).to_json())
+
+    def _firehose_stream(self, server: HostControlServer, query: dict[str, list[str]]) -> None:
+        """`audit tail`: each request record as it arrives, as NDJSON."""
+        if self._allowed((ROLE_CLI,)) is None:
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.end_headers()
+        records = server.firehose.subscribe(bottle=(query.get("bottle") or [""])[0],
+                                            host=(query.get("host") or [""])[0])
+        try:
+            for record in records:
+                # A blank line on quiet seconds finds a client that left.
+                self.wfile.write(b"\n" if record is None else json.dumps(record).encode() + b"\n")
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            records.close()
+        self.close_connection = True
+
     def do_POST(self) -> None:  # pylint: disable=invalid-name
         server = cast(HostControlServer, self.server)
         path = urlsplit(self.path).path
-        route = {BOTTLES_PATH: self._launch, AUDIT_APPEND_PATH: self._audit_append}.get(path)
+        route = {BOTTLES_PATH: self._launch, AUDIT_APPEND_PATH: self._audit_append,
+                 FIREHOSE_PATH: self._firehose_publish}.get(path)
         if route is not None:
             route(server)
             return

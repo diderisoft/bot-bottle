@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterator
 
+
+from ...contract.firehose import FIREHOSE_STREAM_PATH
 from ...contract.hostctl import JOBS_PATH, bearer
 from .runner import HostControlError, HostControlState
 
@@ -53,6 +56,15 @@ class HostControlClient:
         with self._open(f"{JOBS_PATH}/{job_id}/events?from={start}", timeout=None) as resp:
             for line in resp:
                 if line.strip():
+                    yield json.loads(line)
+
+    def firehose(self, *, bottle: str = "", host: str = "") -> Iterator[dict[str, object]]:
+        """Request records as they arrive, until the caller stops."""
+        query = urllib.parse.urlencode({k: v for k, v in (("bottle", bottle), ("host", host)) if v})
+        path = FIREHOSE_STREAM_PATH + (f"?{query}" if query else "")
+        with self._open(path, timeout=None) as resp:
+            for line in resp:
+                if line.strip():  # blank lines are the server's keep-alives
                     yield json.loads(line)
 
     def follow(self, job_id: str, write: Callable[[str], None]) -> dict[str, object] | None:

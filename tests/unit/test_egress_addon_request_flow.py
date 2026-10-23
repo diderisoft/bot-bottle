@@ -198,7 +198,7 @@ _ensure_shims()
 
 import bot_bottle.gateway.egress.addon as _ea_mod  # noqa: E402  (after shims)
 from bot_bottle.gateway.egress.addon import EgressAddon  # noqa: E402  (after shims)
-from bot_bottle.gateway.egress.addon import (  # noqa: E402
+from bot_bottle.gateway.egress.addon_settings import (  # noqa: E402
     DEFAULT_INBOUND_SCAN_LIMIT_BYTES,
     DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS,
     _inbound_scan_limit_from_env,
@@ -213,6 +213,8 @@ from bot_bottle.gateway.egress.addon_core import (  # noqa: E402
 )
 from bot_bottle.gateway.policy_resolver import PolicyResolveError  # noqa: E402
 from bot_bottle.gateway.egress.audit_hooks import EgressAudit  # noqa: E402
+from bot_bottle.gateway.egress.firehose import EgressFirehose  # noqa: E402
+from bot_bottle.contract.firehose import Capture  # noqa: E402
 from bot_bottle.contract.held_secrets import CANARY_KEY  # noqa: E402
 
 
@@ -1421,6 +1423,52 @@ class TestRequiredDelivery(_AuditCase):
         self.assertIn("allowlist", flow.response.get_text())
         self.assertEqual(["egress.decision"], [e.type for e in sink.events])
         self.assertEqual([], sink.sent_now)
+
+
+class _FirehoseClient:
+    def __init__(self, wanted: bool = True) -> None:
+        self.capture = Capture(wanted=wanted)
+        self.records: list[dict[str, Any]] = []
+
+    def submit(self, record: dict[str, Any]) -> None:
+        self.records.append(record)
+
+
+class TestFirehoseHooks(unittest.TestCase):
+    def addon(self, *routes: Route, wanted: bool = True) -> tuple[EgressAddon, _FirehoseClient]:
+        addon = _addon(Config(routes=routes), slug="amber-fox")
+        client = _FirehoseClient(wanted)
+        addon._firehose = EgressFirehose(cast(Any, client))
+        return addon, client
+
+    def test_an_allowed_request_is_recorded_when_its_response_arrives(self) -> None:
+        addon, client = self.addon(Route(host="api.example.com"))
+        flow = _with_client_ip(_Flow(_Request(host="api.example.com")), "10.243.0.9")
+        _run_request(addon, flow)
+        self.assertEqual([], client.records)
+        flow.response = _Response(200, content="ok")
+        addon.response(flow)  # type: ignore[arg-type]
+        [record] = client.records  # pylint: disable=unbalanced-tuple-unpacking
+        self.assertEqual((200, "allowed", "amber-fox"),
+                         (record["http_response"]["code"],
+                          record["unmapped"]["bot_bottle"]["decision"],
+                          record["actor"]["app_name"]))
+
+    def test_a_blocked_request_is_recorded_once(self) -> None:
+        addon, client = self.addon(Route(host="api.example.com"))
+        flow = _with_client_ip(_Flow(_Request(host="evil.example.com")), "10.243.0.9")
+        _run_request(addon, flow)
+        addon.response(flow)  # type: ignore[arg-type]
+        [record] = client.records  # pylint: disable=unbalanced-tuple-unpacking
+        self.assertEqual("blocked", record["unmapped"]["bot_bottle"]["decision"])
+
+    def test_nothing_is_captured_while_nobody_listens(self) -> None:
+        addon, client = self.addon(Route(host="api.example.com"), wanted=False)
+        flow = _with_client_ip(_Flow(_Request(host="api.example.com")), "10.243.0.9")
+        _run_request(addon, flow)
+        flow.response = _Response(200, content="ok")
+        addon.response(flow)  # type: ignore[arg-type]
+        self.assertEqual([], client.records)
 
 if __name__ == "__main__":
     unittest.main()

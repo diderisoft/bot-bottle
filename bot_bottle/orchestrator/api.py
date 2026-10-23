@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ..contract.audit import AUDIT_EVENTS_PATH, GATEWAY_PRODUCERS, AuditEvent
+from ..contract.firehose import FIREHOSE_PATH, Capture
 from ..contract.auth import CONTROL_PLANE, ROLE_CLI, ROLES
 from ..contract.hostctl import BOTTLES_PATH, JOBS_PATH, ROLE_ORCHESTRATOR, LaunchRequest
 from ..contract.supervise import TOOLS
@@ -44,6 +45,7 @@ RECONCILE_TIMER_GRACE_SECONDS = 600.0
 
 _GATEWAY_ROUTES = frozenset({
     ("POST", AUDIT_EVENTS_PATH),
+    ("POST", FIREHOSE_PATH),
     ("POST", "/resolve"),
     ("POST", "/supervise/propose"),
     ("POST", "/supervise/poll"),
@@ -100,6 +102,11 @@ class AuditEventsBody(_StrictModel):
     # The bottle's `audit.delivery` is `required`: write it now, and fail
     # unless it was written, so the gateway can refuse the action.
     required: StrictBool = False
+
+
+class FirehoseBody(_StrictModel):
+    records: list[dict[StrictStr, Any]]
+    dropped: int = 0
 
 
 class IdentityBody(_StrictModel):
@@ -292,6 +299,19 @@ async def reconcile_periodically(
             continue
         if reaped:
             log.info(f"reaped {len(reaped)} orphaned bottle(s): {', '.join(reaped)}")
+
+
+def _name_firehose_record(record: dict[str, Any], audit: OrchestratorAudit) -> None:
+    """Rename the bottle the gateway knows by registry id to its slug, the
+    name every audit record uses; the id becomes the run's activation."""
+    actor = record.get("actor")
+    if not isinstance(actor, dict):
+        return
+    registry_id = actor.get("app_name")
+    slug = audit.slug(registry_id) if isinstance(registry_id, str) and registry_id else None
+    if slug and slug != registry_id:
+        actor["app_name"] = slug
+        actor["session"] = {"uid": registry_id}
 
 
 def create_app(
@@ -558,6 +578,22 @@ def create_app(
         if not audit.relay(event, producer=body.producer, required=body.required):
             raise HTTPException(503, "audit event not written")
         return {"written": True} if body.required else {"queued": True}
+
+    @app.post(FIREHOSE_PATH)
+    def firehose(body: FirehoseBody) -> dict[str, Any]:
+        """A batch of the gateway's request records, passed to the host
+        controller with each bottle named by slug. The reply says whether to
+        keep capturing; with no host controller to take them, no."""
+        if hostctl is None:
+            return Capture().to_json()
+        for record in body.records:
+            _name_firehose_record(record, audit)
+        try:
+            status, reply = hostctl.request("POST", FIREHOSE_PATH,
+                                            {"records": body.records, "dropped": body.dropped})
+        except HostControlUnreachable:
+            return Capture().to_json()
+        return Capture.from_json(reply).to_json() if status == 200 else Capture().to_json()
 
     @app.post("/resolve")
     def resolve(body: IdentityBody) -> dict[str, object]:

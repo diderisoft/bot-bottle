@@ -18,6 +18,12 @@ from mitmproxy import http  # type: ignore[import-not-found]  # pylint: disable=
 from bot_bottle.contract.identity import IDENTITY_HEADER
 from bot_bottle.gateway.audit_client import GatewayAudit
 from bot_bottle.gateway.egress.audit_hooks import AUDIT_REFUSED, EgressAudit
+from bot_bottle.gateway.egress.firehose import EgressFirehose, FirehoseClient
+from bot_bottle.gateway.egress.addon_settings import (
+    DEFAULT_INBOUND_SCAN_LIMIT_BYTES,
+    _inbound_scan_limit_from_env,
+    _token_allow_timeout_from_env,
+)
 from bot_bottle.gateway.egress.dlp_detectors import redact_tokens
 from bot_bottle.gateway.egress.dlp_config import (
     DEFAULT_OUTBOUND_ON_MATCH,
@@ -88,18 +94,6 @@ def _token_from_proxy_auth(header: str) -> str:
     _, _, password = decoded.partition(":")
     return password
 
-# Seconds the egress proxy holds a token-blocked request open waiting for the
-# operator's supervisor decision, overridable via env.
-DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS = 300.0
-
-# Maximum bytes of a response body passed to the DLP inbound scan. mitmproxy
-# buffers the full response before the hook fires; capping at scan time limits
-# the additional memory amplification from decoded text and regex match strings.
-# A cap is a security trade-off (content above the threshold is not scanned),
-# but without it a single large download OOM-kills the shared egress process
-#. Override with EGRESS_INBOUND_SCAN_LIMIT_BYTES; set to 0 to
-# disable the cap.
-DEFAULT_INBOUND_SCAN_LIMIT_BYTES = 1 * 1024 * 1024  # 1 MiB
 # Filesystem poll cadence while awaiting the operator's response.
 TOKEN_ALLOW_POLL_INTERVAL_SECONDS = 0.5
 
@@ -127,6 +121,7 @@ class EgressAddon:
     _inbound_scan_limit: int = DEFAULT_INBOUND_SCAN_LIMIT_BYTES
     # None (the class default, for __new__-built addons): record nothing.
     _audit: "EgressAudit | None" = None
+    _firehose: "EgressFirehose | None" = None
 
     def __init__(self) -> None:
         # Resolver-only: the gateway is always multi-tenant, resolving each
@@ -141,7 +136,9 @@ class EgressAddon:
                 "no static routes file to fall back to."
             )
         self._resolver = PolicyResolver(orch_url)
-        self._audit = EgressAudit(GatewayAudit(orch_url, "egress").start())
+        audit, firehose = GatewayAudit(orch_url, "egress"), FirehoseClient(orch_url)
+        self._audit, self._firehose = EgressAudit(audit), EgressFirehose(firehose)
+        self._senders: tuple[GatewayAudit | FirehoseClient, ...] = (audit, firehose)
         # Tokens the operator has approved this session, keyed by
         # bottle so the shared gateway keeps each bottle's safelist separate —
         # a global set would let bottle A's approved secret pass bottle B's DLP
@@ -241,8 +238,13 @@ class EgressAddon:
             self._refuse_unrecorded(flow)
         return recorded
 
+    def _firehose_end(self, flow: http.HTTPFlow, decision: str = "", reason: str = "") -> None:
+        if self._firehose is not None:
+            self._firehose.end(flow, self._flow_ctx(flow)[1], decision, reason)
+
     def _refuse_unrecorded(self, flow: http.HTTPFlow) -> None:
         """403 for a `required` action whose record wasn't written."""
+        self._firehose_end(flow, "blocked", AUDIT_REFUSED)
         flow.response = http.Response.make(
             403, AUDIT_REFUSED.encode("utf-8"),
             {"Content-Type": "text/plain; charset=utf-8"},
@@ -260,6 +262,7 @@ class EgressAddon:
         any other refusal as a blocked `egress.decision`."""
         self._audit_egress(flow, "egress.anomaly" if anomaly else "egress.decision",
                            "blocked", reason, hold=False)
+        self._firehose_end(flow, "blocked", reason)
         if self._flow_log(flow) >= LOG_BLOCKS:
             entry: dict[str, object] = {"event": "egress_block", "reason": reason}
             if ctx:
@@ -411,8 +414,11 @@ class EgressAddon:
         host = flow.request.pretty_host
         route = match_route(config.routes, host)
         if route is not None and not route.inspect:
+            if self._firehose is not None:
+                self._firehose.begin(flow, env)  # the tunnel is all there is to record
             decision = decide(config.routes, host, "/", env, deny_reason=config.deny_reason)
             if decision.action == "block":
+                self._firehose_end(flow, "blocked", decision.reason)
                 self._audit_egress(flow, "egress.decision", "blocked", decision.reason,
                                    hold=False)
                 flow.response = http.Response.make(
@@ -426,6 +432,7 @@ class EgressAddon:
             if not self._first_contact(flow):
                 self._refuse_unrecorded(flow)
                 return
+            self._firehose_end(flow, "allowed")
             if conn_id:
                 self._passthrough_conns.add(conn_id)
 
@@ -453,6 +460,8 @@ class EgressAddon:
         if flow.request.pretty_host == INTROSPECT_HOST:
             self._serve_introspection(flow, request_path, config)
             return
+        if self._firehose is not None:
+            self._firehose.begin(flow, env)
 
         # DLP outbound scan BEFORE stripping auth — catches tokens the
         # agent tried to smuggle in any header, path, query param, or body.
@@ -569,6 +578,8 @@ class EgressAddon:
             # canary hit is an exfil attempt by definition: never redacted.
             if policy == ON_MATCH_REDACT and not result.canary:
                 if redact_request(flow.request, route, env):
+                    if self._firehose is not None:
+                        self._firehose.mark(flow, "redacted")
                     reason = f"egress DLP: {result.reason}; redacted"
                     recorded = await self._allowed_and_recorded(
                         flow, lambda: self._audit_egress(
@@ -724,6 +735,7 @@ class EgressAddon:
     def response(self, flow: http.HTTPFlow) -> None:
         """DLP inbound scan on response headers and body, against the calling
         bottle's resolved config (`request()` stashed it — see `_flow_ctx`)."""
+        self._firehose_end(flow)  # once per flow; a block already ended it
         config, _slug, env = self._flow_ctx(flow)
         route = match_route(config.routes, flow.request.pretty_host)
         if route is None or not route.inspect:
@@ -766,6 +778,17 @@ class EgressAddon:
                 + "\n"
             )
 
+    def load(self, loader: typing.Any) -> None:
+        """mitmproxy loaded the addon: start sending audit events and firehose
+        records. Not in __init__, so importing this module starts no threads."""
+        del loader
+        for sender in self._senders:
+            sender.start()
+
+    def error(self, flow: http.HTTPFlow) -> None:
+        """A request that failed upstream (no response) still gets its record."""
+        self._firehose_end(flow, "failed", str(getattr(flow, "error", "") or ""))
+
     def websocket_message(self, flow: http.HTTPFlow) -> None:
         """DLP scan on WebSocket frames, against the calling bottle's resolved
         config (see `_flow_ctx`). `request()` resolves and stashes the per-flow
@@ -806,44 +829,6 @@ class EgressAddon:
                     flow.kill()  # type: ignore[union-attr]
                 elif result.severity == "warn":
                     sys.stderr.write(f"egress DLP warn: {result.reason}\n")
-
-
-def _inbound_scan_limit_from_env(env: "os._Environ[str]") -> int:
-    """Read EGRESS_INBOUND_SCAN_LIMIT_BYTES; fall back to the default on an
-    unset or invalid value. Returns 0 to disable the cap."""
-    raw = env.get("EGRESS_INBOUND_SCAN_LIMIT_BYTES", "").strip()
-    if not raw:
-        return DEFAULT_INBOUND_SCAN_LIMIT_BYTES
-    try:
-        value = int(raw)
-    except ValueError:
-        value = -1
-    if value < 0:
-        sys.stderr.write(
-            "egress: invalid EGRESS_INBOUND_SCAN_LIMIT_BYTES="
-            f"{raw!r}; using default {DEFAULT_INBOUND_SCAN_LIMIT_BYTES}\n"
-        )
-        return DEFAULT_INBOUND_SCAN_LIMIT_BYTES
-    return value
-
-
-def _token_allow_timeout_from_env(env: "os._Environ[str]") -> float:
-    """Read EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS; fall back to the default on an
-    unset or invalid value (a bad value should not wedge egress at boot)."""
-    raw = env.get("EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS", "").strip()
-    if not raw:
-        return DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS
-    try:
-        value = float(raw)
-    except ValueError:
-        value = 0.0
-    if value <= 0:
-        sys.stderr.write(
-            "egress: invalid EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS="
-            f"{raw!r}; using default {DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS:g}s\n"
-        )
-        return DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS
-    return value
 
 
 addons = [EgressAddon()]
