@@ -493,6 +493,7 @@ done < "$refs_file"
 # *shapes*; this knows the bottle's actual values. Fails closed.
 if ! PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" \
     python3 -m bot_bottle.gateway.git_gate.held_secret_scan "$refs_file"; then
+  audit_push forge.push_rejected blocked "*" --detail "carries a secret this bottle holds"
   exit 1
 fi
 
