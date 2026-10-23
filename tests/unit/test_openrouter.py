@@ -32,13 +32,13 @@ class FreeModels(unittest.TestCase):
         self.assertEqual(["a/x:free", "d/w"], [m.id for m in models])
         self.assertEqual((1000, 50), (models[0].context_length, models[0].max_completion_tokens))
 
-    def test_ranked_models_win_and_the_router_is_the_fallback(self) -> None:
+    def test_the_router_comes_first_then_ranked_models(self) -> None:
         ranked = openrouter.RANKED_FREE_MODELS[1]
         listed = [openrouter.FreeModel("other:free"), openrouter.FreeModel(ranked),
-                  openrouter.FreeModel(openrouter.FREE_ROUTER)]
-        self.assertEqual(ranked, openrouter.pick_free_model(listed).id)
-        self.assertEqual(openrouter.FREE_ROUTER,
-                         openrouter.pick_free_model([openrouter.FreeModel("other:free")]).id)
+                  openrouter.FreeModel(openrouter.FREE_ROUTER, 200000)]
+        self.assertEqual([openrouter.FREE_ROUTER, ranked],
+                         [m.id for m in openrouter.candidates(listed)])
+        self.assertEqual(200000, openrouter.pick_free_model(listed).context_length)
 
     def test_probe_sends_a_tool_request_with_the_key(self) -> None:
         sent: list[tuple[str, dict[str, Any], str]] = []
@@ -68,7 +68,7 @@ class FreeModels(unittest.TestCase):
             return model_id == ranked[2]
 
         self.assertEqual(ranked[2], openrouter.pick_working_model(listed, "k", check=check).id)
-        self.assertEqual([ranked[0], ranked[2]], tried)
+        self.assertEqual([openrouter.FREE_ROUTER, ranked[0], ranked[2]], tried)
 
     def test_a_failed_listing_is_an_openrouter_error(self) -> None:
         def boom(_url: str) -> Any:

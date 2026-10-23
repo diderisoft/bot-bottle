@@ -147,18 +147,24 @@ class PiOnOpenRouter(_Host):
         self.assertEqual(0o600, stat.S_IMODE((self.root / "secrets").stat().st_mode))
         self.assertFalse(any("sk-or-from-oauth" in line for line in self.lines))
         settings = self.load("pi").bottle.agent_provider.settings
-        self.assertEqual(("openrouter", ["google/gemma-4-26b-a4b-it:free"], "OPENROUTER_API_KEY"),
-                         (settings["provider"], settings["models"], settings["api_key_env"]))
-        self.assertEqual((131072, 16384), (settings["context_window"], settings["max_tokens"]))
+        self.assertEqual(("openrouter", "OPENROUTER_API_KEY"),
+                         (settings["provider"], settings["api_key_env"]))
+        self.assertEqual((131072, 8192), (settings["context_window"], settings["max_tokens"]))
         self.assertTrue(any("50 requests a day" in line for line in self.lines))
 
-    def test_a_listed_model_that_does_not_answer_is_skipped(self) -> None:
+    def test_the_free_router_is_the_default(self) -> None:
+        self.setup(interactive=True).run()
+        self.assertEqual([(openrouter.FREE_ROUTER, "sk-or-from-oauth")], self.probed)
+        self.assertEqual([openrouter.FREE_ROUTER],
+                         self.load("pi").bottle.agent_provider.settings["models"])
+
+    def test_a_model_that_does_not_answer_is_skipped(self) -> None:
         nemotron = openrouter.FreeModel("nvidia/nemotron-3-super-120b-a12b:free")
         self.models = [nemotron, _GEMMA]
-        self.dead = {nemotron.id}
+        self.dead = {openrouter.FREE_ROUTER, nemotron.id}
         self.setup(interactive=True).run()
-        self.assertEqual([(nemotron.id, "sk-or-from-oauth"), (_GEMMA.id, "sk-or-from-oauth")],
-                         self.probed)
+        self.assertEqual([openrouter.FREE_ROUTER, nemotron.id, _GEMMA.id],
+                         [m for m, _ in self.probed])
         self.assertEqual([_GEMMA.id], self.load("pi").bottle.agent_provider.settings["models"])
 
     def test_when_nothing_answers_the_free_router_is_used(self) -> None:
@@ -179,6 +185,7 @@ class PiOnOpenRouter(_Host):
         self.assertEqual(1, self.signed_in)
 
     def test_refresh_model_rewrites_only_a_starter_setup_wrote(self) -> None:
+        self.dead = {openrouter.FREE_ROUTER}
         self.setup(extra_env={"OPENROUTER_API_KEY": "k"}).run()
         self.models = [openrouter.FreeModel("poolside/laguna-s-2.1:free")]
         self.setup(extra_env={"OPENROUTER_API_KEY": "k"}, refresh_model=True).run()
@@ -228,6 +235,7 @@ class Doctor(_Host):
     def test_warns_when_the_pi_model_left_the_free_list(self) -> None:
         from bot_bottle.cli.commands import doctor  # pylint: disable=import-outside-toplevel
 
+        self.dead = {openrouter.FREE_ROUTER}  # a single free model, which can vanish
         self.setup(extra_env={"OPENROUTER_API_KEY": "k"}).run()
         with patch.object(openrouter, "listed", return_value=False), \
                 patch("builtins.print") as out:

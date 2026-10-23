@@ -31,8 +31,10 @@ API = "https://openrouter.ai/api/v1"
 AUTH_URL = "https://openrouter.ai/auth"
 FREE_ROUTER = "openrouter/free"
 
-# Free models known to handle agentic coding, best first. The first one that
-# is listed (free, with tools) wins; `openrouter/free` is the fallback.
+# `openrouter/free` comes first: each request goes to a free model that is up
+# right now, which in practice beats any single free model (they go down or
+# get throttled in OpenRouter's shared free pool). These are the fallbacks if
+# the router itself doesn't answer, best first.
 RANKED_FREE_MODELS = (
     "nvidia/nemotron-3-super-120b-a12b:free",
     "google/gemma-4-31b-it:free",
@@ -88,15 +90,15 @@ def free_tool_models(fetch: Callable[[str], Any] = _get_json) -> list[FreeModel]
 
 
 def candidates(models: list[FreeModel]) -> list[FreeModel]:
-    """Listed models to try, best first: the ranked ones, then the free
-    router."""
+    """Models to try, best first: the free router, then the ranked listed
+    models."""
     by_id = {m.id: m for m in models}
     ranked = [by_id[model_id] for model_id in RANKED_FREE_MODELS if model_id in by_id]
-    return [*ranked, by_id.get(FREE_ROUTER, FreeModel(FREE_ROUTER))]
+    return [by_id.get(FREE_ROUTER, FreeModel(FREE_ROUTER)), *ranked]
 
 
 def pick_free_model(models: list[FreeModel]) -> FreeModel:
-    """The best-ranked listed model, else the free router (no probing)."""
+    """The first candidate (the free router), without probing."""
     return candidates(models)[0]
 
 
@@ -129,8 +131,9 @@ def _post_authed(url: str, body: dict[str, Any], key: str) -> Any:
 
 def pick_working_model(models: list[FreeModel], key: str, *, max_probes: int = 4,
                        check: Callable[[str, str], bool] = probe) -> FreeModel:
-    """The best candidate that answers a probe. If none of the first
-    ``max_probes`` does, the free router, which reroutes per request."""
+    """The first candidate that answers a probe. If none of the first
+    ``max_probes`` does, the free router anyway: it reroutes per request,
+    so it may well work later."""
     for model in candidates(models)[:max_probes]:
         if check(model.id, key):
             return model
