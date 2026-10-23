@@ -22,6 +22,7 @@ from pathlib import Path
 
 from ..contract.hostctl import InfraSettings, Settings
 from ..control.gateway import Gateway
+from ..lib import log
 from ..lib.log import die, info
 from ..control.lifecycle import DEFAULT_STARTUP_TIMEOUT_SECONDS, Orchestrator
 from ..paths import bot_bottle_root
@@ -110,6 +111,7 @@ class InfraService(abc.ABC):
         *,
         startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
         attach_policy: AttachPolicy = AttachPolicy.STRICT,
+        launch_stages: bool = False,
     ) -> str:
         """Bring the orchestrator + gateway pair up (idempotent per-host
         singleton — a healthy, current pair is left running) and, when either
@@ -122,7 +124,18 @@ class InfraService(abc.ABC):
         was interrupted anywhere is retried by the next bring-up even when it
         adopts the pair. The whole sequence holds this backend's bring-up lock.
         Under the default STRICT policy a failure ends the bring-up naming each
-        bottle."""
+        bottle. ``launch_stages`` (a bottle launch) marks this as its own
+        progress stage, then hands back to "Starting the bottle"."""
+        if launch_stages:
+            log.stage("services", "Starting bot-bottle services")
+        try:
+            return self._ensure_running(startup_timeout=startup_timeout,
+                                        attach_policy=attach_policy)
+        finally:
+            if launch_stages:
+                log.stage("start", "Starting the bottle")
+
+    def _ensure_running(self, *, startup_timeout: float, attach_policy: AttachPolicy) -> str:
         with self.bring_up_lock():
             marker = self._reattach_pending_marker()
             pending = marker.exists()

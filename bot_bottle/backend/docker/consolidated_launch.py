@@ -88,7 +88,7 @@ def launch_consolidated(
     provision its git-gate state. Returns the agent's attach context. (Bringing
     the pair up cold also reattaches already-running bottles; see
     `InfraService.reattach_running_bottles`.)"""
-    url = service.ensure_running()
+    url = service.ensure_running(launch_stages=True)
     # Agents attribute against the *gateway* container (data plane), not the
     # orchestrator — the two planes are now separate containers. Read its
     # agent-facing address + provisioning transport off the Gateway service.

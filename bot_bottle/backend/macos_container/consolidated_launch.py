@@ -79,7 +79,7 @@ def ensure_gateway(*, service: MacosInfraService) -> GatewayEndpoint:
     report how to reach the gateway. Idempotent — one singleton pair, so N bottle
     launches share it. Call before starting the agent container: the agent's
     proxy env needs `gateway_ip` at run time."""
-    orchestrator_url = service.ensure_running()
+    orchestrator_url = service.ensure_running(launch_stages=True)
     endpoint = GatewayEndpoint(
         orchestrator_url=orchestrator_url,
         gateway_ip=service.gateway().address(),

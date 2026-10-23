@@ -302,7 +302,8 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         """Template: build or load images, then delegate to _launch_impl."""
         log.stage("image", "Getting images")
         images = self._build_or_load_images(plan)
-        log.stage("start", "Starting the bottle")
+        # The backend's bring-up marks "Starting bot-bottle services" and then
+        # "Starting the bottle" (InfraService.ensure_running).
         with self._launch_impl(plan, images) as bottle:
             yield bottle
 

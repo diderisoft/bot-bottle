@@ -16,6 +16,7 @@ from collections.abc import Callable
 from functools import cache
 
 from . import image_inputs, image_registry
+from .lib import log
 from .lib.log import info
 from .published_artifacts import Artifact, current_platform, load_artifacts_manifest_optional
 
@@ -45,6 +46,7 @@ def _local_inputs_hash(image: str) -> str:
 def _note_mismatch(image: str, version: str) -> None:
     info(f"published {image} {version} was built from different code than this "
          "install; building it locally")
+    log.stage("services", "Rebuilding bot-bottle services for this code (once per change)")
 
 
 def pull_pinned_image(

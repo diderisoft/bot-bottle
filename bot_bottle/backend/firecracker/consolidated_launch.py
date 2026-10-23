@@ -81,7 +81,7 @@ def launch_consolidated(
     """Ensure the infra VM is up, register the bottle by its guest IP, and
     provision its git-gate state into the gateway VM. Returns the context the
     agent-VM launch needs. Raises on failure — the caller tears down."""
-    url = service.ensure_running()
+    url = service.ensure_running(launch_stages=True)
     client = OrchestratorClient(url)
 
     # Read the gateway's provisioning transport + CA off the Gateway service.
