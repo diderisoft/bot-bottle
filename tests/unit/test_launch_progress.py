@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 import tempfile
 import unittest
 from collections.abc import Callable
@@ -29,9 +30,11 @@ class Progress(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.log_path = Path(tmp.name) / "logs" / "launch.log"
 
-    def progress(self, *, tty: bool = False, verbose: bool = False) -> tuple[LaunchProgress, _Out]:
+    def progress(self, *, tty: bool = False, verbose: bool = False,
+                 panel: bool = False) -> tuple[LaunchProgress, _Out]:
         out = _Out(tty)
-        return LaunchProgress(self.log_path, verbose=verbose, out=out), out
+        return LaunchProgress(self.log_path, verbose=verbose, out=out, panel=panel,
+                              color=tty), out
 
     def run_launch(self, progress: LaunchProgress) -> None:
         progress.stage("prepare", "Reading the bottle")
@@ -106,6 +109,43 @@ class Progress(unittest.TestCase):
         progress._draw("x")  # pylint: disable=protected-access  # what the spinner calls
         progress.line("bot-bottle: warning: shown as plain text")
         self.assertNotIn("Reading the bottle", out.getvalue()[len(before):])
+        progress.close()
+
+    def test_finished_stages_get_a_green_check_on_a_terminal(self) -> None:
+        progress, out = self.progress(tty=True)
+        self.run_launch(progress)
+        progress.done()
+        self.assertIn("\x1b[32m✓\x1b[0m Reading the bottle", out.getvalue())
+
+    def test_the_panel_draws_the_logo_beside_the_stages(self) -> None:
+        from bot_bottle.cli import logo  # pylint: disable=import-outside-toplevel
+
+        progress, out = self.progress(tty=True, panel=True)
+        self.run_launch(progress)
+        progress.done("pi is running")
+        # Each redraw starts by moving the cursor up over the previous one.
+        *final, log_line = re.split(r"\x1b\[\d+F", out.getvalue())[-1].splitlines()
+        self.assertEqual((len(logo.ART) + 1) // 2, len(final))
+        self.assertIn("launch log:", log_line)  # full width, under the panel
+        stages = [re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line).split("  ")[0] for line in final]
+        self.assertEqual(["✓ Reading the bottle", "✓ Getting images", "✓ pi is running"],
+                         stages[:3])
+        self.assertTrue(all("▀" in line or "▄" in line for line in final[1:-1]))
+
+    def test_a_warning_lands_above_the_panel(self) -> None:
+        progress, out = self.progress(tty=True, panel=True)
+        progress.stage("image", "Getting images")
+        progress.line("bot-bottle: warning: image is 9 days old")
+        progress.close()
+        text = out.getvalue()
+        warning = text.index("image is 9 days old")
+        self.assertIn("\x1b[J", text[:warning])  # the panel was cleared first
+        self.assertIn("Getting images", text[warning:])  # and drawn again below
+
+    def test_no_color_means_no_logo(self) -> None:
+        with patch.dict("os.environ", {"NO_COLOR": "1"}):
+            progress = LaunchProgress(self.log_path, out=_Out(True), tty=True)
+        self.assertFalse(progress.panel)
         progress.close()
 
     def test_a_terminal_redraws_in_place(self) -> None:
