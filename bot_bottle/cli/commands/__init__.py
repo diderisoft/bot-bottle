@@ -19,6 +19,7 @@ from typing import Callable
 _HANDLERS: dict[str, str] = {
     "active": "active:cmd_active",
     "attach": "attach:cmd_attach",
+    "audit": "audit:cmd_audit",
     "backend": "backend:cmd_backend",
     "cleanup": "cleanup:cmd_cleanup",
     "commit": "commit:cmd_commit",
@@ -62,7 +63,7 @@ COMMANDS = {name: _lazy(spec) for name, spec in _HANDLERS.items()}
 # isn't a TTY and the migration prompt can't be answered. `help` and `login`
 # likewise never touch the store, nor do the host-service commands.
 NO_MIGRATION_COMMANDS = frozenset({
-    "attach", "backend", "doctor", "down", "help", "install", "jobs", "login",
+    "attach", "audit", "backend", "doctor", "down", "help", "install", "jobs", "login",
     "status", "uninstall", "up",
 })
 
