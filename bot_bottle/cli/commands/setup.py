@@ -144,7 +144,7 @@ class Setup:
         except openrouter.OpenRouterError as e:
             self.say(f"warn: pi: {e}")
             return None
-        self.say(f"pi: OpenRouter, {model.id} ({FREE_LIMIT_NOTE})")
+        self.say(f"note: {FREE_LIMIT_NOTE}")
         return dataclasses.replace(
             detection, logged_in=True, login_location=f"OpenRouter ({model.id})",
             starter_settings=pi_starter.starter_settings(
