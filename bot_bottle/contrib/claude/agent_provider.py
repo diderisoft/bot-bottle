@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -18,6 +19,7 @@ from typing import TYPE_CHECKING
 from ...agent_provider import (
     AgentProvider,
     AgentProviderRuntime,
+    HostDetection,
     AgentProvisionDir,
     AgentProvisionFile,
     AgentProvisionPlan,
@@ -26,7 +28,8 @@ from ...agent_provider import (
 from ...backend.docker import util as docker_mod
 from ...egress import CLAUDE_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
 from ...lib.log import die, info, warn
-from .claude_auth import claude_host_access_token
+from ...starter import GENERAL_PROMPT, starter_agent, starter_bottle
+from .claude_auth import claude_host_access_token, claude_login_location
 
 
 if TYPE_CHECKING:
@@ -108,6 +111,27 @@ class ClaudeAgentProvider(AgentProvider):
     @property
     def runtime(self) -> AgentProviderRuntime:
         return _RUNTIME
+
+    def detect_host(self, host_env: Mapping[str, str]) -> HostDetection:
+        location = claude_login_location(host_env)
+        return HostDetection(
+            installed=shutil.which("claude", path=host_env.get("PATH")) is not None,
+            logged_in=bool(location),
+            login_location=location,
+            login_command="claude login",
+        )
+
+    def create_default_agent_manifest(self, detection: HostDetection) -> str:
+        del detection
+        return starter_agent("claude", GENERAL_PROMPT)
+
+    def create_default_bottle_manifest(self, detection: HostDetection) -> str:
+        return starter_bottle(
+            {"template": "claude", "forward_host_credentials": True},
+            "Claude Code, signed in with this host's Claude login "
+            f"({detection.login_location or 'claude login'}). The gateway "
+            "injects the login token, so the agent never sees it.",
+        )
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
         # The base installs from a committed lock in /opt/claude; a bump can't

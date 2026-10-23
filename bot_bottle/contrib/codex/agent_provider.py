@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import os
 import shlex
+import shutil
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -22,11 +23,17 @@ from ...agent_provider import (
     AgentProviderRuntime,
     AgentProvisionDir,
     AgentProvisionCommand,
+    HostDetection,
     AgentProvisionFile,
     AgentProvisionPlan,
     provider_startup_args,
 )
-from .codex_auth import codex_host_access_token, write_codex_dummy_auth_file
+from ...starter import GENERAL_PROMPT, starter_agent, starter_bottle
+from .codex_auth import (
+    codex_host_access_token,
+    codex_login_location,
+    write_codex_dummy_auth_file,
+)
 from ...egress import CODEX_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
 from ...lib.log import die, info
 
@@ -108,6 +115,27 @@ class CodexAgentProvider(AgentProvider):
     @property
     def runtime(self) -> AgentProviderRuntime:
         return _RUNTIME
+
+    def detect_host(self, host_env: Mapping[str, str]) -> HostDetection:
+        location = codex_login_location(host_env)
+        return HostDetection(
+            installed=shutil.which("codex", path=host_env.get("PATH")) is not None,
+            logged_in=bool(location),
+            login_location=location,
+            login_command="codex login --device-auth",
+        )
+
+    def create_default_agent_manifest(self, detection: HostDetection) -> str:
+        del detection
+        return starter_agent("codex", GENERAL_PROMPT)
+
+    def create_default_bottle_manifest(self, detection: HostDetection) -> str:
+        return starter_bottle(
+            {"template": "codex", "forward_host_credentials": True},
+            "Codex, signed in with this host's ChatGPT device login "
+            f"({detection.login_location or 'codex login --device-auth'}). "
+            "The gateway injects the login token, so the agent never sees it.",
+        )
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
         # Mirrors the Dockerfile's standalone install. The base checks a

@@ -28,6 +28,25 @@ def codex_auth_path(host_env: Mapping[str, str] | None = None) -> Path:
     return Path.home() / ".codex" / "auth.json"
 
 
+def codex_login_location(host_env: Mapping[str, str] | None = None) -> str:
+    """The host Codex auth file if it holds a user/device login that
+    `forward_host_credentials` can use, else "". Never returns a token."""
+    path = codex_auth_path(host_env)
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(raw, dict):
+        return ""
+    auth = cast(dict[str, object], raw)
+    mode = auth.get("auth_mode")
+    tokens = auth.get("tokens")
+    if not isinstance(mode, str) or mode == "api_key" or not isinstance(tokens, dict):
+        return ""
+    access = cast(dict[str, object], tokens).get("access_token")
+    return str(path) if isinstance(access, str) and access else ""
+
+
 def codex_host_access_token(
     host_env: Mapping[str, str] | None = None,
     *,
@@ -325,5 +344,6 @@ __all__ = [
     "codex_auth_path",
     "codex_dummy_auth_json",
     "codex_host_access_token",
+    "codex_login_location",
     "write_codex_dummy_auth_file",
 ]

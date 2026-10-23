@@ -55,6 +55,36 @@ def _read_keychain() -> dict[str, object] | None:
     return raw if isinstance(raw, dict) else None
 
 
+def _keychain_item_exists() -> bool:
+    """Whether the macOS Keychain holds Claude Code's credentials item.
+    Runs `security find-generic-password` without `-w`, so the secret is
+    never read and no Keychain prompt appears."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", _KEYCHAIN_SERVICE],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def claude_login_location(host_env: Mapping[str, str] | None = None) -> str:
+    """Where the host's Claude login lives, or "" if there's none. Checks
+    the same places as `claude_host_access_token`, in the same order, but
+    reads no token."""
+    path = claude_auth_path(host_env)
+    if path.is_file():
+        return str(path)
+    if _keychain_item_exists():
+        return f"macOS Keychain ({_KEYCHAIN_SERVICE})"
+    return ""
+
+
 def claude_host_access_token(
     host_env: Mapping[str, str] | None = None,
     *,
@@ -112,4 +142,5 @@ def claude_host_access_token(
 __all__ = [
     "claude_auth_path",
     "claude_host_access_token",
+    "claude_login_location",
 ]

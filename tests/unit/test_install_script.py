@@ -33,7 +33,7 @@ def code_only(text: str) -> str:
     )
 
 
-class TestInstallScript(unittest.TestCase):
+class TestInstallScript(unittest.TestCase):  # pylint: disable=too-many-public-methods
     @classmethod
     def setUpClass(cls):
         cls.text = INSTALL_SH.read_text()
@@ -90,6 +90,14 @@ class TestInstallScript(unittest.TestCase):
 
     def test_runs_doctor_after_install(self):
         self.assertIn("doctor", self.text)
+
+    def test_runs_setup_before_doctor_reading_the_terminal(self):
+        """Under `curl | sh`, stdin is the script: setup's prompts read
+        /dev/tty instead, and without a terminal it gets /dev/null."""
+        setup, doctor = self.text.index('" setup'), self.text.index('" doctor')
+        self.assertLess(setup, doctor)
+        self.assertIn('setup </dev/tty', self.text)
+        self.assertIn('setup </dev/null', self.text)
 
     def test_install_spec_is_overridable(self):
         # Tests / local installs point BOT_BOTTLE_INSTALL_SPEC at a checkout.

@@ -136,6 +136,24 @@ class AgentProvisionPlan:
     provisioned_env: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class HostDetection:
+    """What a provider found on the host, for `bot-bottle setup` and
+    `doctor`. It only declares; the CLI decides what to do with it.
+
+    `login_location` names where the login lives (a path, or the macOS
+    Keychain) and never holds the secret itself. `starter_settings` is
+    the `agent_provider.settings` a starter bottle should carry (pi's
+    model source), filled by detection or by the CLI after it picked
+    one."""
+
+    installed: bool = False
+    logged_in: bool = False
+    login_location: str = ""
+    login_command: str = ""
+    starter_settings: Mapping[str, object] = field(default_factory=dict)
+
+
 class AgentProvider(ABC):
     """Per-template plugin: produces the provision plan and applies
     the provider-specific in-guest setup steps (skills, prompt, the
@@ -181,6 +199,22 @@ class AgentProvider(ABC):
         `agent_provider.py` module. Override to point at a non-standard
         path."""
         return Path(inspect.getfile(type(self))).parent / "Dockerfile"
+
+    def detect_host(self, host_env: Mapping[str, str]) -> HostDetection:
+        """Whether this provider can run a starter on this host (PRD 0091).
+        Must not read secrets or prompt. Default: not detected, so `setup`
+        never asks this provider for a starter."""
+        del host_env
+        return HostDetection()
+
+    def create_default_agent_manifest(self, detection: HostDetection) -> str:
+        """The starter agent manifest (`agents/<template>.md`)."""
+        raise NotImplementedError(f"{type(self).__name__} has no starter agent")
+
+    def create_default_bottle_manifest(self, detection: HostDetection) -> str:
+        """The starter bottle manifest (`bottles/<template>.md`), with the
+        detected login wired in."""
+        raise NotImplementedError(f"{type(self).__name__} has no starter bottle")
 
     @abstractmethod
     def provision_plan(

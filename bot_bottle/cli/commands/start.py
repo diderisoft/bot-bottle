@@ -98,7 +98,8 @@ def cmd_start(argv: list[str]) -> int:
         "name",
         nargs="?",
         default=None,
-        help="agent name defined in bot-bottle.json (omit to pick interactively)",
+        help=("agent name from ~/.bot-bottle/agents or ./.bot-bottle/agents "
+              "(omit to pick interactively)"),
     )
     args = parser.parse_args(argv)
     if args.cached_images and not args.headless:

@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import re
 import stat
+import tempfile
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
@@ -119,4 +120,29 @@ def _parse(path: Path, text: str) -> dict[str, str]:
     return values
 
 
-__all__ = ["ChainSecrets", "FileSecrets", "MappingSecrets", "SecretSource"]
+def write_secret(path: Path, name: str, value: str) -> None:
+    """Set ``name`` in the secrets file at ``path``, replacing an existing
+    line or appending one. The file is rewritten atomically at mode 0600;
+    other lines and comments are kept. The value is never echoed."""
+    if not _NAME_RE.match(name):
+        raise SecretsFileError(f"secret name {name!r} is not NAME-shaped")
+    if not value or "\n" in value or "\r" in value:
+        raise SecretsFileError(f"secret {name}: the value must be one non-empty line")
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        lines = []
+    kept = [line for line in lines if line.strip().partition("=")[0] != name]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".secrets-")
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("".join(f"{line}\n" for line in [*kept, f"{name}={value}"]))
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+__all__ = ["ChainSecrets", "FileSecrets", "MappingSecrets", "SecretSource", "write_secret"]

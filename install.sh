@@ -10,7 +10,8 @@
 #
 # This script is a thin bootstrapper: it finds a Python 3.11+ interpreter,
 # installs the package with pipx (falling back to a private venv), creates the
-# config dir, and runs `bot-bottle doctor`. It is idempotent (safe to re-run)
+# config dir, runs `bot-bottle setup` (starter agents, then an offer to pair a
+# phone) and `bot-bottle doctor`. It is idempotent (safe to re-run)
 # and never uses sudo. It does NOT install Docker or a VM backend for you —
 # `doctor` reports what's missing after install.
 #
@@ -190,6 +191,17 @@ elif [ -x "${BIN_DIR}/bot-bottle" ]; then
     say "    echo 'export PATH=\"${BIN_DIR}:\$PATH\"' >> ${profile}"
 else
     die "bot-bottle was installed but no entry point turned up in ${BIN_DIR}"
+fi
+
+# --- starters ----------------------------------------------------------------
+
+# Under `curl | sh` stdin is this script, so setup's prompts (OpenRouter
+# sign-in, pairing) read from the terminal instead, when there is one.
+say "running '${BOT_BOTTLE_BIN} setup'"
+if [ -t 1 ] && (: </dev/tty) 2>/dev/null; then
+    "${BOT_BOTTLE_BIN}" setup </dev/tty || say "setup didn't finish; re-run '${BOT_BOTTLE_BIN} setup'"
+else
+    "${BOT_BOTTLE_BIN}" setup </dev/null || say "setup didn't finish; re-run '${BOT_BOTTLE_BIN} setup'"
 fi
 
 # --- verify ------------------------------------------------------------------

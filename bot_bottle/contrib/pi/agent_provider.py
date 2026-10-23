@@ -22,9 +22,12 @@ from ...agent_provider import (
     AgentProvisionDir,
     AgentProvisionFile,
     AgentProvisionPlan,
+    HostDetection,
     provider_startup_args,
 )
 from ...egress import EgressRoute
+from ...starter import GENERAL_PROMPT, starter_agent, starter_bottle
+from .starter import has_secret, local_starter_settings, read_local_model
 from ...lib.log import die, info
 
 
@@ -183,6 +186,41 @@ class PiAgentProvider(AgentProvider):
     @property
     def runtime(self) -> AgentProviderRuntime:
         return _RUNTIME
+
+    def detect_host(self, host_env: Mapping[str, str]) -> HostDetection:
+        """pi runs in the image, so it's always "installed". It's ready when
+        the host's pi config names a model a bottle can reach and its key is
+        in the environment or the host secrets file. Otherwise `setup`
+        picks the model (OpenRouter) and fills `starter_settings` itself."""
+        local = read_local_model(host_env)
+        if local is None:
+            return HostDetection(installed=True, login_command="bot-bottle setup")
+        ready = not local.literal_key and has_secret(local.key_name, host_env)
+        return HostDetection(
+            installed=True,
+            logged_in=ready,
+            login_location=f"~/.pi/agent ({local.provider}/{local.model})",
+            login_command="bot-bottle setup",
+            starter_settings=local_starter_settings(local),
+        )
+
+    def create_default_agent_manifest(self, detection: HostDetection) -> str:
+        del detection
+        return starter_agent("pi", GENERAL_PROMPT)
+
+    def create_default_bottle_manifest(self, detection: HostDetection) -> str:
+        settings = dict(detection.starter_settings)
+        if not settings:
+            raise ValueError("the pi starter needs a model source (starter_settings)")
+        models = settings.get("models")
+        model = models[0] if isinstance(models, list) and models else "?"
+        return starter_bottle(
+            {"template": "pi", "settings": settings},
+            f"pi on `{model}` via {settings.get('provider')}. The gateway injects "
+            f"the `{settings.get('api_key_env')}` key on the model route, so the "
+            "agent never sees it. Free models are rate-limited; change `models` "
+            "(and the provider) to use another.",
+        )
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
         # The pi core packages depend on each other at ^<same version>, so
