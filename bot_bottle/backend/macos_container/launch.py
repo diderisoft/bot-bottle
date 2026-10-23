@@ -252,6 +252,7 @@ def launch(
             )
             nested_containers_mod.start(bottle)
 
+        bottle.registry_id = ctx.bottle_id
         yield bottle
     finally:
         teardown()

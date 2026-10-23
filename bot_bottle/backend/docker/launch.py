@@ -212,6 +212,7 @@ def launch(
             check_dns=True,
         )
         bottle.prompt_path = provision(plan, bottle)
+        bottle.registry_id = ctx.bottle_id
         yield bottle
     finally:
         teardown()

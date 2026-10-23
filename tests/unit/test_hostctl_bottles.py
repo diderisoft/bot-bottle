@@ -85,6 +85,7 @@ class TestLaunchRequestSchema(unittest.TestCase):
 
 class FakeBottle:
     name = "fake-container"
+    registry_id = ""
 
     def __init__(self, script: str) -> None:
         self.script = script
@@ -525,6 +526,14 @@ class TestLifecycleAudit(_Root):
         stop = self.audited()[2]
         self.assertTrue(stop["payload"]["stop_requested"])
         self.assertEqual("success", stop["outcome"])
+
+    def test_the_activation_is_the_orchestrators_registry_id(self) -> None:
+        self.backend.bottle.registry_id = "3f9a0c1d2e4b5a69"
+        self.launch("l4")
+        self.manager.wait_exit("l4", timeout=15)
+        activations = {r["activation"] for r in self.audited()
+                       if r["type"].startswith("lifecycle.")}
+        self.assertEqual({"3f9a0c1d2e4b5a69"}, activations)
 
     def test_each_run_is_its_own_activation(self) -> None:
         self.launch("l3")

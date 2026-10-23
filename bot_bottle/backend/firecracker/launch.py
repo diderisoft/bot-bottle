@@ -178,6 +178,7 @@ def launch(
             bottle, agent_base, runtime_for(plan.agent_provider_template).smoke_test)
         bottle.prompt_path = provision(plan, bottle)
 
+        bottle.registry_id = ctx.bottle_id
         yield bottle
     finally:
         teardown()

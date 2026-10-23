@@ -89,10 +89,10 @@ class ApiEvents(unittest.TestCase):
         self.assertEqual(201, status)
         [event] = self.sink.events  # pylint: disable=unbalanced-tuple-unpacking
         self.assertEqual("auth.token_minted", event.type)
-        # Named by slug, like the host controller's events, with the registry id kept.
-        self.assertEqual(("amber-fox", "amber-fox"), (event.bottle, event.resource))
+        # Named by slug, like the host controller's events; the registry id is the run.
+        self.assertEqual(("amber-fox", "amber-fox", body["bottle_id"]),
+                         (event.bottle, event.resource, event.activation))
         assert event.payload is not None
-        self.assertEqual(body["bottle_id"], event.payload["registry_id"])
         self.assertTrue(event.payload["token_id"].startswith("sha256:"))
         self.assertNotIn(body["identity_token"], json.dumps(event.to_json()))
 

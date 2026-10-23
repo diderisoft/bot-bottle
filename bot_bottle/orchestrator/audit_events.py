@@ -6,9 +6,9 @@ orchestrator no host controller brought up) it records nothing.
 
 Every producer names a bottle by its slug (`amber-fox`), but the orchestrator
 and gateway know it by its registry id, minted afresh at each registration.
-Each event is renamed to the slug on its way out, with the registry id kept as
-`payload.registry_id`, so one `--bottle` filter finds a bottle's events from
-every producer.
+That id is the run's `activation`, the one the host controller records too.
+Each event is renamed on its way out (`bottle` the slug, `activation` the
+registry id), so a bottle's events from every producer share both names.
 """
 
 from __future__ import annotations
@@ -55,14 +55,14 @@ class OrchestratorAudit:
         return slug
 
     def named(self, event: AuditEvent) -> AuditEvent:
-        """`event` with its bottle named by slug, the registry id kept as
-        `payload.registry_id`. Unchanged when the id isn't a known bottle."""
+        """`event` with its bottle named by slug and the registry id as its
+        `activation`. Unchanged when the id isn't a known bottle."""
         registry_id = event.bottle
         slug = self._slug(registry_id) if registry_id else None
         if not slug or slug == registry_id:
             return event
         body = event.to_json()
-        body["payload"] = {**(event.payload or {}), "registry_id": registry_id}
+        body["activation"] = event.activation or registry_id
         for name in ("bottle", "bottled_agent", "resource"):
             if body[name] == registry_id:
                 body[name] = slug

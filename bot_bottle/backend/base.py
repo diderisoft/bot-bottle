@@ -118,6 +118,9 @@ class Bottle(ABC):
     """
 
     name: str
+    # This run's id in the orchestrator registry, minted when it registered:
+    # the audit journal's `activation`. Empty until the launch has registered.
+    registry_id: str = ""
 
     @abstractmethod
     def agent_argv(

@@ -232,7 +232,6 @@ class BottleService:
         is_ready = threading.Event()
         held = _Held(identity, backend.name)
         template = str(getattr(plan, "agent_provider_template", "claude"))
-        activation = str(uuid.uuid4())
         policy = digest_manifest(plan.manifest)
 
         def sink(line: str) -> None:
@@ -243,6 +242,9 @@ class BottleService:
         with log.redirect(sink):
             try:
                 with backend.launch(plan) as bottle:
+                    # The orchestrator's registry id names this run everywhere
+                    # in the journal; a backend that didn't register gets one.
+                    activation = bottle.registry_id or str(uuid.uuid4())
                     command, env = bottle.agent_command(agent_args(
                         template, plan.agent_provision.startup_args, request.prompt))
                     with self._lock:
