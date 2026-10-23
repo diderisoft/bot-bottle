@@ -112,6 +112,7 @@ class _Request:
         body: str = "",
     ) -> None:
         self.pretty_host = host
+        self.port = 443
         self.method = method
         self.path = path
         self.headers = _Headers(headers)
@@ -1306,6 +1307,71 @@ class TestInboundBodyScanCap(unittest.TestCase):
             addon.response(flow)  # type: ignore[arg-type]
         self.assertNotIn("egress_scan_truncated", buf.getvalue())
 
+
+
+class _AuditSink:
+    """Stands in for GatewayAudit: keeps what the addon submits."""
+
+    def __init__(self) -> None:
+        self.events: list[Any] = []
+
+    def now(self) -> str:
+        return "2026-10-23T00:00:00.000Z"
+
+    def submit(self, event: Any) -> None:
+        self.events.append(event)
+
+
+class TestAuditTrail(unittest.TestCase):
+    def addon(self, *routes: Route) -> tuple[EgressAddon, _AuditSink]:
+        addon = _addon(Config(routes=routes), slug="amber-fox")
+        sink = _AuditSink()
+        addon._audit = cast(Any, sink)
+        addon._contacted = set()
+        return addon, sink
+
+    def request(self, addon: EgressAddon, **kwargs: Any) -> _Flow:
+        flow = _with_client_ip(_Flow(_Request(**kwargs)), "10.243.0.9")
+        _run_request(addon, flow)
+        return flow
+
+    def test_a_host_is_recorded_on_first_contact_only(self) -> None:
+        addon, sink = self.addon(Route(host="api.example.com"))
+        for _ in range(3):
+            self.request(addon, host="api.example.com")
+        [event] = sink.events  # pylint: disable=unbalanced-tuple-unpacking
+        self.assertEqual(("egress.decision", "allowed", "amber-fox", "api.example.com:443"),
+                         (event.type, event.outcome, event.bottle, event.resource))
+        self.assertEqual({"method": "GET", "host": "api.example.com", "port": 443,
+                          "src_ip": "10.243.0.9"}, event.payload)
+
+    def test_a_refused_host_is_a_blocked_decision(self) -> None:
+        addon, sink = self.addon(Route(host="api.example.com"))
+        self.request(addon, host="evil.example.com")
+        [event] = sink.events  # pylint: disable=unbalanced-tuple-unpacking
+        self.assertEqual(("egress.decision", "blocked"), (event.type, event.outcome))
+        self.assertIn("allowlist", event.payload["reason"])
+
+    def test_a_dlp_block_is_an_anomaly(self) -> None:
+        addon, sink = self.addon(Route(host="api.example.com", outbound_on_match="block"))
+        self.request(addon, host="api.example.com", method="POST", body=f"key={_OPENAI_KEY}")
+        [event] = sink.events  # pylint: disable=unbalanced-tuple-unpacking
+        self.assertEqual(("egress.anomaly", "blocked"), (event.type, event.outcome))
+        self.assertNotIn(_OPENAI_KEY, json.dumps(event.payload))
+
+    def test_a_redacted_request_is_an_allowed_anomaly_then_a_first_contact(self) -> None:
+        addon, sink = self.addon(Route(host="api.example.com", outbound_on_match="redact"))
+        self.request(addon, host="api.example.com", method="POST", body=f"key={_OPENAI_KEY}")
+        self.assertEqual([("egress.anomaly", "allowed"), ("egress.decision", "allowed")],
+                         [(e.type, e.outcome) for e in sink.events])
+
+    def test_each_bottle_gets_its_own_first_contact(self) -> None:
+        addon, sink = self.addon(Route(host="api.example.com"))
+        self.request(addon, host="api.example.com")
+        addon._resolver = cast(Any, _StaticResolver(
+            Config(routes=(Route(host="api.example.com"),)), bottle_id="other"))
+        self.request(addon, host="api.example.com")
+        self.assertEqual(["amber-fox", "other"], [e.bottle for e in sink.events])
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,12 +9,14 @@ import math
 import re
 import sys
 from collections.abc import AsyncGenerator
+from typing import Any
 from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from ..contract.audit import AUDIT_EVENTS_PATH, GATEWAY_PRODUCERS, AuditEvent
 from ..contract.auth import CONTROL_PLANE, ROLE_CLI, ROLES
 from ..contract.hostctl import BOTTLES_PATH, JOBS_PATH, ROLE_ORCHESTRATOR, LaunchRequest
 from ..contract.supervise import TOOLS
@@ -41,6 +43,7 @@ RECONCILE_INTERVAL_SECONDS = 60.0
 RECONCILE_TIMER_GRACE_SECONDS = 600.0
 
 _GATEWAY_ROUTES = frozenset({
+    ("POST", AUDIT_EVENTS_PATH),
     ("POST", "/resolve"),
     ("POST", "/supervise/propose"),
     ("POST", "/supervise/poll"),
@@ -89,6 +92,11 @@ class SecretBody(_StrictModel):
 
 class ReconcileBody(_StrictModel):
     grace_seconds: float | None = None
+
+
+class AuditEventsBody(_StrictModel):
+    producer: StrictStr
+    event: dict[StrictStr, Any]
 
 
 class IdentityBody(_StrictModel):
@@ -524,6 +532,19 @@ def create_app(
                                   if hostctl is None else "invalid bottle id")
             return
         await pump_attach(websocket, hostctl, session, cols=cols, rows=rows)
+
+    @app.post(AUDIT_EVENTS_PATH)
+    def audit_events(body: AuditEventsBody) -> dict[str, bool]:
+        """A gateway component's event, queued for the host controller's journal
+        under the component's name."""
+        if body.producer not in GATEWAY_PRODUCERS:
+            raise HTTPException(400, f"producer must be one of {sorted(GATEWAY_PRODUCERS)}")
+        try:
+            event = AuditEvent.from_json(body.event)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(400, f"invalid audit event: {e}") from None
+        audit.relay(event, producer=body.producer)
+        return {"queued": True}
 
     @app.post("/resolve")
     def resolve(body: IdentityBody) -> dict[str, object]:

@@ -22,6 +22,11 @@ from typing import Any, Mapping
 
 SCHEMA_VERSION = 1
 
+# The orchestrator route the gateway's components send their events to; the
+# orchestrator relays them to the host controller's journal.
+AUDIT_EVENTS_PATH = "/audit/events"
+GATEWAY_PRODUCERS = frozenset({"egress", "git-gate", "supervise"})
+
 OUTCOMES = frozenset({"allowed", "blocked", "deferred", "success", "failure"})
 SENSITIVITIES = ("normal", "security", "restricted")  # ascending
 
@@ -90,12 +95,26 @@ class AuditEvent:
         return cls(**body)
 
 
+def truncation_event(producer: str, dropped: int, first: AuditEvent, last: AuditEvent,
+                     ts_event: str) -> AuditEvent:
+    """The record of events a full delivery queue dropped."""
+    return AuditEvent(
+        type="audit.truncation_detected", actor=producer, action="audit.truncation_detected",
+        outcome="failure", sensitivity="security", ts_event=ts_event,
+        payload={"detail": "audit queue overflowed while delivery was failing",
+                 "dropped": dropped, "ts_first": first.ts_event, "ts_last": last.ts_event},
+    )
+
+
 __all__ = [
+    "AUDIT_EVENTS_PATH",
     "AuditEvent",
+    "GATEWAY_PRODUCERS",
     "OUTCOMES",
     "SCHEMA_VERSION",
     "SENSITIVITIES",
     "canonical",
     "record_hash",
+    "truncation_event",
     "utc_iso",
 ]

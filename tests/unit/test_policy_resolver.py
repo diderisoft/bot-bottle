@@ -12,7 +12,7 @@ from bot_bottle.gateway.policy_resolver import (
     ORCHESTRATOR_AUTH_JWT_ENV,
     PolicyResolveError,
     PolicyResolver,
-    _orchestrator_auth_headers,
+    orchestrator_auth_headers,
 )
 
 _URLOPEN = "bot_bottle.gateway.policy_resolver.urllib.request.urlopen"
@@ -32,13 +32,13 @@ def _http_error(code: int) -> urllib.error.HTTPError:
 class TestOrchestratorAuthHeaders(unittest.TestCase):
     def test_sends_the_gateway_jwt_when_configured(self) -> None:
         with patch.dict("os.environ", {ORCHESTRATOR_AUTH_JWT_ENV: "gateway.jwt.tok"}):
-            self.assertEqual({ORCHESTRATOR_AUTH_HEADER: "gateway.jwt.tok"}, _orchestrator_auth_headers())
+            self.assertEqual({ORCHESTRATOR_AUTH_HEADER: "gateway.jwt.tok"}, orchestrator_auth_headers())
 
     def test_sends_nothing_when_unset(self) -> None:
         import os
         with patch.dict("os.environ", {}, clear=False):
             os.environ.pop(ORCHESTRATOR_AUTH_JWT_ENV, None)
-            self.assertEqual({}, _orchestrator_auth_headers())
+            self.assertEqual({}, orchestrator_auth_headers())
 
 
 class TestPolicyResolver(unittest.TestCase):

@@ -31,10 +31,11 @@ _KEY = "audit-test-key"
 class _Sink:
     def __init__(self) -> None:
         self.events: list[AuditEvent] = []
+        self.producers: list[str] = []
 
     def submit(self, event: AuditEvent, producer: str = "orchestrator") -> None:
-        del producer
         self.events.append(event)
+        self.producers.append(producer)
 
     def types(self) -> list[str]:
         return [e.type for e in self.events]
@@ -105,6 +106,24 @@ class ApiEvents(unittest.TestCase):
         assert event.payload is not None
         self.assertEqual(("auth.token_rejected", "unattributed", "10.243.0.9"),
                          (event.type, event.payload["reason_code"], event.payload["src_ip"]))
+
+    def test_the_gateway_relays_its_events_under_its_component(self) -> None:
+        event = {"type": "egress.decision", "actor": "bottled-agent:a", "action": "egress.get",
+                 "outcome": "allowed", "sensitivity": "security", "ts_event": "t"}
+        status, body = self.call("POST", "/audit/events",
+                                 {"producer": "egress", "event": event}, role=ROLE_GATEWAY)
+        self.assertEqual((200, {"queued": True}), (status, body))
+        self.assertEqual((["egress.decision"], ["egress"]),
+                         (self.sink.types(), self.sink.producers))
+
+    def test_a_relayed_event_must_name_a_gateway_component(self) -> None:
+        event = {"type": "egress.decision", "actor": "a", "action": "x", "outcome": "allowed",
+                 "sensitivity": "security", "ts_event": "t"}
+        for producer, bad in (("hostctl", event), ("egress", {**event, "host": "spoofed"})):
+            status, _ = self.call("POST", "/audit/events", {"producer": producer, "event": bad},
+                                  role=ROLE_GATEWAY)
+            self.assertEqual(400, status)
+        self.assertEqual([], self.sink.events)
 
     def test_a_proposal_and_its_decision(self) -> None:
         rec = self.store.register("10.243.0.9", metadata=json.dumps({"slug": "demo"}),

@@ -70,6 +70,11 @@ class OrchestratorAudit:
             body["actor"] = f"bottled-agent:{slug}"
         return AuditEvent.from_json(body)
 
+    def relay(self, event: AuditEvent, *, producer: str) -> None:
+        """Pass on an event a gateway component produced, named by slug."""
+        if self._sink is not None:
+            self._sink.submit(self.named(event), producer)
+
     def _record(self, **fields: Any) -> None:
         if self._sink is None:
             return

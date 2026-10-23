@@ -45,7 +45,7 @@ ORCHESTRATOR_AUTH_HEADER = "x-bot-bottle-orchestrator-auth"
 ORCHESTRATOR_AUTH_JWT_ENV = "BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT"
 
 
-def _orchestrator_auth_headers() -> dict[str, str]:
+def orchestrator_auth_headers() -> dict[str, str]:
     """The auth header to send, or {} when no token is configured (an open
     control plane, e.g. Firecracker behind its nft boundary — sending nothing
     is correct there and harmlessly ignored)."""
@@ -74,7 +74,7 @@ class PolicyResolver:
         body = json.dumps(payload).encode()
         req = urllib.request.Request(
             f"{self._base}{path}", data=body, method="POST",
-            headers={"Content-Type": "application/json", **_orchestrator_auth_headers()},
+            headers={"Content-Type": "application/json", **orchestrator_auth_headers()},
         )
         try:
             with urllib.request.urlopen(req, timeout=self._timeout) as resp:

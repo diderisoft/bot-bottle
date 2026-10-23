@@ -14,14 +14,13 @@ credential-shaped key) is logged and dropped: sending it again can't succeed.
 from __future__ import annotations
 
 import sys
-import threading
 import time
-from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ..contract.audit import AuditEvent, utc_iso
+from ..contract.audit import AuditEvent, truncation_event, utc_iso
 from ..contract.hostctl import AUDIT_APPEND_PATH
+from ..lib.retry_queue import DONE, RETRY, RetryQueue
 from .hostctl_relay import HostControlRelay, HostControlUnreachable
 
 QUEUE_LIMIT = 1000
@@ -39,93 +38,42 @@ class AuditSender:
                  retry_seconds: float = RETRY_SECONDS,
                  clock: Callable[[], float] = time.time) -> None:
         self._relay = relay
-        self._limit = limit
-        self._retry = retry_seconds
         self._clock = clock
-        self._queue: deque[_Queued] = deque()
-        self._cond = threading.Condition()
-        self._closed = False
-        self._dropped = 0
-        self._dropped_range: tuple[str, str] = ("", "")
-        self._thread = threading.Thread(target=self._run, daemon=True, name="audit-sender")
+        self._queue: RetryQueue[_Queued] = RetryQueue(
+            self._send, limit=limit, retry_seconds=retry_seconds, on_gap=self._gap,
+            name="audit-sender")
 
     def start(self) -> "AuditSender":
-        self._thread.start()
+        self._queue.start()
         return self
 
     def close(self, timeout: float = 5.0) -> None:
-        """Stop after trying to deliver what's queued, for up to `timeout`."""
-        with self._cond:
-            self._closed = True
-            self._cond.notify()
-        self._thread.join(timeout)
+        self._queue.close(timeout)
 
     def submit(self, event: AuditEvent, producer: str = "orchestrator") -> None:
-        with self._cond:
-            if len(self._queue) >= self._limit:
-                lost = self._queue.popleft().event.ts_event
-                first = self._dropped_range[0] or lost
-                self._dropped_range = (first, lost)
-                self._dropped += 1
-            self._queue.append(_Queued(event, producer))
-            self._cond.notify()
+        self._queue.put(_Queued(event, producer))
 
     def pending(self) -> int:
-        with self._cond:
-            return len(self._queue)
+        return self._queue.pending()
 
-    def _truncation_event(self) -> _Queued | None:
-        """The record of what overflow dropped, if anything; resets the count."""
-        if not self._dropped:
-            return None
-        first, last = self._dropped_range
-        event = AuditEvent(
-            type="audit.truncation_detected", actor="orchestrator",
-            action="audit.truncation_detected", outcome="failure", sensitivity="security",
-            ts_event=utc_iso(self._clock()),
-            payload={"detail": "audit queue overflowed while the host controller was "
-                               "unreachable", "dropped": self._dropped,
-                     "ts_first": first, "ts_last": last},
-        )
-        self._dropped, self._dropped_range = 0, ("", "")
-        return _Queued(event, "orchestrator")
+    def _gap(self, dropped: int, first: _Queued, last: _Queued) -> _Queued:
+        return _Queued(truncation_event("orchestrator", dropped, first.event, last.event,
+                                        utc_iso(self._clock())), "orchestrator")
 
-    def _send(self, item: _Queued) -> bool:
-        """True once the item needs no more tries: delivered, or refused for good."""
+    def _send(self, item: _Queued) -> str:
         try:
             status, body = self._relay.request(
                 "POST", AUDIT_APPEND_PATH,
                 {"producer": item.producer, "event": item.event.to_json()})
         except HostControlUnreachable:
-            return False
+            return RETRY
         if status == 200:
-            return True
+            return DONE
         if 400 <= status < 500 and status not in (408, 429):
             sys.stderr.write(f"orchestrator: audit event {item.event.type} refused "
                              f"({status}: {body.get('error', '')}); dropping it\n")
-            return True
-        return False
-
-    def _run(self) -> None:
-        while True:
-            with self._cond:
-                while not self._queue and not self._closed:
-                    self._cond.wait()
-                if not self._queue:
-                    return
-                item = self._queue[0]
-            if not self._send(item):
-                with self._cond:
-                    if self._closed:
-                        return
-                    self._cond.wait(self._retry)
-                continue
-            with self._cond:
-                if self._queue and self._queue[0] is item:
-                    self._queue.popleft()
-                truncation = self._truncation_event()
-                if truncation is not None:
-                    self._queue.appendleft(truncation)
+            return DONE
+        return RETRY
 
 
 __all__ = ["AuditSender", "QUEUE_LIMIT"]
