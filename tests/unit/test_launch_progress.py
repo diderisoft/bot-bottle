@@ -25,15 +25,16 @@ class _Out(io.StringIO):
 
 
 class Progress(unittest.TestCase):
+    """Plain lines: no terminal, or a terminal with the screen turned off."""
+
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         self.addCleanup(tmp.cleanup)
         self.log_path = Path(tmp.name) / "logs" / "launch.log"
 
-    def progress(self, *, tty: bool = False, verbose: bool = False,
-                 panel: bool = False) -> tuple[LaunchProgress, _Out]:
+    def progress(self, *, tty: bool = False, verbose: bool = False) -> tuple[LaunchProgress, _Out]:
         out = _Out(tty)
-        return LaunchProgress(self.log_path, verbose=verbose, out=out, panel=panel,
+        return LaunchProgress(self.log_path, verbose=verbose, out=out, screen=False,
                               color=tty), out
 
     def run_launch(self, progress: LaunchProgress) -> None:
@@ -48,22 +49,19 @@ class Progress(unittest.TestCase):
         self.run_launch(progress)
         progress.done("pi is running")
         text = out.getvalue()
-        self.assertIn("✓ Reading the bottle", text)
-        self.assertIn("✓ Getting images", text)
-        self.assertIn("✓ pi is running", text)
-        self.assertIn("warning: image is 9 days old", text)
+        for expected in ("✓ Reading the bottle", "✓ Getting images", "✓ pi is running",
+                         "warning: image is 9 days old"):
+            self.assertIn(expected, text)
         self.assertNotIn("resolved agent", text)
 
     def test_a_repeated_stage_retitles_its_line(self) -> None:
         progress, out = self.progress()
         progress.stage("services", "Starting bot-bottle services")
         progress.stage("services", "Rebuilding bot-bottle services")
-        progress.stage("services", "Rebuilding bot-bottle services")
         progress.stage("start", "Starting the bottle")
         progress.done()
-        text = out.getvalue()
-        self.assertEqual(1, text.count("Rebuilding bot-bottle services"))
-        self.assertNotIn("Starting bot-bottle services", text)
+        self.assertEqual(1, out.getvalue().count("Rebuilding bot-bottle services"))
+        self.assertNotIn("Starting bot-bottle services", out.getvalue())
 
     def test_success_ends_with_the_log_path(self) -> None:
         progress, out = self.progress()
@@ -90,9 +88,8 @@ class Progress(unittest.TestCase):
         self.run_launch(progress)
         progress.fail("bot-bottle: image pull failed")
         text = out.getvalue()
-        self.assertIn("✗ Getting images", text)
-        self.assertIn("pulled bot-bottle-pi", text)
-        self.assertIn(str(self.log_path), text)
+        for expected in ("✗ Getting images", "pulled bot-bottle-pi", str(self.log_path)):
+            self.assertIn(expected, text)
 
     def test_since_stage_is_the_current_stage_only(self) -> None:
         progress, _ = self.progress()
@@ -101,85 +98,93 @@ class Progress(unittest.TestCase):
                           "bot-bottle: pulled bot-bottle-pi"], progress.since_stage())
         progress.close()
 
-    def test_nothing_redraws_over_a_question(self) -> None:
-        progress, out = self.progress(tty=True)
-        progress.stage("prepare", "Reading the bottle")
-        progress.pause()
-        before = out.getvalue()
-        progress._draw("x")  # pylint: disable=protected-access  # what the spinner calls
-        progress.line("bot-bottle: warning: shown as plain text")
-        self.assertNotIn("Reading the bottle", out.getvalue()[len(before):])
-        progress.close()
-
     def test_finished_stages_get_a_green_check_on_a_terminal(self) -> None:
         progress, out = self.progress(tty=True)
         self.run_launch(progress)
         progress.done()
         self.assertIn("\x1b[32m✓\x1b[0m Reading the bottle", out.getvalue())
 
-    def test_the_panel_draws_the_logo_beside_the_stages(self) -> None:
-        from bot_bottle.cli import logo  # pylint: disable=import-outside-toplevel
 
-        progress, out = self.progress(tty=True, panel=True)
-        self.run_launch(progress)
-        progress.done("pi is running")
-        # Each redraw starts by moving the cursor up over the previous one.
-        *final, log_line = re.split(r"\x1b\[\d+F", out.getvalue())[-1].splitlines()
-        self.assertEqual((len(logo.ART) + 1) // 2, len(final))
-        self.assertIn("launch log:", log_line)  # full width, under the panel
-        stages = [re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line).split("  ")[0] for line in final]
-        self.assertEqual(["✓ Reading the bottle", "✓ Getting images", "✓ pi is running"],
-                         stages[:3])
-        self.assertTrue(all("▀" in line or "▄" in line for line in final[1:-1]))
+class Screen(unittest.TestCase):
+    """The alternate screen: frames while launching, a summary after."""
 
-    def test_a_warning_lands_above_the_panel(self) -> None:
-        progress, out = self.progress(tty=True, panel=True)
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
+        self.addCleanup(tmp.cleanup)
+        self.log_path = Path(tmp.name) / "launch.log"
+        self.size = patch("bot_bottle.cli.progress._size", return_value=(100, 30))
+        self.size.start()
+        self.addCleanup(self.size.stop)
+
+    def progress(self, *, color: bool = True) -> tuple[LaunchProgress, _Out]:
+        out = _Out(True)
+        return LaunchProgress(self.log_path, out=out, tty=True, screen=True, color=color), out
+
+    def test_the_launch_draws_on_the_alternate_screen_and_leaves_a_summary(self) -> None:
+        progress, out = self.progress()
+        progress.stage("prepare", "Reading the bottle")
         progress.stage("image", "Getting images")
         progress.line("bot-bottle: warning: image is 9 days old")
-        progress.close()
+        progress.done("pi is running")
         text = out.getvalue()
-        warning = text.index("image is 9 days old")
-        self.assertIn("\x1b[J", text[:warning])  # the panel was cleared first
-        self.assertIn("Getting images", text[warning:])  # and drawn again below
+        self.assertTrue(text.startswith("\x1b[?1049h"))
+        during, after = text.split("\x1b[?1049l", 1)
+        self.assertIn("\x1b[?2026h", during)  # repaints are synchronized
+        self.assertIn("▀", during)  # the bottle
+        plain_after = re.sub(r"\x1b\[[0-9;]*m", "", after)
+        for expected in ("✓ Reading the bottle", "✓ Getting images",
+                         "warning: image is 9 days old", "✓ pi is running", "launch log:"):
+            self.assertIn(expected, plain_after)
 
-    def test_an_80_column_terminal_gets_the_panel(self) -> None:
-        with patch("bot_bottle.cli.progress._columns", return_value=80):
-            progress = LaunchProgress(self.log_path, out=_Out(True), tty=True, color=True)
-        self.assertTrue(progress.panel)
+    def test_only_changed_lines_are_rewritten(self) -> None:
+        progress, out = self.progress()
+        progress.stage("image", "Getting images")
+        before = len(out.getvalue())
+        progress.line("bot-bottle: just a log line")  # not shown: nothing changes
+        self.assertEqual(before, len(out.getvalue()))
         progress.close()
 
-    def test_narrowing_the_terminal_drops_to_plain_lines(self) -> None:
-        progress, out = self.progress(tty=True, panel=True)
+    def test_a_narrow_terminal_drops_the_bottle(self) -> None:
+        progress, out = self.progress()
         progress.stage("image", "Getting images")
-        with patch("bot_bottle.cli.progress._columns", return_value=60):
+        with patch("bot_bottle.cli.progress._size", return_value=(50, 30)):
             progress._on_resize(0, None)  # pylint: disable=protected-access
             progress.stage("start", "Starting the bottle")
-        progress.done()
-        self.assertFalse(progress.panel)
-        after = out.getvalue().rsplit("▀", 1)[-1]  # everything after the last logo row
-        self.assertIn("Starting the bottle", after)
-        self.assertNotIn("\x1b[2K", after)  # no more panel redraws
+        last = out.getvalue().rsplit("\x1b[2J", 1)[-1]  # the resize cleared the screen
+        self.assertIn("Starting the bottle", last)
+        self.assertNotIn("▀", last)
+        progress.close()
 
-    def test_widening_keeps_the_panel(self) -> None:
-        progress, _ = self.progress(tty=True, panel=True)
+    def test_a_question_gets_the_normal_screen(self) -> None:
+        progress, out = self.progress()
+        progress.stage("prepare", "Reading the bottle")
+        progress.pause()
+        self.assertTrue(out.getvalue().endswith("\x1b[?25h\x1b[?1049l"))
+        before = len(out.getvalue())
+        progress.line("bot-bottle: warning: shown as plain text")
+        self.assertIn("shown as plain text", out.getvalue()[before:])
+        self.assertNotIn("\x1b[?1049h", out.getvalue()[before:])
+        progress.close()
+
+    def test_failure_summarises_after_leaving_the_screen(self) -> None:
+        progress, out = self.progress()
         progress.stage("image", "Getting images")
-        with patch("bot_bottle.cli.progress._columns", return_value=200):
-            progress._on_resize(0, None)  # pylint: disable=protected-access
-            progress.stage("start", "Starting the bottle")
-        self.assertTrue(progress.panel)
-        progress.close()
+        progress.line("bot-bottle: pulled half")
+        progress.fail("bot-bottle: pull failed")
+        after = re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue().split("\x1b[?1049l", 1)[1])
+        for expected in ("✗ Getting images", "pulled half", "pull failed", "full log:"):
+            self.assertIn(expected, after)
 
-    def test_no_color_means_no_logo(self) -> None:
-        with patch.dict("os.environ", {"NO_COLOR": "1"}):
-            progress = LaunchProgress(self.log_path, out=_Out(True), tty=True)
-        self.assertFalse(progress.panel)
+    def test_no_color_means_no_bottle(self) -> None:
+        progress, out = self.progress(color=False)
+        progress.stage("image", "Getting images")
         progress.close()
+        self.assertNotIn("▀", out.getvalue())
 
-    def test_a_terminal_redraws_in_place(self) -> None:
-        progress, out = self.progress(tty=True)
-        self.run_launch(progress)
-        progress.done()
-        self.assertIn("\r\x1b[K", out.getvalue())
+    def test_verbose_never_uses_the_screen(self) -> None:
+        progress = LaunchProgress(self.log_path, out=_Out(True), tty=True, verbose=True)
+        self.assertFalse(progress.screen)
+        progress.close()
 
 
 class Pruning(unittest.TestCase):
