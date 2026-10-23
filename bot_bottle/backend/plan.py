@@ -48,6 +48,9 @@ class BottleSpec:
     # Image startup policy. "fresh" preserves the normal build path;
     # "cached" reuses the current local image/artifact without rebuilding.
     image_policy: str = "fresh"
+    # Mount `user_cwd` read-write instead of copying it. A backend that can't
+    # mount (Firecracker) copies instead.
+    mount_cwd: bool = False
 
 
 @dataclass(frozen=True)

@@ -52,6 +52,7 @@ def _plan(
     image_policy: str = "fresh",
     nested_containers: bool = False,
     env_var_secret: str = "",
+    mount_workspace: str = "",
 ) -> MacosContainerBottlePlan:
     routes_path = stage_dir / "routes.yaml"
     routes_path.write_text("routes: []\n", encoding="utf-8")
@@ -88,6 +89,9 @@ def _plan(
         agent_git_gate_url=agent_git_gate_url,
         agent_supervise_url=agent_supervise_url,
         env_var_secret=env_var_secret,
+        workspace_plan=SimpleNamespace(
+            mount=bool(mount_workspace), host_path=Path(mount_workspace or "/"),
+            guest_path="/home/node/workspace"),
     ))
 
 
@@ -229,6 +233,16 @@ class TestAgentRunArgv(unittest.TestCase):
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
+
+    def test_no_workspace_mount_unless_asked(self) -> None:
+        self.assertNotIn("--mount", self.argv)
+
+    def test_a_mounted_workspace_is_bound_read_write(self) -> None:
+        argv = _agent_run_argv(_plan(Path(self._tmp.name), mount_workspace="/Users/me/app"),
+                               _endpoint())
+        spec = argv[argv.index("--mount") + 1]
+        self.assertEqual("type=bind,source=/Users/me/app,target=/home/node/workspace", spec)
+        self.assertLess(argv.index("--mount"), argv.index("bot-bottle-agent:latest"))
 
     def test_drops_net_raw(self) -> None:
         """The attribution invariant: Apple grants CAP_NET_RAW by default,

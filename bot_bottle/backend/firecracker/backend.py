@@ -38,6 +38,7 @@ class FirecrackerBottleBackend(
     BottleBackend["FirecrackerBottlePlan", "FirecrackerBottleCleanupPlan"]
 ):
     name = "firecracker"
+    supports_workspace_mount = False  # no virtio-fs or 9p in Firecracker, by design
 
     @classmethod
     def is_available(cls) -> bool:

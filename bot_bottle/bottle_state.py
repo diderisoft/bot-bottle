@@ -103,7 +103,7 @@ class BottleMetadata:
 
     identity: str
     agent_name: str
-    cwd: str           # empty string when --cwd was not passed
+    cwd: str           # empty string when the workspace wasn't copied or mounted
     copy_cwd: bool
     started_at: str    # ISO 8601 UTC
     # Derivable from identity via `compose_project_name(identity)`, but
@@ -120,6 +120,7 @@ class BottleMetadata:
     # for state dirs written before this change; resume falls back to
     # the agent's `bottle:` field in that case.
     bottle_names: tuple[str, ...] = ()
+    mount_cwd: bool = False
 
 
 def metadata_path(identity: str) -> Path:
@@ -156,6 +157,7 @@ def read_metadata(identity: str) -> BottleMetadata | None:
         agent_name=str(raw_typed.get("agent_name", "")),
         cwd=str(raw_typed.get("cwd", "")),
         copy_cwd=bool(raw_typed.get("copy_cwd", False)),
+        mount_cwd=bool(raw_typed.get("mount_cwd", False)),
         started_at=str(raw_typed.get("started_at", "")),
         compose_project=str(raw_typed.get("compose_project", "")),
         backend=str(raw_typed.get("backend", "")),

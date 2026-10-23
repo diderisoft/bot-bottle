@@ -37,13 +37,15 @@ def _manifest() -> ManifestIndex:
     })
 
 
-def _spec(tmp: Path, *, copy_cwd: bool = True, identity: str = "demo-work") -> BottleSpec:
+def _spec(tmp: Path, *, copy_cwd: bool = True, identity: str = "demo-work",
+          mount_cwd: bool = False) -> BottleSpec:
     return BottleSpec(
         manifest=_manifest(),
         agent_name="demo",
         copy_cwd=copy_cwd,
         user_cwd=str(tmp),
         identity=identity,
+        mount_cwd=mount_cwd,
     )
 
 
@@ -169,6 +171,53 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
         self.assertIsNotNone(metadata)
         assert metadata is not None
         self.assertEqual("firecracker", metadata.backend)
+
+
+class TestWorkspaceMount(_FakeStateMixin, unittest.TestCase):
+    def docker_plan(self) -> object:
+        backend = DockerBottleBackend(Settings())
+        with (
+            patch("bot_bottle.backend.docker.resolve_plan.docker_mod.require_docker"),
+            patch(
+                "bot_bottle.backend.docker.resolve_plan.docker_mod.runsc_available",
+                return_value=False,
+            ),
+        ):
+            return backend.prepare(_spec(self.tmp, copy_cwd=False, mount_cwd=True),
+                                   self.tmp / "stage", MappingSecrets({}))
+
+    def test_a_mounted_workspace_is_not_copied(self) -> None:
+        plan = self.docker_plan()
+        bottle = _bottle()
+        backend = DockerBottleBackend(Settings())
+        backend.provision_workspace(plan, bottle)  # type: ignore[arg-type]
+        bottle.cp_in.assert_not_called()
+        bottle.exec.assert_not_called()
+        workdir = plan.workspace_plan.workdir  # type: ignore[attr-defined]
+        self.assertEqual("/home/node/workspace", workdir)
+
+    def test_docker_binds_it_into_the_agent(self) -> None:
+        from bot_bottle.backend.docker.consolidated_compose import (  # pylint: disable=import-outside-toplevel
+            consolidated_agent_compose,
+        )
+        plan = self.docker_plan()
+        spec = consolidated_agent_compose(
+            plan,  # type: ignore[arg-type]
+            gateway_ip="10.0.0.2", source_ip="10.0.0.3", network="gw")
+        self.assertEqual([{"type": "bind", "source": str(self.tmp),
+                           "target": "/home/node/workspace"}],
+                         spec["services"]["agent"]["volumes"])
+
+    def test_firecracker_copies_instead_and_says_so(self) -> None:
+        backend = FirecrackerBottleBackend(Settings())
+        with patch("bot_bottle.backend.firecracker.resolve_plan.util.require_firecracker"), \
+                patch("bot_bottle.backend.base.warn") as warned:
+            plan = backend.prepare(_spec(self.tmp, copy_cwd=False, mount_cwd=True,
+                                         identity="demo-fc-mount"),
+                                   self.tmp / "stage", MappingSecrets({}))
+        workspace = plan.workspace_plan
+        self.assertEqual((False, True), (workspace.mount, workspace.copy_contents))
+        self.assertIn("can't mount", warned.call_args.args[0])
 
 
 class TestWorkspaceTrustPath(_FakeStateMixin, unittest.TestCase):

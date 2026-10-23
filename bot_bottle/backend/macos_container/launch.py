@@ -393,6 +393,12 @@ def _agent_run_argv(
     ]
     for entry in _agent_env_entries(plan, endpoint):
         argv += ["--env", entry]
+    workspace = plan.workspace_plan
+    if workspace.mount:
+        # virtiofs: the agent (uid 1000) edits the user's files in place; on the
+        # host they keep the user's ownership.
+        argv += ["--mount", container_mod.bind_mount_spec(
+            str(workspace.host_path), workspace.guest_path)]
     # The init process is a no-op: every agent command arrives via
     # `container exec`, which is also how the identity token gets in.
     argv += [plan.image, "sleep", _AGENT_SLEEP_SECONDS]

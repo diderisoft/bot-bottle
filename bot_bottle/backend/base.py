@@ -14,6 +14,7 @@ thin package `__init__` re-exports these names lazily.
 
 from __future__ import annotations
 
+import dataclasses
 import enum
 import os
 import shlex
@@ -196,6 +197,9 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     # Backends that cannot must reject `nested_containers: true` rather than
     # reach for a host daemon socket.
     supports_nested_containers: bool = False
+    # Whether the backend can mount the user's directory into the bottle.
+    # Firecracker can't (no virtio-fs or 9p, by design), so it copies instead.
+    supports_workspace_mount: bool = True
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -208,6 +212,10 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         accidentally skip it. No remote/runtime resources are created.
         `secrets` supplies the bottle's secret values, now and at launch."""
         from .preparation import BottlePreparationPlanner
+        if spec.mount_cwd and not self.supports_workspace_mount:
+            warn(f"{self.name} can't mount {spec.user_cwd}; copying it in instead "
+                 "(the agent's changes are saved as a patch when it exits)")
+            spec = dataclasses.replace(spec, mount_cwd=False, copy_cwd=True)
         prepared = BottlePreparationPlanner(self).prepare(spec, secrets)
 
         return self._resolve_plan(
@@ -361,6 +369,8 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         does not build a derived image containing the current
         workspace."""
         workspace = plan.workspace_plan
+        if workspace.mount:
+            return  # the backend mounted it at launch
         if not (workspace.enabled and workspace.copy_contents):
             return
 

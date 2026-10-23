@@ -77,6 +77,11 @@ def consolidated_agent_compose(
     }
     if plan.use_runsc:
         service["runtime"] = "runsc"
+    workspace = plan.workspace_plan
+    if workspace.mount:
+        # The user's directory, read-write: the agent edits it in place.
+        service["volumes"] = [{"type": "bind", "source": str(workspace.host_path),
+                               "target": workspace.guest_path}]
 
     return {
         "name": f"bot-bottle-{plan.slug}",
