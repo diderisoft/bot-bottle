@@ -182,5 +182,28 @@ class TestMacosGatewayLifecycle(unittest.TestCase):
         self.assertEqual(self.gw.name, transport.gateway)
 
 
+class TestMacosGatewayBuild(unittest.TestCase):
+    def build(self, *, have_build: bool) -> tuple[MacosGateway, Mock]:
+        gw = MacosGateway("bot-bottle-gateway:latest", settings=Settings())
+        with patch(f"{_GW}.container_mod") as mod, \
+                patch(f"{_GW}.pinned_infra_artifact", return_value=None), \
+                patch(f"{_GW}.local_build_tag", return_value="bot-bottle-gateway:src-abc"):
+            mod.image_exists.return_value = have_build
+            gw.ensure_built()
+        return gw, mod
+
+    def test_builds_and_tags_when_this_code_has_no_build(self) -> None:
+        gw, mod = self.build(have_build=False)
+        mod.build_image.assert_called_once()
+        mod.tag_image.assert_called_once_with("bot-bottle-gateway:latest",
+                                              "bot-bottle-gateway:src-abc")
+        self.assertEqual("bot-bottle-gateway:src-abc", gw.image_ref)
+
+    def test_reuses_a_build_of_this_code(self) -> None:
+        gw, mod = self.build(have_build=True)
+        mod.build_image.assert_not_called()
+        self.assertEqual("bot-bottle-gateway:src-abc", gw.image_ref)
+
+
 if __name__ == "__main__":
     unittest.main()

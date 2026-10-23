@@ -46,6 +46,17 @@ def _local_inputs_hash(image: str) -> str:
 def _note_mismatch(image: str, version: str) -> None:
     info(f"published {image} {version} was built from different code than this "
          "install; building it locally")
+
+
+def local_build_tag(image: str, local_ref: str) -> str:
+    """The tag a local build of `image` from this checkout carries:
+    `<repo>:src-<inputs hash>`. An image with it was built from exactly
+    these inputs, so a launch can use it instead of building again."""
+    return f"{_repo(local_ref)}:src-{_local_inputs_hash(image)}"
+
+
+def note_local_build() -> None:
+    """Mark the launch stage for a service image that's actually being built."""
     log.stage("services", "Rebuilding bot-bottle services for this code (once per change)")
 
 

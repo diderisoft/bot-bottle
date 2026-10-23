@@ -31,7 +31,9 @@ from ...control.lifecycle import (
 )
 from . import util as container_mod
 from ...image_registry import RegistryError
-from ...infra_image import pinned_infra_artifact, pull_pinned_image
+from ...infra_image import (
+    local_build_tag, note_local_build, pinned_infra_artifact, pull_pinned_image,
+)
 from ...published_artifacts import FORMAT_OCI
 from .gateway import CONTROL_NETWORK
 
@@ -130,10 +132,19 @@ class MacosOrchestrator(Orchestrator):
             except RegistryError as e:
                 raise OrchestratorStartError(str(e)) from e
             return
+        # A local build of exactly this code is reused: even a fully cached
+        # Apple `container build` costs ~10 s of BuildKit overhead per launch.
+        built = local_build_tag("bot-bottle-orchestrator", self.image_ref)
+        if not self._settings.operation.no_cache and container_mod.image_exists(built):
+            self.image_ref = built
+            return
+        note_local_build()
         container_mod.build_image(
             self.image_ref, str(self._repo_root), dockerfile="Dockerfile.orchestrator",
             no_cache=self._settings.operation.no_cache,
             dns_override=self._settings.infra.macos_container_dns)
+        container_mod.tag_image(self.image_ref, built)
+        self.image_ref = built
 
     def ensure_running(
         self, *, startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,

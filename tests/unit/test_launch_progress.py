@@ -142,6 +142,33 @@ class Progress(unittest.TestCase):
         self.assertIn("\x1b[J", text[:warning])  # the panel was cleared first
         self.assertIn("Getting images", text[warning:])  # and drawn again below
 
+    def test_an_80_column_terminal_gets_the_panel(self) -> None:
+        with patch("bot_bottle.cli.progress._columns", return_value=80):
+            progress = LaunchProgress(self.log_path, out=_Out(True), tty=True, color=True)
+        self.assertTrue(progress.panel)
+        progress.close()
+
+    def test_narrowing_the_terminal_drops_to_plain_lines(self) -> None:
+        progress, out = self.progress(tty=True, panel=True)
+        progress.stage("image", "Getting images")
+        with patch("bot_bottle.cli.progress._columns", return_value=60):
+            progress._on_resize(0, None)  # pylint: disable=protected-access
+            progress.stage("start", "Starting the bottle")
+        progress.done()
+        self.assertFalse(progress.panel)
+        after = out.getvalue().rsplit("▀", 1)[-1]  # everything after the last logo row
+        self.assertIn("Starting the bottle", after)
+        self.assertNotIn("\x1b[2K", after)  # no more panel redraws
+
+    def test_widening_keeps_the_panel(self) -> None:
+        progress, _ = self.progress(tty=True, panel=True)
+        progress.stage("image", "Getting images")
+        with patch("bot_bottle.cli.progress._columns", return_value=200):
+            progress._on_resize(0, None)  # pylint: disable=protected-access
+            progress.stage("start", "Starting the bottle")
+        self.assertTrue(progress.panel)
+        progress.close()
+
     def test_no_color_means_no_logo(self) -> None:
         with patch.dict("os.environ", {"NO_COLOR": "1"}):
             progress = LaunchProgress(self.log_path, out=_Out(True), tty=True)

@@ -16,6 +16,7 @@ from __future__ import annotations
 import collections
 import os
 import shutil
+import signal
 import sys
 import threading
 import time
@@ -32,8 +33,11 @@ _TAIL_LINES = 12
 # Log lines the user should see even when the rest is hidden.
 _SHOWN = ("bot-bottle: warning:", "bot-bottle: error:")
 # The panel: stages on the left, the logo after a gap.
-_LEFT_WIDTH = 50
+_LEFT_WIDTH = 49
 _GAP = 2
+# The panel's full width, plus a column so no line ever hits the right edge
+# (where some terminals wrap early).
+_PANEL_COLUMNS = _LEFT_WIDTH + _GAP + len(logo.ART[0]) + 1
 _RESET = "\x1b[0m"
 
 
@@ -113,6 +117,10 @@ def logo_rows(*, truecolor: bool) -> list[str]:
     return rows
 
 
+def _columns() -> int:
+    return shutil.get_terminal_size((80, 24)).columns
+
+
 class _Row:
     """One left-panel line: its plain text (for width) and how it's drawn."""
 
@@ -135,8 +143,7 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
         self.color = (self.tty and not os.environ.get("NO_COLOR")) if color is None else color
         live = self.tty and not verbose
         if panel is None:
-            columns = shutil.get_terminal_size((80, 24)).columns
-            panel = live and self.color and columns >= _LEFT_WIDTH + _GAP + len(logo.ART[0])
+            panel = live and self.color and _columns() >= _PANEL_COLUMNS
         self.panel = panel
         truecolor = os.environ.get("COLORTERM", "") in ("truecolor", "24bit")
         self._logo = logo_rows(truecolor=truecolor) if panel else []
@@ -154,6 +161,13 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
         # Set while a question is on screen: nothing may redraw over it.
         self._paused = False
         self._spinner: threading.Thread | None = None
+        # A resize narrower than the panel rewraps what's on screen, so the
+        # panel can't be redrawn in place any more: drop to plain lines.
+        self._resized = threading.Event()
+        self._old_winch: object = None
+        if panel and hasattr(signal, "SIGWINCH") \
+                and threading.current_thread() is threading.main_thread():
+            self._old_winch = signal.signal(signal.SIGWINCH, self._on_resize)
 
     # -- events ----------------------------------------------------------------
 
@@ -229,6 +243,9 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
                 self._clear()
 
     def close(self) -> None:
+        if self._old_winch is not None:
+            signal.signal(signal.SIGWINCH, self._old_winch)  # type: ignore[arg-type]
+            self._old_winch = None
         self._stop.set()
         if self._spinner is not None:
             self._spinner.join(timeout=1)
@@ -258,9 +275,24 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
             self.out.write("\r\x1b[K")
         self.out.flush()
 
+    def _on_resize(self, signum: int, frame: object) -> None:
+        del signum, frame
+        self._resized.set()  # a signal handler only sets a flag; drawing takes the lock
+
+    def _check_resize(self) -> None:
+        if not self._resized.is_set():
+            return
+        self._resized.clear()
+        if self.panel and _columns() < _PANEL_COLUMNS:
+            # What's on screen stays as it is; from here on, plain lines.
+            self.panel = False
+            self._drawn = 0
+            self.out.write("\n")
+
     def _draw(self, frame: str = "…") -> None:
         if self.verbose or self._paused or not self.tty:
             return
+        self._check_resize()
         if self.panel:
             self._draw_panel(frame)
         elif self._title:
@@ -289,6 +321,7 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
     def _finish(self, mark: str) -> None:
         if not self._title:
             return
+        self._check_resize()
         plain = f"{mark} {self._title}  {self._elapsed()}"
         drawn = f"{self._mark(mark)} {self._title}  {self._elapsed()}"
         self._title = ""

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import unittest
+from typing import Any
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -152,12 +155,35 @@ class TestMacosOrchestratorEnsureRunning(unittest.TestCase):
 
 
 class TestMacosOrchestratorBuildStop(unittest.TestCase):
-    def test_ensure_built_builds_the_orchestrator_image(self) -> None:
-        orch = MacosOrchestrator(repo_root=Path("/r"), settings=Settings())
-        with patch(f"{_ORCH}.container_mod") as mod:
+    def build(self, *, have_build: bool, no_cache: bool = False) -> tuple[MacosOrchestrator, Any]:
+        settings = Settings()
+        if no_cache:
+            settings = dataclasses.replace(
+                settings, operation=dataclasses.replace(settings.operation, no_cache=True))
+        orch = MacosOrchestrator(repo_root=Path("/r"), settings=settings)
+        with patch(f"{_ORCH}.container_mod") as mod, \
+                patch(f"{_ORCH}.pinned_infra_artifact", return_value=None), \
+                patch(f"{_ORCH}.local_build_tag", return_value="bot-bottle-orchestrator:src-abc"):
+            mod.image_exists.return_value = have_build
             orch.ensure_built()
+        return orch, mod
+
+    def test_ensure_built_builds_and_tags_the_orchestrator_image(self) -> None:
+        orch, mod = self.build(have_build=False)
         _args, kwargs = mod.build_image.call_args
         self.assertEqual("Dockerfile.orchestrator", kwargs["dockerfile"])
+        mod.tag_image.assert_called_once_with(mod.build_image.call_args[0][0],
+                                              "bot-bottle-orchestrator:src-abc")
+        self.assertEqual("bot-bottle-orchestrator:src-abc", orch.image_ref)
+
+    def test_a_build_of_this_code_is_reused(self) -> None:
+        orch, mod = self.build(have_build=True)
+        mod.build_image.assert_not_called()
+        self.assertEqual("bot-bottle-orchestrator:src-abc", orch.image_ref)
+
+    def test_no_cache_builds_anyway(self) -> None:
+        _orch, mod = self.build(have_build=True, no_cache=True)
+        mod.build_image.assert_called_once()
 
     def test_stop_removes_the_container(self) -> None:
         orch = MacosOrchestrator(settings=Settings())
