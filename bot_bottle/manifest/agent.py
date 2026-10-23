@@ -24,7 +24,7 @@ APT_PACKAGE_RE = re.compile(r"[a-z0-9][a-z0-9+.-]*(:[a-z0-9-]+)?(=[A-Za-z0-9.+:~
 
 @dataclass(frozen=True)
 class ManifestImageOverlay:
-    """A small tweak layered on the pinned default agent image (PRD 0085).
+    """A small tweak layered on the pinned default agent image.
 
     Rendered as a thin `FROM <pinned-default>` layer — a pinned
     harness version, extra apt packages, and extra files COPYed in — so the base
@@ -139,7 +139,7 @@ class ManifestAgentProvider:
     @property
     def builds_custom_image(self) -> bool:
         """The bottle names its own `dockerfile`, so its image is built from
-        that, never swapped for the published default (PRD 0085)."""
+        that, never swapped for the published default."""
         return bool(self.dockerfile)
 
     @classmethod
@@ -244,13 +244,13 @@ class ManifestAgent:
     bottle: str = ""
     skills: tuple[str, ...] = ()
     prompt: str = ""
-    # Per-agent git identity (issue #94). Overlays the referenced
+    # Per-agent git identity. Overlays the referenced
     # bottle's git-gate.user per-field at `Manifest.bottle_for`. Only
     # `user` is allowed at the agent level; `repos` stays bottle-only
     # because it carries credentials and host trust.
     git_user: ManifestGitUser = ManifestGitUser()
     # `remote.writable`: whether remote viewers of this agent's session may
-    # type (PRD 0092). They're read-only otherwise.
+    # type. They're read-only otherwise.
     remote_writable: bool = False
 
     @classmethod

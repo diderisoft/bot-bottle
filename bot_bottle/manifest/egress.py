@@ -1,4 +1,4 @@
-"""Egress routing manifest dataclasses and helpers (PRD 0017, PRD 0053)."""
+"""Egress routing manifest dataclasses and helpers."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ VALID_METHODS = frozenset({
 OUTBOUND_DETECTOR_NAMES = frozenset({"token_patterns", "known_secrets"})
 INBOUND_DETECTOR_NAMES = frozenset({"naive_injection_detection"})
 
-# What the proxy does on an outbound token match (PRD 0062).
+# What the proxy does on an outbound token match.
 OUTBOUND_ON_MATCH_VALUES = ("block", "redact", "supervise")
 
 

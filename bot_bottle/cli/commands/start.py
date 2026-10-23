@@ -1,5 +1,5 @@
 """start: launch a sandboxed bottle for a named agent and attach to its
-interactive session (PRD 0092).
+interactive session.
 
 The CLI resolves everything interactive (agent and bottle pickers, label
 and color, secret prompts, host-key and launch confirmations), then asks

@@ -444,7 +444,7 @@ def create_app(
             rec.bottle_id, _required(body.proposal_id, "proposal_id"),
         )
 
-    # --- remote launch and attach, through the host controller (PRD 0092) ----
+    # --- remote launch and attach, through the host controller ----
 
     def relay() -> HostControlRelay:
         if hostctl is None:

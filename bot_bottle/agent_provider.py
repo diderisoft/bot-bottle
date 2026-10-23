@@ -4,7 +4,7 @@ The manifest owns the user-facing AgentProvider shape. This module is
 the launch-time table that turns a provider template into an executable
 command, default image, and prompt/auth behavior.
 
-Per PRD 0050 the per-provider implementations live under
+The per-provider implementations live under
 `bot_bottle/contrib/<template>/agent_provider.py`. This module exposes:
 
   - `AgentProvider` (ABC) — the contract each plugin implements.
@@ -166,7 +166,7 @@ class AgentProvider(ABC):
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
         """Dockerfile lines that replace this provider's pinned harness with
-        `version` in an overlay layer (PRD 0085), or None when the provider
+        `version` in an overlay layer, or None when the provider
         does not support a harness bump. The lines start as root and may
         switch user; the overlay restores `image_user` afterwards. They must
         fail the build unless the installed harness reports exactly
@@ -226,8 +226,7 @@ class AgentProvider(ABC):
     def provision(self, plan: "BottlePlan", bottle: "Bottle") -> None:
         """Apply the provider's declarative
         `dirs`/`pre_copy`/`files`/`verify` steps from
-        `plan.agent_provision`. Was called `provision_provider_auth`
-        on `BottleBackend` before PRD 0050."""
+        `plan.agent_provision`."""
 
     @abstractmethod
     def provision_supervise_mcp(

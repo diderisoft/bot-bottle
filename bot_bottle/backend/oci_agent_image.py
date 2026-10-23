@@ -1,5 +1,4 @@
-"""Published agent images for the OCI backends: docker and macos_container
-(PRD 0085).
+"""Published agent images for the OCI backends: docker and macos_container.
 
 Both run the agent from a local image store, so they resolve it the same way:
 pull the release-pinned image, or build the bottle's overlay on it, and give

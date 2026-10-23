@@ -307,7 +307,7 @@ def build_rootfs_ext4(base_dir: Path, out_path: Path, *, slack_mib: int = 1024) 
 
 def make_bottle_rootfs(agent_base: Path, out_path: Path) -> None:
     """The per-bottle writable disk from `agent_base`, which is either a
-    prepared ext4 image (a pulled published agent, PRD 0085) or a rootfs
+    prepared ext4 image (a pulled published agent) or a rootfs
     directory (a local build, overlay, or resumed snapshot). An image is copied
     sparsely — the base already carries its guest boot bits and slack — while a
     directory goes through `mke2fs -d`. Either way the base stays pristine for

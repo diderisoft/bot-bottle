@@ -1,4 +1,4 @@
-"""Egress policy schema parsing and serialization (PRD 0017 / 0053)."""
+"""Egress policy schema parsing and serialization."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""SQLite-backed audit store for supervise (PRD 0013)."""
+"""SQLite-backed audit store for supervise."""
 
 from __future__ import annotations
 

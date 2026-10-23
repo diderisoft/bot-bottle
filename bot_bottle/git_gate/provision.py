@@ -1,4 +1,4 @@
-"""git-gate deploy-key lifecycle for `gitea` upstreams (PRD 0047/0048).
+"""git-gate deploy-key lifecycle for `gitea` upstreams.
 
 Provisions a fresh ed25519 deploy key via the forge API at prepare time
 and revokes it at teardown, so the agent never holds an upstream

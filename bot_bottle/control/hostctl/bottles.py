@@ -1,4 +1,4 @@
-"""Bottles held by the host controller (PRD 0092): launch, list, teardown.
+"""Bottles held by the host controller: launch, list, teardown.
 
 A launch job prepares the bottle without prompting, then hands it to a
 holder thread that stays inside `backend.launch(plan)` for the bottle's

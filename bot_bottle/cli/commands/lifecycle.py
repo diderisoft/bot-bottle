@@ -1,4 +1,4 @@
-"""The bot-bottle host service as a whole (PRD 0092): `install`, `uninstall`,
+"""The bot-bottle host service as a whole: `install`, `uninstall`,
 `up`, `down`, `status` and `jobs`.
 
 The host controller daemon and each backend's orchestrator and gateway are

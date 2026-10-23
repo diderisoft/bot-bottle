@@ -1,4 +1,4 @@
-"""Per-service control-plane signing keys (issue #476).
+"""Per-service control-plane signing keys.
 
 A `TrustDomain` is one service's signing material: its host-canonical key file,
 the roles that key may sign, and the env vars its key and a pre-minted token ride
@@ -7,7 +7,7 @@ signing (or accepting) another service's tokens.
 
 Today there is one domain, `CONTROL_PLANE` — the orchestrator's key (roles
 `{gateway, cli}`): the orchestrator holds it and mints the gateway's and CLI's
-tokens. The host controller (#468) will add a **second** domain with its own key
+tokens. The host controller will add a **second** domain with its own key
 the orchestrator never holds. That is the point: the host controller starts and
 stops the orchestrator, so the orchestrator must not be able to mint the
 credentials it uses to talk to it. Adding a `host` role to `CONTROL_PLANE`
@@ -16,7 +16,7 @@ instead would defeat that — the orchestrator holds that key, so it could forge
 
 `ControlPlaneProvisioning` is the one seam every backend launcher uses to get the
 orchestrator its key and the gateway its token, instead of re-deriving that
-wiring per backend (the bug class behind PR #471 — see
+wiring per backend (see
 `docs/prds/0079-control-plane-auth-provisioning.md`).
 
 The domain descriptions (`TrustDomain`, `CONTROL_PLANE`) and token mint/verify
@@ -53,9 +53,8 @@ def mint(domain: TrustDomain, role: str) -> str:
 @dataclass(frozen=True)
 class ControlPlaneProvisioning:
     """The one seam every backend launcher uses to provision control-plane auth,
-    instead of re-deriving the four invariants that each cost a PR #471 review
-    round: the orchestrator gets the raw key (`orchestrator_key`), the gateway
-    gets a minted `gateway` token (`gateway_token`), the host CLI mints its own
+    instead of re-deriving its four invariants: the orchestrator gets the raw
+    key (`orchestrator_key`), the gateway gets a minted `gateway` token (`gateway_token`), the host CLI mints its own
     `cli` token from the same host-canonical key, and the orchestrator never
     starts open."""
 
@@ -72,7 +71,7 @@ class ControlPlaneProvisioning:
             raise ProvisioningError(
                 f"refusing to start the {self.domain.name} orchestrator without "
                 "a signing key: an open orchestrator authenticates no one and "
-                "grants every caller that reaches it full `cli` (#476)"
+                "grants every caller that reaches it full `cli`"
             )
         return key
 
@@ -97,7 +96,7 @@ class HostLink:
 
 @dataclass(frozen=True)
 class HostControlProvisioning:
-    """What the host controller hands an orchestrator it brings up (PRD 0092):
+    """What the host controller hands an orchestrator it brings up:
     the daemon's URL on the orchestrator's link and an `orchestrator`-role
     token. Never the `HOST_CONTROL` key, so the orchestrator can't mint itself
     a `cli` token. `listen` has the daemon serve a link (idempotent)."""

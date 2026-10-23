@@ -4,7 +4,7 @@ The shared gateway's address is assigned by vmnet's DHCP and changes whenever
 the gateway container is recreated. Every agent-facing URL (egress proxy,
 git-http, supervise) names the gateway (`GATEWAY_HOSTNAME`) instead, resolved
 through the bottle's own `/etc/hosts`: unlike the agent's `environ`, that file
-can be rewritten in a running container, so the reattach flow (PRD 0081)
+can be rewritten in a running container, so the reattach flow
 re-points live bottles when the gateway moves. Apple Container 1.0 has no
 container-name DNS and no `--add-host`, so the entry is written by exec.
 

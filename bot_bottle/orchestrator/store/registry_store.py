@@ -1,4 +1,4 @@
-"""Orchestrator bottle registry — the per-host runtime-state store (PRD 0070).
+"""Orchestrator bottle registry — the per-host runtime-state store.
 
 SQLite-backed registry mapping each live bottle to its source IP and
 per-bottle identity token, plus the **fail-closed attribution** the data
@@ -10,9 +10,8 @@ framework namespaces each store by `schema_key`), so all bot-bottle
 runtime state lives in one queryable file — one place to back up, inspect,
 and integrate a console against.
 
-This is the "runtime state" tier of PRD 0070 (leases / approvals /
-registry) — deliberately NOT config (which stays declarative under
-`~/.bot-bottle/`) and NOT the build-time constants (a flat file). It is the
+This is the "runtime state" tier (leases / approvals / registry) —
+deliberately NOT config (which stays declarative under `~/.bot-bottle/`) and NOT the build-time constants (a flat file). It is the
 source of truth the orchestrator sweeps on restart to re-adopt running
 bottles, so it lives in a durable store rather than process memory.
 
@@ -50,7 +49,7 @@ DEFAULT_REAP_GRACE_SECONDS = 120.0
 
 
 def new_identity_token() -> str:
-    """A fresh per-bottle identity token (PRD 0070 attribution defence)."""
+    """A fresh per-bottle identity token."""
     return secrets.token_urlsafe(IDENTITY_TOKEN_BYTES)
 
 
@@ -105,7 +104,7 @@ _MIGRATIONS = TableMigrations(
         # egress allowlist / routes / git config selected by source IP. The
         # multi-tenant gateway resolves it per request via `attribute`.
         "ALTER TABLE orchestrator_bottles ADD COLUMN policy TEXT NOT NULL DEFAULT ''",
-        # v4 — per-bottle encrypted egress secrets (PRD 0080).
+        # v4 — per-bottle encrypted egress secrets.
         # One row per env-var: key (env-var name) is plaintext for auditing;
         # value is the encrypted token string. The encryption key (ENV_VAR_SECRET)
         # lives only in the agent's environment — a row alone cannot recover the

@@ -1,5 +1,4 @@
-"""The `GatewayTransport` for the gateway running in the gateway microVM
-(PRD 0070).
+"""The `GatewayTransport` for the gateway running in the gateway microVM.
 
 How the launcher stages files + runs commands in the running gateway: the
 docker exec/cp equivalents over SSH (dropbear + the stable infra key). The

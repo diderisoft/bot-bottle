@@ -1,4 +1,4 @@
-"""The orchestrator's store manager (PRD 0013 / 0070).
+"""The orchestrator's store manager.
 
 The orchestrator is the sole opener of `bot-bottle.db`, so it owns migrating
 every table in it: the supervise `queue_store` and `audit_store` plus the host

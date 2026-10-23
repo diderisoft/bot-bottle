@@ -7,7 +7,7 @@ defaults to `~/.bot-bottle` and is overridable with the
 
 Note that the supervise queue and the audit log are *tables in the shared
 DB*, not directories under the root — see `queue_store.py` / `audit_store.py`.
-The root held a `queue/` directory before the SQLite migration (PRD 0067);
+The root held a `queue/` directory before the SQLite migration;
 nothing writes there now.
 
 The env override is the single knob for redirecting the root: the test
@@ -83,7 +83,7 @@ def host_gateway_ca_dir() -> Path:
     `docker volume prune` / `docker system prune --volumes` during routine host
     maintenance; the gateway then mints a fresh CA that every already-running
     bottle distrusts, failing the TLS handshake even after it reconnects to the
-    moved gateway (issue #450). A path under the root docker never prunes it,
+    moved gateway. A path under the root docker never prunes it,
     and it stays directly inspectable + rotatable from the host."""
     ca_dir = bot_bottle_root() / GATEWAY_CA_DIRNAME
     ca_dir.mkdir(parents=True, exist_ok=True)
@@ -96,7 +96,7 @@ def host_signing_key(filename: str) -> str:
 
     The generic form of `host_orchestrator_token()`: each service names its own
     key file (`contract.auth.TrustDomain`), so the orchestrator and a separate service like
-    the host controller (#468) get distinct keys neither can read. It is a *host*
+    the host controller get distinct keys neither can read. It is a *host*
     artifact — the file lives under the root the agent never mounts, and its value
     is injected only into the trusted control-plane process — so reading it here
     is safe on the launch path but the value never reaches a bottle."""

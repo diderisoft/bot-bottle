@@ -1,4 +1,4 @@
-"""Bottles running on the backends (PRD 0092): `GET /bottles/live`.
+"""Bottles running on the backends: `GET /bottles/live`.
 
 What's actually up, whoever launched it, including bottles from before this
 daemon started. Each backend lists its bottles through the `GatewayAttacher`

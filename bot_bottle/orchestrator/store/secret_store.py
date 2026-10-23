@@ -1,4 +1,4 @@
-"""Symmetric encryption for per-bottle egress secrets (PRD 0080).
+"""Symmetric encryption for per-bottle egress secrets.
 
 Each agent receives a random ENV_VAR_SECRET at startup — passed as an env var,
 never logged or persisted. The host uses this key to encrypt each egress auth

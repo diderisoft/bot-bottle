@@ -1,8 +1,8 @@
-"""The per-host orchestrator core (PRD 0070).
+"""The per-host orchestrator core.
 
 `OrchestratorCore` is the single backend-neutral object the control plane talks
 to: it owns the registry (runtime state). Bottles are launched by the host
-controller (PRD 0092); the host registers each one here during its launch.
+controller; the host registers each one here during its launch.
 
   * `register_bottle` mints the bottle (registry: source IP + identity token)
     with its gateway policy and egress tokens.
@@ -72,7 +72,7 @@ class OrchestratorCore:
         # Held **in memory only** — never written to the registry DB — so the
         # gateway can inject each bottle's upstream credential without secrets
         # at rest. Lost on restart (re-launch re-registers them); the future
-        # SecretProvider (#355) replaces this with per-request minting.
+        # SecretProvider replaces this with per-request minting.
         self._tokens: dict[str, dict[str, str]] = {}
 
     def register_bottle(
@@ -118,7 +118,7 @@ class OrchestratorCore:
         """Drop registry rows for bottles that are no longer running, and
         forget their in-memory egress tokens. Returns the reaped bottle ids.
 
-        The live set comes from the host controller (`hostctl`, PRD 0092):
+        The live set comes from the host controller (`hostctl`):
         the orchestrator runs *inside* the infra container and has no view
         of the backend. The bottles are already gone, so there is nothing to
         stop.
@@ -180,7 +180,7 @@ class OrchestratorCore:
     # host TUI (no direct-DB access, one path for every backend).
     #
     # The *agent* half of the queue (queue a proposal, poll for its response)
-    # is served here too (PRD 0070): the data plane no longer opens the DB, so
+    # is served here too: the data plane never opens the DB, so
     # supervise_server / egress / git-gate reach the queue over the control
     # plane. Both are keyed on the caller's orchestrator-resolved bottle id —
     # never a caller-supplied slug — so a bottle can only queue or read its own
@@ -214,7 +214,7 @@ class OrchestratorCore:
 
         Poll does **not** archive — a decided proposal keeps returning the same
         decision so a client whose connection drops after the decision but before
-        it consumes the response still gets it on retry (issue #469 review). A
+        it consumes the response still gets it on retry. A
         decided proposal is already excluded from the operator's pending list (a
         response row exists), so it doesn't linger there; the row itself is reaped
         when the bottle is torn down / reconciled.
@@ -398,7 +398,7 @@ class OrchestratorCore:
     def gateway_status(self) -> dict[str, object]:
         """Report the shared gateway for the control plane / console.
 
-        The orchestrator no longer owns a standalone gateway lifecycle — the
+        The orchestrator does not own the gateway's lifecycle — the
         consolidated flow runs the gateway data plane inside the per-host infra
         container/VM (see `backend/*/gateway`), so this reports `configured:
         false`. Retained for the documented `GET /gateway` control-plane

@@ -1,5 +1,4 @@
-"""Prune published images from the Gitea registry per the retention policy
-(PRD 0084, "Retention").
+"""Prune published images from the Gitea registry per the retention policy.
 
 Publishing only ever adds. ext4 rootfs artifacts do not dedupe — each is a full
 monolithic copy per release per arch — so a release cadence fills the registry

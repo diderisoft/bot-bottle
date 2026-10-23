@@ -240,7 +240,7 @@ class TestGitEntryCrossValidation(unittest.TestCase):
         except ManifestError as e:
             msg = str(e)
         self.assertIn("git-gate", msg)
-        self.assertIn("PRD 0047", msg)
+        self.assertIn("git-gate.repos", msg)
 
 
 class TestStaticKey(unittest.TestCase):

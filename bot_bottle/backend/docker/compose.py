@@ -1,4 +1,4 @@
-"""Docker compose lifecycle helpers (PRD 0018).
+"""Docker compose lifecycle helpers.
 
 Serialize a compose spec to disk, drive `docker compose up/down`,
 dump the merged log on teardown, and enumerate `bot-bottle-*`
@@ -20,7 +20,7 @@ from ..base import EnumerationError
 from .util import daemon_running
 
 
-# --- Lifecycle helpers (PRD 0018 chunk 3) ----------------------------------
+# --- Lifecycle helpers ----------------------------------
 #
 # The renderer above is pure. The helpers below own the I/O side:
 # serialize the spec to disk, drive `docker compose up`, dump the

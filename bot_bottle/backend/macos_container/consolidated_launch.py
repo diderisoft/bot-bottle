@@ -1,4 +1,4 @@
-"""Consolidated bottle launch sequence for the macOS backend (PRD 0070).
+"""Consolidated bottle launch sequence for the macOS backend.
 
 The docker backend allocates a free address, pins the agent to it with
 `--ip`, registers it, *then* starts the agent — registration precedes launch
@@ -27,7 +27,7 @@ time instead — see `bottle.MacosContainerBottle`.
 
 That delivery is load-bearing, not a nicety: `/resolve` requires a matching
 `(source_ip, identity_token)` pair and fail-closes with no source-IP-only
-fallback (#366). So egress that does not carry the token is denied — which is
+fallback. So egress that does not carry the token is denied — which is
 the safe direction, and is why the agent's init process is a bare `sleep` and
 every real command arrives through `container exec`.
 """

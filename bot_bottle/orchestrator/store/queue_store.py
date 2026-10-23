@@ -1,4 +1,4 @@
-"""SQLite-backed queue store for supervise proposals and responses (PRD 0013)."""
+"""SQLite-backed queue store for supervise proposals and responses."""
 
 from __future__ import annotations
 

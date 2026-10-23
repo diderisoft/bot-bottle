@@ -1,5 +1,4 @@
-"""Relay a remote viewer's WebSocket to the host controller's attach stream
-(PRD 0092).
+"""Relay a remote viewer's WebSocket to the host controller's attach stream.
 
 Frames pass through unchanged both ways: terminal bytes as binary, JSON
 control messages (`resize`, `writable`, `exit`, `detached`) as text. The host

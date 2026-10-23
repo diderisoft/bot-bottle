@@ -1,8 +1,7 @@
-"""Launch flow for the macOS Apple Container backend (PRD 0070).
+"""Launch flow for the macOS Apple Container backend.
 
 The agent container attaches to the **shared host-only gateway network** and
-proxies egress through the one per-host gateway, replacing the per-bottle
-companion container removed in #385.
+proxies egress through the one per-host gateway.
 
 The order differs from docker's, forced by Apple Container 1.0.0 having no
 `--ip` (see `consolidated_launch`): the agent is started *before* it is
@@ -15,14 +14,14 @@ Two things follow from that inversion:
 
 - The **identity token** is minted by registration and so cannot be in the
   agent's run-time env; it rides the proxy URL applied at `container exec`
-  time (`bottle.MacosContainerBottle`). `/resolve` requires it (#366), so
+  time (`bottle.MacosContainerBottle`). `/resolve` requires it, so
   egress without it is denied — hence the bare `sleep` init: every real agent
   command goes through exec and therefore carries the token.
 - The agent is run with `--cap-drop CAP_NET_RAW`. Apple Container grants
   NET_RAW by default, which would let an agent open a raw socket and forge a
   neighbour's source address on the shared segment. NET_ADMIN is already
   absent (the agent cannot change its own address or route), so dropping
-  NET_RAW is what closes the source-address half of PRD 0070's invariant:
+  NET_RAW is what closes the source-address half of the attribution invariant:
   "a packet's source address, as seen by the orchestrator, provably identifies
   the originating bottle." The identity token is the other half — an attacker
   would need to forge the address *and* steal the token — but the invariant is
@@ -104,7 +103,7 @@ def _agent_image(plan: MacosContainerBottlePlan) -> str:
         info(f"using committed image {committed!r}")
         return committed
     # Prefer the release-pinned published image (or an overlay on it) over a
-    # local build (PRD 0085); the nested-containers layer is added on top by
+    # local build; the nested-containers layer is added on top by
     # the caller either way. None: build the bottle's own Dockerfile.
     published = oci_agent_image.resolve_published_agent_image(
         plan, _container_runtime(plan.settings), template=plan.agent_provider_template,
@@ -171,7 +170,7 @@ def launch(
         # Step 1: the per-host singletons. Must precede the agent run — its
         # proxy env needs the gateway's address at `container run` time.
         # Bringing them up cold re-points running bottles at the gateway's new
-        # address as part of the reattach (PRD 0081).
+        # address as part of the reattach.
         service = MacosInfraService(plan.settings)
         endpoint = ensure_gateway(service=service)
 
@@ -317,7 +316,7 @@ def _proxy_url(egress_port: int, identity_token: str = "") -> str:
     """The agent's egress proxy URL. The identity token rides as proxy
     credentials — the gateway reads Proxy-Authorization, resolves the
     (source_ip, token) pair against the control plane, and strips it before
-    upstream. Without a valid pair `/resolve` denies the request (#366).
+    upstream. Without a valid pair `/resolve` denies the request.
 
     Names the gateway rather than addressing it: this URL reaches the agent as
     process environment, which cannot be rewritten once the agent is running,

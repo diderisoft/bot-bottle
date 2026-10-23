@@ -1,4 +1,4 @@
-"""Launch flow for the Firecracker backend (PRD 0070, consolidated).
+"""Launch flow for the Firecracker backend.
 
 Per bottle:
   1. build the agent rootfs in a builder VM (buildah, no host docker), or
@@ -206,7 +206,7 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
     `util.make_bottle_rootfs` turns into this bottle's disk. In order: a
     committed snapshot (freeze/migrate) resumed from the freezer's tar; the
     release-pinned published ext4, or an overlay built on the pinned OCI
-    image (PRD 0085); else the bottle's Dockerfile, built in the infra VM. A
+    image; else the bottle's Dockerfile, built in the infra VM. A
     custom agent_provider.dockerfile is built as written, never replaced by
     the published default for its template."""
     committed = read_committed_image(plan.slug)

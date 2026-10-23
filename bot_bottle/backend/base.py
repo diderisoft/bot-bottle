@@ -1,4 +1,4 @@
-"""The abstract backend contract (PRD 0018 / 0070).
+"""The abstract backend contract.
 
 The backend-neutral types every bottle backend implements: the launch
 `BottleSpec` and `BottlePlan` (defined in `plan`, re-exported here), the
@@ -188,7 +188,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
     # Whether this backend can run a container engine *inside* the bottle.
     # Backends that cannot must reject `nested_containers: true` rather than
-    # reach for a host daemon socket (issue #392).
+    # reach for a host daemon socket.
     supports_nested_containers: bool = False
 
     def __init__(self, settings: Settings) -> None:
@@ -322,18 +322,16 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         the agent's trust store is rebuilt before anything inside the
         agent makes a TLS call.
 
-        Per PRD 0050 the per-provider steps (prompt, skills,
+        The per-provider steps (prompt, skills,
         declarative provision-plan apply, supervise MCP registration)
         live on the `AgentProvider` plugin. The backend only owns the
         steps that are about backend infrastructure (CA, workspace,
         git) and surfaces the supervise daemon URL its launch step
         knows about via `supervise_mcp_url`.
 
-        PRD 0017: cred-proxy's agent-side dotfile rewrites (~/.npmrc,
-        ~/.gitconfig insteadOf, tea config) are gone. Egress-proxy is
-        on the agent's HTTP_PROXY path so every tool that respects
-        HTTPS_PROXY (claude-code, git over HTTPS, npm, curl) is
-        intercepted without per-tool reconfiguration."""
+        The egress proxy is on the agent's HTTP_PROXY path, so every tool
+        that respects HTTPS_PROXY (claude-code, git over HTTPS, npm, curl)
+        is intercepted without per-tool reconfiguration."""
         provider = get_provider(plan.agent_provision.template)
         provider.provision_ca(bottle, plan)
         prompt_path = provider.provision_prompt(plan, bottle)
@@ -385,9 +383,9 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
     @abstractmethod
     def infra_service(self) -> "InfraService":
-        """This backend's per-host orchestrator + gateway pair (PRD 0070). The
+        """This backend's per-host orchestrator + gateway pair. The
         one hook a backend implements to get bring-up, reattaching running
-        bottles after a restart (PRD 0081), and CA rotation."""
+        bottles after a restart, and CA rotation."""
 
     def ensure_orchestrator(self) -> str:
         """Bring up this backend's per-host orchestrator + shared gateway

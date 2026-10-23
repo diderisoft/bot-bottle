@@ -1,4 +1,4 @@
-"""Agent bases for the Firecracker backend (PRD 0069 Stage 3, PRD 0085).
+"""Agent bases for the Firecracker backend.
 
 Three sources, each cached under the host cache dir: a published ext4 image,
 downloaded, verified and prepared on the host; an overlay on the published
@@ -9,7 +9,7 @@ Docker daemon or root-equivalent `docker` group is required. In-VM builds run
 over SSH and stream the rootfs back to the host.
 
 Builds run on the control-plane (orchestrator) side — not the data-plane
-gateway — per PRD 0070 v1 ("builds stay in the orchestrator"): it owns
+gateway: it owns
 launches and already carries buildah. Tradeoff: an untrusted Dockerfile's
 `RUN` steps share the VM with the control plane (buildah `--isolation chroot`
 isn't a hard boundary) — the accepted blast-radius tradeoff, re-splittable
@@ -249,7 +249,7 @@ def cached_agent_image_ext4(artifact: Artifact, infra: InfraSettings) -> Path | 
 
 
 def acquire_agent_image_ext4(artifact: Artifact, settings: Settings) -> Path:
-    """The bootable agent base for a published ext4 `artifact` (PRD 0085):
+    """The bootable agent base for a published ext4 `artifact`:
     download and verify it on the host (`image_registry.ensure_ext4`, digest
     checked, fail closed), decompress it, add slack, and write this host's
     guest boot bits into it. Prepared once and cached; each bottle then gets a
@@ -315,7 +315,7 @@ def acquire_agent_overlay_rootfs_dir(
     smoke_test: tuple[str, ...] = (),
 ) -> Path:
     """The rootfs of `overlay` built as a thin layer on the pinned OCI
-    `artifact` (PRD 0085 tier 2), cached by the staged build context and the
+    `artifact`, cached by the staged build context and the
     guest boot bits. Builds with a host Docker/Podman when one is present (it
     shares the user's layer cache), else in the infra VM. The pin's tag is
     checked against its digest only when building, so a cached overlay

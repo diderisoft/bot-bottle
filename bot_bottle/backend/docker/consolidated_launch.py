@@ -1,4 +1,4 @@
-"""Consolidated bottle launch sequence for the docker backend (PRD 0070).
+"""Consolidated bottle launch sequence for the docker backend.
 
 Composes the orchestrator primitives into the register/teardown sequence:
 

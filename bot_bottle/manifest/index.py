@@ -164,7 +164,7 @@ class ManifestIndex:
     def resolve(cls, cwd: str, *, missing_ok: bool = False) -> "ManifestIndex":
         """Walk the per-file manifest tree and build a ManifestIndex.
 
-        Layout (PRD 0011):
+        Layout:
           $HOME/.bot-bottle/bottles/<name>.md  — bottles (home-only)
           $HOME/.bot-bottle/agents/<name>.md   — home agents
           $CWD/.bot-bottle/agents/<name>.md    — cwd agents
@@ -182,8 +182,8 @@ class ManifestIndex:
         If `bot-bottle.json` exists alongside a missing
         `.bot-bottle/` directory at either side, dies with a
         clear pointer at the README's manifest section — the
-        manifest format changed in PRD 0011 and we don't silently
-        fall back."""
+        manifest format changed to per-file Markdown and we don't
+        silently fall back."""
         home_dir = Path(os.environ["HOME"])
         cwd_dir = Path(cwd)
         home_md = home_dir / ".bot-bottle"
@@ -198,8 +198,7 @@ class ManifestIndex:
                 return cls.from_json_obj({"bottles": {}, "agents": {}})
             raise ManifestError(
                 f"no manifest found: {home_md} does not exist. "
-                f"See README.md for the per-file Markdown layout "
-                f"(PRD 0011)."
+                f"See README.md for the per-file Markdown layout."
             )
 
         # When CWD == HOME (running from $HOME directly), pass the
@@ -231,8 +230,8 @@ class ManifestIndex:
                     warn(
                         f"ignoring bottle file(s) under "
                         f"{stale_bottles}: {names}. Bottles can only "
-                        f"live under $HOME/.bot-bottle/bottles/ "
-                        f"(PRD 0011). Move them or delete."
+                        f"live under $HOME/.bot-bottle/bottles/. "
+                        f"Move them or delete."
                     )
         return cls(bottles={}, agents={}, home_md=home_dir, cwd_md=cwd_dir)
 
@@ -244,7 +243,7 @@ class ManifestIndex:
         raw_agents = _section_dict(d.get("agents"), "manifest 'agents'")
 
         # Coerce each bottle's raw to dict[str, object] so the
-        # PRD 0025 resolver can apply extends-merge rules
+        # extends resolver can apply its merge rules
         # consistently with the md-loader path.
         raw_bottles: dict[str, dict[str, object]] = {}
         for n, b in raw_bottles_obj.items():

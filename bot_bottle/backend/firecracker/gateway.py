@@ -1,10 +1,10 @@
-"""The Firecracker gateway data plane as a microVM (PRD 0070).
+"""The Firecracker gateway data plane as a microVM.
 
 `FirecrackerGateway` is the Firecracker implementation of the backend-neutral
 `Gateway` service, and owns the gateway's host-side logic directly: booting the
 gateway microVM on its NAT'd link, seeding the pre-minted `gateway` token,
 fetching the mitmproxy CA, and the SSH exec/cp provisioning transport. The
-gateway VM never opens `bot-bottle.db` (#469), so it holds no signing key —
+gateway VM never opens `bot-bottle.db`, so it holds no signing key —
 only the token the host hands it via `connect_to_orchestrator`.
 
 The plane-agnostic VM substrate the orchestrator VM also uses stays in
@@ -42,8 +42,7 @@ from .gateway_transport import FirecrackerGatewayTransport
 GATEWAY_NAME = "bot-bottle-gateway"
 
 # The gateway VM's slim memory ceiling — the data plane carries no build
-# tooling (buildah lives only on the orchestrator rootfs) — PRD 0070
-# "Memory: fixed ceilings".
+# tooling (buildah lives only on the orchestrator rootfs).
 _GW_MEM_MIB = 2048
 
 # The pre-minted `gateway` JWT path in the guest. The gateway init (in
@@ -85,7 +84,7 @@ class FirecrackerGateway(Gateway):
         guest IP is parsed from the URL and passed on the cmdline (`bb_orch=`), so
         the baked init stays IP-independent. Boot the orchestrator first — the
         gateway daemons reach it at startup. The gateway never mints, so it holds
-        no signing key, only this token (#469). Always a fresh boot (adoption
+        no signing key, only this token. Always a fresh boot (adoption
         happens a level up, in `FirecrackerInfraService`), so returns True."""
         self._orchestrator_url = orchestrator_url
         self._gateway_token = gateway_token

@@ -1,8 +1,7 @@
-"""Consolidated bottle launch sequence for the Firecracker backend
-(PRD 0070, Stage B).
+"""Consolidated bottle launch sequence for the Firecracker backend.
 
 The orchestrator control plane and the shared gateway run in **two** persistent
-per-host **infra VMs** (`infra_vm.py`), split per PRD 0070 — not Docker
+per-host **infra VMs** (`infra_vm.py`) — not Docker
 containers. Agent VMs reach the gateway's egress / supervise / git-http ports
 via a PREROUTING DNAT on their own host-side TAP IP that redirects to the
 **gateway** VM (see `scripts/firecracker-netpool.sh`) — never the orchestrator,

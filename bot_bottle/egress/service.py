@@ -1,4 +1,4 @@
-"""The `Egress` host-side service (PRD 0017).
+"""The `Egress` host-side service.
 
 `Egress` builds a bottle's egress plan at launch: resolve the manifest's egress
 routes, render the gateway's `routes.yaml`, assign per-route token slots, and
@@ -136,7 +136,7 @@ def _default_provider_on_match(
     provider_routes: tuple[EgressRoute, ...],
 ) -> tuple[EgressRoute, ...]:
     """Provider routes (the agent talking to its own LLM API) default to the
-    `redact` on-match policy (PRD 0062): high-volume conversation payloads are
+    `redact` on-match policy: high-volume conversation payloads are
     the worst source of token-shaped false positives, so a match is scrubbed
     and forwarded rather than hard-blocked or queued for the operator. A
     provider that sets `outbound_on_match` explicitly keeps its choice."""

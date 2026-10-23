@@ -1,4 +1,4 @@
-"""The `GitGate` host-side service (PRD 0008).
+"""The `GitGate` host-side service.
 
 The git-gate fronts a bottle's declared git upstreams as a transparent mirror:
 a `pre-receive` hook gitleaks-scans pushes and forwards clean refs to the real
@@ -38,7 +38,7 @@ def stage_git_gate_scripts(
     """Render the git-gate entrypoint, pre-receive hook, access hook and
     gitleaks config from the current code into `stage_dir`, returning their
     paths in that order. Used at launch and when a restarted gateway is
-    re-provisioned (PRD 0081), so both always install current hooks."""
+    re-provisioned, so both always install current hooks."""
     entrypoint = stage_dir / "git_gate_entrypoint.sh"
     entrypoint.write_text(git_gate_render_entrypoint(upstreams))
     entrypoint.chmod(0o600)

@@ -1,4 +1,4 @@
-"""Consolidated registration inputs (PRD 0070, docker slice).
+"""Consolidated registration inputs.
 
 Bridges the existing per-bottle `prepare` output to the consolidated
 registry: turns a prepared bottle's egress plan into the backend-neutral

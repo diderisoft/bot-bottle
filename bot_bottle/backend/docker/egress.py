@@ -2,10 +2,7 @@
 container naming, and the host-side mitmproxy CA mint. The
 prepare-time routes-yaml rendering itself lives on the
 platform-neutral `Egress` ABC — backends instantiate it directly.
-
-The per-container `.start()` / `.stop()` lifecycle was removed in
-PRD 0024 chunk 3; the gateway (PRD 0024) runs egress
-under its python init supervisor."""
+The gateway runs egress under its python init supervisor."""
 
 from __future__ import annotations
 
@@ -96,8 +93,8 @@ def egress_tls_init(stage_dir: Path) -> tuple[Path, Path]:
 
     cert_path.chmod(0o644)
     # mitmproxy reads cert + key from a single concatenated PEM file.
-    # This file IS bind-mounted into the egress container (chunk 3+),
-    # where mitmproxy runs as uid 1000 — so the host file has to be
+    # This file is bind-mounted into the egress container, where
+    # mitmproxy runs as uid 1000 — so the host file has to be
     # world-readable for the container's user to read it through the
     # mount. Owner-only mode on the parent dir (state/<slug>/, under
     # ~/.bot-bottle which inherits ~'s 0o700) is what actually

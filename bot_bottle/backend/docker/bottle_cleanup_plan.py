@@ -1,6 +1,6 @@
 """DockerBottleCleanupPlan — concrete subclass of BottleCleanupPlan.
 
-PRD 0018 chunk 4: cleanup is centered on compose projects. `docker
+Cleanup is centered on compose projects. `docker
 compose ls` is the source of truth for what's running; the plan
 carries the projects to `compose down`, plus three fallback buckets
 for legacy / orphan resources:

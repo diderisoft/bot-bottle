@@ -2,7 +2,7 @@
 
 Optional everywhere it is used: the firecracker backend runs without one, but
 when one is present it builds agent overlays on the host, sharing its layer
-cache, instead of with buildah inside the infra VM (PRD 0085). `BOT_BOTTLE_BUILD_ENGINE` picks one explicitly (`docker`,
+cache, instead of with buildah inside the infra VM. `BOT_BOTTLE_BUILD_ENGINE` picks one explicitly (`docker`,
 `podman`) or turns host builds off (`vm`).
 """
 

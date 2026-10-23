@@ -17,13 +17,13 @@ from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
 
 def check_stale_json(dir_path: Path, md_dir: Path, label: str) -> None:
     """Die if `<dir_path>/bot-bottle.json` exists but `md_dir` does
-    not. The manifest format changed in PRD 0011 and we do not want
-    to silently leave the JSON content unused."""
+    not. The manifest format changed to per-file Markdown and we do not
+    want to silently leave the JSON content unused."""
     legacy = dir_path / "bot-bottle.json"
     if legacy.is_file() and not md_dir.exists():
         raise ManifestError(
             f"found {legacy} but {md_dir} does not exist. The manifest "
-            f"format changed in PRD 0011 — rewrite the JSON content "
+            f"format changed — rewrite the JSON content "
             f"as per-file Markdown under {md_dir}/bottles/ and "
             f"{md_dir}/agents/. See README.md for the schema. "
             f"({label})"

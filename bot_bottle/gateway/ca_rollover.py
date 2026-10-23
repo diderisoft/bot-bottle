@@ -1,4 +1,4 @@
-"""Roll the gateway's mitmproxy CA over to a new one, in place (PRD 0090).
+"""Roll the gateway's mitmproxy CA over to a new one, in place.
 
     python3 -m bot_bottle.gateway.ca_rollover <confdir>
 

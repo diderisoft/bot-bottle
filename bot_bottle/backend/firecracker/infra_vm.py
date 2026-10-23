@@ -1,14 +1,13 @@
-"""The per-host infra VMs for the Firecracker backend (PRD 0070).
+"""The per-host infra VMs for the Firecracker backend.
 
-Two persistent microVMs, split now that #469 got the DB off the data plane
-(PRD 0070 "Separating the planes"):
+Two persistent microVMs, one per plane:
 
   * **orchestrator VM** — the control plane. Boots on the NAT'd orchestrator
     link (`netpool.orch_slot()`); the host CLI reaches its `/health` +
     operator routes over HTTP at the guest IP. Sole opener of `bot-bottle.db`
     (on its persistent /dev/vdb registry volume); holds the host-canonical
     signing key (pushed post-boot). Also carries buildah, so in-VM agent-image
-    builds run here (PRD 0070 v1: builds stay with the control plane).
+    builds run here.
   * **gateway VM** — the data plane. Boots on its own NAT'd link
     (`netpool.gw_slot()`); runs the egress / git-http / supervise daemons that
     agent VMs reach (their gateway-port traffic is DNAT'd here — never to the
@@ -55,7 +54,7 @@ from . import firecracker_vm, infra_rootfs, netpool, util
 # (mounted at /var/lib/bot-bottle). The launcher seeds this
 # file with the host-canonical key AFTER boot (over SSH), so the VM verifies
 # tokens with the same key the host CLI signs with — the host token file stays
-# the single source of truth, never clobbered per-backend (issue #469 review).
+# the single source of truth, never clobbered per-backend.
 _GUEST_SIGNING_KEY_PATH = "/var/lib/bot-bottle/orchestrator-token"
 # The gateway VM's pre-minted `gateway` JWT path (rootfs, not /dev/vdb — the
 # data plane has no registry volume and never opens the DB). Pushed post-boot;
@@ -124,7 +123,7 @@ def _role_version(role: str, infra: InfraSettings) -> str:
 def ensure_built(settings: Settings) -> None:
     """Ensure both infra rootfs artifacts are available before boot.
 
-    Default (docker-free, PRD 0069 Stage 2): download + verify the prebuilt
+    Default (docker-free): download + verify the prebuilt
     orchestrator + gateway rootfs artifacts matching this code version (see
     `infra_rootfs`); the launch host needs no Docker.
     It builds the images from source with host Docker instead (the
@@ -500,7 +499,7 @@ def _gateway_init() -> str:
     over git-http (9420), so the git:// daemon (a per-bottle entrypoint the
     consolidated model doesn't use) is left out. No SUPERVISE_DB_PATH: the data
     plane reaches the supervise queue over the control-plane RPC and never opens
-    bot-bottle.db (PRD 0070 / #469). If the JWT never arrives, REFUSE to start
+    bot-bottle.db. If the JWT never arrives, REFUSE to start
     rather than run without auth."""
     return _init_head() + f"""
 ORCH=$(sed -n 's/.*bb_orch=\\([^ ]*\\).*/\\1/p' /proc/cmdline)
@@ -529,7 +528,7 @@ def _orchestrator_init() -> str:
     registry volume (/dev/vdb — bot-bottle.db survives a VM restart), waits for
     the host-seeded signing key, then starts ONLY the control plane. If the key
     never arrives, REFUSE to start rather than run OPEN — open mode would grant
-    every unauthenticated caller the `cli` role (#469)."""
+    every unauthenticated caller the `cli` role."""
     return _init_head() + f"""
 # Persistent registry volume (second virtio-block device, /dev/vdb) mounted at
 # the DB dir, so bot-bottle.db survives orchestrator-VM restarts.

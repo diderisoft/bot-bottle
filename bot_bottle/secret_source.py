@@ -1,4 +1,4 @@
-"""Where bottle secrets come from (PRD 0092).
+"""Where bottle secrets come from.
 
 A `SecretSource` maps a secret's name (an egress `token_ref`, an
 interpolated `${HOST_VAR}`, a `?` env entry, a forge token env name) to its

@@ -1,4 +1,4 @@
-"""Agent sessions in tmux, owned by the host controller (PRD 0092).
+"""Agent sessions in tmux, owned by the host controller.
 
 Each session runs on bot-bottle's own tmux server (never the user's), started
 detached with a launcher that fetches the real command and environment from

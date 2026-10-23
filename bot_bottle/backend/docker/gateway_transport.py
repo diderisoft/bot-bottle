@@ -1,4 +1,4 @@
-"""The `GatewayTransport` for the docker gateway container (PRD 0070).
+"""The `GatewayTransport` for the docker gateway container.
 
 How the launcher stages files + runs commands in the running gateway container:
 `docker exec` / `docker cp` over the docker socket. The backend-neutral

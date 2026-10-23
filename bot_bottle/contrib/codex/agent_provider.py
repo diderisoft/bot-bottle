@@ -1,11 +1,11 @@
-"""Codex agent provider plugin (PRD 0050, contrib).
+"""Codex agent provider plugin.
 
 The Codex-specific behavior previously inlined under
 `agent_provider.agent_provision_plan` (config.toml trust marker,
 chatgpt.com / api.openai.com egress routes, optional host-credential
 forwarding with dummy-auth.json + verify), plus the `codex mcp add`
 invocation that registers the supervise daemon in Codex's
-~/.codex/config.toml (PRD 0050)."""
+~/.codex/config.toml."""
 
 from __future__ import annotations
 

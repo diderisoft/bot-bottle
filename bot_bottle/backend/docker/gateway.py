@@ -31,9 +31,7 @@ class DockerGateway(Gateway):
     """The consolidated gateway as a single, fixed-name Docker container.
 
     `image_ref` defaults to `settings.infra.gateway_image`; `ensure_built`
-    builds it from `Dockerfile.gateway` when it's missing. (Note: slice 5
-    builds + launches the bundle container; wiring its per-bottle,
-    source-IP-keyed config is a later slice — see PRD 0070.)"""
+    builds it from `Dockerfile.gateway` when it's missing."""
 
     def __init__(
         self,
@@ -56,12 +54,12 @@ class DockerGateway(Gateway):
         # When set, the gateway is dual-homed: it also joins this `--internal`
         # control network (shared only with the orchestrator) so it can resolve
         # `orchestrator_url` by container name over docker DNS. Agents are never
-        # on it, so they get no route to the control plane (PRD 0070).
+        # on it, so they get no route to the control plane.
         self._control_network = control_network
         # The orchestrator binding — set by `connect_to_orchestrator` (the
         # control-plane URL the data plane resolves against, and the pre-minted
         # `gateway` token it presents; the gateway never mints, so it never
-        # holds the signing key — #469). Empty until connected; `ca_cert_pem` /
+        # holds the signing key). Empty until connected; `ca_cert_pem` /
         # `address` / `stop` work on an already-running gateway without it.
         self._orchestrator_url = ""
         self._gateway_token = ""
@@ -96,7 +94,7 @@ class DockerGateway(Gateway):
         if self._dockerfile is None:
             return
         # Pull the release-pinned image instead when it was built from exactly
-        # this install's code (PRD 0081 / 0085); otherwise build it.
+        # this install's code; otherwise build it.
         pin = pinned_infra_artifact(
             "bot-bottle-gateway", FORMAT_OCI, local_build=self._settings.infra.infra_build_local)
         if pin is not None:
@@ -245,14 +243,14 @@ class DockerGateway(Gateway):
             )
 
     def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> bool:
-        # Bind to this orchestrator (PRD 0070): stash the URL its daemons resolve
+        # Bind to this orchestrator: stash the URL its daemons resolve
         # policy against + the pre-minted `gateway` token they present, then bring
         # the container up. The gateway never mints, so it holds no signing key —
-        # only this token (#469).
+        # only this token.
         self._orchestrator_url = orchestrator_url
         self._gateway_token = gateway_token
         # Fail closed on a missing policy source. The data-plane daemons are
-        # resolver-only now (PRD 0070) — without an orchestrator URL egress
+        # resolver-only now — without an orchestrator URL egress
         # raises, git-http exits 1, and supervise exits 2 — so launching a
         # gateway without one would only crash-loop its daemons. Refuse here so
         # the misconfiguration surfaces as a clear error, not a broken container.
@@ -288,12 +286,12 @@ class DockerGateway(Gateway):
             "--ip", self.pinned_address(),
             # Persist the self-generated CA on the host so it survives both
             # container recreation AND docker volume pruning (agents trust it)
-            # — see host_gateway_ca_dir / issue #450.
+            # — see host_gateway_ca_dir.
             "--volume", f"{self._ca_mount_source}:{MITMPROXY_HOME}",
             # No DB mount: the data plane (egress / supervise / git-gate) reaches
             # the supervise queue over the control-plane RPC and never opens
             # bot-bottle.db, so the gateway container gets no file handle on it
-            # (PRD 0070 / issue #469).
+            #.
         ]
         for port in self._host_port_bindings:
             argv += ["--publish", f"0.0.0.0:{port}:{port}"]
@@ -306,7 +304,7 @@ class DockerGateway(Gateway):
         # the host signing key) on those calls. The gateway never receives the
         # signing key — only this pre-minted token, which it cannot rewrite into
         # a `cli` token, so a compromised data-plane process can't drive the
-        # operator routes (issue #469 review). Bare `--env NAME` keeps the value
+        # operator routes. Bare `--env NAME` keeps the value
         # off argv (it is still in the container config `docker inspect` shows,
         # which only the host user can read); only the gateway is given it.
         argv += ["--env", ORCHESTRATOR_AUTH_JWT_ENV]

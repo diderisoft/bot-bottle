@@ -1,4 +1,4 @@
-"""Egress launch DTOs (PRD 0017).
+"""Egress launch DTOs.
 
 `EgressRoute` (the host-side extension of the addon's wire `Route`) and
 `EgressPlan` (the launch plan the backend contract references). Pure value

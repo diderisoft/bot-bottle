@@ -1,4 +1,4 @@
-"""Build the CLI's `SecretSource` (PRD 0092): this process's environment,
+"""Build the CLI's `SecretSource`: this process's environment,
 then the host secrets file. The CLI calls `secrets_from_env()` once per
 command and passes the result down, like `settings_from_env()`."""
 

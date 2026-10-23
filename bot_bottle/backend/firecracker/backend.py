@@ -1,6 +1,6 @@
 """FirecrackerBottleBackend — Linux microVM implementation.
 
-Replaces smolmachines on Linux (issue #342): mature KVM-based
+Replaces smolmachines on Linux: mature KVM-based
 isolation via Firecracker, SSH control over a point-to-point TAP, and a
 fail-closed nftables egress boundary. Selected by
 `BOT_BOTTLE_BACKEND=firecracker` or `--backend=firecracker`.

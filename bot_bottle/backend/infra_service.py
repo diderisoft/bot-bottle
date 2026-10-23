@@ -1,4 +1,4 @@
-"""The per-host infra service contract (PRD 0070).
+"""The per-host infra service contract.
 
 `InfraService` is the backend-neutral composer of the per-host **pair**: the
 `Orchestrator` (control plane) + `Gateway` (data plane) services, brought up as
@@ -91,7 +91,7 @@ class InfraService(abc.ABC):
 
     `ensure_running` is the same everywhere: a backend's `_bring_up` brings the
     pair up and reports whether either plane was (re)started, and only then are
-    running bottles reattached (PRD 0081). Backends never decide that."""
+    running bottles reattached. Backends never decide that."""
 
     # Names this backend's "reattach pending" marker.
     name: str = "infra"
@@ -168,7 +168,7 @@ class InfraService(abc.ABC):
     @abc.abstractmethod
     def gateway_attacher(self) -> GatewayAttacher:
         """How this backend lists its running bottles and reattaches one to
-        the gateway (PRD 0081)."""
+        the gateway."""
 
     def _reattach_pending_marker(self) -> Path:
         return bot_bottle_root() / "infra" / f"{self.name}.reattach-pending"

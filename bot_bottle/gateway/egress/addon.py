@@ -1,4 +1,4 @@
-"""mitmproxy addon entrypoint for the egress gateway (PRD 0017, PRD 0053).
+"""mitmproxy addon entrypoint for the egress gateway.
 
 Loaded by `mitmdump -s /app/egress_addon.py` inside the
 egress container."""
@@ -58,7 +58,7 @@ from bot_bottle.contract.supervise import (
 INTROSPECT_HOST = "_egress.local"
 
 # The per-host orchestrator control plane the addon resolves every request's
-# Config against, by source IP (PRD 0070). Mandatory: the consolidated gateway
+# Config against, by source IP. Mandatory: the consolidated gateway
 # is the only topology now — there is no static per-bottle routes file to fall
 # back to — so an unset value is a fatal misconfiguration (see __init__).
 ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
@@ -87,7 +87,7 @@ def _token_from_proxy_auth(header: str) -> str:
     return password
 
 # Seconds the egress proxy holds a token-blocked request open waiting for the
-# operator's supervisor decision (PRD 0062), overridable via env.
+# operator's supervisor decision, overridable via env.
 DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS = 300.0
 
 # Maximum bytes of a response body passed to the DLP inbound scan. mitmproxy
@@ -95,7 +95,7 @@ DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS = 300.0
 # the additional memory amplification from decoded text and regex match strings.
 # A cap is a security trade-off (content above the threshold is not scanned),
 # but without it a single large download OOM-kills the shared egress process
-# (issue #455). Override with EGRESS_INBOUND_SCAN_LIMIT_BYTES; set to 0 to
+#. Override with EGRESS_INBOUND_SCAN_LIMIT_BYTES; set to 0 to
 # disable the cap.
 DEFAULT_INBOUND_SCAN_LIMIT_BYTES = 1 * 1024 * 1024  # 1 MiB
 # Filesystem poll cadence while awaiting the operator's response.
@@ -114,7 +114,7 @@ class EgressAddon:
     # Bare annotations (no class value): __init__ sets a live PolicyResolver for
     # real runs, and every host-side test builds an addon via __new__ and sets a
     # fake resolver. Egress is resolver-only now — the per-request policy always
-    # comes from the orchestrator's /resolve (PRD 0070); there is no static
+    # comes from the orchestrator's /resolve; there is no static
     # per-bottle routes file, SIGHUP reload, or single-tenant fallback.
     _resolver: "PolicyResolver"
     # Class defaults so __new__-built addons have them (real runs get fresh
@@ -127,7 +127,7 @@ class EgressAddon:
     def __init__(self) -> None:
         # Resolver-only: the gateway is always multi-tenant, resolving each
         # request's policy by source IP against the orchestrator control plane
-        # (PRD 0070). The URL is mandatory — without a policy source the gateway
+        #. The URL is mandatory — without a policy source the gateway
         # must not come up (fail-closed), rather than silently allowing nothing.
         orch_url = os.environ.get(ORCHESTRATOR_URL_ENV, "").strip()
         if not orch_url:
@@ -137,7 +137,7 @@ class EgressAddon:
                 "no static routes file to fall back to."
             )
         self._resolver = PolicyResolver(orch_url)
-        # Tokens the operator has approved this session (PRD 0062), keyed by
+        # Tokens the operator has approved this session, keyed by
         # bottle so the shared gateway keeps each bottle's safelist separate —
         # a global set would let bottle A's approved secret pass bottle B's DLP
         # scan. In-memory only (a restart re-prompts); mutated only from the
@@ -162,7 +162,7 @@ class EgressAddon:
         return bool(slug)
 
     def _safe_tokens_for(self, slug: str) -> set[str]:
-        """This bottle's operator-approved DLP safelist (PRD 0062), created on
+        """This bottle's operator-approved DLP safelist, created on
         first use. Keyed by bottle so the shared gateway never leaks one
         bottle's approved token into another's scan."""
         return self._safe_tokens.setdefault(slug, set())
@@ -487,8 +487,8 @@ class EgressAddon:
         slug: str,
         env: "typing.Mapping[str, str]",
     ) -> bool:
-        """Scan the outbound request and apply the route's on-match policy
-        (PRD 0062). `env` is the per-bottle env overlay (process env + this
+        """Scan the outbound request and apply the route's on-match policy.
+`env` is the per-bottle env overlay (process env + this
         bottle's tokens) used for DLP detection. Returns True if the request may
         be forwarded, False if a 403 response has been written to `flow`.
 
@@ -568,7 +568,7 @@ class EgressAddon:
             result,
         )
         # Attribute the proposal by (source_ip, identity_token) over the control
-        # plane — the data plane no longer opens bot-bottle.db (PRD 0070 / #469).
+        # plane — the data plane never opens bot-bottle.db.
         # source_ip + token come from this bottle's connection; `slug` is kept
         # only for its own DLP safelist.
         conn = flow.client_conn
@@ -577,7 +577,7 @@ class EgressAddon:
         try:
             # The resolver RPC is synchronous (blocking urllib); run it off the
             # event loop so a slow/unreachable orchestrator can't freeze the
-            # proxy for every other bottle's traffic (#471 review).
+            # proxy for every other bottle's traffic.
             proposal_id = await asyncio.to_thread(
                 self._resolver.propose_supervise,
                 source_ip, token,
@@ -645,7 +645,7 @@ class EgressAddon:
                 # Poll off the event loop — the resolver RPC blocks on urllib,
                 # and this loop runs for the whole operator-approval window, so
                 # calling it inline would repeatedly freeze all proxy traffic
-                # until a decision or timeout (#471 review).
+                # until a decision or timeout.
                 result = await asyncio.to_thread(
                     self._resolver.poll_supervise, source_ip, token, proposal_id,
                 )

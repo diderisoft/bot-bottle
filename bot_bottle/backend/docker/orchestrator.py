@@ -1,11 +1,10 @@
-"""The docker orchestrator (control plane) as a single, fixed-name container
-(PRD 0070).
+"""The docker orchestrator (control plane) as a single, fixed-name container.
 
 `DockerOrchestrator` is the docker implementation of the backend-neutral
 `Orchestrator` service. The lean control-plane container joins the `--internal`
 control network (agents are never on it, so they have no L3 route to it) plus a
 host-loopback publish for the CLI. It is the sole opener of `bot-bottle.db` and
-the sole holder of the signing key (#469).
+the sole holder of the signing key.
 
 The publish needs a second network: Docker doesn't publish ports for a
 container whose only networks are `--internal` (Docker 28+), so the CLI could
@@ -47,8 +46,7 @@ from ...control.lifecycle import (
 
 # The control plane's own container + the dedicated `--internal` control network
 # the gateway reaches it over. The orchestrator + gateway join it, agents never
-# do, so agents have no route to the control plane (PRD 0070 "Separating the
-# planes"). Same name across docker + macOS.
+# do, so agents have no route to the control plane. Same name across docker + macOS.
 ORCHESTRATOR_NAME = "bot-bottle-orchestrator"
 ORCHESTRATOR_LABEL = "bot-bottle-orchestrator=1"
 ORCHESTRATOR_NETWORK = "bot-bottle-orchestrator"
@@ -66,7 +64,7 @@ ORCHESTRATOR_SOURCE_HASH_LABEL = "bot-bottle-orchestrator-source-hash"
 
 # Bot-bottle host-root bind-mount (DB + state) inside the orchestrator. The
 # control plane opens bot-bottle.db under here (passed as `--db`); it is the
-# ONLY container with a handle on it (issue #469).
+# ONLY container with a handle on it.
 _ROOT_IN_CONTAINER = "/bot-bottle-root"
 _DB_IN_CONTAINER = f"{_ROOT_IN_CONTAINER}/db/{HOST_DB_FILENAME}"
 
@@ -145,7 +143,7 @@ class DockerOrchestrator(Orchestrator):
         if self._dockerfile is None:
             return
         # Pull the release-pinned image instead when it was built from exactly
-        # this install's code (PRD 0081 / 0085); otherwise build it.
+        # this install's code; otherwise build it.
         pin = pinned_infra_artifact(
             "bot-bottle-orchestrator", FORMAT_OCI,
             local_build=self._settings.infra.infra_build_local)
@@ -278,7 +276,7 @@ class DockerOrchestrator(Orchestrator):
         self._ensure_control_network()
         self._ensure_publish_network()
         run_docker(["docker", "rm", "--force", self.name])
-        # The signing key comes through the shared provisioning contract (#476),
+        # The signing key comes through the shared provisioning contract,
         # which fail-closes rather than yield an empty key that would run OPEN.
         _signing_key = self.control_plane_key()
         host_env = self.host_control_env()
@@ -308,7 +306,7 @@ class DockerOrchestrator(Orchestrator):
             "--volume", f"{self._root_mount_source}:{_ROOT_IN_CONTAINER}",
             # The signing key — held ONLY by the orchestrator (it verifies
             # tokens); the gateway gets the pre-minted `gateway` JWT, never the
-            # key (issue #469). Bare `--env NAME` keeps the value off argv.
+            # key. Bare `--env NAME` keeps the value off argv.
             "--env", ORCHESTRATOR_TOKEN_ENV,
             # The host controller's URL and an `orchestrator` token, when it is
             # the one bringing this up (never its key).

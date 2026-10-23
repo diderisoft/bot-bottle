@@ -240,10 +240,10 @@ def _merge_bottles(
     merged_repos_raw: dict[str, object],
     name: str,
 ) -> ManifestBottle:
-    """Apply PRD 0025 merge rules."""
+    """Apply the `extends:` merge rules."""
     # git-gate.repos: when the child declares repos, inject the already
     # name-merged repo set (computed by _resolve_repos_raw) so the child
-    # parses with the full inherited+overridden list (issue #237).
+    # parses with the full inherited+overridden list.
     if _child_declares_git_gate_repos(child_raw):
         git_raw = as_json_object(child_raw.get("git-gate", {}), "child git-gate")
         child_raw = {**child_raw, "git-gate": {**git_raw, "repos": merged_repos_raw}}

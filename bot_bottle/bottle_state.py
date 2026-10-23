@@ -46,10 +46,8 @@ _PER_BOTTLE_DOCKERFILE_NAME = "Dockerfile"
 _COMMITTED_IMAGE_NAME = "committed-image"
 _COMMITTED_ROOTFS_NAME = "committed-rootfs.tar"
 _TRANSCRIPT_SUBDIR = "transcript"
-# Per-daemon scratch subdirs. PRD 0018 chunk 2: bind-mount sources
-# live here so chunk 3's `docker compose up` can find them at stable
-# paths. Each daemon's `prepare()` writes config + CAs into its own
-# subdir; the launch step is unchanged today (still `docker cp`).
+# Per-daemon scratch subdirs. Each daemon's `prepare()` writes its
+# config into its own subdir at a stable path.
 _EGRESS_SUBDIR = "egress"
 _GIT_GATE_SUBDIR = "git-gate"
 _SUPERVISE_SUBDIR = "supervise"
@@ -108,20 +106,17 @@ class BottleMetadata:
     cwd: str           # empty string when --cwd was not passed
     copy_cwd: bool
     started_at: str    # ISO 8601 UTC
-    # PRD 0018 chunk 3: derivable from identity via
-    # `compose_project_name(identity)`, but persisted explicitly so
-    # dashboard / cleanup / resume tooling can read it without
-    # importing the compose module. Empty string for state dirs
-    # written before chunk 3 (resume / inspect should fall back to
-    # deriving from identity in that case).
+    # Derivable from identity via `compose_project_name(identity)`, but
+    # persisted explicitly so dashboard / cleanup / resume tooling can read
+    # it without importing the compose module. Empty string in older state
+    # dirs (resume / inspect fall back to deriving it from identity).
     compose_project: str = ""
-    # PRD 0040: backend name ("docker", "firecracker", "macos-container").
-    # Empty string for state dirs written before PRD 0040; callers default
-    # to "docker" for backward compatibility.
+    # Backend name ("docker", "firecracker", "macos-container"). Empty
+    # string in older state dirs; callers default to "docker".
     backend: str = ""
     label: str = ""
     color: str = ""
-    # Ordered bottle names selected at launch (issue #269). Empty tuple
+    # Ordered bottle names selected at launch. Empty tuple
     # for state dirs written before this change; resume falls back to
     # the agent's `bottle:` field in that case.
     bottle_names: tuple[str, ...] = ()
@@ -279,7 +274,7 @@ def transcript_snapshot_dir(identity: str) -> Path:
     return bottle_state_dir(identity) / _TRANSCRIPT_SUBDIR
 
 
-# --- Per-daemon scratch subdirs (PRD 0018 chunk 2) ------------------------
+# --- Per-daemon scratch subdirs ------------------------
 #
 # Each daemon gets its own subdir under the bottle's state dir for
 # bind-mount sources (config, CAs, hooks, etc.). Prepare-time writes
@@ -289,15 +284,14 @@ def transcript_snapshot_dir(identity: str) -> Path:
 
 
 def egress_state_dir(identity: str) -> Path:
-    """State subdir for the egress daemon: routes.yaml + the
-    per-bottle mitmproxy CA. Bind-mount source from chunk 3 onward."""
+    """State subdir for the bottle's egress config, including the staged
+    shared gateway CA (`gateway-ca/`)."""
     return bottle_state_dir(identity) / _EGRESS_SUBDIR
 
 
 def git_gate_state_dir(identity: str) -> Path:
     """State subdir for the git-gate daemon: entrypoint + hooks +
-    per-upstream known_hosts. Bind-mount source from chunk 3
-    onward."""
+    per-upstream known_hosts."""
     return bottle_state_dir(identity) / _GIT_GATE_SUBDIR
 
 

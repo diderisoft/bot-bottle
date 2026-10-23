@@ -1,4 +1,4 @@
-"""Bottle-level provisioning for the consolidated launch sequence (PRD 0070).
+"""Bottle-level provisioning for the consolidated launch sequence.
 
 Register a bottle with the orchestrator and provision its git-gate state into
 the shared gateway (`provision_bottle`), and the inverse teardown

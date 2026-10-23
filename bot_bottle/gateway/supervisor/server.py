@@ -1,4 +1,4 @@
-"""Supervise daemon HTTP server (PRD 0013).
+"""Supervise daemon HTTP server.
 
 Per-bottle MCP server exposing tools the agent calls to propose egress
 config changes when stuck. The tools are `egress-allow`,
@@ -10,14 +10,14 @@ Each queued proposal tool call:
   2. Queues a Proposal over the control-plane RPC (`POST /supervise/propose`),
      which attributes it to the calling bottle by (source_ip, identity_token)
      and writes it to the one orchestrator-owned SQLite database. This daemon
-     never opens `bot-bottle.db` itself (PRD 0070 / issue #469).
+     never opens `bot-bottle.db` itself.
   3. Polls the control plane (`POST /supervise/poll`) for a matching Response,
      up to a short grace window (`SUPERVISE_RESPONSE_TIMEOUT_SECONDS`,
      default 30s).
   4. On a decision within the window, returns the operator's
      `{status, notes}`. On timeout, returns `status: pending` **with the
      proposal id** and leaves the proposal queued — the flow is
-     non-blocking past the grace window (PRD 0072 / issue #412).
+     non-blocking past the grace window.
 
 `check-proposal` is the non-blocking companion: given a `proposal_id`
 returned by a `pending` response, it reports the current decision
@@ -25,7 +25,7 @@ returned by a `pending` response, it reports the current decision
 so an approval made out-of-band (e.g. a web review console) can be resumed
 without holding an HTTP request open.
 
-One shared server fronts every bottle (PRD 0070) and attributes each
+One shared server fronts every bottle and attributes each
 proposal to the calling bottle by source IP, resolved from the orchestrator
 — an unattributed or unreachable source fails closed. BOT_BOTTLE_ORCHESTRATOR_URL
 is mandatory: there is no fixed-slug single-tenant fallback, and the queue is
@@ -95,7 +95,7 @@ DEFAULT_RESPONSE_TIMEOUT_SECONDS = 30.0
 # Grace-window poll cadence. 250 ms keeps the operator-visible latency low while
 # staying gentle on the shared control plane — each poll is now an HTTP round
 # trip, not a local file read, so the old 50 ms would be ~20 req/s per pending
-# proposal across every waiting agent (issue #469 review).
+# proposal across every waiting agent.
 MIN_RESPONSE_POLL_INTERVAL_SECONDS = 0.25
 
 # The per-host orchestrator control plane the shared supervise server attributes
@@ -332,7 +332,7 @@ def validate_proposed_file(tool: str, content: str) -> None:
 class ServerConfig:
     # No bottle_slug: the calling bottle is attributed per request by the
     # control plane from (source_ip, identity_token), so nothing on this daemon
-    # is keyed by a single slug (PRD 0070 / issue #469).
+    # is keyed by a single slug.
     response_timeout_seconds: float = DEFAULT_RESPONSE_TIMEOUT_SECONDS
 
 

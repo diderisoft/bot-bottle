@@ -1,5 +1,4 @@
-"""The host-side orchestrator (control-plane) service + shared lifecycle pieces
-(PRD 0070).
+"""The host-side orchestrator (control-plane) service + shared lifecycle pieces.
 
 `Orchestrator` is the backend-neutral host-side contract for the control plane,
 mirroring `Gateway` for the data plane: build its image/rootfs, bring it up,
@@ -57,16 +56,16 @@ class Orchestrator(abc.ABC):
 
     One concrete impl per backend (`backend/*/orchestrator.py`); the host
     composes it with the `Gateway` service. The orchestrator is the **sole**
-    holder of the signing key and the **sole** opener of `bot-bottle.db` (#469),
+    holder of the signing key and the **sole** opener of `bot-bottle.db`,
     so it — not the gateway — mints the gateway's role-scoped token.
     Backend-neutral."""
 
-    # The shared control-plane auth provisioning contract (#476). Every backend
+    # The shared control-plane auth provisioning contract. Every backend
     # gets its signing key + gateway token through this one seam rather than
     # re-deriving the wiring; it is fail-closed for every backend — the
     # orchestrator never starts without its signing key.
     provisioning: ControlPlaneProvisioning = ControlPlaneProvisioning()
-    # Set in the host controller's process (PRD 0092), so every orchestrator it
+    # Set in the host controller's process, so every orchestrator it
     # brings up can reach it. None elsewhere: that orchestrator has no host
     # controller to relay launches to.
     host_control: HostControlProvisioning | None = None
@@ -84,7 +83,7 @@ class Orchestrator(abc.ABC):
         """Start the control plane if it isn't already healthy on the current
         source, then block until `/health` answers. Idempotent — a healthy,
         current control plane is left running so its in-memory egress tokens
-        survive (#381). Returns True when it (re)started the control plane
+        survive. Returns True when it (re)started the control plane
         (so its in-memory egress tokens are gone), False when it adopted a
         running one. Raises `OrchestratorStartError` on startup timeout."""
 
@@ -130,7 +129,7 @@ class Orchestrator(abc.ABC):
     def mint_gateway_token(self) -> str:
         """Mint a role-scoped `gateway` JWT from the host signing key for the
         gateway to present. The orchestrator holds the key; the gateway never
-        does (#469). Routed through the shared provisioning contract (#476), so
+        does. Routed through the shared provisioning contract, so
         the same host token file is the single source of truth across backends."""
         return self.provisioning.gateway_token()
 
@@ -161,7 +160,7 @@ class Orchestrator(abc.ABC):
         place a backend obtains it (docker/macOS inject it as `key_env`;
         firecracker pushes it to the guest). Fail-closed via the provisioning
         contract: it raises rather than yield an empty key that would run the
-        server OPEN (#476)."""
+        server OPEN."""
         return self.provisioning.orchestrator_key()
 
 

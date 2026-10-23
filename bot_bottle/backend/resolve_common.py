@@ -122,7 +122,7 @@ def reject_nested_containers(backend: str, manifest: Manifest) -> None:
 
     Silently ignoring it would hand the agent a bottle where `docker` is not
     there — and the only sound alternatives on these backends (a host daemon
-    socket, a privileged container) are exactly what issue #392 rules out.
+    socket, a privileged container) are exactly what nested containers must not need.
     """
     if not manifest.bottle.nested_containers:
         return

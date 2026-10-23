@@ -1,4 +1,4 @@
-"""Run the orchestrator control plane as a plain process (PRD 0070 dev-harness).
+"""Run the orchestrator control plane as a plain process.
 
     BOT_BOTTLE_ORCHESTRATOR_TOKEN=<signing-key> \
         python -m bot_bottle.orchestrator --db PATH [--host H] [--port P]

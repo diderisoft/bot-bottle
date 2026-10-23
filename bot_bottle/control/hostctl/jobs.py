@@ -1,4 +1,4 @@
-"""Long-running host controller operations as jobs (PRD 0092).
+"""Long-running host controller operations as jobs.
 
 A job runs in its own thread with its output redirected to its event list, so
 concurrent jobs never interleave. Events are `log` lines followed by one

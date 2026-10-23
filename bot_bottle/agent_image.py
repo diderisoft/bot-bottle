@@ -1,4 +1,4 @@
-"""Resolve agent images from the published manifest (PRD 0085).
+"""Resolve agent images from the published manifest.
 
 The consumer side of agent images, mirroring `infra_rootfs` for infra: given a
 built-in provider template, find the release-pinned artifact for this platform in

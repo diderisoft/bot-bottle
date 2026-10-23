@@ -1,6 +1,6 @@
 """Launch steps every backend shares.
 
-All three backends launch a bottle onto the same per-host topology (PRD 0070):
+All three backends launch a bottle onto the same per-host topology:
 mint the bottle's git-gate deploy keys, register it with the orchestrator,
 install the shared gateway's CA, and point the agent at the gateway's
 git-gate and supervise endpoints. They differ in how the agent runs and how

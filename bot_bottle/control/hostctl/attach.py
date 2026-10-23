@@ -1,5 +1,5 @@
 """One remote viewer of a session: a `tmux attach` under its own PTY, pumped
-to and from a WebSocket (PRD 0092).
+to and from a WebSocket.
 
 Binary frames carry terminal bytes both ways. Text frames carry JSON control
 messages: from the viewer `{"type": "resize", "cols", "rows"}` and

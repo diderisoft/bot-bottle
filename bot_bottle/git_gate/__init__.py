@@ -1,4 +1,4 @@
-"""Per-agent git-gate (PRD 0008).
+"""Per-agent git-gate.
 
 The git-gate fronts a bottle's declared git upstreams as a transparent mirror:
 a `pre-receive` hook gitleaks-scans pushes and forwards clean refs to the real

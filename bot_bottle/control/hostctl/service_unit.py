@@ -1,5 +1,5 @@
 """The optional user service that keeps the host controller running across
-reboots (PRD 0092): a launchd LaunchAgent on macOS, a `systemd --user` unit
+reboots: a launchd LaunchAgent on macOS, a `systemd --user` unit
 on Linux. Nothing requires it; without it the CLI starts the daemon on demand.
 
 The unit runs the daemon from the package that installed it, with that

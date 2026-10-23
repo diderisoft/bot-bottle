@@ -1,7 +1,7 @@
-"""Role-scoped control-plane credentials (issue #469 review follow-up).
+"""Role-scoped control-plane credentials.
 
-The control plane no longer trusts a single shared bearer secret for every
-route. Instead the orchestrator holds a *signing key* and issues short,
+The control plane does not trust a single shared bearer secret for every
+route. The orchestrator holds a *signing key* and issues short,
 HMAC-signed tokens (compact HS256 JWTs) that embed a **role** naming the kind
 of caller:
 
@@ -70,7 +70,7 @@ def mint(role: str, secret: str, *, roles: frozenset[str] = ROLES) -> str:
     `roles` is the set the signing key is allowed to sign (default: the
     orchestrator's `{gateway, cli}`). A separate service (e.g. the host
     controller) passes its own key + role set so its tokens can't be forged with
-    the orchestrator's key — see `TrustDomain`, issues #476/#468.
+    the orchestrator's key — see `TrustDomain`.
 
     Raises ValueError for a role outside `roles`, or an empty signing key (an
     unsigned credential is never valid)."""

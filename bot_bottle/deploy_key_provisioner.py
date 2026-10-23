@@ -1,4 +1,4 @@
-"""Deploy-key provisioner interface and factory (PRD 0048).
+"""Deploy-key provisioner interface and factory.
 
 The core defines the abstract contract; concrete implementations live
 in `bot_bottle/contrib/<provider>/deploy_key_provisioner.py`. The

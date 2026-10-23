@@ -10,7 +10,7 @@ This module is a thin façade. The real work lives in four siblings:
 The base class's `prepare` template runs cross-backend host-side
 validation before calling `_resolve_plan` here.
 
-Per PRD 0050 the per-provider provisioning steps (prompt, skills,
+The per-provider provisioning steps (prompt, skills,
 the declarative provision-plan apply, supervise MCP registration)
 live on the `AgentProvider` plugin under `bot_bottle/contrib/`. The
 Docker backend only owns the steps that are about backend

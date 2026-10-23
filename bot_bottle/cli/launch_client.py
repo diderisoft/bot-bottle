@@ -1,4 +1,4 @@
-"""The CLI side of a launch (PRD 0092): resolve what only the CLI can (secret
+"""The CLI side of a launch: resolve what only the CLI can (secret
 values, confirmed host keys, yes/no answers), send the host controller a
 `LaunchRequest`, stream the job, then attach to the agent's tmux session."""
 

@@ -1,31 +1,23 @@
 """Launch step for the Docker bottle backend.
 
-PRD 0018 chunk 3: each instance is one `docker compose` project.
+Each bottle is one `docker compose` project holding only the agent, on the
+shared gateway network. Per bottle:
 
-The flow is:
+  1. resolve the agent image (committed snapshot, published image, cached
+     image, or a fresh build) — `build_or_load_images`;
+  2. mint the bottle's git-gate deploy keys;
+  3. register the bottle with the orchestrator, which pins its source IP on
+     the shared gateway network and provisions its git-gate state;
+  4. stage the shared gateway CA and point the agent at the gateway;
+  5. render the agent-only compose file and `docker compose up -d`
+     (forwarded values flow through the compose subprocess env as bare
+     names, so they are never written to the file);
+  6. provision (CA install, prompt, skills, workspace, git, supervise)
+     with `docker exec` / `docker cp`, then yield a `DockerBottle`.
 
-  1. Build the agent image from the provider Dockerfile (compose
-     builds the gateway image on first up).
-  2. Mint the per-bottle egress CA (chunk 2 writes it under
-     state/<slug>/egress/).
-  3. Populate the inner plans with launch-time fields so the
-     renderer can read network names, CA paths.
-  6. Render the compose spec, write it to
-     state/<slug>/docker-compose.yml, write metadata.json.
-  7. `docker compose up -d` (token + OAuth values flow into the
-     compose subprocess env so `environment: [NAME]` bare-name
-     entries inherit without rendering values into the file).
-  8. Provision (CA install, prompt copy, skills, workspace, git,
-     supervise config) — unchanged, uses `docker exec` / `docker cp`.
-  9. Yield a DockerBottle handle. `exec_agent` runs claude via
-     `docker exec -it` exactly like the pre-compose world.
-
-Teardown (ExitStack callbacks fire in reverse):
-  - Dump `docker compose logs --no-color --timestamps` to
-    state/<slug>/compose.log (best-effort).
-  - `docker compose down` removes the project's containers (not the
-    external networks).
-  - `network_remove` deletes the two networks we pre-created.
+Teardown (ExitStack callbacks fire in reverse): dump the compose logs to
+state/<slug>/compose.log, `docker compose down`, deregister the bottle from
+the orchestrator, then revoke its deploy keys.
 """
 
 from __future__ import annotations
@@ -93,7 +85,7 @@ def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
         return BottleImages(agent=committed)
     smoke = runtime_for(plan.agent_provider_template).smoke_test
     # Prefer the release-pinned published image (or an overlay on it) over a
-    # local build (PRD 0085). None: build the bottle's own Dockerfile.
+    # local build. None: build the bottle's own Dockerfile.
     published = oci_agent_image.resolve_published_agent_image(
         plan, _docker_runtime(plan.settings), template=plan.agent_provider_template,
         image=plan.image,
@@ -132,7 +124,7 @@ def launch(
         agent_provision=dataclasses.replace(plan.agent_provision, image=str(images.agent)),
     )
 
-    # Docker teardown reports a failure but never raises it (issue #156).
+    # Docker teardown reports a failure but never raises it.
     teardown = LaunchTeardown(
         plan, f"container {plan.container_name} (compose-down)", reraise=False)
     stack = teardown.stack

@@ -1,4 +1,4 @@
-"""Shared types for supervise stores (PRD 0013).
+"""Shared types for supervise stores.
 
 Extracted from supervise.py so queue_store and audit_store can import
 Proposal, Response, and AuditEntry without creating a circular import

@@ -1,4 +1,4 @@
-"""The agent <-> infra protocol version (PRD 0085).
+"""The agent <-> infra protocol version.
 
 An agent image boots against the infra it was published with: the guest init,
 the orchestrator's control-plane contract, and what the gateway expects of an

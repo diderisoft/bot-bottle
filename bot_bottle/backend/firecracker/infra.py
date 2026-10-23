@@ -1,4 +1,4 @@
-"""The per-host infra service for the Firecracker backend (PRD 0070).
+"""The per-host infra service for the Firecracker backend.
 
 `FirecrackerInfraService` is the Firecracker `InfraService`: it composes the
 orchestrator + gateway microVMs as an idempotent per-host singleton pair over
@@ -84,7 +84,7 @@ class FirecrackerInfraService(InfraService):
             # Orchestrator first — the gateway daemons reach the control plane at
             # startup. Each service owns its own boot; the orchestrator (which
             # holds the signing key) mints the role-scoped `gateway` JWT for the
-            # gateway, which never sees the key (#469).
+            # gateway, which never sees the key.
             orchestrator.ensure_running(startup_timeout=startup_timeout)
             gateway = self.gateway()
             gateway.connect_to_orchestrator(

@@ -1,5 +1,5 @@
-"""Docker's primitives for reattaching running agent containers to the gateway
-(PRD 0081); the flow itself is `backend.gateway_attach`.
+"""Docker's primitives for reattaching running agent containers to the gateway;
+the flow itself is `backend.gateway_attach`.
 
 Each bottle is a compose project whose `agent` service holds a pinned address
 on the shared gateway network, which is how the orchestrator knows it. The

@@ -1,4 +1,4 @@
-"""DLP detectors for the egress proxy (PRD 0053).
+"""DLP detectors for the egress proxy.
 
 Pure Python, no mitmproxy dependency. Each detector is a module-level
 function returning `ScanResult | None`.
@@ -87,7 +87,7 @@ def scan_token_patterns(
     for name, pattern in TOKEN_PATTERNS:
         for m in pattern.finditer(normalized):
             value = m.group(0)
-            # A value the supervisor has approved (PRD 0062) is no longer a
+            # A value the supervisor has approved is no longer a
             # block — keep scanning so a second, un-approved token in the
             # same request is still caught.
             if safe_tokens is not None and value in safe_tokens:
@@ -251,7 +251,7 @@ def scan_known_secrets(
             pos = text.find(variant)
             if pos >= 0:
                 # The supervisor approves the exact encoded variant found
-                # (PRD 0062); a different encoding of the same secret is a
+                #; a different encoding of the same secret is a
                 # fresh block.
                 if safe_tokens is not None and variant in safe_tokens:
                     approved_exact = True
@@ -491,7 +491,7 @@ _CRLF_HEADER_INJECT_RE = re.compile(r"\r\n[A-Za-z][A-Za-z0-9\-]+\s*:", re.ASCII)
 
 def strip_crlf(text: str) -> str:
     """Remove URL-encoded and literal CRLF injection sequences from a request
-    surface (PRD 0062 redact policy). Used to scrub the request line / headers
+    surface. Used to scrub the request line / headers
     so the request can be forwarded instead of hard-blocked."""
     text = _CRLF_ENCODED_RE.sub("", text)
     return _CRLF_HEADER_INJECT_RE.sub(lambda m: m.group(0)[2:], text)

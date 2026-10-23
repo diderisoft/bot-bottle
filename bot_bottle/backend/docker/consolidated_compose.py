@@ -1,9 +1,7 @@
-"""Agent-only compose for the consolidated docker backend (PRD 0070).
+"""Agent-only compose for the consolidated docker backend.
 
-The per-bottle model rendered a compose project with the agent *and* a
-gateway on two per-bottle networks. In the consolidated model the
-per-bottle companion containers are gone — one shared gateway serves every bottle — so this renders
-just the agent, attached to the **external shared gateway network** with the
+One shared gateway serves every bottle, so this renders just the agent,
+attached to the **external shared gateway network** with the
 pinned source IP the orchestrator allocated, and pointed at the gateway's
 address for egress (and, around the proxy, for git-http / supervise).
 

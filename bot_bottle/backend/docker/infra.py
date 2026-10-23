@@ -1,7 +1,7 @@
-"""The per-host control plane + gateway for the docker backend (PRD 0070).
+"""The per-host control plane + gateway for the docker backend.
 
 Runs the orchestrator (control plane) and the gateway (data plane) as **two
-separate containers**, split now that #469 got the DB off the data plane:
+separate containers**:
 
   * `bot-bottle-orchestrator` — the lean control-plane container
     (`DockerOrchestrator`). Joins the `bot-bottle-orchestrator` **control
@@ -142,7 +142,7 @@ class DockerInfraService(InfraService):
         # Bring up (or refresh) the gateway once the control plane it resolves
         # against is healthy. The orchestrator (which holds the signing key)
         # mints the role-scoped `gateway` JWT here and hands it to the gateway,
-        # which never sees the key (#469). `connect_to_orchestrator` is
+        # which never sees the key. `connect_to_orchestrator` is
         # idempotent and reports whether it (re)started the gateway.
         gateway_restarted = gateway.connect_to_orchestrator(
             orchestrator.gateway_url(), orchestrator.mint_gateway_token(),

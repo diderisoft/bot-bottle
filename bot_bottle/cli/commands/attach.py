@@ -1,4 +1,4 @@
-"""attach: join a running agent session in this terminal (PRD 0092).
+"""attach: join a running agent session in this terminal.
 
 Runs `tmux attach` against bot-bottle's own tmux server. Ctrl-] detaches;
 the agent keeps running.

@@ -1,4 +1,4 @@
-"""Firecracker backend: Linux KVM microVM isolation (issue #342).
+"""Firecracker backend: Linux KVM microVM isolation.
 
 Thin by design: `FirecrackerBottleBackend` is re-exported lazily via
 `__getattr__`, so importing a leaf module under this package doesn't drag the

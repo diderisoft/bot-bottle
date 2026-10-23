@@ -1,4 +1,4 @@
-"""Orchestrator bring-up through the host controller (PRD 0092).
+"""Orchestrator bring-up through the host controller.
 
 `ensure` and `status` run inside the daemon; `ensure_via_daemon` is the CLI
 side, which starts the daemon if needed, submits the job and streams its output.

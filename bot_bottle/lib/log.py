@@ -1,6 +1,6 @@
 """Tiny logging wrappers. Output goes to stderr unless redirected (`redirect`).
 
-Two capabilities layer onto the bare wrappers (issue #252):
+Two capabilities layer onto the bare wrappers:
 
   - **Levels.** `debug` / `info` / `warn` / `error` carry an ordered
     severity. Output is gated by `BOT_BOTTLE_LOG_LEVEL` (debug | info |

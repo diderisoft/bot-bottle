@@ -17,7 +17,7 @@ OUTBOUND_DETECTOR_NAMES = frozenset({"token_patterns", "known_secrets", "entropy
 INBOUND_DETECTOR_NAMES = frozenset({"naive_injection_detection"})
 
 # Per-route policy for what the proxy does when an outbound DLP detector
-# matches a token (PRD 0062).
+# matches a token.
 ON_MATCH_BLOCK = "block"          # hard 403, never overridable
 ON_MATCH_REDACT = "redact"        # scrub the matched value, forward the request
 ON_MATCH_SUPERVISE = "supervise"  # queue for operator approval, hold the request

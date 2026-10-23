@@ -112,7 +112,7 @@ class NetPool:
     # + apt/npm).
     orch_iface: str
     # The gateway (data-plane) VM's dedicated TAP — the second infra link (see
-    # `gw_slot`), split from the orchestrator per PRD 0070. Like the
+    # `gw_slot`), separate from the orchestrator's. Like the
     # orchestrator link it is NAT'd to the internet (the gateway forwards agent
     # egress upstream); unlike it, agents DNAT here, never to the orchestrator,
     # so a breached agent has no L3 route to the control plane.

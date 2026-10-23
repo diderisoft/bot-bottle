@@ -1,4 +1,4 @@
-"""The host controller's wire contract (PRD 0092): routes, response shapes,
+"""The host controller's wire contract: routes, response shapes,
 its trust domain and the `Settings` each request carries, shared by the daemon
 and its clients."""
 

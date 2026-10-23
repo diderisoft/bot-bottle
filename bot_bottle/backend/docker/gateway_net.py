@@ -1,5 +1,4 @@
-"""Shared-gateway source-IP allocation for the consolidated docker backend
-(PRD 0070).
+"""Shared-gateway source-IP allocation for the consolidated docker backend.
 
 In the consolidated model one gateway container serves every bottle over a
 single shared docker network, and each agent bottle attaches with a pinned,

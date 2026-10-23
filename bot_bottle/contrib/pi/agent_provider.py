@@ -1,4 +1,4 @@
-"""Pi agent provider plugin (PRD 0058, contrib).
+"""Pi agent provider plugin.
 
 Pi uses ~/.pi/agent/models.json for custom provider/model settings.
 This provider writes an Ollama-compatible default configuration and

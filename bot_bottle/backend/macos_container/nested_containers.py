@@ -1,4 +1,4 @@
-"""Guest-local container engine for Apple-container bottles (issue #392).
+"""Guest-local container engine for Apple-container bottles.
 
 The service and every nested container remain inside the existing per-bottle
 VM.  This module refuses to compensate for missing prerequisites with outer
@@ -63,7 +63,7 @@ def build_image(
     Podman and its networking stack live here rather than in the base agent
     images so that bottles without the flag pay no image-size cost.
 
-    # TODO(#394): replace this hand-rolled Dockerfile with a docker-layer
+    # TODO: replace this hand-rolled Dockerfile with a docker-layer
     # abstraction once that infrastructure exists.
     """
     image = f"{pinned_base}{IMAGE_SUFFIX}"

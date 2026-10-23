@@ -1,10 +1,8 @@
-"""The per-host control plane + gateway for the macOS backend (PRD 0070).
+"""The per-host control plane + gateway for the macOS backend.
 
 Two Apple containers — the orchestrator (control plane) and the gateway (data
-plane) — split now that #469 got the DB off the data plane. The single-container
-model existed only because two Apple-Container guests writing one `bot-bottle.db`
-over virtiofs would race incoherent `fcntl` locks; with the data plane no longer
-opening the DB at all, only the orchestrator does, so the split is safe.
+plane). Only the orchestrator opens `bot-bottle.db`: two Apple-Container guests
+writing one database over virtiofs would race incoherent `fcntl` locks.
 
   * `bot-bottle-mac-orchestrator` — the lean control plane (`MacosOrchestrator`).
     Joins the host-only **control network** (`bot-bottle-mac-control`) only. Sole
@@ -141,7 +139,7 @@ class MacosInfraService(InfraService):
         # healthy — it needs the orchestrator's control-network address. The
         # orchestrator (which holds the signing key) mints the role-scoped
         # `gateway` JWT and hands it to the gateway, which never sees the key
-        # (#469).
+        #.
         url = orchestrator.url()
         gateway_restarted = gateway.connect_to_orchestrator(
             url, orchestrator.mint_gateway_token())

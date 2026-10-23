@@ -1,4 +1,4 @@
-"""Shared SQLite-backed store base class for bot-bottle (PRD 0013)."""
+"""Shared SQLite-backed store base class for bot-bottle."""
 
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
-"""Firecracker's primitives for reattaching running agent VMs to the gateway
-(PRD 0081); the flow itself is `backend.gateway_attach`.
+"""Firecracker's primitives for reattaching running agent VMs to the gateway;
+the flow itself is `backend.gateway_attach`.
 
 Live agent VMs are their run dirs: each holds the VM's Firecracker config (its
 guest IP is on the kernel command line) and the per-bottle SSH key the host

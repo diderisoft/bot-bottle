@@ -1,5 +1,5 @@
-"""macOS's primitives for reattaching running agent containers to the gateway
-(PRD 0081); the flow itself is `backend.gateway_attach`.
+"""macOS's primitives for reattaching running agent containers to the gateway;
+the flow itself is `backend.gateway_attach`.
 
 Agents are `container` instances named by slug, attributed by their address on
 the shared agent network. The CA is staged under root-only `/root` (not

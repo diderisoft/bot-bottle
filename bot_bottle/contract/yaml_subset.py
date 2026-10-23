@@ -1,5 +1,4 @@
-"""Hand-rolled YAML-subset parser for bot-bottle manifest files
-(PRD 0011).
+"""Hand-rolled YAML-subset parser for bot-bottle manifest files.
 
 Why hand-rolled: the configs we accept have a bounded shape (flat
 top-level keys; values are strings / ints / bools / null / lists /

@@ -1,4 +1,4 @@
-"""Gateway data-plane supervisor (PRD 0070; PRD 0024 bundle shape).
+"""Gateway data-plane supervisor.
 
 PID 1 inside the `bot-bottle-gateway` data-plane image. Spawns
 the configured daemons (egress, git-gate, supervise),
@@ -59,7 +59,7 @@ _READY_GATED_DAEMONS: tuple[str, ...] = ("git-gate", "git-http")
 # only ever holds the pre-minted `gateway` JWT its daemons present. Strip the
 # key from every daemon's env as defense-in-depth, so a compromised data-plane
 # daemon can't read it and mint a `cli` token even if it somehow leaked into the
-# gateway container (issue #469 review). Value matches
+# gateway container. Value matches
 # contract.identity.ORCHESTRATOR_TOKEN_ENV; hardcoded here so this supervisor stays
 # import-light.
 _SIGNING_KEY_ENV = "BOT_BOTTLE_ORCHESTRATOR_TOKEN"

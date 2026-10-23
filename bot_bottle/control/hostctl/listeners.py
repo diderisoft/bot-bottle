@@ -1,4 +1,4 @@
-"""The host controller's listeners on each backend's host address (PRD 0092).
+"""The host controller's listeners on each backend's host address.
 
 An orchestrator runs in a guest, so the daemon also listens where that guest
 reaches the host: the docker publish network's bridge, the macOS control

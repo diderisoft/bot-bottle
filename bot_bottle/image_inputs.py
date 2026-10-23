@@ -56,7 +56,7 @@ BUILD_INPUTS: dict[str, tuple[str, ...]] = {
 
 # The slice of the `bot_bottle` package each infrastructure image bakes (the
 # orchestrator COPYs it, the gateway pip-installs it): the contract, the shared
-# lib and the image's own service, never host code (PRD 0087). Each entry is a
+# lib and the image's own service, never host code. Each entry is a
 # file or a directory taken whole, and must match the Dockerfile's `COPY` lines
 # (a unit test checks), so a host-only change leaves both hashes alone. Agent
 # images carry a harness, not our package.

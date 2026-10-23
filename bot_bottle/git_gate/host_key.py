@@ -1,4 +1,4 @@
-"""Preflight host-key population for git-gate upstreams (issue #333).
+"""Preflight host-key population for git-gate upstreams.
 
 When a git-gate repo entry lacks a `host_key`, this module either:
 - headless: dies with a clear config error.

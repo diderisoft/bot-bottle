@@ -1,4 +1,4 @@
-"""Gitea deploy-key provisioner (PRD 0048, contrib).
+"""Gitea deploy-key provisioner.
 
 Generates ed25519 keypairs via `ssh-keygen` and registers / deletes
 them using the Gitea deploy-key HTTP API. No new Python dependencies —

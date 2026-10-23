@@ -37,7 +37,7 @@ class BottleSpec:
     identity: str = ""
     label: str = ""
     color: str = ""
-    # Ordered bottle names selected at launch (issue #269). When non-empty
+    # Ordered bottle names selected at launch. When non-empty
     # they are merged in order and replace the agent's `bottle:` field.
     bottle_names: tuple[str, ...] = ()
     # No TTY, no interactive prompts: the host-key preflight and secret

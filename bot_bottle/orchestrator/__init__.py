@@ -1,4 +1,4 @@
-"""Per-host orchestrator service (PRD 0070).
+"""Per-host orchestrator service.
 
 A single persistent per-host service that will run the gateway functions
 (egress / git-gate / supervise), coordinate with the console, and broker
@@ -11,7 +11,7 @@ backend-neutral "consolidation core" that needs no VM packaging:
                       (register/deregister), the supervise queue, attributes.
   * `server` — the HTTP control-plane RPC (register / deregister /
                       list / attribute / gateway / health), plus remote
-                      launches relayed to the host controller (PRD 0092).
+                      launches relayed to the host controller.
 """
 
 from __future__ import annotations

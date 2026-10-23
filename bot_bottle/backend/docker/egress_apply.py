@@ -1,11 +1,8 @@
 """Host-side egress route-apply for the docker backend.
 
-The per-bottle companion container this used to signal (`docker kill
---signal HUP <container>`) was removed in the companion-container removal (#385).
-In the consolidated model the shared gateway resolves egress policy
-per-request against the orchestrator rather than reloading a per-bottle
-routes file, so the live per-bottle reload is not supported here and
-fails closed until the gateway-side apply lands.
+Live route-apply is not supported: the shared gateway resolves egress policy
+per request against the orchestrator rather than reloading a per-bottle routes
+file, so a reload request fails closed until a gateway-side apply exists.
 """
 
 from __future__ import annotations
@@ -17,9 +14,9 @@ class DockerEgressApplicator(EgressApplicator):
     def _signal_bundle_reload(self, slug: str) -> None:
         del slug
         raise EgressApplyError(
-            "live egress route-apply was removed with the per-bottle "
-            "companion container (#385); route changes will flow through "
-            "the consolidated gateway in a follow-up."
+            "live egress route-apply is not supported: the shared "
+            "gateway resolves egress policy per request, and a "
+            "gateway-side apply does not exist yet."
         )
 
 

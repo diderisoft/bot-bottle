@@ -1,4 +1,4 @@
-"""Gateway-side per-client policy resolver (PRD 0070).
+"""Gateway-side per-client policy resolver.
 
 The consolidated gateway serves every bottle from one process, so for each
 request it must apply the *calling* bottle's policy, selected by the source
@@ -150,8 +150,8 @@ class PolicyResolver:
         construction on Firecracker's `/31`+nft, weaker elsewhere). The
         consolidated end state makes the token mandatory so the app-layer
         defense is always enforced, not silently degraded; that flips at the
-        `/resolve` boundary once identity-token *delivery* lands (a PRD 0070
-        open question — we can't require what the agent can't yet present).
+        `/resolve` boundary once identity-token *delivery* lands (we can't
+        require what the agent can't yet present).
         Raises `PolicyResolveError` if the orchestrator can't be reached."""
         payload = self._post_resolve(source_ip, identity_token)
         if payload is None:

@@ -1,4 +1,4 @@
-"""The orchestrator as a client of the host controller (PRD 0092).
+"""The orchestrator as a client of the host controller.
 
 Remote launches and attaches reach a bottle through the host controller,
 which the orchestrator calls with the `orchestrator`-role token it was given

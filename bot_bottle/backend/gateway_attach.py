@@ -1,4 +1,4 @@
-"""Reattach running bottles to a freshly (re)started gateway (PRD 0081).
+"""Reattach running bottles to a freshly (re)started gateway.
 
 When the gateway or the orchestrator comes up cold, every bottle that was
 already running loses something it depends on: the gateway may be at a new

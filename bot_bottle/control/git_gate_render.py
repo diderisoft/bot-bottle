@@ -1,4 +1,4 @@
-"""Pure host-side rendering for the per-agent git-gate (PRD 0008).
+"""Pure host-side rendering for the per-agent git-gate.
 
 Builds the agent's `.gitconfig` insteadOf rewrites, the known_hosts
 line, and the entrypoint / pre-receive / access-hook scripts the gateway
@@ -89,7 +89,7 @@ def git_gate_render_gitconfig(
     if not entries:
         return ""
     out = [
-        "# bot-bottle git-gate (PRD 0008): every git operation against\n",
+        "# bot-bottle git-gate: every git operation against\n",
         "# a declared upstream routes through the gate, which mirrors\n",
         "# the upstream bidirectionally (gitleaks-scanned push;\n",
         "# fetch-from-upstream-before-every-upload-pack via access-hook).\n",
@@ -146,7 +146,7 @@ def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
         f"  keyfile={creds_dir}/${{name}}-key",
         f"  hostsfile={creds_dir}/${{name}}-known_hosts",
         "",
-        # `|| true`: PRD 0018 chunk 3+ bind-mounts these RO from the
+        # `|| true`: these may be bind-mounted read-only from the
         # host, so chmod-syscalls fail with EROFS. The files already
         # have the right perms on the host (SSH requires 0600 to load
         # the key in the first place), so the chmod is best-effort
@@ -214,7 +214,7 @@ def git_gate_render_provision(
     bottle_id: str, upstreams: tuple[GitGateUpstream, ...],
 ) -> str:
     """Posix-sh script that provisions ONE bottle's bare repos into the
-    consolidated gateway (PRD 0070), under `/git/<bottle_id>/` with creds
+    consolidated gateway, under `/git/<bottle_id>/` with creds
     read from `/git-gate/creds/<bottle_id>/`. Init-only — no `git daemon`,
     since the shared gateway already serves every bottle; run inside the
     running gateway when the bottle is registered.
@@ -243,7 +243,7 @@ def git_gate_render_hook() -> str:
     half-pushing refs 1..N-1; both phases re-read stdin from a temp
     file because pre-receive's stdin is a one-shot stream."""
     return r"""#!/bin/sh
-# git-gate pre-receive (PRD 0008). Stdin: <old> <new> <ref> per line.
+# git-gate pre-receive. Stdin: <old> <new> <ref> per line.
 set -u
 
 refs_file=$(mktemp)
@@ -299,9 +299,8 @@ import os
 import sys
 from pathlib import Path
 
-# Queue over the control-plane RPC — the git-gate data plane no longer opens
-# bot-bottle.db (PRD 0070 / issue #469). Attribution is by (source_ip,
-# identity_token), resolved server-side, so the proposal lands under the
+# Queue over the control-plane RPC — the git-gate data plane never opens
+# bot-bottle.db. Attribution is by (source_ip, identity_token), resolved server-side, so the proposal lands under the
 # calling bottle exactly as a direct write once did.
 try:
     from bot_bottle.gateway.policy_resolver import PolicyResolver, PolicyResolveError
@@ -461,10 +460,9 @@ while IFS=' ' read -r old new ref; do
   # sandbox-escape gitleaks fixtures), blocking the push. `--not --all`
   # excludes anything already on the gate regardless of ancestry, so it
   # is also correct for non-fast-forward pushes (a rebase can skip
-  # commits off the direct path). Security-equivalent per PRD 0028's
-  # analysis: the bare repo's refs come only from trusted upstream
-  # mirror-fetch or gitleaks-gated pushes.
-  # See PRD 0028 (open question) / issues #106, #346.
+  # commits off the direct path). Security-equivalent because the bare
+  # repo's refs come only from trusted upstream mirror-fetch or
+  # gitleaks-gated pushes; see docs/prds/0028-git-gate-new-branch-scan-scope.md.
   log_opts="$new --not --all"
   echo "git-gate: gitleaks scanning $ref ($log_opts)" >&2
   if ! gitleaks git --config /etc/git-gate/gitleaks.toml --log-opts="$log_opts" --no-banner --redact 1>&2; then
@@ -605,7 +603,7 @@ def git_gate_render_access_hook() -> str:
     so it never silently sees stale data — matches the PRD's
     'equivalent to operations against the upstream' contract."""
     return r"""#!/bin/sh
-# git-gate access-hook (PRD 0008). $1=service $2=repo $3=host $4=peer
+# git-gate access-hook. $1=service $2=repo $3=host $4=peer
 set -u
 service=$1
 repo_dir=$2

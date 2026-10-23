@@ -1,4 +1,4 @@
-"""Host-side control-plane client (PRD 0070).
+"""Host-side control-plane client.
 
 The launch path talks to the orchestrator over its HTTP control plane to
 register, re-policy, and tear down bottles — the counterpart to the

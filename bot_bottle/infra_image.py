@@ -1,4 +1,4 @@
-"""Pull or build the infra images (gateway + orchestrator), PRD 0081 / 0085.
+"""Pull or build the infra images (gateway + orchestrator).
 
 Every backend runs the same rule: pull the release-pinned image when it was
 built from exactly the code this install has, otherwise build it. Each manifest

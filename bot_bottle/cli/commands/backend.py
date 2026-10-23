@@ -24,7 +24,7 @@ from ..settings import settings_from_env
 
 
 def _note_tmux() -> None:
-    """Agent sessions run in tmux (PRD 0092); say so if it's missing or too old."""
+    """Agent sessions run in tmux; say so if it's missing or too old."""
     version = tmux_version()
     if version is None or version < MIN_TMUX_VERSION:
         found = "not installed" if version is None else f"{version[0]}.{version[1]}"

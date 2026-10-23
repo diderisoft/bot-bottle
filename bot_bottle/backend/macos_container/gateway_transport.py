@@ -1,4 +1,4 @@
-"""The `GatewayTransport` for the Apple gateway container (PRD 0070).
+"""The `GatewayTransport` for the Apple gateway container.
 
 How the launcher stages files + runs commands in the running gateway container:
 the `container` CLI's exec/cp equivalents. The backend-neutral provisioning

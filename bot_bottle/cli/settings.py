@@ -1,4 +1,4 @@
-"""Build the host `Settings` (PRD 0092) from the `BOT_BOTTLE_*` env vars.
+"""Build the host `Settings` from the `BOT_BOTTLE_*` env vars.
 
 The one place host code reads behaviour knobs from the environment: the CLI
 calls `settings_from_env()` once per command and passes the result down.

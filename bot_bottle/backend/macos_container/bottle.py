@@ -65,7 +65,7 @@ class MacosContainerBottle(Bottle):
         self.agent_workdir = agent_workdir
         # Env applied to the agent process at `container exec` time, on top of
         # what the container was run with. This is how the identity token
-        # reaches the agent (PRD 0070): registration mints it *after* the
+        # reaches the agent: registration mints it *after* the
         # container exists — its source IP is the registration key and Apple
         # Container assigns that by DHCP — so it cannot be in the run-time env
         # the way docker's compose spec does it.

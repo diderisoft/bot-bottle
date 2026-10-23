@@ -1,12 +1,12 @@
-"""Rotate every backend's gateway mitmproxy CA (issue #450, PRD 0090).
+"""Rotate every backend's gateway mitmproxy CA.
 
     python -m bot_bottle.control.rotate_ca
 
 Under every backend's bring-up lock, backends are grouped by the CA dir their
 gateways share (docker and macOS share one). For a group with a running
 gateway, the CA is rolled over through it to a new one cross-signed by the
-current one, then each running gateway is restarted and its bottles reattached
-(PRD 0081): agents that loaded the old CA keep validating, new ones trust the
+current one, then each running gateway is restarted and its bottles reattached:
+agents that loaded the old CA keep validating, new ones trust the
 new CA. A group with no running gateway has its persisted CA cleared, so the
 next start mints a fresh one. A failed group keeps its CA and the command
 exits non-zero; the others still rotate.

@@ -1,9 +1,9 @@
-"""The macOS orchestrator (control plane) as an Apple container (PRD 0070).
+"""The macOS orchestrator (control plane) as an Apple container.
 
 `MacosOrchestrator` is the Apple-Container implementation of the backend-neutral
 `Orchestrator` service. The lean control-plane container joins the host-only
 control network only (agents are never on it), mounts a container-only DB volume
-(exactly one kernel writes `bot-bottle.db`), and holds the signing key (#469).
+(exactly one kernel writes `bot-bottle.db`), and holds the signing key.
 The host CLI and the gateway both reach it at its control-network address —
 Apple has no container DNS, so there's a single resolved URL, not docker's
 loopback-vs-name split.
@@ -117,7 +117,7 @@ class MacosOrchestrator(Orchestrator):
         """Build the control-plane image. The source is bind-mounted so a code
         change takes effect without a rebuild; the image still carries the
         package for its entrypoint. Pulls the release-pinned image instead when it was built
-        from exactly this install's code (PRD 0081 / 0085)."""
+        from exactly this install's code."""
         pin = pinned_infra_artifact(
             "bot-bottle-orchestrator", FORMAT_OCI,
             local_build=self._settings.infra.infra_build_local)
@@ -153,7 +153,7 @@ class MacosOrchestrator(Orchestrator):
 
     def _run_container(self, current_hash: str) -> None:
         container_mod.force_remove_container(self.name)
-        # The signing key comes through the shared provisioning contract (#476),
+        # The signing key comes through the shared provisioning contract,
         # which fail-closes rather than yield an empty key that would run OPEN.
         _signing_key = self.control_plane_key()
         host_env = self.host_control_env()
@@ -174,7 +174,7 @@ class MacosOrchestrator(Orchestrator):
             "--env", f"PYTHONPATH={_SRC_IN_CONTAINER}",
             # Detect a real control-plane code change and recreate.
             "--env", f"BOT_BOTTLE_SOURCE_HASH={current_hash}",
-            # The signing key — held ONLY by the orchestrator (issue #469). Bare
+            # The signing key — held ONLY by the orchestrator. Bare
             # `--env NAME` keeps the value off argv; it is still in the config
             # `container inspect` shows, readable only by the host user.
             "--env", ORCHESTRATOR_TOKEN_ENV,

@@ -1,4 +1,4 @@
-"""Manifest dataclasses (PRD 0011 layout).
+"""Manifest dataclasses.
 
 Reads the per-file manifest tree:
 
@@ -12,9 +12,9 @@ the system prompt, for bottles the body is human documentation
 (ignored by the parser).
 
 Bottle schema (frontmatter):
-  extends:      <bottle-name>                   # optional (PRD 0025)
+  extends:      <bottle-name>                   # optional
   env:          { <NAME>: <env-entry>, ... }
-  git-gate:                                     # optional (PRD 0047)
+  git-gate:                                     # optional
     user:       { name: <str>, email: <str> }   # optional
     repos:      { <name>: <git-gate-entry>, ... }  # optional
   egress: { routes: [ <egress-route>, ... ] }

@@ -1,9 +1,9 @@
-"""The macOS gateway data plane as an Apple container (PRD 0070).
+"""The macOS gateway data plane as an Apple container.
 
 `MacosGateway` is the Apple-Container implementation of the backend-neutral
 `Gateway` service. It runs the gateway daemons (egress / git-http / supervise)
 in a single triple-homed container and never opens `bot-bottle.db` — it reaches
-the supervise queue over the control-plane RPC (#469), so it holds no signing
+the supervise queue over the control-plane RPC, so it holds no signing
 key, only the pre-minted `gateway` token the orchestrator hands it via
 `connect_to_orchestrator`.
 
@@ -42,7 +42,7 @@ GATEWAY_NETWORK = "bot-bottle-mac-gateway"
 GATEWAY_EGRESS_NETWORK = "bot-bottle-mac-egress"
 # The control network the gateway reaches the orchestrator over (host-only).
 # Only the orchestrator + gateway join it; agents never do, so agents have no
-# route to the control plane (PRD 0070 "Separating the planes").
+# route to the control plane.
 CONTROL_NETWORK = "bot-bottle-mac-control"
 
 # The gateway (data plane) container. The name predates the split — it was the
@@ -99,13 +99,13 @@ class MacosGateway(Gateway):
         self._repo_root = repo_root if repo_root is not None else resources.build_root()
         # Set by `connect_to_orchestrator`: the URL the daemons resolve policy
         # against + the pre-minted `gateway` token they present. The gateway
-        # never mints, so it never holds the signing key (#469).
+        # never mints, so it never holds the signing key.
         self._orchestrator_url = ""
         self._gateway_token = ""
 
     def ensure_built(self) -> None:
         """Build the data-plane image from `Dockerfile.gateway`. Pulls the release-pinned image instead when it was built
-        from exactly this install's code (PRD 0081 / 0085)."""
+        from exactly this install's code."""
         pin = pinned_infra_artifact(
             "bot-bottle-gateway", FORMAT_OCI, local_build=self._settings.infra.infra_build_local)
         if pin is not None:
@@ -131,12 +131,12 @@ class MacosGateway(Gateway):
         A running gateway on the current image, already bound to this
         orchestrator, is adopted untouched (returns False). Recreating it on
         every launch, as this used to, wiped every running bottle's git-gate
-        state (#512). Otherwise it is (re)started (returns True)."""
+        state. Otherwise it is (re)started (returns True)."""
         self._orchestrator_url = orchestrator_url
         self._gateway_token = gateway_token
         # Fail closed on a missing policy source or token: the resolver-only data
-        # plane (PRD 0070) would only crash-loop its daemons without an
-        # orchestrator URL, and it cannot mint the token it presents (#469).
+        # plane would only crash-loop its daemons without an
+        # orchestrator URL, and it cannot mint the token it presents.
         if not self._orchestrator_url:
             raise GatewayError(
                 "gateway requires an orchestrator URL to run "
@@ -163,8 +163,8 @@ class MacosGateway(Gateway):
             "--network", self.control_network,
             "--dns", container_mod.dns_server(self._settings.infra.macos_container_dns),
             # The mitmproxy CA on a host bind-mount (survives recreation +
-            # volume pruning — issue #450). No DB mount: the data plane never
-            # opens bot-bottle.db (#469).
+            # volume pruning). No DB mount: the data plane never
+            # opens bot-bottle.db.
             "--mount",
             container_mod.bind_mount_spec(str(host_gateway_ca_dir()), MITMPROXY_HOME),
             "--env", f"BOT_BOTTLE_GATEWAY_DAEMONS={GATEWAY_DAEMONS}",

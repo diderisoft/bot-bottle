@@ -71,7 +71,7 @@ def _check_backends() -> bool:
 
 
 def _check_tmux() -> bool:
-    """Agent sessions run in tmux (PRD 0092); 3.1 added `window-size latest`."""
+    """Agent sessions run in tmux; 3.1 added `window-size latest`."""
     version = tmux_version()
     if version is None:
         _fail("tmux", "not installed; install tmux 3.1 or newer (brew/apt/nix install tmux)")

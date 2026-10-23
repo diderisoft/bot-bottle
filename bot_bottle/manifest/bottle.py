@@ -33,18 +33,18 @@ class ManifestBottle:
     env: Mapping[str, str] = field(default_factory=_empty_str_dict)
     agent_provider: ManifestAgentProvider = field(default_factory=ManifestAgentProvider)
     git: tuple[ManifestGitEntry, ...] = ()
-    # Per-bottle git identity (issue #86). Empty default — bottles
+    # Per-bottle git identity. Empty default — bottles
     # that don't set `git-gate.user:` in the manifest skip the
     # `git config --global` step entirely. A bottle can declare a user
     # identity without any git-gate.repos upstreams, and vice versa.
     git_user: ManifestGitUser = field(default_factory=ManifestGitUser)
     egress: ManifestEgressConfig = field(default_factory=ManifestEgressConfig)
-    # Per-bottle stuck-recovery daemon (PRD 0013). When true (the
-    # default, issue #249), the launch step brings up a supervise
+    # Per-bottle stuck-recovery daemon. When true (the
+    # default), the launch step brings up a supervise
     # daemon that exposes egress MCP tools to the agent. Set
     # `supervise: false` to skip the gateway.
     supervise: bool = True
-    # Guest-local container engine (issue #392). Not a host-daemon grant:
+    # Guest-local container engine. Not a host-daemon grant:
     # backends implement it inside the bottle or reject it. Gated because it
     # costs image weight, a resident service, and relaxed guest device modes
     # that the majority of bottles never need.
@@ -68,16 +68,16 @@ class ManifestBottle:
 
         if "ssh" in d:
             raise ManifestError(
-                f"bottle '{name}' has an 'ssh' field, which has been removed "
-                f"(PRD 0009). Declare upstreams under 'git-gate.repos' with "
-                f"url + identity + host_key; the git-gate daemon (PRD 0008) "
+                f"bottle '{name}' has an 'ssh' field, which has been removed. "
+                f"Declare upstreams under 'git-gate.repos' with "
+                f"url + identity + host_key; the git-gate daemon "
                 f"holds the credential and gitleaks-scans pushes."
             )
 
         if "git" in d:
             raise ManifestError(
                 f"bottle '{name}' uses 'git' which has been replaced by "
-                f"'git-gate' (PRD 0047). Move git.user → git-gate.user "
+                f"'git-gate'. Move git.user → git-gate.user "
                 f"and git.remotes → git-gate.repos (fields: url, identity, host_key)."
             )
 

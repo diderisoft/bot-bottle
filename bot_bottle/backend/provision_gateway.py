@@ -1,5 +1,5 @@
-"""Provision one bottle's git-gate state into the running shared gateway
-(PRD 0070). Backend-neutral: it drives any `GatewayTransport` (docker/apple
+"""Provision one bottle's git-gate state into the running shared gateway.
+Backend-neutral: it drives any `GatewayTransport` (docker/apple
 exec+cp, firecracker SSH), and the guest-side paths it writes are identical
 inside every backend's gateway because they all run the same gateway image.
 

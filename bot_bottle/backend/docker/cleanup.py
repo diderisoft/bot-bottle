@@ -1,6 +1,6 @@
 """Cleanup for the Docker bottle backend.
 
-PRD 0018 chunk 4: cleanup is centered on `docker compose ls`.
+Cleanup is centered on `docker compose ls`.
 Pre-compose code paths could leave bare containers / networks
 without a compose project; those still show up via the prefix
 scan, just as a fallback bucket alongside the project list.

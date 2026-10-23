@@ -1,4 +1,4 @@
-"""Synthesize a thin overlay layer on a pinned agent image (PRD 0085, tier 2).
+"""Synthesize a thin overlay layer on a pinned agent image.
 
 The overlay is the middle path between "pull the default as-is" and "bring your
 own image": a one-layer `FROM <pinned-default>` build declared in agent
@@ -246,7 +246,7 @@ def render_overlay_dockerfile_text(base_ref: str, text: str, *, template: str) -
     kept = [ln for n, ln in enumerate(lines) if n not in drop]
     user = get_provider(template).image_user
     return (
-        "# Staged by bot-bottle (PRD 0085 overlay): BASE is the verified,\n"
+        "# Staged by bot-bottle: BASE is the verified,\n"
         "# digest-pinned agent image; the provider's user is restored at the end.\n"
         f"ARG BASE={base_ref}\n"
         + "\n".join(kept).rstrip("\n")

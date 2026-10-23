@@ -91,7 +91,7 @@ class ManifestKeyConfig:
 
 @dataclass(frozen=True)
 class ManifestGitEntry:
-    """One upstream the per-agent git-gate (PRD 0008) is allowed to
+    """One upstream the per-agent git-gate is allowed to
     talk to. `Upstream` is the real remote URL the agent would push to
     if there were no gate; the gate hosts a bare repo at /git/<Name>.git
     and `IdentityFile` is the SSH key the gate uses to push that repo
@@ -102,7 +102,7 @@ class ManifestGitEntry:
     stashed in the `Upstream*` fields so the git-gate render step
     doesn't have to re-parse.
 
-    Manifest source: `git-gate.repos.<Name>` (PRD 0047/0048). A `key`
+    Manifest source: `git-gate.repos.<Name>`. A `key`
     block is required; `key.provider` is `"static"` or `"gitea"`. For
     `static`, `IdentityFile` is populated at parse time from `key.path`.
     For `gitea`, `IdentityFile` is populated at provision time."""
@@ -238,7 +238,7 @@ def _parse_key_config(
 @dataclass(frozen=True)
 class ManifestGitUser:
     """Per-bottle `git config --global user.name` / `user.email`
-    pair (issue #86). The agent's commits inside the bottle are
+    pair. The agent's commits inside the bottle are
     attributed to this identity rather than the agent image's
     image-baked default (no user, or whatever the image dropped
     in). Either or both fields can be set independently.

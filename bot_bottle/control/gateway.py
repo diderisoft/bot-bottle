@@ -1,4 +1,4 @@
-"""The consolidated per-host gateway (PRD 0070).
+"""The consolidated per-host gateway.
 
 The core consolidation win: **one** persistent gateway per host, shared by
 every bottle, instead of a gateway per bottle. It's safe to share
@@ -45,7 +45,7 @@ GATEWAY_NETWORK = "bot-bottle-gateway"
 # CA to trust the shared gateway's TLS interception, so it must not rotate when
 # the gateway restarts. A host bind-mount rather than a named volume: a named
 # volume is silently wiped by `docker volume prune`, minting a fresh CA that
-# breaks every running bottle (issue #450).
+# breaks every running bottle.
 MITMPROXY_HOME = "/home/mitmproxy/.mitmproxy"
 GATEWAY_CA_CERT = f"{MITMPROXY_HOME}/mitmproxy-ca-cert.pem"
 
@@ -71,7 +71,7 @@ GATEWAY_DOCKERFILE = "Dockerfile.gateway"
 
 def rotate_gateway_ca(ca_dir: Path | None = None) -> list[Path]:
     """Delete the persisted mitmproxy CA so the next gateway start mints a
-    fresh one — the explicit, deliberate CA-rollover path (issue #450).
+    fresh one — the explicit, deliberate CA-rollover path.
 
     Persistence keeps the CA stable across restarts precisely because mitmproxy
     reuses the on-disk CA; rotation is therefore just removing that material.
@@ -138,7 +138,7 @@ class Gateway(abc.ABC):
         per-bottle state (and, without a persisted CA, minted a new one);
         False when a running, current gateway was adopted untouched. The
         infra service's bring-up reattaches running bottles when this or the
-        orchestrator reports a (re)start (PRD 0081)."""
+        orchestrator reports a (re)start."""
 
     @abc.abstractmethod
     def is_running(self) -> bool:
@@ -167,7 +167,7 @@ class Gateway(abc.ABC):
 
     def roll_over_ca(self) -> None:
         """Replace the running gateway's CA with a new one cross-signed by the
-        current one (PRD 0090). Takes effect on the gateway's next start;
+        current one. Takes effect on the gateway's next start;
         agents that loaded the current CA keep validating it. Raises
         `GatewayError`."""
         try:

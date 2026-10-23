@@ -1,4 +1,4 @@
-"""Per-agent egress (PRD 0017).
+"""Per-agent egress.
 
 The egress gateway is a TLS-terminating forward proxy that allow-lists a
 bottle's outbound HTTP(S), scans payloads for secret exfil, and injects

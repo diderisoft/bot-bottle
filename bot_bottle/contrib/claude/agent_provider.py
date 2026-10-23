@@ -1,10 +1,10 @@
-"""Claude agent provider plugin (PRD 0050, contrib).
+"""Claude agent provider plugin.
 
 The Claude-specific behavior previously inlined under
 `agent_provider.agent_provision_plan` (claude.json trust marker,
 api.anthropic.com egress route, OAuth-token placeholder), plus
 the `claude mcp add` invocation that registers the supervise
-gateway in claude-code's user config (PRD 0013)."""
+gateway in claude-code's user config."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ _SUPERVISE_MCP_NAME = "supervise"
 _IDENTITY_HEADER = "x-bot-bottle-identity"
 # Placeholder stood in for the real identity token in the manual-recovery hint.
 # The token is a per-bottle credential, so it must never be rendered into the
-# host-side launch log (#476 review); the operator substitutes the value from
+# host-side launch log; the operator substitutes the value from
 # inside the bottle (it rides in the agent's HTTPS_PROXY credentials).
 _IDENTITY_TOKEN_PLACEHOLDER = "<bottle-identity-token>"
 
@@ -345,7 +345,7 @@ class ClaudeAgentProvider(AgentProvider):
         )
         if r.returncode != 0:
             # A placeholder — never the real token — keeps this per-bottle
-            # credential out of the host launch log (#476 review). The operator
+            # credential out of the host launch log. The operator
             # substitutes it from inside the bottle (it rides in the agent's
             # HTTPS_PROXY credentials).
             manual_header = (

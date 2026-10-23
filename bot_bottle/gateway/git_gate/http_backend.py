@@ -7,7 +7,7 @@ wrapper serves the same `/git/*.git` bare repos through
 `git http-backend`, so pre-receive and upstream forwarding remain the
 git-gate enforcement point.
 
-One shared gateway serves every bottle (PRD 0070): each request is served
+One shared gateway serves every bottle: each request is served
 from the calling bottle's repo namespace (`<root>/<bottle_id>`), attributed
 from the unspoofable source IP via the orchestrator. Per-repo credentials +
 hooks scope by repo directory, so isolating the *root* per bottle isolates
@@ -180,8 +180,8 @@ class GitHttpHandler(BaseHTTPRequestHandler):
         })
         # Attribute the gitleaks-allow supervise proposal (queued by
         # receive-pack's pre-receive hook, a child of the CGI we spawn below) to
-        # the calling bottle. The hook queues over the control-plane RPC (PRD
-        # 0070 / issue #469), which re-resolves the bottle from these — the same
+        # the calling bottle. The hook queues over the control-plane RPC, which
+        # re-resolves the bottle from these — the same
         # (source_ip, identity_token) pair that selected the namespaced root
         # above — so it can only ever queue its own proposals.
         env["SUPERVISE_SOURCE_IP"] = self.client_address[0]

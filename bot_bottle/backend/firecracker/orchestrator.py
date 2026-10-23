@@ -1,4 +1,4 @@
-"""The Firecracker orchestrator (control plane) as a microVM (PRD 0070).
+"""The Firecracker orchestrator (control plane) as a microVM.
 
 `FirecrackerOrchestrator` is the Firecracker implementation of the backend-neutral
 `Orchestrator` service, and owns the control plane's host-side logic directly:
@@ -35,8 +35,7 @@ from .infra_vm import ORCHESTRATOR_PORT
 ORCHESTRATOR_NAME = "bot-bottle-orchestrator"
 
 # Memory ceiling (fixed at boot, demand-paged). The orchestrator keeps the build
-# headroom (buildah's 2-4 GB working set during in-VM agent builds) — PRD 0070
-# "Memory: fixed ceilings".
+# headroom (buildah's 2-4 GB working set during in-VM agent builds).
 _ORCH_MEM_MIB = 4096
 
 _HEALTH_POLL_SECONDS = 0.5
@@ -48,7 +47,7 @@ _SYNC_TIMEOUT_SECONDS = 15.0
 # orchestrator-VM restart — the firecracker analogue of a docker volume. A plain
 # ext4 file: `sudo mount -o loop <path>` on the host (VM stopped) to inspect
 # bot-bottle.db. The gateway VM has no such volume — the data plane never opens
-# the DB (#469).
+# the DB.
 _REGISTRY_SIZE = "512M"
 
 # The build-store volume (guest /dev/vdc, mounted at infra_vm.GUEST_BUILD_STORE):
@@ -144,7 +143,7 @@ class FirecrackerOrchestrator(Orchestrator):
         )
         # Push the host-canonical signing key (the init waits for it before
         # starting the control plane). It comes through the shared provisioning
-        # contract (#476) — the same host token file every backend uses, so a
+        # contract — the same host token file every backend uses, so a
         # co-running docker/macOS control plane keeps working and the guest
         # verifies tokens with the same key the CLI signs from; fail-closed, so
         # the guest is never handed an empty key that would run it OPEN.
