@@ -186,6 +186,9 @@ class GitHttpHandler(BaseHTTPRequestHandler):
         # above — so it can only ever queue its own proposals.
         env["SUPERVISE_SOURCE_IP"] = self.client_address[0]
         env["SUPERVISE_IDENTITY_TOKEN"] = self.headers.get(IDENTITY_HEADER, "")
+        # The namespace is the calling bottle's id; the hook's audit events
+        # name it.
+        env["GIT_GATE_BOTTLE"] = sandbox_root.name
         for header, variable in (
             ("accept", "HTTP_ACCEPT"),
             ("content-encoding", "HTTP_CONTENT_ENCODING"),

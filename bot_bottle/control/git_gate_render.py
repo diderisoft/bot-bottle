@@ -253,6 +253,12 @@ cat > "$refs_file"
 
 zero=0000000000000000000000000000000000000000
 
+# Record a push decision in the audit journal. Best effort: it never fails
+# or delays the push beyond its short send timeout.
+audit_push() {
+  python3 -m bot_bottle.gateway.git_gate.audit "$@" >/dev/null 2>&1 || :
+}
+
 # Phase 0: reject Gitea AGit review refs before scanning or forwarding.
 # A push to refs/for/*, refs/draft/*, or refs/for-review/* asks Gitea to
 # open a pull request backed by a server-managed refs/pull/<n>/head rather
@@ -269,6 +275,7 @@ while IFS=' ' read -r old new ref; do
     refs/for/*|refs/draft/*|refs/for-review/*)
       echo "git-gate: refusing AGit review ref $ref" >&2
       echo "git-gate: push to refs/heads/<branch> and open a branch-backed pull request instead" >&2
+      audit_push forge.push_rejected blocked "$ref" --detail "AGit review ref"
       exit 1
       ;;
   esac
@@ -466,11 +473,17 @@ while IFS=' ' read -r old new ref; do
   # gitleaks-gated pushes; see docs/prds/0028-git-gate-new-branch-scan-scope.md.
   log_opts="$new --not --all"
   echo "git-gate: gitleaks scanning $ref ($log_opts)" >&2
-  if ! gitleaks git --config /etc/git-gate/gitleaks.toml --log-opts="$log_opts" --no-banner --redact 1>&2; then
+  scan_report=$(mktemp)
+  if ! gitleaks git --config /etc/git-gate/gitleaks.toml --log-opts="$log_opts" --no-banner --redact \
+      --report-format=json --report-path="$scan_report" 1>&2; then
     echo "git-gate: gitleaks rejected push to $ref" >&2
+    audit_push forge.push_rejected blocked "$ref" --report "$scan_report" --detail "gitleaks findings"
+    rm -f "$scan_report"
     exit 1
   fi
+  rm -f "$scan_report"
   if ! supervise_gitleaks_allow "$log_opts" "$ref"; then
+    audit_push forge.push_rejected blocked "$ref" --detail "gitleaks:allow finding not approved"
     exit 1
   fi
 done < "$refs_file"
@@ -490,6 +503,7 @@ hostsfile=$(git config --get git-gate.knownHosts)
 if [ ! -f "$hostsfile" ]; then
   echo "git-gate: no KnownHostKey configured for this upstream; refusing to push" >&2
   echo "git-gate: add KnownHostKey to the bottle.git entry and restart the bottle" >&2
+  audit_push forge.push_rejected failure "*" --detail "no KnownHostKey for the upstream"
   exit 1
 fi
 ssh_cmd="ssh -i $keyfile -o UserKnownHostsFile=$hostsfile -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10"
@@ -521,7 +535,13 @@ while IFS=' ' read -r old new ref; do
   echo "git-gate: forwarding $ref to origin" >&2
   if ! GIT_SSH_COMMAND="$ssh_cmd" git push "$@" origin "$refspec" 1>&2; then
     echo "git-gate: upstream push failed for $ref" >&2
+    audit_push forge.push_rejected failure "$ref" --detail "upstream push failed"
     exit 1
+  fi
+  if [ "$new" = "$zero" ]; then
+    audit_push forge.push_accepted success "$ref" --detail "ref deleted"
+  else
+    audit_push forge.push_accepted success "$ref" --findings 0
   fi
 done < "$refs_file"
 

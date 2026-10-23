@@ -182,10 +182,11 @@ class Sender(unittest.TestCase):
         return sender
 
     def wait_for(self, relay: _Relay, count: int) -> None:
+        idle = threading.Event()
         for _ in range(500):
             if len(relay.sent) >= count:
                 return
-            relay.delivered.wait(0.01)
+            idle.wait(0.01)
         self.fail(f"only {len(relay.sent)} of {count} delivered")
 
     def test_delivers_in_order_with_the_producer(self) -> None:
