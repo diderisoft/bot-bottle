@@ -234,8 +234,9 @@ def git_gate_render_provision(
 
 
 def git_gate_render_hook() -> str:
-    """The shared pre-receive hook: gitleaks-scan all incoming refs,
-    then forward each accepted ref to the real upstream (`origin`)
+    """The shared pre-receive hook: gitleaks-scan all incoming refs, refuse
+    any that carry a secret the pushing bottle holds, then forward each
+    accepted ref to the real upstream (`origin`)
     using the per-repo credential. Failure in either phase aborts
     the push so the agent sees a real rejection. POSIX sh.
 
@@ -473,6 +474,14 @@ while IFS=' ' read -r old new ref; do
     exit 1
   fi
 done < "$refs_file"
+
+# Phase 1b: refuse a push carrying a secret this bottle holds (its canary,
+# its secret env values, its egress tokens). gitleaks only knows secret
+# *shapes*; this knows the bottle's actual values. Fails closed.
+if ! PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 -m bot_bottle.gateway.git_gate.held_secret_scan "$refs_file"; then
+  exit 1
+fi
 
 # Phase 2: forward each ref to the upstream (`origin`, configured
 # in the entrypoint via `git remote add --mirror=fetch`).

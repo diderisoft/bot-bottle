@@ -79,3 +79,6 @@ class ScanResult:
     location: str = ""
     context: str = ""
     matched: str = ""
+    # A hit on the bottle's exfil canary: always a hard block, never
+    # supervised, safelisted or redacted-and-forwarded.
+    canary: bool = False

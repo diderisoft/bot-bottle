@@ -41,7 +41,7 @@ from ...image_cache import check_stale_path
 from ...lib.log import die, info
 from ..launch_common import (
     LaunchTeardown,
-    egress_token_values,
+    registration_tokens,
     gateway_agent_urls,
     provision_git_gate_keys,
     stage_gateway_ca,
@@ -91,7 +91,7 @@ def launch(
         # Step 4: register on the orchestrator + provision this bottle's
         # git-gate state into the shared gateway.
         # Attribution is by the VM's guest IP (unspoofable via /31 TAP + nft).
-        token_values = egress_token_values(plan)
+        token_values = registration_tokens(plan)
         teardown_timeout = resolve_teardown_timeout(host_db_path())
         service = FirecrackerInfraService(plan.settings)
         ctx = launch_consolidated(

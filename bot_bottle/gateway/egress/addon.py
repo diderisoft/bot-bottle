@@ -508,8 +508,9 @@ class EgressAddon:
             policy = route.outbound_on_match or DEFAULT_OUTBOUND_ON_MATCH
 
             # redact scrubs every detection (tokens and structural CRLF) and
-            # forwards; it fails closed only if a match survives the scrub.
-            if policy == ON_MATCH_REDACT:
+            # forwards; it fails closed only if a match survives the scrub. A
+            # canary hit is an exfil attempt by definition: never redacted.
+            if policy == ON_MATCH_REDACT and not result.canary:
                 if redact_request(flow.request, route, env):
                     if self._flow_log(flow) >= LOG_BLOCKS:
                         sys.stderr.write(json.dumps({
@@ -528,8 +529,8 @@ class EgressAddon:
 
             # Structural blocks (CRLF, no safelist-able value) cannot be
             # supervised — there is nothing to approve and remember — so under
-            # block/supervise they are a hard 403.
-            if policy == ON_MATCH_BLOCK or not result.matched:
+            # block/supervise they are a hard 403. Nor can the canary.
+            if result.canary or policy == ON_MATCH_BLOCK or not result.matched:
                 self._block_dlp(flow, result)
                 return False
 

@@ -47,7 +47,7 @@ from ... import resources
 from .. import BottleImages, oci_agent_image
 from ..launch_common import (
     LaunchTeardown,
-    egress_token_values,
+    registration_tokens,
     gateway_agent_urls,
     provision_git_gate_keys,
     stage_gateway_ca,
@@ -202,7 +202,7 @@ def launch(
                 f"agent {plan.container_name} never got an address on "
                 f"{endpoint.network}"
             )
-        token_values = egress_token_values(plan)
+        token_values = registration_tokens(plan)
         teardown_timeout = resolve_teardown_timeout(host_db_path())
         ctx = register_agent(
             plan.egress_plan,

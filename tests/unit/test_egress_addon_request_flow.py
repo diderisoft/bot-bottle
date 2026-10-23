@@ -211,6 +211,7 @@ from bot_bottle.gateway.egress.addon_core import (  # noqa: E402
     route_to_yaml_dict,
 )
 from bot_bottle.gateway.policy_resolver import PolicyResolveError  # noqa: E402
+from bot_bottle.contract.held_secrets import CANARY_KEY  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +558,44 @@ class TestOutboundDlpPolicy(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Outbound DLP supervise branch (operator approval round-trip)
 # ---------------------------------------------------------------------------
+
+
+_CANARY = "canary-Qm9vT4nW8pL5jH3bX7k2"
+
+
+class TestCanary(unittest.TestCase):
+    """The bottle's exfil canary arrives with its `/resolve` tokens. A hit is
+    an exfil attempt by definition: a hard 403 under every on-match policy."""
+
+    def _flow(self) -> _Flow:
+        return _Flow(_Request(host="api.example.com", method="POST", body=f"x={_CANARY}"))
+
+    def test_is_not_supervised_even_if_an_operator_would_approve(self) -> None:
+        addon = _addon(Config(routes=(Route(host="api.example.com"),)), slug="b",
+                       tokens={CANARY_KEY: _CANARY})
+        cast(Any, addon._resolver).supervise_status = "approved"
+        flow = self._flow()
+        _run_request(addon, flow)
+        assert flow.response is not None
+        self.assertEqual(403, flow.response.status_code)
+        self.assertNotIn(_CANARY, addon._safe_tokens_for("b"))
+        self.assertNotIn(_CANARY, flow.response.get_text())
+
+    def test_is_not_redacted_and_forwarded(self) -> None:
+        route = Route(host="api.example.com", outbound_on_match="redact")
+        addon = _addon(Config(routes=(route,)), tokens={CANARY_KEY: _CANARY})
+        flow = self._flow()
+        _run_request(addon, flow)
+        assert flow.response is not None
+        self.assertEqual(403, flow.response.status_code)
+
+    def test_is_caught_even_with_known_secrets_disabled_on_the_route(self) -> None:
+        route = Route(host="api.example.com", outbound_detectors=("token_patterns",))
+        addon = _addon(Config(routes=(route,)), tokens={CANARY_KEY: _CANARY})
+        flow = self._flow()
+        _run_request(addon, flow)
+        assert flow.response is not None
+        self.assertEqual(403, flow.response.status_code)
 
 
 class TestSuperviseBranch(unittest.TestCase):

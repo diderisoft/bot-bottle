@@ -14,9 +14,11 @@ import dataclasses
 from contextlib import ExitStack
 
 from ..bottle_state import egress_state_dir, git_gate_state_dir
+from ..contract.held_secrets import CANARY_KEY, HELD_ENV_PREFIX, MIN_HELD_SECRET_LEN
 from ..contract.identity import GIT_HTTP_PORT
 from ..contract.supervise import SUPERVISE_PORT
 from ..egress import Egress, EgressPlan
+from ..env import env_entry_kind
 from ..git_gate import GitGate, GitGatePlan
 from ..lib.log import warn
 from .base import BottlePlan, BottleSpec
@@ -62,13 +64,30 @@ def provision_git_gate_keys(plan: BottlePlan) -> GitGatePlan:
     )
 
 
-def egress_token_values(plan: BottlePlan) -> dict[str, str]:
-    """The bottle's egress auth tokens, resolved from the plan's secrets and
-    handed to the orchestrator in memory for the gateway to inject. The agent
-    never sees them."""
-    return Egress().resolve_token_values(
+def registration_tokens(plan: BottlePlan) -> dict[str, str]:
+    """The map the bottle registers with the orchestrator (see
+    `contract.held_secrets`): its egress auth tokens, resolved from the plan's
+    secrets for the gateway to inject (the agent never sees them), plus the
+    secrets the bottle holds, which the gateway scans pushes and requests
+    for."""
+    tokens = Egress().resolve_token_values(
         plan.egress_plan.token_env_map, plan.egress_secrets,
     )
+    return {**tokens, **held_secret_values(plan)}
+
+
+def held_secret_values(plan: BottlePlan) -> dict[str, str]:
+    """The secrets inside the bottle: its exfil canary, and the values of its
+    `?` secret env entries (not `${VAR}` interpolations, which carry ordinary
+    host values). Values shorter than `MIN_HELD_SECRET_LEN` are left out."""
+    held: dict[str, str] = {}
+    if plan.egress_plan.canary and plan.egress_plan.canary_env:
+        held[CANARY_KEY] = plan.egress_plan.canary
+    for name, raw in plan.manifest.bottle.env.items():
+        value = plan.forwarded_env.get(name, "")
+        if env_entry_kind(raw) == "secret" and len(value) >= MIN_HELD_SECRET_LEN:
+            held[HELD_ENV_PREFIX + name] = value
+    return held
 
 
 def stage_gateway_ca(plan: BottlePlan, ca_pem: str) -> EgressPlan:

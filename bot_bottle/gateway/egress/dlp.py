@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import typing
 
+from ...contract.held_secrets import CANARY_KEY, EGRESS_TOKEN_PREFIX
 from .types import Route, ScanResult
 
 
@@ -36,6 +38,19 @@ def _enabled(configured: tuple[str, ...] | None, name: str) -> bool:
     return configured is None or name in configured
 
 
+def _scan_canary(text: str, environ: typing.Mapping[str, str]) -> ScanResult | None:
+    """A hit on the bottle's exfil canary. Checked on every inspected route,
+    whatever detectors the route enables, and never against the safelist: no
+    legitimate request carries it."""
+    from .dlp_detectors import scan_known_secrets
+    canary = environ.get(CANARY_KEY, "")
+    if not canary:
+        return None
+    result = scan_known_secrets(text, location="body", env={CANARY_KEY: canary},
+                                sensitive_prefixes=(CANARY_KEY,))
+    return dataclasses.replace(result, canary=True) if result is not None else None
+
+
 def scan_outbound(route: Route, body: str | bytes, environ: typing.Mapping[str, str], *,
                   safe_tokens: typing.AbstractSet[str] | None = None,
                   crlf_text: str | None = None) -> ScanResult | None:
@@ -54,7 +69,8 @@ def scan_outbound(route: Route, body: str | bytes, environ: typing.Mapping[str, 
             text = body.decode("latin-1")
     else:
         text = body
-    result = scan_crlf_injection(text if crlf_text is None else crlf_text)
+    result = (scan_crlf_injection(text if crlf_text is None else crlf_text)
+              or _scan_canary(text, environ))
     if result is not None:
         return result
     if _enabled(route.outbound_detectors, "token_patterns"):
@@ -65,7 +81,7 @@ def scan_outbound(route: Route, body: str | bytes, environ: typing.Mapping[str, 
         extra = tuple(prefix for prefix in environ.get(
             "BOT_BOTTLE_SENSITIVE_PREFIXES", "").split(",") if prefix)
         result = scan_known_secrets(text, location="body", env=environ,
-                                    sensitive_prefixes=("EGRESS_TOKEN_",) + extra,
+                                    sensitive_prefixes=(EGRESS_TOKEN_PREFIX,) + extra,
                                     safe_tokens=safe_tokens)
         if result is not None:
             return result

@@ -34,7 +34,7 @@ from ...lib.log import die, info
 from .. import BottleImages, isolation_probe, oci_agent_image
 from ..launch_common import (
     LaunchTeardown,
-    egress_token_values,
+    registration_tokens,
     gateway_agent_urls,
     provision_git_gate_keys,
     stage_gateway_ca,
@@ -137,7 +137,7 @@ def launch(
         # Step 3: register on the orchestrator + provision this bottle's
         # git-gate state into the shared gateway; get the agent's attach
         # context (pinned source IP, gateway address, shared network).
-        token_values = egress_token_values(plan)
+        token_values = registration_tokens(plan)
         teardown_timeout = resolve_teardown_timeout(host_db_path())
         service = DockerInfraService(plan.settings)
         ctx = launch_consolidated(
