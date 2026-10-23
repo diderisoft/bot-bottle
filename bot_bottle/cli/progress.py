@@ -22,6 +22,7 @@ from ..paths import bot_bottle_root
 from ..util import slugify
 
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+KEEP_LAUNCH_LOGS = 50
 _TAIL_LINES = 12
 # Log lines the user should see even when the rest is hidden.
 _SHOWN = ("bot-bottle: warning:", "bot-bottle: error:")
@@ -35,8 +36,27 @@ def _home_relative(path: Path) -> str:
 
 
 def launch_log_path(name: str) -> Path:
+    """A new launch log's path. Prunes the oldest launch logs first, so at
+    most ``KEEP_LAUNCH_LOGS`` remain (counting the new one)."""
+    logs = bot_bottle_root() / "logs"
+    prune_launch_logs(logs, keep=KEEP_LAUNCH_LOGS - 1)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    return bot_bottle_root() / "logs" / f"launch-{slugify(name) or 'bottle'}-{stamp}.log"
+    return logs / f"launch-{slugify(name) or 'bottle'}-{stamp}.log"
+
+
+def prune_launch_logs(logs: Path, *, keep: int) -> None:
+    """Delete all but the ``keep`` newest `launch-*.log` files. Other files
+    in the directory are left alone, and a file that can't be removed is
+    skipped."""
+    try:
+        found = sorted(logs.glob("launch-*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return
+    for old in found[max(keep, 0):]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
 
 
 class LaunchProgress:

@@ -115,6 +115,37 @@ class Progress(unittest.TestCase):
         self.assertIn("\r\x1b[K", out.getvalue())
 
 
+class Pruning(unittest.TestCase):
+    def test_keeps_the_newest_launch_logs_and_nothing_else_is_touched(self) -> None:
+        import os  # pylint: disable=import-outside-toplevel
+        from bot_bottle.cli.progress import prune_launch_logs  # pylint: disable=import-outside-toplevel
+
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp)
+            for i in range(5):
+                path = logs / f"launch-pi-{i}.log"
+                path.write_text("x")
+                os.utime(path, (1000 + i, 1000 + i))
+            (logs / "supervise-crash.log").write_text("keep me")
+            prune_launch_logs(logs, keep=2)
+            self.assertEqual(["launch-pi-3.log", "launch-pi-4.log", "supervise-crash.log"],
+                             sorted(p.name for p in logs.iterdir()))
+
+    def test_a_new_launch_log_makes_room_for_itself(self) -> None:
+        from bot_bottle.cli import progress as progress_mod  # pylint: disable=import-outside-toplevel
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.dict("os.environ", {"BOT_BOTTLE_ROOT": tmp}), \
+                patch.object(progress_mod, "KEEP_LAUNCH_LOGS", 3):
+            logs = Path(tmp) / "logs"
+            logs.mkdir()
+            for i in range(5):
+                (logs / f"launch-old-{i}.log").write_text("x")
+            path = progress_mod.launch_log_path("pi")
+            path.write_text("new")
+            self.assertEqual(3, len(list(logs.glob("launch-*.log"))))
+
+
 class StageEvents(unittest.TestCase):
     def test_a_job_records_stage_markers_as_stage_events(self) -> None:
         def work() -> dict[str, object]:
