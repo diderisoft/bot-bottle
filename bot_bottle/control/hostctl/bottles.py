@@ -224,6 +224,7 @@ class BottleService:
                 log.die(str(e))
             if not request.assume_yes:
                 raise ConfirmationNeeded(f"{e}\nLaunch anyway?") from None
+            log.warn(str(e))  # launching anyway; say why it might be off
         if not request.assume_yes:
             raise ConfirmationNeeded("launch this agent?")
 

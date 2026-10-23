@@ -38,11 +38,13 @@ from ...util import slugify
 from .. import tui
 
 
-def cmd_start(argv: list[str]) -> int:
+def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statements
     parser = argparse.ArgumentParser(prog=f"{PROG} start", add_help=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="stream the full launch log instead of one line per stage")
+    parser.add_argument("--pick", action="store_true",
+                        help="choose bottles, label, color and image mode interactively")
     parser.add_argument("--cwd", action="store_true", help="copy host cwd into the running bottle")
     parser.add_argument(
         "--no-cache",
@@ -134,14 +136,30 @@ def cmd_start(argv: list[str]) -> int:
         if agent_name is None:
             return 0
 
-    # Bottle multiselect: always show after agent selection so operators
-    # can compose bottles at launch time without editing agent manifests.
+    # An agent that names its bottle starts on it with no more questions
+    # (PRD 0094): its own label (deduplicated), no color, images as
+    # published, no launch confirmation. `--pick` brings back the pickers to
+    # compose bottles or set a label and color.
+    default_bottle = _peek_agent_bottle(manifest, agent_name)
+    if default_bottle and not args.pick:
+        request = LaunchRequest(
+            agent=agent_name,
+            bottles=(default_bottle,),
+            label=_uniquify_label(settings, agent_name),
+            assume_yes=True,
+            settings=settings,
+            cwd=os.getcwd(),
+            copy_cwd=args.cwd,
+        )
+        return _launch_bottle(request, manifest, dry_run=dry_run, verbose=args.verbose)
+
+    # Bottle multiselect: compose bottles at launch time without editing
+    # agent manifests.
     available_bottles = manifest.all_bottle_names
     lineage_map = _bottle_lineage(manifest)
     display_labels = [lineage_map.get(n, n) for n in available_bottles]
     label_to_name = {lineage_map.get(n, n): n for n in available_bottles}
-    initial_bottle = _peek_agent_bottle(manifest, agent_name)
-    initial_labels = [lineage_map.get(initial_bottle, initial_bottle)] if initial_bottle else []
+    initial_labels = [lineage_map.get(default_bottle, default_bottle)] if default_bottle else []
     selected_labels = tui.filter_multiselect(
         display_labels,
         title="Select bottles",
@@ -151,12 +169,16 @@ def cmd_start(argv: list[str]) -> int:
         return 0
     bottle_names = tuple(label_to_name.get(lbl, lbl) for lbl in selected_labels)
 
-    label, color = tui.name_color_modal(default_label=agent_name)
-    label, color = _resolve_unique_label(settings, label, color)
-
-    image_policy = _select_image_policy()
-    if image_policy is None:
-        return 0
+    # Launches are named after the agent; `--pick` asks for a label, color
+    # and image mode instead.
+    if args.pick:
+        label, color = tui.name_color_modal(default_label=agent_name)
+        label, color = _resolve_unique_label(settings, label, color)
+        image_policy = _select_image_policy()
+        if image_policy is None:
+            return 0
+    else:
+        label, color, image_policy = _uniquify_label(settings, agent_name), "", "fresh"
 
     request = LaunchRequest(
         agent=agent_name,
@@ -220,7 +242,7 @@ def _start_headless(
             )
         bottle_names = (default_bottle,)
 
-    label = _uniquify_label_headless(settings, args.label or agent_name)
+    label = _uniquify_label(settings, args.label or agent_name)
 
     request = LaunchRequest(
         agent=agent_name,
@@ -239,7 +261,7 @@ def _start_headless(
     return _launch_bottle(request, manifest, dry_run=dry_run, verbose=True)
 
 
-def _uniquify_label_headless(settings: Settings, label: str) -> str:
+def _uniquify_label(settings: Settings, label: str) -> str:
     """Non-interactive analog of `_resolve_unique_label`: if the label's
     slug collides with a running bottle, append -2, -3, … until free,
     logging the chosen label. Orchestrators fire-and-forget many bottles,

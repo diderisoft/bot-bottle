@@ -18,6 +18,7 @@ import bot_bottle.cli.commands.start as start_mod
 import bot_bottle.cli.tui as tui_mod
 from bot_bottle.manifest.preview import manifest_to_yaml
 from bot_bottle.backend import ActiveAgent
+from bot_bottle.contract.hostctl import LaunchRequest
 
 
 def _make_manifest(
@@ -143,14 +144,14 @@ class TestCmdStartSelector(unittest.TestCase):
 
     def test_image_policy_forwarded_to_spec(self):
         with patch("bot_bottle.cli.commands.start._select_image_policy", return_value="cached"):
-            start_mod.cmd_start(["researcher"])
+            start_mod.cmd_start(["--pick", "researcher"])
         self._launch_mock.assert_called_once()
         spec = self._launch_mock.call_args[0][0]
         self.assertEqual("cached", spec.image_policy)
 
     def test_image_policy_cancel_returns_0(self):
         with patch("bot_bottle.cli.commands.start._select_image_policy", return_value=None):
-            rc = start_mod.cmd_start(["researcher"])
+            rc = start_mod.cmd_start(["--pick", "researcher"])
         self.assertEqual(0, rc)
         self._launch_mock.assert_not_called()
 
@@ -172,7 +173,7 @@ class TestCmdStartSelector(unittest.TestCase):
         with patch(
             "bot_bottle.cli.commands.start.ManifestIndex.resolve", return_value=manifest
         ):
-            start_mod.cmd_start(["implementer"])
+            start_mod.cmd_start(["--pick", "implementer"])
         call_kwargs = self._bottle_picker_mock.call_args
         self.assertEqual(["claude"], call_kwargs[1]["initial"])
 
@@ -243,7 +244,7 @@ class TestCmdStartLabelCollision(unittest.TestCase):
             patch.object(tui_mod, "name_color_modal", return_value=("researcher", "")) as modal,
             patch("bot_bottle.cli.commands.start.enumerate_active_agents", return_value=[]),
         ):
-            rc = start_mod.cmd_start(["researcher"])
+            rc = start_mod.cmd_start(["--pick", "researcher"])
         self.assertEqual(0, rc)
         modal.assert_called_once()
         self._launch_mock.assert_called_once()
@@ -266,13 +267,53 @@ class TestCmdStartLabelCollision(unittest.TestCase):
                 side_effect=[[collision_agent], []],
             ),
         ):
-            rc = start_mod.cmd_start(["researcher"])
+            rc = start_mod.cmd_start(["--pick", "researcher"])
 
         self.assertEqual(0, rc)
         self.assertEqual(2, modal.call_count)
         second_call_kwargs = modal.call_args_list[1][1]
         self.assertIn("researcher", second_call_kwargs.get("disclaimer", ""))
         self.assertIn("already in use", second_call_kwargs.get("disclaimer", ""))
+
+
+class TestCmdStartDefaults(unittest.TestCase):
+    """Without --pick, start asks nothing it can decide itself (PRD 0094)."""
+
+    def setUp(self):
+        self._launch_mock = patch(
+            "bot_bottle.cli.commands.start._launch_bottle", return_value=0,
+        ).start()
+        self._bottles = patch.object(tui_mod, "filter_multiselect", return_value=["dev"]).start()
+        self._modal = patch.object(tui_mod, "name_color_modal").start()
+        self._policy = patch("bot_bottle.cli.commands.start._select_image_policy").start()
+        self._active = patch("bot_bottle.cli.commands.start.enumerate_active_agents",
+                             return_value=[]).start()
+        self.addCleanup(patch.stopall)
+
+    def start(self, agent_bottle: str) -> LaunchRequest:
+        manifest = _make_manifest(["pi"], ["pi", "dev"], agent_bottle=agent_bottle)
+        with patch("bot_bottle.cli.commands.start.ManifestIndex.resolve", return_value=manifest):
+            self.assertEqual(0, start_mod.cmd_start(["pi"]))
+        return self._launch_mock.call_args[0][0]
+
+    def test_an_agent_with_a_bottle_launches_with_no_questions(self):
+        request = self.start("pi")
+        for picker in (self._bottles, self._modal, self._policy):
+            picker.assert_not_called()
+        self.assertEqual((("pi",), "pi", "", "fresh", True),
+                         (request.bottles, request.label, request.color,
+                          request.image_policy, request.assume_yes))
+
+    def test_the_label_is_deduplicated_against_running_bottles(self):
+        self._active.return_value = [_active_agent("pi")]
+        self.assertEqual("pi-2", self.start("pi").label)
+
+    def test_without_a_bottle_only_the_bottle_picker_shows(self):
+        request = self.start("")
+        self._bottles.assert_called_once()
+        self._modal.assert_not_called()
+        self._policy.assert_not_called()
+        self.assertEqual((("dev",), "pi"), (request.bottles, request.label))
 
 
 class TestBottleLineage(unittest.TestCase):
