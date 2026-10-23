@@ -87,13 +87,54 @@ def free_tool_models(fetch: Callable[[str], Any] = _get_json) -> list[FreeModel]
     return out
 
 
-def pick_free_model(models: list[FreeModel]) -> FreeModel:
-    """The best-ranked listed model, else the free router."""
+def candidates(models: list[FreeModel]) -> list[FreeModel]:
+    """Listed models to try, best first: the ranked ones, then the free
+    router."""
     by_id = {m.id: m for m in models}
-    for model_id in RANKED_FREE_MODELS:
-        if model_id in by_id:
-            return by_id[model_id]
-    return by_id.get(FREE_ROUTER, FreeModel(FREE_ROUTER))
+    ranked = [by_id[model_id] for model_id in RANKED_FREE_MODELS if model_id in by_id]
+    return [*ranked, by_id.get(FREE_ROUTER, FreeModel(FREE_ROUTER))]
+
+
+def pick_free_model(models: list[FreeModel]) -> FreeModel:
+    """The best-ranked listed model, else the free router (no probing)."""
+    return candidates(models)[0]
+
+
+_PROBE_TOOL = {"type": "function", "function": {
+    "name": "ok", "description": "Acknowledge.",
+    "parameters": {"type": "object", "properties": {}}}}
+
+
+def probe(model_id: str, key: str,
+          post: Callable[[str, dict[str, Any], str], Any] | None = None) -> bool:
+    """Whether ``model_id`` answers a tiny tool-enabled request on ``key``.
+    A model can be listed while its only free provider is down (it returns
+    404 or 5xx), so setup checks before writing it into a starter. It costs
+    one request of the free daily allowance."""
+    body = {"model": model_id, "max_tokens": 16, "tools": [_PROBE_TOOL],
+            "messages": [{"role": "user", "content": "Reply with OK."}]}
+    try:
+        result = (post or _post_authed)(f"{API}/chat/completions", body, key)
+    except (OSError, ValueError):
+        return False
+    return isinstance(result, dict) and bool(result.get("choices"))
+
+
+def _post_authed(url: str, body: dict[str, Any], key: str) -> Any:
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST", headers={
+        "Content-Type": "application/json", "Authorization": f"Bearer {key}"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return json.loads(resp.read())
+
+
+def pick_working_model(models: list[FreeModel], key: str, *, max_probes: int = 4,
+                       check: Callable[[str, str], bool] = probe) -> FreeModel:
+    """The best candidate that answers a probe. If none of the first
+    ``max_probes`` does, the free router, which reroutes per request."""
+    for model in candidates(models)[:max_probes]:
+        if check(model.id, key):
+            return model
+    return FreeModel(FREE_ROUTER)
 
 
 # -- sign-in (OAuth PKCE) -------------------------------------------------------
@@ -211,5 +252,6 @@ def listed(model_id: str, fetch: Callable[[str], Any] = _get_json) -> bool:
 
 __all__ = [
     "FREE_ROUTER", "FreeModel", "OpenRouterError", "RANKED_FREE_MODELS",
-    "auth_url", "exchange_code", "free_tool_models", "listed", "pick_free_model", "sign_in",
+    "auth_url", "candidates", "exchange_code", "free_tool_models", "listed",
+    "pick_free_model", "pick_working_model", "probe", "sign_in",
 ]

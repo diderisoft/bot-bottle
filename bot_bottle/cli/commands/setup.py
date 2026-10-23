@@ -63,6 +63,7 @@ class Setup:
     ask: Callable[[str], str] = input
     sign_in: Callable[..., str] = openrouter.sign_in
     lookup: Callable[[], list[openrouter.FreeModel]] = openrouter.free_tool_models
+    probe: Callable[[str, str], bool] = openrouter.probe
 
     @property
     def manifests(self) -> Path:
@@ -139,8 +140,10 @@ class Setup:
                 self.say(f"warn: pi: {e}")
                 return None
             self.store(pi_starter.OPENROUTER_KEY_NAME, key)
+        key = pi_starter.secret_value(pi_starter.OPENROUTER_KEY_NAME, self.host_env)
         try:
-            model = openrouter.pick_free_model(self.lookup())
+            self.say("pi: checking which free OpenRouter models answer right now")
+            model = openrouter.pick_working_model(self.lookup(), key, check=self.probe)
         except openrouter.OpenRouterError as e:
             self.say(f"warn: pi: {e}")
             return None

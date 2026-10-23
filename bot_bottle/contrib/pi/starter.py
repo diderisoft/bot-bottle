@@ -75,6 +75,17 @@ def has_secret(name: str, host_env: Mapping[str, str]) -> bool:
         return False
 
 
+def secret_value(name: str, host_env: Mapping[str, str]) -> str:
+    """``name`` from ``host_env``, else the host secrets file, else "".
+    For `setup`'s own use (probing a model); never printed."""
+    if host_env.get(name):
+        return host_env[name]
+    try:
+        return FileSecrets(host_secrets_path()).get(name) or ""
+    except SecretsFileError:
+        return ""
+
+
 def pi_agent_dir(host_env: Mapping[str, str]) -> Path:
     home = host_env.get("HOME")
     return (Path(home) if home else Path.home()) / ".pi" / "agent"

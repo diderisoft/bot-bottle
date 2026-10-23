@@ -41,6 +41,8 @@ class _Host(unittest.TestCase):
         self.answers: list[str] = []
         self.signed_in = 0
         self.models = [_GEMMA]
+        self.dead: set[str] = set()
+        self.probed: list[tuple[str, str]] = []
 
     def install(self, name: str) -> None:
         exe = self.bin / name
@@ -77,7 +79,12 @@ class _Host(unittest.TestCase):
             host_env={"HOME": str(self.home), "PATH": str(self.bin), **(extra_env or {})},
             interactive=interactive, say=self.lines.append,
             ask=lambda _q: self.answers.pop(0) if self.answers else "",
-            sign_in=self.fake_sign_in, lookup=lambda: self.models, **kwargs)
+            sign_in=self.fake_sign_in, lookup=lambda: self.models,
+            probe=self.fake_probe, **kwargs)
+
+    def fake_probe(self, model_id: str, key: str) -> bool:
+        self.probed.append((model_id, key))
+        return model_id not in self.dead
 
     def starter(self, kind: str, name: str) -> Path:
         return self.home / ".bot-bottle" / kind / f"{name}.md"
@@ -144,6 +151,21 @@ class PiOnOpenRouter(_Host):
                          (settings["provider"], settings["models"], settings["api_key_env"]))
         self.assertEqual((131072, 16384), (settings["context_window"], settings["max_tokens"]))
         self.assertTrue(any("50 requests a day" in line for line in self.lines))
+
+    def test_a_listed_model_that_does_not_answer_is_skipped(self) -> None:
+        nemotron = openrouter.FreeModel("nvidia/nemotron-3-super-120b-a12b:free")
+        self.models = [nemotron, _GEMMA]
+        self.dead = {nemotron.id}
+        self.setup(interactive=True).run()
+        self.assertEqual([(nemotron.id, "sk-or-from-oauth"), (_GEMMA.id, "sk-or-from-oauth")],
+                         self.probed)
+        self.assertEqual([_GEMMA.id], self.load("pi").bottle.agent_provider.settings["models"])
+
+    def test_when_nothing_answers_the_free_router_is_used(self) -> None:
+        self.dead = {_GEMMA.id, openrouter.FREE_ROUTER}
+        self.setup(extra_env={"OPENROUTER_API_KEY": "k"}).run()
+        self.assertEqual([openrouter.FREE_ROUTER],
+                         self.load("pi").bottle.agent_provider.settings["models"])
 
     def test_a_key_already_in_the_environment_skips_sign_in(self) -> None:
         self.setup(extra_env={"OPENROUTER_API_KEY": "k"}).run()

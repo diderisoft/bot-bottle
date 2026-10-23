@@ -40,6 +40,36 @@ class FreeModels(unittest.TestCase):
         self.assertEqual(openrouter.FREE_ROUTER,
                          openrouter.pick_free_model([openrouter.FreeModel("other:free")]).id)
 
+    def test_probe_sends_a_tool_request_with_the_key(self) -> None:
+        sent: list[tuple[str, dict[str, Any], str]] = []
+
+        def post(url: str, body: dict[str, Any], key: str) -> Any:
+            sent.append((url, body, key))
+            return {"choices": [{"message": {"content": "OK"}}]}
+
+        self.assertTrue(openrouter.probe("m:free", "k", post=post))
+        url, body, key = sent[0]
+        self.assertTrue(url.endswith("/chat/completions"))
+        self.assertEqual(("m:free", "k"), (body["model"], key))
+        self.assertTrue(body["tools"])
+
+    def test_probe_fails_on_a_provider_error(self) -> None:
+        def post(_u: str, _b: dict[str, Any], _k: str) -> Any:
+            raise OSError("HTTP Error 404")
+        self.assertFalse(openrouter.probe("m:free", "k", post=post))
+
+    def test_the_first_answering_candidate_wins(self) -> None:
+        ranked = openrouter.RANKED_FREE_MODELS
+        listed = [openrouter.FreeModel(ranked[0]), openrouter.FreeModel(ranked[2])]
+        tried: list[str] = []
+
+        def check(model_id: str, _key: str) -> bool:
+            tried.append(model_id)
+            return model_id == ranked[2]
+
+        self.assertEqual(ranked[2], openrouter.pick_working_model(listed, "k", check=check).id)
+        self.assertEqual([ranked[0], ranked[2]], tried)
+
     def test_a_failed_listing_is_an_openrouter_error(self) -> None:
         def boom(_url: str) -> Any:
             raise OSError("offline")
