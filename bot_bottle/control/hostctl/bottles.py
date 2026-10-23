@@ -109,7 +109,8 @@ def _log_preflight(plan: "BottlePlan", backend_name: str) -> None:
 
 
 def _stderr_line(line: str) -> None:
-    sys.stderr.write(line + "\n")
+    marker = log.parse_stage(line)
+    sys.stderr.write((f"bot-bottle: {marker[1]}" if marker else line) + "\n")
 
 
 class BottleService:
@@ -184,6 +185,7 @@ class BottleService:
         identity = ""
         handed_off = False
         try:
+            log.stage("prepare", "Reading the bottle")
             plan = backend.prepare(spec, stage_dir=stage_dir, secrets=secrets)
             identity = str(getattr(plan, "slug", ""))
             if request.headless or not request.assume_yes:

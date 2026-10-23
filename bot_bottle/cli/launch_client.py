@@ -25,6 +25,7 @@ from ..manifest import Manifest, ManifestIndex
 from ..secret_source import SecretSource
 from ..util import read_tty_line
 from .constants import PROG
+from .progress import LaunchProgress, launch_log_path
 from .secrets_env import secrets_from_env
 
 # How long to wait for a session that ended to report its exit.
@@ -97,30 +98,43 @@ def _prompt_yes(question: str) -> bool:
     return read_tty_line() in ("y", "Y", "yes", "YES")
 
 
-def launch(request: LaunchRequest) -> int:
+def launch(request: LaunchRequest, *, verbose: bool = False) -> int:
     """Launch through the host controller and attach. Returns the agent's
-    exit code, or 0 if the user detached or declined."""
+    exit code, or 0 if the user detached or declined. Progress is one line
+    per stage; the whole log goes to a file (``verbose`` streams it)."""
+    progress = LaunchProgress(launch_log_path(request.label or request.agent), verbose=verbose)
     try:
         client = HostControlClient(runner.ensure_running(), runner.cli_token())
         while True:
             job = str(client.post(BOTTLES_PATH, request.to_json())["job"])
-            final = client.follow(job, log.write_line)
+            final = client.follow(job, progress.line, progress.stage)
             if final is None:
+                progress.close()
                 die(f"detached; the launch continues as job {job} (see `{PROG} jobs`)")
             if final.get("type") != "error":
                 break
             message = str(final.get("message") or "launch failed")
             if final.get("code") != CONFIRM_ERROR or request.assume_yes:
-                die(message)
+                progress.fail(f"{PROG}: {message}")
+                raise log.Die(1, message)
+            progress.pause()
+            if not verbose:
+                # What's being confirmed: the preflight summary the job logged.
+                for line in progress.since_stage():
+                    sys.stderr.write(line + "\n")
             if not _prompt_yes(message):
+                progress.close()
                 info("aborted by user")
                 return 0
             request = replace(request, assume_yes=True)
         value = final.get("value")
         if not isinstance(value, dict) or not isinstance(value.get("session"), str):
-            die("host controller returned no session")
+            progress.fail(f"{PROG}: host controller returned no session")
+            raise log.Die(1, "host controller returned no session")
+        progress.done(f"{request.label or request.agent} is running")
         return attach(client, value["session"])
     except runner.HostControlError as e:
+        progress.close()
         die(str(e))
 
 

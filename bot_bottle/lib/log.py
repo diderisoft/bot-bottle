@@ -132,6 +132,29 @@ def _emit(
     write_line(f"bot-bottle: {prefix}{msg}{_format_context(context)}")
 
 
+# A launch stage marker travels through the same sinks as log lines, so the
+# host controller's job turns it into a `stage` event without new plumbing.
+_STAGE_MARK = "\x1fstage\x1f"
+
+
+def stage(name: str, title: str) -> None:
+    """Mark the start of a launch stage (`prepare`, `image`, `start`,
+    `provision`). A job sink records it as a `stage` event, which the CLI
+    draws as one progress line; without a sink it logs like `info`."""
+    if _SINK.get() is None:
+        info(title)
+    else:
+        write_line(f"{_STAGE_MARK}{name}\x1f{title}")
+
+
+def parse_stage(line: str) -> tuple[str, str] | None:
+    """`(name, title)` if ``line`` is a stage marker, else None."""
+    if not line.startswith(_STAGE_MARK):
+        return None
+    name, _, title = line[len(_STAGE_MARK):].partition("\x1f")
+    return name, title
+
+
 def debug(msg: str, *, context: Mapping[str, object] | None = None) -> None:
     _emit(DEBUG, "debug", msg, context)
 

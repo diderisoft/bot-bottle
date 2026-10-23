@@ -67,13 +67,17 @@ class HostControlClient:
                 if line.strip():  # blank lines are the server's keep-alives
                     yield json.loads(line)
 
-    def follow(self, job_id: str, write: Callable[[str], None]) -> dict[str, object] | None:
-        """Write a job's log lines as they arrive and return its final
-        (`result` or `error`) event. On Ctrl-C, return None; the job keeps running."""
+    def follow(self, job_id: str, write: Callable[[str], None],
+               stage: Callable[[str, str], None] | None = None) -> dict[str, object] | None:
+        """Write a job's log lines as they arrive (and pass its `stage`
+        events to ``stage``), and return its final (`result` or `error`)
+        event. On Ctrl-C, return None; the job keeps running."""
         try:
             for event in self.events(job_id):
                 if event.get("type") == "log":
                     write(str(event.get("line", "")))
+                elif event.get("type") == "stage" and stage is not None:
+                    stage(str(event.get("stage", "")), str(event.get("title", "")))
                 elif event.get("type") in ("result", "error"):
                     return event
         except KeyboardInterrupt:

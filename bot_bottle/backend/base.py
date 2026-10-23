@@ -27,6 +27,7 @@ from ..agent_provider import AgentProvisionPlan, get_provider
 from ..contract.hostctl import Settings
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
+from ..lib import log
 from ..lib.log import die, info
 from ..util import expand_tilde
 from ..manifest import Manifest
@@ -299,7 +300,9 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     @contextmanager
     def launch(self, plan: PlanT) -> Generator[Bottle, None, None]:
         """Template: build or load images, then delegate to _launch_impl."""
+        log.stage("image", "Getting images")
         images = self._build_or_load_images(plan)
+        log.stage("start", "Starting the bottle")
         with self._launch_impl(plan, images) as bottle:
             yield bottle
 
@@ -335,6 +338,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         The egress proxy is on the agent's HTTP_PROXY path, so every tool
         that respects HTTPS_PROXY (claude-code, git over HTTPS, npm, curl)
         is intercepted without per-tool reconfiguration."""
+        log.stage("provision", "Setting up the agent")
         provider = get_provider(plan.agent_provision.template)
         provider.provision_ca(bottle, plan)
         prompt_path = provider.provision_prompt(plan, bottle)

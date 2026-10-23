@@ -80,7 +80,11 @@ class JobRegistry:
             self._jobs[job.id] = job
 
         def sink(line: str) -> None:
-            job.record({"type": "log", "line": line})
+            marker = log.parse_stage(line)
+            if marker is None:
+                job.record({"type": "log", "line": line})
+            else:
+                job.record({"type": "stage", "stage": marker[0], "title": marker[1]})
 
         def run() -> None:
             with log.redirect(sink):

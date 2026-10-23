@@ -41,6 +41,8 @@ from .. import tui
 def cmd_start(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog=f"{PROG} start", add_help=True)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="stream the full launch log instead of one line per stage")
     parser.add_argument("--cwd", action="store_true", help="copy host cwd into the running bottle")
     parser.add_argument(
         "--no-cache",
@@ -166,7 +168,7 @@ def cmd_start(argv: list[str]) -> int:
         cwd=os.getcwd(),
         copy_cwd=args.cwd,
     )
-    return _launch_bottle(request, manifest, dry_run=dry_run)
+    return _launch_bottle(request, manifest, dry_run=dry_run, verbose=args.verbose)
 
 
 # --- Headless launch -----------------------------------------------------
@@ -233,7 +235,8 @@ def _start_headless(
         cwd=os.getcwd(),
         copy_cwd=args.cwd,
     )
-    return _launch_bottle(request, manifest, dry_run=dry_run)
+    # Orchestrators relay this PTY and keep its output: stream everything.
+    return _launch_bottle(request, manifest, dry_run=dry_run, verbose=True)
 
 
 def _uniquify_label_headless(settings: Settings, label: str) -> str:
@@ -357,10 +360,12 @@ def _bottle_lineage(manifest: ManifestIndex) -> dict[str, str]:
     return labels
 
 
-def _launch_bottle(request: LaunchRequest, manifest: ManifestIndex, *, dry_run: bool) -> int:
+def _launch_bottle(request: LaunchRequest, manifest: ManifestIndex, *, dry_run: bool,
+                   verbose: bool = False) -> int:
     """Shared launch core for `start` and `resume`: a local dry run, or the
     request (with its secrets and confirmed host keys) sent to the host
-    controller, then attached."""
+    controller, then attached. ``verbose`` (or `BOT_BOTTLE_VERBOSE=1`)
+    streams the launch log instead of one line per stage."""
     try:
         request.check()
     except ValueError as e:
@@ -368,7 +373,8 @@ def _launch_bottle(request: LaunchRequest, manifest: ManifestIndex, *, dry_run: 
     if dry_run:
         return _dry_run(request, manifest)
     interactive = not request.headless
-    return launch(prepare_request(request, manifest, interactive=interactive))
+    return launch(prepare_request(request, manifest, interactive=interactive),
+                  verbose=verbose or os.environ.get("BOT_BOTTLE_VERBOSE") == "1")
 
 
 def _dry_run(request: LaunchRequest, manifest: ManifestIndex) -> int:

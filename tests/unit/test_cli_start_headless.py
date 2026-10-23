@@ -227,7 +227,7 @@ class TestLaunchSendsTheRequest(unittest.TestCase):
              patch.object(start_mod, "launch", return_value=4) as launch:
             self.assertEqual(4, start_mod._launch_bottle(request, manifest, dry_run=False))
         prep.assert_called_once_with(request, manifest, interactive=True)
-        launch.assert_called_once_with(prepared)
+        launch.assert_called_once_with(prepared, verbose=False)
 
     def test_invalid_color_dies_before_launch(self):
         from bot_bottle.contract.hostctl import LaunchRequest
