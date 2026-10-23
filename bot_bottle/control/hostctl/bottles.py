@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextvars
 import dataclasses
 import queue
+import shlex
 import shutil
 import sys
 import tempfile
@@ -106,6 +107,27 @@ def _log_preflight(plan: "BottlePlan", backend_name: str) -> None:
     log.write_line(f"backend: {backend_name}")
     for line in manifest_to_yaml(plan.manifest).splitlines():
         log.write_line(line)
+
+
+def _save_work(bottle: Any, plan: "BottlePlan", identity: str) -> None:
+    """Before teardown: save what the agent changed in a copied git
+    workspace as a patch, so its work outlives the bottle."""
+    from ...workspace import export_patch_script, save_patch  # pylint: disable=import-outside-toplevel
+    try:
+        workspace = plan.workspace_plan
+        if not (workspace.enabled and workspace.has_host_git_dir):
+            return
+        result = bottle.exec(export_patch_script(shlex.quote(workspace.guest_path)))
+    except Exception as e:  # pylint: disable=broad-exception-caught  # never block teardown
+        log.warn(f"bottle {identity}: couldn't save the agent's changes: {e}")
+        return
+    if result.returncode != 0:
+        log.warn(f"bottle {identity}: couldn't save the agent's changes: "
+                 f"{result.stderr.strip()[:200] or 'git diff failed'}")
+        return
+    path = save_patch(identity, result.stdout)
+    if path is not None:
+        log.info(f"saved the agent's changes to {path}")
 
 
 def _stderr_line(line: str) -> None:
@@ -273,6 +295,7 @@ class BottleService:
                         exit_code=code, stop_requested=held.stop_requested)
                     log.info(f"session {identity} ended (exit {code}); "
                              f"removing {bottle.name}")
+                    _save_work(bottle, plan, identity)
                     if template == "claude":
                         capture_claude_session_state(identity, code)
             except BaseException as e:  # pylint: disable=broad-exception-caught

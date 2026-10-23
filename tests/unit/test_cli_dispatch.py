@@ -24,9 +24,31 @@ class TestMainDispatch(unittest.TestCase):
         self._mock_check = patcher.start()
         self.addCleanup(patcher.stop)
 
-    def test_no_args_prints_usage_returns_2(self) -> None:
-        with patch("sys.stderr", io.StringIO()):
-            self.assertEqual(2, main([]))
+    def test_no_args_starts_an_agent_here(self) -> None:
+        seen: list[list[str]] = []
+
+        def quick(rest: list[str]) -> int:
+            seen.append(rest)
+            return 0
+
+        with patch.dict(climod.COMMANDS, {"quick": quick}), \
+                patch("bot_bottle.cli.__main__.StoreManager"):
+            self.assertEqual(0, main([]))
+            self.assertEqual(0, main(["-v"]))
+        self.assertEqual([[], ["-v"]], seen)
+
+    def test_an_agent_name_starts_that_agent(self) -> None:
+        seen: list[list[str]] = []
+
+        def quick(rest: list[str]) -> int:
+            seen.append(rest)
+            return 0
+
+        with patch.dict(climod.COMMANDS, {"quick": quick}), \
+                patch("bot_bottle.cli.__main__.StoreManager"), \
+                patch("bot_bottle.cli.__main__._is_agent", return_value=True):
+            main(["pi"])
+        self.assertEqual([["pi"]], seen)
 
     def test_help_flags_return_0(self) -> None:
         with patch("sys.stderr", io.StringIO()):

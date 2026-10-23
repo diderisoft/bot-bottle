@@ -17,6 +17,7 @@ from __future__ import annotations
 import enum
 import os
 import shlex
+import tempfile
 from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
@@ -28,11 +29,12 @@ from ..contract.hostctl import Settings
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
 from ..lib import log
-from ..lib.log import die, info
+from ..lib.log import die, info, warn
 from ..util import expand_tilde
 from ..manifest import Manifest
 from ..secret_source import SecretSource
 from ..supervisor.plan import SupervisePlan
+from ..workspace import LARGE_WORKSPACE_BYTES, pack_workspace, record_base_script
 from ..env import ResolvedEnv
 from .plan import BottlePlan, BottleSpec
 from .util import host_skill_dir
@@ -362,21 +364,34 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         if not (workspace.enabled and workspace.copy_contents):
             return
 
-        guest_parent = workspace.guest_path.rsplit("/", 1)[0] or "/"
         guest_path = shlex.quote(workspace.guest_path)
-        guest_parent = shlex.quote(guest_parent)
         owner = shlex.quote(workspace.owner)
         mode = shlex.quote(workspace.mode)
-        info(f"copying {workspace.host_path} -> {bottle.name}:{workspace.guest_path}")
-        bottle.exec(
-            f"rm -rf {guest_path} && mkdir -p {guest_parent}",
-            user="root",
-        )
-        bottle.cp_in(str(workspace.host_path), workspace.guest_path)
-        bottle.exec(
+        is_git = workspace.has_host_git_dir
+        # One filtered tarball, copied in as a single file and unpacked: much
+        # faster than copying the directory (dependencies, build output).
+        with tempfile.TemporaryDirectory(prefix="bot-bottle-ws.") as tmp:
+            tarball = Path(tmp) / "workspace.tar"
+            size = pack_workspace(workspace.host_path, tarball, is_git=is_git)
+            info(f"copying {workspace.host_path} ({size >> 20} MB"
+                 f"{', filtered by .gitignore' if is_git else ''}) -> "
+                 f"{bottle.name}:{workspace.guest_path}")
+            if not is_git and size > LARGE_WORKSPACE_BYTES:
+                warn(f"{workspace.host_path} isn't a git repo and is {size >> 30} GB; "
+                     "copying it all into the bottle")
+            guest_tar = "/tmp/bot-bottle-workspace.tar"
+            bottle.cp_in(str(tarball), guest_tar)
+        unpacked = bottle.exec(
+            f"rm -rf {guest_path} && mkdir -p {guest_path} && "
+            f"tar -xf {guest_tar} -C {guest_path} && rm -f {guest_tar} && "
             f"chown -R {owner} {guest_path} && chmod {mode} {guest_path}",
             user="root",
         )
+        if unpacked.returncode != 0:
+            die(f"copying the workspace into {bottle.name} failed: "
+                f"{unpacked.stderr.strip() or 'tar failed'}")
+        if is_git:
+            bottle.exec(record_base_script(guest_path))
 
     def supervise_mcp_url(self, plan: PlanT) -> str:
         """Return the agent-side URL of the per-bottle supervise

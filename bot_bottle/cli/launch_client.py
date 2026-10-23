@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from dataclasses import replace
+from pathlib import Path
 
 from ..contract.hostctl import (
     BOTTLES_PATH, CONFIRM_ERROR, SESSIONS_PATH, LaunchRequest, exit_code,
@@ -24,6 +25,7 @@ from ..lib.log import die, info, warn
 from ..manifest import Manifest, ManifestIndex
 from ..secret_source import SecretSource
 from ..util import read_tty_line
+from ..workspace import patch_summary, work_patch_path
 from .constants import PROG
 from .progress import LaunchProgress, launch_log_path
 from .secrets_env import secrets_from_env
@@ -132,7 +134,10 @@ def launch(request: LaunchRequest, *, verbose: bool = False) -> int:
             progress.fail(f"{PROG}: host controller returned no session")
             raise log.Die(1, "host controller returned no session")
         progress.done(f"{request.label or request.agent} is running")
-        return attach(client, value["session"])
+        started = time.time()
+        code = attach(client, value["session"])
+        _report_work(value["session"], since=started)
+        return code
     except runner.HostControlError as e:
         progress.close()
         die(str(e))
@@ -154,6 +159,26 @@ def tmux_attach(session_id: str) -> tuple[list[str], dict[str, str]]:
     if env.get("TERM", "dumb") == "dumb":
         env["TERM"] = "xterm-256color"
     return argv, env
+
+
+def _report_work(session_id: str, *, since: float) -> None:
+    """After the agent exits: say what it changed and where the patch is."""
+    path = work_patch_path(session_id)
+    try:
+        if path.stat().st_mtime < since:
+            return
+        patch = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    files, added, removed = patch_summary(patch)
+    try:
+        shown = f"~/{path.relative_to(Path.home())}"
+    except ValueError:
+        shown = str(path)
+    sys.stderr.write(
+        f"\n{session_id} changed {files} file{'s' if files != 1 else ''} "
+        f"(+{added} −{removed}). The changes are saved as a patch:\n  {shown}\n"
+        f"Apply them here with:  git apply {shown}\n")
 
 
 def attach(client: HostControlClient, session_id: str) -> int:

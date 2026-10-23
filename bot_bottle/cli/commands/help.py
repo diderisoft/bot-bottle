@@ -19,7 +19,8 @@ def cmd_help(argv: list[str] | None = None) -> int:
     explicit `help`/`-h`, 2 for the bare no-args usage error)."""
     del argv  # help takes no arguments
     w = sys.stderr.write
-    w(f"usage: {PROG} <command> [args...]\n\n")
+    w(f"usage: {PROG} [agent]           start an agent on this directory\n")
+    w(f"       {PROG} <command> [args...]\n\n")
     w("Commands:\n")
     w("  active    list currently-running bot-bottle bottles\n")
     w("  attach    join a running agent session in this terminal (Ctrl-] detaches)\n")
@@ -28,6 +29,7 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w("  backend   set up / check / undo a backend's host prerequisites (setup|status|teardown)\n")
     w("  cleanup   stop and remove all active bot-bottle containers\n")
     w("  commit    snapshot a running bottle's container state to a Docker image\n")
+    w("  default   set the agent bare `bot-bottle` starts when none was used here\n")
     w("  doctor    check host prerequisites (Python, backend, config dir)\n")
     w("  down      stop the orchestrator, gateway and host controller\n")
     w("  help      show this command list\n")

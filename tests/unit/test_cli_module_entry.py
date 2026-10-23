@@ -26,9 +26,11 @@ class TestModuleEntry(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("login", result.stderr)
 
-    def test_no_args_prints_usage(self) -> None:
-        # main() returns 2 with no command, matching the cli.py entry point.
-        self.assertEqual(_run().returncode, 2)
+    def test_help_prints_usage(self) -> None:
+        # Bare `bot-bottle` starts an agent now; `--help` prints the usage.
+        result = _run("--help")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("usage:", result.stderr)
 
     def test_subcommand_help_reaches_handler(self) -> None:
         result = _run("login", "--help")

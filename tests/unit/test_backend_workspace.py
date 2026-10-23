@@ -7,10 +7,12 @@ Docker derived-image workspace path stays disabled.
 
 from __future__ import annotations
 
+import subprocess
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 from bot_bottle.contract.hostctl import Settings
 from bot_bottle.secret_source import MappingSecrets
@@ -52,6 +54,18 @@ def _bottle() -> MagicMock:
     return bottle
 
 
+def _record_packed(bottle: MagicMock) -> list[str]:
+    """The names in the tarball `provision_workspace` copies in."""
+    packed: list[str] = []
+
+    def cp_in(src: str, _dst: str) -> None:
+        with tarfile.open(src) as tar:
+            packed.extend(tar.getnames())
+
+    bottle.cp_in.side_effect = cp_in
+    return packed
+
+
 class _FakeStateMixin:
     def setUp(self) -> None:
         self.tmp_dir = tempfile.TemporaryDirectory(prefix="backend-workspace.")
@@ -67,7 +81,8 @@ class _FakeStateMixin:
 class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
     def test_default_backend_method_copies_workspace_to_running_bottle(self) -> None:
         (self.tmp / "src.txt").write_text("hello\n")
-        (self.tmp / ".git").mkdir()
+        (self.tmp / "node_modules").mkdir()
+        (self.tmp / "node_modules" / "dep.js").write_text("x")
         backend = DockerBottleBackend(Settings())
 
         with (
@@ -80,23 +95,42 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
             plan = backend.prepare(_spec(self.tmp), self.tmp / "stage", MappingSecrets({}))
 
         bottle = _bottle()
+        packed = _record_packed(bottle)
         backend.provision_workspace(plan, bottle)
 
-        self.assertEqual(
-            [
-                call(
-                    "rm -rf /home/node/workspace && mkdir -p /home/node",
-                    user="root",
-                ),
-                call(
-                    "chown -R node:node /home/node/workspace && "
-                    "chmod 755 /home/node/workspace",
-                    user="root",
-                ),
-            ],
-            bottle.exec.call_args_list,
-        )
-        bottle.cp_in.assert_called_once_with(str(self.tmp), "/home/node/workspace")
+        # One tarball, unpacked in place; dependency directories stay behind.
+        bottle.cp_in.assert_called_once_with(ANY, "/tmp/bot-bottle-workspace.tar")
+        self.assertIn("src.txt", packed)
+        self.assertNotIn("node_modules/dep.js", packed)
+        [unpack] = bottle.exec.call_args_list
+        self.assertEqual(call(
+            "rm -rf /home/node/workspace && mkdir -p /home/node/workspace && "
+            "tar -xf /tmp/bot-bottle-workspace.tar -C /home/node/workspace && "
+            "rm -f /tmp/bot-bottle-workspace.tar && "
+            "chown -R node:node /home/node/workspace && chmod 755 /home/node/workspace",
+            user="root"), unpack)
+
+    def test_a_git_workspace_is_filtered_by_gitignore_and_records_its_base(self) -> None:
+        subprocess.run(["git", "init", "-q", str(self.tmp)], check=True)
+        (self.tmp / ".gitignore").write_text("secret.env\n.bot-bottle/\n")
+        (self.tmp / "app.py").write_text("print(1)\n")
+        (self.tmp / "secret.env").write_text("KEY=1\n")
+        backend = DockerBottleBackend(Settings())
+        with (
+            patch("bot_bottle.backend.docker.resolve_plan.docker_mod.require_docker"),
+            patch(
+                "bot_bottle.backend.docker.resolve_plan.docker_mod.runsc_available",
+                return_value=False,
+            ),
+        ):
+            plan = backend.prepare(_spec(self.tmp), self.tmp / "stage", MappingSecrets({}))
+        bottle = _bottle()
+        packed = _record_packed(bottle)
+        backend.provision_workspace(plan, bottle)
+        self.assertIn("app.py", packed)
+        self.assertIn(".git/HEAD", packed)
+        self.assertNotIn("secret.env", packed)
+        self.assertIn("bot-bottle-base", bottle.exec.call_args_list[-1].args[0])
 
     def test_default_backend_method_noops_without_copy_cwd(self) -> None:
         backend = DockerBottleBackend(Settings())
@@ -130,7 +164,7 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
         bottle = _bottle()
         backend.provision_workspace(plan, bottle)
 
-        bottle.cp_in.assert_called_once_with(str(self.tmp), "/home/node/workspace")
+        bottle.cp_in.assert_called_once_with(ANY, "/tmp/bot-bottle-workspace.tar")
         metadata = bottle_state.read_metadata("demo-fc-work")
         self.assertIsNotNone(metadata)
         assert metadata is not None
