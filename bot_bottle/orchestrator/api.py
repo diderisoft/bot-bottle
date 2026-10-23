@@ -302,7 +302,7 @@ def create_app(
 
     sender = AuditSender(hostctl) if audit is None and hostctl is not None else None
     if audit is None:
-        audit = OrchestratorAudit(sender)
+        audit = OrchestratorAudit(sender, slug_for=orch.session_for)
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:

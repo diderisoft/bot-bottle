@@ -3,6 +3,12 @@ identity tokens it minted, and supervise proposals and their decisions.
 
 `OrchestratorAudit` hands each event to an `AuditSender`; without one (an
 orchestrator no host controller brought up) it records nothing.
+
+Every producer names a bottle by its slug (`amber-fox`), but the orchestrator
+and gateway know it by its registry id, minted afresh at each registration.
+Each event is renamed to the slug on its way out, with the registry id kept as
+`payload.registry_id`, so one `--bottle` filter finds a bottle's events from
+every producer.
 """
 
 from __future__ import annotations
@@ -24,16 +30,50 @@ def fingerprint(secret: str) -> str:
     return "sha256:" + hashlib.sha256(secret.encode("utf-8")).hexdigest()[:16]
 
 
+# Registry id -> slug lookups remembered, so an event that arrives after its
+# bottle deregistered is still named by slug.
+_SLUG_CACHE_LIMIT = 10_000
+
+
 class OrchestratorAudit:
     def __init__(self, sink: _Sink | None = None, *,
+                 slug_for: Callable[[str], str | None] | None = None,
                  clock: Callable[[], float] = time.time) -> None:
         self._sink = sink
+        self._slug_for = slug_for
+        self._slugs: dict[str, str] = {}
         self._clock = clock
+
+    def _slug(self, registry_id: str) -> str | None:
+        if registry_id in self._slugs:
+            return self._slugs[registry_id]
+        slug = self._slug_for(registry_id) if self._slug_for is not None else None
+        if slug:
+            if len(self._slugs) >= _SLUG_CACHE_LIMIT:
+                self._slugs.clear()
+            self._slugs[registry_id] = slug
+        return slug
+
+    def named(self, event: AuditEvent) -> AuditEvent:
+        """`event` with its bottle named by slug, the registry id kept as
+        `payload.registry_id`. Unchanged when the id isn't a known bottle."""
+        registry_id = event.bottle
+        slug = self._slug(registry_id) if registry_id else None
+        if not slug or slug == registry_id:
+            return event
+        body = event.to_json()
+        body["payload"] = {**(event.payload or {}), "registry_id": registry_id}
+        for name in ("bottle", "bottled_agent", "resource"):
+            if body[name] == registry_id:
+                body[name] = slug
+        if event.actor == f"bottled-agent:{registry_id}":
+            body["actor"] = f"bottled-agent:{slug}"
+        return AuditEvent.from_json(body)
 
     def _record(self, **fields: Any) -> None:
         if self._sink is None:
             return
-        self._sink.submit(AuditEvent(ts_event=utc_iso(self._clock()), **fields))
+        self._sink.submit(self.named(AuditEvent(ts_event=utc_iso(self._clock()), **fields)))
 
     # -- auth.* --------------------------------------------------------------
 

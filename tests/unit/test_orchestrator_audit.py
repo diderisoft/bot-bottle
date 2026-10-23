@@ -61,7 +61,8 @@ class ApiEvents(unittest.TestCase):
         headers = {"content-type": "application/json"}
         if role is not None:
             headers[ORCHESTRATOR_AUTH_HEADER] = mint(role, _KEY)
-        app = create_app(self.orch, signing_key=_KEY, audit=OrchestratorAudit(self.sink))
+        app = create_app(self.orch, signing_key=_KEY,
+                         audit=OrchestratorAudit(self.sink, slug_for=self.orch.session_for))
 
         async def request() -> httpx.Response:
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
@@ -83,11 +84,15 @@ class ApiEvents(unittest.TestCase):
         self.assertEqual(("auth.authz_denied", "role:gateway"), (event.type, event.actor))
 
     def test_registering_mints_a_token_recorded_by_fingerprint_only(self) -> None:
-        status, body = self.call("POST", "/bottles", {"source_ip": "10.243.0.9"})
+        status, body = self.call("POST", "/bottles", {
+            "source_ip": "10.243.0.9", "metadata": json.dumps({"slug": "amber-fox"})})
         self.assertEqual(201, status)
         [event] = self.sink.events  # pylint: disable=unbalanced-tuple-unpacking
         self.assertEqual("auth.token_minted", event.type)
+        # Named by slug, like the host controller's events, with the registry id kept.
+        self.assertEqual(("amber-fox", "amber-fox"), (event.bottle, event.resource))
         assert event.payload is not None
+        self.assertEqual(body["bottle_id"], event.payload["registry_id"])
         self.assertTrue(event.payload["token_id"].startswith("sha256:"))
         self.assertNotIn(body["identity_token"], json.dumps(event.to_json()))
 
@@ -115,6 +120,8 @@ class ApiEvents(unittest.TestCase):
         self.assertEqual(200, status)
         proposed, resolved = self.sink.events  # pylint: disable=unbalanced-tuple-unpacking
         self.assertEqual(("decision.proposed", "deferred"), (proposed.type, proposed.outcome))
+        self.assertEqual(("demo", "bottled-agent:demo"), (proposed.bottle, proposed.actor))
+        self.assertEqual("demo", resolved.bottle)
         # The agent's reason is its own claim.
         self.assertEqual({"agent_rationale": "need it"}, proposed.untrusted)
         assert proposed.payload is not None
