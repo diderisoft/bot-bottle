@@ -17,57 +17,69 @@
 - **Per-bottle egress allowlist** — TLS-bumped HTTP/HTTPS chokepoint with a per-manifest host allowlist; per-route path/method/header `matches` filtering; outbound DLP scanning for known tokens and secrets, inbound DLP scanning for prompt-injection attempts; DoH and arbitrary hosts blocked by default.
 - **Per-route token-match policy** — each egress route picks what happens when the outbound DLP catches a token via `dlp.outbound_on_match`: `supervise` (default) holds the request and surfaces it in `bot-bottle supervise` for approval (an approved value is remembered for the life of the proxy); `redact` scrubs the value and forwards; `block` is a hard `403`. Cuts false-positive friction without weakening default-deny.
 - **Tokens the agent never sees** — host secrets live in a gateway; the agent dials `http://gateway:9099/<path>` and the proxy strips inbound `Authorization` and injects the real token before forwarding. `printenv` in the agent shows proxy URLs only.
-- **Gitleaks-scanned push (git-gate)** — `bottle.git` remotes route through a per-bottle `git daemon` that gitleaks-scans incoming refs pre-receive and forwards clean refs upstream over SSH. The agent never holds the upstream credential.
+- **Gitleaks-scanned push (git-gate)** — `bottle.git` remotes route through the gateway's git-gate, which gitleaks-scans incoming refs pre-receive and forwards clean refs upstream over SSH. The agent never holds the upstream credential.
 - **Manifest-scoped skills + secrets** — each bottle declares its skills, env, git identity, remotes, and egress routes; unknown keys die at load.
 - **Trust boundary at `$HOME`** — bottles (credentials, egress, remotes) live only under `~/.bot-bottle/bottles/`. Repos may ship agents but not bottles, so a cloned repo can't redirect an env var to an attacker host.
 - **Composable bottles (`extends:`)** — keep provider/runtime policy in one base bottle (e.g. `claude.md`) and overlay task bottles on top.
-- **Parallel, isolated bottles** — each bottle runs in its own backend-owned isolation boundary; bottles don't share state or talk to each other.
-- **Provider templates (Claude, Codex)** — `Dockerfile.claude` / `Dockerfile.codex`, or a bottle-supplied Dockerfile. Claude auth via long-lived OAuth token; Codex via opt-in host device-auth forwarding.
+- **Parallel, isolated bottles** — each bottle runs in its own backend-owned isolation boundary; bottles don't share state. They share the per-host gateway, which attributes every request to its bottle by source IP and keeps each bottle's policy, tokens and git-gate repos separate.
+- **Provider templates (Claude, Codex)** — `bot_bottle/contrib/{claude,codex,pi}/Dockerfile`, or a bottle-supplied Dockerfile. Claude auth via long-lived OAuth token; Codex via opt-in host device-auth forwarding.
 - **gVisor auto-detect** — on Linux hosts where `runsc` is registered with Docker, every bottle launches under it for a userspace syscall barrier; no manifest config required.
 - **Apple Container backend (macOS default when available)** — runs the agent and gateway with Apple's `container` CLI, using a host-only agent network plus a separate gateway egress network.
-- **Firecracker backend (Linux default when available)** — runs the agent in a KVM Firecracker microVM reached over SSH on a point-to-point TAP, with the gateway in Docker. A dedicated, fail-closed `nftables` table isolates the guest, closing the raw DNS/IP exfiltration gap that exists in the legacy Docker backend. Requires KVM (`/dev/kvm`) and a one-time privileged network-pool setup.
+- **Firecracker backend (Linux default when available)** — runs the agent in a KVM Firecracker microVM reached over SSH on a point-to-point TAP; the orchestrator and gateway run in their own per-host microVMs, so the host needs no Docker. A dedicated, fail-closed `nftables` table isolates the guest, closing the raw DNS/IP exfiltration gap that exists in the legacy Docker backend. Requires KVM (`/dev/kvm`) and a one-time privileged network-pool setup.
 - **Legacy Docker backend** — still available for examples, CI, and hosts without Apple Container or KVM via `BOT_BOTTLE_BACKEND=docker` or `--backend=docker`.
 
 ## Architecture
 
-On the default macOS Apple Container backend, a bottle is an agent container on a host-only internal network plus a gateway attached to both that internal network and a NAT egress network. The agent gets HTTP(S)_PROXY and CA bundle env vars pointing at the gateway's internal-network IP, so HTTP/HTTPS traffic flows through the gateway instead of direct egress. git-gate runs over the gateway's consolidated `git-http` daemon (the legacy per-bottle `git://` daemon is not used on this backend); keys are provisioned dynamically at launch and revoked on teardown.
+Every backend has the same shape. Each host runs one **orchestrator** (the
+control plane) and one **gateway** (the data plane), started on demand and
+shared by every bottle on that host. Each bottle is just the agent, in its own
+container or microVM, pointed at the gateway for all outbound traffic.
 
-On the Firecracker backend, a bottle is an agent microVM plus a Docker gateway for egress, git-gate, and supervise. The VM reaches the gateway over a per-bottle point-to-point TAP link; a dedicated fail-closed `nftables` table (`inet bot_bottle_fc`) confines the guest to that link, so nothing leaves the box except through the gateway. The TAP pool and nft table are provisioned once (root); per-launch needs no privilege.
-
-On the legacy Docker backend, the same logical bottle is two containers per agent: an `agent` container and a `companion containers` container. They share a per-agent Docker `--internal` network; the agent has no default route off-box.
-
-The Docker topology looks like this:
+- The **gateway** runs the egress proxy (mitmproxy: TLS bumping, route
+  allowlist, DLP, token injection), git-gate (a smart-HTTP git server that
+  gitleaks-scans pushes and forwards clean refs upstream over SSH) and the
+  supervise endpoint. It attributes each request to a bottle by the agent's
+  source IP, which the backend pins and the agent cannot change, so one gateway
+  enforces each bottle's own policy.
+- The **orchestrator** holds the bottle registry, the signing key and the
+  approval queue. Agents have no route to it; the gateway and the host CLI do.
+- The **host controller** runs on the host as your user. The CLI and the
+  orchestrator use it to launch, list, attach to and tear down bottles. Each
+  agent session runs in tmux, so it survives the terminal that started it and
+  can have several viewers.
 
 ```
-                            host  ( bot-bottle )
-                                  │
-                          starts  │  stops
-                                  ▼
-   ┌─────────────────────────── bottle ──────────────────────────────────┐
-   │                                                                     │
-   │   ┌──────────────────┐                   ┌──────────────────────┐   │
-   │   │ agent image      │   HTTP(S) proxy   │ egress image         │   │
-   │   │ (claude-code,    │ ─────────────────►│ (mitmproxy; TLS bump │   │  HTTPS to
-   │   │  codex, etc)     │                   │  DLP scan, path      │───┼──►  allowlisted
-   │   │                  │                   │  matching, auth      │   │     hosts
-   │   │ environ: proxy   │                   │  injection)          │   │
-   │   │ URLs only, no    │                   └──────────────────────┘   │
-   │   │ real tokens      │                                              │
-   │   │                  │    git proxy     ┌────────────────┐          │  SSH push/fetch
-   │   │                  │ ────────────────►│ git-gate image │──────────┼──►  to bottle.git
-   │   │                  │                  │ (gitleaks +    │          │      upstreams
-   │   └──────────────────┘                  │  git daemon)   │          │     (direct — not
-   │                                         └────────────────┘          │      via egress)
-   │                                                                     │
-   │   agent on internal network (no default route); egress and          │
-   │   git-gate straddle internal + egress networks.                     │
-   │   egress is the single HTTP/HTTPS chokepoint — all agent HTTP/HTTPS │
-   │   traffic flows through it. git-gate's SSH egress is direct         │
-   │   because egress is HTTP-only.                                      │
-   └─────────────────────────────────────────────────────────────────────┘
+  host CLI ──► host controller ──► backend (launch / teardown)
+                                       │
+  ┌──────────── per host ──────────────┼──────────────────────────────────┐
+  │                                    ▼                                  │
+  │  ┌───────────────┐       ┌─────────────────────────┐                  │
+  │  │ agent         │ HTTPS │ gateway                 │ HTTPS to         │
+  │  │ (claude,      │──────►│  egress proxy (DLP,     │──► allowlisted   │
+  │  │  codex, pi)   │       │   token injection)      │    hosts         │
+  │  │               │  git  │  git-gate (gitleaks)    │ SSH push to      │
+  │  │ env: proxy    │──────►│  supervise              │──► upstreams     │
+  │  │ URLs only,    │       └────────────┬────────────┘                  │
+  │  │ no real       │                    │ control network               │
+  │  │ tokens        │       ┌────────────▼────────────┐                  │
+  │  └───────────────┘       │ orchestrator            │                  │
+  │   one per bottle;        │  registry, signing key, │                  │
+  │   no route to the        │  approval queue         │                  │
+  │   control plane          └─────────────────────────┘                  │
+  └───────────────────────────────────────────────────────────────────────┘
 ```
 
-When the agent exits, `cli.py` tears down every gateway and both networks; nothing about a bottle persists between runs.
+How each backend builds that boundary:
+
+| Backend | Agent | Orchestrator and gateway | What confines the agent |
+|---|---|---|---|
+| **macos-container** (macOS default) | Apple container | Two Apple containers | Host-only agent network; only the gateway is also on the NAT egress and control networks |
+| **firecracker** (Linux default with KVM) | Firecracker microVM, reached over SSH | Two Firecracker microVMs | Point-to-point TAP per bottle plus a fail-closed `nftables` table (`inet bot_bottle_fc`); the gateway's ports are DNAT'd to the gateway VM, and nothing else leaves the box |
+| **docker** (legacy) | Docker container (gVisor `runsc` when registered) | Two Docker containers | Shared gateway bridge network; only the gateway is also on the control network |
+
+When the agent exits, its bottle is deregistered from the orchestrator, its
+git-gate deploy keys are revoked, and its container or VM is removed. The
+orchestrator and gateway keep running for the next bottle.
 
 ## Quickstart
 
@@ -85,7 +97,7 @@ The installer is a bootstrapper: it finds a suitable Python, installs bot-bottle
 
 **`git`**, because the default install spec is a `git+` URL. Set `BOT_BOTTLE_INSTALL_SPEC` to a wheel path or index name to avoid it.
 
-**A backend**, which the installer deliberately does *not* install for you — `doctor` reports what's missing afterwards. On compatible macOS hosts, the default backend requires Apple's `container` CLI and does not require Docker. The Firecracker backend (Linux) requires Docker on the host for the gateway plus the `firecracker` binary and KVM. The legacy Docker backend requires Docker. Every backend needs tmux 3.1 or newer, which runs the agent sessions. Claude bottles also need a long-lived Claude Code OAuth token (`claude setup-token`) exported as `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`.
+**A backend**, which the installer deliberately does *not* install for you — `doctor` reports what's missing afterwards. On compatible macOS hosts, the default backend requires Apple's `container` CLI and does not require Docker. The Firecracker backend (Linux) requires the `firecracker` binary, KVM and e2fsprogs; Docker is needed only to build the infra images from source instead of using a release. The legacy Docker backend requires Docker. Every backend needs tmux 3.1 or newer, which runs the agent sessions. Claude bottles also need a long-lived Claude Code OAuth token (`claude setup-token`) exported as `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`.
 
 Use `BOT_BOTTLE_BACKEND=docker bot-bottle start <agent>` on hosts where neither Apple Container nor KVM is available and Docker is the desired backend.
 
@@ -179,7 +191,7 @@ On Linux, a KVM-capable host defaults to the Firecracker backend. It needs:
 
 - **`/dev/kvm`** present and accessible. Load `kvm-intel` or `kvm-amd` (and enable virtualization in BIOS/firmware). The invoking user must be in the `kvm` group: `sudo usermod -aG kvm "$USER"` then re-login. bot-bottle preflights this and reports exactly what's missing.
 - **`firecracker`** on `PATH`: grab a release from <https://github.com/firecracker-microvm/firecracker/releases>. Start flows print this pointer when the binary is missing.
-- **Docker** for the gateway and image build.
+- **e2fsprogs** (`mke2fs`, `debugfs`, `e2fsck`, `resize2fs`) for building root filesystems. Docker is optional: it is used only to build the infra images from source rather than downloading a release's prebuilt ones.
 - **A one-time privileged network setup** — the per-bottle TAP pool plus the fail-closed `nftables` isolation table. Run `bot-bottle install --backend=firecracker` for the host-appropriate config (a NixOS module, a `sudo` script elsewhere) plus autostart for the host controller; `bot-bottle backend status --backend=firecracker` reports what's present, including whether the pool range collides with an existing route. The pool defaults to `10.243.0.0/16` (an obscure RFC-1918 block that dodges docker/libvirt/LAN and, deliberately, Tailscale's `100.64.0.0/10` CGNAT range); override with `BOT_BOTTLE_FC_IP_BASE` if it clashes on your host.
 
 ```sh
