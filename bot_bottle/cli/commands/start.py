@@ -42,7 +42,8 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
     parser = argparse.ArgumentParser(prog=f"{PROG} start", add_help=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true",
-                        help="stream the full launch log instead of one line per stage")
+                        help=("stream the full launch log instead of one line per stage "
+                              "(it's always saved under ~/.bot-bottle/logs/)"))
     parser.add_argument("--pick", action="store_true",
                         help="choose bottles, label, color and image mode interactively")
     parser.add_argument("--cwd", action="store_true", help="copy host cwd into the running bottle")

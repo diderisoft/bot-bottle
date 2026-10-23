@@ -51,6 +51,23 @@ class Progress(unittest.TestCase):
         self.assertIn("warning: image is 9 days old", text)
         self.assertNotIn("resolved agent", text)
 
+    def test_a_repeated_stage_retitles_its_line(self) -> None:
+        progress, out = self.progress()
+        progress.stage("services", "Starting bot-bottle services")
+        progress.stage("services", "Rebuilding bot-bottle services")
+        progress.stage("services", "Rebuilding bot-bottle services")
+        progress.stage("start", "Starting the bottle")
+        progress.done()
+        text = out.getvalue()
+        self.assertEqual(1, text.count("Rebuilding bot-bottle services"))
+        self.assertNotIn("Starting bot-bottle services", text)
+
+    def test_success_ends_with_the_log_path(self) -> None:
+        progress, out = self.progress()
+        self.run_launch(progress)
+        progress.done("pi is running")
+        self.assertTrue(out.getvalue().rstrip().endswith("launch.log"))
+
     def test_every_line_goes_to_the_log_file(self) -> None:
         progress, _ = self.progress()
         self.run_launch(progress)

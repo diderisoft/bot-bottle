@@ -27,6 +27,13 @@ _TAIL_LINES = 12
 _SHOWN = ("bot-bottle: warning:", "bot-bottle: error:")
 
 
+def _home_relative(path: Path) -> str:
+    try:
+        return f"~/{path.relative_to(Path.home())}"
+    except ValueError:
+        return str(path)
+
+
 def launch_log_path(name: str) -> Path:
     stamp = time.strftime("%Y%m%d-%H%M%S")
     return bot_bottle_root() / "logs" / f"launch-{slugify(name) or 'bottle'}-{stamp}.log"
@@ -47,6 +54,7 @@ class LaunchProgress:
         self._tail: collections.deque[str] = collections.deque(maxlen=_TAIL_LINES)
         self._since_stage: list[str] = []
         self._title = ""
+        self._name = ""
         self._started = 0.0
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -66,9 +74,16 @@ class LaunchProgress:
                 self._print_above(text)
 
     def stage(self, name: str, title: str) -> None:
-        del name
         with self._lock:
+            if name and name == self._name and self._title:
+                # The same stage, more specific (e.g. "Starting bot-bottle
+                # services" turning out to be a rebuild): retitle in place.
+                self._log.write(f"== {title}\n")
+                self._title = title
+                self._draw()
+                return
             self._finish("✓")
+            self._name = name
             self._log.write(f"== {title}\n")
             self._title, self._started = title, time.monotonic()
             self._since_stage = []
@@ -83,6 +98,8 @@ class LaunchProgress:
             self._finish("✓")
             if message:
                 self.out.write(f"✓ {message}\n")
+            if not self.verbose:
+                self.out.write(f"  launch log: {_home_relative(self.log_path)}\n")
         self.close()
 
     def fail(self, message: str) -> None:
