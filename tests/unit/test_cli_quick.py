@@ -56,10 +56,16 @@ class Quick(unittest.TestCase):
 
     def test_the_first_ready_starter_and_the_directory_mounted(self) -> None:
         request = self.run_quick([], ["codex", "pi", "zeta"])
-        self.assertEqual(("codex", ("codex",), True, False, str(self.project), "prefer-cached",
-                          True),
+        self.assertEqual(("codex", ("codex", "basic"), True, False, str(self.project),
+                          "prefer-cached", True),
                          (request.agent, request.bottles, request.mount_cwd, request.copy_cwd,
                           request.cwd, request.image_policy, request.assume_yes))
+
+    def test_a_project_bottle_replaces_basic(self) -> None:
+        bottles = self.project / ".bot-bottle" / "bottles"
+        bottles.mkdir(parents=True)
+        (bottles / "app.md").write_text("---\nextends: basic\n---\n")
+        self.assertEqual(("pi", "app"), self.run_quick([], ["pi"]).bottles)
 
     def test_copy_mode_copies_instead(self) -> None:
         request = self.run_quick(["--copy"], ["pi"])

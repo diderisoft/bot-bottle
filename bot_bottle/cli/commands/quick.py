@@ -8,7 +8,10 @@
   bot-bottle default <agent>
                          set the agent bare `bot-bottle` falls back to
 
-The agent's own bottle is used. This directory is mounted into the bottle, so
+The bottle is the agent's own, plus the project's bottle when the project
+ships one (`./.bot-bottle/bottles/<directory name>.md`, trusted on this host
+first) or else the built-in `basic` (package registries and public code,
+read-only). This directory is mounted into the bottle, so
 the agent edits your files in place (not your home directory or `/`). With
 --copy, or on Firecracker, which can't mount, it's copied in instead (a git
 repo filtered by its .gitignore), and when the agent exits its changes are
@@ -28,6 +31,7 @@ from ...contract.hostctl import LaunchRequest
 from ...lib.log import die, info
 from ...manifest import ManifestIndex
 from ...paths import bot_bottle_root
+from ...util import slugify
 from ..constants import PROG
 from ..settings import settings_from_env
 from .start import _launch_bottle, _peek_agent_bottle, _uniquify_label
@@ -107,6 +111,12 @@ def _ensure_starters(manifest: ManifestIndex, cwd: Path) -> ManifestIndex:
     return ManifestIndex.resolve(str(cwd))
 
 
+def project_bottle(cwd: Path) -> str:
+    """The project's own bottle, named after its directory, if it ships one."""
+    name = slugify(cwd.name)
+    return name if (cwd / ".bot-bottle" / "bottles" / f"{name}.md").is_file() else ""
+
+
 def _uncommitted(cwd: Path) -> int:
     """How many files have uncommitted changes in a git repo (0 elsewhere)."""
     try:
@@ -148,7 +158,7 @@ def cmd_quick(argv: list[str]) -> int:
     settings = settings_from_env()
     request = LaunchRequest(
         agent=agent,
-        bottles=(bottle,),
+        bottles=(bottle, project_bottle(cwd) or "basic"),
         label=_uniquify_label(settings, agent),
         image_policy="prefer-cached",
         assume_yes=True,

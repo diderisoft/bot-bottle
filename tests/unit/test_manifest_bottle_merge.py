@@ -226,7 +226,7 @@ class TestAllBottleNames(unittest.TestCase):
             (bottles_dir / "dev.md").write_text("---\n---\n")
             (agents_dir / "impl.md").write_text("---\nbottle: claude\n---\n")
             idx = ManifestIndex.resolve(str(home))
-            self.assertEqual(["claude", "dev"], idx.all_bottle_names)
+            self.assertEqual(["basic", "claude", "dev"], idx.all_bottle_names)  # basic is built in
         finally:
             if orig_home is None:
                 os.environ.pop("HOME", None)

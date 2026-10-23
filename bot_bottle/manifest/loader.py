@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..lib.log import warn
@@ -68,29 +70,40 @@ def scan_agent_names(agents_dir: Path) -> dict[str, Path]:
     return result
 
 
-def load_bottle_chain_from_dir(
-    bottle_name: str, bottles_dir: Path
-) -> ManifestBottle:
-    """Load `bottle_name` and its full `extends:` chain from `bottles_dir`,
-    returning the resolved ManifestBottle.
+# The built-in bottles shipped with bot-bottle (`basic`).
+BUILTIN_BOTTLES_DIR = Path(__file__).parent / "builtin"
 
-    Only the files in the extends chain are read — unrelated bottle files
-    are never touched. Raises ManifestError on parse or validation failure."""
+
+@dataclass(frozen=True)
+class BottleSource:
+    """One file in a resolved bottle chain, and whether it came from the
+    project (`./.bot-bottle/bottles/`), which makes it untrusted input."""
+
+    name: str
+    path: Path
+    project: bool
+
+
+def load_bottle_chain(
+    bottle_name: str, dirs: Sequence[tuple[Path, bool]],
+) -> tuple[ManifestBottle, tuple[BottleSource, ...]]:
+    """Load `bottle_name` and its `extends:` chain, each name from the first
+    of ``dirs`` that has it (``(dir, is_project)`` pairs, in precedence
+    order). Returns the resolved bottle and the files it came from."""
     raws: dict[str, dict[str, object]] = {}
+    sources: list[BottleSource] = []
     to_load = [bottle_name]
     while to_load:
         name = to_load.pop()
         if name in raws:
             continue
-        path = bottles_dir / f"{name}.md"
-        if not path.is_file():
-            avail = ", ".join(
-                p.stem for p in sorted(bottles_dir.glob("*.md")) if p.is_file()
-            ) or "(none)"
-            raise ManifestError(
-                f"bottle '{name}' not found at {path}. "
-                f"Available: {avail}"
-            )
+        found = next(((d / f"{name}.md", project) for d, project in dirs
+                      if (d / f"{name}.md").is_file()), None)
+        if found is None:
+            avail = ", ".join(sorted({p.stem for d, _ in dirs if d.is_dir()
+                                      for p in d.glob("*.md") if p.is_file()})) or "(none)"
+            raise ManifestError(f"bottle '{name}' not found. Available: {avail}")
+        path, project = found
         try:
             fm, _body = parse_frontmatter(path.read_text())
         except OSError as e:
@@ -99,10 +112,22 @@ def load_bottle_chain_from_dir(
             raise ManifestError(f"{path}: {e}") from e
         validate_bottle_frontmatter_keys(path, fm.keys())
         raws[name] = dict(fm)
+        sources.append(BottleSource(name, path, project))
         parent = fm.get("extends")
         if isinstance(parent, str):
             to_load.append(parent)
         elif isinstance(parent, list):
             to_load.extend(p for p in parent if isinstance(p, str))
 
-    return resolve_bottles(raws)[bottle_name]
+    return resolve_bottles(raws)[bottle_name], tuple(sources)
+
+
+def load_bottle_chain_from_dir(
+    bottle_name: str, bottles_dir: Path
+) -> ManifestBottle:
+    """Load `bottle_name` and its full `extends:` chain from `bottles_dir`,
+    returning the resolved ManifestBottle.
+
+    Only the files in the extends chain are read — unrelated bottle files
+    are never touched. Raises ManifestError on parse or validation failure."""
+    return load_bottle_chain(bottle_name, ((bottles_dir, False),))[0]

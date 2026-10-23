@@ -52,6 +52,7 @@ bot_bottle = [
     "contrib/pi/package-lock.json",
     "backend/firecracker/netpool.defaults.env",
     "backend/macos_container/nested-containers-init.sh",
+    "manifest/builtin/basic.md",
 ]
 
 # Local convenience runner. CI runs the same tests via `unittest` (see

@@ -22,7 +22,7 @@ from ..env import env_entry_interpolated_from, env_entry_kind, prompt_secret
 from ..git_gate.host_key import preflight_host_keys
 from ..lib import log
 from ..lib.log import die, info, warn
-from ..manifest import Manifest, ManifestIndex
+from ..manifest import Manifest, ManifestIndex, trust
 from ..secret_source import SecretSource
 from ..util import read_tty_line
 from ..workspace import patch_summary, work_patch_path
@@ -88,10 +88,30 @@ def prepare_request(request: LaunchRequest, index: ManifestIndex, *,
                     interactive: bool) -> LaunchRequest:
     """`request` with the secrets it needs and, when `interactive`, the
     host keys the user confirmed."""
-    manifest = index.load_for_agent(request.agent, request.bottles)
+    manifest = load_trusting(index, request.agent, request.bottles, interactive=interactive)
     host_keys = confirm_host_keys(manifest, index) if interactive else {}
     secrets = resolve_secrets(manifest, secrets_from_env(), prompt=interactive)
     return replace(request, secrets=secrets, host_keys=host_keys)
+
+
+def load_trusting(index: ManifestIndex, agent: str, bottles: tuple[str, ...], *,
+                  interactive: bool) -> Manifest:
+    """Load the agent's manifest. A project bottle this host hasn't trusted
+    (or that changed) is shown and asked about first; without a terminal it
+    fails with a pointer to `bot-bottle trust`. Declining stops the launch."""
+    while True:
+        try:
+            return index.load_for_agent(agent, bottles)
+        except trust.UntrustedBottleError as e:
+            if not interactive:
+                raise
+            sys.stderr.write("\n" + trust.prompt_text(e))
+            sys.stderr.flush()
+            if read_tty_line() not in ("y", "Y", "yes", "YES"):
+                die("not started; the bottle stays untrusted "
+                    f"(`{PROG} trust {e.bottle}` to review it later)")
+            trust.trust(e)
+            info(f"trusted {e.bottle} on this host")
 
 
 def _prompt_yes(question: str) -> bool:

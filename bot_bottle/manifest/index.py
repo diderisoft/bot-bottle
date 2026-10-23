@@ -12,20 +12,22 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Mapping
 
-from ..lib.log import warn
 from .util import ManifestError, as_json_object
 from .agent import ManifestAgent
 from .bottle import ManifestBottle
 from .extends import merge_bottles_runtime, resolve_bottles
 from .git import ManifestGitUser
 from .loader import (
+    BUILTIN_BOTTLES_DIR,
     check_stale_json,
-    load_bottle_chain_from_dir,
+    load_bottle_chain,
     scan_agent_names,
     scan_bottle_names,
 )
+from .trust import check as trust_check
 from .schema import validate_agent_frontmatter_keys
 from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
 
@@ -93,19 +95,27 @@ def _resolve_effective_bottle_eager(
     return bottles[agent.bottle]
 
 
+def _load_checked(name: str, dirs: "Sequence[tuple[Path, bool]]") -> "ManifestBottle":
+    """Load one bottle chain; a chain with project files must be trusted."""
+    bottle, sources = load_bottle_chain(name, dirs)
+    trust_check(name, bottle, sources)
+    return bottle
+
+
 def _resolve_effective_bottle_lazy(
     agent_name: str,
     agent_bottle: str,
     bottle_names: "tuple[str, ...]",
-    bottles_dir: "Path",
+    dirs: "Sequence[tuple[Path, bool]]",
 ) -> "ManifestBottle":
     """Return the effective ManifestBottle for the lazy (from_md_dirs) path.
 
     When bottle_names is non-empty they are resolved from disk and merged in
     order. When empty, falls back to agent_bottle. Raises ManifestError when
-    neither is set."""
+    neither is set, and UntrustedBottleError for a project bottle this host
+    hasn't trusted."""
     if bottle_names:
-        resolved = [load_bottle_chain_from_dir(bn, bottles_dir) for bn in bottle_names]
+        resolved = [_load_checked(bn, dirs) for bn in bottle_names]
         return merge_bottles_runtime(resolved)
 
     if not agent_bottle:
@@ -114,7 +124,7 @@ def _resolve_effective_bottle_lazy(
             f"selected at launch. Select at least one bottle or add "
             f"'bottle: <name>' to the agent manifest."
         )
-    return load_bottle_chain_from_dir(agent_bottle, bottles_dir)
+    return _load_checked(agent_bottle, dirs)
 
 
 @dataclass(frozen=True)
@@ -165,14 +175,17 @@ class ManifestIndex:
         """Walk the per-file manifest tree and build a ManifestIndex.
 
         Layout:
-          $HOME/.bot-bottle/bottles/<name>.md  — bottles (home-only)
+          $HOME/.bot-bottle/bottles/<name>.md  — the user's bottles
           $HOME/.bot-bottle/agents/<name>.md   — home agents
           $CWD/.bot-bottle/agents/<name>.md    — cwd agents
+          $CWD/.bot-bottle/bottles/<name>.md   — project bottles
+          built-in bottles (`basic`)
 
         Cwd agents merge into the home agents on the same name
-        (cwd wins). A bottles/ subdir under $CWD is logged as a
-        warning and ignored — the filesystem layout IS the trust
-        boundary.
+        (cwd wins). Bottles resolve by name from the user's, then the
+        project's, then the built-ins, so a project can't replace a bottle
+        the user has. A project bottle is untrusted input: it loads only
+        once this host has trusted its contents (manifest/trust.py).
 
         If `missing_ok` is true, a missing `$HOME/.bot-bottle/`
         returns an empty index instead of dying. This is for
@@ -216,23 +229,10 @@ class ManifestIndex:
         filenames are scanned for the agent selector.  Full parsing happens
         later, per-agent, via `load_for_agent`.
 
-        A `bottles/` subdir under `cwd_dir` is logged as a warning and
-        ignored — the filesystem layout IS the trust boundary.
+        Project bottles under `cwd_dir/bottles` load only once trusted.
 
         Used by tests to build a ManifestIndex from fixture directories
         without touching `os.environ`."""
-        if cwd_dir is not None:
-            stale_bottles = cwd_dir / "bottles"
-            if stale_bottles.is_dir():
-                files = sorted(stale_bottles.glob("*.md"))
-                if files:
-                    names = ", ".join(p.name for p in files)
-                    warn(
-                        f"ignoring bottle file(s) under "
-                        f"{stale_bottles}: {names}. Bottles can only "
-                        f"live under $HOME/.bot-bottle/bottles/. "
-                        f"Move them or delete."
-                    )
         return cls(bottles={}, agents={}, home_md=home_dir, cwd_md=cwd_dir)
 
     @classmethod
@@ -265,8 +265,18 @@ class ManifestIndex:
         filenames without reading their content. In eager mode (from
         from_json_obj) it returns the pre-parsed bottles' names."""
         if self.home_md is not None:
-            return scan_bottle_names(self.home_md / "bottles")
+            return sorted({n for d, _ in self.bottle_dirs() for n in scan_bottle_names(d)})
         return sorted(self.bottles.keys())
+
+    def bottle_dirs(self) -> list[tuple[Path, bool]]:
+        """Where bottles resolve from, in precedence order, as
+        ``(directory, is_project)``."""
+        assert self.home_md is not None
+        dirs = [(self.home_md / "bottles", False)]
+        if self.cwd_md is not None:
+            dirs.append((self.cwd_md / "bottles", True))
+        dirs.append((BUILTIN_BOTTLES_DIR, False))
+        return dirs
 
     @property
     def all_agent_names(self) -> list[str]:
@@ -358,9 +368,8 @@ class ManifestIndex:
 
         # Determine the effective bottle name(s).
         agent_bottle = fm.get("bottle") or ""
-        bottles_dir = self.home_md / "bottles"
         raw_bottle = _resolve_effective_bottle_lazy(
-            agent_name, str(agent_bottle), bottle_names, bottles_dir
+            agent_name, str(agent_bottle), bottle_names, self.bottle_dirs()
         )
         effective_bottle_name = (
             bottle_names[-1] if bottle_names else str(agent_bottle)
@@ -378,7 +387,9 @@ class ManifestIndex:
         # Pass the effective bottle name as the known-bottles set so agents
         # that have bottle: set are validated; agents without bottle: pass {}
         # since bottle_names were already resolved above.
-        known = {effective_bottle_name} if effective_bottle_name else set()
+        # The agent's own bottle counts as known too: it's composed with the
+        # selected ones (e.g. `pi` plus `basic`), not necessarily last.
+        known = {n for n in (effective_bottle_name, str(agent_bottle), *bottle_names) if n}
         agent = ManifestAgent.from_dict(agent_name, agent_dict, known)
 
         return _manifest_with_merged_git_user(agent, raw_bottle)
