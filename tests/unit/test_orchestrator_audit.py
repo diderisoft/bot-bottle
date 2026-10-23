@@ -128,7 +128,8 @@ class ApiEvents(unittest.TestCase):
         [relayed] = self.sink.events  # pylint: disable=unbalanced-tuple-unpacking
         self.assertEqual(("amber-fox", "amber-fox", "bottled-agent:amber-fox"),
                          (relayed.bottle, relayed.bottled_agent, relayed.actor))
-        self.assertEqual({"host": "x", "registry_id": rec.bottle_id}, relayed.payload)
+        self.assertEqual(rec.bottle_id, relayed.activation)
+        self.assertEqual({"host": "x"}, relayed.payload)
 
     def test_a_relayed_event_must_name_a_gateway_component(self) -> None:
         event = {"type": "egress.decision", "actor": "a", "action": "x", "outcome": "allowed",
