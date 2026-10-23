@@ -37,6 +37,7 @@ from bot_bottle.backend import BottleSpec, get_bottle_backend
 from bot_bottle.bottle_state import cleanup_state
 from bot_bottle.cli.secrets_env import secrets_from_env
 from bot_bottle.cli.settings import settings_from_env
+from bot_bottle.egress.service import _CANARY_ENV_WORDS  # pyright: ignore[reportPrivateUsage]
 from bot_bottle.manifest import ManifestIndex
 from bot_bottle.secret_source import ChainSecrets, MappingSecrets
 from tests._backend import skip_unless_selected_backend_available
@@ -516,13 +517,14 @@ class TestSandboxEscape(unittest.TestCase):
 
     # ---- attack 6: secrets the bottle holds --------------------------
 
-    # Sets $canary to the bottle's exfil canary: the one env var named
-    # WORD_WORD_SECRET that isn't a test fixture. TEST_HELD_SECRET has the same
-    # shape, so fixtures are excluded and anything but exactly one candidate
-    # fails loudly instead of silently testing the wrong value.
+    # Sets $canary to the bottle's exfil canary. Its name is two words from
+    # the canary vocabulary plus _SECRET; other env vars share that shape
+    # (TEST_HELD_SECRET, ENV_VAR_SECRET), so match the vocabulary, and fail
+    # loudly unless exactly one name matches.
+    _CANARY_WORDS = "|".join(_CANARY_ENV_WORDS)
     _CANARY_SH = (
-        "names=$(env | sed -n 's/^\\([A-Z][A-Z]*_[A-Z][A-Z]*_SECRET\\)=.*/\\1/p'"
-        " | grep -v '^TEST_')\n"
+        f"names=$(env | grep -oE '^({_CANARY_WORDS})_({_CANARY_WORDS})_SECRET=' "
+        "| sed 's/=$//')\n"
         '[ "$(printf "%s\\n" "$names" | grep -c .)" = 1 ] || '
         '{ echo "expected one canary env var, got: $names" >&2; exit 99; }\n'
         'canary=$(printenv "$names")\n'
