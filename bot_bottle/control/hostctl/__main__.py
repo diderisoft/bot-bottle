@@ -27,6 +27,7 @@ from .bottles import BottleService
 from .jobs import JobRegistry
 from .listeners import GuestListeners
 from .live import LiveBottles
+from .remote import Supervisor
 from .server import HostControlServer
 from .sessions import SessionManager, control_socket_path, tmux_version, write_config
 
@@ -63,6 +64,9 @@ def main() -> int:
     audit = HostAudit.open()
     # Registers the `bottle` finisher, so it must exist before adopting.
     bottles = BottleService(sessions, audit=audit)
+    # The console link (ADR 0007): runs only while `bot-bottle remote enable`d.
+    remote_link = Supervisor(bottles)
+    remote_link.start()
     local = localsock.serve(control_socket_path(), sessions)
     if tmux_version() is not None:
         write_config()
@@ -101,6 +105,7 @@ def main() -> int:
         server.server_close()
         guests.close()
         local.close()
+        remote_link.close()
         audit.close()
         clear_state(state.pid)
     return 0

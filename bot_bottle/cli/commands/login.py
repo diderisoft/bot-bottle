@@ -2,7 +2,8 @@
 
 Opens a device-authorization flow against the target console, waits for the
 operator to approve, then writes access and refresh tokens to
-~/.bot-bottle/console.json (or $BOT_BOTTLE_ROOT/console.json).
+~/.bot-bottle/console.json (or $BOT_BOTTLE_ROOT/console.json), along with the
+console's iroh identity when it returns one, which `bot-bottle remote` pins.
 
 Usage:
   bb login [--console-url URL] [--label LABEL]
@@ -69,7 +70,8 @@ def _get(url: str) -> tuple[int, dict[str, Any]]:
 
 
 def _save_credentials(
-    console_url: str, host_id: str, access_token: str, refresh_token: str
+    console_url: str, host_id: str, access_token: str, refresh_token: str,
+    console_iroh: dict[str, str] | None = None,
 ) -> Path:
     path = bot_bottle_root() / "console.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -80,6 +82,8 @@ def _save_credentials(
                 "host_id": host_id,
                 "access_token": access_token,
                 "refresh_token": refresh_token,
+                # The console's iroh identity, pinned for `bot-bottle remote`.
+                **(console_iroh or {}),
             },
             indent=2,
         )
@@ -157,6 +161,8 @@ def cmd_login(argv: list[str]) -> int:
                 result["host_id"],
                 result["access_token"],
                 result["refresh_token"],
+                {k: str(result[k]) for k in ("console_node_id", "console_ticket")
+                 if result.get(k)},
             )
             sys.stderr.write(f"Credentials saved to {path}\n")
             return 0

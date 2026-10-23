@@ -15,6 +15,9 @@ httpx>=0.28.0
 # gateway image, which pins it in requirements.gateway.lock; tests need it too.
 # A floor the CI runners' distro package already meets (pip can't replace it).
 cryptography>=41.0
+# The optional `remote` extra (ADR 0007), so the console-link tests run on
+# the real iroh bindings.
+iroh>=1.2
 # Local convenience test runner (see [tool.pytest.ini_options] in pyproject.toml).
 # CI runs the suite via unittest; pytest is for interactive runs where its
 # per-test output capture keeps a green run to just dots.
