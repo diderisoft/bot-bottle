@@ -25,8 +25,9 @@
 - **Provider templates (Claude, Codex)** — `bot_bottle/contrib/{claude,codex,pi}/Dockerfile`, or a bottle-supplied Dockerfile. Claude auth via long-lived OAuth token; Codex via opt-in host device-auth forwarding.
 - **gVisor auto-detect** — on Linux hosts where `runsc` is registered with Docker, every bottle launches under it for a userspace syscall barrier; no manifest config required.
 - **Apple Container backend (macOS default when available)** — runs the agent and gateway with Apple's `container` CLI, using a host-only agent network plus a separate gateway egress network.
-- **Firecracker backend (Linux default when available)** — runs the agent in a KVM Firecracker microVM reached over SSH on a point-to-point TAP; the orchestrator and gateway run in their own per-host microVMs, so the host needs no Docker. A dedicated, fail-closed `nftables` table isolates the guest, closing the raw DNS/IP exfiltration gap that exists in the legacy Docker backend. Requires KVM (`/dev/kvm`) and a one-time privileged network-pool setup.
-- **Legacy Docker backend** — still available for examples, CI, and hosts without Apple Container or KVM via `BOT_BOTTLE_BACKEND=docker` or `--backend=docker`.
+- **Firecracker backend (Linux default when available)** — runs the agent in a KVM Firecracker microVM reached over SSH on a point-to-point TAP; the orchestrator and gateway run in their own per-host microVMs, so the host needs no Docker. A dedicated, fail-closed `nftables` table isolates the guest. Requires KVM (`/dev/kvm`) and a one-time privileged network-pool setup.
+- **Docker backend (fallback)** — for CI and hosts without Apple Container or KVM, via `BOT_BOTTLE_BACKEND=docker` or `--backend=docker`. It is the weakest boundary: agents are containers sharing the host kernel (gVisor narrows that when installed). Their network is `--internal`, so the gateway is still the only way out.
+- **Launch-time isolation probe** — before an agent runs, bot-bottle proves from inside it that it cannot reach the host or a public address without the gateway (and, on Docker, cannot resolve public names), and refuses to start it otherwise. Firecracker and Docker run it today.
 
 ## Architecture
 
@@ -75,7 +76,7 @@ How each backend builds that boundary:
 |---|---|---|---|
 | **macos-container** (macOS default) | Apple container | Two Apple containers | Host-only agent network; only the gateway is also on the NAT egress and control networks |
 | **firecracker** (Linux default with KVM) | Firecracker microVM, reached over SSH | Two Firecracker microVMs | Point-to-point TAP per bottle plus a fail-closed `nftables` table (`inet bot_bottle_fc`); the gateway's ports are DNAT'd to the gateway VM, and nothing else leaves the box |
-| **docker** (legacy) | Docker container (gVisor `runsc` when registered) | Two Docker containers | Shared gateway bridge network; only the gateway is also on the control network |
+| **docker** (fallback) | Docker container (gVisor `runsc` when registered) | Two Docker containers | `--internal` agent network with no route off the box; only the gateway is also on the egress and control networks |
 
 When the agent exits, its bottle is deregistered from the orchestrator, its
 git-gate deploy keys are revoked, and its container or VM is removed. The
@@ -97,7 +98,7 @@ The installer is a bootstrapper: it finds a suitable Python, installs bot-bottle
 
 **`git`**, because the default install spec is a `git+` URL. Set `BOT_BOTTLE_INSTALL_SPEC` to a wheel path or index name to avoid it.
 
-**A backend**, which the installer deliberately does *not* install for you — `doctor` reports what's missing afterwards. On compatible macOS hosts, the default backend requires Apple's `container` CLI and does not require Docker. The Firecracker backend (Linux) requires the `firecracker` binary, KVM and e2fsprogs; Docker is needed only to build the infra images from source instead of using a release. The legacy Docker backend requires Docker. Every backend needs tmux 3.1 or newer, which runs the agent sessions. Claude bottles also need a long-lived Claude Code OAuth token (`claude setup-token`) exported as `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`.
+**A backend**, which the installer deliberately does *not* install for you — `doctor` reports what's missing afterwards. On compatible macOS hosts, the default backend requires Apple's `container` CLI and does not require Docker. The Firecracker backend (Linux) requires the `firecracker` binary, KVM and e2fsprogs; Docker is needed only to build the infra images from source instead of using a release. The Docker backend requires Docker. Every backend needs tmux 3.1 or newer, which runs the agent sessions. Claude bottles also need a long-lived Claude Code OAuth token (`claude setup-token`) exported as `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`.
 
 Use `BOT_BOTTLE_BACKEND=docker bot-bottle start <agent>` on hosts where neither Apple Container nor KVM is available and Docker is the desired backend.
 

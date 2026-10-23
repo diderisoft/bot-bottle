@@ -35,6 +35,17 @@ def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> Mock:
 
 
 _ORCH_URL = "http://orchestrator:9000"
+
+
+def _healthy_network(argv: list[str]) -> Mock | None:
+    """The answer for an `--internal`, correctly-labelled gateway network, or
+    None when `argv` isn't a gateway-network inspect."""
+    if argv[:3] != ["docker", "network", "inspect"] or "--format" not in argv:
+        return None
+    fmt = argv[argv.index("--format") + 1]
+    if "Internal" in fmt:
+        return _proc(stdout=f"{DEFAULT_GATEWAY_SUBNET}|true\n")
+    return _proc(stdout="")  # attached containers: none
 _TOKEN = "gw-jwt-token"
 
 
@@ -83,6 +94,8 @@ class TestDockerGateway(unittest.TestCase):
 
         def fake(argv: list[str], **_kw: object) -> Mock:
             calls.append(argv)
+            if (net := _healthy_network(argv)) is not None:
+                return net
             if argv[:2] == ["docker", "ps"]:
                 return _proc(stdout=self.sc.name)          # running
             if argv[:3] == ["docker", "image", "inspect"]:
@@ -261,13 +274,16 @@ class TestDockerGateway(unittest.TestCase):
 
         with patch(_RUN_DOCKER, side_effect=fake):
             self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
-        creates = [c for c in calls if c[:3] == ["docker", "network", "create"]]
+        creates = [c for c in calls if c[:3] == ["docker", "network", "create"]
+                   and c[-1] == self.sc.network]
         self.assertEqual(
             [[
                 "docker", "network", "create",
                 # IPv6 is disabled so a default-IPv6 daemon can't attach a
                 # malformed fdd0::/64 subnet that breaks `network inspect`.
                 "--ipv6=false",
+                # No route off the box: agents reach only the gateway.
+                "--internal",
                 "--subnet", DEFAULT_GATEWAY_SUBNET,
                 "--label",
                 f"bot-bottle.gateway-subnet={DEFAULT_GATEWAY_SUBNET}",
@@ -284,7 +300,7 @@ class TestDockerGateway(unittest.TestCase):
             if argv[:2] == ["docker", "ps"]:
                 return _proc(stdout="")
             if argv[:3] == ["docker", "network", "inspect"]:
-                return _proc(stdout="<no value>\n")
+                return _proc(stdout="<no value>|true\n")
             return _proc()
 
         with patch(_RUN_DOCKER, side_effect=fake):
@@ -323,11 +339,13 @@ class TestDockerGateway(unittest.TestCase):
             self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
         self.assertIn(["docker", "rm", "--force", self.sc.name], calls)
         self.assertIn(["docker", "network", "rm", self.sc.network], calls)
-        creates = [c for c in calls if c[:3] == ["docker", "network", "create"]]
+        creates = [c for c in calls if c[:3] == ["docker", "network", "create"]
+                   and c[-1] == self.sc.network]
         self.assertEqual(
             [[
                 "docker", "network", "create",
                 "--ipv6=false",
+                "--internal",
                 "--subnet", DEFAULT_GATEWAY_SUBNET,
                 "--label",
                 f"bot-bottle.gateway-subnet={DEFAULT_GATEWAY_SUBNET}",
@@ -350,7 +368,8 @@ class TestDockerGateway(unittest.TestCase):
         with patch(_RUN_DOCKER, side_effect=fake):
             self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
         self.assertNotIn(["docker", "network", "rm", self.sc.network], calls)
-        creates = [c for c in calls if c[:3] == ["docker", "network", "create"]]
+        creates = [c for c in calls if c[:3] == ["docker", "network", "create"]
+                   and c[-1] == self.sc.network]
         self.assertEqual(1, len(creates))
 
     def test_ensure_running_does_not_destroy_on_generic_inspect_error(self) -> None:
@@ -404,11 +423,72 @@ class TestDockerGateway(unittest.TestCase):
 
         def fake(argv: list[str], **_kw: object) -> Mock:
             calls.append(argv)
+            if (net := _healthy_network(argv)) is not None:
+                return net
             return _proc(stdout="") if argv[:2] == ["docker", "ps"] else _proc()
 
         with patch(_RUN_DOCKER, side_effect=fake):
             self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)  # network inspect returns 0 → exists
         self.assertEqual([], [c for c in calls if c[:3] == ["docker", "network", "create"]])
+        self.assertNotIn(["docker", "network", "rm", self.sc.network], calls)
+
+    def test_gateway_joins_the_egress_network_agents_are_not_on(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake(argv: list[str], **_kw: object) -> Mock:
+            calls.append(argv)
+            if (net := _healthy_network(argv)) is not None:
+                return net
+            if argv[:3] == ["docker", "network", "inspect"]:
+                return _proc(returncode=1, stderr="No such network")
+            return _proc(stdout="") if argv[:2] == ["docker", "ps"] else _proc()
+
+        with patch(_RUN_DOCKER, side_effect=fake):
+            self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
+        self.assertNotEqual(self.sc.network, self.sc.egress_network)
+        self.assertIn(
+            ["docker", "network", "create", "--ipv6=false", self.sc.egress_network], calls)
+        self.assertIn(
+            ["docker", "network", "connect", self.sc.egress_network, self.sc.name], calls)
+
+    def _non_internal_network(self, calls: list[list[str]], attached: str) -> object:
+        def fake(argv: list[str], **_kw: object) -> Mock:
+            calls.append(argv)
+            if argv[:2] == ["docker", "ps"]:
+                return _proc(stdout="")
+            if argv[:3] == ["docker", "network", "inspect"] and "--format" in argv:
+                fmt = argv[argv.index("--format") + 1]
+                if "Internal" in fmt:
+                    return _proc(stdout=f"{DEFAULT_GATEWAY_SUBNET}|false\n")
+                return _proc(stdout=attached)
+            return _proc()
+        return fake
+
+    def test_a_non_internal_network_is_replaced_when_nothing_is_attached(self) -> None:
+        # Older releases created the agent network without `--internal`, which
+        # gives agents a route that bypasses the gateway. It must be recreated.
+        calls: list[list[str]] = []
+        with patch(_RUN_DOCKER, side_effect=self._non_internal_network(
+                calls, f"{self.sc.name} ")):
+            self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
+        self.assertIn(["docker", "network", "rm", self.sc.network], calls)
+        creates = [c for c in calls if c[:3] == ["docker", "network", "create"]
+                   and c[-1] == self.sc.network]
+        self.assertEqual(1, len(creates))
+        self.assertIn("--internal", creates[0])
+
+    def test_a_non_internal_network_with_bottles_attached_fails_closed(self) -> None:
+        # Replacing it would strand the running bottles, and launching onto it
+        # would leak: refuse, and change nothing.
+        calls: list[list[str]] = []
+        with patch(_RUN_DOCKER, side_effect=self._non_internal_network(
+                calls, f"{self.sc.name} bot-bottle-demo-abc ")):
+            with self.assertRaises(GatewayError) as cm:
+                self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
+        self.assertIn("bot-bottle-demo-abc", str(cm.exception))
+        self.assertNotIn(["docker", "network", "rm", self.sc.network], calls)
+        self.assertFalse(any(c[:3] == ["docker", "rm", "--force"] for c in calls))
+        self.assertFalse(any(c[:2] == ["docker", "run"] for c in calls))
 
     def test_ensure_running_raises_on_docker_failure(self) -> None:
         def fake(argv: list[str], **_kw: object) -> Mock:

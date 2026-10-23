@@ -31,7 +31,7 @@ from typing import Callable, Generator
 from ...agent_provider import runtime_for
 from ...image_cache import check_stale
 from ...lib.log import die, info
-from .. import BottleImages, oci_agent_image
+from .. import BottleImages, isolation_probe, oci_agent_image
 from ..launch_common import (
     LaunchTeardown,
     egress_token_values,
@@ -191,7 +191,8 @@ def launch(
             compose_dump_logs, project, compose_file, compose_log_path(state_dir),
         )
 
-        # Step 6: provision (CA install now uses the gateway CA) + yield.
+        # Step 6: prove the agent has no route off the box except through the
+        # gateway, then provision (CA install uses the gateway CA) + yield.
         bottle = DockerBottle(
             plan.container_name,
             teardown,
@@ -202,6 +203,13 @@ def launch(
             terminal_title=terminal_title(plan.spec),
             terminal_color=plan.spec.color,
             agent_workdir=plan.workspace_plan.workdir,
+        )
+        isolation_probe.verify_isolation(
+            lambda script: bottle.exec(script).stdout,
+            what=f"agent container {plan.container_name}",
+            remedy=(f"Its network ({ctx.network}) must be a docker `--internal` "
+                    "network; stop running bottles and relaunch so it is recreated."),
+            check_dns=True,
         )
         bottle.prompt_path = provision(plan, bottle)
         yield bottle

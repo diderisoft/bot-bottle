@@ -24,6 +24,7 @@ from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.backend.docker.consolidated_launch import LaunchContext
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
+from bot_bottle.lib.log import Die
 from bot_bottle.manifest import ManifestIndex
 from tests.unit import use_bottle_root
 
@@ -113,6 +114,7 @@ class TestTeardownWarning(unittest.TestCase):
              ), \
              mock.patch.object(launch_mod, "compose_up") as compose_up, \
              mock.patch.object(launch_mod, "compose_dump_logs"), \
+             mock.patch.object(launch_mod.isolation_probe, "verify_isolation"), \
              mock.patch.object(
                  launch_mod, "compose_down",
                  side_effect=RuntimeError("compose down failed"),
@@ -129,6 +131,46 @@ class TestTeardownWarning(unittest.TestCase):
         self.assertEqual(
             "encryption-key", compose_up.call_args.kwargs["env"]["ENV_VAR_SECRET"],
         )
+
+
+    def test_a_failed_isolation_probe_stops_the_launch_before_provisioning(self):
+        plan = _plan(self._tmp)
+        gw = mock.Mock()
+        gw.ca_cert_pem.return_value = "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n"
+        ctx = LaunchContext(
+            bottle_id="b1", identity_token="t", source_ip="172.20.0.4",
+            network="bot-bottle-gateway", gateway_ip="172.20.0.2",
+            env_var_secret="encryption-key",
+        )
+        images = BottleImages(agent="bot-bottle-claude:latest")
+        provision = mock.Mock(return_value=None)
+
+        with mock.patch.object(launch_mod, "launch_consolidated", return_value=ctx), \
+             mock.patch.object(launch_mod, "deprovision_consolidated") as deprovision, \
+             mock.patch.object(launch_mod, "DockerGateway", return_value=gw), \
+             mock.patch.object(
+                 launch_mod, "consolidated_agent_compose",
+                 return_value={"services": {"agent": {}}},
+             ), \
+             mock.patch.object(
+                 launch_mod, "write_compose_file", return_value=Path("/tmp/compose.yml"),
+             ), \
+             mock.patch.object(launch_mod, "compose_up"), \
+             mock.patch.object(launch_mod, "compose_dump_logs"), \
+             mock.patch.object(launch_mod, "compose_down") as compose_down, \
+             mock.patch.object(
+                 launch_mod.isolation_probe, "verify_isolation",
+                 side_effect=Die(1, "ISOLATION FAILURE"),
+             ) as probe, \
+             contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(Die):
+                with launch_mod.launch(plan, images, provision=provision):
+                    pass
+
+        self.assertTrue(probe.call_args.kwargs["check_dns"])
+        provision.assert_not_called()
+        compose_down.assert_called_once()
+        deprovision.assert_called_once()
 
 
 if __name__ == "__main__":

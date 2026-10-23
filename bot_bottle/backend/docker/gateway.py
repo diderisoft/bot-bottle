@@ -24,6 +24,10 @@ from ...control.gateway import (
 )
 
 DEFAULT_GATEWAY_SUBNET = "10.242.255.0/24"
+# The gateway's route out. Agents share only the `--internal` gateway network
+# with the gateway, so this is the one network with a route off the box, and
+# only the gateway is on it.
+GATEWAY_EGRESS_NETWORK = "bot-bottle-gateway-egress"
 _GATEWAY_SUBNET_LABEL = "bot-bottle.gateway-subnet"
 
 
@@ -41,6 +45,7 @@ class DockerGateway(Gateway):
         name: str = GATEWAY_NAME,
         network: str = GATEWAY_NETWORK,
         control_network: str = "",
+        egress_network: str = GATEWAY_EGRESS_NETWORK,
         build_context: Path | None = None,
         dockerfile: str | None = GATEWAY_DOCKERFILE,
         host_port_bindings: tuple[int, ...] = (),
@@ -50,6 +55,7 @@ class DockerGateway(Gateway):
         self.image_ref = image_ref or settings.infra.gateway_image
         self.name = name
         self.network = network
+        self.egress_network = egress_network
         self._settings = settings
         # When set, the gateway is dual-homed: it also joins this `--internal`
         # control network (shared only with the orchestrator) so it can resolve
@@ -172,18 +178,25 @@ class DockerGateway(Gateway):
         """Create the shared gateway network if it doesn't exist. Idempotent —
         a concurrent create loses harmlessly (the loser sees 'already exists').
         The explicit subnet is required because bottle attribution pins source
-        IPs; Docker rejects static endpoint addresses on an auto-IPAM network."""
+        IPs; Docker rejects static endpoint addresses on an auto-IPAM network.
+
+        The network is `--internal`: agents on it have no route off the box,
+        so everything they send must go through the gateway. A network left
+        without the flag by an older release is replaced, but only once no
+        bottle is attached to it."""
         inspected = run_docker([
             "docker", "network", "inspect",
-            "--format", f'{{{{index .Labels "{_GATEWAY_SUBNET_LABEL}"}}}}',
+            "--format", f'{{{{index .Labels "{_GATEWAY_SUBNET_LABEL}"}}}}|{{{{.Internal}}}}',
             self.network,
         ])
         if inspected.returncode == 0:
-            marker = inspected.stdout.strip()
-            if marker in {"", self._subnet}:
+            marker, _, internal = inspected.stdout.strip().rpartition("|")
+            if marker in {"", self._subnet} and internal == "true":
                 return
-            # Inspectable but mislabelled: the stale auto-IPAM network created
-            # by older releases. Replace it below.
+            if internal != "true":
+                self._refuse_replacing_with_bottles_attached()
+            # Mislabelled (the stale auto-IPAM network created by older
+            # releases) or not internal: replace it below.
             stale = True
         else:
             # inspect failed. Classify by stderr — do NOT assume "not absent"
@@ -233,6 +246,7 @@ class DockerGateway(Gateway):
             # ParseAddr in `network inspect`/`ls`, which poisons every launch
             # that reads this network's subnet.
             "--ipv6=false",
+            "--internal",
             "--subnet", self._subnet,
             "--label", f"{_GATEWAY_SUBNET_LABEL}={self._subnet}",
             self.network,
@@ -240,6 +254,43 @@ class DockerGateway(Gateway):
         if proc.returncode != 0 and "already exists" not in proc.stderr:
             raise GatewayError(
                 f"gateway network {self.network} failed to create: {proc.stderr.strip()}"
+            )
+
+    def _refuse_replacing_with_bottles_attached(self) -> None:
+        """Fail closed when the gateway network must be replaced while bottles
+        still run on it: removing it would strand them, and launching more onto
+        it would give them a route that bypasses the gateway."""
+        proc = run_docker([
+            "docker", "network", "inspect",
+            "--format", "{{range .Containers}}{{.Name}} {{end}}",
+            self.network,
+        ])
+        attached = [n for n in proc.stdout.split() if n != self.name]
+        if proc.returncode != 0 or attached:
+            raise GatewayError(
+                f"gateway network {self.network} is not `--internal`, so its "
+                f"agents can reach the network without the gateway. It must be "
+                f"recreated, but bottles are still attached "
+                f"({', '.join(attached) or 'unknown'}). Stop them "
+                f"(`bot-bottle cleanup`) and launch again."
+            )
+
+    def _connect_egress_network(self) -> None:
+        """Ensure the gateway's egress network exists and attach the gateway to
+        it — its only route off the box. Idempotent."""
+        if run_docker(["docker", "network", "inspect", self.egress_network]).returncode != 0:
+            proc = run_docker(
+                ["docker", "network", "create", "--ipv6=false", self.egress_network])
+            if proc.returncode != 0 and "already exists" not in proc.stderr:
+                raise GatewayError(
+                    f"egress network {self.egress_network} failed to create: "
+                    f"{proc.stderr.strip()}"
+                )
+        proc = run_docker(["docker", "network", "connect", self.egress_network, self.name])
+        if proc.returncode != 0 and "already exists" not in proc.stderr:
+            raise GatewayError(
+                f"gateway failed to join egress network {self.egress_network}: "
+                f"{proc.stderr.strip()}"
             )
 
     def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> bool:
@@ -313,10 +364,12 @@ class DockerGateway(Gateway):
         proc = run_docker(argv, env=run_env)
         if proc.returncode != 0:
             raise GatewayError(f"gateway failed to start: {proc.stderr.strip()}")
-        # Dual-home onto the control network so the daemons resolve the
-        # orchestrator by name. Docker attaches only one network at `run`, so
-        # the second is a `network connect` — the daemons tolerate the brief
-        # pre-connect window (they retry /resolve per request).
+        # Attach the egress network (the gateway's route out) and the control
+        # network (so the daemons resolve the orchestrator by name). Docker
+        # attaches only one network at `run`, so these are `network connect`s;
+        # the daemons tolerate the brief pre-connect window (they retry
+        # /resolve per request).
+        self._connect_egress_network()
         if self._control_network:
             self._connect_control_network()
         return True

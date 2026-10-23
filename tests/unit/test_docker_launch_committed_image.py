@@ -106,6 +106,7 @@ class TestLaunchCommittedImage(unittest.TestCase):
                 mock.patch.object(launch_mod, "compose_up"), \
                 mock.patch.object(launch_mod, "compose_dump_logs"), \
                 mock.patch.object(launch_mod, "compose_down"), \
+                mock.patch.object(launch_mod.isolation_probe, "verify_isolation"), \
                 contextlib.redirect_stderr(io.StringIO()):
             yield built
 
