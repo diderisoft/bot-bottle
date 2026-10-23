@@ -14,22 +14,22 @@ from unittest.mock import MagicMock, patch
 
 class TestFlagParsing(unittest.TestCase):
     def test_console_url_flag(self) -> None:
-        from bot_bottle.cli.commands.login import _flag
-        self.assertEqual(_flag(["--console-url", "http://x"], "--console-url"), "http://x")
+        from bot_bottle.cli.commands.login import flag
+        self.assertEqual(flag(["--console-url", "http://x"], "--console-url"), "http://x")
 
     def test_console_url_equals_form(self) -> None:
-        from bot_bottle.cli.commands.login import _flag
+        from bot_bottle.cli.commands.login import flag
         self.assertEqual(
-            _flag(["--console-url=http://x"], "--console-url"), "http://x"
+            flag(["--console-url=http://x"], "--console-url"), "http://x"
         )
 
     def test_label_flag(self) -> None:
-        from bot_bottle.cli.commands.login import _flag
-        self.assertEqual(_flag(["--label", "my-mac"], "--label"), "my-mac")
+        from bot_bottle.cli.commands.login import flag
+        self.assertEqual(flag(["--label", "my-mac"], "--label"), "my-mac")
 
     def test_missing_flag_returns_none(self) -> None:
-        from bot_bottle.cli.commands.login import _flag
-        self.assertIsNone(_flag([], "--console-url"))
+        from bot_bottle.cli.commands.login import flag
+        self.assertIsNone(flag([], "--console-url"))
 
 
 class TestHttpHelpers(unittest.TestCase):

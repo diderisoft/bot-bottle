@@ -23,6 +23,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +43,7 @@ def _usage() -> None:
     )
 
 
-def _flag(argv: list[str], name: str) -> str | None:
+def flag(argv: list[str], name: str) -> str | None:
     for i, arg in enumerate(argv):
         if arg == name and i + 1 < len(argv):
             return argv[i + 1]
@@ -110,7 +111,7 @@ def cmd_login(argv: list[str]) -> int:
         _usage()
         return 0
 
-    console_url = _flag(argv, "--console-url") or os.environ.get(_CONSOLE_URL_ENV)
+    console_url = flag(argv, "--console-url") or os.environ.get(_CONSOLE_URL_ENV)
     if not console_url:
         sys.stderr.write(
             "bb login: --console-url or BB_CONSOLE_URL is required\n"
@@ -118,24 +119,43 @@ def cmd_login(argv: list[str]) -> int:
         return 1
     console_url = console_url.rstrip("/")
 
-    label = _flag(argv, "--label") or socket.gethostname()
+    label = flag(argv, "--label") or socket.gethostname()
 
+    def show(resp: dict[str, Any]) -> None:
+        sys.stderr.write(
+            f"\nOpen this URL in your browser to authorize this host:\n\n"
+            f"  {console_url}/hosts/authorize?code={resp['user_code']}\n\n"
+        )
+
+    return run_device_flow(console_url, label, show, prog="bb login")
+
+
+def run_device_flow(
+    console_url: str, label: str, show: Callable[[dict[str, Any]], None],
+    *, confirm: bool = False, prog: str = "bb login",
+) -> int:
+    """Start a device flow, let ``show`` tell the operator where to approve
+    it, then poll until it's approved and save the host's tokens.
+
+    ``confirm`` asks the console for a confirm code (`bot-bottle pair`); it
+    comes back in the response ``show`` gets."""
     try:
-        resp = _post(f"{console_url}/api/v1/hosts/authorize", {"label": label})
+        resp = _post(f"{console_url}/api/v1/hosts/authorize",
+                     {"label": label, **({"confirm": True} if confirm else {})})
     except (OSError, ValueError) as exc:
-        sys.stderr.write(f"bb login: failed to start authorization: {exc}\n")
+        sys.stderr.write(f"{prog}: failed to start authorization: {exc}\n")
+        return 1
+    if confirm and not resp.get("confirm_code"):
+        sys.stderr.write(f"{prog}: this console can't pair with a confirm code yet; "
+                         "use `bb login` instead\n")
         return 1
 
     device_code = resp["device_code"]
-    user_code = resp["user_code"]
     expires_in = resp.get("expires_in", 300)
     poll_sleep = max(1, min(int(resp.get("poll_interval", _POLL_SLEEP)), 60))
 
-    sys.stderr.write(
-        f"\nOpen this URL in your browser to authorize this host:\n\n"
-        f"  {console_url}/hosts/authorize?code={user_code}\n\n"
-        f"Waiting for approval"
-    )
+    show(resp)
+    sys.stderr.write("Waiting for approval")
 
     deadline = time.monotonic() + expires_in
     while time.monotonic() < deadline:
@@ -167,7 +187,7 @@ def cmd_login(argv: list[str]) -> int:
             sys.stderr.write(f"Credentials saved to {path}\n")
             return 0
         if st == "denied":
-            sys.stderr.write("\n\nDenied by operator.\n")
+            sys.stderr.write("\n\nDenied.\n")
             return 1
 
     sys.stderr.write("\n\nAuthorization timed out.\n")

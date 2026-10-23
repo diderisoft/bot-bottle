@@ -32,6 +32,7 @@ _HANDLERS: dict[str, str] = {
     "init": "init:cmd_init",
     "list": "list:cmd_list",
     "login": "login:cmd_login",
+    "pair": "pair:cmd_pair",
     "remote": "remote:cmd_remote",
     "resume": "resume:cmd_resume",
     "start": "start:cmd_start",
@@ -65,7 +66,7 @@ COMMANDS = {name: _lazy(spec) for name, spec in _HANDLERS.items()}
 # likewise never touch the store, nor do the host-service commands.
 NO_MIGRATION_COMMANDS = frozenset({
     "attach", "audit", "backend", "doctor", "down", "help", "install", "jobs", "login",
-    "remote", "status", "uninstall", "up",
+    "pair", "remote", "status", "uninstall", "up",
 })
 
 __all__ = ["COMMANDS", "NO_MIGRATION_COMMANDS"]

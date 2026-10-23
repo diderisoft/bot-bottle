@@ -112,12 +112,15 @@ class TestCliBottleCommandsAreHostControllerClients(unittest.TestCase):
 
 class TestRuntimeModuleSizes(unittest.TestCase):
     def test_no_runtime_module_grows_beyond_global_ceiling(self) -> None:
-        """A coarse ceiling catches new monoliths; focused caps stay tighter."""
+        """A coarse ceiling catches new monoliths; focused caps stay tighter.
+        Third-party code vendored verbatim (marked on its first line) is ours
+        to ship, not to split."""
         ceiling = 850
         oversized = [
             f"{path.relative_to(ROOT)} ({len(path.read_text().splitlines())})"
             for path in (ROOT / "bot_bottle").rglob("*.py")
             if len(path.read_text().splitlines()) > ceiling
+            and not path.read_text().startswith("# Vendored verbatim")
         ]
         self.assertEqual(
             [], oversized,

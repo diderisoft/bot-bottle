@@ -37,6 +37,7 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w("  jobs      list the host controller's recent jobs\n")
     w("  list      list available agents from bot-bottle.json\n")
     w("  login     register this host with a bot-bottle console\n")
+    w("  pair      link this host to your phone (QR code + passkey)\n")
     w("  resume    re-launch a bottle by its identity (continues its saved state)\n")
     w("  start     boot a container for a named agent and attach an interactive session\n")
     w("  status    show the host controller, orchestrator and running bottles\n")
