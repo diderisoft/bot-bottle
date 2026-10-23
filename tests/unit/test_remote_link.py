@@ -247,6 +247,133 @@ class TestRemoteEnable(_RootCase):
         self.assertIn("bot-bottle[remote]", err.getvalue())
 
 
+class TestRemoteCommand(_RootCase):
+    """The CLI's other paths: the HTTP helper, refusals, disable and status."""
+
+    def _run(self, *argv: str, **patches: Any) -> tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.ExitStack() as stack:
+            for name, value in patches.items():
+                stack.enter_context(mock.patch.object(remote_cmd, name, value))
+            stack.enter_context(mock.patch.object(remote, "node_id", return_value="hostnode"))
+            stack.enter_context(contextlib.redirect_stdout(out))
+            stack.enter_context(contextlib.redirect_stderr(out))
+            rc = remote_cmd.cmd_remote(list(argv))
+        return rc, out.getvalue()
+
+    def _login(self) -> None:
+        remote.save_console({"url": "https://console", "host_id": "h1",
+                             "access_token": "at", "refresh_token": "rt"})
+
+    def test_request_sends_json_with_the_bearer_token(self) -> None:
+        sent: dict[str, Any] = {}
+
+        class _Resp(io.BytesIO):
+            def __enter__(self) -> "_Resp":
+                return self
+
+            def __exit__(self, *exc: object) -> None:
+                pass
+
+        def urlopen(req: Any, timeout: float) -> _Resp:
+            del timeout
+            sent.update(method=req.get_method(), url=req.full_url,
+                        auth=req.get_header("Authorization"), body=json.loads(req.data))
+            return _Resp(b'{"ok": true}')
+
+        request = getattr(remote_cmd, "_request")
+        with mock.patch.object(remote_cmd.urllib.request, "urlopen", urlopen):
+            self.assertEqual({"ok": True}, request("PUT", "https://c/x", {"a": 1}, "tok"))
+        self.assertEqual({"method": "PUT", "url": "https://c/x", "auth": "Bearer tok",
+                          "body": {"a": 1}}, sent)
+
+    def test_explains_each_refusal(self) -> None:
+        self._login()
+        for status, phrase in ((401, "rejected this host's token"), (409, "another host"), (500, "HTTP 500")):
+            error = urllib.error.HTTPError("u", status, "no", {}, None)  # type: ignore[arg-type]
+            with self.subTest(status=status):
+                rc, output = self._run("enable", _bind=mock.Mock(side_effect=error))
+                self.assertEqual((1, True), (rc, phrase in output), output)
+        rc, output = self._run("enable", _bind=mock.Mock(side_effect=OSError("down")))
+        self.assertEqual((1, True), (rc, "couldn't reach the console" in output))
+        rc, output = self._run("enable", _bind=mock.Mock(return_value={}))
+        self.assertEqual((1, True), (rc, "iroh identity" in output))
+        self.assertFalse(remote.load_config().enabled)
+
+    def test_disable_keeps_the_pinned_console(self) -> None:
+        remote.save_config(remote.RemoteConfig(True, "cid", "tk"))
+        self.assertEqual(0, self._run("disable")[0])
+        self.assertEqual(remote.RemoteConfig(False, "cid", "tk"), remote.load_config())
+
+    def test_status_reports_the_link(self) -> None:
+        self.assertIn("disabled", self._run("status")[1])
+        remote.save_config(remote.RemoteConfig(True, "cid0123456789", "tk"))
+        self.assertIn("no report yet", self._run("status")[1])
+        remote.write_status(connected=False, error="console unreachable")
+        output = self._run("status")[1]
+        self.assertIn("not connected (console unreachable)", output)
+        remote.write_status(connected=True)
+        self.assertIn("link: connected", self._run("status")[1])
+
+    def test_usage(self) -> None:
+        self.assertEqual(2, self._run("bogus")[0])
+        self.assertEqual(0, self._run("--help")[0])
+
+    def test_a_malformed_status_file_reads_as_no_report(self) -> None:
+        (self.root / remote.STATUS_FILE).write_text("[not, an, object")
+        self.assertEqual({}, remote.read_status())
+
+
+class TestSupervisor(_RootCase):
+    """The link runs exactly while remote.json says it's enabled."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.enterContext(mock.patch.object(remote, "POLL_SECONDS", 0.05))
+        self.started: list[remote.RemoteConfig] = []
+        self.stopped = threading.Event()
+
+        async def fake_run(config: remote.RemoteConfig, bottles: Any,
+                           stop: threading.Event) -> None:
+            del bottles
+            self.started.append(config)
+            await asyncio.to_thread(stop.wait)
+            self.stopped.set()
+
+        self.enterContext(mock.patch.object(remote, "run", fake_run))
+
+    def _wait(self, condition: Any) -> bool:
+        deadline = 2.0
+        while deadline > 0 and not condition():
+            threading.Event().wait(0.02)
+            deadline -= 0.02
+        return bool(condition())
+
+    def test_enable_starts_and_disable_stops_the_link(self) -> None:
+        supervisor = remote.Supervisor(_Bottles())
+        supervisor.start()
+        self.addCleanup(supervisor.close)
+        self.assertFalse(self._wait(lambda: self.started))  # disabled: nothing runs
+        remote.save_config(remote.RemoteConfig(True, "cid", "tk"))
+        self.assertTrue(self._wait(lambda: self.started))
+        remote.save_config(remote.RemoteConfig(False, "cid", "tk"))
+        self.assertTrue(self.stopped.wait(2))
+        self.assertTrue(self._wait(
+            lambda: "disabled" in str(remote.read_status().get("error"))))
+
+    def test_a_link_that_cannot_run_reports_why(self) -> None:
+        async def failing(*_args: Any) -> None:
+            raise remote.RemoteError("install `bot-bottle[remote]`")
+
+        remote.save_config(remote.RemoteConfig(True, "cid", "tk"))
+        with mock.patch.object(remote, "run", failing):
+            supervisor = remote.Supervisor(_Bottles())
+            supervisor.start()
+            self.addCleanup(supervisor.close)
+            self.assertTrue(self._wait(
+                lambda: "bot-bottle[remote]" in str(remote.read_status().get("error"))))
+
+
 @unittest.skipIf(iroh is None, "needs the iroh bindings (the `remote` extra)")
 class TestOverRealIroh(_RootCase):
     """A console-shaped endpoint driving the host's real `run()` loop."""
