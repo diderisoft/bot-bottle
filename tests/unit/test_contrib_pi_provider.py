@@ -200,7 +200,7 @@ class TestPiProvision(unittest.TestCase):
                             for s in scripts))
 
     def test_the_remote_view_flag(self):
-        self.assertEqual(("--bb-remote-view",), PiAgentProvider().remote_view_args())
+        self.assertEqual(("--bb-remote-view=true",), PiAgentProvider().remote_view_args())
 
     def test_dies_when_dir_creation_fails(self):
         provision = AgentProvisionPlan(

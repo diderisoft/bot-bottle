@@ -73,7 +73,9 @@ def _supervise_paths(guest_home: str) -> tuple[str, str]:
 # Hides pi's empty input editor in a session the console relays to a phone
 # (`--bb-remote-view`); installed in every pi bottle, off unless flagged.
 _REMOTE_VIEW_EXTENSION = Path(__file__).with_name("remote_view.ts")
-_REMOTE_VIEW_FLAG = "--bb-remote-view"
+# With `=`: pi takes the word after a bare unknown flag as its value, which
+# would swallow the prompt that follows.
+_REMOTE_VIEW_FLAG = "--bb-remote-view=true"
 
 
 def _remote_view_path(guest_home: str) -> str:

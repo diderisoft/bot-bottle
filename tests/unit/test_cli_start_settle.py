@@ -106,9 +106,13 @@ class TestAgentArgs(unittest.TestCase):
                 self.assertNotIn("-p", args)
 
     def test_a_console_session_gets_the_providers_remote_view_args(self):
-        self.assertIn("--bb-remote-view", agent_args("pi", (), "Do it", headless=False,
+        self.assertIn("--bb-remote-view=true", agent_args("pi", (), "Do it", headless=False,
                                                      remote_view=True))
-        self.assertNotIn("--bb-remote-view", agent_args("pi", (), "Do it", headless=False))
+        self.assertNotIn("--bb-remote-view=true", agent_args("pi", (), "Do it", headless=False))
+        # The prompt stays its own argument: a bare flag would take it as its value.
+        args = agent_args("pi", (), "Do it", headless=False, remote_view=True)
+        self.assertEqual("Do it", args[-1])
+        self.assertTrue(all("=" in a for a in args if a.startswith("--bb-")))
         self.assertEqual(agent_args("claude", (), "", remote_view=True), agent_args("claude", (), ""))
 
     def test_a_prompt_that_looks_like_an_option_stays_a_prompt(self):
