@@ -4,10 +4,6 @@
 
 # bot-bottle
 
-[![test](https://gitea.dideric.is/didericis/bot-bottle/actions/workflows/test.yml/badge.svg?branch=main)](https://gitea.dideric.is/didericis/bot-bottle/actions?workflow=test.yml)
-[![coverage](https://img.shields.io/badge/coverage-85%25-brightgreen)](https://coverage.readthedocs.io/)
-[![core coverage](https://img.shields.io/badge/core%20coverage-94%25-brightgreen)](https://gitea.dideric.is/didericis/bot-bottle/src/branch/main/docs/decisions/0004-coverage-policy.md)
-
 **Problem:** Developer wants to run a coding agent without supervision, but they don't want a prompt injected or misbehaving agent wrecking their environment or exfiltrating sensitive data.
 
 **Solution:** Ephemeral, per agent "bottles" the agent cannot modify that scan all traffic for data exfiltration and limit capabilities and egress to only what the agent needs.
@@ -15,10 +11,10 @@
 ## Features
 
 - **Per-bottle egress allowlist** — TLS-bumped HTTP/HTTPS chokepoint with a per-manifest host allowlist; per-route path/method/header `matches` filtering; outbound DLP scanning for known tokens and secrets, inbound DLP scanning for prompt-injection attempts; DoH and arbitrary hosts blocked by default.
-- **Per-route token-match policy** — each egress route picks what happens when the outbound DLP catches a token via `dlp.outbound_on_match`: `supervise` (default) holds the request and surfaces it in `bot-bottle supervise` for approval (an approved value is remembered for the life of the proxy); `redact` scrubs the value and forwards; `block` is a hard `403`. Cuts false-positive friction without weakening default-deny.
+- **Per-route token-match policy** — each egress route picks what happens when the outbound DLP catches a token via `inspect.outbound_on_match`: `supervise` (default) holds the request and surfaces it in `bot-bottle supervise` for approval (an approved value is remembered for the life of the proxy); `redact` scrubs the value and forwards; `block` is a hard `403`. Cuts false-positive friction without weakening default-deny.
 - **Tokens the agent never sees** — host secrets live in a gateway; the agent dials `http://gateway:9099/<path>` and the proxy strips inbound `Authorization` and injects the real token before forwarding. `printenv` in the agent shows proxy URLs only.
 - **Gitleaks-scanned push (git-gate)** — `bottle.git` remotes route through the gateway's git-gate, which gitleaks-scans incoming refs pre-receive, refuses any push carrying a secret the bottle holds (its `?` secret env values and its exfil canary, matched by value rather than by shape), and forwards clean refs upstream over SSH. The agent never holds the upstream credential.
-- **Manifest-scoped skills + secrets** — each bottle declares its skills, env, git identity, remotes, and egress routes; unknown keys die at load.
+- **Manifest-scoped secrets and skills** — each bottle declares its env, git identity, remotes and egress routes, and each agent its skills and harness; unknown keys die at load.
 - **Project bottles need your trust** — your bottles (credentials, egress, remotes) live in `~/.bot-bottle/bottles/`. A repo may also ship bottles in `./.bot-bottle/bottles/`, but they run only after you've trusted their exact contents on this host (`bot-bottle trust <bottle>`), and any change asks again. The trust prompt lists every host and secret the bottle touches (including what it inherits through `extends`), and your own bottles win a name clash, so a cloned repo can't send a credential to another host without you seeing it first.
 - **Composable bottles (`extends:`)** — keep shared policy in one base bottle and overlay task bottles on top; the agent picks its own harness (`agent_provider`), so one bottle serves Claude, Codex and pi agents alike.
 - **Parallel, isolated bottles** — each bottle runs in its own backend-owned isolation boundary; bottles don't share state. They share the per-host gateway, which attributes every request to its bottle by source IP and keeps each bottle's policy, tokens and git-gate repos separate.
@@ -27,7 +23,7 @@
 - **Apple Container backend (macOS default when available)** — runs the agent and gateway with Apple's `container` CLI, using a host-only agent network plus a separate gateway egress network.
 - **Firecracker backend (Linux default when available)** — runs the agent in a KVM Firecracker microVM reached over SSH on a point-to-point TAP; the orchestrator and gateway run in their own per-host microVMs, so the host needs no Docker. A dedicated, fail-closed `nftables` table isolates the guest. Requires KVM (`/dev/kvm`) and a one-time privileged network-pool setup.
 - **Docker backend (fallback)** — for CI and hosts without Apple Container or KVM, via `BOT_BOTTLE_BACKEND=docker` or `--backend=docker`. It is the weakest boundary: agents are containers sharing the host kernel (gVisor narrows that when installed). Their network is `--internal`, so the gateway is still the only way out.
-- **Launch-time isolation probe** — before an agent runs, bot-bottle proves from inside it that it cannot reach the host or a public address without the gateway (and, on Docker, cannot resolve public names), and refuses to start it otherwise. On macos-container, agents can currently reach host services on the host's LAN and vmnet gateway addresses ([#678](https://gitea.dideric.is/didericis/bot-bottle/issues/678)), so there the host check only warns; the public-address and DNS checks still refuse the launch.
+- **Launch-time isolation probe** — before an agent runs, bot-bottle proves from inside it that it cannot reach the host or a public address without the gateway, and refuses to start it otherwise. On Docker and macos-container it also checks that the agent can't resolve public names. On macos-container, agents can currently reach host services on the host's LAN and vmnet gateway addresses ([#678](https://gitea.dideric.is/didericis/bot-bottle/issues/678)), so there the host check only warns; the public-address and DNS checks still refuse the launch.
 
 ## Architecture
 
@@ -106,11 +102,11 @@ The installer is a bootstrapper: it finds a suitable Python, installs bot-bottle
 
 **Python ≥ 3.11**, and this is the one that trips people up on macOS: the `python3` Apple ships at `/usr/bin/python3` is **3.9.6**, which is too old. Bare `python3` resolves to that stub far more often than people expect. `path_helper` builds a login shell's `PATH` from `/etc/paths` and then appends `/etc/paths.d/*`, and `/usr/bin` sits in the former — so even when `/opt/homebrew/bin` *is* on the `PATH` (via `/etc/paths.d/homebrew`), it comes after `/usr/bin` and loses. Prepending a newer Python is something your shell profile does, and a fresh account, a launchd job, or a CI runner has no such profile. So the installer looks past bare `python3` before giving up: it tries `python3`, then the versioned `python3.11`–`python3.14` names, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, and python.org framework builds — and tells you which one it picked when it isn't the obvious one. Point it somewhere specific with `BOT_BOTTLE_PYTHON=/path/to/python3`.
 
-**No `pipx` required.** If `pipx` is present the installer uses it and stays out of the way. If it isn't, bot-bottle installs into a private venv at `~/.bot-bottle/venv` (override with `BOT_BOTTLE_VENV`) and symlinks the entry point into `~/.local/bin`. There is deliberately no `pip install --user` path: Homebrew, python.org and Debian/Ubuntu interpreters are all externally managed (PEP 668), which blocks `--user` outright — so on a Mac it is never the fallback it appears to be. A venv is exempt from PEP 668, and `venv` is stdlib, so unlike `pipx` there is nothing to bootstrap first.
+**No `uv` or `pipx` required.** If either is present the installer uses it (`uv` first) and stays out of the way. If neither is, bot-bottle installs into a private venv at `~/.bot-bottle/venv` (override with `BOT_BOTTLE_VENV`) and symlinks the entry point into `~/.local/bin`. There is deliberately no `pip install --user` path: Homebrew, python.org and Debian/Ubuntu interpreters are all externally managed (PEP 668), which blocks `--user` outright — so on a Mac it is never the fallback it appears to be. A venv is exempt from PEP 668, and `venv` is stdlib, so unlike `uv` or `pipx` there is nothing to bootstrap first.
 
 **`git`**, because the default install spec is a `git+` URL. Set `BOT_BOTTLE_INSTALL_SPEC` to a wheel path or index name to avoid it.
 
-**A backend**, which the installer deliberately does *not* install for you — `doctor` reports what's missing afterwards. On compatible macOS hosts, the default backend requires Apple's `container` CLI and does not require Docker. The Firecracker backend (Linux) requires the `firecracker` binary, KVM and e2fsprogs; Docker is needed only to build the infra images from source instead of using a release. The Docker backend requires Docker. Every backend needs tmux 3.1 or newer, which runs the agent sessions. Claude bottles also need a long-lived Claude Code OAuth token (`claude setup-token`) exported as `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`.
+**A backend**, which the installer deliberately does *not* install for you — `doctor` reports what's missing afterwards. On compatible macOS hosts, the default backend requires Apple's `container` CLI and does not require Docker. The Firecracker backend (Linux) requires the `firecracker` binary, KVM and e2fsprogs; Docker is needed only to build the infra images from source instead of using a release. The Docker backend requires Docker. Every backend needs tmux 3.1 or newer, which runs the agent sessions. A Claude agent signs in either with your host's Claude Code login (`agent_provider.forward_host_credentials: true`, what `bot-bottle setup` writes when Claude Code is installed and logged in) or with a long-lived token from `claude setup-token`, kept in a host variable that `agent_provider.auth_token` names. Either way the gateway injects it; the agent only ever sees a placeholder.
 
 Use `BOT_BOTTLE_BACKEND=docker bot-bottle start <agent>` on hosts where neither Apple Container nor KVM is available and Docker is the desired backend.
 
@@ -142,7 +138,7 @@ request, so each registry needs a route — **and so does the CDN it redirects
 layer blobs to**, which is a different host. Without the CDN route the pull
 authenticates, fetches the manifest, then 403s partway through.
 
-Docker Hub and GHCR additionally need `preserve_auth: true`: their token dance
+Docker Hub and GHCR additionally need `inspect.preserve_auth: true`: their token dance
 uses a client-fetched per-scope bearer token that the proxy would otherwise
 strip. Turn DLP off on every registry and CDN route — the bodies are
 compressed layer blobs that no detector can read, and buffering them is what
@@ -154,28 +150,25 @@ egress:
   routes:
     # Docker Hub: registry, token endpoint, blob CDN.
     - host: registry-1.docker.io
-      preserve_auth: true
-      dlp: { outbound_detectors: false, inbound_detectors: false }
+      inspect: { preserve_auth: true, outbound_detectors: false, inbound_detectors: false }
     - host: auth.docker.io
-      preserve_auth: true
-      dlp: { outbound_detectors: false, inbound_detectors: false }
+      inspect: { preserve_auth: true, outbound_detectors: false, inbound_detectors: false }
     - host: production.cloudfront.docker.com
-      dlp: { outbound_detectors: false, inbound_detectors: false }
+      inspect: { outbound_detectors: false, inbound_detectors: false }
     # GHCR: registry + blob CDN.
     - host: ghcr.io
-      preserve_auth: true
-      dlp: { outbound_detectors: false, inbound_detectors: false }
+      inspect: { preserve_auth: true, outbound_detectors: false, inbound_detectors: false }
     - host: pkg-containers.githubusercontent.com
-      dlp: { outbound_detectors: false, inbound_detectors: false }
+      inspect: { outbound_detectors: false, inbound_detectors: false }
     # quay.io: registry + blob CDNs. No preserve_auth needed for public pulls.
     - host: quay.io
-      dlp: { outbound_detectors: false, inbound_detectors: false }
+      inspect: { outbound_detectors: false, inbound_detectors: false }
     - host: cdn01.quay.io
-      dlp: { outbound_detectors: false, inbound_detectors: false }
+      inspect: { outbound_detectors: false, inbound_detectors: false }
     - host: cdn02.quay.io
-      dlp: { outbound_detectors: false, inbound_detectors: false }
+      inspect: { outbound_detectors: false, inbound_detectors: false }
     - host: cdn03.quay.io
-      dlp: { outbound_detectors: false, inbound_detectors: false }
+      inspect: { outbound_detectors: false, inbound_detectors: false }
 ```
 
 `mcr.microsoft.com` and `registry.k8s.io` follow the same shape and also
@@ -211,17 +204,17 @@ On Linux, a KVM-capable host defaults to the Firecracker backend. It needs:
 BOT_BOTTLE_BACKEND=firecracker bot-bottle start <agent>
 ```
 
-> **NixOS:** enable `virtualisation.docker`, ensure the KVM module is loaded (`boot.kernelModules = [ "kvm-intel" ];` or `kvm-amd`), and add your user to the `kvm` and `docker` groups. For the network pool, consume the flake module — `imports = [ inputs.bot-bottle.nixosModules.firecracker-netpool ]; services.bot-bottle-firecracker = { enable = true; owner = "you"; };` — then `nixos-rebuild switch` (imperative nft/TAP rules don't survive a rebuild; channel users can `imports = [ <bot-bottle>/nix/firecracker-netpool.nix ]`). `firecracker` isn't in nixpkgs by default as a user binary — install the release binary (pin the version) and put it on `PATH`.
+> **NixOS:** ensure the KVM module is loaded (`boot.kernelModules = [ "kvm-intel" ];` or `kvm-amd`) and add your user to the `kvm` group. Docker (`virtualisation.docker`, plus the `docker` group) is only needed to build the infra images from source. For the network pool, consume the flake module — `imports = [ inputs.bot-bottle.nixosModules.firecracker-netpool ]; services.bot-bottle-firecracker = { enable = true; owner = "you"; };` — then `nixos-rebuild switch` (imperative nft/TAP rules don't survive a rebuild; channel users can `imports = [ <bot-bottle>/nix/firecracker-netpool.nix ]`). `firecracker` isn't in nixpkgs by default as a user binary — install the release binary (pin the version) and put it on `PATH`.
 
 > **CI:** Firecracker integration runs in the manually dispatched `.gitea/workflows/pre-release-test.yml` on a self-hosted runner labelled `kvm`; privileged KVM hosts never execute unreviewed PR code automatically. Provision it like a normal Firecracker host: `firecracker` on `PATH`, `/dev/kvm`, the cached guest kernel and static dropbear, and the persistent TAP/nft pool. The required pull-request workflow runs unit plus the complete Docker integration suite on `ubuntu-latest`; see `docs/reference/ci.md`.
 
 ```sh
-bot-bottle start <agent>   # builds the image on first run, drops you into claude
+bot-bottle start <agent>   # pulls (or builds) the images on first run, then drops you into the agent
 ```
 
 ## Manifest
 
-Bottles and agents are Markdown files with YAML frontmatter under `~/.bot-bottle/`. The Markdown body is the system prompt. Bottles live in `~/.bot-bottle/bottles/`; agents may also be shipped by a repo at `<repo>/.bot-bottle/agents/<name>.md`. A repo agent whose `agent_provider` grants something (your login, a model host with a secret, or an image build) runs only once this host trusts it, like a repo bottle (`bot-bottle trust <name>`).
+Bottles and agents are Markdown files with YAML frontmatter under `~/.bot-bottle/`. An agent's Markdown body is its system prompt; a bottle's is documentation. Bottles live in `~/.bot-bottle/bottles/`; agents may also be shipped by a repo at `<repo>/.bot-bottle/agents/<name>.md`. A repo agent whose `agent_provider` grants something (your login, a model host with a secret, or an image build) runs only once this host trusts it, like a repo bottle (`bot-bottle trust <name>`).
 
 **Bottle** (`~/.bot-bottle/bottles/gitea-dev.md`):
 
@@ -253,7 +246,8 @@ egress:
           token_ref: BOT_BOTTLE_GITEA_TOKEN
         matches:               # optional — restrict to specific paths/methods/headers
           - paths:
-              - {type: prefix, value: /api/v1/}
+              - type: prefix
+                value: /api/v1/
             methods: [GET, POST, PATCH, DELETE]
         outbound_detectors: [token_patterns, known_secrets]
         inbound_detectors: false   # disable response scanning for this host
@@ -278,25 +272,25 @@ skills:
 You help maintain Gitea-hosted projects.
 ````
 
-**Egress route fields:**
+**Egress route fields:** a route has `host`, an optional `role`, and an optional `inspect` block holding everything else.
 
 | Field | Required | Description |
 |---|---|---|
 | `host` | yes | Hostname to allowlist. One entry per host. |
 | `role` | no | Reserved for future use. The key is recognised but any value is currently rejected at load. Provider auth routes (e.g. Claude's `api.anthropic.com`) are injected automatically from the agent's `agent_provider`, not via `role`; a bottle route for such a host fails the launch. |
-| `auth.scheme` | when `auth` present | `Bearer` or `token`. Injected by the proxy; the agent never sees the value. |
-| `auth.token_ref` | when `auth` present | Env-var name holding the secret on the host. |
-| `matches` | no | Array of `{paths, methods, headers}` filters. A request must match at least one entry (if any are given) to be forwarded. |
-| `matches[].paths` | no | Array of `{type, value}`. `type` is `prefix` (default), `exact`, or `regex`. |
-| `matches[].methods` | no | Array of HTTP method strings, e.g. `[GET, POST]`. |
-| `matches[].headers` | no | Array of `{name, value, type}`. `type` is `exact` (default) or `regex`. |
-| `dlp` | no | Per-route DLP overrides. Omit to use defaults (all detectors on). |
-| `dlp.outbound_detectors` | no | `false` disables outbound scanning; list restricts to named detectors (`token_patterns`, `known_secrets`). |
-| `dlp.inbound_detectors` | no | `false` disables inbound scanning; list restricts to named detectors (`naive_injection_detection`). |
-| `dlp.outbound_on_match` | no | What to do when an outbound token is detected: `supervise` (default for manifest routes — hold for operator approval), `redact` (scrub the value and forward), or `block` (hard 403). Agent-provider routes (e.g. `api.anthropic.com`) default to `redact`. |
-| `git.fetch` | no | `true` permits smart HTTP clone/fetch (`git-upload-pack`) for this host. Push (`git-receive-pack`) remains blocked. |
+| `inspect.auth.scheme` | when `auth` present | `Bearer` or `token`. Injected by the proxy; the agent never sees the value. |
+| `inspect.auth.token_ref` | when `auth` present | Env-var name holding the secret on the host. |
+| `inspect.matches` | no | Array of `{paths, methods, headers}` filters. A request must match at least one entry (if any are given) to be forwarded. |
+| `inspect.matches[].paths` | no | Array of `{type, value}`. `type` is `prefix` (default), `exact`, or `regex`. |
+| `inspect.matches[].methods` | no | Array of HTTP method strings, e.g. `[GET, POST]`. |
+| `inspect.matches[].headers` | no | Array of `{name, value, type}`. `type` is `exact` (default) or `regex`. |
+| `inspect.outbound_detectors` | no | `false` disables outbound scanning; a list restricts it to named detectors (`token_patterns`, `known_secrets`). Omit for all. |
+| `inspect.inbound_detectors` | no | `false` disables inbound scanning; a list restricts it to named detectors (`naive_injection_detection`). Omit for all. |
+| `inspect.outbound_on_match` | no | What to do when an outbound token is detected: `supervise` (default for manifest routes — hold for operator approval), `redact` (scrub the value and forward), or `block` (hard 403). Agent-provider routes (e.g. `api.anthropic.com`) default to `redact`. |
+| `inspect.preserve_auth` | no | `true` forwards the client's own `Authorization` header instead of stripping it (registries whose token dance fetches per-scope tokens). |
+| `inspect.git.fetch` | no | `true` permits smart HTTP clone/fetch (`git-upload-pack`) for this host. Push (`git-receive-pack`) remains blocked. |
 
-When an outbound DLP detector matches a token, the route's `dlp.outbound_on_match` policy decides what happens. Under the default `supervise`, the proxy queues an `egress-token-allow` proposal for the operator's `bot-bottle supervise` TUI and holds the request open until it is answered (or `EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS`, default 300s, elapses — after which it fails closed). The operator never sees the raw token, only the host, method, path, and a redacted snippet; approving adds the value to an in-memory safelist for the life of the egress proxy. Under `redact`, the matched value is scrubbed from the body, headers, and path and the request is forwarded (failing closed if a match lands somewhere unredactable, like the hostname). Under `block` it stays a hard `403`. Structural blocks (CRLF injection) and not-in-allowlist host blocks are always hard `403`s regardless of policy.
+When an outbound DLP detector matches a token, the route's `inspect.outbound_on_match` policy decides what happens. Under the default `supervise`, the proxy queues an `egress-token-allow` proposal for the operator's `bot-bottle supervise` TUI and holds the request open until it is answered (or `EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS`, default 300s, elapses — after which it fails closed). The operator never sees the raw token, only the host, method, path, and a redacted snippet; approving adds the value to an in-memory safelist for the life of the egress proxy. Under `redact`, the matched value is scrubbed from the body, headers, and path and the request is forwarded (failing closed if a match lands somewhere unredactable, like the hostname). Under `block` it stays a hard `403`. Structural blocks (CRLF injection) and not-in-allowlist host blocks are always hard `403`s regardless of policy.
 
 More examples in `examples/`. How the system works today is in [`docs/reference/`](docs/reference/architecture.md); the design history is under `docs/prds/`, and the trust-boundary rationale is in `docs/prds/0011-per-file-md-manifest.md`.
 

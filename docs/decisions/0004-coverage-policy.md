@@ -86,7 +86,7 @@ omit list.
   and their modules read low — accepted, because the *enforced* gates
   (critical-module standard + diff coverage) are Docker-independent.
 - "We're at N%" is now a curated figure; outsiders should read the
-  policy, not just the badge.
+  policy, not a single number.
 - A rename or removal in the curated list fails CI. Updating the list is an
   explicit review of where the security-critical behavior moved, not a way to
   improve the percentage by omission.
@@ -97,8 +97,7 @@ omit list.
   introduces this record.
 - `.coveragerc`, `scripts/coverage.sh`, `scripts/diff_coverage.py`.
 - `scripts/critical-modules.txt` — the single source of truth for the
-  core-module list; read by both `scripts/coverage.sh` and the
-  `update-badges.yml` "core coverage" badge so they cannot drift.
-- The README carries a `core coverage` badge (auto-updated from that
-  list) — the headline number, distinct from the informational global
-  `coverage` badge.
+  core-module list, read by `scripts/coverage.sh`.
+- The README's coverage badges and the `update-badges.yml` workflow that
+  refreshed them were removed in 2026-10 (#712): the workflow had failed for
+  months, and the gates above are what CI enforces.

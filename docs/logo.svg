@@ -1,50 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 210" width="200" height="210">
-  <!-- cork flange -->
-  <rect x="74" y="14" width="52" height="8" rx="3" fill="#a07045"/>
-  <!-- cork body -->
-  <rect x="78" y="22" width="44" height="22" rx="3" fill="#7a4f2a"/>
-
-  <!-- glass bottle (shorter, sized to the robot) -->
-  <path d="M 80 44 L 80 58 Q 80 62 76 66 Q 58 72 58 90 L 58 180 Q 58 200 100 200 Q 142 200 142 180 L 142 90 Q 142 72 124 66 Q 120 62 120 58 L 120 44 Z"
-        fill="#2f5d4e" fill-opacity="0.85"
-        stroke="#173028" stroke-width="2" stroke-linejoin="round"/>
-
-  <!-- glass highlight -->
-  <path d="M 70 80 Q 64 110 68 160"
-        fill="none" stroke="rgba(255,255,255,0.28)"
-        stroke-width="4" stroke-linecap="round"/>
-
-  <!-- robot -->
-  <g stroke="#3a2a1a" stroke-width="1.5" stroke-linejoin="round">
-    <!-- antenna -->
-    <line x1="100" y1="80" x2="100" y2="90" stroke-width="2" stroke-linecap="round"/>
-    <circle cx="100" cy="78" r="3" fill="#d97757"/>
-
-    <!-- head -->
-    <rect x="78" y="90" width="44" height="34" rx="5" fill="#f0d4b8"/>
-
-    <!-- eyes -->
-    <circle cx="91" cy="106" r="3.5" fill="#3a2a1a" stroke="none"/>
-    <circle cx="109" cy="106" r="3.5" fill="#3a2a1a" stroke="none"/>
-    <circle cx="92.5" cy="104.5" r="1" fill="#ffffff" stroke="none"/>
-    <circle cx="110.5" cy="104.5" r="1" fill="#ffffff" stroke="none"/>
-
-    <!-- mouth -->
-    <rect x="92" y="115" width="16" height="2" rx="1" fill="#3a2a1a" stroke="none"/>
-
-    <!-- neck -->
-    <rect x="94" y="124" width="12" height="4" fill="#d4b894"/>
-
-    <!-- body + chest light -->
-    <rect x="68" y="128" width="64" height="48" rx="5" fill="#f0d4b8"/>
-    <circle cx="100" cy="145" r="4" fill="#d97757"/>
-
-    <!-- arms -->
-    <rect x="62" y="134" width="6" height="26" rx="2" fill="#d4b894"/>
-    <rect x="132" y="134" width="6" height="26" rx="2" fill="#d4b894"/>
-
-    <!-- legs -->
-    <rect x="82" y="176" width="10" height="10" rx="1.5" fill="#d4b894"/>
-    <rect x="108" y="176" width="10" height="10" rx="1.5" fill="#d4b894"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs><clipPath id="left"><rect x="0" y="60" width="62" height="118"/></clipPath></defs>
+  <path d="M78 46H122V56C122 63 128 66 138 68C156 72 164 84 164 104V162C164 177 153 188 138 188H62C47 188 36 177 36 162V104C36 84 44 72 62 68C72 66 78 63 78 56Z" fill="#141414"/>
+  <g transform="translate(100 120) scale(0.88) translate(-100 -120)" clip-path="url(#left)"><path d="M78 46H122V56C122 63 128 66 138 68C156 72 164 84 164 104V162C164 177 153 188 138 188H62C47 188 36 177 36 162V104C36 84 44 72 62 68C72 66 78 63 78 56Z" fill="none" stroke="#f5efe4" stroke-width="4" stroke-linejoin="round"/></g>
+  <rect x="62" y="10" width="76" height="36" rx="5" fill="#c47a4e"/>
+  <rect x="62" y="10" width="76" height="7" rx="3" fill="#d9946a"/>
+  <path d="M68 122l23 14-23 14" fill="none" stroke="#c47a4e" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="98" y="145" width="32" height="9" rx="2" fill="#c47a4e"/>
 </svg>
