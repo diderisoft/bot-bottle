@@ -384,6 +384,8 @@ class ManifestIndex:
             agent_dict["bottle"] = agent_bottle
         if "git-gate" in fm:
             agent_dict["git-gate"] = fm["git-gate"]
+        if "remote" in fm:
+            agent_dict["remote"] = fm["remote"]
         # Pass the effective bottle name as the known-bottles set so agents
         # that have bottle: set are validated; agents without bottle: pass {}
         # since bottle_names were already resolved above.
