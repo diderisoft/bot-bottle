@@ -199,6 +199,15 @@ def stop(*, force: bool = False) -> bool:
         return True
 
 
+def leave_callers_directory() -> None:
+    """Move the daemon out of the directory `bot-bottle` was run in, into its
+    state directory: tmux, and so every session pane, starts in the daemon's
+    (#706)."""
+    directory = state_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    os.chdir(directory)
+
+
 def _start(timeout: float) -> HostControlState:
     from . import service_unit  # pylint: disable=import-outside-toplevel
 

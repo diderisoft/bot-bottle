@@ -3,6 +3,7 @@ in the working directory (#706)."""
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,14 @@ class IsolatedImports(unittest.TestCase):
             runner._start(1.0)  # pylint: disable=protected-access
         argv = spawn.call_args.args[1]
         self.assertEqual([sys.executable, "-P", "-m", "bot_bottle.control.hostctl"], argv)
+
+    def test_the_daemon_leaves_the_callers_directory(self) -> None:
+        before = os.getcwd()
+        self.addCleanup(os.chdir, before)
+        with tempfile.TemporaryDirectory() as root, \
+                mock.patch.object(runner, "state_dir", return_value=Path(root) / "hostctl"):
+            runner.leave_callers_directory()
+            self.assertEqual((Path(root) / "hostctl").resolve(), Path.cwd().resolve())
 
 
 if __name__ == "__main__":
