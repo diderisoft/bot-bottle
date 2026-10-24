@@ -493,11 +493,15 @@ class TestConsoleTerminal(unittest.TestCase):
             await term.start(open_stream, cols=80, rows=24)
             await asyncio.sleep(1.0)
             seen = []
-            term.scroll(10)
+            for lines in (4, 3, 3):  # a burst adds up to 10
+                term.scroll(lines)
+            await asyncio.sleep(0.5)  # the worker applies it
             seen.append(self._in_mode())
             term.scroll(-10)  # back at the bottom: -e leaves copy mode
+            await asyncio.sleep(0.5)
             seen.append(self._in_mode())
             term.scroll(5)
+            await asyncio.sleep(0.5)
             term.write(b"after-scroll\r")
             await asyncio.sleep(0.5)
             seen.append(self._in_mode())
