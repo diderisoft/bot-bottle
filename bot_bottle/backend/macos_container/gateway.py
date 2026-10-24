@@ -18,6 +18,7 @@ from ...control.gateway import (
 )
 from ...contract.hostctl import DEFAULT_GATEWAY_IMAGE, Settings
 from ...contract.identity import ORCHESTRATOR_AUTH_JWT_ENV
+from ...lib.log import die
 from ...paths import host_gateway_ca_dir
 from ... import resources
 from .. import util as backend_util
@@ -32,6 +33,9 @@ from ...published_artifacts import FORMAT_OCI
 # address here is its attribution key. Named apart from docker's so both
 # backends can coexist.
 GATEWAY_NETWORK = "bot-bottle-mac-gateway"
+# The agent network's subnets, pinned so the host firewall can name them.
+AGENT_SUBNET = "192.168.128.0/24"
+AGENT_SUBNET_V6 = "fd62:6f74:6274:6c65::/64"
 # NAT network giving only the gateway a route out.
 GATEWAY_EGRESS_NETWORK = "bot-bottle-mac-egress"
 # Host-only network the gateway reaches the orchestrator over. Agents never
@@ -53,10 +57,21 @@ def ensure_networks(
     egress_network: str = GATEWAY_EGRESS_NETWORK,
     control_network: str = CONTROL_NETWORK,
 ) -> None:
-    """Create the agent, egress and control networks. Idempotent."""
+    """Create the agent, egress and control networks. Idempotent. Dies when
+    the agent network exists with other subnets than the host firewall
+    blocks."""
     container_mod.create_network(egress_network)
-    container_mod.create_network(network, internal=True)
+    container_mod.create_network(
+        network, internal=True, subnet=AGENT_SUBNET, subnet_v6=AGENT_SUBNET_V6)
     container_mod.create_network(control_network, internal=True)
+    found = container_mod.network_subnets(network)
+    if found != (AGENT_SUBNET, AGENT_SUBNET_V6):
+        die(
+            f"network {network} has subnets {found}, not the "
+            f"{AGENT_SUBNET} and {AGENT_SUBNET_V6} the host firewall blocks. "
+            f"Stop running bottles, then `container network rm {network}`; "
+            "the next launch recreates it."
+        )
 
 
 class MacosGateway(Gateway):
@@ -220,6 +235,8 @@ class MacosGateway(Gateway):
 
 
 __all__ = [
+    "AGENT_SUBNET",
+    "AGENT_SUBNET_V6",
     "GATEWAY_NETWORK",
     "GATEWAY_EGRESS_NETWORK",
     "CONTROL_NETWORK",

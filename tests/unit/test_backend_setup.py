@@ -262,6 +262,22 @@ class TestNetpoolSpanConflict(unittest.TestCase):
 # --- macos-container ------------------------------------------------
 
 class TestMacosSetupStatus(unittest.TestCase):
+    """As a regular user unless a test says otherwise: CI runs as root, and
+    the root path installs the host firewall for real."""
+
+    def setUp(self) -> None:
+        self.enterContext(patch.object(mc.os, "geteuid", return_value=501))
+        self.enterContext(patch.object(mc._container, "is_macos", return_value=True))
+        self.install = self.enterContext(patch.object(mc.host_firewall, "install"))
+        self.uninstall = self.enterContext(patch.object(mc.host_firewall, "uninstall"))
+
+    def _ready(self, firewall: str = "ok") -> contextlib.ExitStack:
+        stack = contextlib.ExitStack()
+        stack.enter_context(patch.object(mc.shutil, "which", return_value="/usr/bin/container"))
+        stack.enter_context(patch.object(mc, "_service_running", return_value=True))
+        stack.enter_context(patch.object(mc.host_firewall, "state", return_value=firewall))
+        return stack
+
     def test_setup_not_macos(self):
         with patch.object(mc._container, "is_macos", return_value=False):
             rc, out = _cap(mc.setup)
@@ -269,45 +285,75 @@ class TestMacosSetupStatus(unittest.TestCase):
         self.assertIn("requires macOS", out)
 
     def test_setup_no_cli(self):
-        with patch.object(mc._container, "is_macos", return_value=True), \
-             patch.object(mc.shutil, "which", return_value=None):
+        with patch.object(mc.shutil, "which", return_value=None):
             rc, out = _cap(mc.setup)
         self.assertEqual(1, rc)
         self.assertIn("not found on PATH", out)
 
     def test_setup_service_not_running(self):
-        with patch.object(mc._container, "is_macos", return_value=True), \
-             patch.object(mc.shutil, "which", return_value="/usr/bin/container"), \
+        with patch.object(mc.shutil, "which", return_value="/usr/bin/container"), \
              patch.object(mc, "_service_running", return_value=False):
             rc, out = _cap(mc.setup)
         self.assertEqual(1, rc)
         self.assertIn("system start", out)
 
-    def test_setup_ready(self):
-        with patch.object(mc._container, "is_macos", return_value=True), \
-             patch.object(mc.shutil, "which", return_value="/usr/bin/container"), \
-             patch.object(mc, "_service_running", return_value=True):
+    def test_setup_ready_when_the_firewall_is_installed(self):
+        with self._ready("ok"):
             rc, out = _cap(mc.setup)
         self.assertEqual(0, rc)
         self.assertIn("ready", out)
+        self.install.assert_not_called()
+
+    def test_setup_prints_the_sudo_block_without_root(self):
+        for firewall in ("missing", "stale"):
+            with self.subTest(firewall=firewall), self._ready(firewall):
+                rc, out = _cap(mc.setup)
+            self.assertEqual(0, rc)
+            self.assertIn(f"sudo tee {mc.host_firewall.RULES_PATH}", out)
+            self.assertIn("sudo launchctl bootstrap system", out)
+            self.install.assert_not_called()
+
+    def test_setup_as_root_installs_the_firewall_only(self):
+        with patch.object(mc.os, "geteuid", return_value=0), \
+             patch.object(mc.shutil, "which") as which:
+            rc, out = _cap(mc.setup)
+        self.assertEqual(0, rc)
+        self.install.assert_called_once_with(mc.AGENT_SUBNET, mc.AGENT_SUBNET_V6)
+        which.assert_not_called()  # the container service is per-user
+        self.assertIn("Installed the host firewall", out)
 
     def test_status_all_ok(self):
-        with patch.object(mc._container, "is_macos", return_value=True), \
-             patch.object(mc.shutil, "which", return_value="/usr/bin/container"), \
-             patch.object(mc, "_service_running", return_value=True):
-            rc, _ = _cap(mc.status)
+        with self._ready("ok"):
+            rc, out = _cap(mc.status)
         self.assertEqual(0, rc)
+        self.assertIn("host firewall: installed", out)
+
+    def test_status_fails_without_the_firewall(self):
+        for firewall, text in (("missing", "NOT installed"), ("stale", "out of date")):
+            with self.subTest(firewall=firewall), self._ready(firewall):
+                rc, out = _cap(mc.status)
+            self.assertEqual(1, rc)
+            self.assertIn(text, out)
+            self.assertIn("backend setup --backend=macos-container", out)
 
     def test_status_not_macos_no_cli(self):
         with patch.object(mc._container, "is_macos", return_value=False), \
-             patch.object(mc.shutil, "which", return_value=None):
+             patch.object(mc.shutil, "which", return_value=None), \
+             patch.object(mc.host_firewall, "state", return_value="missing"):
             rc, _ = _cap(mc.status)
         self.assertEqual(1, rc)
 
-    def test_teardown_noop(self):
+    def test_teardown_prints_the_sudo_block_without_root(self):
         rc, out = _cap(mc.teardown)
         self.assertEqual(0, rc)
-        self.assertIn("nothing to undo", out)
+        self.assertIn(f"sudo launchctl bootout system/{mc.host_firewall.DAEMON_LABEL}", out)
+        self.uninstall.assert_not_called()
+
+    def test_teardown_as_root_removes_the_firewall(self):
+        with patch.object(mc.os, "geteuid", return_value=0):
+            rc, _ = _cap(mc.teardown)
+        self.assertEqual(0, rc)
+        self.uninstall.assert_called_once_with()
 
     def test_service_running_false_without_cli(self):
         with patch.object(mc.shutil, "which", return_value=None):

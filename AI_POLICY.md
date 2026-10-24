@@ -32,9 +32,7 @@ up front and describes what keeps that safe for a security tool.
 - **The launch-time isolation probe** (`backend/isolation_probe.py`) proves
   from inside the agent, before it runs, that it can't reach the host or a
   public address except through the gateway. If it can, the launch fails.
-  On macos-container, agents can currently reach host services (#678), so
-  there the host check warns instead; the public-address and DNS checks still
-  fail the launch.
+  Every backend runs it.
 
 ## What this doesn't promise
 

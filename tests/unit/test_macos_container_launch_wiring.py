@@ -487,9 +487,8 @@ class TestLaunchIsolationProbe(unittest.TestCase):
         self.assertEqual(["register", "probe", "provision"], order)
         self.assertTrue(seen["check_dns"])
         self.assertIn("bot-bottle-dev-abc", str(seen["what"]))
-        self.assertIn("bot-bottle-mac-gateway", str(seen["remedy"]))
-        # Host reach is warn-only on this backend until #678.
-        self.assertIn("#678", str(seen["host_gap"]))
+        self.assertIn("backend setup --backend=macos-container", str(seen["remedy"]))
+        self.assertNotIn("host_gap", seen)
 
     def test_the_probe_runs_through_the_bottle_exec(self) -> None:
         calls: list[str] = []

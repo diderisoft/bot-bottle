@@ -384,13 +384,19 @@ def _run_container_op(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return result
 
 
-def create_network(name: str, *, internal: bool = False) -> None:
+def create_network(
+    name: str, *, internal: bool = False, subnet: str = "", subnet_v6: str = "",
+) -> None:
     args = [
         _CONTAINER, "network", "create",
         "--label", "bot-bottle.backend=macos-container",
     ]
     if internal:
         args.append("--internal")
+    if subnet:
+        args += ["--subnet", subnet]
+    if subnet_v6:
+        args += ["--subnet-v6", subnet_v6]
     args.append(name)
     result = subprocess.run(
         args, capture_output=True, text=True, check=False,
@@ -509,6 +515,19 @@ def network_ipv4(network: str) -> tuple[str, str] | None:
     except ValueError:
         return None
     return str(gateway), str(subnet)
+
+
+def network_subnets(network: str) -> tuple[str, str] | None:
+    """(IPv4 subnet, IPv6 subnet) of `network`, normalized, or None."""
+    status = _inspect_first([_CONTAINER, "network", "inspect", network]).get("status")
+    if not isinstance(status, dict):
+        return None
+    try:
+        v4 = ipaddress.ip_network(str(status.get("ipv4Subnet")))
+        v6 = ipaddress.ip_network(str(status.get("ipv6Subnet")))
+    except ValueError:
+        return None
+    return str(v4), str(v6)
 
 
 def inspect_container_network_ip(name: str, network: str) -> str | None:

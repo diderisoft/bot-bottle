@@ -33,14 +33,11 @@ def _leaky_guest(script: str) -> str:
     return _result(0)
 
 
-def _probe(
-    run_guest: Callable[[str], str], *, check_dns: bool = False, host_gap: str = "",
-) -> str:
+def _probe(run_guest: Callable[[str], str], *, check_dns: bool = False) -> str:
     err = io.StringIO()
     with contextlib.redirect_stderr(err):
         isolation_probe.verify_isolation(
-            run_guest, what="the agent", remedy="fix it", check_dns=check_dns,
-            host_gap=host_gap)
+            run_guest, what="the agent", remedy="fix it", check_dns=check_dns)
     return err.getvalue()
 
 
@@ -97,50 +94,6 @@ class TestVerifyIsolation(unittest.TestCase):
         _probe(guest, check_dns=True)
         self.assertIn("dns=0", scripts[0])
         self.assertIn("dns=1", scripts[1])
-
-
-class TestHostGap(unittest.TestCase):
-    """A backend with a tracked host gap warns on reaching the host and still
-    fails closed on everything else."""
-
-    def setUp(self) -> None:
-        self.enterContext(mock.patch.object(
-            isolation_probe, "host_canary_ip", return_value="127.0.0.1"))
-
-    def test_reaching_the_host_warns_and_cites_the_gap(self) -> None:
-        def guest(script: str) -> str:
-            _leaky_guest(script)
-            return _result(1)
-        err = _probe(guest, host_gap="see #678")
-        self.assertIn("isolation gap", err)
-        self.assertIn("see #678", err)
-        self.assertNotIn("isolation verified", err)
-
-    def test_the_guest_keeps_checking_after_reaching_the_host(self) -> None:
-        scripts: list[str] = []
-
-        def guest(script: str) -> str:
-            scripts.append(script)
-            return _result(1)
-        _probe(guest, host_gap="see #678")
-        _probe(guest)
-        self.assertIn("eh=0", scripts[0])
-        self.assertIn("eh=1", scripts[1])
-
-    def test_a_public_leak_still_fails_closed(self) -> None:
-        def guest(script: str) -> str:
-            _leaky_guest(script)
-            return _result(4)
-        with self.assertRaises(Die):
-            _probe(guest, host_gap="see #678")
-
-    def test_a_dns_leak_still_fails_closed(self) -> None:
-        with self.assertRaises(Die):
-            _probe(lambda _s: _result(3), check_dns=True, host_gap="see #678")
-
-    def test_a_blocked_guest_is_verified(self) -> None:
-        self.assertIn("isolation verified",
-                      _probe(lambda _s: _result(1), host_gap="see #678"))
 
 
 class TestNoCanary(unittest.TestCase):

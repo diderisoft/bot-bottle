@@ -39,13 +39,13 @@ running agent to an image that `bot-bottle resume` can start again.
 |---|---|---|---|
 | Agent | Apple container (a lightweight VM) | Firecracker microVM, reached over SSH | container, under gVisor `runsc` when Docker has it |
 | Infra pair | two Apple containers | two Firecracker microVMs | two containers |
-| Agent network | host-only agent network | point-to-point TAP with a /31 per slot | `bot-bottle-gateway` network with an explicit subnet |
-| Way out | only the gateway is on the NAT egress network | `inet bot_bottle_fc` nft table: agent traffic to the gateway ports is DNAT'd to the gateway VM, everything else dropped | only the gateway is on an egress network |
+| Agent network | host-only agent network with pinned subnets | point-to-point TAP with a /31 per slot | `bot-bottle-gateway` network with an explicit subnet |
+| Way out | only the gateway is on the NAT egress network; a host pf anchor drops agent traffic to the host and off the subnet | `inet bot_bottle_fc` nft table: agent traffic to the gateway ports is DNAT'd to the gateway VM, everything else dropped | only the gateway is on an egress network |
 | Control plane reachable from agent | no; the agent isn't on the control network | no; no forward rule | no; the agent isn't on the `--internal` control network |
-| Isolation probe | not yet | yes | yes, plus a DNS check |
+| Isolation probe | yes, plus a DNS check | yes | yes, plus a DNS check |
 | Agent image builds | host `container build` | in the orchestrator VM with buildah, or a published ext4 image | host `docker build` |
 | `nested_containers` | yes, rootless podman in the guest | rejected | rejected |
-| Host requirements | `container` CLI | `/dev/kvm`, `firecracker`, e2fsprogs, a one-time TAP and nft setup | Docker |
+| Host requirements | `container` CLI, a one-time pf anchor and LaunchDaemon | `/dev/kvm`, `firecracker`, e2fsprogs, a one-time TAP and nft setup | Docker |
 
 ## macos-container
 
@@ -57,7 +57,20 @@ running agent to an image that `bot-bottle resume` can start again.
   host-only agent network, and the control network. Apple has no container
   DNS, so it reaches the orchestrator by IP.
 
-Agents are on the agent network only. Gateway files and commands go through
+Agents are on the agent network only. That network is `--internal` (vmnet
+host-only), which removes the internet route but still lets guests reach the
+host's own addresses, and with IP forwarding on, anything that NATs the subnet
+would let them out. So its subnets are pinned (`192.168.128.0/24` and
+`fd62:6f74:6274:6c65::/64`, `gateway.py`) and a host pf anchor,
+`com.apple/io.bot-bottle` (`host_firewall.py`), drops traffic from them to the
+host itself and to anything off the subnet. Agent-to-gateway traffic stays on
+the subnet. `backend setup` installs the anchor and a root LaunchDaemon
+(`io.bot-bottle.pf`) that loads it at boot and re-applies it every minute;
+`/etc/pf.conf` isn't edited. An existing agent network with other subnets is
+refused at launch, and the isolation probe refuses a launch when the anchor
+isn't in force.
+
+Gateway files and commands go through
 the `container` CLI's exec and cp (`gateway_transport.py`). With
 `nested_containers: true`, the guest runs rootless podman and exposes a
 Docker-compatible socket. It provides no isolation from the agent, since root

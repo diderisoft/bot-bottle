@@ -225,11 +225,10 @@ def launch(
         isolation_probe.verify_isolation(
             lambda script: bottle.exec(script).stdout,
             what=f"agent container {plan.container_name}",
-            remedy=(f"Its network ({endpoint.network}) must be host-only; stop "
-                    "running bottles and relaunch so it is recreated."),
+            remedy=("The host firewall keeps agents off this Mac; install or "
+                    "update it with `bot-bottle backend setup "
+                    "--backend=macos-container`."),
             check_dns=True,
-            # Measured: vmnet guests reach the host's LAN and gateway addresses.
-            host_gap="Host services on those addresses are exposed to the agent (#678).",
         )
         bottle.prompt_path = provision(plan, bottle)
 
