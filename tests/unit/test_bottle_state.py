@@ -10,6 +10,7 @@ from tests.unit import use_bottle_root
 from bot_bottle import bottle_state
 from bot_bottle.bottle_state import (
     BottleMetadata,
+    metadata_path,
     read_metadata,
     write_metadata,
 )
@@ -168,6 +169,15 @@ class TestBottleMetadata(_FakeHomeMixin, unittest.TestCase):
         write_metadata(meta)
         loaded = read_metadata("dev-a4f8c")
         self.assertEqual(meta, loaded)
+
+    def test_a_bottle_that_mounted_its_project_resumes_with_a_copy(self):
+        path = metadata_path("dev-m")
+        path.parent.mkdir(parents=True)
+        path.write_text('{"agent_name": "dev", "cwd": "/proj/A", "copy_cwd": false, '
+                        '"mount_cwd": true, "started_at": "t"}')
+        loaded = read_metadata("dev-m")
+        assert loaded is not None
+        self.assertEqual(("/proj/A", True), (loaded.cwd, loaded.copy_cwd))
 
     def test_metadata_lives_under_state_dir(self):
         meta = BottleMetadata(

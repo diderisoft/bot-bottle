@@ -186,8 +186,10 @@ _MAP_FIELDS = ("secrets", "host_keys")
 
 @dataclass(frozen=True)
 class LaunchRequest:
-    """`POST /bottles`: a fully resolved, non-interactive launch. `cwd`,
-    `copy_cwd`, `mount_cwd`, `secrets` and `host_keys` are `cli`-only."""
+    """`POST /bottles`: a fully resolved, non-interactive launch.
+
+    `cwd`, `copy_cwd`, `secrets` and `host_keys` are `cli`-only: a path on
+    the host, and values the CLI resolved or its user confirmed."""
 
     agent: str
     bottles: tuple[str, ...] = ()
@@ -204,8 +206,6 @@ class LaunchRequest:
     settings: Settings = field(default_factory=Settings)
     cwd: str = ""
     copy_cwd: bool = False
-    # Mount `cwd` read-write instead of copying it.
-    mount_cwd: bool = False
     secrets: dict[str, str] = field(default_factory=dict, repr=False)
     # Repo name -> the upstream host key the user confirmed.
     host_keys: dict[str, str] = field(default_factory=dict)
@@ -264,15 +264,11 @@ class LaunchRequest:
             raise ValueError("launch.cwd: expected an absolute path")
         if self.copy_cwd and not self.cwd:
             raise ValueError("launch.copy_cwd needs cwd")
-        if self.mount_cwd and not self.cwd:
-            raise ValueError("launch.mount_cwd needs cwd")
-        if self.mount_cwd and self.copy_cwd:
-            raise ValueError("launch: mount_cwd and copy_cwd are exclusive")
         if self.headless and not self.prompt:
             raise ValueError("launch: headless needs a prompt")
 
 
-LAUNCH_CLI_ONLY = ("cwd", "copy_cwd", "mount_cwd", "secrets", "host_keys")
+LAUNCH_CLI_ONLY = ("cwd", "copy_cwd", "secrets", "host_keys")
 _DEFAULT_LAUNCH = LaunchRequest(agent="")
 
 

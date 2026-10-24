@@ -44,8 +44,6 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
     parser.add_argument("--pick", action="store_true",
                         help="choose bottles, label, color and image mode interactively")
     parser.add_argument("--cwd", action="store_true", help="copy host cwd into the running bottle")
-    parser.add_argument("--mount", action="store_true",
-                        help="mount host cwd read-write into the bottle (copied on Firecracker)")
     parser.add_argument(
         "--no-cache",
         action="store_true",
@@ -150,7 +148,6 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
             settings=settings,
             cwd=os.getcwd(),
             copy_cwd=args.cwd,
-        mount_cwd=args.mount,
         )
         return _launch_bottle(request, manifest, dry_run=dry_run, verbose=args.verbose)
 
@@ -188,7 +185,6 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
         settings=settings,
         cwd=os.getcwd(),
         copy_cwd=args.cwd,
-        mount_cwd=args.mount,
     )
     return _launch_bottle(request, manifest, dry_run=dry_run, verbose=args.verbose)
 
@@ -253,7 +249,6 @@ def _start_headless(
         settings=settings,
         cwd=os.getcwd(),
         copy_cwd=args.cwd,
-        mount_cwd=args.mount,
     )
     # Stream everything; callers relay this PTY.
     return _launch_bottle(request, manifest, dry_run=dry_run, verbose=True)

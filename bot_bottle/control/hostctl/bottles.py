@@ -137,7 +137,7 @@ def _save_work(bottle: Any, workspace: Any, identity: str) -> None:
     `workspace` is the plan's workspace or an adoption record's."""
     from ...workspace import export_patch_script, save_patch  # pylint: disable=import-outside-toplevel
     try:
-        if not (workspace.enabled and workspace.has_host_git_dir) or workspace.mount:
+        if not (workspace.enabled and workspace.has_host_git_dir):
             return
         result = bottle.exec(export_patch_script(shlex.quote(workspace.guest_path)))
     except Exception as e:  # pylint: disable=broad-exception-caught  # never block teardown
@@ -235,7 +235,6 @@ class BottleService:
         index.require_agent(request.agent)
         spec = BottleSpec(
             manifest=index, agent_name=request.agent, copy_cwd=request.copy_cwd,
-            mount_cwd=request.mount_cwd,
             user_cwd=cwd, identity=request.identity, label=request.label,
             color=request.color, bottle_names=request.bottles, headless=True,
             image_policy=request.image_policy,

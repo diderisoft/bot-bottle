@@ -57,18 +57,17 @@ class TestLaunchRequestSchema(unittest.TestCase):
 
     def test_cli_only_fields_are_refused_from_other_roles(self) -> None:
         for name in LAUNCH_CLI_ONLY:
-            value = {"cwd": "/w", "copy_cwd": False, "mount_cwd": False, "secrets": {},
+            value = {"cwd": "/w", "copy_cwd": False, "secrets": {},
                      "host_keys": {}}[name]
             with self.subTest(name), self.assertRaises(PermissionError):
                 LaunchRequest.from_json({"agent": "demo", name: value}, ROLE_ORCHESTRATOR)
         LaunchRequest.from_json({"agent": "demo", "prompt": "hi"}, ROLE_ORCHESTRATOR)
 
-    def test_mount_and_copy_are_exclusive_and_need_a_cwd(self) -> None:
-        for request in (LaunchRequest(agent="demo", mount_cwd=True),
-                        LaunchRequest(agent="demo", cwd="/w", mount_cwd=True, copy_cwd=True)):
-            with self.subTest(request=request), self.assertRaises(ValueError):
-                request.check()
-        LaunchRequest(agent="demo", cwd="/w", mount_cwd=True).check()
+    def test_copy_needs_a_cwd_and_there_is_no_mount(self) -> None:
+        with self.assertRaises(ValueError):
+            LaunchRequest(agent="demo", copy_cwd=True).check()
+        with self.assertRaises(ValueError):
+            LaunchRequest.from_json({"agent": "demo", "cwd": "/w", "mount_cwd": True}, ROLE_CLI)
 
     def test_rejects_malformed_requests(self) -> None:
         bad: list[object] = [

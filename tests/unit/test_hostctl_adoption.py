@@ -71,7 +71,7 @@ class TestRecord(_Root):
                                  Key=SimpleNamespace(provider="static", forge_token_env="",
                                                      api_url=""))
         plan = SimpleNamespace(
-            workspace_plan=SimpleNamespace(enabled=True, has_host_git_dir=True, mount=False,
+            workspace_plan=SimpleNamespace(enabled=True, has_host_git_dir=True,
                                            guest_path="/home/node/workspace"),
             manifest=SimpleNamespace(bottle=SimpleNamespace(git=(entry, static))))
         bottle = SimpleNamespace(name="bot-bottle-b1", registry_id="reg-1")

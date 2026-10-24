@@ -43,8 +43,6 @@ class BottleSpec:
     host_keys: tuple[tuple[str, str], ...] = ()
     # "fresh" builds as normal; "cached" reuses the local image or artifact.
     image_policy: str = "fresh"
-    # Mount `user_cwd` read-write instead of copying it, where the backend can.
-    mount_cwd: bool = False
 
 
 @dataclass(frozen=True)

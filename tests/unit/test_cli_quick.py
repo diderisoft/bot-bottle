@@ -54,11 +54,11 @@ class Quick(unittest.TestCase):
             self.assertEqual(0, quick.cmd_quick(argv))
         return self.launched[-1]
 
-    def test_the_first_ready_starter_and_the_directory_mounted(self) -> None:
+    def test_the_first_ready_starter_and_the_directory_copied(self) -> None:
         request = self.run_quick([], ["codex", "pi", "zeta"])
-        self.assertEqual(("codex", ("codex", "basic"), True, False, str(self.project),
+        self.assertEqual(("codex", ("codex", "basic"), True, str(self.project),
                           "prefer-cached", True),
-                         (request.agent, request.bottles, request.mount_cwd, request.copy_cwd,
+                         (request.agent, request.bottles, request.copy_cwd,
                           request.cwd, request.image_policy, request.assume_yes))
 
     def test_a_project_bottle_replaces_basic(self) -> None:
@@ -66,10 +66,6 @@ class Quick(unittest.TestCase):
         bottles.mkdir(parents=True)
         (bottles / "app.md").write_text("---\nextends: basic\n---\n")
         self.assertEqual(("pi", "app"), self.run_quick([], ["pi"]).bottles)
-
-    def test_copy_mode_copies_instead(self) -> None:
-        request = self.run_quick(["--copy"], ["pi"])
-        self.assertEqual((False, True), (request.mount_cwd, request.copy_cwd))
 
     def test_the_last_agent_used_here_wins_then_the_default(self) -> None:
         self.run_quick(["zeta"], ["codex", "zeta"])
@@ -86,7 +82,7 @@ class Quick(unittest.TestCase):
 
     def test_the_home_directory_is_not_shared(self) -> None:
         request = self.run_quick([], ["pi"], cwd=Path.home())
-        self.assertEqual((False, False), (request.mount_cwd, request.copy_cwd))
+        self.assertFalse(request.copy_cwd)
 
     def test_an_unknown_agent_or_none_at_all_stops(self) -> None:
         for argv, agents in ((["nope"], ["pi"]), ([], [])):

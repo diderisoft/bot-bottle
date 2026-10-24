@@ -30,10 +30,6 @@ class WorkspaceSpec(Protocol):
     def user_cwd(self) -> str:
         ...
 
-    @property
-    def mount_cwd(self) -> bool:
-        ...
-
 
 @dataclass(frozen=True)
 class WorkspacePlan:
@@ -48,21 +44,11 @@ class WorkspacePlan:
     mode: str = DEFAULT_WORKSPACE_MODE
     copy_contents: bool = True
     has_host_git_dir: bool = False
-    # Mounted read-write from the host: edits land in place, so nothing is
-    # copied or exported.
-    mount: bool = False
 
 
 def workspace_plan(spec: WorkspaceSpec, *, guest_home: str) -> WorkspacePlan:
     """Resolve the in-bottle workspace from CLI intent."""
     host_path = Path(spec.user_cwd).expanduser()
-    if spec.mount_cwd:
-        guest_path = f"{guest_home.rstrip('/')}/{WORKSPACE_DIRNAME}"
-        return WorkspacePlan(
-            enabled=True, host_path=host_path, guest_home=guest_home,
-            guest_path=guest_path, workdir=guest_path, copy_contents=False,
-            has_host_git_dir=(host_path / ".git").is_dir(), mount=True,
-        )
     if spec.copy_cwd:
         guest_path = f"{guest_home.rstrip('/')}/{WORKSPACE_DIRNAME}"
         workdir = guest_path

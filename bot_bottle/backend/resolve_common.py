@@ -47,9 +47,8 @@ def write_launch_metadata(
     write_metadata(BottleMetadata(
         identity=slug,
         agent_name=spec.agent_name,
-        cwd=spec.user_cwd if spec.copy_cwd or spec.mount_cwd else "",
+        cwd=spec.user_cwd if spec.copy_cwd else "",
         copy_cwd=spec.copy_cwd,
-        mount_cwd=spec.mount_cwd,
         started_at=datetime.now(timezone.utc).isoformat(),
         compose_project=compose_project,
         backend=backend,

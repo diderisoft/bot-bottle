@@ -4,23 +4,24 @@
                          (`bot-bottle default <agent>`), else the first ready
                          starter: claude, codex, then pi
   bot-bottle <agent>     that agent
-  bot-bottle --copy      copy this directory in instead of mounting it
   bot-bottle default <agent>
                          set the default agent
 
-The bottle is the agent's own plus the project's bottle
-(`./.bot-bottle/bottles/<directory name>.md`, once trusted) or else the
-built-in `basic`. The directory is mounted so the agent edits it in place; with
---copy, or on firecracker, it's copied in (filtered by .gitignore) and the
-agent's changes are saved as a patch at exit. With no starter yet, `bot-bottle
-setup` runs first.
+The bottle is the agent's own, plus the project's bottle when the project
+ships one (`./.bot-bottle/bottles/<directory name>.md`, trusted on this host
+first) or else the built-in `basic` (package registries and public code,
+read-only). This directory is copied into the bottle (not your home
+directory or `/`; a git repo filtered by its .gitignore), and when the agent
+exits its changes are saved as a patch to apply here. The bottle never writes
+to your files: a mount would let the agent plant code the host then runs, such
+as a `.git/config` that git executes. With no starter yet, `bot-bottle setup` runs
+first. `bot-bottle start` keeps the pickers.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -114,20 +115,9 @@ def project_bottle(cwd: Path) -> str:
     return name if (cwd / ".bot-bottle" / "bottles" / f"{name}.md").is_file() else ""
 
 
-def _uncommitted(cwd: Path) -> int:
-    """Files with uncommitted changes in a git repo (0 elsewhere)."""
-    try:
-        out = subprocess.run(["git", "-C", str(cwd), "status", "--porcelain"],
-                             capture_output=True, text=True, check=True).stdout
-    except (OSError, subprocess.CalledProcessError):
-        return 0
-    return len(out.splitlines())
-
-
 def cmd_quick(argv: list[str]) -> int:
     verbose = "-v" in argv or "--verbose" in argv
-    copy_mode = "--copy" in argv
-    names = [a for a in argv if a not in ("-v", "--verbose", "--copy")]
+    names = [a for a in argv if a not in ("-v", "--verbose")]
     cwd = Path.cwd()
     manifest = ManifestIndex.resolve(str(cwd))
     if names:
@@ -148,9 +138,6 @@ def cmd_quick(argv: list[str]) -> int:
     share = cwd not in (Path.home(), Path("/"))
     if not share:
         info(f"not sharing {cwd} with the bottle; cd into a project to work on it")
-    elif not copy_mode and (changed := _uncommitted(cwd)):
-        info(f"{changed} file{'s' if changed != 1 else ''} here have uncommitted changes; "
-             "the agent edits these files directly (--copy to give it a copy)")
     remember(cwd, agent)
     settings = settings_from_env()
     request = LaunchRequest(
@@ -161,8 +148,7 @@ def cmd_quick(argv: list[str]) -> int:
         assume_yes=True,
         settings=settings,
         cwd=str(cwd),
-        copy_cwd=share and copy_mode,
-        mount_cwd=share and not copy_mode,
+        copy_cwd=share,
     )
     dry_run = os.environ.get("BOT_BOTTLE_DRY_RUN") == "1"
     return _launch_bottle(request, manifest, dry_run=dry_run, verbose=verbose)

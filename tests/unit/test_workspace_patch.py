@@ -54,7 +54,7 @@ class Patches(unittest.TestCase):
         bottle = MagicMock()
         bottle.exec.return_value = ExecResult(returncode=0, stdout=_PATCH, stderr="")
         plan = SimpleNamespace(workspace_plan=SimpleNamespace(
-            enabled=True, has_host_git_dir=git, guest_path="/home/node/workspace", mount=False))
+            enabled=True, has_host_git_dir=git, guest_path="/home/node/workspace"))
         return bottle, plan
 
     def test_the_holder_saves_a_git_workspace_before_teardown(self) -> None:
@@ -72,12 +72,6 @@ class Patches(unittest.TestCase):
         with patch("sys.stderr", io.StringIO()):
             _save_work(bottle, plan.workspace_plan, "pi")  # type: ignore[arg-type]  # must not raise
         self.assertFalse(work_patch_path("pi").exists())
-
-    def test_a_mounted_workspace_has_nothing_to_save(self) -> None:
-        bottle, plan = self.bottle_plan(git=True)
-        plan.workspace_plan.mount = True  # type: ignore[attr-defined]
-        _save_work(bottle, plan.workspace_plan, "pi")  # type: ignore[arg-type]
-        bottle.exec.assert_not_called()
 
     def test_the_cli_reports_a_patch_from_this_session_only(self) -> None:
         save_patch("pi", _PATCH)

@@ -7,7 +7,6 @@ Kept out of `backend/__init__.py` because it imports the framework.
 
 from __future__ import annotations
 
-import dataclasses
 import enum
 import os
 import shlex
@@ -144,8 +143,6 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     # Whether a container engine can run inside the bottle. Backends that can't
     # must reject `nested_containers: true`.
     supports_nested_containers: bool = False
-    # Whether the user's directory can be mounted. Firecracker copies instead.
-    supports_workspace_mount: bool = True
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -155,10 +152,6 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         `_resolve_plan`. Creates no runtime resources. `secrets` supplies
         secret values now and at launch."""
         from .preparation import BottlePreparationPlanner
-        if spec.mount_cwd and not self.supports_workspace_mount:
-            warn(f"{self.name} can't mount {spec.user_cwd}; copying it in instead "
-                 "(the agent's changes are saved as a patch when it exits)")
-            spec = dataclasses.replace(spec, mount_cwd=False, copy_cwd=True)
         prepared = BottlePreparationPlanner(self).prepare(spec, secrets)
 
         return self._resolve_plan(
@@ -272,8 +265,6 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     def provision_workspace(self, plan: PlanT, bottle: "Bottle") -> None:
         """Copy the operator workspace into the running bottle."""
         workspace = plan.workspace_plan
-        if workspace.mount:
-            return  # mounted at launch
         if not (workspace.enabled and workspace.copy_contents):
             return
 

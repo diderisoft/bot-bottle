@@ -33,7 +33,6 @@ class AdoptedWorkspace:
 
     enabled: bool = False
     has_host_git_dir: bool = False
-    mount: bool = False
     guest_path: str = ""
 
 
@@ -52,7 +51,7 @@ def record_for(plan: "BottlePlan", bottle: "Bottle") -> AdoptionRecord:
         container=bottle.name,
         registry_id=bottle.registry_id,
         workspace=AdoptedWorkspace(
-            enabled=ws.enabled, has_host_git_dir=ws.has_host_git_dir, mount=ws.mount,
+            enabled=ws.enabled, has_host_git_dir=ws.has_host_git_dir,
             guest_path=ws.guest_path),
         deploy_keys=deploy_key_refs(plan.manifest.bottle),
     )
