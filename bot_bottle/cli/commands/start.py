@@ -21,10 +21,10 @@ import tempfile
 from dataclasses import replace
 from pathlib import Path
 
-from ...backend import BottlePlan, enumerate_active_agents
+from ...backend import BottlePlan, enumerate_active_agents, launch_isolation_note
 from ...bottle_state import settle_state
 from ...contract.hostctl import LaunchRequest, Settings
-from ...lib.log import info, die
+from ...lib.log import info, die, warn
 from ...manifest import ManifestIndex
 from ...manifest.preview import manifest_to_yaml
 from ..constants import PROG
@@ -329,6 +329,9 @@ def _text_render_preflight():
         print(file=sys.stderr)
         print(f"backend: {backend_name}", file=sys.stderr)
         print(manifest_to_yaml(plan.manifest), file=sys.stderr)
+        note = launch_isolation_note(plan, backend_name)
+        if note:
+            warn(note)
     return _render
 
 

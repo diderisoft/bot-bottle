@@ -23,12 +23,15 @@ if TYPE_CHECKING:
         ExecResult,
     )
     from .selection import (
+        backend_os_requirement,
+        docker_isolation_summary,
         enumerate_active_agents,
         get_bottle_backend,
         has_backend,
         is_backend_available,
         is_backend_ready,
         known_backend_names,
+        launch_isolation_note,
     )
     from .docker import DockerBottleBackend
     from .firecracker import FirecrackerBottleBackend
@@ -48,8 +51,11 @@ _LAZY_MODULES: dict[str, str] = {
     "BottleBackend": "base",
     "BackendStatus": "base",
     "EnumerationError": "base",
+    "backend_os_requirement": "selection",
+    "docker_isolation_summary": "selection",
     "get_bottle_backend": "selection",
     "known_backend_names": "selection",
+    "launch_isolation_note": "selection",
     "has_backend": "selection",
     "is_backend_available": "selection",
     "is_backend_ready": "selection",
@@ -100,4 +106,7 @@ __all__ = [
     "is_backend_available",
     "is_backend_ready",
     "known_backend_names",
+    "launch_isolation_note",
+    "backend_os_requirement",
+    "docker_isolation_summary",
 ]

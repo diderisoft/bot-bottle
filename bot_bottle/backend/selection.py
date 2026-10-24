@@ -10,7 +10,7 @@ from typing import Any
 from ..contract.hostctl import Settings
 from ..lib.log import die, info, warn
 from ..util import read_tty_line
-from .base import ActiveAgent, BackendStatus, BottleBackend
+from .base import ActiveAgent, BackendStatus, BottleBackend, BottlePlan
 
 BACKEND_NAMES = ("docker", "firecracker", "macos-container")
 
@@ -102,6 +102,36 @@ def _auto_select_backend(settings: Settings, prompt: bool = True) -> str:
     if reply == "i":
         _print_vm_install_instructions()
     die("not proceeding with docker; install a VM backend or set BOT_BOTTLE_BACKEND=docker")
+
+
+# Backends that run on one OS only; the rest run anywhere.
+_BACKEND_OS = {"firecracker": ("linux", "Linux"), "macos-container": ("darwin", "macOS")}
+
+
+def backend_os_requirement(name: str) -> str:
+    """The OS `name` needs when it isn't this one (e.g. "Linux"), else ""."""
+    platform, label = _BACKEND_OS.get(name, ("", ""))
+    if platform and not sys.platform.startswith(platform):
+        return label
+    return ""
+
+
+def launch_isolation_note(plan: BottlePlan, backend_name: str) -> str:
+    """A note on a launch's isolation for its preflight: the docker backend's
+    weak boundary unless gVisor is in use, else ""."""
+    if backend_name != "docker":
+        return ""
+    from .docker.util import isolation_note  # pylint: disable=import-outside-toplevel
+    return isolation_note(bool(getattr(plan, "use_runsc", False)))
+
+
+def docker_isolation_summary() -> str:
+    """For `doctor` when docker is the backend in use: its boundary, and
+    whether gVisor (runsc) narrows it."""
+    from .docker.util import isolation_note, runsc_available  # pylint: disable=import-outside-toplevel
+    return isolation_note(runsc_available()) or (
+        "docker backend: agents are containers sharing the host kernel; "
+        "gVisor (runsc) is registered, which narrows that.")
 
 
 def known_backend_names() -> tuple[str, ...]:

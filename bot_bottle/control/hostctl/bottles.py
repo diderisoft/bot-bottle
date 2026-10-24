@@ -118,6 +118,10 @@ def _log_preflight(plan: "BottlePlan", backend_name: str) -> None:
     log.write_line(f"backend: {backend_name}")
     for line in manifest_to_yaml(plan.manifest).splitlines():
         log.write_line(line)
+    from ...backend import launch_isolation_note  # pylint: disable=import-outside-toplevel
+    note = launch_isolation_note(plan, backend_name)
+    if note:
+        log.warn(note)
 
 
 def _save_work(bottle: Any, plan: "BottlePlan", identity: str) -> None:

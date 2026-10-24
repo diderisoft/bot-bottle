@@ -42,6 +42,17 @@ def daemon_running() -> bool:
 
 
 
+def isolation_note(use_runsc: bool) -> str:
+    """One line on the docker backend's boundary for `start` and `doctor`, or
+    "" when gVisor narrows it."""
+    if use_runsc:
+        return ""
+    return ("docker backend: agents are containers sharing the host kernel, the "
+            "weakest of the three backends. Firecracker (Linux with KVM) or Apple "
+            "Container (macOS) isolate better; registering gVisor (runsc) with "
+            "Docker narrows the gap.")
+
+
 def runsc_available() -> bool:
     """True if Docker has the gVisor `runsc` runtime registered."""
     r = run_docker(["docker", "info", "--format", "{{json .Runtimes}}"])

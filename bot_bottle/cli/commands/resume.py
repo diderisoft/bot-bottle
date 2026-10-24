@@ -33,7 +33,7 @@ def cmd_resume(argv: list[str]) -> int:
     if metadata is None:
         die(
             f"no state recorded for identity {args.identity!r}; "
-            f"check ~/.bot-bottle/state/ or run `cli.py start` to create a new bottle"
+            f"check ~/.bot-bottle/state/ or run `{PROG} start` to create a new bottle"
         )
 
     # The host controller resolves the manifest from the same directory.

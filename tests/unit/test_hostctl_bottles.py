@@ -575,5 +575,26 @@ class TestLifecycleAudit(_Root):
         self.assertNotEqual(starts[0]["activation"], starts[1]["activation"])
 
 
+class TestLogPreflight(unittest.TestCase):
+    """The launch log carries the docker backend's weak-boundary note (#606)."""
+
+    def _logged(self, plan: object, backend_name: str) -> list[str]:
+        from bot_bottle.control.hostctl import bottles as bottles_mod
+        warned: list[str] = []
+        with mock.patch.object(bottles_mod.log, "write_line"), \
+             mock.patch.object(bottles_mod.log, "warn", side_effect=warned.append), \
+             mock.patch("bot_bottle.manifest.preview.manifest_to_yaml", return_value=""):
+            bottles_mod._log_preflight(cast(Any, plan), backend_name)  # pyright: ignore[reportPrivateUsage]
+        return warned
+
+    def test_docker_without_gvisor_warns(self) -> None:
+        warned = self._logged(SimpleNamespace(manifest=None, use_runsc=False), "docker")
+        self.assertEqual(1, len(warned))
+        self.assertIn("sharing the host kernel", warned[0])
+
+    def test_vm_backends_do_not(self) -> None:
+        self.assertEqual([], self._logged(SimpleNamespace(manifest=None), "firecracker"))
+
+
 if __name__ == "__main__":
     unittest.main()

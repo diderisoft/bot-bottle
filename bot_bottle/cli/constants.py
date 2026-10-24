@@ -2,4 +2,4 @@
 `PROG` without a cycle.
 """
 
-PROG = "cli.py"
+PROG = "bot-bottle"

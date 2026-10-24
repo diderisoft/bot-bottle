@@ -10,7 +10,9 @@ import sys
 from pathlib import Path
 
 from ...agent_provider import get_provider
-from ...backend import is_backend_ready, known_backend_names
+from ...backend import (
+    backend_os_requirement, docker_isolation_summary, is_backend_ready, known_backend_names,
+)
 from ...contract.yaml_subset import YamlSubsetError, parse_frontmatter
 from .. import openrouter
 from ...control.hostctl.sessions import MIN_TMUX_VERSION, tmux_version
@@ -33,6 +35,10 @@ def _fail(label: str, detail: str) -> None:
     print(f"fail: {label}: {detail}")
 
 
+def _note(label: str, detail: str) -> None:
+    print(f"note: {label}: {detail}")
+
+
 def _check_python() -> bool:
     v = sys.version_info
     detail = f"{v.major}.{v.minor}.{v.micro}"
@@ -45,15 +51,21 @@ def _check_python() -> bool:
 
 def _check_backends() -> bool:
     """At least one backend must pass its full `status()` checks, not just have
-    a binary on PATH. Each not-ready backend prints what's missing."""
+    a binary on PATH. Each not-ready backend prints what's missing; one that
+    can't run on this OS is skipped in a line."""
     settings = settings_from_env()
     ready = []
     for name in known_backend_names():
-        if is_backend_ready(settings, name, quiet=False):
+        needs = backend_os_requirement(name)
+        if needs:
+            _note("backend", f"{name}: skipped ({needs} only)")
+        elif is_backend_ready(settings, name, quiet=False):
             _ok("backend", f"{name}: ready")
             ready.append(name)
         else:
             _warn("backend", f"{name}: not ready (see diagnostics above)")
+    if "docker" in ready and (settings.operation.backend == "docker" or ready == ["docker"]):
+        _note("backend", docker_isolation_summary())
     if ready:
         return True
     _fail(

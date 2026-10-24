@@ -29,7 +29,20 @@ def _run(argv: list[str] | None = None) -> tuple[int, str]:
     return code, buf.getvalue()
 
 
+def _only_docker_ready(_settings: object, name: str, *, quiet: bool = False) -> bool:
+    del quiet
+    return name == "docker"
+
+
 class TestDoctor(unittest.TestCase):
+    def setUp(self) -> None:
+        # Every backend runs here, and Docker has no gVisor, unless a test says
+        # otherwise; neither touches the real host.
+        self.os_req = self.enterContext(
+            patch.object(doctor, "backend_os_requirement", return_value=""))
+        self.enterContext(patch(
+            "bot_bottle.backend.docker.util.runsc_available", return_value=False))
+
     def test_passes_when_python_and_backend_ready(self):
         with patch.object(doctor, "known_backend_names", return_value=("docker",)), \
                 patch.object(doctor, "is_backend_ready", return_value=True):
@@ -92,6 +105,40 @@ class TestDoctor(unittest.TestCase):
             code, out = _run()
         self.assertEqual(0, code)
         self.assertIn("ok:   config", out)
+
+
+    def test_a_backend_for_another_os_is_skipped_in_a_line(self):
+        # #684: doctor on macOS listed every Firecracker diagnostic.
+        def os_req(name: str) -> str:
+            return "Linux" if name == "firecracker" else ""
+        self.os_req.side_effect = os_req
+        with patch.object(doctor, "known_backend_names",
+                          return_value=("firecracker", "macos-container")), \
+                patch.object(doctor, "is_backend_ready", return_value=True) as ready:
+            code, out = _run()
+        self.assertEqual(0, code)
+        self.assertIn("note: backend: firecracker: skipped (Linux only)", out)
+        self.assertEqual(["macos-container"], [c.args[1] for c in ready.call_args_list])
+
+    def test_docker_as_the_only_ready_backend_gets_the_weak_boundary_note(self):
+        with patch.object(doctor, "known_backend_names", return_value=("docker", "firecracker")), \
+                patch.object(doctor, "is_backend_ready", side_effect=_only_docker_ready):
+            _, out = _run()
+        self.assertIn("note: backend: docker backend: agents are containers sharing "
+                      "the host kernel", out)
+
+    def test_docker_with_a_vm_backend_ready_gets_no_note(self):
+        with patch.object(doctor, "known_backend_names", return_value=("docker", "firecracker")), \
+                patch.object(doctor, "is_backend_ready", return_value=True):
+            _, out = _run()
+        self.assertNotIn("host kernel", out)
+
+    def test_the_note_says_when_gvisor_is_registered(self):
+        with patch("bot_bottle.backend.docker.util.runsc_available", return_value=True), \
+                patch.object(doctor, "known_backend_names", return_value=("docker",)), \
+                patch.object(doctor, "is_backend_ready", return_value=True):
+            _, out = _run()
+        self.assertIn("gVisor (runsc) is registered", out)
 
 
 if __name__ == "__main__":

@@ -262,6 +262,23 @@ class TestTextRenderPreflight(unittest.TestCase):
             render(plan, "my-backend")
         self.assertIn("my-backend", err.getvalue())
 
+    def test_docker_without_gvisor_warns_it_is_the_weakest_boundary(self):
+        # #606: the note shows where the backend gets chosen.
+        render = start_mod._text_render_preflight()
+        plan = MagicMock(use_runsc=False)
+        with patch("bot_bottle.cli.commands.start.manifest_to_yaml", return_value=""), \
+             patch("sys.stderr", io.StringIO()) as err:
+            render(plan, "docker")
+        self.assertIn("sharing the host kernel", err.getvalue())
+
+    def test_docker_with_gvisor_has_no_note(self):
+        render = start_mod._text_render_preflight()
+        plan = MagicMock(use_runsc=True)
+        with patch("bot_bottle.cli.commands.start.manifest_to_yaml", return_value=""), \
+             patch("sys.stderr", io.StringIO()) as err:
+            render(plan, "docker")
+        self.assertNotIn("host kernel", err.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,8 @@ a backend lights it up in both places."""
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 from bot_bottle import backend as backend_mod
@@ -16,6 +18,7 @@ from bot_bottle.backend import selection as _sel
 from bot_bottle.contract.hostctl import OperationSettings, Settings
 from bot_bottle.backend import (
     ActiveAgent,
+    BottlePlan,
     enumerate_active_agents,
     get_bottle_backend,
     known_backend_names,
@@ -435,6 +438,37 @@ class TestIsBackendReady(unittest.TestCase):
         with patch.object(_sel, "_get_backends", return_value={"docker": _SpyBackend()}):
             is_backend_ready(_S, "docker", quiet=True)
         self.assertEqual([True], calls)
+
+
+def _plan(**fields: object) -> BottlePlan:
+    return cast(BottlePlan, SimpleNamespace(**fields))
+
+
+class TestBackendOsRequirement(unittest.TestCase):
+    def test_vm_backends_name_the_os_they_need_elsewhere(self) -> None:
+        with patch.object(_sel.sys, "platform", "darwin"):
+            self.assertEqual("Linux", _sel.backend_os_requirement("firecracker"))
+            self.assertEqual("", _sel.backend_os_requirement("macos-container"))
+        with patch.object(_sel.sys, "platform", "linux"):
+            self.assertEqual("macOS", _sel.backend_os_requirement("macos-container"))
+            self.assertEqual("", _sel.backend_os_requirement("firecracker"))
+
+    def test_docker_runs_anywhere(self) -> None:
+        for platform in ("darwin", "linux"):
+            with patch.object(_sel.sys, "platform", platform):
+                self.assertEqual("", _sel.backend_os_requirement("docker"))
+
+
+class TestLaunchIsolationNote(unittest.TestCase):
+    def test_docker_without_gvisor_says_it_is_the_weakest_boundary(self) -> None:
+        note = _sel.launch_isolation_note(_plan(use_runsc=False), "docker")
+        self.assertIn("sharing the host kernel", note)
+
+    def test_no_note_with_gvisor_or_a_vm_backend(self) -> None:
+        self.assertEqual("", _sel.launch_isolation_note(
+            _plan(use_runsc=True), "docker"))
+        self.assertEqual("", _sel.launch_isolation_note(
+            _plan(), "firecracker"))
 
 
 if __name__ == "__main__":
