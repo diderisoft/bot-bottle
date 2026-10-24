@@ -123,5 +123,5 @@ pair comes up cold while bottles are running, `reattach_running_bottles`
 restores each one: the gateway address, the CA, git-gate repos and
 credentials, and egress tokens. Tokens are decrypted by the orchestrator using
 the `ENV_VAR_SECRET` read back from the agent. Each backend supplies a
-`GatewayAttacher` for the steps that differ. By default, any bottle that fails
+`GatewayAttacher` for the steps that differ. Any bottle that fails
 to reattach aborts the bring-up, naming the bottle.
