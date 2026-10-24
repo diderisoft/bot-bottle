@@ -1,10 +1,6 @@
 .DS_Store
 Thumbs.db
 
-# User's local manifest — may contain real secrets. The repo ships
-# claude-bottle.example.json and claude-bottle.demo.json for reference.
-claude-bottle.json
-
 # Claude Code local state — agent memory, scheduler lock, etc.
 .claude/
 
