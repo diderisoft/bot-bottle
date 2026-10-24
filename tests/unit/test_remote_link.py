@@ -415,6 +415,34 @@ class TestConsoleSession(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("tmux"), "needs tmux")
+class TestHistoryRequests(unittest.TestCase):
+    """`history` without tmux: the relay's bounds, and an unreadable reply."""
+
+    def test_the_relay_bounds_what_it_asks_for_and_sends(self) -> None:
+        from bot_bottle.control.hostctl import console_terminal as ct
+
+        sessions = mock.MagicMock()
+        sessions.history.return_value = ("x" * (ct.MAX_HISTORY_CHARS + 5), 9, 2000)
+        term = ct.ConsoleTerminal(sessions, "s1", "a1", writable_allowed=False)
+        text, size, limit = term.history(10**6)
+        sessions.history.assert_called_once_with("s1", ct.HISTORY_LINES)
+        self.assertEqual((ct.MAX_HISTORY_CHARS, 9, 2000), (len(text), size, limit))
+        term.history(0)
+        self.assertEqual(1, sessions.history.call_args.args[1])
+        term.close()
+        self.assertEqual(("", 0, 0), term.history(5))
+
+    def test_an_unreadable_tmux_reply_is_empty(self) -> None:
+        from bot_bottle.control.hostctl import sessions as sessions_mod
+
+        manager = sessions_mod.SessionManager({})
+        for out in ("", "no such session\n", "12\n"):
+            with self.subTest(out=out), mock.patch.object(
+                    sessions_mod.subprocess, "run",
+                    return_value=mock.Mock(stdout=out, returncode=1)):
+                self.assertEqual(("", 0, 0), manager.history("gone", 100))
+
+
 class TestConsoleTerminal(unittest.TestCase):
     """A real relay against a real tmux session running `cat`."""
 
