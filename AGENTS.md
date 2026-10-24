@@ -35,21 +35,28 @@ backend remains available with `BOT_BOTTLE_BACKEND=docker` or
 - `.bot-bottle/` — per-repo agent and bottle manifests (YAML markdown format).
 - `examples/` — example bottles and agents showing the manifest format.
 - `docs/README.md` — docs overview; when to write which document.
-- `docs/glossary.md` — canonical term definitions (Agent Provider, Bottle, Sealed Bottle, etc.).
-- `docs/runtime-contract.md` — the routes, roles, tokens and env between the host and its services.
-- `docs/prds/` — product requirement docs (see `docs/prds/README.md` for format).
+- `docs/reference/` — how the system works **now**. Read
+  `docs/reference/architecture.md` first; it links the rest (backends,
+  gateway, git-gate, host controller, runtime contract, glossary).
+- `docs/prds/` — product requirement docs (see `docs/prds/README.md` for
+  format); superseded ones in `docs/prds/archive/`.
 - `docs/research/` — research notes (see `docs/research/README.md`).
 - `docs/decisions/` — decision records (ADR-lite).
 
 ## Conventions
 
-- Three kinds of doc, each with its own conventions in-folder; see
+- Reference pages (`docs/reference/`) describe current behaviour and are
+  edited in place. Read them before PRDs; open a PRD or research note only
+  when you need the reasoning behind something. A change that alters
+  behaviour a reference page describes updates that page in the same PR.
+- Three kinds of history doc, each with its own conventions in-folder; see
   `docs/README.md` for when to write which:
   - **PRDs** (`docs/prds/`) — one feature per file. A draft may initially
     use `prd-new-<kebab>.md`, but its author must assign the next
     sequential number before merge; CI rejects unnumbered PRDs. A
     `Status:` line tracks lifecycle: Draft → Active (shipped to `main`) →
-    Superseded/Retargeted. Format in `docs/prds/README.md`.
+    Superseded/Retargeted; superseded and retargeted PRDs move to
+    `docs/prds/archive/`. Format in `docs/prds/README.md`.
   - **Research notes** (`docs/research/`) — opinionated investigations;
     unnumbered kebab-case, freeform and verdict-first. See
     `docs/research/README.md`.

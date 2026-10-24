@@ -2,7 +2,7 @@
 
 ## Required pull-request gate
 
-[`.gitea/workflows/test.yml`](../.gitea/workflows/test.yml) runs the unit
+[`.gitea/workflows/test.yml`](../../.gitea/workflows/test.yml) runs the unit
 suite, Docker integration suite, combined coverage report, and diff-coverage
 gate when tested package/build inputs change on a pull request or on `main`.
 
@@ -32,7 +32,7 @@ are enforced:
 
 ## Privileged pre-release matrix
 
-[`.gitea/workflows/pre-release-test.yml`](../.gitea/workflows/pre-release-test.yml)
+[`.gitea/workflows/pre-release-test.yml`](../../.gitea/workflows/pre-release-test.yml)
 is manually dispatched before a release. It repeats unit and Docker integration
 coverage, then runs:
 
@@ -49,12 +49,12 @@ When every job passes, it releases: it promotes the tested images to a release
 version and commits their pins (`published-artifacts.json`) to `main`, with
 `pyproject.toml` bumped to that version in the same commit. Leave the `version`
 input blank to take the first unpublished version at or above `pyproject.toml`'s.
-[`publish-images.yml`](../.gitea/workflows/publish-images.yml) only rehearses a
+[`publish-images.yml`](../../.gitea/workflows/publish-images.yml) only rehearses a
 publish: it defaults to a `0.0.0-dev-<run>` version and pins nothing.
 
 ## Scheduled canary
 
-[`.gitea/workflows/canaries.yml`](../.gitea/workflows/canaries.yml) runs weekly
+[`.gitea/workflows/canaries.yml`](../../.gitea/workflows/canaries.yml) runs weekly
 and on manual dispatch. It verifies the pinned gitleaks release URL, checksum,
 archive shape, and executable. The same unittest execution gate requires at
 least one executed canary and rejects skips.

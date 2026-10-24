@@ -19,6 +19,7 @@ def _write_prds(root: Path, *names: str) -> None:
     directory = root / "docs" / "prds"
     directory.mkdir(parents=True, exist_ok=True)
     for name in names:
+        (directory / name).parent.mkdir(parents=True, exist_ok=True)
         (directory / name).write_text("# PRD\n", encoding="utf-8")
 
 
@@ -51,6 +52,12 @@ class TestCheckPrdNumbers(unittest.TestCase):
         problems = check_prd_numbers(self.root)
         self.assertEqual(len(problems), 1)
         self.assertIn("0007-first.md, 0007-second.md", problems[0])
+
+    def test_counts_archived_prds(self):
+        _write_prds(self.root, "0007-first.md", "archive/0007-old.md", "archive/README.md")
+        problems = check_prd_numbers(self.root)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("0007-first.md, 0007-old.md", problems[0])
 
     def test_rejects_number_already_committed_on_the_base_ref(self):
         _write_prds(self.root, "0082-mine.md")

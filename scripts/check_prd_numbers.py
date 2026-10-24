@@ -47,14 +47,15 @@ EXEMPT_NAMES = frozenset({"README.md"})
 
 
 def _prd_names_in_tree(root: Path) -> list[str]:
-    """PRD filenames in the working tree, ignoring the directory's prose."""
+    """PRD filenames in the working tree, `archive/` included, ignoring the
+    directory's prose."""
     directory = root / PRD_DIR
     if not directory.is_dir():
         return []
     return sorted(
         path.name
-        for path in directory.iterdir()
-        if path.is_file() and path.suffix == ".md" and path.name not in EXEMPT_NAMES
+        for path in directory.rglob("*.md")
+        if path.is_file() and path.name not in EXEMPT_NAMES
     )
 
 

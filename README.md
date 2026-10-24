@@ -82,6 +82,8 @@ When the agent exits, its bottle is deregistered from the orchestrator, its
 git-gate deploy keys are revoked, and its container or VM is removed. The
 orchestrator and gateway keep running for the next bottle.
 
+The full picture is in [`docs/reference/architecture.md`](docs/reference/architecture.md).
+
 ## Quickstart
 
 ```sh
@@ -201,7 +203,7 @@ BOT_BOTTLE_BACKEND=firecracker bot-bottle start <agent>
 
 > **NixOS:** enable `virtualisation.docker`, ensure the KVM module is loaded (`boot.kernelModules = [ "kvm-intel" ];` or `kvm-amd`), and add your user to the `kvm` and `docker` groups. For the network pool, consume the flake module — `imports = [ inputs.bot-bottle.nixosModules.firecracker-netpool ]; services.bot-bottle-firecracker = { enable = true; owner = "you"; };` — then `nixos-rebuild switch` (imperative nft/TAP rules don't survive a rebuild; channel users can `imports = [ <bot-bottle>/nix/firecracker-netpool.nix ]`). `firecracker` isn't in nixpkgs by default as a user binary — install the release binary (pin the version) and put it on `PATH`.
 
-> **CI:** Firecracker integration runs in the manually dispatched `.gitea/workflows/pre-release-test.yml` on a self-hosted runner labelled `kvm`; privileged KVM hosts never execute unreviewed PR code automatically. Provision it like a normal Firecracker host: `firecracker` on `PATH`, `/dev/kvm`, the cached guest kernel and static dropbear, and the persistent TAP/nft pool. The required pull-request workflow runs unit plus the complete Docker integration suite on `ubuntu-latest`; see `docs/ci.md`.
+> **CI:** Firecracker integration runs in the manually dispatched `.gitea/workflows/pre-release-test.yml` on a self-hosted runner labelled `kvm`; privileged KVM hosts never execute unreviewed PR code automatically. Provision it like a normal Firecracker host: `firecracker` on `PATH`, `/dev/kvm`, the cached guest kernel and static dropbear, and the persistent TAP/nft pool. The required pull-request workflow runs unit plus the complete Docker integration suite on `ubuntu-latest`; see `docs/reference/ci.md`.
 
 ```sh
 bot-bottle start <agent>   # builds the image on first run, drops you into claude
@@ -220,16 +222,17 @@ extends: claude          # inherit the Claude provider boundary
 env:
   GIT_AUTHOR_NAME: didericis
 
-git:
+git-gate:
   user:
     name: "Eric Bauerfeld"
     email: "eric+claude@dideric.is"
-  remotes:
-    gitea.dideric.is:
-      Name: bot-bottle
-      Upstream: ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git
-      IdentityFile: /Users/didericis/.ssh/id_ed25519_gitea
-      KnownHostKey: ssh-ed25519 AAAA...
+  repos:
+    bot-bottle:
+      url: ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git
+      key:
+        provider: static
+        path: /Users/didericis/.ssh/id_ed25519_gitea
+      host_key: ssh-ed25519 AAAA...
 
 egress:
   routes:
@@ -282,7 +285,7 @@ You help maintain Gitea-hosted projects.
 
 When an outbound DLP detector matches a token, the route's `dlp.outbound_on_match` policy decides what happens. Under the default `supervise`, the proxy queues an `egress-token-allow` proposal for the operator's `bot-bottle supervise` TUI and holds the request open until it is answered (or `EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS`, default 300s, elapses — after which it fails closed). The operator never sees the raw token, only the host, method, path, and a redacted snippet; approving adds the value to an in-memory safelist for the life of the egress proxy. Under `redact`, the matched value is scrubbed from the body, headers, and path and the request is forwarded (failing closed if a match lands somewhere unredactable, like the hostname). Under `block` it stays a hard `403`. Structural blocks (CRLF injection) and not-in-allowlist host blocks are always hard `403`s regardless of policy.
 
-More examples in `examples/`. Full design lives under `docs/prds/`; the trust-boundary rationale is in `docs/prds/0011-per-file-md-manifest.md`.
+More examples in `examples/`. How the system works today is in [`docs/reference/`](docs/reference/architecture.md); the design history is under `docs/prds/`, and the trust-boundary rationale is in `docs/prds/0011-per-file-md-manifest.md`.
 
 ## Tracker policy
 

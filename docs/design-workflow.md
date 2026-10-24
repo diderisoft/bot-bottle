@@ -13,8 +13,9 @@ Design artifacts have different jobs:
 
 | Artifact | Authority |
 |---|---|
+| Reference pages (`docs/reference/`) | How the system works now |
 | Decision records | Stable system-wide boundaries, policies, and invariants |
-| PRDs | The current design for a feature |
+| PRDs | A feature's design and rationale, as shipped |
 | Research notes | Evidence and tradeoff analysis; informative, not normative |
 | Issues | Work tracking, open questions, and discussion |
 | Pull-request comments | Review history; never the final home of a design decision |
@@ -182,7 +183,7 @@ more features on it:
    controller, orchestrator, audit ownership, or signing key.
 2. Search active PRDs, decisions, and open issues for those concepts.
 3. Update or supersede contradictory statements.
-4. Refresh dependency links and the current architecture summary.
+4. Refresh dependency links and the affected pages in `docs/reference/`.
 5. Confirm stacked implementation branches still have the correct base.
 
 This is a milestone activity, not a recurring documentation ceremony.
