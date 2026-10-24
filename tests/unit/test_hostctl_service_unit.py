@@ -39,7 +39,7 @@ class TestRendering(_Isolated):
     def test_launchd_runs_the_daemon_with_the_clis_path_and_root(self) -> None:
         plist = plistlib.loads(service_unit.render_launchd(_SPEC))
         self.assertEqual(service_unit.LAUNCHD_LABEL, plist["Label"])
-        self.assertEqual(["/usr/bin/python3", "-m", "bot_bottle.control.hostctl"],
+        self.assertEqual(["/usr/bin/python3", "-P", "-m", "bot_bottle.control.hostctl"],
                          plist["ProgramArguments"])
         self.assertEqual("/opt/bin:/usr/bin", plist["EnvironmentVariables"]["PATH"])
         self.assertEqual(str(self.root), plist["EnvironmentVariables"]["BOT_BOTTLE_ROOT"])
@@ -47,7 +47,7 @@ class TestRendering(_Isolated):
 
     def test_systemd_quotes_and_restarts_only_on_failure(self) -> None:
         unit = service_unit.render_systemd(_SPEC)
-        self.assertIn('ExecStart="/usr/bin/python3" "-m" "bot_bottle.control.hostctl"', unit)
+        self.assertIn('ExecStart="/usr/bin/python3" "-P" "-m" "bot_bottle.control.hostctl"', unit)
         self.assertIn(f'Environment="BOT_BOTTLE_ROOT={self.root}"', unit)
         self.assertIn("Restart=on-failure", unit)
         self.assertIn("WantedBy=default.target", unit)

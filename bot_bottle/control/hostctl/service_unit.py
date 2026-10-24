@@ -29,7 +29,7 @@ class ServiceSpec:
     path_env: str
 
     def argv(self) -> list[str]:
-        return [self.python, "-m", "bot_bottle.control.hostctl"]
+        return [self.python, "-P", "-m", "bot_bottle.control.hostctl"]  # -P: #706
 
     def environment(self) -> dict[str, str]:
         return {"PATH": self.path_env, "PYTHONPATH": str(PACKAGE_ROOT.parent),

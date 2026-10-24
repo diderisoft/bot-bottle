@@ -82,8 +82,10 @@ def tmux_version() -> tuple[int, int] | None:
 
 
 def _python_command(module: str, *args: str) -> str:
-    """Shell command running `python -m module args` from this package."""
-    argv = ["env", f"PYTHONPATH={PACKAGE_ROOT.parent}", sys.executable, "-m", module, *args]
+    """Shell command running `python -m module args` from this package, never
+    from the working directory (`-P`, #706)."""
+    argv = ["env", f"PYTHONPATH={PACKAGE_ROOT.parent}", sys.executable, "-P", "-m", module,
+            *args]
     return shlex.join(argv)
 
 

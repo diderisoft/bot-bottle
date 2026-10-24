@@ -213,9 +213,11 @@ def _start(timeout: float) -> HostControlState:
     env["PYTHONPATH"] = os.pathsep.join(
         p for p in (str(PACKAGE_ROOT.parent), env.get("PYTHONPATH", "")) if p
     )
-    # Detached in its own session, to outlive this CLI.
+    # Detached in its own session, to outlive this CLI. `-P`: `-m` would put
+    # the caller's directory first on sys.path, so a repo with a `bot_bottle/`
+    # in it would run its own code on the host (#706).
     pid = os.posix_spawn(
-        sys.executable, [sys.executable, "-m", "bot_bottle.control.hostctl"], env,
+        sys.executable, [sys.executable, "-P", "-m", "bot_bottle.control.hostctl"], env,
         file_actions=[
             (os.POSIX_SPAWN_OPEN, 0, os.devnull, os.O_RDONLY, 0),
             (os.POSIX_SPAWN_OPEN, 1, str(log_path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600),

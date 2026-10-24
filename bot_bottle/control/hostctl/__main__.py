@@ -19,7 +19,7 @@ from ...control.lifecycle import Orchestrator
 from ...lib.log import debug, info, warn
 from ...trust_domain import HostControlProvisioning, HostLink, signing_key
 from .build import current_build_id
-from .runner import HostControlState, clear_state, write_state
+from .runner import HostControlState, clear_state, state_dir, write_state
 from . import localsock
 from .audit_events import HostAudit
 from .audit_forward import AuditForwarder
@@ -93,6 +93,9 @@ def start_firehose() -> FirehoseHub:
 
 
 def main() -> int:
+    # Leave the directory `bot-bottle` was run in: tmux, and so every session
+    # pane, starts in this one.
+    os.chdir(state_dir())
     port = int(os.environ.get(PORT_ENV, "0") or "0")
     sessions = SessionManager({})
     # The single audit writer and the journal forwarder live as long as the
