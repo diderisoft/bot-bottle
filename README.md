@@ -84,6 +84,16 @@ orchestrator and gateway keep running for the next bottle.
 
 The full picture is in [`docs/reference/architecture.md`](docs/reference/architecture.md).
 
+## Roadmap
+
+Planned or in progress, not shipped yet:
+
+- **Audit producers** ([#468](https://gitea.dideric.is/didericis/bot-bottle/issues/468)): the host-side audit journal, its OCSF export and the request firehose exist, but the orchestrator and gateway don't write audit events to the journal yet.
+- **Remote access from the web console** ([#478](https://gitea.dideric.is/didericis/bot-bottle/issues/478)): `bot-bottle remote`, console launches and terminals, and the host side of supervise approvals work; the console's approvals UI and escape-sequence filtering for remote viewers don't yet.
+- **Egress metering and budgets** ([#251](https://gitea.dideric.is/didericis/bot-bottle/issues/251)): per-bottle cost tracking with a forced cutoff.
+- **Minted, refreshing credentials** ([#355](https://gitea.dideric.is/didericis/bot-bottle/issues/355)) and **AWS SigV4 re-signing** ([#662](https://gitea.dideric.is/didericis/bot-bottle/issues/662)).
+- **Signed, attested images** ([#339](https://gitea.dideric.is/didericis/bot-bottle/issues/339)) and a **published threat model** ([#337](https://gitea.dideric.is/didericis/bot-bottle/issues/337)).
+
 ## Quickstart
 
 ```sh
