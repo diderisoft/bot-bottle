@@ -248,6 +248,28 @@ jobs:
           name: firecracker-inputs
           path: /var/cache/bot-bottle-fc/dropbear
 
+      # Base rootfs trees accumulate on the runner (#690) until PRD 0088's
+      # `bot-bottle images prune` exists. Drop trees unused for more than 7
+      # days. A cache hit touches the tree's .bb-ready marker but not the
+      # directory, so age is the newer of the two. A removed tree is rebuilt
+      # on its next miss.
+      - name: Prune stale base rootfs trees
+        if: always()
+        continue-on-error: true
+        run: |
+          rootfs="${BOT_BOTTLE_FC_CACHE:-$HOME/.cache/bot-bottle/firecracker}/rootfs"
+          [ -d "$rootfs" ] || exit 0
+          df -h "$rootfs"
+          find "$rootfs" -mindepth 1 -maxdepth 1 -type d -mtime +7 -print0 |
+            while IFS= read -r -d '' tree; do
+              if [ -e "$tree/.bb-ready" ] && [ -n "$(find "$tree/.bb-ready" -mtime -8)" ]; then
+                continue
+              fi
+              echo "removing $tree"
+              rm -rf -- "$tree"
+            done
+          df -h "$rootfs"
+
   # Integration tests against the macOS Apple Container backend. Runs on a
   # self-hosted macOS runner (label `macos`) registered in HOST mode — Apple
   # Container needs the host `container` CLI + virtualization framework and
