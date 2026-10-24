@@ -125,6 +125,12 @@ class TestPinnedAgentNetwork(unittest.TestCase):
                           return_value=_inspect("192.168.128.0/24", "FD62:6F74:6274:6C65::/64")):
             self.assertEqual((_V4, _V6), mac_util.network_subnets("n"))
 
+    def test_network_subnets_takes_the_ipv6_prefix_as_status_reports_it(self) -> None:
+        # What a real network's status says: the host's address on the prefix.
+        with patch.object(mac_util, "run_container_argv",
+                          return_value=_inspect("192.168.128.0/24", "fd62:6f74:6274:6c65::1/64")):
+            self.assertEqual((_V4, _V6), mac_util.network_subnets("n"))
+
     def test_creates_the_agent_network_with_the_pinned_subnets(self) -> None:
         with patch.object(gw.container_mod, "create_network") as create, \
              patch.object(gw.container_mod, "network_subnets", return_value=(_V4, _V6)):

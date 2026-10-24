@@ -523,8 +523,10 @@ def network_subnets(network: str) -> tuple[str, str] | None:
     if not isinstance(status, dict):
         return None
     try:
-        v4 = ipaddress.ip_network(str(status.get("ipv4Subnet")))
-        v6 = ipaddress.ip_network(str(status.get("ipv6Subnet")))
+        # Status gives the IPv6 prefix as the host's address on it
+        # (`fd62:…::1/64`), so host bits are allowed.
+        v4 = ipaddress.ip_network(str(status.get("ipv4Subnet")), strict=False)
+        v6 = ipaddress.ip_network(str(status.get("ipv6Subnet")), strict=False)
     except ValueError:
         return None
     return str(v4), str(v6)
