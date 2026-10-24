@@ -144,7 +144,11 @@ class ConsoleTerminal:
             return "", 0, 0
         text, size, limit = self._sessions.history(self._session,
                                                    max(1, min(lines, HISTORY_LINES)))
-        return text[-MAX_HISTORY_CHARS:], size, limit
+        if len(text) > MAX_HISTORY_CHARS:
+            # Keep whole lines: a cut mid-line could split an escape code.
+            text = text[-MAX_HISTORY_CHARS:]
+            text = text[text.find("\n") + 1:]
+        return text, size, limit
 
     def close(self) -> None:
         """Detach from the session (the agent keeps running). Doesn't block:

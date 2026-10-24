@@ -422,11 +422,14 @@ class TestHistoryRequests(unittest.TestCase):
         from bot_bottle.control.hostctl import console_terminal as ct
 
         sessions = mock.MagicMock()
-        sessions.history.return_value = ("x" * (ct.MAX_HISTORY_CHARS + 5), 9, 2000)
+        line = "\x1b[31m" + "x" * 90 + "\x1b[0m\n"
+        sessions.history.return_value = (line * (ct.MAX_HISTORY_CHARS // len(line) + 3), 9, 2000)
         term = ct.ConsoleTerminal(sessions, "s1", "a1", writable_allowed=False)
         text, size, limit = term.history(10**6)
         sessions.history.assert_called_once_with("s1", ct.HISTORY_LINES)
-        self.assertEqual((ct.MAX_HISTORY_CHARS, 9, 2000), (len(text), size, limit))
+        self.assertLessEqual(len(text), ct.MAX_HISTORY_CHARS)
+        self.assertTrue(text.startswith("\x1b[31m"))  # whole lines only
+        self.assertEqual((9, 2000), (size, limit))
         term.history(0)
         self.assertEqual(1, sessions.history.call_args.args[1])
         term.close()
