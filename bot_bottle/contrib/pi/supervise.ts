@@ -5,7 +5,7 @@
  * lists the bottle's supervise tools (egress-allow and friends) and
  * registers each as a pi tool that forwards to the supervise server over
  * MCP's JSON-RPC. The provider writes the server's URL and this bottle's
- * identity token to supervise.json next to this file.
+ * identity token to ~/.pi/agent/bot-bottle-supervise.json.
  */
 
 import { readFileSync } from "node:fs";

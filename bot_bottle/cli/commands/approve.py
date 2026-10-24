@@ -49,7 +49,8 @@ def describe(request: Request) -> list[str]:
     lines = [f"{_BOLD}{request.summary()}{_RESET}", ""]
     if request.justification.strip():
         lines += [f"{_DIM}why:{_RESET} {request.justification.strip()}", ""]
-    routes = route_lines(request)
+    routes = route_lines(request, host_width=32,
+                         credential=lambda env: f"{_COPPER}with ${env}{_RESET}")
     if routes:
         lines.append(f"{_DIM}it would allow:{_RESET}")
         lines += [f"  {line}" for line in routes]

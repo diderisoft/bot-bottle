@@ -44,6 +44,16 @@ class Requests(unittest.TestCase):
         self.assertFalse(request.can_save_to_project())
         self.assertIn("with $EXAMPLE_TOKEN", "\n".join(describe(request)))
 
+    def test_the_popup_aligns_hosts_and_colors_the_credential(self) -> None:
+        from bot_bottle.approvals import route_lines
+
+        request = Request.from_dict(_pending(_CURRENT + _TOKEN))
+        shown = "\n".join(describe(request))
+        self.assertIn("api.example.com" + " " * 17 + "  ", shown)  # padded to 32
+        self.assertIn("\x1b[38;5;173mwith $EXAMPLE_TOKEN\x1b[0m", shown)
+        # The phone gets the same line in plain text.
+        self.assertEqual(["api.example.com  any  with $EXAMPLE_TOKEN"], route_lines(request))
+
     def test_other_tools_get_a_plain_summary(self) -> None:
         request = Request.from_dict(_pending("an allowlist line", tool="gitleaks-allow"))
         self.assertEqual("pi wants to push past a secret-scan finding", request.summary())
@@ -144,6 +154,8 @@ class Review(unittest.TestCase):
 
     def test_allow_for_project_answers_and_saves(self) -> None:
         reviewer, client = self.reviewer("p", [_pending(_CURRENT + _STRIPE)])
+        shown: list[str] = []
+        reviewer.out = shown.append
         with patch("bot_bottle.cli.commands.approve.session_project",
                    return_value=Path("/proj")), \
                 patch("bot_bottle.approvals.session_project", return_value=Path("/proj")), \
@@ -153,6 +165,7 @@ class Review(unittest.TestCase):
             reviewer.run()
         self.assertEqual("approve", client.supervise_respond.call_args.kwargs["decision"])
         self.assertEqual(Path("/proj"), save.call_args.args[0])
+        self.assertIn("allowed, and saved to ./.bot-bottle/bottles/proj.md in the project", shown)
         self.assertEqual(["api.stripe.com"], [r.host for r in save.call_args.args[1]])
 
     def test_another_sessions_requests_are_not_shown(self) -> None:

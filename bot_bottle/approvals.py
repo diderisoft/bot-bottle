@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 from .contract.supervise import (
@@ -175,23 +176,26 @@ def answer(client: Any, request: Request, decision: str, *, via: str) -> str:
                              notes=f"{note}, from {via}")
     if project is not None:
         saved = save_to_project(project, request.new_routes())
-        return f"allowed, and saved to {saved}"
+        return f"allowed, and saved to ./{saved.relative_to(project)} in the project"
     return "allowed once"
 
 
-def route_lines(request: Request) -> list[str]:
-    """The routes a request adds, one plain line each."""
+def route_lines(request: Request, *, host_width: int = 0,
+                credential: Callable[[str], str] = lambda env: f"with ${env}") -> list[str]:
+    """The routes a request adds, one line each: the host (padded to
+    `host_width`), its methods, paths, git fetch, and the credential the
+    gateway injects (`credential` formats it; the terminal colors it)."""
     lines = []
     for route in request.new_routes():
         methods = sorted({m for entry in route.matches for m in entry.methods}) or ["any"]
         paths = sorted({p.value for entry in route.matches for p in entry.paths})
-        line = f"{route.host}  {', '.join(methods)}"
+        line = f"{route.host:<{host_width}}  {', '.join(methods)}"
         if paths:
             line += f"  paths {', '.join(paths)}"
         if route.git_fetch:
             line += "  + git clone/fetch"
         if route.token_env:
-            line += f"  with ${route.token_env}"
+            line += f"  {credential(route.token_env)}"
         lines.append(line)
     return lines
 
