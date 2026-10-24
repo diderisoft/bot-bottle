@@ -155,6 +155,17 @@ class NetPool:
             f"and re-run `bot-bottle backend setup --backend=firecracker`.")
         raise AssertionError("unreachable")
 
+    def reclaim(self, iface: str) -> IO[str] | None:
+        """Re-take the lock on `iface`'s slot for a bottle that already runs
+        on it, so a new launch can't claim it. None if it's held elsewhere."""
+        handle = open(_lock_dir() / f"{iface}.lock", "w", encoding="utf-8")
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            handle.close()
+            return None
+        return handle
+
     def nondefault_env(self) -> str:
         """Pool env overrides that differ from the defaults, for the printed
         command."""

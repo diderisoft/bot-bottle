@@ -111,6 +111,30 @@ class TestFirecrackerLaunchSecrets(_LaunchCase):
                 pass
         self.assertEqual(_EXPECTED, self._tokens(register))
 
+    def test_the_agent_vm_boots_detached_to_outlive_the_controller(self) -> None:
+        # #679: a host controller restart mustn't take the VM with it.
+        plan = FirecrackerBottlePlan(**_fields(self.stage))
+        ctx = mock.Mock(bottle_id="b", gateway_ca_pem="pem", identity_token="t",
+                        env_var_secret="s")
+        with mock.patch.object(fc_launch, "netpool") as netpool, \
+                mock.patch.object(fc_launch, "info"), \
+                mock.patch.object(fc_launch, "launch_consolidated", return_value=ctx), \
+                mock.patch.object(fc_launch, "deprovision_consolidated"), \
+                mock.patch.object(fc_launch, "resolve_teardown_timeout", return_value=1), \
+                mock.patch.object(fc_launch, "stage_gateway_ca",
+                                  return_value=plan.egress_plan), \
+                mock.patch.object(fc_launch, "gateway_agent_urls", return_value=("g", "s")), \
+                mock.patch.object(fc_launch, "util") as util, \
+                mock.patch.object(fc_launch.firecracker_vm, "boot", side_effect=_Stop) as boot, \
+                self.assertRaises(_Stop):
+            netpool.from_settings.return_value.allocate.return_value = (
+                mock.Mock(iface="t0", host_ip="10.0.0.0", guest_ip="10.0.0.1"), mock.Mock())
+            util.cache_dir.return_value = self.stage
+            util.generate_keypair.return_value = (self.stage / "key", "ssh-ed25519 AAAA")
+            with fc_launch.launch(plan, self.stage / "base", provision=mock.Mock()):
+                pass
+        self.assertTrue(boot.call_args.kwargs["detached"])
+
     def test_guest_env_takes_forwarded_values_from_the_plan(self) -> None:
         plan = FirecrackerBottlePlan(**_fields(self.stage))
         with mock.patch.dict(os.environ, {"FWD": "from-env"}):

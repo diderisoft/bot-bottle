@@ -7,12 +7,13 @@ from __future__ import annotations
 import io
 from contextlib import contextmanager, redirect_stderr
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator, Sequence
+from typing import TYPE_CHECKING, Callable, Generator, Sequence
 
 from ...agent_provider import AgentProvisionPlan
 from ...egress import EgressPlan
 from ...env import ResolvedEnv
 from ...git_gate import GitGatePlan
+from ...lib.log import warn
 from ...manifest import Manifest
 from ...secret_source import SecretSource
 from ...supervisor.plan import SupervisePlan
@@ -108,6 +109,19 @@ class FirecrackerBottleBackend(
         assert isinstance(images.agent, Path)
         with _launch.launch(plan, images.agent, provision=self.provision) as bottle:
             yield bottle
+
+    def hold_adopted(self, bottle_id: str) -> Callable[[], None] | None:
+        """Re-lock the TAP slot a running bottle's VM is on: the lock lived in
+        the previous host controller's process."""
+        from . import firecracker_vm, netpool  # pylint: disable=import-outside-toplevel
+        tap = firecracker_vm.tap_of(_util.cache_dir() / "run" / bottle_id)
+        if not tap:
+            return None
+        lock = netpool.from_settings(self.settings.infra).reclaim(tap)
+        if lock is None:
+            warn(f"bottle {bottle_id}: its slot {tap} is already locked; leaving it")
+            return None
+        return lock.close
 
     def prepare_cleanup(self) -> FirecrackerBottleCleanupPlan:
         return _cleanup.prepare_cleanup()

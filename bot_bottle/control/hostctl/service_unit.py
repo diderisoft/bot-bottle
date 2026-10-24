@@ -60,6 +60,9 @@ def render_launchd(spec: ServiceSpec) -> bytes:
         "EnvironmentVariables": spec.environment(),
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
+        # Agents (tmux, VMs) outlive a controller restart; the next one adopts
+        # them.
+        "AbandonProcessGroup": True,
         "StandardOutPath": log,
         "StandardErrorPath": log,
     })
@@ -79,6 +82,8 @@ def render_systemd(spec: ServiceSpec) -> str:
         "ExecStart=" + " ".join(_systemd_quote(a) for a in spec.argv()),
         *(f"Environment={_systemd_quote(f'{k}={v}')}" for k, v in spec.environment().items()),
         "Restart=on-failure",
+        "# Agents (tmux, VMs) outlive a controller restart; the next one adopts them.",
+        "KillMode=process",
         f"StandardOutput=append:{log}",
         f"StandardError=append:{log}",
         "",

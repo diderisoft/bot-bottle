@@ -110,6 +110,7 @@ def main() -> int:
     if tmux_version() is not None:
         write_config()
         sessions.adopt()
+        bottles.adopt()
     build_id, key, jobs = current_build_id(), signing_key(HOST_CONTROL), JobRegistry()
     live, firehose = LiveBottles(), start_firehose()
     server = HostControlServer(("127.0.0.1", port), build_id, key, sessions, bottles,

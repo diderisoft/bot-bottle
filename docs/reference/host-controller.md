@@ -23,6 +23,9 @@ boundary. Its routes are in
   `gateway`). It never binds `0.0.0.0`.
 - `bot-bottle install` can add a launchd LaunchAgent or a `systemd --user`
   unit (`service_unit.py`). A crash is restarted; a clean exit is not.
+  Stopping the daemon stops only its own process (`KillMode=process`,
+  `AbandonProcessGroup`), so agents outlive a restart. Units installed before
+  this need `bot-bottle install` again.
 
 ## Jobs
 
@@ -47,8 +50,11 @@ Each agent runs in tmux on bot-bottle's own tmux server, never the user's
 - tmux's `pane-died` hook runs `notify.py` to report the exit. The session's
   finisher then runs, and tmux detaches every viewer.
 - Session records are written to disk. A restarted daemon re-adopts live
-  sessions and finishes ones that died while it was down. A re-adopted
-  session has no holder thread, so `bot-bottle cleanup` removes its bottle.
+  sessions and finishes ones that died while it was down. It then re-takes
+  what running bottles hold in its process (`BottleBackend.hold_adopted`): on
+  Firecracker, the TAP slot lock of each agent VM, whose VMM runs in its own
+  session for this reason. A re-adopted session has no holder thread, so
+  `bot-bottle cleanup` removes its bottle.
 - `requests.py` polls the orchestrator for pending supervise proposals and
   shows a one-line summary in the session's tmux status bar, outside the
   agent's pane where the agent can't fake or hide it.

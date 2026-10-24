@@ -129,6 +129,9 @@ def launch(
                 host_ip=slot.host_ip,
                 pubkey=pubkey,
                 run_dir=run_dir,
+                # Its own session, so it outlives a host controller restart;
+                # the next controller adopts it.
+                detached=True,
             )
         stack.callback(vm.terminate)
         firecracker_vm.wait_for_ssh(vm, private_key)

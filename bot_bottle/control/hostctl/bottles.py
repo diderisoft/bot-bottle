@@ -169,6 +169,8 @@ class BottleService:
         self._recorded_infra = recorded_infra
         self._secrets_file = secrets_file
         self._held: dict[str, _Held] = {}
+        # What adopted bottles hold until they end (e.g. a Firecracker slot).
+        self._adopted: dict[str, Callable[[], None]] = {}
         self._lock = threading.Lock()
         sessions.register(SESSION_KIND, self._finish)
 
@@ -336,6 +338,24 @@ class BottleService:
                 if error is not None:
                     ready.put(("error", error))
 
+    def adopt(self) -> None:
+        """After a daemon start, once sessions are adopted: re-take what each
+        running bottle needs held in this process, before anything launches."""
+        for record in self._sessions.records():
+            name = str(record.meta.get("backend", ""))
+            if record.kind != SESSION_KIND or not name or not self._sessions.exists(record.id):
+                continue
+            try:
+                backend = self._backend_for(
+                    with_recorded_infra(Settings(), name, self._recorded_infra))
+                release = backend.hold_adopted(record.id)
+            except Exception as e:  # pylint: disable=broad-exception-caught  # one bad record mustn't stop the daemon
+                log.warn(f"bottle {record.id}: couldn't adopt its {name} resources: {e}")
+                continue
+            if release is not None:
+                with self._lock:
+                    self._adopted[record.id] = release
+
     def _finish(self, record: SessionRecord, exit_status: ExitStatus) -> None:
         """The `bottle` finisher: hand the exit to the holder and wait for
         teardown. Without a holder (re-adopted) the bottle is left for
@@ -347,6 +367,10 @@ class BottleService:
             held.exited.set()
             held.done.wait()
             return
+        with self._lock:
+            release = self._adopted.pop(record.id, None)
+        if release is not None:
+            release()
         code = exit_code(exit_status.status, exit_status.signal)
         self.audit.bottled_agent_exit(
             bottle=record.id, activation=str(record.meta.get("activation", "")),

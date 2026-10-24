@@ -259,6 +259,58 @@ class TestNetpoolAllocation(unittest.TestCase):
         self.assertEqual(slot.iface, slot2.iface)
 
 
+class TestAdoptedSlots(unittest.TestCase):
+    """A restarted host controller re-locks the slots of running VMs (#679)."""
+
+    _POOL = _pool(fc_pool_size=1, fc_iface_prefix="bbadopt")
+
+    def test_reclaim_retakes_a_free_slot_and_refuses_a_held_one(self):
+        iface = self._POOL.slot(0).iface
+        lock = self._POOL.reclaim(iface)
+        assert lock is not None
+        self.addCleanup(lock.close)
+        self.assertIsNone(self._POOL.reclaim(iface))
+        # A launch can't take it either.
+        with patch.object(netpool, "die", side_effect=SystemExit("exhausted")):
+            with self.assertRaises(SystemExit):
+                self._POOL.allocate("new")
+
+    def test_tap_of_reads_the_run_dirs_config(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            run_dir = Path(d)
+            self.assertEqual("", firecracker_vm.tap_of(run_dir))
+            (run_dir / "config.json").write_text(json.dumps(firecracker_vm._config(  # pyright: ignore[reportPrivateUsage]
+                kernel=Path("/k"), rootfs=Path("/r"), tap="bbfc3", guest_ip="10.243.0.7",
+                host_ip="10.243.0.6", pubkey="ssh-ed25519 AAAA", vcpus=1, mem_mib=512,
+                guest_mac="06:00:00:00:00:01")))
+            self.assertEqual("bbfc3", firecracker_vm.tap_of(run_dir))
+
+    def test_hold_adopted_relocks_the_vms_slot_until_released(self):
+        import tempfile
+        from bot_bottle.backend.firecracker import backend as fc_backend
+        with tempfile.TemporaryDirectory() as d:
+            cache = Path(d)
+            run_dir = cache / "run" / "b1"
+            run_dir.mkdir(parents=True)
+            iface = self._POOL.slot(0).iface
+            (run_dir / "config.json").write_text(json.dumps(
+                {"network-interfaces": [{"host_dev_name": iface}]}))
+            backend = fc_backend.FirecrackerBottleBackend(Settings(infra=InfraSettings(
+                fc_pool_size=1, fc_iface_prefix="bbadopt")))
+            with patch.object(fc_backend._util, "cache_dir", return_value=cache):  # pyright: ignore[reportPrivateUsage]
+                release = backend.hold_adopted("b1")
+                self.assertIsNotNone(release)
+                self.assertIsNone(self._POOL.reclaim(iface))
+                assert release is not None
+                release()
+                again = self._POOL.reclaim(iface)
+                assert again is not None
+                again.close()
+                # No run dir: nothing to hold.
+                self.assertIsNone(backend.hold_adopted("gone"))
+
+
 class TestBottleAgentArgv(unittest.TestCase):
     def test_interactive_uses_ssh_tty_and_runuser(self):
         argv = _bottle().agent_argv([], tty=True)

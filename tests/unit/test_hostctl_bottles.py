@@ -596,5 +596,44 @@ class TestLogPreflight(unittest.TestCase):
         self.assertEqual([], self._logged(SimpleNamespace(manifest=None), "firecracker"))
 
 
+class TestAdoptAfterRestart(unittest.TestCase):
+    """A restarted controller re-takes what running bottles hold (#679)."""
+
+    def setUp(self) -> None:
+        root = Path(self.enterContext(tempfile.TemporaryDirectory(prefix="bbadopt.")))
+        self.addCleanup(use_bottle_root(root))
+        self.enterContext(contextlib.redirect_stderr(io.StringIO()))
+        self.sessions = mock.MagicMock()
+        self.records = [
+            sessions.SessionRecord(id="fc1", kind="bottle", meta={"backend": "firecracker"}),
+            sessions.SessionRecord(id="dead", kind="bottle", meta={"backend": "firecracker"}),
+            sessions.SessionRecord(id="other", kind="console", meta={"backend": "firecracker"}),
+        ]
+        self.sessions.records.return_value = self.records
+        def exists(session_id: str) -> bool:
+            return session_id != "dead"
+        self.sessions.exists.side_effect = exists
+        self.release = mock.Mock()
+        self.backend = mock.MagicMock()
+        self.backend.hold_adopted.return_value = self.release
+        self.service = BottleService(self.sessions, backend_for=lambda _s: self.backend,
+                                     recorded_infra=lambda _b: None,
+                                     audit=mock.MagicMock())
+
+    def test_running_bottles_are_held_and_released_when_they_end(self) -> None:
+        self.service.adopt()
+        self.backend.hold_adopted.assert_called_once_with("fc1")
+        self.release.assert_not_called()
+        self.service._finish(self.records[0], sessions.ExitStatus(0))  # pyright: ignore[reportPrivateUsage]
+        self.release.assert_called_once_with()
+
+    def test_a_backend_that_fails_to_adopt_is_skipped(self) -> None:
+        self.backend.hold_adopted.side_effect = RuntimeError("boom")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.service.adopt()  # doesn't raise
+        self.assertIn("couldn't adopt", err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

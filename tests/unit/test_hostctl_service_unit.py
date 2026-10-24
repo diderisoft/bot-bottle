@@ -52,6 +52,11 @@ class TestRendering(_Isolated):
         self.assertIn("Restart=on-failure", unit)
         self.assertIn("WantedBy=default.target", unit)
 
+    def test_agents_outlive_a_controller_restart(self) -> None:
+        # Stopping the controller must not take tmux or VMs with it (#679).
+        self.assertIn("KillMode=process\n", service_unit.render_systemd(_SPEC))
+        self.assertTrue(plistlib.loads(service_unit.render_launchd(_SPEC))["AbandonProcessGroup"])
+
 
 class TestInstall(_Isolated):
     def test_launchd_install_uninstall_and_root_matching(self) -> None:

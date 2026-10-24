@@ -157,6 +157,16 @@ def boot(
     return VmHandle(process=process, guest_ip=guest_ip, console_log=console_log)
 
 
+def tap_of(run_dir: Path) -> str:
+    """The TAP device the VM in `run_dir` was booted on, or "" if its config
+    can't be read."""
+    try:
+        config = json.loads((run_dir / "config.json").read_text())
+        return str(config["network-interfaces"][0]["host_dev_name"])
+    except (OSError, ValueError, KeyError, IndexError, TypeError):
+        return ""
+
+
 def wait_for_ssh(
     vm: VmHandle, private_key: Path, *, timeout: float = 30.0,
 ) -> None:

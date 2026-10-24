@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator, Generic, Sequence, TypeVar
+from typing import TYPE_CHECKING, Callable, Generator, Generic, Sequence, TypeVar
 
 from ..agent_provider import AgentProvisionPlan, get_provider
 from ..contract.hostctl import Settings
@@ -313,6 +313,14 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     def infra_service(self) -> "InfraService":
         """This backend's orchestrator + gateway pair: bring-up, reattach and
         CA rotation all go through it."""
+
+    def hold_adopted(self, bottle_id: str) -> "Callable[[], None] | None":
+        """After a host controller restart, re-take what a running bottle needs
+        held in the controller's process, before anything new launches.
+        Returns how to let it go when the bottle ends, or None when there's
+        nothing to hold."""
+        del bottle_id
+        return None
 
     @abstractmethod
     def prepare_cleanup(self) -> CleanupT:
