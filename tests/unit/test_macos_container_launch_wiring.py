@@ -392,6 +392,14 @@ class TestPlanIdentityToken(unittest.TestCase):
         )
 
 
+def _same_plan(plan: object, *_rest: object) -> object:
+    return plan
+
+
+def _no_provision(*_args: object) -> None:
+    return None
+
+
 def _replace(obj: object, **changes: object) -> SimpleNamespace:
     """`dataclasses.replace` for the SimpleNamespace plans these tests use."""
     return SimpleNamespace(**{**vars(obj), **changes})
@@ -445,9 +453,9 @@ class TestLaunchIsolationProbe(unittest.TestCase):
              patch.object(launch_mod, "LaunchTeardown", return_value=teardown), \
              patch.object(launch_mod, "MacosInfraService"), \
              patch.object(launch_mod, "ensure_gateway", return_value=_endpoint()), \
-             patch.object(launch_mod, "_provision_git_gate_keys", side_effect=lambda p: p), \
-             patch.object(launch_mod, "_install_gateway_ca", side_effect=lambda p, e: p), \
-             patch.object(launch_mod, "_stamp_agent_urls", side_effect=lambda p, e: p), \
+             patch.object(launch_mod, "_provision_git_gate_keys", side_effect=_same_plan), \
+             patch.object(launch_mod, "_install_gateway_ca", side_effect=_same_plan), \
+             patch.object(launch_mod, "_stamp_agent_urls", side_effect=_same_plan), \
              patch.object(launch_mod, "new_env_var_secret", return_value="s"), \
              patch.object(launch_mod, "_start_agent"), \
              patch.object(launch_mod.container_mod, "force_remove_container"), \
@@ -462,7 +470,8 @@ class TestLaunchIsolationProbe(unittest.TestCase):
                           side_effect=run_probe), \
              contextlib.redirect_stderr(io.StringIO()):
             images = BottleImages(agent="bot-bottle-agent:latest")
-            with launch_mod.launch(plan, images, provision=run_provision):
+            with launch_mod.launch(cast(MacosContainerBottlePlan, plan), images,
+                                   provision=run_provision):
                 pass
         return order
 
@@ -473,7 +482,7 @@ class TestLaunchIsolationProbe(unittest.TestCase):
             seen.update(kwargs)
             seen["run_guest"] = run_guest
 
-        order = self._launch(probe, lambda *_a: None)
+        order = self._launch(probe, _no_provision)
 
         self.assertEqual(["register", "probe", "provision"], order)
         self.assertTrue(seen["check_dns"])
@@ -492,7 +501,7 @@ class TestLaunchIsolationProbe(unittest.TestCase):
             return SimpleNamespace(stdout="guest-out")
 
         with patch.object(MacosContainerBottle, "exec", fake_exec):
-            self._launch(probe, lambda *_a: None)
+            self._launch(probe, _no_provision)
 
         self.assertEqual(["echo probe"], calls)
 
@@ -502,8 +511,11 @@ class TestLaunchIsolationProbe(unittest.TestCase):
         def probe(*_a: object, **_k: object) -> None:
             raise Die(1, "ISOLATION FAILURE")
 
+        def provision(*args: object) -> None:
+            provision_calls.append(args)
+
         with self.assertRaises(Die):
-            self._launch(probe, lambda *a: provision_calls.append(a))
+            self._launch(probe, provision)
 
         self.assertEqual([], provision_calls)
 
