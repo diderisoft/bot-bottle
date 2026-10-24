@@ -128,6 +128,16 @@ class TestInstallScript(unittest.TestCase):  # pylint: disable=too-many-public-m
         # exist, and using it would install outside the venv.
         self.assertIn("${VENV}/bin/python\" -m pip install", self.text)
 
+    def test_uv_is_preferred_then_pipx(self):
+        # uv, then pipx, then the venv: whichever tool the user already
+        # manages Python apps with keeps doing it.
+        uv, pipx = self.text.index("command -v uv"), self.text.index("command -v pipx")
+        self.assertLess(uv, pipx)
+        self.assertIn('uv tool install --python "${PYTHON}" --force', self.text)
+
+    def test_asks_uv_where_its_bin_dir_is(self):
+        self.assertIn("uv tool dir --bin", self.text)
+
     def test_pipx_is_preferred_when_present(self):
         # The venv is a fallback, not a takeover: someone who already manages
         # their Python apps with pipx keeps doing so.

@@ -8,11 +8,12 @@
 # of its web raw-file pages to the login page.)
 #
 # Python-native users can skip this entirely:
-#   pipx install bot-bottle        # from a checkout or a published index
-#   uv tool install bot-bottle
+#   uv tool install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git"
+#   pipx install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git"
 #
 # This script is a thin bootstrapper: it finds a Python 3.11+ interpreter,
-# installs the package with pipx (falling back to a private venv), creates the
+# installs the package with uv or pipx if you have either (falling back to a
+# private venv), creates the
 # config dir, runs `bot-bottle setup` (starter agents, then an offer to pair a
 # phone) and `bot-bottle doctor`. It is idempotent (safe to re-run)
 # and never uses sudo. It does NOT install Docker or a VM backend for you —
@@ -22,7 +23,7 @@
 #   BOT_BOTTLE_PYTHON        interpreter to install with (skips the search)
 #   BOT_BOTTLE_INSTALL_SPEC  pip/git spec to install instead of the default
 #                            (bot-bottle[remote] from the repo; no extra on Intel Macs)
-#   BOT_BOTTLE_VENV          where the non-pipx install lives (~/.bot-bottle/venv)
+#   BOT_BOTTLE_VENV          where the venv install lives, without uv or pipx (~/.bot-bottle/venv)
 set -eu
 
 REPO_SPEC="git+https://gitea.dideric.is/didericis/bot-bottle.git"
@@ -168,7 +169,16 @@ mkdir -p \
 
 BIN_DIR="${HOME}/.local/bin"
 
-if command -v pipx >/dev/null 2>&1; then
+if command -v uv >/dev/null 2>&1; then
+    # uv first: fastest, and someone with uv manages their Python tools with
+    # it. --python pins the tool's venv to the interpreter we vetted, as for
+    # pipx below.
+    say "installing with uv (python: ${PYTHON})"
+    uv tool install --python "${PYTHON}" --force "${PACKAGE_SPEC}"
+    # Ask uv where it puts entry points rather than assuming ~/.local/bin.
+    uv_bin="$(uv tool dir --bin 2>/dev/null || true)"
+    [ -n "${uv_bin}" ] && BIN_DIR="${uv_bin}"
+elif command -v pipx >/dev/null 2>&1; then
     # --python pins the venv to the interpreter we vetted. Without it pipx uses
     # whichever Python it was itself installed with, which is not necessarily
     # the one that passed the version check above.
