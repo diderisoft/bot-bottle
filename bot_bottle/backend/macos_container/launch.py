@@ -39,7 +39,9 @@ from ..launch_common import (
 )
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import util as container_mod
+from . import host_firewall
 from .bottle import MacosContainerBottle
+from .gateway import AGENT_SUBNET
 from .gateway_hosts import GATEWAY_HOSTNAME, set_gateway_host
 from . import nested_containers as nested_containers_mod
 from .bottle_plan import MacosContainerBottlePlan
@@ -229,6 +231,9 @@ def launch(
                     "update it with `bot-bottle backend setup "
                     "--backend=macos-container`."),
             check_dns=True,
+            # The host's own address on the agent network: the agents' default
+            # route and resolver, which a host-only network still reaches.
+            host_ips=(host_firewall.host_address(AGENT_SUBNET),),
         )
         bottle.prompt_path = provision(plan, bottle)
 

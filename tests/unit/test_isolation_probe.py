@@ -63,6 +63,29 @@ class TestVerifyIsolation(unittest.TestCase):
         with self.assertRaises(Die):
             _probe(lying_guest)
 
+    def test_a_guest_that_reaches_another_host_address_fails_closed(self) -> None:
+        # The first canary is blocked; the backend's extra host address isn't.
+        def guest(script: str) -> str:
+            more = re.search(r"more='?([\d.]+):(\d+)", script)
+            assert more, script
+            with socket.create_connection((more.group(1), int(more.group(2))), timeout=3):
+                pass
+            return _result(1)
+        err = io.StringIO()
+        with mock.patch.object(isolation_probe, "host_canary_ip", return_value="0.0.0.0"), \
+                contextlib.redirect_stderr(err), self.assertRaises(Die) as cm:
+            isolation_probe.verify_isolation(guest, what="the agent", remedy="fix it",
+                                             host_ips=("127.0.0.1",))
+        self.assertRegex(cm.exception.message, r"canary 127\.0\.0\.1:\d+\.")
+
+    def test_every_host_address_is_named_when_blocked(self) -> None:
+        err = io.StringIO()
+        with mock.patch.object(isolation_probe, "host_canary_ip", return_value="0.0.0.0"), \
+                contextlib.redirect_stderr(err):
+            isolation_probe.verify_isolation(lambda _s: _result(1), what="the agent",
+                                             remedy="fix it", host_ips=("127.0.0.1",))
+        self.assertIn("0.0.0.0, 127.0.0.1", err.getvalue())
+
     def test_a_dns_leak_fails_closed(self) -> None:
         with self.assertRaises(Die) as cm:
             _probe(lambda _s: _result(3), check_dns=True)

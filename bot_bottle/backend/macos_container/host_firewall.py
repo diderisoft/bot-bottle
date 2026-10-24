@@ -15,6 +15,7 @@ launch-time isolation probe proves it's in force.
 
 from __future__ import annotations
 
+import ipaddress
 import plistlib
 import subprocess
 from pathlib import Path
@@ -27,14 +28,24 @@ DAEMON_PATH = Path("/Library/LaunchDaemons") / f"{DAEMON_LABEL}.plist"
 REAPPLY_SECONDS = 60
 
 
+def host_address(subnet: str) -> str:
+    """The host's own address on a vmnet subnet: its first address, which is
+    the agents' default route and resolver."""
+    return str(ipaddress.ip_network(subnet)[1])
+
+
 def render_rules(subnet: str, subnet_v6: str) -> str:
-    """The anchor's rules for the agent subnets."""
+    """The anchor's rules for the agent subnets. The host's address on the
+    subnet is named outright: `(self)` doesn't match the vmnet bridge's own
+    address, and that address is on the subnet, so `! subnet` misses it too."""
     return (
         "# Installed by `bot-bottle backend setup --backend=macos-container`.\n"
         "# Agents may reach the gateway on their own subnet and nothing else:\n"
         "# not the host's addresses, not the LAN, not the internet.\n"
+        f"block drop in quick inet from {subnet} to {host_address(subnet)}\n"
         f"block drop in quick inet from {subnet} to (self)\n"
         f"block drop in quick inet from {subnet} to ! {subnet}\n"
+        f"block drop in quick inet6 from {subnet_v6} to {host_address(subnet_v6)}\n"
         f"block drop in quick inet6 from {subnet_v6} to (self)\n"
         f"block drop in quick inet6 from {subnet_v6} to ! {subnet_v6}\n"
     )

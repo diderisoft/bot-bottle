@@ -23,17 +23,21 @@ _V6 = gw.AGENT_SUBNET_V6
 class TestRules(unittest.TestCase):
     def test_blocks_the_host_and_everything_off_the_subnet(self) -> None:
         rules = fw.render_rules(_V4, _V6)
+        self.assertIn(f"block drop in quick inet from {_V4} to 192.168.128.1\n", rules)
         self.assertIn(f"block drop in quick inet from {_V4} to (self)\n", rules)
         self.assertIn(f"block drop in quick inet from {_V4} to ! {_V4}\n", rules)
+        self.assertIn(f"block drop in quick inet6 from {_V6} to fd62:6f74:6274:6c65::1\n", rules)
         self.assertIn(f"block drop in quick inet6 from {_V6} to (self)\n", rules)
         self.assertIn(f"block drop in quick inet6 from {_V6} to ! {_V6}\n", rules)
 
-    def test_never_blocks_traffic_within_the_subnet(self) -> None:
-        # Agent -> gateway stays on the subnet; no rule may target it.
+    def test_blocks_nothing_else_on_the_subnet(self) -> None:
+        # Agent -> gateway stays on the subnet; only the host's own address
+        # on it may be targeted.
+        hosts = {"192.168.128.1", "fd62:6f74:6274:6c65::1"}
         for line in fw.render_rules(_V4, _V6).splitlines():
             if line.startswith("block"):
                 dest = line.split(" to ", 1)[1]
-                self.assertTrue(dest == "(self)" or dest.startswith("! "), line)
+                self.assertTrue(dest in hosts or dest == "(self)" or dest.startswith("! "), line)
 
 
 class TestDaemon(unittest.TestCase):

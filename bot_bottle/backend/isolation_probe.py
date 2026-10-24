@@ -9,11 +9,13 @@ is a leak and the launch is refused.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import select
 import shlex
 import socket
-from typing import Callable
+from collections.abc import Sequence
+from typing import Callable, cast
 
 from ..lib.log import die, info, warn
 
@@ -50,6 +52,9 @@ report() { echo "bb-isolation-probe=$1"; exit 0; }
 try_connect "$h" "$p"; rc=$?
 [ "$rc" -eq 0 ] && report 0
 [ "$rc" -eq 2 ] && report 2
+for c in $more; do
+  try_connect "${c%:*}" "${c##*:}" && report 0
+done
 try_connect "$pub" 443 && report 4
 if [ "$dns" = 1 ]; then
   if command -v getent >/dev/null 2>&1; then
@@ -65,11 +70,14 @@ report 1
 _RESULT = re.compile(r"^bb-isolation-probe=(\d+)$", re.MULTILINE)
 
 
-def guest_probe_script(canary_ip: str, canary_port: int, *, check_dns: bool) -> str:
+def guest_probe_script(canary_ip: str, canary_port: int, *, check_dns: bool,
+                       more: Sequence[tuple[str, int]] = ()) -> str:
     """The guest script. It prints `bb-isolation-probe=<n>` (an exit code
-    above); no such line means it never ran."""
+    above); no such line means it never ran. `more` are further host
+    canaries, IPv4 `(ip, port)`s, tried after the first."""
+    extra = " ".join(f"{ip}:{port}" for ip, port in more)
     header = (
-        f"h={shlex.quote(canary_ip)}; p={canary_port}; "
+        f"h={shlex.quote(canary_ip)}; p={canary_port}; more={shlex.quote(extra)}; "
         f"pub={_PUBLIC_IP}; dns={1 if check_dns else 0}; name={shlex.quote(_DNS_NAME)}\n"
     )
     return header + _GUEST_PROBE
@@ -92,9 +100,11 @@ def verify_isolation(
     what: str,
     remedy: str,
     check_dns: bool = False,
+    host_ips: Sequence[str] = (),
 ) -> None:
-    """Prove the agent (`what`) can't reach the host's primary address or a
-    public address, and with `check_dns` can't resolve a public name.
+    """Prove the agent (`what`) can't reach the host's primary address, the
+    backend's other `host_ips` (e.g. the host's address on the agent network)
+    or a public address, and with `check_dns` can't resolve a public name.
     `run_guest(script)` returns the guest's stdout. Dies on a leak or a missing
     tool, with `remedy`; warns and skips when the host has no address to test."""
     canary_ip = host_canary_ip()
@@ -103,22 +113,30 @@ def verify_isolation(
              "against (isolated box).")
         return
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listener.bind((canary_ip, 0))
-        listener.listen(1)
-        canary_port = listener.getsockname()[1]
-        out = run_guest(guest_probe_script(canary_ip, canary_port, check_dns=check_dns))
+    with contextlib.ExitStack() as stack:
+        listeners = []
+        for ip in (canary_ip, *[h for h in host_ips if h != canary_ip]):
+            listener = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind((ip, 0))
+            listener.listen(1)
+            listeners.append(listener)
+        canaries = [cast(tuple[str, int], ln.getsockname()[:2]) for ln in listeners]
+        canary_port = canaries[0][1]
+        out = run_guest(guest_probe_script(canary_ip, canary_port, check_dns=check_dns,
+                                           more=canaries[1:]))
         # A completed handshake sits in the backlog whether or not it was
-        # accepted, so the listener is the authority on whether the canary was
+        # accepted, so the listeners are the authority on whether a canary was
         # reached.
-        reached, _, _ = select.select([listener], [], [], 0.5)
+        reached, _, _ = select.select(listeners, [], [], 0.5)
 
     match = _RESULT.search(out)
     rc = int(match.group(1)) if match else None
     if rc == _LEAK or reached:
+        hit = ", ".join(f"{ip}:{port}" for (ip, port), ln in zip(canaries, listeners)
+                        if ln in reached) or f"{canary_ip}:{canary_port}"
         die(f"ISOLATION FAILURE: {what} reached the host canary "
-            f"{canary_ip}:{canary_port}. The egress boundary is not in "
+            f"{hit}. The egress boundary is not in "
             f"force — refusing to run the agent (fail-closed). {remedy}")
     if rc == _PUBLIC_LEAK:
         die(f"ISOLATION FAILURE: {what} connected to {_PUBLIC_IP}:443 without "
@@ -135,4 +153,5 @@ def verify_isolation(
         die(f"isolation probe did not run in {what} "
             f"(result {rc if rc is not None else 'missing'}). Refusing to "
             f"continue (fail-closed).")
-    info(f"isolation verified: {what} cannot reach host {canary_ip}")
+    info(f"isolation verified: {what} cannot reach host "
+         f"{', '.join(ip for ip, _ in canaries)}")
