@@ -303,14 +303,22 @@ class SessionManager:
     def attach_argv(self, session_id: str, *, read_only: bool) -> list[str]:
         return tmux("attach-session", *(["-r"] if read_only else []), "-t", f"={session_id}")
 
-    def history(self, session_id: str, lines: int) -> str:
+    def history(self, session_id: str, lines: int) -> tuple[str, int, int]:
         """The last `lines` that scrolled off the session's pane (not the
-        visible screen), with colors (SGR escapes), one row per line."""
+        visible screen), with colors (SGR escapes), one row per line; and the
+        pane's history size and limit, read in the same tmux command so they
+        match the text. ("", 0, 0) if there's no such session."""
+        target = f"={session_id}:"
         proc = subprocess.run(
-            tmux("capture-pane", "-p", "-e", "-S", f"-{lines}", "-E", "-1",
-                 "-t", f"={session_id}:"),
+            tmux("display-message", "-p", "-t", target, "#{history_size} #{history_limit}", ";",
+                 "capture-pane", "-p", "-e", "-S", f"-{lines}", "-E", "-1", "-t", target),
             capture_output=True, text=True, errors="replace", check=False)
-        return proc.stdout if proc.returncode == 0 else ""
+        head, _, text = proc.stdout.partition("\n")
+        try:
+            size, limit = (int(n) for n in head.split())
+        except ValueError:
+            return "", 0, 0
+        return (text if size else ""), size, limit
 
     def set_read_only(self, client_tty: str, read_only: bool) -> None:
         """Make the viewer on `client_tty` read-only or writable. `switch-client

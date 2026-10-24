@@ -227,6 +227,7 @@ class _Terminal:
         self.writable = writable
         self.written: list[bytes] = []
         self.sizes: list[tuple[int, int]] = []
+        self.history_asked: list[int] = []
         self.closed = False
 
     def write(self, data: bytes) -> bool:
@@ -238,8 +239,9 @@ class _Terminal:
     def resize(self, cols: int, rows: int) -> None:
         self.sizes.append((cols, rows))
 
-    def history(self) -> str:
-        return "older\nnewer\n"
+    def history(self, lines: int) -> tuple[str, int, int]:
+        self.history_asked.append(lines)
+        return "older\nnewer\n", 2, 2000
 
     def close(self) -> None:
         self.closed = True
@@ -358,10 +360,16 @@ class TestConsoleSession(unittest.TestCase):
     def test_history_comes_from_the_relay(self) -> None:
         link, _bottles, sent = self._link()
         self._launch(link)
-        asyncio.run(link.handle({"type": "history", "agent_id": "a1", "request_id": "h1"}))
-        self.assertEqual({"type": "history", "request_id": "h1", "text": "older\nnewer\n"}, sent[-1])
+        asyncio.run(link.handle({"type": "history", "agent_id": "a1", "request_id": "h1",
+                                 "lines": 200}))
+        self.assertEqual({"type": "history", "request_id": "h1", "text": "older\nnewer\n",
+                          "size": 2, "limit": 2000}, sent[-1])
+        for lines in (None, "5", True, -3):  # anything else asks for the most
+            asyncio.run(link.handle({"type": "history", "agent_id": "a1", "lines": lines}))
+        self.assertEqual([200, 3000, 3000, 3000, 3000], self.terms["a1"].history_asked)
         asyncio.run(link.handle({"type": "history", "agent_id": "nobody", "request_id": "h2"}))
-        self.assertEqual({"type": "history", "request_id": "h2", "text": ""}, sent[-1])
+        self.assertEqual({"type": "history", "request_id": "h2", "text": "", "size": 0,
+                          "limit": 0}, sent[-1])
 
     def test_stop_and_disconnect_close_the_relay(self) -> None:
         link, _bottles, _sent = self._link()
@@ -466,15 +474,21 @@ class TestConsoleTerminal(unittest.TestCase):
     def test_history_is_what_scrolled_off_with_colors(self) -> None:
         import subprocess
         import time
+        _text, size, _limit = self.manager.history("s1", 3000)
+        self.assertEqual(0, size)  # nothing has scrolled off yet
         subprocess.run(self.tmux("send-keys", "-t", "=s1:", "-l", "\x1b[31mred\x1b[0m"), check=True)
         subprocess.run(self.tmux("send-keys", "-t", "=s1:", "Enter"), check=True)
         for i in range(60):
             subprocess.run(self.tmux("send-keys", "-t", "=s1:", f"line-{i}", "Enter"), check=True)
         time.sleep(0.5)
-        text = self.manager.history("s1", 3000)
+        text, size, limit = self.manager.history("s1", 3000)
         self.assertIn("\x1b[31mred", text)  # long off the 24-row screen, colors kept
         self.assertIn("line-0", text)
         self.assertNotIn("line-59", text)  # still on screen: the live terminal shows it
+        self.assertEqual(size, len(text.splitlines()))  # the size matches the text
+        self.assertGreater(limit, size)
+        tail, _size, _limit = self.manager.history("s1", 3)
+        self.assertEqual(text.splitlines()[-3:], tail.splitlines())  # just the newest
 
 class TestConfig(_RootCase):
     def test_config_round_trips_privately(self) -> None:

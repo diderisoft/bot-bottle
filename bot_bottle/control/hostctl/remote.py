@@ -35,9 +35,10 @@ On the console's control stream (JSON lines) the host serves:
   assertion) before it sends an allow.
 - The session's terminal is relayed to the console on a uni stream (see
   `console_terminal`); `input` types into it when the agent allows remote
-  typing, `resize` sizes the console's tmux client, and `history` ->
-  `history` (`text`): what scrolled off the pane, with colors, which the
-  console shows above its live terminal.
+  typing, `resize` sizes the console's tmux client, and `history` (`lines`)
+  -> `history` (`text`, `size`, `limit`): the last `lines` that scrolled off
+  the pane, with colors, and the history's size and limit, so the console
+  shows it above its live terminal fetching only what's new.
 - `audit_query` -> `audit_events`: the audit journal records for a bottle this
   link launched, filtered like `audit query` (bottle, activation, limit).
 
@@ -63,7 +64,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from ...contract.hostctl import LaunchRequest
 from ...lib import log
 from ...paths import bot_bottle_root
-from .console_terminal import valid_size
+from .console_terminal import HISTORY_LINES, valid_size
 
 if TYPE_CHECKING:
     import iroh  # pyright: ignore[reportMissingImports]  # the optional `remote` extra
@@ -236,7 +237,7 @@ class Terminal(Protocol):
 
     def write(self, data: bytes) -> bool: ...
     def resize(self, cols: int, rows: int) -> None: ...
-    def history(self) -> str: ...
+    def history(self, lines: int) -> tuple[str, int, int]: ...
     def close(self) -> None: ...
 
 
@@ -349,7 +350,8 @@ class ConsoleLink:
         elif kind == "resize":
             self._resize(str(msg.get("agent_id", "")), msg.get("cols"), msg.get("rows"))
         elif kind == "history":
-            await self._history(str(msg.get("agent_id", "")), msg.get("request_id"))
+            await self._history(str(msg.get("agent_id", "")), msg.get("request_id"),
+                                msg.get("lines"))
         elif kind == "audit_query":
             await self._audit_query(msg)
         elif kind != "hello":  # hello only opens the stream (see serve_connection)
@@ -433,10 +435,14 @@ class ConsoleLink:
         if terminal is not None and size is not None:
             terminal.resize(*size)
 
-    async def _history(self, agent_id: str, request_id: object) -> None:
+    async def _history(self, agent_id: str, request_id: object, lines: object) -> None:
         terminal = self.terminals.get(agent_id)
-        text = await asyncio.to_thread(terminal.history) if terminal is not None else ""
-        await self._send({"type": "history", "request_id": request_id, "text": text})
+        # pylint: disable-next=unidiomatic-typecheck  # bool is an int
+        count = lines if type(lines) is int and lines > 0 else HISTORY_LINES
+        text, size, limit = ("", 0, 0) if terminal is None else \
+            await asyncio.to_thread(terminal.history, count)
+        await self._send({"type": "history", "request_id": request_id, "text": text,
+                          "size": size, "limit": limit})
 
     async def _audit_query(self, msg: dict[str, Any]) -> None:
         bottle, activation = msg.get("bottle"), msg.get("activation")

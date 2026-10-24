@@ -29,7 +29,7 @@ from .sessions import SessionError, SessionManager
 
 # Upper bounds on what the console may send in one message.
 MAX_INPUT_BYTES = 64 * 1024
-# How far back `history` reaches, and the most it sends.
+# The most lines one `history` request may ask for, and the most it sends.
 HISTORY_LINES = 3000
 MAX_HISTORY_CHARS = 2_000_000
 COLS_RANGE = (20, 400)
@@ -136,11 +136,15 @@ class ConsoleTerminal:
         if self._master >= 0 and not self._closed.is_set():
             _set_size(self._master, cols, rows)
 
-    def history(self) -> str:
-        """The session's recent history, for the console to scroll locally."""
+    def history(self, lines: int) -> tuple[str, int, int]:
+        """The last `lines` (at most HISTORY_LINES) that scrolled off the
+        session's screen, with its history's size and limit, so the console
+        can fetch only what's new."""
         if self._closed.is_set():
-            return ""
-        return self._sessions.history(self._session, HISTORY_LINES)[-MAX_HISTORY_CHARS:]
+            return "", 0, 0
+        text, size, limit = self._sessions.history(self._session,
+                                                   max(1, min(lines, HISTORY_LINES)))
+        return text[-MAX_HISTORY_CHARS:], size, limit
 
     def close(self) -> None:
         """Detach from the session (the agent keeps running). Doesn't block:
