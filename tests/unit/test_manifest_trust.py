@@ -217,11 +217,15 @@ class ProjectAgents(_Project):
         index = ManifestIndex.resolve(str(self.project))
         self.assertEqual("pi", index.load_for_agent("mine").agent.agent_provider.harness)
 
-    def test_the_trust_command_trusts_a_project_agent(self) -> None:
+    def test_the_trust_command_shows_then_trusts_a_project_agent(self) -> None:
         self.write_agent(_PI_OWN_HOST)
         with patch("os.getcwd", return_value=str(self.project)), \
                 patch("sys.stderr", io.StringIO()):
+            with patch("builtins.print") as out:
+                self.assertEqual(0, cmd_trust(["show", "pi"]))
+            self.assertIn("llm.attacker.example", str(out.call_args_list))
             self.assertEqual(0, cmd_trust(["pi", "--yes"]))
+            self.assertEqual(0, cmd_trust(["pi"]))  # already trusted: nothing to ask
         self.load()
 
 
