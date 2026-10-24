@@ -5,7 +5,7 @@ point-to-point TAP, behind a fail-closed nftables boundary.
 from __future__ import annotations
 
 import io
-from contextlib import contextmanager, redirect_stderr
+from contextlib import AbstractContextManager, contextmanager, redirect_stderr
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Generator, Sequence
 
@@ -28,6 +28,7 @@ from .bottle_cleanup_plan import FirecrackerBottleCleanupPlan
 from .bottle_plan import FirecrackerBottlePlan
 
 if TYPE_CHECKING:
+    from ..adoption import AdoptionRecord
     from .infra import FirecrackerInfraService
 
 
@@ -122,6 +123,11 @@ class FirecrackerBottleBackend(
             warn(f"bottle {bottle_id}: its slot {tap} is already locked; leaving it")
             return None
         return lock.close
+
+    def adopted_bottle(
+        self, bottle_id: str, record: "AdoptionRecord",
+    ) -> AbstractContextManager[FirecrackerBottle]:
+        return _launch.adopted(bottle_id, record, self.settings)
 
     def prepare_cleanup(self) -> FirecrackerBottleCleanupPlan:
         return _cleanup.prepare_cleanup()

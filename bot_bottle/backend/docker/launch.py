@@ -13,7 +13,7 @@ import dataclasses
 import functools
 import os
 from contextlib import contextmanager
-from typing import Callable, Generator
+from typing import TYPE_CHECKING, Callable, Generator
 
 from ...agent_provider import runtime_for
 from ...image_cache import check_stale
@@ -48,6 +48,9 @@ from .infra import INFRA_NAME, DockerInfraService
 from .gateway import DockerGateway
 from ...contract.hostctl import Settings
 from ... import resources
+
+if TYPE_CHECKING:
+    from ..adoption import AdoptionRecord
 
 
 def _docker_runtime(settings: Settings) -> oci_agent_image.OciRuntime:
@@ -194,6 +197,22 @@ def launch(
         yield bottle
     finally:
         teardown()
+
+
+@contextmanager
+def adopted(
+    bottle_id: str, record: "AdoptionRecord", settings: Settings,
+) -> Generator[DockerBottle, None, None]:
+    """A bottle a previous host controller launched: exec into it, then tear it
+    down as its holder would have (compose down, then deregister)."""
+    try:
+        yield DockerBottle(record.container, lambda: None, None)
+    finally:
+        compose_down(compose_project_name(bottle_id),
+                     compose_file_path(bottle_state_dir(bottle_id)))
+        if record.registry_id:
+            deprovision_consolidated(record.registry_id, service=DockerInfraService(settings),
+                                     timeout=resolve_teardown_timeout(host_db_path()))
 
 
 def stale_checks(plan: DockerBottlePlan) -> None:

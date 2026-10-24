@@ -20,7 +20,7 @@ import functools
 import os
 import subprocess
 from contextlib import contextmanager
-from typing import Callable, Generator
+from typing import TYPE_CHECKING, Callable, Generator
 
 from ...contract.hostctl import Settings
 from ...bottle_state import read_committed_image
@@ -53,6 +53,9 @@ from .consolidated_launch import (
     register_agent,
     deprovision_consolidated,
 )
+
+if TYPE_CHECKING:
+    from ..adoption import AdoptionRecord
 
 _AGENT_SLEEP_SECONDS = "2147483647"
 
@@ -241,6 +244,22 @@ def launch(
     finally:
         teardown()
 
+
+
+@contextmanager
+def adopted(
+    bottle_id: str, record: "AdoptionRecord", settings: Settings,
+) -> Generator[MacosContainerBottle, None, None]:
+    """A bottle a previous host controller launched: exec into it, then tear it
+    down as its holder would have (remove the container, then deregister)."""
+    del bottle_id
+    try:
+        yield MacosContainerBottle(record.container, lambda: None, None)
+    finally:
+        container_mod.force_remove_container(record.container)
+        if record.registry_id:
+            deprovision_consolidated(record.registry_id, service=MacosInfraService(settings),
+                                     timeout=resolve_teardown_timeout(host_db_path()))
 
 
 def stale_checks(plan: MacosContainerBottlePlan) -> None:

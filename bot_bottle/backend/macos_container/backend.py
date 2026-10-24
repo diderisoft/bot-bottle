@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import io
-from contextlib import contextmanager, redirect_stderr
+from contextlib import AbstractContextManager, contextmanager, redirect_stderr
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator, Sequence
 
@@ -25,6 +25,7 @@ from .bottle_cleanup_plan import MacosContainerBottleCleanupPlan
 from .bottle_plan import MacosContainerBottlePlan
 
 if TYPE_CHECKING:
+    from ..adoption import AdoptionRecord
     from .infra import MacosInfraService
 
 
@@ -105,6 +106,11 @@ class MacosContainerBottleBackend(
     def infra_service(self) -> "MacosInfraService":
         from .infra import MacosInfraService
         return MacosInfraService(self.settings)
+
+    def adopted_bottle(
+        self, bottle_id: str, record: "AdoptionRecord",
+    ) -> AbstractContextManager[MacosContainerBottle]:
+        return _launch.adopted(bottle_id, record, self.settings)
 
     def prepare_cleanup(self) -> MacosContainerBottleCleanupPlan:
         return _cleanup.prepare_cleanup()

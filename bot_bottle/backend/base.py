@@ -34,6 +34,7 @@ from .plan import BottlePlan, BottleSpec
 from .util import host_skill_dir
 
 if TYPE_CHECKING:
+    from .adoption import AdoptionRecord
     from .infra_service import InfraService
 
 
@@ -313,6 +314,14 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     def infra_service(self) -> "InfraService":
         """This backend's orchestrator + gateway pair: bring-up, reattach and
         CA rotation all go through it."""
+
+    @abstractmethod
+    def adopted_bottle(
+        self, bottle_id: str, record: "AdoptionRecord",
+    ) -> AbstractContextManager[Bottle]:
+        """A running bottle a previous host controller launched: yields a
+        `Bottle` to exec into and, on exit, tears it down as its holder would
+        have, minus the deploy keys (the caller revokes those)."""
 
     def hold_adopted(self, bottle_id: str) -> "Callable[[], None] | None":
         """After a host controller restart, re-take what a running bottle needs

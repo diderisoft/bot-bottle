@@ -167,6 +167,20 @@ def tap_of(run_dir: Path) -> str:
         return ""
 
 
+def guest_ip_of(run_dir: Path) -> str:
+    """The guest IP the VM in `run_dir` was booted with (its kernel `ip=`
+    arg), or ""."""
+    try:
+        boot_args = str(json.loads((run_dir / "config.json").read_text())
+                        ["boot-source"]["boot_args"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
+    for arg in boot_args.split():
+        if arg.startswith("ip="):
+            return arg[3:].split(":", 1)[0]
+    return ""
+
+
 def wait_for_ssh(
     vm: VmHandle, private_key: Path, *, timeout: float = 30.0,
 ) -> None:

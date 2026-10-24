@@ -53,8 +53,15 @@ Each agent runs in tmux on bot-bottle's own tmux server, never the user's
   sessions and finishes ones that died while it was down. It then re-takes
   what running bottles hold in its process (`BottleBackend.hold_adopted`): on
   Firecracker, the TAP slot lock of each agent VM, whose VMM runs in its own
-  session for this reason. A re-adopted session has no holder thread, so
-  `bot-bottle cleanup` removes its bottle.
+  session for this reason. A re-adopted session has no holder thread, so the
+  holder leaves an `adoption.json` in the bottle's state dir at launch
+  (`backend/adoption.py`: container name, registry id, workspace layout,
+  deploy-key references; no secrets). When an adopted session ends, the daemon
+  saves the agent's work, tears the bottle down through
+  `BottleBackend.adopted_bottle`, and revokes its deploy keys with tokens from
+  the secrets file. A token that was only in the launching CLI's environment
+  can't be found then, so that key is reported for revoking by hand. Without a
+  record, `bot-bottle cleanup` removes the bottle.
 - `requests.py` polls the orchestrator for pending supervise proposals and
   shows a one-line summary in the session's tmux status bar, outside the
   agent's pane where the agent can't fake or hide it.

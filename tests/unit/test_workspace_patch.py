@@ -59,24 +59,24 @@ class Patches(unittest.TestCase):
 
     def test_the_holder_saves_a_git_workspace_before_teardown(self) -> None:
         bottle, plan = self.bottle_plan(git=True)
-        _save_work(bottle, plan, "pi")  # type: ignore[arg-type]
+        _save_work(bottle, plan.workspace_plan, "pi")  # type: ignore[arg-type]
         self.assertEqual(_PATCH, work_patch_path("pi").read_text())
         self.assertIn("git diff --cached --binary", bottle.exec.call_args.args[0])
 
     def test_nothing_is_saved_without_a_git_workspace_or_on_failure(self) -> None:
         bottle, plan = self.bottle_plan(git=False)
-        _save_work(bottle, plan, "pi")  # type: ignore[arg-type]
+        _save_work(bottle, plan.workspace_plan, "pi")  # type: ignore[arg-type]
         bottle.exec.assert_not_called()
         bottle, plan = self.bottle_plan(git=True)
         bottle.exec.side_effect = OSError("bottle gone")
         with patch("sys.stderr", io.StringIO()):
-            _save_work(bottle, plan, "pi")  # type: ignore[arg-type]  # must not raise
+            _save_work(bottle, plan.workspace_plan, "pi")  # type: ignore[arg-type]  # must not raise
         self.assertFalse(work_patch_path("pi").exists())
 
     def test_a_mounted_workspace_has_nothing_to_save(self) -> None:
         bottle, plan = self.bottle_plan(git=True)
         plan.workspace_plan.mount = True  # type: ignore[attr-defined]
-        _save_work(bottle, plan, "pi")  # type: ignore[arg-type]
+        _save_work(bottle, plan.workspace_plan, "pi")  # type: ignore[arg-type]
         bottle.exec.assert_not_called()
 
     def test_the_cli_reports_a_patch_from_this_session_only(self) -> None:

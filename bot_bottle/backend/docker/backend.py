@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import shutil
 import io
-from contextlib import contextmanager, redirect_stderr
+from contextlib import AbstractContextManager, contextmanager, redirect_stderr
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator, Sequence
 
@@ -27,6 +27,7 @@ from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
 
 if TYPE_CHECKING:
+    from ..adoption import AdoptionRecord
     from .infra import DockerInfraService
 class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanupPlan"]):
     """The docker backend, selected with `BOT_BOTTLE_BACKEND=docker`."""
@@ -102,6 +103,11 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     def infra_service(self) -> "DockerInfraService":
         from .infra import DockerInfraService
         return DockerInfraService(self.settings)
+
+    def adopted_bottle(
+        self, bottle_id: str, record: "AdoptionRecord",
+    ) -> AbstractContextManager[DockerBottle]:
+        return _launch.adopted(bottle_id, record, self.settings)
 
     def prepare_cleanup(self) -> DockerBottleCleanupPlan:
         return _cleanup.prepare_cleanup(self.settings)

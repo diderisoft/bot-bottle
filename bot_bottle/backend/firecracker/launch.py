@@ -17,7 +17,7 @@ import shlex
 import shutil
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, Generator
+from typing import TYPE_CHECKING, Callable, Generator
 
 from ... import agent_image, agent_overlay
 from ...agent_provider import runtime_for
@@ -25,6 +25,7 @@ from ...published_artifacts import FORMAT_EXT4, FORMAT_OCI, Artifact, ArtifactsM
 from ...bottle_state import committed_rootfs_path, read_committed_image
 from ...egress import Egress
 from ...image_cache import check_stale_path
+from ...contract.hostctl import Settings
 from ...lib.log import die, info
 from ..launch_common import (
     LaunchTeardown,
@@ -49,6 +50,29 @@ from .consolidated_launch import (
 )
 
 
+
+if TYPE_CHECKING:
+    from ..adoption import AdoptionRecord
+
+
+@contextmanager
+def adopted(
+    bottle_id: str, record: "AdoptionRecord", settings: Settings,
+) -> Generator[FirecrackerBottle, None, None]:
+    """A bottle a previous host controller launched: exec into it over SSH,
+    then tear it down as its holder would have (stop the VM, remove its run
+    dir, deregister)."""
+    from .cleanup import stop_vmms  # pylint: disable=import-outside-toplevel
+    run_dir = util.cache_dir() / "run" / bottle_id
+    try:
+        yield FirecrackerBottle(record.container, private_key=run_dir / "bottle_id_ed25519",
+                                guest_ip=firecracker_vm.guest_ip_of(run_dir))
+    finally:
+        stop_vmms(run_dir)
+        shutil.rmtree(run_dir, ignore_errors=True)
+        if record.registry_id:
+            deprovision_consolidated(record.registry_id, service=FirecrackerInfraService(settings),
+                                     timeout=resolve_teardown_timeout(host_db_path()))
 
 @contextmanager
 def launch(

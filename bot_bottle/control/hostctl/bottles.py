@@ -29,6 +29,7 @@ from ...contract.hostctl import CONFIRM_ERROR, InfraSettings, LaunchRequest, Set
 from ...lib import log
 from ...paths import host_secrets_path
 from ...util import slugify
+from ...backend import adoption
 from .audit_events import HostAudit, digest_manifest, digest_request
 from .sessions import ExitStatus, SessionManager, SessionRecord
 
@@ -124,11 +125,11 @@ def _log_preflight(plan: "BottlePlan", backend_name: str) -> None:
         log.warn(note)
 
 
-def _save_work(bottle: Any, plan: "BottlePlan", identity: str) -> None:
-    """Before teardown, save a copied git workspace's changes as a patch."""
+def _save_work(bottle: Any, workspace: Any, identity: str) -> None:
+    """Before teardown, save a copied git workspace's changes as a patch.
+    `workspace` is the plan's workspace or an adoption record's."""
     from ...workspace import export_patch_script, save_patch  # pylint: disable=import-outside-toplevel
     try:
-        workspace = plan.workspace_plan
         if not (workspace.enabled and workspace.has_host_git_dir) or workspace.mount:
             return
         result = bottle.exec(export_patch_script(shlex.quote(workspace.guest_path)))
@@ -299,6 +300,12 @@ class BottleService:
                         headless=request.headless, remote_view=remote_view))
                     with self._lock:
                         self._held[identity] = held
+                    # Lets a restarted controller finish this bottle.
+                    try:
+                        adoption.write(identity, adoption.record_for(plan, bottle))
+                    except OSError as e:
+                        log.warn(f"bottle {identity}: couldn't record how to finish it "
+                                 f"after a host controller restart: {e}")
                     self._sessions.start(SessionRecord(
                         id=identity, kind=SESSION_KIND,
                         meta={"backend": backend.name, "agent": request.agent,
@@ -321,7 +328,7 @@ class BottleService:
                         exit_code=code, stop_requested=held.stop_requested)
                     log.info(f"session {identity} ended (exit {code}); "
                              f"removing {bottle.name}")
-                    _save_work(bottle, plan, identity)
+                    _save_work(bottle, plan.workspace_plan, identity)
                     if harness == "claude":
                         capture_claude_session_state(identity, code)
             except BaseException as e:  # pylint: disable=broad-exception-caught
@@ -367,21 +374,50 @@ class BottleService:
             held.exited.set()
             held.done.wait()
             return
-        with self._lock:
-            release = self._adopted.pop(record.id, None)
-        if release is not None:
-            release()
         code = exit_code(exit_status.status, exit_status.signal)
         self.audit.bottled_agent_exit(
             bottle=record.id, activation=str(record.meta.get("activation", "")),
             manifest_digest=str(record.meta.get("manifest_digest", "")),
             exit_code=code, stop_requested=False)
-        log.warn(f"bottle {record.id} ({record.meta.get('backend', '?')}): its agent exited "
-                 f"(exit {code}) with nothing holding the bottle; run `bot-bottle cleanup` "
-                 f"to remove it")
+        try:
+            self._finish_adopted(record, code)
+        finally:
+            with self._lock:
+                release = self._adopted.pop(record.id, None)
+            if release is not None:
+                release()
         if record.meta.get("provider") == "claude":
             capture_claude_session_state(record.id, code)
         settle_state(record.id)
+
+    def _finish_adopted(self, record: SessionRecord, code: int) -> None:
+        """Tear down a bottle a previous controller launched, from the record
+        it left: save the work, remove the bottle, revoke its deploy keys."""
+        # pylint: disable=import-outside-toplevel
+        from ...git_gate.provision import revoke_deploy_keys
+        from ...bottle_state import git_gate_state_dir
+        from ...secret_source import FileSecrets
+
+        name = str(record.meta.get("backend", ""))
+        adopted = adoption.read(record.id)
+        if adopted is None or not name:
+            log.warn(f"bottle {record.id} ({name or '?'}): its agent exited (exit {code}) "
+                     f"with nothing holding the bottle; run `bot-bottle cleanup` to remove it")
+            return
+        log.info(f"session {record.id} ended (exit {code}); removing {adopted.container}")
+        try:
+            backend = self._backend_for(
+                with_recorded_infra(Settings(), name, self._recorded_infra))
+            with backend.adopted_bottle(record.id, adopted) as bottle:
+                _save_work(bottle, adopted.workspace, record.id)
+        except Exception as e:  # pylint: disable=broad-exception-caught  # still revoke keys
+            log.warn(f"bottle {record.id}: teardown failed: {e}; run `bot-bottle cleanup`")
+        try:
+            revoke_deploy_keys(adopted.deploy_keys, git_gate_state_dir(record.id),
+                               FileSecrets(self._secrets_file or host_secrets_path()))
+        except Exception as e:  # pylint: disable=broad-exception-caught  # report, don't crash
+            log.warn(f"bottle {record.id}: couldn't revoke its deploy keys: {e}; "
+                     f"revoke them by hand")
 
     # --- list / teardown ---
 

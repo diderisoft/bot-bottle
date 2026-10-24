@@ -125,7 +125,10 @@ class FakeBackend:
         return SimpleNamespace(
             slug=slug, harness="claude",
             agent_provision=SimpleNamespace(startup_args=("--start",)),
-            manifest=SimpleNamespace(agent=SimpleNamespace(remote_writable=True)),
+            manifest=SimpleNamespace(agent=SimpleNamespace(remote_writable=True),
+                                     bottle=SimpleNamespace(git=())),
+            workspace_plan=SimpleNamespace(enabled=False, has_host_git_dir=False, mount=False,
+                                           guest_path=""),
         )
 
     def prelaunch_checks(self, plan: Any) -> None:

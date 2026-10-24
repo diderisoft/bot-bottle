@@ -59,36 +59,63 @@ def _provision_dynamic_key(
     return str(key_file)
 
 
+@dataclasses.dataclass(frozen=True)
+class DeployKeyRef:
+    """What revoking a repo's gitea deploy key needs, minus the token: safe to
+    write to disk."""
+
+    name: str
+    forge_token_env: str
+    api_url: str
+    upstream_host: str
+    upstream_path: str
+
+
+def deploy_key_refs(bottle: ManifestBottle) -> tuple[DeployKeyRef, ...]:
+    """The bottle's repos whose deploy keys are minted per launch."""
+    return tuple(
+        DeployKeyRef(name=e.Name, forge_token_env=e.Key.forge_token_env,
+                     api_url=e.Key.api_url, upstream_host=e.UpstreamHost,
+                     upstream_path=e.UpstreamPath)
+        for e in bottle.git if e.Key.provider == "gitea"
+    )
+
+
 def revoke_git_gate_provisioned_keys(
     bottle: ManifestBottle, stage_dir: Path, secrets: SecretSource,
 ) -> None:
     """Revoke every deploy key provisioned for `bottle`. Raises on any failure,
     since a stranded key needs the operator's attention."""
+    revoke_deploy_keys(deploy_key_refs(bottle), stage_dir, secrets)
+
+
+def revoke_deploy_keys(
+    refs: "tuple[DeployKeyRef, ...]", stage_dir: Path, secrets: SecretSource,
+) -> None:
+    """Revoke the provisioned deploy key of each of `refs`. Raises on any
+    failure."""
     from ..deploy_key_provisioner import get_provisioner
-    for entry in bottle.git:
-        if entry.Key.provider != "gitea":
-            continue
-        pk = entry.Key
-        id_file = stage_dir / f"{entry.Name}-deploy-key-id"
+    for ref in refs:
+        id_file = stage_dir / f"{ref.name}-deploy-key-id"
         if not id_file.exists():
             continue
         key_id = id_file.read_text().strip()
-        token = secrets.get(pk.forge_token_env)
+        token = secrets.get(ref.forge_token_env)
         if token is None:
             raise MissingEnvVarError(
-                pk.forge_token_env,
-                f"git-gate.repos[{entry.Name!r}] key.forge_token_env"
-                f" = {pk.forge_token_env!r}: secret is not set;"
+                ref.forge_token_env,
+                f"git-gate.repos[{ref.name!r}] key.forge_token_env"
+                f" = {ref.forge_token_env!r}: secret is not set;"
                 f" cannot revoke deploy key {key_id}",
             )
-        api_url = pk.api_url or f"https://{entry.UpstreamHost}"
-        provisioner = get_provisioner(pk.provider, token, api_url)
-        owner_repo = entry.UpstreamPath
+        api_url = ref.api_url or f"https://{ref.upstream_host}"
+        provisioner = get_provisioner("gitea", token, api_url)
+        owner_repo = ref.upstream_path
         if owner_repo.endswith(".git"):
             owner_repo = owner_repo[:-4]
-        info(f"revoking deploy key {key_id} for git-gate.repos[{entry.Name!r}]")
+        info(f"revoking deploy key {key_id} for git-gate.repos[{ref.name!r}]")
         provisioner.delete(owner_repo, key_id)
-        info(f"revoked deploy key {key_id} for git-gate.repos[{entry.Name!r}]")
+        info(f"revoked deploy key {key_id} for git-gate.repos[{ref.name!r}]")
 
 
 def _resolve_identity_file(
@@ -180,7 +207,10 @@ def load_upstreams_snapshot(stage_dir: Path) -> tuple[GitGateUpstream, ...]:
 
 
 __all__ = [
+    "DeployKeyRef",
+    "deploy_key_refs",
     "load_upstreams_snapshot",
+    "revoke_deploy_keys",
     "revoke_git_gate_provisioned_keys",
     "provision_git_gate_dynamic_keys",
     "_provision_dynamic_key",

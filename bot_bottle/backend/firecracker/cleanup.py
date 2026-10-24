@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import os
+import select
 import signal
 from pathlib import Path
 
@@ -94,6 +95,31 @@ def _scan_processes(run_root: Path) -> tuple[set[str], list[int]]:
         else:
             orphan_pids.append(pid)
     return live, orphan_pids
+
+
+def stop_vmms(run_dir: Path, *, timeout: float = 5.0) -> None:
+    """Stop the VMMs booted from `run_dir` (SIGTERM, then SIGKILL), for a
+    bottle whose launching host controller is gone."""
+    for pid in _firecracker_pids():
+        args = _process_args(pid)
+        if args is None or _run_dir_of(args, run_dir.parent) != run_dir:
+            continue
+        try:
+            pidfd = os.pidfd_open(pid)
+        except OSError:
+            continue
+        try:
+            info(f"stopping firecracker VM pid {pid}")
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    signal.pidfd_send_signal(pidfd, sig)
+                except ProcessLookupError:
+                    break
+                ready, _, _ = select.select([pidfd], [], [], timeout)
+                if ready:  # the pidfd turns readable when the process exits
+                    break
+        finally:
+            os.close(pidfd)
 
 
 def live_run_dirs() -> tuple[Path, ...]:
