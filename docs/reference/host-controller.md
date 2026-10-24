@@ -93,6 +93,10 @@ Each agent runs in tmux on bot-bottle's own tmux server, never the user's
 
   The bar fits each client (`#{client_width}`): the notice's reason and the
   detach hint need 150 columns, and under 100 the request summary is cut.
+- A launch's warnings (an isolation gap, a stale image) stay on the session
+  as `@bb_warning` and show in amber before the detach key, shortened to the
+  first warning's first clause and a count of the rest: up to 70 columns,
+  30 under 100. A pending request takes their place.
   Counts live in memory and reset when the session or the daemon restarts.
 
 Viewers:
