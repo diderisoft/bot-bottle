@@ -25,6 +25,14 @@ On the console's control stream (JSON lines) the host serves:
   agents that exited meanwhile, reopens the relays of the running ones, and
   sends `agents_running` (`agent_ids`): the console stops any other agent it
   has running on this host.
+- `attention` (sent by the host): an agent this link launched has a pending
+  supervise request: reason `approval`, `since` (when it asked), a `message`
+  (what it wants, the routes, why) and `options` (`allow_project` when it
+  can be saved). `activity` follows once nothing is waiting.
+- `approval` -> the console's answer: `allow`, `allow_project` or `deny`,
+  echoing `since` so a stale click can't answer a newer request. Answered as
+  the terminal popup does. The console checks the person (a fresh passkey
+  assertion) before it sends an allow.
 - The session's terminal is relayed to the console on a uni stream (see
   `console_terminal`); `input` types into it when the agent allows remote
   typing, and `resize` sizes the console's tmux client.
@@ -46,6 +54,7 @@ import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -296,6 +305,8 @@ class ConsoleLink:
 
     def __init__(self, bottles: Bottles, send: Callable[[dict[str, Any]], Awaitable[None]],
                  agents: Callable[[], list[str]] | None = None, *,
+                 requests: Callable[[], list[dict[str, Any]]] | None = None,
+                 orchestrator: Callable[[], Any] | None = None,
                  terminals: TerminalFactory | None = None,
                  audit: Callable[[str, str | None, int], list[dict[str, Any]]] | None = None,
                  state: "LinkState | None" = None,
@@ -303,6 +314,8 @@ class ConsoleLink:
         self._bottles = bottles
         self._send = send
         self._agents = agents if agents is not None else local_agents
+        self._requests = requests if requests is not None else _pending_requests
+        self._orchestrator = orchestrator if orchestrator is not None else _orchestrator
         self._terminal_factory = terminals
         self._audit = audit if audit is not None else query_audit
         state = state if state is not None else LinkState()
@@ -313,6 +326,8 @@ class ConsoleLink:
         self.launched = state.launched
         # console agent id -> the relay of its session's terminal.
         self.terminals: dict[str, Terminal] = {}
+        # console agent id -> the request currently raised for it.
+        self._asking: dict[str, Any] = {}
 
     async def handle(self, msg: dict[str, Any]) -> None:
         kind = msg.get("type")
@@ -323,6 +338,9 @@ class ConsoleLink:
             await self._launch(str(msg.get("agent_id", "")), msg.get("definition"), msg)
         elif kind == "stop":
             await self._stop(str(msg.get("agent_id", "")))
+        elif kind == "approval":
+            await self._approval(str(msg.get("agent_id", "")), str(msg.get("decision", "")),
+                                 str(msg.get("since", "")))
         elif kind == "input":
             self._input(str(msg.get("agent_id", "")), msg.get("data"))
         elif kind == "resize":
@@ -453,6 +471,57 @@ class ConsoleLink:
                 await self._open_terminal(agent_id, bottle)
         await self._send({"type": "agents_running", "agent_ids": sorted(self.running)})
 
+    async def push_attention(self) -> None:
+        """For each agent this link launched, raise its oldest pending
+        request as `attention` (reason "approval"), or report `activity`
+        once nothing is waiting. Only changes are sent."""
+        # pylint: disable=import-outside-toplevel  # the link's only approvals use
+        from ...approvals import Request, route_lines, session_project
+        try:
+            pending = [Request.from_dict(raw) for raw in await asyncio.to_thread(self._requests)]
+        except Exception as e:  # pylint: disable=broad-exception-caught  # retried next round
+            log.debug(f"remote: can't list requests: {e}")
+            return
+        for agent_id, bottle in list(self.running.items()):
+            request = next((r for r in pending if r.session == bottle), None)
+            shown = self._asking.get(agent_id)
+            if request is None:
+                if shown is not None:
+                    self._asking.pop(agent_id, None)
+                    await self._send({"type": "activity", "agent_id": agent_id})
+                continue
+            if shown is not None and shown.id == request.id:
+                continue
+            self._asking[agent_id] = request
+            lines = [request.summary(), *route_lines(request)]
+            if request.justification.strip():
+                lines.append(f"why: {request.justification.strip()}")
+            options = (["allow_project"] if request.can_save_to_project()
+                       and session_project(request.session) is not None else [])
+            await self._send({"type": "attention", "agent_id": agent_id, "reason": "approval",
+                              "since": request.arrived, "message": "\n".join(lines),
+                              "options": options})
+
+    async def _approval(self, agent_id: str, decision: str, since: str) -> None:
+        """The console's answer to the approval raised for ``agent_id``.
+        ``since`` must name the request still shown, so a stale click can't
+        answer a newer one."""
+        # pylint: disable=import-outside-toplevel  # the link's only approvals use
+        from ...approvals import ALLOW_ONCE, ALLOW_PROJECT, DENY, answer
+        request = self._asking.get(agent_id)
+        chosen = {"allow": ALLOW_ONCE, "allow_project": ALLOW_PROJECT, "deny": DENY}.get(decision)
+        if request is None or chosen is None or not _same_moment(since, request.arrived):
+            log.warn(f"remote: ignoring a stale or unknown approval for {agent_id}")
+            return
+        try:
+            message = await asyncio.to_thread(answer, self._orchestrator(), request, chosen,
+                                              via="the phone")
+            log.info(f"remote: {request.session}: {message}")
+        except Exception as e:  # pylint: disable=broad-exception-caught  # logged; still pending
+            log.warn(f"remote: couldn't answer {request.session}'s request: {e}")
+            return
+        await self.push_attention()
+
     async def reap(self) -> None:
         """Report agents that exited on their own."""
         for agent_id, bottle in list(self.running.items()):
@@ -467,6 +536,31 @@ class ConsoleLink:
             exit_info = state.get("exit")
             code = int(exit_info.get("status", 0) or 0) if isinstance(exit_info, dict) else 0  # type: ignore[arg-type]
             await self._send({"type": "agent_stopped", "agent_id": agent_id, "exit_code": code})
+
+
+def _same_moment(a: str, b: str) -> bool:
+    """Whether two ISO timestamps name the same instant, give or take the
+    precision and zone formatting a round trip through the console loses."""
+    def parse(v: str) -> datetime | None:
+        try:
+            dt = datetime.fromisoformat(v)
+        except ValueError:
+            return None
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+    left, right = parse(a), parse(b)
+    return left is not None and right is not None and abs((left - right).total_seconds()) < 1
+
+
+def _pending_requests() -> list[dict[str, Any]]:
+    from .requests import orchestrator_pending  # pylint: disable=import-outside-toplevel
+    return orchestrator_pending()
+
+
+def _orchestrator() -> Any:
+    # pylint: disable=import-outside-toplevel  # only when a request is answered
+    from ...contract.hostctl import Settings
+    from ..client import OrchestratorClient, discover_orchestrator_url
+    return OrchestratorClient(discover_orchestrator_url(Settings()))
 
 
 # -- the connection ------------------------------------------------------------
@@ -506,6 +600,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
         while True:
             await asyncio.sleep(WATCH_SECONDS)
             await link.reap()
+            await link.push_attention()
 
     watcher = asyncio.create_task(watch())
     try:

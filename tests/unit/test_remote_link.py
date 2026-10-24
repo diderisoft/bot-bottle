@@ -138,6 +138,81 @@ class TestConsoleLink(unittest.TestCase):
         self.assertEqual({}, link.running)
 
 
+_CURRENT = 'routes:\n  - host: "github.com"\n'
+_PROPOSED = _CURRENT + '  - host: "api.stripe.com"\n    inspect:\n      matches:\n' \
+    '        - methods: ["GET"]\n'
+
+
+def _pending(pid: str = "p1", session: str = "bottle-1") -> dict[str, Any]:
+    return {"id": pid, "bottle_slug": "b-9", "bottle_label": session, "tool": "egress-allow",
+            "justification": "schema", "proposed_file": _PROPOSED, "current_file": _CURRENT,
+            "arrival_timestamp": "2026-10-23T18:00:01.123456+00:00"}
+
+
+class TestApprovals(unittest.TestCase):
+    """Pending requests raised as the console's `attention`, answered by `approval`."""
+
+    def link(self, pending: list[dict[str, Any]]) -> tuple[remote.ConsoleLink, list[dict[str, Any]],
+                                                           mock.MagicMock]:
+        sent: list[dict[str, Any]] = []
+
+        async def send(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+        client = mock.MagicMock()
+
+        def respond(pid: str, **_kwargs: object) -> None:
+            pending[:] = [p for p in pending if p["id"] != pid]
+
+        client.supervise_respond.side_effect = respond
+        link = remote.ConsoleLink(_Bottles(), send, agents=lambda: ["implementer"],
+                                  requests=lambda: list(pending), orchestrator=lambda: client)
+        asyncio.run(link.handle({"type": "launch", "agent_id": "a1",
+                                 "definition": {"name": "implementer"}}))
+        return link, sent, client
+
+    def test_a_request_is_raised_once_and_cleared_with_activity(self) -> None:
+        pending = [_pending()]
+        link, sent, _ = self.link(pending)
+        asyncio.run(link.push_attention())
+        asyncio.run(link.push_attention())  # unchanged: not raised again
+        raised = [m for m in sent if m["type"] == "attention"]
+        self.assertEqual(1, len(raised))
+        self.assertEqual(("a1", "approval", "2026-10-23T18:00:01.123456+00:00"),
+                         (raised[0]["agent_id"], raised[0]["reason"], raised[0]["since"]))
+        self.assertIn("bottle-1 wants GET api.stripe.com", raised[0]["message"])
+        self.assertIn("api.stripe.com  GET", raised[0]["message"])
+        pending.clear()
+        asyncio.run(link.push_attention())
+        self.assertEqual({"type": "activity", "agent_id": "a1"}, sent[-1])
+
+    def test_approval_answers_the_raised_request(self) -> None:
+        pending = [_pending()]
+        link, sent, client = self.link(pending)
+        asyncio.run(link.push_attention())
+        # The console echoes since after a round trip through its database.
+        asyncio.run(link.handle({"type": "approval", "agent_id": "a1", "decision": "deny",
+                                 "since": "2026-10-23T18:00:01.123456"}))
+        self.assertEqual("reject", client.supervise_respond.call_args.kwargs["decision"])
+        self.assertIn("the phone", client.supervise_respond.call_args.kwargs["notes"])
+        self.assertEqual({"type": "activity", "agent_id": "a1"}, sent[-1])
+
+    def test_a_stale_or_unknown_approval_is_ignored(self) -> None:
+        link, _, client = self.link([_pending()])
+        asyncio.run(link.push_attention())
+        for msg in ({"agent_id": "a1", "decision": "allow", "since": "2026-10-23T17:00:00"},
+                    {"agent_id": "a1", "decision": "maybe", "since": "2026-10-23T18:00:01"},
+                    {"agent_id": "nope", "decision": "allow", "since": "2026-10-23T18:00:01"}):
+            with self.subTest(msg=msg):
+                asyncio.run(link.handle({"type": "approval", **msg}))
+        client.supervise_respond.assert_not_called()
+
+    def test_requests_from_bottles_this_link_did_not_launch_are_not_raised(self) -> None:
+        link, sent, _ = self.link([_pending(session="someone-elses")])
+        asyncio.run(link.push_attention())
+        self.assertEqual([], [m for m in sent if m["type"] == "attention"])
+
+
 class _RootCase(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp(prefix="remote-root."))

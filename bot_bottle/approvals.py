@@ -45,6 +45,7 @@ class Request:
     justification: str
     proposed: str
     current: str
+    arrived: str = ""  # ISO timestamp the agent asked at
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Request":
@@ -52,7 +53,8 @@ class Request:
                    session=str(d.get("bottle_label") or d["bottle_slug"]),
                    tool=str(d["tool"]), justification=str(d.get("justification", "")),
                    proposed=str(d.get("proposed_file", "")),
-                   current=str(d.get("current_file", "")))
+                   current=str(d.get("current_file", "")),
+                   arrived=str(d.get("arrival_timestamp", "")))
 
     def new_routes(self) -> list[Route]:
         """The routes an egress-allow proposal adds or changes, by host."""
@@ -148,6 +150,52 @@ def _trust_project_bottle(project: Path, name: str) -> None:
         trust.trust(e)
 
 
+ALLOW_ONCE, ALLOW_PROJECT, DENY = "allow_once", "allow_project", "deny"
+DECISIONS = (ALLOW_ONCE, ALLOW_PROJECT, DENY)
+
+
+def answer(client: Any, request: Request, decision: str, *, via: str) -> str:
+    """Act on ``decision`` for ``request`` through the orchestrator
+    ``client``; returns what happened, for the person who decided. "Allow for
+    project" also writes the routes into the project's bottle, when the
+    request can be saved and the bottle shared a project directory; otherwise
+    it raises ValueError. ``via`` ("the terminal", "the phone") is noted on the
+    decision."""
+    if decision not in DECISIONS:
+        raise ValueError(f"unknown decision {decision!r}")
+    project = session_project(request.session) if decision == ALLOW_PROJECT else None
+    if decision == ALLOW_PROJECT and (project is None or not request.can_save_to_project()):
+        raise ValueError("this request can only be allowed once")
+    if decision == DENY:
+        client.supervise_respond(request.id, bottle_slug=request.bottle,
+                                 decision="reject", notes=f"denied from {via}")
+        return "denied"
+    note = "allowed for the project" if project is not None else "allowed once"
+    client.supervise_respond(request.id, bottle_slug=request.bottle, decision="approve",
+                             notes=f"{note}, from {via}")
+    if project is not None:
+        saved = save_to_project(project, request.new_routes())
+        return f"allowed, and saved to {saved}"
+    return "allowed once"
+
+
+def route_lines(request: Request) -> list[str]:
+    """The routes a request adds, one plain line each."""
+    lines = []
+    for route in request.new_routes():
+        methods = sorted({m for entry in route.matches for m in entry.methods}) or ["any"]
+        paths = sorted({p.value for entry in route.matches for p in entry.paths})
+        line = f"{route.host}  {', '.join(methods)}"
+        if paths:
+            line += f"  paths {', '.join(paths)}"
+        if route.git_fetch:
+            line += "  + git clone/fetch"
+        if route.token_env:
+            line += f"  with ${route.token_env}"
+        lines.append(line)
+    return lines
+
+
 def session_project(session: str) -> Path | None:
     """The project directory a bottle was started on, if it shared one."""
     from .bottle_state import read_metadata  # pylint: disable=import-outside-toplevel
@@ -158,5 +206,6 @@ def session_project(session: str) -> Path | None:
     return path if path.is_dir() and path != Path(os.path.expanduser("~")) else None
 
 
-__all__ = ["Request", "manifest_route", "project_bottle_path", "save_to_project",
+__all__ = ["ALLOW_ONCE", "ALLOW_PROJECT", "DECISIONS", "DENY", "Request", "answer",
+           "manifest_route", "project_bottle_path", "route_lines", "save_to_project",
            "session_project"]

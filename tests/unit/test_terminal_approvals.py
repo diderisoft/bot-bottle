@@ -146,7 +146,8 @@ class Review(unittest.TestCase):
         reviewer, client = self.reviewer("p", [_pending(_CURRENT + _STRIPE)])
         with patch("bot_bottle.cli.commands.approve.session_project",
                    return_value=Path("/proj")), \
-                patch("bot_bottle.cli.commands.approve.save_to_project",
+                patch("bot_bottle.approvals.session_project", return_value=Path("/proj")), \
+                patch("bot_bottle.approvals.save_to_project",
                       return_value=Path("/proj/.bot-bottle/bottles/proj.md")) as save, \
                 patch("sys.stdout", io.StringIO()):
             reviewer.run()

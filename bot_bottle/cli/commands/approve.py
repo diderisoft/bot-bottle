@@ -20,12 +20,14 @@ import sys
 import termios
 import tty
 from collections.abc import Callable
-from pathlib import Path
 
-from ...approvals import Request, save_to_project, session_project
+from ...approvals import (
+    ALLOW_ONCE, ALLOW_PROJECT, DENY, Request, answer, route_lines, session_project,
+)
 from ...control.client import OrchestratorClient, OrchestratorClientError, discover_orchestrator_url
 from ..settings import settings_from_env
 
+_DECISION = {"a": ALLOW_ONCE, "p": ALLOW_PROJECT, "d": DENY}
 _DIM, _COPPER, _BOLD, _RESET = "\x1b[2m", "\x1b[38;5;173m", "\x1b[1m", "\x1b[0m"
 
 
@@ -47,16 +49,10 @@ def describe(request: Request) -> list[str]:
     lines = [f"{_BOLD}{request.summary()}{_RESET}", ""]
     if request.justification.strip():
         lines += [f"{_DIM}why:{_RESET} {request.justification.strip()}", ""]
-    routes = request.new_routes()
+    routes = route_lines(request)
     if routes:
         lines.append(f"{_DIM}it would allow:{_RESET}")
-        for route in routes:
-            methods = sorted({m for entry in route.matches for m in entry.methods}) or ["any"]
-            paths = sorted({p.value for entry in route.matches for p in entry.paths})
-            extra = f"  paths {', '.join(paths)}" if paths else ""
-            git = "  + git clone/fetch" if route.git_fetch else ""
-            cred = f"  {_COPPER}with ${route.token_env}{_RESET}" if route.token_env else ""
-            lines.append(f"  {route.host:<32} {', '.join(methods)}{extra}{git}{cred}")
+        lines += [f"  {line}" for line in routes]
     else:
         lines.append(f"{_DIM}proposed:{_RESET}")
         lines += [f"  {line}" for line in request.proposed.splitlines()[:20]]
@@ -102,31 +98,15 @@ class Reviewer:  # pylint: disable=too-few-public-methods
             key = self.key()
             if key in ("a", "d", "s", "q") or (key == "p" and project is not None):
                 break
-        try:
-            if key in ("a", "p"):
-                note = "allowed for the project" if key == "p" else "allowed once"
-                self.client.supervise_respond(
-                    request.id, bottle_slug=request.bottle, decision="approve",
-                    notes=f"{note}, from the terminal")
-                if key == "p" and project is not None:
-                    saved = save_to_project(project, request.new_routes())
-                    self.out(f"saved to {_short(saved)}")
-            elif key == "d":
-                self.client.supervise_respond(request.id, bottle_slug=request.bottle,
-                                              decision="reject", notes="denied from the terminal")
-            elif key == "s":
-                self.skipped.add(request.id)
-        except OrchestratorClientError as e:
-            self.out(f"couldn't answer it: {e} (press a key)")
-            self.key()
+        if key == "s":
+            self.skipped.add(request.id)
+        elif key in _DECISION:
+            try:
+                self.out(answer(self.client, request, _DECISION[key], via="the terminal"))
+            except (OrchestratorClientError, ValueError) as e:
+                self.out(f"couldn't answer it: {e} (press a key)")
+                self.key()
         return key
-
-
-def _short(path: Path) -> str:
-    try:
-        return f"./{path.relative_to(Path.cwd())}"
-    except ValueError:
-        return str(path)
 
 
 def cmd_approve(argv: list[str]) -> int:
