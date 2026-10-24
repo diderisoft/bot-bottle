@@ -428,8 +428,12 @@ class TestSandboxEscape(unittest.TestCase):
             r = self._bottle.exec(  # type: ignore
                 "dig +short +tries=1 +time=3 example.com"
             )
+            # `dig` reports its own errors as `;;` lines, which can name the
+            # resolver's address; only answer lines count.
+            answers = "\n".join(
+                ln for ln in r.stdout.splitlines() if not ln.startswith(";;"))
             self.assertIsNone(
-                re.search(r"\b\d{1,3}(\.\d{1,3}){3}\b", r.stdout),
+                re.search(r"\b\d{1,3}(\.\d{1,3}){3}\b", answers),
                 f"example.com resolved inside the agent, so DNS is a channel "
                 f"off the box; stdout={r.stdout!r}",
             )
