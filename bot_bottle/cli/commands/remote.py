@@ -38,6 +38,15 @@ def _request(method: str, url: str, body: dict[str, Any], token: str = "") -> di
         return json.loads(resp.read())
 
 
+def _console_detail(error: urllib.error.HTTPError) -> str:
+    """The console's own explanation of a refusal (FastAPI's `detail`), if any."""
+    try:
+        detail = json.loads(error.read()).get("detail")
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return detail if isinstance(detail, str) else ""
+
+
 def _bind(console: dict[str, Any], node_id: str) -> dict[str, Any]:
     """`PUT /api/v1/hosts/iroh` with the host's access token, refreshing it
     once if expired."""
@@ -66,7 +75,8 @@ def _enable() -> int:
         bound = _bind(console, node_id)
     except urllib.error.HTTPError as e:
         detail = {401: "the console rejected this host's token; run `bot-bottle login` again",
-                  409: "another host on the console already holds this node id"}
+                  409: _console_detail(e) or "another host on the console already holds "
+                                             "this machine's node id"}
         return _fail(detail.get(e.code, f"the console refused the binding (HTTP {e.code})"))
     except (OSError, ValueError) as e:
         return _fail(f"couldn't reach the console at {console['url']}: {e}")
@@ -81,6 +91,13 @@ def _enable() -> int:
     if not pinned:
         console["console_node_id"] = console_id
     console["console_ticket"] = ticket
+    # Re-pairing this machine folds the new pairing into its original host on
+    # the console; that's the host this machine is now.
+    host_id = str(bound.get("host_id", ""))
+    if host_id and host_id != console.get("host_id"):
+        if console.get("host_id"):
+            print("this machine was already paired: kept its original host on the console")
+        console["host_id"] = host_id
     remote.save_console(console)
     remote.save_config(remote.RemoteConfig(
         enabled=True, console_node_id=console_id, console_ticket=ticket))

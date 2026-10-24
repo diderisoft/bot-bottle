@@ -609,6 +609,24 @@ class TestRemoteEnable(_RootCase):
         self.assertIn("changed since login", output)
         self.assertFalse(remote.load_config().enabled)
 
+    def test_a_repaired_machine_takes_its_original_host_id(self) -> None:
+        self._login()  # the new pairing's host, h1
+        rc, output, _ = self._enable([{"host_id": "h0", "console_node_id": "cid",
+                                       "console_ticket": "tk"}])
+        self.assertEqual(0, rc)
+        self.assertEqual("h0", remote.load_console()["host_id"])
+        self.assertIn("already paired", output)
+
+    def test_a_machine_paired_to_another_account_says_so(self) -> None:
+        self._login()
+        body = io.BytesIO(json.dumps({"detail": "this machine is paired to another account "
+                                                "on this console"}).encode())
+        refused = urllib.error.HTTPError("u", 409, "conflict", {}, body)  # type: ignore[arg-type]
+        rc, output, _ = self._enable([refused])
+        self.assertEqual(1, rc)
+        self.assertIn("paired to another account", output)
+        self.assertFalse(remote.load_config().enabled)
+
     def test_needs_a_login(self) -> None:
         rc, output, _ = self._enable([])
         self.assertEqual(1, rc)
