@@ -35,8 +35,9 @@ On the console's control stream (JSON lines) the host serves:
   assertion) before it sends an allow.
 - The session's terminal is relayed to the console on a uni stream (see
   `console_terminal`); `input` types into it when the agent allows remote
-  typing, `resize` sizes the console's tmux client, and `scroll` (`lines`,
-  > 0 back) scrolls the session's history in tmux copy mode.
+  typing, `resize` sizes the console's tmux client, and `history` ->
+  `history` (`text`): the pane's recent history with colors, which the
+  console scrolls locally.
 - `audit_query` -> `audit_events`: the audit journal records for a bottle this
   link launched, filtered like `audit query` (bottle, activation, limit).
 
@@ -235,7 +236,7 @@ class Terminal(Protocol):
 
     def write(self, data: bytes) -> bool: ...
     def resize(self, cols: int, rows: int) -> None: ...
-    def scroll(self, lines: int) -> None: ...
+    def history(self) -> str: ...
     def close(self) -> None: ...
 
 
@@ -347,8 +348,8 @@ class ConsoleLink:
             self._input(str(msg.get("agent_id", "")), msg.get("data"))
         elif kind == "resize":
             self._resize(str(msg.get("agent_id", "")), msg.get("cols"), msg.get("rows"))
-        elif kind == "scroll":
-            self._scroll(str(msg.get("agent_id", "")), msg.get("lines"))
+        elif kind == "history":
+            await self._history(str(msg.get("agent_id", "")), msg.get("request_id"))
         elif kind == "audit_query":
             await self._audit_query(msg)
         elif kind != "hello":  # hello only opens the stream (see serve_connection)
@@ -432,10 +433,10 @@ class ConsoleLink:
         if terminal is not None and size is not None:
             terminal.resize(*size)
 
-    def _scroll(self, agent_id: str, lines: object) -> None:
+    async def _history(self, agent_id: str, request_id: object) -> None:
         terminal = self.terminals.get(agent_id)
-        if terminal is not None and type(lines) is int:  # pylint: disable=unidiomatic-typecheck
-            terminal.scroll(lines)
+        text = await asyncio.to_thread(terminal.history) if terminal is not None else ""
+        await self._send({"type": "history", "request_id": request_id, "text": text})
 
     async def _audit_query(self, msg: dict[str, Any]) -> None:
         bottle, activation = msg.get("bottle"), msg.get("activation")

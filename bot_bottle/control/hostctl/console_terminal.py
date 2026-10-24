@@ -29,8 +29,9 @@ from .sessions import SessionError, SessionManager
 
 # Upper bounds on what the console may send in one message.
 MAX_INPUT_BYTES = 64 * 1024
-# Most lines one scroll message moves; a fling sends several.
-MAX_SCROLL_LINES = 200
+# How far back `history` reaches, and the most it sends.
+HISTORY_LINES = 3000
+MAX_HISTORY_CHARS = 2_000_000
 COLS_RANGE = (20, 400)
 ROWS_RANGE = (5, 200)
 
@@ -49,13 +50,6 @@ class ConsoleTerminal:
         self._session = session_id
         self._agent_id = agent_id
         self.writable = writable_allowed
-        self._scrolled = False  # put the pane in copy mode; leave it before typing
-        # Scrolls add up here; one worker applies the total, so a burst of
-        # them is one tmux call and never blocks the console link.
-        self._scroll_lock = threading.Lock()
-        self._scroll_pending = 0
-        self._scroll_wake = threading.Event()
-        self._scroller: threading.Thread | None = None
         self._master = -1
         self._proc: subprocess.Popen[bytes] | None = None
         self._pump: threading.Thread | None = None
@@ -135,41 +129,18 @@ class ConsoleTerminal:
         """Type `data` into the session, if the agent allows remote typing."""
         if not self.writable or self._master < 0 or self._closed.is_set():
             return False
-        with self._scroll_lock:
-            self._scroll_pending = 0
-            scrolled, self._scrolled = self._scrolled, False
-        if scrolled:
-            self._sessions.end_scroll(self._session)
         os.write(self._master, data[:MAX_INPUT_BYTES])
         return True
-
-    def scroll(self, lines: int) -> None:
-        """Scroll back (`lines` > 0) or forward through the session's history.
-        Returns at once; the worker applies what has added up."""
-        if self._closed.is_set() or not lines:
-            return
-        with self._scroll_lock:
-            self._scroll_pending += lines
-            if self._scroller is None:
-                self._scroller = threading.Thread(target=self._scroll_loop, daemon=True,
-                                                  name=f"console-scroll-{self._session}")
-                self._scroller.start()
-        self._scroll_wake.set()
-
-    def _scroll_loop(self) -> None:
-        while not self._closed.is_set():
-            self._scroll_wake.wait()
-            self._scroll_wake.clear()
-            with self._scroll_lock:
-                lines, self._scroll_pending = self._scroll_pending, 0
-                lines = max(-MAX_SCROLL_LINES, min(MAX_SCROLL_LINES, lines))
-                self._scrolled = self._scrolled or lines > 0
-            if lines and not self._closed.is_set():
-                self._sessions.scroll(self._session, lines)
 
     def resize(self, cols: int, rows: int) -> None:
         if self._master >= 0 and not self._closed.is_set():
             _set_size(self._master, cols, rows)
+
+    def history(self) -> str:
+        """The session's recent history, for the console to scroll locally."""
+        if self._closed.is_set():
+            return ""
+        return self._sessions.history(self._session, HISTORY_LINES)[-MAX_HISTORY_CHARS:]
 
     def close(self) -> None:
         """Detach from the session (the agent keeps running). Doesn't block:
@@ -178,7 +149,6 @@ class ConsoleTerminal:
         if self._closed.is_set():
             return
         self._closed.set()
-        self._scroll_wake.set()  # let the scroll worker finish
         if self._proc is not None and self._proc.poll() is None:
             self._proc.terminate()
         if self._pump is None and self._master >= 0:  # never started relaying
@@ -195,4 +165,4 @@ def valid_size(cols: Any, rows: Any) -> tuple[int, int] | None:
     return None
 
 
-__all__ = ["ConsoleTerminal", "MAX_INPUT_BYTES", "MAX_SCROLL_LINES", "valid_size"]
+__all__ = ["ConsoleTerminal", "HISTORY_LINES", "MAX_INPUT_BYTES", "valid_size"]
