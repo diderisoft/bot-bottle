@@ -177,12 +177,14 @@ class TestConsoleSession(unittest.TestCase):
     """Prompt-first launches, the terminal relay's input/resize, and the
     audit journal query (the console's sidebar-first layout PRD)."""
 
-    def _link(self, *, writable: bool = True,
-              audit: Any = None) -> tuple[remote.ConsoleLink, _ActivationBottles,
-                                          list[dict[str, Any]]]:
-        bottles = _ActivationBottles()
+    def _link(self, *, writable: bool = True, audit: Any = None,
+              state: "remote.LinkState | None" = None,
+              bottles: "_ActivationBottles | None" = None,
+              ) -> tuple[remote.ConsoleLink, _ActivationBottles, list[dict[str, Any]]]:
+        bottles = bottles if bottles is not None else _ActivationBottles()
         sent: list[dict[str, Any]] = []
-        self.terms: dict[str, _Terminal] = {}
+        if not hasattr(self, "terms"):
+            self.terms: dict[str, _Terminal] = {}
 
         async def send(message: dict[str, Any]) -> None:
             sent.append(message)
@@ -192,8 +194,39 @@ class TestConsoleSession(unittest.TestCase):
             return self.terms[agent_id]
 
         link = remote.ConsoleLink(bottles, send, agents=lambda: ["implementer"],
-                                  terminals=terminals, audit=audit)
+                                  terminals=terminals, audit=audit, state=state)
         return link, bottles, sent
+
+    def test_a_reconnected_link_resumes_its_agents(self) -> None:
+        state = remote.LinkState()
+        link, bottles, _sent = self._link(state=state)
+        self._launch(link)
+        link.close()  # the connection dropped
+        self.assertTrue(self.terms["a1"].closed)
+        again, _bottles, sent = self._link(state=state, bottles=bottles)
+        asyncio.run(again.resume())
+        self.assertFalse(self.terms["a1"].closed)  # the relay is open again
+        self.assertEqual({"type": "agents_running", "agent_ids": ["a1"]}, sent[-1])
+        # Stop still reaches the agent launched on the old connection.
+        asyncio.run(again.handle({"type": "stop", "agent_id": "a1"}))
+        self.assertEqual("agent_stopped", sent[-1]["type"])
+
+    def test_an_agent_that_exited_while_away_is_reported(self) -> None:
+        state = remote.LinkState()
+        link, bottles, _sent = self._link(state=state)
+        self._launch(link)
+        link.close()
+        bottles.running.clear()  # the agent exited meanwhile
+        again, _bottles, sent = self._link(state=state, bottles=bottles)
+        asyncio.run(again.resume())
+        self.assertEqual([("agent_stopped", "a1"), ("agents_running", None)],
+                         [(m["type"], m.get("agent_id")) for m in sent])
+        self.assertEqual([], sent[-1]["agent_ids"])
+
+    def test_hello_is_quiet(self) -> None:
+        link, _bottles, sent = self._link()
+        asyncio.run(link.handle({"type": "hello"}))
+        self.assertEqual([], sent)
 
     def _launch(self, link: remote.ConsoleLink, **extra: Any) -> None:
         asyncio.run(link.handle({"type": "launch", "agent_id": "a1",
@@ -574,6 +607,23 @@ class TestSupervisor(_RootCase):
                 lambda: "bot-bottle[remote]" in str(remote.read_status().get("error"))))
 
 
+async def _next_message(recv: Any, kind: str, timeout: float) -> dict[str, Any]:
+    """The next control message of type `kind`, skipping others (a host sends
+    `agents_running` first on every connect)."""
+    buf = b""
+
+    async def read() -> dict[str, Any]:
+        nonlocal buf
+        while True:
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                msg = json.loads(line)
+                if msg.get("type") == kind:
+                    return msg
+            buf += await recv.read(4096)
+
+    return await asyncio.wait_for(read(), timeout)
+
 @unittest.skipIf(iroh is None, "needs the iroh bindings (the `remote` extra)")
 class TestOverRealIroh(_RootCase):
     """A console-shaped endpoint driving the host's real `run()` loop."""
@@ -599,8 +649,7 @@ class TestOverRealIroh(_RootCase):
                 outcome["host_node"] = str(conn.remote_id())
                 bi = await conn.open_bi()
                 await bi.send().write_all(b'{"type":"list_local","request_id":"r1"}\n')
-                outcome["reply"] = json.loads(
-                    await asyncio.wait_for(bi.recv().read(4096), 3))
+                outcome["reply"] = await _next_message(bi.recv(), "local_definitions", 3)
             except Exception as e:  # pylint: disable=broad-exception-caught  # refused case
                 outcome["error"] = type(e).__name__
             finally:
@@ -663,7 +712,7 @@ class TestOverRealIroh(_RootCase):
                 await send.write_all(json.dumps({
                     "type": "launch", "agent_id": "a1", "definition": {"name": "implementer"},
                     "prompt": "go"}).encode() + b"\n")
-                outcome["started"] = json.loads(await asyncio.wait_for(bi.recv().read(4096), 10))
+                outcome["started"] = await _next_message(bi.recv(), "agent_started", 10)
                 uni = await asyncio.wait_for(conn.accept_uni(), 10)
                 await asyncio.sleep(1.0)  # the relay's client attaches and turns writable
                 await send.write_all(json.dumps({"type": "input", "agent_id": "a1",

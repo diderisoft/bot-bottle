@@ -21,6 +21,10 @@ On the console's control stream (JSON lines) the host serves:
   `remote.writable`).
 - `stop` -> tears the bottle down; `agent_stopped` follows. An agent that
   exits on its own is reported `agent_stopped` too.
+- `hello` opens the control stream. On every (re)connect the host reports
+  agents that exited meanwhile, reopens the relays of the running ones, and
+  sends `agents_running` (`agent_ids`): the console stops any other agent it
+  has running on this host.
 - The session's terminal is relayed to the console on a uni stream (see
   `console_terminal`); `input` types into it when the agent allows remote
   typing, and `resize` sizes the console's tmux client.
@@ -41,7 +45,7 @@ import tempfile
 import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -276,25 +280,37 @@ def session_terminals(conn: "iroh.Connection", sessions: Any) -> TerminalFactory
     return start
 
 
+@dataclass
+class LinkState:
+    """What the console link keeps across reconnects: the agents it launched
+    (console agent id -> bottle id) and every bottle it launched."""
+
+    running: dict[str, str] = field(default_factory=dict)
+    launched: set[str] = field(default_factory=set)
+
+
 class ConsoleLink:
     """Serves the console's commands for one connection. Transport-free: `send`
-    writes one message to the console."""
+    writes one message to the console. `state` outlives the connection, so a
+    link that reconnects still knows the agents it launched (see `resume`)."""
 
     def __init__(self, bottles: Bottles, send: Callable[[dict[str, Any]], Awaitable[None]],
                  agents: Callable[[], list[str]] | None = None, *,
                  terminals: TerminalFactory | None = None,
                  audit: Callable[[str, str | None, int], list[dict[str, Any]]] | None = None,
+                 state: "LinkState | None" = None,
                  ) -> None:
         self._bottles = bottles
         self._send = send
         self._agents = agents if agents is not None else local_agents
         self._terminal_factory = terminals
         self._audit = audit if audit is not None else query_audit
+        state = state if state is not None else LinkState()
         # console agent id -> bottle id, for the agents this link launched.
-        self.running: dict[str, str] = {}
+        self.running = state.running
         # Every bottle this link launched, running or not: the console may
         # read the journal of these, and only these.
-        self.launched: set[str] = set()
+        self.launched = state.launched
         # console agent id -> the relay of its session's terminal.
         self.terminals: dict[str, Terminal] = {}
 
@@ -313,7 +329,7 @@ class ConsoleLink:
             self._resize(str(msg.get("agent_id", "")), msg.get("cols"), msg.get("rows"))
         elif kind == "audit_query":
             await self._audit_query(msg)
-        else:
+        elif kind != "hello":  # hello only opens the stream (see serve_connection)
             log.debug(f"remote: ignoring console message {kind!r}")
 
     async def _errored(self, agent_id: str, message: str) -> None:
@@ -427,6 +443,16 @@ class ConsoleLink:
             log.warn(f"remote: stopping {bottle} failed: {e}")
         await self._send({"type": "agent_stopped", "agent_id": agent_id, "exit_code": exit_code})
 
+    async def resume(self) -> None:
+        """A (re)connected console: report the agents that exited while it was
+        away, reopen the relays of the ones still running, and say which those
+        are (`agents_running`), so the console can stop the rest."""
+        await self.reap()
+        for agent_id, bottle in list(self.running.items()):
+            if agent_id not in self.terminals:
+                await self._open_terminal(agent_id, bottle)
+        await self._send({"type": "agents_running", "agent_ids": sorted(self.running)})
+
     async def reap(self) -> None:
         """Report agents that exited on their own."""
         for agent_id, bottle in list(self.running.items()):
@@ -460,9 +486,11 @@ async def _read_lines(recv: "iroh.RecvStream") -> AsyncIterator[bytes]:
 
 
 async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
-                           agents: Callable[[], list[str]] | None = None) -> None:
+                           agents: Callable[[], list[str]] | None = None,
+                           state: LinkState | None = None) -> None:
     """Serve one console connection until it closes. The console opens the
-    control stream; it becomes visible here with its first command."""
+    control stream; it becomes visible here with its first message (`hello`
+    from a current console), and the link resumes then."""
     control = await conn.accept_bi()
     send_stream = control.send()
 
@@ -470,8 +498,9 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
         await send_stream.write_all(json.dumps(message).encode() + b"\n")
 
     sessions = getattr(bottles, "sessions", None)
-    link = ConsoleLink(bottles, send, agents,
+    link = ConsoleLink(bottles, send, agents, state=state,
                        terminals=session_terminals(conn, sessions) if sessions else None)
+    await link.resume()
 
     async def watch() -> None:
         while True:
@@ -499,6 +528,7 @@ async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> 
     endpoint = await iroh.Endpoint.bind(iroh.EndpointOptions(
         preset=iroh.preset_n0(), secret_key=secret_key(), alpns=[]))
     attempt = 0
+    state = LinkState()  # the agents launched over this link, across reconnects
     try:
         while not stop.is_set():
             try:
@@ -511,7 +541,7 @@ async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> 
                 attempt = 0
                 write_status(connected=True, console_node_id=remote)
                 log.info("remote: connected to the console")
-                await serve_connection(conn, bottles)
+                await serve_connection(conn, bottles, state=state)
                 write_status(connected=False, error="console closed the connection")
             except Exception as e:  # pylint: disable=broad-exception-caught
                 write_status(connected=False, error=str(e)[:300] or type(e).__name__)
