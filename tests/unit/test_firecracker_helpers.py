@@ -183,6 +183,19 @@ class TestBuildBaseRootfsDirHit(unittest.TestCase):
             export.assert_not_called()
             self.assertGreater(ready.stat().st_mtime, 1_000_000)
 
+    def test_a_marker_that_cannot_be_touched_is_still_a_hit(self):
+        with tempfile.TemporaryDirectory(prefix="fc-base.") as d:
+            cache = Path(d)
+            base = cache / "rootfs" / "abc123"
+            base.mkdir(parents=True)
+            (base / ".bb-ready").write_text("ok\n")
+            with patch.object(util, "cache_dir", return_value=cache), \
+                 patch.object(util, "docker_image_id", return_value="abc123"), \
+                 patch.object(util, "export_image_rootfs") as export, \
+                 patch.object(Path, "touch", side_effect=PermissionError):
+                self.assertEqual(base, util.build_base_rootfs_dir("img", _INFRA))
+            export.assert_not_called()
+
 
 class TestBuildCommittedRootfsDir(unittest.TestCase):
     """Resume prepares the base rootfs dir from the freezer's snapshot tar

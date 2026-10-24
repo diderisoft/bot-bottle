@@ -6,6 +6,7 @@ is in `netpool.py`.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import hashlib
 import os
@@ -140,10 +141,8 @@ def build_base_rootfs_dir(
     ready = base / ".bb-ready"
     if ready.is_file():
         # A hit refreshes the marker, so its age is time since last use.
-        try:
+        with contextlib.suppress(OSError):
             ready.touch()
-        except OSError:
-            pass
         return base
 
     if base.exists():
