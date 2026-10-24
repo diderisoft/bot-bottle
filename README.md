@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="bot-bottle logo" width="140">
+  <img src="docs/bottle-glass.svg" alt="bot-bottle" width="140">
 </p>
 
 # bot-bottle

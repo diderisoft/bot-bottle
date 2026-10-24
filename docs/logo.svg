@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
-  <defs><clipPath id="left"><rect x="0" y="60" width="62" height="118"/></clipPath></defs>
-  <path d="M78 46H122V56C122 63 128 66 138 68C156 72 164 84 164 104V162C164 177 153 188 138 188H62C47 188 36 177 36 162V104C36 84 44 72 62 68C72 66 78 63 78 56Z" fill="#141414"/>
-  <g transform="translate(100 120) scale(0.88) translate(-100 -120)" clip-path="url(#left)"><path d="M78 46H122V56C122 63 128 66 138 68C156 72 164 84 164 104V162C164 177 153 188 138 188H62C47 188 36 177 36 162V104C36 84 44 72 62 68C72 66 78 63 78 56Z" fill="none" stroke="#f5efe4" stroke-width="4" stroke-linejoin="round"/></g>
-  <rect x="62" y="10" width="76" height="36" rx="5" fill="#c47a4e"/>
-  <rect x="62" y="10" width="76" height="7" rx="3" fill="#d9946a"/>
-  <path d="M68 122l23 14-23 14" fill="none" stroke="#c47a4e" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
-  <rect x="98" y="145" width="32" height="9" rx="2" fill="#c47a4e"/>
-</svg>
