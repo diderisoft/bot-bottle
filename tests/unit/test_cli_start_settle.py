@@ -105,6 +105,12 @@ class TestAgentArgs(unittest.TestCase):
                 self.assertEqual("Do it", args[-1])
                 self.assertNotIn("-p", args)
 
+    def test_a_console_session_gets_the_providers_remote_view_args(self):
+        self.assertIn("--bb-remote-view", agent_args("pi", (), "Do it", headless=False,
+                                                     remote_view=True))
+        self.assertNotIn("--bb-remote-view", agent_args("pi", (), "Do it", headless=False))
+        self.assertEqual(agent_args("claude", (), "", remote_view=True), agent_args("claude", (), ""))
+
     def test_a_prompt_that_looks_like_an_option_stays_a_prompt(self):
         for template in ("claude", "pi", "codex"):
             for prompt in ("-v is broken, fix it", "@README.md says otherwise"):

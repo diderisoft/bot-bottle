@@ -196,6 +196,11 @@ class TestPiProvision(unittest.TestCase):
             any("chown" in s and "/home/node/.pi/agent/models.json" in s
                 for s in scripts)
         )
+        self.assertTrue(any("/home/node/.pi/agent/extensions/bot-bottle-remote-view.ts" in s
+                            for s in scripts))
+
+    def test_the_remote_view_flag(self):
+        self.assertEqual(("--bb-remote-view",), PiAgentProvider().remote_view_args())
 
     def test_dies_when_dir_creation_fails(self):
         provision = AgentProvisionPlan(

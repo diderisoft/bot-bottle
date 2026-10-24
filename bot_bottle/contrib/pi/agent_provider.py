@@ -70,6 +70,16 @@ def _supervise_paths(guest_home: str) -> tuple[str, str]:
     return f"{agent}/extensions/bot-bottle-supervise.ts", f"{agent}/bot-bottle-supervise.json"
 
 
+# Hides pi's empty input editor in a session the console relays to a phone
+# (`--bb-remote-view`); installed in every pi bottle, off unless flagged.
+_REMOTE_VIEW_EXTENSION = Path(__file__).with_name("remote_view.ts")
+_REMOTE_VIEW_FLAG = "--bb-remote-view"
+
+
+def _remote_view_path(guest_home: str) -> str:
+    return f"{guest_home}/.pi/agent/extensions/bot-bottle-remote-view.ts"
+
+
 def _runtime_state_repair_script(guest_home: str) -> str:
     home = shlex.quote(guest_home)
     pi_home = shlex.quote(f"{guest_home}/.pi")
@@ -366,6 +376,15 @@ class PiAgentProvider(AgentProvider):
                 f"chmod {shlex.quote(d.mode)} {path}",
                 f"could not chmod {d.guest_path}",
             )
+        extension = _remote_view_path(plan.guest_home)
+        payload = base64.b64encode(_REMOTE_VIEW_EXTENSION.read_bytes()).decode()
+        _exec(
+            bottle,
+            f"mkdir -p {shlex.quote(os.path.dirname(extension))} && "
+            f"printf %s {shlex.quote(payload)} | base64 -d > {shlex.quote(extension)} && "
+            f"chown -R node:node {shlex.quote(os.path.dirname(extension))}",
+            "could not install the remote view extension",
+        )
         for f in provision.files:
             bottle.cp_in(str(f.host_path), f.guest_path)
             path = shlex.quote(f.guest_path)
@@ -413,6 +432,9 @@ class PiAgentProvider(AgentProvider):
 
     def headless_prompt(self, prompt: str) -> list[str]:
         return ["-p", prompt]
+
+    def remote_view_args(self) -> tuple[str, ...]:
+        return (_REMOTE_VIEW_FLAG,)
 
 
 def _exec(bottle: "Bottle", script: str, error: str) -> None:

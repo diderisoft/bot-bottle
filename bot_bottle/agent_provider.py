@@ -299,6 +299,12 @@ class AgentProvider(ABC):
         turn. Appended after ``bypass_args`` and ``startup_args``."""
         del prompt  # an agent CLI that can't returns None
 
+    def remote_view_args(self) -> tuple[str, ...]:
+        """Extra agent CLI args for a session the console launched and relays
+        to a phone, which has its own message box: e.g. hide an input
+        editor that would only be noise there. Default: none."""
+        return ()
+
     def provision_ca(self, bottle: "Bottle", plan: "BottlePlan") -> None:
         """Install the egress MITM CA into the agent's trust store.
 

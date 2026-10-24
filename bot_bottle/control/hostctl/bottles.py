@@ -67,14 +67,17 @@ class PromptUnsupported(ValueError):
 
 
 def agent_args(template: str, startup_args: tuple[str, ...], prompt: str,
-               headless: bool = True) -> list[str]:
+               headless: bool = True, *, remote_view: bool = False) -> list[str]:
     """The agent CLI's arguments: the provider's bypass flags, its startup
-    args, then the initial task when there is one: run to completion when
+    args (and its `remote_view_args` for a session the console launched),
+    then the initial task when there is one: run to completion when
     `headless`, else as the first message of an interactive session."""
     # pylint: disable=import-outside-toplevel
     from ...agent_provider import get_provider, runtime_for
 
     args = [*runtime_for(template).bypass_args, *startup_args]
+    if remote_view:
+        args.extend(get_provider(template).remote_view_args())
     if prompt and headless:
         args.extend(get_provider(template).headless_prompt(prompt))
     elif prompt:
@@ -199,6 +202,7 @@ class BottleService:
         # pylint: disable=import-outside-toplevel
         from ...backend import BottleSpec
         from ...secret_source import ChainSecrets, FileSecrets, MappingSecrets
+        from .remote import ROLE_REMOTE
 
         wanted = request.identity or (slugify(request.label) if request.label else "")
         if wanted and self._running(wanted):
@@ -238,7 +242,8 @@ class BottleService:
                 target=contextvars.Context().run,
                 args=(self._hold, backend, plan, request),
                 kwargs={"identity": identity, "stage_dir": stage_dir,
-                        "job_sink": log.current_sink(), "ready": ready},
+                        "job_sink": log.current_sink(), "ready": ready,
+                        "remote_view": role == ROLE_REMOTE},
                 daemon=True, name=f"hostctl-bottle-{identity}",
             ).start()
             handed_off = True
@@ -270,7 +275,8 @@ class BottleService:
 
     def _hold(self, backend: "BottleBackend[Any, Any]", plan: "BottlePlan",
               request: LaunchRequest, *, identity: str, stage_dir: Path,
-              job_sink: Callable[[str], None], ready: "queue.Queue[tuple[str, Any]]") -> None:
+              job_sink: Callable[[str], None], ready: "queue.Queue[tuple[str, Any]]",
+              remote_view: bool = False) -> None:
         """The holder thread: launch, run the agent, wait, tear down."""
         is_ready = threading.Event()
         held = _Held(identity, backend.name)
@@ -290,7 +296,7 @@ class BottleService:
                     activation = bottle.registry_id or str(uuid.uuid4())
                     command, env = bottle.agent_command(agent_args(
                         template, plan.agent_provision.startup_args, request.prompt,
-                        headless=request.headless))
+                        headless=request.headless, remote_view=remote_view))
                     with self._lock:
                         self._held[identity] = held
                     self._sessions.start(SessionRecord(
