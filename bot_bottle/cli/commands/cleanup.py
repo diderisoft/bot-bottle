@@ -1,19 +1,17 @@
 """cleanup: stop and remove all orphaned bot-bottle resources.
 
+Usage: bot-bottle cleanup [--backend NAME]
+
 First the host controller tears down the bottles it holds (their agents are
-stopped), then each backend reaps whatever is left.
+stopped), then each backend reaps whatever is left, then the orphaned
+per-bottle state dirs go.
 
-Walks every registered backend (docker, firecracker, macos-container)
-so a single `bot-bottle cleanup` reaps every backend's leftovers — a
-firecracker bottle's VM processes and run dirs won't survive a
-docker-only cleanup pass (issue addressed alongside #77).
-
-Each backend's `prepare_cleanup` enumerates its own resources;
-docker's `_list_orphan_state_dirs` consults
-`enumerate_active_agents()` for the union of live identities so
-state dirs of running non-docker bottles aren't reaped. State
-dirs are shared layout, so docker is the single owner of that
-bucket.
+Every backend whose runtime is installed is swept, so leftovers from a
+backend used earlier (a Firecracker VM's processes, say) are still reaped.
+`--backend NAME` limits the sweep to one. A backend that can't be listed
+(Docker installed but its daemon stopped) is reported and skipped; the
+others still run, and its bottles' state dirs are left alone, since which
+of them are live can't be known (see `backend/state_cleanup.py`).
 
 State dirs with `.preserve` are intentionally never touched — they
 hold preserved sessions the operator may want to `resume`. Manual
@@ -23,9 +21,11 @@ hold preserved sessions the operator may want to `resume`. Manual
 from __future__ import annotations
 
 import sys
+from typing import Any
 
-from ...backend import get_bottle_backend, has_backend, known_backend_names
+from ...backend import EnumerationError, get_bottle_backend, has_backend, known_backend_names
 from ...backend.cleanup_control import CleanupError
+from ...backend.state_cleanup import cleanup_state, prepare_state_cleanup
 from ...contract.hostctl import BOTTLES_PATH
 from ...control.hostctl import runner
 from ...control.hostctl.client import HostControlClient
@@ -36,21 +36,38 @@ from ..settings import settings_from_env
 from .active import held_bottles
 
 
-def cmd_cleanup(_argv: list[str]) -> int:
-    # Order: stable backend iteration so the y/N output is
-    # deterministic across runs. Skip backends whose runtime
-    # isn't available on this host so e.g. macos-container
-    # doesn't error on Linux.
+def cmd_cleanup(argv: list[str]) -> int:
+    if "-h" in argv or "--help" in argv:
+        sys.stderr.write(__doc__ or "")
+        return 0
+    only = _backend_arg(argv)
     settings = settings_from_env()
-    plans = [
-        (name, get_bottle_backend(settings, name))
-        for name in known_backend_names()
-        if has_backend(settings, name)
-    ]
-    prepared = [(name, b, b.prepare_cleanup()) for name, b in plans]
+    # Every available backend is listed for its live bottles (state dirs are
+    # shared, so even a --backend sweep must not reap a bottle live
+    # elsewhere); only the selected ones are swept.
+    live: set[str] = set()
+    listed: set[str] = set()
+    prepared: list[tuple[str, Any, Any]] = []
+    for name in known_backend_names():
+        if not has_backend(settings, name):
+            if name == only:
+                info(f"{name}: not available on this host")
+            continue
+        backend = get_bottle_backend(settings, name)
+        try:
+            live.update(agent.slug for agent in backend.enumerate_active())
+            plan = backend.prepare_cleanup() if only in (None, name) else None
+        except EnumerationError as e:
+            info(f"{name}: skipped, couldn't list its resources ({e})")
+            continue
+        listed.add(name)
+        if plan is not None:
+            prepared.append((name, backend, plan))
+    swept = listed if only is None else listed & {only}
+    state = prepare_state_cleanup(live, swept)
     held = sorted(held_bottles())
 
-    if all(p.empty for _, _, p in prepared) and not held:
+    if all(p.empty for _, _, p in prepared) and state.empty and not held:
         info("no bot-bottle resources to clean up")
         return 0
 
@@ -63,6 +80,9 @@ def cmd_cleanup(_argv: list[str]) -> int:
             continue
         info(f"--- {name} backend ---")
         plan.print()
+    if not state.empty:
+        info("--- state dirs ---")
+        state.print()
 
     if not _prompt_yes("remove all of the above?"):
         info("cleanup: skipped")
@@ -72,18 +92,39 @@ def cmd_cleanup(_argv: list[str]) -> int:
     # Confirmation authorizes a fresh authoritative snapshot, not blind use of
     # identities that may have changed while the operator reviewed the preview.
     for name, backend, displayed in prepared:
-        current = backend.prepare_cleanup()
-        approved = displayed.intersect(current)
-        if approved.empty:
-            continue
         try:
-            backend.cleanup(approved)
-        except CleanupError as exc:
+            approved = displayed.intersect(backend.prepare_cleanup())
+            if not approved.empty:
+                backend.cleanup(approved)
+        except (CleanupError, EnumerationError) as exc:
             failures.append(f"{name}: {exc}")
+    try:
+        current = prepare_state_cleanup(live, swept)
+        approved_state = state.intersect(current)
+        if not approved_state.empty:
+            cleanup_state(approved_state, settings)
+    except CleanupError as exc:
+        failures.append(f"state dirs: {exc}")
     if failures:
         raise CleanupError("cleanup incomplete: " + "; ".join(failures))
     info("cleanup: done")
     return 0
+
+
+def _backend_arg(argv: list[str]) -> str | None:
+    """`--backend NAME` (or `--backend=NAME`), validated; None for all."""
+    for i, arg in enumerate(argv):
+        name = None
+        if arg == "--backend":
+            name = argv[i + 1] if i + 1 < len(argv) else ""
+        elif arg.startswith("--backend="):
+            name = arg.split("=", 1)[1]
+        if name is not None:
+            if name not in known_backend_names():
+                raise SystemExit(f"bot-bottle cleanup: unknown backend {name!r}; "
+                                 f"one of {', '.join(known_backend_names())}")
+            return name
+    return None
 
 
 def _teardown_held(bottle_ids: list[str]) -> list[str]:

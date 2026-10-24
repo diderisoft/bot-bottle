@@ -2,16 +2,13 @@
 
 Cleanup is centered on compose projects. `docker
 compose ls` is the source of truth for what's running; the plan
-carries the projects to `compose down`, plus three fallback buckets
+carries the projects to `compose down`, plus two fallback buckets
 for legacy / orphan resources:
 
   - stray_containers: pre-compose `bot-bottle-*` containers not
     attached to any compose project. Cleared via `docker rm -f`.
   - stray_networks: same idea for networks. Cleared via
     `docker network rm`.
-  - orphan_state_dirs: per-bottle state dirs under
-    ~/.bot-bottle/state/ that have no live compose project AND
-    no `.preserve` marker. Reaped via `shutil.rmtree`.
 
 Compose-managed networks are removed by `compose down --volumes`,
 so they don't appear in stray_networks for a normal project — only
@@ -35,7 +32,6 @@ class DockerBottleCleanupPlan(BottleCleanupPlan):
     projects: tuple[str, ...]
     stray_containers: tuple[str, ...]
     stray_networks: tuple[str, ...]
-    orphan_state_dirs: tuple[str, ...]
 
     @property
     def empty(self) -> bool:
@@ -43,7 +39,6 @@ class DockerBottleCleanupPlan(BottleCleanupPlan):
             not self.projects
             and not self.stray_containers
             and not self.stray_networks
-            and not self.orphan_state_dirs
         )
 
     def intersect(self, current: BottleCleanupPlan) -> "DockerBottleCleanupPlan":
@@ -57,9 +52,6 @@ class DockerBottleCleanupPlan(BottleCleanupPlan):
             stray_networks=tuple(
                 x for x in self.stray_networks if x in current.stray_networks
             ),
-            orphan_state_dirs=tuple(
-                x for x in self.orphan_state_dirs if x in current.orphan_state_dirs
-            ),
         )
 
     def print(self) -> None:
@@ -70,6 +62,4 @@ class DockerBottleCleanupPlan(BottleCleanupPlan):
             info(f"stray container: {name}")
         for name in self.stray_networks:
             info(f"stray network:   {name}")
-        for name in self.orphan_state_dirs:
-            info(f"orphan state:    {name}")
         print(file=sys.stderr)
