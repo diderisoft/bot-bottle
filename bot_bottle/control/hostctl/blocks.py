@@ -25,7 +25,7 @@ from .sessions import tmux
 
 NOTICE_SECONDS = 5.0  # a notice shows this long after the latest block
 NOTICE_MAX_SECONDS = 10.0  # however many blocks keep arriving
-QUIET_SECONDS = 5.0  # then the counts show at least this long
+QUIET_SECONDS = 5.0  # after a capped notice, the counts show at least this long
 TICK_SECONDS = 0.25
 HOST_MAX = 40
 
@@ -38,6 +38,7 @@ class _Session:
     extra: int = 0  # other blocks in the current notice's burst
     start: float = float("-inf")
     until: float = float("-inf")
+    capped: bool = False  # the notice hit NOTICE_MAX_SECONDS
 
 
 def _escape(text: str) -> str:
@@ -111,10 +112,13 @@ class BlockNotifier:
             state.counts[code] = state.counts.get(code, 0) + 1
             if now < state.until:  # in a burst: the newest replaces the text
                 state.host, state.code, state.extra = host, code, state.extra + 1
-                state.until = min(now + NOTICE_SECONDS, state.start + NOTICE_MAX_SECONDS)
-            elif now >= state.until + QUIET_SECONDS:  # else counts only, for now
+                cap = state.start + NOTICE_MAX_SECONDS
+                state.capped = now + NOTICE_SECONDS >= cap
+                state.until = min(now + NOTICE_SECONDS, cap)
+            elif not state.capped or now >= state.until + QUIET_SECONDS:
                 state.host, state.code, state.extra = host, code, 0
-                state.start, state.until = now, now + NOTICE_SECONDS
+                state.start, state.until, state.capped = now, now + NOTICE_SECONDS, False
+            # else a steady stream: counts only, for now
 
     def tick(self) -> None:
         """Write each session's changed options; forget ended sessions."""

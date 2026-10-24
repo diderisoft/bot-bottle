@@ -69,7 +69,8 @@ Each agent runs in tmux on bot-bottle's own tmux server, never the user's
   (`HostAudit.listen`) and shows them in the same bar
   ([PRD 0099](../prds/0099-status-bar-blocks.md)). Each block shows for five
   seconds as `⊘ <host> · <reason>`; a burst shows the newest with `(+N)`,
-  and a notice stays up at most ten seconds. The session's counts by reason
+  and a notice stays up at most ten seconds (then five seconds without one,
+  so a retry loop can't keep it up). The session's counts by reason
   stay beside it as a letter and a number (`A12 S3 P1`):
 
   | Letter | Reason (`reason_code`) |

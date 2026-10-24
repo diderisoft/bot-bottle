@@ -104,6 +104,12 @@ class Timing(_Case):
         self.assertEqual("c.example · not on allowlist (+2)", self.status("block_now"))
         self.assertEqual("A2 S1", self.status("blocks"))
 
+    def test_spaced_blocks_each_get_a_notice(self) -> None:
+        for second in (0, 6, 12, 18):
+            self.at(second)
+            self.hear(_event(f"h{second}.example"))
+            self.assertEqual(f"h{second}.example · not on allowlist", self.status("block_now"))
+
     def test_a_steady_stream_caps_the_notice_then_shows_the_counts(self) -> None:
         for second in range(0, 30):
             self.at(second)
