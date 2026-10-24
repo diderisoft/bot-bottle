@@ -80,8 +80,8 @@ def _plan(
         container_name="bot-bottle-dev-abc",
         image="bot-bottle-agent:latest",
         dockerfile_path="/repo/Dockerfile",
-        # Custom (non-published) template: no pin, so the build path runs.
-        agent_provider_template="test-agent",
+        # Custom (non-published) harness: no pin, so the build path runs.
+        harness="test-agent",
         forwarded_env={"OAUTH_TOKEN": "host-value"},
         egress_plan=egress_plan,
         git_gate_plan=SimpleNamespace(upstreams=()),

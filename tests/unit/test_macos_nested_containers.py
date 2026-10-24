@@ -49,13 +49,13 @@ class _Plan:
     agent_provision: _AgentProvision
     spec: _Spec = _Spec()
     settings: Settings = field(default_factory=Settings)
-    # A custom (non-published) template, so the PRD 0085 pull path resolves no
+    # A custom (non-published) harness, so the PRD 0085 pull path resolves no
     # pin and these tests keep exercising the local build path.
-    agent_provider_template: str = "test-agent"
+    harness: str = "test-agent"
     # No overlay or custom Dockerfile declared, so the missing pin builds
     # locally instead of failing.
     manifest: object = field(default_factory=lambda: SimpleNamespace(
-        bottle=SimpleNamespace(agent_provider=ManifestAgentProvider(template="test-agent"))))
+        agent=SimpleNamespace(agent_provider=ManifestAgentProvider(harness="test-agent"))))
 
 
 def _base_image_only(ref: str) -> bool:

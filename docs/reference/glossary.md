@@ -7,9 +7,11 @@ Canonical terminology for bot-bottle. Prefer these names in docs, comments, and 
 ## Agent Provider
 
 The component that connects to an external model provider and sets up the model
-harness inside the agent runtime. Configured in a bottle manifest under
-`agent_provider:`; built-in templates are `claude` and `codex`. Responsible for
-provider-specific auth, startup args, and egress routes.
+harness inside the agent runtime. Configured in an agent manifest under
+`agent_provider:` (`harness: claude`, or the shorthand `agent_provider:
+claude`); built-in harnesses are `claude`, `codex` and `pi`, and `claude` is
+the default. Responsible for provider-specific auth, startup args, and egress
+routes. A bottle can't declare it, so one bottle serves any harness.
 
 ## Agent Runtime
 
@@ -23,15 +25,16 @@ container. The agent runtime is built from the agent provider's Dockerfile
 
 A Markdown file with YAML frontmatter that declares the system prompt and
 identity of the model harness. Lives under `~/.bot-bottle/agents/` or a repo's
-`.bot-bottle/agents/`. Specifies which bottle to run under (`bottle:`) and
-which skills to load. Agent definitions are safe to commit; they contain no
-secrets or egress policy.
+`.bot-bottle/agents/`. Specifies which bottle to run under (`bottle:`), which
+skills to load, and its Agent Provider. Agent definitions contain no secrets;
+a repo agent whose provider grants something (a host login, a model host with
+a secret, an image build) needs per-host trust, like a repo bottle.
 
 ## Bottle / Bottle Definition
 
 A Markdown file with YAML frontmatter that declares the security and runtime
 boundaries for one agent runtime: egress allowlist, git remotes, env vars,
-nested-container flag, and agent provider config. Lives under
+and nested-container flag. Lives under
 `~/.bot-bottle/bottles/`. Bottles are scoped to `$HOME` so a cloned repo
 cannot override host egress policy.
 

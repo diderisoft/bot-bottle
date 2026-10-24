@@ -22,7 +22,7 @@ from bot_bottle.backend.firecracker.orchestrator import FirecrackerOrchestrator
 # there (not at their home modules).
 _ORCH_CLS = "bot_bottle.backend.firecracker.infra.FirecrackerOrchestrator"
 _GW_CLS = "bot_bottle.backend.firecracker.infra.FirecrackerGateway"
-# The shared bring-up template reattaches through these (PRD 0081).
+# The shared bring-up harness reattaches through these (PRD 0081).
 _REATTACH = "bot_bottle.backend.infra_service.reattach_running_bottles"
 _ROOT = "bot_bottle.backend.infra_service.bot_bottle_root"
 

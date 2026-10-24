@@ -35,7 +35,7 @@ class TestDockerInfraService(unittest.TestCase):
             p = patch.object(self.svc, name, return_value=mock)
             p.start()
             self.addCleanup(p.stop)
-        # Reattaching itself is covered by the shared template's tests.
+        # Reattaching itself is covered by the shared harness's tests.
         reattach = patch("bot_bottle.backend.infra_service.reattach_running_bottles")
         self.reattach = reattach.start()
         self.addCleanup(reattach.stop)
@@ -46,7 +46,7 @@ class TestDockerInfraService(unittest.TestCase):
         self.addCleanup(root.stop)
 
     def test_bring_up_reports_whether_either_plane_restarted(self) -> None:
-        # The shared template reattaches on True; adopting both planes is False.
+        # The shared harness reattaches on True; adopting both planes is False.
         for orch_restarted, gw_restarted in ((False, False), (True, False), (False, True)):
             with self.subTest(orch=orch_restarted, gw=gw_restarted):
                 self.orch.ensure_running.return_value = orch_restarted

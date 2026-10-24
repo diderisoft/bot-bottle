@@ -100,9 +100,10 @@ class Setup:
                          f"`{detection.login_command}`, then `{PROG} setup`")
                 continue
             self.say(f"{name}: {detection.login_location or 'ready'}")
-            self.write("bottles", name, provider.create_default_bottle_manifest(detection),
+            self.write("bottles", name, provider.create_default_bottle_manifest(detection))
+            # The agent carries the provider, so pi's model refresh rewrites it.
+            self.write("agents", name, provider.create_default_agent_manifest(detection),
                        replace=name == "pi" and self.refresh_model)
-            self.write("agents", name, provider.create_default_agent_manifest(detection))
         return 0
 
     def pi_detection(  # pylint: disable=too-many-return-statements  # one per outcome
@@ -121,7 +122,7 @@ class Setup:
             self.say("pi: starter already written")
             return None
         if self.refresh_model and not self.written_by_setup("pi"):
-            self.say(f"pi: {self.manifests / 'bottles' / 'pi.md'} wasn't written by setup; "
+            self.say(f"pi: {self.manifests / 'agents' / 'pi.md'} wasn't written by setup; "
                      "leaving its model alone")
             return None
         if not pi_starter.has_secret(pi_starter.OPENROUTER_KEY_NAME, self.host_env):
@@ -154,7 +155,7 @@ class Setup:
 
     def written_by_setup(self, name: str) -> bool:
         try:
-            return STARTER_MARKER in (self.manifests / "bottles" / f"{name}.md").read_text()
+            return STARTER_MARKER in (self.manifests / "agents" / f"{name}.md").read_text()
         except OSError:
             return False
 

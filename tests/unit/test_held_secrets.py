@@ -55,7 +55,7 @@ def _plan(stage: Path, *, env: dict[str, str], forwarded: dict[str, str],
             canary_env="ATLAS_ORBIT_SECRET" if canary else ""),
         "supervise_plan": None,
         "agent_provision": AgentProvisionPlan(
-            template="claude", command="claude", prompt_mode="append_file",
+            harness="claude", command="claude", prompt_mode="append_file",
             image="i", dockerfile="", guest_home="/home/node",
             instance_name=f"bot-bottle-{_SLUG}", prompt_file=stage / "p.txt",
             guest_env={}, provisioned_env={}),

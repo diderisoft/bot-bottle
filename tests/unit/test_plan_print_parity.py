@@ -81,7 +81,7 @@ def _egress_plan(tmp: str) -> EgressPlan:
 
 def _agent_provision(tmp: str) -> AgentProvisionPlan:
     return AgentProvisionPlan(
-        template="claude",
+        harness="claude",
         command="claude",
         prompt_mode="append_file",
         image="bot-bottle-claude:latest",

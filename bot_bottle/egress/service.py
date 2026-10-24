@@ -119,13 +119,20 @@ def egress_manifest_routes(
 def egress_routes_for_bottle(
     bottle: ManifestBottle,
     provider_routes: tuple[EgressRoute, ...] = (),
+    owner: str = "",
 ) -> tuple[EgressRoute, ...]:
+    """The provider's routes, then the bottle's. A bottle route for a host the
+    provider owns fails the launch, naming `owner` and the host: the bottle
+    was written without knowing the harness, so its route means something
+    (detectors, `inspect`, method limits) that dropping it would hide."""
     manifest = egress_manifest_routes(bottle)
     provisioned_hosts = {pr.host.lower() for pr in provider_routes}
-    merged = list(_default_provider_on_match(provider_routes)) + [
-        r for r in manifest if r.host.lower() not in provisioned_hosts
-    ]
-    return _assign_token_slots(merged)
+    clashes = sorted({r.host for r in manifest if r.host.lower() in provisioned_hosts})
+    if clashes:
+        where = f"{owner}: " if owner else ""
+        die(f"{where}the bottle declares a route for {', '.join(clashes)}, which the "
+            "agent's provider already routes; remove it from the bottle")
+    return _assign_token_slots(list(_default_provider_on_match(provider_routes)) + list(manifest))
 
 
 def _default_provider_on_match(
@@ -367,8 +374,9 @@ class Egress:
         stage_dir: Path,
         provider_routes: tuple[EgressRoute, ...] = (),
         default_audit_delivery: str = "best_effort",
+        owner: str = "",
     ) -> EgressPlan:
-        routes = egress_routes_for_bottle(bottle, provider_routes)
+        routes = egress_routes_for_bottle(bottle, provider_routes, owner)
         log = bottle.egress.Log
         audit_delivery = bottle.audit.delivery or default_audit_delivery
         firehose = bottle.audit.firehose or "full"

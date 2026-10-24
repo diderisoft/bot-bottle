@@ -85,7 +85,7 @@ def _prompt_path(guest_home: str) -> str:
 
 
 _RUNTIME = AgentProviderRuntime(
-    template="codex",
+    harness="codex",
     command=_CODEX_CLI,
     image="bot-bottle-codex:latest",
     prompt_mode="read_prompt_file",
@@ -110,14 +110,16 @@ class CodexAgentProvider(AgentProvider):
 
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
         del detection
-        return starter_agent("codex", GENERAL_PROMPT)
+        return starter_agent("codex", GENERAL_PROMPT,
+                             {"harness": "codex", "forward_host_credentials": True})
 
     def create_default_bottle_manifest(self, detection: HostDetection) -> str:
         return starter_bottle(
-            {"template": "codex", "forward_host_credentials": True},
-            "Codex, signed in with this host's ChatGPT device login "
-            f"({detection.login_location or 'codex login --device-auth'}). "
-            "The gateway injects the login token, so the agent never sees it.",
+            "The codex starter agent's bottle. The agent signs in with this "
+            "host's ChatGPT device login "
+            f"({detection.login_location or 'codex login --device-auth'}); the "
+            "gateway injects the login token, so the agent never sees it. Add "
+            "egress routes, git-gate repos and env here.",
         )
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
@@ -237,7 +239,7 @@ class CodexAgentProvider(AgentProvider):
 
         has_prompt = prompt_file.exists() and bool(prompt_file.read_text())
         return AgentProvisionPlan(
-            template=_RUNTIME.template,
+            harness=_RUNTIME.harness,
             command=_RUNTIME.command,
             prompt_mode=_RUNTIME.prompt_mode,
             image=_RUNTIME.image,

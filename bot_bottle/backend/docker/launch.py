@@ -68,11 +68,11 @@ def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
     if committed and docker_mod.image_exists(committed):
         info(f"using committed image {committed!r}")
         return BottleImages(agent=committed)
-    smoke = runtime_for(plan.agent_provider_template).smoke_test
+    smoke = runtime_for(plan.harness).smoke_test
     # Prefer the published image (or an overlay on it); None means build the
     # bottle's Dockerfile.
     published = oci_agent_image.resolve_published_agent_image(
-        plan, _docker_runtime(plan.settings), template=plan.agent_provider_template,
+        plan, _docker_runtime(plan.settings), harness=plan.harness,
         image=plan.image,
         smoke_test=smoke,
     )
@@ -92,7 +92,7 @@ def build_or_load_images(plan: DockerBottlePlan) -> BottleImages:
     docker_mod.build_image(plan.image, str(resources.build_root()), dockerfile=plan.dockerfile_path,
                            no_cache=plan.settings.operation.no_cache)
     docker_mod.verify_agent_image(
-        plan.image, runtime_for(plan.agent_provider_template).smoke_test,
+        plan.image, runtime_for(plan.harness).smoke_test,
     )
     return BottleImages(agent=plan.image)
 
@@ -177,7 +177,7 @@ def launch(
             None,
             agent_command=plan.agent_command,
             agent_prompt_mode=plan.agent_prompt_mode,
-            agent_provider_template=plan.agent_provider_template,
+            harness=plan.harness,
             terminal_title=terminal_title(plan.spec),
             terminal_color=plan.spec.color,
             agent_workdir=plan.workspace_plan.workdir,

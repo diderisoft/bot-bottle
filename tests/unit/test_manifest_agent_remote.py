@@ -14,8 +14,9 @@ def _home(agent_frontmatter: str) -> tempfile.TemporaryDirectory[str]:
     home = Path(tmp.name)
     (home / "agents").mkdir()
     (home / "bottles").mkdir()
-    (home / "bottles" / "dev.md").write_text("---\nagent_provider:\n  template: pi\n---\n")
-    (home / "agents" / "demo.md").write_text(f"---\nbottle: dev\n{agent_frontmatter}---\n\nHi.\n")
+    (home / "bottles" / "dev.md").write_text("---\n---\n")
+    (home / "agents" / "demo.md").write_text(
+        f"---\nbottle: dev\nagent_provider: pi\n{agent_frontmatter}---\n\nHi.\n")
     return tmp
 
 

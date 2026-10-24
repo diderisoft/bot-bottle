@@ -1,5 +1,5 @@
 """Unit: stale-image check functions across backends, and the
-BottleBackend.launch template method (prelaunch_checks + build_or_load_images).
+BottleBackend.launch harness method (prelaunch_checks + build_or_load_images).
 
 No real images or containers are used — all Docker/container/smolmachine
 calls are mocked at the module boundary."""
@@ -23,7 +23,7 @@ def _bottle_cm(bottle: Any) -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# BottleBackend.launch template — prelaunch_checks + _build_or_load_images
+# BottleBackend.launch harness — prelaunch_checks + _build_or_load_images
 # ---------------------------------------------------------------------------
 
 class TestBottleBackendLaunchTemplate(unittest.TestCase):
@@ -221,8 +221,8 @@ class TestFirecrackerCachedRootfs(unittest.TestCase):
             slug="dev-abc",
             image="bot-bottle-agent:latest",
             dockerfile_path="/repo/Dockerfile",
-            agent_provider_template="claude",
-            manifest=SimpleNamespace(bottle=SimpleNamespace(agent_provider=SimpleNamespace(
+            harness="claude",
+            manifest=SimpleNamespace(agent=SimpleNamespace(agent_provider=SimpleNamespace(
                 overlay=ManifestImageOverlay(), builds_custom_image=False,
             ))),
         ))
@@ -271,7 +271,7 @@ class TestFirecrackerCachedRootfs(unittest.TestCase):
         pin = Artifact(image="bot-bottle-claude", format=FORMAT_OCI, platform="linux/amd64",
                        url="reg/o/bot-bottle-claude:0.1.0-amd64", digest="sha256:" + "f" * 64)
         plan = self._plan("build")
-        plan.manifest.bottle.agent_provider.overlay = ManifestImageOverlay(apt=("jq",))
+        plan.manifest.agent.agent_provider.overlay = ManifestImageOverlay(apt=("jq",))
         plan.spec.user_cwd = "/tmp"
         with patch.object(mod, "read_committed_image", return_value=""), \
              patch.object(mod.agent_image, "resolve_agent_pin", return_value=pin) as resolve, \
@@ -284,7 +284,7 @@ class TestFirecrackerCachedRootfs(unittest.TestCase):
     def test_custom_dockerfile_builds_even_when_a_pin_exists(self) -> None:
         from bot_bottle.backend.firecracker import launch as mod
         plan = self._plan("build")
-        plan.manifest.bottle.agent_provider.builds_custom_image = True
+        plan.manifest.agent.agent_provider.builds_custom_image = True
         built = Path("/cache/rootfs/agent-custom")
         with patch.object(mod, "read_committed_image", return_value=""), \
              patch.object(mod.agent_image, "resolve_agent_pin") as pin, \
@@ -299,7 +299,7 @@ class TestFirecrackerCachedRootfs(unittest.TestCase):
         from bot_bottle.manifest import ManifestImageOverlay
         for policy in ("cached", "build"):
             plan = self._plan(policy)
-            plan.manifest.bottle.agent_provider.overlay = ManifestImageOverlay(apt=("jq",))
+            plan.manifest.agent.agent_provider.overlay = ManifestImageOverlay(apt=("jq",))
             with self.subTest(policy=policy), \
                  patch.object(mod, "read_committed_image", return_value=""), \
                  patch.object(mod.agent_image, "resolve_agent_pin", return_value=None), \

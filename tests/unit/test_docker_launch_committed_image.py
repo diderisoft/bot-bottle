@@ -59,7 +59,7 @@ def _plan(tmp: str) -> DockerBottlePlan:
         ),
         supervise_plan=None,
         agent_provision=AgentProvisionPlan(
-            template="claude", command="claude", prompt_mode="append_file",
+            harness="claude", command="claude", prompt_mode="append_file",
             image=_DEFAULT_IMAGE, dockerfile="", guest_home="/home/node",
             instance_name=f"bot-bottle-{_SLUG}", prompt_file=stage / "prompt.txt",
             guest_env={},

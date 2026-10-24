@@ -105,8 +105,8 @@ class ClaudeAndCodex(_Host):
         self.setup().run()
         for name in ("claude", "codex"):
             manifest = self.load(name)
-            self.assertEqual(name, manifest.bottle.agent_provider.template)
-            self.assertTrue(manifest.bottle.agent_provider.forward_host_credentials)
+            self.assertEqual(name, manifest.agent.agent_provider.harness)
+            self.assertTrue(manifest.agent.agent_provider.forward_host_credentials)
 
     def test_installed_but_not_logged_in_warns_and_writes_nothing(self) -> None:
         self.install("claude")
@@ -146,7 +146,7 @@ class PiOnOpenRouter(_Host):
         self.assertEqual("sk-or-from-oauth", self.secret("OPENROUTER_API_KEY"))
         self.assertEqual(0o600, stat.S_IMODE((self.root / "secrets").stat().st_mode))
         self.assertFalse(any("sk-or-from-oauth" in line for line in self.lines))
-        settings = self.load("pi").bottle.agent_provider.settings
+        settings = self.load("pi").agent.agent_provider.settings
         self.assertEqual(("openrouter", "OPENROUTER_API_KEY"),
                          (settings["provider"], settings["api_key_env"]))
         self.assertEqual((131072, 8192), (settings["context_window"], settings["max_tokens"]))
@@ -156,7 +156,7 @@ class PiOnOpenRouter(_Host):
         self.setup(interactive=True).run()
         self.assertEqual([(openrouter.FREE_ROUTER, "sk-or-from-oauth")], self.probed)
         self.assertEqual([openrouter.FREE_ROUTER],
-                         self.load("pi").bottle.agent_provider.settings["models"])
+                         self.load("pi").agent.agent_provider.settings["models"])
 
     def test_a_model_that_does_not_answer_is_skipped(self) -> None:
         nemotron = openrouter.FreeModel("nvidia/nemotron-3-super-120b-a12b:free")
@@ -165,13 +165,13 @@ class PiOnOpenRouter(_Host):
         self.setup(interactive=True).run()
         self.assertEqual([openrouter.FREE_ROUTER, nemotron.id, _GEMMA.id],
                          [m for m, _ in self.probed])
-        self.assertEqual([_GEMMA.id], self.load("pi").bottle.agent_provider.settings["models"])
+        self.assertEqual([_GEMMA.id], self.load("pi").agent.agent_provider.settings["models"])
 
     def test_when_nothing_answers_the_free_router_is_used(self) -> None:
         self.dead = {_GEMMA.id, openrouter.FREE_ROUTER}
         self.setup(extra_env={"OPENROUTER_API_KEY": "k"}).run()
         self.assertEqual([openrouter.FREE_ROUTER],
-                         self.load("pi").bottle.agent_provider.settings["models"])
+                         self.load("pi").agent.agent_provider.settings["models"])
 
     def test_a_key_already_in_the_environment_skips_sign_in(self) -> None:
         self.setup(extra_env={"OPENROUTER_API_KEY": "k"}).run()
@@ -189,18 +189,18 @@ class PiOnOpenRouter(_Host):
         self.setup(extra_env={"OPENROUTER_API_KEY": "k"}).run()
         self.models = [openrouter.FreeModel("poolside/laguna-s-2.1:free")]
         self.setup(extra_env={"OPENROUTER_API_KEY": "k"}, refresh_model=True).run()
-        self.assertIn("laguna", self.starter("bottles", "pi").read_text())
-        self.starter("bottles", "pi").write_text(
-            "---\nagent_provider:\n  template: pi\n---\nmine\n")
+        self.assertIn("laguna", self.starter("agents", "pi").read_text())
+        self.starter("agents", "pi").write_text(
+            "---\nbottle: pi\nagent_provider: pi\n---\nmine\n")
         self.setup(extra_env={"OPENROUTER_API_KEY": "k"}, refresh_model=True).run()
-        self.assertIn("mine", self.starter("bottles", "pi").read_text())
+        self.assertIn("mine", self.starter("agents", "pi").read_text())
 
 
 class PiFromTheLocalConfig(_Host):
     def test_a_reachable_provider_with_an_env_key_is_used_as_is(self) -> None:
         self.pi_config("groqish", "https://api.example.com/v1", "EXAMPLE_KEY", "big-model")
         self.setup(extra_env={"EXAMPLE_KEY": "v"}).run()
-        settings = self.load("pi").bottle.agent_provider.settings
+        settings = self.load("pi").agent.agent_provider.settings
         self.assertEqual(("groqish", ["big-model"], "EXAMPLE_KEY", 65536, 4096),
                          (settings["provider"], settings["models"], settings["api_key_env"],
                           settings["context_window"], settings["max_tokens"]))
@@ -211,7 +211,7 @@ class PiFromTheLocalConfig(_Host):
         self.setup(interactive=True).run()
         self.assertEqual(1, self.signed_in)
         self.assertEqual("openrouter",
-                         self.load("pi").bottle.agent_provider.settings["provider"])
+                         self.load("pi").agent.agent_provider.settings["provider"])
 
     def test_a_literal_key_is_copied_into_the_secrets_file_when_agreed(self) -> None:
         self.pi_config("my-host", "https://llm.example.com/v1", "sk-literal-value")
@@ -219,7 +219,7 @@ class PiFromTheLocalConfig(_Host):
         self.setup(interactive=True).run()
         self.assertEqual("sk-literal-value", self.secret("PI_MY_HOST_API_KEY"))
         self.assertEqual("PI_MY_HOST_API_KEY",
-                         self.load("pi").bottle.agent_provider.settings["api_key_env"])
+                         self.load("pi").agent.agent_provider.settings["api_key_env"])
         self.assertFalse(any("sk-literal-value" in line for line in self.lines))
 
     def test_a_literal_key_is_left_alone_when_declined(self) -> None:
@@ -228,7 +228,7 @@ class PiFromTheLocalConfig(_Host):
         self.setup(interactive=True).run()
         self.assertIsNone(self.secret("PI_MY_HOST_API_KEY"))
         self.assertEqual("openrouter",
-                         self.load("pi").bottle.agent_provider.settings["provider"])
+                         self.load("pi").agent.agent_provider.settings["provider"])
 
 
 class Doctor(_Host):

@@ -48,7 +48,7 @@ class MacosContainerBottle(Bottle):
         *,
         agent_command: str = "claude",
         agent_prompt_mode: PromptMode = "append_file",
-        agent_provider_template: str = "claude",
+        harness: str = "claude",
         terminal_title: str = "",
         terminal_color: str = "",
         agent_workdir: str = "/home/node",
@@ -61,7 +61,7 @@ class MacosContainerBottle(Bottle):
         self.agent_executable = agent_command
         self.terminal_title = terminal_title
         self.terminal_color = terminal_color
-        self.agent_provider_template = agent_provider_template
+        self.harness = harness
         self.agent_workdir = agent_workdir
         # Env applied at `container exec` time. The identity token is minted
         # after the container exists (its DHCP address is the registration

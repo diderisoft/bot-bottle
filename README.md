@@ -20,9 +20,9 @@
 - **Gitleaks-scanned push (git-gate)** — `bottle.git` remotes route through the gateway's git-gate, which gitleaks-scans incoming refs pre-receive, refuses any push carrying a secret the bottle holds (its `?` secret env values and its exfil canary, matched by value rather than by shape), and forwards clean refs upstream over SSH. The agent never holds the upstream credential.
 - **Manifest-scoped skills + secrets** — each bottle declares its skills, env, git identity, remotes, and egress routes; unknown keys die at load.
 - **Project bottles need your trust** — your bottles (credentials, egress, remotes) live in `~/.bot-bottle/bottles/`. A repo may also ship bottles in `./.bot-bottle/bottles/`, but they run only after you've trusted their exact contents on this host (`bot-bottle trust <bottle>`), and any change asks again. The trust prompt lists every host and secret the bottle touches (including what it inherits through `extends`), and your own bottles win a name clash, so a cloned repo can't send a credential to another host without you seeing it first.
-- **Composable bottles (`extends:`)** — keep provider/runtime policy in one base bottle (e.g. `claude.md`) and overlay task bottles on top.
+- **Composable bottles (`extends:`)** — keep shared policy in one base bottle and overlay task bottles on top; the agent picks its own harness (`agent_provider`), so one bottle serves Claude, Codex and pi agents alike.
 - **Parallel, isolated bottles** — each bottle runs in its own backend-owned isolation boundary; bottles don't share state. They share the per-host gateway, which attributes every request to its bottle by source IP and keeps each bottle's policy, tokens and git-gate repos separate.
-- **Provider templates (Claude, Codex)** — `bot_bottle/contrib/{claude,codex,pi}/Dockerfile`, or a bottle-supplied Dockerfile. Claude auth via long-lived OAuth token; Codex via opt-in host device-auth forwarding.
+- **Provider harnesses (Claude, Codex, pi)** — `bot_bottle/contrib/{claude,codex,pi}/Dockerfile`, or an agent-supplied Dockerfile. Claude auth via long-lived OAuth token; Codex via opt-in host device-auth forwarding.
 - **gVisor auto-detect** — on Linux hosts where `runsc` is registered with Docker, every bottle launches under it for a userspace syscall barrier; no manifest config required.
 - **Apple Container backend (macOS default when available)** — runs the agent and gateway with Apple's `container` CLI, using a host-only agent network plus a separate gateway egress network.
 - **Firecracker backend (Linux default when available)** — runs the agent in a KVM Firecracker microVM reached over SSH on a point-to-point TAP; the orchestrator and gateway run in their own per-host microVMs, so the host needs no Docker. A dedicated, fail-closed `nftables` table isolates the guest. Requires KVM (`/dev/kvm`) and a one-time privileged network-pool setup.
@@ -221,13 +221,13 @@ bot-bottle start <agent>   # builds the image on first run, drops you into claud
 
 ## Manifest
 
-Bottles and agents are Markdown files with YAML frontmatter under `~/.bot-bottle/`. The Markdown body is the system prompt. Bottles live in `~/.bot-bottle/bottles/`; agents may also be shipped by a repo at `<repo>/.bot-bottle/agents/<name>.md`.
+Bottles and agents are Markdown files with YAML frontmatter under `~/.bot-bottle/`. The Markdown body is the system prompt. Bottles live in `~/.bot-bottle/bottles/`; agents may also be shipped by a repo at `<repo>/.bot-bottle/agents/<name>.md`. A repo agent whose `agent_provider` grants something (your login, a model host with a secret, or an image build) runs only once this host trusts it, like a repo bottle (`bot-bottle trust <name>`).
 
 **Bottle** (`~/.bot-bottle/bottles/gitea-dev.md`):
 
 ````markdown
 ---
-extends: claude          # inherit the Claude provider boundary
+extends: basic           # start from the built-in package-registry routes
 
 env:
   GIT_AUTHOR_NAME: didericis
@@ -259,8 +259,8 @@ egress:
         inbound_detectors: false   # disable response scanning for this host
 ---
 
-The `gitea-dev` bottle. Provider auth via the inherited Claude route;
-gitea over SSH for push, token over HTTPS for the API.
+The `gitea-dev` bottle: gitea over SSH for push, token over HTTPS for
+the API. The agent's provider adds its own model route.
 ````
 
 **Agent** (`~/.bot-bottle/agents/gitea-helper.md`):
@@ -268,6 +268,9 @@ gitea over SSH for push, token over HTTPS for the API.
 ````markdown
 ---
 bottle: gitea-dev
+agent_provider:          # the harness and its login; default is `claude`
+  harness: claude
+  forward_host_credentials: true
 skills:
   - init-prd
 ---
@@ -280,7 +283,7 @@ You help maintain Gitea-hosted projects.
 | Field | Required | Description |
 |---|---|---|
 | `host` | yes | Hostname to allowlist. One entry per host. |
-| `role` | no | Reserved for future use. The key is recognised but any value is currently rejected at load. Provider auth routes (e.g. Claude's `api.anthropic.com`) are injected automatically from `agent_provider.auth_token`, not via `role`. |
+| `role` | no | Reserved for future use. The key is recognised but any value is currently rejected at load. Provider auth routes (e.g. Claude's `api.anthropic.com`) are injected automatically from the agent's `agent_provider`, not via `role`; a bottle route for such a host fails the launch. |
 | `auth.scheme` | when `auth` present | `Bearer` or `token`. Injected by the proxy; the agent never sees the value. |
 | `auth.token_ref` | when `auth` present | Env-var name holding the secret on the host. |
 | `matches` | no | Array of `{paths, methods, headers}` filters. A request must match at least one entry (if any are given) to be forwarded. |

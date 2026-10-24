@@ -152,7 +152,7 @@ class ReprovisionGitGate(unittest.TestCase):
 
 
 class InfraServiceTrigger(unittest.TestCase):
-    """The bring-up template decides when to reattach, for every backend."""
+    """The bring-up harness decides when to reattach, for every backend."""
 
     def setUp(self) -> None:
         from bot_bottle.backend.docker.infra import DockerInfraService

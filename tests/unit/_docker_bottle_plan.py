@@ -144,7 +144,7 @@ def _plan(
         supervise_plan=_supervise_plan() if supervise else None,
         use_runsc=False,
         agent_provision=AgentProvisionPlan(
-            template="claude",
+            harness="claude",
             command="claude",
             prompt_mode="append_file",
             image="bot-bottle-claude:latest",

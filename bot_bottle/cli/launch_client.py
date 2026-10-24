@@ -52,7 +52,7 @@ def needed_secrets(manifest: Manifest) -> dict[str, str]:
         if entry.Key.forge_token_env:
             names.setdefault(entry.Key.forge_token_env, "")
     # The provider's egress routes take their tokens from these names.
-    provider = bottle.agent_provider
+    provider = manifest.agent.agent_provider
     for name in (provider.auth_token, str(provider.settings.get("api_key_env", ""))):
         if name:
             names.setdefault(name, "")
@@ -96,7 +96,8 @@ def prepare_request(request: LaunchRequest, index: ManifestIndex, *,
 
 def load_trusting(index: ManifestIndex, agent: str, bottles: tuple[str, ...], *,
                   interactive: bool) -> Manifest:
-    """Load the agent's manifest. An untrusted or changed project bottle is
+    """Load the agent's manifest. An untrusted or changed project bottle (or
+    project agent with a provider) is
     shown and asked about first; without a terminal it fails with a pointer to
     `bot-bottle trust`. Declining stops the launch."""
     while True:
@@ -108,7 +109,7 @@ def load_trusting(index: ManifestIndex, agent: str, bottles: tuple[str, ...], *,
             sys.stderr.write("\n" + trust.prompt_text(e))
             sys.stderr.flush()
             if read_tty_line() not in ("y", "Y", "yes", "YES"):
-                die("not started; the bottle stays untrusted "
+                die(f"not started; the {e.kind} stays untrusted "
                     f"(`{PROG} trust {e.bottle}` to review it later)")
             trust.trust(e)
             info(f"trusted {e.bottle} on this host")

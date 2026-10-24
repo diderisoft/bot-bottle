@@ -12,18 +12,18 @@ def render_manifest(frontmatter: dict[str, object], body: str) -> str:
     return f"---\n{serialize_yaml_subset(frontmatter)}---\n\n{body.strip()}\n"
 
 
-def starter_agent(bottle: str, prompt: str) -> str:
-    """A starter agent bound to `bottle`; the body is its prompt."""
-    return render_manifest({"bottle": bottle}, prompt)
+def starter_agent(bottle: str, prompt: str, agent_provider: dict[str, object]) -> str:
+    """A starter agent bound to `bottle`, with its harness and what it needs
+    (`agent_provider`); the body is its prompt, so the marker is a frontmatter
+    comment."""
+    rendered = render_manifest({"bottle": bottle, "agent_provider": agent_provider}, prompt)
+    return rendered.replace("---\n", f"---\n# {STARTER_MARKER}; edit it freely.\n", 1)
 
 
-def starter_bottle(agent_provider: dict[str, object], description: str) -> str:
-    """A starter bottle with only an `agent_provider` block; its egress is the
-    provider's model API route."""
-    return render_manifest(
-        {"agent_provider": agent_provider},
-        f"{description}\n\n{STARTER_MARKER}; edit it freely.",
-    )
+def starter_bottle(description: str) -> str:
+    """A starter bottle with no policy of its own yet: the agent's provider
+    adds its model API route, and anything else goes here."""
+    return render_manifest({}, f"{description}\n\n{STARTER_MARKER}; edit it freely.")
 
 
 GENERAL_PROMPT = (

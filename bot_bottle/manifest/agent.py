@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import cast
 
-from ..agent_provider import PROVIDER_TEMPLATES
+from ..agent_provider import BUILTIN_HARNESSES
 from .util import ManifestError, as_json_object
 from .git import ManifestGitUser
 from .schema import AGENT_MODEL_KEYS, is_valid_entity_name
@@ -39,8 +39,8 @@ class ManifestImageOverlay:
         return not (self.harness_version or self.apt or self.files or self.dockerfile)
 
     @classmethod
-    def from_dict(cls, bottle_name: str, raw: object) -> "ManifestImageOverlay":
-        where = f"bottle '{bottle_name}' agent_provider.overlay"
+    def from_dict(cls, agent_name: str, raw: object) -> "ManifestImageOverlay":
+        where = f"agent '{agent_name}' agent_provider.overlay"
         d = as_json_object(raw, where)
         for k in d:
             if k not in {"harness_version", "apt", "files", "dockerfile"}:
@@ -104,14 +104,14 @@ def _overlay_str_list(where: str, key: str, raw: object) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class ManifestAgentProvider:
-    """The agent process's provider. `template` picks a built-in runtime;
+    """The agent process's provider. `harness` picks a built-in runtime;
     `dockerfile` optionally names a custom agent image. `auth_token` names the
     host var holding Claude's OAuth token, injected by a provider egress route
     while the agent gets a placeholder. `forward_host_credentials` forwards the
     host's Codex or Claude login token through egress.
     """
 
-    template: str = "claude"
+    harness: str = "claude"
     dockerfile: str = ""
     auth_token: str = ""
     forward_host_credentials: bool = False
@@ -120,16 +120,19 @@ class ManifestAgentProvider:
 
     @property
     def builds_custom_image(self) -> bool:
-        """The bottle names its own `dockerfile`, so its image is always built
+        """The agent names its own `dockerfile`, so its image is always built
         from it."""
         return bool(self.dockerfile)
 
     @classmethod
-    def from_dict(cls, bottle_name: str, raw: object) -> "ManifestAgentProvider":
-        d = as_json_object(raw, f"bottle '{bottle_name}' agent_provider")
+    def from_dict(cls, agent_name: str, raw: object) -> "ManifestAgentProvider":
+        # `agent_provider: pi` is short for `{harness: pi}`.
+        if isinstance(raw, str):
+            raw = {"harness": raw}
+        d = as_json_object(raw, f"agent '{agent_name}' agent_provider")
         for k in d:
             if k not in {
-                "template",
+                "harness",
                 "dockerfile",
                 "auth_token",
                 "forward_host_credentials",
@@ -137,81 +140,81 @@ class ManifestAgentProvider:
                 "overlay",
             }:
                 raise ManifestError(
-                    f"bottle '{bottle_name}' agent_provider has unknown key {k!r}; "
-                    "allowed: template, dockerfile, auth_token, "
+                    f"agent '{agent_name}' agent_provider has unknown key {k!r}; "
+                    "allowed: harness, dockerfile, auth_token, "
                     "forward_host_credentials, settings, overlay"
                 )
-        template = d.get("template", "claude")
-        if not isinstance(template, str) or not template:
+        harness = d.get("harness", "claude")
+        if not isinstance(harness, str) or not harness:
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.template must be a "
+                f"agent '{agent_name}' agent_provider.harness must be a "
                 f"non-empty string"
             )
         dockerfile = d.get("dockerfile", "")
         if not isinstance(dockerfile, str):
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.dockerfile must be a "
+                f"agent '{agent_name}' agent_provider.dockerfile must be a "
                 f"string (was {type(dockerfile).__name__})"
             )
         auth_token = d.get("auth_token", "")
         if not isinstance(auth_token, str):
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.auth_token must be a "
+                f"agent '{agent_name}' agent_provider.auth_token must be a "
                 f"string (was {type(auth_token).__name__})"
             )
-        if auth_token and template not in PROVIDER_TEMPLATES:
+        if auth_token and harness not in BUILTIN_HARNESSES:
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.auth_token is only "
-                f"supported for built-in templates "
-                f"({', '.join(sorted(PROVIDER_TEMPLATES))})"
+                f"agent '{agent_name}' agent_provider.auth_token is only "
+                f"supported for built-in harnesses "
+                f"({', '.join(sorted(BUILTIN_HARNESSES))})"
             )
-        if auth_token and template != "claude":
+        if auth_token and harness != "claude":
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.auth_token is only "
-                f"supported for template 'claude'"
+                f"agent '{agent_name}' agent_provider.auth_token is only "
+                f"supported for harness 'claude'"
             )
         forward_host_credentials = d.get("forward_host_credentials", False)
         if not isinstance(forward_host_credentials, bool):
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.forward_host_credentials "
+                f"agent '{agent_name}' agent_provider.forward_host_credentials "
                 f"must be a boolean (was {type(forward_host_credentials).__name__})"
             )
-        if forward_host_credentials and template not in PROVIDER_TEMPLATES:
+        if forward_host_credentials and harness not in BUILTIN_HARNESSES:
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.forward_host_credentials "
-                f"is only supported for built-in templates "
-                f"({', '.join(sorted(PROVIDER_TEMPLATES))})"
+                f"agent '{agent_name}' agent_provider.forward_host_credentials "
+                f"is only supported for built-in harnesses "
+                f"({', '.join(sorted(BUILTIN_HARNESSES))})"
             )
-        if forward_host_credentials and template not in {"codex", "claude"}:
+        if forward_host_credentials and harness not in {"codex", "claude"}:
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.forward_host_credentials "
-                "is only supported for templates 'codex' and 'claude'"
+                f"agent '{agent_name}' agent_provider.forward_host_credentials "
+                "is only supported for harnesses 'codex' and 'claude'"
             )
         if forward_host_credentials and auth_token:
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.forward_host_credentials "
+                f"agent '{agent_name}' agent_provider.forward_host_credentials "
                 "and auth_token both set; use one or the other"
             )
-        settings = _parse_provider_settings(bottle_name, template, d.get("settings"))
+        settings = _parse_provider_settings(agent_name, harness, d.get("settings"))
         overlay = ManifestImageOverlay()
         if "overlay" in d:
-            overlay = ManifestImageOverlay.from_dict(bottle_name, d["overlay"])
+            overlay = ManifestImageOverlay.from_dict(agent_name, d["overlay"])
         if not overlay.is_empty() and dockerfile:
             raise ManifestError(
-                f"bottle '{bottle_name}' sets both agent_provider.overlay and "
+                f"agent '{agent_name}' sets both agent_provider.overlay and "
                 "agent_provider.dockerfile; an overlay builds on the published "
                 "default image, so use one or the other (an overlay's own "
                 "Dockerfile goes in overlay.dockerfile)"
             )
-        if not overlay.is_empty() and template not in PROVIDER_TEMPLATES:
+        if not overlay.is_empty() and harness not in BUILTIN_HARNESSES:
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.overlay is only "
-                f"supported for built-in templates "
-                f"({', '.join(sorted(PROVIDER_TEMPLATES))}); a custom template "
+                f"agent '{agent_name}' agent_provider.overlay is only "
+                f"supported for built-in harnesses "
+                f"({', '.join(sorted(BUILTIN_HARNESSES))}); a custom harness "
                 "builds its own image and has nothing to overlay"
             )
         return cls(
-            template=template,
+            harness=harness,
             dockerfile=dockerfile,
             auth_token=auth_token,
             forward_host_credentials=forward_host_credentials,
@@ -231,6 +234,10 @@ class ManifestAgent:
     git_user: ManifestGitUser = ManifestGitUser()
     # `remote.writable`: whether remote viewers may type.
     remote_writable: bool = False
+    # What runs: the harness, its image and settings, and what it demands of
+    # any bottle (its API route and credentials). Agents don't compose, so
+    # this is the agent's alone (PRD 0098).
+    agent_provider: ManifestAgentProvider = field(default_factory=ManifestAgentProvider)
 
     @classmethod
     def from_dict(cls, name: str, raw: object, bottle_names: set[str]) -> "ManifestAgent":
@@ -328,18 +335,23 @@ class ManifestAgent:
                 )
             remote_writable = writable
 
+        agent_provider = (
+            ManifestAgentProvider.from_dict(name, d["agent_provider"])
+            if "agent_provider" in d else ManifestAgentProvider()
+        )
+
         return cls(bottle=bottle, skills=skills, prompt=prompt, git_user=git_user,
-                   remote_writable=remote_writable)
+                   remote_writable=remote_writable, agent_provider=agent_provider)
 
 
 def _parse_provider_settings(
-    bottle_name: str,
-    template: str,
+    agent_name: str,
+    harness: str,
     raw: object,
 ) -> dict[str, object]:
     if raw is None:
         return {}
-    settings = as_json_object(raw, f"bottle '{bottle_name}' agent_provider.settings")
+    settings = as_json_object(raw, f"agent '{agent_name}' agent_provider.settings")
 
     common_allowed = {"startup_args"}
     pi_allowed = {
@@ -355,11 +367,11 @@ def _parse_provider_settings(
         "supports_developer_role",
         "supports_reasoning_effort",
     }
-    if template == "pi":
+    if harness == "pi":
         allowed = common_allowed | pi_allowed
-    elif template in ("claude", "codex"):
+    elif harness in ("claude", "codex"):
         allowed = common_allowed
-    elif template not in PROVIDER_TEMPLATES:
+    elif harness not in BUILTIN_HARNESSES:
         return dict(settings)
     else:
         allowed = common_allowed
@@ -367,30 +379,30 @@ def _parse_provider_settings(
     for key in settings:
         if key not in allowed:
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.settings has unknown "
+                f"agent '{agent_name}' agent_provider.settings has unknown "
                 f"key {key!r}; allowed: {', '.join(sorted(allowed))}"
             )
     startup_args = settings.get("startup_args")
     if startup_args is not None:
         if not isinstance(startup_args, list):
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.settings.startup_args "
+                f"agent '{agent_name}' agent_provider.settings.startup_args "
                 f"must be an array of strings"
             )
         for i, arg in enumerate(startup_args):
             if not isinstance(arg, str) or not arg:
                 raise ManifestError(
-                    f"bottle '{bottle_name}' agent_provider.settings."
+                    f"agent '{agent_name}' agent_provider.settings."
                     f"startup_args[{i}] must be a non-empty string"
                 )
-    if template != "pi":
+    if harness != "pi":
         return dict(settings)
 
     for key in ("provider", "base_url", "api", "api_key", "api_key_env"):
         value = settings.get(key)
         if value is not None and (not isinstance(value, str) or not value):
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.settings.{key} must "
+                f"agent '{agent_name}' agent_provider.settings.{key} must "
                 "be a non-empty string"
             )
     max_tokens_field = settings.get("max_tokens_field")
@@ -398,32 +410,32 @@ def _parse_provider_settings(
         "max_tokens", "max_completion_tokens",
     ):
         raise ManifestError(
-            f"bottle '{bottle_name}' agent_provider.settings.max_tokens_field "
+            f"agent '{agent_name}' agent_provider.settings.max_tokens_field "
             "must be 'max_tokens' or 'max_completion_tokens'"
         )
     if settings.get("api_key") is not None and settings.get("api_key_env") is not None:
         raise ManifestError(
-            f"bottle '{bottle_name}' agent_provider.settings may set either "
+            f"agent '{agent_name}' agent_provider.settings may set either "
             "api_key or api_key_env, not both"
         )
     models = settings.get("models")
     if models is not None:
         if not isinstance(models, list) or not models:
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.settings.models must "
+                f"agent '{agent_name}' agent_provider.settings.models must "
                 "be a non-empty array of strings"
             )
         for i, model in enumerate(models):
             if not isinstance(model, str) or not model:
                 raise ManifestError(
-                    f"bottle '{bottle_name}' agent_provider.settings.models[{i}] "
+                    f"agent '{agent_name}' agent_provider.settings.models[{i}] "
                     "must be a non-empty string"
                 )
     for key in ("supports_developer_role", "supports_reasoning_effort"):
         value = settings.get(key)
         if value is not None and not isinstance(value, bool):
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.settings.{key} must "
+                f"agent '{agent_name}' agent_provider.settings.{key} must "
                 f"be a boolean (was {type(value).__name__})"
             )
     for key in ("context_window", "max_tokens"):
@@ -432,7 +444,7 @@ def _parse_provider_settings(
             not isinstance(value, int) or isinstance(value, bool) or value <= 0
         ):
             raise ManifestError(
-                f"bottle '{bottle_name}' agent_provider.settings.{key} must "
+                f"agent '{agent_name}' agent_provider.settings.{key} must "
                 f"be a positive integer (was {type(value).__name__})"
             )
     return dict(settings)

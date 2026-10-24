@@ -91,7 +91,7 @@ def _custom_theme_payload(color: str) -> dict[str, object] | None:
 
 
 _RUNTIME = AgentProviderRuntime(
-    template="claude",
+    harness="claude",
     command="claude",
     image="bot-bottle-claude:latest",
     prompt_mode="append_file",
@@ -116,14 +116,15 @@ class ClaudeAgentProvider(AgentProvider):
 
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
         del detection
-        return starter_agent("claude", GENERAL_PROMPT)
+        return starter_agent("claude", GENERAL_PROMPT,
+                             {"harness": "claude", "forward_host_credentials": True})
 
     def create_default_bottle_manifest(self, detection: HostDetection) -> str:
         return starter_bottle(
-            {"template": "claude", "forward_host_credentials": True},
-            "Claude Code, signed in with this host's Claude login "
-            f"({detection.login_location or 'claude login'}). The gateway "
-            "injects the login token, so the agent never sees it.",
+            "The claude starter agent's bottle. The agent signs in with this "
+            f"host's Claude login ({detection.login_location or 'claude login'}); "
+            "the gateway injects the login token, so the agent never sees it. "
+            "Add egress routes, git-gate repos and env here.",
         )
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
@@ -236,7 +237,7 @@ class ClaudeAgentProvider(AgentProvider):
 
         has_prompt = prompt_file.exists() and bool(prompt_file.read_text())
         return AgentProvisionPlan(
-            template=_RUNTIME.template,
+            harness=_RUNTIME.harness,
             command=_RUNTIME.command,
             prompt_mode=_RUNTIME.prompt_mode,
             image=_RUNTIME.image,

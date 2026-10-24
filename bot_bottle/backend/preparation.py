@@ -32,6 +32,12 @@ if TYPE_CHECKING:
     from .base import BottleSpec
 
 
+def _egress_owner(spec: "BottleSpec", manifest: Manifest) -> str:
+    """The agent and its bottle(s), for a launch error."""
+    bottles = ", ".join(spec.bottle_names) or manifest.agent.bottle
+    return f"agent '{spec.agent_name}' with bottle {bottles}"
+
+
 class PreparationBackend(Protocol):
     """Backend hooks the shared planner calls."""
 
@@ -77,8 +83,8 @@ class BottlePreparationPlanner:
         )
 
         bottle = manifest.bottle
-        provider_config = bottle.agent_provider
-        provider = get_provider(provider_config.template)
+        provider_config = manifest.agent.agent_provider
+        provider = get_provider(provider_config.harness)
         resolved_env = resolve_env(manifest, secrets, prompt=not spec.headless)
         workspace = workspace_plan(spec, guest_home=provider.guest_home)
         slug = mint_slug(spec)
@@ -91,7 +97,7 @@ class BottlePreparationPlanner:
         )
         agent_dir, prompt_file = prepare_agent_state_dir(slug, manifest)
         provision = build_agent_provision_plan(
-            template=provider_config.template,
+            harness=provider_config.harness,
             dockerfile=dockerfile,
             state_dir=agent_dir,
             instance_name=f"bot-bottle-{slug}",
@@ -112,7 +118,8 @@ class BottlePreparationPlanner:
             slug=slug,
             resolved_env=resolved_env,
             agent_provision_plan=provision,
-            egress_plan=prepare_egress(bottle, slug, provision),
+            egress_plan=prepare_egress(
+                bottle, slug, provision, owner=_egress_owner(spec, manifest)),
             git_gate_plan=prepare_git_gate(bottle, slug),
             supervise_plan=prepare_supervise(bottle, slug),
         )

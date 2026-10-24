@@ -99,9 +99,9 @@ class TestAgentArgs(unittest.TestCase):
 
     def test_interactive_prompt_is_the_first_message(self):
         # A console launch: the session stays open after the first turn.
-        for template in ("claude", "pi", "codex"):
-            with self.subTest(template=template):
-                args = agent_args(template, (), "Do it", headless=False)
+        for harness in ("claude", "pi", "codex"):
+            with self.subTest(harness=harness):
+                args = agent_args(harness, (), "Do it", headless=False)
                 self.assertEqual("Do it", args[-1])
                 self.assertNotIn("-p", args)
 
@@ -116,11 +116,11 @@ class TestAgentArgs(unittest.TestCase):
         self.assertEqual(agent_args("claude", (), "", remote_view=True), agent_args("claude", (), ""))
 
     def test_a_prompt_that_looks_like_an_option_stays_a_prompt(self):
-        for template in ("claude", "pi", "codex"):
+        for harness in ("claude", "pi", "codex"):
             for prompt in ("-v is broken, fix it", "@README.md says otherwise"):
-                with self.subTest(template=template, prompt=prompt):
+                with self.subTest(harness=harness, prompt=prompt):
                     self.assertEqual(" " + prompt,
-                                     agent_args(template, (), prompt, headless=False)[-1])
+                                     agent_args(harness, (), prompt, headless=False)[-1])
 
     def test_an_agent_without_interactive_prompts_is_refused(self):
         from unittest import mock

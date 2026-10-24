@@ -174,17 +174,17 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         with patch.object(image_builder.util, "cache_dir", return_value=self.cache):
             with image_builder.agent_overlay.staged_overlay(
                 image_builder.image_registry.pinned_reference(pin), overlay,
-                template="claude", source_root=self.cache,
+                harness="claude", source_root=self.cache,
             ) as staged:
                 base = self.cache / "rootfs" / image_builder._overlay_rootfs_name(staged, _S.infra)
             base.mkdir(parents=True)
             (base / ".bb-ready").write_text("ok\n")
             self.assertEqual(base, image_builder.cached_agent_overlay_rootfs_dir(
-                pin, overlay, _S.infra, template="claude", source_root=self.cache))
+                pin, overlay, _S.infra, harness="claude", source_root=self.cache))
             with patch.object(image_builder, "_infra_build") as build, \
                  patch.object(image_builder.image_registry, "verify_tag") as verify:
                 out = image_builder.acquire_agent_overlay_rootfs_dir(
-                    pin, overlay, _S, template="claude", source_root=self.cache)
+                    pin, overlay, _S, harness="claude", source_root=self.cache)
         build.assert_not_called()
         verify.assert_not_called()  # a cached overlay launches offline
         self.assertEqual(base, out)
@@ -199,7 +199,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
              patch.object(image_builder, "_infra_build") as vm, \
              patch.object(image_builder.util, "inject_guest_boot"):
             out = image_builder.acquire_agent_overlay_rootfs_dir(
-                self._oci_pin("9"), ManifestImageOverlay(apt=("jq",)), _S, template="claude",
+                self._oci_pin("9"), ManifestImageOverlay(apt=("jq",)), _S, harness="claude",
                 source_root=self.cache)
         verify.assert_called_once()
         self.assertTrue((out / ".bb-ready").is_file())
@@ -229,7 +229,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
              patch.object(image_builder, "_infra_build") as vm, \
              self.assertRaises(SystemExit):
             image_builder.acquire_agent_overlay_rootfs_dir(
-                self._oci_pin("8"), ManifestImageOverlay(apt=("jq",)), _S, template="claude",
+                self._oci_pin("8"), ManifestImageOverlay(apt=("jq",)), _S, harness="claude",
                 source_root=self.cache)
         vm.assert_not_called()
 

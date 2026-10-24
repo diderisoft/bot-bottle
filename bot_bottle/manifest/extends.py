@@ -34,7 +34,7 @@ def merge_bottles_runtime(bottles: "list[ManifestBottle]") -> "ManifestBottle":
     - git_user: per field, later wins when non-empty
     - repos: union by name, later wins
     - egress routes: concatenate
-    - agent_provider, supervise, nested_containers: later replaces, but only
+    - supervise, nested_containers: later replaces, but only
       when it declared the field (so an explicit `false` overrides)
     """
     if not bottles:
@@ -69,7 +69,6 @@ def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle
 
     return ManifestBottle(
         env=merged_env,
-        agent_provider=override.agent_provider,
         git=merged_git,
         git_user=merged_git_user,
         egress=merged_egress,
@@ -219,7 +218,6 @@ def _fold_two_bottles(
 
     return ManifestBottle(
         env=merged_env,
-        agent_provider=later.agent_provider,
         git=merged_git,
         git_user=merged_git_user,
         egress=merged_egress,
@@ -273,11 +271,6 @@ def _merge_bottles(
     )
 
     # Remaining scalars: replaced when present.
-    merged_agent_provider = (
-        child.agent_provider
-        if "agent_provider" in child_raw
-        else parent.agent_provider
-    )
     merged_supervise = _overlay_declared_bool(parent, child, "supervise")
     merged_nested_containers = _overlay_declared_bool(
         parent, child, "nested_containers"
@@ -286,7 +279,6 @@ def _merge_bottles(
 
     return ManifestBottle(
         env=merged_env,
-        agent_provider=merged_agent_provider,
         git=merged_git,
         git_user=merged_git_user,
         egress=merged_egress,

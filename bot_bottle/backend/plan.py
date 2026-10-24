@@ -107,8 +107,8 @@ class BottlePlan(ABC):
         return self.agent_provision.prompt_mode
 
     @property
-    def agent_provider_template(self) -> str:
-        return self.agent_provision.template
+    def harness(self) -> str:
+        return self.agent_provision.harness
 
     @property
     def git_gate_insteadof_host(self) -> str:
@@ -143,7 +143,7 @@ class BottlePlan(ABC):
 
         print(file=sys.stderr)
         info(f"agent           : {spec.agent_name}")
-        info(f"provider        : {self.agent_provision.template}")
+        info(f"provider        : {self.agent_provision.harness}")
         print_multi("env             ", env_names)
         print_multi("skills          ", list(agent.skills))
         effective_bottles = (

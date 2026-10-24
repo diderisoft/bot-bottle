@@ -1,5 +1,5 @@
 ---
-extends: claude
+extends: basic
 
 env:
   GIT_AUTHOR_NAME: Eric Diderich
@@ -8,7 +8,8 @@ env:
 
 The `dev` bottle — backs a generic development workflow.
 
-Inherits the Claude provider boundary from `claude`. Drop this file
+Extends the built-in `basic` bottle; the agent brings its own
+provider (`agent_provider`), so any harness can use it. Drop this file
 into `~/.bot-bottle/bottles/dev.md` and any agent referencing
 `bottle: dev` will launch against this infrastructure. By default,
 bot-bottle runs this bottle on the host's default backend (Firecracker

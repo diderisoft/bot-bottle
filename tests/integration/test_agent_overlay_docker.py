@@ -78,7 +78,7 @@ class TestAgentOverlayDocker(unittest.TestCase):
     def _build(self, src: Path, overlay: ManifestImageOverlay) -> str:
         plan = cast(Any, SimpleNamespace(
             spec=SimpleNamespace(user_cwd=str(src), image_policy="build"),
-            manifest=SimpleNamespace(bottle=SimpleNamespace(agent_provider=SimpleNamespace(
+            manifest=SimpleNamespace(agent=SimpleNamespace(agent_provider=SimpleNamespace(
                 overlay=overlay, builds_custom_image=False,
             ))),
         ))
@@ -88,7 +88,7 @@ class TestAgentOverlayDocker(unittest.TestCase):
                                return_value=self.pin):
             tag = oci_agent_image.resolve_published_agent_image(
                 plan, launch_mod._docker_runtime(settings_from_env()),  # pyright: ignore[reportPrivateUsage]
-                template="claude", image=f"bb-overlay-test-{uuid.uuid4().hex[:8]}:latest",
+                harness="claude", image=f"bb-overlay-test-{uuid.uuid4().hex[:8]}:latest",
                 smoke_test=(),
             )
         assert tag is not None

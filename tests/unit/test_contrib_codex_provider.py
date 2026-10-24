@@ -58,7 +58,7 @@ def _plan(
     supervise: bool = False,
     identity_token: str = "",
 ) -> DockerBottlePlan:
-    bottle_json: dict = {"agent_provider": {"template": "codex"}}  # type: ignore
+    bottle_json: dict = {}  # type: ignore
     if supervise:
         bottle_json["supervise"] = True
     index = ManifestIndex.from_json_obj({
@@ -68,6 +68,7 @@ def _plan(
                 "skills": list(skills or []),
                 "prompt": agent_prompt,
                 "bottle": "dev",
+                "agent_provider": {"harness": "codex"},
             },
         },
     })
@@ -103,7 +104,7 @@ def _plan(
         use_runsc=False,
         identity_token=identity_token,
         agent_provision=agent_provision or AgentProvisionPlan(
-            template="codex", command="codex", prompt_mode="read_prompt_file",
+            harness="codex", command="codex", prompt_mode="read_prompt_file",
             image="bot-bottle-codex:latest", dockerfile="",
             guest_home="/home/node",
             instance_name="bot-bottle-demo-abc12",
@@ -142,7 +143,7 @@ class TestCodexProvisionPrompt(unittest.TestCase):
     def test_returns_path_when_provider_prompt_exists(self):
         bottle = _make_bottle()
         provision = AgentProvisionPlan(
-            template="codex", command="codex",
+            harness="codex", command="codex",
             prompt_mode="read_prompt_file",
             image="", dockerfile="", guest_home="/home/node",
             instance_name="bot-bottle-demo-abc12",
@@ -215,7 +216,7 @@ class TestCodexProvision(unittest.TestCase):
 
     def test_creates_dir_and_copies_config(self):
         provision = AgentProvisionPlan(
-            template="codex", command="codex",
+            harness="codex", command="codex",
             prompt_mode="read_prompt_file",
             image="", dockerfile="", guest_home="/home/node",
             instance_name="bot-bottle-demo-abc12",
@@ -242,7 +243,7 @@ class TestCodexProvision(unittest.TestCase):
 
     def test_runs_pre_copy_then_verify(self):
         provision = AgentProvisionPlan(
-            template="codex", command="codex",
+            harness="codex", command="codex",
             prompt_mode="read_prompt_file",
             image="", dockerfile="", guest_home="/home/node",
             instance_name="bot-bottle-demo-abc12",
@@ -297,7 +298,7 @@ class TestCodexProvision(unittest.TestCase):
 
     def test_dies_when_dir_creation_fails(self):
         provision = AgentProvisionPlan(
-            template="codex", command="codex",
+            harness="codex", command="codex",
             prompt_mode="read_prompt_file",
             image="", dockerfile="", guest_home="/home/node",
             instance_name="bot-bottle-demo-abc12",
@@ -381,7 +382,7 @@ class TestCodexSuperviseMcp(unittest.TestCase):
     def test_appends_to_custom_codex_home(self):
         bottle = _make_bottle()
         provision = AgentProvisionPlan(
-            template="codex", command="codex", prompt_mode="read_prompt_file",
+            harness="codex", command="codex", prompt_mode="read_prompt_file",
             image="", dockerfile="", guest_home="/home/node",
             instance_name="bot-bottle-demo-abc12",
             prompt_file=Path("/tmp/prompt.txt"),

@@ -76,7 +76,7 @@ class TestAgentProviderValidation(unittest.TestCase):
 
     def test_empty_template(self) -> None:
         with self.assertRaises(ManifestError):
-            ManifestAgentProvider.from_dict("b", {"template": ""})
+            ManifestAgentProvider.from_dict("b", {"harness": ""})
 
     def test_dockerfile_not_string(self) -> None:
         with self.assertRaises(ManifestError):
@@ -84,39 +84,39 @@ class TestAgentProviderValidation(unittest.TestCase):
 
     def test_auth_token_unknown_template(self) -> None:
         with self.assertRaises(ManifestError):
-            ManifestAgentProvider.from_dict("b", {"auth_token": "x", "template": "weird"})
+            ManifestAgentProvider.from_dict("b", {"auth_token": "x", "harness": "weird"})
 
     def test_auth_token_non_claude_template(self) -> None:
         with self.assertRaises(ManifestError):
-            ManifestAgentProvider.from_dict("b", {"auth_token": "x", "template": "codex"})
+            ManifestAgentProvider.from_dict("b", {"auth_token": "x", "harness": "codex"})
 
     def test_forward_creds_unknown_template(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict(
-                "b", {"forward_host_credentials": True, "template": "weird"}
+                "b", {"forward_host_credentials": True, "harness": "weird"}
             )
 
     def test_forward_creds_pi_template_rejected(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict(
-                "b", {"forward_host_credentials": True, "template": "pi"}
+                "b", {"forward_host_credentials": True, "harness": "pi"}
             )
 
     def test_forward_creds_claude_allowed(self) -> None:
         p = ManifestAgentProvider.from_dict(
-            "b", {"forward_host_credentials": True, "template": "claude"}
+            "b", {"forward_host_credentials": True, "harness": "claude"}
         )
         self.assertTrue(p.forward_host_credentials)
 
     def test_forward_creds_and_auth_token_rejected(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict(
-                "b", {"forward_host_credentials": True, "auth_token": "T", "template": "claude"}
+                "b", {"forward_host_credentials": True, "auth_token": "T", "harness": "claude"}
             )
 
     def test_image_overlay_parses(self) -> None:
         p = ManifestAgentProvider.from_dict("b", {
-            "template": "claude",
+            "harness": "claude",
             "overlay": {
                 "harness_version": "2.1.180",
                 "apt": ["jq", "postgresql-client"],
@@ -130,7 +130,7 @@ class TestAgentProviderValidation(unittest.TestCase):
 
     def test_image_overlay_harness_version_accepts_prerelease(self) -> None:
         p = ManifestAgentProvider.from_dict("b", {
-            "template": "codex",
+            "harness": "codex",
             "overlay": {"harness_version": "0.146.0-alpha.1"},
         })
         self.assertEqual(p.overlay.harness_version, "0.146.0-alpha.1")
@@ -139,13 +139,13 @@ class TestAgentProviderValidation(unittest.TestCase):
         for bad in ("latest", "2.1", "^2.1.180", "2.1.180; rm -rf /", "v2.1.180"):
             with self.subTest(bad=bad), self.assertRaises(ManifestError):
                 ManifestAgentProvider.from_dict("b", {
-                    "template": "claude",
+                    "harness": "claude",
                     "overlay": {"harness_version": bad},
                 })
 
     def test_image_overlay_dockerfile_parses(self) -> None:
         p = ManifestAgentProvider.from_dict("b", {
-            "template": "claude",
+            "harness": "claude",
             "overlay": {"dockerfile": "overlay/Dockerfile"},
         })
         self.assertEqual(p.overlay.dockerfile, "overlay/Dockerfile")
@@ -155,7 +155,7 @@ class TestAgentProviderValidation(unittest.TestCase):
         for extra in ({"apt": ["jq"]}, {"files": ["f"]}, {"harness_version": "2.1.180"}):
             with self.subTest(extra=extra), self.assertRaises(ManifestError):
                 ManifestAgentProvider.from_dict("b", {
-                    "template": "claude",
+                    "harness": "claude",
                     "overlay": {"dockerfile": "Dockerfile", **extra},
                 })
 
@@ -163,14 +163,14 @@ class TestAgentProviderValidation(unittest.TestCase):
         for bad in ("/etc/Dockerfile", "../Dockerfile", "a/../../Dockerfile"):
             with self.subTest(bad=bad), self.assertRaises(ManifestError):
                 ManifestAgentProvider.from_dict("b", {
-                    "template": "claude",
+                    "harness": "claude",
                     "overlay": {"dockerfile": bad},
                 })
 
     def test_overlay_and_custom_dockerfile_rejected_together(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict("b", {
-                "template": "claude",
+                "harness": "claude",
                 "dockerfile": "agent.Dockerfile",
                 "overlay": {"apt": ["jq"]},
             })
@@ -178,12 +178,12 @@ class TestAgentProviderValidation(unittest.TestCase):
     def test_image_overlay_dockerfile_must_be_string(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict("b", {
-                "template": "claude",
+                "harness": "claude",
                 "overlay": {"dockerfile": ["Dockerfile"]},
             })
 
     def test_no_overlay_is_empty(self) -> None:
-        p = ManifestAgentProvider.from_dict("b", {"template": "claude"})
+        p = ManifestAgentProvider.from_dict("b", {"harness": "claude"})
         self.assertTrue(p.overlay.is_empty())
 
     def test_overlay_unknown_key_rejected(self) -> None:
@@ -224,10 +224,10 @@ class TestAgentProviderValidation(unittest.TestCase):
     def test_overlay_rejected_for_custom_template(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict(
-                "b", {"template": "my-agent", "overlay": {"apt": ["jq"]}})
+                "b", {"harness": "my-agent", "overlay": {"apt": ["jq"]}})
 
     def test_valid_claude_auth_token(self) -> None:
-        p = ManifestAgentProvider.from_dict("b", {"template": "claude", "auth_token": "T"})
+        p = ManifestAgentProvider.from_dict("b", {"harness": "claude", "auth_token": "T"})
         self.assertEqual("T", p.auth_token)
 
 

@@ -58,7 +58,7 @@ CLI change doesn't rebuild them (`image_inputs.py` hashes the same paths).
 
 | Package / module | Does |
 |---|---|
-| `manifest/` | loads agent and bottle Markdown files, resolves `extends:`, seals the bottle, project-bottle trust |
+| `manifest/` | loads agent and bottle Markdown files, resolves `extends:`, seals the bottle, project bottle and agent trust |
 | `agent_provider.py`, `contrib/` | per-harness image, command, auth and egress routes |
 | `egress/`, `git_gate/`, `supervisor/` | host-side plans for each gateway service, built from the sealed bottle |
 | `backend/base.py` | `BottleBackend`: `prepare` → `launch` → `provision` → teardown |
@@ -129,7 +129,7 @@ Roles, routes and env vars are in [runtime-contract.md](runtime-contract.md).
 | What | Where | Owner |
 |---|---|---|
 | User agents and bottles | `~/.bot-bottle/{agents,bottles}/` | user |
-| Project agents and bottles | `<repo>/.bot-bottle/` (bottles need `bot-bottle trust`) | repo |
+| Project agents and bottles | `<repo>/.bot-bottle/` (bottles, and agents whose `agent_provider` grants anything, need `bot-bottle trust`) | repo |
 | Registry, supervise queue, encrypted egress secrets, settings | `bot-bottle.db`: `~/.bot-bottle/db/` mounted into the orchestrator; on firecracker, the orchestrator VM's `/dev/vdb` volume | orchestrator |
 | Signing keys | `~/.bot-bottle/<key file>`, mode 0600, pushed to the key holder | host |
 | Gateway CA | `~/.bot-bottle/gateway-ca/`, mounted at mitmproxy's confdir (firecracker: the infra VM dir's `gateway-ca/`) | gateway |

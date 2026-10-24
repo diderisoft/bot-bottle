@@ -40,23 +40,49 @@ def _bottle(routes):  # type: ignore
     }).bottles["dev"]
 
 
-def _provider_bottle(provider, routes):  # type: ignore
+def _provider_config_agent(agent_provider):  # type: ignore
     return ManifestIndex.from_json_obj({
-        "bottles": {
-            "dev": {
-                "agent_provider": {"template": provider},
-                "egress": {"routes": _inspect_routes(routes)},
-            }
-        },
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-    }).bottles["dev"]
+        "bottles": {"dev": {}},
+        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev",
+                            "agent_provider": agent_provider}},
+    }).agents["demo"]
 
 
-def _provider_config_bottle(agent_provider):  # type: ignore
-    return ManifestIndex.from_json_obj({
-        "bottles": {"dev": {"agent_provider": agent_provider}},
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-    }).bottles["dev"]
+class TestAgentOwnsProvider(unittest.TestCase):
+    def test_the_default_is_claude(self):
+        self.assertEqual("claude", _provider_config_agent({}).agent_provider.harness)
+
+    def test_the_string_shorthand_is_the_harness(self):
+        self.assertEqual(_provider_config_agent({"harness": "pi"}).agent_provider,
+                         _provider_config_agent("pi").agent_provider)
+
+    def test_template_is_an_unknown_key(self):
+        with self.assertRaises(ManifestError):
+            _provider_config_agent({"template": "pi"})
+
+    def test_a_bottle_declaring_it_is_told_to_move_it(self):
+        with self.assertRaises(ManifestError) as e:
+            ManifestIndex.from_json_obj({
+                "bottles": {"dev": {"agent_provider": {"harness": "pi"}}},
+                "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            })
+        self.assertIn("belongs to the agent", str(e.exception))
+
+    def test_one_bottle_serves_two_harnesses(self):
+        index = ManifestIndex.from_json_obj({
+            "bottles": {"dev": {"egress": {"routes": [{"host": "api.example.com"}]}}},
+            "agents": {
+                "a": {"skills": [], "prompt": "", "bottle": "dev",
+                      "agent_provider": {"harness": "claude", "auth_token": "TOK"}},
+                "b": {"skills": [], "prompt": "", "bottle": "dev",
+                      "agent_provider": {"harness": "codex",
+                                         "forward_host_credentials": True}},
+            },
+        })
+        a, b = index.load_for_agent("a"), index.load_for_agent("b")
+        self.assertEqual(a.bottle, b.bottle)
+        self.assertEqual(("claude", "codex"),
+                         (a.agent.agent_provider.harness, b.agent.agent_provider.harness))
 
 
 class TestMinimalRoute(unittest.TestCase):
@@ -84,66 +110,66 @@ class TestMinimalRoute(unittest.TestCase):
 
 class TestAgentProviderHostCredentials(unittest.TestCase):
     def test_forward_host_credentials_defaults_false(self):
-        b = _provider_config_bottle({"template": "codex"})
+        b = _provider_config_agent({"harness": "codex"})
         self.assertFalse(b.agent_provider.forward_host_credentials)
 
     def test_forward_host_credentials_allowed_for_codex(self):
-        b = _provider_config_bottle({
-            "template": "codex",
+        b = _provider_config_agent({
+            "harness": "codex",
             "forward_host_credentials": True,
         })
         self.assertTrue(b.agent_provider.forward_host_credentials)
 
     def test_forward_host_credentials_must_be_boolean(self):
         with self.assertRaises(ManifestError):
-            _provider_config_bottle({
-                "template": "codex",
+            _provider_config_agent({
+                "harness": "codex",
                 "forward_host_credentials": "yes",
             })
 
     def test_forward_host_credentials_allowed_for_claude(self):
-        b = _provider_config_bottle({
-            "template": "claude",
+        b = _provider_config_agent({
+            "harness": "claude",
             "forward_host_credentials": True,
         })
         self.assertTrue(b.agent_provider.forward_host_credentials)
 
     def test_forward_host_credentials_and_auth_token_rejected_together(self):
         with self.assertRaises(ManifestError):
-            _provider_config_bottle({
-                "template": "claude",
+            _provider_config_agent({
+                "harness": "claude",
                 "forward_host_credentials": True,
                 "auth_token": "SOME_TOKEN",
             })
 
     def test_auth_token_defaults_empty(self):
-        b = _provider_config_bottle({"template": "claude"})
+        b = _provider_config_agent({"harness": "claude"})
         self.assertEqual("", b.agent_provider.auth_token)
 
     def test_auth_token_allowed_for_claude(self):
-        b = _provider_config_bottle({
-            "template": "claude",
+        b = _provider_config_agent({
+            "harness": "claude",
             "auth_token": "BOT_BOTTLE_CLAUDE_OAUTH_TOKEN",
         })
         self.assertEqual("BOT_BOTTLE_CLAUDE_OAUTH_TOKEN", b.agent_provider.auth_token)
 
     def test_auth_token_must_be_string(self):
         with self.assertRaises(ManifestError):
-            _provider_config_bottle({
-                "template": "claude",
+            _provider_config_agent({
+                "harness": "claude",
                 "auth_token": 42,
             })
 
     def test_auth_token_rejected_for_codex(self):
         with self.assertRaises(ManifestError):
-            _provider_config_bottle({
-                "template": "codex",
+            _provider_config_agent({
+                "harness": "codex",
                 "auth_token": "SOME_TOKEN",
             })
 
     def test_settings_allowed_for_pi(self):
-        b = _provider_config_bottle({
-            "template": "pi",
+        b = _provider_config_agent({
+            "harness": "pi",
             "settings": {
                 "provider": "ollama",
                 "base_url": "http://ollama:11434/v1",
@@ -174,8 +200,8 @@ class TestAgentProviderHostCredentials(unittest.TestCase):
         )
 
     def test_settings_allowed_for_pi_api_key_env(self):
-        b = _provider_config_bottle({
-            "template": "pi",
+        b = _provider_config_agent({
+            "harness": "pi",
             "settings": {
                 "provider": "openrouter",
                 "base_url": "https://openrouter.ai/api/v1",
@@ -188,8 +214,8 @@ class TestAgentProviderHostCredentials(unittest.TestCase):
 
     def test_settings_rejects_api_key_and_api_key_env_together(self):
         with self.assertRaises(ManifestError):
-            _provider_config_bottle({
-                "template": "pi",
+            _provider_config_agent({
+                "harness": "pi",
                 "settings": {
                     "api_key": "literal",
                     "api_key_env": "OPENROUTER_API_KEY",
@@ -197,8 +223,8 @@ class TestAgentProviderHostCredentials(unittest.TestCase):
             })
 
     def test_startup_args_allowed_for_claude(self):
-        b = _provider_config_bottle({
-            "template": "claude",
+        b = _provider_config_agent({
+            "harness": "claude",
             "settings": {"startup_args": ["--model", "opus"]},
         })
         self.assertEqual(
@@ -207,8 +233,8 @@ class TestAgentProviderHostCredentials(unittest.TestCase):
         )
 
     def test_startup_args_allowed_for_codex(self):
-        b = _provider_config_bottle({
-            "template": "codex",
+        b = _provider_config_agent({
+            "harness": "codex",
             "settings": {"startup_args": ["--model", "gpt-5-codex"]},
         })
         self.assertEqual(
@@ -218,29 +244,29 @@ class TestAgentProviderHostCredentials(unittest.TestCase):
 
     def test_provider_specific_settings_still_rejected_for_claude(self):
         with self.assertRaises(ManifestError):
-            _provider_config_bottle({
-                "template": "claude",
+            _provider_config_agent({
+                "harness": "claude",
                 "settings": {"models": ["qwen2.5-coder:7b"]},
             })
 
     def test_startup_args_must_be_string_array(self):
         with self.assertRaises(ManifestError):
-            _provider_config_bottle({
-                "template": "codex",
+            _provider_config_agent({
+                "harness": "codex",
                 "settings": {"startup_args": ["--model", 42]},
             })
 
     def test_settings_models_must_be_non_empty_string_array(self):
         with self.assertRaises(ManifestError):
-            _provider_config_bottle({
-                "template": "pi",
+            _provider_config_agent({
+                "harness": "pi",
                 "settings": {"models": []},
             })
 
     def test_settings_boolean_flags_must_be_boolean(self):
         with self.assertRaises(ManifestError):
-            _provider_config_bottle({
-                "template": "pi",
+            _provider_config_agent({
+                "harness": "pi",
                 "settings": {"supports_developer_role": "no"},
             })
 

@@ -31,7 +31,7 @@ class _Provider(AgentProvider):
     @property
     def runtime(self) -> AgentProviderRuntime:
         return AgentProviderRuntime(
-            template="test", command="test", image="",
+            harness="test", command="test", image="",
             prompt_mode="append_file", bypass_args=(),
         )
     def provision_plan(self, **kwargs):  # type: ignore[override]
@@ -86,7 +86,7 @@ def _plan(*, git_user: dict | None = None,  # type: ignore
         supervise_plan=None,
         use_runsc=False,
         agent_provision=AgentProvisionPlan(
-            template="claude",
+            harness="claude",
             command="claude",
             prompt_mode="append_file",
             image="bot-bottle-claude:latest",

@@ -1,7 +1,7 @@
 """Resolve built-in agent images from the published manifest.
 
 Returns None when the caller should build locally (no manifest, custom
-template, image not published). An existing pin is digest-verified and fails
+harness, image not published). An existing pin is digest-verified and fails
 closed; it never falls back to a build.
 """
 
@@ -19,10 +19,10 @@ from .published_artifacts import (
 )
 
 
-def agent_image_name(template: str) -> str | None:
-    """Published image name for a built-in `template` (`claude` ->
-    `bot-bottle-claude`), or None for a custom template or an infra role."""
-    name = f"bot-bottle-{template}"
+def agent_image_name(harness: str) -> str | None:
+    """Published image name for a built-in `harness` (`claude` ->
+    `bot-bottle-claude`), or None for a custom harness or an infra role."""
+    name = f"bot-bottle-{harness}"
     if name in image_inputs.INFRA_ROLES:  # gateway/orchestrator are not agents
         return None
     return name if name in image_inputs.BUILD_INPUTS else None
@@ -50,11 +50,11 @@ def _assert_protocol_compatible(
 
 
 def resolve_agent_pin(
-    template: str, *, fmt: str, plat: str | None = None,
+    harness: str, *, fmt: str, plat: str | None = None,
 ) -> Artifact | None:
-    """The pinned `fmt` artifact for `template` on `plat`, or None to build
+    """The pinned `fmt` artifact for `harness` on `plat`, or None to build
     locally. Raises on a protocol mismatch."""
-    name = agent_image_name(template)
+    name = agent_image_name(harness)
     if name is None:
         return None
     entries = load_artifacts_manifest_optional()

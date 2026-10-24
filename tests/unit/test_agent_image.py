@@ -54,7 +54,7 @@ class ResolvePin(unittest.TestCase):
             self.assertIsNone(ai.resolve_agent_pin("claude", fmt=pa.FORMAT_OCI))
 
     def test_none_for_a_custom_template(self) -> None:
-        # Never even consults the manifest — a custom template has no default.
+        # Never even consults the manifest — a custom harness has no default.
         with mock.patch.object(ai, "load_artifacts_manifest_optional") as load:
             self.assertIsNone(ai.resolve_agent_pin("mine", fmt=pa.FORMAT_OCI))
             load.assert_not_called()

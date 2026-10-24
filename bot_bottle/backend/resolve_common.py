@@ -79,12 +79,14 @@ def prepare_git_gate(bottle: ManifestBottle, slug: str) -> GitGatePlan:
 
 def prepare_egress(
     bottle: ManifestBottle, slug: str, provision: AgentProvisionPlan,
+    owner: str = "",
 ) -> EgressPlan:
+    """`owner` names the agent and bottle in a same-host route error."""
     egress_dir = egress_state_dir(slug)
     egress_dir.mkdir(parents=True, exist_ok=True)
     return Egress().prepare(
         bottle, slug, egress_dir, provision.egress_routes,
-        default_audit_delivery=ConfigStore(host_db_path()).audit_delivery())
+        default_audit_delivery=ConfigStore(host_db_path()).audit_delivery(), owner=owner)
 
 
 def prepare_supervise(bottle: ManifestBottle, slug: str) -> SupervisePlan | None:

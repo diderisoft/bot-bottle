@@ -2,14 +2,14 @@
 
   $HOME/.bot-bottle/bottles/<name>.md   the user's bottles
   $HOME/.bot-bottle/agents/<name>.md    home agents
-  $CWD/.bot-bottle/agents/<name>.md     project agents
+  $CWD/.bot-bottle/agents/<name>.md     project agents (trusted per host
+                                        when their provider grants anything)
   $CWD/.bot-bottle/bottles/<name>.md    project bottles (trusted per host)
 
 An agent's body is its system prompt; a bottle's body is documentation.
 
 Bottle frontmatter:
   extends:      <bottle-name> | [<bottle-name>, ...]
-  agent_provider: { template: ..., ... }
   env:          { <NAME>: <env-entry>, ... }
   git-gate:
     user:       { name: <str>, email: <str> }
@@ -25,6 +25,9 @@ Agent frontmatter:
   git-gate:
     user:       { name: <str>, email: <str> }   # overlays the bottle's
   remote:       { writable: <bool> }
+  agent_provider: <harness> | { harness: ..., auth_token: ...,  # default claude
+                  forward_host_credentials: ..., dockerfile: ...,
+                  settings: {...}, overlay: {...} }
   # Claude Code subagent fields, accepted and ignored:
   name, description, model, color, memory
 

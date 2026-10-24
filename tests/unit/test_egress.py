@@ -20,6 +20,7 @@ from bot_bottle.egress import (
 )
 from bot_bottle.egress.service import _yaml_str_escape
 from bot_bottle.errors import MissingEnvVarError
+from bot_bottle.lib.log import Die
 from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.manifest import ManifestIndex
 from bot_bottle.contract.yaml_subset import parse_yaml_subset
@@ -195,7 +196,8 @@ class TestRoutesForBottleManifestOnly(unittest.TestCase):
 
 
 class TestProviderRouteMerge(unittest.TestCase):
-    """Provider routes win on host collision; manifest fills the rest."""
+    """Provider routes first, then the bottle's; a bottle route for a provider
+    host fails the launch."""
 
     def test_provider_route_appended_when_not_in_manifest(self):
         b = _bottle([])
@@ -218,18 +220,15 @@ class TestProviderRouteMerge(unittest.TestCase):
         self.assertEqual("", routes[0].token_ref)
         self.assertEqual({}, egress_token_env_map(routes))
 
-    def test_provider_route_wins_over_bare_manifest_route(self):
+    def test_bottle_route_for_a_provider_host_fails_the_launch(self):
         b = _bottle([{"host": "api.openai.com", "matches": [
             {"paths": [{"value": "/v1/"}]}
         ]}])
         pr = EgressRoute(host="api.openai.com")
-        routes = egress_routes_for_bottle(b, (pr,))
-        self.assertEqual(1, len(routes))
-        self.assertEqual("", routes[0].auth_scheme)
-        self.assertEqual("", routes[0].token_env)
-        self.assertEqual("", routes[0].token_ref)
-        self.assertEqual((), routes[0].matches)
-        self.assertEqual({}, egress_token_env_map(routes))
+        with self.assertRaises(Die) as e:
+            egress_routes_for_bottle(b, (pr,), "agent 'demo' with bottle dev")
+        self.assertIn("agent 'demo' with bottle dev", str(e.exception.message))
+        self.assertIn("api.openai.com", str(e.exception.message))
 
     def test_provider_route_defaults_to_redact_on_match(self):
         b = _bottle([])
@@ -258,22 +257,14 @@ class TestProviderRouteMerge(unittest.TestCase):
         self.assertEqual("EGRESS_TOKEN_0", routes[0].token_env)
         self.assertEqual("EGRESS_TOKEN_0", routes[1].token_env)
 
-    def test_provider_route_wins_over_authed_manifest_route(self):
-        b = _bottle([{"host": "chatgpt.com",
-                      "matches": [{"paths": [{"value": "/backend-api/"}]}],
-                      "auth": {"scheme": "Bearer", "token_ref": "OTHER"}}])
+    def test_host_match_ignores_case(self):
+        b = _bottle([{"host": "ChatGPT.com"}])
         pr = _provider_route("chatgpt.com", CODEX_HOST_CREDENTIAL_TOKEN_REF)
-        routes = egress_routes_for_bottle(b, (pr,))
-        self.assertEqual(1, len(routes))
-        self.assertEqual("chatgpt.com", routes[0].host)
-        self.assertEqual("Bearer", routes[0].auth_scheme)
-        self.assertEqual("EGRESS_TOKEN_0", routes[0].token_env)
-        self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, routes[0].token_ref)
-        self.assertEqual((), routes[0].matches)
+        with self.assertRaises(Die):
+            egress_routes_for_bottle(b, (pr,))
 
-    def test_manifest_route_preserved_for_non_provisioned_host(self):
+    def test_manifest_route_kept_for_non_provisioned_host(self):
         b = _bottle([
-            {"host": "api.openai.com"},
             {"host": "api.github.com",
              "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"}},
         ])
@@ -283,6 +274,7 @@ class TestProviderRouteMerge(unittest.TestCase):
         self.assertEqual(["api.openai.com", "api.github.com"], hosts)
         self.assertEqual(CODEX_HOST_CREDENTIAL_TOKEN_REF, routes[0].token_ref)
         self.assertEqual("GH_PAT", routes[1].token_ref)
+
 
 class TestTokenEnvMap(unittest.TestCase):
     def test_only_authenticated_routes_contribute(self):

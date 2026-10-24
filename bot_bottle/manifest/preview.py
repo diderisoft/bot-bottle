@@ -23,14 +23,15 @@ def manifest_to_yaml(manifest: Manifest) -> str:
         if agent.git_user.email:
             lines.append(f"      email: {agent.git_user.email}")
 
+    provider = agent.agent_provider
+    if provider.harness != "claude" or provider.dockerfile:
+        lines.append("  agent_provider:")
+        lines.append(f"    harness: {provider.harness}")
+        if provider.dockerfile:
+            lines.append(f"    dockerfile: {provider.dockerfile}")
+
     bottle = manifest.bottle
     lines.append("bottle:")
-
-    if bottle.agent_provider.template != "claude" or bottle.agent_provider.dockerfile:
-        lines.append("  agent_provider:")
-        lines.append(f"    template: {bottle.agent_provider.template}")
-        if bottle.agent_provider.dockerfile:
-            lines.append(f"    dockerfile: {bottle.agent_provider.dockerfile}")
 
     if bottle.env:
         lines.append("  env:")

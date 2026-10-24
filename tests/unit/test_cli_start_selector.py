@@ -375,17 +375,14 @@ class TestManifestToYaml(unittest.TestCase):
         skills: Sequence[str] = (),
         env: Mapping[str, str] | None = None,
         supervise: bool = True,
-        agent_provider_template: str = "claude",
+        harness: str = "claude",
     ):
         from bot_bottle.manifest import Manifest, ManifestBottle
         from bot_bottle.manifest.agent import ManifestAgent, ManifestAgentProvider
 
-        agent = ManifestAgent(skills=tuple(skills))
-        bottle = ManifestBottle(
-            env=env or {},
-            supervise=supervise,
-            agent_provider=ManifestAgentProvider(template=agent_provider_template),
-        )
+        agent = ManifestAgent(skills=tuple(skills),
+                              agent_provider=ManifestAgentProvider(harness=harness))
+        bottle = ManifestBottle(env=env or {}, supervise=supervise)
         return Manifest(agent=agent, bottle=bottle)
 
     def test_includes_agent_section(self):
@@ -407,13 +404,13 @@ class TestManifestToYaml(unittest.TestCase):
         self.assertIn("supervise: false", manifest_to_yaml(m_false))
 
     def test_non_claude_provider_shown(self):
-        m = self._make_manifest_obj(agent_provider_template="codex")
+        m = self._make_manifest_obj(harness="codex")
         yaml = manifest_to_yaml(m)
         self.assertIn("agent_provider:", yaml)
-        self.assertIn("template: codex", yaml)
+        self.assertIn("harness: codex", yaml)
 
     def test_default_claude_provider_omitted(self):
-        m = self._make_manifest_obj(agent_provider_template="claude")
+        m = self._make_manifest_obj(harness="claude")
         yaml = manifest_to_yaml(m)
         self.assertNotIn("agent_provider:", yaml)
 

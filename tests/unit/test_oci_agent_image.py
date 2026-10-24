@@ -54,7 +54,7 @@ def _plan(cwd: str, *, overlay: ManifestImageOverlay = ManifestImageOverlay(),
           custom: bool = False, policy: str = "build") -> Any:
     return cast(Any, SimpleNamespace(
         spec=SimpleNamespace(image_policy=policy, user_cwd=cwd),
-        manifest=SimpleNamespace(bottle=SimpleNamespace(agent_provider=SimpleNamespace(
+        manifest=SimpleNamespace(agent=SimpleNamespace(agent_provider=SimpleNamespace(
             overlay=overlay, builds_custom_image=custom,
         ))),
     ))
@@ -78,13 +78,13 @@ class ResolvePublished(unittest.TestCase):
                                return_value=SimpleNamespace(pinned_ref=_PINNED_REF)), \
              mock.patch.object(oai.image_registry, "pull", side_effect=pull):
             return oai.resolve_published_agent_image(
-                plan, store.runtime(), template="claude",
+                plan, store.runtime(), harness="claude",
                 image="bot-bottle-claude:latest", smoke_test=("claude", "--version"))
 
     def test_custom_dockerfile_is_never_replaced(self) -> None:
         with mock.patch.object(oai.agent_image, "resolve_agent_pin") as pin:
             self.assertIsNone(oai.resolve_published_agent_image(
-                _plan(self.cwd, custom=True), _Store().runtime(), template="claude",
+                _plan(self.cwd, custom=True), _Store().runtime(), harness="claude",
                 image="bot-bottle-claude:latest", smoke_test=()))
         pin.assert_not_called()
 
@@ -136,7 +136,7 @@ class ResolvePublished(unittest.TestCase):
                                side_effect=ArtifactsManifestError("protocol 2 vs 1")), \
              self.assertRaises(SystemExit):
             oai.resolve_published_agent_image(
-                _plan(self.cwd), _Store().runtime(), template="claude",
+                _plan(self.cwd), _Store().runtime(), harness="claude",
                 image="bot-bottle-claude:latest", smoke_test=())
 
     def test_registry_failure_dies_with_the_reason(self) -> None:
@@ -145,7 +145,7 @@ class ResolvePublished(unittest.TestCase):
                                side_effect=RegistryError("tag moved")), \
              self.assertRaises(SystemExit):
             oai.resolve_published_agent_image(
-                _plan(self.cwd), _Store().runtime(), template="claude",
+                _plan(self.cwd), _Store().runtime(), harness="claude",
                 image="bot-bottle-claude:latest", smoke_test=())
 
 

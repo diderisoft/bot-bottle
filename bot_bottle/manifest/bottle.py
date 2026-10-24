@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from typing import Mapping
 
 from .util import ManifestError, as_json_object
-from .agent import ManifestAgentProvider
 from .egress import ManifestEgressConfig
 from .git import ManifestGitEntry, ManifestGitUser, parse_git_gate_config
 from .schema import BOTTLE_KEYS
@@ -57,7 +56,6 @@ class ManifestAudit:
 @dataclass(frozen=True)
 class ManifestBottle:
     env: Mapping[str, str] = field(default_factory=_empty_str_dict)
-    agent_provider: ManifestAgentProvider = field(default_factory=ManifestAgentProvider)
     git: tuple[ManifestGitEntry, ...] = ()
     # The bottle's git identity; empty skips `git config`. Independent of
     # repos.
@@ -133,11 +131,12 @@ class ManifestBottle:
         if git_raw is not None:
             git, git_user = parse_git_gate_config(name, git_raw)
 
-        agent_provider = (
-            ManifestAgentProvider.from_dict(name, d["agent_provider"])
-            if "agent_provider" in d
-            else ManifestAgentProvider()
-        )
+        if "agent_provider" in d:
+            raise ManifestError(
+                f"bottle '{name}' declares agent_provider, which now belongs to "
+                "the agent: move it into the agent's manifest "
+                "(agents/<name>.md), renaming `template` to `harness`"
+            )
 
         egress = (
             ManifestEgressConfig.from_dict(name, d["egress"])
@@ -162,7 +161,7 @@ class ManifestBottle:
         audit = ManifestAudit.from_dict(name, d["audit"]) if "audit" in d else ManifestAudit()
 
         return cls(
-            env=env, agent_provider=agent_provider, git=git,
+            env=env, git=git,
             git_user=git_user, egress=egress, supervise=supervise_raw,
             nested_containers=nested_raw, audit=audit,
             declared_fields=frozenset(d),

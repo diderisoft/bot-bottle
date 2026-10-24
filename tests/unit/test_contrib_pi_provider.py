@@ -52,12 +52,13 @@ def _plan(
     agent_provision: AgentProvisionPlan | None = None,
 ) -> DockerBottlePlan:
     index = ManifestIndex.from_json_obj({
-        "bottles": {"dev": {"agent_provider": {"template": "pi"}}},
+        "bottles": {"dev": {}},
         "agents": {
             "demo": {
                 "skills": list(skills or []),
                 "prompt": agent_prompt,
                 "bottle": "dev",
+                "agent_provider": {"harness": "pi"},
             },
         },
     })
@@ -87,7 +88,7 @@ def _plan(
         supervise_plan=None,
         use_runsc=False,
         agent_provision=agent_provision or AgentProvisionPlan(
-            template="pi", command="pi", prompt_mode="append_system_prompt",
+            harness="pi", command="pi", prompt_mode="append_system_prompt",
             image="bot-bottle-pi:latest", dockerfile="",
             guest_home="/home/node",
             instance_name="bot-bottle-demo-abc12",
@@ -162,7 +163,7 @@ class TestPiProvisionSkills(unittest.TestCase):
 class TestPiProvision(unittest.TestCase):
     def test_creates_dir_and_copies_models_config(self):
         provision = AgentProvisionPlan(
-            template="pi", command="pi", prompt_mode="append_system_prompt",
+            harness="pi", command="pi", prompt_mode="append_system_prompt",
             image="", dockerfile="", guest_home="/home/node",
             instance_name="bot-bottle-demo-abc12",
             prompt_file=Path("/tmp/prompt.txt"),
@@ -203,7 +204,7 @@ class TestPiProvision(unittest.TestCase):
 
     def test_dies_when_dir_creation_fails(self):
         provision = AgentProvisionPlan(
-            template="pi", command="pi", prompt_mode="append_system_prompt",
+            harness="pi", command="pi", prompt_mode="append_system_prompt",
             image="", dockerfile="", guest_home="/home/node",
             instance_name="bot-bottle-demo-abc12",
             prompt_file=Path("/tmp/prompt.txt"),

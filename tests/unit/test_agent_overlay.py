@@ -15,12 +15,12 @@ _BASE = "reg/o/bot-bottle-claude@sha256:" + "a" * 64
 
 class RenderOverlay(unittest.TestCase):
     def test_from_only_when_empty(self) -> None:
-        df = ao.render_overlay_dockerfile(_BASE, ManifestImageOverlay(), template="claude")
+        df = ao.render_overlay_dockerfile(_BASE, ManifestImageOverlay(), harness="claude")
         self.assertEqual(df.strip(), f"FROM {_BASE}")
 
     def test_apt_and_files(self) -> None:
         overlay = ManifestImageOverlay(apt=("jq", "curl"), files=("extra/s.json",))
-        df = ao.render_overlay_dockerfile(_BASE, overlay, template="claude")
+        df = ao.render_overlay_dockerfile(_BASE, overlay, harness="claude")
         self.assertIn(f"FROM {_BASE}", df)
         self.assertIn("apt-get install -y --no-install-recommends jq curl", df)
         self.assertIn("rm -rf /var/lib/apt/lists/*", df)
@@ -29,14 +29,14 @@ class RenderOverlay(unittest.TestCase):
     def test_copy_uses_json_form(self) -> None:
         # COPY doesn't do shell quoting, so a space in a path must not split it.
         df = ao.render_overlay_dockerfile(
-            _BASE, ManifestImageOverlay(files=("my file.txt",)), template="claude")
+            _BASE, ManifestImageOverlay(files=("my file.txt",)), harness="claude")
         self.assertIn(f'COPY ["my file.txt", "{ao.OVERLAY_DEST}/my file.txt"]', df)
 
     def test_apt_runs_as_root_and_restores_image_user(self) -> None:
         # The default images end as `USER node`; apt needs root, and the agent
         # must not be left running as root afterwards.
         df = ao.render_overlay_dockerfile(
-            _BASE, ManifestImageOverlay(apt=("jq",), files=("f",)), template="claude")
+            _BASE, ManifestImageOverlay(apt=("jq",), files=("f",)), harness="claude")
         lines = df.splitlines()
         self.assertLess(lines.index("USER root"),
                         next(i for i, l in enumerate(lines) if "apt-get" in l))
@@ -44,12 +44,12 @@ class RenderOverlay(unittest.TestCase):
 
     def test_apt_tolerates_expired_snapshot_release(self) -> None:
         df = ao.render_overlay_dockerfile(
-            _BASE, ManifestImageOverlay(apt=("jq",)), template="claude")
+            _BASE, ManifestImageOverlay(apt=("jq",)), harness="claude")
         self.assertIn("apt-get -o Acquire::Check-Valid-Until=false update", df)
 
     def test_files_only_does_not_switch_user(self) -> None:
         df = ao.render_overlay_dockerfile(
-            _BASE, ManifestImageOverlay(files=("f",)), template="claude")
+            _BASE, ManifestImageOverlay(files=("f",)), harness="claude")
         self.assertNotIn("USER", df)
 
     def test_invalid_apt_package_rejected_before_rendering(self) -> None:
@@ -57,14 +57,14 @@ class RenderOverlay(unittest.TestCase):
         for pkg in ("a b;rm", "jq\nFROM alpine", "Jq"):
             with self.subTest(pkg=pkg), self.assertRaises(ao.OverlayError):
                 ao.render_overlay_dockerfile(
-                    _BASE, ManifestImageOverlay(apt=(pkg,)), template="claude")
+                    _BASE, ManifestImageOverlay(apt=(pkg,)), harness="claude")
 
 
 
 class RenderHarness(unittest.TestCase):
-    def _render(self, template: str, version: str = "2.1.180") -> list[str]:
+    def _render(self, harness: str, version: str = "2.1.180") -> list[str]:
         overlay = ManifestImageOverlay(harness_version=version, apt=("jq",))
-        return ao.render_overlay_dockerfile(_BASE, overlay, template=template).splitlines()
+        return ao.render_overlay_dockerfile(_BASE, overlay, harness=harness).splitlines()
 
     def _assert_bracketed_by_users(self, lines: list[str], marker: str) -> None:
         # Harness steps run after the switch to root and before the image
@@ -127,7 +127,7 @@ class StageContext(unittest.TestCase):
             dest = Path(tmp) / "ctx"
             overlay = ManifestImageOverlay(apt=("jq",), files=("extra/s.json",))
             df = ao.stage_overlay_context(
-                _BASE, overlay, template="claude", source_root=root, dest=dest)
+                _BASE, overlay, harness="claude", source_root=root, dest=dest)
             self.assertTrue(df.is_file())
             self.assertIn(f"FROM {_BASE}", df.read_text())
             self.assertTrue((dest / "extra" / "s.json").is_file())
@@ -145,7 +145,7 @@ class StageContext(unittest.TestCase):
             for rel in ("creds", "linked/secret"):
                 with self.subTest(rel=rel), self.assertRaises(ao.OverlayError):
                     ao.stage_overlay_context(
-                        _BASE, ManifestImageOverlay(files=(rel,)), template="claude",
+                        _BASE, ManifestImageOverlay(files=(rel,)), harness="claude",
                         source_root=root, dest=Path(tmp) / f"ctx-{rel.replace('/', '-')}")
 
     def test_missing_file_raises(self) -> None:
@@ -156,12 +156,12 @@ class StageContext(unittest.TestCase):
             overlay = ManifestImageOverlay(files=("nope.txt",))
             with self.assertRaises(ao.OverlayError):
                 ao.stage_overlay_context(
-                _BASE, overlay, template="claude", source_root=root, dest=dest)
+                _BASE, overlay, harness="claude", source_root=root, dest=dest)
 
 
 class RenderDockerfileOverlay(unittest.TestCase):
     def _render(self, text: str) -> str:
-        return ao.render_overlay_dockerfile_text(_BASE, text, template="claude")
+        return ao.render_overlay_dockerfile_text(_BASE, text, harness="claude")
 
     def test_pins_base_and_restores_user(self) -> None:
         out = self._render("ARG BASE\nFROM ${BASE}\nUSER root\nRUN apt-get install -y rg\n")
@@ -229,7 +229,7 @@ class StageDockerfileOverlay(unittest.TestCase):
             dest = Path(tmp) / "ctx"
             df = ao.stage_overlay_context(
                 _BASE, ManifestImageOverlay(dockerfile="overlay/Dockerfile"),
-                template="claude", source_root=root, dest=dest)
+                harness="claude", source_root=root, dest=dest)
             self.assertEqual(ao.STAGED_DOCKERFILE, df.name)
             self.assertIn(f"ARG BASE={_BASE}", df.read_text())
             self.assertTrue((dest / "conf" / "a.json").is_file())
@@ -247,7 +247,7 @@ class StageDockerfileOverlay(unittest.TestCase):
             dest = Path(tmp) / "ctx"
             ao.stage_overlay_context(
                 _BASE, ManifestImageOverlay(dockerfile="overlay/Dockerfile"),
-                template="claude", source_root=Path(tmp) / "src", dest=dest)
+                harness="claude", source_root=Path(tmp) / "src", dest=dest)
             self.assertTrue((dest / "creds").is_symlink())
             self.assertTrue((dest / "dangling").is_symlink())
 
@@ -256,12 +256,12 @@ class StageDockerfileOverlay(unittest.TestCase):
             with self.assertRaises(ao.OverlayError):
                 ao.stage_overlay_context(
                     _BASE, ManifestImageOverlay(dockerfile="nope/Dockerfile"),
-                    template="claude", source_root=Path(tmp), dest=Path(tmp) / "ctx")
+                    harness="claude", source_root=Path(tmp), dest=Path(tmp) / "ctx")
 
 
 class StagedOverlayKey(unittest.TestCase):
     def _key(self, root: Path, overlay: ManifestImageOverlay, base: str = _BASE) -> str:
-        with ao.staged_overlay(base, overlay, template="claude", source_root=root) as st:
+        with ao.staged_overlay(base, overlay, harness="claude", source_root=root) as st:
             self.assertTrue(st.dockerfile.is_file())
             return st.cache_key
 

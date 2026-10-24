@@ -144,13 +144,13 @@ def launch(
             guest_env=_agent_guest_env(plan, slot.host_ip),
             agent_command=plan.agent_command,
             agent_prompt_mode=plan.agent_prompt_mode,
-            agent_provider_template=plan.agent_provider_template,
+            harness=plan.harness,
             terminal_title=terminal_title(plan.spec),
             terminal_color=plan.spec.color,
             agent_workdir=plan.workspace_plan.workdir,
         )
         _smoke_test_published_base(
-            bottle, agent_base, runtime_for(plan.agent_provider_template).smoke_test)
+            bottle, agent_base, runtime_for(plan.harness).smoke_test)
         bottle.prompt_path = provision(plan, bottle)
 
         bottle.registry_id = ctx.bottle_id
@@ -199,17 +199,17 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
             )
         info(f"using cached agent rootfs {cached.name}")
         return cached
-    template = plan.agent_provider_template
-    smoke = runtime_for(template).smoke_test
+    harness = plan.harness
+    smoke = runtime_for(harness).smoke_test
     pin = _agent_pin(plan)
     if pin is None:
         return image_builder.build_agent_rootfs_dir(
             Path(plan.dockerfile_path), plan.settings, image_tag=plan.image, smoke_test=smoke)
-    overlay = plan.manifest.bottle.agent_provider.overlay
+    overlay = plan.manifest.agent.agent_provider.overlay
     if overlay.is_empty():
         return image_builder.acquire_agent_image_ext4(pin, plan.settings)
     return image_builder.acquire_agent_overlay_rootfs_dir(
-        pin, overlay, plan.settings, template=template,
+        pin, overlay, plan.settings, harness=harness,
         source_root=Path(plan.spec.user_cwd), smoke_test=smoke,
     )
 
@@ -218,19 +218,19 @@ def _agent_pin(plan: FirecrackerBottlePlan) -> Artifact | None:
     """The published artifact this base comes from (the ext4, or the OCI image
     an overlay builds on). None means build the bottle's Dockerfile; an overlay
     without a published base fails closed."""
-    provider = plan.manifest.bottle.agent_provider
+    provider = plan.manifest.agent.agent_provider
     if provider.builds_custom_image:
         return None
     overlay = provider.overlay
     try:
         pin = agent_image.resolve_agent_pin(
-            plan.agent_provider_template,
+            plan.harness,
             fmt=FORMAT_EXT4 if overlay.is_empty() else FORMAT_OCI,
         )
     except ArtifactsManifestError as e:
         die(str(e))
     if pin is None and not overlay.is_empty():
-        raise agent_overlay.no_published_base_error(plan.agent_provider_template)
+        raise agent_overlay.no_published_base_error(plan.harness)
     return pin
 
 
@@ -240,11 +240,11 @@ def _cached_agent_base(plan: FirecrackerBottlePlan) -> Path | None:
     if pin is None:
         return image_builder.cached_agent_rootfs_dir(
             Path(plan.dockerfile_path), plan.settings.infra)
-    overlay = plan.manifest.bottle.agent_provider.overlay
+    overlay = plan.manifest.agent.agent_provider.overlay
     if overlay.is_empty():
         return image_builder.cached_agent_image_ext4(pin, plan.settings.infra)
     return image_builder.cached_agent_overlay_rootfs_dir(
-        pin, overlay, plan.settings.infra, template=plan.agent_provider_template,
+        pin, overlay, plan.settings.infra, harness=plan.harness,
         source_root=Path(plan.spec.user_cwd),
     )
 

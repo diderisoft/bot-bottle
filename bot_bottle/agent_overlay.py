@@ -38,19 +38,19 @@ class OverlayError(ManifestError):
     reports it as a config problem."""
 
 
-def no_published_base_error(template: str) -> OverlayError:
+def no_published_base_error(harness: str) -> OverlayError:
     """Error for an overlay with no pinned base to build on. Fails closed
     rather than silently building the default image without the overlay."""
     return OverlayError(
         f"agent_provider.overlay needs a published, digest-pinned "
-        f"{template!r} agent image to build on, but none is pinned for this "
-        "install (no published-artifacts.json, or no entry for this template). "
+        f"{harness!r} agent image to build on, but none is pinned for this "
+        "install (no published-artifacts.json, or no entry for this harness). "
         "Remove the overlay, or use a release that publishes agent images."
     )
 
 
 def render_overlay_dockerfile(
-    base_ref: str, overlay: ManifestImageOverlay, *, template: str,
+    base_ref: str, overlay: ManifestImageOverlay, *, harness: str,
 ) -> str:
     """The Dockerfile that layers `overlay` on the digest-pinned `base_ref`.
     RUN steps run as root; the provider's `image_user` is restored afterwards."""
@@ -70,7 +70,7 @@ def render_overlay_dockerfile(
             "&& rm -rf /var/lib/apt/lists/*"
         )
     if overlay.harness_version:
-        runs.extend(_harness_lines(template, overlay.harness_version))
+        runs.extend(_harness_lines(harness, overlay.harness_version))
     if runs:
         lines.append("USER root")
         lines.extend(runs)
@@ -79,7 +79,7 @@ def render_overlay_dockerfile(
         # JSON form: COPY doesn't shell-quote.
         lines.append(f"COPY {json.dumps([rel, dest])}")
     if runs:
-        lines.append(f"USER {get_provider(template).image_user}")
+        lines.append(f"USER {get_provider(harness).image_user}")
     return "\n".join(lines) + "\n"
 
 
@@ -152,7 +152,7 @@ def _instructions(lines: list[str]) -> list[tuple[int, str, str]]:
     return out
 
 
-def render_overlay_dockerfile_text(base_ref: str, text: str, *, template: str) -> str:
+def render_overlay_dockerfile_text(base_ref: str, text: str, *, harness: str) -> str:
     """Validate a user overlay Dockerfile and return the staged copy.
 
     It must be single-stage and build `FROM ${BASE}` (only `ARG`s before it).
@@ -209,7 +209,7 @@ def render_overlay_dockerfile_text(base_ref: str, text: str, *, template: str) -
                 )
             drop.add(n)
     kept = [ln for n, ln in enumerate(lines) if n not in drop]
-    user = get_provider(template).image_user
+    user = get_provider(harness).image_user
     return (
         "# Staged by bot-bottle: BASE is the verified,\n"
         "# digest-pinned agent image; the provider's user is restored at the end.\n"
@@ -219,14 +219,14 @@ def render_overlay_dockerfile_text(base_ref: str, text: str, *, template: str) -
     )
 
 
-def _harness_lines(template: str, version: str) -> tuple[str, ...]:
+def _harness_lines(harness: str, version: str) -> tuple[str, ...]:
     # Re-checked: the version lands in RUN.
     if not HARNESS_VERSION_RE.fullmatch(version):
         raise OverlayError(f"invalid harness_version {version!r}")
-    lines = get_provider(template).harness_overlay_lines(version)
+    lines = get_provider(harness).harness_overlay_lines(version)
     if lines is None:
         raise OverlayError(
-            f"agent provider {template!r} does not support "
+            f"agent provider {harness!r} does not support "
             "agent_provider.overlay.harness_version; "
             "pin the harness in a custom agent image instead"
         )
@@ -252,7 +252,7 @@ def stage_overlay_context(
     base_ref: str,
     overlay: ManifestImageOverlay,
     *,
-    template: str,
+    harness: str,
     source_root: Path,
     dest: Path,
 ) -> Path:
@@ -263,13 +263,13 @@ def stage_overlay_context(
     if overlay.dockerfile:
         src = _source(source_root, overlay.dockerfile, "dockerfile")
         staged = render_overlay_dockerfile_text(
-            base_ref, src.read_text(), template=template)
+            base_ref, src.read_text(), harness=harness)
         # The Dockerfile's directory is the build context. Symlinks are copied
         # as links, never followed.
         shutil.copytree(src.parent, dest, symlinks=True, dirs_exist_ok=True)
         dockerfile.write_text(staged)
         return dockerfile
-    dockerfile.write_text(render_overlay_dockerfile(base_ref, overlay, template=template))
+    dockerfile.write_text(render_overlay_dockerfile(base_ref, overlay, harness=harness))
     for rel in overlay.files:
         out = dest / rel
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -311,7 +311,7 @@ def staged_overlay(
     base_ref: str,
     overlay: ManifestImageOverlay,
     *,
-    template: str,
+    harness: str,
     source_root: Path,
 ) -> Generator[StagedOverlay, None, None]:
     """Stage the overlay in a temporary directory for the duration of the
@@ -319,7 +319,7 @@ def staged_overlay(
     with tempfile.TemporaryDirectory(prefix="bb-overlay-") as tmp:
         ctx = Path(tmp) / "ctx"
         dockerfile = stage_overlay_context(
-            base_ref, overlay, template=template, source_root=source_root, dest=ctx)
+            base_ref, overlay, harness=harness, source_root=source_root, dest=ctx)
         h = hashlib.sha256(f"{base_ref}\0{context_digest(ctx)}".encode())
         yield StagedOverlay(ctx, dockerfile, h.hexdigest()[:16])
 

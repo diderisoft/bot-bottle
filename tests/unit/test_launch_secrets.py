@@ -60,7 +60,7 @@ def _fields(stage: Path) -> dict[str, Any]:
             token_env_map={"EGRESS_TOKEN_0": "GH_PAT", "EGRESS_TOKEN_1": "HOST_CRED"}),
         "supervise_plan": None,
         "agent_provision": AgentProvisionPlan(
-            template="claude", command="claude", prompt_mode="append_file",
+            harness="claude", command="claude", prompt_mode="append_file",
             image="bot-bottle-claude:latest", dockerfile="", guest_home="/home/node",
             instance_name=f"bot-bottle-{_SLUG}", prompt_file=stage / "prompt.txt",
             guest_env={}, provisioned_env={"HOST_CRED": "provisioned"}),

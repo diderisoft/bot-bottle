@@ -63,7 +63,7 @@ class PromptUnsupported(ValueError):
     """The agent CLI can't start an interactive session with a first message."""
 
 
-def agent_args(template: str, startup_args: tuple[str, ...], prompt: str,
+def agent_args(harness: str, startup_args: tuple[str, ...], prompt: str,
                headless: bool = True, *, remote_view: bool = False) -> list[str]:
     """The agent CLI's args: bypass flags, startup args (plus
     `remote_view_args` for a console launch), then the initial task, headless
@@ -71,16 +71,16 @@ def agent_args(template: str, startup_args: tuple[str, ...], prompt: str,
     # pylint: disable=import-outside-toplevel
     from ...agent_provider import get_provider, runtime_for
 
-    args = [*runtime_for(template).bypass_args, *startup_args]
+    args = [*runtime_for(harness).bypass_args, *startup_args]
     if remote_view:
-        args.extend(get_provider(template).remote_view_args())
+        args.extend(get_provider(harness).remote_view_args())
     if prompt and headless:
-        args.extend(get_provider(template).headless_prompt(prompt))
+        args.extend(get_provider(harness).headless_prompt(prompt))
     elif prompt:
-        interactive = get_provider(template).interactive_prompt(prompt)
+        interactive = get_provider(harness).interactive_prompt(prompt)
         if interactive is None:
             raise PromptUnsupported(
-                f"the {template} agent can't start an interactive session with a prompt")
+                f"the {harness} agent can't start an interactive session with a prompt")
         args.extend(interactive)
     return args
 
@@ -279,7 +279,7 @@ class BottleService:
         """The holder thread: launch, run the agent, wait, tear down."""
         is_ready = threading.Event()
         held = _Held(identity, backend.name)
-        template = str(getattr(plan, "agent_provider_template", "claude"))
+        harness = str(getattr(plan, "harness", "claude"))
         policy = digest_manifest(plan.manifest)
 
         def sink(line: str) -> None:
@@ -293,14 +293,14 @@ class BottleService:
                     # The registry id names this run in the journal.
                     activation = bottle.registry_id or str(uuid.uuid4())
                     command, env = bottle.agent_command(agent_args(
-                        template, plan.agent_provision.startup_args, request.prompt,
+                        harness, plan.agent_provision.startup_args, request.prompt,
                         headless=request.headless, remote_view=remote_view))
                     with self._lock:
                         self._held[identity] = held
                     self._sessions.start(SessionRecord(
                         id=identity, kind=SESSION_KIND,
                         meta={"backend": backend.name, "agent": request.agent,
-                              "label": request.label, "provider": template,
+                              "label": request.label, "provider": harness,
                               "activation": activation, "manifest_digest": policy},
                         writable_allowed=plan.manifest.agent.remote_writable,
                     ), command, env)
@@ -320,7 +320,7 @@ class BottleService:
                     log.info(f"session {identity} ended (exit {code}); "
                              f"removing {bottle.name}")
                     _save_work(bottle, plan, identity)
-                    if template == "claude":
+                    if harness == "claude":
                         capture_claude_session_state(identity, code)
             except BaseException as e:  # pylint: disable=broad-exception-caught
                 if is_ready.is_set():

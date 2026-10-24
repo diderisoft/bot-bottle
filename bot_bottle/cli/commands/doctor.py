@@ -118,15 +118,15 @@ def _check_providers() -> None:
             _warn(name, "no starter yet" + (f" (login: {detection.login_location})"
                                              if detection.login_location else ""))
         if name == "pi" and written:
-            _check_pi_model(manifests / "bottles" / "pi.md")
+            _check_pi_model(manifests / "agents" / "pi.md")
     if missing:
         print(f"      run `{PROG} setup` to write starters for: {', '.join(missing)}")
 
 
-def _check_pi_model(bottle: Path) -> None:
+def _check_pi_model(agent: Path) -> None:
     """Warn when the pi starter's free OpenRouter model has left the free list."""
     try:
-        frontmatter, _ = parse_frontmatter(bottle.read_text())
+        frontmatter, _ = parse_frontmatter(agent.read_text())
     except (OSError, YamlSubsetError):
         return
     provider = frontmatter.get("agent_provider")

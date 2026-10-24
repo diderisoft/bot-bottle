@@ -18,7 +18,7 @@ BOTTLE_KEYS = frozenset(
     }
 )
 AGENT_KEYS_REQUIRED: frozenset[str] = frozenset()
-AGENT_KEYS_OPTIONAL = frozenset({"bottle", "skills", "git-gate", "remote"})
+AGENT_KEYS_OPTIONAL = frozenset({"bottle", "skills", "git-gate", "remote", "agent_provider"})
 
 # Claude Code subagent fields accepted and ignored, so a file can double as
 # `~/.claude/agents/*.md`.

@@ -89,7 +89,7 @@ def _agent_image(plan: MacosContainerBottlePlan) -> str:
     # Prefer the published image (or an overlay on it); the nested-containers
     # layer goes on top either way. None means build the bottle's Dockerfile.
     published = oci_agent_image.resolve_published_agent_image(
-        plan, _container_runtime(plan.settings), template=plan.agent_provider_template,
+        plan, _container_runtime(plan.settings), harness=plan.harness,
         image=plan.image, smoke_test=(),
     )
     if published is not None:
@@ -212,7 +212,7 @@ def launch(
             None,
             agent_command=plan.agent_command,
             agent_prompt_mode=plan.agent_prompt_mode,
-            agent_provider_template=plan.agent_provider_template,
+            harness=plan.harness,
             terminal_title=terminal_title(plan.spec),
             terminal_color=plan.spec.color,
             agent_workdir=plan.workspace_plan.workdir,

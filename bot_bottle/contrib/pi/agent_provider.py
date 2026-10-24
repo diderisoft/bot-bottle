@@ -184,7 +184,7 @@ def _route_host(base_url: str) -> str:
 
 
 _RUNTIME = AgentProviderRuntime(
-    template="pi",
+    harness="pi",
     command="pi",
     image="bot-bottle-pi:latest",
     prompt_mode="append_system_prompt",
@@ -199,6 +199,13 @@ _PI_CORE_PACKAGES = (
     "@earendil-works/pi-ai",
     "@earendil-works/pi-tui",
 )
+
+
+def _starter_settings(detection: HostDetection) -> dict[str, object]:
+    settings = dict(detection.starter_settings)
+    if not settings:
+        raise ValueError("the pi starter needs a model source (starter_settings)")
+    return settings
 
 
 class PiAgentProvider(AgentProvider):
@@ -223,21 +230,20 @@ class PiAgentProvider(AgentProvider):
         )
 
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
-        del detection
-        return starter_agent("pi", GENERAL_PROMPT)
+        return starter_agent("pi", GENERAL_PROMPT,
+                             {"harness": "pi", "settings": _starter_settings(detection)})
 
     def create_default_bottle_manifest(self, detection: HostDetection) -> str:
-        settings = dict(detection.starter_settings)
-        if not settings:
-            raise ValueError("the pi starter needs a model source (starter_settings)")
+        settings = _starter_settings(detection)
         models = settings.get("models")
         model = models[0] if isinstance(models, list) and models else "?"
         return starter_bottle(
-            {"template": "pi", "settings": settings},
-            f"pi on `{model}` via {settings.get('provider')}. The gateway injects "
-            f"the `{settings.get('api_key_env')}` key on the model route, so the "
-            "agent never sees it. Free models are rate-limited; change `models` "
-            "(and the provider) to use another.",
+            f"The pi starter agent's bottle. The agent runs `{model}` via "
+            f"{settings.get('provider')}; the gateway injects the "
+            f"`{settings.get('api_key_env')}` key on the model route, so the agent "
+            "never sees it. Free models are rate-limited; change `models` (and "
+            "the provider) in the agent to use another. Add egress routes, "
+            "git-gate repos and env here.",
         )
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
@@ -285,7 +291,7 @@ class PiAgentProvider(AgentProvider):
         has_prompt = prompt_file.exists() and bool(prompt_file.read_text())
         auth_scheme = "Bearer" if api_key_env else ""
         return AgentProvisionPlan(
-            template=_RUNTIME.template,
+            harness=_RUNTIME.harness,
             command=_RUNTIME.command,
             prompt_mode=_RUNTIME.prompt_mode,
             image=_RUNTIME.image,

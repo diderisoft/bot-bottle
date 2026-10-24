@@ -258,12 +258,12 @@ def _overlay_rootfs_name(staged: agent_overlay.StagedOverlay, infra: InfraSettin
 
 def cached_agent_overlay_rootfs_dir(
     artifact: Artifact, overlay: ManifestImageOverlay, infra: InfraSettings,
-    *, template: str, source_root: Path,
+    *, harness: str, source_root: Path,
 ) -> Path | None:
     """A ready rootfs for `overlay` on `artifact`, or None."""
     with agent_overlay.staged_overlay(
         image_registry.pinned_reference(artifact), overlay,
-        template=template, source_root=source_root,
+        harness=harness, source_root=source_root,
     ) as staged:
         return _ready_dir(_overlay_rootfs_name(staged, infra))
 
@@ -273,7 +273,7 @@ def acquire_agent_overlay_rootfs_dir(
     overlay: ManifestImageOverlay,
     settings: Settings,
     *,
-    template: str,
+    harness: str,
     source_root: Path,
     smoke_test: tuple[str, ...] = (),
 ) -> Path:
@@ -283,7 +283,7 @@ def acquire_agent_overlay_rootfs_dir(
     launches offline. Inputs resolve from `source_root`."""
     base_ref = image_registry.pinned_reference(artifact)
     with agent_overlay.staged_overlay(
-        base_ref, overlay, template=template, source_root=source_root,
+        base_ref, overlay, harness=harness, source_root=source_root,
     ) as staged:
         name = _overlay_rootfs_name(staged, settings.infra)
         if _ready_dir(name) is None:

@@ -23,6 +23,7 @@ from .loader import (
     scan_bottle_names,
 )
 from .trust import check as trust_check
+from .trust import check_agent as trust_check_agent
 from .schema import validate_agent_frontmatter_keys
 from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
 
@@ -323,10 +324,15 @@ class ManifestIndex:
             agent_dict["git-gate"] = fm["git-gate"]
         if "remote" in fm:
             agent_dict["remote"] = fm["remote"]
+        if "agent_provider" in fm:
+            agent_dict["agent_provider"] = fm["agent_provider"]
         # Known bottles for validation: the effective one, the agent's own
         # (composed with the selected ones), and the selected names.
         known = {n for n in (effective_bottle_name, str(agent_bottle), *bottle_names) if n}
         agent = ManifestAgent.from_dict(agent_name, agent_dict, known)
+        if agent_name in cwd_agents:
+            # A project agent's provider can spend host logins and secrets.
+            trust_check_agent(agent_name, agent_path, agent.agent_provider)
 
         return _manifest_with_merged_git_user(agent, raw_bottle)
 

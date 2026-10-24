@@ -201,21 +201,14 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
                 )
 
     def _validate_agent_provider_dockerfile(self, spec: BottleSpec, manifest: Manifest) -> None:
-        bottle = manifest.bottle
-        dockerfile = bottle.agent_provider.dockerfile
+        dockerfile = manifest.agent.agent_provider.dockerfile
         if not dockerfile:
             return
         path = Path(expand_tilde(dockerfile))
         if not path.is_absolute():
             path = Path(spec.user_cwd) / path
         if not path.is_file():
-            effective = (
-                ", ".join(spec.bottle_names) if spec.bottle_names else manifest.agent.bottle
-            )
-            die(
-                f"agent_provider.dockerfile for bottle "
-                f"'{effective}' not found: {path}"
-            )
+            die(f"agent '{spec.agent_name}' agent_provider.dockerfile not found: {path}")
 
     @abstractmethod
     def _resolve_plan(self,
@@ -263,7 +256,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         MCP. The CA goes first so the trust store is rebuilt before any TLS
         call. Provider-specific steps live on the `AgentProvider`."""
         log.stage("provision", "Setting up the agent")
-        provider = get_provider(plan.agent_provision.template)
+        provider = get_provider(plan.agent_provision.harness)
         provider.provision_ca(bottle, plan)
         prompt_path = provider.provision_prompt(plan, bottle)
         provider.provision(plan, bottle)

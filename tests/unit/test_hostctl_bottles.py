@@ -123,7 +123,7 @@ class FakeBackend:
         slug = spec.identity or spec.label or "demo-xyz12"
         bottle_state.write_per_bottle_dockerfile(slug, "FROM x\n")
         return SimpleNamespace(
-            slug=slug, agent_provider_template="claude",
+            slug=slug, harness="claude",
             agent_provision=SimpleNamespace(startup_args=("--start",)),
             manifest=SimpleNamespace(agent=SimpleNamespace(remote_writable=True)),
         )

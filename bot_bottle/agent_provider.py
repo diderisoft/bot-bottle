@@ -1,8 +1,8 @@
-"""Agent provider plugins: the launch-time mapping from a provider template to
+"""Agent provider plugins: the launch-time mapping from a provider harness to
 its command, image, auth and guest setup.
 
-Built-in providers live in `bot_bottle/contrib/<template>/agent_provider.py`; a
-user plugin in `~/.bot-bottle/contrib/<template>/` shadows a built-in.
+Built-in providers live in `bot_bottle/contrib/<harness>/agent_provider.py`; a
+user plugin in `~/.bot-bottle/contrib/<harness>/` shadows a built-in.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 PROVIDER_CLAUDE = "claude"
 PROVIDER_CODEX = "codex"
 PROVIDER_PI = "pi"
-PROVIDER_TEMPLATES = frozenset({PROVIDER_CLAUDE, PROVIDER_CODEX, PROVIDER_PI})
+BUILTIN_HARNESSES = frozenset({PROVIDER_CLAUDE, PROVIDER_CODEX, PROVIDER_PI})
 
 # Hosts egress injects the host ChatGPT bearer on when Codex
 # `forward_host_credentials` is enabled.
@@ -44,7 +44,7 @@ PromptMode = Literal[
 
 @dataclass(frozen=True)
 class AgentProviderRuntime:
-    template: str
+    harness: str
     command: str
     image: str
     prompt_mode: PromptMode
@@ -83,7 +83,7 @@ class AgentProvisionPlan:
     placeholder env names the preflight summary hides.
     """
 
-    template: str
+    harness: str
     command: str
     prompt_mode: PromptMode
     image: str
@@ -120,13 +120,13 @@ class HostDetection:
 
 
 class AgentProvider(ABC):
-    """Per-template plugin: builds the provision plan and runs the provider's
+    """Per-harness plugin: builds the provision plan and runs the provider's
     guest setup (skills, prompt, files, supervise MCP registration)."""
 
     @property
     @abstractmethod
     def runtime(self) -> AgentProviderRuntime:
-        """Command, image and prompt-mode table for this template."""
+        """Command, image and prompt-mode table for this harness."""
 
     @property
     def guest_home(self) -> str:
@@ -158,11 +158,11 @@ class AgentProvider(ABC):
         return HostDetection()
 
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
-        """Starter agent manifest (`agents/<template>.md`)."""
+        """Starter agent manifest (`agents/<harness>.md`)."""
         raise NotImplementedError(f"{type(self).__name__} has no starter agent")
 
     def create_default_bottle_manifest(self, detection: HostDetection) -> str:
-        """Starter bottle manifest (`bottles/<template>.md`) with the detected
+        """Starter bottle manifest (`bottles/<harness>.md`) with the detected
         login."""
         raise NotImplementedError(f"{type(self).__name__} has no starter bottle")
 
@@ -333,17 +333,17 @@ class AgentProvider(ABC):
                 )
 
 
-def _load_user_plugin(template: str) -> AgentProvider | None:
-    """A user-defined AgentProvider from ~/.bot-bottle/contrib/<template>/, or
+def _load_user_plugin(harness: str) -> AgentProvider | None:
+    """A user-defined AgentProvider from ~/.bot-bottle/contrib/<harness>/, or
     None when there's no plugin directory. Raises ValueError if the file
     exports no subclass."""
     plugin_path = (
-        Path.home() / ".bot-bottle" / "contrib" / template / "agent_provider.py"
+        Path.home() / ".bot-bottle" / "contrib" / harness / "agent_provider.py"
     )
     if not plugin_path.exists():
         return None
     spec = importlib.util.spec_from_file_location(
-        f"_user_contrib_{template}.agent_provider", plugin_path
+        f"_user_contrib_{harness}.agent_provider", plugin_path
     )
     if spec is None or spec.loader is None:
         raise ValueError(f"user plugin at {plugin_path} could not be loaded")
@@ -361,31 +361,31 @@ def _load_user_plugin(template: str) -> AgentProvider | None:
     )
 
 
-def get_provider(template: str) -> AgentProvider:
-    """Resolve a template name to its provider: a user plugin first, then the
+def get_provider(harness: str) -> AgentProvider:
+    """Resolve a harness name to its provider: a user plugin first, then the
     built-ins. Raises ValueError for an unknown name."""
-    user_plugin = _load_user_plugin(template)
+    user_plugin = _load_user_plugin(harness)
     if user_plugin is not None:
         return user_plugin
-    if template == PROVIDER_CLAUDE:
+    if harness == PROVIDER_CLAUDE:
         from .contrib.claude.agent_provider import ClaudeAgentProvider
         return ClaudeAgentProvider()
-    if template == PROVIDER_CODEX:
+    if harness == PROVIDER_CODEX:
         from .contrib.codex.agent_provider import CodexAgentProvider
         return CodexAgentProvider()
-    if template == PROVIDER_PI:
+    if harness == PROVIDER_PI:
         from .contrib.pi.agent_provider import PiAgentProvider
         return PiAgentProvider()
-    raise ValueError(f"unknown agent provider template: {template!r}")
+    raise ValueError(f"unknown agent provider harness: {harness!r}")
 
 
-def runtime_for(template: str) -> AgentProviderRuntime:
-    return get_provider(template).runtime
+def runtime_for(harness: str) -> AgentProviderRuntime:
+    return get_provider(harness).runtime
 
 
 def build_agent_provision_plan(
     *,
-    template: str,
+    harness: str,
     dockerfile: str,
     state_dir: Path,
     instance_name: str,
@@ -400,7 +400,7 @@ def build_agent_provision_plan(
     provider_settings: dict[str, object] | None = None,
 ) -> AgentProvisionPlan:
     """Delegates to the provider plugin."""
-    return get_provider(template).provision_plan(
+    return get_provider(harness).provision_plan(
         dockerfile=dockerfile,
         state_dir=state_dir,
         instance_name=instance_name,

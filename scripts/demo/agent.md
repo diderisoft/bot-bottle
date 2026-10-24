@@ -5,6 +5,9 @@ name: demo
 description: Runs the four egress/git probes recorded in docs/demo.gif.
 model: sonnet
 bottle: demo
+agent_provider:
+  harness: claude
+  auth_token: BOT_BOTTLE_CLAUDE_OAUTH_TOKEN
 skills: []
 ---
 

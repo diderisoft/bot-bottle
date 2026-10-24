@@ -308,7 +308,7 @@ class TestBottleAgentArgv(unittest.TestCase):
         argv = _bottle(
             agent_command="codex",
             agent_prompt_mode="read_prompt_file",
-            agent_provider_template="codex",
+            harness="codex",
             prompt_path_in_guest="/home/node/.bot-bottle-prompt.txt",
         ).agent_argv([], tty=False)
         idx = argv.index("--")
@@ -454,7 +454,7 @@ class TestBottlePlanProperties(unittest.TestCase):
         ap.prompt_file = Path("/stage/prompt.txt")
         ap.command = "claude"
         ap.prompt_mode = "append_file"
-        ap.template = "claude"
+        ap.harness = "claude"
         ap.guest_home = "/home/node"
         ap.guest_env = {}
         egress_plan = cast(Any, MagicMock())
@@ -479,7 +479,7 @@ class TestBottlePlanProperties(unittest.TestCase):
         self.assertEqual(Path("/stage/prompt.txt"), p.prompt_file)
         self.assertEqual("claude", p.agent_command)
         self.assertEqual("append_file", p.agent_prompt_mode)
-        self.assertEqual("claude", p.agent_provider_template)
+        self.assertEqual("claude", p.harness)
 
     def test_git_gate_insteadof_host_from_url(self):
         p = self._plan(agent_git_gate_url="http://10.243.0.0:9420/")

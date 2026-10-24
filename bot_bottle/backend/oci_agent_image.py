@@ -35,24 +35,24 @@ def resolve_published_agent_image(
     plan: BottlePlan,
     runtime: OciRuntime,
     *,
-    template: str,
+    harness: str,
     image: str,
     smoke_test: tuple[str, ...],
 ) -> str | None:
     """Local tag of the published agent image this bottle runs, pulled or built
     as needed; None when nothing is published and the caller builds its own
     Dockerfile. An overlay with no published base fails closed."""
-    provider = plan.manifest.bottle.agent_provider
+    provider = plan.manifest.agent.agent_provider
     if provider.builds_custom_image:
         return None
     overlay = provider.overlay
     try:
-        pin = agent_image.resolve_agent_pin(template, fmt=FORMAT_OCI)
+        pin = agent_image.resolve_agent_pin(harness, fmt=FORMAT_OCI)
     except ArtifactsManifestError as e:
         die(str(e))
     if pin is None:
         if not overlay.is_empty():
-            raise agent_overlay.no_published_base_error(template)
+            raise agent_overlay.no_published_base_error(harness)
         return None
     pinned_ref = image_registry.pinned_reference(pin)
     repo = image.rpartition(":")[0] or image
@@ -72,7 +72,7 @@ def resolve_published_agent_image(
         return tag
 
     with agent_overlay.staged_overlay(
-        pinned_ref, overlay, template=template, source_root=Path(plan.spec.user_cwd),
+        pinned_ref, overlay, harness=harness, source_root=Path(plan.spec.user_cwd),
     ) as staged:
         tag = f"{repo}:overlay-{staged.cache_key}"
         if runtime.image_exists(tag):

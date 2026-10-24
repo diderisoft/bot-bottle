@@ -6,12 +6,8 @@
 # layout is the trust boundary, PRD 0011), so setup writes into real
 # config and teardown must restore it.
 #
-# Deliberately self-contained: it declares the Claude provider inline
-# rather than `extends: claude`, so the demo runs on a host that has no
-# claude.md bottle of its own.
-agent_provider:
-  template: claude
-  auth_token: BOT_BOTTLE_CLAUDE_OAUTH_TOKEN
+# The Claude provider is the demo agent's (scripts/demo/agent.md), so
+# this bottle carries only the boundary.
 
 env:
   # Synthetic GitHub-PAT-shaped value. Never a real credential — it
