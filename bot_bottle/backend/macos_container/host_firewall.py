@@ -18,6 +18,8 @@ from __future__ import annotations
 import ipaddress
 import plistlib
 import subprocess
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 ANCHOR = "com.apple/io.bot-bottle"
@@ -35,9 +37,12 @@ def host_address(subnet: str) -> str:
 
 
 def render_rules(subnet: str, subnet_v6: str) -> str:
-    """The anchor's rules for the agent subnets. The host's address on the
+    """The anchor's rules for the agent subnets. The host's IPv4 address on the
     subnet is named outright: `(self)` doesn't match the vmnet bridge's own
-    address, and that address is on the subnet, so `! subnet` misses it too."""
+    address, and that address is on the subnet, so `! subnet` misses it too.
+    The host's IPv6 addresses on the bridge (link-local, and an autoconf one
+    on the ULA prefix) can't be named, so the daemon turns IPv6 off on the
+    bridge instead (#720)."""
     return (
         "# Installed by `bot-bottle backend setup --backend=macos-container`.\n"
         "# Agents may reach the gateway on their own subnet and nothing else:\n"
@@ -45,26 +50,38 @@ def render_rules(subnet: str, subnet_v6: str) -> str:
         f"block drop in quick inet from {subnet} to {host_address(subnet)}\n"
         f"block drop in quick inet from {subnet} to (self)\n"
         f"block drop in quick inet from {subnet} to ! {subnet}\n"
-        f"block drop in quick inet6 from {subnet_v6} to {host_address(subnet_v6)}\n"
         f"block drop in quick inet6 from {subnet_v6} to (self)\n"
         f"block drop in quick inet6 from {subnet_v6} to ! {subnet_v6}\n"
     )
 
 
-def _apply_script() -> str:
+def _bridge_lookup(subnet: str) -> str:
+    """Shell that prints the bridge holding the host's address on `subnet`.
+    Its name changes whenever the agent network is recreated."""
+    address = host_address(subnet).replace(".", r"\.")
+    return ("/sbin/ifconfig | /usr/bin/awk "
+            f"'/^[a-z]/{{i=$1}} /inet {address} /{{sub(\":\",\"\",i); print i}}'")
+
+
+def _apply_script(subnet: str) -> str:
     # Enable pf only when it's off: each `pfctl -E` takes another reference.
+    # Nothing on the agent network uses IPv6, so the host stops speaking it
+    # there; the agent can't turn it back on.
     return (
         "/sbin/pfctl -s info 2>/dev/null | /usr/bin/grep -q '^Status: Enabled' "
         "|| /sbin/pfctl -E; "
-        f"/sbin/pfctl -a {ANCHOR} -f {RULES_PATH}"
+        f"/sbin/pfctl -a {ANCHOR} -f {RULES_PATH}; "
+        f"br=$({_bridge_lookup(subnet)}); "
+        '[ -z "$br" ] || /sbin/ifconfig "$br" inet6 ifdisabled'
     )
 
 
-def render_daemon() -> bytes:
-    """The LaunchDaemon plist that loads the anchor at boot and re-applies it."""
+def render_daemon(subnet: str) -> bytes:
+    """The LaunchDaemon plist that loads the anchor at boot and re-applies it,
+    with IPv6 off on the agent bridge."""
     return plistlib.dumps({
         "Label": DAEMON_LABEL,
-        "ProgramArguments": ["/bin/sh", "-c", _apply_script()],
+        "ProgramArguments": ["/bin/sh", "-c", _apply_script(subnet)],
         "RunAtLoad": True,
         "StartInterval": REAPPLY_SECONDS,
         "StandardErrorPath": f"/var/log/{DAEMON_LABEL}.log",
@@ -80,7 +97,7 @@ def state(subnet: str, subnet_v6: str) -> str:
         daemon = DAEMON_PATH.read_bytes()
     except OSError:
         return "missing"
-    if rules != render_rules(subnet, subnet_v6) or daemon != render_daemon():
+    if rules != render_rules(subnet, subnet_v6) or daemon != render_daemon(subnet):
         return "stale"
     return "ok"
 
@@ -90,17 +107,22 @@ def install(subnet: str, subnet_v6: str) -> None:
     RULES_PATH.parent.mkdir(parents=True, exist_ok=True)
     RULES_PATH.write_text(render_rules(subnet, subnet_v6), encoding="utf-8")
     RULES_PATH.chmod(0o644)
-    DAEMON_PATH.write_bytes(render_daemon())
+    DAEMON_PATH.write_bytes(render_daemon(subnet))
     DAEMON_PATH.chmod(0o644)
     subprocess.run(["launchctl", "bootout", f"system/{DAEMON_LABEL}"],
                    capture_output=True, check=False)
     subprocess.run(["launchctl", "bootstrap", "system", str(DAEMON_PATH)], check=True)
 
 
-def uninstall() -> None:
-    """Unload the daemon, flush the anchor and remove both files. Needs root."""
+def uninstall(subnet: str) -> None:
+    """Unload the daemon, flush the anchor, turn IPv6 back on on the agent
+    bridge and remove both files. Needs root."""
     subprocess.run(["launchctl", "bootout", f"system/{DAEMON_LABEL}"],
                    capture_output=True, check=False)
+    bridge = agent_bridge(subnet)
+    if bridge:
+        subprocess.run(["/sbin/ifconfig", bridge, "inet6", "-ifdisabled"],
+                       capture_output=True, check=False)
     subprocess.run(["/sbin/pfctl", "-a", ANCHOR, "-F", "all"],
                    capture_output=True, check=False)
     DAEMON_PATH.unlink(missing_ok=True)
@@ -114,24 +136,63 @@ def install_commands(subnet: str, subnet_v6: str) -> str:
         f"{render_rules(subnet, subnet_v6)}"
         "RULES\n"
         f"sudo tee {DAEMON_PATH} >/dev/null <<'PLIST'\n"
-        f"{render_daemon().decode()}"
+        f"{render_daemon(subnet).decode()}"
         "PLIST\n"
         f"sudo launchctl bootout system/{DAEMON_LABEL} 2>/dev/null || true\n"
         f"sudo launchctl bootstrap system {DAEMON_PATH}\n"
     )
 
 
-def uninstall_commands() -> str:
+def uninstall_commands(subnet: str) -> str:
     """The same uninstall as a copy-paste block for a non-root shell."""
     return (
         f"sudo launchctl bootout system/{DAEMON_LABEL} 2>/dev/null || true\n"
         f"sudo pfctl -a {ANCHOR} -F all\n"
+        f'br=$({_bridge_lookup(subnet)}); [ -z "$br" ] || sudo ifconfig "$br" inet6 -ifdisabled\n'
         f"sudo rm -f {DAEMON_PATH} {RULES_PATH}\n"
     )
 
 
+def agent_bridge(subnet: str) -> str | None:
+    """The bridge interface holding the host's address on `subnet`, or None
+    when there's none (the network doesn't exist yet)."""
+    out = subprocess.run(["/sbin/ifconfig"], capture_output=True, text=True,
+                         check=False).stdout
+    iface, wanted = None, f"inet {host_address(subnet)} "
+    for line in out.splitlines():
+        if line and not line[0].isspace():
+            iface = line.split(":", 1)[0]
+        elif wanted in line:
+            return iface
+    return None
+
+
+def ipv6_off(bridge: str) -> bool:
+    """Whether the host has IPv6 off on `bridge` (`IFDISABLED` in its nd6
+    options), readable without root."""
+    out = subprocess.run(["/sbin/ifconfig", bridge], capture_output=True, text=True,
+                         check=False).stdout
+    return any("nd6 options=" in line and "IFDISABLED" in line for line in out.splitlines())
+
+
+def wait_ipv6_off(subnet: str, *, timeout: float = REAPPLY_SECONDS + 15,
+                  poll: float = 2.0, sleep: Callable[[float], None] = time.sleep,
+                  clock: Callable[[], float] = time.monotonic) -> bool:
+    """Wait for the daemon to turn IPv6 off on the agent bridge: a recreated
+    network gets a new bridge, which the daemon reaches within a minute."""
+    deadline = clock() + timeout
+    while True:
+        bridge = agent_bridge(subnet)
+        if bridge and ipv6_off(bridge):
+            return True
+        if clock() >= deadline:
+            return False
+        sleep(poll)
+
+
 __all__ = [
     "ANCHOR", "DAEMON_LABEL", "DAEMON_PATH", "RULES_PATH",
-    "install", "install_commands", "render_daemon", "render_rules", "state",
+    "agent_bridge", "host_address", "install", "install_commands", "ipv6_off",
+    "render_daemon", "render_rules", "state", "wait_ipv6_off",
     "uninstall", "uninstall_commands",
 ]

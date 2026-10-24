@@ -63,12 +63,21 @@ host's own addresses, and with IP forwarding on, anything that NATs the subnet
 would let them out. So its subnets are pinned (`192.168.128.0/24` and
 `fd62:6f74:6274:6c65::/64`, `gateway.py`) and a host pf anchor,
 `com.apple/io.bot-bottle` (`host_firewall.py`), drops traffic from them to the
-host itself and to anything off the subnet. Agent-to-gateway traffic stays on
-the subnet. `backend setup` installs the anchor and a root LaunchDaemon
-(`io.bot-bottle.pf`) that loads it at boot and re-applies it every minute;
-`/etc/pf.conf` isn't edited. An existing agent network with other subnets is
-refused at launch, and the isolation probe refuses a launch when the anchor
-isn't in force.
+host itself (named as the subnet's first address, since pf's `(self)` misses
+the vmnet bridge's own address) and to anything off the subnet. Agent-to-gateway
+traffic stays on the subnet. `backend setup` installs the anchor and a root
+LaunchDaemon (`io.bot-bottle.pf`) that loads it at boot and re-applies it every
+minute; `/etc/pf.conf` isn't edited.
+
+The host's IPv6 addresses on the agent bridge (link-local, and an autoconf one
+on the ULA prefix) can't be named in pf, and the bridge's name changes whenever
+the network is recreated. Nothing on the agent network uses IPv6, so each
+minute the daemon finds the bridge holding `192.168.128.1` and turns IPv6 off
+on it (`ifconfig <bridge> inet6 ifdisabled`, host-side, so an agent can't undo
+it). An existing agent network with other subnets is refused at launch; so is a
+launch while the bridge still has IPv6 on (it waits out the daemon's minute
+first), and the isolation probe refuses one where the agent reaches the host's
+LAN address or `192.168.128.1`.
 
 Gateway files and commands go through
 the `container` CLI's exec and cp (`gateway_transport.py`). With

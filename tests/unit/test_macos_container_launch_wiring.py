@@ -423,7 +423,7 @@ class TestLaunchIsolationProbe(unittest.TestCase):
         self._tmp = Path(tempfile.mkdtemp(prefix="macos-launch-probe-test."))
         self.addCleanup(lambda: __import__("shutil").rmtree(self._tmp, ignore_errors=True))
 
-    def _launch(self, probe: object, provision: object) -> list[str]:
+    def _launch(self, probe: object, provision: object, *, ipv6_off: bool = True) -> list[str]:
         plan = _replace(
             _plan(self._tmp),
             agent_command="claude",
@@ -468,6 +468,7 @@ class TestLaunchIsolationProbe(unittest.TestCase):
              patch.object(launch_mod, "deprovision_consolidated"), \
              patch.object(launch_mod.isolation_probe, "verify_isolation",
                           side_effect=run_probe), \
+             patch.object(launch_mod.host_firewall, "wait_ipv6_off", return_value=ipv6_off), \
              contextlib.redirect_stderr(io.StringIO()):
             images = BottleImages(agent="bot-bottle-agent:latest")
             with launch_mod.launch(cast(MacosContainerBottlePlan, plan), images,
@@ -505,6 +506,16 @@ class TestLaunchIsolationProbe(unittest.TestCase):
             self._launch(probe, _no_provision)
 
         self.assertEqual(["echo probe"], calls)
+
+    def test_ipv6_on_the_agent_bridge_stops_the_launch(self) -> None:
+        with self.assertRaises(Die) as cm:
+            self._launch(lambda *_a, **_k: None, _no_provision, ipv6_off=False)
+        self.assertIn("IPv6", cm.exception.message)
+
+    def test_the_probe_also_tests_the_hosts_agent_network_address(self) -> None:
+        seen: dict[str, object] = {}
+        self._launch(lambda _g, **kw: seen.update(kw), _no_provision)
+        self.assertEqual(("192.168.128.1",), seen["host_ips"])
 
     def test_a_leak_stops_the_launch_before_provisioning(self) -> None:
         provision_calls: list[object] = []

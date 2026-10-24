@@ -67,11 +67,11 @@ def setup() -> int:
 
 def teardown() -> int:
     if os.geteuid() == 0:
-        host_firewall.uninstall()
+        host_firewall.uninstall(AGENT_SUBNET)
         sys.stderr.write(f"Removed the host firewall ({host_firewall.DAEMON_LABEL}).\n")
     else:
         sys.stderr.write("Remove the host firewall (one copy-paste):\n\n")
-        sys.stdout.write(host_firewall.uninstall_commands())
+        sys.stdout.write(host_firewall.uninstall_commands(AGENT_SUBNET))
     sys.stderr.write(
         "The Apple Container CLI and its system service are left as-is (stop "
         "the service yourself with `container system stop` if you want).\n"

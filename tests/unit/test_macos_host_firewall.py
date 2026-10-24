@@ -26,14 +26,13 @@ class TestRules(unittest.TestCase):
         self.assertIn(f"block drop in quick inet from {_V4} to 192.168.128.1\n", rules)
         self.assertIn(f"block drop in quick inet from {_V4} to (self)\n", rules)
         self.assertIn(f"block drop in quick inet from {_V4} to ! {_V4}\n", rules)
-        self.assertIn(f"block drop in quick inet6 from {_V6} to fd62:6f74:6274:6c65::1\n", rules)
         self.assertIn(f"block drop in quick inet6 from {_V6} to (self)\n", rules)
         self.assertIn(f"block drop in quick inet6 from {_V6} to ! {_V6}\n", rules)
 
     def test_blocks_nothing_else_on_the_subnet(self) -> None:
         # Agent -> gateway stays on the subnet; only the host's own address
         # on it may be targeted.
-        hosts = {"192.168.128.1", "fd62:6f74:6274:6c65::1"}
+        hosts = {"192.168.128.1"}
         for line in fw.render_rules(_V4, _V6).splitlines():
             if line.startswith("block"):
                 dest = line.split(" to ", 1)[1]
@@ -42,7 +41,7 @@ class TestRules(unittest.TestCase):
 
 class TestDaemon(unittest.TestCase):
     def test_loads_the_anchor_at_boot_and_reapplies_it(self) -> None:
-        plist = plistlib.loads(fw.render_daemon())
+        plist = plistlib.loads(fw.render_daemon(_V4))
         self.assertEqual(fw.DAEMON_LABEL, plist["Label"])
         self.assertTrue(plist["RunAtLoad"])
         self.assertEqual(fw.REAPPLY_SECONDS, plist["StartInterval"])
@@ -52,7 +51,7 @@ class TestDaemon(unittest.TestCase):
     def test_enables_pf_only_when_it_is_off(self) -> None:
         # Each `pfctl -E` takes another reference; re-applying every minute
         # must not pile them up.
-        script = plistlib.loads(fw.render_daemon())["ProgramArguments"][-1]
+        script = plistlib.loads(fw.render_daemon(_V4))["ProgramArguments"][-1]
         self.assertIn("|| /sbin/pfctl -E", script)
 
     def test_hooks_into_the_existing_com_apple_anchor(self) -> None:
@@ -73,12 +72,12 @@ class TestState(unittest.TestCase):
 
     def test_ok_when_both_files_match(self) -> None:
         self.rules.write_text(fw.render_rules(_V4, _V6))
-        self.daemon.write_bytes(fw.render_daemon())
+        self.daemon.write_bytes(fw.render_daemon(_V4))
         self.assertEqual("ok", fw.state(_V4, _V6))
 
     def test_stale_when_the_subnets_changed(self) -> None:
         self.rules.write_text(fw.render_rules("192.168.200.0/24", _V6))
-        self.daemon.write_bytes(fw.render_daemon())
+        self.daemon.write_bytes(fw.render_daemon(_V4))
         self.assertEqual("stale", fw.state(_V4, _V6))
 
 
@@ -104,16 +103,18 @@ class TestInstall(unittest.TestCase):
     def test_uninstall_unloads_flushes_and_removes(self) -> None:
         fw.install(_V4, _V6)
         self.pfrun.reset_mock()
-        fw.uninstall()
+        with patch.object(fw, "agent_bridge", return_value="bridge103"):
+            fw.uninstall(_V4)
         argvs = [c.args[0] for c in self.pfrun.call_args_list]
         self.assertIn(["/sbin/pfctl", "-a", fw.ANCHOR, "-F", "all"], argvs)
+        self.assertIn(["/sbin/ifconfig", "bridge103", "inet6", "-ifdisabled"], argvs)
         self.assertFalse(self.rules.exists())
         self.assertFalse(self.daemon.exists())
 
     def test_the_sudo_block_installs_the_same_files(self) -> None:
         block = fw.install_commands(_V4, _V6)
         self.assertIn(fw.render_rules(_V4, _V6), block)
-        self.assertIn(fw.render_daemon().decode(), block)
+        self.assertIn(fw.render_daemon(_V4).decode(), block)
         self.assertIn(f"sudo launchctl bootstrap system {fw.DAEMON_PATH}", block)
 
 
@@ -156,6 +157,59 @@ class TestPinnedAgentNetwork(unittest.TestCase):
             mac_util.create_network("n", internal=True, subnet=_V4, subnet_v6=_V6)
         argv = run.call_args.args[0]
         self.assertEqual(["--internal", "--subnet", _V4, "--subnet-v6", _V6, "n"], argv[-6:])
+
+
+_IFCONFIG = """lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+	inet 127.0.0.1 netmask 0xff000000
+bridge103: flags=8a63<UP,BROADCAST,SMART,RUNNING,ALLMULTI,SIMPLEX,MULTICAST> mtu 1500
+	inet 192.168.128.1 netmask 0xffffff00 broadcast 192.168.128.255
+	inet6 fe80::bcd0:74ff:fed1:b767%bridge103 prefixlen 64 scopeid 0x24
+	nd6 options=201<PERFORMNUD,DAD>
+bridge104: flags=8a63<UP> mtu 1500
+	inet 192.168.129.1 netmask 0xffffff00 broadcast 192.168.129.255
+"""
+
+
+def _ifconfig(out: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess([], 0, out, "")
+
+
+class TestAgentBridgeIPv6(unittest.TestCase):
+    def test_finds_the_bridge_holding_the_hosts_address(self) -> None:
+        with patch.object(fw.subprocess, "run", return_value=_ifconfig(_IFCONFIG)):
+            self.assertEqual("bridge103", fw.agent_bridge(_V4))
+        with patch.object(fw.subprocess, "run", return_value=_ifconfig("lo0: flags=1\n")):
+            self.assertIsNone(fw.agent_bridge(_V4))
+
+    def test_reads_whether_ipv6_is_off(self) -> None:
+        on = "\tnd6 options=201<PERFORMNUD,DAD>\n"
+        off = "\tnd6 options=209<PERFORMNUD,IFDISABLED,DAD>\n"
+        with patch.object(fw.subprocess, "run", return_value=_ifconfig(on)):
+            self.assertFalse(fw.ipv6_off("bridge103"))
+        with patch.object(fw.subprocess, "run", return_value=_ifconfig(off)):
+            self.assertTrue(fw.ipv6_off("bridge103"))
+
+    def test_waits_for_the_daemon_then_gives_up(self) -> None:
+        now = [0.0]
+        def sleep(s: float) -> None:
+            now[0] += s
+        with patch.object(fw, "agent_bridge", return_value="bridge103"), \
+                patch.object(fw, "ipv6_off", side_effect=[False, False, True]):
+            self.assertTrue(fw.wait_ipv6_off(_V4, sleep=sleep, clock=lambda: now[0]))
+        with patch.object(fw, "agent_bridge", return_value="bridge103"), \
+                patch.object(fw, "ipv6_off", return_value=False):
+            self.assertFalse(fw.wait_ipv6_off(_V4, timeout=10, sleep=sleep,
+                                              clock=lambda: now[0]))
+
+    def test_the_daemon_turns_ipv6_off_on_the_agent_bridge(self) -> None:
+        script = plistlib.loads(fw.render_daemon(_V4))["ProgramArguments"][-1]
+        self.assertIn(r"/inet 192\.168\.128\.1 /", script)
+        self.assertIn('/sbin/ifconfig "$br" inet6 ifdisabled', script)
+        # The lookup the daemon runs finds the right bridge in real ifconfig output.
+        lookup = script.split("br=$(", 1)[1].split("); [ -z", 1)[0].replace("/sbin/ifconfig | ", "")
+        done = subprocess.run(["/bin/sh", "-c", lookup], input=_IFCONFIG, capture_output=True,
+                              text=True, check=True)
+        self.assertEqual("bridge103", done.stdout.strip())
 
 
 if __name__ == "__main__":

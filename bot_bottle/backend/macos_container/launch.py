@@ -224,6 +224,14 @@ def launch(
             exec_env=exec_env,
         )
         # Prove the only way out is the gateway, then provision.
+        # IPv6 on the agent bridge reaches the host where pf can't name it
+        # (#720); the host firewall's daemon turns it off, within a minute of
+        # the network being (re)created.
+        if not host_firewall.wait_ipv6_off(AGENT_SUBNET):
+            die("ISOLATION FAILURE: IPv6 is still on on the agent network's bridge, "
+                "so agents can reach this Mac over it. Refusing to run the agent "
+                "(fail-closed). Install or update the host firewall with "
+                "`bot-bottle backend setup --backend=macos-container`.")
         isolation_probe.verify_isolation(
             lambda script: bottle.exec(script).stdout,
             what=f"agent container {plan.container_name}",

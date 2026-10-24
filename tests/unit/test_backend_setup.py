@@ -353,7 +353,7 @@ class TestMacosSetupStatus(unittest.TestCase):
         with patch.object(mc.os, "geteuid", return_value=0):
             rc, _ = _cap(mc.teardown)
         self.assertEqual(0, rc)
-        self.uninstall.assert_called_once_with()
+        self.uninstall.assert_called_once_with(mc.AGENT_SUBNET)
 
     def test_service_running_false_without_cli(self):
         with patch.object(mc.shutil, "which", return_value=None):
