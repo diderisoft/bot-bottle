@@ -125,6 +125,13 @@ def _log_preflight(plan: "BottlePlan", backend_name: str) -> None:
         log.warn(note)
 
 
+def _code_changed() -> bool:
+    """Whether the code on disk differs from what this process started from:
+    a launch would mix the two through lazy imports."""
+    from .build import build_id, current_build_id  # pylint: disable=import-outside-toplevel
+    return build_id() != current_build_id()
+
+
 def _save_work(bottle: Any, workspace: Any, identity: str) -> None:
     """Before teardown, save a copied git workspace's changes as a patch.
     `workspace` is the plan's workspace or an adoption record's."""
@@ -162,8 +169,10 @@ class BottleService:
         secrets_file: Path | None = None,
         recorded_infra: Callable[[str], InfraSettings | None] = _recorded_infra,
         audit: HostAudit | None = None,
+        code_changed: Callable[[], bool] = _code_changed,
     ) -> None:
         self.audit = audit if audit is not None else HostAudit()
+        self._code_changed = code_changed
         self._sessions = sessions
         self._backend_for = backend_for
         self._manifest_for = manifest_for
@@ -206,6 +215,9 @@ class BottleService:
         from ...secret_source import ChainSecrets, FileSecrets, MappingSecrets
         from .remote import ROLE_REMOTE
 
+        if self._code_changed():
+            log.die("bot-bottle was updated since the host controller started; restart it "
+                    "to launch (`bot-bottle up --restart`). Running bottles keep running")
         wanted = request.identity or (slugify(request.label) if request.label else "")
         if wanted and self._running(wanted):
             log.die(f"bottle {wanted} is already running")

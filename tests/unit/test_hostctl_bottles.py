@@ -22,6 +22,7 @@ from typing import Any, cast
 from unittest import mock
 
 from bot_bottle import bottle_state
+from bot_bottle.lib import log
 from bot_bottle.contract.auth import ROLE_CLI, ROLE_GATEWAY
 from bot_bottle.contract.hostctl import (
     AUDIT_APPEND_PATH, BOTTLES_PATH, CONFIRM_ERROR, HOST_CONTROL, LAUNCH_CLI_ONLY,
@@ -177,6 +178,15 @@ class _Root(unittest.TestCase):
 
 class TestLaunchConfirmation(_Root):
     """Everything before the holder: no tmux needed."""
+
+    def test_a_launch_is_refused_once_the_code_on_disk_changed(self) -> None:
+        # #679: lazy imports would mix old classes with new modules.
+        service = BottleService(self.manager, backend_for=lambda _s: cast(Any, self.backend),
+                                manifest_for=lambda _cwd: self.index, code_changed=lambda: True)
+        with self.assertRaises(log.Die) as cm:
+            service.launch(LaunchRequest(agent="demo", label="c0", cwd="/w"))
+        self.assertIn("up --restart", cm.exception.message)
+        self.assertEqual([], self.backend.specs)
 
     def test_unconfirmed_launch_logs_the_preflight_and_asks(self) -> None:
         lines: list[str] = []

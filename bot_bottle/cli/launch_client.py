@@ -121,13 +121,32 @@ def _prompt_yes(question: str) -> bool:
     return read_tty_line() in ("y", "Y", "yes", "YES")
 
 
+def confirm_controller_restart(held: list[str]) -> bool:
+    """Ask before restarting an updated host controller that holds bottles.
+    Without a terminal there's no one to ask, so no."""
+    if not sys.stdin.isatty():
+        return False
+    sys.stderr.write(
+        f"bot-bottle: bot-bottle was updated. Restarting the host controller moves "
+        f"{len(held)} running bottle(s) ({', '.join(held)}) to the new version: the agents "
+        "keep running, but attached terminals and the phone link disconnect briefly.\n")
+    return _prompt_yes("Continue?")
+
+
+def _never(held: list[str]) -> bool:
+    del held
+    return False
+
+
 def launch(request: LaunchRequest, *, verbose: bool = False) -> int:
     """Launch through the host controller and attach. Returns the agent's exit
     code, or 0 on detach or decline. One line per stage; the full log goes to a
     file (`verbose` streams it)."""
     progress = LaunchProgress(launch_log_path(request.label or request.agent), verbose=verbose)
     try:
-        client = HostControlClient(runner.ensure_running(), runner.cli_token())
+        confirm = _never if request.headless else confirm_controller_restart
+        client = HostControlClient(runner.ensure_running(confirm_restart=confirm),
+                                   runner.cli_token())
         while True:
             job = str(client.post(BOTTLES_PATH, request.to_json())["job"])
             final = client.follow(job, progress.line, progress.stage)

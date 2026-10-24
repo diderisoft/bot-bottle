@@ -15,7 +15,13 @@ boundary. Its routes are in
 - The CLI trusts that file only once `GET /status` returns the same pid.
   `runner.ensure_running` starts the daemon on demand, holding a lock so
   concurrent CLIs start only one, and restarts a daemon whose `build_id` (a
-  hash of the package's `.py` files) differs from the CLI's.
+  hash of the package's `.py` files) differs from the CLI's. When that daemon
+  holds bottles, a launch asks first ("moves N running bottles to the new
+  version"); a headless or non-terminal launch is refused instead. Other
+  commands keep using the old daemon. `bot-bottle up --restart` restarts it
+  on purpose, with the same question. The daemon also refuses a launch itself
+  once the code on disk no longer matches its `build_id`, so no path (the
+  phone included) runs a launch on mixed code.
 - `listeners.py` adds one listener per backend, where that backend's
   orchestrator guest reaches the host: the docker publish bridge, the macOS
   control network's vmnet gateway, or the firecracker orchestrator TAP. Each

@@ -47,9 +47,21 @@ class TestUpDown(_Mocked):
             code, out, _ = self.run_cmd(lifecycle.cmd_up, [])
             self.assertEqual(0, code)
             self.assertFalse(ensure.call_args.kwargs["restart"])
+            self.runner.restart.assert_not_called()
             self.run_cmd(lifecycle.cmd_up, ["--restart"])
             self.assertTrue(ensure.call_args.kwargs["restart"])
         self.assertIn("firecracker orchestrator: running at http://orch", out)
+        # #679: --restart restarts the host controller too, asking first.
+        self.runner.restart.assert_called_once_with(
+            confirm_restart=lifecycle.confirm_controller_restart)
+
+    def test_up_restart_declined_fails(self) -> None:
+        self.runner.restart.side_effect = RuntimeError("not restarting; 1 bottle(s) are running")
+        with mock.patch.object(lifecycle, "ensure_via_daemon") as ensure:
+            code, _, err = self.run_cmd(lifecycle.cmd_up, ["--restart"])
+        self.assertEqual(1, code)
+        self.assertIn("not restarting", err)
+        ensure.assert_not_called()
 
     def test_down_stops_infra_then_the_daemon(self) -> None:
         code, out, _ = self.run_cmd(lifecycle.cmd_down, [])

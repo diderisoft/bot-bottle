@@ -146,6 +146,40 @@ class TestEnsureRunning(unittest.TestCase):
             self.assertTrue(runner.stop(force=True))
         self.assertIsNone(runner.running())
 
+    def test_a_launch_restarts_an_outdated_daemon_holding_bottles_only_if_confirmed(self) -> None:
+        # #679: its bottles keep running and the new daemon adopts them.
+        first = runner.ensure_running()
+        asked: list[list[str]] = []
+
+        def confirm(answer: bool) -> runner.ConfirmRestart:
+            def ask(held: list[str]) -> bool:
+                asked.append(held)
+                return answer
+            return ask
+
+        with mock.patch.object(runner, "held_bottles", return_value=["b1"]), \
+             mock.patch.object(runner, "current_build_id", return_value="other-code"), \
+             mock.patch("sys.stderr", io.StringIO()):
+            with self.assertRaises(runner.StaleHostControllerError) as cm:
+                runner.ensure_running(confirm_restart=confirm(False))
+            self.assertIn("up --restart", str(cm.exception))
+            self.assertTrue(runner.probe(first))
+            second = runner.ensure_running(confirm_restart=confirm(True))
+        self.assertEqual([["b1"], ["b1"]], asked)
+        self.assertNotEqual(first.pid, second.pid)
+        self.assertFalse(runner.probe(first))
+
+    def test_restart_replaces_the_daemon_even_on_the_same_code(self) -> None:
+        first = runner.ensure_running()
+        with mock.patch("sys.stderr", io.StringIO()):
+            second = runner.restart(confirm_restart=lambda _held: False)  # nothing held: no ask
+        self.assertNotEqual(first.pid, second.pid)
+        with mock.patch.object(runner, "held_bottles", return_value=["b1"]), \
+             mock.patch("sys.stderr", io.StringIO()), \
+             self.assertRaises(runner.StaleHostControllerError):
+            runner.restart(confirm_restart=lambda _held: False)
+        self.assertTrue(runner.probe(second))
+
 
 if __name__ == "__main__":
     unittest.main()

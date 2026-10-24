@@ -14,7 +14,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +34,23 @@ _POLL_SECONDS = 0.1
 
 class HostControlError(RuntimeError):
     """The host controller couldn't be started, reached or stopped."""
+
+
+class StaleHostControllerError(HostControlError):
+    """The host controller runs older code than is on disk and holds bottles,
+    and restarting it wasn't confirmed."""
+
+
+# Asked before restarting a stale host controller that holds bottles: the ids,
+# and whether to go ahead.
+ConfirmRestart = Callable[[list[str]], bool]
+
+
+def stale_message(held: list[str]) -> str:
+    """Why a launch is refused while an outdated controller holds bottles."""
+    return (f"bot-bottle was updated while {len(held)} bottle(s) are running "
+            f"({', '.join(held)}); restart the host controller to launch: "
+            "`bot-bottle up --restart`. The agents keep running")
 
 
 @dataclass(frozen=True)
@@ -105,21 +122,45 @@ def _lock() -> Generator[None]:
             fcntl.flock(fh, fcntl.LOCK_UN)
 
 
-def ensure_running(timeout: float = START_TIMEOUT_SECONDS) -> HostControlState:
+def ensure_running(
+    timeout: float = START_TIMEOUT_SECONDS, *, confirm_restart: ConfirmRestart | None = None,
+) -> HostControlState:
     """The live host controller, starting it (or replacing one running other
-    code) if needed. One holding bottles is kept, since replacing it would
-    orphan them."""
+    code) if needed. A replaced controller's bottles keep running and the new
+    one adopts them. With bottles held, `confirm_restart` decides: yes
+    restarts, no raises `StaleHostControllerError`. Without it the old
+    controller is kept, for callers that launch nothing."""
     with _lock():
         state = running()
         if state is not None and state.build_id == current_build_id():
             return state
         if state is not None:
             held = held_bottles(state)
-            if held:
+            if held and confirm_restart is None:
                 warn(f"host controller runs different code but holds {len(held)} bottle(s) "
                      f"({', '.join(held)}); using it until they're done")
                 return state
+            if held and confirm_restart is not None and not confirm_restart(held):
+                raise StaleHostControllerError(stale_message(held))
             info("host controller runs different code; restarting it")
+            _stop(state)
+        return _start(timeout)
+
+
+def restart(
+    timeout: float = START_TIMEOUT_SECONDS, *, confirm_restart: ConfirmRestart,
+) -> HostControlState:
+    """Restart the host controller whatever code it runs; its bottles keep
+    running and the new one adopts them. With bottles held, `confirm_restart`
+    must agree or `StaleHostControllerError` is raised."""
+    with _lock():
+        state = running()
+        if state is not None:
+            held = held_bottles(state)
+            if held and not confirm_restart(held):
+                raise StaleHostControllerError(
+                    f"not restarting; {len(held)} bottle(s) are running ({', '.join(held)})")
+            info("restarting the host controller")
             _stop(state)
         return _start(timeout)
 
@@ -229,6 +270,7 @@ def _stop(state: HostControlState) -> None:
 
 
 __all__ = [
-    "HostControlError", "HostControlState", "clear_state", "cli_token", "ensure_running",
+    "ConfirmRestart", "HostControlError", "HostControlState", "StaleHostControllerError",
+    "restart", "stale_message", "clear_state", "cli_token", "ensure_running",
     "probe", "read_state", "running", "state_dir", "stop", "write_state",
 ]

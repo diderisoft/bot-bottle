@@ -165,6 +165,46 @@ class TestLaunch(unittest.TestCase):
             self.launch(_client([None], []))
 
 
+class TestControllerRestartPrompt(unittest.TestCase):
+    """#679: an updated controller holding bottles is restarted only on a yes."""
+
+    def setUp(self) -> None:
+        self.err = self.enterContext(contextlib.redirect_stderr(io.StringIO()))
+
+    def test_without_a_terminal_the_answer_is_no(self) -> None:
+        with mock.patch.object(launch_client.sys.stdin, "isatty", return_value=False), \
+             mock.patch.object(launch_client, "read_tty_line") as read:
+            self.assertFalse(launch_client.confirm_controller_restart(["b1"]))
+        read.assert_not_called()
+
+    def test_the_prompt_names_the_bottles_and_says_they_keep_running(self) -> None:
+        for reply, expected in (("y", True), ("", False)):
+            with self.subTest(reply=reply), \
+                 mock.patch.object(launch_client.sys.stdin, "isatty", return_value=True), \
+                 mock.patch.object(launch_client, "read_tty_line", return_value=reply):
+                self.assertEqual(expected, launch_client.confirm_controller_restart(["b1", "b2"]))
+        self.assertIn("moves 2 running bottle(s) (b1, b2)", self.err.getvalue())
+        self.assertIn("agents keep running", self.err.getvalue())
+
+    def test_a_headless_launch_never_restarts_the_controller(self) -> None:
+        with mock.patch.object(launch_client.runner, "ensure_running",
+                               side_effect=launch_client.runner.StaleHostControllerError("x")) as ensure, \
+             mock.patch.object(launch_client.runner, "cli_token", return_value="t"), \
+             self.assertRaises(Die):
+            launch_client.launch(LaunchRequest(agent="demo", headless=True))
+        confirm = ensure.call_args.kwargs["confirm_restart"]
+        self.assertFalse(confirm(["b1"]))
+
+    def test_an_interactive_launch_asks(self) -> None:
+        with mock.patch.object(launch_client.runner, "ensure_running",
+                               side_effect=launch_client.runner.StaleHostControllerError("x")) as ensure, \
+             mock.patch.object(launch_client.runner, "cli_token", return_value="t"), \
+             self.assertRaises(Die):
+            launch_client.launch(LaunchRequest(agent="demo"))
+        self.assertIs(launch_client.confirm_controller_restart,
+                      ensure.call_args.kwargs["confirm_restart"])
+
+
 class TestActive(unittest.TestCase):
     def _run(self, held: dict[str, Any], active: list[ActiveAgent]) -> str:
         out = io.StringIO()

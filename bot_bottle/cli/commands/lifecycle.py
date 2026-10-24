@@ -15,6 +15,7 @@ from ...control.hostctl.client import HostControlClient
 from ...control.hostctl.orchestrator import ensure_via_daemon
 from ...control.hostctl.sessions import MIN_TMUX_VERSION, tmux_version
 from ..constants import PROG
+from ..launch_client import confirm_controller_restart
 from ..settings import settings_from_env
 
 
@@ -33,11 +34,14 @@ def _fail(message: str) -> int:
 def cmd_up(argv: list[str]) -> int:
     parser = _parser("up", "Start the host controller and the backend's orchestrator and gateway.")
     parser.add_argument("--restart", action="store_true",
-                        help="stop the orchestrator and gateway first, then start them")
+                        help="restart the host controller (running bottles keep running), "
+                             "then the orchestrator and gateway")
     ns = parser.parse_args(argv)
     settings = settings_from_env()
     backend = get_bottle_backend(settings, ns.backend).name
     try:
+        if ns.restart:
+            runner.restart(confirm_restart=confirm_controller_restart)
         url = ensure_via_daemon(settings, backend, restart=ns.restart)
     except runner.HostControlError as e:
         return _fail(str(e))
