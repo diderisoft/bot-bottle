@@ -304,10 +304,11 @@ class SessionManager:
         return tmux("attach-session", *(["-r"] if read_only else []), "-t", f"={session_id}")
 
     def history(self, session_id: str, lines: int) -> str:
-        """The session's pane, its last `lines` of history included, with
-        colors (SGR escapes) and one row per line at the pane's width."""
+        """The last `lines` that scrolled off the session's pane (not the
+        visible screen), with colors (SGR escapes), one row per line."""
         proc = subprocess.run(
-            tmux("capture-pane", "-p", "-e", "-S", f"-{lines}", "-t", f"={session_id}:"),
+            tmux("capture-pane", "-p", "-e", "-S", f"-{lines}", "-E", "-1",
+                 "-t", f"={session_id}:"),
             capture_output=True, text=True, errors="replace", check=False)
         return proc.stdout if proc.returncode == 0 else ""
 

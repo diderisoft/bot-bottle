@@ -36,8 +36,8 @@ On the console's control stream (JSON lines) the host serves:
 - The session's terminal is relayed to the console on a uni stream (see
   `console_terminal`); `input` types into it when the agent allows remote
   typing, `resize` sizes the console's tmux client, and `history` ->
-  `history` (`text`): the pane's recent history with colors, which the
-  console scrolls locally.
+  `history` (`text`): what scrolled off the pane, with colors, which the
+  console shows above its live terminal.
 - `audit_query` -> `audit_events`: the audit journal records for a bottle this
   link launched, filtered like `audit query` (bottle, activation, limit).
 

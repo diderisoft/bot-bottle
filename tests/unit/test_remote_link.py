@@ -463,18 +463,18 @@ class TestConsoleTerminal(unittest.TestCase):
         self.assertNotIn(b"hello-from-console", out)
 
 
-    def test_history_reaches_back_past_the_screen_with_colors(self) -> None:
+    def test_history_is_what_scrolled_off_with_colors(self) -> None:
         import subprocess
-        for i in range(60):
-            subprocess.run(self.tmux("send-keys", "-t", "=s1:", f"line-{i}", "Enter"), check=True)
+        import time
         subprocess.run(self.tmux("send-keys", "-t", "=s1:", "-l", "\x1b[31mred\x1b[0m"), check=True)
         subprocess.run(self.tmux("send-keys", "-t", "=s1:", "Enter"), check=True)
-        import time
+        for i in range(60):
+            subprocess.run(self.tmux("send-keys", "-t", "=s1:", f"line-{i}", "Enter"), check=True)
         time.sleep(0.5)
         text = self.manager.history("s1", 3000)
-        self.assertIn("line-0", text)  # long off the 24-row screen
-        self.assertIn("line-59", text)
-        self.assertIn("\x1b[31mred", text)  # colors kept as SGR escapes
+        self.assertIn("\x1b[31mred", text)  # long off the 24-row screen, colors kept
+        self.assertIn("line-0", text)
+        self.assertNotIn("line-59", text)  # still on screen: the live terminal shows it
 
 class TestConfig(_RootCase):
     def test_config_round_trips_privately(self) -> None:
