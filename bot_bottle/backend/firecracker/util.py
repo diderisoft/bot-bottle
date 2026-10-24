@@ -139,6 +139,11 @@ def build_base_rootfs_dir(
     base = cache_dir() / "rootfs" / f"{digest}{variant}"
     ready = base / ".bb-ready"
     if ready.is_file():
+        # A hit refreshes the marker, so its age is time since last use.
+        try:
+            ready.touch()
+        except OSError:
+            pass
         return base
 
     if base.exists():

@@ -242,7 +242,10 @@ class BuildExt4(unittest.TestCase):
         def _mk_ext4(_base: Path, out: Path, **_kw: object) -> None:
             out.write_bytes(b"rootfs-bytes")
 
-        fake_fc.build_base_rootfs_dir.return_value = tmp / "base"
+        base = tmp / "base"
+        (base / "etc").mkdir(parents=True)
+        (base / ".bb-ready").write_text("ok\n")
+        fake_fc.build_base_rootfs_dir.return_value = base
         fake_fc.build_rootfs_ext4.side_effect = _mk_ext4
         return fake_fc, fake_infra
 
@@ -261,6 +264,32 @@ class BuildExt4(unittest.TestCase):
                     artifact = pi.build_ext4(image, "linux/arm64", root / "o", _HASH,
                                          repo_root=Path("."))
             return artifact, fake_fc, fake_infra
+
+    def _base_tree_after(self, *, ext4_fails: bool) -> bool:
+        """Whether the base tree still exists after a build."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_fc, fake_infra = self._patched(root)
+            if ext4_fails:
+                fake_fc.build_rootfs_ext4.side_effect = RuntimeError("mke2fs failed")
+            mods = {"bot_bottle.backend.firecracker.infra_vm": fake_infra,
+                    "bot_bottle.backend.firecracker.util": fake_fc}
+            with mock.patch.dict("sys.modules", mods), \
+                 mock.patch("bot_bottle.backend.firecracker.infra_vm", fake_infra, create=True), \
+                 mock.patch("bot_bottle.backend.firecracker.util", fake_fc, create=True):
+                try:
+                    pi.build_ext4("bot-bottle-claude", "linux/arm64", root / "o", _HASH,
+                                  repo_root=Path("."))
+                except RuntimeError:
+                    pass
+            return (root / "base").exists()
+
+    def test_the_base_tree_is_deleted_once_the_ext4_is_built(self) -> None:
+        # Every publish rebuilds its inputs; a kept tree is never read again.
+        self.assertFalse(self._base_tree_after(ext4_fails=False))
+
+    def test_the_base_tree_is_deleted_when_the_ext4_build_fails(self) -> None:
+        self.assertFalse(self._base_tree_after(ext4_fails=True))
 
     def test_infra_image_gets_its_role_init(self) -> None:
         """The infra pair boots a role-specific PID 1; an agent takes the

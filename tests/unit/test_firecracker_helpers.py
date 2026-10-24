@@ -165,6 +165,25 @@ class TestRequireFirecracker(unittest.TestCase):
                 util.require_firecracker(_INFRA)
 
 
+class TestBuildBaseRootfsDirHit(unittest.TestCase):
+    def test_a_hit_refreshes_the_ready_marker_and_exports_nothing(self):
+        # Pruning goes by age, so the marker must say when it was last used.
+        with tempfile.TemporaryDirectory(prefix="fc-base.") as d:
+            cache = Path(d)
+            base = cache / "rootfs" / "abc123-gw"
+            base.mkdir(parents=True)
+            ready = base / ".bb-ready"
+            ready.write_text("ok\n")
+            os.utime(ready, (1_000_000, 1_000_000))
+            with patch.object(util, "cache_dir", return_value=cache), \
+                 patch.object(util, "docker_image_id", return_value="abc123"), \
+                 patch.object(util, "export_image_rootfs") as export:
+                got = util.build_base_rootfs_dir("img", _INFRA, variant="-gw")
+            self.assertEqual(base, got)
+            export.assert_not_called()
+            self.assertGreater(ready.stat().st_mtime, 1_000_000)
+
+
 class TestBuildCommittedRootfsDir(unittest.TestCase):
     """Resume prepares the base rootfs dir from the freezer's snapshot tar
     with no Docker: extract, recreate the excluded mount points, inject the

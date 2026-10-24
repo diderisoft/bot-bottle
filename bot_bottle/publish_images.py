@@ -431,8 +431,13 @@ def build_ext4(
     # Per-platform: concurrent `mke2fs -d` into one path corrupts it.
     ext4 = out_dir / f"{image}.{_platform_suffix(plat)}.ext4"
     print(f"  building rootfs for {image} ({plat})")
-    fc_util.build_rootfs_ext4(
-        base, ext4, slack_mib=image_inputs.rootfs_slack_mib(image))
+    try:
+        fc_util.build_rootfs_ext4(
+            base, ext4, slack_mib=image_inputs.rootfs_slack_mib(image))
+    finally:
+        # The tree only feeds `mke2fs -d`, and every publish rebuilds its
+        # inputs, so nothing reads it again; kept, they fill the runner's disk.
+        shutil.rmtree(base, ignore_errors=True)
     gz = out_dir / ext4_filename(plat)
     print(f"  compressing {image} rootfs")
     _gzip(ext4, gz)
