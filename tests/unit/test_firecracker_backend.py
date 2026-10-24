@@ -47,9 +47,6 @@ class TestNetpoolSlots(unittest.TestCase):
         self.assertEqual((f"{pfx}1", "100.64.0.2", "100.64.0.3"),
                          (s1.iface, s1.host_ip, s1.guest_ip))
 
-    def test_guest_cidr_is_31(self):
-        self.assertEqual("100.64.0.1/31", _pool(fc_ip_base="100.64.0.0").slot(0).guest_cidr)
-
     def test_default_base_avoids_cgnat_and_common_private_ranges(self):
         # The default base must NOT sit in 100.64.0.0/10 (RFC-6598 CGNAT,
         # which Tailscale hands node addresses from); it's an obscure
@@ -484,15 +481,9 @@ class TestBottlePlanProperties(unittest.TestCase):
         self.assertEqual("append_file", p.agent_prompt_mode)
         self.assertEqual("claude", p.agent_provider_template)
 
-    def test_git_gate_insteadof_defaults(self):
-        p = self._plan()
-        self.assertEqual("git-gate", p.git_gate_insteadof_host)
-        self.assertEqual("git", p.git_gate_insteadof_scheme)
-
-    def test_git_gate_insteadof_http_override(self):
+    def test_git_gate_insteadof_host_from_url(self):
         p = self._plan(agent_git_gate_url="http://10.243.0.0:9420/")
         self.assertEqual("10.243.0.0:9420", p.git_gate_insteadof_host)
-        self.assertEqual("http", p.git_gate_insteadof_scheme)
 
     def test_guest_env_pins_global_git_config(self):
         from bot_bottle.backend.firecracker.launch import _agent_guest_env

@@ -342,21 +342,6 @@ def container_is_running(name: str) -> bool:
     return name in {line.strip() for line in result.stdout.splitlines()}
 
 
-def stop_container(name: str) -> None:
-    """Stop the container without deleting it."""
-    result = subprocess.run(
-        [_CONTAINER, "stop", name],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        die(
-            f"container stop {name!r} failed: "
-            f"{(result.stderr or '').strip() or '<no stderr>'}"
-        )
-
-
 def force_remove_container(name: str) -> None:
     if container_exists(name):
         subprocess.run(
@@ -367,33 +352,8 @@ def force_remove_container(name: str) -> None:
         )
 
 
-def copy_into_container(name: str, host_path: str, container_path: str) -> None:
-    cmd = [_CONTAINER, "cp", host_path, f"{name}:{container_path}"]
-    result = _run_container_op(cmd)
-    if result.returncode != 0:
-        die(
-            f"container cp into {name}:{container_path} failed: "
-            f"{(result.stderr or '').strip() or '<no stderr>'}"
-        )
-
-
-def exec_container(name: str, argv: list[str]) -> None:
-    result = _run_container_op([_CONTAINER, "exec", name, *argv])
-    if result.returncode != 0:
-        die(
-            f"container exec in {name} failed: "
-            f"{(result.stderr or '').strip() or '<no stderr>'}"
-        )
-
-
-def read_container_env(name: str, env_name: str) -> str:
-    """One configured env value from a running container, or ""."""
-    result = _run_container_op([_CONTAINER, "exec", name, "printenv", env_name])
-    return result.stdout.strip() if result.returncode == 0 else ""
-
-
 def exec_container_as_root(name: str, argv: list[str]) -> None:
-    """`exec_container` as uid 0, for host maintenance the agent mustn't be
+    """Run `argv` in container `name` as uid 0, for host maintenance the agent mustn't be
     able to do (e.g. rewriting `/etc/hosts`).
     """
     result = _run_container_op([_CONTAINER, "exec", "--user", "root", name, *argv])
@@ -443,50 +403,6 @@ def create_network(name: str, *, internal: bool = False) -> None:
         f"container network create {name} failed: "
         f"{(result.stderr or '').strip() or '<no stderr>'}"
     )
-
-
-def remove_network(name: str) -> None:
-    result = subprocess.run(
-        [_CONTAINER, "network", "delete", name],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    if result.returncode != 0:
-        return
-
-
-def inspect_container(name: str) -> dict[str, object]:
-    result = subprocess.run(
-        [_CONTAINER, "inspect", name],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        die(
-            f"container inspect {name} failed: "
-            f"{(result.stderr or '').strip() or '<no stderr>'}"
-        )
-    try:
-        data = json.loads(result.stdout or "[]")
-    except json.JSONDecodeError as exc:
-        die(f"container inspect {name} returned malformed JSON: {exc}")
-    if isinstance(data, list) and data and isinstance(data[0], dict):
-        return data[0]
-    if isinstance(data, dict):
-        return data
-    die(f"container inspect {name} returned an unexpected shape")
-    raise AssertionError("unreachable")
-
-
-def container_ipv4_on_network(name: str, network: str) -> str:
-    """The container's IPv4 on `network`. Fatal if absent; see
-    `try_container_ipv4_on_network`."""
-    ip = try_container_ipv4_on_network(name, network)
-    if not ip:
-        die(f"container {name} has no IPv4 address on {network}")
-    return ip
 
 
 def run_container_argv(
@@ -567,7 +483,7 @@ def container_env(name: str) -> dict[str, str]:
 
 
 def try_container_ipv4_on_network(name: str, network: str) -> str:
-    """`container_ipv4_on_network` returning "" instead of dying, for pollers."""
+    """The container's IPv4 on `network`, or "" when it has none yet."""
     status = _inspect_first([_CONTAINER, "inspect", name]).get("status")
     networks = status.get("networks") if isinstance(status, dict) else None
     if not isinstance(networks, list):

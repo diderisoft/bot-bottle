@@ -21,10 +21,11 @@ from ...agent_provider import (
     AgentProvisionPlan,
     provider_startup_args,
 )
-from ...backend.docker import util as docker_mod
+from ...contract.identity import IDENTITY_HEADER
 from ...egress import CLAUDE_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
 from ...lib.log import die, info, warn
 from ...starter import GENERAL_PROMPT, starter_agent, starter_bottle
+from ...util import slugify
 from .claude_auth import claude_host_access_token, claude_login_location
 
 
@@ -33,8 +34,6 @@ if TYPE_CHECKING:
 
 
 _SUPERVISE_MCP_NAME = "supervise"
-# Identity token header (as in `contract.identity`).
-_IDENTITY_HEADER = "x-bot-bottle-identity"
 # Stands in for the identity token in the manual-recovery hint, which goes to
 # the host launch log. The operator takes the value from the bottle's
 # HTTPS_PROXY.
@@ -97,7 +96,6 @@ _RUNTIME = AgentProviderRuntime(
     image="bot-bottle-claude:latest",
     prompt_mode="append_file",
     bypass_args=("--dangerously-skip-permissions",),
-    resume_args=("--continue",),
     smoke_test=("claude", "--version"),
 )
 
@@ -200,7 +198,7 @@ class ClaudeAgentProvider(AgentProvider):
             }
         theme_payload = _custom_theme_payload(color)
         if theme_payload is not None:
-            theme_name = f"bot-bottle-{docker_mod.slugify(label or color)}"
+            theme_name = f"bot-bottle-{slugify(label or color)}"
             theme_file = state_dir / f"{theme_name}.json"
             theme_file.write_text(json.dumps(theme_payload, indent=2) + "\n")
             theme_file.chmod(0o644)
@@ -342,7 +340,7 @@ class ClaudeAgentProvider(AgentProvider):
         # supervise requires the identity token as an MCP header.
         token = getattr(plan, "identity_token", "")
         header = (
-            f" --header {shlex.quote(f'{_IDENTITY_HEADER}: {token}')}" if token else ""
+            f" --header {shlex.quote(f'{IDENTITY_HEADER}: {token}')}" if token else ""
         )
         r = bottle.exec(
             f"claude mcp add --scope user --transport http "
@@ -352,7 +350,7 @@ class ClaudeAgentProvider(AgentProvider):
         if r.returncode != 0:
             # A placeholder keeps the token out of the host log.
             manual_header = (
-                f" --header {shlex.quote(f'{_IDENTITY_HEADER}: {_IDENTITY_TOKEN_PLACEHOLDER}')}"
+                f" --header {shlex.quote(f'{IDENTITY_HEADER}: {_IDENTITY_TOKEN_PLACEHOLDER}')}"
                 if token else ""
             )
             warn(

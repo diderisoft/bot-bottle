@@ -16,7 +16,6 @@ bot_bottle/egress/service.py
 
 # Gateway egress policy, matching, and DLP enforcement.
 bot_bottle/gateway/egress/addon.py
-bot_bottle/gateway/egress/addon_core.py
 bot_bottle/gateway/egress/context.py
 bot_bottle/gateway/egress/dlp.py
 bot_bottle/gateway/egress/dlp_config.py

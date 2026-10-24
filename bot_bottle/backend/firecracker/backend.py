@@ -118,9 +118,6 @@ class FirecrackerBottleBackend(
     def enumerate_active(self) -> Sequence[ActiveAgent]:
         return _enumerate.enumerate_active()
 
-    def supervise_mcp_url(self, plan: FirecrackerBottlePlan) -> str:
-        return plan.agent_supervise_url
-
     def infra_service(self) -> "FirecrackerInfraService":
         from .infra import FirecrackerInfraService
         return FirecrackerInfraService(self.settings)

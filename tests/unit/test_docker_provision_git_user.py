@@ -32,7 +32,7 @@ class _Provider(AgentProvider):
     def runtime(self) -> AgentProviderRuntime:
         return AgentProviderRuntime(
             template="test", command="test", image="",
-            prompt_mode="append_file", bypass_args=(), resume_args=(),
+            prompt_mode="append_file", bypass_args=(),
         )
     def provision_plan(self, **kwargs):  # type: ignore[override]
         raise NotImplementedError
@@ -73,7 +73,6 @@ def _plan(*, git_user: dict | None = None,  # type: ignore
         forwarded_env={},
         git_gate_plan=GitGatePlan(
             slug="demo-abc12",
-            entrypoint_script=Path("/tmp/git-gate-entrypoint.sh"),
             hook_script=Path("/tmp/git-gate-hook"),
             access_hook_script=Path("/tmp/git-gate-access-hook"),
             upstreams=(),

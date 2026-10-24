@@ -40,7 +40,7 @@ class TestBottleBackendLaunchTemplate(unittest.TestCase):
         backend = self._make_backend()
         plan = cast(Any, SimpleNamespace())
         bottle = MagicMock()
-        images = BottleImages(agent="agent:latest", sidecar="sidecar:latest")
+        images = BottleImages(agent="agent:latest")
         with patch.object(
             backend, "_build_or_load_images", return_value=images,
         ) as build_mock, patch.object(

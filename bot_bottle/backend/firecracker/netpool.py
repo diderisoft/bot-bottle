@@ -53,9 +53,6 @@ def _default(key: str) -> str:
         die(f"{key} is missing from {DEFAULTS_FILE.name} (broken install)")
 
 
-# Gateway ports the VM reaches at its host TAP IP (egress, supervise,
-# git-http).
-GATEWAY_PORTS = (9099, 9100, 9420)
 
 
 @dataclass(frozen=True)
@@ -66,12 +63,6 @@ class Slot:
     iface: str
     host_ip: str
     guest_ip: str
-
-    @property
-    def guest_cidr(self) -> str:
-        """Guest address with the /31 prefix, for the kernel `ip=` arg."""
-        return f"{self.guest_ip}/31"
-
 
 @dataclass(frozen=True)
 class NetPool:

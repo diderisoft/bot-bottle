@@ -26,7 +26,7 @@ from bot_bottle.backend.docker.consolidated_launch import (
     _network_cidr,
     _network_container_ips,
 )
-from bot_bottle.backend.docker.egress import EGRESS_PORT
+from bot_bottle.contract.hostctl import DEFAULT_EGRESS_PORT as EGRESS_PORT
 from bot_bottle.backend.docker.gateway_net import next_free_ip
 from bot_bottle.control.client import OrchestratorClient
 from bot_bottle.control.gateway import GATEWAY_IMAGE, GATEWAY_NAME, GATEWAY_NETWORK

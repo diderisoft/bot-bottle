@@ -221,20 +221,9 @@ class OrchestratorCore:
         return slug if isinstance(slug, str) and slug else bottle_slug
 
     def _record_for_slug(self, slug: str) -> BottleRecord | None:
-        """The live record for a proposal's bottle, or None if it's gone.
-        Proposals are keyed by bottle id; the metadata-slug scan covers older
-        ones keyed by slug."""
-        rec = self.registry.get(slug)
-        if rec is not None:
-            return rec
-        for rec in self.registry.all():
-            try:
-                meta = json.loads(rec.metadata) if rec.metadata else {}
-            except ValueError:
-                meta = {}
-            if isinstance(meta, dict) and meta.get("slug") == slug:
-                return rec
-        return None
+        """The live record for a proposal's bottle (proposals are keyed by
+        bottle id), or None if it's gone."""
+        return self.registry.get(slug)
 
     def supervise_respond(
         self,

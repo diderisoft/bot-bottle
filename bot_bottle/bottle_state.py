@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import cast
 
 from .paths import bot_bottle_root
+from .util import slugify
 
 
 # Directory layout: ~/.bot-bottle/state/<identity>/...
@@ -25,18 +26,12 @@ _STATE_SUBDIR = "state"
 _PER_BOTTLE_DOCKERFILE_NAME = "Dockerfile"
 _COMMITTED_IMAGE_NAME = "committed-image"
 _COMMITTED_ROOTFS_NAME = "committed-rootfs.tar"
-_TRANSCRIPT_SUBDIR = "transcript"
 # Per-service scratch subdirs.
 _EGRESS_SUBDIR = "egress"
 _GIT_GATE_SUBDIR = "git-gate"
 _SUPERVISE_SUBDIR = "supervise"
 _AGENT_SUBDIR = "agent"
 _METADATA_NAME = "metadata.json"
-# Read-only live config for the supervise server, refreshed on every approval
-# so `list-egress-routes` reports current state.
-_LIVE_CONFIG_SUBDIR = "live-config"
-LIVE_CONFIG_ROUTES_NAME = "routes.yaml"
-LIVE_CONFIG_ALLOWLIST_NAME = "allowlist"
 # Empty marker: preserve the state dir at session end for `resume`.
 _PRESERVE_MARKER = ".preserve"
 
@@ -48,8 +43,7 @@ _SUFFIX_ALPHABET = string.ascii_lowercase + string.digits
 def bottle_identity(agent_name: str) -> str:
     """Mint a fresh, random per-launch identity: `slugify(agent_name)` plus a
     5-char suffix so concurrent starts don't collide."""
-    from .backend.docker import util as docker_mod
-    slug = docker_mod.slugify(agent_name)
+    slug = slugify(agent_name)
     suffix = "".join(secrets.choice(_SUFFIX_ALPHABET) for _ in range(_RANDOM_SUFFIX_LEN))
     return f"{slug}-{suffix}"
 
@@ -176,47 +170,6 @@ def read_committed_image(identity: str) -> str | None:
     return tag or None
 
 
-def per_bottle_image_tag(identity: str) -> str:
-    """Image tag for a per-bottle rebuild, distinct from the base image tag."""
-    return f"bot-bottle-rebuilt-{identity}:latest"
-
-
-def live_config_dir(identity: str) -> Path:
-    """Per-bottle live-config dir, mounted read-only into the supervise server."""
-    return bottle_state_dir(identity) / _LIVE_CONFIG_SUBDIR
-
-
-def live_routes_path(identity: str) -> Path:
-    return live_config_dir(identity) / LIVE_CONFIG_ROUTES_NAME
-
-
-def live_allowlist_path(identity: str) -> Path:
-    return live_config_dir(identity) / LIVE_CONFIG_ALLOWLIST_NAME
-
-
-def write_live_config(
-    identity: str, *, routes: str = "", allowlist: str = "",
-) -> Path:
-    """Create or refresh the live-config dir; empty args leave a file alone.
-    Returns the dir."""
-    d = live_config_dir(identity)
-    d.mkdir(parents=True, exist_ok=True)
-    if routes:
-        p = live_routes_path(identity)
-        p.write_text(routes)
-        p.chmod(0o644)
-    if allowlist:
-        p = live_allowlist_path(identity)
-        p.write_text(allowlist)
-        p.chmod(0o644)
-    return d
-
-
-def transcript_snapshot_dir(identity: str) -> Path:
-    """Where agent session snapshots are kept for resume flows."""
-    return bottle_state_dir(identity) / _TRANSCRIPT_SUBDIR
-
-
 # Per-service scratch subdirs, removed with the state dir by `cleanup_state`.
 
 
@@ -312,12 +265,10 @@ __all__ = [
     "metadata_path",
     "per_bottle_dockerfile",
     "per_bottle_dockerfile_path",
-    "per_bottle_image_tag",
     "preserve_marker_path",
     "read_committed_image",
     "read_metadata",
     "supervise_state_dir",
-    "transcript_snapshot_dir",
     "write_committed_image",
     "write_metadata",
     "write_per_bottle_dockerfile",

@@ -21,7 +21,6 @@ tests/
   integration/
     test_gateway_image.py
     test_sandbox_escape.py
-    test_orphan_cleanup.py
     ...
   canaries/
     test_gitleaks_release.py        # opt-in upstream artifact check
@@ -44,8 +43,6 @@ Discovery is invoked with `-t .` (top-level dir = repo root) so the
 
 ## What the integration tests cover
 
-- `test_orphan_cleanup.py` — `network_remove` is idempotent against
-  missing resources, so the EXIT trap can call it unconditionally.
 - `test_gateway_image.py` — builds Dockerfile.gateway and
   probes that gitleaks / mitmdump / supervise are all reachable
   inside the gateway image.

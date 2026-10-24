@@ -85,7 +85,7 @@ class TestClaudeArgv(unittest.TestCase):
         self.assertNotIn("--append-system-prompt-file", argv)
 
     def test_empty_prompt_string_is_treated_as_no_prompt(self):
-        # Matches the existing exec_agent behavior: falsy
+        # A falsy
         # prompt_path means "skip the flag." The synth path in
         # dashboard.py relies on this when metadata is missing.
         argv = _bottle("").agent_argv(["--continue"])

@@ -45,7 +45,6 @@ def _git_gate_plan(tmp: str) -> GitGatePlan:
     stage = Path(tmp)
     return GitGatePlan(
         slug="test-00001",
-        entrypoint_script=stage / "entrypoint.sh",
         hook_script=stage / "hook.sh",
         access_hook_script=stage / "access-hook.sh",
         upstreams=(

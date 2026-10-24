@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend import gateway_attach as ga
 from bot_bottle.backend.gateway_attach import (
-    AttachPolicy, GatewayAttachError, GatewayAttacher, RunningBottle,
+    GatewayAttachError, GatewayAttacher, RunningBottle,
 )
 from bot_bottle.backend.util import ROOT_EXEC_PATH
 from bot_bottle.control.gateway import GatewayError
@@ -63,9 +63,9 @@ class ReattachRunningBottles(unittest.TestCase):
         self.git_gate = git_gate.start()
         self.addCleanup(git_gate.stop)
 
-    def _run(self, attacher: GatewayAttacher, policy: AttachPolicy = AttachPolicy.STRICT) -> None:
+    def _run(self, attacher: GatewayAttacher) -> None:
         ga.reattach_running_bottles(
-            attacher, orchestrator_url="http://orch", gateway=self.gateway, policy=policy)
+            attacher, orchestrator_url="http://orch", gateway=self.gateway)
 
     def test_restores_address_ca_git_gate_and_egress_tokens_for_every_bottle(self) -> None:
         attacher = _Attacher([_A, _B])
@@ -102,11 +102,6 @@ class ReattachRunningBottles(unittest.TestCase):
             self._run(_Attacher([_A], secrets={}))
         self.assertIn("a: its ENV_VAR_SECRET is missing", str(raised.exception))
         self.client.reprovision_gateway.assert_not_called()
-
-    def test_report_policy_warns_and_continues(self) -> None:
-        with patch.object(ga, "warn") as warn:
-            self._run(_Attacher([_A], fail_ca={"a"}), AttachPolicy.REPORT)
-        self.assertIn("could not reattach 1", warn.call_args.args[0])
 
     def test_unregistered_or_addressless_bottles_are_skipped(self) -> None:
         # Mid-launch (no address yet, or not registered until the pair is up)
@@ -187,7 +182,6 @@ class InfraServiceTrigger(unittest.TestCase):
     def test_restarted_pair_reattaches_and_clears_the_marker(self) -> None:
         self._ensure(True)
         self.assertEqual("http://orch", self.reattach.call_args.kwargs["orchestrator_url"])
-        self.assertIs(AttachPolicy.STRICT, self.reattach.call_args.kwargs["policy"])
         self.assertFalse(self.marker.exists())
 
     def test_a_failed_reattach_is_retried_even_on_adopt(self) -> None:
@@ -224,10 +218,6 @@ class InfraServiceTrigger(unittest.TestCase):
             self._ensure(True)   # nothing recorded yet; this records it
             self._ensure(False)  # recorded and unchanged
         stop.assert_not_called()
-
-    def test_policy_is_passed_through(self) -> None:
-        self._ensure(True, attach_policy=AttachPolicy.REPORT)
-        self.assertIs(AttachPolicy.REPORT, self.reattach.call_args.kwargs["policy"])
 
     def test_a_bring_up_interrupted_mid_restart_is_retried(self) -> None:
         # Interrupted after a plane was recreated but before `_bring_up`

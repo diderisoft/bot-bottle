@@ -117,11 +117,3 @@ def load_bottle_chain(
             to_load.extend(p for p in parent if isinstance(p, str))
 
     return resolve_bottles(raws)[bottle_name], tuple(sources)
-
-
-def load_bottle_chain_from_dir(
-    bottle_name: str, bottles_dir: Path
-) -> ManifestBottle:
-    """Load `bottle_name` and its `extends:` chain from `bottles_dir`, reading
-    only the chain's files. Raises ManifestError."""
-    return load_bottle_chain(bottle_name, ((bottles_dir, False),))[0]

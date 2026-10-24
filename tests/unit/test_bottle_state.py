@@ -54,21 +54,6 @@ class TestPerBottleDockerfile(_FakeHomeMixin, unittest.TestCase):
         path = bottle_state.per_bottle_dockerfile_path("dev")
         self.assertTrue(str(path).endswith("/.bot-bottle/state/dev/Dockerfile"))
 
-    def test_image_tag_unique_per_slug(self):
-        self.assertEqual(
-            "bot-bottle-rebuilt-dev:latest",
-            bottle_state.per_bottle_image_tag("dev"),
-        )
-        self.assertNotEqual(
-            bottle_state.per_bottle_image_tag("dev"),
-            bottle_state.per_bottle_image_tag("api"),
-        )
-
-    def test_transcript_dir_under_state_dir(self):
-        path = bottle_state.transcript_snapshot_dir("dev")
-        self.assertTrue(str(path).endswith("/.bot-bottle/state/dev/transcript"))
-
-
 class TestBottleIdentity(unittest.TestCase):
     """bottle_identity(agent_name) — PRD 0016 follow-up.
 

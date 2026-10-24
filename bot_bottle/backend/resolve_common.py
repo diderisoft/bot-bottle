@@ -93,9 +93,8 @@ def prepare_supervise(bottle: ManifestBottle, slug: str) -> SupervisePlan | None
     if not bottle.supervise:
         return None
     supervise_state_dir(slug).mkdir(parents=True, exist_ok=True)
-    mgr = StoreManager(host_db_path())
-    mgr.migrate()
-    return SupervisePlan(slug=slug, db_path=mgr.db_path)
+    StoreManager(host_db_path()).migrate()
+    return SupervisePlan(slug=slug)
 
 
 def merge_provision_env_vars(provision: AgentProvisionPlan) -> AgentProvisionPlan:

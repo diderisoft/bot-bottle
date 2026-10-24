@@ -6,7 +6,6 @@ import unittest
 
 from bot_bottle.control.git_gate_render import (
     GitGateUpstream,
-    git_gate_render_entrypoint,
     git_gate_render_provision,
 )
 
@@ -49,18 +48,6 @@ class TestProvisionRender(unittest.TestCase):
         for bad in ("../etc", "a/b", "a b", "a;rm", ""):
             with self.assertRaises(ValueError):
                 git_gate_render_provision(bad, _ups("foo"))
-
-
-class TestEntrypointUnchanged(unittest.TestCase):
-    """The shared `_git_gate_init_repo_fn` refactor must not alter the
-    single-tenant daemon entrypoint's output."""
-
-    def test_entrypoint_still_single_tenant_flat(self) -> None:
-        script = git_gate_render_entrypoint(_ups("foo"))
-        self.assertIn("repo=/git/${name}.git", script)      # flat, not namespaced
-        self.assertIn("keyfile=/git-gate/creds/${name}-key", script)
-        self.assertIn("--base-path=/git", script)
-        self.assertIn("exec git daemon", script)
 
 
 if __name__ == "__main__":

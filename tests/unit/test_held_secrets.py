@@ -46,7 +46,7 @@ def _plan(stage: Path, *, env: dict[str, str], forwarded: dict[str, str],
         "manifest": index.load_for_agent("demo"),
         "stage_dir": stage,
         "git_gate_plan": GitGatePlan(
-            slug=_SLUG, entrypoint_script=stage / "e.sh", hook_script=stage / "h.sh",
+            slug=_SLUG, hook_script=stage / "h.sh",
             access_hook_script=stage / "a.sh", upstreams=()),
         "egress_plan": EgressPlan(
             slug=_SLUG, routes_path=stage / "egress.yaml", routes=(),

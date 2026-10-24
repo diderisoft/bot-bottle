@@ -75,10 +75,6 @@ class PackageVersion:
     release: tuple[int, int, int] | None
 
     @property
-    def is_release(self) -> bool:
-        return self.release is not None
-
-    @property
     def identity(self) -> tuple[str, str, str]:
         """(type, package, version): what protection is keyed on."""
         return (self.registry_type, self.package, self.version)

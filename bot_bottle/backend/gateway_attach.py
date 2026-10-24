@@ -6,14 +6,13 @@ egress tokens are empty, and after a CA rotation the bottles distrust the
 gateway. `reattach_running_bottles` restores all four. Backends supply the
 primitives as a `GatewayAttacher`.
 
-Every bottle is attempted and failures collected. By default they abort the
-bring-up, naming each bottle; `AttachPolicy.REPORT` reports and continues.
+Every bottle is attempted and failures collected; then they abort the
+bring-up, naming each bottle.
 """
 
 from __future__ import annotations
 
 import abc
-import enum
 from dataclasses import dataclass
 
 from ..bottle_state import git_gate_state_dir
@@ -21,18 +20,13 @@ from ..control.gateway import Gateway, GatewayError
 from ..git_gate.plan import GitGatePlan
 from ..git_gate.provision import load_upstreams_snapshot
 from ..git_gate.service import stage_git_gate_scripts
-from ..lib.log import info, warn
+from ..lib.log import info
 from ..control.client import OrchestratorClient, OrchestratorClientError
 from .provision_gateway import GatewayTransport, provision_git_gate
 
 
 class GatewayAttachError(RuntimeError):
     """One or more running bottles could not be reattached to the gateway."""
-
-
-class AttachPolicy(enum.Enum):
-    STRICT = "strict"  # any failure aborts the bring-up (default)
-    REPORT = "report"  # failures are reported and the bring-up continues
 
 
 @dataclass(frozen=True)
@@ -74,7 +68,6 @@ def reattach_running_bottles(
     *,
     orchestrator_url: str,
     gateway: Gateway,
-    policy: AttachPolicy = AttachPolicy.STRICT,
 ) -> None:
     """Restore every running bottle's gateway address, CA, git-gate state and
     egress tokens."""
@@ -127,9 +120,7 @@ def reattach_running_bottles(
             + "\n  ".join(failures)
             + "\nStop or remove those bottles, then retry."
         )
-        if policy is AttachPolicy.STRICT:
-            raise GatewayAttachError(message)
-        warn(message)
+        raise GatewayAttachError(message)
 
 
 def reprovision_git_gate(transport: GatewayTransport, bottle_id: str, slug: str) -> None:
@@ -140,10 +131,9 @@ def reprovision_git_gate(transport: GatewayTransport, bottle_id: str, slug: str)
     upstreams = load_upstreams_snapshot(state_dir)
     if not upstreams:
         return
-    entrypoint, hook, access_hook, gitleaks = stage_git_gate_scripts(state_dir, upstreams)
+    hook, access_hook, gitleaks = stage_git_gate_scripts(state_dir)
     provision_git_gate(transport, bottle_id, GitGatePlan(
         slug=slug,
-        entrypoint_script=entrypoint,
         hook_script=hook,
         access_hook_script=access_hook,
         gitleaks_config=gitleaks,
@@ -152,7 +142,6 @@ def reprovision_git_gate(transport: GatewayTransport, bottle_id: str, slug: str)
 
 
 __all__ = [
-    "AttachPolicy",
     "GatewayAttachError",
     "GatewayAttacher",
     "RunningBottle",

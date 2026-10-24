@@ -9,9 +9,9 @@ from bot_bottle.gateway.egress.context import (
     DENY_RESOLVER_ERROR,
     DENY_UNATTRIBUTED,
     DENY_UNPARSEABLE,
-    resolve_client_config,
     resolve_client_context,
 )
+from bot_bottle.gateway.egress.types import Config
 from bot_bottle.gateway.egress.matching import decide
 from bot_bottle.gateway.policy_resolver import PolicyResolveError
 
@@ -22,11 +22,19 @@ class _FakeResolver:
         self._raises = raises
         self.calls: list[tuple[str, str]] = []
 
-    def resolve(self, source_ip: str, identity_token: str = "") -> str | None:
+    def resolve_policy_and_bottle_id(
+        self, source_ip: str, identity_token: str = "",
+    ) -> tuple[str | None, str | None, dict[str, str]]:
         self.calls.append((source_ip, identity_token))
         if self._raises:
             raise PolicyResolveError("orchestrator down")
-        return self._result
+        return self._result, "b1", {}
+
+
+def resolve_client_config(
+    resolver: _FakeResolver, client_ip: str, identity_token: str = "",
+) -> Config:
+    return resolve_client_context(resolver, client_ip, identity_token)[0]
 
 
 class TestResolveClientConfig(unittest.TestCase):

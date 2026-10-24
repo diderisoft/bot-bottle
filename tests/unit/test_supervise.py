@@ -323,9 +323,8 @@ class TestSupervisePrepare(unittest.TestCase):
     def test_prepare_creates_queue(self):
         plan = prepare_supervise(_SUPERVISED, "dev")
         assert plan is not None
-        self.assertTrue(plan.db_path.is_file())
+        self.assertTrue(host_db_path().is_file())
         self.assertEqual("dev", plan.slug)
-        self.assertEqual("", plan.internal_network)
 
     def test_prepare_skips_unsupervised_bottles(self):
         unsupervised = cast(ManifestBottle, SimpleNamespace(supervise=False))

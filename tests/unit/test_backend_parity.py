@@ -232,8 +232,7 @@ class TestCloseParity(unittest.TestCase):
 
 
 class TestAgentCommandParity(unittest.TestCase):
-    """`agent_command` is exactly what an interactive `exec_agent` runs, so a
-    host-controller session runs the same thing a foreground one would."""
+    """Every backend's `agent_command` wraps the agent the same way."""
 
     def _bottles(self) -> list[tuple[str, object]]:
         from bot_bottle.backend.macos_container.bottle import MacosContainerBottle
@@ -241,23 +240,6 @@ class TestAgentCommandParity(unittest.TestCase):
                                    terminal_title="t", terminal_color="red",
                                    exec_env={"HTTPS_PROXY": "http://tok@gw"})
         return [(label, factory({})) for label, factory in _BACKENDS] + [("macos", mac)]
-
-    def test_exec_agent_runs_agent_command(self) -> None:
-        for label, bottle in self._bottles():
-            with self.subTest(label), \
-                    patch("subprocess.run",
-                          return_value=subprocess.CompletedProcess([], 5)) as run:
-                command, extra = bottle.agent_command(["--x"])  # type: ignore[attr-defined]
-                self.assertEqual(5, bottle.exec_agent(["--x"], tty=True))  # type: ignore[attr-defined]
-            self.assertEqual(command, run.call_args.args[0])
-            env = run.call_args.kwargs.get("env")
-            if extra:
-                assert env is not None
-                self.assertTrue(set(extra.items()) <= set(env.items()))
-                # The value rides in the env, never on argv.
-                self.assertNotIn("http://tok@gw", " ".join(command))
-            else:
-                self.assertIsNone(env)
 
     def test_title_or_color_wraps_the_command_in_a_login_shell(self) -> None:
         mac = self._bottles()[-1][1]

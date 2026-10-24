@@ -24,9 +24,6 @@ class EgressPlan:
     routes_path: Path
     routes: tuple[EgressRoute, ...]
     token_env_map: dict[str, str]
-    internal_network: str = ""
-    egress_network: str = ""
-    mitmproxy_ca_host_path: Path = Path()
     mitmproxy_ca_cert_only_host_path: Path = Path()
     log: int = 0
     canary: str = ""

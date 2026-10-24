@@ -113,16 +113,7 @@ class BottlePlan(ABC):
     @property
     def git_gate_insteadof_host(self) -> str:
         """Host and port for git-gate insteadOf URLs, once launch has set them."""
-        if self.agent_git_gate_url.startswith("http://"):
-            return self.agent_git_gate_url.removeprefix("http://").rstrip("/")
-        return "git-gate"
-
-    @property
-    def git_gate_insteadof_scheme(self) -> str:
-        """URL scheme for git-gate insteadOf rewrites."""
-        if self.agent_git_gate_url.startswith("http://"):
-            return "http"
-        return "git"
+        return self.agent_git_gate_url.removeprefix("http://").rstrip("/")
 
     @property
     def workspace_plan(self) -> WorkspacePlan:

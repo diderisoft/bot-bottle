@@ -15,10 +15,7 @@ class GitGatePlan:
     TOML. Empty values mean not yet set."""
 
     slug: str
-    entrypoint_script: Path
     hook_script: Path
     access_hook_script: Path
     upstreams: tuple[GitGateUpstream, ...]
     gitleaks_config: Path = Path()
-    internal_network: str = ""
-    egress_network: str = ""

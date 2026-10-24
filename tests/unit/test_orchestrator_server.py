@@ -633,16 +633,18 @@ class TestDispatchSupervise(unittest.TestCase):
         self.store.migrate()
         StoreManager(db).migrate()
         self.orch = OrchestratorCore(self.store)
+        self.bottle_id = ""
 
     def tearDown(self) -> None:
         self._env.stop()
         self._tmp.cleanup()
 
     def _queue(self, slug: str, proposed: str) -> str:
-        self.store.register(
+        rec = self.store.register(
             "10.243.0.1", metadata=json.dumps({"slug": slug}), policy="routes: []\n")
+        self.bottle_id = rec.bottle_id
         p = Proposal.new(
-            bottle_slug=slug, tool=TOOL_EGRESS_ALLOW, proposed_file=proposed,
+            bottle_slug=rec.bottle_id, tool=TOOL_EGRESS_ALLOW, proposed_file=proposed,
             justification="need it")
         Supervisor(self.db).write_proposal(p)
         return p.id
@@ -659,7 +661,7 @@ class TestDispatchSupervise(unittest.TestCase):
         pid = self._queue("demo", "routes:\n  - host: google.com\n")
         status, payload = dispatch(
             self.orch, "POST", "/supervise/respond",
-            _body({"proposal_id": pid, "bottle_slug": "demo", "decision": "approve"}),
+            _body({"proposal_id": pid, "bottle_slug": self.bottle_id, "decision": "approve"}),
         )
         self.assertEqual(200, status)
         self.assertTrue(payload["responded"])

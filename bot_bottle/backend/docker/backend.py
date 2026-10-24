@@ -10,7 +10,6 @@ from contextlib import contextmanager, redirect_stderr
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator, Sequence
 
-from ...contract.supervise import SUPERVISE_HOSTNAME, SUPERVISE_PORT
 from ...agent_provider import AgentProvisionPlan
 from ...egress import EgressPlan
 from ...env import ResolvedEnv
@@ -103,14 +102,6 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     def infra_service(self) -> "DockerInfraService":
         from .infra import DockerInfraService
         return DockerInfraService(self.settings)
-
-    def supervise_mcp_url(self, plan: DockerBottlePlan) -> str:
-        """The agent's supervise URL on the shared gateway."""
-        if plan.supervise_plan is None:
-            return ""
-        if plan.agent_supervise_url:
-            return plan.agent_supervise_url
-        return f"http://{SUPERVISE_HOSTNAME}:{SUPERVISE_PORT}/"
 
     def prepare_cleanup(self) -> DockerBottleCleanupPlan:
         return _cleanup.prepare_cleanup(self.settings)

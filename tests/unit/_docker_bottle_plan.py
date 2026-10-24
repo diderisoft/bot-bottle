@@ -63,12 +63,9 @@ def _manifest(*, supervise: bool, with_git: bool, with_egress: bool) -> Manifest
 def _git_gate_plan(upstreams: tuple[GitGateUpstream, ...] = ()) -> GitGatePlan:
     return GitGatePlan(
         slug=SLUG,
-        entrypoint_script=STATE / "git-gate" / "entrypoint.sh",
         hook_script=STATE / "git-gate" / "pre-receive",
         access_hook_script=STATE / "git-gate" / "access-hook",
         upstreams=upstreams,
-        internal_network=f"bot-bottle-net-{SLUG}",
-        egress_network=f"bot-bottle-egress-{SLUG}",
     )
 
 
@@ -87,9 +84,6 @@ def _egress_plan(
         routes_path=STATE / "egress" / "routes.yaml",
         routes=routes,
         token_env_map=token_env_map,
-        internal_network=f"bot-bottle-net-{SLUG}",
-        egress_network=f"bot-bottle-egress-{SLUG}",
-        mitmproxy_ca_host_path=STATE / "egress-ca" / "mitmproxy-ca.pem",
         mitmproxy_ca_cert_only_host_path=STATE / "egress-ca" / "ca.pem",
         canary="fake-canary-value" if canary else "",
         canary_env="CANON_ALPHA_SECRET" if canary else "",
@@ -99,8 +93,6 @@ def _egress_plan(
 def _supervise_plan() -> SupervisePlan:
     return SupervisePlan(
         slug=SLUG,
-        db_path=STATE / "bot-bottle.db",
-        internal_network=f"bot-bottle-net-{SLUG}",
     )
 
 

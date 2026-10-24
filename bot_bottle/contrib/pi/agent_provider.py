@@ -189,7 +189,6 @@ _RUNTIME = AgentProviderRuntime(
     image="bot-bottle-pi:latest",
     prompt_mode="append_system_prompt",
     bypass_args=(),
-    resume_args=(),
 )
 
 

@@ -345,7 +345,7 @@ class TestRenderRoutes(unittest.TestCase):
         self.assertEqual([], parse_yaml_subset(rendered)["routes"])
 
     def test_round_trip_through_addon_core(self):
-        from bot_bottle.gateway.egress.addon_core import load_config
+        from bot_bottle.gateway.egress.schema import load_config
         b = _bottle([
             {"host": "api.github.com",
              "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
@@ -364,7 +364,7 @@ class TestRenderRoutes(unittest.TestCase):
         self.assertEqual("", addon_routes[2].auth_scheme)
 
     def test_dlp_round_trips(self):
-        from bot_bottle.gateway.egress.addon_core import load_config
+        from bot_bottle.gateway.egress.schema import load_config
         b = _bottle([{"host": "x.example", "dlp": {
             "outbound_detectors": ["token_patterns"],
             "inbound_detectors": False,
@@ -376,7 +376,7 @@ class TestRenderRoutes(unittest.TestCase):
         self.assertEqual((), addon_routes[0].inbound_detectors)
 
     def test_outbound_on_match_round_trips(self):
-        from bot_bottle.gateway.egress.addon_core import load_config
+        from bot_bottle.gateway.egress.schema import load_config
         b = _bottle([{"host": "logs.example", "dlp": {
             "outbound_on_match": "redact",
         }}])
@@ -393,7 +393,7 @@ class TestRenderRoutes(unittest.TestCase):
         self.assertNotIn("outbound_on_match", rendered)
 
     def test_git_fetch_policy_round_trips(self):
-        from bot_bottle.gateway.egress.addon_core import load_config
+        from bot_bottle.gateway.egress.schema import load_config
         b = _bottle([{"host": "github.com", "git": {"fetch": True}}])
         routes = egress_routes_for_bottle(b)
         rendered = egress_render_routes(routes)
@@ -406,7 +406,7 @@ class TestRenderRoutes(unittest.TestCase):
         it, but the renderer in between dropped it — so the flag never reached
         the proxy and registry pulls kept failing with "unauthorized" while
         the config looked correct everywhere it was inspected."""
-        from bot_bottle.gateway.egress.addon_core import load_config
+        from bot_bottle.gateway.egress.schema import load_config
         b = _bottle([{"host": "registry-1.docker.io", "preserve_auth": True}])
         routes = egress_routes_for_bottle(b)
         rendered = egress_render_routes(routes)
@@ -417,7 +417,7 @@ class TestRenderRoutes(unittest.TestCase):
         b = _bottle([{"host": "x.example"}])
         rendered = egress_render_routes(egress_routes_for_bottle(b))
         self.assertNotIn("preserve_auth", rendered)
-        from bot_bottle.gateway.egress.addon_core import load_config
+        from bot_bottle.gateway.egress.schema import load_config
         self.assertFalse(load_config(rendered).routes[0].preserve_auth)
 
     def test_log_zero_omitted_from_render(self):
@@ -435,7 +435,8 @@ class TestRenderRoutes(unittest.TestCase):
                 self.assertTrue(rendered.startswith(f"log: {level}\n"))
 
     def test_log_level_round_trips_to_addon_core(self):
-        from bot_bottle.gateway.egress.addon_core import load_config, LOG_FULL
+        from bot_bottle.gateway.egress.schema import load_config
+        from bot_bottle.gateway.egress.types import LOG_FULL
         b = _bottle([{"host": "x.example"}])
         routes = egress_routes_for_bottle(b)
         rendered = egress_render_routes(routes, log=LOG_FULL)
@@ -445,7 +446,8 @@ class TestRenderRoutes(unittest.TestCase):
 
     def test_log_via_manifest_flows_to_render(self):
         from bot_bottle.manifest import ManifestIndex
-        from bot_bottle.gateway.egress.addon_core import load_config, LOG_BLOCKS
+        from bot_bottle.gateway.egress.schema import load_config
+        from bot_bottle.gateway.egress.types import LOG_BLOCKS
         m = ManifestIndex.from_json_obj({
             "bottles": {"dev": {"egress": {
                 "log": 1,
@@ -513,7 +515,7 @@ class TestRenderRoutesEscaping(unittest.TestCase):
         self.assertEqual('Bear"er', parsed[0]["inspect"]["auth_scheme"])
 
     def test_path_value_with_double_quote_round_trips(self):
-        from bot_bottle.gateway.egress.addon_core import PathMatch, MatchEntry
+        from bot_bottle.gateway.egress.types import PathMatch, MatchEntry
         routes = (EgressRoute(
             host="api.example",
             matches=(MatchEntry(paths=(PathMatch(type="prefix", value='/v1/"quoted"/'),)),),
@@ -522,7 +524,7 @@ class TestRenderRoutesEscaping(unittest.TestCase):
         self.assertEqual('/v1/"quoted"/', parsed[0]["inspect"]["matches"][0]["paths"][0]["value"])
 
     def test_header_value_with_double_quote_round_trips(self):
-        from bot_bottle.gateway.egress.addon_core import HeaderMatch, MatchEntry
+        from bot_bottle.gateway.egress.types import HeaderMatch, MatchEntry
         routes = (EgressRoute(
             host="api.example",
             matches=(MatchEntry(headers=(HeaderMatch(name="x-h", value='val"ue'),)),),

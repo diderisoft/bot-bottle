@@ -266,7 +266,6 @@ def _split_key_value(content: str, lineno: int) -> tuple[str, str]:
             if i + 1 >= len(content) or content[i + 1] in (" ", "\t"):
                 return content[:i].strip(), content[i + 1:].lstrip()
     raise YamlSubsetError(f"yaml-subset: line {lineno} missing `: ` separator: {content!r}")
-    return "", ""  # unreachable; for the type checker
 
 
 def _parse_block(

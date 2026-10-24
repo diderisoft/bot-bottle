@@ -29,6 +29,7 @@ from .codex_auth import (
     codex_login_location,
     write_codex_dummy_auth_file,
 )
+from ...contract.identity import IDENTITY_HEADER
 from ...egress import CODEX_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
 from ...lib.log import die, info
 
@@ -38,8 +39,6 @@ if TYPE_CHECKING:
 
 
 _SUPERVISE_MCP_NAME = "supervise"
-# Identity token header (as in `contract.identity`).
-_IDENTITY_HEADER = "x-bot-bottle-identity"
 _CODEX_CLI = "/home/node/.codex/packages/standalone/current/bin/codex"
 _CODEX_CLI_PATH = (
     "/home/node/.local/bin:"
@@ -69,7 +68,7 @@ def _supervise_mcp_config_toml(supervise_url: str, token: str) -> str:
         f"url = {_toml_basic_string(supervise_url)}",
     ]
     if token:
-        key = _toml_basic_string(_IDENTITY_HEADER)
+        key = _toml_basic_string(IDENTITY_HEADER)
         val = _toml_basic_string(token)
         lines.append(f"http_headers = {{ {key} = {val} }}")
     lines.append("")
@@ -91,7 +90,6 @@ _RUNTIME = AgentProviderRuntime(
     image="bot-bottle-codex:latest",
     prompt_mode="read_prompt_file",
     bypass_args=("--dangerously-bypass-approvals-and-sandbox",),
-    resume_args=("resume", "--last"),
     smoke_test=(_CODEX_CLI, "--version"),
 )
 

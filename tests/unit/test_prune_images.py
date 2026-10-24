@@ -47,7 +47,6 @@ class VersionParsing(unittest.TestCase):
         v = _mk("container", "bot-bottle-gateway", "0.14.2-arm64", 1)
         self.assertEqual(v.base, "0.14.2")
         self.assertEqual(v.platform, "arm64")
-        self.assertTrue(v.is_release)
         self.assertEqual(v.release, (0, 14, 2))
 
     def test_generic_has_no_arch(self) -> None:
@@ -60,7 +59,6 @@ class VersionParsing(unittest.TestCase):
         v = _mk("container", "bot-bottle-codex", "0.0.0-dev-7-amd64", 1)
         self.assertEqual(v.base, "0.0.0-dev-7")
         self.assertEqual(v.platform, "amd64")
-        self.assertFalse(v.is_release)
         self.assertIsNone(v.release)
 
     def test_foreign_package_is_left_alone(self) -> None:

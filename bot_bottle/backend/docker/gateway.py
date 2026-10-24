@@ -45,7 +45,6 @@ class DockerGateway(Gateway):
         egress_network: str = GATEWAY_EGRESS_NETWORK,
         build_context: Path | None = None,
         dockerfile: str | None = GATEWAY_DOCKERFILE,
-        host_port_bindings: tuple[int, ...] = (),
         ca_mount_source: str | Path | None = None,
         subnet: str | None = None,
     ) -> None:
@@ -65,8 +64,6 @@ class DockerGateway(Gateway):
         # Resolved lazily so reading the CA never stages a build root.
         self._build_context = build_context
         self._dockerfile = dockerfile
-        # Ports published on the host, for the firecracker dev-harness gateway.
-        self._host_port_bindings = host_port_bindings
         self._subnet = (
             subnet or settings.infra.docker_gateway_subnet or DEFAULT_GATEWAY_SUBNET
         )
@@ -290,8 +287,6 @@ class DockerGateway(Gateway):
             # No DB mount: the gateway reaches state over the control-plane
             # RPC.
         ]
-        for port in self._host_port_bindings:
-            argv += ["--publish", f"0.0.0.0:{port}:{port}"]
         run_env = dict(os.environ)
         # The daemons resolve policy against the control plane per request.
         argv += ["--env", f"BOT_BOTTLE_ORCHESTRATOR_URL={self._orchestrator_url}"]

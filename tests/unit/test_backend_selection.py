@@ -437,44 +437,5 @@ class TestIsBackendReady(unittest.TestCase):
         self.assertEqual([True], calls)
 
 
-class TestEnsureOrchestrator(unittest.TestCase):
-    """The backend-agnostic orchestrator bring-up entry point. Docker starts
-    each backend's InfraService brings up its orchestrator + gateway pair."""
-
-    def test_docker_delegates_to_infra_service(self):
-        b = get_bottle_backend(_S, "docker")
-        with patch(
-            "bot_bottle.backend.docker.infra.DockerInfraService"
-        ) as service_cls:
-            service_cls.return_value.ensure_running.return_value = (
-                "http://127.0.0.1:8099"
-            )
-            url = b.ensure_orchestrator()
-        self.assertEqual(url, "http://127.0.0.1:8099")
-        service_cls.return_value.ensure_running.assert_called_once_with()
-
-    def test_firecracker_delegates_to_infra_service(self):
-        b = get_bottle_backend(_S, "firecracker")
-        with patch(
-            "bot_bottle.backend.firecracker.infra.FirecrackerInfraService"
-        ) as service_cls:
-            service_cls.return_value.ensure_running.return_value = (
-                "http://10.243.255.1:8099"
-            )
-            url = b.ensure_orchestrator()
-        self.assertEqual(url, "http://10.243.255.1:8099")
-
-    def test_macos_delegates_to_infra_service(self):
-        b = get_bottle_backend(_S, "macos-container")
-        with patch(
-            "bot_bottle.backend.macos_container.infra.MacosInfraService"
-        ) as service_cls:
-            service_cls.return_value.ensure_running.return_value = (
-                "http://192.168.128.2:8099"
-            )
-            url = b.ensure_orchestrator()
-        self.assertEqual(url, "http://192.168.128.2:8099")
-
-
 if __name__ == "__main__":
     unittest.main()

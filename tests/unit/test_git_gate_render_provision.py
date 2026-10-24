@@ -71,25 +71,15 @@ class TestRenderGitconfig(unittest.TestCase):
 
     def test_single_entry_renders_insteadof(self) -> None:
         out = git_gate_render_gitconfig((_entry(),), "git-gate")
-        self.assertIn('[url "git://git-gate/repo.git"]', out)
+        self.assertIn('[url "http://git-gate/repo.git"]', out)
         self.assertIn("insteadOf = git@github.com:o/r.git", out)
 
-    def test_scheme_override(self) -> None:
-        out = git_gate_render_gitconfig((_entry(),), "1.2.3.4:9418", scheme="http")
-        self.assertIn('[url "http://1.2.3.4:9418/repo.git"]', out)
-
     def test_identity_token_extraheader_over_http(self) -> None:
-        # Delivered as a URL-scoped http.extraHeader so git-http can enforce
-        # the mandatory (source_ip, token) pair; only over the http transport.
+        # A URL-scoped http.extraHeader, so git-http can check (source_ip, token).
         out = git_gate_render_gitconfig(
-            (_entry(),), "1.2.3.4:9420", scheme="http", identity_token="TOK123")
+            (_entry(),), "1.2.3.4:9420", identity_token="TOK123")
         self.assertIn('[http "http://1.2.3.4:9420/"]', out)
         self.assertIn("extraHeader = x-bot-bottle-identity: TOK123", out)
-
-    def test_identity_token_omitted_over_git_scheme(self) -> None:
-        out = git_gate_render_gitconfig(
-            (_entry(),), "git-gate", scheme="git", identity_token="TOK123")
-        self.assertNotIn("extraHeader", out)
 
     def test_remote_key_alias_with_nondefault_port(self) -> None:
         out = git_gate_render_gitconfig(

@@ -53,7 +53,7 @@ def _fields(stage: Path) -> dict[str, Any]:
         "manifest": _INDEX.load_for_agent("demo"),
         "stage_dir": stage,
         "git_gate_plan": GitGatePlan(
-            slug=_SLUG, entrypoint_script=stage / "e.sh", hook_script=stage / "h.sh",
+            slug=_SLUG, hook_script=stage / "h.sh",
             access_hook_script=stage / "a.sh", upstreams=()),
         "egress_plan": EgressPlan(
             slug=_SLUG, routes_path=stage / "egress.yaml", routes=(),
@@ -86,7 +86,7 @@ class _LaunchCase(unittest.TestCase):
 class TestDockerLaunchSecrets(_LaunchCase):
     def test_token_refs_resolve_from_the_plan(self) -> None:
         plan = DockerBottlePlan(**_fields(self.stage), use_runsc=False)
-        images = BottleImages(agent="a:latest", sidecar="s:latest")
+        images = BottleImages(agent="a:latest")
         with mock.patch.object(docker_launch, "launch_consolidated",
                                side_effect=_Stop) as register, \
                 mock.patch.object(docker_launch, "resolve_teardown_timeout", return_value=1), \
@@ -121,7 +121,7 @@ class TestFirecrackerLaunchSecrets(_LaunchCase):
 class TestMacosLaunchSecrets(_LaunchCase):
     def test_token_refs_resolve_from_the_plan(self) -> None:
         plan = MacosContainerBottlePlan(**_fields(self.stage))
-        images = BottleImages(agent="a:latest", sidecar="s:latest")
+        images = BottleImages(agent="a:latest")
         with mock.patch.object(mac_launch, "MacosInfraService"), \
                 mock.patch.object(mac_launch, "ensure_gateway"), \
                 mock.patch.object(mac_launch, "_install_gateway_ca",

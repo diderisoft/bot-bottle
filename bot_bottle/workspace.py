@@ -47,7 +47,6 @@ class WorkspacePlan:
     owner: str = DEFAULT_WORKSPACE_OWNER
     mode: str = DEFAULT_WORKSPACE_MODE
     copy_contents: bool = True
-    copy_git: bool = True
     has_host_git_dir: bool = False
     # Mounted read-write from the host: edits land in place, so nothing is
     # copied or exported.

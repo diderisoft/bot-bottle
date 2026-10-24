@@ -1,6 +1,6 @@
 """Gateway supervisor: PID 1 in the gateway image.
 
-Starts the daemons (egress, git-gate, supervise), forwards SIGTERM/SIGINT,
+Starts the daemons (egress, git-http, supervise), forwards SIGTERM/SIGINT,
 prefixes each one's output with `[name] `, and restarts a daemon that dies. It
 exits only on SIGTERM/SIGINT. `BOT_BOTTLE_GATEWAY_DAEMONS` selects a subset
 (default: all). Stdlib only.
@@ -34,7 +34,7 @@ class _DaemonSpec:
 
 # Egress-only credential env prefixes; no other daemon sees them.
 _EGRESS_ONLY_ENV_PREFIXES: tuple[str, ...] = ("EGRESS_TOKEN_",)
-_READY_GATED_DAEMONS: tuple[str, ...] = ("git-gate", "git-http")
+_READY_GATED_DAEMONS: tuple[str, ...] = ("git-http",)
 
 # The orchestrator's signing key, stripped from every daemon's env in case it
 # ever leaks into the gateway. Same value as
@@ -57,7 +57,6 @@ def _env_for_daemon(name: str, base_env: dict[str, str]) -> dict[str, str]:
 
 _DAEMONS: tuple[_DaemonSpec, ...] = (
     _DaemonSpec("egress", ("/bin/sh", "/app/egress-entrypoint.sh")),
-    _DaemonSpec("git-gate", ("/bin/sh", "/git-gate-entrypoint.sh")),
     _DaemonSpec("git-http", ("python3", "-m", "bot_bottle.gateway.git_gate.http_backend")),
     _DaemonSpec("supervise", ("python3", "-m", "bot_bottle.gateway.supervisor.server")),
 )
@@ -139,8 +138,7 @@ class _DaemonManager:
         self.shutdown_at: float | None = None
         # Children already logged as exited.
         self._logged_dead: set[str] = set()
-        # Restart requests from signal handlers, coalesced by name and drained
-        # by the main loop.
+        # Crashed children awaiting restart, drained by the main loop.
         self._restart_requested: set[str] = set()
 
     def start_all(self) -> None:
@@ -168,17 +166,6 @@ class _DaemonManager:
                     p.kill()
                 except ProcessLookupError:
                     pass
-
-    def request_restart(self, daemon_name: str) -> bool:
-        """Queue a restart for the main loop (signal-handler safe). Coalesces
-        by name. True iff the daemon is known and shutdown hasn't started."""
-        if self.shutdown_at is not None:
-            _log(f"restart {daemon_name} skipped; supervisor is shutting down")
-            return False
-        if not any(spec.name == daemon_name for spec, _ in self.procs):
-            return False
-        self._restart_requested.add(daemon_name)
-        return True
 
     def tick(self) -> bool:
         """One watch-loop iteration; True once every child has exited. A crash
@@ -246,26 +233,6 @@ class _DaemonManager:
                 return
             self.restart_daemon(daemon_name)
 
-    def forward_signal(self, sig: int, daemon_name: str) -> bool:
-        """Forward a signal to one named child. True iff a live child was
-        signaled."""
-        for spec, p in self.procs:
-            if spec.name != daemon_name:
-                continue
-            if p.poll() is not None:
-                _log(
-                    f"SIGHUP for {daemon_name} dropped; daemon "
-                    f"already exited (rc={p.returncode})"
-                )
-                return False
-            try:
-                p.send_signal(sig)
-            except ProcessLookupError:
-                return False
-            _log(f"forwarded {signal.Signals(sig).name} to {daemon_name}")
-            return True
-        return False
-
     def restart_daemon(self, daemon_name: str, *, grace: float = 5.0) -> bool:
         """SIGTERM one child, SIGKILL after `grace`, and spawn a replacement in
         its slot, leaving the others running. False if there's no such daemon."""
@@ -315,11 +282,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     signal.signal(signal.SIGTERM, lambda *_: sup.request_shutdown("SIGTERM"))  # type: ignore
     signal.signal(signal.SIGINT, lambda *_: sup.request_shutdown("SIGINT"))  # type: ignore
-    # Forward SIGHUP to mitmdump.
-    signal.signal(
-        signal.SIGHUP,
-        lambda *_: sup.forward_signal(signal.SIGHUP, "egress"),  # type: ignore[misc]
-    )
 
     while not sup.tick():
         time.sleep(_POLL_INTERVAL)

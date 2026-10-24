@@ -44,13 +44,6 @@ def host_db_path() -> Path:
     return bot_bottle_root() / "db" / HOST_DB_FILENAME
 
 
-def host_db_dir() -> Path:
-    """The host DB's directory, created if missing."""
-    db_dir = host_db_path().parent
-    db_dir.mkdir(parents=True, exist_ok=True)
-    return db_dir
-
-
 def host_audit_dir() -> Path:
     """`<root>/audit/`. Only the host controller writes here."""
     return bot_bottle_root() / AUDIT_DIRNAME
@@ -121,7 +114,6 @@ __all__ = [
     "GATEWAY_CA_DIRNAME",
     "bot_bottle_root",
     "host_db_path",
-    "host_db_dir",
     "host_gateway_ca_dir",
     "host_signing_key",
     "host_orchestrator_token",

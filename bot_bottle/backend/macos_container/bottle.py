@@ -108,14 +108,6 @@ class MacosContainerBottle(Bottle):
             self.agent_argv(argv, tty=True), self.terminal_title, self.terminal_color)
         return command, dict(self._exec_env)
 
-    def exec_agent(self, argv: list[str], *, tty: bool = True) -> int:
-        if tty:
-            command, extra = self.agent_command(argv)
-        else:
-            command, extra = self.agent_argv(argv, tty=False), dict(self._exec_env)
-        env = {**os.environ, **extra} if extra else None
-        return subprocess.run(command, env=env, check=False).returncode
-
     def exec(self, script: str, *, user: str = "node") -> ExecResult:
         # Provisioning gets the agent's exec env too, so its egress carries the
         # token. Bare names again.

@@ -5,17 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import shutil
 import subprocess
-from typing import Iterator
+
 
 from ... import resources
 from ...lib.log import die, info
 from ...lib.proc import run_streaming
-from ...util import slugify as _slugify
-
-
-def slugify(name: str) -> str:
-    """Compatibility wrapper for `bot_bottle.util.slugify`."""
-    return _slugify(name)
 
 
 def run_docker(
@@ -46,15 +40,6 @@ def daemon_running() -> bool:
     return proc.returncode == 0
 
 
-# Most suffixes tried for a conflicting container name.
-MAX_CONTAINER_SUFFIX = 100
-
-
-def container_name_candidates(base: str) -> Iterator[str]:
-    """`base`, `base-2`, ... `base-MAX_CONTAINER_SUFFIX`."""
-    yield base
-    for suffix in range(2, MAX_CONTAINER_SUFFIX + 1):
-        yield f"{base}-{suffix}"
 
 
 def runsc_available() -> bool:
@@ -94,37 +79,6 @@ def force_remove_container(name: str) -> None:
     """`docker rm -f` the container if it exists. Best effort."""
     if container_exists(name):
         run_docker(["docker", "rm", "-f", name])
-
-
-def docker_exec_root(container: str, argv: list[str]) -> None:
-    """`docker exec -u 0`, check=True."""
-    subprocess.run(
-        ["docker", "exec", "-u", "0", container, *argv],
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
-
-
-def docker_exec(container: str, argv: list[str], *, user: str = "") -> None:
-    """`docker exec`, dying with its stderr on failure."""
-    cmd = ["docker", "exec"]
-    if user:
-        cmd += ["-u", user]
-    cmd += [container, *argv]
-    result = run_docker(cmd)
-    if result.returncode != 0:
-        die(
-            f"docker exec in {container} failed: "
-            f"{(result.stderr or '').strip() or '<no stderr>'}"
-        )
-
-
-def docker_cp(src: str, dest: str) -> None:
-    """`docker cp`, dying with its stderr on failure."""
-    result = run_docker(["docker", "cp", src, dest])
-    if result.returncode != 0:
-        die(f"docker cp {src} -> {dest} failed: "
-            f"{(result.stderr or '').strip() or '<no stderr>'}")
 
 
 def build_image(

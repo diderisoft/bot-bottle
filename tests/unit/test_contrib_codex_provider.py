@@ -80,7 +80,6 @@ def _plan(
     if supervise:
         supervise_plan = SupervisePlan(
             slug="demo-abc12",
-            db_path=Path("/tmp/bot-bottle.db"),
         )
     return DockerBottlePlan(
         spec=spec,
@@ -90,7 +89,6 @@ def _plan(
         forwarded_env={},
         git_gate_plan=GitGatePlan(
             slug="demo-abc12",
-            entrypoint_script=Path("/tmp/git-gate-entrypoint.sh"),
             hook_script=Path("/tmp/git-gate-hook"),
             access_hook_script=Path("/tmp/git-gate-access-hook"),
             upstreams=(),

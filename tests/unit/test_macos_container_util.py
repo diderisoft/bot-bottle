@@ -28,21 +28,6 @@ class TestMacosContainerAvailability(unittest.TestCase):
 
 
 class TestMacosContainerCommands(unittest.TestCase):
-    def test_read_container_env(self):
-        completed = util.subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="secret\n", stderr="",
-        )
-        with patch.object(util, "_run_container_op", return_value=completed) as run:
-            self.assertEqual("secret", util.read_container_env("bottle", "KEY"))
-        run.assert_called_once_with(["container", "exec", "bottle", "printenv", "KEY"])
-
-    def test_read_container_env_returns_empty_on_failure(self):
-        completed = util.subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="missing",
-        )
-        with patch.object(util, "_run_container_op", return_value=completed):
-            self.assertEqual("", util.read_container_env("bottle", "KEY"))
-
     def test_dns_server_prefers_direct_host_ipv4_resolver(self):
         scutil = util.subprocess.CompletedProcess(
             args=[],
@@ -365,7 +350,7 @@ resolver #2
         with patch.object(util.subprocess, "run", return_value=completed):
             self.assertEqual(
                 "192.168.128.2",
-                util.container_ipv4_on_network(
+                util.try_container_ipv4_on_network(
                     "bot-bottle-demo",
                     "bot-bottle-net-demo",
                 ),

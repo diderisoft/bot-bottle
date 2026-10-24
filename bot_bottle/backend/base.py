@@ -108,11 +108,8 @@ class Bottle(ABC):
 
     @abstractmethod
     def agent_command(self, argv: list[str]) -> tuple[list[str], dict[str, str]]:
-        """The host command and added env that `exec_agent(argv, tty=True)`
-        runs; the host controller runs it in tmux."""
-
-    @abstractmethod
-    def exec_agent(self, argv: list[str], *, tty: bool = True) -> int: ...
+        """The host command and added env that run the agent interactively;
+        the host controller runs it in tmux."""
 
     @abstractmethod
     def exec(self, script: str, *, user: str = "node") -> ExecResult:
@@ -135,7 +132,6 @@ class BottleImages:
     """Resolved image references or artifact paths for a launch."""
 
     agent: str | Path
-    sidecar: str | Path = ""
 
 
 class BottleBackend(ABC, Generic[PlanT, CleanupT]):
@@ -318,18 +314,12 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     def supervise_mcp_url(self, plan: PlanT) -> str:
         """The agent-side URL of the supervise server, or "" when there is
         none."""
-        del plan
-        return ""
+        return plan.agent_supervise_url
 
     @abstractmethod
     def infra_service(self) -> "InfraService":
         """This backend's orchestrator + gateway pair: bring-up, reattach and
         CA rotation all go through it."""
-
-    def ensure_orchestrator(self) -> str:
-        """Bring up the infra pair (idempotent) and return the host
-        control-plane URL."""
-        return self.infra_service().ensure_running()
 
     @abstractmethod
     def prepare_cleanup(self) -> CleanupT:

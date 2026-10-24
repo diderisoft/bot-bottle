@@ -12,7 +12,24 @@ import unittest
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from bot_bottle.gateway.egress.addon_core import (
+from bot_bottle.gateway.egress.dlp import (
+    build_inbound_scan_text,
+    build_outbound_scan_text,
+    build_token_allow_payload,
+    outbound_scan_headers,
+    scan_inbound,
+    scan_outbound,
+)
+from bot_bottle.gateway.egress.matching import (
+    decide,
+    decide_git_fetch,
+    evaluate_matches,
+    is_git_fetch_request,
+    is_git_push_request,
+    match_route,
+)
+from bot_bottle.gateway.egress.schema import load_config, parse_config, parse_routes
+from bot_bottle.gateway.egress.types import (
     LOG_BLOCKS,
     LOG_FULL,
     LOG_OFF,
@@ -23,21 +40,6 @@ from bot_bottle.gateway.egress.addon_core import (
     PathMatch,
     Route,
     ScanResult,
-    build_inbound_scan_text,
-    build_outbound_scan_text,
-    build_token_allow_payload,
-    decide,
-    decide_git_fetch,
-    evaluate_matches,
-    is_git_fetch_request,
-    is_git_push_request,
-    load_config,
-    match_route,
-    outbound_scan_headers,
-    parse_config,
-    parse_routes,
-    scan_inbound,
-    scan_outbound,
 )
 
 
@@ -1377,15 +1379,15 @@ class TestScanOutboundEnhanced(unittest.TestCase):
 
 class TestOutboundDetectorNames(unittest.TestCase):
     def test_entropy_in_outbound_detector_names(self):
-        from bot_bottle.gateway.egress.addon_core import OUTBOUND_DETECTOR_NAMES
+        from bot_bottle.gateway.egress.dlp_config import OUTBOUND_DETECTOR_NAMES
         self.assertIn("entropy", OUTBOUND_DETECTOR_NAMES)
 
     def test_known_secrets_in_outbound_detector_names(self):
-        from bot_bottle.gateway.egress.addon_core import OUTBOUND_DETECTOR_NAMES
+        from bot_bottle.gateway.egress.dlp_config import OUTBOUND_DETECTOR_NAMES
         self.assertIn("known_secrets", OUTBOUND_DETECTOR_NAMES)
 
     def test_token_patterns_in_outbound_detector_names(self):
-        from bot_bottle.gateway.egress.addon_core import OUTBOUND_DETECTOR_NAMES
+        from bot_bottle.gateway.egress.dlp_config import OUTBOUND_DETECTOR_NAMES
         self.assertIn("token_patterns", OUTBOUND_DETECTOR_NAMES)
 
 

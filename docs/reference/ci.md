@@ -20,7 +20,7 @@ the isolation/attribution key.
 `scripts.unittest_gate` enforces the Docker job's contract: all 22 integration
 tests must execute and none may skip. This includes the real gateway-image,
 control-plane authentication, multitenant policy/token isolation,
-sandbox-escape, and orphan-network tests. Backend skip decorators remain useful
+and sandbox-escape tests. Backend skip decorators remain useful
 for local runs, but the CI preflight plus execution-count gate prevents a
 missing backend or runner-topology regression from becoming a green job.
 

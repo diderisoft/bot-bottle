@@ -15,7 +15,7 @@ SIGTERM/SIGINT. `BOT_BOTTLE_GATEWAY_DAEMONS` limits which daemons run.
 | Daemon | Port | Code |
 |---|---|---|
 | `egress` (mitmdump + addon) | 9099 | `gateway/egress/` |
-| `git-gate` (`git daemon`) and `git-http` (smart HTTP) | 9420 for HTTP | `gateway/git_gate/`; see [git-gate.md](git-gate.md) |
+| `git-http` (git-gate's smart-HTTP server) | 9420 | `gateway/git_gate/`; see [git-gate.md](git-gate.md) |
 | `supervise` (MCP server) | 9100 | `gateway/supervisor/` |
 
 Only `egress` gets the egress token env. Every daemon reaches the orchestrator

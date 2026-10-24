@@ -144,16 +144,16 @@ class TestSelectedDaemons(unittest.TestCase):
 
 class TestDaemonArgv(unittest.TestCase):
     def test_git_daemons_wait_for_ready_marker_when_configured(self):
+        daemon = ("python3", "-m", "bot_bottle.gateway.git_gate.http_backend")
         argv = _argv_for_daemon(
-            "git-gate",
-            ("/bin/sh", "/git-gate-entrypoint.sh"),
+            "git-http", daemon,
             {"BOT_BOTTLE_GIT_GATE_READY_FILE": "/run/git-gate/ready"},
         )
         self.assertEqual("/bin/sh", argv[0])
         self.assertEqual("-c", argv[1])
         self.assertIn("BOT_BOTTLE_GIT_GATE_READY_FILE", argv[2])
-        self.assertEqual("git-gate", argv[3])
-        self.assertEqual(["/bin/sh", "/git-gate-entrypoint.sh"], argv[4:])
+        self.assertEqual("git-http", argv[3])
+        self.assertEqual(list(daemon), argv[4:])
 
     def test_non_git_daemon_does_not_wait_for_ready_marker(self):
         argv = _argv_for_daemon(
@@ -281,59 +281,6 @@ class TestSupervisor(unittest.TestCase):
         sup.request_shutdown(reason="test-teardown")
         self._drive(sup)
 
-    def test_forward_signal_to_named_child(self):
-        # SIGHUP needs to reach mitmdump inside the bundle so
-        # routes.yaml reloads (egress_apply.py issues `docker kill
-        # --signal HUP <bundle>`). The supervisor forwards by daemon
-        # name.
-        #
-        # The child is Python (not a shell-with-trap) on purpose:
-        # bash on macOS defers trap execution while a foreground
-        # builtin like `sleep` is running and stdout is a pipe,
-        # which makes shell-trap test fixtures flaky. The
-        # production code path (mitmdump as the bundle child)
-        # doesn't have a shell in between — egress_entrypoint.sh
-        # `exec`s mitmdump, so SIGHUP lands directly on mitmdump.
-        sighup_marker = (
-            sys.executable, "-c",
-            "import signal, sys, time\n"
-            "def _h(*_): sys.exit(42)\n"
-            "signal.signal(signal.SIGHUP, _h)\n"
-            "while True: time.sleep(0.1)\n",
-        )
-        specs = [
-            _DaemonSpec("egress", sighup_marker),
-            _DaemonSpec("other",  (SLEEP, "30")),
-        ]
-        sup = _DaemonManager(specs)
-        sup.start_all()
-        time.sleep(0.3)  # let Python install the handler
-
-        delivered = sup.forward_signal(signal.SIGHUP, "egress")
-        self.assertTrue(delivered)
-
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline:
-            if sup.procs[0][1].poll() is not None:
-                break
-            time.sleep(0.05)
-        self.assertEqual(42, sup.procs[0][1].returncode,
-                         "egress did not see SIGHUP")
-        # The other daemon is untouched.
-        self.assertIsNone(sup.procs[1][1].poll())
-
-        sup.request_shutdown(reason="cleanup")
-        self._drive(sup)
-
-    def test_forward_signal_unknown_daemon_no_op(self):
-        specs = [_DaemonSpec("a", (SLEEP, "30"))]
-        sup = _DaemonManager(specs)
-        sup.start_all()
-        delivered = sup.forward_signal(signal.SIGHUP, "ghost")
-        self.assertFalse(delivered)
-        sup.request_shutdown(reason="cleanup")
-        self._drive(sup)
-
     def test_restart_daemon_replaces_in_place(self):
         # Restart one daemon; the other (supervise, the MCP server
         # in production) must remain untouched.
@@ -358,64 +305,6 @@ class TestSupervisor(unittest.TestCase):
         self.assertIsNone(sup.procs[1][1].poll(),
                           "supervise should still be running")
 
-        sup.request_shutdown(reason="cleanup")
-        self._drive(sup)
-
-    def test_request_restart_is_drained_by_tick(self):
-        specs = [
-            _DaemonSpec("git-gate", (SLEEP, "30")),
-            _DaemonSpec("supervise", (SLEEP, "30")),
-        ]
-        sup = _DaemonManager(specs)
-        sup.start_all()
-        time.sleep(0.1)
-        old_git_gate_pid = sup.procs[0][1].pid
-        supervise_pid = sup.procs[1][1].pid
-
-        ok = sup.request_restart("git-gate")
-        self.assertTrue(ok)
-        # The non-blocking request path only records intent.
-        self.assertEqual(old_git_gate_pid, sup.procs[0][1].pid)
-
-        done = sup.tick()
-        self.assertFalse(done)
-
-        self.assertNotEqual(old_git_gate_pid, sup.procs[0][1].pid)
-        self.assertEqual(supervise_pid, sup.procs[1][1].pid)
-
-        sup.request_shutdown(reason="cleanup")
-        self._drive(sup)
-
-    def test_repeated_restart_requests_coalesce(self):
-        specs = [_DaemonSpec("git-gate", (SLEEP, "30"))]
-        sup = _DaemonManager(specs)
-        sup.start_all()
-        time.sleep(0.1)
-
-        self.assertTrue(sup.request_restart("git-gate"))
-        self.assertTrue(sup.request_restart("git-gate"))
-        self.assertEqual({"git-gate"}, sup._restart_requested)
-
-        old_pid = sup.procs[0][1].pid
-        sup.tick()
-        first_restarted_pid = sup.procs[0][1].pid
-        self.assertNotEqual(old_pid, first_restarted_pid)
-
-        # A second tick should not restart again; the coalesced
-        # request was consumed by the first tick.
-        sup.tick()
-        self.assertEqual(first_restarted_pid, sup.procs[0][1].pid)
-
-        sup.request_shutdown(reason="cleanup")
-        self._drive(sup)
-
-    def test_request_restart_unknown_daemon_no_op(self):
-        specs = [_DaemonSpec("a", (SLEEP, "30"))]
-        sup = _DaemonManager(specs)
-        sup.start_all()
-        ok = sup.request_restart("ghost")
-        self.assertFalse(ok)
-        self.assertEqual(set(), sup._restart_requested)
         sup.request_shutdown(reason="cleanup")
         self._drive(sup)
 
@@ -445,7 +334,7 @@ class TestSupervisor(unittest.TestCase):
         time.sleep(0.1)
         old_pid = sup.procs[0][1].pid
 
-        self.assertTrue(sup.request_restart("git-gate"))
+        sup._restart_requested.add("git-gate")
         sup.request_shutdown(reason="test")
         self.assertEqual(set(), sup._restart_requested)
         self._drive(sup)

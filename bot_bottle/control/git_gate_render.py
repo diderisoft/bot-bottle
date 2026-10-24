@@ -9,12 +9,10 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..contract.identity import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
+from ..contract.identity import IDENTITY_HEADER
 from ..manifest import ManifestBottle, ManifestGitEntry
 from ..gateway.egress.dlp_detectors import TOKEN_PATTERNS
 
-# git-gate's network alias for git:// URLs.
-GIT_GATE_HOSTNAME = "git-gate"
 
 
 @dataclass(frozen=True)
@@ -58,11 +56,10 @@ def _gitconfig_validate_value(field: str, value: str) -> None:
 
 
 def git_gate_render_gitconfig(
-    entries: tuple[ManifestGitEntry, ...], gate_host: str, *, scheme: str = "git",
-    identity_token: str = "",
+    entries: tuple[ManifestGitEntry, ...], gate_host: str, *, identity_token: str = "",
 ) -> str:
-    """The agent's ~/.gitconfig insteadOf rewrites. `gate_host` is what goes
-    between `<scheme>://` and the repo path. Empty `entries` gives ""."""
+    """The agent's ~/.gitconfig insteadOf rewrites to the gate at
+    `http://<gate_host>/`. Empty `entries` gives ""."""
     if not entries:
         return ""
     out = [
@@ -71,15 +68,14 @@ def git_gate_render_gitconfig(
         "# the upstream bidirectionally (gitleaks-scanned push;\n",
         "# fetch-from-upstream-before-every-upload-pack via access-hook).\n",
     ]
-    # Over HTTP, send the identity token as a header scoped to the gate's URL.
-    # git:// carries none.
-    if identity_token and scheme == "http":
+    # The identity token goes as a header scoped to the gate's URL.
+    if identity_token:
         _gitconfig_validate_value("identity_token", identity_token)
         out.append(f'[http "http://{gate_host}/"]\n')
         out.append(f"\textraHeader = {IDENTITY_HEADER}: {identity_token}\n")
     for entry in entries:
         _gitconfig_validate_value(f"repos[{entry.Name!r}].url", entry.Upstream)
-        out.append(f'[url "{scheme}://{gate_host}/{entry.Name}.git"]\n')
+        out.append(f'[url "http://{gate_host}/{entry.Name}.git"]\n')
         out.append(f"\tinsteadOf = {entry.Upstream}\n")
         if entry.RemoteKey and entry.RemoteKey != entry.UpstreamHost:
             port = (
@@ -106,8 +102,7 @@ def git_gate_known_hosts_line(host: str, port: str, key: str) -> str:
 
 
 def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
-    """The `init_repo` shell function for a repo root and creds dir, shared by
-    the daemon entrypoint and per-bottle provisioning."""
+    """The `init_repo` shell function for a repo root and creds dir."""
     return [
         "init_repo() {",
         "  name=$1",
@@ -136,28 +131,6 @@ def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
         "  install -m 755 /etc/git-gate/pre-receive \"$repo/hooks/pre-receive\"",
         "}",
     ]
-
-
-def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
-    """POSIX sh entrypoint: `init_repo` per upstream, then `exec git daemon`."""
-    lines = ["#!/bin/sh", "set -eu", ""]
-    lines += _git_gate_init_repo_fn("/git", "/git-gate/creds")
-    lines += ["", "mkdir -p /git"]
-    for u in upstreams:
-        lines.append(f"init_repo {shlex.quote(u.name)} {shlex.quote(u.upstream_url)}")
-    lines.extend([
-        "",
-        "exec git daemon \\",
-        "  --reuseaddr \\",
-        f"  --timeout={GIT_GATE_TIMEOUT_SECS} \\",
-        f"  --init-timeout={GIT_GATE_TIMEOUT_SECS} \\",
-        "  --base-path=/git \\",
-        "  --export-all \\",
-        "  --enable=receive-pack \\",
-        "  --access-hook=/etc/git-gate/access-hook \\",
-        "  --verbose",
-    ])
-    return "\n".join(lines) + "\n"
 
 
 # Embedded unquoted in the script, so limited to a shell- and path-safe

@@ -29,7 +29,7 @@ def _egress_plan() -> EgressPlan:
 
 def _git_plan() -> GitGatePlan:
     return GitGatePlan(
-        slug="demo", entrypoint_script=Path(), hook_script=Path(),
+        slug="demo", hook_script=Path(),
         access_hook_script=Path(), upstreams=(),
     )
 

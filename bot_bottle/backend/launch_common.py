@@ -88,7 +88,6 @@ def stage_gateway_ca(plan: BottlePlan, ca_pem: str) -> EgressPlan:
     ca_file.write_text(ca_pem)
     return dataclasses.replace(
         plan.egress_plan,
-        mitmproxy_ca_host_path=ca_file,
         mitmproxy_ca_cert_only_host_path=ca_file,
     )
 

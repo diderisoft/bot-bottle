@@ -27,10 +27,6 @@ DENY_RESOLVER_ERROR = (
 )
 
 
-class PolicyResolverLike(typing.Protocol):
-    def resolve(self, source_ip: str, identity_token: str = ...) -> str | None: ...
-
-
 class ContextResolverLike(typing.Protocol):
     def resolve_policy_and_bottle_id(
         self, source_ip: str, identity_token: str = ...,
@@ -46,20 +42,6 @@ def _config_from_policy(policy: str | None) -> Config:
         return load_config(policy)
     except ValueError:
         return Config(routes=(), deny_reason=DENY_UNPARSEABLE)
-
-
-def resolve_client_config(
-    resolver: PolicyResolverLike, client_ip: str, identity_token: str = "",
-) -> Config:
-    try:
-        policy = resolver.resolve(client_ip, identity_token)
-    except Exception as exc:  # noqa: BLE001 - a policy lookup failure must deny
-        debug(
-            "egress policy resolution failed; applying deny-all",
-            context={"error_type": type(exc).__name__},
-        )
-        return Config(routes=(), deny_reason=DENY_RESOLVER_ERROR)
-    return _config_from_policy(policy)
 
 
 def resolve_client_context(

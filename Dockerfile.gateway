@@ -23,7 +23,6 @@
 #                                        (mitmdump -s requires a file path, not a module)
 #   /etc/egress/routes.yaml              bind-mounted at run time
 #   /etc/git-gate/pre-receive            docker-cp'd at start time
-#   /git-gate-entrypoint.sh              docker-cp'd at start time
 #   /git-gate/creds/*                    docker-cp'd at start time
 #   /git/*                               bare repos, populated at runtime
 #   /home/mitmproxy/.mitmproxy/          mitmproxy CA dir
@@ -32,7 +31,6 @@
 #
 # Exposed ports inside the container:
 #   9099  egress (mitmproxy, agent-facing HTTPS proxy)
-#   9418  git-gate (git-daemon)
 #   9420  git-gate smart HTTP (VM-backend agent-facing transport)
 #   9100  supervise (MCP HTTP)
 
@@ -55,8 +53,7 @@ RUN sed -i \
       /etc/apt/sources.list.d/debian.sources
 
 # Runtime system deps:
-#   git supplies the `git daemon` subcommand (no separate package)
-#     plus the core `git` binary the pre-receive hook invokes.
+#   git supplies `git http-backend` and the `git` the hooks invoke.
 #   openssh-client supplies the upstream SSH transport the
 #     pre-receive hook uses to forward accepted refs.
 #   ca-certificates is needed for mitmdump upstream TLS.
@@ -136,7 +133,7 @@ RUN mkdir -p \
 
 # Documentation only — the compose renderer publishes whichever
 # subset the bottle uses.
-EXPOSE 8888 9099 9418 9420 9100
+EXPOSE 8888 9099 9420 9100
 
 # PID 1 is the supervisor. It owns signal handling and exit-code
 # propagation; no `exec` chain in the entrypoint itself.

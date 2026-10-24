@@ -12,7 +12,6 @@ from ..control.git_gate_render import (
     GitGateUpstream,
     git_gate_known_hosts_line,
     git_gate_render_access_hook,
-    git_gate_render_entrypoint,
     git_gate_render_gitleaks_config,
     git_gate_render_hook,
     git_gate_upstreams_for_bottle,
@@ -22,16 +21,10 @@ from . import provision as _provision
 from . import host_key as _host_key
 
 
-
-def stage_git_gate_scripts(
-    stage_dir: Path, upstreams: tuple[GitGateUpstream, ...],
-) -> tuple[Path, Path, Path, Path]:
-    """Render the entrypoint, pre-receive hook, access hook and gitleaks config
-    from the current code into `stage_dir`; returns their paths in that order.
-    Used at launch and on re-provision."""
-    entrypoint = stage_dir / "git_gate_entrypoint.sh"
-    entrypoint.write_text(git_gate_render_entrypoint(upstreams))
-    entrypoint.chmod(0o600)
+def stage_git_gate_scripts(stage_dir: Path) -> tuple[Path, Path, Path]:
+    """Render the pre-receive hook, access hook and gitleaks config from the
+    current code into `stage_dir`; returns their paths in that order. Used at
+    launch and on re-provision."""
     hook = stage_dir / "git_gate_pre_receive.sh"
     hook.write_text(git_gate_render_hook())
     hook.chmod(0o600)
@@ -43,7 +36,7 @@ def stage_git_gate_scripts(
     gitleaks_config = stage_dir / "git_gate_gitleaks.toml"
     gitleaks_config.write_text(git_gate_render_gitleaks_config())
     gitleaks_config.chmod(0o600)
-    return entrypoint, hook, access_hook, gitleaks_config
+    return hook, access_hook, gitleaks_config
 
 class GitGate:
     """The stateless git-gate host service."""
@@ -53,8 +46,7 @@ class GitGate:
         under `stage_dir`. No side effects beyond the files. gitea upstreams
         get their identity file at launch."""
         upstreams = git_gate_upstreams_for_bottle(bottle)
-        entrypoint, hook, access_hook, gitleaks_config = stage_git_gate_scripts(
-            stage_dir, upstreams)
+        hook, access_hook, gitleaks_config = stage_git_gate_scripts(stage_dir)
         upstreams_with_files: list[GitGateUpstream] = []
         for u in upstreams:
             known_hosts_file = Path()
@@ -79,7 +71,6 @@ class GitGate:
             )
         return GitGatePlan(
             slug=slug,
-            entrypoint_script=entrypoint,
             hook_script=hook,
             access_hook_script=access_hook,
             gitleaks_config=gitleaks_config,

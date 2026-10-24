@@ -50,7 +50,6 @@ def _plan(tmp: str) -> DockerBottlePlan:
         stage_dir=stage,
         git_gate_plan=GitGatePlan(
             slug="test-teardown-00001",
-            entrypoint_script=stage / "entrypoint.sh",
             hook_script=stage / "hook.sh",
             access_hook_script=stage / "access-hook.sh",
             upstreams=(),
@@ -98,7 +97,7 @@ class TestTeardownWarning(unittest.TestCase):
             env_var_secret="encryption-key",
         )
 
-        images = BottleImages(agent="bot-bottle-claude:latest", sidecar="bot-bottle-sidecars:latest")
+        images = BottleImages(agent="bot-bottle-claude:latest")
 
         with mock.patch.object(launch_mod.docker_mod, "build_image"), \
              mock.patch.object(launch_mod.docker_mod, "verify_agent_image"), \

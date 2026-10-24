@@ -204,13 +204,8 @@ from bot_bottle.gateway.egress.addon_settings import (  # noqa: E402
     _inbound_scan_limit_from_env,
     _token_allow_timeout_from_env,
 )
-from bot_bottle.gateway.egress.addon_core import (  # noqa: E402
-    Config,
-    LOG_BLOCKS,
-    LOG_FULL,
-    Route,
-    route_to_yaml_dict,
-)
+from bot_bottle.gateway.egress.schema import route_to_yaml_dict  # noqa: E402
+from bot_bottle.gateway.egress.types import Config, LOG_BLOCKS, LOG_FULL, Route  # noqa: E402
 from bot_bottle.gateway.policy_resolver import PolicyResolveError  # noqa: E402
 from bot_bottle.gateway.egress.audit_hooks import EgressAudit  # noqa: E402
 from bot_bottle.gateway.egress.firehose import EgressFirehose  # noqa: E402

@@ -33,7 +33,6 @@ def _recorder(calls: list[list[str]]):
 def _plan(*upstreams: GitGateUpstream) -> GitGatePlan:
     return GitGatePlan(
         slug="demo",
-        entrypoint_script=Path("/stage/entrypoint.sh"),
         hook_script=Path("/stage/pre-receive"),
         access_hook_script=Path("/stage/access-hook"),
         gitleaks_config=Path("/stage/gitleaks.toml"),

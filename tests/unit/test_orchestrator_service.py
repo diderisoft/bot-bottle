@@ -211,16 +211,17 @@ class TestOrchestratorSupervise(unittest.TestCase):
     def test_approve_applies_policy_writes_response_and_clears_pending(self) -> None:
         bottle_id = self._register("demo", "routes:\n  - host: existing.com\n")
         new_routes = "routes:\n  - host: google.com\n"
-        pid = self._queue("demo", new_routes)
+        pid = self._queue(bottle_id, new_routes)
         ok, err = self.orch.supervise_respond(
-            pid, bottle_slug="demo", decision="approve")
+            pid, bottle_slug=bottle_id, decision="approve")
         self.assertTrue(ok, err)
         # policy live-applied so /resolve serves the new routes
         rec = self.store.get(bottle_id)
         assert rec is not None
         self.assertEqual(new_routes, rec.policy)
         # response written -> agent unblocks, proposal no longer pending
-        self.assertEqual(STATUS_APPROVED, Supervisor(self.db).read_response("demo", pid).status)
+        self.assertEqual(
+            STATUS_APPROVED, Supervisor(self.db).read_response(bottle_id, pid).status)
         self.assertEqual([], self.orch.supervise_pending())
 
     def test_pending_carries_human_label(self) -> None:
@@ -261,10 +262,10 @@ class TestOrchestratorSupervise(unittest.TestCase):
 
     def test_modify_applies_final_file_not_proposed(self) -> None:
         bottle_id = self._register("demo", "routes: []\n")
-        pid = self._queue("demo", "routes:\n  - host: google.com\n")
+        pid = self._queue(bottle_id, "routes:\n  - host: google.com\n")
         edited = "routes:\n  - host: example.com\n"
         ok, _ = self.orch.supervise_respond(
-            pid, bottle_slug="demo", decision="modify", final_file=edited)
+            pid, bottle_slug=bottle_id, decision="modify", final_file=edited)
         self.assertTrue(ok)
         rec = self.store.get(bottle_id)
         assert rec is not None

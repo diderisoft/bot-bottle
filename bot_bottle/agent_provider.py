@@ -34,9 +34,6 @@ PROVIDER_TEMPLATES = frozenset({PROVIDER_CLAUDE, PROVIDER_CODEX, PROVIDER_PI})
 # `forward_host_credentials` is enabled.
 CODEX_HOST_CREDENTIAL_HOSTS = ("api.openai.com", "chatgpt.com")
 
-# Host egress injects the host Claude bearer on when Claude
-# `forward_host_credentials` is enabled.
-CLAUDE_HOST_CREDENTIAL_HOSTS = ("api.anthropic.com",)
 PromptMode = Literal[
     "append_file",
     "read_prompt_file",
@@ -52,7 +49,6 @@ class AgentProviderRuntime:
     image: str
     prompt_mode: PromptMode
     bypass_args: tuple[str, ...]
-    resume_args: tuple[str, ...]
     # argv run in a throwaway container of a freshly built image to catch a
     # build that exited 0 but produced a broken CLI. Empty skips the check.
     smoke_test: tuple[str, ...] = ()
@@ -282,11 +278,9 @@ class AgentProvider(ABC):
 
         manifest_bottle = plan.manifest.bottle
         if manifest_bottle.git:
-            from .control.git_gate_render import GIT_GATE_HOSTNAME, git_gate_render_gitconfig
-            gate_host = getattr(plan, "git_gate_insteadof_host", GIT_GATE_HOSTNAME)
-            gate_scheme = getattr(plan, "git_gate_insteadof_scheme", "git")
+            from .control.git_gate_render import git_gate_render_gitconfig
             content = git_gate_render_gitconfig(
-                manifest_bottle.git, gate_host, scheme=gate_scheme,
+                manifest_bottle.git, plan.git_gate_insteadof_host,
                 identity_token=getattr(plan, "identity_token", ""),
             )
             guest_gitconfig = f"{plan.guest_home}/.gitconfig"

@@ -18,7 +18,6 @@ from ..lib.log import die, info
 from ..control.lifecycle import DEFAULT_STARTUP_TIMEOUT_SECONDS, Orchestrator
 from ..paths import bot_bottle_root
 from .gateway_attach import (
-    AttachPolicy,
     GatewayAttachError,
     GatewayAttacher,
     reattach_running_bottles,
@@ -97,7 +96,6 @@ class InfraService(abc.ABC):
         self,
         *,
         startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
-        attach_policy: AttachPolicy = AttachPolicy.STRICT,
         launch_stages: bool = False,
     ) -> str:
         """Bring the pair up (adopting a healthy one) and reattach running
@@ -110,13 +108,12 @@ class InfraService(abc.ABC):
         if launch_stages:
             log.stage("services", "Starting bot-bottle services")
         try:
-            return self._ensure_running(startup_timeout=startup_timeout,
-                                        attach_policy=attach_policy)
+            return self._ensure_running(startup_timeout=startup_timeout)
         finally:
             if launch_stages:
                 log.stage("start", "Starting the bottle")
 
-    def _ensure_running(self, *, startup_timeout: float, attach_policy: AttachPolicy) -> str:
+    def _ensure_running(self, *, startup_timeout: float) -> str:
         with self.bring_up_lock():
             marker = self._reattach_pending_marker()
             pending = marker.exists()
@@ -134,7 +131,7 @@ class InfraService(abc.ABC):
                 try:
                     reattach_running_bottles(
                         self.gateway_attacher(), orchestrator_url=url,
-                        gateway=self.gateway(), policy=attach_policy,
+                        gateway=self.gateway(),
                     )
                 except GatewayAttachError as e:
                     die(str(e))

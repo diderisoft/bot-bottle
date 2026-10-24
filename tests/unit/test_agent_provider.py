@@ -9,7 +9,6 @@ import unittest
 from pathlib import Path
 
 from bot_bottle.agent_provider import (
-    CLAUDE_HOST_CREDENTIAL_HOSTS,
     CODEX_HOST_CREDENTIAL_HOSTS,
     build_agent_provision_plan,
     prompt_args,
@@ -316,7 +315,7 @@ class TestAgentProviderRuntime(unittest.TestCase):
             )
         self.assertEqual(1, len(plan.egress_routes))
         route = plan.egress_routes[0]
-        self.assertIn(route.host, CLAUDE_HOST_CREDENTIAL_HOSTS)
+        self.assertEqual("api.anthropic.com", route.host)
         self.assertEqual("Bearer", route.auth_scheme)
         self.assertEqual(CLAUDE_HOST_CREDENTIAL_TOKEN_REF, route.token_ref)
         self.assertEqual("egress-placeholder", plan.env_vars["CLAUDE_CODE_OAUTH_TOKEN"])

@@ -10,7 +10,7 @@ from bot_bottle.control.git_gate_render import (
     GitGateUpstream,
     git_gate_known_hosts_line,
     git_gate_render_access_hook,
-    git_gate_render_entrypoint,
+    git_gate_render_provision,
     git_gate_render_gitleaks_config,
     git_gate_render_hook,
     git_gate_upstreams_for_bottle,
@@ -26,6 +26,10 @@ from bot_bottle.errors import MissingEnvVarError
 from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.manifest import ManifestIndex
 from tests.fixtures import fixture_minimal, fixture_with_git
+
+
+def _render_provision(upstreams: tuple[GitGateUpstream, ...]) -> str:
+    return git_gate_render_provision("b1", upstreams)
 
 
 class _StubGate(GitGate):
@@ -63,7 +67,7 @@ class TestKnownHostsLine(unittest.TestCase):
         self.assertEqual("[gitea.dideric.is]:30009 ssh-ed25519 AAAA\n", line)
 
 
-class TestEntrypointRender(unittest.TestCase):
+class TestProvisionRender(unittest.TestCase):
     def test_one_init_repo_call_per_upstream(self):
         ups = (
             GitGateUpstream(
@@ -83,8 +87,7 @@ class TestEntrypointRender(unittest.TestCase):
                 known_host_key="",
             ),
         )
-        script = git_gate_render_entrypoint(ups)
-        self.assertIn("#!/bin/sh", script)
+        script = _render_provision(ups)
         # shlex.quote leaves safe strings unquoted; verify via token parse.
         import shlex as _shlex
         lines_with_init = [l for l in script.splitlines() if l.startswith("init_repo ")]
@@ -98,31 +101,14 @@ class TestEntrypointRender(unittest.TestCase):
             ["init_repo", "foo", "ssh://git@github.com/didericis/foo.git"],
             _shlex.split(lines_with_init[1]),
         )
-        # Daemon line is what keeps PID 1 alive.
-        self.assertIn("exec git daemon", script)
-        self.assertIn("--enable=receive-pack", script)
-        self.assertIn("--timeout=15", script)
-        self.assertIn("--init-timeout=15", script)
-        self.assertIn("--base-path=/git", script)
-        # Smart HTTP receive-pack uses the same bare repos and hooks
-        # as git-daemon, so repos must opt in to HTTP pushes too.
+        # Repos must opt in to smart-HTTP pushes.
         self.assertIn("http.receivepack true", script)
         # The gate must advertise push-option support so clients can
         # pass forge-specific options through to the pre-receive hook.
         self.assertIn("receive.advertisePushOptions true", script)
-        # The access-hook is what makes fetch a mirror operation
-        # against the upstream (PRD 0008 v1.1).
-        self.assertIn("--access-hook=/etc/git-gate/access-hook", script)
         # Each repo's `origin` remote is wired to the upstream via
         # --mirror=fetch so `git fetch origin` mirrors all refs.
         self.assertIn("remote add --mirror=fetch origin", script)
-
-    def test_empty_upstreams_still_execs_daemon(self):
-        # A no-upstream gate is a no-op for repos but the daemon still
-        # has to start so the entrypoint doesn't exit.
-        script = git_gate_render_entrypoint(())
-        self.assertNotIn("init_repo '", script)
-        self.assertIn("exec git daemon", script)
 
     def test_single_quote_in_upstream_url_is_escaped(self):
         ups = (GitGateUpstream(
@@ -133,7 +119,7 @@ class TestEntrypointRender(unittest.TestCase):
             identity_file="/key",
             known_host_key="",
         ),)
-        script = git_gate_render_entrypoint(ups)
+        script = _render_provision(ups)
         self.assertNotIn(
             "init_repo 'myrepo' 'ssh://git@host/path'with'quotes.git'",
             script,
@@ -152,7 +138,7 @@ class TestEntrypointRender(unittest.TestCase):
             identity_file="/key",
             known_host_key="",
         ),)
-        script = git_gate_render_entrypoint(ups)
+        script = _render_provision(ups)
         line = next(l for l in script.splitlines() if l.startswith("init_repo "))
         tokens = _shlex.split(line)
         self.assertEqual(3, len(tokens))
@@ -395,12 +381,9 @@ class TestPrepare(unittest.TestCase):
 
         shutil.rmtree(self.stage, ignore_errors=True)
 
-    def test_prepare_writes_all_four_scripts(self):
+    def test_prepare_writes_all_three_scripts(self):
         plan = _StubGate().prepare(
             fixture_with_git().bottles["dev"], "demo", self.stage
-        )
-        self.assertEqual(
-            self.stage / "git_gate_entrypoint.sh", plan.entrypoint_script
         )
         self.assertEqual(
             self.stage / "git_gate_pre_receive.sh", plan.hook_script
@@ -411,12 +394,8 @@ class TestPrepare(unittest.TestCase):
         self.assertEqual(
             self.stage / "git_gate_gitleaks.toml", plan.gitleaks_config
         )
-        # Entrypoint + pre-receive are mode 600 (loaded into the
-        # gate by docker cp and then `install -m 755`'d into each
-        # bare repo's hooks/ — source bit doesn't matter). The
-        # access-hook is execed directly by git daemon, so it has to
-        # carry the x bit through docker cp.
-        self.assertEqual(0o600, os.stat(plan.entrypoint_script).st_mode & 0o777)
+        # pre-receive is installed 755 into each repo, so its source mode
+        # doesn't matter; the access hook is exec'd directly.
         self.assertEqual(0o600, os.stat(plan.hook_script).st_mode & 0o777)
         self.assertEqual(0o700, os.stat(plan.access_hook_script).st_mode & 0o777)
         self.assertEqual(0o600, os.stat(plan.gitleaks_config).st_mode & 0o777)
@@ -427,8 +406,6 @@ class TestPrepare(unittest.TestCase):
         )
         self.assertEqual("demo", plan.slug)
         self.assertEqual(2, len(plan.upstreams))
-        self.assertEqual("", plan.internal_network)
-        self.assertEqual("", plan.egress_network)
 
     def test_prepare_writes_known_hosts_file(self):
         plan = _StubGate().prepare(
@@ -457,16 +434,6 @@ class TestPrepare(unittest.TestCase):
             manifest.bottles["dev"], "demo", self.stage
         )
         self.assertEqual(Path(), plan.upstreams[0].known_hosts_file)
-
-    def test_prepare_with_no_git_writes_minimal_script(self):
-        plan = _StubGate().prepare(
-            fixture_minimal().bottles["dev"], "demo", self.stage
-        )
-        self.assertEqual((), plan.upstreams)
-        content = plan.entrypoint_script.read_text()
-        self.assertNotIn("init_repo '", content)
-        self.assertIn("exec git daemon", content)
-
 
 class TestDynamicKeyProvisioning(unittest.TestCase):
     def setUp(self):
@@ -612,17 +579,17 @@ class TestShellEscaping(unittest.TestCase):
     def test_access_hook_renders_valid_sh(self):
         self._assert_valid_sh(git_gate_render_access_hook(), "access hook")
 
-    def test_entrypoint_with_pathological_upstream_url_renders_valid_sh(self):
+    def test_provision_with_pathological_upstream_url_renders_valid_sh(self):
         for label, url in self._MALICIOUS_URL_CASES:
             with self.subTest(char=label):
-                script = git_gate_render_entrypoint((self._make_upstream(url),))
+                script = _render_provision((self._make_upstream(url),))
                 self._assert_valid_sh(script, label)
 
-    def test_entrypoint_upstream_url_value_preserved_after_quoting(self):
+    def test_provision_upstream_url_value_preserved_after_quoting(self):
         import shlex as _shlex
         for label, url in self._MALICIOUS_URL_CASES:
             with self.subTest(char=label):
-                script = git_gate_render_entrypoint((self._make_upstream(url),))
+                script = _render_provision((self._make_upstream(url),))
                 # The quoted form of the URL must appear verbatim in the script so
                 # the shell reconstructs exactly the original value at runtime.
                 expected = f"init_repo {_shlex.quote('myrepo')} {_shlex.quote(url)}"
@@ -631,20 +598,20 @@ class TestShellEscaping(unittest.TestCase):
                     f"{label}: expected quoted form not found in script",
                 )
 
-    def test_entrypoint_with_pathological_name_renders_valid_sh(self):
+    def test_provision_with_pathological_name_renders_valid_sh(self):
         for label, name in self._MALICIOUS_NAME_CASES:
             with self.subTest(char=label):
-                script = git_gate_render_entrypoint((
+                script = _render_provision((
                     self._make_upstream("ssh://git@github.com/foo/bar.git", name=name),
                 ))
                 self._assert_valid_sh(script, label)
 
-    def test_entrypoint_name_value_preserved_after_quoting(self):
+    def test_provision_name_value_preserved_after_quoting(self):
         import shlex as _shlex
         url = "ssh://git@github.com/foo/bar.git"
         for label, name in self._MALICIOUS_NAME_CASES:
             with self.subTest(char=label):
-                script = git_gate_render_entrypoint((
+                script = _render_provision((
                     self._make_upstream(url, name=name),
                 ))
                 expected = f"init_repo {_shlex.quote(name)} {_shlex.quote(url)}"

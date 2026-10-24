@@ -25,7 +25,7 @@ from pathlib import Path
 
 from bot_bottle.cli.settings import settings_from_env
 from bot_bottle.backend.docker.consolidated_launch import _network_cidr, _network_container_ips
-from bot_bottle.backend.docker.egress import EGRESS_PORT
+from bot_bottle.contract.hostctl import DEFAULT_EGRESS_PORT as EGRESS_PORT
 from bot_bottle.backend.docker.gateway_net import next_free_ip
 from bot_bottle.backend.docker.infra import DockerInfraService
 from bot_bottle.backend.docker.orchestrator import ORCHESTRATOR_NAME

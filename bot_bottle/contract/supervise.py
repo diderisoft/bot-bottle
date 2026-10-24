@@ -38,7 +38,6 @@ POLL_STATUS_UNKNOWN = "unknown"
 ACTION_OPERATOR_EDIT = "operator-edit"
 
 # Supervise constants shared by the gateway and the backends.
-SUPERVISE_HOSTNAME = "supervise"
 SUPERVISE_PORT = 9100
 # supervise queries egress's introspection endpoint over loopback for
 # `list-egress-routes`.
@@ -178,7 +177,6 @@ __all__ = [
     "TOOL_EGRESS_TOKEN_ALLOW",
     "TOOL_GITLEAKS_ALLOW",
     "TOOL_LIST_EGRESS_ROUTES",
-    "SUPERVISE_HOSTNAME",
     "SUPERVISE_PORT",
     "EGRESS_FORWARD_PROXY",
     "EGRESS_INTROSPECT_URL",

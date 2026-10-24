@@ -2,20 +2,11 @@
 
 from __future__ import annotations
 
-import ipaddress
 import os
 import re
 import sys
 
 from .lib.log import die
-
-
-def is_ip_literal(value: str) -> bool:
-    try:
-        ipaddress.ip_address(value)
-    except ValueError:
-        return False
-    return True
 
 
 def read_tty_line() -> str:

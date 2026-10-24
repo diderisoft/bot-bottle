@@ -114,6 +114,3 @@ class MacosContainerBottleBackend(
 
     def enumerate_active(self) -> Sequence[ActiveAgent]:
         return _enumerate.enumerate_active()
-
-    def supervise_mcp_url(self, plan: MacosContainerBottlePlan) -> str:
-        return plan.agent_supervise_url

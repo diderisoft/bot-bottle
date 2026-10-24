@@ -1,7 +1,7 @@
 """Bottle handle for a Firecracker microVM, over SSH to the guest's dropbear.
 
-`exec` pipes a script over stdin, `cp_in` streams a tar, and `exec_agent` uses
-`ssh -t` (which forwards SIGWINCH). Commands run as `node` via `runuser` with
+`exec` pipes a script over stdin, `cp_in` streams a tar, and `agent_command`
+uses `ssh -t` (which forwards SIGWINCH). Commands run as `node` via `runuser` with
 HOME/USER/PATH and the bottle env set per invocation, since the VM has no
 process env of its own.
 """
@@ -106,10 +106,6 @@ class FirecrackerBottle(Bottle):
         command = agent_shell_command(
             self.agent_argv(argv, tty=True), self.terminal_title, self.terminal_color)
         return command, {}
-
-    def exec_agent(self, argv: list[str], *, tty: bool = True) -> int:
-        command = self.agent_command(argv)[0] if tty else self.agent_argv(argv, tty=False)
-        return subprocess.run(command, check=False).returncode
 
     def exec(self, script: str, *, user: str = "node") -> ExecResult:
         # Pipe the script to `sh -s`, so nothing is quoted through ssh.

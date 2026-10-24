@@ -58,10 +58,6 @@ class DockerBottle(Bottle):
             self.agent_argv(argv, tty=True), self.terminal_title, self.terminal_color)
         return command, {}
 
-    def exec_agent(self, argv: list[str], *, tty: bool = True) -> int:
-        command = self.agent_command(argv)[0] if tty else self.agent_argv(argv, tty=False)
-        return subprocess.run(command, check=False).returncode
-
     def exec(self, script: str, *, user: str = "node") -> ExecResult:
         # Pipe the script to `sh -s` so it never crosses argv.
         result = subprocess.run(
