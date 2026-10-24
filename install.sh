@@ -18,10 +18,11 @@
 # Env:
 #   BOT_BOTTLE_PYTHON        interpreter to install with (skips the search)
 #   BOT_BOTTLE_INSTALL_SPEC  pip/git spec to install instead of the default
+#                            (bot-bottle[remote] from the repo; no extra on Intel Macs)
 #   BOT_BOTTLE_VENV          where the non-pipx install lives (~/.bot-bottle/venv)
 set -eu
 
-PACKAGE_SPEC="${BOT_BOTTLE_INSTALL_SPEC:-git+https://gitea.dideric.is/didericis/bot-bottle.git}"
+REPO_SPEC="git+https://gitea.dideric.is/didericis/bot-bottle.git"
 VENV="${BOT_BOTTLE_VENV:-${HOME}/.bot-bottle/venv}"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=11
@@ -127,6 +128,21 @@ if [ "${PYTHON}" != "${path_python}" ]; then
     fi
 fi
 
+# Pairing a phone (remote access) needs the iroh bindings: the `remote` extra.
+# iroh publishes no Intel-macOS wheel, so there the package installs without
+# it. Decided by the interpreter the install uses, which is what pip matches
+# wheels against (and stays right under Rosetta).
+REMOTE=yes
+if [ "$(uname -s)" = Darwin ] && \
+        [ "$("${PYTHON}" -c 'import platform; print(platform.machine())')" = x86_64 ]; then
+    REMOTE=no
+fi
+if [ "${REMOTE}" = yes ]; then
+    PACKAGE_SPEC="${BOT_BOTTLE_INSTALL_SPEC:-bot-bottle[remote] @ ${REPO_SPEC}}"
+else
+    PACKAGE_SPEC="${BOT_BOTTLE_INSTALL_SPEC:-${REPO_SPEC}}"
+fi
+
 # Installing a `git+` spec (the default) shells out to git under the hood,
 # whether via pipx or pip. Fail early with a clear message rather than deep
 # inside the installer's output.
@@ -191,6 +207,11 @@ elif [ -x "${BIN_DIR}/bot-bottle" ]; then
     say "    echo 'export PATH=\"${BIN_DIR}:\$PATH\"' >> ${profile}"
 else
     die "bot-bottle was installed but no entry point turned up in ${BIN_DIR}"
+fi
+
+if [ "${REMOTE}" = no ]; then
+    say "note: this is an Intel Mac, which iroh has no build for: pairing a phone"
+    say "(remote access) isn't available here. Everything else is."
 fi
 
 # --- starters ----------------------------------------------------------------

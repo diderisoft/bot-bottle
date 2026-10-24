@@ -103,6 +103,20 @@ class TestInstallScript(unittest.TestCase):  # pylint: disable=too-many-public-m
         # Tests / local installs point BOT_BOTTLE_INSTALL_SPEC at a checkout.
         self.assertIn("BOT_BOTTLE_INSTALL_SPEC", self.text)
 
+    def test_installs_the_remote_extra_except_on_intel_macs(self):
+        # Pairing a phone needs iroh (the `remote` extra); iroh has no
+        # Intel-macOS wheel, decided by the interpreter's machine.
+        self.assertIn('bot-bottle[remote] @ ${REPO_SPEC}', self.text)
+        self.assertIn("platform.machine()", self.text)
+        self.assertIn("x86_64", self.text)
+        self.assertIn("isn't available here", self.text)
+
+    def test_the_default_spec_needs_git(self):
+        # The default (with or without the extra) ends in `.git`, so the git
+        # check below still applies to it.
+        self.assertIn('REPO_SPEC="git+https://', self.text)
+        self.assertIn('.git"', self.text)
+
     def test_requires_git_for_git_specs(self):
         # A git+ / .git spec (the default) shells out to git; the script must
         # gate on it rather than failing opaquely inside pipx/pip.
