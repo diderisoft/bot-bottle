@@ -2,7 +2,10 @@
 # bot-bottle quick installer.
 #
 # Usage:
-#   curl -fsSL https://gitea.dideric.is/didericis/bot-bottle/raw/branch/main/install.sh | sh
+#   curl -fsSL "https://gitea.dideric.is/api/v1/repos/didericis/bot-bottle/raw/install.sh?ref=main" | sh
+#
+# (The API's raw URL, not /raw/branch/...: the forge sends anonymous visitors
+# of its web raw-file pages to the login page.)
 #
 # Python-native users can skip this entirely:
 #   pipx install bot-bottle        # from a checkout or a published index

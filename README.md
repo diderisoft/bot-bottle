@@ -97,10 +97,10 @@ Planned or in progress, not shipped yet:
 ## Quickstart
 
 ```sh
-curl -fsSL https://gitea.dideric.is/didericis/bot-bottle/raw/branch/main/install.sh | sh
+curl -fsSL "https://gitea.dideric.is/api/v1/repos/didericis/bot-bottle/raw/install.sh?ref=main" | sh
 ```
 
-The installer is a bootstrapper: it finds a suitable Python, installs bot-bottle with `pipx` (falling back to `pip --user`), creates `~/.bot-bottle`, and runs `bot-bottle doctor`. It is idempotent and never uses `sudo`. Python-native users can skip it entirely with `pipx install bot-bottle` or `uv tool install bot-bottle`.
+The installer is a bootstrapper: it finds a suitable Python, installs bot-bottle with its `remote` extra for phone pairing (none on Intel Macs, which iroh has no build for) using `pipx`, or a private venv at `~/.bot-bottle/venv` when pipx isn't installed, creates `~/.bot-bottle`, and runs `bot-bottle setup` and `bot-bottle doctor`. It is idempotent and never uses `sudo`. Python-native users can skip it entirely with `pipx install bot-bottle` or `uv tool install bot-bottle`.
 
 ### Requirements
 
