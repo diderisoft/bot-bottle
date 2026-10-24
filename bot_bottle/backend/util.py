@@ -69,8 +69,8 @@ def select_ca_cert(egress_plan: EgressPlan) -> tuple[Path, str]:
     if cert == Path() or not cert.is_file():
         die(
             f"egress CA cert missing at {cert or '(empty)'}; "
-            f"launch must have called egress_tls_init and "
-            f"re-bound the plan before provision"
+            f"launch must stage the gateway CA (stage_gateway_ca) "
+            f"before provision"
         )
     return cert, "egress"
 
