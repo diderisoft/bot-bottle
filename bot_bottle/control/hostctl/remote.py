@@ -35,7 +35,8 @@ On the console's control stream (JSON lines) the host serves:
   assertion) before it sends an allow.
 - The session's terminal is relayed to the console on a uni stream (see
   `console_terminal`); `input` types into it when the agent allows remote
-  typing, and `resize` sizes the console's tmux client.
+  typing, `resize` sizes the console's tmux client, and `scroll` (`lines`,
+  > 0 back) scrolls the session's history in tmux copy mode.
 - `audit_query` -> `audit_events`: the audit journal records for a bottle this
   link launched, filtered like `audit query` (bottle, activation, limit).
 
@@ -234,6 +235,7 @@ class Terminal(Protocol):
 
     def write(self, data: bytes) -> bool: ...
     def resize(self, cols: int, rows: int) -> None: ...
+    def scroll(self, lines: int) -> None: ...
     def close(self) -> None: ...
 
 
@@ -345,6 +347,8 @@ class ConsoleLink:
             self._input(str(msg.get("agent_id", "")), msg.get("data"))
         elif kind == "resize":
             self._resize(str(msg.get("agent_id", "")), msg.get("cols"), msg.get("rows"))
+        elif kind == "scroll":
+            self._scroll(str(msg.get("agent_id", "")), msg.get("lines"))
         elif kind == "audit_query":
             await self._audit_query(msg)
         elif kind != "hello":  # hello only opens the stream (see serve_connection)
@@ -427,6 +431,11 @@ class ConsoleLink:
         size = valid_size(cols, rows)
         if terminal is not None and size is not None:
             terminal.resize(*size)
+
+    def _scroll(self, agent_id: str, lines: object) -> None:
+        terminal = self.terminals.get(agent_id)
+        if terminal is not None and type(lines) is int:  # pylint: disable=unidiomatic-typecheck
+            terminal.scroll(lines)
 
     async def _audit_query(self, msg: dict[str, Any]) -> None:
         bottle, activation = msg.get("bottle"), msg.get("activation")

@@ -303,6 +303,25 @@ class SessionManager:
     def attach_argv(self, session_id: str, *, read_only: bool) -> list[str]:
         return tmux("attach-session", *(["-r"] if read_only else []), "-t", f"={session_id}")
 
+    def scroll(self, session_id: str, lines: int) -> None:
+        """Scroll the session's pane through its history: `lines` > 0 goes
+        back, < 0 forward. Uses copy mode, which belongs to the pane, so every
+        viewer sees it; `-e` leaves it once scrolled back to the bottom."""
+        target = f"={session_id}:"
+        if lines > 0:
+            subprocess.run(tmux("copy-mode", "-e", "-t", target, ";",
+                                "send-keys", "-t", target, "-X", "-N", str(lines), "scroll-up"),
+                           capture_output=True, check=False)
+        elif lines < 0:
+            subprocess.run(tmux("if-shell", "-F", "-t", target, "#{pane_in_mode}",
+                                f"send-keys -t {target} -X -N {-lines} scroll-down"),
+                           capture_output=True, check=False)
+
+    def end_scroll(self, session_id: str) -> None:
+        """Leave copy mode, so typing reaches the agent again."""
+        subprocess.run(tmux("copy-mode", "-q", "-t", f"={session_id}:"),
+                       capture_output=True, check=False)
+
     def set_read_only(self, client_tty: str, read_only: bool) -> None:
         """Make the viewer on `client_tty` read-only or writable. `switch-client
         -r` toggles, so it runs only when the state differs."""

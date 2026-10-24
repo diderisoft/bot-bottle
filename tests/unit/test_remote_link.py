@@ -227,6 +227,7 @@ class _Terminal:
         self.writable = writable
         self.written: list[bytes] = []
         self.sizes: list[tuple[int, int]] = []
+        self.scrolls: list[int] = []
         self.closed = False
 
     def write(self, data: bytes) -> bool:
@@ -237,6 +238,9 @@ class _Terminal:
 
     def resize(self, cols: int, rows: int) -> None:
         self.sizes.append((cols, rows))
+
+    def scroll(self, lines: int) -> None:
+        self.scrolls.append(lines)
 
     def close(self) -> None:
         self.closed = True
@@ -352,6 +356,14 @@ class TestConsoleSession(unittest.TestCase):
             asyncio.run(link.handle({"type": "resize", "agent_id": "a1", "cols": cols, "rows": rows}))
         self.assertEqual([(46, 30)], self.terms["a1"].sizes)
 
+    def test_scroll_takes_whole_lines(self) -> None:
+        link, _bottles, _sent = self._link()
+        self._launch(link)
+        for lines in (5, -3, "5", 2.5, True, None):
+            asyncio.run(link.handle({"type": "scroll", "agent_id": "a1", "lines": lines}))
+        asyncio.run(link.handle({"type": "scroll", "agent_id": "nobody", "lines": 1}))
+        self.assertEqual([5, -3], self.terms["a1"].scrolls)
+
     def test_stop_and_disconnect_close_the_relay(self) -> None:
         link, _bottles, _sent = self._link()
         self._launch(link)
@@ -451,6 +463,50 @@ class TestConsoleTerminal(unittest.TestCase):
         self.assertTrue(out.startswith(b"agent-9\n"))
         self.assertNotIn(b"hello-from-console", out)
 
+
+    def _in_mode(self) -> bool:
+        import subprocess
+        out = subprocess.run(self.tmux("display-message", "-p", "-t", "=s1:", "#{pane_in_mode}"),
+                             capture_output=True, text=True, check=False).stdout
+        return out.strip() == "1"
+
+    def test_scroll_uses_copy_mode_and_typing_leaves_it(self) -> None:
+        import subprocess
+        from bot_bottle.control.hostctl.console_terminal import ConsoleTerminal
+
+        for i in range(60):  # history to scroll through
+            subprocess.run(self.tmux("send-keys", "-t", "=s1:", f"line-{i}", "Enter"), check=True)
+        received = bytearray()
+
+        class _Stream:
+            async def write_all(self, data: bytes) -> None:
+                received.extend(data)
+
+            async def finish(self) -> None:
+                pass
+
+        async def scenario() -> list[bool]:
+            async def open_stream() -> _Stream:
+                return _Stream()
+
+            term = ConsoleTerminal(self.manager, "s1", "agent-9", writable_allowed=True)
+            await term.start(open_stream, cols=80, rows=24)
+            await asyncio.sleep(1.0)
+            seen = []
+            term.scroll(10)
+            seen.append(self._in_mode())
+            term.scroll(-10)  # back at the bottom: -e leaves copy mode
+            seen.append(self._in_mode())
+            term.scroll(5)
+            term.write(b"after-scroll\r")
+            await asyncio.sleep(0.5)
+            seen.append(self._in_mode())
+            term.close()
+            await asyncio.sleep(0.5)
+            return seen
+
+        self.assertEqual([True, False, False], asyncio.run(scenario()))
+        self.assertIn(b"after-scroll", bytes(received))
 
 class TestConfig(_RootCase):
     def test_config_round_trips_privately(self) -> None:

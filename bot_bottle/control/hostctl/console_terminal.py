@@ -29,6 +29,8 @@ from .sessions import SessionError, SessionManager
 
 # Upper bounds on what the console may send in one message.
 MAX_INPUT_BYTES = 64 * 1024
+# Most lines one scroll message moves; a fling sends several.
+MAX_SCROLL_LINES = 200
 COLS_RANGE = (20, 400)
 ROWS_RANGE = (5, 200)
 
@@ -47,6 +49,7 @@ class ConsoleTerminal:
         self._session = session_id
         self._agent_id = agent_id
         self.writable = writable_allowed
+        self._scrolled = False  # put the pane in copy mode; leave it before typing
         self._master = -1
         self._proc: subprocess.Popen[bytes] | None = None
         self._pump: threading.Thread | None = None
@@ -126,8 +129,19 @@ class ConsoleTerminal:
         """Type `data` into the session, if the agent allows remote typing."""
         if not self.writable or self._master < 0 or self._closed.is_set():
             return False
+        if self._scrolled:
+            self._sessions.end_scroll(self._session)
+            self._scrolled = False
         os.write(self._master, data[:MAX_INPUT_BYTES])
         return True
+
+    def scroll(self, lines: int) -> None:
+        """Scroll back (`lines` > 0) or forward through the session's history."""
+        if self._closed.is_set() or not lines:
+            return
+        lines = max(-MAX_SCROLL_LINES, min(MAX_SCROLL_LINES, lines))
+        self._sessions.scroll(self._session, lines)
+        self._scrolled = self._scrolled or lines > 0
 
     def resize(self, cols: int, rows: int) -> None:
         if self._master >= 0 and not self._closed.is_set():
@@ -156,4 +170,4 @@ def valid_size(cols: Any, rows: Any) -> tuple[int, int] | None:
     return None
 
 
-__all__ = ["ConsoleTerminal", "MAX_INPUT_BYTES", "valid_size"]
+__all__ = ["ConsoleTerminal", "MAX_INPUT_BYTES", "MAX_SCROLL_LINES", "valid_size"]
