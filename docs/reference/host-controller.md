@@ -65,6 +65,28 @@ Each agent runs in tmux on bot-bottle's own tmux server, never the user's
 - `requests.py` polls the orchestrator for pending supervise proposals and
   shows a one-line summary in the session's tmux status bar, outside the
   agent's pane where the agent can't fake or hide it.
+- `blocks.py` hears the gateway's block events as the journal writes them
+  (`HostAudit.listen`) and shows them in the same bar
+  ([PRD 0099](../prds/0099-status-bar-blocks.md)). Each block shows for five
+  seconds as `⊘ <host> · <reason>`; a burst shows the newest with `(+N)`,
+  and a notice stays up at most ten seconds. The session's counts by reason
+  stay beside it as a letter and a number (`A12 S3 P1`):
+
+  | Letter | Reason (`reason_code`) |
+  |---|---|
+  | A | not on allowlist (`allowlist`) |
+  | R | outside the route's `matches`, or git over HTTPS (`route`) |
+  | S | a secret in the request (`secret`) |
+  | I | an unsafe response (`inbound`) |
+  | M | a malformed request (`request`) |
+  | D | you denied it (`denied`) |
+  | P | git-gate rejected a push (`push`) |
+  | C | bottle config: a token unset, an unattributed request (`config`) |
+  | ? | an event without a code |
+
+  The bar fits each client (`#{client_width}`): the notice's reason and the
+  detach hint need 150 columns, and under 100 the request summary is cut.
+  Counts live in memory and reset when the session or the daemon restarts.
 
 Viewers:
 

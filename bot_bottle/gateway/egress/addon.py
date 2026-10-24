@@ -13,6 +13,7 @@ import typing
 
 from mitmproxy import http  # type: ignore[import-not-found]  # pylint: disable=import-error
 
+from bot_bottle.contract import blocks
 from bot_bottle.contract.identity import IDENTITY_HEADER
 from bot_bottle.gateway.audit_client import GatewayAudit
 from bot_bottle.gateway.egress.audit_hooks import AUDIT_REFUSED, EgressAudit
@@ -179,14 +180,15 @@ class EgressAddon:
         }
 
     def _audit_egress(self, flow: http.HTTPFlow, kind: str, outcome: str,
-                      reason: str = "", *, hold: bool = True) -> bool:
+                      reason: str = "", *, hold: bool = True, code: str = "") -> bool:
         """Record a decision (see `audit_hooks`). `hold` (an allowed action)
-        honors `audit.delivery: required`."""
+        honors `audit.delivery: required`; `code` is a block's reason code."""
         if self._audit is None:
             return True
         config, slug, _ = self._flow_ctx(flow)
         return self._audit.record(flow, slug, kind, outcome, reason,
-                                  required=hold and config.audit_delivery == "required")
+                                  required=hold and config.audit_delivery == "required",
+                                  code=code)
 
     def _first_contact(self, flow: http.HTTPFlow) -> bool:
         if self._audit is None:
@@ -226,12 +228,13 @@ class EgressAddon:
         reason: str,
         ctx: dict[str, object] | None = None,
         *,
+        code: str,
         anomaly: bool = False,
     ) -> None:
         """Answer 403 and record it: a DLP hit as `egress.anomaly`, any other
-        refusal as a blocked `egress.decision`."""
+        refusal as a blocked `egress.decision`, either with its reason `code`."""
         self._audit_egress(flow, "egress.anomaly" if anomaly else "egress.decision",
-                           "blocked", reason, hold=False)
+                           "blocked", reason, hold=False, code=code)
         self._firehose_end(flow, "blocked", reason)
         if self._flow_log(flow) >= LOG_BLOCKS:
             entry: dict[str, object] = {"event": "egress_block", "reason": reason}
@@ -368,7 +371,7 @@ class EgressAddon:
             if decision.action == "block":
                 self._firehose_end(flow, "blocked", decision.reason)
                 self._audit_egress(flow, "egress.decision", "blocked", decision.reason,
-                                   hold=False)
+                                   hold=False, code=decision.code)
                 flow.response = http.Response.make(
                     403,
                     decision.reason.encode("utf-8"),
@@ -447,7 +450,7 @@ class EgressAddon:
         )
         if not reason:
             return True
-        self._block(flow, reason, ctx=self._req_ctx(flow))
+        self._block(flow, reason, ctx=self._req_ctx(flow), code=blocks.ROUTE)
         return False
 
     def _apply_route_policy(
@@ -470,7 +473,8 @@ class EgressAddon:
             flow.request.headers.pop("authorization", None)
 
         if result.block_reason:
-            self._block(flow, result.block_reason, ctx=self._req_ctx(flow))
+            self._block(flow, result.block_reason, ctx=self._req_ctx(flow),
+                        code=result.block_code)
             return
 
         if result.inject_authorization is not None:
@@ -483,7 +487,9 @@ class EgressAddon:
         ctx = self._req_ctx(flow)
         if result.context:
             ctx = {**ctx, "context": result.context}
-        self._block(flow, f"egress DLP: {result.reason}", ctx=ctx, anomaly=True)
+        # A structural block (CRLF) matched no value; the canary is a secret.
+        code = blocks.SECRET if result.matched or result.canary else blocks.REQUEST
+        self._block(flow, f"egress DLP: {result.reason}", ctx=ctx, code=code, anomaly=True)
 
     async def _handle_outbound_dlp(
         self,
@@ -531,6 +537,7 @@ class EgressAddon:
                     f"egress DLP: {result.reason}; redaction could not remove "
                     "all matches (e.g. a match in the hostname)",
                     ctx=self._req_ctx(flow),
+                    code=blocks.SECRET,
                     anomaly=True,
                 )
                 return False
@@ -593,7 +600,7 @@ class EgressAddon:
             proposal_id = None
         if proposal_id is None:
             self._block(flow, f"egress DLP: {result.reason}", ctx=self._req_ctx(flow),
-                        anomaly=True)
+                        code=blocks.SECRET, anomaly=True)
             return False
 
         sys.stderr.write(json.dumps({
@@ -623,9 +630,11 @@ class EgressAddon:
                 f"egress DLP: {result.reason}; supervisor approval timed out "
                 f"after {self._token_allow_timeout:g}s"
             )
+            code = blocks.SECRET
         else:
             reason = f"egress DLP: {result.reason}; supervisor rejected the request"
-        self._block(flow, reason, ctx=self._req_ctx(flow), anomaly=True)
+            code = blocks.DENIED
+        self._block(flow, reason, ctx=self._req_ctx(flow), code=code, anomaly=True)
         return False
 
     async def _await_token_response(
@@ -688,7 +697,8 @@ class EgressAddon:
         if result.context:
             resp_ctx = {**resp_ctx, "context": result.context}
         if result.severity == "block":
-            self._block(flow, f"egress DLP: {result.reason}", ctx=resp_ctx, anomaly=True)
+            self._block(flow, f"egress DLP: {result.reason}", ctx=resp_ctx,
+                        code=blocks.INBOUND, anomaly=True)
         elif result.severity == "warn" and config.log >= LOG_BLOCKS:
             sys.stderr.write(
                 json.dumps({
@@ -732,7 +742,8 @@ class EgressAddon:
             if result is not None and result.severity == "block":
                 sys.stderr.write(f"egress DLP: {result.reason}\n")
                 self._audit_egress(flow, "egress.anomaly", "blocked",
-                                   f"egress DLP: {result.reason} (websocket)", hold=False)
+                                   f"egress DLP: {result.reason} (websocket)", hold=False,
+                                   code=blocks.SECRET)
                 flow.kill()  # type: ignore[union-attr]
         else:
             result = scan_inbound(route, content)
@@ -740,7 +751,8 @@ class EgressAddon:
                 if result.severity == "block":
                     sys.stderr.write(f"egress DLP: {result.reason}\n")
                     self._audit_egress(flow, "egress.anomaly", "blocked",
-                                       f"egress DLP: {result.reason} (websocket)", hold=False)
+                                       f"egress DLP: {result.reason} (websocket)", hold=False,
+                                       code=blocks.INBOUND)
                     flow.kill()  # type: ignore[union-attr]
                 elif result.severity == "warn":
                     sys.stderr.write(f"egress DLP warn: {result.reason}\n")

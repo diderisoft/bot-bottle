@@ -24,6 +24,7 @@ import urllib.request
 from pathlib import Path
 
 from ...contract.audit import AUDIT_EVENTS_PATH, AuditEvent, utc_iso
+from ...contract.blocks import PUSH, REASON_CODE_KEY
 from ..policy_resolver import PolicyResolveError, PolicyResolver, orchestrator_auth_headers
 
 ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
@@ -60,6 +61,8 @@ def build_event(kind: str, outcome: str, ref: str, *, bottle: str, src_ip: str,
         payload["src_ip"] = src_ip
     if detail:
         payload["detail"] = detail
+    if outcome == "blocked":
+        payload[REASON_CODE_KEY] = PUSH
     return AuditEvent(
         type=kind, actor=f"bottled-agent:{bottle}" if bottle else "unattributed",
         action="git.push", outcome=outcome, sensitivity="security", ts_event=utc_iso(now),

@@ -205,7 +205,9 @@ from bot_bottle.gateway.egress.addon_settings import (  # noqa: E402
     _token_allow_timeout_from_env,
 )
 from bot_bottle.gateway.egress.schema import route_to_yaml_dict  # noqa: E402
-from bot_bottle.gateway.egress.types import Config, LOG_BLOCKS, LOG_FULL, Route  # noqa: E402
+from bot_bottle.gateway.egress.types import (  # noqa: E402
+    Config, LOG_BLOCKS, LOG_FULL, MatchEntry, PathMatch, Route,
+)
 from bot_bottle.gateway.policy_resolver import PolicyResolveError  # noqa: E402
 from bot_bottle.gateway.egress.audit_hooks import EgressAudit  # noqa: E402
 from bot_bottle.gateway.egress.firehose import EgressFirehose  # noqa: E402
@@ -1360,6 +1362,14 @@ class TestAuditTrail(_AuditCase):
         [event] = sink.events  # pylint: disable=unbalanced-tuple-unpacking
         self.assertEqual(("egress.decision", "blocked"), (event.type, event.outcome))
         self.assertIn("allowlist", event.payload["reason"])
+        self.assertEqual("allowlist", event.payload["reason_code"])
+
+    def test_a_request_outside_the_route_is_a_route_block(self) -> None:
+        addon, sink = self.addon(Route(host="api.example.com", matches=(
+            MatchEntry(paths=(PathMatch(type="prefix", value="/v1/"),)),)))
+        self.request(addon, host="api.example.com", path="/admin")
+        [event] = sink.events  # pylint: disable=unbalanced-tuple-unpacking
+        self.assertEqual("route", event.payload["reason_code"])
 
     def test_a_dlp_block_is_an_anomaly(self) -> None:
         addon, sink = self.addon(Route(host="api.example.com", outbound_on_match="block"))
@@ -1367,6 +1377,7 @@ class TestAuditTrail(_AuditCase):
         [event] = sink.events  # pylint: disable=unbalanced-tuple-unpacking
         self.assertEqual(("egress.anomaly", "blocked"), (event.type, event.outcome))
         self.assertNotIn(_OPENAI_KEY, json.dumps(event.payload))
+        self.assertEqual("secret", event.payload["reason_code"])
 
     def test_a_redacted_request_is_an_allowed_anomaly_then_a_first_contact(self) -> None:
         addon, sink = self.addon(Route(host="api.example.com", outbound_on_match="redact"))

@@ -52,6 +52,19 @@ class HostAudit:
                  clock: Callable[[], float] = time.time) -> None:
         self._journal = journal
         self._clock = clock
+        self._listeners: list[Callable[[AuditEvent, str], None]] = []
+
+    def listen(self, listener: Callable[[AuditEvent, str], None]) -> None:
+        """Call `listener(event, producer)` for each event another component
+        sends, once, whether or not the journal could write it."""
+        self._listeners.append(listener)
+
+    def _notify(self, event: AuditEvent, producer: str) -> None:
+        for listener in self._listeners:
+            try:
+                listener(event, producer)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                warn(f"audit: a listener failed on {event.type}: {e}")
 
     @classmethod
     def open(cls) -> "HostAudit":
@@ -83,8 +96,12 @@ class HostAudit:
         """Write an event another component sent. False for an already-written
         retry; AuditRedactionError for a credential-shaped key."""
         if self._journal is None:
+            self._notify(event, producer)
             raise AuditUnavailable("audit journal unavailable")
-        return self._journal.append(event, producer=producer) is not None
+        written = self._journal.append(event, producer=producer) is not None
+        if written:  # a retry was already heard
+            self._notify(event, producer)
+        return written
 
     def _now(self) -> str:
         return utc_iso(self._clock())

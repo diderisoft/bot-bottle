@@ -9,7 +9,10 @@ from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
 
-from bot_bottle.control.hostctl.audit_events import HostAudit, digest_manifest, digest_request
+from bot_bottle.contract.audit import AuditEvent
+from bot_bottle.control.hostctl.audit_events import (
+    AuditUnavailable, HostAudit, digest_manifest, digest_request,
+)
 from bot_bottle.control.hostctl.audit_journal import AuditJournal, AuditJournalBusy
 
 
@@ -40,6 +43,43 @@ class HostAuditTest(unittest.TestCase):
                 journal.close()
         self.assertIn('"producer":"hostctl"', last)
         self.assertIn('"type":"hostctl.broker_reject"', last)
+
+    def test_listeners_hear_each_relayed_event_once(self) -> None:
+        heard: list[tuple[str, str]] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = AuditJournal(Path(tmp), host="h", engine="e")
+            try:
+                audit = HostAudit(journal)
+                audit.listen(lambda event, producer: heard.append((event.type, producer)))
+                event = _event()
+                audit.append(event, producer="egress")
+                audit.append(event, producer="egress")  # a retry
+            finally:
+                journal.close()
+        self.assertEqual([("egress.decision", "egress")], heard)
+
+    def test_listeners_hear_events_the_journal_cannot_write(self) -> None:
+        heard: list[str] = []
+        audit = HostAudit(None)
+        audit.listen(lambda event, producer: heard.append(producer))
+        with self.assertRaises(AuditUnavailable):
+            audit.append(_event(), producer="egress")
+        self.assertEqual(["egress"], heard)
+
+    def test_a_failing_listener_does_not_break_the_append(self) -> None:
+        journal = mock.Mock(spec=AuditJournal)
+        journal.append.return_value = {}
+        audit = HostAudit(journal)
+        audit.listen(mock.Mock(side_effect=RuntimeError("boom")))
+        with redirect_stderr(io.StringIO()) as err:
+            self.assertTrue(audit.append(_event(), producer="egress"))
+        self.assertIn("boom", err.getvalue())
+
+
+def _event() -> AuditEvent:
+    return AuditEvent(type="egress.decision", actor="bottled-agent:b", action="egress.get",
+                      outcome="blocked", sensitivity="security", ts_event="2026-10-24T00:00:00Z",
+                      bottle="b", payload={"host": "x.example", "reason_code": "allowlist"})
 
 
 class Digests(unittest.TestCase):

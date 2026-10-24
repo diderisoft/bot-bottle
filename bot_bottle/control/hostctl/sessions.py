@@ -89,20 +89,38 @@ def _python_command(module: str, *args: str) -> str:
 
 # Status bar: copper "bot-bottle", the session label and agent on the left, the
 # detach key on the right. `@bb_agent` is empty when the label is the agent.
+# Fits the client: the full block notice and the detach hint need 150 columns,
+# and under 100 the request summary is cut (PRD 0099).
+_WIDE = "#{e|>=:#{client_width},150}"
+_NARROW = "#{e|<:#{client_width},100}"
+# What the bottle blocked (`blocks.py`): the latest block, red, for a few
+# seconds, beside the session's counts by reason in one dim colour.
+_BLOCKS = (
+    "#{?@bb_blocks,"
+    "#{?@bb_block_now,"
+    f"#[bg=colour88#,fg=colour255#,bold] ⊘ #{{?{_WIDE},#{{@bb_block_now}},#{{@bb_block_host}}}} "
+    "#[default] ,#[fg=colour131]⊘ }"
+    "#[fg=colour131]#{@bb_blocks} #[default],}"
+)
+# A pending request turns its segment copper, with the review key; otherwise
+# the detach key, when there's room.
+_REQUEST = (
+    "#{?@bb_request,"
+    f"#[bg=colour173#,fg=colour232#,bold] #{{?{_NARROW},#{{=30:@bb_request}},#{{@bb_request}}}}"
+    " · Ctrl-\\\\ review ,"
+    f"#{{?#{{||:{_WIDE},#{{?@bb_blocks,0,1}}}},#[fg=colour244]Ctrl-] detach ,}}}}"
+)
 _STATUS_BAR = (
     "set -g status on",
     "set -g status-position bottom",
     'set -g status-style "bg=colour235,fg=colour250"',
     "set -g status-left-length 100",
-    "set -g status-right-length 120",
-    # Requests arrive as option changes; redraw every second.
+    "set -g status-right-length 160",
+    # Requests and blocks arrive as option changes; redraw every second.
     "set -g status-interval 1",
     'set -g status-left "#[fg=colour173,bold] ▣ bot-bottle #[default]· #{session_name}'
     '#{?@bb_agent, · #{@bb_agent} agent,} "',
-    # A pending request turns the right side copper, with the review key.
-    'set -g status-right "#{?@bb_request,'
-    '#[bg=colour173#,fg=colour232#,bold] #{@bb_request} · Ctrl-\\\\ review ,'
-    '#[fg=colour244]Ctrl-] detach }"',
+    f'set -g status-right "{_BLOCKS}{_REQUEST}"',
     'set -g window-status-format ""',
     'set -g window-status-current-format ""',
 )

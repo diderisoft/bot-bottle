@@ -72,6 +72,7 @@ class Decision:
     action: str
     reason: str = ""
     inject_authorization: str | None = None
+    code: str = ""  # a block's reason code (contract.blocks)
 
 
 @dataclass(frozen=True)

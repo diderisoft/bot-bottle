@@ -83,6 +83,13 @@ class TestRoutePolicy(unittest.TestCase):
             env={},
         )
         self.assertEqual("not allowed", result.block_reason)
+        self.assertEqual("config", result.block_code)
+
+    def test_an_unlisted_host_is_an_allowlist_block(self) -> None:
+        result = evaluate_route_policy(
+            Config(routes=()), None, host="x.example", request_path="/",
+            method="GET", headers={}, env={})
+        self.assertEqual("allowlist", result.block_code)
 
 
 if __name__ == "__main__":

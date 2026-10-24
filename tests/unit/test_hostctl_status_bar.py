@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -40,6 +41,37 @@ class StatusBar(unittest.TestCase):
                               capture_output=True, text=True, check=True).stdout
         self.assertIn("bot-bottle", left)
         self.assertIn("pi-2 · pi agent", left)
+
+    @unittest.skipUnless(shutil.which("tmux"), "needs tmux")
+    def test_the_right_side_fits_the_client(self) -> None:
+        conf = sessions.write_config()
+        server = ["tmux", "-L", f"bb-test-r{os.getpid()}", "-f", str(conf)]
+        self.addCleanup(subprocess.run, [*server, "kill-server"], capture_output=True, check=False)
+        subprocess.run([*server, "new-session", "-d", "-s", "pi", "sleep 30"], check=True)
+        right = subprocess.run([*server, "show-options", "-gv", "status-right"],
+                               capture_output=True, text=True, check=True).stdout.strip()
+
+        def render(width: int, **options: str) -> str:
+            for name in ("blocks", "block_now", "block_host", "request"):
+                subprocess.run([*server, "set-option", "-t", "=pi:", f"@bb_{name}",
+                                options.get(name, "")], check=True)
+            # No client attaches here, so stand the width in for client_width.
+            fmt = right.replace("#{client_width}", str(width))
+            out = subprocess.run([*server, "display-message", "-p", "-t", "=pi:", fmt],
+                                 capture_output=True, text=True, check=True).stdout
+            return re.sub(r"#\[[^]]*\]", "", out).strip()
+
+        notice = {"blocks": "A12 S3", "block_now": "x.example · not on allowlist (+1)",
+                  "block_host": "x.example (+1)"}
+        self.assertEqual("Ctrl-] detach", render(120))
+        self.assertEqual("⊘ A12 S3 Ctrl-] detach", render(160, blocks="A12 S3"))
+        self.assertEqual("⊘ A12 S3", render(120, blocks="A12 S3"))
+        self.assertEqual("⊘ x.example · not on allowlist (+1)  A12 S3 Ctrl-] detach",
+                         render(160, **notice))
+        self.assertEqual("⊘ x.example (+1)  A12 S3", render(120, **notice))
+        request = "pi wants api.example.com and more besides"
+        self.assertIn(request, render(120, blocks="A1", request=request))
+        self.assertIn(request[:30] + " · Ctrl-", render(80, blocks="A1", request=request))
 
 
 if __name__ == "__main__":

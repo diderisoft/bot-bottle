@@ -28,6 +28,7 @@ class RoutePolicyResult:
     """Flow mutations and outcome from route policy."""
 
     block_reason: str = ""
+    block_code: str = ""
     strip_authorization: bool = False
     inject_authorization: str | None = None
     log_request: bool = False
@@ -76,6 +77,7 @@ def evaluate_route_policy(
     )
     return RoutePolicyResult(
         block_reason=decision.reason if decision.action == "block" else "",
+        block_code=decision.code if decision.action == "block" else "",
         strip_authorization=strip_authorization,
         inject_authorization=decision.inject_authorization,
         log_request=config.log >= LOG_FULL,

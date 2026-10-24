@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typing
 
+from ...contract import blocks
 from .types import Decision, MatchEntry, PathMatch, Route
 
 
@@ -87,17 +88,18 @@ def decide(
     if route is None:
         return Decision("block", deny_reason or (
             f"egress: host {request_host!r} is not in the bottle's egress.routes "
-            "allowlist. Declare a route for it or remove the request."))
+            "allowlist. Declare a route for it or remove the request."),
+            code=blocks.CONFIG if deny_reason else blocks.ALLOWLIST)
     if not evaluate_matches(route, request_path, request_method, request_headers):
         return Decision("block", (
             f"egress: request {request_method} {request_path!r} does not match any "
-            f"entry in matches for {route.host!r}"))
+            f"entry in matches for {route.host!r}"), code=blocks.ROUTE)
     if route.auth_scheme and route.token_env:
         token = environ.get(route.token_env, "")
         if not token:
             return Decision("block", (
                 f"egress: route for {route.host!r} declared auth but env var "
-                f"{route.token_env!r} is unset"))
+                f"{route.token_env!r} is unset"), code=blocks.CONFIG)
         return Decision("forward", inject_authorization=f"{route.auth_scheme} {token}")
     return Decision("forward")
 
@@ -109,4 +111,4 @@ def decide_git_fetch(routes: typing.Sequence[Route], request_host: str) -> Decis
     return Decision("block", (
         "egress: git fetch/clone over HTTPS is not allowed by default; use git-gate "
         "for declared repos or set egress.routes[].git.fetch=true for explicit "
-        "read-only HTTPS Git access."))
+        "read-only HTTPS Git access."), code=blocks.ROUTE)

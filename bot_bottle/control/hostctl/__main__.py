@@ -29,6 +29,7 @@ from .jobs import JobRegistry
 from .listeners import GuestListeners
 from .live import LiveBottles
 from .remote import Supervisor
+from .blocks import BlockNotifier
 from .requests import RequestNotifier, orchestrator_pending
 from .server import HostControlServer
 from .sessions import SessionManager, control_socket_path, tmux_version, write_config
@@ -106,6 +107,10 @@ def main() -> int:
     # Pending requests in session status bars.
     requests = RequestNotifier(bottles.held_ids, orchestrator_pending)
     requests.start()
+    # What each bottle blocked, from the audit events this daemon writes.
+    blocks = BlockNotifier(bottles.held_ids)
+    audit.listen(blocks.on_event)
+    blocks.start()
     local = localsock.serve(control_socket_path(), sessions)
     if tmux_version() is not None:
         write_config()
@@ -148,6 +153,7 @@ def main() -> int:
         local.close()
         remote_link.close()
         requests.stop()
+        blocks.stop()
         if forwarder is not None:
             forwarder.close()
         firehose.close()

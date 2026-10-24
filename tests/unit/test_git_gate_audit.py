@@ -63,6 +63,12 @@ class BuildEvent(unittest.TestCase):
                 assert (payload := self.event(findings).payload) is not None
                 self.assertEqual(result, payload["gitleaks_result"])
 
+    def test_only_a_blocked_push_carries_the_push_reason(self) -> None:
+        assert (blocked := self.event(1).payload) is not None
+        assert (passed := self.event(0, "success").payload) is not None
+        self.assertEqual("push", blocked["reason_code"])
+        self.assertNotIn("reason_code", passed)
+
     def test_it_names_the_bottle_repo_and_ref(self) -> None:
         event = self.event(2)
         self.assertEqual(("amber-fox", "app:refs/heads/main", "git.push"),

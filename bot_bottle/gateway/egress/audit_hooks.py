@@ -12,6 +12,7 @@ from __future__ import annotations
 import typing
 
 from ...contract.audit import AuditEvent
+from ...contract.blocks import REASON_CODE_KEY
 
 # First contacts remembered before starting over.
 CONTACTED_LIMIT = 50_000
@@ -28,8 +29,9 @@ class Sink(typing.Protocol):
 
 
 def egress_event(flow: typing.Any, slug: str, kind: str, outcome: str, *, reason: str,
-                 now: str) -> AuditEvent:
-    """The event for one decision about `flow` from bottle `slug`."""
+                 now: str, code: str = "") -> AuditEvent:
+    """The event for one decision about `flow` from bottle `slug`. A block
+    carries its `code` (contract.blocks) for the session status bar."""
     conn = flow.client_conn
     src_ip = conn.peername[0] if conn is not None and conn.peername else ""
     host, port, method = flow.request.pretty_host, flow.request.port, flow.request.method
@@ -37,6 +39,8 @@ def egress_event(flow: typing.Any, slug: str, kind: str, outcome: str, *, reason
                                   "src_ip": src_ip}
     if reason:
         payload["reason"] = reason
+    if code:
+        payload[REASON_CODE_KEY] = code
     return AuditEvent(
         type=kind, actor=f"bottled-agent:{slug}" if slug else "unattributed",
         action=f"egress.{method.lower()}", outcome=outcome, sensitivity="security",
@@ -51,10 +55,11 @@ class EgressAudit:
         self._contacted: set[tuple[str, str, int]] = set()
 
     def record(self, flow: typing.Any, slug: str, kind: str, outcome: str,
-               reason: str = "", *, required: bool = False) -> bool:
+               reason: str = "", *, required: bool = False, code: str = "") -> bool:
         """Record one decision; `required` sends now and reports whether it was
         written."""
-        event = egress_event(flow, slug, kind, outcome, reason=reason, now=self._sink.now())
+        event = egress_event(flow, slug, kind, outcome, reason=reason, now=self._sink.now(),
+                             code=code)
         if required:
             return self._sink.send_now(event)
         self._sink.submit(event)
