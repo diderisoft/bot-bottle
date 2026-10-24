@@ -1,13 +1,8 @@
-"""OpenRouter for the pi starter (PRD 0091): sign in from the browser, and
-pick a free model.
+"""OpenRouter for the pi starter: browser sign-in and free-model selection.
 
-Sign-in is OpenRouter's OAuth PKCE flow. The user signs in (or signs up) in
-their own browser, and the key that comes back belongs to them. With a
-browser, the callback lands on a one-shot server on localhost. Without one
-(SSH), OpenRouter shows the code and the user pastes it. bot-bottle never
-automates signup.
-
-The model is looked up, not pinned, because OpenRouter's free list changes.
+Sign-in is OAuth PKCE in the user's own browser; the key is theirs. The
+callback hits a one-shot localhost server, or without a browser the user pastes
+the code. The model is looked up, since the free list changes.
 """
 
 from __future__ import annotations
@@ -31,10 +26,8 @@ API = "https://openrouter.ai/api/v1"
 AUTH_URL = "https://openrouter.ai/auth"
 FREE_ROUTER = "openrouter/free"
 
-# `openrouter/free` comes first: each request goes to a free model that is up
-# right now, which in practice beats any single free model (they go down or
-# get throttled in OpenRouter's shared free pool). These are the fallbacks if
-# the router itself doesn't answer, best first.
+# `openrouter/free` first: it routes each request to a free model that is up.
+# The rest are fallbacks, best first.
 RANKED_FREE_MODELS = (
     "nvidia/nemotron-3-super-120b-a12b:free",
     "google/gemma-4-31b-it:free",
@@ -68,8 +61,7 @@ def _is_free(model: dict[str, Any]) -> bool:
 
 
 def free_tool_models(fetch: Callable[[str], Any] = _get_json) -> list[FreeModel]:
-    """OpenRouter's free models that support tool calling (public endpoint,
-    no key)."""
+    """Free models that support tool calling (public endpoint, no key)."""
     try:
         data = fetch(f"{API}/models")["data"]
     except (OSError, ValueError, KeyError, TypeError) as e:
@@ -90,15 +82,14 @@ def free_tool_models(fetch: Callable[[str], Any] = _get_json) -> list[FreeModel]
 
 
 def candidates(models: list[FreeModel]) -> list[FreeModel]:
-    """Models to try, best first: the free router, then the ranked listed
-    models."""
+    """Models to try, best first."""
     by_id = {m.id: m for m in models}
     ranked = [by_id[model_id] for model_id in RANKED_FREE_MODELS if model_id in by_id]
     return [by_id.get(FREE_ROUTER, FreeModel(FREE_ROUTER)), *ranked]
 
 
 def pick_free_model(models: list[FreeModel]) -> FreeModel:
-    """The first candidate (the free router), without probing."""
+    """The first candidate, without probing."""
     return candidates(models)[0]
 
 
@@ -109,10 +100,9 @@ _PROBE_TOOL = {"type": "function", "function": {
 
 def probe(model_id: str, key: str,
           post: Callable[[str, dict[str, Any], str], Any] | None = None) -> bool:
-    """Whether ``model_id`` answers a tiny tool-enabled request on ``key``.
-    A model can be listed while its only free provider is down (it returns
-    404 or 5xx), so setup checks before writing it into a starter. It costs
-    one request of the free daily allowance."""
+    """Whether `model_id` answers a tiny tool-enabled request on `key`. A
+    listed model may have no free provider up. Costs one request of the daily
+    allowance."""
     body = {"model": model_id, "max_tokens": 16, "tools": [_PROBE_TOOL],
             "messages": [{"role": "user", "content": "Reply with OK."}]}
     try:
@@ -131,16 +121,15 @@ def _post_authed(url: str, body: dict[str, Any], key: str) -> Any:
 
 def pick_working_model(models: list[FreeModel], key: str, *, max_probes: int = 4,
                        check: Callable[[str, str], bool] = probe) -> FreeModel:
-    """The first candidate that answers a probe. If none of the first
-    ``max_probes`` does, the free router anyway: it reroutes per request,
-    so it may well work later."""
+    """The first candidate that answers a probe; after `max_probes` misses, the
+    free router anyway."""
     for model in candidates(models)[:max_probes]:
         if check(model.id, key):
             return model
     return FreeModel(FREE_ROUTER)
 
 
-# -- sign-in (OAuth PKCE) -------------------------------------------------------
+# --- sign-in (OAuth PKCE) ---
 
 
 def _pkce() -> tuple[str, str]:
@@ -184,9 +173,8 @@ _DONE_PAGE = (b"<!doctype html><meta charset=utf-8><title>bot-bottle</title>"
 
 
 def _callback_servers(codes: "queue.Queue[str]") -> tuple[int, list[http.server.HTTPServer]]:
-    """One-shot callback servers on localhost, IPv4 and (where available)
-    IPv6 on the same port, since a browser may resolve `localhost` to
-    either."""
+    """One-shot localhost callback servers on IPv4 and, where available, IPv6
+    on the same port, since `localhost` may resolve to either."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - http.server's naming
@@ -222,7 +210,7 @@ def _callback_servers(codes: "queue.Queue[str]") -> tuple[int, list[http.server.
 def sign_in(*, browser: bool = True, timeout: float = 300,
             say: Callable[[str], None] = print,
             ask: Callable[[str], str] = input) -> str:
-    """Sign the user in to OpenRouter and return their key."""
+    """Sign the user in and return their key."""
     verifier, challenge = _pkce()
     if not browser:
         say(f"Open this link, sign in to OpenRouter, then paste the code it shows:\n\n"
@@ -249,7 +237,7 @@ def sign_in(*, browser: bool = True, timeout: float = 300,
 
 
 def listed(model_id: str, fetch: Callable[[str], Any] = _get_json) -> bool:
-    """Whether ``model_id`` is still a free, tool-capable model (`doctor`)."""
+    """Whether `model_id` is still a free, tool-capable model."""
     return any(m.id == model_id for m in free_tool_models(fetch))
 
 

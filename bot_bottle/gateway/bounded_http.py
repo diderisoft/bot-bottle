@@ -1,4 +1,4 @@
-"""Shared resource boundaries for gateway stdlib HTTP services."""
+"""Resource limits for the gateway's stdlib HTTP services."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def read_declared_body(
     timeout_seconds: float,
     require_length: bool,
 ) -> bytes:
-    """Validate and read exactly one declared body under a read deadline."""
+    """Validate and read one declared body under a read deadline."""
     output = io.BytesIO()
     copy_declared_body(
         stream, output, connection, raw_length, maximum=maximum,
@@ -53,7 +53,7 @@ def copy_declared_body(
     timeout_seconds: float,
     require_length: bool,
 ) -> int:
-    """Copy one declared body to a sink without retaining it in memory."""
+    """Copy one declared body to a sink without holding it in memory."""
     if raw_length is None:
         if require_length:
             raise BodyReadError(411, "Content-Length required")
@@ -88,7 +88,7 @@ def copy_declared_body(
 
 
 class BoundedThreadingHTTPServer(http.server.ThreadingHTTPServer):
-    """ThreadingHTTPServer with a hard cap on in-flight request threads."""
+    """ThreadingHTTPServer with a cap on in-flight request threads."""
 
     daemon_threads = True
 

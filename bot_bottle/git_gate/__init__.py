@@ -1,23 +1,6 @@
-"""Per-agent git-gate.
-
-The git-gate fronts a bottle's declared git upstreams as a transparent mirror:
-a `pre-receive` hook gitleaks-scans pushes and forwards clean refs to the real
-upstream with a gate-resident credential; an `--access-hook` refreshes from the
-upstream before fetches. The agent never sees the upstream credential.
-
-Layout:
-
-  * `service`  — the `GitGate` host-side service (prepare / provision / revoke /
-    preflight) the backend drives at launch.
-  * `plan`     — `GitGatePlan`, the launch DTO (in the backend contract).
-  * `provision`, `host_key` — the deploy-key + host-key host-side helpers the
-    service delegates to.
-
-The rendering, including the hook scripts the gateway runs, lives in
-`bot_bottle.control.git_gate_render`; import it from there. This package's
-public names are re-exported lazily via `__getattr__`, so importing
-`git_gate.plan` (the contract's dependency) doesn't drag in the provisioning /
-forge-API code.
+"""Host side of git-gate: `service` (`GitGate`), `plan` (`GitGatePlan`), and
+the deploy-key and host-key helpers. Rendering is in
+`bot_bottle.control.git_gate_render`. Names are re-exported lazily.
 """
 
 from __future__ import annotations
@@ -33,7 +16,7 @@ if TYPE_CHECKING:
     )
 
 
-# Public name -> this package's submodule that defines it.
+# Public name -> defining submodule.
 _LAZY: dict[str, str] = {
     "GitGate": ".service",
     "GitGatePlan": ".plan",

@@ -1,17 +1,14 @@
-"""bot-bottle approve — answer an agent's requests (PRD 0094).
+"""bot-bottle approve: review an agent's pending requests, one at a time.
 
-  bot-bottle approve [session]   review pending requests, one at a time
+  bot-bottle approve [session]
 
-Opened by Ctrl-\\ in an agent's session when its status bar shows a
-request. For each one: what the agent wants and why, then one key:
+Opened by Ctrl-\\ in a session whose status bar shows a request. Keys:
 
   a  allow once          p  allow for this project (saved in its bottle)
   d  deny                s  skip for now           q  close
 
-"Allow for project" adds the route to the project's bottle
-(`./.bot-bottle/bottles/<directory>.md`, extending `basic`), so the next run
-starts with it. Requests that carry a credential can only be allowed once.
-`bot-bottle supervise` lists every bottle's requests in one place.
+"Allow for project" adds the route to `./.bot-bottle/bottles/<directory>.md`
+(extending `basic`). Requests carrying a credential can only be allowed once.
 """
 
 from __future__ import annotations
@@ -32,7 +29,7 @@ _DIM, _COPPER, _BOLD, _RESET = "\x1b[2m", "\x1b[38;5;173m", "\x1b[1m", "\x1b[0m"
 
 
 def read_key() -> str:
-    """One keypress, unbuffered (falls back to a line without a terminal)."""
+    """One keypress, unbuffered (a line without a terminal)."""
     if not sys.stdin.isatty():
         return (sys.stdin.readline().strip() or "q")[0].lower()
     fd = sys.stdin.fileno()
@@ -45,7 +42,7 @@ def read_key() -> str:
 
 
 def describe(request: Request) -> list[str]:
-    """What the request is, for a person deciding on it."""
+    """What the request is, for the person deciding."""
     lines = [f"{_BOLD}{request.summary()}{_RESET}", ""]
     if request.justification.strip():
         lines += [f"{_DIM}why:{_RESET} {request.justification.strip()}", ""]
@@ -61,7 +58,7 @@ def describe(request: Request) -> list[str]:
 
 
 class Reviewer:  # pylint: disable=too-few-public-methods
-    """Walks one session's pending requests (or every session's)."""
+    """Walks one session's pending requests, or every session's."""
 
     def __init__(self, client: OrchestratorClient, session: str = "",
                  key: Callable[[], str] = read_key, out: Callable[[str], None] = print) -> None:

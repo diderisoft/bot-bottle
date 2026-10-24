@@ -1,49 +1,15 @@
-"""Supervise daemon HTTP server.
+"""The supervise MCP server (HTTP + JSON-RPC), shared by every bottle.
 
-Per-bottle MCP server exposing tools the agent calls to propose egress
-config changes when stuck. The tools are `egress-allow`,
-`egress-block`, `list-egress-routes`, and `check-proposal`.
+Tools: `egress-allow`, `egress-block`, `list-egress-routes`, `check-proposal`.
+A proposal is validated, queued with the orchestrator (`POST
+/supervise/propose`, attributed by (source_ip, identity_token)), then polled
+for up to `SUPERVISE_RESPONSE_TIMEOUT_SECONDS` (30). A decision in time is
+returned; otherwise `status: pending` with the proposal id, which
+`check-proposal` reads later. The server never opens `bot-bottle.db`.
+Unattributed callers fail closed.
 
-Each queued proposal tool call:
-
-  1. Validates the proposed file syntactically.
-  2. Queues a Proposal over the control-plane RPC (`POST /supervise/propose`),
-     which attributes it to the calling bottle by (source_ip, identity_token)
-     and writes it to the one orchestrator-owned SQLite database. This daemon
-     never opens `bot-bottle.db` itself.
-  3. Polls the control plane (`POST /supervise/poll`) for a matching Response,
-     up to a short grace window (`SUPERVISE_RESPONSE_TIMEOUT_SECONDS`,
-     default 30s).
-  4. On a decision within the window, returns the operator's
-     `{status, notes}`. On timeout, returns `status: pending` **with the
-     proposal id** and leaves the proposal queued — the flow is
-     non-blocking past the grace window.
-
-`check-proposal` is the non-blocking companion: given a `proposal_id`
-returned by a `pending` response, it reports the current decision
-(`pending` | `approved` | `modified` | `rejected`) without re-proposing,
-so an approval made out-of-band (e.g. a web review console) can be resumed
-without holding an HTTP request open.
-
-One shared server fronts every bottle and attributes each
-proposal to the calling bottle by source IP, resolved from the orchestrator
-— an unattributed or unreachable source fails closed. BOT_BOTTLE_ORCHESTRATOR_URL
-is mandatory: there is no fixed-slug single-tenant fallback, and the queue is
-reached only over that control-plane RPC (no direct database handle).
-
-Speaks MCP over HTTP+JSON-RPC. Methods handled:
-
-  * `initialize`           — handshake; returns server info + caps.
-  * `notifications/initialized` — ack-only.
-  * `tools/list`           — returns the tool definitions.
-  * `tools/call`           — validates, queues, waits out the grace
-                             window, returns (pending past it); or, for
-                             `check-proposal`, a non-blocking status poll.
-
-Everything else returns JSON-RPC error -32601 (method not found).
-
-The Dockerfile copies this script to /app/supervise_server.py and installs
-the bot_bottle package so its `from bot_bottle.*` imports resolve.
+Methods: `initialize`, `notifications/initialized`, `tools/list`, `tools/call`;
+anything else is -32601.
 """
 
 from __future__ import annotations
@@ -75,7 +41,7 @@ from bot_bottle.gateway.supervisor.mcp_dispatch import (
 from bot_bottle.contract import supervise as _sv
 
 
-# --- JSON-RPC / MCP plumbing ----------------------------------------------
+# --- JSON-RPC / MCP plumbing ---
 
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
@@ -84,7 +50,7 @@ SERVER_VERSION = "0.1.0"
 
 JSONRPC_VERSION = "2.0"
 
-# JSON-RPC 2.0 standard error codes.
+# JSON-RPC 2.0 error codes.
 ERR_PARSE = -32700
 ERR_INVALID_REQUEST = -32600
 ERR_METHOD_NOT_FOUND = -32601
@@ -92,15 +58,10 @@ ERR_INVALID_PARAMS = -32602
 ERR_INTERNAL = -32603
 
 DEFAULT_RESPONSE_TIMEOUT_SECONDS = 30.0
-# Grace-window poll cadence. 250 ms keeps the operator-visible latency low while
-# staying gentle on the shared control plane — each poll is now an HTTP round
-# trip, not a local file read, so the old 50 ms would be ~20 req/s per pending
-# proposal across every waiting agent.
+# Poll cadence in the grace window; each poll is an HTTP round trip.
 MIN_RESPONSE_POLL_INTERVAL_SECONDS = 0.25
 
-# The per-host orchestrator control plane the shared supervise server attributes
-# each proposal to, by source IP. Mandatory — there is no single-tenant
-# SUPERVISE_BOTTLE_SLUG fallback.
+# The orchestrator proposals are attributed through. Mandatory.
 ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
 
 
@@ -108,13 +69,13 @@ ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
 class JsonRpcRequest:
     method: str
     params: dict[str, object]
-    id: object  # None for notifications; int/str/null for requests
+    id: object  # None for notifications
     is_notification: bool
 
 
 def parse_jsonrpc(body: bytes) -> JsonRpcRequest:
-    """Parse a single JSON-RPC 2.0 request body. Raises ValueError
-    with a JSON-RPC error code attached if the shape is wrong."""
+    """Parse one JSON-RPC 2.0 request; ValueError with a JSON-RPC code on a bad
+    shape."""
     try:
         raw = json.loads(body)
     except json.JSONDecodeError as e:
@@ -145,7 +106,7 @@ _NO_ID = object()
 
 
 class _RpcError(Exception):
-    """Base class for all typed RPC errors that surface as JSON-RPC error responses."""
+    """Base for errors returned as JSON-RPC error responses."""
     def __init__(self, code: int, message: str):
         super().__init__(message)
         self.code = code
@@ -153,11 +114,11 @@ class _RpcError(Exception):
 
 
 class _RpcClientError(_RpcError):
-    """Caller sent a bad request; returned verbatim, no server-side logging."""
+    """A bad request; returned as-is, not logged."""
 
 
 class _RpcInternalError(_RpcError):
-    """Server-side fault; logged at ERROR with cause, always returns ERR_INTERNAL."""
+    """A server fault; logged with its cause, returned as ERR_INTERNAL."""
     def __init__(self, message: str) -> None:
         super().__init__(ERR_INTERNAL, message)
 
@@ -176,12 +137,10 @@ def jsonrpc_error(request_id: object, code: int, message: str) -> bytes:
     return (json.dumps(payload) + "\n").encode("utf-8")
 
 
-# --- Tool definitions ------------------------------------------------------
+# --- Tool definitions ---
 
 
-# Shared by both proposal tools (egress-allow / egress-block): they take the
-# same arguments and differ only in their top-level tool description. Kept as a
-# single source of truth so the schema can't drift between the two tools.
+# Shared by egress-allow and egress-block, which differ only in description.
 _ROUTES_YAML_DESCRIPTION = (
     "Full proposed /etc/egress/routes.yaml content. "
     "Each route entry accepts these keys:\n"
@@ -205,8 +164,8 @@ _ROUTES_YAML_DESCRIPTION = (
 
 
 def _proposal_input_schema() -> dict[str, object]:
-    """Build a fresh input schema for a routes.yaml proposal tool. Returns a
-    new dict per call so the two tool definitions don't alias one object."""
+    """A fresh input schema for a routes.yaml proposal tool (not shared between
+    tools)."""
     return {
         "type": "object",
         "properties": {
@@ -291,21 +250,19 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
 ]
 
 
-# Map each proposal tool to the input field that carries the agent's
-# payload (stored in Proposal.proposed_file).
+# Each proposal tool's payload field (stored as `Proposal.proposed_file`).
 PROPOSED_FILE_FIELD: dict[str, str] = {
     _sv.TOOL_EGRESS_ALLOW: "routes_yaml",
     _sv.TOOL_EGRESS_BLOCK: "routes_yaml",
 }
 
 
-# --- Validation ------------------------------------------------------------
+# --- Validation ---
 
 
 def validate_proposed_file(tool: str, content: str) -> None:
-    """Syntactic validation. The operator is the real gate; this just
-    catches obvious paste-errors / wrong-tool selections before they
-    enter the queue."""
+    """Syntactic checks to catch obvious mistakes; the operator is the real
+    gate."""
     if not content.strip():
         raise _RpcClientError(ERR_INVALID_PARAMS, f"{tool}: proposed file is empty")
     if tool in (_sv.TOOL_EGRESS_ALLOW, _sv.TOOL_EGRESS_BLOCK):
@@ -325,14 +282,12 @@ def validate_proposed_file(tool: str, content: str) -> None:
         raise _RpcClientError(ERR_INVALID_PARAMS, f"unknown tool {tool!r}")
 
 
-# --- MCP handlers ----------------------------------------------------------
+# --- MCP handlers ---
 
 
 @dataclass(frozen=True)
 class ServerConfig:
-    # No bottle_slug: the calling bottle is attributed per request by the
-    # control plane from (source_ip, identity_token), so nothing on this daemon
-    # is keyed by a single slug.
+    # No bottle slug: each request is attributed by the control plane.
     response_timeout_seconds: float = DEFAULT_RESPONSE_TIMEOUT_SECONDS
 
 
@@ -356,17 +311,9 @@ def handle_tools_call(
     source_ip: str,
     identity_token: str,
 ) -> dict[str, object]:
-    """Validates the proposal, queues it over the control-plane RPC, polls for
-    a Response through the grace window, and returns the result wrapped in MCP
-    `content`.
-
-    The queue lives behind the orchestrator now — `propose_supervise` attributes
-    the proposal to the calling bottle by `(source_ip, identity_token)` and
-    `poll_supervise` reads only that bottle's own responses, so this daemon
-    never opens `bot-bottle.db`. `list-egress-routes` never reaches here — the
-    handler answers it from the calling bottle's resolved policy before
-    dispatching (see `MCPHandler._dispatch`); this path is the queued,
-    operator-approved `egress-allow` / `egress-block` tools."""
+    """Validate, queue over the control plane, poll through the grace window,
+    and return the result as MCP `content`. `list-egress-routes` is answered
+    earlier, in `MCPHandler._dispatch`."""
     name = params.get("name")
     if not isinstance(name, str):
         raise _RpcClientError(ERR_INVALID_PARAMS, "tools/call missing 'name'")
@@ -429,9 +376,8 @@ def _queue_proposal(
     proposed_file: str,
     justification: str,
 ) -> str:
-    """Queue a proposal over the control plane and return its id, mapping the
-    resolver's fail-closed outcomes to internal errors so `do_POST` returns a
-    clean -32603 rather than leaking the cause to the agent."""
+    """Queue a proposal and return its id; fail-closed outcomes become internal
+    errors (-32603) without leaking the cause."""
     try:
         proposal_id = resolver.propose_supervise(
             source_ip, identity_token,
@@ -447,10 +393,8 @@ def _queue_proposal(
 def _poll_response(
     resolver: "PolicyResolver", source_ip: str, identity_token: str, proposal_id: str,
 ) -> "_sv.Response | None":
-    """One non-blocking control-plane poll for `proposal_id`'s decision. Returns
-    the operator's Response once decided, or None while it is still pending
-    (or `unknown` — treated as still-waiting so a transient blip degrades to the
-    pending-timeout path rather than a spurious error mid grace window)."""
+    """One poll for `proposal_id`. The Response once decided, else None
+    (`unknown` counts as still waiting)."""
     try:
         result = resolver.poll_supervise(source_ip, identity_token, proposal_id)
     except PolicyResolveError as e:
@@ -463,7 +407,7 @@ def _poll_response(
 
 
 def _response_from_poll(proposal_id: str, result: "dict[str, object]") -> "_sv.Response":
-    """Build a Response from a decided `/supervise/poll` payload."""
+    """A Response from a decided `/supervise/poll` payload."""
     final_file = result.get("final_file")
     return _sv.Response(
         proposal_id=proposal_id,
@@ -480,14 +424,9 @@ def handle_check_proposal(
     source_ip: str,
     identity_token: str,
 ) -> dict[str, object]:
-    """Non-blocking poll of a queued proposal's decision, by id.
-
-    Never creates a Proposal (so `check-proposal` isn't in `TOOLS`); it only
-    reads the queue over the control-plane RPC, attributed by
-    `(source_ip, identity_token)` so it can only read *this* bottle's own
-    proposals. The orchestrator archives a decided proposal on read — the same
-    terminal step the synchronous path triggers — so `pending` proposals stay
-    visible to the operator until they're both decided *and* polled."""
+    """Non-blocking poll of a proposal by id, attributed so a bottle reads only
+    its own. Never creates a Proposal. The orchestrator archives a decided
+    proposal on read."""
     args_raw = params.get("arguments", {})
     if not isinstance(args_raw, dict):
         raise _RpcClientError(ERR_INVALID_PARAMS, "tools/call 'arguments' must be an object")
@@ -525,8 +464,7 @@ def handle_check_proposal(
 
 
 def format_response_text(response: "_sv.Response") -> str:
-    """Pretty-print a Response for the tool's text content. The agent
-    reads the text and decides whether to retry / give up / surface."""
+    """A Response as the tool's text content."""
     lines = [f"status: {response.status}"]
     if response.notes:
         lines.append(f"notes: {response.notes}")
@@ -537,8 +475,8 @@ def format_response_text(response: "_sv.Response") -> str:
 
 
 def format_pending_response_text(proposal_id: str, timeout_seconds: float) -> str:
-    """Grace-window timeout: the proposal stays queued, and the agent is
-    told the id so it can `check-proposal` instead of re-proposing."""
+    """Grace-window timeout: the proposal stays queued and the agent gets its
+    id for `check-proposal`."""
     return "\n".join([
         "status: pending",
         f"proposal_id: {proposal_id}",
@@ -569,20 +507,18 @@ def format_unknown_proposal_text(proposal_id: str) -> str:
     ])
 
 
-# --- HTTP transport --------------------------------------------------------
+# --- HTTP transport ---
 
 
-# Max request body the server accepts. 1 MB is well above any realistic
-# routes.yaml proposal.
+# Max request body.
 MAX_BODY_BYTES = 1 * 1024 * 1024
 REQUEST_BODY_TIMEOUT_SECONDS = 10.0
 MAX_REQUEST_WORKERS = 32
 
 
 class MCPHandler(http.server.BaseHTTPRequestHandler):
-    """Per-request JSON-RPC handler. Each tools/call may block for
-    a long time; the ThreadingMixIn on the server class ensures
-    other requests can be processed concurrently."""
+    """Per-request JSON-RPC handler; the threading server lets calls block
+    concurrently."""
 
     server_version = f"{SERVER_NAME}/{SERVER_VERSION}"
 
@@ -591,8 +527,7 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
             super().log_message(format, *args)
 
     def do_GET(self) -> None:
-        # /health for liveness; everything else 405. POST is the only
-        # method MCP needs.
+        # /health for liveness; everything else 405.
         if self.path == "/health":
             self._write_text(200, "ok\n")
             return
@@ -687,17 +622,13 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
         ))
 
     def _identity_token(self) -> str:
-        """The agent's per-bottle identity token from the request header (the
-        MCP client sends it via `mcp add --header`), or empty. The control plane
-        requires the (source_ip, token) pair, so a missing/wrong token
-        fail-closes there."""
+        """The identity token from the request header, or "". A wrong or
+        missing one fails at the control plane."""
         headers = getattr(self, "headers", None)
         return headers.get(IDENTITY_HEADER, "") if headers is not None else ""
 
     def _resolver_or_fail(self) -> "PolicyResolver":
-        """This server's policy resolver. A server started without one is a
-        misconfiguration, not a tenancy mode — fail closed rather than
-        attribute (or list) anything."""
+        """This server's resolver; fail closed without one."""
         resolver = getattr(self.server, "policy_resolver", None)
         if resolver is None:
             raise _RpcInternalError("supervise server has no policy resolver")
@@ -726,16 +657,14 @@ class MCPServer(BoundedThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
     config: ServerConfig = ServerConfig()
-    # Set by `serve`; every proposal is attributed to the source-IP + token
-    # resolved bottle by the control plane. A server without a resolver fails
-    # closed per request (see `_resolver_or_fail`).
+    # Set by `serve`.
     policy_resolver: "PolicyResolver | None" = None
 
     def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
         super().__init__(*args, max_workers=MAX_REQUEST_WORKERS, **kwargs)
 
 
-# --- Entry point -----------------------------------------------------------
+# --- Entry point ---
 
 
 def serve(
@@ -746,8 +675,6 @@ def serve(
     response_timeout_seconds: float = DEFAULT_RESPONSE_TIMEOUT_SECONDS,
 ) -> typing.NoReturn:
     server = MCPServer((bind, port), MCPHandler)
-    # Every request's proposal is attributed to the source-IP + token resolved
-    # bottle by the control plane (see MCPHandler._dispatch).
     server.config = ServerConfig(response_timeout_seconds=response_timeout_seconds)
     server.policy_resolver = resolver
     sys.stderr.write(
@@ -765,11 +692,10 @@ def serve(
 
 
 def main(argv: list[str]) -> int:
-    del argv  # config is env-only, no CLI flags
+    del argv  # env-only
     orch_url = os.environ.get(ORCHESTRATOR_URL_ENV, "").strip()
     if not orch_url:
-        # Resolver-only: without an orchestrator the server can't attribute a
-        # proposal to a bottle, so it must not serve (fail-closed).
+        # Without an orchestrator nothing can be attributed: don't serve.
         sys.stderr.write(
             f"supervise: {ORCHESTRATOR_URL_ENV} is required "
             "(no single-tenant SUPERVISE_BOTTLE_SLUG fallback)\n"
@@ -788,7 +714,7 @@ def main(argv: list[str]) -> int:
         bind=bind,
         response_timeout_seconds=response_timeout_seconds,
     )
-    return 0  # serve() does not return
+    return 0  # serve() doesn't return
 
 
 def _response_timeout_from_env(env: typing.Mapping[str, str]) -> float:

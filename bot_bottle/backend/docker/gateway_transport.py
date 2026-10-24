@@ -1,9 +1,4 @@
-"""The `GatewayTransport` for the docker gateway container.
-
-How the launcher stages files + runs commands in the running gateway container:
-`docker exec` / `docker cp` over the docker socket. The backend-neutral
-provisioning logic that drives it lives in `backend.provision_gateway`.
-"""
+"""`GatewayTransport` for the docker gateway: `docker exec` and `docker cp`."""
 
 from __future__ import annotations
 
@@ -12,7 +7,6 @@ from ...control.gateway import GatewayProvisionError
 
 
 class DockerGatewayTransport:
-    """`GatewayTransport` for the docker gateway container (exec/cp)."""
 
     def __init__(self, gateway: str) -> None:
         self.gateway = gateway

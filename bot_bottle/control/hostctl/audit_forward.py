@@ -1,17 +1,10 @@
-"""Forward the audit journal to an HTTPS endpoint the user configured.
+"""Forward the audit journal to a configured HTTPS endpoint, at least once.
 
-At-least-once: a background thread in the host controller reads complete
-journal lines past a persisted cursor and POSTs them in batches, as NDJSON in
-the native form or projected onto OCSF. The cursor advances only on a 2xx,
-so a failure, a crash or a restart resends from the last acknowledged record,
-and the receiver deduplicates on `id`. The cursor is kept per endpoint URL:
-pointing at a new endpoint ships the journal from the start.
-
-Forwarding never blocks the data plane: a slow or unreachable endpoint only
-lets the cursor lag. The start of each failure streak is itself recorded as
-`audit.export_failed`, so a gap in what reached the endpoint is on the record.
-
-Only the local chain is forwarded; imported chains stay on the host.
+A host-controller thread POSTs journal lines past a persisted per-endpoint
+cursor, as native NDJSON or OCSF, advancing it only on a 2xx; the receiver
+dedupes on `id`. A new endpoint starts from the beginning. Never blocks the
+data plane; each failure streak is recorded as `audit.export_failed`. Only the
+local chain is forwarded.
 """
 
 from __future__ import annotations
@@ -75,8 +68,8 @@ class ForwardCursors(DbStore):
 
 def read_batch(journal_dir: Path, cursor: Cursor,
                limit: int = BATCH_RECORDS) -> tuple[list[str], Cursor]:
-    """Up to `limit` complete journal lines past `cursor`, and the cursor
-    after them. A torn final line is left for the next read."""
+    """Up to `limit` complete lines past `cursor`, and the new cursor. A torn
+    final line waits for the next read."""
     lines: list[str] = []
     for path in sorted(journal_dir.glob(f"*{SEGMENT_SUFFIX}")):
         name = path.name
@@ -96,14 +89,14 @@ def read_batch(journal_dir: Path, cursor: Cursor,
 
 
 def batch_body(lines: list[str], fmt: str) -> bytes:
-    """NDJSON of `lines`: verbatim (native), or each projected onto OCSF."""
+    """NDJSON of `lines`: verbatim, or each as OCSF."""
     if fmt == "ocsf":
         lines = [canonical(to_ocsf(json.loads(line))) for line in lines]
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 def post(forward: AuditForward, body: bytes, token: str) -> None:
-    """POST a batch; raises unless the endpoint answers 2xx."""
+    """POST a batch; raises unless 2xx."""
     headers = {"Content-Type": "application/x-ndjson"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -137,8 +130,8 @@ class AuditForwarder:
             self._thread.join(timeout)
 
     def forward_once(self) -> int | None:
-        """Send one batch. The number of records sent (0: nothing to send or
-        nowhere to send it), or None when the send failed."""
+        """Send one batch. Returns records sent (0 when there's nothing or
+        nowhere to send), or None when the send failed."""
         try:
             forward = self._config()
         except sqlite3.Error:

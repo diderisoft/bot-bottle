@@ -1,16 +1,13 @@
-"""Terminal escape-sequence helpers shared across all bottle backends."""
+"""Terminal title and palette escapes for agent sessions."""
 
 from __future__ import annotations
 
 import shlex
 
 
-# color name → (normal_idx, normal_hex, bright_idx, bright_hex, dark_bg_hex)
-# OSC 4 sets indexed palette entries (affects syntax-highlighted code and any
-# TUI content that uses indexed colors).  dark_bg_hex is used for OSC 11
-# (default background) — a very dark tint that's visible even when the TUI
-# uses true/24-bit colors for its own chrome, which would otherwise bypass
-# the palette entirely.
+# color -> (normal_idx, normal_hex, bright_idx, bright_hex, dark_bg_hex). OSC 4
+# sets palette entries; dark_bg_hex is for OSC 11 (default background), which
+# also tints TUIs that draw in 24-bit color.
 _COLORS: dict[str, tuple[int, str, int, str, str]] = {
     "red":     (9,  "#e74c3c", 1,  "#c0392b", "#200808"),
     "green":   (10, "#2ecc71", 2,  "#27ae60", "#082008"),
@@ -19,14 +16,13 @@ _COLORS: dict[str, tuple[int, str, int, str, str]] = {
     "magenta": (13, "#9b59b6", 5,  "#7d3c98", "#160820"),
 }
 
-# OSC 104 resets all indexed palette entries; OSC 111 resets default background.
+# OSC 104 resets the palette; OSC 111 resets the background.
 _RESET_PRINTF = "printf '\\033]104\\007\\033]111\\007'"
 
 
 def palette_printf(color: str) -> str:
-    """Shell `printf` command that emits OSC 4 + OSC 11 to tint the terminal
-    for *color*: sets the normal/bright palette entries AND the default
-    background to a dark shade of that color.  Returns '' if unknown."""
+    """`printf` command tinting the terminal for `color` (palette entries and a
+    dark background). "" if unknown."""
     entry = _COLORS.get(color)
     if not entry:
         return ""
@@ -44,10 +40,8 @@ def exec_shell_script(
     terminal_title: str = "",
     terminal_color: str = "",
 ) -> str | None:
-    """Build a shell script string that optionally sets the terminal
-    title and/or palette before running *agent_argv*, and resets the
-    palette + background on exit. Returns None when no decoration is
-    needed — callers should run *agent_argv* directly in that case."""
+    """A shell script that sets the title and/or palette, runs `agent_argv` and
+    resets on exit; None when no decoration is needed."""
     title_cmd = (
         f"printf '\\033]0;%s\\007' {shlex.quote(terminal_title)}"
         if terminal_title else ""
@@ -65,7 +59,7 @@ def exec_shell_script(
         parts.append(shlex.join(agent_argv))
         parts.append(_RESET_PRINTF)
     else:
-        # No palette change — exec so the agent replaces the shell.
+        # No palette to reset, so exec.
         parts.append(f"exec {shlex.join(agent_argv)}")
 
     return "; ".join(parts)
@@ -76,7 +70,6 @@ def agent_shell_command(
     terminal_title: str = "",
     terminal_color: str = "",
 ) -> list[str]:
-    """*agent_argv*, wrapped in `sh -lc` when the terminal needs a title
-    or palette set first (see `exec_shell_script`)."""
+    """`agent_argv`, wrapped in `sh -lc` when a title or palette is set first."""
     script = exec_shell_script(agent_argv, terminal_title, terminal_color)
     return list(agent_argv) if script is None else ["sh", "-lc", script]

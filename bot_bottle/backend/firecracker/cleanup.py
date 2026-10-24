@@ -1,22 +1,7 @@
-"""Cleanup for the Firecracker backend.
-
-Reaps *orphans* only — resources with no live VM behind them:
-
-  * orphan run dirs: a per-bottle run dir (holding the ~1G rootfs.ext4)
-    whose firecracker process has exited. These leak when a launch is
-    hard-killed before its teardown runs (host OOM/crash, a cancelled CI
-    job, `kill -9`); the clean-exit path already removes its own dir in
-    launch.py.
-  * orphan VM pids: a firecracker process whose run dir is already gone
-    — a VMM left lingering after its dir was removed.
-
-A run dir with a *live* firecracker process is a running bottle and is
-left strictly alone: it is neither killed nor removed. Active-agent
-enumeration uses this same process snapshot, so cleanup and generic
-backend consumers agree about which bottles are running.
-
-TAP slots free themselves (the flock drops when the launcher exits), so
-there is nothing to reclaim there.
+"""Firecracker cleanup reaps orphans only: run dirs whose VM has exited (left
+by a hard-killed launch) and VMM pids whose run dir is gone. A run dir with a
+live VM is a running bottle and is never touched. TAP slots free themselves
+when the launcher exits.
 """
 
 from __future__ import annotations
@@ -39,12 +24,8 @@ def _run_root() -> Path:
 
 
 def _run_dir_of(args: Sequence[str], run_root: Path) -> Path | None:
-    """The bottle run dir a firecracker cmdline belongs to, or None.
-
-    A bottle VM is launched with `--config-file <run_root>/<slug>/config.json`,
-    so the run dir is the config file's parent when it sits directly under
-    the run root. Anything else (a builder VM, the infra VM elsewhere) is
-    not ours to reap here.
+    """The bottle run dir a firecracker cmdline belongs to (the
+    `--config-file`'s parent, directly under the run root), or None.
     """
     for i, arg in enumerate(args):
         if arg == "--config-file" and i + 1 < len(args):
@@ -55,7 +36,7 @@ def _run_dir_of(args: Sequence[str], run_root: Path) -> Path | None:
 
 
 def _decode_cmdline(raw: bytes) -> tuple[str, ...]:
-    """Decode Linux's NUL-delimited argv without losing embedded spaces."""
+    """Decode NUL-delimited argv, keeping embedded spaces."""
     return tuple(
         value.decode(errors="surrogateescape")
         for value in raw.split(b"\0") if value
@@ -63,7 +44,7 @@ def _decode_cmdline(raw: bytes) -> tuple[str, ...]:
 
 
 def _process_args(pid: int) -> tuple[str, ...] | None:
-    """Read one process's lossless argv, or None when it exited meanwhile."""
+    """One process's argv, or None if it exited."""
     try:
         raw = Path(f"/proc/{pid}/cmdline").read_bytes()
     except FileNotFoundError:
@@ -76,10 +57,8 @@ def _process_args(pid: int) -> tuple[str, ...] | None:
 
 
 def _firecracker_pids(proc_root: Path = Path("/proc")) -> list[int]:
-    """Pids of running processes whose name contains `firecracker`, read from
-    `/proc` (what `pgrep firecracker` matches, without needing procps on the
-    host's PATH). A process that exits mid-scan is skipped; an unreadable
-    `/proc` raises, since an empty answer would hide live VMs."""
+    """Pids of running processes named like `firecracker`, from `/proc`. An
+    unreadable `/proc` raises rather than hide live VMs."""
     try:
         entries = [e for e in proc_root.iterdir() if e.name.isdigit()]
     except OSError as exc:
@@ -90,7 +69,7 @@ def _firecracker_pids(proc_root: Path = Path("/proc")) -> list[int]:
     for entry in entries:
         try:
             name = (entry / "comm").read_text(errors="replace").strip()
-        except OSError:  # exited meanwhile, or not ours to read
+        except OSError:  # exited, or not ours to read
             continue
         if "firecracker" in name:
             pids.append(int(entry.name))
@@ -98,12 +77,8 @@ def _firecracker_pids(proc_root: Path = Path("/proc")) -> list[int]:
 
 
 def _scan_processes(run_root: Path) -> tuple[set[str], list[int]]:
-    """Inspect running firecracker VMs under ``run_root``.
-
-    Returns ``(live_run_dirs, orphan_pids)``:
-      * ``live_run_dirs`` — run dirs backed by a running VM (never reaped);
-      * ``orphan_pids`` — firecracker pids whose run dir no longer exists
-        (a lingering VMM to kill).
+    """Scan firecracker VMs under `run_root`. Returns `(live_run_dirs,
+    orphan_pids)`: run dirs with a running VM, and pids whose run dir is gone.
     """
     live: set[str] = set()
     orphan_pids: list[int] = []
@@ -122,13 +97,13 @@ def _scan_processes(run_root: Path) -> tuple[set[str], list[int]]:
 
 
 def live_run_dirs() -> tuple[Path, ...]:
-    """Run directories backed by currently running agent microVMs."""
+    """Run dirs backed by running agent VMs."""
     live, _ = _scan_processes(_run_root())
     return tuple(Path(path) for path in sorted(live))
 
 
 def _orphan_run_dirs(run_root: Path, live: set[str]) -> list[str]:
-    """Run dirs with no live VM behind them — the leaked ones to remove."""
+    """Run dirs with no live VM."""
     if not run_root.is_dir():
         return []
     return sorted(
@@ -147,7 +122,8 @@ def prepare_cleanup() -> FirecrackerBottleCleanupPlan:
 
 
 def cleanup(plan: FirecrackerBottleCleanupPlan, settings: Settings) -> None:
-    """Revalidate the preview under the launch lock, then remove its survivors."""
+    """Revalidate the plan under the launch lock, then remove what's still
+    orphaned."""
     with lifecycle_lock.hold():
         fresh = prepare_cleanup()
         approved_pids = set(plan.vm_pids).intersection(fresh.vm_pids)
@@ -165,7 +141,7 @@ def cleanup(plan: FirecrackerBottleCleanupPlan, settings: Settings) -> None:
 
 
 def _terminate_orphan(pid: int, run_root: Path) -> None:
-    """Signal exactly the process identity that still owns an orphan config."""
+    """Signal exactly the process that still owns an orphan config."""
     try:
         pidfd = os.pidfd_open(pid)
     except ProcessLookupError:

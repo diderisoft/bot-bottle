@@ -1,10 +1,7 @@
-"""Firecracker's primitives for reattaching running agent VMs to the gateway;
-the flow itself is `backend.gateway_attach`.
-
-Live agent VMs are their run dirs: each holds the VM's Firecracker config (its
-guest IP is on the kernel command line) and the per-bottle SSH key the host
-reaches it with. Commands run as the guest's root through dropbear, which uses
-root's own PATH, not the agent's.
+"""Firecracker primitives for reattaching running agent VMs (the flow is in
+`backend.gateway_attach`). A live VM is its run dir: config (guest IP on the
+cmdline) and SSH key. Commands run as guest root through dropbear with root's
+PATH.
 """
 
 from __future__ import annotations
@@ -35,8 +32,8 @@ class FirecrackerGatewayAttacher(GatewayAttacher):
         return bottles
 
     def point_at_gateway(self, bottle: RunningBottle, address: str) -> None:
-        # Nothing to re-point: an agent VM dials its own slot's host-side TAP
-        # address, which the netpool DNATs to the gateway VM's fixed link.
+        # Nothing to re-point: the VM dials its TAP's host address, DNAT'd to
+        # the gateway.
         del bottle, address
 
     def install_ca(self, bottle: RunningBottle, ca_pem: str) -> None:
@@ -69,7 +66,7 @@ class FirecrackerGatewayAttacher(GatewayAttacher):
 
 
 def _printable(text: str) -> str:
-    """Agent-controlled output, minus control characters (no terminal escapes)."""
+    """Agent output with control characters removed."""
     return "".join(c for c in text.strip() if c.isprintable() or c == "\n")
 
 

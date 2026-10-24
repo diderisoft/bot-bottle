@@ -1,11 +1,5 @@
-"""Host setup + status for the macOS Apple Container backend.
-
-Like Docker, this backend needs no privileged network-pool provisioning
-— it wants Apple's `container` CLI installed and its system service
-running. `setup()` points at the install/`container system start` steps;
-`status()` reports readiness. Reached via
-`MacosContainerBottleBackend.setup` / `.status`, dispatched from the
-generic `bot-bottle backend {setup,status}`.
+"""macOS backend setup and status. No privileged setup: it needs Apple's
+`container` CLI and its system service running.
 """
 
 from __future__ import annotations

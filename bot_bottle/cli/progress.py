@@ -1,19 +1,13 @@
-"""Launch progress for the terminal (PRD 0094): one line per stage instead
-of the job's whole log.
+"""Launch progress: one line per stage instead of the job's whole log.
 
-On a terminal, the launch draws on the alternate screen (as full-screen
-tools do): the stages, each with a spinner and then a green ✓ and its time,
-next to the bot-bottle bottle. Frames are diffed, so only changed lines are
-rewritten, and each repaint is wrapped in synchronized output so it never
-shows half-drawn. A resize just redraws the screen at the new size, and the
-bottle goes when there's no room for it. When the launch is done (or fails,
-or needs to ask something) the alternate screen closes and a summary goes to
-normal scrollback: the stages and their times, any warnings, the log path,
-and on failure the log's last lines.
+On a terminal it draws on the alternate screen: stages with a spinner, then a ✓
+and time, beside the bottle. Frames are diffed and wrapped in synchronized
+output; a resize redraws. When done, failed or asking something, it leaves the
+alternate screen and prints a summary: stages, times, warnings, the log path
+and, on failure, the log's tail.
 
-Without a terminal, or with ``verbose``, it's plain lines (``verbose``
-streams every log line as before). Every log line always goes to a
-per-launch log file. `NO_COLOR` turns off color and the bottle.
+Without a terminal, or with `verbose`, it prints plain lines. Every log line
+goes to a per-launch log file. `NO_COLOR` turns off color and the bottle.
 """
 
 from __future__ import annotations
@@ -36,19 +30,18 @@ from . import logo
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 KEEP_LAUNCH_LOGS = 50
 _TAIL_LINES = 12
-# Log lines the user should see even when the rest is hidden.
+# Log lines shown even when the rest is hidden.
 _SHOWN = ("bot-bottle: warning:", "bot-bottle: error:")
 _RESET = "\x1b[0m"
-# Screen layout, centered: the stage column, a gap, then the bottle. The
-# column has a fixed width so the block doesn't shift as stages arrive.
+# Layout, centered: a fixed-width stage column, a gap, then the bottle.
 _MARGIN = 2
 _GAP = 4
 _MIN_STAGE_WIDTH = 30
 _STAGE_WIDTH = 40
-# The bottle's cursor blinks every this many spinner ticks (0.1 s each).
+# Cursor blink period, in 0.1 s spinner ticks.
 _BLINK_TICKS = 5
-# Alternate screen + hidden cursor, and back. Synchronized output (DEC 2026)
-# makes a terminal show a whole frame at once; others ignore it.
+# Alternate screen and hidden cursor, and back. DEC 2026 synchronized output
+# shows whole frames.
 _ENTER = "\x1b[?1049h\x1b[?25l\x1b[2J"
 _LEAVE = "\x1b[?25h\x1b[?1049l"
 _SYNC_BEGIN, _SYNC_END = "\x1b[?2026h", "\x1b[?2026l"
@@ -62,8 +55,7 @@ def _home_relative(path: Path) -> str:
 
 
 def launch_log_path(name: str) -> Path:
-    """A new launch log's path. Prunes the oldest launch logs first, so at
-    most ``KEEP_LAUNCH_LOGS`` remain (counting the new one)."""
+    """A new launch log's path, after pruning to `KEEP_LAUNCH_LOGS`."""
     logs = bot_bottle_root() / "logs"
     prune_launch_logs(logs, keep=KEEP_LAUNCH_LOGS - 1)
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -71,9 +63,8 @@ def launch_log_path(name: str) -> Path:
 
 
 def prune_launch_logs(logs: Path, *, keep: int) -> None:
-    """Delete all but the ``keep`` newest `launch-*.log` files. Other files
-    in the directory are left alone, and a file that can't be removed is
-    skipped."""
+    """Delete all but the `keep` newest `launch-*.log` files; unremovable ones
+    are skipped."""
     try:
         found = sorted(logs.glob("launch-*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
     except OSError:
@@ -85,7 +76,7 @@ def prune_launch_logs(logs: Path, *, keep: int) -> None:
             pass
 
 
-# -- color and the bottle --------------------------------------------------------
+# --- color and the bottle ---
 
 
 def _rgb(hex6: str) -> tuple[int, int, int]:
@@ -93,7 +84,7 @@ def _rgb(hex6: str) -> tuple[int, int, int]:
 
 
 def _xterm256(r: int, g: int, b: int) -> int:
-    """The nearest color in the xterm 6x6x6 cube."""
+    """The nearest xterm 6x6x6 cube color."""
     def level(v: int) -> int:
         return 0 if v < 48 else 1 if v < 115 else (v - 35) // 40
     return 16 + 36 * level(r) + 6 * level(g) + level(b)
@@ -107,9 +98,8 @@ def _sgr(hex6: str, *, background: bool, truecolor: bool) -> str:
 
 
 def logo_rows(*, truecolor: bool, cursor: bool = True) -> list[str]:
-    """The bottle as terminal rows (half blocks, two pixels per cell), each
-    `logo.ART` columns wide. ``cursor=False`` draws the prompt without its
-    `_`, for the blink."""
+    """The bottle as terminal rows (half blocks). `cursor=False` omits the
+    prompt's `_`, for the blink."""
     art: list[str] = list(logo.ART)
     if not cursor:
         row, first, last = logo.CURSOR
@@ -153,8 +143,8 @@ class _Stage:  # pylint: disable=too-few-public-methods
 
 
 class LaunchProgress:  # pylint: disable=too-many-instance-attributes
-    """Draws stages, keeps the log. Thread-safe: the spinner redraws from
-    its own thread."""
+    """Draws stages and keeps the log. Thread-safe; the spinner runs on its own
+    thread."""
 
     def __init__(self, log_path: Path, *, verbose: bool = False,
                  out: TextIO | None = None, tty: bool | None = None,
@@ -164,7 +154,7 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
         self.out = out or sys.stderr
         self.tty = self.out.isatty() if tty is None else tty
         self.color = (self.tty and not os.environ.get("NO_COLOR")) if color is None else color
-        # Full-screen drawing on the alternate screen; else plain lines.
+        # Full-screen drawing, else plain lines.
         self.screen = (self.tty and not verbose) if screen is None else screen
         truecolor = os.environ.get("COLORTERM", "") in ("truecolor", "24bit")
         drawn = self.screen and self.color
@@ -174,12 +164,12 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
         self._log = log_path.open("a", encoding="utf-8")
         self._tail: collections.deque[str] = collections.deque(maxlen=_TAIL_LINES)
         self._since_stage: list[str] = []
-        self._notes: list[str] = []  # warnings and errors, shown on screen and after
+        self._notes: list[str] = []  # warnings and errors
         self._stages: list[_Stage] = []
         self._name = ""
         self._frame = 0
         self._on_screen = False  # inside the alternate screen
-        self._previous: list[str] | None = None  # the last frame drawn (for diffing)
+        self._previous: list[str] | None = None  # last frame drawn, for diffing
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._paused = False  # a question is on the normal screen
@@ -192,7 +182,7 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
         if self.screen:
             atexit.register(self._restore)
 
-    # -- events ----------------------------------------------------------------
+    # --- events ---
 
     def line(self, text: str) -> None:
         with self._lock:
@@ -213,8 +203,7 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
             self._log.write(f"== {title}\n")
             current = self._current()
             if name and name == self._name and current is not None:
-                # The same stage, more specific (e.g. "Starting bot-bottle
-                # services" turning out to be a rebuild): retitle it.
+                # Same stage, more specific: retitle it.
                 current.title = title
                 self._draw()
                 return
@@ -251,14 +240,14 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
         self.close()
 
     def since_stage(self) -> list[str]:
-        """The log lines of the current stage (a launch's preflight summary,
-        shown before asking to confirm)."""
+        """The current stage's log lines (the preflight summary before a
+        confirmation)."""
         with self._lock:
             return list(self._since_stage)
 
     def pause(self) -> None:
-        """Give the normal screen back so a prompt can use it. Drawing
-        resumes, on the alternate screen again, at the next stage."""
+        """Give the normal screen back for a prompt; drawing resumes at the
+        next stage."""
         with self._lock:
             self._paused = True
             if self.screen:
@@ -279,7 +268,7 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
             if not self._log.closed:
                 self._log.close()
 
-    # -- drawing (lock held) ----------------------------------------------------
+    # --- drawing (lock held) ---
 
     def _current(self) -> _Stage | None:
         if self._stages and self._stages[-1].seconds is None:
@@ -337,7 +326,7 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
         if ok_line:
             self._write_line(f"{self._mark('✓')} {ok_line}")
 
-    # -- the alternate screen -----------------------------------------------------
+    # --- the alternate screen ---
 
     def _enter_screen(self) -> None:
         if not self._on_screen:
@@ -362,11 +351,10 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
 
     def _on_resize(self, signum: int, frame: object) -> None:
         del signum, frame
-        self._resized.set()  # a signal handler only sets a flag; drawing takes the lock
+        self._resized.set()  # the handler only sets a flag; drawing takes the lock
 
     def _layout(self) -> list[str]:
-        """The whole screen as lines, for the current terminal size: the
-        stages and the bottle, centered as one block."""
+        """The whole screen for the current size: stages and bottle, centered."""
         columns, rows = _size()
         art = self._logo_blink if (self._frame // _BLINK_TICKS) % 2 else self._logo
         art_width = len(logo.ART[0])
@@ -382,7 +370,7 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
         height = min(max(len(left), len(art)), max(rows - 2, 1))
         block_width = stage_width + (_GAP + art_width if art else 0)
         pad = " " * max((columns - block_width) // 2, _MARGIN)
-        # Stages sit level with the bottle's body, below its cap.
+        # Stages level with the bottle's body.
         top = max((len(art) - len(left)) // 2, 0) if art else 0
         lines = [""] * max((rows - height) // 2, 1)
         for i in range(height):
@@ -425,11 +413,11 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
             with self._lock:
                 self._frame += 1
                 if self._current() is not None:
-                    self._draw()  # the spinner, and every _BLINK_TICKS the bottle's cursor
+                    self._draw()  # spinner, and the cursor every _BLINK_TICKS
 
 
 def _strip(text: str) -> str:
-    """``text`` without its escape sequences (for measuring width)."""
+    """`text` without escape sequences, for measuring width."""
     out, i = [], 0
     while i < len(text):
         if text[i] == "\x1b":

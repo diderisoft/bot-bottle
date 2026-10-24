@@ -16,7 +16,7 @@ def _lock_path() -> Path:
 
 @contextmanager
 def hold() -> Generator[None]:
-    """Exclude cleanup while a launch directory lacks a visible VMM."""
+    """Hold off cleanup while a launch dir has no VMM yet."""
     path = _lock_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:

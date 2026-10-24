@@ -1,12 +1,4 @@
-"""Shared types for supervise stores.
-
-Extracted from supervise.py so queue_store and audit_store can import
-Proposal, Response, and AuditEntry without creating a circular import
-(supervise imports from queue_store/audit_store and vice-versa).
-
-The path helpers (`bot_bottle_root`, `host_db_path`, `HOST_DB_FILENAME`)
-live in `paths` — import them from there.
-"""
+"""Supervise wire types and constants: `Proposal`, `Response`, `AuditEntry`."""
 
 from __future__ import annotations
 
@@ -22,9 +14,8 @@ TOOL_EGRESS_ALLOW = "egress-allow"
 TOOL_GITLEAKS_ALLOW = "gitleaks-allow"
 TOOL_EGRESS_TOKEN_ALLOW = "egress-token-allow"
 TOOL_LIST_EGRESS_ROUTES = "list-egress-routes"
-# Read-only agent tool: poll a queued proposal for the operator's decision
-# without blocking or re-proposing. It never becomes a `Proposal.tool` (no
-# queue record is created for it), so it is intentionally NOT in `TOOLS`.
+# Read-only agent tool that polls a proposal's decision. It never becomes a
+# `Proposal.tool`, so it isn't in `TOOLS`.
 TOOL_CHECK_PROPOSAL = "check-proposal"
 TOOLS: tuple[str, ...] = (
     TOOL_EGRESS_ALLOW,
@@ -39,25 +30,18 @@ STATUS_MODIFIED = "modified"
 STATUS_REJECTED = "rejected"
 STATUSES: tuple[str, ...] = (STATUS_APPROVED, STATUS_MODIFIED, STATUS_REJECTED)
 
-# Non-terminal markers the control-plane supervise-poll RPC returns when a
-# proposal has no operator decision yet (`PENDING`) or no queued proposal with
-# that id exists for the calling bottle (`UNKNOWN`). They are never a
-# `Response.status` — only the poll wire contract (see
-# `OrchestratorCore.supervise_poll_response`) — so they are deliberately outside
-# `STATUSES`.
+# Poll-only statuses for a proposal with no decision yet, or no such proposal
+# for the caller. Never a `Response.status`.
 POLL_STATUS_PENDING = "pending"
 POLL_STATUS_UNKNOWN = "unknown"
 
 ACTION_OPERATOR_EDIT = "operator-edit"
 
-# Shared supervise-daemon constants. The gateway `supervise_server` and the
-# backend read these, so they live with the wire types in the neutral package
-# (never in the orchestrator's private code the data plane can't import).
+# Supervise constants shared by the gateway and the backends.
 SUPERVISE_HOSTNAME = "supervise"
 SUPERVISE_PORT = 9100
-# The supervise daemon queries egress's introspection endpoint for the
-# `list-egress-routes` tool over loopback (egress runs alongside it in the
-# gateway), stable across docker / firecracker / Apple Container backends.
+# supervise queries egress's introspection endpoint over loopback for
+# `list-egress-routes`.
 EGRESS_FORWARD_PROXY = "http://127.0.0.1:9099"
 EGRESS_INTROSPECT_URL = "http://_egress.local/allowlist"
 DB_PATH_IN_CONTAINER = "/run/supervise/bot-bottle.db"
@@ -78,7 +62,7 @@ def _require_str(raw: dict[str, object], key: str) -> str:
 
 @dataclass(frozen=True)
 class Proposal:
-    """One pending tool-call from the agent."""
+    """One pending tool call from the agent."""
 
     id: str
     bottle_slug: str

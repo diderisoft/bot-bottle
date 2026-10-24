@@ -1,10 +1,5 @@
-"""Deploy-key provisioner interface and factory.
-
-The core defines the abstract contract; concrete implementations live
-in `bot_bottle/contrib/<provider>/deploy_key_provisioner.py`. The
-factory `get_provisioner` imports contrib modules lazily so that a
-missing optional dependency in one provider doesn't break unrelated
-features."""
+"""Deploy-key provisioner interface and factory. Implementations live in
+`bot_bottle/contrib/<provider>/` and are imported lazily."""
 
 from __future__ import annotations
 
@@ -12,38 +7,29 @@ from abc import ABC, abstractmethod
 
 
 class DeployKeyCollisionError(RuntimeError):
-    """Raised when a deploy key title or public key already exists on the repo."""
+    """A deploy key with this title or public key already exists on the repo."""
 
 
 class DeployKeyProvisioner(ABC):
-    """Manages a single deploy-key lifecycle on a remote forge."""
+    """One deploy key's lifecycle on a forge."""
 
     @abstractmethod
     def create(self, owner_repo: str, title: str) -> tuple[str, bytes]:
-        """Generate a keypair and register the public half as a
-        deploy key on the forge.
-
-        `owner_repo` is the `<owner>/<repo>` path (no `.git` suffix).
-        `title` is the human-readable label shown in the forge UI.
-
-        Returns `(key_id, private_key_bytes)` where `key_id` is opaque
-        to the caller and is only ever passed back to `delete`."""
+        """Generate a keypair and register the public half as a deploy key on
+        `owner_repo` (`<owner>/<repo>`) under `title`. Returns `(key_id,
+        private_key_bytes)`; `key_id` is only passed back to `delete`."""
 
     @abstractmethod
     def delete(self, owner_repo: str, key_id: str) -> None:
-        """Delete the registered deploy key.
-
-        Must not raise if the key is already absent (HTTP 404 is
-        success). Must raise for all other failures so teardown halts."""
+        """Delete the key. An already-absent key is success; any other failure
+        raises so teardown halts."""
 
 
 def get_provisioner(
     provider: str, token: str, api_url: str
 ) -> DeployKeyProvisioner:
-    """Instantiate the contrib provisioner for `provider`.
-
-    Raises `ManifestError` for unknown providers so the error surfaces
-    at parse time rather than at runtime."""
+    """The provisioner for `provider`. Raises `ManifestError` for an unknown
+    one."""
     if provider == "gitea":
         from bot_bottle.contrib.gitea.deploy_key_provisioner import (
             GiteaDeployKeyProvisioner,

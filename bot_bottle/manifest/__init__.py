@@ -1,59 +1,35 @@
-"""Manifest dataclasses.
+"""Agent and bottle manifests: Markdown files with YAML frontmatter.
 
-Reads the per-file manifest tree:
+  $HOME/.bot-bottle/bottles/<name>.md   the user's bottles
+  $HOME/.bot-bottle/agents/<name>.md    home agents
+  $CWD/.bot-bottle/agents/<name>.md     project agents
+  $CWD/.bot-bottle/bottles/<name>.md    project bottles (trusted per host)
 
-  $HOME/.bot-bottle/bottles/<name>.md   — one bottle per file
-  $HOME/.bot-bottle/agents/<name>.md    — home-resident agents
-  $CWD/.bot-bottle/agents/<name>.md     — cwd-supplied agents
+An agent's body is its system prompt; a bottle's body is documentation.
 
-Each file is Markdown with YAML frontmatter. The frontmatter holds
-the structured config (see schema below); for agents the body is
-the system prompt, for bottles the body is human documentation
-(ignored by the parser).
-
-Bottle schema (frontmatter):
-  extends:      <bottle-name>                   # optional
+Bottle frontmatter:
+  extends:      <bottle-name> | [<bottle-name>, ...]
+  agent_provider: { template: ..., ... }
   env:          { <NAME>: <env-entry>, ... }
-  git-gate:                                     # optional
-    user:       { name: <str>, email: <str> }   # optional
-    repos:      { <name>: <git-gate-entry>, ... }  # optional
-  egress: { routes: [ <egress-route>, ... ] }
-    # route keys: host, matches, auth, role, dlp
-  supervise:    <bool>                          # optional (default true)
-  nested_containers: <bool>                     # optional (default false)
-
-Agent schema (frontmatter):
-  bottle:        <bottle-name>          # required
-  skills:        [ <skill-name>, ... ]   # optional
   git-gate:
-    user:        { name: <str>, email: <str> }  # optional; overlays bottle
-  # Claude Code subagent passthrough fields — accepted, ignored:
+    user:       { name: <str>, email: <str> }
+    repos:      { <name>: <git-gate-entry>, ... }
+  egress:       { routes: [ <egress-route>, ... ] }
+  supervise:    <bool>                          # default true
+  nested_containers: <bool>                     # default false
+  audit:        { delivery: ..., firehose: ... }
+
+Agent frontmatter:
+  bottle:       <bottle-name>                   # optional; else picked at launch
+  skills:       [ <skill-name>, ... ]
+  git-gate:
+    user:       { name: <str>, email: <str> }   # overlays the bottle's
+  remote:       { writable: <bool> }
+  # Claude Code subagent fields, accepted and ignored:
   name, description, model, color, memory
 
-The agent file's Markdown body is the system prompt (stripped).
-Unknown top-level frontmatter keys raise ManifestError with a hint.
-
-Bottles can ONLY live under $HOME. A bottles/ dir under $CWD is a
-warn at load time and contributes nothing. The trust boundary is
-expressed as filesystem layout rather than resolver logic.
-
-Two types are exported:
-
-  ManifestIndex  — the multi-agent/bottle collection returned by
-                   resolve() and from_json_obj(). Used for agent
-                   selection (all_agent_names), validation
-                   (require_agent), and lazy loading (load_for_agent).
-                   This is the pre-preflight form.
-
-  Manifest       — a single-agent/bottle value type holding exactly
-                   one agent: ManifestAgent and one bottle:
-                   ManifestBottle (with the agent's git-gate.user
-                   already overlaid). Returned by load_for_agent().
-                   This is the post-preflight form passed to backends.
-
-ManifestIndex.from_json_obj is preserved as a programmatic entry
-point (used by tests) that takes a dict with the same field names —
-useful for building manifests without on-disk files.
+Unknown keys raise ManifestError. `ManifestIndex` is the collection used for
+selection; `Manifest` is one agent with its effective bottle.
 """
 
 from __future__ import annotations
@@ -69,8 +45,7 @@ if TYPE_CHECKING:
     from .git import ManifestGitEntry, ManifestGitUser, ManifestKeyConfig
 
 
-# Facade name -> submodule that defines it. The aggregate model (`Manifest`,
-# `ManifestIndex`) lives in `index`; the piece types in their own modules.
+# Facade name -> defining submodule.
 _LAZY_MODULES: dict[str, str] = {
     "Manifest": "index",
     "ManifestIndex": "index",
@@ -90,10 +65,7 @@ _LAZY_MODULES: dict[str, str] = {
 
 
 def __getattr__(name: str) -> Any:
-    """Lazily surface the manifest facade names from their submodules and cache
-    them at package level — so importing a leaf (e.g. `manifest.util`) doesn't
-    build the whole manifest model, while `from bot_bottle.manifest import
-    Manifest` keeps working."""
+    """Resolve a facade name from its submodule on first access and cache it."""
     mod = _LAZY_MODULES.get(name)
     if mod is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

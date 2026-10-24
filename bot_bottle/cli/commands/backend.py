@@ -1,14 +1,5 @@
-"""`backend` CLI command — generic host setup/status across backends.
-
-`bot-bottle backend setup    [--backend=NAME]` provisions (or points at how
-to provision) the chosen backend's one-time host prerequisites.
-`bot-bottle backend status   [--backend=NAME]` reports readiness.
-`bot-bottle backend teardown [--backend=NAME]` undoes setup (uninstall).
-
-All dispatch to the backend's `setup()` / `status()` / `teardown()`,
-so there are no backend-specific commands — swapping
-backends is just a different `--backend` (or `$BOT_BOTTLE_BACKEND`, or
-the host default).
+"""`backend setup|status|teardown [--backend=NAME]`: a backend's one-time host
+prerequisites, dispatched to its `setup()`, `status()` and `teardown()`.
 """
 
 from __future__ import annotations
@@ -24,7 +15,7 @@ from ..settings import settings_from_env
 
 
 def _note_tmux() -> None:
-    """Agent sessions run in tmux; say so if it's missing or too old."""
+    """Agent sessions run in tmux; note if it's missing or too old."""
     version = tmux_version()
     if version is None or version < MIN_TMUX_VERSION:
         found = "not installed" if version is None else f"{version[0]}.{version[1]}"

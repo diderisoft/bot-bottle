@@ -1,11 +1,6 @@
-"""Prepare step for the Docker bottle backend.
-
-`resolve_plan` does all host-side resolution (image and container
-names, prompt-file, proxy plan, runtime detection) and returns a
-frozen DockerBottlePlan. No Docker resources are created; the only
-side effects are scratch files under `stage_dir` and a probe of
-`docker info`. Cross-backend host-side validation has already run
-via the base class's `prepare` template before this is called.
+"""Docker `resolve_plan`: image and container names, prompt file, proxy plan,
+runtime detection. Creates no Docker resources; writes scratch files under
+`stage_dir` and probes `docker info`.
 """
 
 from __future__ import annotations
@@ -45,11 +40,9 @@ def resolve_plan(
     settings: Settings,
     secrets: SecretSource,
 ) -> DockerBottlePlan:
-    """Resolve Docker-specific names and write scratch files. Trusts
-    that the agent and its skills/git-gate keys are present —
-    validation already ran in the base class."""
+    """Resolve docker-specific names and write scratch files. Validation has
+    already run."""
 
-    # ==== docker specific setup ====
     use_runsc = docker_mod.runsc_available()
 
     return DockerBottlePlan(

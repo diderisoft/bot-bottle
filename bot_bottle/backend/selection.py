@@ -1,9 +1,5 @@
-"""Backend registry, selection, and active-agent enumeration.
-
-Resolves which bottle backend to use (explicit name / `settings.operation.backend`
-/ auto-select), and enumerates running agents across every available backend.
-The three concrete backends are imported lazily inside `_get_backends` so this
-module — and anything that only needs to *select* a backend — stays cheap.
+"""Backend registry, selection and cross-backend enumeration. Backends are
+imported lazily.
 """
 
 from __future__ import annotations
@@ -20,8 +16,7 @@ BACKEND_NAMES = ("docker", "firecracker", "macos-container")
 
 
 def _get_backends(settings: Settings) -> dict[str, BottleBackend[Any, Any]]:
-    """Every backend, constructed with `settings`. The concrete classes are
-    imported here so importing one backend's modules doesn't load the others."""
+    """Every backend, constructed with `settings`."""
     from .docker import DockerBottleBackend
     from .firecracker import FirecrackerBottleBackend
     from .macos_container import MacosContainerBottleBackend
@@ -38,20 +33,9 @@ def get_bottle_backend(
     *,
     prompt: bool = True,
 ) -> BottleBackend[Any, Any]:
-    """Resolve the bottle backend.
-
-    `name` precedence:
-      1. explicit arg (e.g. resume passes the recorded backend name)
-      2. `settings.operation.backend` (BOT_BOTTLE_BACKEND)
-      3. auto-selection: VM backend first, docker fallback with prompt
-
-    `prompt` controls whether auto-selection may block on an interactive
-    [i/d/q] prompt when falling back to docker. Pass `prompt=False` in
-    non-interactive contexts (headless launches, CI) so the call dies
-    with an actionable message instead of hanging.
-
-    Dies with a pointer at the known backends if the chosen name
-    isn't implemented."""
+    """Resolve the backend: `name`, else `settings.operation.backend`, else
+    auto-selection. With `prompt=False` the docker fallback dies instead of
+    prompting. Dies on an unknown name."""
     resolved = name or settings.operation.backend or None
     if resolved is None:
         resolved = _auto_select_backend(settings, prompt=prompt)
@@ -63,12 +47,12 @@ def get_bottle_backend(
 
 
 def _platform_vm_suggestion() -> str:
-    """Platform-appropriate VM backend name for install suggestions."""
+    """VM backend to suggest on this platform."""
     return "macos-container" if sys.platform == "darwin" else "firecracker"
 
 
 def _print_vm_install_instructions() -> None:
-    """Print platform-appropriate VM backend install instructions to stderr."""
+    """Print VM backend install instructions to stderr."""
     vm = _platform_vm_suggestion()
     if vm == "macos-container":
         info("Install Apple Container: https://github.com/apple/container/releases")
@@ -79,29 +63,16 @@ def _print_vm_install_instructions() -> None:
 
 
 def _auto_select_backend(settings: Settings, prompt: bool = True) -> str:
-    """Tier-1 / tier-2 backend auto-selection.
-
-    Tier 1: VM backend — macos-container on macOS when Apple Container is
-    installed; firecracker on KVM-capable Linux even before the binary is
-    present (its preflight prints an install pointer).
-
-    Tier 2: docker, with a security warning and an interactive prompt.
-    When `prompt=False` (headless / CI), dies with an actionable message
-    instead of blocking on a TTY read. When docker is also absent, prints
-    VM install instructions and exits.
+    """macos-container if installed, else firecracker on a KVM-capable host
+    (even before the binary is installed, so its preflight explains), else
+    docker after a warning and a prompt.
     """
-    # --- Tier 1: VM backend -----------------------------------------
     if has_backend(settings, "macos-container"):
         return "macos-container"
-    # A KVM-capable Linux host defaults to firecracker even when the
-    # `firecracker` binary isn't installed yet: selecting it here routes
-    # start through firecracker's preflight, which prints an install
-    # pointer, instead of silently falling back to docker.
     from .firecracker import FirecrackerBottleBackend
     if FirecrackerBottleBackend.is_host_capable():
         return "firecracker"
 
-    # --- Tier 2: docker fallback ------------------------------------
     if not has_backend(settings, "docker"):
         info("No backend available on this host.")
         _print_vm_install_instructions()
@@ -134,20 +105,13 @@ def _auto_select_backend(settings: Settings, prompt: bool = True) -> str:
 
 
 def known_backend_names() -> tuple[str, ...]:
-    """Sorted names of every backend. Used by argparse (`--backend` choices)
-    and the dashboard's backend picker."""
+    """Sorted backend names."""
     return BACKEND_NAMES
 
 
 def has_backend(settings: Settings, name: str) -> bool:
-    """Whether the named backend's runtime prerequisites are
-    available on the current host. Cross-backend callers (list,
-    cleanup) skip unavailable backends so a docker-only host
-    doesn't fail when the firecracker backend isn't usable,
-    and vice versa.
-
-    Returns False for unknown names so callers can pass
-    arbitrary input without separate validation."""
+    """Whether the named backend's prerequisites are met here. False for
+    unknown names."""
     backends = _get_backends(settings)
     if name not in backends:
         return False
@@ -155,22 +119,14 @@ def has_backend(settings: Settings, name: str) -> bool:
 
 
 def is_backend_available(settings: Settings, name: str) -> bool:
-    """Cheap availability check: is the backend's binary on PATH?
-
-    Suitable for cleanup enumeration and auto-selection — does NOT probe
-    the daemon or network pool. Use is_backend_ready() for a full
-    readiness check before launching tests."""
+    """Cheap check: is the backend's binary on PATH? Doesn't probe daemons or
+    the network pool."""
     return has_backend(settings, name)
 
 
 def is_backend_ready(settings: Settings, name: str, *, quiet: bool = False) -> bool:
-    """Full readiness check: passes all of the backend's status() checks.
-
-    When quiet=False the backend prints diagnostic output explaining what
-    is missing — intended for test-suite guards that run at discovery time
-    so the operator sees a concrete failure reason for each skip.
-
-    Returns False for unknown backend names."""
+    """Full readiness: all of the backend's `status()` checks pass. Prints
+    what's missing unless `quiet`. False for unknown names."""
     backends = _get_backends(settings)
     if name not in backends:
         return False
@@ -178,17 +134,8 @@ def is_backend_ready(settings: Settings, name: str, *, quiet: bool = False) -> b
 
 
 def enumerate_active_agents(settings: Settings) -> list[ActiveAgent]:
-    """All currently-running agents, across every available
-    backend. Used by CLI `active` and the dashboard's agents
-    pane so neither has to know which backends exist. Skips
-    backends whose `is_available()` reports False.
-
-    Sorted by `(started_at, slug)` so the list is stable across
-    dashboard refresh ticks — agents don't shift position while
-    the operator navigates with arrow keys. ISO 8601 timestamps
-    sort lexicographically in chronological order; `slug` is the
-    deterministic tiebreaker. Agents with missing metadata
-    (`started_at == ""`) sort first."""
+    """Running agents across every available backend, sorted by `(started_at,
+    slug)` so the order is stable."""
     out: list[ActiveAgent] = []
     backends = _get_backends(settings)
     for name in sorted(backends):

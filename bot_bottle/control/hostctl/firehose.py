@@ -1,12 +1,8 @@
-"""The request firehose's fan-out in the host controller (PRD 0093).
-
-Batches arrive from the orchestrator and go to every live `audit tail`
-subscriber and every configured sink, each through its own bounded queue: one
-that falls behind drops its oldest records and is told how many, and never
-slows the others or the gateway. Nothing is stored. When nobody is subscribed
-and no sink is configured the reply says so, and the gateway stops building
-records until something is. Settings are reread every `RELOAD_SECONDS`, so a
-sink added with `bot-bottle audit firehose` is picked up without a restart.
+"""Request firehose fan-out: batches from the orchestrator go to each `audit
+tail` subscriber and sink through its own bounded queue, which drops its oldest
+records when behind and reports how many. Nothing is stored. With no consumer,
+the reply tells the gateway to stop building records. Settings are reread every
+`RELOAD_SECONDS`.
 """
 
 from __future__ import annotations
@@ -26,8 +22,8 @@ RELOAD_SECONDS = 5.0
 
 
 def matches(record: Mapping[str, Any], bottle: str, host: str) -> bool:
-    """Whether a record passes `tail`'s `--bottle` / `--host` filters. A gap
-    marker always does: it belongs to no one bottle."""
+    """Whether a record passes `tail`'s `--bottle` / `--host` filters. Gap
+    markers always do."""
     if "firehose_dropped" in record:
         return True
     actor = record.get("actor") or {}
@@ -69,7 +65,7 @@ class FirehoseHub:
         self._lock = threading.Lock()
 
     def _current(self) -> FirehoseSettings:
-        """The settings, reread at most every `RELOAD_SECONDS`; the sinks follow."""
+        """The settings, reread at most every `RELOAD_SECONDS`."""
         if time.monotonic() - self._read_at >= RELOAD_SECONDS:
             self._read_at = time.monotonic()
             try:
@@ -101,8 +97,8 @@ class FirehoseHub:
             self._sinks.close()
 
     def publish(self, records: list[dict[str, Any]], dropped: int = 0) -> Capture:
-        """Hand a batch to every subscriber. `dropped`: records the senders
-        upstream lost, passed on so every consumer sees the gap."""
+        """Hand a batch to every subscriber. `dropped` is upstream loss, passed
+        on."""
         with self._lock:
             subscribers = list(self._subscribers)
         gap = [{"firehose_dropped": dropped}] if dropped else []
@@ -116,10 +112,9 @@ class FirehoseHub:
     def subscribe(self, *, bottle: str = "", host: str = "",
                   closed: Callable[[], bool] = lambda: False,
                   poll_seconds: float = 1.0) -> Generator[dict[str, Any] | None]:
-        """Records as they arrive, until `closed()` or the caller stops
-        iterating. A drop on this subscriber's own queue is reported in line.
-        `None` every `poll_seconds` of quiet, so a server writing to a client
-        that left notices."""
+        """Records as they arrive, until `closed()` or the caller stops.
+        Own-queue drops are reported in line. Yields None every `poll_seconds`
+        of quiet so a server notices a client that left."""
         subscriber = _Subscriber(bottle, host)
         with self._lock:
             self._subscribers.append(subscriber)

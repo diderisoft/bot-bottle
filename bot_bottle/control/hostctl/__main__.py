@@ -1,9 +1,7 @@
-"""`python -m bot_bottle.control.hostctl`: run the host controller daemon.
-
-Binds 127.0.0.1 (port from `BOT_BOTTLE_HOSTCTL_PORT`, else ephemeral),
-publishes its state file, and serves until SIGTERM or SIGINT. It also
-listens on each backend's host address for the orchestrators it brings up
-(see `listeners`).
+"""`python -m bot_bottle.control.hostctl`: run the host controller on
+127.0.0.1 (`BOT_BOTTLE_HOSTCTL_PORT`, else ephemeral), publish its state file,
+and serve until SIGTERM/SIGINT, plus a listener per backend for its
+orchestrator (see `listeners`).
 """
 
 from __future__ import annotations
@@ -35,13 +33,13 @@ from .requests import RequestNotifier, orchestrator_pending
 from .server import HostControlServer
 from .sessions import SessionManager, control_socket_path, tmux_version, write_config
 
-# What a guest listener accepts: never `cli`, which only the host holds.
+# Guest listeners never accept `cli`.
 GUEST_ROLES = frozenset({ROLE_ORCHESTRATOR, ROLE_GATEWAY})
 
 
 def serve_running_orchestrators() -> None:
-    """Listen for the orchestrators already up from an earlier daemon: each
-    backend whose infra was brought up before, on its recorded settings."""
+    """Listen for orchestrators an earlier daemon brought up, on their recorded
+    settings."""
     # pylint: disable=import-outside-toplevel
     from ...backend import get_bottle_backend
     from ...backend.infra_service import recorded_infra_settings
@@ -96,16 +94,16 @@ def start_firehose() -> FirehoseHub:
 def main() -> int:
     port = int(os.environ.get(PORT_ENV, "0") or "0")
     sessions = SessionManager({})
-    # The host's single audit writer lives as long as this daemon, and so
-    # does forwarding the journal to wherever the user configured.
+    # The single audit writer and the journal forwarder live as long as the
+    # daemon.
     audit = HostAudit.open()
     forwarder = start_forwarder(audit)
     # Registers the `bottle` finisher, so it must exist before adopting.
     bottles = BottleService(sessions, audit=audit)
-    # The console link (ADR 0007): runs only while `bot-bottle remote enable`d.
+    # The console link (ADR 0007), while remote access is enabled.
     remote_link = Supervisor(bottles)
     remote_link.start()
-    # Agents' pending requests, in their sessions' status bars.
+    # Pending requests in session status bars.
     requests = RequestNotifier(bottles.held_ids, orchestrator_pending)
     requests.start()
     local = localsock.serve(control_socket_path(), sessions)
@@ -123,8 +121,8 @@ def main() -> int:
                                  backend=link.backend, firehose=firehose)
 
     guests = GuestListeners(guest_server)
-    # Every orchestrator this process brings up gets this daemon's URL on its
-    # link and an `orchestrator` token.
+    # Orchestrators this process starts get its URL and an `orchestrator`
+    # token.
     Orchestrator.host_control = HostControlProvisioning(listen=guests.listen)
     threading.Thread(target=serve_running_orchestrators, daemon=True).start()
     state = HostControlState(
@@ -133,7 +131,8 @@ def main() -> int:
 
     def _shutdown(signum: int, frame: FrameType | None) -> None:
         del signum, frame
-        # shutdown() blocks until serve_forever returns, so not from its thread.
+        # shutdown() blocks until serve_forever returns, so not from its
+        # thread.
         threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, _shutdown)

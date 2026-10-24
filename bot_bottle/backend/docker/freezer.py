@@ -1,4 +1,4 @@
-"""DockerFreezer — snapshot a Docker bottle via `docker commit`."""
+"""`DockerFreezer`: snapshot a docker bottle with `docker commit`."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from ...lib.log import info
 
 
 class DockerFreezer(Freezer):
-    """Freezes a Docker bottle by running `docker commit`."""
 
     backend_name = "docker"
 

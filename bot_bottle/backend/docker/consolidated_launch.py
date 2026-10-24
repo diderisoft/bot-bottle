@@ -1,14 +1,6 @@
-"""Consolidated bottle launch sequence for the docker backend.
-
-Composes the orchestrator primitives into the register/teardown sequence:
-
-  1. ensure the per-host pair (orchestrator + gateway containers) is up;
-  2. allocate the bottle a pinned source IP on the gateway network;
-  3. register it and provision its git-gate repos/creds into the gateway.
-
-Returns a `LaunchContext` with everything the agent container needs to
-attach. The agent `docker run` itself is the backend's job; this owns the
-orchestrator-facing wiring so that sequence stays testable in isolation.
+"""Docker register/teardown sequence: ensure the infra pair, allocate a pinned
+source IP on the gateway network, register the bottle and provision its
+git-gate state. Returns the agent's `LaunchContext`.
 """
 
 from __future__ import annotations
@@ -27,7 +19,7 @@ from .gateway_net import next_free_ip
 
 
 class ConsolidatedLaunchError(RuntimeError):
-    """The consolidated register/provision sequence could not complete."""
+    """The register/provision sequence couldn't complete."""
 
 
 @dataclass(frozen=True)
@@ -36,10 +28,10 @@ class LaunchContext:
 
     bottle_id: str
     identity_token: str
-    source_ip: str          # the agent's pinned address (attribution key)
-    network: str            # the shared gateway network to attach to
-    gateway_ip: str         # the gateway's address — the agent's proxy target
-    env_var_secret: str = ""  # encryption key injected into the agent's env
+    source_ip: str  # pinned address (attribution key)
+    network: str  # shared gateway network
+    gateway_ip: str  # proxy target
+    env_var_secret: str = ""  # key for the agent's env
 
 
 def _network_cidr(network: str) -> str:
@@ -57,9 +49,8 @@ def _network_cidr(network: str) -> str:
 
 
 def _network_container_ips(network: str) -> list[str]:
-    """Every address currently assigned on the gateway network — the ground
-    truth for "in use": the gateway container and every live agent. Read from
-    the network so a new bottle can't collide with anything actually attached."""
+    """Every address assigned on the gateway network, read from the network
+    itself."""
     proc = run_docker([
         "docker", "network", "inspect", "--format",
         "{{range .Containers}}{{.IPv4Address}} {{end}}", network,
@@ -84,14 +75,10 @@ def launch_consolidated(
     infra_name: str = INFRA_NAME,
     network: str = GATEWAY_NETWORK,
 ) -> LaunchContext:
-    """Ensure the orchestrator + gateway pair is up, allocate + register the bottle, and
-    provision its git-gate state. Returns the agent's attach context. (Bringing
-    the pair up cold also reattaches already-running bottles; see
-    `InfraService.reattach_running_bottles`.)"""
+    """Ensure the infra pair, allocate and register the bottle, and provision
+    its git-gate state. Returns the attach context."""
     url = service.ensure_running(launch_stages=True)
-    # Agents attribute against the *gateway* container (data plane), not the
-    # orchestrator — the two planes are now separate containers. Read its
-    # agent-facing address + provisioning transport off the Gateway service.
+    # Agents attribute against the gateway container, not the orchestrator.
     gateway = service.gateway()
     client = OrchestratorClient(url)
 

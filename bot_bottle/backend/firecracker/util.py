@@ -1,15 +1,7 @@
-"""Host-side primitives for the Firecracker backend.
-
-Covers the pieces that don't need root at launch time: locating the
-firecracker binary / guest kernel / injected dropbear, the fail-closed
-preflight (KVM + kernel + isolation table + TAP pool must all be
-present before a VM boots), the rootless rootfs pipeline
-(`docker export` -> `mke2fs -d`, no mount), and per-bottle SSH key
-generation.
-
-The privileged network setup (TAP pool + nft table) is a one-time
-operator step — see `netpool.py`, `scripts/firecracker-netpool.sh`,
-and `bot-bottle backend setup --backend=firecracker`.
+"""Firecracker host primitives that need no root: locating the binary, kernel
+and dropbear, the fail-closed preflight, the rootless rootfs pipeline (image
+export -> `mke2fs -d`), and per-bottle SSH keys. The privileged network setup
+is in `netpool.py`.
 """
 
 from __future__ import annotations
@@ -29,12 +21,10 @@ from ...paths import host_firecracker_cache_dir
 from . import netpool
 
 
-# Guest agent images are Debian-family with USER node; the VM is
-# reached over SSH as root (init drops the pubkey into both root's and
-# node's authorized_keys) and commands `runuser` down to node.
+# The VM is reached as root over SSH; commands `runuser` down to node.
 GUEST_SSH_USER = "root"
 
-# `/dev/kvm` must exist and be openable by the invoking user.
+# Must exist and be openable by the user.
 _KVM_DEVICE = "/dev/kvm"
 
 
@@ -47,40 +37,31 @@ def kernel_path(infra: InfraSettings) -> Path:
 
 
 def dropbear_path(infra: InfraSettings) -> Path:
-    """The static dropbear injected into every guest rootfs as its SSH
-    server. Must be statically linked — the guest has none of the
-    host's shared libraries."""
+    """The static dropbear put in every guest rootfs as its SSH server."""
     return Path(infra.fc_dropbear) if infra.fc_dropbear else cache_dir() / "dropbear"
 
 
-# --- availability + preflight ---------------------------------------
+# --- availability + preflight ---
 
 def is_linux() -> bool:
     return platform.system() == "Linux"
 
 
 def is_host_capable() -> bool:
-    """Whether this host *could* run firecracker — Linux with KVM —
-    regardless of whether the `firecracker` binary is installed. Used
-    for default-backend selection so a KVM Linux host that hasn't
-    installed firecracker yet still selects it and gets an install
-    pointer at launch (see `require_firecracker`), rather than silently
-    falling back to docker."""
+    """Linux with KVM, whether or not `firecracker` is installed, so such a
+    host selects firecracker and gets an install pointer."""
     return is_linux() and os.path.exists(_KVM_DEVICE)
 
 
 def is_available() -> bool:
-    """Cheap capability probe used by cross-backend enumeration —
-    firecracker on PATH, on Linux, with KVM. Does not check the
-    (operator-provisioned) kernel / pool, so an available-but-unset
-    host still shows up and gets an actionable error at launch."""
+    """Cheap probe: firecracker on PATH, Linux, KVM. Doesn't check the kernel
+    or pool, so an unset host errors at launch with a pointer."""
     return is_host_capable() and shutil.which("firecracker") is not None
 
 
 def require_firecracker(infra: InfraSettings) -> None:
-    """Fail-closed preflight. Every check that gates the security
-    boundary (the isolation table, the TAP pool) errors rather than
-    booting a VM without it."""
+    """Fail-closed preflight: a missing isolation table or TAP pool errors
+    rather than boot a VM."""
     if not is_linux():
         die("firecracker backend is only supported on Linux (KVM). "
             "On macOS use the macos-container backend.")
@@ -110,16 +91,9 @@ def _require_kvm() -> None:
 
 
 def _require_network_pool(pool: netpool.NetPool) -> None:
-    """Fail-closed on the parts we can check unprivileged; defer the
-    rest to the post-boot isolation probe.
-
-    The TAP pool is verified here (`ip link show` is unprivileged). The
-    nft table can only be *confirmed present* here when `nft` is
-    queryable — which usually needs root — so a missing/absent nft is
-    not treated as fatal at this stage: the authoritative check is the
-    empirical isolation probe run after boot, before the agent starts
-    (see isolation_probe.verify_isolation). What we must never do is
-    boot without the TAP pool."""
+    """Check the TAP pool (unprivileged). The nft table is fatal here only when
+    `nft` can be queried and says it's absent; otherwise the post-boot probe
+    decides. Never boot without the TAP pool."""
     conflicts = pool.overlapping_routes()
     if conflicts:
         detail = "; ".join(f"{c.dst} dev {c.dev}" for c in conflicts)
@@ -133,18 +107,17 @@ def _require_network_pool(pool: netpool.NetPool) -> None:
         die(f"network pool incomplete — missing TAP devices: "
             f"{', '.join(missing)}.\n    bot-bottle backend setup --backend=firecracker")
     if shutil.which("nft") is not None and not pool.nft_table_present():
-        # nft is queryable and says the table is absent — that's a
-        # definite, catchable misconfiguration; fail early.
+        # nft answered and the table is absent: fail now.
         warn(f"isolation table `inet {pool.nft_table}` not found via nft. "
              "If this is a permissions issue it will be re-checked "
              "empirically after boot; otherwise run: "
              "bot-bottle backend setup --backend=firecracker")
 
 
-# --- rootfs pipeline (rootless) -------------------------------------
+# --- rootfs pipeline (rootless) ---
 
 def docker_image_id(ref: str) -> str:
-    """The image's content digest, used as the rootfs cache key."""
+    """The image's content digest, the rootfs cache key."""
     result = subprocess.run(
         ["docker", "image", "inspect", "--format", "{{.Id}}", ref],
         capture_output=True, text=True, check=False,
@@ -158,17 +131,10 @@ def docker_image_id(ref: str) -> str:
 def build_base_rootfs_dir(
     image_ref: str, infra: InfraSettings, *, variant: str = "", init_script: str | None = None,
 ) -> Path:
-    """Export the image's filesystem and inject the guest init + static
-    dropbear. Cached by image digest — the per-bottle bits
-    (authorized_keys, IP) are passed at boot via the kernel cmdline, so
-    this tree carries nothing bottle-specific and is safely shared.
-
-    `variant` suffixes the cache key so the same image can be prepared
-    with a different `init_script` (e.g. the infra VM boots the same
-    orchestrator image as the builder but runs the control plane as
-    PID 1, not the SSH-only agent init) without a cache collision.
-
-    Returns the prepared directory (read as the `mke2fs -d` source)."""
+    """Export the image's filesystem and inject the guest init and dropbear.
+    Cached by image digest; per-bottle bits arrive on the kernel cmdline.
+    `variant` keys a different `init_script` for the same image. Returns the
+    `mke2fs -d` source dir."""
     digest = docker_image_id(image_ref)
     base = cache_dir() / "rootfs" / f"{digest}{variant}"
     ready = base / ".bb-ready"
@@ -187,9 +153,8 @@ def build_base_rootfs_dir(
 
 
 def export_image_rootfs(engine: str, image_ref: str, dest: Path) -> None:
-    """Unpack `image_ref`'s filesystem into `dest` with a host container engine
-    (`docker` or `podman`): create a stopped container, stream `export` into
-    `tar -x`, remove the container."""
+    """Unpack `image_ref` into `dest` with docker or podman (create, export,
+    rm)."""
     cid = subprocess.run(
         [engine, "create", image_ref, "sleep", "infinity"],
         capture_output=True, text=True, check=False,
@@ -211,15 +176,9 @@ def export_image_rootfs(engine: str, image_ref: str, dest: Path) -> None:
 
 
 def build_committed_rootfs_dir(tar_path: Path, infra: InfraSettings) -> Path:
-    """Prepare a base rootfs dir from a frozen-bottle snapshot tar (the
-    freeze/resume path — no Docker). Extracts the snapshot, recreates the
-    virtual mount points the freezer excluded, and injects the guest init +
-    static dropbear, mirroring `build_base_rootfs_dir` but sourced from a tar
-    we control rather than a Docker image.
-
-    Cached under the rootfs cache, keyed by the tar's size+mtime so a
-    re-freeze re-extracts but repeated resumes of the same snapshot don't.
-    Returns the prepared directory (read as the `mke2fs -d` source)."""
+    """A base rootfs dir from a frozen-bottle tar: extract, recreate the
+    excluded mount points and inject the boot bits. Cached by the tar's size
+    and mtime. Returns the `mke2fs -d` source dir."""
     st = tar_path.stat()
     fingerprint = hashlib.sha256(
         f"{tar_path}:{st.st_size}:{st.st_mtime_ns}".encode()
@@ -242,9 +201,7 @@ def build_committed_rootfs_dir(tar_path: Path, infra: InfraSettings) -> Path:
         die(f"extracting committed rootfs {tar_path} failed: "
             f"{result.stderr.strip() or '<no stderr>'}")
 
-    # The freezer excludes the live/virtual filesystems from the snapshot;
-    # recreate them as empty mount points so the guest init can mount
-    # proc/sys/dev and dropbear has a writable /run.
+    # Recreate the excluded mount points empty for the init and dropbear.
     for mount_point in ("proc", "sys", "dev", "run"):
         (base / mount_point).mkdir(mode=0o755, exist_ok=True)
 
@@ -256,23 +213,16 @@ def build_committed_rootfs_dir(tar_path: Path, infra: InfraSettings) -> Path:
 def inject_guest_boot(
     rootfs: Path, infra: InfraSettings, init_script: str | None = None,
 ) -> None:
-    """Drop the static dropbear and the PID-1 init into the rootfs.
-    `init_script` defaults to the SSH-only agent init; each infra VM
-    passes its own per-plane init (orchestrator or gateway).
-
-    A committed snapshot is guest-controlled, so `bb-dropbear`/`bb-init`
-    may already exist as symlinks aimed at a host file (e.g. bb-init ->
-    ~/.bashrc). Replace whatever is there and create the files with
-    O_EXCL|O_NOFOLLOW so the write always lands a fresh regular file in
-    the staging tree and never follows a planted symlink out of it."""
+    """Write the static dropbear and the PID-1 init (`init_script`, default the
+    agent init) into the rootfs. A snapshot is guest-controlled, so existing
+    entries are replaced with O_EXCL|O_NOFOLLOW files, never followed."""
     _write_staged_file(rootfs / "bb-dropbear", dropbear_path(infra).read_bytes())
     _write_staged_file(rootfs / "bb-init", (init_script or _GUEST_INIT).encode())
 
 
 def _write_staged_file(path: Path, data: bytes) -> None:
-    """Write `data` to `path` (mode 0755) as a fresh regular file inside a
-    staging rootfs, replacing any pre-existing entry without following a
-    symlink at `path`. Fails closed on anything unexpected there."""
+    """Write `data` to `path` (0755) as a fresh regular file, never following a
+    symlink. Fails closed on anything unexpected."""
     if path.is_symlink() or path.exists():
         if path.is_dir() and not path.is_symlink():
             shutil.rmtree(path)
@@ -289,10 +239,8 @@ def _write_staged_file(path: Path, data: bytes) -> None:
 
 
 def build_rootfs_ext4(base_dir: Path, out_path: Path, *, slack_mib: int = 1024) -> None:
-    """Build a fresh, writable ext4 for one bottle from the cached base
-    dir. Rootless: `mke2fs -d` populates the image from a directory
-    without mounting. Each call produces an independent disk, so the
-    shared base dir stays untouched and concurrent bottles don't race."""
+    """A fresh writable ext4 for one bottle from the cached base dir, via
+    `mke2fs -d` (no mount). The base stays untouched."""
     used_mib = _dir_size_mib(base_dir)
     size_mib = used_mib + slack_mib
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -306,12 +254,8 @@ def build_rootfs_ext4(base_dir: Path, out_path: Path, *, slack_mib: int = 1024) 
 
 
 def make_bottle_rootfs(agent_base: Path, out_path: Path) -> None:
-    """The per-bottle writable disk from `agent_base`, which is either a
-    prepared ext4 image (a pulled published agent) or a rootfs
-    directory (a local build, overlay, or resumed snapshot). An image is copied
-    sparsely — the base already carries its guest boot bits and slack — while a
-    directory goes through `mke2fs -d`. Either way the base stays pristine for
-    the next bottle."""
+    """The per-bottle disk from `agent_base`: a prepared ext4 is copied
+    sparsely; a rootfs dir goes through `mke2fs -d`. The base stays pristine."""
     if agent_base.is_file():
         out_path.parent.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
@@ -327,10 +271,8 @@ def make_bottle_rootfs(agent_base: Path, out_path: Path) -> None:
 def inject_guest_boot_ext4(
     image: Path, infra: InfraSettings, init_script: str | None = None,
 ) -> None:
-    """`inject_guest_boot` for a prepared ext4 image instead of a directory:
-    replace `/bb-dropbear` and `/bb-init` with this host's copies, mode 0755,
-    owned by root. Rootless (`debugfs -w`, no mount), so the host's guest init
-    stays authoritative over whatever an image was published with."""
+    """`inject_guest_boot` for an ext4 image: replace `/bb-dropbear` and
+    `/bb-init` with this host's copies (0755, root) via `debugfs -w`."""
     with tempfile.TemporaryDirectory(prefix="bb-guest-boot-") as tmp:
         init = Path(tmp) / "bb-init"
         init.write_bytes((init_script or _GUEST_INIT).encode())
@@ -345,8 +287,8 @@ def inject_guest_boot_ext4(
         ]) + "\n"
         script = Path(tmp) / "commands"
         script.write_text(commands)
-        # debugfs reports a missing file on `rm` but carries on; success is
-        # checked below by reading the files back, not from its exit code.
+        # debugfs carries on after a missing-file `rm`; success is checked by
+        # reading back.
         subprocess.run(["debugfs", "-w", "-f", str(script), str(image)],
                        capture_output=True, text=True, check=False)
         for name in ("bb-dropbear", "bb-init"):
@@ -357,9 +299,7 @@ def inject_guest_boot_ext4(
 
 
 def grow_ext4(image: Path, slack_mib: int) -> None:
-    """Add `slack_mib` of free space to an ext4 image file (rootless:
-    `e2fsck -f` then `resize2fs`), so a bottle has room to install and write
-    beyond what the published image left free."""
+    """Add `slack_mib` free space to an ext4 image (`e2fsck -f`, `resize2fs`)."""
     check = subprocess.run(["e2fsck", "-f", "-y", str(image)],
                            capture_output=True, text=True, check=False)
     if check.returncode not in (0, 1):  # 1 = errors corrected
@@ -381,15 +321,14 @@ def _dir_size_mib(path: Path) -> int:
         return 2048
 
 
-# --- per-bottle SSH keys --------------------------------------------
+# --- per-bottle SSH keys ---
 
-# Where the launch writes the bottle's ENV_VAR_SECRET inside the agent VM.
+# Where launch writes the bottle's ENV_VAR_SECRET in the VM.
 ENV_VAR_SECRET_PATH = "/run/bot-bottle/env-var-secret"
 
 
 def guest_ip_from_config(config_path: Path) -> str:
-    """The agent VM's guest IP from its Firecracker config (the `ip=` kernel
-    argument), or "" if it can't be read."""
+    """The VM's guest IP from its config's `ip=` argument, or ""."""
     try:
         cfg = json.loads(config_path.read_text())
     except (OSError, json.JSONDecodeError):
@@ -403,9 +342,8 @@ def guest_ip_from_config(config_path: Path) -> str:
 
 
 def generate_keypair(dest_dir: Path) -> tuple[Path, str]:
-    """Mint a per-bottle ed25519 keypair. Returns (private_key_path,
-    public_key_line). The public line is injected into the guest via
-    the boot cmdline; the private key authenticates host->guest SSH."""
+    """Mint a per-bottle ed25519 keypair. Returns (private key path, public key
+    line); the public line goes on the boot cmdline."""
     dest_dir.mkdir(parents=True, exist_ok=True)
     key = dest_dir / "bottle_id_ed25519"
     if key.exists():
@@ -421,15 +359,12 @@ def generate_keypair(dest_dir: Path) -> tuple[Path, str]:
 
 
 def ssh_base_argv(private_key: Path, guest_ip: str) -> list[str]:
-    """Common SSH options for host->guest control. The VM is ephemeral
-    and per-bottle, so host-key TOFU is meaningless — pin no known_hosts
-    and skip the check rather than accumulate churn."""
+    """SSH options for host->guest control. The VM is ephemeral, so host keys
+    aren't checked."""
     return [
         "ssh",
         "-i", str(private_key),
-        # Only offer the per-bottle key — don't let an agent or the
-        # operator's ~/.ssh/config inject other identities (newer
-        # OpenSSH otherwise may not reliably present the -i key).
+        # Offer only the per-bottle key.
         "-o", "IdentitiesOnly=yes",
         "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null",
@@ -439,11 +374,9 @@ def ssh_base_argv(private_key: Path, guest_ip: str) -> list[str]:
     ]
 
 
-# PID-1 init injected into every guest. Kept dependency-light: relies
-# only on coreutils + a POSIX shell (present in the Debian-family agent
-# images). The kernel `ip=` cmdline configures eth0 before init runs,
-# so no iproute2 is needed. The per-bottle SSH pubkey arrives base64 on
-# the cmdline; dropbear generates ephemeral host keys with -R.
+# PID-1 init for every guest: POSIX shell and coreutils only. The kernel
+# configures eth0; the SSH pubkey arrives base64 on the cmdline; dropbear makes
+# ephemeral host keys (-R).
 _GUEST_INIT = r"""#!/bin/sh
 # bot-bottle Firecracker guest init (PID 1).
 mount -t proc proc /proc 2>/dev/null

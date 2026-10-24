@@ -55,8 +55,8 @@ def make_server(
     signing_key: str | None = None,
     hostctl: HostControlRelay | None = None,
 ) -> OrchestratorServer:
-    """Build a bounded Uvicorn server around the orchestrator application.
-    The host controller relay defaults to the one bring-up provisioned."""
+    """A bounded Uvicorn server around the orchestrator app. The
+    host-controller relay defaults to the provisioned one."""
     key = CONTROL_PLANE.key_from_env() if signing_key is None else signing_key
     app = create_app(orchestrator, signing_key=key,
                      hostctl=hostctl if hostctl is not None else HostControlRelay.from_env())

@@ -1,15 +1,12 @@
-"""Rotate every backend's gateway mitmproxy CA.
+"""Rotate every backend's gateway CA.
 
     python -m bot_bottle.control.rotate_ca
 
-Under every backend's bring-up lock, backends are grouped by the CA dir their
-gateways share (docker and macOS share one). For a group with a running
-gateway, the CA is rolled over through it to a new one cross-signed by the
-current one, then each running gateway is restarted and its bottles reattached:
-agents that loaded the old CA keep validating, new ones trust the
-new CA. A group with no running gateway has its persisted CA cleared, so the
-next start mints a fresh one. A failed group keeps its CA and the command
-exits non-zero; the others still rotate.
+Under each backend's bring-up lock, backends are grouped by shared CA dir
+(docker and macOS share one). A group with a running gateway rolls over to a
+new CA cross-signed by the current one, then restarts and reattaches, so agents
+holding the old CA keep working. A group with no running gateway has its CA
+cleared. A failed group keeps its CA and the exit is non-zero.
 """
 
 from __future__ import annotations
@@ -32,9 +29,7 @@ def _out(msg: str) -> None:
 
 
 def _services(settings: "Settings") -> list[tuple[str, Callable[[], "InfraService"]]]:
-    """(backend name, infra service factory) for every registered backend
-    available on this host. Driven by the backend registry, so a new backend
-    is covered without changes here."""
+    """(backend name, infra service factory) for every available backend."""
     from ..backend import get_bottle_backend, has_backend, known_backend_names
     return [
         (name, lambda name=name: get_bottle_backend(settings, name).infra_service())
@@ -44,7 +39,7 @@ def _services(settings: "Settings") -> list[tuple[str, Callable[[], "InfraServic
 
 
 def _rotate_group(ca_dir: Path | None, members: dict[str, "InfraService"]) -> None:
-    """Rotate the CA one or more backends share. Raises on failure."""
+    """Rotate one group's CA. Raises on failure."""
     running = [name for name, service in members.items() if service.gateway().is_running()]
     if not running:
         label = ", ".join(members)
@@ -56,8 +51,7 @@ def _rotate_group(ca_dir: Path | None, members: dict[str, "InfraService"]) -> No
         _out(f"{label}: gateway isn't running; removed {len(removed)} CA file(s) from "
              f"{ca_dir}, so its next start mints a new CA")
         return
-    # The rollover runs the gateway's own installed code, so bring it up to
-    # date first (a no-op when it's current).
+    # The rollover runs the gateway's installed code, so update it first.
     members[running[0]].ensure_running()
     members[running[0]].gateway().roll_over_ca()
     _out(f"{running[0]}: rolled the CA over to a new one cross-signed by the current one")
@@ -72,7 +66,7 @@ def _rotate_group(ca_dir: Path | None, members: dict[str, "InfraService"]) -> No
 
 
 def main(argv: list[str] | None = None) -> int:
-    del argv  # no flags — a single deliberate action
+    del argv  # no flags
     from ..cli.settings import settings_from_env
     services = [(name, factory()) for name, factory in _services(settings_from_env())]
     if not services:
@@ -91,8 +85,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 _rotate_group(ca_dir, members)
             except (Exception, SystemExit) as e:  # pylint: disable=broad-exception-caught
-                # Any backend can fail in its own way, and a failed reattach
-                # ends its bring-up via die(); report it, keep going.
+                # Report a backend's failure and keep going.
                 _out(f"{', '.join(members)}: rotation failed: {e}")
                 failed = True
     if failed:

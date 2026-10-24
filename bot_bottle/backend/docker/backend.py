@@ -1,20 +1,5 @@
-"""DockerBottleBackend — the Docker implementation of BottleBackend.
-
-This module is a thin façade. The real work lives in four siblings:
-
-  - resolve_plan.py — Docker-specific resolution into a DockerBottlePlan
-  - launch.py       — bring-up + teardown context manager
-  - cleanup.py      — orphan enumeration + removal
-  - enumerate.py    — active-agent listing
-
-The base class's `prepare` template runs cross-backend host-side
-validation before calling `_resolve_plan` here.
-
-The per-provider provisioning steps (prompt, skills,
-the declarative provision-plan apply, supervise MCP registration)
-live on the `AgentProvider` plugin under `bot_bottle/contrib/`. The
-Docker backend only owns the steps that are about backend
-infrastructure: CA install and git copy-in.
+"""`DockerBottleBackend`: a facade over `resolve_plan`, `launch`, `cleanup` and
+`enumerate`.
 """
 
 from __future__ import annotations
@@ -45,18 +30,14 @@ from .bottle_plan import DockerBottlePlan
 if TYPE_CHECKING:
     from .infra import DockerInfraService
 class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanupPlan"]):
-    """Docker backend implementation. Selected by BOT_BOTTLE_BACKEND
-    when set to `docker`; retained as a legacy/example backend."""
+    """The docker backend, selected with `BOT_BOTTLE_BACKEND=docker`."""
 
     name = "docker"
 
     @classmethod
     def is_available(cls) -> bool:
-        """`docker` on PATH is sufficient; we don't probe `docker info`
-        eagerly because the cross-backend enumerator runs this on
-        every `list active` and we'd pay a subprocess per call. A
-        broken daemon will surface its own error during prepare /
-        launch."""
+        """`docker` on PATH. The daemon isn't probed, since cross-backend
+        listing calls this often; a broken daemon errors at prepare or launch."""
         return shutil.which("docker") is not None
 
     def setup(self) -> int:
@@ -124,14 +105,9 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
         return DockerInfraService(self.settings)
 
     def supervise_mcp_url(self, plan: DockerBottlePlan) -> str:
-        """Docker bottles reach the supervise daemon via the
-        compose-network alias `supervise:9100`. No per-bottle URL
-        plumbing needed; the alias resolves inside the bridge."""
+        """The agent's supervise URL on the shared gateway."""
         if plan.supervise_plan is None:
             return ""
-        # Consolidated: the supervise daemon lives on the shared gateway, so
-        # the agent registers the gateway address (NO_PROXY bypasses egress),
-        # not the per-bottle `supervise` alias.
         if plan.agent_supervise_url:
             return plan.agent_supervise_url
         return f"http://{SUPERVISE_HOSTNAME}:{SUPERVISE_PORT}/"

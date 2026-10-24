@@ -1,8 +1,5 @@
-"""The orchestrator as a client of the host controller.
-
-Remote launches and attaches reach a bottle through the host controller,
-which the orchestrator calls with the `orchestrator`-role token it was given
-at bring-up (it never holds the host controller's key). Stdlib only.
+"""The orchestrator as a client of the host controller, with the
+`orchestrator` token it got at bring-up (never the key). Stdlib only.
 """
 
 from __future__ import annotations
@@ -52,8 +49,8 @@ class HostControlRelay:
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "HostControlRelay | None":
-        """The relay the orchestrator's bring-up provisioned, or None when it
-        wasn't brought up by a host controller."""
+        """The relay provisioned at bring-up, or None without a host
+        controller."""
         env = os.environ if environ is None else environ
         url = env.get(HOSTCTL_URL_ENV, "").strip().rstrip("/")
         token = env.get(HOST_CONTROL.token_env, "").strip()
@@ -61,7 +58,7 @@ class HostControlRelay:
 
     def request(self, method: str, path: str,
                 body: dict[str, object] | None = None) -> tuple[int, dict[str, object]]:
-        """(status, JSON body) of one call; error statuses are returned, not raised."""
+        """(status, JSON body) of one call; error statuses are returned."""
         data = None if body is None else json.dumps(body).encode()
         headers = bearer(self.token)
         if data is not None:
@@ -76,10 +73,9 @@ class HostControlRelay:
             raise HostControlUnreachable(f"host controller unreachable: {e}") from None
 
     def live_source_ips(self) -> list[str]:
-        """The source IPs of the bottles running on this orchestrator's
-        backend (`GET /bottles/live`; its listener narrows it to that
-        backend). Raises `LiveBottlesUnknown` unless the answer is complete:
-        an unreachable daemon, an error status or a backend it couldn't list."""
+        """Source IPs of the bottles running on this orchestrator's backend
+        (`GET /bottles/live`). Raises `LiveBottlesUnknown` unless the answer is
+        complete."""
         try:
             status, body = self.request("GET", LIVE_BOTTLES_PATH)
         except HostControlUnreachable as e:
@@ -94,9 +90,8 @@ class HostControlRelay:
                 if isinstance(b, dict) and isinstance(b.get("source_ip"), str) and b["source_ip"]]
 
     def stream(self, path: str) -> Iterator[bytes]:
-        """The lines of a streamed response, as they arrive (no read timeout:
-        a build step can be quiet for minutes). Opens it before returning, so
-        a refusal raises here rather than mid-stream."""
+        """A streamed response's lines as they arrive (no read timeout). Opens
+        before returning, so a refusal raises here."""
         req = urllib.request.Request(self.url + path, headers=bearer(self.token))
         try:
             resp = urllib.request.urlopen(req, timeout=None)  # pylint: disable=consider-using-with
@@ -117,7 +112,7 @@ class HostControlRelay:
                                               headers=bearer(self.token))
         except OSError as e:
             raise HostControlUnreachable(f"host controller unreachable: {e}") from None
-        sock.settimeout(None)  # a session can be quiet for as long as it likes
+        sock.settimeout(None)  # sessions may be quiet indefinitely
         return sock, reader, writer
 
 

@@ -1,10 +1,6 @@
-"""Bottle-level provisioning for the consolidated launch sequence.
-
-Register a bottle with the orchestrator and provision its git-gate state into
-the shared gateway (`provision_bottle`), and the inverse teardown
-(`deprovision_bottle`). Backend-neutral — each backend's consolidated_launch
-drives these through its own `GatewayTransport` rather than re-implementing
-them. The git-gate half of the work lives in `provision_gateway`.
+"""Register a bottle with the orchestrator and provision its git-gate state
+into the gateway, and the inverse. Backends drive these through their
+`GatewayTransport`.
 """
 
 from __future__ import annotations
@@ -33,13 +29,10 @@ def provision_bottle(
     tokens: dict[str, str] | None = None,
     env_var_secret: str | None = None,
 ) -> RegisteredBottle:
-    """Register the bottle and provision its git-gate state. Rolls back the
-    registration if provisioning fails so no orphan is left.
-
-    Generates a fresh ENV_VAR_SECRET, passes it to the orchestrator so it can
-    encrypt the token values at rest, and stamps the secret onto the returned
-    ``RegisteredBottle`` so callers can inject it into the agent container's
-    environment."""
+    """Register the bottle and provision its git-gate state, rolling the
+    registration back if provisioning fails. A fresh ENV_VAR_SECRET goes to the
+    orchestrator (to encrypt tokens at rest) and onto the returned
+    `RegisteredBottle` for the agent's env."""
     inputs = registration_inputs(egress_plan)
     env_var_secret = env_var_secret or new_env_var_secret()
     reg = client.register_bottle(
@@ -61,10 +54,9 @@ def deprovision_bottle(
     orchestrator: Orchestrator,
     timeout: float | None = None,
 ) -> None:
-    """Deregister the bottle and remove its git-gate state. Both steps are
-    idempotent so this is safe from a cleanup trap. The orchestrator is
-    reached at its address now, not at launch: it may have been recreated
-    elsewhere while the bottle ran."""
+    """Deregister the bottle and remove its git-gate state. Idempotent. The
+    orchestrator is looked up now, since it may have moved while the bottle
+    ran."""
     from ..orchestrator.store.config_store import DEFAULT_TEARDOWN_TIMEOUT_SECONDS
     url = orchestrator.url()
     if not url:

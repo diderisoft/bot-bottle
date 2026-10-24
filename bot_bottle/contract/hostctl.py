@@ -1,6 +1,5 @@
-"""The host controller's wire contract: routes, response shapes,
-its trust domain and the `Settings` each request carries, shared by the daemon
-and its clients."""
+"""The host controller's wire contract: routes, responses, its trust domain and
+the `Settings` each request carries."""
 
 from __future__ import annotations
 
@@ -17,51 +16,48 @@ from .auth import ROLE_CLI, ROLE_GATEWAY, TrustDomain
 
 SERVICE_NAME = "bot-bottle-hostctl"
 
-# Port the daemon binds; unset means an ephemeral port, published in its state file.
+# Daemon port; unset means ephemeral, published in its state file.
 PORT_ENV = "BOT_BOTTLE_HOSTCTL_PORT"
-# The port it listens on at each backend's host address for the orchestrator.
-# Fixed, so the URL an orchestrator was given survives a daemon restart.
+# Its port on each backend's host address for the orchestrator. Fixed, so an
+# orchestrator's URL survives a daemon restart.
 GUEST_PORT = 8098
-# Carries that URL into the orchestrator; its `orchestrator` token rides in
+# That URL, in the orchestrator's env; its token is in
 # `HOST_CONTROL.token_env`. Unset: no host controller to relay launches to.
 HOSTCTL_URL_ENV = "BOT_BOTTLE_HOSTCTL_URL"
 
 STATUS_PATH = "/status"
-# GET /jobs, /jobs/{id}, /jobs/{id}/events (newline-delimited JSON, streamed).
+# GET /jobs, /jobs/{id}, /jobs/{id}/events (streamed NDJSON).
 JOBS_PATH = "/jobs"
-# POST /orchestrator/{ensure,restart} start jobs; POST /orchestrator/status answers.
-# Each takes {"settings": Settings.to_json()}.
+# POST /orchestrator/{ensure,restart} start jobs; POST /orchestrator/status
+# answers. Each takes {"settings": Settings.to_json()}.
 ORCHESTRATOR_PATH = "/orchestrator"
 # GET /sessions/{id}: {"running": bool, "exit": {"status", "signal"} | null}.
-# GET /sessions/{id}/attach upgrades to the attach WebSocket (see control/hostctl/attach).
+# GET /sessions/{id}/attach upgrades to the attach WebSocket.
 SESSIONS_PATH = "/sessions"
-# POST /bottles (a `LaunchRequest`) starts a `bottle.launch` job whose result is
-# {"bottle": id, "session": id}; GET /bottles lists the bottles the daemon holds;
-# DELETE /bottles/{id} starts a `bottle.teardown` job.
+# POST /bottles (a `LaunchRequest`) starts a `bottle.launch` job ({"bottle",
+# "session"}); GET lists held bottles; DELETE /bottles/{id} starts a
+# `bottle.teardown` job.
 BOTTLES_PATH = "/bottles"
 # GET /bottles/live: {"bottles": [{"backend", "slug", "source_ip"}], "errors":
-# {backend: message}}, the bottles running on the backends whoever launched
-# them. `?backend=` narrows the cli's view; a guest listener answers only for
-# its own backend. A backend under `errors` couldn't be listed.
+# {backend: message}}. `?backend=` narrows it; a guest listener answers only
+# for its own backend. A backend in `errors` couldn't be listed.
 LIVE_BOTTLES_PATH = "/bottles/live"
-# `POST`: append one audit event, `{"producer": ..., "event": {...}}`. Only the
-# orchestrator calls it; it relays the gateway's events too, naming which
-# component produced each one.
+# POST one audit event, `{"producer": ..., "event": {...}}`. Only the
+# orchestrator calls it, relaying the gateway's events too.
 AUDIT_APPEND_PATH = "/audit/append"
 AUDIT_PRODUCERS = frozenset({"orchestrator", "egress", "git-gate", "supervise"})
 
-# A job `error` event with this `code` stopped for a yes/no the caller can give:
-# resend the request with `assume_yes` to go ahead.
+# A job `error` with this `code` needs a yes/no: resend with `assume_yes`.
 CONFIRM_ERROR = "confirm"
 
-# Callers authenticate with `Authorization: Bearer <token>`.
+# `Authorization: Bearer <token>`.
 AUTH_HEADER = "Authorization"
 AUTH_SCHEME = "Bearer"
 
 ROLE_ORCHESTRATOR = "orchestrator"
 
-# The host controller's own key, which the orchestrator never holds: it gets an
-# `orchestrator` token instead, so it can't mint `cli` tokens and restart itself.
+# The host controller's key. The orchestrator gets an `orchestrator` token
+# instead, so it can't mint `cli` tokens.
 HOST_CONTROL = TrustDomain(
     name="host-control",
     key_filename="hostctl-token",
@@ -81,7 +77,7 @@ _SectionT = TypeVar("_SectionT", "OperationSettings", "InfraSettings")
 
 @dataclass(frozen=True)
 class OperationSettings:
-    """Knobs that apply to one request only; `cli` and `orchestrator` may set them."""
+    """Per-request knobs; `cli` and `orchestrator` may set them."""
 
     # Empty means auto-select.
     backend: str = ""
@@ -91,13 +87,11 @@ class OperationSettings:
 
 @dataclass(frozen=True)
 class InfraSettings:
-    """Knobs that describe the host infra itself; only `cli` may set them.
+    """Host infra knobs; only `cli` may set them. "" or 0 means the default."""
 
-    An empty string or 0 means the built-in default."""
-
-    # Build the infra images locally instead of pulling the published ones.
+    # Build the infra images locally instead of pulling.
     infra_build_local: bool = False
-    # `docker`, `podman`, `vm`, or empty to pick the first usable engine.
+    # `docker`, `podman`, `vm`, or "" for the first usable engine.
     build_engine: str = ""
     artifact_cache: str = ""
     orchestrator_image: str = DEFAULT_ORCHESTRATOR_IMAGE
@@ -119,14 +113,14 @@ class InfraSettings:
     macos_container_dns: str = ""
 
     def fingerprint(self) -> str:
-        """sha256 of the canonical JSON: equal settings, equal fingerprint."""
+        """sha256 of the canonical JSON."""
         canonical = json.dumps(_section_json(self), sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 @dataclass(frozen=True)
 class Settings:
-    """Everything bring-up and launch would otherwise read from the environment."""
+    """Everything bring-up and launch would otherwise read from the env."""
 
     operation: OperationSettings = field(default_factory=OperationSettings)
     infra: InfraSettings = field(default_factory=InfraSettings)
@@ -136,8 +130,8 @@ class Settings:
 
     @classmethod
     def from_json(cls, data: object) -> "Settings":
-        """Parse a `to_json` value. Missing keys take their defaults; unknown
-        keys and wrongly typed values raise ValueError."""
+        """Parse a `to_json` value. Missing keys take defaults; unknown keys
+        and wrong types raise ValueError."""
         body = _mapping(data, "settings")
         _reject_unknown(body, {"operation", "infra"}, "settings")
         return cls(
@@ -168,7 +162,7 @@ def _section_from_json(cls: type[_SectionT], data: object, where: str) -> _Secti
     _reject_unknown(body, set(fields), where)
     values: dict[str, object] = {}
     for name, value in body.items():
-        # Every field's default is a plain value of its type; bool is not an int here.
+        # Defaults are plain values of their type; bool isn't int here.
         expected = type(fields[name].default)
         if expected is float and isinstance(value, int) and not isinstance(value, bool):
             value = float(value)
@@ -182,8 +176,8 @@ def _section_from_json(cls: type[_SectionT], data: object, where: str) -> _Secti
 
 
 BOTTLE_COLORS = ("red", "green", "yellow", "blue", "magenta")
-# "prefer-cached" (the interactive default): use local images when they're
-# there, else build or pull like "fresh". "cached" fails when one is missing.
+# "prefer-cached" (interactive default) uses local images when present, else
+# builds or pulls. "cached" fails when one is missing.
 IMAGE_POLICIES = ("fresh", "cached", "prefer-cached")
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _IDENTITY = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -192,30 +186,28 @@ _MAP_FIELDS = ("secrets", "host_keys")
 
 @dataclass(frozen=True)
 class LaunchRequest:
-    """`POST /bottles`: a fully resolved, non-interactive launch.
-
-    `cwd`, `copy_cwd`, `mount_cwd`, `secrets` and `host_keys` are `cli`-only: a path on
-    the host, and values the CLI resolved or its user confirmed."""
+    """`POST /bottles`: a fully resolved, non-interactive launch. `cwd`,
+    `copy_cwd`, `mount_cwd`, `secrets` and `host_keys` are `cli`-only."""
 
     agent: str
     bottles: tuple[str, ...] = ()
     label: str = ""
     color: str = ""
-    # The headless initial task; empty for an interactive session.
+    # Headless initial task; empty for interactive.
     prompt: str = ""
     headless: bool = False
-    # Resume this bottle identity; empty mints a fresh one.
+    # Identity to resume; empty mints one.
     identity: str = ""
     image_policy: str = "fresh"
-    # Go ahead without the yes/no a `CONFIRM_ERROR` would ask for.
+    # Skip the yes/no a `CONFIRM_ERROR` would ask for.
     assume_yes: bool = False
     settings: Settings = field(default_factory=Settings)
     cwd: str = ""
     copy_cwd: bool = False
-    # Mount `cwd` read-write instead of copying it (macos-container, Docker).
+    # Mount `cwd` read-write instead of copying it.
     mount_cwd: bool = False
     secrets: dict[str, str] = field(default_factory=dict, repr=False)
-    # Repo name -> the upstream host key the user confirmed for this launch.
+    # Repo name -> the upstream host key the user confirmed.
     host_keys: dict[str, str] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, object]:
@@ -226,9 +218,8 @@ class LaunchRequest:
 
     @classmethod
     def from_json(cls, data: object, role: str) -> "LaunchRequest":
-        """Parse and validate a request from `role`. ValueError for a
-        malformed one; PermissionError when a non-`cli` role sets a
-        `cli`-only field."""
+        """Parse and validate a request from `role`. ValueError when malformed;
+        PermissionError when a non-`cli` role sets a `cli`-only field."""
         body = _mapping(data, "launch")
         names = {f.name for f in dataclasses.fields(cls)}
         _reject_unknown(body, names, "launch")
@@ -238,7 +229,7 @@ class LaunchRequest:
         values: dict[str, Any] = {}
         for name in sorted((names - {"bottles", "settings", *_MAP_FIELDS}) & set(body)):
             expected = type(getattr(_DEFAULT_LAUNCH, name))
-            # Exact types: a bool is not a str here, nor an int a bool.
+            # Exact types: bool isn't str, int isn't bool.
             if not isinstance(body[name], expected) or \
                     isinstance(body[name], bool) != (expected is bool):
                 raise ValueError(f"launch.{name}: expected {expected.__name__}")
@@ -259,7 +250,7 @@ class LaunchRequest:
         return request
 
     def check(self) -> None:
-        """ValueError unless every field holds an allowed value."""
+        """ValueError unless every field is allowed."""
         for name in (self.agent, *self.bottles):
             if not _NAME.match(name):
                 raise ValueError(f"launch: invalid agent or bottle name {name!r}")
@@ -293,8 +284,8 @@ def _str_map(data: object, where: str) -> dict[str, str]:
 
 
 def exit_code(status: int, signal_name: str = "") -> int:
-    """A shell-style exit code for an agent that exited with `status`, or
-    was killed by `signal_name` (128 + its number)."""
+    """Shell-style exit code for `status`, or 128 + the number of
+    `signal_name`."""
     if signal_name:
         try:
             return 128 + int(signal.Signals[signal_name])
@@ -304,12 +295,12 @@ def exit_code(status: int, signal_name: str = "") -> int:
 
 
 def status_body(*, build_id: str, pid: int) -> dict[str, object]:
-    """`GET /status` response: which code the daemon runs and its pid."""
+    """`GET /status`: the daemon's build id and pid."""
     return {"service": SERVICE_NAME, "build_id": build_id, "pid": pid}
 
 
 def bearer(token: str) -> dict[str, str]:
-    """The request header carrying `token`."""
+    """The header carrying `token`."""
     return {AUTH_HEADER: f"{AUTH_SCHEME} {token}"}
 
 

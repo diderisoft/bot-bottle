@@ -1,4 +1,4 @@
-"""The preflight view of a resolved manifest: what a launch will give the agent."""
+"""The preflight view of a resolved manifest."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from .index import Manifest
 
 
 def manifest_to_yaml(manifest: Manifest) -> str:
-    """Serialize the resolved Manifest to a YAML string for preflight display."""
+    """The resolved Manifest as YAML for the preflight."""
     lines: list[str] = []
 
     agent = manifest.agent

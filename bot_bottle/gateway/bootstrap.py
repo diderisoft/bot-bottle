@@ -1,22 +1,9 @@
-"""Gateway data-plane supervisor.
+"""Gateway supervisor: PID 1 in the gateway image.
 
-PID 1 inside the `bot-bottle-gateway` data-plane image. Spawns
-the configured daemons (egress, git-gate, supervise),
-forwards SIGTERM/SIGINT to each child, and propagates per-daemon
-stdout+stderr to the container log with a `[name] ` prefix.
-
-Failure policy: when a child dies unexpectedly, the supervisor
-restarts it automatically and logs the restart. The gateway stays
-up; a temporary loss of one daemon (e.g. egress OOM-killed) is
-recovered without manual container recreation. The supervisor
-itself exits only when the operator sends SIGTERM/SIGINT.
-
-Daemon subset is env-driven via `BOT_BOTTLE_GATEWAY_DAEMONS=egress`
-for callers that don't use git-gate or supervise. Default: all
-daemons.
-
-Stdlib-only by design — adding supervisord/s6/runit for four
-daemons is heavier than this script.
+Starts the daemons (egress, git-gate, supervise), forwards SIGTERM/SIGINT,
+prefixes each one's output with `[name] `, and restarts a daemon that dies. It
+exits only on SIGTERM/SIGINT. `BOT_BOTTLE_GATEWAY_DAEMONS` selects a subset
+(default: all). Stdlib only.
 """
 
 from __future__ import annotations
@@ -31,13 +18,11 @@ from dataclasses import dataclass
 from typing import IO, Sequence
 
 
-# Below compose's default 10s `stop_grace_period`. After this many
-# seconds past SIGTERM, escalate to SIGKILL on any still-running
-# child.
+# Under compose's 10 s `stop_grace_period`: SIGKILL anything still running this
+# long after SIGTERM.
 _GRACE_SECONDS = 8.0
 
-# Tight enough that exits and signals propagate without lag; loose
-# enough that the main loop isn't a CPU hog.
+# Main loop poll interval.
 _POLL_INTERVAL = 0.1
 
 
@@ -47,32 +32,19 @@ class _DaemonSpec:
     argv: Sequence[str]
 
 
-# Env-var name prefixes that carry egress-only credentials.
-# `egress_apply.py` assigns `EGRESS_TOKEN_<n>` slots that egress
-# reads to inject `Authorization` headers on configured routes;
-# no other daemon in the bundle should see these values.
+# Egress-only credential env prefixes; no other daemon sees them.
 _EGRESS_ONLY_ENV_PREFIXES: tuple[str, ...] = ("EGRESS_TOKEN_",)
 _READY_GATED_DAEMONS: tuple[str, ...] = ("git-gate", "git-http")
 
-# The control-plane signing key is the orchestrator's alone (it verifies
-# tokens), and the orchestrator runs in a separate container/VM — the gateway
-# only ever holds the pre-minted `gateway` JWT its daemons present. Strip the
-# key from every daemon's env as defense-in-depth, so a compromised data-plane
-# daemon can't read it and mint a `cli` token even if it somehow leaked into the
-# gateway container. Value matches
-# contract.identity.ORCHESTRATOR_TOKEN_ENV; hardcoded here so this supervisor stays
-# import-light.
+# The orchestrator's signing key, stripped from every daemon's env in case it
+# ever leaks into the gateway. Same value as
+# `contract.identity.ORCHESTRATOR_TOKEN_ENV`, hardcoded to stay import-light.
 _SIGNING_KEY_ENV = "BOT_BOTTLE_ORCHESTRATOR_TOKEN"
 
 
 def _env_for_daemon(name: str, base_env: dict[str, str]) -> dict[str, str]:
-    """Per-daemon env, scoped to what each process legitimately needs.
-    Returns a fresh dict — callers can mutate without affecting `base_env`.
-
-      * `EGRESS_TOKEN_*` upstream-auth slots go to egress only.
-      * the control-plane signing key is stripped from every daemon — the
-        gateway never holds it (it's the orchestrator's); the data-plane daemons
-        present the pre-minted `gateway` JWT instead."""
+    """A fresh per-daemon env: `EGRESS_TOKEN_*` for egress only, and the
+    signing key for none."""
     env = dict(base_env)
     if name != "egress":
         env = {
@@ -111,13 +83,9 @@ def _selected_daemons(
     env: dict[str, str],
     all_daemons: Sequence[_DaemonSpec] | None = None,
 ) -> tuple[_DaemonSpec, ...]:
-    """Filter the daemon set by the BOT_BOTTLE_GATEWAY_DAEMONS env var.
-
-    When the var is unset/empty, return all daemons (the standard gateway
-    subset). Unknown names are ignored.
-
-    `all_daemons` defaults to `_DAEMONS` resolved at call time (not at
-    definition time), so tests can pass a custom list."""
+    """The daemons `BOT_BOTTLE_GATEWAY_DAEMONS` selects; all when unset.
+    Unknown names are ignored. `all_daemons` defaults to `_DAEMONS` at call
+    time."""
     if all_daemons is None:
         all_daemons = _DAEMONS
     raw = env.get("BOT_BOTTLE_GATEWAY_DAEMONS", "").strip()
@@ -133,19 +101,16 @@ def _log(msg: str) -> None:
 
 
 def _pump(name: str, stream: IO[bytes]) -> None:
-    """Read lines from `stream`, prefix with `[name]`, write to
-    stdout. Runs in its own thread per child; daemon=True so a
-    blocked read doesn't keep the process alive after main exits."""
+    """Copy `stream`'s lines to stdout prefixed `[name]`, on its own daemon
+    thread."""
     try:
         for raw in iter(stream.readline, b""):
             line = raw.decode("utf-8", errors="replace").rstrip("\n")
             sys.stdout.write(f"[{name}] {line}\n")
             sys.stdout.flush()
     except (OSError, ValueError) as exc:
-        # The manager closes a dead child's pipe after wait() and before a
-        # restart. A pump can be between readline calls at that exact moment;
-        # closed-stream errors are normal completion, not uncaught thread
-        # failures. Preserve genuinely unexpected I/O diagnostics.
+        # The manager may close a dead child's pipe mid-read; that ends the
+        # pump normally. Other I/O errors are still reported.
         if not stream.closed:
             _log(f"{name} output pump stopped: {type(exc).__name__}: {exc}")
 
@@ -166,19 +131,16 @@ def _spawn(spec: _DaemonSpec) -> subprocess.Popen[bytes]:
 
 
 class _DaemonManager:
-    """Holds the running children + shutdown state. Pulled out so
-    the test suite can drive it with fake commands."""
+    """The running children and shutdown state, separate so tests can drive it."""
 
     def __init__(self, specs: Sequence[_DaemonSpec]):
         self.specs = tuple(specs)
         self.procs: list[tuple[_DaemonSpec, subprocess.Popen[bytes]]] = []
         self.shutdown_at: float | None = None
-        # Names of children that have been logged as having exited
-        # so we only log each death once across watch-loop ticks.
+        # Children already logged as exited.
         self._logged_dead: set[str] = set()
-        # Signal handlers add daemon names here and return quickly.
-        # The main watch loop drains the set, so repeated restart
-        # requests for one daemon coalesce into one restart.
+        # Restart requests from signal handlers, coalesced by name and drained
+        # by the main loop.
         self._restart_requested: set[str] = set()
 
     def start_all(self) -> None:
@@ -208,15 +170,8 @@ class _DaemonManager:
                     pass
 
     def request_restart(self, daemon_name: str) -> bool:
-        """Queue a daemon restart for the main loop to process.
-
-        Signal handlers use this non-blocking path instead of doing
-        subprocess lifecycle work directly. Requests coalesce by
-        daemon name: one pending restart is enough to make the daemon
-        reread the latest config from disk.
-
-        Returns True iff a daemon by that name is known to the
-        supervisor and shutdown has not started."""
+        """Queue a restart for the main loop (signal-handler safe). Coalesces
+        by name. True iff the daemon is known and shutdown hasn't started."""
         if self.shutdown_at is not None:
             _log(f"restart {daemon_name} skipped; supervisor is shutting down")
             return False
@@ -226,12 +181,8 @@ class _DaemonManager:
         return True
 
     def tick(self) -> bool:
-        """One iteration of the watch loop. Returns True when every
-        child has exited and the supervisor can return.
-
-        A child dying unexpectedly is logged and restarted but does
-        NOT initiate shutdown — see the module docstring's
-        failure-policy section. Shutdown is signal-driven only."""
+        """One watch-loop iteration; True once every child has exited. A crash
+        is logged and restarted; only a signal starts shutdown."""
         restarted_children = bool(self._restart_requested)
         self._drain_restart_requests()
 
@@ -246,10 +197,8 @@ class _DaemonManager:
             else:
                 _log(f"{spec.name} exited with code {rc}")
 
-        # Restart deaths discovered above before checking whether all
-        # processes are done. Deferring this until the next tick would make a
-        # single-daemon supervisor return True and exit with the restart still
-        # queued.
+        # Process restarts before the all-done check, or a single-daemon
+        # supervisor would exit with one queued.
         restarted_children |= bool(self._restart_requested)
         self._drain_restart_requests()
 
@@ -277,12 +226,8 @@ class _DaemonManager:
         return done
 
     def exit_code(self) -> int:
-        """Positive child failures win; otherwise report success.
-
-        Python represents signal-terminated children as negative
-        return codes. A signal-only graceful shutdown should not leak
-        that platform-specific detail into the container exit status,
-        but a positive crash before shutdown should remain visible."""
+        """A positive child failure wins; otherwise success (signal deaths
+        aren't failures)."""
         positives = [
             p.returncode for _, p in self.procs
             if p.returncode is not None and p.returncode > 0
@@ -302,12 +247,8 @@ class _DaemonManager:
             self.restart_daemon(daemon_name)
 
     def forward_signal(self, sig: int, daemon_name: str) -> bool:
-        """Forward a signal to one named child. Used by the SIGHUP
-        path: egress_apply.py runs `docker kill --signal HUP
-        <bundle>`, the host kernel delivers SIGHUP to PID 1 (this
-        supervisor), and we relay it to mitmdump so it reloads
-        its addon's routes.yaml. Returns True iff a live child by
-        that name was signaled."""
+        """Forward a signal to one named child. True iff a live child was
+        signaled."""
         for spec, p in self.procs:
             if spec.name != daemon_name:
                 continue
@@ -326,18 +267,8 @@ class _DaemonManager:
         return False
 
     def restart_daemon(self, daemon_name: str, *, grace: float = 5.0) -> bool:
-        """Terminate one named child and spawn a fresh one, leaving
-        the other daemons running. A daemon that has no in-process
-        reload can be restarted this way after its config file changes.
-
-        Behavior: SIGTERM → wait up to `grace` seconds → SIGKILL if
-        still alive → spawn a replacement under the same DaemonSpec.
-        The `procs` slot is updated in place so subsequent
-        forward_signal / shutdown calls reach the new pid.
-
-        Returns True iff a daemon by that name was running and a
-        replacement spawned; False if no such daemon (not wired
-        for this bottle)."""
+        """SIGTERM one child, SIGKILL after `grace`, and spawn a replacement in
+        its slot, leaving the others running. False if there's no such daemon."""
         if self.shutdown_at is not None:
             _log(f"restart {daemon_name} skipped; supervisor is shutting down")
             return False
@@ -373,7 +304,7 @@ class _DaemonManager:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    del argv  # no flags yet; env-driven only
+    del argv  # env-only
     specs = _selected_daemons(dict(os.environ))
     if not specs:
         _log("no daemons selected; nothing to do")
@@ -384,10 +315,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     signal.signal(signal.SIGTERM, lambda *_: sup.request_shutdown("SIGTERM"))  # type: ignore
     signal.signal(signal.SIGINT, lambda *_: sup.request_shutdown("SIGINT"))  # type: ignore
-    # SIGHUP reload path: egress_apply.py runs `docker kill
-    # --signal HUP <bundle>` after writing routes.yaml. The kernel
-    # delivers SIGHUP to PID 1 (this supervisor); forward it to
-    # mitmdump so it reloads its addon.
+    # Forward SIGHUP to mitmdump.
     signal.signal(
         signal.SIGHUP,
         lambda *_: sup.forward_signal(signal.SIGHUP, "egress"),  # type: ignore[misc]

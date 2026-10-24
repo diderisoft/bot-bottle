@@ -1,13 +1,10 @@
 """One remote viewer of a session: a `tmux attach` under its own PTY, pumped
 to and from a WebSocket.
 
-Binary frames carry terminal bytes both ways. Text frames carry JSON control
-messages: from the viewer `{"type": "resize", "cols", "rows"}` and
-`{"type": "writable", "value": bool}`; to the viewer `{"type": "exit",
-"status", "signal"}` when the agent exits, or `{"type": "detached"}` when the
-viewer's tmux client ends for another reason. The viewer starts read-only;
-its keystrokes are dropped until it becomes writable, which needs the
-session's agent to allow it.
+Binary frames carry terminal bytes. Text frames carry JSON: from the viewer
+`{"type": "resize", "cols", "rows"}` and `{"type": "writable", "value"}`; to it
+`{"type": "exit", "status", "signal"}` or `{"type": "detached"}`. Viewers start
+read-only and can type only if the agent allows it.
 """
 
 from __future__ import annotations
@@ -26,7 +23,7 @@ from typing import BinaryIO
 from ...lib import websocket as ws
 from .sessions import SessionError, SessionManager
 
-# Make the PTY the child's controlling terminal (so resizes reach tmux), then exec.
+# Make the PTY the child's controlling terminal so resizes reach tmux.
 _LOGIN_TTY = "import os, sys; os.login_tty(0); os.execv(sys.argv[1], sys.argv[1:])"
 
 

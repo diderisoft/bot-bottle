@@ -1,12 +1,9 @@
 """Bottles held by the host controller: launch, list, teardown.
 
-A launch job prepares the bottle without prompting, then hands it to a
-holder thread that stays inside `backend.launch(plan)` for the bottle's
-life. The holder runs the agent in a tmux session and, when the agent exits,
-leaves the launch context (tearing the bottle down) and settles its state.
-The `bottle` session finisher hands the agent's exit to the holder; a session
-re-adopted after a daemon restart has no holder, so its bottle is left for
-`bot-bottle cleanup`.
+A launch job prepares without prompting, then hands off to a holder thread that
+stays inside `backend.launch(plan)` for the bottle's life, runs the agent in
+tmux, and tears down when it exits. A session re-adopted after a daemon restart
+has no holder, so its bottle is left for `cleanup`.
 """
 
 from __future__ import annotations
@@ -40,14 +37,14 @@ if TYPE_CHECKING:
     from ...manifest import ManifestIndex
 
 SESSION_KIND = "bottle"
-# How long a stopped agent gets to exit before its bottle is finished anyway.
+# How long a stopped agent gets before its bottle is finished anyway.
 STOP_GRACE_SECONDS = 15.0
-# How long to wait for that report once the agent's session is gone.
+# How long to wait for its report once its session is gone.
 GONE_REPORT_SECONDS = 2.0
 
 
 class ConfirmationNeeded(Exception):
-    """The launch stopped for a yes/no; resending with `assume_yes` goes ahead."""
+    """The launch stopped for a yes/no; resend with `assume_yes`."""
 
     job_error_code = CONFIRM_ERROR
 
@@ -68,10 +65,9 @@ class PromptUnsupported(ValueError):
 
 def agent_args(template: str, startup_args: tuple[str, ...], prompt: str,
                headless: bool = True, *, remote_view: bool = False) -> list[str]:
-    """The agent CLI's arguments: the provider's bypass flags, its startup
-    args (and its `remote_view_args` for a session the console launched),
-    then the initial task when there is one: run to completion when
-    `headless`, else as the first message of an interactive session."""
+    """The agent CLI's args: bypass flags, startup args (plus
+    `remote_view_args` for a console launch), then the initial task, headless
+    or as the first message."""
     # pylint: disable=import-outside-toplevel
     from ...agent_provider import get_provider, runtime_for
 
@@ -102,8 +98,8 @@ def _recorded_infra(backend: str) -> InfraSettings | None:
 def with_recorded_infra(settings: Settings, backend: str,
                         recorded: Callable[[str], InfraSettings | None] = _recorded_infra,
                         ) -> Settings:
-    """`settings` for `backend` with the infra settings its last bring-up
-    recorded (defaults when none): only `cli` may set those."""
+    """`settings` for `backend` with its last recorded infra settings, which
+    only `cli` may set."""
     return dataclasses.replace(
         settings,
         operation=dataclasses.replace(settings.operation, backend=backend),
@@ -125,8 +121,7 @@ def _log_preflight(plan: "BottlePlan", backend_name: str) -> None:
 
 
 def _save_work(bottle: Any, plan: "BottlePlan", identity: str) -> None:
-    """Before teardown: save what the agent changed in a copied git
-    workspace as a patch, so its work outlives the bottle."""
+    """Before teardown, save a copied git workspace's changes as a patch."""
     from ...workspace import export_patch_script, save_patch  # pylint: disable=import-outside-toplevel
     try:
         workspace = plan.workspace_plan
@@ -151,7 +146,7 @@ def _stderr_line(line: str) -> None:
 
 
 class BottleService:
-    """The daemon's bottles. Registers the `bottle` finisher on `sessions`."""
+    """The daemon's bottles; registers the `bottle` finisher."""
 
     def __init__(
         self,
@@ -173,22 +168,22 @@ class BottleService:
         self._lock = threading.Lock()
         sessions.register(SESSION_KIND, self._finish)
 
-    # -- launch --------------------------------------------------------------
+    # --- launch ---
 
     @property
     def sessions(self) -> SessionManager:
-        """The tmux sessions the agents run in (the console link relays them)."""
+        """The tmux sessions agents run in."""
         return self._sessions
 
     def launch(self, request: LaunchRequest, role: str = ROLE_CLI) -> dict[str, object]:
-        """A `bottle.launch` job: prepare without prompting, hand the bottle
-        to a holder, and return once its agent runs in a tmux session. A
-        non-`cli` request runs on the backend's recorded infra settings."""
+        """A `bottle.launch` job: prepare without prompting, hand off to a
+        holder, and return once the agent runs in tmux. Non-`cli` requests use
+        the recorded infra settings."""
         digest = digest_request(request.to_json())
         try:
             result = self._launch(request, role)
         except ConfirmationNeeded:
-            raise  # nothing happened yet; the caller is asked first
+            raise  # nothing happened yet
         except BaseException as e:
             self.audit.brokered("broker_launch", "bottle.launch", role=role, success=False,
                                 request_digest=digest, bottle=request.identity or None,
@@ -259,8 +254,8 @@ class BottleService:
     @staticmethod
     def _confirm(backend: "BottleBackend[Any, Any]", plan: "BottlePlan",
                  request: LaunchRequest) -> None:
-        """Stop for a yes/no unless the request already gave it. A stale
-        image fails a headless launch outright, as it always has."""
+        """Stop for a yes/no unless the request gave it. A stale image fails a
+        headless launch."""
         from ...image_cache import StaleImageError  # pylint: disable=import-outside-toplevel
         try:
             backend.prelaunch_checks(plan)
@@ -269,7 +264,7 @@ class BottleService:
                 log.die(str(e))
             if not request.assume_yes:
                 raise ConfirmationNeeded(f"{e}\nLaunch anyway?") from None
-            log.warn(str(e))  # launching anyway; say why it might be off
+            log.warn(str(e))  # launching anyway
         if not request.assume_yes:
             raise ConfirmationNeeded("launch this agent?")
 
@@ -284,15 +279,14 @@ class BottleService:
         policy = digest_manifest(plan.manifest)
 
         def sink(line: str) -> None:
-            # Into the launch job until it has returned, then the daemon's log.
+            # Into the launch job until it returns, then the daemon's log.
             (_stderr_line if is_ready.is_set() else job_sink)(line)
 
         error: BaseException | None = None
         with log.redirect(sink):
             try:
                 with backend.launch(plan) as bottle:
-                    # The orchestrator's registry id names this run everywhere
-                    # in the journal; a backend that didn't register gets one.
+                    # The registry id names this run in the journal.
                     activation = bottle.registry_id or str(uuid.uuid4())
                     command, env = bottle.agent_command(agent_args(
                         template, plan.agent_provision.startup_args, request.prompt,
@@ -339,9 +333,9 @@ class BottleService:
                     ready.put(("error", error))
 
     def _finish(self, record: SessionRecord, exit_status: ExitStatus) -> None:
-        """The `bottle` finisher: hand the exit to the holder and wait for its
-        teardown. With no holder (re-adopted after a restart) there's no
-        launch context to leave, so the bottle is left for `cleanup`."""
+        """The `bottle` finisher: hand the exit to the holder and wait for
+        teardown. Without a holder (re-adopted) the bottle is left for
+        `cleanup`."""
         with self._lock:
             held = self._held.get(record.id)
         if held is not None:
@@ -361,10 +355,10 @@ class BottleService:
             capture_claude_session_state(record.id, code)
         settle_state(record.id)
 
-    # -- list / teardown -----------------------------------------------------
+    # --- list / teardown ---
 
     def held_ids(self) -> list[str]:
-        """The sessions of the bottles this daemon holds."""
+        """Sessions of the bottles this daemon holds."""
         with self._lock:
             return list(self._held)
 
@@ -398,9 +392,8 @@ class BottleService:
         return record is not None and record.kind == SESSION_KIND
 
     def _await_report(self, bottle_id: str, reported: Callable[[float], bool]) -> bool:
-        """Wait for a stopped agent's exit to be reported: up to
-        `STOP_GRACE_SECONDS`, but only `GONE_REPORT_SECONDS` once its session
-        is gone (a launcher killed before it could report never will)."""
+        """Wait for a stopped agent's exit report: up to `STOP_GRACE_SECONDS`,
+        or `GONE_REPORT_SECONDS` once its session is gone."""
         deadline = time.monotonic() + STOP_GRACE_SECONDS
         gone_at: float | None = None
         while not reported(0.2):
@@ -412,8 +405,8 @@ class BottleService:
         return True
 
     def teardown(self, bottle_id: str, role: str = ROLE_CLI) -> dict[str, object]:
-        """A `bottle.teardown` job: stop the agent, then wait until its bottle
-        is torn down. An agent that ignores the hangup is finished anyway."""
+        """A `bottle.teardown` job: stop the agent and wait for teardown. An
+        agent ignoring the hangup is finished anyway."""
         digest = digest_request({"bottle": bottle_id})
         try:
             result = self._teardown(bottle_id)

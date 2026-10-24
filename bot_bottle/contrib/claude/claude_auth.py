@@ -1,12 +1,8 @@
-"""Host Claude auth helpers.
+"""Host Claude auth: read the host's Claude Code credentials and return only
+the access token egress needs.
 
-Reads the host's Claude Code credentials and returns only the access
-token needed by egress. Does not expose refresh tokens or raw payloads.
-
-Credential storage by platform:
-  Linux  — ~/.claude/.credentials.json
-  macOS  — macOS Keychain, service "Claude Code-credentials"
-            (file path is tried first; Keychain is the fallback)
+Linux: ~/.claude/.credentials.json. macOS: that file, else the Keychain service
+"Claude Code-credentials".
 """
 
 from __future__ import annotations
@@ -34,7 +30,7 @@ def claude_auth_path(host_env: Mapping[str, str] | None = None) -> Path:
 
 
 def _read_keychain() -> dict[str, object] | None:
-    """Try the macOS Keychain. Returns parsed JSON dict or None."""
+    """The Keychain item as parsed JSON, or None."""
     if sys.platform != "darwin":
         return None
     try:
@@ -56,9 +52,8 @@ def _read_keychain() -> dict[str, object] | None:
 
 
 def _keychain_item_exists() -> bool:
-    """Whether the macOS Keychain holds Claude Code's credentials item.
-    Runs `security find-generic-password` without `-w`, so the secret is
-    never read and no Keychain prompt appears."""
+    """Whether the Keychain holds the item. Doesn't read the secret, so no
+    prompt appears."""
     if sys.platform != "darwin":
         return False
     try:
@@ -74,9 +69,8 @@ def _keychain_item_exists() -> bool:
 
 
 def claude_login_location(host_env: Mapping[str, str] | None = None) -> str:
-    """Where the host's Claude login lives, or "" if there's none. Checks
-    the same places as `claude_host_access_token`, in the same order, but
-    reads no token."""
+    """Where the host's Claude login lives, or "". Same lookup as
+    `claude_host_access_token`, without reading a token."""
     path = claude_auth_path(host_env)
     if path.is_file():
         return str(path)
@@ -125,7 +119,7 @@ def claude_host_access_token(
             "Run `claude login` on the host and restart the bottle."
         )
 
-    # expiresAt is in milliseconds
+    # milliseconds
     expires_at = oauth.get("expiresAt")
     if isinstance(expires_at, (int, float)):
         check_now = now or datetime.now(timezone.utc)

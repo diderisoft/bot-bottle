@@ -1,10 +1,5 @@
-"""git-gate deploy-key lifecycle for `gitea` upstreams.
-
-Provisions a fresh ed25519 deploy key via the forge API at prepare time
-and revokes it at teardown, so the agent never holds an upstream
-credential. Split out of `git_gate.py`; the forge HTTP client is lazily
-imported (`deploy_key_provisioner`) to keep its cost off the host path.
-`git_gate` re-exports these names for API stability."""
+"""git-gate deploy keys for `gitea` upstreams: minted through the forge API at
+launch and revoked at teardown. The forge client is imported lazily."""
 
 from __future__ import annotations
 
@@ -29,11 +24,9 @@ def _provision_dynamic_key(
     stage_dir: Path,
     secrets: SecretSource,
 ) -> str:
-    """Generate a fresh ed25519 keypair, register the public half with
-    the forge, and persist the private key + key ID under `stage_dir`.
-
-    Returns the host-side path to the private key file so the caller
-    can inject it into the GitGateUpstream as `identity_file`."""
+    """Generate an ed25519 keypair, register the public half with the forge,
+    store the private key and key id under `stage_dir`, and return the key's
+    path."""
     from ..deploy_key_provisioner import get_provisioner
     pk = entry.Key
     token = secrets.get(pk.forge_token_env)
@@ -69,11 +62,8 @@ def _provision_dynamic_key(
 def revoke_git_gate_provisioned_keys(
     bottle: ManifestBottle, stage_dir: Path, secrets: SecretSource,
 ) -> None:
-    """Revoke all deploy keys provisioned for `bottle` during prepare.
-
-    Called at teardown after containers stop. Raises if any revocation
-    fails — a stranded key is a security concern that the operator must
-    address manually."""
+    """Revoke every deploy key provisioned for `bottle`. Raises on any failure,
+    since a stranded key needs the operator's attention."""
     from ..deploy_key_provisioner import get_provisioner
     for entry in bottle.git:
         if entry.Key.provider != "gitea":
@@ -104,8 +94,8 @@ def revoke_git_gate_provisioned_keys(
 def _resolve_identity_file(
     entry: ManifestGitEntry, slug: str, stage_dir: Path, secrets: SecretSource,
 ) -> str:
-    """Return the host-side SSH identity file path for this entry.
-    For gitea entries, provisions a fresh deploy key first."""
+    """The entry's SSH identity file, provisioning a deploy key first for
+    gitea."""
     if entry.Key.provider == "gitea":
         return _provision_dynamic_key(entry, slug, stage_dir, secrets)
     return entry.IdentityFile
@@ -117,11 +107,8 @@ def provision_git_gate_dynamic_keys(
     stage_dir: Path,
     secrets: SecretSource,
 ) -> "GitGatePlan":
-    """Provision dynamic git-gate keys and return an updated plan.
-
-    This runs during backend launch, after the operator confirms the
-    preflight. Plan preparation intentionally stays side-effect-light:
-    dry-runs and aborted launches must not create remote deploy keys.
+    """Provision the gitea keys and return the updated plan. Runs at launch,
+    after confirmation, so dry runs and aborted launches create no keys.
     """
     if not plan.upstreams:
         return plan
@@ -153,10 +140,8 @@ def provision_git_gate_dynamic_keys(
 def _write_upstreams_snapshot(
     stage_dir: Path, upstreams: tuple[GitGateUpstream, ...]
 ) -> None:
-    """Persist the fully-resolved upstream table to `upstreams.json` in
-    `stage_dir` so the bring-up reconcile can re-provision git-gate without
-    the manifest. Written after dynamic keys are provisioned so every
-    identity_file is set."""
+    """Write the resolved upstream table to `stage_dir/upstreams.json`, so a
+    gateway restart can re-provision without the manifest."""
     data = [
         {
             "name": u.name,
@@ -174,9 +159,8 @@ def _write_upstreams_snapshot(
 
 
 def load_upstreams_snapshot(stage_dir: Path) -> tuple[GitGateUpstream, ...]:
-    """The upstream table `_write_upstreams_snapshot` persisted at launch, or
-    () when the bottle has no git upstreams. Each upstream's known_hosts file
-    is the one staged next to it, when present."""
+    """The upstreams `_write_upstreams_snapshot` saved, or () without
+    upstreams, with each one's staged known_hosts when present."""
     snapshot = stage_dir / "upstreams.json"
     if not snapshot.is_file():
         return ()

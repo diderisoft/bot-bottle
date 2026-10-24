@@ -1,61 +1,25 @@
-"""Hand-rolled YAML-subset parser for bot-bottle manifest files.
-
-Why hand-rolled: the configs we accept have a bounded shape (flat
-top-level keys; values are strings / ints / bools / null / lists /
-nested dicts; no anchors, no multi-line block scalars, no tags, no
-implicit type coercion gotchas). A real YAML library is a much
-larger dependency surface than we need. The project's stdlib-only
-stance (AGENTS.md) is the load-bearing reason; the safety
-properties — no Norway problem, no surprise date/octal coercion —
-are the bonus.
-
-Public API:
+"""A stdlib-only YAML-subset parser for manifests, with no implicit coercion
+(no Norway problem, no surprise dates or octals).
 
     parse_yaml_subset(text) -> dict[str, object]
-        Parse a full document. Top level must be a mapping (the
-        shape every bot-bottle manifest file uses). Values are
-        str / int / bool / None / list / dict only.
+    parse_frontmatter(text) -> (frontmatter dict, body text)
+    serialize_yaml_subset(data) -> str   (round-trips through the parser)
 
-    parse_frontmatter(text) -> tuple[dict[str, object], str]
-        For a Markdown file with YAML frontmatter delimited by `---`
-        lines. Returns (frontmatter_dict, body_text).
+Accepted, block style:
 
-    serialize_yaml_subset(data) -> str
-        Serialize a dict (as produced by parse_yaml_subset) back to
-        block-style YAML text.  The result ends with a newline and
-        can be parsed back by parse_yaml_subset.
-
-What we accept (block-style):
-
-    key: value                # mapping entry, value is inline
-    key:                      # mapping entry, value is block
+    key: value
+    key:
       nested_key: value
-
     key:
-      - item                  # list under a key
       - item
-
-    key:
-      - subkey: value1        # list item that's a mapping
+      - subkey: value1
         subkey2: value2
-      - subkey: value3
 
-What we accept (inline, scalar leaves only):
+and inline with scalar leaves: `key: [a, b, "c d"]`, `key: {a: 1, b: 2}`.
 
-    key: [a, b, "c d"]
-    key: {a: 1, b: 2}
-
-What we reject (each dies with a clear pointer):
-
-    &anchor / *alias          # anchors / aliases
-    !!tag                     # YAML tags
-    | / >                     # multi-line block scalars
-    yes / no / on / off       # only true / false count as bool
-    ambiguous bare strings    # numbers, dates, etc. when unquoted
-    tabs as indentation       # spaces only
-    flow-style nested deeper than one level
-
-Errors carry the line number from the source document.
+Rejected with a line number: anchors and aliases, tags, `|`/`>` block scalars,
+yes/no/on/off, ambiguous bare scalars (numbers, dates), tab indentation, and
+flow nesting deeper than one level.
 """
 
 from __future__ import annotations
@@ -66,24 +30,19 @@ from typing import cast
 
 
 class YamlSubsetError(ValueError):
-    """Raised when input violates the YAML subset's rules. Callers
-    that want fatal-exit semantics (manifest loader, egress-apply,
-    etc.) catch this at their own boundary and forward to `die`;
-    callers running outside the bot-bottle CLI process (the
-    egress daemon's addon) handle it as a normal exception."""
+    """Input breaks the subset's rules. CLI callers turn it into `die`; the
+    egress addon handles it as an exception."""
 
 
 
-# --- Tokenizer / line preprocessing ----------------------------------------
+# --- Tokenizer ---
 
 
 @dataclass(frozen=True)
 class _Line:
-    """One non-blank, non-comment line from the source. `indent` is
-    the column of the first non-space character; `content` is the
-    line text from that column onward, with trailing whitespace and
-    trailing `# ...` comments stripped. `lineno` is the 1-based
-    line in the original document."""
+    """One non-blank, non-comment line: `indent` is the first non-space column,
+    `content` the text from there with trailing whitespace and `# ...` comments
+    stripped, `lineno` 1-based."""
 
     indent: int
     content: str
@@ -91,8 +50,7 @@ class _Line:
 
 
 def _strip_trailing_comment(s: str) -> str:
-    """Strip ` # comment` from end of line, but only when the `#`
-    isn't inside a quoted string. Returns the cleaned line."""
+    """Strip a trailing ` # comment` unless the `#` is inside quotes."""
     in_single = False
     in_double = False
     for i, ch in enumerate(s):
@@ -101,20 +59,17 @@ def _strip_trailing_comment(s: str) -> str:
         elif ch == '"' and not in_single:
             in_double = not in_double
         elif ch == "#" and not in_single and not in_double:
-            # `#` must be preceded by whitespace to be a comment,
-            # otherwise it's just a literal character.
+            # `#` starts a comment only after whitespace.
             if i == 0 or s[i - 1] in (" ", "\t"):
                 return s[:i].rstrip()
     return s.rstrip()
 
 
 def _tokenize(text: str) -> list[_Line]:
-    """Drop blank / comment lines, parse indent + content for the
-    rest. Tabs in the indent area are rejected outright."""
+    """Drop blank and comment lines and split the rest into indent and content.
+    Tabs in the indent are rejected."""
     out: list[_Line] = []
     for n, raw in enumerate(text.splitlines(), start=1):
-        # Tabs in indent are a portability footgun — different
-        # editors render them differently and the spec says spaces.
         leading = len(raw) - len(raw.lstrip(" \t"))
         if "\t" in raw[:leading]:
             raise YamlSubsetError(f"yaml-subset: tab character in indent on line {n}")
@@ -123,7 +78,6 @@ def _tokenize(text: str) -> list[_Line]:
             continue
         if stripped.startswith("#"):
             continue
-        # Whole-line position: indent before first non-space.
         indent = len(raw) - len(raw.lstrip(" "))
         content = _strip_trailing_comment(raw[indent:])
         if not content:
@@ -132,7 +86,7 @@ def _tokenize(text: str) -> list[_Line]:
     return out
 
 
-# --- Scalar parsing ---------------------------------------------------------
+# --- Scalar parsing ---
 
 
 _BARE_RX = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]*$")
@@ -140,12 +94,8 @@ _INT_RX = re.compile(r"^-?[0-9]+$")
 _RESERVED_BOOL_LIKE = frozenset({"yes", "no", "on", "off", "y", "n", "Y", "N",
                                  "YES", "NO", "ON", "OFF", "True", "False",
                                  "TRUE", "FALSE"})
-# Yaml-ish ambiguity sources that an unquoted bare token COULD be
-# mistaken for: dates, octals, etc. Detected and rejected so users
-# quote their strings explicitly. We don't try to enumerate every
-# ambiguity; the rule is "if it looks like a non-string literal,
-# either parse it as that literal (true/false/null/int) or reject
-# it with a 'quote it' hint."
+# Unquoted tokens that look like other literals (dates, octals, ...) are
+# rejected with a "quote it" hint, or parsed as true/false/null/int.
 _DATE_RX = re.compile(r"^-?\d{4}-\d{2}-\d{2}(T\d.*)?$")
 _OCTAL_RX = re.compile(r"^0o?\d+$")
 _HEX_RX = re.compile(r"^0x[0-9A-Fa-f]+$")
@@ -153,16 +103,13 @@ _FLOAT_RX = re.compile(r"^-?\d+\.\d+([eE][-+]?\d+)?$")
 
 
 def _parse_scalar(s: str, lineno: int) -> object:
-    """Turn a stripped value string into a Python value (str, int,
-    bool, None). Quoted strings preserve their literal content
-    (with standard escapes); bare strings are accepted only when
-    they're unambiguous."""
+    """A stripped value as str, int, bool or None. Quoted strings keep their
+    content (with escapes); bare strings only when unambiguous."""
     s = s.strip()
     if not s:
         return ""
 
-    # Quoted forms first — content is whatever's between the quotes
-    # with the documented escapes applied.
+    # Quoted forms first.
     if (s.startswith('"') and s.endswith('"')) or (
         s.startswith("'") and s.endswith("'")
     ):
@@ -176,11 +123,10 @@ def _parse_scalar(s: str, lineno: int) -> object:
             except UnicodeDecodeError as e:
                 raise YamlSubsetError(f"yaml-subset: bad escape on line {lineno}: {e}")
         else:
-            # Single quotes: only '' → ' (standard YAML); no other escapes.
+            # Single quotes: only '' -> '.
             return body.replace("''", "'")
 
-    # Reserved bool-like tokens that aren't `true` / `false` —
-    # always reject so users have to be explicit.
+    # Bool-like tokens other than true/false are rejected.
     if s in _RESERVED_BOOL_LIKE:
         if s in ("true", "false"):
             return s == "true"
@@ -199,7 +145,7 @@ def _parse_scalar(s: str, lineno: int) -> object:
     if _INT_RX.match(s):
         return int(s)
 
-    # Look-alikes that we reject to keep the user in control.
+    # Look-alikes we reject.
     if _DATE_RX.match(s):
         raise YamlSubsetError(
             f"yaml-subset: bare {s!r} on line {lineno} looks like a "
@@ -221,21 +167,16 @@ def _parse_scalar(s: str, lineno: int) -> object:
             f"value {s!r}); use an int or quote as a string"
         )
 
-    # Bare strings: anything that matches the bare-string pattern is
-    # accepted as a string literal. Otherwise we hand it back as a
-    # string anyway — for URLs, paths, hostnames, etc. that contain
-    # special chars. The PRD calls for rejecting "ambiguous" strings,
-    # and we've already rejected the ambiguous shapes above; what's
-    # left is unambiguously a string.
+    # Whatever's left is unambiguously a string (URLs, paths, hostnames).
     return s
 
 
-# --- Inline list / dict ----------------------------------------------------
+# --- Inline list / dict ---
 
 
 def _parse_inline(s: str, lineno: int) -> object:
-    """Inline list `[a, b]` or dict `{a: 1, b: 2}` or scalar.
-    Nested flow more than one level deep is rejected (PRD)."""
+    """Inline `[a, b]`, `{a: 1, b: 2}` or a scalar. Deeper flow nesting is
+    rejected."""
     s = s.strip()
     if s.startswith("["):
         if not s.endswith("]"):
@@ -274,9 +215,7 @@ def _parse_inline(s: str, lineno: int) -> object:
 
 
 def _split_flow(body: str, lineno: int, kind: str) -> list[str]:
-    """Split `a, b, c` respecting quoted strings. Rejects nested
-    flow (a list/dict inside the flow body) since the PRD limits
-    flow nesting to one level."""
+    """Split `a, b, c`, respecting quotes. Nested flow is rejected."""
     items: list[str] = []
     depth_b = 0
     depth_c = 0
@@ -308,13 +247,12 @@ def _split_flow(body: str, lineno: int, kind: str) -> list[str]:
     return [s.strip() for s in items if s.strip()]
 
 
-# --- Block parser ----------------------------------------------------------
+# --- Block parser ---
 
 
 def _split_key_value(content: str, lineno: int) -> tuple[str, str]:
-    """Find the FIRST top-level `:` that separates a key from its
-    value (ignoring `:` inside quoted strings). Returns (key, value).
-    `value` may be empty (block-form mapping)."""
+    """Split at the first unquoted `:` separating key and value; `value` may be
+    empty (a block mapping)."""
     in_single = False
     in_double = False
     for i, ch in enumerate(content):
@@ -323,21 +261,19 @@ def _split_key_value(content: str, lineno: int) -> tuple[str, str]:
         elif ch == '"' and not in_single:
             in_double = not in_double
         elif ch == ":" and not in_single and not in_double:
-            # `:` must be followed by space or be at end-of-line to
-            # count as a key separator (otherwise `key:value` would
-            # ambiguous with URLs etc.).
+            # `:` separates only before a space or at end of line (not in
+            # `key:value` URLs).
             if i + 1 >= len(content) or content[i + 1] in (" ", "\t"):
                 return content[:i].strip(), content[i + 1:].lstrip()
     raise YamlSubsetError(f"yaml-subset: line {lineno} missing `: ` separator: {content!r}")
-    return "", ""  # unreachable, but needed for type checker
+    return "", ""  # unreachable; for the type checker
 
 
 def _parse_block(
     lines: list[_Line], idx: int, base_indent: int
 ) -> tuple[object, int]:
-    """Parse a block starting at `lines[idx]`, expecting that block
-    to live at `base_indent`. Returns (value, new_idx) where
-    `new_idx` is the index of the first unconsumed line."""
+    """Parse the block at `lines[idx]` at `base_indent`. Returns (value, index
+    of the first unconsumed line)."""
     if idx >= len(lines):
         raise YamlSubsetError("yaml-subset: unexpected end of document")
     first = lines[idx]
@@ -382,10 +318,10 @@ def _parse_block_mapping(
             out[key] = _parse_inline(value_text, line.lineno)
             idx += 1
         else:
-            # Value is a block on subsequent lines.
+            # The value is a block on the following lines.
             idx += 1
             if idx >= len(lines) or lines[idx].indent <= base_indent:
-                # Empty block — treat as None to match YAML.
+                # An empty block is None, as in YAML.
                 out[key] = None
                 continue
             child_indent = lines[idx].indent
@@ -405,13 +341,10 @@ def _parse_block_list(
         rest = line.content[2:] if line.content.startswith("- ") else ""
         rest = rest.strip()
 
-        # Look ahead at the next non-empty line: if it's indented
-        # more than the dash AND aligned with the rest's column,
-        # we have a multi-line mapping item.
+        # A multi-line mapping item continues on lines aligned with its first
+        # key.
         if rest and ":" in rest and _looks_like_kv(rest):
-            # The first key:value of a multi-line mapping list item.
-            # Subsequent keys live at indent = base_indent + 2 (or
-            # wherever the content after `- ` started).
+            # Further keys sit at the column after `- `.
             content_col = base_indent + 2
             first_key, first_value_text = _split_key_value(rest, line.lineno)
             if not _BARE_RX.match(first_key):
@@ -431,11 +364,11 @@ def _parse_block_list(
                     item[first_key] = value
                 else:
                     item[first_key] = None
-            # Consume additional keys at content_col.
+            # Consume the item's further keys.
             while idx < len(lines) and lines[idx].indent == content_col:
                 ln = lines[idx]
                 if ln.content.startswith("- "):
-                    break  # next list item, not a sibling key
+                    break  # next list item
                 k, v_text = _split_key_value(ln.content, ln.lineno)
                 if not _BARE_RX.match(k):
                     raise YamlSubsetError(
@@ -457,11 +390,11 @@ def _parse_block_list(
                         item[k] = None
             items.append(item)
         elif rest:
-            # Inline scalar / inline list / inline dict on the dash line.
+            # Inline scalar, list or dict on the dash line.
             items.append(_parse_inline(rest, line.lineno))
             idx += 1
         else:
-            # Bare `-` — value is a block on subsequent lines.
+            # Bare `-`: the value is a block below.
             idx += 1
             if idx >= len(lines) or lines[idx].indent <= base_indent:
                 items.append(None)
@@ -473,8 +406,8 @@ def _parse_block_list(
 
 
 def _looks_like_kv(s: str) -> bool:
-    """Heuristic: does `s` look like a mapping `key: value` line?
-    True if there's an unquoted `:` that's followed by space-or-EOL."""
+    """Whether `s` looks like `key: value` (an unquoted `:` before a space or
+    end)."""
     in_single = False
     in_double = False
     for i, ch in enumerate(s):
@@ -488,14 +421,12 @@ def _looks_like_kv(s: str) -> bool:
     return False
 
 
-# --- Public API -------------------------------------------------------------
+# --- Public API ---
 
 
 def parse_yaml_subset(text: str) -> dict[str, object]:
-    """Parse a YAML-subset document. Top level must be a mapping;
-    otherwise we die with a clear pointer."""
-    # Reject features that have no place in our schema before we
-    # tokenize, with line numbers from the raw text.
+    """Parse a YAML-subset document; the top level must be a mapping."""
+    # Reject unsupported features first, with raw line numbers.
     for n, raw in enumerate(text.splitlines(), start=1):
         s = raw.strip()
         if s.startswith("|") or s.startswith(">") or s.startswith("- |") or s.startswith("- >"):
@@ -505,9 +436,7 @@ def parse_yaml_subset(text: str) -> dict[str, object]:
                 f"single-line string instead."
             )
         if "&" in s or "*" in s:
-            # Only flag when `&` or `*` is being used as anchor/alias,
-            # not when it's inside a quoted string. Cheap check: any
-            # bare `&foo:` / `*foo` at the start of a value position.
+            # Flag `&`/`*` only as an anchor or alias at a value position.
             if re.search(r"(^|\s)[&*][A-Za-z0-9_]+", s):
                 raise YamlSubsetError(
                     f"yaml-subset: line {n} uses anchors / aliases "
@@ -540,15 +469,10 @@ def parse_yaml_subset(text: str) -> dict[str, object]:
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, object], str]:
-    """Find `---` delimiters at the top of a Markdown file, parse
-    the frontmatter as YAML subset, return (mapping, body_text).
-
-    No frontmatter at all → ({}, text). Single opening `---` with
-    no closing → die with a clear pointer. Body is the verbatim
-    text after the closing `---` line (preserving original line
-    endings)."""
-    # Split into lines but preserve the original separators so the
-    # body slice is exact.
+    """Parse `---`-delimited frontmatter at the top of a Markdown file. Returns
+    (mapping, body). No frontmatter gives ({}, text); an unclosed one dies. The
+    body is the exact text after the closing `---`."""
+    # Keep the original separators so the body slice is exact.
     nl_positions: list[int] = []
     for i, ch in enumerate(text):
         if ch == "\n":
@@ -559,9 +483,9 @@ def parse_frontmatter(text: str) -> tuple[dict[str, object], str]:
     first_nl = nl_positions[0] if nl_positions else len(text)
     first_line = text[:first_nl].strip()
     if first_line != "---":
-        return {}, text  # no frontmatter; whole document is body
+        return {}, text  # no frontmatter
 
-    # Find the matching closing `---`.
+    # Find the closing `---`.
     body_start = -1
     fm_end_lineno = -1
     line_starts = [0] + [p + 1 for p in nl_positions]
@@ -582,11 +506,11 @@ def parse_frontmatter(text: str) -> tuple[dict[str, object], str]:
     return fm, body
 
 
-# --- Serializer -------------------------------------------------------------
+# --- Serializer ---
 
 
 def _needs_quoting(s: str) -> bool:
-    """True when the string must be single-quoted to survive a round-trip."""
+    """True when the string must be single-quoted to round-trip."""
     if not s:
         return True
     if s in ("true", "false", "null", "~") or s in _RESERVED_BOOL_LIKE:
@@ -599,14 +523,14 @@ def _needs_quoting(s: str) -> bool:
         or _FLOAT_RX.match(s)
     ):
         return True
-    # Characters that have special meaning at the start of a YAML value
+    # Characters with special meaning at the start of a value.
     if s[0] in ('"', "'", "[", "{", "!", "&", "*", "#", "|", ">", "%", "@", "`"):
         return True
     return False
 
 
 def _yaml_scalar(v: object) -> str:
-    """Serialize a scalar Python value to its YAML text form."""
+    """A scalar as YAML text."""
     if v is None:
         return "null"
     if isinstance(v, bool):
@@ -620,10 +544,8 @@ def _yaml_scalar(v: object) -> str:
 
 
 def _serialize_node(node: object, indent: int) -> list[str]:
-    """Return lines (without trailing newlines) for `node` at `indent`.
-
-    Called only for non-empty dicts and lists (the caller guards with
-    `isinstance(val, (dict, list)) and val`), plus scalars at the leaf."""
+    """Lines for `node` at `indent`: a non-empty dict or list, or a leaf
+    scalar."""
     prefix = " " * indent
     if isinstance(node, dict):
         out: list[str] = []
@@ -674,11 +596,8 @@ def _serialize_node(node: object, indent: int) -> list[str]:
 
 
 def serialize_yaml_subset(data: dict[str, object]) -> str:
-    """Serialize `data` (as produced by parse_yaml_subset) to YAML text.
-
-    Produces block-style output with 2-space indentation. The result ends
-    with a newline and can be parsed back by parse_yaml_subset. Keys are
-    emitted in iteration order (insertion order in Python 3.7+)."""
+    """Serialize `data` as block-style YAML with 2-space indent and a trailing
+    newline, in key insertion order. Round-trips through `parse_yaml_subset`."""
     if not data:
         return ""
     return "\n".join(_serialize_node(data, 0)) + "\n"

@@ -1,9 +1,7 @@
-"""Start, find and stop the host controller from the CLI.
-
-The daemon publishes `{pid, port, build_id}` in a state file under
-`bot_bottle_root()/hostctl`. A CLI trusts that file only after `GET /status`
-on the port answers with the same pid. `ensure_running` holds a lock so
-concurrent CLIs start one daemon, and restarts a daemon running other code.
+"""Start, find and stop the host controller from the CLI. The daemon publishes
+`{pid, port, build_id}` under `bot_bottle_root()/hostctl`, trusted only once
+`GET /status` reports the same pid. `ensure_running` locks so concurrent CLIs
+start one daemon, and replaces one running other code.
 """
 
 from __future__ import annotations
@@ -108,9 +106,9 @@ def _lock() -> Generator[None]:
 
 
 def ensure_running(timeout: float = START_TIMEOUT_SECONDS) -> HostControlState:
-    """Return the live host controller, starting it (or replacing one that
-    runs different code) first if needed. One that holds bottles is kept:
-    replacing it would orphan them."""
+    """The live host controller, starting it (or replacing one running other
+    code) if needed. One holding bottles is kept, since replacing it would
+    orphan them."""
     with _lock():
         state = running()
         if state is not None and state.build_id == current_build_id():
@@ -144,8 +142,8 @@ def cli_token() -> str:
 
 
 def stop(*, force: bool = False) -> bool:
-    """Stop the live host controller. False if none was running. Refuses
-    while it holds bottles, which would be orphaned, unless `force`."""
+    """Stop the host controller; False if none was running. Refuses while it
+    holds bottles unless `force`."""
     with _lock():
         state = running()
         if state is None:
@@ -164,17 +162,17 @@ def _start(timeout: float) -> HostControlState:
     from . import service_unit  # pylint: disable=import-outside-toplevel
 
     if service_unit.installed():
-        # The service manager owns the daemon; ask it, then wait as usual.
+        # The service manager owns the daemon.
         service_unit.start()
         return _await_state(None, timeout)
     directory = state_dir()
     log_path = directory / "hostctl.log"
     env = dict(os.environ)
-    # The daemon must import the same package this CLI runs, checkout or install.
+    # Import the same package this CLI runs.
     env["PYTHONPATH"] = os.pathsep.join(
         p for p in (str(PACKAGE_ROOT.parent), env.get("PYTHONPATH", "")) if p
     )
-    # Detached in its own session, so it outlives this CLI and its terminal.
+    # Detached in its own session, to outlive this CLI.
     pid = os.posix_spawn(
         sys.executable, [sys.executable, "-m", "bot_bottle.control.hostctl"], env,
         file_actions=[
@@ -192,8 +190,8 @@ def _start(timeout: float) -> HostControlState:
 
 
 def _await_state(pid: int | None, timeout: float) -> HostControlState:
-    """Wait for a live daemon to publish its state: the one with `pid`, or
-    (under a service manager) any. Raises if `pid` exits or time runs out."""
+    """Wait for a daemon to publish its state: the one with `pid`, or any under
+    a service manager. Raises if `pid` exits or time runs out."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         state = read_state()
@@ -217,7 +215,7 @@ def _stop(state: HostControlState) -> None:
     deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         try:
-            # Reap it if this process started it; otherwise it isn't our child.
+            # Reap it if we started it.
             if os.waitpid(state.pid, os.WNOHANG)[0] == state.pid:
                 return
         except ChildProcessError:

@@ -1,24 +1,12 @@
-"""Guest-local container engine for Apple-container bottles.
+"""Guest-local container engine for Apple-container bottles. Everything stays
+in the bottle's VM: no outer capabilities, privileged container or host socket.
 
-The service and every nested container remain inside the existing per-bottle
-VM.  This module refuses to compensate for missing prerequisites with outer
-capabilities, a privileged container, or a host Docker socket.
-
-Podman is used rather than rootless Docker for one specific reason: Apple
-Container's capability bounding set omits `CAP_SYS_ADMIN`, which the kernel
-requires to write a multi-range `uid_map` via `newuidmap`.  Rootless Docker
-has no path that avoids that write.  Podman does — with no subordinate UID
-range configured it falls back to a single-UID self-mapping, which an
-unprivileged process may write itself.  See
-`docs/research/rootless-docker-in-apple-container-spike.md`.
-
-That fallback is why `build_image` *removes* the agent user's `/etc/subuid`
-and `/etc/subgid` entries instead of adding them: their presence is precisely
-what would send podman down the `newuidmap` path that cannot work here.
-
-The agent still talks to `docker` and `docker compose`; those speak to
-podman's Docker-compatible API socket, so nothing in the agent's habits
-changes.
+Podman, not rootless Docker: Apple's bounding set lacks `CAP_SYS_ADMIN`, needed
+to write a multi-range `uid_map`. With no subordinate ranges, podman falls back
+to a single-UID self-mapping, so `build_image` removes the agent's
+`/etc/subuid` and `/etc/subgid` entries. See
+`docs/research/rootless-docker-in-apple-container-spike.md`. The agent still
+uses `docker` and `docker compose` against podman's API socket.
 """
 
 from __future__ import annotations
@@ -33,24 +21,16 @@ from typing import Callable
 from ...lib.log import die, info
 
 _INIT = "/usr/local/libexec/bot-bottle/nested-containers-init"
-# Deliberately cryptic and short. podman derives conmon's attach socket as
-# `$XDG_RUNTIME_DIR/libpod/tmp/socket/<64-hex-id>/attach`, and a Unix socket
-# path may not exceed 108 bytes (`sun_path`). The descriptive
-# `/tmp/bot-bottle-podman-run` produced a 116-byte path — over the limit, so
-# attach would have broken as soon as anything got far enough to attach. Do
-# not lengthen this for readability; it buys 8 bytes of headroom.
+# Short on purpose: conmon's attach socket path must fit in 108 bytes
+# (`sun_path`).
 _RUNTIME_DIR = "/tmp/bbp"
 _SOCKET = f"{_RUNTIME_DIR}/podman.sock"
 _LOG = "/tmp/bot-bottle-nested-containers.log"
 IMAGE_SUFFIX = "-nested-containers"
 READY_RETRIES = 30
 
-# Apple Container creates both device nodes 0600 root:root, so the agent user
-# cannot open them: /dev/fuse blocks the fuse-overlayfs storage driver and
-# /dev/net/tun blocks slirp4netns, which rootless podman uses for the default
-# bridge network that stock compose files expect.  Relaxing the modes needs no
-# capability the bottle does not already hold — unlike CAP_SYS_ADMIN, which is
-# what killed the rootless-Docker approach.
+# Apple creates these 0600 root, blocking fuse-overlayfs and slirp4netns.
+# Relaxing the modes needs no extra capability.
 _GUEST_DEVICES = ("/dev/fuse", "/dev/net/tun")
 
 
@@ -58,14 +38,7 @@ def build_image(
     pinned_base: str,
     build: Callable[..., None],
 ) -> str:
-    """Layer the nested-container tooling onto an already-built agent image.
-
-    Podman and its networking stack live here rather than in the base agent
-    images so that bottles without the flag pay no image-size cost.
-
-    # TODO: replace this hand-rolled Dockerfile with a docker-layer
-    # abstraction once that infrastructure exists.
-    """
+    """Layer the nested-container tooling onto a built agent image."""
     image = f"{pinned_base}{IMAGE_SUFFIX}"
     init_script = Path(__file__).with_name("nested-containers-init.sh")
     with tempfile.TemporaryDirectory(prefix="bot-bottle-nested-containers.") as tmp:
@@ -80,28 +53,19 @@ def build_image(
             "COPY --from=docker_cli /usr/local/libexec/docker/cli-plugins/"
             "docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose\n"
             "RUN apt-get update \\\n"
-            # podman 5's networking stack, installed explicitly because
-            # --no-install-recommends omits it and each missing piece fails
-            # at a different, misleading layer:
-            #   podman       -> moved here from the base agent images so that
-            #                   bottles without nested_containers pay no cost
-            #   passt        -> `pasta`, the default rootless netns helper
-            #                   (podman 4 used slirp4netns); without it
-            #                   nothing starts: "could not find pasta"
-            #   nftables     -> `nft`, which netavark shells out to for the
-            #                   bridge network every compose file expects
-            #   aardvark-dns -> name resolution *inside* nested containers;
-            #                   without it DNS fails while everything else
-            #                   looks healthy
-            # slirp4netns stays as the documented fallback for pasta.
+            # podman 5's networking, installed explicitly
+            # (`--no-install-recommends` omits it):
+            #   podman       moved here from the base images
+            #   passt        `pasta`, the default rootless netns helper
+            #   nftables     `nft`, which netavark uses for compose's bridge network
+            #   aardvark-dns DNS inside nested containers
+            # slirp4netns stays as pasta's fallback.
             " && apt-get install -y --no-install-recommends "
             "aardvark-dns fuse-overlayfs netavark nftables passt podman "
             "slirp4netns uidmap \\\n"
             " && rm -rf /var/lib/apt/lists/* \\\n"
-            # Deliberate: an empty subordinate range keeps podman on the
-            # single-UID mapping that needs no CAP_SYS_ADMIN.  Adding ranges
-            # here would reintroduce the newuidmap failure this design exists
-            # to route around.
+            # An empty subordinate range keeps podman on the single-UID
+            # mapping.
             " && sed -i '/^node:/d' /etc/subuid /etc/subgid\n"
             "COPY nested-containers-init.sh "
             "/usr/local/libexec/bot-bottle/nested-containers-init\n"
@@ -114,7 +78,7 @@ def build_image(
 
 
 def guest_env(enabled: bool) -> dict[str, str]:
-    """Environment consumed by the Docker CLI inside an enabled bottle."""
+    """Env for the Docker CLI in an enabled bottle."""
     if not enabled:
         return {}
     return {
@@ -124,10 +88,8 @@ def guest_env(enabled: bool) -> dict[str, str]:
 
 
 def prepare_guest_devices(container_name: str, exec_as_root: Callable[..., None]) -> None:
-    """Make /dev/fuse and /dev/net/tun openable by the agent user.
-
-    Runs as root inside the bottle because the agent must not be able to
-    re-mode device nodes itself.  No outer capability is involved.
+    """Make /dev/fuse and /dev/net/tun openable by the agent user. Runs as root
+    in the bottle.
     """
     exec_as_root(
         container_name,
@@ -136,7 +98,7 @@ def prepare_guest_devices(container_name: str, exec_as_root: Callable[..., None]
 
 
 def start(bottle: object) -> None:
-    """Start and verify the unprivileged service through the bottle exec API."""
+    """Start and verify the unprivileged service via the bottle's exec API."""
     info("starting guest-local container engine")
     result = bottle.exec(shlex.quote(_INIT))  # type: ignore[attr-defined]
     if result.returncode != 0:

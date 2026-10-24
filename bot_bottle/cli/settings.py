@@ -1,7 +1,5 @@
-"""Build the host `Settings` from the `BOT_BOTTLE_*` env vars.
-
-The one place host code reads behaviour knobs from the environment: the CLI
-calls `settings_from_env()` once per command and passes the result down.
+"""Host `Settings` from the `BOT_BOTTLE_*` env vars, built once per command:
+the one place host code reads behaviour knobs from the env.
 """
 
 from __future__ import annotations
@@ -14,7 +12,7 @@ from typing import Any
 from ..contract.hostctl import InfraSettings, OperationSettings, Settings
 from ..lib.log import die
 
-# Settings field -> the env var that sets it.
+# Settings field -> env var.
 OPERATION_ENV: dict[str, str] = {
     "backend": "BOT_BOTTLE_BACKEND",
     "no_cache": "BOT_BOTTLE_NO_CACHE",
@@ -46,8 +44,8 @@ INFRA_ENV: dict[str, str] = {
 
 
 def settings_from_env(environ: Mapping[str, str] | None = None) -> Settings:
-    """`Settings` from `environ` (default: this process's). Unset or empty
-    vars keep the field's default."""
+    """`Settings` from `environ` (default: this process's). Unset or empty vars
+    keep the default."""
     env = os.environ if environ is None else environ
     return Settings(
         operation=OperationSettings(**_section(OperationSettings, OPERATION_ENV, env)),
@@ -90,14 +88,14 @@ def _non_negative_int(var: str, raw: str) -> int:
 
 
 def _timeout(raw: str, default: object) -> object:
-    # A malformed timeout has always fallen back to the default.
+    # A malformed timeout falls back to the default.
     try:
         return max(float(raw), 0.0)
     except ValueError:
         return default
 
 
-# Fields whose env values aren't parsed by type alone.
+# Fields whose env values need custom parsing.
 _SPECIAL: dict[str, Callable[[str, object], object]] = {
     "infra_build_local": lambda raw, _default: raw.lower() == "local",
     "build_engine": lambda raw, _default: raw.lower(),

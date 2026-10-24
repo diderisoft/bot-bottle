@@ -1,14 +1,10 @@
-"""Hands audit events to the host controller, which owns the journal.
+"""Hand audit events to the host controller's journal.
 
-`submit` never blocks the caller: events go on a bounded queue a background
-thread drains, in order, into `POST /audit/append`. While the host controller
-can't be reached the queue holds them and the thread retries. When the queue
-is full the oldest event is dropped, and once delivery resumes an
-`audit.truncation_detected` event records how many were lost and the
-`ts_event` range they covered, so a gap is itself on the record.
-
-An event the host controller refuses outright (a malformed event, or a
-credential-shaped key) is logged and dropped: sending it again can't succeed.
+`submit` never blocks: a background thread drains a bounded queue in order into
+`POST /audit/append`, retrying while unreachable. A full queue drops the
+oldest, and an `audit.truncation_detected` event later records how many and
+their `ts_event` range. An event the host controller refuses outright is logged
+and dropped.
 """
 
 from __future__ import annotations
@@ -54,9 +50,8 @@ class AuditSender:
         self._queue.put(_Queued(event, producer))
 
     def send_now(self, event: AuditEvent, producer: str = "orchestrator") -> bool:
-        """Deliver one event now, outside the queue, for a bottle whose
-        `audit.delivery` is `required`. True only once it's written (or was
-        already); the caller refuses the action otherwise."""
+        """Deliver one event now, bypassing the queue, for `audit.delivery:
+        required`. True once written (or already written)."""
         try:
             status, _ = self._relay.request(
                 "POST", AUDIT_APPEND_PATH, {"producer": producer, "event": event.to_json()})

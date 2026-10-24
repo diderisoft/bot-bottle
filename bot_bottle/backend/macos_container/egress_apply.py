@@ -1,8 +1,5 @@
-"""Host-side egress route-apply for the macos-container backend.
-
-Live route-apply is not supported: the shared gateway resolves egress policy
-per request against the orchestrator rather than reloading a per-bottle routes
-file, so a reload request fails closed until a gateway-side apply exists.
+"""macOS egress apply: unsupported, since the gateway resolves policy per
+request. Always fails closed.
 """
 
 from __future__ import annotations

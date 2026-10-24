@@ -1,32 +1,16 @@
-"""Launch flow for the macOS Apple Container backend.
+"""macOS launch: the agent joins the shared host-only gateway network and
+proxies through the per-host gateway.
 
-The agent container attaches to the **shared host-only gateway network** and
-proxies egress through the one per-host gateway.
+Apple has no `--ip`, so the agent runs before it is registered: gateway up, run
+agent, read its DHCP address, register, provision. The identity token therefore
+reaches the agent only at `container exec` time
+(`bottle.MacosContainerBottle`); the init is a bare `sleep`, so every real
+command carries it.
 
-The order differs from docker's, forced by Apple Container 1.0.0 having no
-`--ip` (see `consolidated_launch`): the agent is started *before* it is
-registered, because its DHCP-assigned address — the attribution key — does not
-exist until then.
-
-    gateway up -> run agent -> read its IP -> register it -> provision
-
-Two things follow from that inversion:
-
-- The **identity token** is minted by registration and so cannot be in the
-  agent's run-time env; it rides the proxy URL applied at `container exec`
-  time (`bottle.MacosContainerBottle`). `/resolve` requires it, so
-  egress without it is denied — hence the bare `sleep` init: every real agent
-  command goes through exec and therefore carries the token.
-- The agent is run with `--cap-drop CAP_NET_RAW`. Apple Container grants
-  NET_RAW by default, which would let an agent open a raw socket and forge a
-  neighbour's source address on the shared segment. NET_ADMIN is already
-  absent (the agent cannot change its own address or route), so dropping
-  NET_RAW is what closes the source-address half of the attribution invariant:
-  "a packet's source address, as seen by the orchestrator, provably identifies
-  the originating bottle." The identity token is the other half — an attacker
-  would need to forge the address *and* steal the token — but the invariant is
-  a stated precondition of consolidation, so it is enforced on its own terms
-  rather than left to the token.
+The agent runs with `--cap-drop CAP_NET_RAW`. Apple grants NET_RAW by default,
+which would let it forge a neighbour's source address; NET_ADMIN is already
+absent. Together they make the source address a reliable attribution key,
+independent of the token.
 """
 
 from __future__ import annotations
@@ -74,21 +58,21 @@ _AGENT_SLEEP_SECONDS = "2147483647"
 
 
 def build_or_load_images(plan: MacosContainerBottlePlan) -> BottleImages:
-    """Resolve the agent image ref for this plan. The gateway's own image is
-    built by `ensure_gateway` — it belongs to the shared singleton."""
+    """The agent image ref. The gateway image belongs to `ensure_gateway`."""
     return BottleImages(agent=_layer_nested_containers(plan, _agent_image(plan)))
 
 
 def _build_image_fn(settings: Settings) -> Callable[..., None]:
-    """`container_mod.build_image` bound to the settings' cache + DNS knobs."""
+    """`container_mod.build_image` bound to the settings' cache and DNS
+    options."""
     return functools.partial(
         container_mod.build_image, no_cache=settings.operation.no_cache,
         dns_override=settings.infra.macos_container_dns)
 
 
 def _container_runtime(settings: Settings) -> oci_agent_image.OciRuntime:
-    # Apple's CLI pulls with `container image pull`. No smoke test yet: the
-    # macOS local-build path doesn't run one either.
+    # Apple pulls with `container image pull`. No smoke test, as for local
+    # builds.
     return oci_agent_image.OciRuntime(
         pull_argv=("container", "image", "pull"),
         image_exists=container_mod.image_exists,
@@ -102,9 +86,8 @@ def _agent_image(plan: MacosContainerBottlePlan) -> str:
     if committed and container_mod.image_exists(committed):
         info(f"using committed image {committed!r}")
         return committed
-    # Prefer the release-pinned published image (or an overlay on it) over a
-    # local build; the nested-containers layer is added on top by
-    # the caller either way. None: build the bottle's own Dockerfile.
+    # Prefer the published image (or an overlay on it); the nested-containers
+    # layer goes on top either way. None means build the bottle's Dockerfile.
     published = oci_agent_image.resolve_published_agent_image(
         plan, _container_runtime(plan.settings), template=plan.agent_provider_template,
         image=plan.image, smoke_test=(),
@@ -130,10 +113,8 @@ def _agent_image(plan: MacosContainerBottlePlan) -> str:
 def _layer_nested_containers(
     plan: MacosContainerBottlePlan, agent_image: str,
 ) -> str:
-    """Add the guest-local container tooling on top of the agent image.
-
-    A separate derived tag, not the provider Dockerfile, so bottles that never
-    ask for nested containers carry none of its weight.
+    """Add the nested-container tooling as a separate derived tag, so other
+    bottles carry none of it.
     """
     if not plan.nested_containers:
         return agent_image
@@ -163,8 +144,7 @@ def launch(
     *,
     provision: Callable[[MacosContainerBottlePlan, "MacosContainerBottle"], str | None],
 ) -> Generator[MacosContainerBottle, None, None]:
-    """Run, register, provision, and yield an Apple Container bottle on the
-    shared per-host gateway."""
+    """Run, register, provision and yield an Apple Container bottle."""
     plan = dataclasses.replace(
         plan,
         agent_provision=dataclasses.replace(plan.agent_provision, image=str(images.agent)),
@@ -173,32 +153,25 @@ def launch(
     stack = teardown.stack
 
     try:
-        # Step 1: the per-host singletons. Must precede the agent run — its
-        # proxy env needs the gateway's address at `container run` time.
-        # Bringing them up cold re-points running bottles at the gateway's new
-        # address as part of the reattach.
+        # Infra first: the agent's proxy env needs the gateway at run time. A
+        # cold bring-up re-points running bottles.
         service = MacosInfraService(plan.settings)
         endpoint = ensure_gateway(service=service)
 
-        # Step 2: mint this bottle's deploy keys, then point it at the SHARED
-        # gateway's CA + git-http/supervise ports.
+        # Mint deploy keys, then point at the gateway's CA and ports.
         plan = _provision_git_gate_keys(plan)
         plan = _install_gateway_ca(plan, endpoint)
         plan = _stamp_agent_urls(plan, endpoint)
         plan = dataclasses.replace(plan, env_var_secret=new_env_var_secret())
 
-        # Step 3: run the agent. It has no identity token yet — registration
-        # needs the address this run assigns.
+        # Run the agent. It has no token yet.
         container_mod.force_remove_container(plan.container_name)
         _start_agent(plan, endpoint)
         stack.callback(container_mod.force_remove_container, plan.container_name)
 
-        # Step 4: read the assigned address and register by it. This is the
-        # attribution key; `--cap-drop CAP_NET_RAW` at run is what makes it
-        # unforgeable. Poll: `container run --detach` can return before vmnet's
-        # DHCP has assigned the address.
-        # Resolve the gateway name before anything execs: every agent-facing
-        # URL uses it, so the entry must exist for the first connection.
+        # Resolve the gateway name before anything execs, then read the DHCP
+        # address (polling: `run --detach` can return first) and register by
+        # it.
         set_gateway_host(plan.container_name, endpoint.gateway_ip)
         source_ip = container_mod.wait_container_ipv4_on_network(
             plan.container_name, endpoint.network,
@@ -225,13 +198,8 @@ def launch(
             f"(gateway {endpoint.gateway_ip}, ip {source_ip})"
         )
 
-        # Stamp the token onto the plan so provision-time consumers can read it,
-        # not only the exec-time egress proxy. git-gate's gitconfig extraHeader
-        # and the supervise MCP --header both reach the gateway on NO_PROXY (they
-        # bypass the egress proxy that carries the token), so without this the
-        # gateway's /resolve fail-closes and every git fetch/push and supervise
-        # call from the bottle is denied. Registration already produced the
-        # token above, so — unlike the run-time env — the plan CAN carry it.
+        # Put the token on the plan: git-gate's extraHeader and the supervise
+        # MCP header bypass the proxy, so they need it too.
         plan = dataclasses.replace(plan, identity_token=ctx.identity_token)
 
         exec_env = {
@@ -266,9 +234,8 @@ def launch(
 
 
 def stale_checks(plan: MacosContainerBottlePlan) -> None:
-    """Raise StaleImageError if a cached image is older than the configured
-    threshold. Only runs when image_policy is 'cached'. Called by the backend
-    class's _image_stale_checks before _launch_impl starts any resources."""
+    """Raise StaleImageError if a cached image is past the threshold. Only
+    under the 'cached' policy."""
     if plan.spec.image_policy not in ("cached", "prefer-cached"):
         return
     committed = read_committed_image(plan.slug)
@@ -292,7 +259,7 @@ def _provision_git_gate_keys(
 def _install_gateway_ca(
     plan: MacosContainerBottlePlan, endpoint: GatewayEndpoint,
 ) -> MacosContainerBottlePlan:
-    """Stage the shared gateway's CA for the provisioner to install."""
+    """Stage the gateway's CA for the provisioner."""
     return dataclasses.replace(
         plan, egress_plan=stage_gateway_ca(plan, endpoint.gateway_ca_pem))
 
@@ -300,16 +267,10 @@ def _install_gateway_ca(
 def _stamp_agent_urls(
     plan: MacosContainerBottlePlan, endpoint: GatewayEndpoint,
 ) -> MacosContainerBottlePlan:
-    """Point the agent's git-gate insteadOf rewrites + supervise MCP at the
-    shared gateway's ports. Both bypass the egress proxy (NO_PROXY covers the
-    gateway name).
-
-    Addressed by `GATEWAY_HOSTNAME`, never by IP: these URLs are baked into
-    the agent's gitconfig and MCP config at provision time, so an address here
-    would strand the bottle the moment the gateway moved. The name is resolved
-    per connection through `/etc/hosts`, which stays rewritable while the
-    bottle runs."""
-    del endpoint  # addressed by name; the address reaches the bottle via /etc/hosts
+    """Point git-gate and supervise at the gateway by `GATEWAY_HOSTNAME`, never
+    by IP: these URLs are baked in at provision time, and the name resolves
+    through the rewritable `/etc/hosts`. Both bypass the proxy."""
+    del endpoint  # addressed by name, via /etc/hosts
     git_gate_url, supervise_url = gateway_agent_urls(
         plan, GATEWAY_HOSTNAME, plan.git_gate_plan)
     return dataclasses.replace(
@@ -320,38 +281,24 @@ def _stamp_agent_urls(
 
 
 def _proxy_url(egress_port: int, identity_token: str = "") -> str:
-    """The agent's egress proxy URL. The identity token rides as proxy
-    credentials — the gateway reads Proxy-Authorization, resolves the
-    (source_ip, token) pair against the control plane, and strips it before
-    upstream. Without a valid pair `/resolve` denies the request.
-
-    Names the gateway rather than addressing it: this URL reaches the agent as
-    process environment, which cannot be rewritten once the agent is running,
-    so an address baked here is unfixable if the gateway moves."""
+    """The agent's proxy URL with the identity token as credentials. Uses the
+    gateway's name, since process env can't change if the gateway moves."""
     cred = f"bottle:{identity_token}@" if identity_token else ""
     return f"http://{cred}{GATEWAY_HOSTNAME}:{egress_port}"
 
 
 def _no_proxy() -> str:
-    # git-http + supervise live on the gateway and must NOT go through the
-    # egress proxy — the agent reaches them directly by name. Deliberately
-    # address-free: NO_PROXY is baked into the run-time env and is therefore
-    # just as unfixable as the proxy URL if the gateway moves.
+    # git-http and supervise bypass the proxy. Address-free, like the proxy
+    # URL.
     return f"localhost,127.0.0.1,{GATEWAY_HOSTNAME}"
 
 
 def _identity_proxy_env(
     endpoint: GatewayEndpoint, identity_token: str, egress_port: int,
 ) -> dict[str, str]:
-    """The token-bearing proxy env applied at `container exec` — the only way
-    to get the token in, since it does not exist until after the container
-    runs (registration keys on the DHCP-assigned address).
-
-    This is the *sole* source of `*_PROXY` for the agent. It deliberately does
-    not rely on overriding a run-time value: `container exec --env` appends
-    rather than replaces, so a run-time `HTTPS_PROXY` would survive alongside
-    this one and first-wins runtimes would read the wrong entry. See
-    `_agent_env_entries`."""
+    """The token-bearing proxy env applied at `container exec`, and the only
+    source of `*_PROXY`. `exec --env` appends rather than replaces, so nothing
+    may be set at run time. See `_agent_env_entries`."""
     if not identity_token:
         return {}
     del endpoint  # the gateway is named, not addressed
@@ -385,22 +332,19 @@ def _agent_run_argv(
         "--detach",
         "--label", "bot-bottle.backend=macos-container",
         "--network", endpoint.network,
-        # The attribution invariant: without NET_RAW the agent cannot open a
-        # raw socket, so it cannot source-IP-spoof its neighbours on the shared
-        # segment. NET_ADMIN is not granted by default, so its address and
-        # route are already fixed. See the module docstring.
+        # Without NET_RAW the agent can't spoof neighbours' addresses. See the
+        # module docstring.
         "--cap-drop", "CAP_NET_RAW",
     ]
     for entry in _agent_env_entries(plan, endpoint):
         argv += ["--env", entry]
     workspace = plan.workspace_plan
     if workspace.mount:
-        # virtiofs: the agent (uid 1000) edits the user's files in place; on the
-        # host they keep the user's ownership.
+        # virtiofs: the agent edits the user's files in place; they keep the
+        # user's ownership on the host.
         argv += ["--mount", container_mod.bind_mount_spec(
             str(workspace.host_path), workspace.guest_path)]
-    # The init process is a no-op: every agent command arrives via
-    # `container exec`, which is also how the identity token gets in.
+    # No-op init; every command arrives via exec, with the token.
     argv += [plan.image, "sleep", _AGENT_SLEEP_SECONDS]
     return argv
 
@@ -408,21 +352,10 @@ def _agent_run_argv(
 def _agent_env_entries(
     plan: MacosContainerBottlePlan, endpoint: GatewayEndpoint,
 ) -> tuple[str, ...]:
-    # No `*_PROXY` here on purpose. The token-bearing URL is applied at
-    # `container exec` (`_identity_proxy_env`), and Apple's `container exec
-    # --env` **appends** to the run-time environment rather than replacing it:
-    # setting a token-less value here leaves two `HTTPS_PROXY` entries in the
-    # agent's `environ`, token-less first. Which one a runtime reads is then
-    # pure luck — Node takes the last (and worked), Rust's `std::env::var`
-    # takes the first, so Codex proxied without its identity token and
-    # `/resolve` fail-closed on every request.
-    #
-    # A token-less proxy URL has no legitimate consumer anyway: the init
-    # process is `sleep` and everything that egresses arrives via exec. Its
-    # only value was a tidy 403 for unattributed callers, which is not worth
-    # silently dropping attribution for. Without it a process that egresses
-    # before the exec-time env still fails closed — the agent network is
-    # host-only, so there is no route off it except the gateway.
+    # No `*_PROXY` at run time: `exec --env` appends, so a token-less entry
+    # here would sit first in `environ`, and first-wins runtimes (Rust) would
+    # proxy without the token. A process egressing before exec still fails
+    # closed: the agent network is host-only.
     no_proxy = _no_proxy()
     env = [
         f"NO_PROXY={no_proxy}",
@@ -439,8 +372,7 @@ def _agent_env_entries(
         env.append(f"{ENV_VAR_SECRET_NAME}={plan.env_var_secret}")
     for name, value in sorted(plan.agent_provision.guest_env.items()):
         env.append(f"{name}={value}")
-    # Forwarded vars: bare name → inherits from the `container run` process env
-    # so the secret value never lands on argv.
+    # Bare names: values come from the `container run` process env.
     for name in sorted(plan.forwarded_env.keys()):
         env.append(name)
     env.extend(Egress().agent_env_entries(plan.egress_plan))

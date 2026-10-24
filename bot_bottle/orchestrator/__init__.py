@@ -1,17 +1,6 @@
-"""Per-host orchestrator service.
-
-A single persistent per-host service that will run the gateway functions
-(egress / git-gate / supervise), coordinate with the console, and broker
-agent launches. This package is being built bottom-up, starting with the
-backend-neutral "consolidation core" that needs no VM packaging:
-
-  * `store.registry_store` — the SQLite runtime-state store + fail-closed
-                      attribution (source IP + per-bottle identity token).
-  * `service`       — the `OrchestratorCore`: owns the registry
-                      (register/deregister), the supervise queue, attributes.
-  * `server` — the HTTP control-plane RPC (register / deregister /
-                      list / attribute / gateway / health), plus remote
-                      launches relayed to the host controller.
+"""The per-host orchestrator: the control plane. `store.registry_store` is the
+bottle registry and fail-closed attribution; `service` is `OrchestratorCore`;
+`api` and `server` serve the HTTP control plane.
 """
 
 from __future__ import annotations
@@ -24,10 +13,7 @@ if TYPE_CHECKING:
     from .server import OrchestratorServer, create_app, make_server
 
 
-# Facade name -> submodule that defines it. Lazy so importing a leaf (or the
-# parent package, e.g. via `orchestrator.store.store_manager`) doesn't drag the
-# whole orchestrator — server, http — while
-# `from bot_bottle.orchestrator import RegistryStore` keeps working.
+# Facade name -> defining submodule, resolved lazily.
 _LAZY: dict[str, str] = {
     "BottleRecord": ".store.registry_store",
     "RegistryStore": ".store.registry_store",

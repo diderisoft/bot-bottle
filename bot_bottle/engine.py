@@ -1,13 +1,8 @@
-"""Which bot-bottle code is running: `bot-bottle/<version>+<short sha>`.
+"""`bot-bottle/<version>+<short sha>`: the code version stamped on audit
+records as `engine`.
 
-Stamped on every audit record as `engine`. With a fixed manifest,
-the enforcing code is the only other thing that can change a decision, so a
-record has to say which code made it.
-
-A source checkout asks git. An install reads the commit pip recorded in the
-distribution's `direct_url.json`, which every `pip install git+…` writes, so
-no build step has to stamp it. An install from a local directory or a plain
-wheel has no commit to report and gets the version alone.
+A checkout asks git; a `pip install git+…` reads the commit from
+`direct_url.json`; other installs report the version alone.
 """
 
 from __future__ import annotations

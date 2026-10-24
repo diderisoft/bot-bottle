@@ -1,21 +1,6 @@
-"""Per-agent egress.
-
-The egress gateway is a TLS-terminating forward proxy that allow-lists a
-bottle's outbound HTTP(S), scans payloads for secret exfil, and injects
-per-route upstream credentials the agent never sees.
-
-Layout:
-
-  * `service` — the `Egress` host-side service (`prepare` the launch plan,
-    `resolve_token_values`, `agent_env_entries`) + the route-building /
-    rendering functions.
-  * `plan`    — `EgressPlan` / `EgressRoute`, the launch DTOs (in the backend
-    contract).
-
-The runtime enforcement (the mitmproxy addon) lives in
-`bot_bottle.gateway.egress.addon*`. Public names are re-exported lazily via
-`__getattr__`, so `from bot_bottle.egress import …` keeps working and importing
-`egress.plan` (the contract's dependency) stays light.
+"""Host side of egress: `service` (the `Egress` service and route rendering)
+and `plan` (`EgressPlan`, `EgressRoute`). Enforcement is in
+`bot_bottle.gateway.egress`. Names are re-exported lazily.
 """
 
 from __future__ import annotations

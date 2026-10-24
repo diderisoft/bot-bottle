@@ -1,4 +1,4 @@
-"""SQLite-backed bot-bottle configuration store."""
+"""SQLite store for host-side bot-bottle settings."""
 
 from __future__ import annotations
 
@@ -12,14 +12,14 @@ from .migrations import TableMigrations
 
 
 DEFAULT_CACHED_IMAGE_STALE_WARNING_DAYS = 1
-# What a bottle that doesn't set `audit.delivery` gets.
+# The default for bottles that don't set `audit.delivery`.
 DEFAULT_AUDIT_DELIVERY = "best_effort"
 
 
 @dataclass(frozen=True)
 class AuditForward:
-    """An HTTPS endpoint the audit journal is forwarded to. `secret` names an
-    entry in the user's secrets file, sent as a bearer token; never the value."""
+    """An HTTPS endpoint the journal is forwarded to. `secret` names a
+    secrets-file entry sent as a bearer token."""
 
     url: str
     secret: str
@@ -28,9 +28,9 @@ class AuditForward:
 
 @dataclass(frozen=True)
 class FirehoseSink:
-    """Where the request firehose goes: `exec` writes JSONL to `command`'s
-    stdin; `https` POSTs NDJSON batches to `url`, with the secrets-file entry
-    `secret` as a bearer token."""
+    """A firehose sink: `exec` writes JSONL to `command`'s stdin; `https` POSTs
+    NDJSON batches to `url` with the secrets-file entry `secret` as a bearer
+    token."""
 
     type: str  # exec | https
     command: tuple[str, ...] = ()
@@ -62,23 +62,23 @@ class FirehoseSettings:
 
 
 class ConfigStore(DbStore):
-    """SQLite configuration for host-side bot-bottle settings."""
+    """SQLite store for host-side settings."""
 
     def __init__(self, db_path: Path) -> None:
         migrations = TableMigrations("config_store", [
-            # v1 — host-side bot-bottle settings
+            # v1: host settings
             """
             CREATE TABLE IF NOT EXISTS bot_bottle_config (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 cached_image_stale_warning_days INTEGER NOT NULL DEFAULT 1
             )
             """,
-            # v2 — the host-wide audit delivery default
+            # v2: host-wide audit delivery default
             """
             ALTER TABLE bot_bottle_config
             ADD COLUMN audit_delivery TEXT NOT NULL DEFAULT 'best_effort'
             """,
-            # v3-5 — where the host controller forwards the audit journal
+            # v3-5: audit journal forwarding
             """
             ALTER TABLE bot_bottle_config
             ADD COLUMN audit_forward_url TEXT NOT NULL DEFAULT ''
@@ -91,7 +91,7 @@ class ConfigStore(DbStore):
             ALTER TABLE bot_bottle_config
             ADD COLUMN audit_forward_format TEXT NOT NULL DEFAULT 'native'
             """,
-            # v6-9 — the request firehose: its sinks and what it captures
+            # v6-9: firehose sinks and capture
             """
             ALTER TABLE bot_bottle_config
             ADD COLUMN firehose_sinks TEXT NOT NULL DEFAULT '[]'

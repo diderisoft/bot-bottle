@@ -1,13 +1,9 @@
 """The audit-event envelope and hash chain.
 
-Producers (the gateway, the orchestrator, the host controller itself) build an
-`AuditEvent`. The host controller's single writer seals it into a journal
-record: it adds the chain fields (`epoch`, `seq`, `segment`, `prev`, `hash`),
-`ts_recorded`/`ts_mono`, and the attribution it owns (`producer`, `host`,
-`engine`). Nothing a producer sends can set those.
-
-Everything outside `untrusted` is host-established; `untrusted` is the one
-place an agent's or a remote's claims may go.
+Producers build an `AuditEvent`. The host controller's writer seals it: it adds
+the chain fields (`epoch`, `seq`, `segment`, `prev`, `hash`),
+`ts_recorded`/`ts_mono`, and `producer`, `host` and `engine`, none of which a
+producer can set. Only `untrusted` holds agent or remote claims.
 """
 
 from __future__ import annotations
@@ -22,8 +18,7 @@ from typing import Any, Mapping
 
 SCHEMA_VERSION = 1
 
-# The orchestrator route the gateway's components send their events to; the
-# orchestrator relays them to the host controller's journal.
+# Orchestrator route the gateway sends events to, relayed to the journal.
 AUDIT_EVENTS_PATH = "/audit/events"
 GATEWAY_PRODUCERS = frozenset({"egress", "git-gate", "supervise"})
 
@@ -32,29 +27,27 @@ SENSITIVITIES = ("normal", "security", "restricted")  # ascending
 
 
 def utc_iso(ts: float) -> str:
-    """`ts` as audit records write times: UTC, millisecond precision."""
+    """`ts` in UTC with millisecond precision."""
     return datetime.fromtimestamp(ts, timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%S.") + f"{int(ts * 1000) % 1000:03d}Z"
 
 
 def canonical(record: Mapping[str, Any]) -> str:
-    """The one serialization every hash is computed over."""
+    """The serialization every hash is computed over."""
     return json.dumps(record, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False)
 
 
 def record_hash(prev: str, record: Mapping[str, Any]) -> str:
-    """`sha256_hex(prev + canonical(record with hash=""))`.
-
-    `hash` is present and empty, never omitted, so the key set is the same
-    before and after sealing."""
+    """`sha256_hex(prev + canonical(record with hash=""))`. `hash` is present
+    and empty, so the key set matches before and after sealing."""
     data = prev + canonical({**record, "hash": ""})
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
 class AuditEvent:
-    """What a producer reports. The writer adds the rest when it seals it."""
+    """What a producer reports; the writer adds the rest."""
 
     type: str
     actor: str
@@ -86,8 +79,8 @@ class AuditEvent:
 
     @classmethod
     def from_json(cls, body: Mapping[str, Any]) -> "AuditEvent":
-        """Strict: an unknown key is refused rather than dropped, so a producer
-        can't slip in a top-level field that looks host-established."""
+        """Strict: unknown keys are refused, so a producer can't add a field
+        that looks host-established."""
         known = {f.name for f in fields(cls)}
         unknown = set(body) - known
         if unknown:

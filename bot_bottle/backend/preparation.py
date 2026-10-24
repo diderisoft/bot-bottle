@@ -1,9 +1,5 @@
-"""Backend-neutral preparation planner.
-
-This module owns the shared transformation from a CLI ``BottleSpec`` to the
-typed inputs consumed by a concrete backend's ``_resolve_plan``. Backend
-classes retain only their validation/preflight/env hooks and their
-backend-specific final resolution.
+"""Shared preparation: turn a `BottleSpec` into the inputs a backend's
+`_resolve_plan` takes.
 """
 
 from __future__ import annotations
@@ -37,7 +33,7 @@ if TYPE_CHECKING:
 
 
 class PreparationBackend(Protocol):
-    """Backend hooks needed by the shared planner."""
+    """Backend hooks the shared planner calls."""
 
     name: str
     supports_nested_containers: bool
@@ -49,7 +45,7 @@ class PreparationBackend(Protocol):
 
 @dataclass(frozen=True)
 class PreparedBottle:
-    """Typed, backend-neutral result of shared launch preparation."""
+    """Backend-neutral result of shared preparation."""
 
     manifest: Manifest
     slug: str
@@ -61,16 +57,14 @@ class PreparedBottle:
 
 
 class BottlePreparationPlanner:
-    """Run the common, side-effect-limited part of bottle preparation."""
+    """Run the shared, side-effect-limited part of preparation."""
 
     def __init__(self, backend: PreparationBackend) -> None:
         self._backend = backend
 
     def prepare(self, spec: BottleSpec, secrets: SecretSource) -> PreparedBottle:
         backend = self._backend
-        # These are deliberately protected backend hooks: only this shared
-        # planner orchestrates them, while concrete backends provide the
-        # implementation.
+        # Protected on purpose: only this planner calls these hooks.
         manifest = backend._validate(spec)  # pylint: disable=protected-access
         if not backend.supports_nested_containers:
             reject_nested_containers(backend.name, manifest)

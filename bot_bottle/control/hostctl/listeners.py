@@ -1,10 +1,7 @@
-"""The host controller's listeners on each backend's host address.
-
-An orchestrator runs in a guest, so the daemon also listens where that guest
-reaches the host: the docker publish network's bridge, the macOS control
-network's vmnet gateway, the firecracker orchestrator TAP's host end. Never
-`0.0.0.0`. Each listener accepts only peers from its link's network and only
-the guest roles.
+"""Host-controller listeners where each backend's orchestrator guest reaches
+the host: the docker publish bridge, the macOS control network's vmnet gateway,
+the firecracker orchestrator TAP. Never `0.0.0.0`. Each accepts only peers on
+its link and only guest roles.
 """
 
 from __future__ import annotations
@@ -19,15 +16,14 @@ from ...lib.log import debug, info, warn
 from ...trust_domain import HostLink
 from .server import HostControlServer
 
-# How long to keep retrying an address that isn't up yet: a vmnet bridge
-# appears only once its first container starts.
+# Retry window for an address not up yet (a vmnet bridge appears with its first
+# container).
 RETRY_SECONDS = 120.0
 _RETRY_POLL_SECONDS = 0.5
 
 
 class GuestListeners:
-    """One `HostControlServer` per host link. `make_server` builds (and
-    binds) the server for a link."""
+    """One `HostControlServer` per host link, built by `make_server`."""
 
     def __init__(self, make_server: Callable[[HostLink], HostControlServer], *,
                  retry_seconds: float = RETRY_SECONDS) -> None:
@@ -39,8 +35,8 @@ class GuestListeners:
         self._closed = False
 
     def listen(self, link: HostLink) -> None:
-        """Serve `link` (idempotent). An address that isn't up yet is retried
-        in the background; other bind failures are logged."""
+        """Serve `link` (idempotent). An address not up yet is retried in the
+        background; other bind failures are logged."""
         with self._lock:
             if self._closed:
                 return

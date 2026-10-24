@@ -1,12 +1,5 @@
-"""macOS Apple Container backend.
-
-Selectable via `BOT_BOTTLE_BACKEND=macos-container`. This package owns the Apple
-`container` CLI integration; launch remains gated until the gateway network
-enforcement shape is implemented.
-
-Thin by design: `MacosContainerBottleBackend` is re-exported lazily via
-`__getattr__`, so importing a leaf module under this package doesn't drag the
-backend (and the framework it pulls) into memory.
+"""macOS Apple Container backend (`BOT_BOTTLE_BACKEND=macos-container`).
+`MacosContainerBottleBackend` is re-exported lazily.
 """
 
 from __future__ import annotations

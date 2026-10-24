@@ -1,11 +1,9 @@
-"""Published agent images for the OCI backends: docker and macos_container.
+"""Published agent images for docker and macos_container.
 
-Both run the agent from a local image store, so they resolve it the same way:
-pull the release-pinned image, or build the bottle's overlay on it, and give
-the result a tag derived from its content (`pin-<digest>` or
-`overlay-<key>`). A content tag means two bottles can never race over one
-mutable tag, a `--cached-images` launch finds exactly the image it would have
-built, and an image that is already local launches without the registry.
+Pull the release-pinned image or build the bottle's overlay on it, tagged by
+content (`pin-<digest>`, `overlay-<key>`): no races on a mutable tag, a
+`--cached-images` launch finds exactly what it would build, and a local image
+launches without the registry.
 """
 
 from __future__ import annotations
@@ -23,9 +21,8 @@ from .base import BottlePlan
 
 @dataclass(frozen=True)
 class OciRuntime:
-    """The image-store operations a backend provides. `pull_argv` is the
-    command prefix that pulls a reference; `verify` smoke-tests a fresh image
-    (None skips it)."""
+    """A backend's image-store operations. `pull_argv` is the pull command
+    prefix; `verify` smoke-tests a fresh image (None skips)."""
 
     pull_argv: tuple[str, ...]
     image_exists: Callable[[str], bool]
@@ -42,11 +39,9 @@ def resolve_published_agent_image(
     image: str,
     smoke_test: tuple[str, ...],
 ) -> str | None:
-    """The local tag of the published agent image this bottle runs, pulling or
-    building it as needed, or None when nothing is published for it and the
-    caller should build its own Dockerfile (a custom `agent_provider.dockerfile`,
-    or no manifest yet). An overlay with no published base fails closed rather
-    than silently building the default image without it."""
+    """Local tag of the published agent image this bottle runs, pulled or built
+    as needed; None when nothing is published and the caller builds its own
+    Dockerfile. An overlay with no published base fails closed."""
     provider = plan.manifest.bottle.agent_provider
     if provider.builds_custom_image:
         return None
@@ -94,8 +89,8 @@ def resolve_published_agent_image(
 
 
 def _pull(pin: Artifact, runtime: OciRuntime) -> None:
-    """Verify the pin's tag still points at its digest, then pull by digest.
-    Registry failures end the launch with the cause, not a traceback."""
+    """Verify the pin's tag, then pull by digest. Registry failures end the
+    launch with the cause."""
     try:
         resolved = image_registry.resolve(pin)
         image_registry.pull(resolved, argv=runtime.pull_argv)
@@ -104,8 +99,7 @@ def _pull(pin: Artifact, runtime: OciRuntime) -> None:
 
 
 def _verify(runtime: OciRuntime, tag: str, smoke_test: tuple[str, ...]) -> None:
-    # Smoke-test published and overlaid images too, not just local builds: an
-    # image that can't launch the harness should fail here, not at start.
+    # Smoke-test pulled and overlaid images too.
     if runtime.verify is not None:
         runtime.verify(tag, smoke_test)
 

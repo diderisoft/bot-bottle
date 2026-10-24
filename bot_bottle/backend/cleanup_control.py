@@ -13,8 +13,8 @@ class CleanupError(RuntimeError):
 
 
 class CleanupFailures:
-    """Attempt every approved mutation, then fail with complete diagnostics.
-    Each command gets `timeout` seconds (at least one)."""
+    """Attempt every approved mutation, then fail with full diagnostics. Each
+    command gets `timeout` seconds (at least one)."""
 
     def __init__(self, *, timeout: float) -> None:
         self._messages: list[str] = []

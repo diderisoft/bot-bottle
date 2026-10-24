@@ -1,9 +1,5 @@
-"""FirecrackerBottleBackend — Linux microVM implementation.
-
-Replaces smolmachines on Linux: mature KVM-based
-isolation via Firecracker, SSH control over a point-to-point TAP, and a
-fail-closed nftables egress boundary. Selected by
-`BOT_BOTTLE_BACKEND=firecracker` or `--backend=firecracker`.
+"""`FirecrackerBottleBackend`: agents in KVM microVMs, controlled over SSH on a
+point-to-point TAP, behind a fail-closed nftables boundary.
 """
 
 from __future__ import annotations
@@ -38,7 +34,7 @@ class FirecrackerBottleBackend(
     BottleBackend["FirecrackerBottlePlan", "FirecrackerBottleCleanupPlan"]
 ):
     name = "firecracker"
-    supports_workspace_mount = False  # no virtio-fs or 9p in Firecracker, by design
+    supports_workspace_mount = False  # no virtio-fs or 9p in Firecracker
 
     @classmethod
     def is_available(cls) -> bool:
@@ -46,10 +42,8 @@ class FirecrackerBottleBackend(
 
     @classmethod
     def is_host_capable(cls) -> bool:
-        """Linux + KVM, regardless of whether the `firecracker` binary
-        is installed. Drives default-backend selection so a capable host
-        without the binary still lands on firecracker and gets an
-        install pointer at launch."""
+        """Linux + KVM, whether or not the `firecracker` binary is installed,
+        so a capable host selects firecracker and gets an install pointer."""
         return _util.is_host_capable()
 
     def setup(self) -> int:

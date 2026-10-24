@@ -1,10 +1,5 @@
-"""The `Manifest` / `ManifestIndex` aggregate model.
-
-The parsed manifest document (`Manifest`) and the multi-agent index over it
-(`ManifestIndex`), plus the bottle-resolution helpers that stitch the pieces
-(`agent`, `bottle`, `egress`, `git`, `extends`, `loader`, `schema`) into an
-effective manifest. This is the heavy aggregate — the thin package `__init__`
-re-exports `Manifest` / `ManifestIndex` lazily.
+"""The `Manifest` and `ManifestIndex` models and the bottle-resolution helpers
+that combine the manifest pieces into an effective manifest.
 """
 
 from __future__ import annotations
@@ -42,7 +37,7 @@ def _section_dict(value: object, label: str) -> dict[str, object]:
 def _merge_git_user(
     agent_user: ManifestGitUser, base_user: ManifestGitUser
 ) -> ManifestGitUser:
-    """Merge the agent's git.user over the bottle's, agent-wins-on-non-empty."""
+    """The agent's git user over the bottle's, agent winning when non-empty."""
     if agent_user.is_empty():
         return base_user
     return ManifestGitUser(
@@ -54,9 +49,8 @@ def _merge_git_user(
 def _manifest_with_merged_git_user(
     agent: "ManifestAgent", raw_bottle: "ManifestBottle"
 ) -> "Manifest":
-    """Build the single-value Manifest, overlaying the agent's git-gate.user
-    onto the bottle (agent wins on non-empty, per-field). Shared by the eager
-    and lazy load_for_agent paths."""
+    """The single-agent Manifest, with the agent's git-gate.user overlaid on
+    the bottle's per field."""
     merged = _merge_git_user(agent.git_user, raw_bottle.git_user)
     bottle = (
         raw_bottle if merged == raw_bottle.git_user
@@ -71,10 +65,8 @@ def _resolve_effective_bottle_eager(
     bottle_names: "tuple[str, ...]",
     bottles: "Mapping[str, ManifestBottle]",
 ) -> "ManifestBottle":
-    """Return the effective ManifestBottle for the eager (from_json_obj) path.
-
-    When bottle_names is non-empty they are merged in order. When empty, falls
-    back to agent.bottle. Raises ManifestError when neither is set."""
+    """The effective bottle (eager path): `bottle_names` merged in order, else
+    the agent's bottle. Raises ManifestError when neither is set."""
     if bottle_names:
         resolved: list[ManifestBottle] = []
         for bn in bottle_names:
@@ -96,7 +88,7 @@ def _resolve_effective_bottle_eager(
 
 
 def _load_checked(name: str, dirs: "Sequence[tuple[Path, bool]]") -> "ManifestBottle":
-    """Load one bottle chain; a chain with project files must be trusted."""
+    """Load one bottle chain; one with project files must be trusted."""
     bottle, sources = load_bottle_chain(name, dirs)
     trust_check(name, bottle, sources)
     return bottle
@@ -108,12 +100,9 @@ def _resolve_effective_bottle_lazy(
     bottle_names: "tuple[str, ...]",
     dirs: "Sequence[tuple[Path, bool]]",
 ) -> "ManifestBottle":
-    """Return the effective ManifestBottle for the lazy (from_md_dirs) path.
-
-    When bottle_names is non-empty they are resolved from disk and merged in
-    order. When empty, falls back to agent_bottle. Raises ManifestError when
-    neither is set, and UntrustedBottleError for a project bottle this host
-    hasn't trusted."""
+    """The effective bottle (lazy path), resolved from disk: `bottle_names`
+    merged in order, else `agent_bottle`. Raises ManifestError when neither is
+    set, UntrustedBottleError for an untrusted project bottle."""
     if bottle_names:
         resolved = [_load_checked(bn, dirs) for bn in bottle_names]
         return merge_bottles_runtime(resolved)
@@ -129,21 +118,17 @@ def _resolve_effective_bottle_lazy(
 
 @dataclass(frozen=True)
 class Manifest:
-    """Single-agent/bottle value type. Returned by ManifestIndex.load_for_agent().
-
-    `bottle` is the effective bottle with the agent's git-gate.user already
-    overlaid per-field (agent wins on non-empty). Backends and provisioners
-    use this directly — no agent_name lookup needed."""
+    """One agent and its effective bottle, the agent's git-gate.user already
+    overlaid. What backends use."""
 
     agent: ManifestAgent
     bottle: ManifestBottle
 
     def git_identity_summary(self) -> str | None:
-        """One-line effective git identity with per-field provenance, e.g.
-        `name=claude (agent), email=eric@dideric.is (bottle)`.
-        Returns None when neither agent nor bottle sets an identity."""
-        over = self.agent.git_user        # agent's declared git_user (pre-merge)
-        merged = self.bottle.git_user     # effective git_user (post-merge)
+        """The effective git identity with provenance, e.g. `name=claude
+        (agent), email=eric@dideric.is (bottle)`; None when unset."""
+        over = self.agent.git_user  # agent's own git_user
+        merged = self.bottle.git_user  # effective git_user
         if merged.is_empty():
             return None
         parts: list[str] = []
@@ -156,47 +141,30 @@ class Manifest:
 
 @dataclass(frozen=True)
 class ManifestIndex:
-    """Multi-agent/bottle collection. The pre-preflight form.
-
-    In lazy mode (from resolve()/from_md_dirs()) only filenames are scanned;
-    no file content is read. In eager mode (from from_json_obj()) all agents
-    and bottles are pre-parsed. Call load_for_agent() to get a single-value
-    Manifest ready for backend use."""
+    """All agents and bottles. Lazy mode (`resolve`, `from_md_dirs`) only scans
+    filenames; eager mode (`from_json_obj`) pre-parses everything.
+    `load_for_agent` gives a single-agent Manifest."""
 
     bottles: Mapping[str, ManifestBottle]
     agents: Mapping[str, ManifestAgent]
-    # Set by from_md_dirs; None in from_json_obj (test/programmatic) mode.
-    # Stores the manifest root dirs so load_for_agent can locate files later.
+    # Manifest root, set by from_md_dirs.
     home_md: Path | None = field(default=None)
     cwd_md: Path | None = field(default=None)
 
     @classmethod
     def resolve(cls, cwd: str, *, missing_ok: bool = False) -> "ManifestIndex":
-        """Walk the per-file manifest tree and build a ManifestIndex.
+        """Build a ManifestIndex from the per-file tree:
 
-        Layout:
-          $HOME/.bot-bottle/bottles/<name>.md  — the user's bottles
-          $HOME/.bot-bottle/agents/<name>.md   — home agents
-          $CWD/.bot-bottle/agents/<name>.md    — cwd agents
-          $CWD/.bot-bottle/bottles/<name>.md   — project bottles
+          $HOME/.bot-bottle/bottles/<name>.md  user bottles
+          $HOME/.bot-bottle/agents/<name>.md   home agents
+          $CWD/.bot-bottle/agents/<name>.md    cwd agents (win on a name clash)
+          $CWD/.bot-bottle/bottles/<name>.md   project bottles (need trust)
           built-in bottles (`basic`)
 
-        Cwd agents merge into the home agents on the same name
-        (cwd wins). Bottles resolve by name from the user's, then the
-        project's, then the built-ins, so a project can't replace a bottle
-        the user has. A project bottle is untrusted input: it loads only
-        once this host has trusted its contents (manifest/trust.py).
-
-        If `missing_ok` is true, a missing `$HOME/.bot-bottle/`
-        returns an empty index instead of dying. This is for
-        passive UI surfaces like the dashboard, which can still
-        monitor already-running agents without launch config.
-
-        If `bot-bottle.json` exists alongside a missing
-        `.bot-bottle/` directory at either side, dies with a
-        clear pointer at the README's manifest section — the
-        manifest format changed to per-file Markdown and we don't
-        silently fall back."""
+        Bottles resolve from the user's, then the project's, then built-ins, so
+        a project can't replace a user bottle. `missing_ok` returns an empty
+        index without `$HOME/.bot-bottle/`. A leftover `bot-bottle.json` dies
+        with a pointer to the per-file format."""
         home_dir = Path(os.environ["HOME"])
         cwd_dir = Path(cwd)
         home_md = home_dir / ".bot-bottle"
@@ -214,8 +182,7 @@ class ManifestIndex:
                 f"See README.md for the per-file Markdown layout."
             )
 
-        # When CWD == HOME (running from $HOME directly), pass the
-        # same dir for both — _load_md_dirs will dedupe.
+        # When CWD is HOME, pass the same dir; _load_md_dirs dedupes.
         cwd_md_arg = cwd_md if cwd_md.is_dir() and cwd_dir.resolve() != home_dir.resolve() else None
         return cls.from_md_dirs(home_md, cwd_md_arg)
 
@@ -225,26 +192,19 @@ class ManifestIndex:
         home_dir: Path,
         cwd_dir: Path | None,
     ) -> "ManifestIndex":
-        """Return a names-only ManifestIndex. No file content is read; only
-        filenames are scanned for the agent selector.  Full parsing happens
-        later, per-agent, via `load_for_agent`.
-
-        Project bottles under `cwd_dir/bottles` load only once trusted.
-
-        Used by tests to build a ManifestIndex from fixture directories
-        without touching `os.environ`."""
+        """A names-only ManifestIndex; files are parsed later by
+        `load_for_agent`. Project bottles load only once trusted. Lets tests
+        use fixture dirs without `os.environ`."""
         return cls(bottles={}, agents={}, home_md=home_dir, cwd_md=cwd_dir)
 
     @classmethod
     def from_json_obj(cls, obj: object) -> "ManifestIndex":
-        """Validate and build a ManifestIndex from a raw JSON-like dict."""
+        """Validate and build a ManifestIndex from a JSON-like dict."""
         d = as_json_object(obj, "manifest")
         raw_bottles_obj = _section_dict(d.get("bottles"), "manifest 'bottles'")
         raw_agents = _section_dict(d.get("agents"), "manifest 'agents'")
 
-        # Coerce each bottle's raw to dict[str, object] so the
-        # extends resolver can apply its merge rules
-        # consistently with the md-loader path.
+        # Raw dicts, so extends merges as on the md path.
         raw_bottles: dict[str, dict[str, object]] = {}
         for n, b in raw_bottles_obj.items():
             raw_bottles[n] = as_json_object(b, f"bottle '{n}'")
@@ -259,18 +219,14 @@ class ManifestIndex:
 
     @property
     def all_bottle_names(self) -> list[str]:
-        """Sorted list of all discoverable bottle names.
-
-        In names-only mode (from resolve/from_md_dirs) this scans bottle
-        filenames without reading their content. In eager mode (from
-        from_json_obj) it returns the pre-parsed bottles' names."""
+        """Sorted bottle names (filenames in lazy mode)."""
         if self.home_md is not None:
             return sorted({n for d, _ in self.bottle_dirs() for n in scan_bottle_names(d)})
         return sorted(self.bottles.keys())
 
     def bottle_dirs(self) -> list[tuple[Path, bool]]:
-        """Where bottles resolve from, in precedence order, as
-        ``(directory, is_project)``."""
+        """Bottle directories in precedence order, as `(directory,
+        is_project)`."""
         assert self.home_md is not None
         dirs = [(self.home_md / "bottles", False)]
         if self.cwd_md is not None:
@@ -280,11 +236,7 @@ class ManifestIndex:
 
     @property
     def all_agent_names(self) -> list[str]:
-        """Sorted list of all discoverable agent names.
-
-        In names-only mode (from resolve/from_md_dirs) this scans agent
-        filenames without reading their content. In eager mode (from
-        from_json_obj) it returns the pre-parsed agents' names."""
+        """Sorted agent names (filenames in lazy mode)."""
         if self.home_md is not None:
             home_names = set(scan_agent_names(self.home_md / "agents").keys())
             cwd_names: set[str] = set()
@@ -298,23 +250,11 @@ class ManifestIndex:
         agent_name: str,
         bottle_names: "tuple[str, ...] | None" = None,
     ) -> "Manifest":
-        """Parse the named agent and its bottle; return a single-value Manifest.
-
-        `bottle_names` is an ordered list of bottles selected at launch time.
-        When non-empty they are resolved and merged in order (index 0 = base;
-        later entries override). When empty or None, falls back to the agent's
-        own `bottle:` field. Raises ManifestError when neither is set.
-
-        In lazy mode (from resolve/from_md_dirs) the agent file and its
-        bottle chain are read from disk for the first time here.  In eager
-        mode (from_json_obj) the data is already parsed; this just filters
-        down to the requested agent and its bottle.
-
-        The returned Manifest.bottle has the agent's git-gate.user already
-        overlaid (agent wins on non-empty, per-field).
-
-        Always raises ManifestError if the agent is unknown or invalid.
-        Backends call this at preflight inside _validate."""
+        """Parse the agent and its bottle into a single-agent Manifest.
+        `bottle_names` are merged in order (0 is the base); empty falls back to
+        the agent's `bottle:`. The bottle has the agent's git-gate.user
+        overlaid. Raises ManifestError for an unknown or invalid agent, or no
+        bottle."""
         effective_bottle_names: tuple[str, ...] = bottle_names or ()
         if self.home_md is None:
             return self._load_for_agent_eager(agent_name, effective_bottle_names)
@@ -323,9 +263,7 @@ class ManifestIndex:
     def _load_for_agent_eager(
         self, agent_name: str, bottle_names: tuple[str, ...]
     ) -> "Manifest":
-        """Eager path (from_json_obj): data is already parsed; filter to the one
-        requested agent and its bottle so the returned Manifest always holds
-        exactly one agent and one bottle regardless of path."""
+        """Eager path: filter the parsed data to the one agent and its bottle."""
         if agent_name not in self.agents:
             available = ", ".join(sorted(self.agents.keys())) or "(none)"
             raise ManifestError(
@@ -340,10 +278,9 @@ class ManifestIndex:
     def _load_for_agent_lazy(
         self, agent_name: str, bottle_names: tuple[str, ...]
     ) -> "Manifest":
-        """Lazy path (resolve/from_md_dirs): read and parse the agent file and
-        its bottle chain from disk for the first time here."""
-        assert self.home_md is not None  # guaranteed by load_for_agent dispatch
-        # Locate the agent file; cwd wins over home on name collision.
+        """Lazy path: read and parse the agent file and its bottle chain."""
+        assert self.home_md is not None  # set by load_for_agent's dispatch
+        # cwd wins over home on a name clash.
         home_agents = scan_agent_names(self.home_md / "agents")
         cwd_agents: dict[str, Path] = {}
         if self.cwd_md is not None:
@@ -366,7 +303,7 @@ class ManifestIndex:
 
         validate_agent_frontmatter_keys(agent_path, fm.keys())
 
-        # Determine the effective bottle name(s).
+        # The effective bottle name(s).
         agent_bottle = fm.get("bottle") or ""
         raw_bottle = _resolve_effective_bottle_lazy(
             agent_name, str(agent_bottle), bottle_names, self.bottle_dirs()
@@ -375,7 +312,7 @@ class ManifestIndex:
             bottle_names[-1] if bottle_names else str(agent_bottle)
         )
 
-        # Build and validate the full ManifestAgent.
+        # Build and validate the ManifestAgent.
         agent_dict: dict[str, object] = {
             "skills": fm.get("skills", []),
             "prompt": body.strip(),
@@ -386,11 +323,8 @@ class ManifestIndex:
             agent_dict["git-gate"] = fm["git-gate"]
         if "remote" in fm:
             agent_dict["remote"] = fm["remote"]
-        # Pass the effective bottle name as the known-bottles set so agents
-        # that have bottle: set are validated; agents without bottle: pass {}
-        # since bottle_names were already resolved above.
-        # The agent's own bottle counts as known too: it's composed with the
-        # selected ones (e.g. `pi` plus `basic`), not necessarily last.
+        # Known bottles for validation: the effective one, the agent's own
+        # (composed with the selected ones), and the selected names.
         known = {n for n in (effective_bottle_name, str(agent_bottle), *bottle_names) if n}
         agent = ManifestAgent.from_dict(agent_name, agent_dict, known)
 
@@ -400,13 +334,11 @@ class ManifestIndex:
         return name in self.agents
 
     def require_agent(self, name: str) -> None:
-        """Check that `name` is a discoverable agent. In names-only mode
-        this checks whether the .md file exists; in eager mode it checks
-        the pre-parsed agents dict. Does NOT parse file content."""
+        """Whether `name` is a discoverable agent, without parsing it."""
         if self.has_agent(name):
             return
         if self.home_md is not None:
-            # Names-only mode: check file existence without parsing.
+            # Lazy mode: check the file exists.
             home_path = self.home_md / "agents" / f"{name}.md"
             cwd_path = (
                 self.cwd_md / "agents" / f"{name}.md"

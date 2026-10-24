@@ -1,21 +1,11 @@
-"""cleanup: stop and remove all orphaned bot-bottle resources.
+"""cleanup: stop and remove orphaned bot-bottle resources.
 
-Usage: bot-bottle cleanup [--backend NAME]
+  bot-bottle cleanup [--backend NAME]
 
-First the host controller tears down the bottles it holds (their agents are
-stopped), then each backend reaps whatever is left, then the orphaned
-per-bottle state dirs go.
-
-Every backend whose runtime is installed is swept, so leftovers from a
-backend used earlier (a Firecracker VM's processes, say) are still reaped.
-`--backend NAME` limits the sweep to one. A backend that can't be listed
-(Docker installed but its daemon stopped) is reported and skipped; the
-others still run, and its bottles' state dirs are left alone, since which
-of them are live can't be known (see `backend/state_cleanup.py`).
-
-State dirs with `.preserve` are intentionally never touched — they
-hold preserved sessions the operator may want to `resume`. Manual
-`rm -rf ~/.bot-bottle/state/<identity>` is the path for those.
+The host controller tears down the bottles it holds, then each installed
+backend (or just NAME) reaps what's left, then orphaned state dirs go. A
+backend that can't be listed is reported and skipped, and its state dirs are
+left alone. Dirs with `.preserve` are never touched.
 """
 
 from __future__ import annotations
@@ -42,9 +32,8 @@ def cmd_cleanup(argv: list[str]) -> int:
         return 0
     only = _backend_arg(argv)
     settings = settings_from_env()
-    # Every available backend is listed for its live bottles (state dirs are
-    # shared, so even a --backend sweep must not reap a bottle live
-    # elsewhere); only the selected ones are swept.
+    # List every available backend's live bottles, since state dirs are shared;
+    # sweep only the selected ones.
     live: set[str] = set()
     listed: set[str] = set()
     prepared: list[tuple[str, Any, Any]] = []
@@ -89,8 +78,7 @@ def cmd_cleanup(argv: list[str]) -> int:
         return 0
 
     failures = _teardown_held(held)
-    # Confirmation authorizes a fresh authoritative snapshot, not blind use of
-    # identities that may have changed while the operator reviewed the preview.
+    # Confirmation re-takes a fresh snapshot rather than trust the preview.
     for name, backend, displayed in prepared:
         try:
             approved = displayed.intersect(backend.prepare_cleanup())
@@ -128,8 +116,8 @@ def _backend_arg(argv: list[str]) -> str | None:
 
 
 def _teardown_held(bottle_ids: list[str]) -> list[str]:
-    """Ask the host controller to tear down each of `bottle_ids`, streaming
-    its output; one failure message per bottle that didn't go."""
+    """Ask the host controller to tear down each of `bottle_ids`, streaming its
+    output; one failure message per bottle that didn't go."""
     if not bottle_ids:
         return []
     state = runner.running()

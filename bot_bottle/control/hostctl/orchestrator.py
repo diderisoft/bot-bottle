@@ -1,7 +1,5 @@
-"""Orchestrator bring-up through the host controller.
-
-`ensure` and `status` run inside the daemon; `ensure_via_daemon` is the CLI
-side, which starts the daemon if needed, submits the job and streams its output.
+"""Orchestrator bring-up through the host controller: `ensure` and `status` run
+in the daemon; `ensure_via_daemon` is the CLI side.
 """
 
 from __future__ import annotations
@@ -20,29 +18,29 @@ def _service(settings: Settings):  # type: ignore[no-untyped-def]
 
 
 def ensure(settings: Settings, *, restart: bool = False) -> dict[str, object]:
-    """Bring the backend's orchestrator and gateway up (daemon side). With
-    `restart`, stop them first."""
+    """Bring the backend's infra pair up (daemon side); `restart` stops it
+    first."""
     name, service = _service(settings)
     if restart:
         log.info(f"stopping the {name} orchestrator and gateway")
         service.stop()
     url = service.ensure_running()
-    # One it adopted (e.g. from before a daemon restart) still needs a listener.
+    # An adopted one still needs a listener.
     service.orchestrator().serve_host_control()
     return {"backend": name, "url": url}
 
 
 def status(settings: Settings) -> dict[str, object]:
-    """Whether the backend's control plane answers, and where (daemon side)."""
+    """Whether the backend's control plane answers, and where."""
     name, service = _service(settings)
     healthy = service.is_healthy()
     return {"backend": name, "running": healthy, "url": service.url() if healthy else ""}
 
 
 def ensure_via_daemon(settings: Settings, backend: str, *, restart: bool = False) -> str:
-    """Ask the host controller to bring `backend`'s orchestrator up, print its
-    output as it runs, and return the control-plane URL. Dies on failure, or
-    if the user detaches before it finishes (the job keeps running)."""
+    """Have the host controller bring `backend`'s orchestrator up, print its
+    output, and return the control-plane URL. Dies on failure or detach (the
+    job keeps running)."""
     # pylint: disable=import-outside-toplevel
     from . import runner
     from .client import HostControlClient

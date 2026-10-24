@@ -1,4 +1,4 @@
-"""SQLite-backed audit store for supervise."""
+"""SQLite store for supervise audit entries."""
 
 from __future__ import annotations
 
@@ -11,14 +11,11 @@ from ...lib.migrations import TableMigrations
 
 
 class AuditStore(DbStore):
-    """SQLite-backed persistent store for supervise audit entries."""
 
     def __init__(self, db_path: Path) -> None:
-        # One entry per schema version: migrations[0] brings a fresh DB to
-        # version 1, [1] to version 2, etc.  Add new entries at the end; never
-        # edit existing ones.
+        # One migration per schema version; append only.
         migrations = TableMigrations("audit_store", [
-            # v1 — initial schema
+            # v1
             """
             CREATE TABLE IF NOT EXISTS supervise_audit_entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

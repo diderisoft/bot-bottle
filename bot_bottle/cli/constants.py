@@ -1,8 +1,5 @@
-"""Shared CLI constants.
-
-Kept as a leaf module (imports nothing from the `cli` package) so both the
-dispatcher (`cli/__init__.py`) and the command modules it imports can share
-`PROG` without a circular import.
+"""Shared CLI constants; a leaf module so the dispatcher and commands can share
+`PROG` without a cycle.
 """
 
 PROG = "cli.py"

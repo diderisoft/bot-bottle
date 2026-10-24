@@ -19,10 +19,8 @@ def render_diff(
     before_title: str,
     after_label: str,
 ) -> str:
-    """Unified diff of `before` vs `after`, with the two sides headed
-    `{label} ({before_title})` and `{label} ({after_label})`. Empty diff (no
-    changes) renders as the empty string. The side titles are the caller's —
-    e.g. "current"/"proposed" for a supervise proposal."""
+    """Unified diff of `before` vs `after`, headed `{label} ({before_title})`
+    and `{label} ({after_label})`; "" when unchanged."""
     diff = difflib.unified_diff(
         before.splitlines(keepends=True),
         after.splitlines(keepends=True),

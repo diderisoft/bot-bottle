@@ -43,8 +43,8 @@ def require_container() -> None:
 
 
 def service_running() -> bool:
-    """True iff Apple Container's system service is up. When it isn't, no
-    container runs."""
+    """True iff Apple Container's system service is up (otherwise nothing
+    runs)."""
     if shutil.which(_CONTAINER) is None:
         return False
     return subprocess.run(
@@ -77,14 +77,9 @@ def build_image(
     no_cache: bool = False,
     dns_override: str = "",
 ) -> None:
-    """Build an OCI image with Apple's BuildKit-backed `container build`,
-    resolving through `dns_server(dns_override)`.
-
-    `no_cache` (the `start --no-cache` flag) forces `--no-cache`. The
-    npm/curl installers some provider Dockerfiles
-    shell out to can silently no-op on a transient network failure —
-    e.g. an `optionalDependencies` fetch for a platform-native binary —
-    and the builder will then cache that broken layer indefinitely."""
+    """Build with Apple's `container build`, resolving through
+    `dns_server(dns_override)`. `no_cache` forces `--no-cache`, for layers a
+    flaky installer cached broken."""
     info(
         f"building image {ref} from {context} with Apple Container "
         "(layer cache keeps repeat builds fast)"
@@ -94,9 +89,7 @@ def build_image(
     if no_cache:
         args.append("--no-cache")
     if dockerfile:
-        # `container build` resolves -f relative to the current working
-        # directory, not the build context. Anchor a relative Dockerfile to
-        # the context so builds work from any cwd.
+        # `container build` resolves -f against the cwd, not the context.
         if not os.path.isabs(dockerfile):
             dockerfile = os.path.join(context, dockerfile)
         args.extend(["-f", dockerfile])
@@ -108,15 +101,13 @@ def build_image(
     for name, value in effective_build_args.items():
         args.extend(["--build-arg", f"{name}={value}"])
     args.append(context)
-    # Streamed, so a host controller job captures the build's output.
+    # Streamed so a host-controller job captures the output.
     run_streaming(args, check=True)
 
 
 def verify_agent_image(image: str, argv: tuple[str, ...]) -> None:
-    """Run `argv` inside a throwaway container of a freshly built agent
-    image and die loudly if it fails, instead of shipping an image
-    whose CLI only breaks at first real use. No-op when the provider
-    hasn't declared a smoke test (`AgentProviderRuntime.smoke_test`)."""
+    """Run `argv` in a throwaway container of a fresh image and die if it
+    fails. No-op without a provider smoke test."""
     if not argv:
         return
     result = subprocess.run(
@@ -137,13 +128,9 @@ def verify_agent_image(image: str, argv: tuple[str, ...]) -> None:
 def commit_container(
     container_name: str, image_tag: str, *, no_cache: bool = False, dns_override: str = "",
 ) -> None:
-    """Snapshot a running Apple Container as a local image.
-
-    `container export` requires a stopped container, but Apple Container
-    removes containers when they stop, making stop-then-export impossible.
-    Instead, exec into the running container as root and stream the root
-    filesystem out via tar, then build a new image from that archive.
-    The bottle continues running after commit.
+    """Snapshot a running container as a local image. Apple removes stopped
+    containers, so the root filesystem is streamed out with tar and built into
+    an image. The bottle keeps running.
     """
     with tempfile.TemporaryDirectory(prefix="bot-bottle-container-commit.") as tmp:
         rootfs_tar = os.path.join(tmp, "rootfs.tar")
@@ -318,8 +305,7 @@ def image_exists(ref: str) -> bool:
 
 
 def tag_image(src: str, dst: str) -> None:
-    """Give local image `src` the additional tag `dst`, so a pulled pinned image
-    substitutes for a locally-built one everywhere downstream refers to `dst`."""
+    """Tag local image `src` as `dst` too."""
     result = subprocess.run(
         [_CONTAINER, "image", "tag", src, dst],
         capture_output=True,
@@ -344,9 +330,7 @@ def container_exists(name: str) -> bool:
 
 
 def container_is_running(name: str) -> bool:
-    """Return True if the named container is currently running.
-
-    `container list` without `--all` lists only running containers."""
+    """True if the named container is running."""
     result = subprocess.run(
         [_CONTAINER, "list", "--quiet"],
         capture_output=True,
@@ -359,7 +343,7 @@ def container_is_running(name: str) -> bool:
 
 
 def stop_container(name: str) -> None:
-    """Stop the named container without deleting it."""
+    """Stop the container without deleting it."""
     result = subprocess.run(
         [_CONTAINER, "stop", name],
         capture_output=True,
@@ -403,17 +387,14 @@ def exec_container(name: str, argv: list[str]) -> None:
 
 
 def read_container_env(name: str, env_name: str) -> str:
-    """Read one configured env value from a running container, or ``""``."""
+    """One configured env value from a running container, or ""."""
     result = _run_container_op([_CONTAINER, "exec", name, "printenv", env_name])
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
 def exec_container_as_root(name: str, argv: list[str]) -> None:
-    """`exec_container`, but as uid 0 inside the container.
-
-    For host-driven maintenance the agent itself must not be able to perform —
-    rewriting `/etc/hosts` to point the gateway name at an address. The agent
-    runs as `node`, so it cannot repoint its own gateway; the host can.
+    """`exec_container` as uid 0, for host maintenance the agent mustn't be
+    able to do (e.g. rewriting `/etc/hosts`).
     """
     result = _run_container_op([_CONTAINER, "exec", "--user", "root", name, *argv])
     if result.returncode != 0:
@@ -500,8 +481,8 @@ def inspect_container(name: str) -> dict[str, object]:
 
 
 def container_ipv4_on_network(name: str, network: str) -> str:
-    """The container's IPv4 address on `network`. Fatal if absent — callers
-    that can tolerate "not yet" want `try_container_ipv4_on_network`."""
+    """The container's IPv4 on `network`. Fatal if absent; see
+    `try_container_ipv4_on_network`."""
     ip = try_container_ipv4_on_network(name, network)
     if not ip:
         die(f"container {name} has no IPv4 address on {network}")
@@ -511,24 +492,16 @@ def container_ipv4_on_network(name: str, network: str) -> str:
 def run_container_argv(
     argv: list[str], *, env: dict[str, str] | None = None, timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a `container` command, returning the result for the caller to
-    interpret. Unlike the `die`-on-failure helpers above, this lets callers
-    that raise their own typed errors (the gateway / orchestrator lifecycle)
-    keep control of the failure path.
-
-    `env` sets the child process environment — used to hand a secret to a bare
-    `--env NAME` flag (Apple's "just key → inherit from host" form) so the
-    value is inherited from this process, never written onto argv or into
-    `container inspect`'s recorded command line. `timeout` raises
-    `subprocess.TimeoutExpired` when exceeded."""
+    """Run a `container` command and return the result, for callers with their
+    own error types. `env` is the child env, for a bare `--env NAME` secret.
+    `timeout` raises `subprocess.TimeoutExpired`."""
     return subprocess.run(
         argv, capture_output=True, text=True, check=False, env=env, timeout=timeout)
 
 
 def bind_mount_spec(source: str, target: str, *, readonly: bool = False) -> str:
-    """A `container run --mount` bind spec. One definition so the gateway and
-    orchestrator emit an identical string — a divergence here would silently
-    break one backend's mounts while the other kept working."""
+    """A `container run --mount` bind spec, shared so the gateway and
+    orchestrator agree."""
     spec = f"type=bind,source={source},target={target}"
     if readonly:
         spec += ",readonly"
@@ -540,11 +513,8 @@ def _normalize_digest(value: str) -> str:
 
 
 def _inspect_first(argv: list[str]) -> dict[str, object]:
-    """Run an inspect command and return its first JSON object, or {} on any
-    failure (non-zero exit, malformed JSON, unexpected shape). {} is the shared
-    'don't know' signal all the non-fatal inspect readers below build on — a
-    caller comparing against it treats it as 'leave the working container
-    alone', never as a mismatch."""
+    """An inspect command's first JSON object, or {} on any failure. {} means
+    "don't know": leave the container alone."""
     result = run_container_argv(argv)
     if result.returncode != 0:
         return {}
@@ -558,10 +528,8 @@ def _inspect_first(argv: list[str]) -> dict[str, object]:
 
 
 def _descriptor_digest(node: object) -> str:
-    """The normalized digest under a `{... "descriptor": {"digest": ...}}`
-    node, or "". Both the image and container inspect shapes nest the image's
-    identity this way, so the digest readers stay symmetric — a difference
-    between them is what would spuriously recreate a container."""
+    """The digest under a `{"descriptor": {"digest": ...}}` node, or "". Image
+    and container inspect share the shape."""
     if not isinstance(node, dict):
         return ""
     descriptor = node.get("descriptor")
@@ -571,26 +539,20 @@ def _descriptor_digest(node: object) -> str:
 
 
 def image_digest(ref: str) -> str:
-    """The digest of image `ref`, or "" if it can't be read. Reads exactly the
-    field `container_image_digest` reads (`configuration.descriptor.digest`) so
-    the two are comparable; "" means 'don't know' → callers don't churn."""
+    """Digest of image `ref` (`configuration.descriptor.digest`), or ""."""
     data = _inspect_first([_CONTAINER, "image", "inspect", ref])
     return _descriptor_digest(data.get("configuration"))
 
 
 def container_image_digest(name: str) -> str:
-    """The digest of the image container `name` was created from, or "" if it
-    can't be read. Compare with `image_digest(ref)` to tell whether a running
-    container predates an image rebuild."""
+    """Digest of the image container `name` was created from, or ""."""
     config = _inspect_first([_CONTAINER, "inspect", name]).get("configuration")
     image = config.get("image") if isinstance(config, dict) else None
     return _descriptor_digest(image)
 
 
 def container_env(name: str) -> dict[str, str]:
-    """The env container `name` was started with, or {} if unreadable. Lets a
-    caller tell whether a running container's baked-in configuration still
-    matches what it would pass today."""
+    """The env container `name` was started with, or {}."""
     config = _inspect_first([_CONTAINER, "inspect", name]).get("configuration")
     init = config.get("initProcess") if isinstance(config, dict) else None
     entries = init.get("environment") if isinstance(init, dict) else None
@@ -605,9 +567,7 @@ def container_env(name: str) -> dict[str, str]:
 
 
 def try_container_ipv4_on_network(name: str, network: str) -> str:
-    """`container_ipv4_on_network` without the fatal exit: "" when the address
-    isn't readable yet. For pollers — a container is created before it has an
-    address, so "not yet" is an expected state there, not an error."""
+    """`container_ipv4_on_network` returning "" instead of dying, for pollers."""
     status = _inspect_first([_CONTAINER, "inspect", name]).get("status")
     networks = status.get("networks") if isinstance(status, dict) else None
     if not isinstance(networks, list):
@@ -622,8 +582,7 @@ def try_container_ipv4_on_network(name: str, network: str) -> str:
 
 
 def network_ipv4(network: str) -> tuple[str, str] | None:
-    """(the host's gateway address, the IPv4 subnet) of `network`, or None
-    when it can't be read."""
+    """(host gateway address, IPv4 subnet) of `network`, or None."""
     status = _inspect_first([_CONTAINER, "network", "inspect", network]).get("status")
     if not isinstance(status, dict):
         return None
@@ -637,12 +596,8 @@ def network_ipv4(network: str) -> tuple[str, str] | None:
 
 
 def inspect_container_network_ip(name: str, network: str) -> str | None:
-    """IP of `name` on `network`, distinguishing inspect failure from "not yet".
-
-    Returns:
-      - the IP string when the container has one on `network`
-      - "" when inspect succeeds but no address is assigned yet (in-flight DHCP)
-      - None when the inspect command itself fails (authoritative list impossible)
+    """IP of `name` on `network`: the IP, "" when none is assigned yet, or None
+    when inspect fails.
     """
     result = subprocess.run(
         [_CONTAINER, "inspect", name],
@@ -674,14 +629,8 @@ def inspect_container_network_ip(name: str, network: str) -> str | None:
 def wait_container_ipv4_on_network(
     name: str, network: str, *, timeout: float = 15.0, poll: float = 0.25,
 ) -> str:
-    """Poll for the container's DHCP-assigned address on `network`, returning
-    it once available or "" on timeout.
-
-    Apple Container has no `--ip`: `container run --detach` can return before
-    vmnet's DHCP has populated `status.networks[].ipv4Address`, so a bare read
-    right after start races the assignment. Callers that need the address (the
-    attribution key, the gateway's proxy target) poll through here instead of
-    the fatal `container_ipv4_on_network`."""
+    """Poll for the container's DHCP address on `network`; "" on timeout. `run
+    --detach` can return before vmnet assigns it."""
     deadline = time.monotonic() + timeout
     while True:
         ip = try_container_ipv4_on_network(name, network)
@@ -693,10 +642,8 @@ def wait_container_ipv4_on_network(
 
 
 def image_id(ref: str) -> str:
-    """Return the image digest/ID from `container image inspect`.
-
-    The command returns JSON on current Apple Container releases. Keep
-    parsing narrow and fatal so callers do not cache on an empty key.
+    """The image ID from `container image inspect`. Fatal on failure, so
+    callers never cache on an empty key.
     """
     import json
 
@@ -726,19 +673,10 @@ def image_id(ref: str) -> str:
 
 
 def pinned_local_image_ref(ref: str) -> str:
-    """Tag a local image with its complete content ID for a stable ``FROM``.
-
-    Agent images are immediately used as bases for the optional
-    nested-containers layer. A content-derived tag prevents another concurrent
-    build from moving the provider's ordinary ``:latest`` tag between those
-    two builds.
-
-    Unlike Docker, `container image tag` only accepts ``image-name[:tag]`` as
-    its source and rejects a bare image ID ("cannot specify 64 byte hex string
-    as reference"), so the mutable ``ref`` is what gets tagged here. The
-    post-tag inspection below is what keeps that fail-closed: if ``ref`` moved
-    between the two commands, the new tag will not resolve to the ID this call
-    derived its name from.
+    """Tag a local image with its full content ID for a stable `FROM`, so a
+    concurrent build can't move `:latest` in between. Apple's `image tag`
+    rejects a bare ID, so the mutable `ref` is tagged and then checked to
+    resolve to the expected ID.
     """
     image = image_id(ref)
     digest = image.removeprefix("sha256:")
@@ -767,10 +705,7 @@ def pinned_local_image_ref(ref: str) -> str:
 
 
 def image_created_at(ref: str) -> datetime | None:
-    """Return the image creation timestamp as an aware UTC datetime, or None
-    when the field is absent or unparseable (e.g. FROM-scratch images, images
-    pulled from registries that omit the field). Callers should skip the stale
-    check when None is returned rather than treating it as an error."""
+    """The image creation time as aware UTC, or None (skip the stale check)."""
     result = subprocess.run(
         [_CONTAINER, "image", "inspect", ref],
         capture_output=True,

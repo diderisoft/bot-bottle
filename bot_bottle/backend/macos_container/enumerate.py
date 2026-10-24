@@ -9,15 +9,9 @@ from .. import ActiveAgent, EnumerationError
 from . import util as container_mod
 from .infra import INFRA_NAME, ORCHESTRATOR_NAME
 
-# The name every agent container carries: `bot-bottle-<slug>`. Exported
-# because callers that act on a running bottle (gateway-host rewrites,
-# registry reconciliation) have to map an enumerated slug back to a
-# container name.
+# Every agent container is `bot-bottle-<slug>`.
 CONTAINER_NAME_PREFIX = "bot-bottle-"
-# The two shared per-host infra containers (orchestrator + gateway) carry the
-# same `bot-bottle-` prefix as agent containers but are infrastructure, not
-# bottles — one pair serves every agent, so enumerating either as an agent would
-# invent a phantom bottle per host.
+# The infra containers share the prefix but aren't bottles.
 _INFRA_NAMES = frozenset({INFRA_NAME, ORCHESTRATOR_NAME})
 
 
@@ -35,7 +29,7 @@ def enumerate_active() -> list[ActiveAgent]:
         ) from exc
     if result.returncode != 0:
         if not container_mod.service_running():
-            return []  # no container runs while the service is down
+            return []  # nothing runs while the service is down
         raise EnumerationError(
             f"container list failed: "
             f"{(result.stderr or '').strip() or '<no stderr>'}"

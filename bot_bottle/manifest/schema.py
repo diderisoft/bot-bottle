@@ -1,20 +1,16 @@
-"""Internal manifest schema policy helpers."""
+"""Manifest schema helpers."""
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
-# Filename-as-key uses kebab-case ASCII. The first character is a
-# letter so we don't conflict with hidden files / Markdown special
-# names (`.md`, `_template.md`, etc.). Filenames that fail this
-# pattern are skipped with a warning rather than crashing the load.
+# Entity filenames are kebab-case starting with a letter; others are skipped
+# with a warning.
 _FILENAME_RX = re.compile(r"^[a-z][a-z0-9-]*$")
 
 
-# Frontmatter keys we accept on each entity. Anything not in these
-# sets dies with a "did you mean" pointer: typos should not silently
-# ghost into an empty config.
+# Accepted frontmatter keys; anything else dies with a "did you mean".
 BOTTLE_KEYS = frozenset(
     {
         "env", "extends", "agent_provider", "git-gate", "egress",
@@ -24,9 +20,8 @@ BOTTLE_KEYS = frozenset(
 AGENT_KEYS_REQUIRED: frozenset[str] = frozenset()
 AGENT_KEYS_OPTIONAL = frozenset({"bottle", "skills", "git-gate", "remote"})
 
-# Claude Code subagent fields bot-bottle ignores at launch but does
-# not reject. This lets the same file double as
-# `~/.claude/agents/*.md` without modification.
+# Claude Code subagent fields accepted and ignored, so a file can double as
+# `~/.claude/agents/*.md`.
 CLAUDE_CODE_AGENT_PASSTHROUGH_KEYS = frozenset({
     "name", "description", "model", "color", "memory",
 })
@@ -37,15 +32,14 @@ AGENT_MODEL_KEYS = AGENT_KEYS | frozenset({"prompt"})
 
 
 def is_valid_entity_name(name: str) -> bool:
-    """True if `name` fits the kebab-case `[a-z][a-z0-9-]*` convention
-    shared by bottle/agent filenames and skill names. Names that satisfy
-    this are also safe to interpolate into a host/guest path segment."""
+    """True if `name` is kebab-case `[a-z][a-z0-9-]*`, which also makes it safe
+    as a path segment."""
     return bool(_FILENAME_RX.match(name))
 
 
 def entity_name_from_path(path: Path) -> str | None:
-    """Return the entity name implied by the filename, or None if the
-    filename does not fit the [a-z][a-z0-9-]* convention."""
+    """The entity name from a filename, or None if it doesn't fit the
+    convention."""
     if path.suffix != ".md":
         return None
     stem = path.stem

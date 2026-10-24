@@ -1,38 +1,14 @@
 """Prune published images from the Gitea registry per the retention policy.
 
-Publishing only ever adds. ext4 rootfs artifacts do not dedupe — each is a full
-monolithic copy per release per arch — so a release cadence fills the registry
-(and, unbounded, the build host) faster than a person notices. This reclaims the
-space, and only the space, that no supported version still resolves.
+- The delete set is every published version minus everything a
+  `published-artifacts.json` on `main` or a release tag references, so a
+  supported version can't be collected.
+- Collection is by age and count, never by quota.
+- OCI layers dedupe: every release is kept 12 months and the newest patch of
+  each minor forever. ext4 rootfs don't: the last few releases are kept.
+  Losing an old ext4 only makes firecracker convert the OCI image locally.
 
-Two rules shape the whole thing, both from the PRD:
-
-- **Collection reads the manifests, never a hardcoded list.** The delete set is
-  every published package version *minus* the union of `published-artifacts.json`
-  across `main` and every retained release tag. That makes it structurally
-  impossible to collect something a supported version still resolves — the one
-  mistake that cannot be undone.
-- **Trigger on time and count; never collect on quota.** Quota-driven deletion
-  fires under pressure and removes whatever is oldest, precisely when there is
-  least slack to reason about what is still in use. This tool takes no notice of
-  how full the registry is; it deletes what the age/count policy says is stale
-  and nothing else.
-
-The asymmetry between formats is deliberate and comes straight from their cost
-curves. OCI layers dedupe across versions, so a release costs tens of MB and time
-is the right axis; every OCI release is kept for 12 months and the newest patch
-of each minor is kept forever. An ext4 does not dedupe at all, so count is the
-right axis; the last few releases are kept and older ones fall away. Deleting an
-old rootfs only degrades a host to *slow* — the OCI image remains and the
-firecracker consumer falls back to converting it locally, once, then cached — so
-narrow ext4 retention is safe in a way narrow OCI retention would not be.
-
-Dry-run by default: it prints the plan and deletes nothing. `--apply` — passed by
-the scheduled job, withheld by a human eyeballing the plan — actually deletes.
-
-Off-host, like `publish_images`: it needs the package-write token, not a launch
-host. Auth reuses the same `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN`; a `write:package`
-token can also list and delete.
+Dry-run unless `--apply`. Uses `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN`.
 """
 
 from __future__ import annotations
@@ -59,50 +35,43 @@ from .published_artifacts import (
 _HTTP_TIMEOUT_SECONDS = 60.0
 _PAGE_LIMIT = 50
 
-# Gitea package types, as they appear in the packages API and its delete route.
+# Gitea package types.
 _TYPE_CONTAINER = "container"  # the OCI images
-_TYPE_GENERIC = "generic"      # the ext4 rootfs tarballs
+_TYPE_GENERIC = "generic"  # the ext4 rootfs tarballs
 
-# Retention thresholds. Named here rather than buried in the policy so the
-# knobs — and the fact that they are the *only* knobs — are visible at a glance.
-OCI_MAX_AGE = timedelta(days=365)      # every OCI release kept this long...
-DEV_RC_MAX_AGE = timedelta(days=30)    # ...dev/RC tags only this long.
-EXT4_KEEP_INFRA = 3                    # last N ext4 releases for an infra image...
-EXT4_KEEP_AGENT = 2                    # ...current + previous for a convenience agent image.
+# Retention thresholds: the only knobs.
+OCI_MAX_AGE = timedelta(days=365)  # every OCI release kept this long...
+DEV_RC_MAX_AGE = timedelta(days=30)  # ...dev/RC tags only this long.
+EXT4_KEEP_INFRA = 3  # last N ext4 releases for an infra image...
+EXT4_KEEP_AGENT = 2  # ...current + previous for an agent image.
 
-# A release version is exactly major.minor.patch. Anything with a pre-release
-# suffix (`-dev-7`, `-rc1`) is not a release and lives under the dev/RC rule.
+# Exactly major.minor.patch; pre-release suffixes fall under the dev/RC rule.
 _RELEASE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
-# The per-arch suffix a published OCI tag / generic filename carries.
+# Per-arch suffix on OCI tags and generic filenames.
 _ARCHES = ("amd64", "arm64")
 
-# The agent (convenience) images, which are allowed to lag and are the most
-# expensive thing to retain, so they keep fewer ext4 releases than infra images.
+# Agent images may lag, so they keep fewer ext4 releases.
 _AGENT_IMAGES = frozenset(image_inputs.IMAGES) - frozenset(image_inputs.INFRA_ROLES)
 
 
 class PruneError(RuntimeError):
-    """Listing or deleting failed. Fatal: a half-finished prune is fine to
-    re-run, but a caller must not be told it collected when it did not."""
+    """Listing or deleting failed. Fatal; a partial prune is safe to re-run."""
 
 
 @dataclass(frozen=True)
 class PackageVersion:
-    """One deletable unit in the registry: a single package version.
+    """One deletable package version: a per-arch tag (`0.14.2-arm64`) for a
+    container, or a version directory holding every arch (`0.14.2`) for a
+    generic. So `platform` is set only for containers."""
 
-    For a `container` package this is one per-arch *tag* (`0.14.2-arm64`); for a
-    `generic` package it is one version directory (`0.14.2`) holding every arch's
-    file. That is why `platform` is set only for containers — the generic delete
-    is version-wide by construction, matching how the ext4s were published."""
-
-    registry_type: str          # _TYPE_CONTAINER | _TYPE_GENERIC
-    package: str                # the Gitea package name
-    image: str                  # our image name (package minus the -rootfs suffix)
-    version: str                # the registry version string, as deleted
-    base: str                   # version with the -<arch> suffix stripped
-    platform: str | None        # amd64/arm64 for containers; None for generics
+    registry_type: str  # _TYPE_CONTAINER | _TYPE_GENERIC
+    package: str  # Gitea package name
+    image: str  # image name (package minus -rootfs)
+    version: str  # registry version string
+    base: str  # version without the -<arch> suffix
+    platform: str | None  # amd64/arm64 for containers; None for generics
     created_at: datetime
-    # The parsed release triple, or None for a pre-release (dev/RC) version.
+    # Release triple, or None for a dev/RC version.
     release: tuple[int, int, int] | None
 
     @property
@@ -111,31 +80,24 @@ class PackageVersion:
 
     @property
     def identity(self) -> tuple[str, str, str]:
-        """What the protected set is keyed on: (type, package, version). A
-        version protected by a manifest is protected by this exact triple."""
+        """(type, package, version): what protection is keyed on."""
         return (self.registry_type, self.package, self.version)
 
 
 @dataclass(frozen=True)
 class Decision:
-    """The verdict for one package version, with the reason it was reached — the
-    reason is the product here as much as the verb, since a human reads the plan
-    before ever passing `--apply`."""
+    """The verdict for one version, with its reason (shown in the plan)."""
 
     version: PackageVersion
     delete: bool
     reason: str
 
 
-# --------------------------------------------------------------------------- #
-# Parsing registry versions into something the policy can reason about
-# --------------------------------------------------------------------------- #
+# --- Parsing registry versions ---
 
 def _split_arch(base_with_arch: str) -> tuple[str, str | None]:
     """`0.14.2-arm64` -> (`0.14.2`, `arm64`); `0.14.2` -> (`0.14.2`, None).
-
-    Only a trailing segment that is a known arch is stripped, so a pre-release
-    like `0.0.0-dev-7` keeps its `-7` and is not mistaken for an architecture."""
+    Only a known arch is stripped, so `0.0.0-dev-7` keeps its `-7`."""
     for arch in _ARCHES:
         suffix = f"-{arch}"
         if base_with_arch.endswith(suffix):
@@ -144,11 +106,8 @@ def _split_arch(base_with_arch: str) -> tuple[str, str | None]:
 
 
 def _image_of(registry_type: str, package: str) -> str | None:
-    """Our image name for a package, or None if it is not one of ours.
-
-    A container package *is* the image; a generic package is `<image>-rootfs`.
-    Anything outside `image_inputs.IMAGES` is left strictly alone — this tool
-    only ever prunes what this repo publishes."""
+    """Our image name for a package (a generic is `<image>-rootfs`), or None if
+    it isn't one of `image_inputs.IMAGES`."""
     if registry_type == _TYPE_GENERIC:
         if not package.endswith("-rootfs"):
             return None
@@ -161,22 +120,16 @@ def _image_of(registry_type: str, package: str) -> str | None:
 def parse_version(
     registry_type: str, package: str, version: str, created_at: datetime,
 ) -> PackageVersion | None:
-    """Lift a raw registry version into a `PackageVersion`, or None to leave it
-    untouched.
-
-    None means "not something this tool understands", and the only safe response
-    to that is to never delete it: a package that is not ours, or a version whose
-    string does not parse (an untagged manifest digest, a hand-pushed oddity)."""
+    """A raw registry version as a `PackageVersion`, or None (never delete) for
+    one that isn't ours or doesn't parse."""
     image = _image_of(registry_type, package)
     if image is None:
         return None
-    # A container version is a per-arch tag; a generic version is arch-free (the
-    # arch lives in the filename inside it).
+    # Container versions are per-arch tags; generic versions are arch-free.
     if registry_type == _TYPE_CONTAINER:
         base, platform = _split_arch(version)
         if platform is None:
-            # An OCI version with no arch suffix is not one we published (our
-            # tags are always `<version>-<arch>`); do not touch it.
+            # We always tag `<version>-<arch>`; anything else isn't ours.
             return None
     else:
         base, platform = version, None
@@ -193,11 +146,8 @@ def parse_version(
 
 
 def _parse_created_at(raw: str) -> datetime:
-    """Gitea's RFC3339 `created_at` into an aware UTC datetime.
-
-    `Z` is normalised to `+00:00` for `fromisoformat` on older interpreters, and
-    a naive value is assumed UTC — the server's timezone — so age arithmetic is
-    always between aware datetimes."""
+    """Gitea's RFC3339 `created_at` as an aware UTC datetime (naive values are
+    UTC)."""
     text = raw.strip().replace("Z", "+00:00")
     dt = datetime.fromisoformat(text)
     if dt.tzinfo is None:
@@ -205,9 +155,7 @@ def _parse_created_at(raw: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
-# --------------------------------------------------------------------------- #
-# Enumerating what is published
-# --------------------------------------------------------------------------- #
+# --- Enumerating what is published ---
 
 def _request(url: str, token: str, *, method: str = "GET") -> urllib.request.Request:
     req = urllib.request.Request(url, method=method)
@@ -220,12 +168,8 @@ def _request(url: str, token: str, *, method: str = "GET") -> urllib.request.Req
 def list_package_versions(
     base: str, owner: str, token: str,
 ) -> list[PackageVersion]:
-    """Every version of every package this repo publishes, from the Gitea
-    packages API.
-
-    Paginated because an owner accumulates many versions; the loop stops on the
-    first short page. Versions that do not parse (not ours, untagged, odd) are
-    dropped here rather than carried through the policy as un-actionable."""
+    """Every version of every package this repo publishes, paginated. Versions
+    that don't parse are dropped."""
     versions: list[PackageVersion] = []
     page = 1
     while True:
@@ -248,9 +192,7 @@ def list_package_versions(
             try:
                 created = _parse_created_at(item.get("created_at", ""))
             except (ValueError, TypeError):
-                # A version we cannot date cannot be safely aged out. Drop it so
-                # it is never a delete candidate (it stays published) rather than
-                # letting one malformed timestamp abort the whole prune.
+                # An undatable version is never a delete candidate.
                 continue
             parsed = parse_version(
                 item.get("type", ""), item.get("name", ""),
@@ -263,15 +205,11 @@ def list_package_versions(
         page += 1
 
 
-# --------------------------------------------------------------------------- #
-# What the manifests protect
-# --------------------------------------------------------------------------- #
+# --- What the manifests protect ---
 
 def _git_show(repo_root: Path, ref: str, path: str) -> str | None:
-    """`git show <ref>:<path>`, or None if the ref or path is absent.
-
-    Absent is expected and not an error: an old release tag predates the
-    manifest, and a shallow clone may not have every ref."""
+    """`git show <ref>:<path>`, or None if absent (older tags predate the
+    manifest)."""
     try:
         proc = subprocess.run(
             ["git", "-C", str(repo_root), "show", f"{ref}:{path}"],
@@ -285,11 +223,8 @@ def _git_show(repo_root: Path, ref: str, path: str) -> str | None:
 
 
 def _release_refs(repo_root: Path) -> list[str]:
-    """`main` plus every `v*` release tag that exists in this checkout.
-
-    Every existing release tag is a *retained* release tag by definition, so its
-    manifest protects. `main` is tried under a couple of spellings because CI
-    checks out a detached tag and only has `origin/main`."""
+    """`main` plus every `v*` tag in this checkout. `main` is tried under
+    several spellings because CI checks out a detached tag."""
     refs: list[str] = []
     for candidate in ("origin/main", "main"):
         proc = subprocess.run(
@@ -309,12 +244,9 @@ def _release_refs(repo_root: Path) -> list[str]:
 
 
 def protected_identities(repo_root: Path) -> set[tuple[str, str, str]]:
-    """The `(type, package, version)` set no prune may ever delete: everything
-    referenced by `published-artifacts.json` on `main` or a release tag.
-
-    Each OCI artifact protects its per-arch container tag; each ext4 artifact
-    protects its generic version. Read from git rather than the working tree so
-    an uncommitted local edit can neither add nor remove protection."""
+    """The `(type, package, version)` set no prune may delete: everything a
+    manifest on `main` or a release tag references. Read from git, so local
+    edits can't change it."""
     protected: set[tuple[str, str, str]] = set()
     for ref in _release_refs(repo_root):
         raw = _git_show(repo_root, ref, ARTIFACTS_MANIFEST_NAME)
@@ -323,12 +255,8 @@ def protected_identities(repo_root: Path) -> set[tuple[str, str, str]]:
         try:
             entries = parse_artifacts_manifest(json.loads(raw))
         except (json.JSONDecodeError, ArtifactsManifestError) as e:
-            # A manifest that is present but does not parse is corruption, not an
-            # absent one (absence is handled above via `if not raw`). Skipping it
-            # would silently drop that ref's protection and let the prune delete
-            # artifacts a supported release still resolves — the one unrecoverable
-            # mistake. Abort instead; the CI linter keeps a malformed manifest off
-            # a release ref, so this only fires on genuine corruption.
+            # A present but unparseable manifest is corruption; skipping it
+            # would drop its protection.
             raise PruneError(
                 f"manifest on {ref!r} is present but unparseable ({e}); "
                 f"refusing to prune with a ref's protection missing"
@@ -344,18 +272,13 @@ def protected_identities(repo_root: Path) -> set[tuple[str, str, str]]:
     return protected
 
 
-# --------------------------------------------------------------------------- #
-# The policy
-# --------------------------------------------------------------------------- #
+# --- The policy ---
 
 def _newest_patch_per_minor(
     versions: list[PackageVersion],
 ) -> set[tuple[str, str | None, int, int, int]]:
-    """The set of `(image, platform, major, minor, patch)` identities to keep
-    forever — one per `(image, platform, major, minor)` group, its highest patch.
-
-    "Newest patch of each minor, kept indefinitely" (OCI). Grouped by platform
-    too because each arch is its own tag and must keep its own newest patch."""
+    """`(image, platform, major, minor, patch)` of the newest patch per minor
+    and platform: kept forever."""
     best: dict[tuple[str, str | None, int, int], PackageVersion] = {}
     for v in versions:
         if v.release is None:
@@ -369,12 +292,8 @@ def _newest_patch_per_minor(
 
 
 def _ext4_keep_bases(versions: list[PackageVersion]) -> dict[str, set[str]]:
-    """Per image, the set of ext4 release *bases* to keep by count.
-
-    Infra images keep the last `EXT4_KEEP_INFRA`; agent images, being convenience
-    artifacts explicitly allowed to lag, keep only `EXT4_KEEP_AGENT`
-    (current + previous). Sorted by the parsed release triple so `0.9.0` does not
-    outrank `0.10.0` the way a string sort would."""
+    """Per image, the ext4 release bases kept by count: `EXT4_KEEP_INFRA` for
+    infra, `EXT4_KEEP_AGENT` for agents. Sorted by release triple."""
     by_image: dict[str, dict[str, tuple[int, int, int]]] = {}
     for v in versions:
         if v.registry_type != _TYPE_GENERIC or v.release is None:
@@ -396,17 +315,12 @@ def _verdict(
     keep_forever_oci: set[tuple[str, str | None, int, int, int]],
     keep_ext4_bases: dict[str, set[str]],
 ) -> Decision:
-    """The retention verdict for one version, with its reason.
-
-    Precedence is deliberate: protection wins over everything (it is the
-    un-recoverable mistake), then format-specific rules decide the rest."""
+    """The verdict for one version and its reason. Protection wins; then the
+    format's rule."""
     # pylint: disable=too-many-return-statements
-    # One early return per policy rule reads better than the nested equivalent;
-    # the rules are the point, and each is a single guarded line.
     if v.identity in protected:
         return Decision(v, False, "referenced by a retained manifest")
-    # `is None` rather than `not is_release` so the release triple is narrowed
-    # to non-None for the container branch below.
+    # `is None` narrows the type for the container branch.
     if v.release is None:
         if age <= DEV_RC_MAX_AGE:
             return Decision(v, False, f"dev/RC within {DEV_RC_MAX_AGE.days}d ({age.days}d old)")
@@ -419,7 +333,7 @@ def _verdict(
         return Decision(
             v, True,
             f"OCI older than {OCI_MAX_AGE.days}d, superseded patch ({age.days}d old)")
-    # ext4 (generic): kept by count, not by age.
+    # ext4: kept by count, not age.
     limit = EXT4_KEEP_AGENT if v.image in _AGENT_IMAGES else EXT4_KEEP_INFRA
     if v.base in keep_ext4_bases.get(v.image, set()):
         return Decision(v, False, f"among the last {limit} ext4 releases")
@@ -432,13 +346,8 @@ def plan(
     *,
     now: datetime | None = None,
 ) -> list[Decision]:
-    """The verdict for every version — pure, so the whole policy is testable
-    without a registry.
-
-    The count-based keep-sets (newest OCI patch per minor, last-N ext4 releases)
-    are computed once over the whole population, then each version is judged
-    against them. A version this tool did not understand never reaches here — it
-    was dropped at parse time — so every input gets a real verdict."""
+    """The verdict for every version. Pure, so the policy is testable without a
+    registry."""
     if now is None:
         now = datetime.now(timezone.utc)
     keep_forever_oci = _newest_patch_per_minor(
@@ -454,15 +363,12 @@ def plan(
     ]
 
 
-# --------------------------------------------------------------------------- #
-# Applying
-# --------------------------------------------------------------------------- #
+# --- Applying ---
 
 def delete_version(
     base: str, owner: str, token: str, version: PackageVersion,
 ) -> None:
-    """DELETE one package version. A 404 is success — something already removed
-    it, and the goal is that it be gone."""
+    """DELETE one package version; a 404 is success."""
     url = (
         f"{base}/api/v1/packages/{owner}/{version.registry_type}/"
         f"{version.package}/{urllib.parse.quote(version.version, safe='')}"
@@ -484,9 +390,7 @@ def delete_version(
         ) from e
 
 
-# --------------------------------------------------------------------------- #
-# CLI
-# --------------------------------------------------------------------------- #
+# --- CLI ---
 
 @dataclass
 class _Summary:
@@ -552,10 +456,8 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = args.repo_root or resources.build_root()
     protected = protected_identities(repo_root)
     if not protected:
-        # Every supported version is protected by a manifest; an empty set means
-        # no manifest was found, which almost certainly means the tags/main were
-        # not fetched. Deleting against an empty protected set would collect
-        # everything — refuse rather than do that.
+        # An empty protected set means no manifest was found (tags or main not
+        # fetched); deleting against it would collect everything.
         print(
             "refusing to prune: no published-artifacts.json found on main or any "
             "release tag (is this a full checkout with tags fetched?). Nothing "

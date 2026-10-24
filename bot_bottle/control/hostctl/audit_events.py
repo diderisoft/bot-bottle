@@ -1,11 +1,7 @@
-"""What the host controller records in the audit journal.
-
-The host controller owns the host's single journal writer, and is the first
-producer on it: each bottled agent's start and exit (`lifecycle.*`), and each
-launch, teardown and refused call it brokers (`hostctl.*`).
-
-A journal that can't be opened or written is logged and skipped: auditing
-must not stop a bottle from launching or tearing down.
+"""What the host controller records: each agent's start and exit
+(`lifecycle.*`) and each launch, teardown and refused call it brokers
+(`hostctl.*`). A journal that can't be written is logged and skipped, never
+blocking a launch or teardown.
 """
 
 from __future__ import annotations
@@ -28,8 +24,8 @@ ACTOR = "hostctl"
 
 
 def digest_manifest(manifest: "Manifest") -> str:
-    """The sealed manifest a bottle runs under, which is its policy. Empty
-    (and logged) if it can't be rendered: auditing must not stop a launch."""
+    """The sealed manifest a bottle runs under (its policy); "" (logged) if it
+    can't be rendered."""
     from ...manifest.preview import manifest_to_yaml  # pylint: disable=import-outside-toplevel
     try:
         rendered = manifest_to_yaml(manifest)
@@ -40,7 +36,7 @@ def digest_manifest(manifest: "Manifest") -> str:
 
 
 def digest_request(body: Mapping[str, Any]) -> str:
-    """A request's fingerprint. Secret values are left out; their names stay."""
+    """A request's fingerprint: secret names kept, values left out."""
     scrubbed = dict(body)
     if isinstance(scrubbed.get("secrets"), Mapping):
         scrubbed["secrets"] = sorted(scrubbed["secrets"])
@@ -84,8 +80,8 @@ class HostAudit:
             warn(f"audit: couldn't record {event.type}: {e}")
 
     def append(self, event: AuditEvent, *, producer: str) -> bool:
-        """Write an event another component sent. False for a retry of one
-        already written; AuditRedactionError for a credential-shaped key."""
+        """Write an event another component sent. False for an already-written
+        retry; AuditRedactionError for a credential-shaped key."""
         if self._journal is None:
             raise AuditUnavailable("audit journal unavailable")
         return self._journal.append(event, producer=producer) is not None
@@ -93,7 +89,7 @@ class HostAudit:
     def _now(self) -> str:
         return utc_iso(self._clock())
 
-    # -- lifecycle.* ---------------------------------------------------------
+    # --- lifecycle.* ---
 
     def bottled_agent_start(self, *, bottle: str, activation: str, manifest_digest: str,
                             backend: str, agent: str) -> None:
@@ -119,12 +115,12 @@ class HostAudit:
                      "stop_requested": stop_requested},
         ))
 
-    # -- hostctl.* -----------------------------------------------------------
+    # --- hostctl.* ---
 
     def brokered(self, kind: str, op: str, *, role: str, success: bool,
                  request_digest: str, bottle: str | None = None,
                  detail: str | None = None) -> None:
-        """`hostctl.broker_launch` / `broker_teardown`: a job it ran for `role`."""
+        """`hostctl.broker_launch` / `broker_teardown`: a job run for `role`."""
         payload: dict[str, Any] = {"op": op, "request_digest": request_digest}
         if detail:
             payload["detail"] = detail

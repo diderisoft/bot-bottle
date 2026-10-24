@@ -1,14 +1,8 @@
 """Resolve and verify published images against the registry.
 
-`published_artifacts` says what a checkout expects; this fetches it and proves
-the registry agrees.
-
-Resolution is two steps. Ask the registry what the tag resolves to now and
-compare against the pinned digest — a digest pull ignores the tag, so this is
-the only way a re-pointed tag surfaces. Then pull by digest. Detection, then
-integrity.
-
-Both fail closed and never fall back to a local build.
+Two steps: check the tag still resolves to the pinned digest (a digest pull
+ignores the tag, so this is the only way a re-pointed tag surfaces), then pull
+by digest. Both fail closed and never fall back to a local build.
 """
 
 from __future__ import annotations
@@ -28,12 +22,12 @@ from pathlib import Path
 from .published_artifacts import Artifact, FORMAT_EXT4, FORMAT_OCI
 
 REGISTRY_HTTP_TIMEOUT_SECONDS = 30.0
-# Generous by comparison: these are hundreds of MB, not a manifest HEAD.
+# These are hundreds of MB.
 ARTIFACT_HTTP_TIMEOUT_SECONDS = 300.0
 _CHUNK = 1 << 20
 
-# The OCI distribution media types a manifest request must accept. Without these
-# a registry may answer with a legacy schema, or refuse an image index outright.
+# OCI media types a manifest request must accept, or a registry may answer with
+# a legacy schema or refuse an index.
 _ACCEPT = ", ".join((
     "application/vnd.oci.image.manifest.v1+json",
     "application/vnd.oci.image.index.v1+json",
@@ -41,22 +35,18 @@ _ACCEPT = ", ".join((
     "application/vnd.docker.distribution.manifest.list.v2+json",
 ))
 
-# Shared with the generic-package artifacts: one package-scoped token, kept
-# separate from the general-purpose Gitea token.
+# One package-scoped token, shared with the generic-package artifacts.
 TOKEN_ENV = "BOT_BOTTLE_INFRA_ARTIFACT_TOKEN"
 
 
 class RegistryError(RuntimeError):
     """The registry was unreachable, answered unexpectedly, or disagreed with
-    the manifest. Always fatal to the caller — there is no safe degraded mode
-    for "I could not confirm what I am about to run"."""
+    the manifest. Always fatal."""
 
 
 class DigestMismatch(RegistryError):
-    """The tag no longer resolves to the pinned digest.
-
-    Distinct from a transport failure because the remediation is completely
-    different: a transport error is retried, this one is investigated."""
+    """The tag no longer resolves to the pinned digest. Investigated, not
+    retried."""
 
 
 @dataclass(frozen=True)
@@ -64,16 +54,13 @@ class ResolvedImage:
     """A verified reference, safe to pull."""
 
     artifact: Artifact
-    # `repo@sha256:…` — what to actually pull. The tag is deliberately absent:
-    # it has served its purpose (detection) by this point, and including it in
-    # the pull reference would invite the impression it is being trusted.
+    # `repo@sha256:...`, what to pull. The tag is left out.
     pinned_ref: str
 
 
 def _registry_host(ref: str) -> str:
-    """The registry host from an image reference. A reference is
-    `host/owner/name`, and the host is the first segment — distinguishable from
-    a bare owner because it carries a dot or a port."""
+    """The registry host of `host/owner/name`: the first segment, which carries
+    a dot or a port."""
     head = ref.split("/", 1)[0]
     if "." not in head and ":" not in head:
         raise RegistryError(
@@ -97,26 +84,24 @@ def _request(url: str) -> urllib.request.Request:
     req.add_header("Accept", _ACCEPT)
     token = os.environ.get(TOKEN_ENV, "").strip()
     if token:
-        # The OCI /v2/ distribution API (the only thing _request talks to)
-        # rejects Gitea's REST `token <PAT>` scheme with 401; it wants HTTP
-        # Basic, and Gitea accepts any username with the token as the password.
-        # The generic-package download in _download keeps the `token` scheme.
+        # The OCI /v2/ API wants HTTP Basic (any username, the token as
+        # password), not Gitea's REST `token <PAT>` scheme. `_download` keeps
+        # the `token` scheme.
         creds = base64.b64encode(f"bot-bottle:{token}".encode()).decode()
         req.add_header("Authorization", f"Basic {creds}")
     return req
 
 
 def _head_digest(url: str, repo: str) -> str:
-    """HEAD a manifest and return its `Docker-Content-Digest`. A registry that
-    answers 401 with a Bearer challenge (the standard token flow, used even
-    for anonymous reads) gets one pull-scoped token request and a retry."""
+    """HEAD a manifest and return its `Docker-Content-Digest`. A 401 Bearer
+    challenge gets one pull-scoped token request and a retry."""
     req = _request(url)
     req.get_method = lambda: "HEAD"  # type: ignore[method-assign]
     try:
         with urllib.request.urlopen(req, timeout=REGISTRY_HTTP_TIMEOUT_SECONDS) as resp:
             return resp.headers.get("Docker-Content-Digest", "").strip()
     except urllib.error.HTTPError as e:
-        # `headers` is None when an HTTPError is raised without any.
+        # `headers` is None on an HTTPError raised without any.
         get_all = getattr(e.headers, "get_all", None)
         challenge = _bearer_challenge((get_all("WWW-Authenticate") if get_all else None) or [])
         if e.code != 401 or challenge is None:
@@ -128,7 +113,7 @@ def _head_digest(url: str, repo: str) -> str:
 
 
 def _bearer_challenge(headers: list[str]) -> dict[str, str] | None:
-    """The parameters of a `Bearer realm="…",service="…"` challenge, if any."""
+    """The parameters of a `Bearer realm=...,service=...` challenge, if any."""
     for header in headers:
         scheme, _, params = header.partition(" ")
         if scheme.lower() == "bearer":
@@ -138,8 +123,8 @@ def _bearer_challenge(headers: list[str]) -> dict[str, str] | None:
 
 
 def _bearer_token(challenge: dict[str, str], repo: str) -> str:
-    """A pull token for `repo` from the challenge's realm: anonymous, or with
-    the artifact token as Basic credentials when one is set."""
+    """A pull token for `repo` from the challenge's realm, anonymous or with
+    the artifact token as Basic credentials."""
     query = urllib.parse.urlencode({
         "service": challenge.get("service", ""), "scope": f"repository:{repo}:pull"})
     req = _request(f"{challenge['realm']}?{query}")
@@ -153,10 +138,7 @@ def _bearer_token(challenge: dict[str, str], repo: str) -> str:
 
 
 def resolve_tag_digest(ref: str, tag: str, *, scheme: str = "https") -> str:
-    """Ask the registry what `tag` currently resolves to, without pulling.
-
-    Uses a HEAD against the manifest endpoint: the digest comes back in
-    `Docker-Content-Digest`, so this costs one round trip and no image bytes."""
+    """What `tag` resolves to now, via one manifest HEAD."""
     host, repo = _registry_host(ref), _repository(ref)
     url = f"{scheme}://{host}/v2/{repo}/manifests/{tag}"
     try:
@@ -180,12 +162,8 @@ def resolve_tag_digest(ref: str, tag: str, *, scheme: str = "https") -> str:
 
 
 def _split_oci_url(url: str) -> tuple[str, str]:
-    """`host/owner/name:tag` -> (`host/owner/name`, `tag`).
-
-    The tag is whatever follows the last colon, which is unambiguous even when
-    the host carries a `:port`: that colon precedes the first `/`, so it never
-    wins the split. A url with no tag (or a `:` that is really a port) is a
-    manifest bug, caught here rather than at pull time."""
+    """`host/owner/name:tag` -> (`host/owner/name`, `tag`). The tag follows the
+    last colon, which a `:port` can't be. A missing tag raises."""
     ref, sep, tag = url.rpartition(":")
     if not sep or not tag or "/" in tag:
         raise RegistryError(
@@ -195,16 +173,13 @@ def _split_oci_url(url: str) -> tuple[str, str]:
 
 
 def _url_filename(url: str) -> str:
-    """The trailing path segment of a download url — the file to cache it as."""
+    """The last path segment of a download url."""
     return url.rsplit("/", 1)[-1]
 
 
 def verify_tag(artifact: Artifact, *, scheme: str = "https") -> None:
-    """Confirm the artifact's tag still resolves to its pinned digest, raising
-    `DigestMismatch` if it does not.
-
-    A moved tag means a published version was overwritten; pinning alone would
-    hide it."""
+    """Raise `DigestMismatch` if the artifact's tag no longer resolves to its
+    pinned digest (a published version was overwritten)."""
     if artifact.format != FORMAT_OCI:
         raise RegistryError(
             f"verify_tag is for {FORMAT_OCI} artifacts, got {artifact.format!r}"
@@ -222,7 +197,7 @@ def verify_tag(artifact: Artifact, *, scheme: str = "https") -> None:
 
 
 def pinned_reference(artifact: Artifact) -> str:
-    """The digest-pinned reference to pull. The tag is not part of it."""
+    """The digest-pinned reference to pull."""
     ref, _ = _split_oci_url(artifact.url)
     return f"{ref}@{artifact.digest}"
 
@@ -230,10 +205,8 @@ def pinned_reference(artifact: Artifact) -> str:
 def resolve(
     artifact: Artifact, *, verify: bool = True, scheme: str = "https",
 ) -> ResolvedImage:
-    """Verify (unless skipped) and return the reference to pull.
-
-    `verify=False` is for offline use, where the tag cannot be resolved: it
-    gives up detection but the pull stays digest-pinned."""
+    """Verify (unless `verify=False`, for offline use) and return the reference
+    to pull. The pull stays digest-pinned either way."""
     if verify:
         verify_tag(artifact, scheme=scheme)
     return ResolvedImage(artifact=artifact, pinned_ref=pinned_reference(artifact))
@@ -242,13 +215,9 @@ def resolve(
 def pull(
     resolved: ResolvedImage, *, runtime: str = "docker", argv: tuple[str, ...] = (),
 ) -> None:
-    """Pull the verified reference with `runtime` (or the explicit command
-    prefix `argv`, for a CLI whose pull isn't `<runtime> pull`).
-
-    Deliberately never falls back to building: this path exists precisely
-    because the image should come from the registry, and a silent local build
-    would produce bytes nobody verified. Callers wanting a build ask for one
-    explicitly."""
+    """Pull the verified reference with `runtime`, or with the command prefix
+    `argv` for a CLI whose pull isn't `<runtime> pull`. Never falls back to a
+    build."""
     cmd = [*(argv or (runtime, "pull")), resolved.pinned_ref]
     try:
         proc = subprocess.run(cmd, capture_output=True, check=False, text=True,
@@ -256,8 +225,8 @@ def pull(
     except OSError as e:
         raise RegistryError(f"{runtime} not available to pull images: {e}") from e
     except subprocess.TimeoutExpired as e:
-        # Apple's `container image pull` waits forever on a registry it isn't
-        # allowed to read, rather than failing.
+        # Apple's `container image pull` waits forever on a registry it can't
+        # read.
         raise RegistryError(
             f"pulling {resolved.pinned_ref} did not finish in {PULL_TIMEOUT_SECONDS // 60} "
             f"minutes. {_ACCESS_HINT}") from e
@@ -269,7 +238,7 @@ def pull(
         )
 
 
-# Long enough for a multi-GB agent image on a slow link.
+# Enough for a multi-GB agent image on a slow link.
 PULL_TIMEOUT_SECONDS = 30 * 60
 _ACCESS_HINT = (
     "If the registry isn't public, log the container runtime in to it "
@@ -283,8 +252,7 @@ def _looks_unauthorized(detail: str) -> bool:
 
 
 def ext4_url(artifact: Artifact) -> str:
-    """The generic-package URL for an ext4 artifact — baked into the manifest at
-    publish time, so consuming it is just reading `url`."""
+    """The generic-package URL for an ext4 artifact, baked into the manifest."""
     if artifact.format != FORMAT_EXT4:
         raise RegistryError(
             f"ext4_url is for {FORMAT_EXT4} artifacts, got {artifact.format!r}"
@@ -301,30 +269,15 @@ def _sha256_file(path: Path) -> str:
 
 
 def ensure_ext4(artifact: Artifact, *, cache_root: Path) -> Path:
-    """The verified, cached `.gz` for an ext4 artifact, downloading it once.
+    """The verified, cached `.gz` for an ext4 artifact, downloaded once.
 
-    The counterpart to the OCI half: `pull` hands a digest to the container
-    runtime and lets it fetch and verify, but a generic package has no runtime
-    to delegate to, so the download, the digest check and the cache all live
-    here.
-
-    Cached because these are hundreds of MB and a host boots the same version
-    repeatedly. A `.verified` marker beside the file is what makes the cache
-    trustworthy — a `.gz` alone could be a partial download from a previous
-    interrupted run.
-
-    Fails closed on a mismatch, deleting the file: a rootfs that failed
-    verification must not be left where the next run would take it for
-    cached-and-checked."""
+    A `.verified` marker beside the file marks a complete, checked download. A
+    digest mismatch deletes the file and raises."""
     if artifact.format != FORMAT_EXT4:
         raise RegistryError(
             f"ensure_ext4 is for {FORMAT_EXT4} artifacts, got {artifact.format!r}"
         )
-    # Content-addressed, by digest rather than by (image, version, platform).
-    # A version can be republished with different bytes — `--force` exists — and
-    # a path that does not include the digest would then serve the previous
-    # download forever, because a cache hit returns before anything is compared
-    # to the manifest. Keying on the digest makes a hit provably the right bytes.
+    # Keyed on digest, since a version can be republished with different bytes.
     root = cache_root / artifact.image / artifact.digest.replace(":", "-")
     root.mkdir(parents=True, exist_ok=True)
     gz = root / _url_filename(artifact.url)
@@ -350,8 +303,7 @@ def ensure_ext4(artifact: Artifact, *, cache_root: Path) -> Path:
 
 
 def _download(url: str, dest: Path) -> None:
-    """Stream `url` to `dest`, atomically via a `.part` sibling so an
-    interrupted download can never be mistaken for a complete one."""
+    """Stream `url` to `dest` atomically via a `.part` sibling."""
     tmp = dest.with_suffix(dest.suffix + ".part")
     req = urllib.request.Request(url)
     token = os.environ.get(TOKEN_ENV, "").strip()

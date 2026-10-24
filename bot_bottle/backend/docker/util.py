@@ -1,6 +1,4 @@
-"""Docker host-side primitives used by DockerBottleBackend: the lean
-`run_docker` subprocess wrapper, probing for docker on PATH, slugifying agent
-names, checking image/container existence, and building images."""
+"""Docker host primitives: `run_docker`, image and container checks, builds."""
 
 from __future__ import annotations
 
@@ -16,7 +14,7 @@ from ...util import slugify as _slugify
 
 
 def slugify(name: str) -> str:
-    """Compatibility wrapper; new generic callers import ``bot_bottle.util``."""
+    """Compatibility wrapper for `bot_bottle.util.slugify`."""
     return _slugify(name)
 
 
@@ -24,14 +22,8 @@ def run_docker(
     argv: list[str], *, env: dict[str, str] | None = None, input: str | None = None,
     timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a `docker` command, capturing stdout/stderr as text. Never raises on
-    a non-zero exit — callers inspect `returncode` / `stderr` so they can stay
-    fail-closed or tolerate idempotent no-ops (e.g. removing an already-absent
-    container).
-
-    `env` sets the child process environment — used to hand a secret to a bare
-    `--env NAME` flag (docker inherits its value from this process) so the value
-    never lands on argv or in `docker inspect`'s recorded command line."""
+    """Run a `docker` command, capturing text output. Never raises on non-zero
+    exit. `env` is the child env, for handing a secret to a bare `--env NAME`."""
     return subprocess.run(
         argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         check=False, env=env, input=input, timeout=timeout,
@@ -42,10 +34,8 @@ _DAEMON_PROBE_TIMEOUT_SECONDS = 10
 
 
 def daemon_running() -> bool:
-    """True iff the docker daemon answers. bot-bottle's docker containers
-    bind-mount host paths, so they only ever run on a local daemon: when it
-    doesn't answer, no bottle or gateway is running. A probe that hangs counts
-    as running, so callers don't claim an empty host they couldn't check."""
+    """True iff the docker daemon answers. Bottles only run on a local daemon,
+    so no answer means nothing is running. A hung probe counts as running."""
     try:
         proc = run_docker(["docker", "version", "--format", "{{.Server.Version}}"],
                           timeout=_DAEMON_PROBE_TIMEOUT_SECONDS)
@@ -56,29 +46,25 @@ def daemon_running() -> bool:
     return proc.returncode == 0
 
 
-# Cap on the suffix the container-name conflict logic will try before
-# giving up: base, base-2, ..., base-MAX_CONTAINER_SUFFIX.
+# Most suffixes tried for a conflicting container name.
 MAX_CONTAINER_SUFFIX = 100
 
 
 def container_name_candidates(base: str) -> Iterator[str]:
-    """Yield `base`, then `base-2`, `base-3`, ... up to
-    `base-MAX_CONTAINER_SUFFIX`. Both the prepare-time probe and the
-    launch-time race retry walk this sequence."""
+    """`base`, `base-2`, ... `base-MAX_CONTAINER_SUFFIX`."""
     yield base
     for suffix in range(2, MAX_CONTAINER_SUFFIX + 1):
         yield f"{base}-{suffix}"
 
 
 def runsc_available() -> bool:
-    """Return True if the Docker daemon has the gVisor (`runsc`) runtime
-    registered. Called once per prepare; the result lives on the plan."""
+    """True if Docker has the gVisor `runsc` runtime registered."""
     r = run_docker(["docker", "info", "--format", "{{json .Runtimes}}"])
     return r.returncode == 0 and "runsc" in r.stdout
 
 
 def require_docker() -> None:
-    """Fail with an install pointer if `docker` is not on PATH."""
+    """Fail with an install pointer if `docker` isn't on PATH."""
     if shutil.which("docker") is None:
         info("Docker is required but was not found on PATH.")
         info("macOS:  install Docker Desktop  https://docs.docker.com/desktop/install/mac-install/")
@@ -91,8 +77,7 @@ def image_exists(ref: str) -> bool:
 
 
 def tag_image(src: str, dst: str) -> None:
-    """Give local image `src` the additional tag `dst`, so a pulled pinned image
-    substitutes for a locally-built one everywhere downstream refers to `dst`."""
+    """Tag local image `src` as `dst` too."""
     result = run_docker(["docker", "image", "tag", src, dst])
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
@@ -100,24 +85,19 @@ def tag_image(src: str, dst: str) -> None:
 
 
 def container_exists(name: str) -> bool:
-    """Returns True if a container (running or stopped) with the given
-    name exists. Uses `docker ps -a -q -f name=^<name>$` so substring
-    matches don't false-positive."""
+    """True if a container named exactly `name` exists, running or stopped."""
     result = run_docker(["docker", "ps", "-a", "-q", "-f", f"name=^{name}$"])
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
 def force_remove_container(name: str) -> None:
-    """`docker rm -f` the named container if it exists. No-op if it
-    doesn't — and the rm itself is best-effort (errors swallowed) so
-    this is safe to register as a teardown callback."""
+    """`docker rm -f` the container if it exists. Best effort."""
     if container_exists(name):
         run_docker(["docker", "rm", "-f", name])
 
 
 def docker_exec_root(container: str, argv: list[str]) -> None:
-    """Run `docker exec -u 0` in the named container, check=True. Used
-    by SSH provisioning to chown/chmod files that need root."""
+    """`docker exec -u 0`, check=True."""
     subprocess.run(
         ["docker", "exec", "-u", "0", container, *argv],
         stdout=subprocess.DEVNULL,
@@ -126,8 +106,7 @@ def docker_exec_root(container: str, argv: list[str]) -> None:
 
 
 def docker_exec(container: str, argv: list[str], *, user: str = "") -> None:
-    """Run `docker exec` in the named container, dying with the
-    command's own stderr on failure. Pass `user=\"0\"` to run as root."""
+    """`docker exec`, dying with its stderr on failure."""
     cmd = ["docker", "exec"]
     if user:
         cmd += ["-u", user]
@@ -141,7 +120,7 @@ def docker_exec(container: str, argv: list[str], *, user: str = "") -> None:
 
 
 def docker_cp(src: str, dest: str) -> None:
-    """Run `docker cp`, dying with the command's own stderr on failure."""
+    """`docker cp`, dying with its stderr on failure."""
     result = run_docker(["docker", "cp", src, dest])
     if result.returncode != 0:
         die(f"docker cp {src} -> {dest} failed: "
@@ -156,19 +135,9 @@ def build_image(
     build_args: dict[str, str] | None = None,
     no_cache: bool = False,
 ) -> None:
-    """Invokes `docker build` every call. Layer cache makes no-change
-    rebuilds cheap; running every time means Dockerfile edits land
-    without manual `docker rmi`.
-
-    `dockerfile` is an optional path (relative to `context`, or
-    absolute) for callers that need to build from a non-default
-    Dockerfile in the same context — e.g. `Dockerfile.git-gate`.
-
-    `no_cache` (the `start --no-cache` flag) forces `--no-cache`. The
-    npm/curl installers some provider Dockerfiles
-    shell out to can silently no-op on a transient network failure —
-    e.g. an `optionalDependencies` fetch for a platform-native binary —
-    and Docker will then cache that broken layer indefinitely."""
+    """`docker build`, every call (the layer cache keeps it cheap).
+    `dockerfile` is an optional path relative to `context`. `no_cache` forces
+    `--no-cache`, for layers a flaky installer cached broken."""
     info(f"building image {ref} from {context} (layer cache keeps repeat builds fast)")
     args = ["docker", "build", "-t", ref]
     if no_cache:
@@ -183,15 +152,13 @@ def build_image(
     for name, value in effective_build_args.items():
         args.extend(["--build-arg", f"{name}={value}"])
     args.append(context)
-    # Streamed, so a host controller job captures the build's output.
+    # Streamed so a host-controller job captures the output.
     run_streaming(args, check=True)
 
 
 def image_id(ref: str) -> str:
-    """Return the exact content-addressed ID for a local image.
-
-    This is used when one locally built image is another Dockerfile's base:
-    passing the ID prevents a mutable tag from being resolved between builds.
+    """The content-addressed ID of a local image, so a base can't change
+    between builds.
     """
     result = run_docker(["docker", "image", "inspect", "--format", "{{.Id}}", ref])
     image = result.stdout.strip()
@@ -202,13 +169,9 @@ def image_id(ref: str) -> str:
 
 
 def pinned_local_image_ref(ref: str) -> str:
-    """Give a local image a content-derived tag and verify the tag resolves
-    back to the same image ID.
-
-    BuildKit treats a bare ``sha256:...`` ID in ``FROM`` as a registry
-    repository name. A tag whose complete suffix is the local image ID remains
-    resolvable by BuildKit, while the post-tag inspection keeps the handoff
-    fail-closed.
+    """Tag a local image with a content-derived tag and check it resolves back
+    to the same ID. BuildKit reads a bare `sha256:...` in `FROM` as a
+    repository.
     """
     image = image_id(ref)
     digest = image.removeprefix("sha256:")
@@ -232,10 +195,8 @@ def pinned_local_image_ref(ref: str) -> str:
 
 
 def verify_agent_image(image: str, argv: tuple[str, ...]) -> None:
-    """Run `argv` inside a throwaway container of a freshly built agent
-    image and die loudly if it fails, instead of shipping an image
-    whose CLI only breaks at first real use. No-op when the provider
-    hasn't declared a smoke test (`AgentProviderRuntime.smoke_test`)."""
+    """Run `argv` in a throwaway container of a fresh image and die if it
+    fails. No-op without a provider smoke test."""
     if not argv:
         return
     result = run_docker(["docker", "run", "--rm", "--entrypoint", argv[0], image, *argv[1:]])
@@ -248,44 +209,10 @@ def verify_agent_image(image: str, argv: tuple[str, ...]) -> None:
         )
 
 
-# def build_image_with_cwd(
-#     derived: str,
-#     base: str,
-#     workspace: "WorkspacePlan",
-# ) -> None:
-#     """Build a thin derived image that copies the workspace into
-#     the plan's guest path and sets the plan's workdir."""
-#     import os
-#
-#     cwd = str(workspace.host_path)
-#     if not os.path.isdir(cwd):
-#         die(f"cwd not found at {cwd}")
-#     info(f"building image {derived} from {base} with {cwd} -> {workspace.guest_path}")
-#     with tempfile.TemporaryDirectory(prefix="bot-bottle-cwd.") as tmp:
-#         context_dir = os.path.join(tmp, "context")
-#         staged_workspace = os.path.join(context_dir, "workspace")
-#         shutil.copytree(
-#             cwd,
-#             staged_workspace,
-#             symlinks=True,
-#             ignore=shutil.ignore_patterns(".git"),
-#         )
-#         dockerfile = (
-#             f"FROM {base}\n"
-#             f"COPY --chown=node:node workspace/. {workspace.guest_path}\n"
-#             f"WORKDIR {workspace.workdir}\n"
-#         )
-#         subprocess.run(
-#             ["docker", "build", "-t", derived, "-f", "-", context_dir],
-#             input=dockerfile,
-#             text=True,
-#             check=True,
-#         )
 
 
 def commit_container(container_name: str, image_tag: str) -> None:
-    """Run `docker commit <container_name> <image_tag>` to snapshot the
-    running container's filesystem state as a local Docker image."""
+    """`docker commit` the container to `image_tag`."""
     result = run_docker(["docker", "commit", container_name, image_tag])
     if result.returncode != 0:
         die(
@@ -296,9 +223,8 @@ def commit_container(container_name: str, image_tag: str) -> None:
 
 
 def image_created_at(ref: str) -> datetime | None:
-    """Return Docker's image Created timestamp as an aware UTC datetime, or
-    None when the field is absent or unparseable. Callers should skip the
-    stale check when None is returned."""
+    """The image's Created timestamp as aware UTC, or None (skip the stale
+    check)."""
     r = subprocess.run(
         ["docker", "image", "inspect", "--format", "{{.Created}}", ref],
         capture_output=True,

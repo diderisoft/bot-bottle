@@ -1,12 +1,7 @@
-"""The macOS orchestrator (control plane) as an Apple container.
-
-`MacosOrchestrator` is the Apple-Container implementation of the backend-neutral
-`Orchestrator` service. The lean control-plane container joins the host-only
-control network only (agents are never on it), mounts a container-only DB volume
-(exactly one kernel writes `bot-bottle.db`), and holds the signing key.
-The host CLI and the gateway both reach it at its control-network address —
-Apple has no container DNS, so there's a single resolved URL, not docker's
-loopback-vs-name split.
+"""`MacosOrchestrator`: the control plane as an Apple container on the
+host-only control network only, with a container-only DB volume and the signing
+key. The CLI and the gateway both reach it at its control-network address (no
+container DNS).
 """
 
 from __future__ import annotations
@@ -39,12 +34,10 @@ from .gateway import CONTROL_NETWORK
 
 ORCHESTRATOR_NAME = "bot-bottle-mac-orchestrator"
 ORCHESTRATOR_LABEL = "bot-bottle-mac-orchestrator=1"
-# Container-only volume holding bot-bottle.db, mounted ONLY into the
-# orchestrator. One kernel writes it (never host-shared or cross-guest).
+# Volume holding `bot-bottle.db`, mounted only into the orchestrator.
 ORCHESTRATOR_DB_VOLUME = "bot-bottle-mac-db"
 
-# Where the DB volume mounts inside the orchestrator; the DB itself is at
-# <root>/db/<filename>, passed as `--db`.
+# DB volume mount point; the DB is `<root>/db/<filename>`, passed as `--db`.
 _DB_ROOT_IN_CONTAINER = "/var/lib/bot-bottle"
 _DB_IN_CONTAINER = f"{_DB_ROOT_IN_CONTAINER}/db/{HOST_DB_FILENAME}"
 _SRC_IN_CONTAINER = "/bot-bottle-src"
@@ -53,9 +46,8 @@ _HEALTH_POLL_SECONDS = 0.25
 
 
 class MacosOrchestrator(Orchestrator):
-    """The control plane as an Apple container on the host-only control network.
-    `ensure_built` builds `Dockerfile.orchestrator`; `ensure_running` starts it
-    and blocks until `/health` answers at its control-network address."""
+    """The control plane as an Apple container. `ensure_built` builds
+    `Dockerfile.orchestrator`; `ensure_running` waits for `/health`."""
 
     def __init__(
         self,
@@ -75,27 +67,23 @@ class MacosOrchestrator(Orchestrator):
         self.label = label
         self.port = port
         self.control_network = control_network
-        # Build context / bind-mount source: the repo root in a checkout, a
-        # staged copy from the installed wheel otherwise (bot_bottle.resources).
+        # Build context and source mount: the checkout root, or a copy staged
+        # from the wheel.
         self._repo_root = repo_root if repo_root is not None else resources.build_root()
         self._db_volume = db_volume
 
     def url(self) -> str:
-        """The orchestrator's control-network address (host CLI + registration),
-        or "" while it has no address yet. Apple has no container DNS, so this is
-        also what the gateway resolves against (`gateway_url`)."""
+        """The control-network address, or "" before it has one."""
         ip = container_mod.try_container_ipv4_on_network(self.name, self.control_network)
         return f"http://{ip}:{self.port}" if ip else ""
 
     def gateway_url(self) -> str:
-        """Same address the host uses — the gateway reaches the orchestrator by
-        control-network IP (Apple has no container DNS)."""
+        """Same as `url()`."""
         return self.url()
 
     def host_link(self) -> HostLink | None:
         """The host's vmnet gateway on the control network. Agents can route
-        to that address too, so the host controller accepts only peers on
-        this network (the orchestrator and gateway)."""
+        there too, so the host controller accepts only control-network peers."""
         found = container_mod.network_ipv4(self.control_network)
         if found is None:
             return None
@@ -105,21 +93,18 @@ class MacosOrchestrator(Orchestrator):
         return container_mod.container_is_running(self.name)
 
     def _source_current(self, current_hash: str) -> bool:
-        """True iff the running orchestrator was created from the current
-        bind-mounted control-plane source (it loads that code at startup and
-        won't reload it)."""
+        """True iff the running orchestrator loaded the current mounted source."""
         if not self.is_running():
             return False
         env = container_mod.container_env(self.name)
         if not env:
-            return True  # can't compare → don't churn a working container
+            return True  # can't compare: don't churn a working container
         return env.get("BOT_BOTTLE_SOURCE_HASH") == current_hash
 
     def ensure_built(self) -> None:
-        """Build the control-plane image. The source is bind-mounted so a code
-        change takes effect without a rebuild; the image still carries the
-        package for its entrypoint. Pulls the release-pinned image instead when it was built
-        from exactly this install's code."""
+        """Build the image, or pull the release-pinned one when it was built
+        from this install's code. The source is mounted, so code changes need
+        no rebuild."""
         pin = pinned_infra_artifact(
             "bot-bottle-orchestrator", FORMAT_OCI,
             local_build=self._settings.infra.infra_build_local)
@@ -132,8 +117,8 @@ class MacosOrchestrator(Orchestrator):
             except RegistryError as e:
                 raise OrchestratorStartError(str(e)) from e
             return
-        # A local build of exactly this code is reused: even a fully cached
-        # Apple `container build` costs ~10 s of BuildKit overhead per launch.
+        # Reuse a local build of exactly this code; even a cached Apple build
+        # costs ~10 s.
         built = local_build_tag("bot-bottle-orchestrator", self.image_ref)
         if not self._settings.operation.no_cache and container_mod.image_exists(built):
             self.image_ref = built
@@ -149,11 +134,9 @@ class MacosOrchestrator(Orchestrator):
     def ensure_running(
         self, *, startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
     ) -> bool:
-        """Ensure the control-plane container is up on current source; block
-        until healthy. Idempotent — a healthy orchestrator on current source is
-        left untouched and False is returned; True when it was (re)started.
-        Raises `OrchestratorStartError` on startup timeout. The control
-        network must already exist (the composer ensures it)."""
+        """Ensure the container is up on current source and healthy. A healthy
+        current one is left alone (False); True when (re)started. Raises
+        `OrchestratorStartError` on timeout. The control network must exist."""
         current_hash = source_hash(self._repo_root)
         if self._source_current(current_hash) and self.is_healthy():
             return False
@@ -164,8 +147,7 @@ class MacosOrchestrator(Orchestrator):
 
     def _run_container(self, current_hash: str) -> None:
         container_mod.force_remove_container(self.name)
-        # The signing key comes through the shared provisioning contract,
-        # which fail-closes rather than yield an empty key that would run OPEN.
+        # Raises rather than yield an empty key that would serve open.
         _signing_key = self.control_plane_key()
         host_env = self.host_control_env()
         argv = [
@@ -173,27 +155,25 @@ class MacosOrchestrator(Orchestrator):
             "--name", self.name,
             "--label", "bot-bottle.backend=macos-container",
             "--label", self.label,
-            # Control network only — agents are never on it (L3-isolated).
+            # Control network only.
             "--network", self.control_network,
             "--dns", container_mod.dns_server(self._settings.infra.macos_container_dns),
-            # Container-only DB volume: exactly one kernel writes bot-bottle.db.
+            # Container-only DB volume.
             "--volume", f"{self._db_volume}:{_DB_ROOT_IN_CONTAINER}",
-            # Live control-plane source (a code change takes effect on relaunch).
+            # Live source mount.
             "--mount",
             container_mod.bind_mount_spec(
                 str(self._repo_root), _SRC_IN_CONTAINER, readonly=True),
             "--env", f"PYTHONPATH={_SRC_IN_CONTAINER}",
-            # Detect a real control-plane code change and recreate.
+            # Recreate on a real code change.
             "--env", f"BOT_BOTTLE_SOURCE_HASH={current_hash}",
-            # The signing key — held ONLY by the orchestrator. Bare
-            # `--env NAME` keeps the value off argv; it is still in the config
-            # `container inspect` shows, readable only by the host user.
+            # The signing key, as a bare `--env NAME`.
             "--env", ORCHESTRATOR_TOKEN_ENV,
-            # The host controller's URL and an `orchestrator` token, when it is
-            # the one bringing this up (never its key).
+            # The host controller's URL and token, when it is the one starting
+            # this.
             *[arg for name in sorted(host_env) for arg in ("--env", name)],
             self.image_ref,
-            # Dockerfile.orchestrator ENTRYPOINT is `-m bot_bottle.orchestrator`.
+            # Args to the `-m bot_bottle.orchestrator` entrypoint.
             "--host", "0.0.0.0", "--port", str(self.port),
             "--db", _DB_IN_CONTAINER,
         ]
@@ -220,14 +200,12 @@ class MacosOrchestrator(Orchestrator):
             time.sleep(_HEALTH_POLL_SECONDS)
 
     def stop(self) -> None:
-        """Remove the control-plane container (idempotent). The DB volume
-        persists."""
+        """Remove the container. Idempotent; the DB volume persists."""
         container_mod.force_remove_container(self.name)
 
 
 def _local_network_hint(problem: str) -> str:
-    """macOS Local Network privacy blocks an app it hasn't allowed from
-    reaching vmnet addresses, which surfaces as "No route to host"."""
+    """macOS Local Network privacy shows up as "No route to host"."""
     if "No route to host" not in problem:
         return ""
     return (f"; if `curl` reaches it, macOS Local Network privacy may be "
@@ -236,9 +214,8 @@ def _local_network_hint(problem: str) -> str:
 
 
 def probe_orchestrator_url(port: int = DEFAULT_PORT) -> str:
-    """The running orchestrator's control-plane URL, or "" if it isn't up. Used
-    by host-side control-plane discovery; safe on any host (returns "" when the
-    container or the `container` CLI isn't present)."""
+    """The running orchestrator's URL, or "" if it isn't up or `container`
+    isn't installed."""
     ip = container_mod.try_container_ipv4_on_network(ORCHESTRATOR_NAME, CONTROL_NETWORK)
     return f"http://{ip}:{port}" if ip else ""
 

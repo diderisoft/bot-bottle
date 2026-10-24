@@ -1,27 +1,22 @@
-"""The egress proxy's env-tunable limits, parsed at startup."""
+"""The egress proxy's env-tunable limits."""
 
 from __future__ import annotations
 
 import os
 import sys
 
-# Seconds the egress proxy holds a token-blocked request open waiting for the
-# operator's supervisor decision, overridable via env.
+# How long a token-blocked request waits for the operator.
 DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS = 300.0
 
-# Maximum bytes of a response body passed to the DLP inbound scan. mitmproxy
-# buffers the full response before the hook fires; capping at scan time limits
-# the additional memory amplification from decoded text and regex match strings.
-# A cap is a security trade-off (content above the threshold is not scanned),
-# but without it a single large download OOM-kills the shared egress process
-#. Override with EGRESS_INBOUND_SCAN_LIMIT_BYTES; set to 0 to
-# disable the cap.
+# Max response bytes passed to inbound DLP; larger content isn't scanned, but
+# without a cap one big download can OOM the shared proxy.
+# `EGRESS_INBOUND_SCAN_LIMIT_BYTES` overrides; 0 disables.
 DEFAULT_INBOUND_SCAN_LIMIT_BYTES = 1 * 1024 * 1024  # 1 MiB
 
 
 def _inbound_scan_limit_from_env(env: "os._Environ[str]") -> int:
-    """Read EGRESS_INBOUND_SCAN_LIMIT_BYTES; fall back to the default on an
-    unset or invalid value. Returns 0 to disable the cap."""
+    """`EGRESS_INBOUND_SCAN_LIMIT_BYTES`, or the default if unset or invalid. 0
+    disables the cap."""
     raw = env.get("EGRESS_INBOUND_SCAN_LIMIT_BYTES", "").strip()
     if not raw:
         return DEFAULT_INBOUND_SCAN_LIMIT_BYTES
@@ -39,8 +34,8 @@ def _inbound_scan_limit_from_env(env: "os._Environ[str]") -> int:
 
 
 def _token_allow_timeout_from_env(env: "os._Environ[str]") -> float:
-    """Read EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS; fall back to the default on an
-    unset or invalid value (a bad value should not wedge egress at boot)."""
+    """`EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS`, or the default if unset or
+    invalid."""
     raw = env.get("EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS", "").strip()
     if not raw:
         return DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS

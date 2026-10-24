@@ -1,15 +1,13 @@
-"""bot-bottle trust — review and trust a project's bottles on this host.
+"""bot-bottle trust: review and trust a project's bottles on this host.
 
-  bot-bottle trust <bottle>     show what the project bottle grants beyond
-                                `basic` and trust it (asks first; --yes skips)
+  bot-bottle trust <bottle>     show what the bottle grants beyond `basic` and
+                                trust it (asks first; --yes skips)
   bot-bottle trust show <bottle>
                                 show what it grants, without trusting it
   bot-bottle trust --list       the bottles this host trusts
 
-A project can ship bottles in `./.bot-bottle/bottles/`. They run only once
-this host has trusted their exact contents; any change needs trusting
-again. Your own bottles in ~/.bot-bottle/ and the built-in `basic` need no
-trust. Run it in the project's directory.
+Project bottles (`./.bot-bottle/bottles/`) run only once their exact contents
+are trusted; any change asks again. Run in the project's directory.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""SQLite-backed queue store for supervise proposals and responses."""
+"""SQLite store for supervise proposals and responses."""
 
 from __future__ import annotations
 
@@ -11,15 +11,12 @@ from ...lib.migrations import TableMigrations
 
 
 class QueueStore(DbStore):
-    """SQLite-backed persistent store for supervise proposals and responses."""
 
     def __init__(self, queue_key: str, db_path: Path) -> None:
         self.queue_key = queue_key
-        # One entry per schema version: migrations[0] brings a fresh DB to
-        # version 1, [1] to version 2, etc.  Add new entries at the end; never
-        # edit existing ones.
+        # One migration per schema version; append only.
         migrations = TableMigrations("queue_store", [
-            # v1 — proposals table
+            # v1: proposals
             """
             CREATE TABLE IF NOT EXISTS supervise_proposals (
                 queue_key TEXT NOT NULL,
@@ -34,7 +31,7 @@ class QueueStore(DbStore):
                 PRIMARY KEY (queue_key, id)
             )
             """,
-            # v2 — responses table
+            # v2: responses
             """
             CREATE TABLE IF NOT EXISTS supervise_responses (
                 queue_key TEXT NOT NULL,
@@ -158,10 +155,8 @@ class QueueStore(DbStore):
         return self._row_to_response(row)
 
     def archive_all(self) -> None:
-        """Archive every proposal + response for this queue key. Used to reap a
-        bottle's supervise records when it is torn down or reconciled away —
-        the retention path for a client that received a decision but died before
-        acknowledging it. Idempotent."""
+        """Archive every proposal and response for this key (bottle teardown or
+        reconcile). Idempotent."""
         if not self.db_path.is_file():
             return
         with self._connection() as conn:

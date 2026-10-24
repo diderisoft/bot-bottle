@@ -1,10 +1,8 @@
-"""bot-bottle pair — link this host to your phone.
+"""bot-bottle pair: link this host to your phone.
 
-Prints a QR code and a short confirm code. Scan the QR code with your phone,
-type the confirm code, and approve with a passkey (Face ID, Touch ID, …). The
-first pairing makes an account that is just that passkey; pairing another
-host from the same phone adds it to the same account. Then remote access is
-turned on, so the phone can reach this host's agents.
+Prints a QR code and a confirm code. Scan it, type the code and approve with a
+passkey; the first pairing creates an account that is just that passkey, and
+later hosts join it. Then remote access is turned on.
 
 Usage:
   bot-bottle pair [--console-url URL] [--label LABEL]
@@ -14,8 +12,7 @@ Flags:
                       this host last logged in to)
   --label LABEL       Host name shown on the phone (default: hostname)
 
-`bb login` does the same with an existing console account and no QR code,
-for headless and CI setups.
+`bb login` does the same without a QR code, for headless setups.
 """
 
 from __future__ import annotations
@@ -30,13 +27,13 @@ from ...lib import qrcodegen
 from . import login
 from .remote import cmd_remote
 
-_QUIET_ZONE = 2  # modules of white border; scanners need some
+_QUIET_ZONE = 2  # modules of white border
 
 
 def render_qr(text: str, ansi: bool = True) -> str:
-    """``text`` as a QR code made of half-block characters, two rows of
-    modules per line. With ``ansi``, it's drawn black on white whatever the
-    terminal's colors are, since many phone scanners can't read inverted codes."""
+    """`text` as a QR code in half-block characters, two module rows per line.
+    With `ansi`, drawn black on white regardless of the terminal's colors,
+    since many scanners can't read inverted codes."""
     qr = qrcodegen.QrCode.encode_text(text, qrcodegen.QrCode.Ecc.MEDIUM)
     lo, hi = -_QUIET_ZONE, qr.get_size() + _QUIET_ZONE
     glyphs = {(False, False): " ", (True, False): "▀", (False, True): "▄", (True, True): "█"}
@@ -79,7 +76,7 @@ def cmd_pair(argv: list[str]) -> int:
         sys.stderr.write("bot-bottle pair: --console-url or BB_CONSOLE_URL is required\n")
         return 1
     try:
-        remote.node_id()  # remote access needs iroh; find out before pairing
+        remote.node_id()  # remote access needs iroh; check before pairing
     except remote.RemoteError as e:
         sys.stderr.write(f"bot-bottle pair: {e}\n")
         return 1

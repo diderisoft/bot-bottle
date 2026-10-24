@@ -21,8 +21,7 @@ from .types import (
     Route,
 )
 
-# Parsing
-# ---------------------------------------------------------------------------
+# --- Parsing ---
 
 def _parse_path_match(idx: int, j: int, raw: object) -> PathMatch:
     label = f"route[{idx}] matches paths[{j}]"
@@ -292,12 +291,8 @@ def _match_entry_to_dict(me: MatchEntry) -> dict[str, object]:
 
 
 def route_to_yaml_dict(r: Route) -> dict[str, object]:
-    """Serialize a Route to YAML-schema-compatible dict.
-
-    Uses the same field names the YAML parser accepts, so the output
-    can be round-tripped directly into an `allow` or `egress-block`
-    proposal without translation. Fields that are empty/default are
-    omitted so the agent doesn't copy irrelevant keys."""
+    """A Route as a dict in the YAML schema's field names, defaults omitted, so
+    it round-trips into an `egress-allow` or `egress-block` proposal."""
     d: dict[str, object] = {"host": r.host}
     if not r.inspect:
         d["inspect"] = False
@@ -324,7 +319,7 @@ def route_to_yaml_dict(r: Route) -> dict[str, object]:
 
 
 def parse_config(payload: object) -> "Config":
-    """Parse a full egress config payload (top-level log level + routes)."""
+    """Parse an egress config payload (log level + routes)."""
     if not isinstance(payload, dict):
         raise ValueError("routes payload: top-level must be an object")
     payload_dict: dict[str, object] = typing.cast(dict[str, object], payload)
@@ -350,7 +345,7 @@ def parse_config(payload: object) -> "Config":
 
 
 def load_config(text: str) -> "Config":
-    """Parse YAML text → Config (routes + log flag)."""
+    """YAML text -> Config."""
     try:
         payload = parse_yaml_subset(text)
     except YamlSubsetError as e:

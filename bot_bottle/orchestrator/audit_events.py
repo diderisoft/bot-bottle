@@ -1,14 +1,9 @@
-"""The orchestrator's audit events: who it let in and turned away, the
-identity tokens it minted, and supervise proposals and their decisions.
+"""The orchestrator's audit events: who it admitted and refused, identity
+tokens minted, and supervise proposals and decisions. Sent via an
+`AuditSender`; without one (no host controller) nothing is recorded.
 
-`OrchestratorAudit` hands each event to an `AuditSender`; without one (an
-orchestrator no host controller brought up) it records nothing.
-
-Every producer names a bottle by its slug (`amber-fox`), but the orchestrator
-and gateway know it by its registry id, minted afresh at each registration.
-That id is the run's `activation`, the one the host controller records too.
-Each event is renamed on its way out (`bottle` the slug, `activation` the
-registry id), so a bottle's events from every producer share both names.
+Producers name a bottle by slug; the orchestrator and gateway know it by
+registry id, which is the run's `activation`. Each event leaves with both.
 """
 
 from __future__ import annotations
@@ -32,8 +27,7 @@ def fingerprint(secret: str) -> str:
     return "sha256:" + hashlib.sha256(secret.encode("utf-8")).hexdigest()[:16]
 
 
-# Registry id -> slug lookups remembered, so an event that arrives after its
-# bottle deregistered is still named by slug.
+# Registry id -> slug, remembered so late events still get a slug.
 _SLUG_CACHE_LIMIT = 10_000
 
 
@@ -58,8 +52,8 @@ class OrchestratorAudit:
         return slug
 
     def named(self, event: AuditEvent) -> AuditEvent:
-        """`event` with its bottle named by slug and the registry id as its
-        `activation`. Unchanged when the id isn't a known bottle."""
+        """`event` with its bottle named by slug and the registry id as
+        `activation`; unchanged for an unknown id."""
         registry_id = event.bottle
         slug = self.slug(registry_id) if registry_id else None
         if not slug or slug == registry_id:
@@ -74,9 +68,9 @@ class OrchestratorAudit:
         return AuditEvent.from_json(body)
 
     def relay(self, event: AuditEvent, *, producer: str, required: bool = False) -> bool:
-        """Pass on an event a gateway component produced, named by slug.
-        `required`: deliver it now and say whether it was written; without a
-        host controller to write it, it wasn't."""
+        """Pass on a gateway component's event, named by slug. `required`
+        delivers now and reports whether it was written (never, without a host
+        controller)."""
         if self._sink is None:
             return not required
         if required:
@@ -88,11 +82,11 @@ class OrchestratorAudit:
         event = AuditEvent(ts_event=utc_iso(self._clock()), **fields)
         return self.relay(event, producer="orchestrator", required=required)
 
-    # -- auth.* --------------------------------------------------------------
+    # --- auth.* ---
 
     def token_rejected(self, op: str, *, reason_code: str, src_ip: str = "") -> None:
-        """A call with no valid token, or a bottle whose identity token
-        doesn't match its source IP."""
+        """A call with no valid token, or an identity token that doesn't match
+        its source IP."""
         payload: dict[str, Any] = {"op": op, "reason_code": reason_code}
         if src_ip:
             payload["src_ip"] = src_ip
@@ -113,12 +107,12 @@ class OrchestratorAudit:
                      payload={"role": "bottle", "token_id": fingerprint(token),
                               "src_ip": src_ip, "reason_code": "register"})
 
-    # -- decision.* ----------------------------------------------------------
+    # --- decision.* ---
 
     def proposed(self, *, bottle_id: str, proposal_id: str, tool: str,
                  proposed_file: str, justification: str) -> None:
-        """A bottled agent asked the operator for something. Its reason is
-        its own claim, so it goes under `untrusted`."""
+        """An agent asked the operator for something; its reason is a claim, so
+        it goes under `untrusted`."""
         self._record(type="decision.proposed", actor=f"bottled-agent:{bottle_id}",
                      action=f"supervise.{tool}", outcome="deferred", sensitivity="security",
                      resource=bottle_id, bottle=bottle_id, bottled_agent=bottle_id,
@@ -130,7 +124,7 @@ class OrchestratorAudit:
     def resolved(self, *, bottle_id: str, proposal_id: str, decision: str,
                  notes: str, required: bool = False) -> bool:
         """The operator's answer: approve or modify allows, reject blocks.
-        `required`: recorded before it's applied; False means it wasn't."""
+        `required` records before applying; False means it wasn't recorded."""
         return self._record(required=required, type="decision.resolved", actor="role:cli",
                      action=f"supervise.{decision}",
                      outcome="blocked" if decision == "reject" else "allowed",

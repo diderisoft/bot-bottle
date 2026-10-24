@@ -1,4 +1,4 @@
-"""Which code a host controller runs, so a CLI can tell a stale daemon apart."""
+"""The code a host controller runs, so a CLI can spot a stale daemon."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def build_id(package_root: Path = PACKAGE_ROOT) -> str:
 
 @cache
 def current_build_id() -> str:
-    """`build_id()` of the package this process imported, computed once."""
+    """`build_id()` of this process's package, computed once."""
     return build_id()
 
 

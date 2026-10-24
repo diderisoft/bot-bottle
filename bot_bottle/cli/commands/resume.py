@@ -1,15 +1,8 @@
-"""resume: re-launch a bottle by its identity.
+"""resume: relaunch a bottle by identity from its recorded metadata (agent,
+cwd, copy mode, bottles, backend), through the host controller, under the same
+identity and state dir.
 
-Reads ~/.bot-bottle/state/<identity>/metadata.json to recover the
-(agent_name, cwd, copy_cwd, bottles, backend) the bottle was originally
-started with, then launches through the host controller like `start`, pinned
-to the recorded identity so the new bottle picks up any per-bottle Dockerfile
-override and transcript snapshot under the same state dir.
-
-Use case: an interrupted or preserved bottle needs to be relaunched;
-the operator runs
     bot-bottle resume <identity>
-to bring up the replacement from the recorded state.
 """
 
 from __future__ import annotations

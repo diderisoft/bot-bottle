@@ -1,4 +1,4 @@
-"""Internal per-file Markdown manifest loader."""
+"""Per-file Markdown manifest loader."""
 
 from __future__ import annotations
 
@@ -18,9 +18,8 @@ from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
 
 
 def check_stale_json(dir_path: Path, md_dir: Path, label: str) -> None:
-    """Die if `<dir_path>/bot-bottle.json` exists but `md_dir` does
-    not. The manifest format changed to per-file Markdown and we do not
-    want to silently leave the JSON content unused."""
+    """Die if `<dir_path>/bot-bottle.json` exists without `md_dir`, rather than
+    silently ignore the old format."""
     legacy = dir_path / "bot-bottle.json"
     if legacy.is_file() and not md_dir.exists():
         raise ManifestError(
@@ -33,9 +32,8 @@ def check_stale_json(dir_path: Path, md_dir: Path, label: str) -> None:
 
 
 def scan_bottle_names(bottles_dir: Path) -> list[str]:
-    """Scan `<bottles_dir>/*.md` for valid filenames and return sorted bottle names.
-
-    No file content is read. Invalid filenames are skipped with a warning."""
+    """Sorted bottle names from `<bottles_dir>/*.md` filenames; invalid names
+    are skipped with a warning. Reads no content."""
     result: list[str] = []
     if not bottles_dir.is_dir():
         return result
@@ -52,9 +50,8 @@ def scan_bottle_names(bottles_dir: Path) -> list[str]:
 
 
 def scan_agent_names(agents_dir: Path) -> dict[str, Path]:
-    """Scan `<agents_dir>/*.md` for valid filenames and return `{name: path}`.
-
-    No file content is read. Invalid filenames are skipped with a warning."""
+    """`{name: path}` from `<agents_dir>/*.md` filenames; invalid names are
+    skipped with a warning. Reads no content."""
     result: dict[str, Path] = {}
     if not agents_dir.is_dir():
         return result
@@ -70,14 +67,14 @@ def scan_agent_names(agents_dir: Path) -> dict[str, Path]:
     return result
 
 
-# The built-in bottles shipped with bot-bottle (`basic`).
+# Built-in bottles (`basic`).
 BUILTIN_BOTTLES_DIR = Path(__file__).parent / "builtin"
 
 
 @dataclass(frozen=True)
 class BottleSource:
-    """One file in a resolved bottle chain, and whether it came from the
-    project (`./.bot-bottle/bottles/`), which makes it untrusted input."""
+    """One file of a resolved bottle chain, and whether it's from the project
+    (untrusted input)."""
 
     name: str
     path: Path
@@ -87,9 +84,9 @@ class BottleSource:
 def load_bottle_chain(
     bottle_name: str, dirs: Sequence[tuple[Path, bool]],
 ) -> tuple[ManifestBottle, tuple[BottleSource, ...]]:
-    """Load `bottle_name` and its `extends:` chain, each name from the first
-    of ``dirs`` that has it (``(dir, is_project)`` pairs, in precedence
-    order). Returns the resolved bottle and the files it came from."""
+    """Load `bottle_name` and its `extends:` chain, each name from the first of
+    `dirs` (`(dir, is_project)`, in precedence order) that has it. Returns the
+    resolved bottle and its files."""
     raws: dict[str, dict[str, object]] = {}
     sources: list[BottleSource] = []
     to_load = [bottle_name]
@@ -125,9 +122,6 @@ def load_bottle_chain(
 def load_bottle_chain_from_dir(
     bottle_name: str, bottles_dir: Path
 ) -> ManifestBottle:
-    """Load `bottle_name` and its full `extends:` chain from `bottles_dir`,
-    returning the resolved ManifestBottle.
-
-    Only the files in the extends chain are read — unrelated bottle files
-    are never touched. Raises ManifestError on parse or validation failure."""
+    """Load `bottle_name` and its `extends:` chain from `bottles_dir`, reading
+    only the chain's files. Raises ManifestError."""
     return load_bottle_chain(bottle_name, ((bottles_dir, False),))[0]

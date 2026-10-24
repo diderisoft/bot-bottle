@@ -1,7 +1,5 @@
-"""attach: join a running agent session in this terminal.
-
-Runs `tmux attach` against bot-bottle's own tmux server. Ctrl-] detaches;
-the agent keeps running.
+"""attach: join a running agent session in this terminal via bot-bottle's tmux
+server. Ctrl-] detaches; the agent keeps running.
 """
 
 from __future__ import annotations

@@ -1,12 +1,6 @@
-"""The per-host infra service for the Firecracker backend.
-
-`FirecrackerInfraService` is the Firecracker `InfraService`: it composes the
-orchestrator + gateway microVMs as an idempotent per-host singleton pair over
-the shared `infra_vm` substrate (boot primitives, the singleton flock, the
-adopt/version machinery). Unlike the docker/macOS services it takes no
-per-instance config beyond `Settings` — the firecracker pair is a **hard** per-host singleton,
-pinned to the fixed netpool links (`orch_slot()` / `gw_slot()`), host cache
-paths, and a `booted-version` marker, so two pairs can't coexist on one host.
+"""`FirecrackerInfraService`: the orchestrator and gateway VMs as a hard
+per-host singleton, pinned to the fixed netpool links, host cache paths and a
+`booted-version` marker.
 """
 
 from __future__ import annotations
@@ -23,7 +17,7 @@ from .gateway_attach import FirecrackerGatewayAttacher
 
 
 class FirecrackerInfraService(InfraService):
-    """Bring up the orchestrator + gateway microVM pair as a per-host singleton."""
+    """Bring up the orchestrator + gateway VM pair as a per-host singleton."""
 
     name = "firecracker"
 
@@ -31,33 +25,25 @@ class FirecrackerInfraService(InfraService):
         self.settings = settings
 
     def orchestrator(self) -> FirecrackerOrchestrator:
-        """The control-plane service (adopts the running orchestrator VM by its
-        fixed link; no live handle needed for URL / SSH / health)."""
+        """The control-plane service; adopts the running VM by its fixed link."""
         return FirecrackerOrchestrator(self.settings)
 
     def gateway(self) -> FirecrackerGateway:
-        """The data-plane service (adopts the running gateway VM by its fixed
-        link; CA fetch / provisioning go through the stable key)."""
+        """The gateway service; adopts the running VM by its fixed link."""
         return FirecrackerGateway(self.settings)
 
     def _bring_up(self, *, startup_timeout: float) -> tuple[str, bool]:
-        """Idempotent per-host singleton pair. Adopt the running VMs if the
-        orchestrator's control plane is healthy AND the gateway VM is alive AND
-        both booted the CURRENT code version (a prior launcher booted them — they
-        outlive short-lived `start` processes); otherwise clear any stale VMs and
-        boot a fresh pair (orchestrator first, then the gateway that resolves
-        policy against it). Returns the host control-plane URL and whether it
-        booted the pair (True) or adopted it (False).
+        """Adopt the running pair if the orchestrator is healthy, the gateway
+        VM is alive and both booted the current version; otherwise stop any
+        stale VMs and boot a fresh pair, orchestrator first. Returns the
+        control-plane URL and whether it booted (True) or adopted (False).
 
-        Concurrency-safe: the cold stop/build/boot path is serialized by a host
-        flock, so two simultaneous first launches don't both boot on the same
-        links/PIDs. The healthy fast-path takes no lock."""
+        The cold path holds a host flock; the healthy fast path takes no lock."""
         key = infra_vm._infra_dir() / "id_ed25519"
         orchestrator = self.orchestrator()
         url = orchestrator.url()
-        # Resolving the expected version reads the published manifest; a missing
-        # or malformed one, or an unresolvable image, should surface as a clean
-        # one-line error with remediation, not a traceback out of a launch.
+        # A missing manifest or unresolvable image is a clean error, not a
+        # traceback.
         try:
             want = infra_vm.expected_version(self.settings.infra)
         except (RegistryError, ArtifactsManifestError) as e:
@@ -67,35 +53,30 @@ class FirecrackerInfraService(InfraService):
             return url, False
 
         with infra_vm.singleton_lock():
-            # Re-check under the lock: another launcher may have booted them while
-            # we waited (double-checked, so we adopt not re-boot).
+            # Re-check under the lock: another launcher may have booted them.
             if infra_vm.adoptable(key, url, want):
                 info(f"adopting running infra VMs (orchestrator at {url})")
                 return url, False
-            # Clear stale/hung/OUTDATED VMs holding either link before booting fresh.
+            # Clear stale, hung or outdated VMs holding either link.
             infra_vm.stop()
-            # Fetch + verify the rootfs artifacts; a 404, digest mismatch, or
-            # unreachable registry is a clean fail-closed message, not a stack
-            # trace (matches the behavior of the retired infra_artifact.py).
+            # A 404, digest mismatch or unreachable registry fails closed with
+            # a clean message.
             try:
                 infra_vm.ensure_built(self.settings)
             except (RegistryError, ArtifactsManifestError) as e:
                 die(str(e))
-            # Orchestrator first — the gateway daemons reach the control plane at
-            # startup. Each service owns its own boot; the orchestrator (which
-            # holds the signing key) mints the role-scoped `gateway` JWT for the
-            # gateway, which never sees the key.
+            # Orchestrator first: the gateway reaches it at startup. The
+            # orchestrator mints the gateway's token.
             orchestrator.ensure_running(startup_timeout=startup_timeout)
             gateway = self.gateway()
             gateway.connect_to_orchestrator(
                 orchestrator.gateway_url(), orchestrator.mint_gateway_token())
             infra_vm.record_booted_version(want)
-            # Both VMs just booted: the gateway has no per-bottle state and the
-            # orchestrator holds no egress tokens.
+            # Both just booted, so neither holds per-bottle state.
             return url, True
 
     def stop(self) -> None:
-        """Stop both infra VMs (idempotent) and drop the version marker."""
+        """Stop both VMs (idempotent) and drop the version marker."""
         infra_vm.stop()
 
     def gateway_attacher(self) -> FirecrackerGatewayAttacher:

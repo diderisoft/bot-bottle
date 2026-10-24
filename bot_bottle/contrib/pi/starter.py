@@ -1,10 +1,6 @@
-"""The pi starter's model source (PRD 0091).
-
-pi runs inside the bottle image, so the host needs no pi install. What the
-starter needs is a model a bottle can reach, with a key bot-bottle can
-forward through the gateway. This module finds that in the host's own pi
-config (`~/.pi/agent/`), and builds the starter settings for it, or for
-OpenRouter. It only reads; it never changes or mounts the user's pi files.
+"""The pi starter's model source: the host's pi config (`~/.pi/agent/`), read
+only, or OpenRouter. The host needs no pi install; it needs a model a bottle
+can reach with a key the gateway can forward.
 """
 
 from __future__ import annotations
@@ -25,7 +21,6 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_KEY_NAME = "OPENROUTER_API_KEY"
 
 # pi's built-in OpenAI-compatible providers: name -> (base URL, key env var).
-# A `defaultProvider` naming one of these needs no models.json entry.
 BUILTIN_PROVIDERS: dict[str, tuple[str, str]] = {
     "openrouter": (OPENROUTER_BASE_URL, OPENROUTER_KEY_NAME),
     "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY"),
@@ -37,22 +32,19 @@ BUILTIN_PROVIDERS: dict[str, tuple[str, str]] = {
 }
 
 _ENV_NAME = re.compile(r"^[A-Z_][A-Z0-9_]*$")
-# A starter's context window: the model's own, capped so a 1M-token model
-# doesn't make pi keep a huge transcript per request.
+# Starter context window, capped so a 1M-token model doesn't make pi keep a
+# huge transcript.
 MAX_CONTEXT_WINDOW = 131072
 DEFAULT_MAX_TOKENS = 8192
-# pi keeps `context_window - max_tokens` for input, so cap the output share.
+# pi reserves `context_window - max_tokens` for input.
 MAX_OUTPUT_TOKENS = 16384
 
 
 @dataclass(frozen=True)
 class LocalPiModel:
-    """The default model from the host's pi config, when a bottle can use it.
-
-    ``key_name`` is the env var or secrets-file name that holds the key.
-    ``literal_key`` is True when models.json holds the key itself; `setup`
-    then asks before copying it into the host secrets file under
-    ``key_name``."""
+    """The host pi config's default model, when a bottle can use it. `key_name`
+    is the env var or secrets name holding the key; `literal_key` means
+    models.json holds the key itself, which `setup` asks before copying."""
 
     provider: str
     base_url: str
@@ -65,8 +57,7 @@ class LocalPiModel:
 
 
 def has_secret(name: str, host_env: Mapping[str, str]) -> bool:
-    """Whether ``name`` is set in ``host_env`` or the host secrets file.
-    Only presence is checked; the value is never returned."""
+    """Whether `name` is set in `host_env` or the secrets file (presence only)."""
     if host_env.get(name):
         return True
     try:
@@ -76,8 +67,8 @@ def has_secret(name: str, host_env: Mapping[str, str]) -> bool:
 
 
 def secret_value(name: str, host_env: Mapping[str, str]) -> str:
-    """``name`` from ``host_env``, else the host secrets file, else "".
-    For `setup`'s own use (probing a model); never printed."""
+    """`name` from `host_env`, else the secrets file, else "". For `setup`'s
+    probe; never printed."""
     if host_env.get(name):
         return host_env[name]
     try:
@@ -100,8 +91,8 @@ def _read_json(path: Path) -> dict[str, object]:
 
 
 def reachable_from_bottle(base_url: str) -> bool:
-    """A public HTTPS endpoint. Localhost, private and link-local addresses
-    are the host's (or its LAN's), which a bottle can't reach."""
+    """A public HTTPS endpoint; host-local, private and link-local addresses
+    aren't reachable from a bottle."""
     url = urlparse(base_url)
     host = url.hostname or ""
     if url.scheme != "https" or not host or host == "localhost" or host.endswith(".local"):
@@ -118,8 +109,8 @@ def _int(value: object) -> int:
 
 
 def read_local_model(host_env: Mapping[str, str]) -> LocalPiModel | None:
-    """The host pi config's default provider and model, if a bottle can
-    reach them and the key is an env var name or a literal; else None."""
+    """The host pi config's default provider and model if a bottle can reach
+    them and the key is an env name or literal; else None."""
     agent_dir = pi_agent_dir(host_env)
     settings = _read_json(agent_dir / "settings.json")
     provider = settings.get("defaultProvider")
@@ -155,7 +146,7 @@ def read_local_model(host_env: Mapping[str, str]) -> LocalPiModel | None:
 
 def read_local_literal_key(host_env: Mapping[str, str]) -> str:
     """The literal key in models.json for the default provider. Only `setup`
-    calls this, after the user agreed to copy it into the secrets file."""
+    calls this, after the user agrees."""
     agent_dir = pi_agent_dir(host_env)
     provider = _read_json(agent_dir / "settings.json").get("defaultProvider")
     providers = _read_json(agent_dir / "models.json").get("providers")
@@ -168,7 +159,7 @@ def read_local_literal_key(host_env: Mapping[str, str]) -> str:
 def starter_settings(provider: str, base_url: str, model: str, key_name: str, *,
                      context_window: int = 0, max_tokens: int = 0,
                      reasoning: bool = False) -> dict[str, object]:
-    """`agent_provider.settings` for a pi starter bottle."""
+    """`agent_provider.settings` for a pi starter."""
     window = min(context_window or MAX_CONTEXT_WINDOW, MAX_CONTEXT_WINDOW)
     settings: dict[str, object] = {
         "provider": provider,

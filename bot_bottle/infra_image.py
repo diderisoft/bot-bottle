@@ -1,13 +1,8 @@
 """Pull or build the infra images (gateway + orchestrator).
 
-Every backend runs the same rule: pull the release-pinned image when it was
-built from exactly the code this install has, otherwise build it. Each manifest
-entry records the `inputs_hash` of what went into its image, and the install
-can compute the same hash from its own sources, so a match means the pulled
-image is byte-for-byte what a local build would produce. A mismatch (an install
-from `main` past the last release) builds instead of running an image older
-than the code that drives it. `local_build` (`BOT_BOTTLE_INFRA_BUILD=local`)
-always builds.
+Pull the release-pinned image only when its recorded `inputs_hash` matches this
+install's sources, otherwise build. `local_build`
+(`BOT_BOTTLE_INFRA_BUILD=local`) always builds.
 """
 
 from __future__ import annotations
@@ -23,8 +18,7 @@ from .published_artifacts import Artifact, current_platform, load_artifacts_mani
 
 def pinned_infra_artifact(image: str, fmt: str, *, local_build: bool) -> Artifact | None:
     """The published `fmt` artifact of infra `image` to pull, or None to build
-    it locally: `local_build` was requested, nothing is published yet, the
-    image or format isn't in the manifest, or it was built from other code."""
+    locally."""
     if local_build:
         return None
     entries = load_artifacts_manifest_optional()
@@ -49,14 +43,13 @@ def _note_mismatch(image: str, version: str) -> None:
 
 
 def local_build_tag(image: str, local_ref: str) -> str:
-    """The tag a local build of `image` from this checkout carries:
-    `<repo>:src-<inputs hash>`. An image with it was built from exactly
-    these inputs, so a launch can use it instead of building again."""
+    """Tag of a local build of `image` from this checkout: `<repo>:src-<inputs
+    hash>`, reusable instead of rebuilding."""
     return f"{_repo(local_ref)}:src-{_local_inputs_hash(image)}"
 
 
 def note_local_build() -> None:
-    """Mark the launch stage for a service image that's actually being built."""
+    """Mark the launch stage for a service image that is being built."""
     log.stage("services", "Rebuilding bot-bottle services")
 
 
@@ -68,14 +61,11 @@ def pull_pinned_image(
     tag_image: Callable[[str, str], None],
     pull_argv: tuple[str, ...],
 ) -> str:
-    """Make the pinned `artifact` available locally and return the tag to run
-    in place of `local_ref`: `<its repo>:pin-<digest>`, pulled by digest (after
-    checking its tag still points there) unless the digest is already local,
-    so an install that has it launches offline. The tag names only this
-    digest: retagging a shared one like `:latest` can leave a local build
-    answering to it (Apple Container keeps the built image's literal name, and
-    its `image tag` normalizes the new one). Raises `RegistryError` when the
-    registry disagrees or can't be reached."""
+    """Make the pinned `artifact` available locally and return its tag,
+    `<repo>:pin-<digest>`. Pulls by digest after verifying the tag, unless the
+    digest is already local. The tag names only this digest, since retagging a
+    shared tag like `:latest` can leave a local build answering to it. Raises
+    `RegistryError`."""
     tag = f"{_repo(local_ref)}:pin-{artifact.digest.removeprefix('sha256:')[:16]}"
     if image_exists(tag):
         return tag

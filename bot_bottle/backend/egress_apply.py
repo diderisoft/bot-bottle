@@ -1,7 +1,5 @@
-"""Shared base class for host-side egress apply across backends.
-
-Each backend subclasses EgressApplicator and overrides _signal_bundle_reload
-with the backend-specific kill command.
+"""Base class for host-side egress apply; backends override
+`_signal_bundle_reload`.
 """
 
 from __future__ import annotations

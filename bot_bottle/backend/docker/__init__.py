@@ -1,21 +1,5 @@
-"""Docker bottle backend.
-
-The bulk of the implementation lives in sibling modules:
-
-  - util:                 thin Docker subprocess wrappers
-  - network:              Docker network plumbing
-  - bottle_plan:          DockerBottlePlan
-  - bottle_cleanup_plan:  DockerBottleCleanupPlan
-  - bottle:               DockerBottle handle
-  - prepare:              host-side resolution into a DockerBottlePlan
-  - launch:               bring-up + teardown context manager
-  - cleanup:              orphan enumeration, removal, active listing
-  - backend:              DockerBottleBackend façade wiring the above
-  - infra:                DockerInfraService (the per-host orchestrator + gateway pair)
-
-Thin by design: the public names are re-exported lazily via `__getattr__`, so
-importing a leaf like `backend.docker.util` doesn't drag `DockerBottleBackend`
-(and the whole framework it pulls) into memory.
+"""Docker bottle backend. Public names are re-exported lazily so importing a
+leaf module stays cheap.
 """
 
 from __future__ import annotations

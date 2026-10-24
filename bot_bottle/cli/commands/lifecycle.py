@@ -1,8 +1,6 @@
-"""The bot-bottle host service as a whole: `install`, `uninstall`,
-`up`, `down`, `status` and `jobs`.
-
-The host controller daemon and each backend's orchestrator and gateway are
-separate processes underneath; these commands treat them as one service.
+"""The bot-bottle host service as one unit: `install`, `uninstall`, `up`,
+`down`, `status` and `jobs`, across the host controller and each backend's
+infra pair.
 """
 
 from __future__ import annotations
@@ -115,7 +113,7 @@ def cmd_install(argv: list[str]) -> int:
     if ns.no_autostart:
         return 0
     try:
-        runner.stop()  # a daemon the CLI started would run beside the service's
+        runner.stop()  # a CLI-started daemon would run beside the service's
         spec = service_unit.ServiceSpec(python=sys.executable, path_env=os.environ.get("PATH", ""))
         print(f"autostart: installed ({service_unit.install(spec)})")
         state = runner.ensure_running()

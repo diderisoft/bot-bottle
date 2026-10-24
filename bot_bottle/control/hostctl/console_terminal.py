@@ -1,15 +1,10 @@
-"""The console's view of one agent session: a `tmux attach` under its own PTY,
-its output relayed to the console on an iroh uni stream (ADR 0007).
+"""The console's view of one session: a `tmux attach` under its own PTY,
+relayed on an iroh uni stream (ADR 0007).
 
-The stream starts with the console's agent id and a newline, then carries raw
-terminal bytes. The console sends keystrokes (`input`) and sizes (`resize`)
-over the control stream; `ConsoleLink` hands them to `write` and `resize`.
-
-Like the host's WebSocket viewer (`attach.py`), the client starts read-only.
-It becomes writable only if the session's agent allows remote typing
-(`remote.writable` in its manifest); otherwise `write` drops the bytes. tmux
-sizes the window to the most recently active client (`window-size latest`),
-so a resize from the console applies while the console is the one in use.
+The stream starts with the console's agent id and a newline, then terminal
+bytes. Keystrokes and sizes arrive on the control stream through `ConsoleLink`.
+The client starts read-only and can type only if the agent's manifest sets
+`remote.writable`. tmux sizes to the most recently active client.
 """
 
 from __future__ import annotations
@@ -27,9 +22,9 @@ from ...lib import log
 from .attach import _LOGIN_TTY, _set_size
 from .sessions import SessionError, SessionManager
 
-# Upper bounds on what the console may send in one message.
+# Bounds on one console message.
 MAX_INPUT_BYTES = 64 * 1024
-# The most lines one `history` request may ask for, and the most it sends.
+# Most lines one `history` request may get.
 HISTORY_LINES = 3000
 MAX_HISTORY_CHARS = 2_000_000
 COLS_RANGE = (20, 400)
@@ -101,8 +96,8 @@ class ConsoleTerminal:
         return tty in out.split()
 
     def _relay(self, master: int, stream: _SendStream, loop: asyncio.AbstractEventLoop) -> None:
-        """Copy PTY output to the console stream, waiting on each write so a
-        slow console applies backpressure instead of growing a buffer."""
+        """Copy PTY output to the console, awaiting each write so a slow
+        console gets backpressure."""
         try:
             while data := os.read(master, 65536):
                 asyncio.run_coroutine_threadsafe(stream.write_all(data), loop).result()
@@ -120,8 +115,8 @@ class ConsoleTerminal:
             asyncio.run_coroutine_threadsafe(stream.finish(), loop).result(timeout=5)
         except Exception:  # pylint: disable=broad-exception-caught
             pass
-        # The relay owns the PTY's master: closing it here, after the last
-        # read, means no other thread can reuse the fd under a pending read.
+        # The relay owns the PTY master; closing it after the last read means
+        # no thread reuses the fd mid-read.
         self._closed.set()
         os.close(master)
 
@@ -137,23 +132,21 @@ class ConsoleTerminal:
             _set_size(self._master, cols, rows)
 
     def history(self, lines: int) -> tuple[str, int, int]:
-        """The last `lines` (at most HISTORY_LINES) that scrolled off the
-        session's screen, with its history's size and limit, so the console
-        can fetch only what's new."""
+        """Up to `lines` (at most HISTORY_LINES) of scrolled-off history, with
+        the history's size and limit."""
         if self._closed.is_set():
             return "", 0, 0
         text, size, limit = self._sessions.history(self._session,
                                                    max(1, min(lines, HISTORY_LINES)))
         if len(text) > MAX_HISTORY_CHARS:
-            # Keep whole lines: a cut mid-line could split an escape code.
+            # Whole lines only; a mid-line cut could split an escape code.
             text = text[-MAX_HISTORY_CHARS:]
             text = text[text.find("\n") + 1:]
         return text, size, limit
 
     def close(self) -> None:
-        """Detach from the session (the agent keeps running). Doesn't block:
-        it may run on the event loop the relay thread needs to finish, so the
-        relay closes the PTY itself once the tmux client is gone."""
+        """Detach (the agent keeps running). Non-blocking: the relay closes the
+        PTY once the tmux client is gone."""
         if self._closed.is_set():
             return
         self._closed.set()

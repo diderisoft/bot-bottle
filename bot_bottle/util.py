@@ -1,7 +1,4 @@
-"""Cross-cutting utility helpers used by multiple modules.
-
-Top-level (i.e. backend-agnostic) — backend-specific helpers live one
-level deeper, under their backend package."""
+"""Backend-agnostic helpers."""
 
 from __future__ import annotations
 
@@ -22,7 +19,7 @@ def is_ip_literal(value: str) -> bool:
 
 
 def read_tty_line() -> str:
-    """Mirror `IFS= read -r REPLY </dev/tty`. Falls back to stdin."""
+    """Like `IFS= read -r REPLY </dev/tty`; falls back to stdin."""
     try:
         with open("/dev/tty", "r", encoding="utf-8") as tty:
             return tty.readline().rstrip("\n")
@@ -31,9 +28,7 @@ def read_tty_line() -> str:
 
 
 def expand_tilde(path: str) -> str:
-    """Expand a leading '~' to $HOME. Leaves paths without a leading
-    tilde unchanged. Falls back to the empty string if $HOME is unset
-    (callers should already have checked HOME if they care)."""
+    """Expand a leading '~' to $HOME ("" if HOME is unset)."""
     if path.startswith("~"):
         home = os.environ.get("HOME", "")
         return home + path[1:]
@@ -44,11 +39,7 @@ _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
 def slugify(name: str) -> str:
-    """Return a portable bottle identifier from a human-readable name.
-
-    This is deliberately a root utility: names are part of the generic CLI
-    and state model, not a Docker container concern.
-    """
+    """A portable bottle identifier from a human-readable name."""
     if not name:
         die("slugify: missing name")
     slug = _SLUG_RE.sub("-", name.lower()).strip("-")

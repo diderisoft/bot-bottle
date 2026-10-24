@@ -1,19 +1,9 @@
-"""Locate build-time resources whether bot-bottle runs from a source
-checkout or an installed wheel.
+"""Locate build resources in a source checkout or an installed wheel.
 
-The gateway / infra / orchestrator images are built from a Docker (or Apple
-`container`) build context that must contain the `bot_bottle` package,
-`pyproject.toml`, and the root-level Dockerfiles as siblings. In a source
-checkout that context is simply the repo root, one level above the package.
-An installed wheel has no repo root: the same root-level files are shipped
-inside the package under ``bot_bottle/_resources/`` (see ``setup.py``), and a
-repo-root-shaped build context is staged on demand into the app-data dir.
-
-``build_root()`` is the single source of truth — it returns a directory laid
-out like a repo root (has ``bot_bottle/``, ``pyproject.toml``, the
-Dockerfiles, ``nix/``, ``scripts/``). Every caller that needs a build
-context, a Dockerfile path, the nix netpool module, or the netpool script
-derives from it, so checkout and wheel installs share one downstream path.
+`build_root()` returns a directory shaped like a repo root (`bot_bottle/`,
+`pyproject.toml`, the Dockerfiles, `nix/`, `scripts/`). A checkout returns the
+repo root; a wheel stages one from the files bundled under
+`bot_bottle/_resources/`.
 """
 
 from __future__ import annotations
@@ -29,14 +19,12 @@ from pathlib import Path
 
 from .paths import bot_bottle_root
 
-_PKG = Path(__file__).resolve().parent          # …/bot_bottle
-_CHECKOUT_ROOT = _PKG.parent                     # repo root in a checkout
-_BUNDLED = _PKG / "_resources"                   # wheel-shipped copies
+_PKG = Path(__file__).resolve().parent  # .../bot_bottle
+_CHECKOUT_ROOT = _PKG.parent  # repo root in a checkout
+_BUNDLED = _PKG / "_resources"  # wheel-shipped copies
 
-# Root-level files bundled into the wheel under ``_resources/`` (paths are
-# relative to the checkout root, and preserved verbatim under ``_resources/``
-# and in the staged build root). ``setup.py`` copies exactly this set; keep
-# the two lists in sync (``test_resources`` guards that every entry exists).
+# Root-level files bundled into the wheel under `_resources/`, paths relative
+# to the checkout root. Must match `setup.py` (`test_resources` checks).
 BUNDLED_RESOURCES: tuple[str, ...] = (
     "pyproject.toml",
     "image-build-args.json",
@@ -49,19 +37,13 @@ BUNDLED_RESOURCES: tuple[str, ...] = (
     "scripts/firecracker-netpool.sh",
 )
 
-# Root-level files bundled into the wheel *only when present at build time*.
-# The published-artifacts manifest exists only after a release (the release
-# workflow, pre-release-test.yml's promote job, commits it to main), so a
-# pre-release wheel ships without it and the consumer falls back to a local
-# build. Kept out of BUNDLED_RESOURCES so its absence is not a build
-# error and its guard test does not require it to exist. Keep in sync with
-# ``setup.py``'s ``_OPTIONAL_BUNDLED_RESOURCES`` (``test_resources`` guards drift).
+# Bundled only when present at build time: the artifacts manifest exists only
+# after a release. Must match `setup.py`'s `_OPTIONAL_BUNDLED_RESOURCES`.
 OPTIONAL_BUNDLED_RESOURCES: tuple[str, ...] = (
     "published-artifacts.json",
 )
 
-# Present at a checkout root, never in a bare installed package — the cheap
-# tell for which layout we're in.
+# Present at a checkout root, never in an installed package.
 _CHECKOUT_MARKER = "Dockerfile.gateway"
 _IMAGE_BUILD_ARGS_FILE = "image-build-args.json"
 _CENTRAL_BUILD_ARG_NAMES = frozenset({
@@ -72,31 +54,25 @@ _CENTRAL_BUILD_ARG_NAMES = frozenset({
 
 
 class ResourceError(RuntimeError):
-    """Build resources are missing from the install (corrupt/partial wheel)."""
+    """Build resources are missing from the install."""
 
 
 def is_source_checkout() -> bool:
-    """True when running from a source tree (the root Dockerfiles sit beside
-    the package); False from an installed wheel."""
+    """True when running from a source tree."""
     return (_CHECKOUT_ROOT / _CHECKOUT_MARKER).is_file()
 
 
 def build_root() -> Path:
-    """A directory shaped like a repo root: ``bot_bottle/``, ``pyproject.toml``,
-    the root Dockerfiles, ``nix/``, and ``scripts/``.
-
-    A checkout returns the repo root itself (no copying). An installed wheel
-    returns a staged copy under the app-data dir, materialized once and reused.
-    The stage is keyed by a digest of the installed package + bundled resources
-    (not the distribution version), so a force-reinstall of a newer commit that
-    keeps ``version = 0.1.0`` still rebuilds instead of reusing a stale tree."""
+    """A repo-root-shaped directory: the checkout root, or a copy staged from
+    the wheel once and reused. The stage is keyed by content digest, so a
+    reinstall at the same version re-stages."""
     if is_source_checkout():
         return _CHECKOUT_ROOT
     return _stage_build_root()
 
 
 def dockerfile(name: str) -> Path:
-    """Absolute path to a root-level Dockerfile, e.g. ``Dockerfile.gateway``."""
+    """Absolute path to a root-level Dockerfile, e.g. `Dockerfile.gateway`."""
     return build_root() / name
 
 
@@ -105,12 +81,9 @@ def image_build_args(
     *,
     context: str | Path | None = None,
 ) -> dict[str, str]:
-    """Return centralized arguments declared by ``dockerfile_path``.
-
-    Base-image arguments deliberately have no Dockerfile defaults. Their
-    digest-pinned values live in one repository input file and every supported
-    build path calls this helper before invoking its OCI builder. Explicit
-    caller-supplied arguments may still override this returned mapping.
+    """The centralized build args `dockerfile_path` declares (digest-pinned
+    bases with no Dockerfile defaults). Callers' explicit args may override
+    them.
     """
     path = Path(dockerfile_path)
     if not path.is_absolute() and context is not None:
@@ -118,8 +91,7 @@ def image_build_args(
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
-        # Generic callers and tests may build an ephemeral Dockerfile outside
-        # bot-bottle. The builder will report a genuinely missing file.
+        # A Dockerfile outside bot-bottle; the builder reports a missing file.
         return {}
     declared = set(re.findall(
         r"(?m)^\s*ARG\s+([A-Za-z_][A-Za-z0-9_]*)\s*$",
@@ -128,10 +100,8 @@ def image_build_args(
     wanted = declared & _CENTRAL_BUILD_ARG_NAMES
     if not wanted:
         return {}
-    # Generated Dockerfiles (notably the macOS nested-container layer) live in
-    # temporary build contexts. Resolve their declaration there, but take the
-    # centralized values from that context only when it carries its own input
-    # file; otherwise use bot-bottle's staged build root.
+    # Generated Dockerfiles live in temporary contexts; use that context's
+    # input file if it has one, else the build root's.
     context_root = Path(context) if context is not None else None
     root = (
         context_root
@@ -164,23 +134,17 @@ def image_build_args(
 
 
 def nix_netpool_module() -> Path:
-    """Absolute path to the firecracker netpool NixOS module."""
+    """The firecracker netpool NixOS module."""
     return build_root() / "nix" / "firecracker-netpool.nix"
 
 
 def netpool_script() -> Path:
-    """Absolute path to the firecracker netpool bring-up script."""
+    """The firecracker netpool setup script."""
     return build_root() / "scripts" / "firecracker-netpool.sh"
 
 
 def _content_digest() -> str:
-    """A 16-hex digest of the installed package + bundled resources.
-
-    Keys the staged build root by *content*, so a force-reinstall over the same
-    version string (the installer defaults to a git branch + ``pipx install
-    --force``, and ``version`` stays ``0.1.0``) yields a different key and
-    re-stages, rather than reusing an old commit's tree. ``_PKG`` already
-    contains ``_resources``, so walking it covers both."""
+    """16-hex digest of the installed package (which includes `_resources`)."""
     h = hashlib.sha256()
     for path in sorted(_PKG.rglob("*")):
         if not path.is_file() or "__pycache__" in path.parts or path.suffix == ".pyc":
@@ -192,10 +156,8 @@ def _content_digest() -> str:
 
 
 def _stage_build_root() -> Path:
-    """Materialize a repo-root-shaped build context from the installed wheel's
-    bundled resources, keyed by content digest. Idempotent and concurrency-safe:
-    a file lock serializes staging, a partial/stale tree is replaced, and the
-    finished tree is published with an atomic rename."""
+    """Stage a repo-root-shaped build context from the wheel, keyed by content
+    digest. Serialized by a file lock and published by atomic rename."""
     if not _BUNDLED.is_dir():
         raise ResourceError(
             "bot-bottle build resources are missing from this install "
@@ -207,32 +169,27 @@ def _stage_build_root() -> Path:
     if (dest / ".complete").is_file():
         return dest
 
-    # Serialize staging across processes: a concurrent `start` after an install
-    # must not race on the shared tree. The lock is held only around stage +
-    # atomic publish; the fast path above never blocks.
+    # Serialize staging across processes; the fast path above never blocks.
     with open(base / ".stage.lock", "w", encoding="utf-8") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         if (dest / ".complete").is_file():  # another process staged while we waited
             return dest
-        # Stage into a private temp dir on the same filesystem, then publish by
-        # rename — never populate a shared path other processes might read.
+        # Stage privately on the same filesystem, then publish by rename.
         staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=base))
         try:
-            # The package itself, minus caches and the bundled-resource copies,
-            # so the staged ``bot_bottle/`` matches a checkout's (keeps the
-            # firecracker infra-artifact hash stable across checkout and wheel).
+            # The package minus caches and bundled copies, matching a
+            # checkout's layout.
             shutil.copytree(
                 _PKG,
                 staging / "bot_bottle",
                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "_resources"),
             )
-            # The bundled root files, restored to their checkout-relative layout.
+            # Bundled root files, in their checkout layout.
             for rel in BUNDLED_RESOURCES:
                 dst = staging / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(_BUNDLED / rel, dst)
-            # Optional root files, restored only when the wheel actually shipped
-            # them (the manifest is absent before the first release).
+            # Optional root files, when the wheel shipped them.
             for rel in OPTIONAL_BUNDLED_RESOURCES:
                 src = _BUNDLED / rel
                 if src.is_file():
@@ -240,12 +197,11 @@ def _stage_build_root() -> Path:
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, dst)
             (staging / ".complete").write_text("")
-            # Replace any partial leftover for this digest (safe: we hold the
-            # lock), then publish atomically.
+            # Replace a partial leftover (we hold the lock), then publish.
             if dest.exists():
                 shutil.rmtree(dest)
             os.replace(staging, dest)
-            staging = None  # published; nothing to clean up
+            staging = None  # published
         finally:
             if staging is not None:
                 shutil.rmtree(staging, ignore_errors=True)

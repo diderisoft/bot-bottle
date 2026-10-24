@@ -1,14 +1,10 @@
-"""The egress proxy's audit events, kept out of the mitmproxy adapter.
+"""Egress audit events. Blocks are blocked `egress.decision`s, DLP hits
+`egress.anomaly`s, and an allowed request is recorded only on a bottle's first
+contact with its `host:port`.
 
-Every block is a blocked `egress.decision` and every DLP hit an
-`egress.anomaly`. An allowed request is recorded only the first time a bottle
-reaches its `host:port`, so the journal shows everywhere an agent went without
-one record per request.
-
-Under a bottle's `audit.delivery: required` an allowed action's event is sent
-now rather than queued, and `False` means it wasn't written, so the caller
-must refuse the action. That send blocks, so an async caller runs it off the
-event loop. A refusal is never held: nothing goes out either way.
+Under `audit.delivery: required` an allowed action's event is sent immediately,
+and False means the caller must refuse. That send blocks, so async callers run
+it off the event loop.
 """
 
 from __future__ import annotations
@@ -17,9 +13,9 @@ import typing
 
 from ...contract.audit import AuditEvent
 
-# Most (bottle, host, port) first contacts remembered before starting over.
+# First contacts remembered before starting over.
 CONTACTED_LIMIT = 50_000
-# The 403 body when a `required` bottle's audit event couldn't be written.
+# 403 body when a `required` bottle's event couldn't be written.
 AUDIT_REFUSED = "egress: refused because its audit record could not be written"
 
 
@@ -33,7 +29,7 @@ class Sink(typing.Protocol):
 
 def egress_event(flow: typing.Any, slug: str, kind: str, outcome: str, *, reason: str,
                  now: str) -> AuditEvent:
-    """The event for one decision about `flow`, from the bottle `slug`."""
+    """The event for one decision about `flow` from bottle `slug`."""
     conn = flow.client_conn
     src_ip = conn.peername[0] if conn is not None and conn.peername else ""
     host, port, method = flow.request.pretty_host, flow.request.port, flow.request.method
@@ -56,8 +52,8 @@ class EgressAudit:
 
     def record(self, flow: typing.Any, slug: str, kind: str, outcome: str,
                reason: str = "", *, required: bool = False) -> bool:
-        """Record one decision; `required` sends it now and says whether it
-        was written."""
+        """Record one decision; `required` sends now and reports whether it was
+        written."""
         event = egress_event(flow, slug, kind, outcome, reason=reason, now=self._sink.now())
         if required:
             return self._sink.send_now(event)
@@ -65,9 +61,8 @@ class EgressAudit:
         return True
 
     def first_contact(self, flow: typing.Any, slug: str, *, required: bool) -> bool:
-        """Record an allowed request the first time `slug` reaches its host.
-        False when `required` and the record couldn't be written; the host
-        isn't remembered then, so the next request tries again."""
+        """Record an allowed request on `slug`'s first contact with its host.
+        False when `required` and unwritten; the host isn't remembered then."""
         key = (slug, flow.request.pretty_host, flow.request.port)
         if key in self._contacted:
             return True

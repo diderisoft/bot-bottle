@@ -1,14 +1,11 @@
-"""Where bottle secrets come from.
+"""Where bottle secrets come from. A `SecretSource` maps a secret's name to its
+value; prepare and launch take one instead of reading the environment.
 
-A `SecretSource` maps a secret's name (an egress `token_ref`, an
-interpolated `${HOST_VAR}`, a `?` env entry, a forge token env name) to its
-value. Prepare and launch take one instead of reading the environment:
+- `MappingSecrets`: a fixed mapping (values a CLI forwards).
+- `FileSecrets`: the host secrets file.
+- `ChainSecrets`: several sources; the first hit wins.
 
-- `MappingSecrets` — a fixed name→value mapping (values a CLI forwards).
-- `FileSecrets` — the host secrets file (`NAME=value` lines, mode 0600).
-- `ChainSecrets` — several sources in order; the first hit wins.
-
-No source ever renders a value in its repr or in an error message.
+No source renders a value in its repr or an error.
 """
 
 from __future__ import annotations
@@ -31,7 +28,7 @@ class SecretSource(ABC):
 
     @abstractmethod
     def get(self, name: str) -> str | None:
-        """The value of `name`, or None when this source doesn't have it."""
+        """The value of `name`, or None."""
 
 
 class MappingSecrets(SecretSource):
@@ -48,13 +45,10 @@ class MappingSecrets(SecretSource):
 
 
 class FileSecrets(SecretSource):
-    """Secrets from a `NAME=value` file.
-
-    Blank lines and `#` comments are skipped; each value is the text after
-    the first `=`, taken literally (no quotes, no expansion). A missing file
-    holds no secrets. The file is read on first lookup and must be owned by
-    this user with no group/other permissions, or lookups raise
-    `SecretsFileError`."""
+    """Secrets from a `NAME=value` file: blank lines and `#` comments skipped,
+    the value taken literally after the first `=`. A missing file holds
+    nothing. Read on first lookup; it must be owned by this user with no
+    group/other access, or lookups raise `SecretsFileError`."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -89,7 +83,7 @@ class FileSecrets(SecretSource):
 
 
 class ChainSecrets(SecretSource):
-    """Asks each source in order; the first one that has the name wins."""
+    """Asks each source in order; the first hit wins."""
 
     def __init__(self, *sources: SecretSource) -> None:
         self.sources = sources
@@ -113,7 +107,7 @@ def _parse(path: Path, text: str) -> dict[str, str]:
             continue
         name, sep, value = line.partition("=")
         if not sep or not _NAME_RE.match(name):
-            # Never echo the line: it may hold a value.
+            # Never echo the line.
             raise SecretsFileError(
                 f"secrets file {path}: line {lineno} is not NAME=value")
         values[name] = value
@@ -121,9 +115,8 @@ def _parse(path: Path, text: str) -> dict[str, str]:
 
 
 def write_secret(path: Path, name: str, value: str) -> None:
-    """Set ``name`` in the secrets file at ``path``, replacing an existing
-    line or appending one. The file is rewritten atomically at mode 0600;
-    other lines and comments are kept. The value is never echoed."""
+    """Set `name` in the secrets file at `path`, replacing or appending its
+    line. Rewritten atomically at 0600; the value is never echoed."""
     if not _NAME_RE.match(name):
         raise SecretsFileError(f"secret name {name!r} is not NAME-shaped")
     if not value or "\n" in value or "\r" in value:

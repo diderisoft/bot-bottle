@@ -1,4 +1,4 @@
-"""Shared helpers for cached-image quickstart stale checks."""
+"""Staleness checks for cached images and artifacts."""
 
 from __future__ import annotations
 
@@ -10,14 +10,12 @@ from .paths import host_db_path
 
 
 class StaleImageError(Exception):
-    """Raised when a cached image or artifact exceeds the configured staleness
-    threshold. Callers can catch this to prompt interactively; headless paths
-    let it propagate as a fatal error."""
+    """A cached image or artifact is older than the staleness threshold."""
 
 
 def check_stale(label: str, created_at: datetime) -> None:
-    """Raise StaleImageError if `created_at` is older than the configured
-    stale-warning threshold. Negative threshold disables the check."""
+    """Raise StaleImageError if `created_at` is past the threshold. A negative
+    threshold disables the check."""
     threshold_days = ConfigStore(host_db_path()).cached_image_stale_warning_days()
     if threshold_days < 0:
         return
@@ -33,7 +31,7 @@ def check_stale(label: str, created_at: datetime) -> None:
 
 
 def check_stale_path(label: str, path: Path) -> None:
-    """Raise StaleImageError if `path`'s mtime exceeds the staleness threshold."""
+    """Raise StaleImageError if `path`'s mtime is past the threshold."""
     check_stale(label, datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc))
 
 

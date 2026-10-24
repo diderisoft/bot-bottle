@@ -1,17 +1,10 @@
-"""Stable gateway name for macOS agents, via each bottle's `/etc/hosts`.
+"""Stable gateway name for macOS agents through each bottle's `/etc/hosts`.
 
-The shared gateway's address is assigned by vmnet's DHCP and changes whenever
-the gateway container is recreated. Every agent-facing URL (egress proxy,
-git-http, supervise) names the gateway (`GATEWAY_HOSTNAME`) instead, resolved
-through the bottle's own `/etc/hosts`: unlike the agent's `environ`, that file
-can be rewritten in a running container, so the reattach flow
-re-points live bottles when the gateway moves. Apple Container 1.0 has no
-container-name DNS and no `--add-host`, so the entry is written by exec.
-
-Writing it needs root and the agent runs as `node`, so the agent cannot
-repoint its own gateway; the host can. The rewrite runs an absolute `/bin/sh`
-with a pinned PATH and stages under root-only `/root`, never `/tmp`, where the
-agent could plant a symlink.
+The gateway's DHCP address changes when it's recreated, so agent URLs use
+`GATEWAY_HOSTNAME`, which reattach can re-point in a running container (unlike
+`environ`). Apple has no container DNS or `--add-host`. The write needs root,
+so the agent can't re-point it; it runs `/bin/sh` with a pinned PATH and stages
+under `/root`.
 """
 
 from __future__ import annotations
@@ -21,21 +14,18 @@ import ipaddress
 from ..util import ROOT_EXEC_PATH
 from . import util as container_mod
 
-# The name every agent-facing gateway URL uses. Must not collide with a real
-# DNS name the agent might resolve; it is bottle-local by construction.
+# Bottle-local name every agent-facing gateway URL uses.
 GATEWAY_HOSTNAME = "bot-bottle-gateway"
 
-# Marker so the rewrite is idempotent and only ever touches our own line —
-# the rest of /etc/hosts (localhost, the container's own name) is preserved.
+# Marks our line so the rewrite is idempotent and leaves the rest alone.
 _MARKER = "# bot-bottle gateway"
 _STAGED_HOSTS = "/root/.bot-bottle-hosts"
 
 
 def gateway_host_argv(gateway_ip: str) -> list[str]:
-    """The root command (run via `container exec --user root`) that points
-    `GATEWAY_HOSTNAME` at `gateway_ip`. Rewrites in place via `cat` rather than
-    `mv`, so `/etc/hosts` keeps its inode, ownership and mode. Raises
-    ValueError if `gateway_ip` isn't an IP address."""
+    """Root command pointing `GATEWAY_HOSTNAME` at `gateway_ip`. Rewrites with
+    `cat` so `/etc/hosts` keeps its inode and mode. Raises ValueError for a
+    non-IP."""
     ip = str(ipaddress.ip_address(gateway_ip))
     script = (
         f"export PATH={ROOT_EXEC_PATH}; set -e; "
@@ -48,9 +38,8 @@ def gateway_host_argv(gateway_ip: str) -> list[str]:
 
 
 def set_gateway_host(container_name: str, gateway_ip: str) -> None:
-    """Point `GATEWAY_HOSTNAME` at `gateway_ip` inside one running container.
-    Must run before the agent is exec'd, so the entry exists for its first
-    connection. Idempotent."""
+    """Point `GATEWAY_HOSTNAME` at `gateway_ip` in one container, before the
+    agent starts. Idempotent."""
     container_mod.exec_container_as_root(container_name, gateway_host_argv(gateway_ip))
 
 

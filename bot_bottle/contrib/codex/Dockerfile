@@ -1,7 +1,5 @@
-# bot-bottle Codex provider image.
-#
-# Mirrors the default Claude image shape: Node LTS, git/network tooling,
-# non-root node user, and the provider CLI installed for that user.
+# Codex agent image: Node LTS, git/network tooling, non-root `node`, the codex
+# CLI.
 
 ARG NODE_BASE_IMAGE
 FROM ${NODE_BASE_IMAGE}
@@ -28,10 +26,7 @@ RUN apt-get -o Acquire::Check-Valid-Until=false update \
   ripgrep \
   && rm -rf /var/lib/apt/lists/*
 
-# App-specific deps. Python isn't required by codex itself
-# (codex is a Node CLI), but is convenient for the agent to shell
-# out to for ad-hoc scripts. Kept on its own layer so it can be
-# moved to a downstream image if the base ever needs to shrink.
+# Python for the agent's ad-hoc scripts.
 RUN apt-get -o Acquire::Check-Valid-Until=false update \
   && apt-get install -y --no-install-recommends python3 python3-pip python3-venv \
   && rm -rf /var/lib/apt/lists/*
@@ -43,9 +38,8 @@ WORKDIR /home/node
 
 ENV PATH="/home/node/.local/bin:${PATH}"
 
-# Install the exact standalone release archive selected by the target
-# architecture. The checksum list is copied from the immutable upstream release
-# and committed so a rebuild cannot silently accept changed release bytes.
+# The standalone release for the target arch, checked against the committed
+# upstream SHA256SUMS.
 COPY --chown=node:node bot_bottle/contrib/codex/codex-package_SHA256SUMS /tmp/codex-package_SHA256SUMS
 RUN case "$(dpkg --print-architecture)" in \
       amd64) codex_target=x86_64-unknown-linux-musl ;; \

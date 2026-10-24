@@ -1,10 +1,6 @@
-"""Answering an agent's requests from the terminal (PRD 0094, chunk 4).
-
-An agent asks for more through supervise (`egress-allow` and friends); the
-request waits in the orchestrator. This module turns a pending proposal into
-what a person needs to decide: a one-line summary for the status bar, the
-routes it would add, and, for "allow for project", those routes written into
-the project's bottle so the next run starts with them.
+"""Answer an agent's pending supervise requests from the terminal: summaries
+for the status bar, the routes a request adds, and saving them to the project's
+bottle.
 """
 
 from __future__ import annotations
@@ -40,13 +36,13 @@ class Request:
     """A pending proposal, as the CLI sees it."""
 
     id: str
-    bottle: str  # the orchestrator's bottle id (what /supervise/respond takes)
-    session: str  # the bottle's label: its tmux session
+    bottle: str  # orchestrator bottle id
+    session: str  # tmux session name
     tool: str
     justification: str
     proposed: str
     current: str
-    arrived: str = ""  # ISO timestamp the agent asked at
+    arrived: str = ""  # ISO timestamp
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Request":
@@ -82,8 +78,8 @@ class Request:
         return f"{self.session} {_TOOL_WORDS.get(self.tool, 'asks: ' + self.tool)}"
 
     def can_save_to_project(self) -> bool:
-        """Only plain egress additions go into a project bottle; a route that
-        carries a credential is allowed once, never saved."""
+        """Only plain egress additions can be saved; a route carrying a
+        credential is allowed once."""
         routes = self.new_routes()
         return bool(routes) and not any(r.auth_scheme or r.token_env for r in routes)
 
@@ -119,9 +115,8 @@ def project_bottle_path(project: Path) -> Path:
 
 
 def save_to_project(project: Path, routes: list[Route]) -> Path:
-    """Add ``routes`` to the project's bottle (creating it to extend
-    `basic`), replacing a route for the same host, then trust the result:
-    the person approving it is the one who'd be asked."""
+    """Add `routes` to the project's bottle (creating one that extends
+    `basic`), replacing same-host routes, then trust the result."""
     path = project_bottle_path(project)
     frontmatter: dict[str, object] = {"extends": "basic"}
     body = ("The bottle for this project. bot-bottle adds a route here when you\n"
@@ -156,12 +151,9 @@ DECISIONS = (ALLOW_ONCE, ALLOW_PROJECT, DENY)
 
 
 def answer(client: Any, request: Request, decision: str, *, via: str) -> str:
-    """Act on ``decision`` for ``request`` through the orchestrator
-    ``client``; returns what happened, for the person who decided. "Allow for
-    project" also writes the routes into the project's bottle, when the
-    request can be saved and the bottle shared a project directory; otherwise
-    it raises ValueError. ``via`` ("the terminal", "the phone") is noted on the
-    decision."""
+    """Act on `decision` through the orchestrator `client` and return what
+    happened. "Allow for project" also saves the routes, or raises ValueError
+    if the request can't be saved. `via` is noted on the decision."""
     if decision not in DECISIONS:
         raise ValueError(f"unknown decision {decision!r}")
     project = session_project(request.session) if decision == ALLOW_PROJECT else None
@@ -182,9 +174,8 @@ def answer(client: Any, request: Request, decision: str, *, via: str) -> str:
 
 def route_lines(request: Request, *, host_width: int = 0,
                 credential: Callable[[str], str] = lambda env: f"with ${env}") -> list[str]:
-    """The routes a request adds, one line each: the host (padded to
-    `host_width`), its methods, paths, git fetch, and the credential the
-    gateway injects (`credential` formats it; the terminal colors it)."""
+    """The routes a request adds, one line each: host (padded to `host_width`),
+    methods, paths, git fetch, and the injected credential."""
     lines = []
     for route in request.new_routes():
         methods = sorted({m for entry in route.matches for m in entry.methods}) or ["any"]

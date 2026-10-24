@@ -1,13 +1,5 @@
-"""Inspection and DLP configuration parsing for egress routes.
-
-A route's optional `inspect:` object names which outbound/inbound detectors run
-and what the proxy does when an outbound detector matches a token
-(`outbound_on_match`). This module owns parsing and validating that block,
-kept apart from the request-time scan/decision flow in `egress_addon_core`
-so each half reads top-to-bottom without scrolling past the other.
-
-Stdlib-only; ships flat into the gateway image alongside
-`egress_addon_core.py` — see `Dockerfile.gateway`."""
+"""Parsing of a route's `inspect:` block: which outbound and inbound detectors
+run, and `outbound_on_match`."""
 
 from __future__ import annotations
 
@@ -16,13 +8,12 @@ import typing
 OUTBOUND_DETECTOR_NAMES = frozenset({"token_patterns", "known_secrets", "entropy"})
 INBOUND_DETECTOR_NAMES = frozenset({"naive_injection_detection"})
 
-# Per-route policy for what the proxy does when an outbound DLP detector
-# matches a token.
-ON_MATCH_BLOCK = "block"          # hard 403, never overridable
-ON_MATCH_REDACT = "redact"        # scrub the matched value, forward the request
-ON_MATCH_SUPERVISE = "supervise"  # queue for operator approval, hold the request
+# What the proxy does when an outbound detector matches a token.
+ON_MATCH_BLOCK = "block"  # hard 403
+ON_MATCH_REDACT = "redact"  # scrub the value, forward
+ON_MATCH_SUPERVISE = "supervise"  # hold for operator approval
 OUTBOUND_ON_MATCH_VALUES = (ON_MATCH_BLOCK, ON_MATCH_REDACT, ON_MATCH_SUPERVISE)
-# Unset resolves to supervise (fall back to block when supervise is not wired).
+# Unset is supervise (block when supervise isn't wired).
 DEFAULT_OUTBOUND_ON_MATCH = ON_MATCH_SUPERVISE
 
 

@@ -1,9 +1,6 @@
-"""Pi agent provider plugin.
-
-Pi uses ~/.pi/agent/models.json for custom provider/model settings.
-This provider writes an Ollama-compatible default configuration and
-lets bottles override the model endpoint and model ids via
-agent_provider.settings.
+"""Pi agent provider. Pi reads `~/.pi/agent/models.json`; this writes an
+Ollama-compatible default that bottles override through
+`agent_provider.settings`.
 """
 
 from __future__ import annotations
@@ -60,8 +57,8 @@ def _models_path(guest_home: str) -> str:
     return f"{guest_home}/.pi/agent/models.json"
 
 
-# pi has no MCP client: this extension lists the supervise tools at startup
-# and forwards calls, reading the URL and identity token from its config.
+# pi has no MCP client: this extension lists the supervise tools at startup and
+# forwards calls, with the URL and token from its config.
 _SUPERVISE_EXTENSION = Path(__file__).with_name("supervise.ts")
 
 
@@ -70,11 +67,10 @@ def _supervise_paths(guest_home: str) -> tuple[str, str]:
     return f"{agent}/extensions/bot-bottle-supervise.ts", f"{agent}/bot-bottle-supervise.json"
 
 
-# Hides pi's empty input editor in a session the console relays to a phone
-# (`--bb-remote-view`); installed in every pi bottle, off unless flagged.
+# Hides pi's input editor in a console-relayed session (`--bb-remote-view`);
+# installed in every pi bottle, off unless flagged.
 _REMOTE_VIEW_EXTENSION = Path(__file__).with_name("remote_view.ts")
-# With `=`: pi takes the word after a bare unknown flag as its value, which
-# would swallow the prompt that follows.
+# With `=`, since pi takes the next word as a bare unknown flag's value.
 _REMOTE_VIEW_FLAG = "--bb-remote-view=true"
 
 
@@ -197,7 +193,7 @@ _RUNTIME = AgentProviderRuntime(
 )
 
 
-# The pi harness packages released in lockstep (see contrib/pi/package.json).
+# pi packages released in lockstep (see contrib/pi/package.json).
 _PI_CORE_PACKAGES = (
     "@earendil-works/pi-coding-agent",
     "@earendil-works/pi-agent-core",
@@ -212,10 +208,9 @@ class PiAgentProvider(AgentProvider):
         return _RUNTIME
 
     def detect_host(self, host_env: Mapping[str, str]) -> HostDetection:
-        """pi runs in the image, so it's always "installed". It's ready when
-        the host's pi config names a model a bottle can reach and its key is
-        in the environment or the host secrets file. Otherwise `setup`
-        picks the model (OpenRouter) and fills `starter_settings` itself."""
+        """pi is in the image, so always "installed". Ready when the host's pi
+        config names a reachable model whose key is in the env or secrets file;
+        otherwise `setup` picks an OpenRouter model."""
         local = read_local_model(host_env)
         if local is None:
             return HostDetection(installed=True, login_command="bot-bottle setup")
@@ -247,9 +242,8 @@ class PiAgentProvider(AgentProvider):
         )
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
-        # The pi core packages depend on each other at ^<same version>, so
-        # they move together. Extensions stay at the base image's lock; a peer
-        # conflict fails the npm install rather than resolving silently.
+        # The core packages pin each other, so they move together. Extensions
+        # stay at the base lock; a peer conflict fails the install.
         pkgs = " ".join(f"{p}@{version}" for p in _PI_CORE_PACKAGES)
         return (
             "USER node",
@@ -333,9 +327,7 @@ class PiAgentProvider(AgentProvider):
                 )
             dst = f"{skills_dir}/{name}"
             info(f"copying skill {name} into {bottle.name}:{dst}")
-            # Defense in depth: skill names are validated kebab-case at
-            # manifest load, but quote the path so a future unvalidated
-            # field can't inject shell metacharacters here either.
+            # Skill names are validated at load; quote anyway.
             dst_q = shlex.quote(dst)
             bottle.exec(f"rm -rf {dst_q} && mkdir -p {dst_q}", user="root")
             bottle.cp_in(f"{src}/.", f"{dst}/")
@@ -354,8 +346,8 @@ class PiAgentProvider(AgentProvider):
             f"{shlex.quote(append_system_path)}",
             user="root",
         )
-        # Pi's `--append-system-prompt` takes literal text, not a file path.
-        # Use its documented APPEND_SYSTEM.md discovery path instead.
+        # `--append-system-prompt` takes text, not a path; use APPEND_SYSTEM.md
+        # discovery.
         return None
 
     def provision(self, plan: "BottlePlan", bottle: "Bottle") -> None:
@@ -407,9 +399,8 @@ class PiAgentProvider(AgentProvider):
         bottle: "Bottle",
         supervise_url: str,
     ) -> None:
-        """Install the supervise extension and its config (URL and identity
-        token, 0600) in pi's agent dir. Fatal when it fails, as for Codex:
-        without it the agent can't ask for anything."""
+        """Install the supervise extension and its 0600 config (URL, token) in
+        pi's agent dir. Fatal on failure."""
         if plan.supervise_plan is None:
             return
         info(f"installing supervise tools for pi → {supervise_url}")
@@ -429,7 +420,7 @@ class PiAgentProvider(AgentProvider):
                 f"{(r.stderr or r.stdout or '').strip()}")
 
     def interactive_prompt(self, prompt: str) -> list[str] | None:
-        # `pi <prompt>`: the interactive UI, with the prompt as its first message.
+        # `pi <prompt>`: interactive, with the prompt as the first message.
         return [self.positional_prompt(prompt)]
 
     def headless_prompt(self, prompt: str) -> list[str]:

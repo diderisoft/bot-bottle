@@ -1,1 +1,1 @@
-"""Pi agent provider package."""
+"""Pi agent provider."""

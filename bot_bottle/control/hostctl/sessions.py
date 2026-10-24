@@ -1,12 +1,10 @@
 """Agent sessions in tmux, owned by the host controller.
 
-Each session runs on bot-bottle's own tmux server (never the user's), started
-detached with a launcher that fetches the real command and environment from
-the daemon, so secrets never reach tmux's argv or environment. A `pane-died`
-hook reports the agent's exit; the session's finisher then runs and the tmux
-session is killed, detaching every viewer. Session records persist under the
-state dir, so a restarted daemon re-adopts live sessions and finishes ones that
-died while it was down.
+Sessions run on bot-bottle's own tmux server, launched with a command that
+fetches the real argv and env from the daemon, so secrets never reach tmux. A
+`pane-died` hook reports the exit; the finisher runs and the session is killed.
+Records persist, so a restarted daemon re-adopts live sessions and finishes
+dead ones.
 """
 
 from __future__ import annotations
@@ -43,8 +41,8 @@ class ExitStatus:
 
 @dataclass(frozen=True)
 class SessionRecord:
-    """What the daemon persists about a session. `kind` picks the finisher
-    that runs when the agent exits; `meta` is that finisher's input."""
+    """A session's persisted record. `kind` picks the finisher; `meta` is its
+    input."""
 
     id: str
     kind: str
@@ -53,8 +51,7 @@ class SessionRecord:
 
 
 def socket_name() -> str:
-    """bot-bottle's tmux server: `bot-bottle` for the default root, a
-    per-root name otherwise, so separate roots never share sessions."""
+    """bot-bottle's tmux server name, per root, so roots never share sessions."""
     root = bot_bottle_root().resolve()
     if root == (Path.home() / ".bot-bottle").resolve():
         return "bot-bottle"
@@ -66,7 +63,7 @@ def config_path() -> Path:
 
 
 def control_socket_path() -> Path:
-    """The daemon's local socket the launcher and the exit hook talk to."""
+    """The daemon socket the launcher and exit hook use."""
     return state_dir() / "sessions.sock"
 
 
@@ -75,7 +72,7 @@ def tmux(*args: str) -> list[str]:
 
 
 def tmux_version() -> tuple[int, int] | None:
-    """The installed tmux's (major, minor), or None if it isn't installed."""
+    """Installed tmux (major, minor), or None."""
     try:
         out = subprocess.run(["tmux", "-V"], capture_output=True, text=True, check=False).stdout
     except OSError:
@@ -85,26 +82,24 @@ def tmux_version() -> tuple[int, int] | None:
 
 
 def _python_command(module: str, *args: str) -> str:
-    """A shell command running `python -m module args` from this package."""
+    """Shell command running `python -m module args` from this package."""
     argv = ["env", f"PYTHONPATH={PACKAGE_ROOT.parent}", sys.executable, "-m", module, *args]
     return shlex.join(argv)
 
 
-# The status bar: copper "bot-bottle", the session (its label) and agent on the
-# left, the detach key on the right, no window list. `@bb_agent` is set per
-# session at start, and left empty when the label already is the agent.
+# Status bar: copper "bot-bottle", the session label and agent on the left, the
+# detach key on the right. `@bb_agent` is empty when the label is the agent.
 _STATUS_BAR = (
     "set -g status on",
     "set -g status-position bottom",
     'set -g status-style "bg=colour235,fg=colour250"',
     "set -g status-left-length 100",
     "set -g status-right-length 120",
-    # Requests arrive as an option change; redraw at least every second.
+    # Requests arrive as option changes; redraw every second.
     "set -g status-interval 1",
     'set -g status-left "#[fg=colour173,bold] ▣ bot-bottle #[default]· #{session_name}'
     '#{?@bb_agent, · #{@bb_agent} agent,} "',
-    # An agent's pending request (`@bb_request`, set by the host controller)
-    # turns the right side copper, with the key that reviews it.
+    # A pending request turns the right side copper, with the review key.
     'set -g status-right "#{?@bb_request,'
     '#[bg=colour173#,fg=colour232#,bold] #{@bb_request} · Ctrl-\\\\ review ,'
     '#[fg=colour244]Ctrl-] detach }"',
@@ -114,13 +109,10 @@ _STATUS_BAR = (
 
 
 def write_config() -> Path:
-    """bot-bottle's tmux config: no prefix, Ctrl-] detaches, the most
-    recently active client sets the size, and dead panes stay until the
-    `pane-died` hook has reported them. A one-line status bar at the bottom
-    says this is a bot-bottle session (which one, and its agent) and how to
-    detach. tmux draws it outside the agent's pane, so the agent can't
-    draw over it or fake it."""
-    # The hook runs a wrapper script so the config line holds one quoted path.
+    """bot-bottle's tmux config: no prefix, Ctrl-] detaches, the most recent
+    client sets the size, dead panes stay until reported, and a status bar
+    outside the agent's pane names the session."""
+    # A wrapper script, so the config line holds one quoted path.
     notify = state_dir() / "notify"
     notify.parent.mkdir(parents=True, exist_ok=True)
     notify.write_text("#!/bin/sh\nexec " + _python_command(
@@ -138,8 +130,8 @@ def write_config() -> Path:
         "set -g prefix2 None",
         "unbind C-b",
         "bind -n C-] detach-client",
-        # Ctrl-\ reviews a pending request in a popup over the agent; with
-        # none pending the key goes to the agent as usual.
+        # Ctrl-\ opens a pending request's review popup; otherwise it goes to
+        # the agent.
         "bind -n 'C-\\' if-shell -F '#{@bb_request}' "
         + '"display-popup -E -w 90% -h 70% -T \' bot-bottle request \' '
         + "'" + str(approve) + " #{session_name}'\" 'send-keys C-\\'",
@@ -168,7 +160,7 @@ class SessionManager:
         """Run `finisher` when a session of `kind` ends."""
         self._finishers[kind] = finisher
 
-    # -- records -------------------------------------------------------------
+    # --- records ---
 
     def records(self) -> list[SessionRecord]:
         """Every session record on disk."""
@@ -194,10 +186,10 @@ class SessionManager:
         tmp.write_text(json.dumps(asdict(record)), encoding="utf-8")
         tmp.replace(path)
 
-    # -- lifecycle -----------------------------------------------------------
+    # --- lifecycle ---
 
     def start(self, record: SessionRecord, argv: list[str], env: dict[str, str]) -> None:
-        """Start `argv` with `env` (added to tmux's environment) as session `record.id`."""
+        """Start `argv` with `env` as session `record.id`."""
         if not _SESSION_ID.match(record.id):
             raise SessionError(f"invalid session id {record.id!r}")
         if self.exists(record.id):
@@ -209,8 +201,7 @@ class SessionManager:
             self._exits.pop(record.id, None)
         launcher = _python_command(
             "bot_bottle.control.hostctl.launch", str(control_socket_path()), record.id)
-        # The agent's name for the status bar rides along in the same tmux
-        # command, so starting a session costs no extra round trip.
+        # The agent name for the status bar rides in the same tmux command.
         agent = str(record.meta.get("agent", ""))
         shown = [";", "set-option", "-t", f"={record.id}:", "@bb_agent", agent] \
             if agent and agent != record.id else []
@@ -225,13 +216,13 @@ class SessionManager:
             raise SessionError(f"tmux new-session failed: {proc.stderr.strip()}")
 
     def spec(self, session_id: str) -> tuple[list[str], dict[str, str]] | None:
-        """The command and environment for a starting session, handed out once."""
+        """The command and env for a starting session, handed out once."""
         with self._cond:
             return self._specs.pop(session_id, None)
 
     def died(self, session_id: str, exit_status: ExitStatus) -> None:
-        """The agent in `session_id` exited: run its finisher, kill the session.
-        Reported by both the launcher and the `pane-died` hook; the first wins."""
+        """`session_id`'s agent exited: run its finisher and kill the session.
+        The launcher and the hook both report; the first wins."""
         with self._cond:
             if session_id in self._finishing or session_id in self._exits:
                 return
@@ -267,8 +258,8 @@ class SessionManager:
             return self._exits.get(session_id)
 
     def kill(self, session_id: str) -> None:
-        """Kill the tmux session; its agent gets SIGHUP and the exit is
-        reported as usual."""
+        """Kill the tmux session; the agent gets SIGHUP and the exit is
+        reported."""
         subprocess.run(tmux("kill-session", "-t", f"={session_id}"),
                        capture_output=True, check=False)
 
@@ -277,8 +268,8 @@ class SessionManager:
                               capture_output=True, check=False).returncode == 0
 
     def adopt(self) -> None:
-        """After a daemon (re)start: finish sessions whose agent died while
-        it was down, drop records whose session is gone, report unknown sessions."""
+        """After a daemon start: finish sessions that died meanwhile, drop
+        records of gone sessions, report unknown ones."""
         proc = subprocess.run(
             tmux("list-panes", "-a", "-F",
                  "#{session_name} #{pane_dead} #{pane_dead_status} #{pane_dead_signal}"),
@@ -298,16 +289,15 @@ class SessionManager:
         for name in known - set(live):
             self._record_path(name).unlink(missing_ok=True)
 
-    # -- viewers -------------------------------------------------------------
+    # --- viewers ---
 
     def attach_argv(self, session_id: str, *, read_only: bool) -> list[str]:
         return tmux("attach-session", *(["-r"] if read_only else []), "-t", f"={session_id}")
 
     def history(self, session_id: str, lines: int) -> tuple[str, int, int]:
-        """The last `lines` that scrolled off the session's pane (not the
-        visible screen), with colors (SGR escapes), one row per line; and the
-        pane's history size and limit, read in the same tmux command so they
-        match the text. ("", 0, 0) if there's no such session."""
+        """The last `lines` of scrolled-off pane history with colors, plus the
+        history's size and limit from the same tmux command. ("", 0, 0) without
+        the session."""
         target = f"={session_id}:"
         proc = subprocess.run(
             tmux("display-message", "-p", "-t", target, "#{history_size} #{history_limit}", ";",
@@ -321,8 +311,8 @@ class SessionManager:
         return (text if size else ""), size, limit
 
     def set_read_only(self, client_tty: str, read_only: bool) -> None:
-        """Make the viewer on `client_tty` read-only or writable. `switch-client
-        -r` toggles, so it runs only when the state differs."""
+        """Make the viewer on `client_tty` read-only or writable
+        (`switch-client -r` toggles, so only on a change)."""
         proc = subprocess.run(tmux("list-clients", "-F", "#{client_tty} #{client_readonly}"),
                               capture_output=True, text=True, check=False)
         for line in proc.stdout.splitlines():

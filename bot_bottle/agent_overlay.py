@@ -1,24 +1,10 @@
-"""Synthesize a thin overlay layer on a pinned agent image.
+"""Render, validate and stage overlay builds on a pinned agent image.
 
-The overlay is the middle path between "pull the default as-is" and "bring your
-own image": a one-layer `FROM <pinned-default>` build declared in agent
-frontmatter, so the base stays the verified release image and compatibility is
-inherited. This module renders and validates the overlay Dockerfile and stages
-its build context; the per-backend build machinery does the actual build.
-
-Supported directives: `apt` packages, a `harness_version` bump (rendered by the
-provider's `AgentProvider.harness_overlay_lines`, since each harness installs
-differently), and extra `files`, which land under ``OVERLAY_DEST`` in the image
-preserving their relative path.
-
-Or, instead of those, a free-form `dockerfile`: a single-stage Dockerfile that
-builds `FROM ${BASE}`, staged with its own directory as the build context. The
-staged copy pins `BASE` to the verified base (`ARG BASE=<ref@digest>`, so no
-build-arg plumbing is needed per backend) and restores the provider's
-`image_user` at the end.
-
-Every backend builds from `staged_overlay`, whose `cache_key` hashes the
-staged context, so they agree on when an overlay must rebuild.
+An overlay is either directives (`apt`, `harness_version`, `files` under
+`OVERLAY_DEST`) or a single-stage `dockerfile` that builds `FROM ${BASE}`. Both
+build on the verified base and end as the provider's `image_user`.
+`staged_overlay`'s `cache_key` hashes the staged context, so every backend
+agrees on when to rebuild.
 """
 
 from __future__ import annotations
@@ -40,27 +26,21 @@ from .agent_provider import get_provider
 from .manifest import ManifestError, ManifestImageOverlay
 from .manifest.agent import APT_PACKAGE_RE, HARNESS_VERSION_RE
 
-# Where overlay `files` are placed in the image. A fixed, documented location
-# rather than an arbitrary path: predictable for the agent to read and safe from
-# clobbering system paths. A future `dest` field could override this.
+# Where overlay `files` land in the image.
 OVERLAY_DEST = "/opt/bot-bottle/overlay"
 
-# Name of the staged overlay Dockerfile inside the build context. Dotted so it
-# is unlikely to clobber a file in a user's `dockerfile` context directory.
+# Staged overlay Dockerfile name inside the build context.
 STAGED_DOCKERFILE = ".bb-overlay.Dockerfile"
 
 
 class OverlayError(ManifestError):
-    """An overlay cannot be rendered or staged (unsupported directive, a missing
-    file, a Dockerfile that doesn't build FROM ${BASE}, or no published base).
-    A ManifestError so the CLI reports it as a config problem, not a crash."""
+    """An overlay can't be rendered or staged. A ManifestError, so the CLI
+    reports it as a config problem."""
 
 
 def no_published_base_error(template: str) -> OverlayError:
-    """The error for an overlay declared where there is no pinned base to build
-    it on — before the first release publishes agent images, or when the
-    published manifest has no entry for this template. Fail closed: building
-    the default image instead would silently drop the declared overlay."""
+    """Error for an overlay with no pinned base to build on. Fails closed
+    rather than silently building the default image without the overlay."""
     return OverlayError(
         f"agent_provider.overlay needs a published, digest-pinned "
         f"{template!r} agent image to build on, but none is pinned for this "
@@ -72,24 +52,18 @@ def no_published_base_error(template: str) -> OverlayError:
 def render_overlay_dockerfile(
     base_ref: str, overlay: ManifestImageOverlay, *, template: str,
 ) -> str:
-    """The thin Dockerfile that layers `overlay` on `base_ref`.
-
-    `base_ref` must be the digest-pinned reference to the verified default image,
-    so the overlay inherits exactly those bytes as its base. `template` names the
-    agent provider whose image this is: the default images end as a non-root
-    user, so RUN steps switch to root and the provider's `image_user` is restored
-    afterwards."""
+    """The Dockerfile that layers `overlay` on the digest-pinned `base_ref`.
+    RUN steps run as root; the provider's `image_user` is restored afterwards."""
     lines = [f"FROM {base_ref}"]
     runs: list[str] = []
     if overlay.apt:
-        # Re-checked here, not only at manifest parse: the names land in RUN,
-        # and a newline would start a new Dockerfile instruction.
+        # Re-checked: a newline in a name would start a new instruction.
         for pkg in overlay.apt:
             if not APT_PACKAGE_RE.fullmatch(pkg):
                 raise OverlayError(f"invalid apt package name {pkg!r}")
         pkgs = " ".join(overlay.apt)
-        # The default images point apt at snapshot.debian.org, whose Release
-        # files are past their Valid-Until; match the base images' flag.
+        # Match the base images' apt flag for snapshot.debian.org's expired
+        # Release files.
         runs.append(
             "RUN apt-get -o Acquire::Check-Valid-Until=false update "
             f"&& apt-get install -y --no-install-recommends {pkgs} "
@@ -102,7 +76,7 @@ def render_overlay_dockerfile(
         lines.extend(runs)
     for rel in overlay.files:
         dest = f"{OVERLAY_DEST}/{rel}"
-        # JSON form: COPY doesn't do shell quoting, so a space would split it.
+        # JSON form: COPY doesn't shell-quote.
         lines.append(f"COPY {json.dumps([rel, dest])}")
     if runs:
         lines.append(f"USER {get_provider(template).image_user}")
@@ -111,25 +85,23 @@ def render_overlay_dockerfile(
 
 _FROM_BASE_RE = re.compile(r"\$(\{BASE\}|BASE)(\s+as\s+[A-Za-z0-9_.-]+)?", re.IGNORECASE)
 _ARG_BASE_RE = re.compile(r"\s*ARG\s+BASE\s*", re.IGNORECASE)
-# A parser directive (`# syntax=`, `# escape=`, `# check=`) changes how the
-# file is parsed or which frontend parses it, which the checks below can't
-# follow, so overlays refuse them.
+# Parser directives change how the file is parsed, which the checks below can't
+# follow, so they are refused.
 _DIRECTIVE_RE = re.compile(r"\s*#\s*(syntax|escape|check)\s*=", re.IGNORECASE)
-# BuildKit's own heredoc token shape: the whole word after `<<` (quotes
-# stripped) is the terminator.
+# BuildKit's heredoc token: the word after `<<` (quotes stripped) is the
+# terminator.
 _HEREDOC_RE = re.compile(r"\d*<<(-?)([^<]+)")
 
 
 def _physical_lines(text: str) -> list[str]:
-    # Split only on newlines, as Docker does: `str.splitlines` also breaks on
-    # \x85, \u2028 and friends, which would let the check and Docker disagree.
+    # Split only on newlines, as Docker does (`str.splitlines` also splits on
+    # \x85, \u2028, ...).
     return [ln.removesuffix("\r") for ln in text.split("\n")]
 
 
 def _heredocs(rest: str) -> list[tuple[str, str]]:
-    """(strip-tabs flag, terminator) for each heredoc an instruction opens.
-    Any instruction counts, not just RUN/COPY/ADD: treating a non-heredoc as
-    one can only make the check refuse a file, never accept a bad one."""
+    """(strip-tabs flag, terminator) for each heredoc an instruction opens. Any
+    instruction counts, so the check can only over-refuse."""
     out: list[tuple[str, str]] = []
     for token in rest.split():
         m = _HEREDOC_RE.fullmatch(token)
@@ -139,12 +111,10 @@ def _heredocs(rest: str) -> list[tuple[str, str]]:
 
 
 def _instructions(lines: list[str]) -> list[tuple[int, str, str]]:
-    """Logical instructions as (first physical line index, KEYWORD, rest),
-    parsed the way Docker does: comments and blank lines dropped, including
-    inside a backslash continuation, and the keyword split off on any
-    whitespace. Heredoc bodies are skipped. A file that ends inside a
-    continuation or an unterminated heredoc is refused, since whatever is
-    appended after it (the restored USER) would be swallowed."""
+    """Logical instructions as (first line index, KEYWORD, rest), parsed as
+    Docker does. Heredoc bodies are skipped. A file ending inside a
+    continuation or an unterminated heredoc is refused, since the appended USER
+    would be swallowed."""
     out: list[tuple[int, str, str]] = []
     buf: list[str] = []
     start = 0
@@ -185,18 +155,13 @@ def _instructions(lines: list[str]) -> list[tuple[int, str, str]]:
 def render_overlay_dockerfile_text(base_ref: str, text: str, *, template: str) -> str:
     """Validate a user overlay Dockerfile and return the staged copy.
 
-    The Dockerfile must be single-stage and build `FROM ${BASE}` (or `$BASE`),
-    so the image is always a layer on the verified base: only `ARG`s may come
-    before that one `FROM`, and no other `FROM` may follow. `BASE` is pinned by
-    an `ARG BASE=<base_ref>` prepended to the staged copy; the user's own bare
-    `ARG BASE` line (before the FROM) is dropped, and any other declaration of
-    `BASE` is an error, since it could replace the verified base. The
-    provider's `image_user` is restored at the end, so a Dockerfile that
-    switches to root can't leave the agent running as root.
+    It must be single-stage and build `FROM ${BASE}` (only `ARG`s before it).
+    `BASE` is pinned by a prepended `ARG BASE=<base_ref>`; the user's bare `ARG
+    BASE` is dropped and any other `BASE` declaration is an error. The
+    provider's `image_user` is restored at the end.
 
-    The checks are deliberately stricter than Docker: parser directives are
-    refused, and any physical line that starts with FROM counts as a stage,
-    even inside a heredoc or continuation, so the check can only over-count."""
+    Stricter than Docker: parser directives are refused, and any physical line
+    starting with FROM counts as a stage."""
     lines = _physical_lines(text)
     instrs = _instructions(lines)
     leading = itertools.takewhile(lambda ln: ln.strip().startswith("#"), lines)
@@ -255,7 +220,7 @@ def render_overlay_dockerfile_text(base_ref: str, text: str, *, template: str) -
 
 
 def _harness_lines(template: str, version: str) -> tuple[str, ...]:
-    # Re-checked here, not only at manifest parse: the version lands in RUN.
+    # Re-checked: the version lands in RUN.
     if not HARNESS_VERSION_RE.fullmatch(version):
         raise OverlayError(f"invalid harness_version {version!r}")
     lines = get_provider(template).harness_overlay_lines(version)
@@ -269,10 +234,9 @@ def _harness_lines(template: str, version: str) -> tuple[str, ...]:
 
 
 def _source(source_root: Path, rel: str, kind: str) -> Path:
-    """The host file an overlay entry names, refusing one that is missing or
-    that resolves outside `source_root` through a symlink. `source_root` is
-    the launch directory, which may be an untrusted checkout, so a link like
-    `creds -> ~/.aws/credentials` must not copy a host secret into the image."""
+    """The host file an overlay entry names. Refuses one that is missing or
+    that resolves outside `source_root` (possibly an untrusted checkout)
+    through a symlink."""
     path = source_root / rel
     if not path.is_file():
         raise OverlayError(f"overlay {kind} not found: {rel!r} (looked in {source_root})")
@@ -292,21 +256,16 @@ def stage_overlay_context(
     source_root: Path,
     dest: Path,
 ) -> Path:
-    """Write the overlay Dockerfile and copy its inputs into `dest`, returning
-    the Dockerfile path. `source_root` is where the overlay's paths resolve
-    from: the launch cwd, matching how a custom `agent_provider.dockerfile`
-    resolves. Missing inputs fail loudly rather than producing an image that
-    silently omits them."""
+    """Write the overlay Dockerfile and copy its inputs into `dest`; returns
+    the Dockerfile path. Paths resolve from `source_root` (the launch cwd)."""
     dest.mkdir(parents=True, exist_ok=True)
     dockerfile = dest / STAGED_DOCKERFILE
     if overlay.dockerfile:
         src = _source(source_root, overlay.dockerfile, "dockerfile")
         staged = render_overlay_dockerfile_text(
             base_ref, src.read_text(), template=template)
-        # The Dockerfile's own directory is the build context, so its COPYs
-        # resolve next to it. Symlinks are copied as links, not followed: the
-        # build then sees the link itself, as Docker would, and never the
-        # host file it points at.
+        # The Dockerfile's directory is the build context. Symlinks are copied
+        # as links, never followed.
         shutil.copytree(src.parent, dest, symlinks=True, dirs_exist_ok=True)
         dockerfile.write_text(staged)
         return dockerfile
@@ -319,11 +278,9 @@ def stage_overlay_context(
 
 
 def context_digest(ctx: Path) -> str:
-    """A digest of everything in a staged build context: the rendered
-    Dockerfile and every input, with symlinks hashed by their target rather
-    than followed. Keying caches on this (instead of the overlay spec) means
-    any change to what the build would actually see rebuilds, including a
-    change to how bot-bottle renders the Dockerfile."""
+    """Digest of a staged build context: the rendered Dockerfile and every
+    input, symlinks hashed by target. Any change to what the build would see
+    rebuilds."""
     h = hashlib.sha256()
     for dirpath, dirnames, filenames in os.walk(ctx):
         dirnames.sort()
@@ -341,8 +298,8 @@ def context_digest(ctx: Path) -> str:
 
 @dataclass(frozen=True)
 class StagedOverlay:
-    """A staged overlay build: its context dir, the Dockerfile in it, and
-    `cache_key`, which identifies the image it builds (base ref + context)."""
+    """A staged overlay build: context dir, Dockerfile, and `cache_key` (base
+    ref + context)."""
 
     context: Path
     dockerfile: Path
@@ -358,7 +315,7 @@ def staged_overlay(
     source_root: Path,
 ) -> Generator[StagedOverlay, None, None]:
     """Stage the overlay in a temporary directory for the duration of the
-    block. Every backend builds from this, so they agree on the cache key."""
+    block."""
     with tempfile.TemporaryDirectory(prefix="bb-overlay-") as tmp:
         ctx = Path(tmp) / "ctx"
         dockerfile = stage_overlay_context(

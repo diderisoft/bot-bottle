@@ -39,9 +39,8 @@ def _enabled(configured: tuple[str, ...] | None, name: str) -> bool:
 
 
 def _scan_canary(text: str, environ: typing.Mapping[str, str]) -> ScanResult | None:
-    """A hit on the bottle's exfil canary. Checked on every inspected route,
-    whatever detectors the route enables, and never against the safelist: no
-    legitimate request carries it."""
+    """A hit on the bottle's canary. Checked on every inspected route, never
+    safelisted."""
     from .dlp_detectors import scan_known_secrets
     canary = environ.get(CANARY_KEY, "")
     if not canary:
@@ -91,7 +90,7 @@ def scan_outbound(route: Route, body: str | bytes, environ: typing.Mapping[str, 
 
 
 def build_token_allow_payload(host: str, method: str, path: str, result: ScanResult) -> str:
-    """Render redacted operator context; the raw matched secret is excluded."""
+    """Redacted operator context; the raw match is left out."""
     lines = [
         "egress blocked an outbound request carrying a detected token",
         f"host: {host}", f"method: {method}", f"path: {path}",

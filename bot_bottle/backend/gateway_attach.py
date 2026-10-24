@@ -1,25 +1,13 @@
 """Reattach running bottles to a freshly (re)started gateway.
 
-When the gateway or the orchestrator comes up cold, every bottle that was
-already running loses something it depends on: the gateway may be at a new
-address, its per-bottle git-gate repos and credentials are gone, the
-orchestrator's in-memory egress tokens are empty, and after a deliberate CA
-rotation the gateway serves a CA the bottle doesn't trust yet (the CA is
-otherwise persisted across restarts on every backend).
-`reattach_running_bottles` restores all four for every live bottle, the same
-way on every backend.
+A cold infra pair loses what running bottles depend on: the gateway's address
+may change, its git-gate repos and credentials are gone, the orchestrator's
+egress tokens are empty, and after a CA rotation the bottles distrust the
+gateway. `reattach_running_bottles` restores all four. Backends supply the
+primitives as a `GatewayAttacher`.
 
-Backends supply only the primitives that differ, as a `GatewayAttacher`: how
-to list live bottles, how to point one at the gateway's address, how to
-install a CA in one, and how to read one's `ENV_VAR_SECRET`. What gets
-restored, which bottles are in scope, and what a failure means all live here.
-
-Failure policy: every bottle is attempted and every failure collected. By
-default the failures then abort the bring-up, naming each bottle, because a
-bottle that silently can't reach the gateway fails later and far from the
-cause. `AttachPolicy.REPORT` reports them and continues instead, for a future
-`--force` bring-up that must come up even with a wedged bottle (the
-orchestrator is what you need running to inspect or remove it).
+Every bottle is attempted and failures collected. By default they abort the
+bring-up, naming each bottle; `AttachPolicy.REPORT` reports and continues.
 """
 
 from __future__ import annotations
@@ -49,10 +37,9 @@ class AttachPolicy(enum.Enum):
 
 @dataclass(frozen=True)
 class RunningBottle:
-    """A live bottle as the reattach flow sees it. `ref` is the backend's own
-    handle (a container name, or a firecracker run dir); `slug` names its
-    host-side state dir; `source_ip` is how the orchestrator knows it ("" while
-    it has no address yet, e.g. mid-launch)."""
+    """A live bottle for reattach. `ref` is the backend's handle (container
+    name or firecracker run dir); `slug` names its state dir; `source_ip` is ""
+    until it has an address."""
 
     ref: str
     slug: str
@@ -60,32 +47,26 @@ class RunningBottle:
 
 
 class GatewayAttacher(abc.ABC):
-    """The backend-specific primitives of the reattach flow. None of them may
-    run code from the agent's image as root with the agent's PATH (see
-    `backend.util.ROOT_EXEC_PATH`)."""
+    """Backend primitives for reattach. None may run the agent image's code as
+    root with the agent's PATH (see `backend.util.ROOT_EXEC_PATH`)."""
 
     @abc.abstractmethod
     def running_bottles(self) -> list[RunningBottle]:
-        """Every live bottle, including ones without an address yet. Raises
-        if the live set can't be determined authoritatively (a partial list
-        would silently skip bottles)."""
+        """Every live bottle, including ones without an address. Raises if the
+        set can't be determined authoritatively."""
 
     @abc.abstractmethod
     def point_at_gateway(self, bottle: RunningBottle, address: str) -> None:
-        """Make the bottle reach the gateway at `address`, its current
-        agent-facing address. A backend whose gateway address is fixed by
-        construction only confirms it. Raises if the bottle can't reach the
-        gateway there."""
+        """Point the bottle at the gateway's current `address`, or confirm it
+        where the address is fixed. Raises if the bottle can't reach it."""
 
     @abc.abstractmethod
     def install_ca(self, bottle: RunningBottle, ca_pem: str) -> None:
-        """Make the bottle trust `ca_pem` (write it and rebuild the trust
-        store). Raises on failure."""
+        """Make the bottle trust `ca_pem`. Raises on failure."""
 
     @abc.abstractmethod
     def read_env_var_secret(self, bottle: RunningBottle) -> str:
-        """The bottle's `ENV_VAR_SECRET`, or "" when it has none. Raises if it
-        can't be determined."""
+        """The bottle's `ENV_VAR_SECRET`, or "". Raises if it can't be read."""
 
 
 def reattach_running_bottles(
@@ -95,8 +76,8 @@ def reattach_running_bottles(
     gateway: Gateway,
     policy: AttachPolicy = AttachPolicy.STRICT,
 ) -> None:
-    """Restore the gateway address, CA, git-gate state and egress tokens of
-    every running bottle against the current gateway and orchestrator."""
+    """Restore every running bottle's gateway address, CA, git-gate state and
+    egress tokens."""
     bottles = attacher.running_bottles()
     if not bottles:
         return
@@ -119,9 +100,7 @@ def reattach_running_bottles(
     for bottle in bottles:
         bottle_id = bottle_ids.get(bottle.source_ip) if bottle.source_ip else None
         if bottle_id is None:
-            # No address yet, or not registered: a bottle mid-launch (it
-            # registers once the pair is up) or mid-teardown. Either way there
-            # is no registration to restore against.
+            # Mid-launch or mid-teardown: nothing registered to restore.
             skipped.append(bottle.slug)
             continue
         try:
@@ -131,12 +110,10 @@ def reattach_running_bottles(
             secret = attacher.read_env_var_secret(bottle)
             if not secret:
                 raise GatewayAttachError("its ENV_VAR_SECRET is missing")
-            # False means the orchestrator holds no secrets for this bottle:
-            # nothing to restore.
+            # False: the orchestrator holds no secrets for this bottle.
             client.reprovision_gateway(bottle_id, secret)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            # Any step can fail in backend-specific ways (ssh, exec, HTTP);
-            # each is reported against its bottle rather than aborting the rest.
+            # Report each failure against its bottle and carry on.
             failures.append(f"{bottle.slug}: {e}")
             continue
         reattached += 1
@@ -156,12 +133,9 @@ def reattach_running_bottles(
 
 
 def reprovision_git_gate(transport: GatewayTransport, bottle_id: str, slug: str) -> None:
-    """Re-provision one bottle's git-gate repos, credentials and hooks in the
-    gateway, through the same `provision_git_gate` a launch uses. The upstream
-    table and credentials come from the bottle's host-side state dir; the
-    hooks, gitleaks config and entrypoint are rendered from the current code,
-    as at launch, so a gateway rebuilt for a fix gets the fixed hooks. A bottle
-    with no git upstreams has nothing to do."""
+    """Re-provision one bottle's git-gate repos, credentials and hooks, as a
+    launch does. Upstreams and credentials come from its state dir; hooks are
+    rendered from the current code."""
     state_dir = git_gate_state_dir(slug)
     upstreams = load_upstreams_snapshot(state_dir)
     if not upstreams:

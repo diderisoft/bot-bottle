@@ -35,12 +35,11 @@ from .hostctl_relay import (
 from .relay_attach import pump_attach
 from .service import LiveSource, OrchestratorCore
 
-# How often the orchestrator reconciles its registry against the host
-# controller's live bottles when a host controller brought it up.
+# How often the registry is reconciled against the host controller's live
+# bottles (when one brought this orchestrator up).
 RECONCILE_INTERVAL_SECONDS = 60.0
-# The timer's grace window. Docker and firecracker register a bottle before
-# its container or VM exists, so a scheduled round must leave a slow launch
-# well alone; nothing waits on the timer, so being late costs little.
+# The timer's grace window: docker and firecracker register before the
+# container or VM exists, so a slow launch is left alone.
 RECONCILE_TIMER_GRACE_SECONDS = 600.0
 
 _GATEWAY_ROUTES = frozenset({
@@ -66,7 +65,7 @@ class RegisterBody(_StrictModel):
 
 class LaunchesBody(_StrictModel):
     """`POST /launches`: what a remote caller may ask the host controller for.
-    Unknown fields (a path, secret values) are dropped, never forwarded."""
+    Unknown fields (paths, secret values) are dropped."""
 
     agent: StrictStr
     bottles: list[StrictStr] = []
@@ -99,8 +98,8 @@ class ReconcileBody(_StrictModel):
 class AuditEventsBody(_StrictModel):
     producer: StrictStr
     event: dict[StrictStr, Any]
-    # The bottle's `audit.delivery` is `required`: write it now, and fail
-    # unless it was written, so the gateway can refuse the action.
+    # For `audit.delivery: required`: write now and fail unless written, so the
+    # gateway can refuse.
     required: StrictBool = False
 
 
@@ -138,7 +137,7 @@ class PollBody(IdentityBody):
 
 
 class ControlPlaneBoundary:
-    """Reject unauthenticated and oversized requests before reading a body."""
+    """Reject unauthenticated and oversized requests before reading the body."""
 
     def __init__(self, app: ASGIApp, signing_key: str,
                  audit: OrchestratorAudit | None = None) -> None:
@@ -153,7 +152,7 @@ class ControlPlaneBoundary:
         return CONTROL_PLANE.verify(presented, self.signing_key)
 
     async def _websocket(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Every WebSocket route is the cli role's; refuse before accepting."""
+        """WebSocket routes are cli-only; refuse before accepting."""
         role = self._role(scope)
         if role != ROLE_CLI:
             op = f"WEBSOCKET {scope['path']}"
@@ -248,8 +247,8 @@ class ControlPlaneBoundary:
 
     @staticmethod
     def _replay_body(body: bytes, receive: Receive) -> Receive:
-        """The body already read, then the client's own messages, so a
-        streamed response still learns when the client goes away."""
+        """The body already read, then the client's messages, so a streamed
+        response still notices a disconnect."""
         sent = False
 
         async def replay() -> Message:
@@ -263,7 +262,7 @@ class ControlPlaneBoundary:
 
 
 class _BodyTooLarge(Exception):
-    """The streamed request exceeded the control-plane body limit."""
+    """The streamed request exceeded the body limit."""
 
 
 def _required(value: str, name: str) -> str:
@@ -284,9 +283,8 @@ def _id(value: str, name: str) -> str:
 async def reconcile_periodically(
     orch: OrchestratorCore, hostctl: LiveSource, interval: float,
 ) -> None:
-    """Reconcile every `interval` seconds until cancelled, so orphans are
-    reaped without a CLI running. A failed round is logged and the next
-    one tries again."""
+    """Reconcile every `interval` seconds until cancelled; a failed round is
+    logged and retried."""
     while True:
         await asyncio.sleep(interval)
         try:
@@ -302,8 +300,8 @@ async def reconcile_periodically(
 
 
 def _name_firehose_record(record: dict[str, Any], audit: OrchestratorAudit) -> None:
-    """Rename the bottle the gateway knows by registry id to its slug, the
-    name every audit record uses; the id becomes the run's activation."""
+    """Name the bottle by slug instead of registry id; the id becomes the
+    activation."""
     actor = record.get("actor")
     if not isinstance(actor, dict):
         return
@@ -319,11 +317,9 @@ def create_app(
     reconcile_interval: float = RECONCILE_INTERVAL_SECONDS,
     audit: OrchestratorAudit | None = None,
 ) -> FastAPI:
-    """Build the authenticated orchestrator ASGI application. `hostctl` is
-    the host controller remote launches go to, reconcile asks which bottles
-    are live, and audit events go to; None when this orchestrator wasn't
-    brought up by one. With it, the app reconciles every `reconcile_interval`
-    seconds while it runs. `audit` overrides where events go (tests)."""
+    """The authenticated ASGI app. `hostctl` is the host controller (for remote
+    launches, the live set and audit), or None. With it, reconcile runs every
+    `reconcile_interval`. `audit` overrides the event sink (tests)."""
     key = signing_key.strip()
     if not key:
         raise ValueError(
@@ -413,10 +409,8 @@ def create_app(
 
     @app.post("/bottles/{bottle_id}/secret")
     def update_secret(bottle_id: str, body: SecretBody) -> dict[str, object]:
-        # Update ONE egress token for a running bottle in place — the
-        # single-secret form of reprovision, for refreshing a short-lived host
-        # credential (e.g. the Codex access token) without a relaunch. cli-only
-        # (not in _GATEWAY_ROUTES): a bottle must never set its own tokens.
+        # Replace one egress token of a running bottle (e.g. a refreshed Codex
+        # token). cli-only: a bottle must never set its own tokens.
         if orch.update_agent_secret(
             bottle_id,
             _required(body.name, "name"),
@@ -462,8 +456,8 @@ def create_app(
     @app.post("/supervise/respond")
     def respond(body: RespondBody) -> dict[str, object]:
         bottle_slug = _required(body.bottle_slug, "bottle_slug")
-        # No record, no action: a `required` bottle's decision is written
-        # before it's applied, and not applied if it can't be.
+        # A `required` bottle's decision is recorded before it's applied, and
+        # not applied if it can't be.
         required = orch.audit_delivery(bottle_slug) == "required"
         if required and not audit.resolved(
                 bottle_id=bottle_slug, proposal_id=body.proposal_id,
@@ -515,7 +509,7 @@ def create_app(
             rec.bottle_id, _required(body.proposal_id, "proposal_id"),
         )
 
-    # --- remote launch and attach, through the host controller ----
+    # --- remote launch and attach, via the host controller ---
 
     def relay() -> HostControlRelay:
         if hostctl is None:
@@ -557,7 +551,7 @@ def create_app(
     @app.websocket("/bottles/{bottle_id}/attach")
     async def attach(websocket: WebSocket, bottle_id: str, cols: int = 80,
                      rows: int = 24) -> None:
-        # A registry bottle id names its session by the slug it registered.
+        # A registry bottle's session is named by its slug.
         session = orch.session_for(bottle_id)
         if hostctl is None or not _ID.match(session):
             await websocket.close(code=1011, reason="host controller not available"
@@ -567,8 +561,7 @@ def create_app(
 
     @app.post(AUDIT_EVENTS_PATH)
     def audit_events(body: AuditEventsBody) -> dict[str, bool]:
-        """A gateway component's event, queued for the host controller's journal
-        under the component's name."""
+        """Queue a gateway component's event for the journal under its name."""
         if body.producer not in GATEWAY_PRODUCERS:
             raise HTTPException(400, f"producer must be one of {sorted(GATEWAY_PRODUCERS)}")
         try:
@@ -581,9 +574,9 @@ def create_app(
 
     @app.post(FIREHOSE_PATH)
     def firehose(body: FirehoseBody) -> dict[str, Any]:
-        """A batch of the gateway's request records, passed to the host
-        controller with each bottle named by slug. The reply says whether to
-        keep capturing; with no host controller to take them, no."""
+        """Pass a batch of the gateway's request records to the host
+        controller, bottles named by slug. The reply says whether to keep
+        capturing (no, without a host controller)."""
         if hostctl is None:
             return Capture().to_json()
         for record in body.records:

@@ -1,14 +1,6 @@
-"""The macOS gateway data plane as an Apple container.
-
-`MacosGateway` is the Apple-Container implementation of the backend-neutral
-`Gateway` service. It runs the gateway daemons (egress / git-http / supervise)
-in a single triple-homed container and never opens `bot-bottle.db` — it reaches
-the supervise queue over the control-plane RPC, so it holds no signing
-key, only the pre-minted `gateway` token the orchestrator hands it via
-`connect_to_orchestrator`.
-
-This module also holds the pieces the infra service + launch/provision glue
-share: the network names, the gateway image, and the network-creation helper.
+"""`MacosGateway`: the gateway as one Apple container on three networks. It
+never opens `bot-bottle.db` and holds only the `gateway` token. Also holds the
+network names and creation helper the infra service and launch share.
 """
 
 from __future__ import annotations
@@ -36,23 +28,21 @@ from ...infra_image import (
 )
 from ...published_artifacts import FORMAT_OCI
 
-# The shared host-only network the gateway container and every agent bottle sit
-# on. The agent's address here is the attribution key. Distinct from the docker
-# names so both backends can coexist on one host.
+# The shared host-only network for the gateway and every agent; an agent's
+# address here is its attribution key. Named apart from docker's so both
+# backends can coexist.
 GATEWAY_NETWORK = "bot-bottle-mac-gateway"
-# The NAT network that gives the gateway (and only it) a route out.
+# NAT network giving only the gateway a route out.
 GATEWAY_EGRESS_NETWORK = "bot-bottle-mac-egress"
-# The control network the gateway reaches the orchestrator over (host-only).
-# Only the orchestrator + gateway join it; agents never do, so agents have no
-# route to the control plane.
+# Host-only network the gateway reaches the orchestrator over. Agents never
+# join it.
 CONTROL_NETWORK = "bot-bottle-mac-control"
 
-# The gateway (data plane) container. The name predates the split — it was the
-# combined "infra" container — and is kept so callers importing it still resolve
-# the gateway (probe / reprovision attribute against it).
+# The gateway container. The name predates the split from the combined infra
+# container.
 GATEWAY_NAME = "bot-bottle-mac-infra"
 GATEWAY_LABEL = "bot-bottle-mac-infra=1"
-# The gateway subset the consolidated model runs (no per-bottle git:// daemon).
+# The daemons to run (no git:// daemon).
 GATEWAY_DAEMONS = "egress,git-http,supervise"
 
 GATEWAY_IMAGE = DEFAULT_GATEWAY_IMAGE
@@ -63,21 +53,16 @@ def ensure_networks(
     egress_network: str = GATEWAY_EGRESS_NETWORK,
     control_network: str = CONTROL_NETWORK,
 ) -> None:
-    """Create the shared host-only agent network, the NAT egress network, and
-    the host-only control network. Idempotent — `create_network` tolerates
-    'already exists'."""
+    """Create the agent, egress and control networks. Idempotent."""
     container_mod.create_network(egress_network)
     container_mod.create_network(network, internal=True)
     container_mod.create_network(control_network, internal=True)
 
 
 class MacosGateway(Gateway):
-    """The consolidated gateway as a single Apple container, triple-homed on the
-    NAT egress, host-only agent, and control networks.
-
-    `ensure_built` builds `Dockerfile.gateway`; the networks are ensured by the
-    composer. `connect_to_orchestrator` runs the container carrying the mitmproxy
-    CA + the pre-minted `gateway` token."""
+    """The gateway as one Apple container on the NAT egress, host-only agent
+    and control networks. `ensure_built` builds `Dockerfile.gateway`;
+    `connect_to_orchestrator` runs it with the CA and the `gateway` token."""
 
     def __init__(
         self,
@@ -96,18 +81,16 @@ class MacosGateway(Gateway):
         self.network = network
         self.egress_network = egress_network
         self.control_network = control_network
-        # Build context: the repo root in a checkout, a staged copy from the
-        # installed wheel otherwise (bot_bottle.resources).
+        # Build context: the checkout root, or a copy staged from the wheel.
         self._repo_root = repo_root if repo_root is not None else resources.build_root()
-        # Set by `connect_to_orchestrator`: the URL the daemons resolve policy
-        # against + the pre-minted `gateway` token they present. The gateway
-        # never mints, so it never holds the signing key.
+        # Set by `connect_to_orchestrator`: the policy URL and the `gateway`
+        # token.
         self._orchestrator_url = ""
         self._gateway_token = ""
 
     def ensure_built(self) -> None:
-        """Build the data-plane image from `Dockerfile.gateway`. Pulls the release-pinned image instead when it was built
-        from exactly this install's code."""
+        """Build the gateway image from `Dockerfile.gateway`, or pull the
+        release-pinned image when it was built from this install's code."""
         pin = pinned_infra_artifact(
             "bot-bottle-gateway", FORMAT_OCI, local_build=self._settings.infra.infra_build_local)
         if pin is not None:
@@ -119,8 +102,8 @@ class MacosGateway(Gateway):
             except RegistryError as e:
                 raise GatewayError(str(e)) from e
             return
-        # A local build of exactly this code is reused: even a fully cached
-        # Apple `container build` costs ~10 s of BuildKit overhead per launch.
+        # Reuse a local build of exactly this code; even a cached Apple build
+        # costs ~10 s.
         built = local_build_tag("bot-bottle-gateway", self.image_ref)
         if not self._settings.operation.no_cache and container_mod.image_exists(built):
             self.image_ref = built
@@ -134,20 +117,13 @@ class MacosGateway(Gateway):
         self.image_ref = built
 
     def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> bool:
-        """Bind the gateway to this orchestrator and bring it up, dual-homed on
-        the agent + control networks, resolving policy against `orchestrator_url`
-        (the orchestrator's control-network address — Apple has no container
-        DNS) and presenting `gateway_token`.
-
-        A running gateway on the current image, already bound to this
-        orchestrator, is adopted untouched (returns False). Recreating it on
-        every launch, as this used to, wiped every running bottle's git-gate
-        state. Otherwise it is (re)started (returns True)."""
+        """Bind the gateway to this orchestrator (by control-network IP; Apple
+        has no container DNS) and bring it up. A running gateway on the current
+        image already bound to it is adopted (False), since recreating it wipes
+        every bottle's git-gate state. Otherwise (re)started (True)."""
         self._orchestrator_url = orchestrator_url
         self._gateway_token = gateway_token
-        # Fail closed on a missing policy source or token: the resolver-only data
-        # plane would only crash-loop its daemons without an
-        # orchestrator URL, and it cannot mint the token it presents.
+        # Without a policy URL and token the daemons would only crash-loop.
         if not self._orchestrator_url:
             raise GatewayError(
                 "gateway requires an orchestrator URL to run "
@@ -166,22 +142,19 @@ class MacosGateway(Gateway):
             "--name", self.name,
             "--label", "bot-bottle.backend=macos-container",
             "--label", GATEWAY_LABEL,
-            # NAT egress FIRST (default route out); the host-only agent network
-            # is where agents reach the gateway; the control network reaches the
-            # orchestrator.
+            # NAT egress first (default route), then the agent and control
+            # networks.
             "--network", self.egress_network,
             "--network", self.network,
             "--network", self.control_network,
             "--dns", container_mod.dns_server(self._settings.infra.macos_container_dns),
-            # The mitmproxy CA on a host bind-mount (survives recreation +
-            # volume pruning). No DB mount: the data plane never
-            # opens bot-bottle.db.
+            # The CA on a host mount (survives recreation and pruning). No DB
+            # mount.
             "--mount",
             container_mod.bind_mount_spec(str(host_gateway_ca_dir()), MITMPROXY_HOME),
             "--env", f"BOT_BOTTLE_GATEWAY_DAEMONS={GATEWAY_DAEMONS}",
             "--env", f"BOT_BOTTLE_ORCHESTRATOR_URL={self._orchestrator_url}",
-            # The pre-minted `gateway` JWT (never the signing key). Bare
-            # `--env NAME` inherits the value from run_env below.
+            # The `gateway` token as a bare `--env NAME`, from run_env.
             "--env", ORCHESTRATOR_AUTH_JWT_ENV,
             self.image_ref,
         ]
@@ -195,11 +168,9 @@ class MacosGateway(Gateway):
         return True
 
     def _is_current(self, orchestrator_url: str, gateway_token: str) -> bool:
-        """True iff the running gateway was created from the current image,
-        resolves policy against `orchestrator_url`, and presents
-        `gateway_token`. Anything unreadable counts as not current: recreating
-        costs a reattach, while keeping a stale gateway could keep it on an
-        old image or a rotated-out token."""
+        """True iff the running gateway uses the current image,
+        `orchestrator_url` and `gateway_token`. Anything unreadable counts as
+        stale."""
         running = container_mod.container_image_digest(self.name)
         wanted = container_mod.image_digest(self.image_ref)
         if not running or running != wanted:
@@ -215,12 +186,11 @@ class MacosGateway(Gateway):
         return host_gateway_ca_dir()
 
     def stop(self) -> None:
-        """Remove the gateway container (idempotent)."""
+        """Remove the gateway container. Idempotent."""
         container_mod.force_remove_container(self.name)
 
     def address(self) -> str:
-        """The gateway's agent-network address — the proxy / git-http / supervise
-        target agents dial (also the source IP the gateway attributes by)."""
+        """The gateway's agent-network address: the agents' proxy target."""
         ip = container_mod.try_container_ipv4_on_network(self.name, self.network)
         if not ip:
             raise GatewayError(
@@ -229,9 +199,7 @@ class MacosGateway(Gateway):
         return ip
 
     def ca_cert_pem(self, *, timeout: float = DEFAULT_CA_TIMEOUT_SECONDS) -> str:
-        """The gateway's mitmproxy CA (PEM) agents install to trust its TLS
-        interception. Read from the gateway container; polls because mitmproxy
-        writes it a beat after start."""
+        """The gateway's CA PEM, read from the container and polled for."""
         def _fetch() -> str | None:
             result = container_mod.run_container_argv(
                 ["container", "exec", self.name, "cat", GATEWAY_CA_CERT])
@@ -244,10 +212,9 @@ class MacosGateway(Gateway):
             ) from exc
 
     def provisioning_transport(self) -> GatewayTransport:
-        """The exec/cp transport git-gate provisioning stages per-bottle repos +
-        deploy keys through (over the `container` CLI)."""
-        # Local import: gateway_transport imports GATEWAY_NAME from this module,
-        # so importing MacosGatewayTransport at module scope would cycle.
+        """The exec/cp transport for git-gate provisioning, via the `container`
+        CLI."""
+        # Local import to avoid a cycle with gateway_transport.
         from .gateway_transport import MacosGatewayTransport
         return MacosGatewayTransport(self.name)
 

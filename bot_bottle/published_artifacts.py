@@ -1,24 +1,14 @@
-"""The published-artifacts manifest (`published-artifacts.json`).
+"""The published-artifacts manifest (`published-artifacts.json`): per image, a
+`version`, an `inputs_hash`, and one asset per (type, platform).
 
-`image-build-args.json` pins what goes *in* to an image; this records what came
-*out*. Per image: a legible `version`, an `inputs_hash` (see `image_inputs`), and
-one asset per (type, platform). Only the digest is verified — the version is
-human-facing and never resolved on alone.
+Each asset is `{type, platform, url, digest}` keyed `<type>_<platform>` (the
+loader checks the key matches). `oci`: `url` is a pull ref, `digest` the
+manifest digest. `ext4`: `url` is an HTTPS download, `digest` the file's
+sha256. Only the digest is trusted. Platforms are `linux-arm64` on disk and
+`linux/arm64` in code.
 
-Each asset is a flat, self-describing `{type, platform, url, digest}` keyed by
-`<type>_<platform>`. `type` says how to fetch and what `url`/`digest` mean: `oci`
-→ `url` is a registry pull ref (`host/owner/name:tag`) and `digest` is the OCI
-manifest digest; `ext4` → `url` is an HTTPS download and `digest` is the file's
-sha256. Platform is dash-spelled on disk (`linux-arm64`) and slash-spelled in
-code (`linux/arm64`); the translation happens only at this parse/serialize
-boundary. The loader asserts `key == f"{type}_{platform}"`, so the key/field
-redundancy is an integrity check rather than two things to keep in sync.
-
-Read-only: loading, validating, resolving. `publish_images` produces the
-manifest; `image_registry` fetches and verifies what it points at.
-
-Named `ARTIFACTS_MANIFEST_*` / `*_artifacts_manifest` throughout to stay distinct
-from bottle manifests (`bot_bottle.manifest`) and OCI manifests.
+Read-only; `publish_images` writes it and `image_registry` verifies what it
+points at.
 """
 
 from __future__ import annotations
@@ -33,15 +23,14 @@ from . import resources
 
 ARTIFACTS_MANIFEST_NAME = "published-artifacts.json"
 
-# Distribution formats, in no particular order — consumers declare their own
-# preference (see `resolve`).
+# Distribution formats; consumers pick their own preference (see `resolve`).
 FORMAT_OCI = "oci"
 FORMAT_EXT4 = "ext4"
 FORMATS = (FORMAT_OCI, FORMAT_EXT4)
 
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _INPUTS_HASH = re.compile(r"^[0-9a-f]{16}$")
-_MANIFEST_PLATFORM = re.compile(r"^linux-(amd64|arm64)$")   # on-disk (dash)
+_MANIFEST_PLATFORM = re.compile(r"^linux-(amd64|arm64)$")  # on-disk spelling
 
 
 def _platform_from_manifest(dashed: str) -> str:
@@ -50,11 +39,10 @@ def _platform_from_manifest(dashed: str) -> str:
 
 
 def platform_to_manifest(slashed: str) -> str:
-    """`linux/arm64` (in code) -> `linux-arm64` (on disk). Public so the
-    publisher writes the same spelling the loader validates."""
+    """`linux/arm64` -> `linux-arm64`, the spelling the loader validates."""
     return slashed.replace("/", "-", 1)
 
-# `platform.machine()` spellings we accept for each canonical platform string.
+# `platform.machine()` spellings accepted for each platform.
 _MACHINE_ALIASES = {
     "x86_64": "linux/amd64",
     "amd64": "linux/amd64",
@@ -64,27 +52,20 @@ _MACHINE_ALIASES = {
 
 
 class ArtifactsManifestError(RuntimeError):
-    """`published-artifacts.json` is missing, malformed, or internally inconsistent.
-
-    Raised rather than `die`d so callers can decide: a launch path fails
-    closed, while the CI checker collects every problem before reporting."""
+    """`published-artifacts.json` is missing, malformed or inconsistent."""
 
 
 @dataclass(frozen=True)
 class Artifact:
-    """One image asset: one `format` (the manifest's `type`), one platform.
-
-    `url` is the whole locator — for `oci` a registry reference
-    `host/owner/name:tag`, for `ext4` the generic-package download URL. `digest`
-    is always what gets verified (an OCI manifest digest, or the ext4 file's
-    sha256). `platform` is the in-code slash form (`linux/arm64`)."""
+    """One image asset in one `format` for one platform. `url` locates it;
+    `digest` is what gets verified. `platform` is slash form."""
 
     image: str
     format: str
     platform: str
     url: str
     digest: str
-    # Carried so an Artifact is enough to fetch/verify on its own.
+    # So an Artifact alone is enough to fetch and verify.
     version: str = ""
 
 
@@ -107,11 +88,8 @@ class ImageEntry:
 
 
 def current_platform() -> str:
-    """This host's canonical platform string (`linux/arm64`, `linux/amd64`).
-
-    Keyed on the machine only: every image we publish is a Linux image, even
-    when the host running the launcher is macOS (the containers and microVMs
-    are Linux regardless)."""
+    """This host's platform (`linux/arm64`, `linux/amd64`), from the machine
+    only: every published image is Linux."""
     machine = _platform.machine().lower()
     plat = _MACHINE_ALIASES.get(machine)
     if plat is None:
@@ -131,10 +109,8 @@ def artifacts_manifest_path(repo_root: Path | None = None) -> Path:
 def parse_artifacts_manifest(
     data: object, *, problems: list[str] | None = None,
 ) -> dict[str, ImageEntry]:
-    """Validate `data` and lift it into `ImageEntry`s keyed by image name.
-
-    With `problems`, every fault is collected and parsing continues (the CI
-    checker wants the full list); without it, the first fault raises."""
+    """Validate `data` into `ImageEntry`s by image name. With `problems`,
+    collect every fault and continue; without, raise on the first."""
     collect = problems is not None
     found: list[str] = [] if problems is None else problems
 
@@ -226,8 +202,8 @@ def parse_artifacts_manifest(
 
 
 def load_artifacts_manifest(repo_root: Path | None = None) -> dict[str, ImageEntry]:
-    """Read + validate the committed manifest. Raises `ArtifactsManifestError` if it is
-    absent or malformed — a launch path must not silently proceed without it."""
+    """Read and validate the committed manifest. Raises
+    `ArtifactsManifestError` if absent or malformed."""
     path = artifacts_manifest_path(repo_root)
     try:
         raw = path.read_text(encoding="utf-8")
@@ -246,12 +222,8 @@ def load_artifacts_manifest(repo_root: Path | None = None) -> dict[str, ImageEnt
 def load_artifacts_manifest_optional(
     repo_root: Path | None = None,
 ) -> dict[str, ImageEntry] | None:
-    """Like `load_artifacts_manifest`, but returns None when the manifest is
-    absent instead of raising.
-
-    For the consumer *pull* path, which falls back to a local build when nothing
-    is pinned yet — there is no manifest before the first release. A
-    present-but-malformed manifest still raises: that is corruption, not absence."""
+    """Like `load_artifacts_manifest`, but None when absent (before the first
+    release). A malformed manifest still raises."""
     if not artifacts_manifest_path(repo_root).is_file():
         return None
     return load_artifacts_manifest(repo_root)
@@ -264,12 +236,8 @@ def resolve(
     prefer: tuple[str, ...],
     plat: str | None = None,
 ) -> Artifact:
-    """The best published artifact for `name` on `plat`, taking the first
-    format in `prefer` that exists.
-
-    `prefer` is per-caller: firecracker prefers `ext4` over `oci`, docker and
-    macos-container take `oci` only. Falling back rather than failing lets an
-    image ship only some formats."""
+    """The published artifact for `name` on `plat` in the first format of
+    `prefer` that exists."""
     if plat is None:
         plat = current_platform()
     entry = entries.get(name)
@@ -290,13 +258,8 @@ def resolve(
 
 
 def check_consistency(entries: dict[str, ImageEntry]) -> list[str]:
-    """Cross-artifact problems `parse_artifacts_manifest` cannot see field by
-    field. Empty when clean.
-
-    Checks that no two artifacts claim the same digest: different formats and
-    platforms are never the same bytes, so a collision means a publish bug
-    copied one across. (Interchangeability is enforced in `publish_images`,
-    which sees the builds.)"""
+    """Cross-artifact problems; empty when clean. Two artifacts sharing a
+    digest means a publish copied one across."""
     problems: list[str] = []
     for name, entry in sorted(entries.items()):
         seen: dict[str, tuple[str, str]] = {}

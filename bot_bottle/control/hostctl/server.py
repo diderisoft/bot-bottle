@@ -1,4 +1,4 @@
-"""The host controller daemon's HTTP server (stdlib only)."""
+"""The host controller's HTTP server (stdlib only)."""
 
 from __future__ import annotations
 
@@ -37,11 +37,10 @@ _BOTTLE_ROLES = (ROLE_CLI, ROLE_ORCHESTRATOR)
 
 
 class HostControlServer(ThreadingHTTPServer):
-    """Serves the host controller's routes. `build_id` is what `/status`
-    reports; `key` verifies callers' `HOST_CONTROL` tokens. A listener on a
-    guest network passes `peers` (only those addresses may connect) and the
-    `roles` it accepts, and the `backend` whose live bottles it reports;
-    listeners share `jobs`, `sessions`, `bottles` and `live`."""
+    """Serves the host controller's routes. `build_id` is reported on
+    `/status`; `key` verifies `HOST_CONTROL` tokens. A guest listener passes
+    `peers`, the `roles` it accepts and the `backend` it reports; listeners
+    share `jobs`, `sessions`, `bottles` and `live`."""
 
     daemon_threads = True
 
@@ -117,8 +116,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": f"no route {url.path}"})
 
     def _live(self, server: HostControlServer, query: dict[str, list[str]]) -> None:
-        """The bottles running on the backends: a guest listener's own
-        backend, else the `backend` asked for, else all of them."""
+        """Running bottles: a guest listener's own backend, else the one asked
+        for, else all."""
         backend = server.backend or query.get("backend", [""])[0]
         if backend and not server.live.known(backend):
             self._send(400, {"error": f"unknown backend {backend!r}"})
@@ -238,7 +237,7 @@ class _Handler(BaseHTTPRequestHandler):
                                             host=(query.get("host") or [""])[0])
         try:
             for record in records:
-                # A blank line on quiet seconds finds a client that left.
+                # A blank line every quiet second notices a client that left.
                 self.wfile.write(b"\n" if record is None else json.dumps(record).encode() + b"\n")
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
@@ -284,7 +283,8 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(202, {"job": job.id})
 
     def _json_body(self) -> dict[str, object]:
-        """The request's JSON object body; ValueError if missing, too big or not an object."""
+        """The JSON object body; ValueError if missing, too big or not an
+        object."""
         length = int(self.headers.get("Content-Length") or 0)
         if not 0 < length <= MAX_BODY_BYTES:
             raise ValueError("request body missing or too large")
@@ -315,8 +315,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "no such job route"})
 
     def _allowed(self, roles: tuple[str, ...]) -> str | None:
-        """The caller's role if it's one of `roles`; otherwise send 401/403 and
-        return None."""
+        """The caller's role if in `roles`; otherwise send 401/403 and return
+        None."""
         role = self._role()
         if role is None:
             self._reject(role)

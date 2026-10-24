@@ -35,15 +35,15 @@ def scan_request(
     *,
     safe_tokens: set[str] | None = None,
 ) -> ScanResult | None:
-    """Scan all mutable outbound request surfaces in their canonical order."""
+    """Scan every mutable outbound request surface, in canonical order."""
     request_path, _, query = request.path.partition("?")
     headers = outbound_scan_headers(route, dict(request.headers.items()))
     body = request.get_text(strict=False) or ""
     scan_text = build_outbound_scan_text(
         request.pretty_host, request_path, query, headers, body,
     )
-    # Bodies cannot alter HTTP framing, so CRLF detection is deliberately
-    # restricted to the request line and headers.
+    # Bodies can't alter HTTP framing, so CRLF checks cover the request line
+    # and headers only.
     crlf_text = build_outbound_scan_text(
         request.pretty_host, request_path, query, headers, "",
     )
@@ -61,7 +61,7 @@ def redact_request(
     route: Route,
     env: Mapping[str, str],
 ) -> bool:
-    """Redact mutable request surfaces and return whether the result is clean."""
+    """Redact the mutable request surfaces; True if the result is clean."""
     body = request.get_text(strict=False)
     if body:
         redacted_body = redact_tokens(body, env=env)

@@ -1,8 +1,4 @@
-"""Shared egress policy value objects.
-
-Kept dependency-free so the schema parser, matcher, DLP scanner, and addon
-adapter can use the same immutable public shapes without importing each other.
-"""
+"""Shared egress policy value objects, dependency-free."""
 
 from __future__ import annotations
 
@@ -63,11 +59,11 @@ class Config:
     routes: tuple[Route, ...]
     log: int = LOG_OFF
     deny_reason: str = ""
-    # The bottle's `audit.delivery`: `required` holds an allowed request
-    # until its audit event is written, and refuses it if it can't be.
+    # `audit.delivery`: `required` holds an allowed request until its event is
+    # written, refusing it otherwise.
     audit_delivery: str = "best_effort"
-    # The bottle's `audit.firehose`: `metadata` keeps its request records to
-    # method, host, port, decision, status, size and timing.
+    # `audit.firehose`: `metadata` limits records to method, host, port,
+    # decision, status, size and timing.
     firehose: str = "full"
 
 
@@ -85,6 +81,5 @@ class ScanResult:
     location: str = ""
     context: str = ""
     matched: str = ""
-    # A hit on the bottle's exfil canary: always a hard block, never
-    # supervised, safelisted or redacted-and-forwarded.
+    # A canary hit: always a hard block.
     canary: bool = False

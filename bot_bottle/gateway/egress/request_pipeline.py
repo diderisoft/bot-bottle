@@ -1,8 +1,6 @@
-"""Framework-neutral request policy stages for the egress adapter.
-
-The mitmproxy addon owns flow mutation and response construction. This module
-owns the ordered Git and route-policy decisions so those rules remain directly
-testable without a live proxy flow.
+"""Framework-neutral request policy for the egress addon: the git and route
+decisions, testable without a proxy flow. The addon mutates flows and builds
+responses.
 """
 
 from __future__ import annotations
@@ -27,7 +25,7 @@ GIT_PUSH_BLOCK_REASON = (
 
 @dataclass(frozen=True)
 class RoutePolicyResult:
-    """The flow mutations and outcome produced by general route policy."""
+    """Flow mutations and outcome from route policy."""
 
     block_reason: str = ""
     strip_authorization: bool = False
@@ -41,7 +39,7 @@ def git_block_reason(
     request_path: str,
     query: str,
 ) -> str:
-    """Return the HTTPS Git policy denial, or ``""`` when allowed."""
+    """The HTTPS git denial reason, or ""."""
     if is_git_push_request(request_path, query):
         return GIT_PUSH_BLOCK_REASON
     if not is_git_fetch_request(request_path, query):
@@ -60,7 +58,7 @@ def evaluate_route_policy(
     headers: Mapping[str, str],
     env: Mapping[str, str],
 ) -> RoutePolicyResult:
-    """Evaluate authorization stripping, matching, injection, and logging."""
+    """Auth stripping, matching, injection and logging decisions."""
     strip_authorization = route is None or not route.preserve_auth
     effective_headers = {
         name.lower(): value

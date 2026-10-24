@@ -1,15 +1,9 @@
-"""Bottle handle for a Firecracker microVM, over SSH.
+"""Bottle handle for a Firecracker microVM, over SSH to the guest's dropbear.
 
-Every operation routes through SSH to the guest (dropbear, listening on
-the TAP link). `exec` pipes a script over stdin and captures output;
-`cp_in` uses scp; `exec_agent` uses `ssh -t` for an interactive PTY
-session. `ssh -t` forwards the host terminal's SIGWINCH to the remote
-PTY natively, so no separate resize bridge is needed.
-
-Commands run as the image's `node` user via `runuser`, with HOME/USER/
-PATH and the bottle env (HTTPS_PROXY at the gateway, CA paths, …) set
-per-invocation through `env` (the VM itself just runs the init; it has
-no baked-in process env like a `docker run` container would).
+`exec` pipes a script over stdin, `cp_in` streams a tar, and `exec_agent` uses
+`ssh -t` (which forwards SIGWINCH). Commands run as `node` via `runuser` with
+HOME/USER/PATH and the bottle env set per invocation, since the VM has no
+process env of its own.
 """
 
 from __future__ import annotations
@@ -79,12 +73,12 @@ class FirecrackerBottle(Bottle):
     def _ssh(self, *, tty: bool) -> list[str]:
         argv = util.ssh_base_argv(self._private_key, self._guest_ip)
         if tty:
-            # -t: allocate a remote PTY and forward window-size changes.
+            # -t: remote PTY with window-size forwarding.
             argv.insert(1, "-t")
         return argv
 
     def _agent_remote_argv(self, argv: list[str]) -> list[str]:
-        """The `runuser … <agent> …` command run inside the guest."""
+        """The `runuser ... <agent> ...` command run in the guest."""
         full_argv = list(argv)
         full_argv.extend(
             prompt_args(
@@ -93,21 +87,8 @@ class FirecrackerBottle(Bottle):
                 argv=full_argv,
             )
         )
-        # ALWAYS cd into the workdir before exec'ing the agent. The
-        # control SSH logs in as root, so the inherited cwd is /root —
-        # which the agent (running as node) can't even read now that
-        # /root is root-owned. Run the agent from the node workdir
-        # (default /home/node) so its cwd is node-accessible; otherwise
-        # Node's process.cwd(), the shell-snapshot machinery, and
-        # `/doctor` all fail on the unreadable /root.
-        # Run the agent from the node workdir (default /home/node), NOT
-        # the /root cwd inherited from the root SSH login — /root is now
-        # root-owned and unreadable by node, which breaks Node's
-        # process.cwd(), the shell-snapshot machinery, and `/doctor`.
-        # Use `env --chdir` rather than a `sh -c 'cd … && exec "$@"'`
-        # wrapper: it keeps the guest command a flat argv that `agent_argv`
-        # can quote token-by-token for the ssh→guest-shell round trip,
-        # avoiding a fragile nested-quoting `"$@"` script.
+        # Run from the node workdir, not the root login's unreadable /root cwd.
+        # `env --chdir` keeps the command a flat argv for quoting.
         workdir = self.agent_workdir or _HOME_FOR["node"]
         remote = ["runuser", "-u", "node", "--",
                   "env", f"--chdir={workdir}",
@@ -116,13 +97,8 @@ class FirecrackerBottle(Bottle):
         return remote
 
     def agent_argv(self, argv: list[str], *, tty: bool = True) -> list[str]:
-        # ssh space-joins everything after the host into one line the guest
-        # shell re-parses, so pre-quote each remote token for that shell.
-        # Simple words are unchanged (existing behaviour); an arg containing
-        # spaces — e.g. codex's `read_prompt_file` positional "Read and follow
-        # the instructions in <path>." — is quoted so it survives as ONE
-        # argument instead of being re-split (which made codex parse "and" as
-        # a subcommand).
+        # ssh joins the remote args into one line the guest shell re-parses, so
+        # quote each token.
         remote = self._agent_remote_argv(argv)
         return [*self._ssh(tty=tty), "--", *(shlex.quote(t) for t in remote)]
 
@@ -136,8 +112,7 @@ class FirecrackerBottle(Bottle):
         return subprocess.run(command, check=False).returncode
 
     def exec(self, script: str, *, user: str = "node") -> ExecResult:
-        # Pipe the script over stdin (`sh -s`) so nothing needs shell
-        # quoting through the SSH command line.
+        # Pipe the script to `sh -s`, so nothing is quoted through ssh.
         remote = ["runuser", "-u", user, "--",
                   "env", *_env_assignments_for(user, self._guest_env),
                   "/bin/sh", "-s"]
@@ -152,11 +127,8 @@ class FirecrackerBottle(Bottle):
         )
 
     def cp_in(self, host_path: str, container_path: str) -> None:
-        # Stream a tar over the SSH exec channel rather than scp: the
-        # guest runs dropbear, which ships no sftp-server/scp, but every
-        # agent image has `tar`. Copy so `container_path` becomes a copy
-        # of `host_path` (docker cp semantics — callers rm -rf the
-        # destination first).
+        # Stream a tar over the exec channel: dropbear ships no scp or sftp.
+        # Like `docker cp`, `container_path` becomes a copy of `host_path`.
         host_parent = os.path.dirname(host_path.rstrip("/")) or "/"
         host_base = os.path.basename(host_path.rstrip("/"))
         guest_parent = os.path.dirname(container_path.rstrip("/")) or "/"
@@ -172,11 +144,7 @@ class FirecrackerBottle(Bottle):
             ["tar", "-C", host_parent, "-cf", "-", host_base],
             stdout=subprocess.PIPE,
         )
-        # Pass the command as one arg: ssh space-joins everything after
-        # the host into a single string for the guest's login shell, so a
-        # `sh -c <remote>` split would drop everything past the first word
-        # (the guest shell runs `<remote>` directly; stdin carries the
-        # tar).
+        # One arg: ssh hands the guest shell a single joined string.
         ssh = subprocess.run(
             [*self._ssh(tty=False), "--", remote],
             stdin=tar.stdout, capture_output=True, text=True, check=False,
@@ -190,6 +158,5 @@ class FirecrackerBottle(Bottle):
             )
 
     def close(self) -> None:
-        # Real teardown (VM terminate, TAP release) lives on the launch
-        # ExitStack; this is the idempotent alias the ABC expects.
+        # Teardown lives on the launch ExitStack.
         pass

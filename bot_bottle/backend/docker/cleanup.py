@@ -1,25 +1,6 @@
-"""Cleanup for the Docker bottle backend.
-
-Cleanup is centered on `docker compose ls`.
-Pre-compose code paths could leave bare containers / networks
-without a compose project; those still show up via the prefix
-scan, just as a fallback bucket alongside the project list.
-
-`prepare_cleanup` enumerates:
-
-  - Live compose projects whose name starts with `bot-bottle-`.
-  - `bot-bottle-*` containers that aren't part of any compose
-    project (legacy orphans).
-  - `bot-bottle-*` networks that aren't tied to a compose
-    project (legacy orphans; compose-managed networks come down
-    with `compose down --volumes` and don't appear here).
-
-State dirs are shared by every backend and reaped in
+"""Cleanup for the docker backend: `bot-bottle-*` compose projects, plus
+prefixed containers and networks outside any project. State dirs are reaped in
 `backend/state_cleanup.py`.
-
-`cleanup` removes everything in the plan.
-
-Active-agent enumeration lives in `backend/docker/enumerate.py`.
 """
 
 from __future__ import annotations
@@ -53,19 +34,14 @@ def _list_prefixed_containers() -> list[str]:
         if not line:
             continue
         name, _, project = line.partition("\t")
-        # Stray = no compose label. Compose-managed containers carry
-        # `com.docker.compose.project=<name>`; we'll reap those via
-        # `compose down`, not via container rm.
+        # No compose label: not reaped by `compose down`.
         if not project:
             out.append(name)
     return sorted(set(out))
 
 
 def _list_prefixed_networks() -> list[str]:
-    """All bot-bottle-prefixed networks not currently attached
-    to a compose project. Compose-managed networks have a
-    `com.docker.compose.project` label; bare ones (from pre-compose
-    code paths) don't."""
+    """bot-bottle-prefixed networks without a compose project label."""
     try:
         result = subprocess.run(
             ["docker", "network", "ls",
@@ -90,8 +66,8 @@ def _list_prefixed_networks() -> list[str]:
 
 
 def prepare_cleanup(settings: Settings) -> DockerBottleCleanupPlan:
-    """Enumerate everything cleanup will touch. No removals. Raises
-    EnumerationError when the Docker daemon can't be asked."""
+    """Everything cleanup will touch; removes nothing. Raises EnumerationError
+    when the daemon can't be asked."""
     del settings
     docker_mod.require_docker()
     projects = list_compose_projects(
@@ -106,9 +82,7 @@ def prepare_cleanup(settings: Settings) -> DockerBottleCleanupPlan:
 
 
 def cleanup(plan: DockerBottleCleanupPlan, settings: Settings) -> None:
-    """Remove everything in the plan. Projects first (whose `compose
-    down` reaps their containers + networks atomically), then stray
-    legacy resources."""
+    """Remove everything in the plan: projects first, then stray resources."""
     failures = CleanupFailures(timeout=settings.operation.cleanup_command_timeout_seconds)
     for project in plan.projects:
         info(f"docker compose down  ({project})")

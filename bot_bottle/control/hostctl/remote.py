@@ -1,49 +1,30 @@
 """Remote access: the host end of the console link over iroh (ADR 0007).
 
-When remote access is enabled (`bot-bottle remote enable`), the host
-controller dials the console it logged in to, over iroh, on ALPN
-`bb-console/1`. The link is dial-out only: the host's endpoint accepts no
-inbound connections, and it refuses a console whose node id isn't the one
-pinned at login. The console identifies the host by its iroh node id, which
-`remote enable` bound to the host with its access token.
+With `bot-bottle remote enable`, the host controller dials its console on ALPN
+`bb-console/1`. Dial-out only; a console whose node id isn't the one pinned at
+login is refused. The console knows the host by its node id.
 
-On the console's control stream (JSON lines) the host serves:
+The control stream (JSON lines):
 
 - `list_local` -> `local_definitions`: the agents under `~/.bot-bottle/`.
-- `launch` -> runs a **local agent by name** (`definition.name`) through
-  `BottleService`, as role `remote`, and reports `agent_started` or
-  `agent_errored`. Console-supplied agent content is refused: bottles and the
-  agents that pick them come from this host, never from a remote party.
-  The launch may carry `prompt` (the first message of an interactive
-  session), `bottles` (names of this host's bottles) and `label`.
-  `agent_started` reports the bottle, the run's `activation` and whether the
-  console may type into the session (`writable`, the agent's
-  `remote.writable`).
-- `stop` -> tears the bottle down; `agent_stopped` follows. An agent that
-  exits on its own is reported `agent_stopped` too.
-- `hello` opens the control stream. On every (re)connect the host reports
-  agents that exited meanwhile, reopens the relays of the running ones, and
-  sends `agents_running` (`agent_ids`): the console stops any other agent it
-  has running on this host.
-- `attention` (sent by the host): an agent this link launched has a pending
-  supervise request: reason `approval`, `since` (when it asked), a `message`
-  (what it wants, the routes, why) and `options` (`allow_project` when it
-  can be saved). `activity` follows once nothing is waiting.
-- `approval` -> the console's answer: `allow`, `allow_project` or `deny`,
-  echoing `since` so a stale click can't answer a newer request. Answered as
-  the terminal popup does. The console checks the person (a fresh passkey
-  assertion) before it sends an allow.
-- The session's terminal is relayed to the console on a uni stream (see
-  `console_terminal`); `input` types into it when the agent allows remote
-  typing, `resize` sizes the console's tmux client, and `history` (`lines`)
-  -> `history` (`text`, `size`, `limit`): the last `lines` that scrolled off
-  the pane, with colors, and the history's size and limit, so the console
-  shows it above its live terminal fetching only what's new.
-- `audit_query` -> `audit_events`: the audit journal records for a bottle this
-  link launched, filtered like `audit query` (bottle, activation, limit).
+- `launch` -> runs a local agent by name as role `remote`, with optional
+  `prompt`, `bottles` and `label`; replies `agent_started` (bottle,
+  `activation`, `writable`) or `agent_errored`. Agent and bottle content from
+  the console is refused.
+- `stop` -> tears the bottle down; `agent_stopped` follows, also for agents
+  that exit on their own.
+- `hello` opens the stream. On every (re)connect the host reports agents
+  that exited, reopens running ones' relays, and sends `agents_running`.
+- `attention` (from the host): a pending supervise request for an agent this
+  link launched, with `since`, `message` and `options`; `activity` once
+  nothing waits.
+- `approval` -> `allow`, `allow_project` or `deny`, echoing `since` so a
+  stale click can't answer a newer request.
+- Terminals relay on uni streams (`console_terminal`); `input`, `resize` and
+  `history` (`lines` -> `text`, `size`, `limit`) act on them.
+- `audit_query` -> `audit_events` for bottles this link launched.
 
-`iroh` is an optional dependency (`bot-bottle[remote]`), imported only here
-and only when the link runs.
+`iroh` (`bot-bottle[remote]`) is imported only here, only when the link runs.
 """
 
 from __future__ import annotations
@@ -75,13 +56,13 @@ CONSOLE_FILE = "console.json"
 REMOTE_FILE = "remote.json"
 STATUS_FILE = "remote.status.json"
 KEY_FILE = "remote.key"
-# How often the supervisor rereads remote.json, and the reconnect backoff.
+# How often remote.json is reread, and the reconnect backoff.
 POLL_SECONDS = 3.0
 BACKOFF_SECONDS = (1.0, 2.0, 5.0, 10.0, 30.0)
-# How often the link checks whether launched agents are still running.
+# How often launched agents are checked.
 WATCH_SECONDS = 2.0
 _REFUSED = 1  # application close code
-# Bounds on what a console launch may carry.
+# Bounds on a console launch.
 MAX_PROMPT_CHARS = 20_000
 MAX_BOTTLES = 8
 MAX_LABEL_CHARS = 128
@@ -93,13 +74,12 @@ class RemoteError(Exception):
     """Remote access can't be configured or can't run."""
 
 
-# -- configuration -------------------------------------------------------------
+# --- configuration ---
 
 
 @dataclass(frozen=True)
 class RemoteConfig:
-    """`remote.json`: whether the link runs, and the console identity pinned
-    for it."""
+    """`remote.json`: whether the link runs, and the pinned console identity."""
 
     enabled: bool = False
     console_node_id: str = ""
@@ -157,8 +137,8 @@ def save_console(console: dict[str, Any]) -> None:
 
 
 def secret_key() -> bytes:
-    """This host's iroh secret key (32 bytes, mode 0600), created on first
-    use. Its public half is the node id the console knows the host by."""
+    """This host's iroh secret key (32 bytes, 0600), created on first use. Its
+    public half is the node id."""
     path = _root() / KEY_FILE
     try:
         data = path.read_bytes()
@@ -207,7 +187,7 @@ def read_status() -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
-# -- the protocol --------------------------------------------------------------
+# --- the protocol ---
 
 
 class Bottles(Protocol):
@@ -223,7 +203,7 @@ def local_agents() -> list[str]:
     # pylint: disable=import-outside-toplevel
     from ...manifest import ManifestError, ManifestIndex
     try:
-        # Resolved from $HOME, so only home agents: a repo's agents need its cwd.
+        # From $HOME, so only home agents.
         return ManifestIndex.resolve(str(Path.home()), missing_ok=True).all_agent_names
     except (ManifestError, OSError) as e:
         log.warn(f"remote: can't list local agents: {e}")
@@ -241,13 +221,12 @@ class Terminal(Protocol):
     def close(self) -> None: ...
 
 
-# console agent id, bottle id -> a started relay, or None if there's no session.
+# console agent id, bottle id -> a started relay, or None without a session.
 TerminalFactory = Callable[[str, str], Awaitable["Terminal | None"]]
 
 
 def _launch_extras(msg: dict[str, Any]) -> tuple[str, tuple[str, ...], str] | str:
-    """A console launch's optional prompt, bottles and label, or the reason
-    they're refused."""
+    """A console launch's prompt, bottles and label, or why they're refused."""
     prompt = msg.get("prompt", "")
     if not isinstance(prompt, str) or len(prompt) > MAX_PROMPT_CHARS:
         return f"the prompt must be text of at most {MAX_PROMPT_CHARS} characters"
@@ -262,8 +241,8 @@ def _launch_extras(msg: dict[str, Any]) -> tuple[str, tuple[str, ...], str] | st
 
 
 def query_audit(bottle: str, activation: str | None, limit: int) -> list[dict[str, Any]]:
-    """`audit query --bottle --activation --limit` against this host's journal;
-    empty when there's no journal yet."""
+    """`audit query --bottle --activation --limit` on this host's journal;
+    empty without one."""
     # pylint: disable=import-outside-toplevel
     from ...paths import host_audit_dir, host_db_path
     from .audit_index import AuditIndex, Query
@@ -277,8 +256,8 @@ def query_audit(bottle: str, activation: str | None, limit: int) -> list[dict[st
 
 
 def session_terminals(conn: "iroh.Connection", sessions: Any) -> TerminalFactory:
-    """Relays for this connection: each opens a uni stream to the console and
-    attaches to the agent's tmux session."""
+    """Relays for this connection, each a uni stream attached to an agent's
+    tmux session."""
     from .console_terminal import ConsoleTerminal  # pylint: disable=import-outside-toplevel
 
     async def start(agent_id: str, bottle: str) -> Terminal | None:
@@ -295,17 +274,16 @@ def session_terminals(conn: "iroh.Connection", sessions: Any) -> TerminalFactory
 
 @dataclass
 class LinkState:
-    """What the console link keeps across reconnects: the agents it launched
-    (console agent id -> bottle id) and every bottle it launched."""
+    """What survives reconnects: running agents (console id -> bottle id) and
+    every bottle launched."""
 
     running: dict[str, str] = field(default_factory=dict)
     launched: set[str] = field(default_factory=set)
 
 
 class ConsoleLink:
-    """Serves the console's commands for one connection. Transport-free: `send`
-    writes one message to the console. `state` outlives the connection, so a
-    link that reconnects still knows the agents it launched (see `resume`)."""
+    """Serves one connection's commands. `send` writes one message; `state`
+    outlives the connection (see `resume`)."""
 
     def __init__(self, bottles: Bottles, send: Callable[[dict[str, Any]], Awaitable[None]],
                  agents: Callable[[], list[str]] | None = None, *,
@@ -323,14 +301,13 @@ class ConsoleLink:
         self._terminal_factory = terminals
         self._audit = audit if audit is not None else query_audit
         state = state if state is not None else LinkState()
-        # console agent id -> bottle id, for the agents this link launched.
+        # console agent id -> bottle id
         self.running = state.running
-        # Every bottle this link launched, running or not: the console may
-        # read the journal of these, and only these.
+        # Every bottle launched; only their journals may be read.
         self.launched = state.launched
-        # console agent id -> the relay of its session's terminal.
+        # console agent id -> terminal relay
         self.terminals: dict[str, Terminal] = {}
-        # console agent id -> the request currently raised for it.
+        # console agent id -> the request raised for it
         self._asking: dict[str, Any] = {}
 
     async def handle(self, msg: dict[str, Any]) -> None:
@@ -354,7 +331,7 @@ class ConsoleLink:
                                 msg.get("lines"))
         elif kind == "audit_query":
             await self._audit_query(msg)
-        elif kind != "hello":  # hello only opens the stream (see serve_connection)
+        elif kind != "hello":  # hello only opens the stream
             log.debug(f"remote: ignoring console message {kind!r}")
 
     async def _errored(self, agent_id: str, message: str) -> None:
@@ -377,9 +354,7 @@ class ConsoleLink:
             await self._errored(agent_id, extras)
             return
         prompt, bottles, label = extras
-        # The operator chose this local agent in the console: that click is the
-        # launch confirmation a terminal would otherwise ask for. A prompt
-        # starts an interactive session with it as the first message.
+        # The console click is the launch confirmation.
         request = LaunchRequest(agent=name, assume_yes=True, prompt=prompt,
                                 bottles=bottles, label=label, headless=False)
         try:
@@ -417,7 +392,7 @@ class ConsoleLink:
             terminal.close()
 
     def close(self) -> None:
-        """The console went away: detach every relay (the agents keep running)."""
+        """The console left: detach every relay (agents keep running)."""
         for agent_id in list(self.terminals):
             self._close_terminal(agent_id)
 
@@ -451,8 +426,8 @@ class ConsoleLink:
             limit = MAX_AUDIT_EVENTS
         limit = min(limit, MAX_AUDIT_EVENTS)
         events: list[dict[str, Any]] = []
-        # Only the journal of agents this console launched; anything else is
-        # answered with nothing rather than an error that confirms it exists.
+        # Only these bottles' journals; anything else gets nothing, not an
+        # error.
         if isinstance(bottle, str) and bottle in self.launched:
             activation = activation if isinstance(activation, str) and activation else None
             try:
@@ -478,9 +453,9 @@ class ConsoleLink:
         await self._send({"type": "agent_stopped", "agent_id": agent_id, "exit_code": exit_code})
 
     async def resume(self) -> None:
-        """A (re)connected console: report the agents that exited while it was
-        away, reopen the relays of the ones still running, and say which those
-        are (`agents_running`), so the console can stop the rest."""
+        """A (re)connected console: report agents that exited, reopen running
+        ones' relays, and send `agents_running` so the console can stop the
+        rest."""
         await self.reap()
         for agent_id, bottle in list(self.running.items()):
             if agent_id not in self.terminals:
@@ -488,9 +463,9 @@ class ConsoleLink:
         await self._send({"type": "agents_running", "agent_ids": sorted(self.running)})
 
     async def push_attention(self) -> None:
-        """For each agent this link launched, raise its oldest pending
-        request as `attention` (reason "approval"), or report `activity`
-        once nothing is waiting. Only changes are sent."""
+        """For each agent this link launched, raise its oldest pending request
+        as `attention`, or `activity` once nothing waits. Only changes are
+        sent."""
         # pylint: disable=import-outside-toplevel  # the link's only approvals use
         from ...approvals import Request, route_lines, session_project
         try:
@@ -519,9 +494,8 @@ class ConsoleLink:
                               "options": options})
 
     async def _approval(self, agent_id: str, decision: str, since: str) -> None:
-        """The console's answer to the approval raised for ``agent_id``.
-        ``since`` must name the request still shown, so a stale click can't
-        answer a newer one."""
+        """The console's answer to `agent_id`'s raised approval. `since` must
+        match the request still shown."""
         # pylint: disable=import-outside-toplevel  # the link's only approvals use
         from ...approvals import ALLOW_ONCE, ALLOW_PROJECT, DENY, answer
         request = self._asking.get(agent_id)
@@ -555,8 +529,8 @@ class ConsoleLink:
 
 
 def _same_moment(a: str, b: str) -> bool:
-    """Whether two ISO timestamps name the same instant, give or take the
-    precision and zone formatting a round trip through the console loses."""
+    """Whether two ISO timestamps are the same instant, allowing for precision
+    and zone formatting lost in a round trip."""
     def parse(v: str) -> datetime | None:
         try:
             dt = datetime.fromisoformat(v)
@@ -579,7 +553,7 @@ def _orchestrator() -> Any:
     return OrchestratorClient(discover_orchestrator_url(Settings()))
 
 
-# -- the connection ------------------------------------------------------------
+# --- the connection ---
 
 
 async def _read_lines(recv: "iroh.RecvStream") -> AsyncIterator[bytes]:
@@ -598,9 +572,8 @@ async def _read_lines(recv: "iroh.RecvStream") -> AsyncIterator[bytes]:
 async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
                            agents: Callable[[], list[str]] | None = None,
                            state: LinkState | None = None) -> None:
-    """Serve one console connection until it closes. The console opens the
-    control stream; it becomes visible here with its first message (`hello`
-    from a current console), and the link resumes then."""
+    """Serve one console connection until it closes. The link resumes at the
+    first message (`hello`)."""
     control = await conn.accept_bi()
     send_stream = control.send()
 
@@ -639,7 +612,7 @@ async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> 
     endpoint = await iroh.Endpoint.bind(iroh.EndpointOptions(
         preset=iroh.preset_n0(), secret_key=secret_key(), alpns=[]))
     attempt = 0
-    state = LinkState()  # the agents launched over this link, across reconnects
+    state = LinkState()  # agents launched over this link, across reconnects
     try:
         while not stop.is_set():
             try:
@@ -665,9 +638,8 @@ async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> 
 
 
 class Supervisor:
-    """Runs the link while `remote.json` says it's enabled. Rereads the file
-    every `POLL_SECONDS`, so `remote enable`/`disable` take effect without
-    restarting the host controller."""
+    """Runs the link while `remote.json` enables it, rereading every
+    `POLL_SECONDS`."""
 
     def __init__(self, bottles: Bottles) -> None:
         self._bottles = bottles

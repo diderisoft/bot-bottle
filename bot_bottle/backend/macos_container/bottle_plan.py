@@ -9,6 +9,6 @@ from .. import BottlePlan
 
 @dataclass(frozen=True)
 class MacosContainerBottlePlan(BottlePlan):
-    # Guest-local container engine. Gates the derived image, the
-    # device-mode relaxation, and the resident podman service.
+    # Guest-local container engine: the derived image, relaxed device mode and
+    # the podman service.
     nested_containers: bool = False

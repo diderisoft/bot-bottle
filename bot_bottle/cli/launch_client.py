@@ -1,6 +1,6 @@
-"""The CLI side of a launch: resolve what only the CLI can (secret
-values, confirmed host keys, yes/no answers), send the host controller a
-`LaunchRequest`, stream the job, then attach to the agent's tmux session."""
+"""The CLI side of a launch: resolve what only the CLI can (secrets, confirmed
+host keys, answers), send a `LaunchRequest`, stream the job, then attach to the
+agent's tmux session."""
 
 from __future__ import annotations
 
@@ -30,13 +30,13 @@ from .constants import PROG
 from .progress import LaunchProgress, launch_log_path
 from .secrets_env import secrets_from_env
 
-# How long to wait for a session that ended to report its exit.
+# How long a finished session gets to report its exit.
 EXIT_REPORT_SECONDS = 5.0
 
 
 def needed_secrets(manifest: Manifest) -> dict[str, str]:
-    """Every secret name `manifest` resolves at launch, mapped to its `?`
-    env entry when one may be prompted for, else to ""."""
+    """Every secret name `manifest` resolves at launch, mapped to its `?` env
+    entry when it can be prompted for, else ""."""
     bottle = manifest.bottle
     names: dict[str, str] = {}
     for name, raw in bottle.env.items():
@@ -51,7 +51,7 @@ def needed_secrets(manifest: Manifest) -> dict[str, str]:
     for entry in bottle.git:
         if entry.Key.forge_token_env:
             names.setdefault(entry.Key.forge_token_env, "")
-    # The provider's own egress routes take their tokens from these names.
+    # The provider's egress routes take their tokens from these names.
     provider = bottle.agent_provider
     for name in (provider.auth_token, str(provider.settings.get("api_key_env", ""))):
         if name:
@@ -60,9 +60,9 @@ def needed_secrets(manifest: Manifest) -> dict[str, str]:
 
 
 def resolve_secrets(manifest: Manifest, source: SecretSource, *, prompt: bool) -> dict[str, str]:
-    """The values of `manifest`'s secrets that `source` has, plus (when
-    `prompt`) a typed-in value for each `?` entry it doesn't. Missing ones
-    are left for the launch to report."""
+    """The values `source` has for `manifest`'s secrets, plus (with `prompt`) a
+    typed value for each missing `?` entry. Others are left for the launch to
+    report."""
     values: dict[str, str] = {}
     for name, raw in needed_secrets(manifest).items():
         value = source.get(name)
@@ -74,8 +74,8 @@ def resolve_secrets(manifest: Manifest, source: SecretSource, *, prompt: bool) -
 
 
 def confirm_host_keys(manifest: Manifest, index: ManifestIndex) -> dict[str, str]:
-    """Fetch and confirm (on the tty) each upstream host key the manifest
-    lacks; the confirmed keys by repo name."""
+    """Fetch and confirm on the tty each upstream host key the manifest lacks;
+    returns them by repo name."""
     missing = {e.Name for e in manifest.bottle.git if not e.KnownHostKey}
     if not missing:
         return {}
@@ -86,8 +86,8 @@ def confirm_host_keys(manifest: Manifest, index: ManifestIndex) -> dict[str, str
 
 def prepare_request(request: LaunchRequest, index: ManifestIndex, *,
                     interactive: bool) -> LaunchRequest:
-    """`request` with the secrets it needs and, when `interactive`, the
-    host keys the user confirmed."""
+    """`request` with its secrets and, when `interactive`, the confirmed host
+    keys."""
     manifest = load_trusting(index, request.agent, request.bottles, interactive=interactive)
     host_keys = confirm_host_keys(manifest, index) if interactive else {}
     secrets = resolve_secrets(manifest, secrets_from_env(), prompt=interactive)
@@ -96,9 +96,9 @@ def prepare_request(request: LaunchRequest, index: ManifestIndex, *,
 
 def load_trusting(index: ManifestIndex, agent: str, bottles: tuple[str, ...], *,
                   interactive: bool) -> Manifest:
-    """Load the agent's manifest. A project bottle this host hasn't trusted
-    (or that changed) is shown and asked about first; without a terminal it
-    fails with a pointer to `bot-bottle trust`. Declining stops the launch."""
+    """Load the agent's manifest. An untrusted or changed project bottle is
+    shown and asked about first; without a terminal it fails with a pointer to
+    `bot-bottle trust`. Declining stops the launch."""
     while True:
         try:
             return index.load_for_agent(agent, bottles)
@@ -121,9 +121,9 @@ def _prompt_yes(question: str) -> bool:
 
 
 def launch(request: LaunchRequest, *, verbose: bool = False) -> int:
-    """Launch through the host controller and attach. Returns the agent's
-    exit code, or 0 if the user detached or declined. Progress is one line
-    per stage; the whole log goes to a file (``verbose`` streams it)."""
+    """Launch through the host controller and attach. Returns the agent's exit
+    code, or 0 on detach or decline. One line per stage; the full log goes to a
+    file (`verbose` streams it)."""
     progress = LaunchProgress(launch_log_path(request.label or request.agent), verbose=verbose)
     try:
         client = HostControlClient(runner.ensure_running(), runner.cli_token())
@@ -141,7 +141,7 @@ def launch(request: LaunchRequest, *, verbose: bool = False) -> int:
                 raise log.Die(1, message)
             progress.pause()
             if not verbose:
-                # What's being confirmed: the preflight summary the job logged.
+                # The preflight summary the job logged, for confirmation.
                 for line in progress.since_stage():
                     sys.stderr.write(line + "\n")
             if not _prompt_yes(message):
@@ -164,9 +164,8 @@ def launch(request: LaunchRequest, *, verbose: bool = False) -> int:
 
 
 def tmux_attach(session_id: str) -> tuple[list[str], dict[str, str]]:
-    """The writable local `tmux attach` command for `session_id` and its
-    env. `TMUX` is dropped: bot-bottle's server is separate, so attaching
-    from inside the user's own tmux isn't nesting. A missing or `dumb` TERM
+    """The writable `tmux attach` command for `session_id` and its env. `TMUX`
+    is dropped (bot-bottle's server is separate); a missing or `dumb` TERM
     becomes `xterm-256color`."""
     tmux_bin = shutil.which("tmux")
     if tmux_bin is None:
@@ -174,15 +173,14 @@ def tmux_attach(session_id: str) -> tuple[list[str], dict[str, str]]:
     argv = SessionManager({}).attach_argv(session_id, read_only=False)
     argv[0] = tmux_bin
     env = {k: v for k, v in os.environ.items() if k != "TMUX"}
-    # tmux won't attach to a terminal it can't drive (headless runs often
-    # have no TERM, or "dumb").
+    # tmux won't attach to a terminal it can't drive.
     if env.get("TERM", "dumb") == "dumb":
         env["TERM"] = "xterm-256color"
     return argv, env
 
 
 def _report_work(session_id: str, *, since: float) -> None:
-    """After the agent exits: say what it changed and where the patch is."""
+    """After the agent exits: what it changed and where the patch is."""
     path = work_patch_path(session_id)
     try:
         if path.stat().st_mtime < since:
@@ -202,8 +200,8 @@ def _report_work(session_id: str, *, since: float) -> None:
 
 
 def attach(client: HostControlClient, session_id: str) -> int:
-    """Attach this terminal to `session_id` until it ends or the user
-    detaches; the agent's exit code, or 0 after a detach."""
+    """Attach to `session_id` until it ends or the user detaches. Returns the
+    agent's exit code, or 0 after a detach."""
     info(f"attaching to {session_id} (Ctrl-] detaches; the bottle is removed "
          "when the agent exits)")
     argv, env = tmux_attach(session_id)

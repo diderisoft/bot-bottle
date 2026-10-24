@@ -1,10 +1,6 @@
-"""Pure host-side rendering for the per-agent git-gate.
-
-Builds the agent's `.gitconfig` insteadOf rewrites, the known_hosts
-line, and the entrypoint / pre-receive / access-hook scripts the gateway
-runs. No docker or forge calls — exposed for tests and reuse across
-backends. The host-side service (`git_gate.GitGate`) and the deploy-key
-lifecycle (`git_gate.provision`) each read on their own."""
+"""Host-side rendering for git-gate: the agent's `.gitconfig` insteadOf
+rewrites, known_hosts lines, and the entrypoint, provisioning, pre-receive,
+access-hook and gitleaks files the gateway runs."""
 
 from __future__ import annotations
 
@@ -17,25 +13,16 @@ from ..contract.identity import GIT_GATE_TIMEOUT_SECS, IDENTITY_HEADER
 from ..manifest import ManifestBottle, ManifestGitEntry
 from ..gateway.egress.dlp_detectors import TOKEN_PATTERNS
 
-# Short network alias for git-gate inside the gateway. The
-# agent's `.gitconfig` insteadOf rewrites resolve through this name.
+# git-gate's network alias for git:// URLs.
 GIT_GATE_HOSTNAME = "git-gate"
 
 
 @dataclass(frozen=True)
 class GitGateUpstream:
-    """One bare repo on the gate. `name` drives the bare-repo path
-    (`/git/<name>.git`), the agent's URL after insteadOf rewrite
-    (`git://<gate>/<name>.git`), and the per-upstream credential
-    paths inside the gate (`/git-gate/creds/<name>-key` and
-    `/git-gate/creds/<name>-known_hosts`).
-
-    `identity_file` is the host-side absolute path the gate's start
-    step will docker-cp into the container. `known_host_key` is the
-    KnownHostKey string from the manifest; the gate's start step
-    materialises it into a known_hosts file if non-empty.
-
-    the gate credential paths inside the running gateway."""
+    """One bare repo on the gate. `name` sets `/git/<name>.git`, the rewritten
+    agent URL and the credential paths (`/git-gate/creds/<name>-key`,
+    `-known_hosts`). `identity_file` is the host key path; `known_host_key` is
+    the manifest's host key."""
 
     name: str
     upstream_url: str
@@ -46,8 +33,8 @@ class GitGateUpstream:
     known_hosts_file: Path = Path()
 
 def git_gate_upstreams_for_bottle(bottle: ManifestBottle) -> tuple[GitGateUpstream, ...]:
-    """Lift each `bottle.git` entry into a GitGateUpstream. Unique-Name
-    validation already ran in `manifest.ManifestBottle.from_dict`."""
+    """Each `bottle.git` entry as a GitGateUpstream (names were checked at
+    load)."""
     return tuple(
         GitGateUpstream(
             name=e.Name,
@@ -62,7 +49,7 @@ def git_gate_upstreams_for_bottle(bottle: ManifestBottle) -> tuple[GitGateUpstre
 
 
 def _gitconfig_validate_value(field: str, value: str) -> None:
-    """Raise ValueError if value contains characters that break gitconfig line syntax."""
+    """ValueError if `value` would break gitconfig syntax."""
     if "\n" in value or "\r" in value:
         raise ValueError(
             f"git-gate: {field} contains a newline, which would inject "
@@ -74,18 +61,8 @@ def git_gate_render_gitconfig(
     entries: tuple[ManifestGitEntry, ...], gate_host: str, *, scheme: str = "git",
     identity_token: str = "",
 ) -> str:
-    """Render the agent's ~/.gitconfig content for git-gate
-    `insteadOf` rewrites. Pure host-side, no docker / VM;
-    exposed for tests + reuse across backends.
-
-    `gate_host` is the part of the URL between `<scheme>://` and the
-    repo path — backends differ here:
-      - docker:        `git-gate` (the short network alias)
-      - firecracker:   `<bundle_ip>:<port>` (no DNS on the
-                       point-to-point TAP link)
-
-    Empty `entries` returns an empty string so callers can no-op
-    cleanly without conditional formatting at the call site."""
+    """The agent's ~/.gitconfig insteadOf rewrites. `gate_host` is what goes
+    between `<scheme>://` and the repo path. Empty `entries` gives ""."""
     if not entries:
         return ""
     out = [
@@ -94,11 +71,8 @@ def git_gate_render_gitconfig(
         "# the upstream bidirectionally (gitleaks-scanned push;\n",
         "# fetch-from-upstream-before-every-upload-pack via access-hook).\n",
     ]
-    # Over the smart-HTTP transport (VM backends), attach the per-bottle
-    # identity token as a request header on requests to the gate, scoped to
-    # its URL so it never goes to any other remote. git-http requires it (the
-    # gateway's mandatory (source_ip, token) attribution). git:// (single-tenant
-    # docker) carries no header — attribution there is the network alias.
+    # Over HTTP, send the identity token as a header scoped to the gate's URL.
+    # git:// carries none.
     if identity_token and scheme == "http":
         _gitconfig_validate_value("identity_token", identity_token)
         out.append(f'[http "http://{gate_host}/"]\n')
@@ -123,9 +97,7 @@ def git_gate_render_gitconfig(
 
 
 def git_gate_known_hosts_line(host: str, port: str, key: str) -> str:
-    """Format `host[:port] key` for OpenSSH's known_hosts. Non-default
-    ports use the bracketed `[host]:port` form (the form OpenSSH writes
-    on disk for hosts reached via a non-22 port)."""
+    """`host[:port] key` for known_hosts, with `[host]:port` for non-22 ports."""
     if port and port != "22":
         target = f"[{host}]:{port}"
     else:
@@ -134,11 +106,8 @@ def git_gate_known_hosts_line(host: str, port: str, key: str) -> str:
 
 
 def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
-    """The `init_repo` shell function, parameterized by the bare-repo root
-    and the per-bottle creds dir. Single source of the credential-wiring
-    logic, shared by the single-tenant daemon entrypoint (`/git`,
-    `/git-gate/creds`) and the consolidated per-bottle provisioning
-    (`/git/<bottle_id>`, `/git-gate/creds/<bottle_id>`)."""
+    """The `init_repo` shell function for a repo root and creds dir, shared by
+    the daemon entrypoint and per-bottle provisioning."""
     return [
         "init_repo() {",
         "  name=$1",
@@ -146,12 +115,7 @@ def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
         f"  keyfile={creds_dir}/${{name}}-key",
         f"  hostsfile={creds_dir}/${{name}}-known_hosts",
         "",
-        # `|| true`: these may be bind-mounted read-only from the
-        # host, so chmod-syscalls fail with EROFS. The files already
-        # have the right perms on the host (SSH requires 0600 to load
-        # the key in the first place), so the chmod is best-effort
-        # cleanup for the legacy docker-cp path where the file
-        # landed at the host's umask perms.
+        # Best effort: mounted files may be read-only and already 0600.
         "  chmod 600 \"$keyfile\" 2>/dev/null || true",
         "  if [ -f \"$hostsfile\" ]; then",
         "    chmod 600 \"$hostsfile\" 2>/dev/null || true",
@@ -160,11 +124,8 @@ def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
         f"  repo={repo_root}/${{name}}.git",
         "  if [ ! -d \"$repo\" ]; then",
         "    git init --bare \"$repo\" >/dev/null",
-        # --mirror=fetch sets remote.origin.fetch = +refs/*:refs/* so a later
-        # `git fetch origin` mirrors the upstream's full ref graph (heads,
-        # tags, notes) into the bare repo at canonical paths. It does NOT set
-        # remote.origin.mirror=true, so an explicit `git push origin
-        # <ref>:<ref>` still pushes one ref.
+        # `--mirror=fetch` makes `git fetch origin` mirror every upstream ref,
+        # while an explicit `git push origin <ref>:<ref>` still pushes one ref.
         "    git -C \"$repo\" remote add --mirror=fetch origin \"$upstream_url\"",
         "  fi",
         "  git -C \"$repo\" config git-gate.identityFile \"$keyfile\"",
@@ -178,12 +139,7 @@ def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
 
 
 def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
-    """Posix-sh entrypoint. One `init_repo` call per upstream, then
-    `exec git daemon`. The function reads
-    `/git-gate/creds/<name>-{key,known_hosts}` (bind-mounted into
-    the bundle by the renderer) and wires them into each bare repo's
-    config; the access-hook + pre-receive hook pick those paths up
-    at fetch / push time."""
+    """POSIX sh entrypoint: `init_repo` per upstream, then `exec git daemon`."""
     lines = ["#!/bin/sh", "set -eu", ""]
     lines += _git_gate_init_repo_fn("/git", "/git-gate/creds")
     lines += ["", "mkdir -p /git"]
@@ -204,23 +160,17 @@ def git_gate_render_entrypoint(upstreams: tuple[GitGateUpstream, ...]) -> str:
     return "\n".join(lines) + "\n"
 
 
-# A bottle id namespaces the consolidated gateway's repo + creds dirs; it is
-# embedded unquoted in the provisioning script, so restrict it to a shell- and
-# path-safe alphabet (registry ids are token_hex — this is defense in depth).
+# Embedded unquoted in the script, so limited to a shell- and path-safe
+# alphabet.
 _SAFE_BOTTLE_ID = re.compile(r"[A-Za-z0-9_-]+")
 
 
 def git_gate_render_provision(
     bottle_id: str, upstreams: tuple[GitGateUpstream, ...],
 ) -> str:
-    """Posix-sh script that provisions ONE bottle's bare repos into the
-    consolidated gateway, under `/git/<bottle_id>/` with creds
-    read from `/git-gate/creds/<bottle_id>/`. Init-only — no `git daemon`,
-    since the shared gateway already serves every bottle; run inside the
-    running gateway when the bottle is registered.
-
-    Isolating each bottle's repo root and creds dir by id is what keeps one
-    bottle's push credentials out of another's repos on the shared gateway."""
+    """POSIX sh that inits one bottle's bare repos under `/git/<bottle_id>/`
+    with credentials from `/git-gate/creds/<bottle_id>/`. Run in the gateway at
+    registration."""
     if not _SAFE_BOTTLE_ID.fullmatch(bottle_id):
         raise ValueError(f"git-gate: unsafe bottle id {bottle_id!r}")
     repo_root = f"/git/{bottle_id}"
@@ -234,15 +184,10 @@ def git_gate_render_provision(
 
 
 def git_gate_render_hook() -> str:
-    """The shared pre-receive hook: gitleaks-scan all incoming refs, refuse
-    any that carry a secret the pushing bottle holds, then forward each
-    accepted ref to the real upstream (`origin`)
-    using the per-repo credential. Failure in either phase aborts
-    the push so the agent sees a real rejection. POSIX sh.
-
-    Two phases (scan all, then push all) keeps a hit on ref N from
-    half-pushing refs 1..N-1; both phases re-read stdin from a temp
-    file because pre-receive's stdin is a one-shot stream."""
+    """The shared pre-receive hook (POSIX sh): gitleaks-scan every incoming
+    ref, refuse ones carrying a secret the bottle holds, then forward each ref
+    to `origin` with the repo's credential. Every ref is scanned before any is
+    forwarded. stdin is saved to a temp file, since it can be read only once."""
     return r"""#!/bin/sh
 # git-gate pre-receive. Stdin: <old> <new> <ref> per line.
 set -u
@@ -567,13 +512,9 @@ exit 0
 
 
 def _gitleaks_literal_prefix(pattern_str: str) -> str:
-    """Return the longest leading literal substring of a regex pattern,
-    lowercased, for use as a gitleaks keyword pre-filter.
-
-    Stops at the first non-literal construct: a character class `[`, a
-    quantifier `{`, a group `(`, or any other regex metacharacter. A
-    backslash-escaped character (e.g. `\\.`) contributes its literal value;
-    a backslash-escape sequence (e.g. `\\s`) ends the prefix."""
+    """The longest leading literal of a regex, lowercased, as a gitleaks
+    keyword. Stops at the first metacharacter; `\\.` contributes `.`, while
+    `\\s` ends it."""
     result: list[str] = []
     i = 0
     while i < len(pattern_str):
@@ -593,23 +534,15 @@ def _gitleaks_literal_prefix(pattern_str: str) -> str:
 
 
 def _gitleaks_rule_id(name: str) -> str:
-    """Derive a `dlp-`-prefixed gitleaks rule id from a DLP detector name."""
+    """A `dlp-`-prefixed gitleaks rule id for a DLP detector name."""
     return "dlp-" + re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
 def git_gate_render_gitleaks_config() -> str:
-    """Render a gitleaks TOML config that extends the default ruleset with
-    context-free mirrors of the egress DLP TOKEN_PATTERNS.
-
-    Uses `[extend] useDefault = true` to keep all built-in gitleaks rules and
-    adds each DLP pattern under a `dlp-`-prefixed id. This gives the git-gate
-    hook the same token-shape coverage as the egress DLP without requiring a
-    surrounding context keyword (which the default aws-access-token rule and
-    others need).
-
-    Written to the stage dir at prepare time and copied into the gateway at
-    `/etc/git-gate/gitleaks.toml`. The hook passes `--config` to both its
-    gitleaks invocations so this file is always active."""
+    """A gitleaks TOML that keeps the default rules (`useDefault = true`) and
+    adds each egress DLP token pattern without a context keyword, so pushes get
+    the same token-shape coverage as egress. Installed at
+    `/etc/git-gate/gitleaks.toml`."""
     lines = [
         "# Auto-generated from TOKEN_PATTERNS in dlp_detectors.py — edit there.",
         "[extend]",
@@ -632,22 +565,11 @@ def git_gate_render_gitleaks_config() -> str:
 
 
 def git_gate_render_access_hook() -> str:
-    """`git daemon --access-hook` script. Runs before each protocol
-    service; for `upload-pack` (fetch / clone / ls-remote / pull) it
-    refreshes the bare repo from upstream first, so the response
-    reflects upstream's current state. For other services (notably
-    `receive-pack`) it returns 0 immediately and lets the existing
-    pre-receive hook gate the operation. POSIX sh.
+    """The access hook (POSIX sh). For `upload-pack` it refreshes the bare repo
+    from upstream first, failing if the upstream is unreachable; other services
+    pass through to pre-receive.
 
-    The hook receives:
-      $1  service name (`upload-pack`, `receive-pack`, ...)
-      $2  absolute path to the resolved repo
-      $3  client hostname (unused)
-      $4  client tcp address (unused)
-
-    Fail-closed on upstream errors: the agent's fetch fails too,
-    so it never silently sees stale data — matches the PRD's
-    'equivalent to operations against the upstream' contract."""
+      $1  service name    $2  repo path    $3, $4  client host and address"""
     return r"""#!/bin/sh
 # git-gate access-hook. $1=service $2=repo $3=host $4=peer
 set -u

@@ -1,1 +1,1 @@
-"""bot-bottle: Python implementation of the agent container launcher."""
+"""bot-bottle: run AI coding agents in isolated bottles."""

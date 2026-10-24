@@ -1,4 +1,4 @@
-"""Prepare step for the Firecracker backend."""
+"""Firecracker `resolve_plan`."""
 
 from __future__ import annotations
 

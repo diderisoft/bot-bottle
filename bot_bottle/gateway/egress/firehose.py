@@ -1,19 +1,14 @@
-"""The egress proxy's side of the request firehose (PRD 0093).
+"""Egress side of the request firehose.
 
-When something is listening, each request is snapshotted as the agent sent
-it, before the gateway injects a credential: `Authorization`,
-`Proxy-Authorization` and `Cookie` are dropped whatever their value, the
-bottle's provisioned secrets are scrubbed, and a body keeps its first
-`max_body_bytes` plus the SHA-256 of the whole. When the request finishes
-(answered, blocked or failed) the snapshot becomes one OCSF 1.9.0 HTTP
-Activity record.
+While something is listening, each request is snapshotted as the agent sent it,
+before credential injection: `Authorization`, `Proxy-Authorization` and
+`Cookie` dropped, provisioned secrets scrubbed, the body capped at
+`max_body_bytes` plus a SHA-256 of the whole. When it finishes it becomes one
+OCSF 1.9.0 HTTP Activity record.
 
-`FirehoseClient` batches records to the orchestrator, which passes them to the
-host controller. Its reply says whether anything is consuming the stream and
-what to capture; while nothing is, `wanted` is False and no snapshot is taken,
-and the client asks again every `ASK_SECONDS`. The stream is lossy: a full
-queue or a failed send drops records and counts them, and a request is never
-slowed by it.
+`FirehoseClient` batches to the orchestrator; the reply says whether to
+capture. While nothing listens, no snapshots are taken and it asks again every
+`ASK_SECONDS`. Lossy, and never slows a request.
 """
 
 from __future__ import annotations
@@ -49,7 +44,7 @@ TIMEOUT_SECONDS = 5.0
 
 def body_capture(raw: bytes, limit: int, env: typing.Mapping[str, str]) -> dict[str, object]:
     """The first `limit` bytes as text, secrets scrubbed; a longer body is
-    marked truncated and carries the SHA-256 of the whole."""
+    marked truncated with the whole body's SHA-256."""
     out: dict[str, object] = {
         "text": redact_tokens(raw[:limit].decode("utf-8", errors="replace"), env=env),
         "bytes": len(raw),
@@ -62,9 +57,8 @@ def body_capture(raw: bytes, limit: int, env: typing.Mapping[str, str]) -> dict[
 
 def snapshot(flow: typing.Any, env: typing.Mapping[str, str],
              capture: Capture, *, metadata_only: bool = False) -> dict[str, object]:
-    """The request as the agent sent it, made safe to stream. `metadata_only`
-    (the bottle's `audit.firehose: metadata`) keeps just where it went: no
-    path, query, headers or body."""
+    """The request as sent, made safe to stream. `metadata_only` keeps only
+    where it went."""
     req = flow.request
     snap: dict[str, object] = {
         "method": req.method, "scheme": getattr(req, "scheme", "") or "",
@@ -180,7 +174,7 @@ class FirehoseClient:
             with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
                 self._capture = Capture.from_json(json.loads(resp.read() or b"{}"))
         except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-            # Lossy: the batch is gone, and capture pauses until the next ask.
+            # Lossy: drop the batch; capture pauses until the next ask.
             with self._lock:
                 self._dropped += len(batch) + dropped
             self._capture = Capture(wanted=False)
@@ -206,7 +200,7 @@ class EgressFirehose:
                 "capture": capture, "env": env, "metadata_only": metadata_only}
 
     def mark(self, flow: typing.Any, decision: str) -> None:
-        """Note a decision that isn't the default `allowed` (e.g. redacted)."""
+        """Note a non-default decision (e.g. redacted)."""
         entry = getattr(flow, "metadata", {}).get(_SNAPSHOT_KEY)
         if entry is not None:
             entry["decision"] = decision

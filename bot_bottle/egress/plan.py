@@ -1,10 +1,4 @@
-"""Egress launch DTOs.
-
-`EgressRoute` (the host-side extension of the addon's wire `Route`) and
-`EgressPlan` (the launch plan the backend contract references). Pure value
-types — the route-building / rendering logic and the `Egress` service live in
-`egress.service`.
-"""
+"""Egress launch types: `EgressRoute` and `EgressPlan`."""
 
 from __future__ import annotations
 
@@ -16,18 +10,9 @@ from ..gateway.egress.types import Route
 
 @dataclass(frozen=True)
 class EgressRoute(Route):
-    """Host-side extension of the addon's `Route`.
-
-    Inherits `host`, `matches`, `auth_scheme`, and `token_env`
-    from the gateway's wire `Route` — those are the fields that cross the
-    YAML wire into the gateway. The fields below are host-only and
-    are never serialised to the addon.
-
-    `token_ref` is the host env var the CLI reads at launch and forwards
-    into the container's environ under `token_env`.
-
-    `roles` carries the manifest route's role tuple (reserved for
-    future use; always empty today)."""
+    """Host-side extension of the wire `Route`; the fields here never reach the
+    gateway. `token_ref` is the host secret forwarded under `token_env`.
+    `roles` is reserved and always empty."""
 
     token_ref: str = ""
     roles: tuple[str, ...] = ()
@@ -46,7 +31,7 @@ class EgressPlan:
     log: int = 0
     canary: str = ""
     canary_env: str = ""
-    # `audit.delivery` for this bottle, the host default filled in.
+    # `audit.delivery`, defaulted from the host.
     audit_delivery: str = "best_effort"
     # `audit.firehose`: `full`, or `metadata` to keep bodies and headers out.
     firehose: str = "full"

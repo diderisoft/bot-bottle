@@ -1,11 +1,4 @@
-"""Shared helpers used across backends' resolve_plan steps.
-
-Each helper owns one well-defined step of the per-bottle plan
-resolution so the backends don't repeat the same logic.
-Backend-specific steps (container names, env-file, per-bottle
-Dockerfile overrides, subnet allocation) stay in the backend's own
-resolve_plan.py.
-"""
+"""Plan-resolution steps shared by every backend's `resolve_plan`."""
 
 from __future__ import annotations
 
@@ -37,13 +30,8 @@ from . import BottleSpec
 
 
 def mint_slug(spec: BottleSpec) -> str:
-    """Return the bottle identity: the recorded identity for a resume,
-    or a freshly minted one for a new start.
-
-    When a label is provided it becomes the full slug (no random suffix),
-    so two launches with the same label collide by design.  When no label
-    is given the identity is minted with a random suffix to avoid
-    collisions between anonymous launches of the same agent."""
+    """The bottle identity: the recorded one on resume, else the label as-is
+    (so equal labels collide by design), else a freshly minted one."""
     if spec.identity:
         return spec.identity
     if spec.label:
@@ -54,9 +42,8 @@ def mint_slug(spec: BottleSpec) -> str:
 def write_launch_metadata(
     slug: str, spec: BottleSpec, *, compose_project: str, backend: str,
 ) -> None:
-    """Persist launch metadata so `cli.py resume <identity>` can
-    reconstruct the spec. Idempotent — re-writes on resume with a
-    refreshed started_at."""
+    """Write launch metadata for `resume`. Rewritten on resume with a fresh
+    `started_at`."""
     write_metadata(BottleMetadata(
         identity=slug,
         agent_name=spec.agent_name,
@@ -73,8 +60,8 @@ def write_launch_metadata(
 
 
 def prepare_agent_state_dir(slug: str, manifest: Manifest) -> tuple[Path, Path]:
-    """Create the agent state subdir, write the prompt file.
-    Returns (agent_dir, prompt_file)."""
+    """Create the agent state dir and write the prompt file. Returns
+    (agent_dir, prompt_file)."""
     agent = manifest.agent
     agent_dir = agent_state_dir(slug)
     agent_dir.mkdir(parents=True, exist_ok=True)
@@ -101,9 +88,8 @@ def prepare_egress(
 
 
 def prepare_supervise(bottle: ManifestBottle, slug: str) -> SupervisePlan | None:
-    """Prepare the supervise daemon state dir and migrate the host database.
-    Returns None when bottle.supervise is falsy. `internal_network` is set by
-    the launch step before `.start`."""
+    """Prepare the supervise state dir and migrate the host DB. None when the
+    bottle doesn't use supervise."""
     if not bottle.supervise:
         return None
     supervise_state_dir(slug).mkdir(parents=True, exist_ok=True)
@@ -113,8 +99,7 @@ def prepare_supervise(bottle: ManifestBottle, slug: str) -> SupervisePlan | None
 
 
 def merge_provision_env_vars(provision: AgentProvisionPlan) -> AgentProvisionPlan:
-    """Fold provision.env_vars into guest_env (setdefault semantics)
-    and return a new plan with the merged guest_env."""
+    """Merge `provision.env_vars` into `guest_env` (existing keys win)."""
     merged = dict(provision.guest_env)
     for key, val in provision.env_vars.items():
         merged.setdefault(key, val)
@@ -122,11 +107,8 @@ def merge_provision_env_vars(provision: AgentProvisionPlan) -> AgentProvisionPla
 
 
 def reject_nested_containers(backend: str, manifest: Manifest) -> None:
-    """Fail loudly when a backend cannot honor `nested_containers: true`.
-
-    Silently ignoring it would hand the agent a bottle where `docker` is not
-    there — and the only sound alternatives on these backends (a host daemon
-    socket, a privileged container) are exactly what nested containers must not need.
+    """Fail when a backend can't honor `nested_containers: true`, rather than
+    hand the agent a bottle without `docker`.
     """
     if not manifest.bottle.nested_containers:
         return
@@ -138,7 +120,7 @@ def reject_nested_containers(backend: str, manifest: Manifest) -> None:
 
 
 def resolve_manifest_dockerfile(path_value: str, spec: BottleSpec) -> str:
-    """Resolve a manifest-supplied dockerfile path relative to user_cwd."""
+    """A manifest dockerfile path, resolved relative to `user_cwd`."""
     path = Path(os.path.expanduser(path_value))
     if not path.is_absolute():
         path = Path(spec.user_cwd) / path

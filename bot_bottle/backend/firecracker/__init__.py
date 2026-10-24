@@ -1,8 +1,5 @@
-"""Firecracker backend: Linux KVM microVM isolation.
-
-Thin by design: `FirecrackerBottleBackend` is re-exported lazily via
-`__getattr__`, so importing a leaf module under this package doesn't drag the
-backend (and the framework it pulls) into memory.
+"""Firecracker backend: Linux KVM microVMs. `FirecrackerBottleBackend` is
+re-exported lazily.
 """
 
 from __future__ import annotations

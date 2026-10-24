@@ -1,15 +1,8 @@
 """Cleanup of per-bottle state dirs, for every backend.
 
-State dirs (`~/.bot-bottle/state/<identity>/`) share one layout across
-backends, so their reaping lives here rather than in any one backend. A dir
-is an orphan when its bottle isn't live in any backend and it has no
-`.preserve` marker (a preserved session `resume` can pick up).
-
-Whether a bottle is live can only be known for a backend that was listed.
-So a dir is a candidate only when the backend it records (`metadata.json`;
-older dirs without one are Docker's) was listed successfully: when a
-backend's runtime is down, its bottles' state is left alone rather than
-guessed at.
+A dir is an orphan when its bottle isn't live in any backend and it isn't
+preserved. Only dirs whose recorded backend was listed successfully are
+candidates, so a down runtime's state is left alone.
 """
 
 from __future__ import annotations
@@ -24,13 +17,13 @@ from ..lib.log import info
 from ..paths import bot_bottle_root
 from .cleanup_control import CleanupFailures
 
-# What a state dir without a recorded backend belongs to (see BottleMetadata).
+# A state dir with no recorded backend is docker's.
 _DEFAULT_BACKEND = "docker"
 
 
 @dataclass(frozen=True)
 class StateCleanupPlan:
-    """Orphan state dirs cleanup will remove, by identity."""
+    """Orphan state dirs to remove, by identity."""
 
     identities: tuple[str, ...]
 
@@ -55,9 +48,8 @@ def state_backend(identity: str) -> str:
 
 
 def orphan_state_dirs(live: Collection[str], listed: Collection[str]) -> list[str]:
-    """Identities of state dirs whose bottle isn't `live` in any backend,
-    that aren't preserved, and whose backend is among `listed` (the backends
-    whose live bottles are known)."""
+    """State dirs whose bottle isn't `live`, that aren't preserved, and whose
+    backend is in `listed`."""
     state_root = bot_bottle_root() / "state"
     if not state_root.is_dir():
         return []

@@ -1,14 +1,6 @@
-"""The orchestrator's supervise service.
-
-`Supervisor` is the service object the `OrchestratorCore` owns and calls: it wraps
-the supervise queue + audit stores (queue proposals, record operator responses,
-write audit entries). Binding those operations to one object scoped to a
-`db_path` makes the orchestrator's supervise dependency explicit and injectable
-in tests.
-
-The vocabulary it speaks (`Proposal`, `Response`, the tool and status names) is
-`bot_bottle.contract.supervise`; callers import it from there. The data plane
-must NOT import this module; it reaches the queue over the control-plane RPC.
+"""`Supervisor`: the supervise queue and audit stores at `db_path`, as owned by
+`OrchestratorCore`. Types are in `contract.supervise`. The data plane never
+imports this.
 """
 
 from __future__ import annotations
@@ -21,8 +13,7 @@ from .store.queue_store import QueueStore
 
 
 class Supervisor:
-    """The supervise queue + audit I/O the orchestrator drives, against the
-    database at `db_path`."""
+    """Supervise queue and audit I/O against `db_path`."""
 
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
@@ -33,21 +24,21 @@ class Supervisor:
     def _audit(self) -> AuditStore:
         return AuditStore(self._db_path)
 
-    # --- Queue I/O ---------------------------------------------------------
+    # --- Queue I/O ---
 
     def write_proposal(self, proposal: Proposal) -> Path:
-        """Persist `proposal` in the queue database, mode 0o600."""
+        """Store `proposal` (0o600)."""
         return self._queue(proposal.bottle_slug).write_proposal(proposal)
 
     def read_proposal(self, bottle_slug: str, proposal_id: str) -> Proposal:
         return self._queue(bottle_slug).read_proposal(proposal_id)
 
     def list_pending_proposals(self, bottle_slug: str) -> list[Proposal]:
-        """A single bottle's undecided proposals, FIFO by arrival."""
+        """One bottle's undecided proposals, FIFO."""
         return self._queue(bottle_slug).list_pending_proposals()
 
     def list_all_pending_proposals(self) -> list[Proposal]:
-        """All pending proposals across bottles, sorted FIFO."""
+        """All pending proposals, FIFO."""
         return self._queue("").list_all_pending_proposals()
 
     def write_response(self, bottle_slug: str, response: Response) -> Path:
@@ -57,16 +48,15 @@ class Supervisor:
         return self._queue(bottle_slug).read_response(proposal_id)
 
     def archive_all_proposals(self, bottle_slug: str) -> None:
-        """Archive every proposal + response for `bottle_slug` (bottle teardown
-        / reconcile cleanup). Idempotent."""
+        """Archive every proposal and response for `bottle_slug`. Idempotent."""
         self._queue(bottle_slug).archive_all()
 
-    # --- Audit log ---------------------------------------------------------
+    # --- Audit log ---
 
     def write_audit_entry(self, entry: AuditEntry) -> Path:
         """Append `entry` to the host supervise audit table."""
         return self._audit().write_audit_entry(entry)
 
     def read_audit_entries(self, component: str, slug: str) -> list[AuditEntry]:
-        """Load all audit entries for the given component+slug."""
+        """All audit entries for the component and slug."""
         return self._audit().read_audit_entries(component, slug)

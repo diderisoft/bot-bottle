@@ -1,45 +1,23 @@
 #!/bin/sh
-# Egress daemon entrypoint inside the gateway (PRD 0024).
+# Egress entrypoint, started by the gateway supervisor.
 #
-# Extracted verbatim from Dockerfile.egress's prior inline `sh -c`
-# ENTRYPOINT so the supervisor in bot_bottle/gateway_init.py can
-# call it as a normal child. Behavior is unchanged:
-#
-#   * Upstream proxy: when EGRESS_UPSTREAM_PROXY is set, switch
-#     to `--mode upstream:URL` to chain through an upstream proxy.
-#     mitmproxy does NOT honor HTTPS_PROXY on its outbound side,
-#     so the upstream wiring has to be the mitmproxy mode flag,
-#     not env.
-#   * Upstream trust: when EGRESS_UPSTREAM_CA is set, build a
-#     combined trust bundle (system roots + upstream CA) and point
-#     mitmproxy at it. The option REPLACES mitmproxy's default
-#     trust store, so passing the upstream CA alone would break
-#     non-chained hosts.
-#   * `-s /app/egress_addon.py` loads the addon that resolves each
-#     request's policy from the orchestrator control plane by source
-#     IP (PRD 0070). There is no static routes file.
+# - EGRESS_UPSTREAM_PROXY chains through an upstream proxy with `--mode
+#   upstream:URL` (mitmproxy ignores HTTPS_PROXY outbound).
+# - EGRESS_UPSTREAM_CA adds a CA to the system roots for upstream trust (the
+#   option replaces mitmproxy's default store).
+# - The addon resolves each request's policy from the orchestrator.
 
 set -e
 
-# Fail closed on a missing policy source. The addon itself raises at
-# load when BOT_BOTTLE_ORCHESTRATOR_URL is unset (so mitmdump exits via
-# its errorcheck addon), but that leaves the fail-closed guarantee at the
-# mercy of a mitmproxy version keeping that behavior. Refuse here too, so
-# a misconfigured gateway can never come up as a bare TLS-bumping open
-# proxy with no policy — independent of mitmproxy's startup-error handling.
+# Fail closed without a policy source, independent of how mitmproxy handles
+# the addon's own load error.
 if [ -z "$BOT_BOTTLE_ORCHESTRATOR_URL" ]; then
   echo "egress: BOT_BOTTLE_ORCHESTRATOR_URL is required (no static routes fallback)" >&2
   exit 1
 fi
 
-# Pin mitmproxy's config dir to the bind-mount location of its CA
-# regardless of which user mitmdump runs as. In the legacy
-# four-daemon setup (Dockerfile.egress, USER mitmproxy) this
-# resolved naturally to `~mitmproxy/.mitmproxy`. In the PRD 0024
-# bundle (USER root) `~root/.mitmproxy` is empty, so without this
-# flag mitmdump would generate a fresh CA on the wrong path and
-# the agent's installed trust anchor would no longer match the
-# bumped leaf certs.
+# Pin the confdir to where the CA is mounted; under root `~/.mitmproxy` would
+# mint a fresh, untrusted CA.
 CONFDIR=/home/mitmproxy/.mitmproxy
 CONFDIR_FLAG="--set confdir=$CONFDIR"
 
@@ -48,9 +26,7 @@ if [ -n "$EGRESS_UPSTREAM_PROXY" ]; then
   MODE="--mode upstream:$EGRESS_UPSTREAM_PROXY --listen-port 9099"
 fi
 
-# Bind address. Docker backend wants `0.0.0.0` (agent dials egress
-# directly via the docker network alias). A VM backend uses
-# EGRESS_LISTEN_HOST when a non-default binding is needed.
+# EGRESS_LISTEN_HOST overrides the bind address.
 LISTEN_HOST_FLAG=""
 if [ -n "$EGRESS_LISTEN_HOST" ]; then
   LISTEN_HOST_FLAG="--listen-host $EGRESS_LISTEN_HOST"
@@ -63,11 +39,8 @@ if [ -n "$EGRESS_UPSTREAM_CA" ] && [ -f "$EGRESS_UPSTREAM_CA" ]; then
   TRUST_FLAG="--set ssl_verify_upstream_trusted_ca=$COMBINED"
 fi
 
-# Scope the proxy env to this process tree only. In the bundle
-# image (PRD 0024) multiple daemons share one container — setting
-# HTTPS_PROXY at the container level would route git-gate's git
-# pushes through an upstream proxy unintentionally. Setting them
-# here means only mitmdump's subprocess inherits them.
+# Proxy env for mitmdump only, so other gateway daemons don't route through the
+# upstream proxy.
 if [ -n "$EGRESS_UPSTREAM_PROXY" ]; then
   export HTTPS_PROXY="$EGRESS_UPSTREAM_PROXY"
   export HTTP_PROXY="$EGRESS_UPSTREAM_PROXY"

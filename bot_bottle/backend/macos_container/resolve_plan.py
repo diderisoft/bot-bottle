@@ -1,4 +1,4 @@
-"""Prepare step for the macOS Apple Container backend."""
+"""macOS `resolve_plan`."""
 
 from __future__ import annotations
 

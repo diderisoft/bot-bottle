@@ -1,11 +1,6 @@
-"""commit: freeze a running bottle's state to a resumable artifact.
-
-Docker bottles are committed to a local Docker image. Macos-container
-bottles are exported and rebuilt as a local Apple Container image.
-Firecracker bottles stream the guest rootfs out over SSH and rebuild a
-local Docker image. The resulting reference is stored in per-bottle
-state so the next `bot-bottle resume <slug>` boots from the snapshot
-instead of rebuilding from the Dockerfile.
+"""commit: freeze a running bottle to a resumable artifact (a docker image, an
+Apple Container image, or a firecracker rootfs tar), recorded so `resume
+<slug>` boots from it.
 """
 
 from __future__ import annotations

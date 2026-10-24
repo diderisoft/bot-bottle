@@ -1,19 +1,7 @@
-"""Host-side raw-mode wrapper for `container exec --interactive --tty`.
-
-Apple's `container exec --interactive --tty` does not set the host terminal to
-raw mode before starting its I/O relay.  Without raw mode the kernel line
-discipline buffers modifier-key escape sequences (e.g. Shift+Enter in
-modifyOtherKeys mode produces \\x1b[13;2~) until a carriage-return arrives, so
-they never reach Claude Code inside the container.
-
-This module sets the host terminal to raw mode, spawns the inner argv (the
-container exec command), and restores the original terminal attributes on
-exit.  When stdin is not a TTY (piped invocations, CI) it falls through to a
-bare subprocess.run so callers do not need to special-case non-interactive
-contexts.
-
-Usage (the `--` separator is the API contract — everything after it is the
-inner command):
+"""Raw-mode wrapper for `container exec --interactive --tty`, which doesn't set
+the host terminal raw, so modifier-key sequences (e.g. Shift+Enter) would sit
+in the line discipline until CR. Restores the terminal on exit; without a TTY
+it just runs the command.
 
     python pty_forward.py -- container exec --interactive --tty <name> <cmd>
 """
@@ -38,7 +26,7 @@ def _run_inner(inner: list[str]) -> int:
 
 
 def main(argv: list[str]) -> int:
-    """Entry point.  ``argv`` shape: ``-- <inner-argv...>``."""
+    """Entry point. `argv`: `-- <inner-argv...>`."""
     if len(argv) < 2 or argv[0] != "--":
         sys.stderr.write(
             "usage: python pty_forward.py -- <container-exec-argv...>\n"

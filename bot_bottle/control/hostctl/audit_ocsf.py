@@ -1,15 +1,8 @@
-"""Project a journal record onto OCSF 1.9.0.
-
-One journal record becomes one OCSF event, its class chosen from the record
-alone (`type`, `outcome`, `payload`), so the projection is deterministic and
-replayable. The typed OCSF fields are for querying; `raw_data` carries the
-journal line itself, so a receiver can recompute each record's hash and check
-the chain. Claims never land in a typed field: `untrusted` goes only under
-`unmapped.bot_bottle.untrusted`.
-
-A `restricted` record ships without `raw_data`, its payload or its claims:
-only the envelope and the chain fields, so the chain stays checkable for
-continuity without exposing the body.
+"""Project a journal record onto OCSF 1.9.0, deterministically from the record
+alone. Typed fields are for querying; `raw_data` carries the journal line so a
+receiver can check the chain. `untrusted` goes only under
+`unmapped.bot_bottle.untrusted`. A `restricted` record ships only the envelope
+and chain fields.
 """
 
 from __future__ import annotations
@@ -31,7 +24,7 @@ EVENT_LOG_ACTIVITY = 1008
 
 _HTTP_METHODS = {"CONNECT": 1, "DELETE": 2, "GET": 3, "HEAD": 4, "OPTIONS": 5,
                  "POST": 6, "PUT": 7, "TRACE": 8, "PATCH": 9}
-# outcome -> (action_id, disposition_id, status_id); None leaves it out.
+# outcome -> (action_id, disposition_id, status_id); None omits it.
 _OUTCOMES: dict[str, tuple[int | None, int | None, int]] = {
     "allowed": (1, 1, 1),
     "blocked": (2, 2, 2),
@@ -51,8 +44,8 @@ def _ms(iso: str) -> int | None:
         return None
 
 
-# type -> (class_uid, activity_id) for every type that doesn't depend on its
-# payload. Anything else not listed is an API Activity: Create.
+# type -> (class_uid, activity_id) for types not depending on payload; unlisted
+# types are API Activity: Create.
 _BY_TYPE: dict[str, tuple[int, int]] = {
     "egress.cutoff": (NETWORK_ACTIVITY, 2),  # Close
     "egress.anomaly": (DETECTION_FINDING, 1),  # Create
@@ -183,8 +176,7 @@ def to_ocsf(record: dict[str, Any]) -> dict[str, Any]:
     if record.get("activation"):
         event["actor"]["session"] = {"uid": record["activation"]}
     if record.get("bottle"):
-        # The bottle is the application acting. (`container` belongs to other
-        # classes, even under the container profile.)
+        # The bottle is the acting application.
         event["actor"]["app_name"] = record["bottle"]
     if record.get("manifest_digest"):
         event["policy"] = {"uid": record["manifest_digest"], "name": "manifest"}

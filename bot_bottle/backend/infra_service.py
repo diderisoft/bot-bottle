@@ -1,14 +1,5 @@
-"""The per-host infra service contract.
-
-`InfraService` is the backend-neutral composer of the per-host **pair**: the
-`Orchestrator` (control plane) + `Gateway` (data plane) services, brought up as
-an idempotent per-host singleton. One concrete impl per backend
-(`backend/*/infra.py`), mirroring how `Orchestrator` and `Gateway` each have a
-per-backend impl.
-
-The two backend-specific accessors (`orchestrator()` / `gateway()`) are the
-source of truth for how to reach each plane; the convenience `url()` /
-`is_healthy()` just delegate to the orchestrator.
+"""`InfraService`: brings up the per-host orchestrator + gateway pair. One impl
+per backend (`backend/*/infra.py`).
 """
 
 from __future__ import annotations
@@ -39,8 +30,7 @@ _HELD: dict[Path, int] = {}
 
 @contextmanager
 def _reentrant_flock(path: Path) -> Generator[None]:
-    """An exclusive flock on `path` that the holding process may re-enter
-    (a second flock on a new handle would deadlock against the first)."""
+    """Exclusive flock on `path`, re-entrant within this process."""
     if _HELD.get(path):
         _HELD[path] += 1
         try:
@@ -85,14 +75,11 @@ def recorded_infra_settings(backend: str) -> InfraSettings | None:
 
 
 class InfraService(abc.ABC):
-    """Compose + bring up the per-host orchestrator + gateway pair.
+    """Compose and bring up the per-host orchestrator + gateway pair.
 
-    Backend-neutral: docker/macOS run the pair as two containers, firecracker as
-    two microVMs. Callers read reach-info off `orchestrator()` / `gateway()`.
-
-    `ensure_running` is the same everywhere: a backend's `_bring_up` brings the
-    pair up and reports whether either plane was (re)started, and only then are
-    running bottles reattached. Backends never decide that."""
+    `ensure_running` is shared: a backend's `_bring_up` starts or adopts the
+    pair and reports whether either plane restarted; only then are running
+    bottles reattached."""
 
     # Names this backend's "reattach pending" marker.
     name: str = "infra"
@@ -100,11 +87,11 @@ class InfraService(abc.ABC):
 
     @abc.abstractmethod
     def orchestrator(self) -> Orchestrator:
-        """The control-plane service. Cheap to reconstruct."""
+        ...
 
     @abc.abstractmethod
     def gateway(self) -> Gateway:
-        """The data-plane service. Cheap to reconstruct."""
+        ...
 
     def ensure_running(
         self,
@@ -113,19 +100,13 @@ class InfraService(abc.ABC):
         attach_policy: AttachPolicy = AttachPolicy.STRICT,
         launch_stages: bool = False,
     ) -> str:
-        """Bring the orchestrator + gateway pair up (idempotent per-host
-        singleton — a healthy, current pair is left running) and, when either
-        plane was (re)started, reattach every running bottle to it. Returns
-        the host control-plane URL. Raises `OrchestratorStartError` on
-        control-plane startup timeout.
+        """Bring the pair up (adopting a healthy one) and reattach running
+        bottles if either plane restarted. Returns the host control-plane URL;
+        raises `OrchestratorStartError` on timeout.
 
-        The marker is written before anything can restart and removed only
-        once the bring-up (and any reattach) finishes, so one that failed or
-        was interrupted anywhere is retried by the next bring-up even when it
-        adopts the pair. The whole sequence holds this backend's bring-up lock.
-        Under the default STRICT policy a failure ends the bring-up naming each
-        bottle. ``launch_stages`` (a bottle launch) marks this as its own
-        progress stage, then hands back to "Starting the bottle"."""
+        Holds the bring-up lock. A "reattach pending" marker is written first
+        and removed only on success, so an interrupted bring-up is retried by
+        the next one."""
         if launch_stages:
             log.stage("services", "Starting bot-bottle services")
         try:
@@ -162,17 +143,15 @@ class InfraService(abc.ABC):
 
     @contextmanager
     def bring_up_lock(self) -> Generator[None]:
-        """Exclusive, host-wide, per-backend lock over infra bring-up and
-        anything that must not race it (`rotate-ca`). Re-entrant within a
-        process; released if the process dies."""
+        """Host-wide, per-backend lock over infra bring-up and anything that
+        must not race it. Re-entrant within a process."""
         with _reentrant_flock(bot_bottle_root() / "infra" / f"{self.name}.lock"):
             yield
 
     @abc.abstractmethod
     def _bring_up(self, *, startup_timeout: float) -> tuple[str, bool]:
-        """Bring the pair up; return the host control-plane URL and whether the
-        orchestrator or the gateway was (re)started (and so lost its egress
-        tokens or per-bottle state) rather than adopted."""
+        """Bring the pair up; return the control-plane URL and whether either
+        plane was (re)started rather than adopted."""
 
     @abc.abstractmethod
     def stop(self) -> None:
@@ -180,8 +159,8 @@ class InfraService(abc.ABC):
 
     @abc.abstractmethod
     def gateway_attacher(self) -> GatewayAttacher:
-        """How this backend lists its running bottles and reattaches one to
-        the gateway."""
+        """Lists this backend's running bottles and reattaches one to the
+        gateway."""
 
     def _reattach_pending_marker(self) -> Path:
         return bot_bottle_root() / "infra" / f"{self.name}.reattach-pending"
@@ -197,18 +176,17 @@ class InfraService(abc.ABC):
         tmp.replace(path)
 
     def recorded_infra_fingerprint(self) -> str | None:
-        """The fingerprint of the `InfraSettings` the running pair was last
-        (re)started with, or None when none is recorded."""
+        """Fingerprint of the `InfraSettings` the running pair was started
+        with, or None."""
         record = _read_record(self.name)
         fingerprint = record.get("fingerprint") if record is not None else None
         return fingerprint if isinstance(fingerprint, str) else None
 
     def url(self) -> str:
-        """The host-facing control-plane URL the CLI reaches (the orchestrator's)."""
+        """Host-facing control-plane URL."""
         return self.orchestrator().url()
 
     def is_healthy(self) -> bool:
-        """True iff the control plane answers `/health`."""
         return self.orchestrator().is_healthy()
 
 

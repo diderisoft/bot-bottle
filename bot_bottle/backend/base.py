@@ -1,15 +1,8 @@
-"""The abstract backend contract.
+"""The abstract backend contract: `BottleSpec`/`BottlePlan` (from `plan`),
+`BottleCleanupPlan`, `Bottle`, `ExecResult`, `BottleImages` and
+`BottleBackend`.
 
-The backend-neutral types every bottle backend implements: the launch
-`BottleSpec` and `BottlePlan` (defined in `plan`, re-exported here), the
-`BottleCleanupPlan` ABC, the running-`Bottle`
-+ `ExecResult` shapes, `BottleImages`, and the `BottleBackend` ABC itself.
-
-This carries the framework imports (manifest, egress, git-gate, env, workspace,
-agent-provider) the contract's signatures and helpers need — which is why it
-lives here rather than in `backend/__init__.py`: touching an unrelated
-`backend.*` module then doesn't drag the whole framework into memory. The
-thin package `__init__` re-exports these names lazily.
+Kept out of `backend/__init__.py` because it imports the framework.
 """
 
 from __future__ import annotations
@@ -45,30 +38,26 @@ if TYPE_CHECKING:
 
 
 class BackendStatus(enum.IntEnum):
-    """Return codes for BottleBackend.status(). READY == 0 so callsites
-    can compare against 0 or the named constant interchangeably."""
+    """Return codes for `BottleBackend.status()`; READY is 0."""
     READY = 0
 
 
 class EnumerationError(RuntimeError):
-    """A backend could not produce an authoritative live-resource snapshot."""
+    """A backend couldn't produce an authoritative live-resource snapshot."""
 
 
 @dataclass(frozen=True)
 class BottleCleanupPlan(ABC):
-    """Base output of a backend's prepare_cleanup step. Concrete
-    subclasses (e.g. DockerBottleCleanupPlan) carry backend-specific
-    lists of resources to be removed and implement `print` + `empty`."""
+    """A backend's `prepare_cleanup` result: the resources it would remove."""
 
     @abstractmethod
     def print(self) -> None:
-        """Render the cleanup y/N summary to stderr."""
+        """Print the cleanup y/N summary to stderr."""
 
     @property
     @abstractmethod
     def empty(self) -> bool:
-        """True iff there is nothing to clean up; the CLI uses this to
-        short-circuit before showing the y/N."""
+        """True iff there is nothing to clean up."""
 
     @abstractmethod
     def intersect(self, current: "BottleCleanupPlan") -> "BottleCleanupPlan":
@@ -77,10 +66,7 @@ class BottleCleanupPlan(ABC):
 
 @dataclass(frozen=True)
 class ExecResult:
-    """Captured result of `Bottle.exec`. Backend-neutral: the Docker
-    impl populates it from a `subprocess.CompletedProcess`, but a
-    VM backend could populate it from any source that produces a
-    returncode + captured streams."""
+    """Captured result of `Bottle.exec`."""
 
     returncode: int
     stdout: str
@@ -89,77 +75,49 @@ class ExecResult:
 
 @dataclass(frozen=True)
 class ActiveAgent:
-    """One currently-running agent, as the CLI `active` and
-    dashboard agents pane render it. ("Agent" is the project's
-    consistent name for the thing running inside a bottle — the
-    bottle is the container, the agent is what runs in it.)
-
-    Fields are deliberately backend-neutral. `services` is the set
-    of gateway daemons currently up for this bottle (`egress`,
-    `git-gate`, `supervise`); the dashboard uses it to
-    gate edit verbs. `backend_name` is the matching key in
-    `_BACKENDS` (`docker` / `firecracker` / `macos-container`) — used by the active-
-    list rendering to disambiguate and by the dashboard's
-    re-attach path."""
+    """One running agent, as `active` renders it. `services` is the gateway
+    services up for it (`egress`, `git-gate`, `supervise`); `backend_name` is
+    its backend's name."""
 
     backend_name: str
     slug: str
-    agent_name: str       # from metadata.json; "?" if missing
-    started_at: str       # ISO 8601 from metadata.json; "" if missing
+    agent_name: str  # from metadata.json; "?" if missing
+    started_at: str  # ISO 8601 from metadata.json; "" if missing
     services: tuple[str, ...]  # alphabetical
     label: str = ""
     color: str = ""
 
 
 class Bottle(ABC):
-    """Handle to a running bottle. Yielded by a backend's launch step.
-
-    `exec_agent` runs the selected agent CLI inside the bottle and
-    blocks until the session ends. `exec` runs a POSIX shell script inside the bottle
-    and returns the captured result. `cp_in` copies a host path into
-    the bottle. `close` is an idempotent alias for context-manager
-    teardown.
+    """Handle to a running bottle, yielded by a backend's launch step. `close`
+    is an idempotent alias for context-manager teardown.
     """
 
     name: str
-    # This run's id in the orchestrator registry, minted when it registered:
-    # the audit journal's `activation`. Empty until the launch has registered.
+    # This run's orchestrator registry id (the audit journal's `activation`).
+    # Empty until registered.
     registry_id: str = ""
 
     @abstractmethod
     def agent_argv(
         self, argv: list[str], *, tty: bool = True,
     ) -> list[str]:
-        """Return the host-side argv that runs the selected agent
-        inside the bottle. Implementations transparently inject
-        `--append-system-prompt-file` when the bottle was launched
-        with a provisioned prompt path."""
+        """Host argv that runs the agent in the bottle, with the provider's
+        prompt args when a prompt was provisioned."""
         ...
 
     @abstractmethod
     def agent_command(self, argv: list[str]) -> tuple[list[str], dict[str, str]]:
-        """The host command `exec_agent(argv, tty=True)` runs, terminal
-        title/color wrapper included, and the env it adds to this
-        process's. The host controller runs it in a tmux session."""
+        """The host command and added env that `exec_agent(argv, tty=True)`
+        runs; the host controller runs it in tmux."""
 
     @abstractmethod
     def exec_agent(self, argv: list[str], *, tty: bool = True) -> int: ...
 
     @abstractmethod
     def exec(self, script: str, *, user: str = "node") -> ExecResult:
-        """Run `script` as a POSIX shell script inside the bottle as
-        `user` (default `node`, matching the agent image's USER
-        directive) and return the captured stdout/stderr/returncode.
-        The bottle's environment (including HTTPS_PROXY pointing at
-        the egress daemon) is inherited by the child. Non-zero
-        exit does not raise — callers inspect `returncode`
-        themselves.
-
-        Pass `user="root"` for shell-outs that need privileged file
-        writes / package install — provisioning calls that need root
-        bypass `Bottle.exec` and use the backend-specific raw
-        machine-exec helper, but the tests have a legitimate use
-        case for arbitrary-user runs."""
+        """Run `script` as a POSIX shell script in the bottle as `user` and
+        return the captured result. Non-zero exit doesn't raise."""
 
     @abstractmethod
     def cp_in(self, host_path: str, container_path: str) -> None: ...
@@ -174,43 +132,31 @@ CleanupT = TypeVar("CleanupT", bound=BottleCleanupPlan)
 
 @dataclass(frozen=True)
 class BottleImages:
-    """Resolved image references (or artifact paths) for a bottle launch.
-
-    For Docker/macOS-container backends, `agent` and `sidecar` are string
-    image refs. For the smolmachines backend they are Path objects pointing
-    to pre-built `.smolmachine` artifacts."""
+    """Resolved image references or artifact paths for a launch."""
 
     agent: str | Path
     sidecar: str | Path = ""
 
 
 class BottleBackend(ABC, Generic[PlanT, CleanupT]):
-    """Abstract base for selectable bottle backends. Concrete subclasses
-    (e.g. DockerBottleBackend) own their own prepare/launch impls.
-    Parameterized over the backend's concrete plan + cleanup-plan types
-    so subclass methods get the narrow type without isinstance
-    boilerplate."""
+    """Abstract base for bottle backends, parameterized over the concrete plan
+    and cleanup-plan types."""
 
     name: str
 
-    # Whether this backend can run a container engine *inside* the bottle.
-    # Backends that cannot must reject `nested_containers: true` rather than
-    # reach for a host daemon socket.
+    # Whether a container engine can run inside the bottle. Backends that can't
+    # must reject `nested_containers: true`.
     supports_nested_containers: bool = False
-    # Whether the backend can mount the user's directory into the bottle.
-    # Firecracker can't (no virtio-fs or 9p, by design), so it copies instead.
+    # Whether the user's directory can be mounted. Firecracker copies instead.
     supports_workspace_mount: bool = True
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
     def prepare(self, spec: BottleSpec, stage_dir: Path, secrets: SecretSource) -> PlanT:
-        """Template method: run cross-backend host-side validation, then
-        delegate to the subclass's `_resolve_plan` for the
-        backend-specific resolution (names, scratch files, etc.). The
-        validation step is enforced here so a future backend cannot
-        accidentally skip it. No remote/runtime resources are created.
-        `secrets` supplies the bottle's secret values, now and at launch."""
+        """Run the shared host-side validation, then the subclass's
+        `_resolve_plan`. Creates no runtime resources. `secrets` supplies
+        secret values now and at launch."""
         from .preparation import BottlePreparationPlanner
         if spec.mount_cwd and not self.supports_workspace_mount:
             warn(f"{self.name} can't mount {spec.user_cwd}; copying it in instead "
@@ -235,19 +181,13 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         return {}
 
     def _preflight(self) -> None:
-        """
-        tasks to do before resolving a plan
-        """
+        """Host checks to run before resolving a plan."""
         pass
 
     def _validate(self, spec: BottleSpec) -> Manifest:
-        """Cross-backend pre-launch checks. Parses the selected agent and
-        its bottle (raising ManifestError on invalid content), confirms
-        skills are present on the host, and every git IdentityFile resolves.
-
-        Returns the loaded Manifest for the selected agent. Subclasses with
-        additional preconditions should override and call
-        `super()._validate(spec)` first."""
+        """Shared pre-launch checks: parse the agent and its bottle, check
+        skills exist and every git IdentityFile resolves. Returns the Manifest.
+        Overrides call `super()._validate(spec)` first."""
         manifest = spec.manifest.load_for_agent(spec.agent_name, spec.bottle_names)
         self._validate_skills(manifest.agent.skills)
         self._validate_agent_provider_dockerfile(spec, manifest)
@@ -255,8 +195,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
     def _validate_skills(self, skills: Sequence[str]) -> None:
         """Each named skill must be a directory under the host's
-        `~/.claude/skills/`. The check is purely host-side, so the
-        default impl covers every backend."""
+        `~/.claude/skills/`."""
         for name in skills:
             path = host_skill_dir(name)
             if not os.path.isdir(path):
@@ -295,60 +234,38 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
                       supervise_plan: SupervisePlan | None,
                       stage_dir: Path,
                       secrets: SecretSource) -> PlanT:
-        """Backend-specific plan resolution: image/container names,
-        env-file, prompt-file, proxy plan, runtime detection. Called by
-        `prepare` after `_validate` succeeds. Instance name, image,
-        prompt file, Dockerfile path, and guest home all live on
-        `agent_provision_plan` — the source of truth."""
+        """Backend-specific plan resolution, after `_validate`. Instance name,
+        image, prompt file and guest home live on `agent_provision_plan`."""
 
     def prelaunch_checks(self, plan: PlanT) -> None:
-        """Raise StaleImageError if any cached image used by this plan is stale.
-        No-op default; backends override to call the shared check_stale*
-        helpers on their image/artifact timestamps. Called by the CLI before
-        launch so the operator can be prompted outside the launch context."""
+        """Raise StaleImageError if a cached image this plan uses is stale.
+        Called by the CLI before launch, so it can prompt. No-op by default."""
 
     @contextmanager
     def launch(self, plan: PlanT) -> Generator[Bottle, None, None]:
-        """Template: build or load images, then delegate to _launch_impl."""
+        """Build or load images, then run `_launch_impl`."""
         log.stage("image", "Getting images")
         images = self._build_or_load_images(plan)
-        # The backend's bring-up marks "Starting bot-bottle services" and then
-        # "Starting the bottle" (InfraService.ensure_running).
         with self._launch_impl(plan, images) as bottle:
             yield bottle
 
     @abstractmethod
     def _build_or_load_images(self, plan: PlanT) -> BottleImages:
-        """Return the agent and sidecar image references (or artifact paths)
-        for this plan, building fresh images when the policy requires it."""
+        """Agent and gateway image references (or artifact paths), built when
+        the policy requires."""
 
     @abstractmethod
     def _launch_impl(self, plan: PlanT, images: BottleImages) -> AbstractContextManager[Bottle]:
-        """Bring up the bottle using pre-resolved images; yield a handle; tear down on exit."""
+        """Bring up the bottle from resolved images; yield a handle; tear down
+        on exit."""
 
     def provision(self, plan: PlanT, bottle: "Bottle") -> str | None:
-        """Copy host-side files (CA cert, prompt, skills, .git) into
-        the running bottle. Called from `launch` after the container
-        / machine is up. Returns the in-container prompt path if a
-        prompt was provisioned, else None — the Bottle handle uses it
-        to decide whether to add provider-specific prompt args to the
-        agent's argv.
+        """Copy host files into the running bottle and return the guest prompt
+        path, or None.
 
-        Default orchestration: ca → prompt → provider apply → skills
-        → workspace → git → supervise-mcp. CA install runs first so
-        the agent's trust store is rebuilt before anything inside the
-        agent makes a TLS call.
-
-        The per-provider steps (prompt, skills,
-        declarative provision-plan apply, supervise MCP registration)
-        live on the `AgentProvider` plugin. The backend only owns the
-        steps that are about backend infrastructure (CA, workspace,
-        git) and surfaces the supervise daemon URL its launch step
-        knows about via `supervise_mcp_url`.
-
-        The egress proxy is on the agent's HTTP_PROXY path, so every tool
-        that respects HTTPS_PROXY (claude-code, git over HTTPS, npm, curl)
-        is intercepted without per-tool reconfiguration."""
+        Order: CA, prompt, provider steps, skills, workspace, git, supervise
+        MCP. The CA goes first so the trust store is rebuilt before any TLS
+        call. Provider-specific steps live on the `AgentProvider`."""
         log.stage("provision", "Setting up the agent")
         provider = get_provider(plan.agent_provision.template)
         provider.provision_ca(bottle, plan)
@@ -363,14 +280,10 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         return prompt_path
 
     def provision_workspace(self, plan: PlanT, bottle: "Bottle") -> None:
-        """Copy the operator workspace into the running bottle.
-
-        This is the only supported workspace-provisioning path: Docker
-        does not build a derived image containing the current
-        workspace."""
+        """Copy the operator workspace into the running bottle."""
         workspace = plan.workspace_plan
         if workspace.mount:
-            return  # the backend mounted it at launch
+            return  # mounted at launch
         if not (workspace.enabled and workspace.copy_contents):
             return
 
@@ -378,8 +291,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         owner = shlex.quote(workspace.owner)
         mode = shlex.quote(workspace.mode)
         is_git = workspace.has_host_git_dir
-        # One filtered tarball, copied in as a single file and unpacked: much
-        # faster than copying the directory (dependencies, build output).
+        # One filtered tarball, copied and unpacked in the guest.
         with tempfile.TemporaryDirectory(prefix="bot-bottle-ws.") as tmp:
             tarball = Path(tmp) / "workspace.tar"
             size = pack_workspace(workspace.host_path, tarball, is_git=is_git)
@@ -404,86 +316,51 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
             bottle.exec(record_base_script(guest_path))
 
     def supervise_mcp_url(self, plan: PlanT) -> str:
-        """Return the agent-side URL of the per-bottle supervise
-        gateway, or "" when this bottle has no gateway. The provider
-        plugin's `provision_supervise_mcp` uses it to register the
-        MCP entry inside the guest.
-
-        Default returns "" so backends without supervise support
-        don't have to implement it. Docker and firecracker override."""
+        """The agent-side URL of the supervise server, or "" when there is
+        none."""
         del plan
         return ""
 
     @abstractmethod
     def infra_service(self) -> "InfraService":
-        """This backend's per-host orchestrator + gateway pair. The
-        one hook a backend implements to get bring-up, reattaching running
-        bottles after a restart, and CA rotation."""
+        """This backend's orchestrator + gateway pair: bring-up, reattach and
+        CA rotation all go through it."""
 
     def ensure_orchestrator(self) -> str:
-        """Bring up this backend's per-host orchestrator + shared gateway
-        (idempotent) and return the host-reachable control-plane URL. `launch`
-        and operator tools (`supervise`) both start the control plane here."""
+        """Bring up the infra pair (idempotent) and return the host
+        control-plane URL."""
         return self.infra_service().ensure_running()
 
     @abstractmethod
     def prepare_cleanup(self) -> CleanupT:
-        """Enumerate orphaned resources from previous bottles. No side
-        effects; safe to call before the y/N."""
+        """Find orphaned resources from earlier bottles. No side effects."""
 
     @abstractmethod
     def cleanup(self, plan: CleanupT) -> None:
-        """Remove everything described by the cleanup plan."""
+        """Remove everything in the cleanup plan."""
 
     @abstractmethod
     def enumerate_active(self) -> Sequence[ActiveAgent]:
-        """Return every currently-running agent on this backend.
-        Empty when none. Backend-specific: docker queries `docker
-        compose ls`; firecracker cross-references its running gateway
-        containers against per-bottle metadata."""
+        """Every running agent on this backend."""
 
     @classmethod
     @abstractmethod
     def is_available(cls) -> bool:
-        """Whether this backend's runtime prerequisites are satisfied
-        on the current host. Docker → `docker` on PATH; firecracker →
-        Linux + KVM. Used by the cross-backend
-        `enumerate_active_agents` / `cmd_cleanup` to skip backends
-        the operator hasn't installed, so a docker-only host
-        doesn't fail when `cli.py active` walks past
-        firecracker."""
+        """Whether this backend's runtime prerequisites are met on this host.
+        Cross- backend listing and cleanup skip backends that aren't."""
 
     @abstractmethod
     def setup(self) -> int:
-        """Emit this backend's one-time host setup — privileged network
-        pool, daemon bring-up, install pointers, etc. — as
-        host-appropriate config or commands. Prints to stdout/stderr and
-        returns a shell exit code (0 = nothing to report / success). A
-        backend that needs no host setup prints a short note and returns
-        0. Invoked generically by `bot-bottle backend setup [--backend=…]`
-        so operators can provision any backend without a
-        backend-specific command."""
+        """Print this backend's one-time host setup (network pool, daemons,
+        install pointers) and return a shell exit code. Run by `bot-bottle
+        backend setup`."""
 
     @abstractmethod
     def status(self, *, quiet: bool = False) -> int:
-        """Report whether this backend's prerequisites are satisfied on
-        the host — binaries, daemon reachability, network pool, range
-        conflicts, etc. Returns BackendStatus.READY (0) when the backend
-        is ready to launch and non-zero when something is missing.
-
-        When quiet=False (default) prints a human-readable summary to
-        stderr. When quiet=True returns the status code silently —
-        useful for cheap programmatic checks.
-
-        Invoked by `bot-bottle backend status [--backend=…]` (quiet=False)
-        and by is_backend_ready() (caller-controlled)."""
+        """Whether the backend's prerequisites are met: `BackendStatus.READY`
+        (0) or non-zero. Prints a summary to stderr unless `quiet`."""
 
     @abstractmethod
     def teardown(self) -> int:
-        """Undo `setup()` — the inverse operation, surfaced as
-        `bot-bottle backend teardown [--backend=…]` (uninstall). Symmetric
-        with setup: where setup is advisory (prints the privileged
-        commands / declarative config to apply), teardown prints the
-        commands / config change to remove the host prerequisites. A
-        backend with no host setup prints a short note and returns 0.
-        Not called by the launch path or the test suite."""
+        """Print how to undo `setup()` and return a shell exit code. Run by
+        `bot-bottle backend teardown`."""

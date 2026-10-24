@@ -1,14 +1,8 @@
-"""Gitea deploy-key provisioner.
+"""Gitea deploy-key provisioner: `ssh-keygen` keypairs registered and deleted
+through Gitea's deploy-key API (stdlib only).
 
-Generates ed25519 keypairs via `ssh-keygen` and registers / deletes
-them using the Gitea deploy-key HTTP API. No new Python dependencies —
-only stdlib `urllib.request` and `subprocess`.
-
-Required token permissions (Gitea "Applications" → "Generate Token"):
-  - Repository: Read & Write
-    Grants POST /api/v1/repos/{owner}/{repo}/keys (create deploy key)
-    and DELETE /api/v1/repos/{owner}/{repo}/keys/{id} (revoke deploy key).
-    No other scopes are needed."""
+The token needs Repository: Read & Write (POST and DELETE
+/api/v1/repos/{owner}/{repo}/keys)."""
 
 from __future__ import annotations
 
@@ -21,25 +15,22 @@ from pathlib import Path
 
 from ...deploy_key_provisioner import DeployKeyCollisionError, DeployKeyProvisioner
 
-# Timeout for ssh-keygen and Gitea API HTTP calls. A hung Gitea instance at
-# prepare time would stall bottle launch indefinitely without this bound.
+# Bounds ssh-keygen and Gitea calls so a hung Gitea can't stall a launch.
 _API_TIMEOUT_SECS = 30
 _KEYGEN_TIMEOUT_SECS = 10
 
 
 class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
-    """Manages deploy keys on a Gitea instance."""
+    """Deploy keys on a Gitea instance."""
 
     def __init__(self, *, token: str, api_url: str) -> None:
         self._token = token
         self._api_url = api_url.rstrip("/")
 
     def create(self, owner_repo: str, title: str) -> tuple[str, bytes]:
-        """Generate an ed25519 keypair, register the public half as a
-        repo deploy key, and return `(key_id, private_key_bytes)`.
-
-        The key is registered with `read_only=False` because git-gate
-        needs push access to forward gitleaks-scanned refs upstream."""
+        """Generate an ed25519 keypair, register the public half as a writable
+        deploy key (git-gate pushes with it), and return `(key_id,
+        private_key_bytes)`."""
         with tempfile.TemporaryDirectory() as tmpdir:
             key_path = Path(tmpdir) / "key"
             subprocess.run(
@@ -94,8 +85,8 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
         return str(body["id"]), private_key
 
     def delete(self, owner_repo: str, key_id: str) -> None:
-        """Delete the deploy key. HTTP 404 (already gone) is success.
-        All other errors raise RuntimeError so teardown halts."""
+        """Delete the deploy key; 404 is success. Other errors raise
+        RuntimeError."""
         owner, repo = _split_owner_repo(owner_repo)
         url = f"{self._api_url}/api/v1/repos/{owner}/{repo}/keys/{key_id}"
         req = urllib.request.Request(
@@ -122,7 +113,7 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
 
 
 def _split_owner_repo(owner_repo: str) -> tuple[str, str]:
-    """Split `'owner/repo'` into `('owner', 'repo')`."""
+    """`'owner/repo'` -> `('owner', 'repo')`."""
     parts = owner_repo.split("/", 1)
     if len(parts) != 2 or not all(parts):
         raise ValueError(

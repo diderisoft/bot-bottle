@@ -1,24 +1,15 @@
-"""Record a git-gate push decision: `python3 -m bot_bottle.gateway.git_gate.audit`.
-
-The pre-receive hook runs this once per decision (a ref accepted and
-forwarded, or a push refused), so it sends one event and exits, with no
-queue to retry from. It never fails the push: a lost event is reported on
-stderr and the hook goes on.
+"""Record one git-gate push decision. Run by the pre-receive hook per decision;
+never fails the push (a lost event is reported on stderr).
 
     audit <type> <outcome> <ref> [--report FILE | --findings N] [--detail TEXT]
           [--required]
     audit delivery
 
-`--required` (the bottle's `audit.delivery` is `required`) sends now and exits
-1 unless the event was written, so the hook can refuse the push. `delivery`
-prints the calling bottle's mode, and `required` when it can't be resolved:
-a push that can't be attributed can't be recorded either.
-
-`--report` is a gitleaks JSON report; its findings are counted, never copied.
-`--findings 0` says the ref was scanned clean; with neither, it wasn't scanned.
-The repository is the bare repo the hook runs in, and the bottle comes from
-`GIT_GATE_BOTTLE`, which the HTTP backend sets from the calling bottle's
-attributed namespace.
+`--required` exits 1 unless the event was written, so the hook can refuse.
+`delivery` prints the bottle's `audit.delivery`, or `required` when it can't be
+resolved. `--report` is a gitleaks JSON report (findings counted, never
+copied); `--findings 0` means scanned clean. The bottle comes from
+`GIT_GATE_BOTTLE`, set by the HTTP backend.
 """
 
 from __future__ import annotations
@@ -52,7 +43,7 @@ def _findings(report: str) -> int | None:
 
 
 def repository(cwd: Path) -> str:
-    """The bare repo's name, from the directory the hook runs in."""
+    """The bare repo's name, from the hook's directory."""
     return cwd.name.removesuffix(".git")
 
 

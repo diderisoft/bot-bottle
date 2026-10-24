@@ -1,6 +1,5 @@
-"""The launch plan types every backend shares: the CLI's `BottleSpec` and the
-`BottlePlan` a backend's prepare step resolves it into. Re-exported from
-`backend.base`."""
+"""Launch plan types every backend shares: the CLI's `BottleSpec` and the
+`BottlePlan` a backend's prepare step resolves it into."""
 
 from __future__ import annotations
 
@@ -23,40 +22,34 @@ from .print_util import print_multi, visible_agent_env_names
 
 @dataclass(frozen=True)
 class BottleSpec:
-    """CLI-supplied intent. Backend-agnostic — each backend's prepare
-    step consumes it and produces its own backend-specific plan.
-    Resolved values (image names, container name, scratch paths, runsc
-    availability) live on the plan, not the spec."""
+    """CLI-supplied launch intent. Resolved values live on the plan."""
 
     manifest: ManifestIndex
     agent_name: str
     copy_cwd: bool
     user_cwd: str
-    # Resume: prepare uses this identity instead of minting a fresh one, to
-    # continue an existing bottle's state. Empty for a fresh `start`.
+    # Resume: reuse this identity instead of minting one. Empty for a fresh
+    # start.
     identity: str = ""
     label: str = ""
     color: str = ""
-    # Ordered bottle names selected at launch. When non-empty
-    # they are merged in order and replace the agent's `bottle:` field.
+    # Bottle names selected at launch, merged in order; they replace the
+    # agent's `bottle:` when non-empty.
     bottle_names: tuple[str, ...] = ()
-    # No TTY, no interactive prompts: the host-key preflight and secret
-    # resolution error rather than prompt. Every host-controller launch.
+    # No TTY: host-key and secret checks fail instead of prompting. Every
+    # host-controller launch.
     headless: bool = False
     # Repo name -> upstream host key the operator confirmed for this launch.
     host_keys: tuple[tuple[str, str], ...] = ()
-    # Image startup policy. "fresh" preserves the normal build path;
-    # "cached" reuses the current local image/artifact without rebuilding.
+    # "fresh" builds as normal; "cached" reuses the local image or artifact.
     image_policy: str = "fresh"
-    # Mount `user_cwd` read-write instead of copying it. A backend that can't
-    # mount (Firecracker) copies instead.
+    # Mount `user_cwd` read-write instead of copying it, where the backend can.
     mount_cwd: bool = False
 
 
 @dataclass(frozen=True)
 class BottlePlan(ABC):
-    """Base output of a backend's prepare step. Concrete subclasses
-    (e.g. DockerBottlePlan) add backend-specific resolved fields."""
+    """Base output of a backend's prepare step; subclasses add backend fields."""
 
     spec: BottleSpec
     manifest: Manifest
@@ -74,19 +67,17 @@ class BottlePlan(ABC):
     # Where launch resolves egress token_refs and forge tokens.
     secrets: SecretSource = field(repr=False)
     slug: str
-    # Values forwarded into the agent's environment. repr=False keeps
-    # secret, interpolated and OAuth values out of any log of the plan.
+    # Values forwarded into the agent's env; kept out of the repr.
     forwarded_env: dict[str, str] = field(repr=False)
-    # The agent's git-gate and supervise endpoints on the shared gateway
-    # (`http://<gateway>:<port>`), stamped by launch. Empty until then.
+    # The agent's git-gate and supervise URLs (`http://<gateway>:<port>`), set
+    # by launch.
     agent_git_gate_url: str = ""
     agent_supervise_url: str = ""
-    # Per-bottle identity token the agent presents on every attributed request
-    # (egress proxy credentials, git-gate/supervise headers); stamped by launch
-    # from the orchestrator registration. Empty before registration.
+    # The identity token the agent presents on every attributed request, set by
+    # launch from the registration.
     identity_token: str = ""
-    # Encryption key for the agent's stored egress secrets. Each backend
-    # delivers it without writing the value to disk.
+    # Key for the agent's stored egress secrets, delivered without touching
+    # disk.
     env_var_secret: str = ""
 
     @property
@@ -99,8 +90,8 @@ class BottlePlan(ABC):
 
     @property
     def dockerfile_path(self) -> str:
-        """Absolute path to the Dockerfile that builds `image`: the manifest's
-        per-bottle override, else the provider plugin's bundled Dockerfile."""
+        """The Dockerfile that builds `image`: the manifest's override, else
+        the provider's."""
         return self.agent_provision.dockerfile
 
     @property
@@ -121,8 +112,7 @@ class BottlePlan(ABC):
 
     @property
     def git_gate_insteadof_host(self) -> str:
-        """Host and port used in git-gate insteadOf URLs: the shared
-        gateway's git-http endpoint once launch has stamped it."""
+        """Host and port for git-gate insteadOf URLs, once launch has set them."""
         if self.agent_git_gate_url.startswith("http://"):
             return self.agent_git_gate_url.removeprefix("http://").rstrip("/")
         return "git-gate"
@@ -140,13 +130,13 @@ class BottlePlan(ABC):
 
     @property
     def egress_secrets(self) -> SecretSource:
-        """Where egress token_refs resolve: the provider's provisioned
-        values (host credentials it read), then `secrets`."""
+        """Where egress token_refs resolve: the provider's provisioned values,
+        then `secrets`."""
         return ChainSecrets(
             MappingSecrets(self.agent_provision.provisioned_env), self.secrets)
 
     def print(self) -> None:
-        """Render the y/N preflight summary to stderr."""
+        """Print the y/N preflight summary to stderr."""
         spec = self.spec
         manifest = self.manifest
         agent = manifest.agent

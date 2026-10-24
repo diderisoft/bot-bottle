@@ -1,14 +1,9 @@
-"""The gateway's audit events, sent to the orchestrator to relay.
+"""The gateway's audit events, sent to the orchestrator for the journal. Each
+component names itself as producer (`egress`, `git-gate`).
 
-Each gateway component names itself as the producer (`egress`, `git-gate`),
-and the orchestrator relays the event to the host controller's journal. The
-gateway already calls the orchestrator for every policy lookup, so this needs
-no other credential.
-
-`submit` never blocks a request: events go on a bounded queue a background
-thread drains, retrying while the orchestrator is unreachable. When the queue
-is full the oldest is dropped and an `audit.truncation_detected` event follows
-once delivery resumes.
+`submit` never blocks a request: a background thread drains a bounded queue,
+retrying while the orchestrator is unreachable. A full queue drops the oldest,
+and an `audit.truncation_detected` event follows once delivery resumes.
 """
 
 from __future__ import annotations
@@ -54,8 +49,8 @@ class GatewayAudit:
         self._queue.put(event)
 
     def send_now(self, event: AuditEvent) -> bool:
-        """Deliver one event now, outside the queue, for a bottle whose
-        `audit.delivery` is `required`. True only once it's written."""
+        """Deliver one event now, bypassing the queue, for `audit.delivery:
+        required`. True only once written."""
         try:
             self._post(event, required=True)
         except (urllib.error.URLError, TimeoutError, OSError):
@@ -69,7 +64,7 @@ class GatewayAudit:
         return truncation_event(self._producer, dropped, first, last, self.now())
 
     def _post(self, event: AuditEvent, *, required: bool) -> None:
-        """POST one event; raises on any failure, including an error status."""
+        """POST one event; raises on any failure or error status."""
         body: dict[str, object] = {"producer": self._producer, "event": event.to_json()}
         if required:
             body["required"] = True

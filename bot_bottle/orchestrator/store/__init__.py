@@ -1,11 +1,4 @@
-"""Orchestrator-owned SQLite stores.
-
-The stores whose tables only the orchestrator (control plane) opens: the
-per-host bottle `registry_store`, the supervise proposal/response `queue_store`
-and `audit_store`, the agent-secret `secret_store`, and the orchestrator
-`config_store`. They build on the shared `DbStore` / `migrations` base in
-`bot_bottle.lib`, and each takes its database path explicitly.
-
-Callers import the concrete module directly, e.g.
-`from bot_bottle.orchestrator.store.queue_store import QueueStore`.
+"""SQLite stores only the orchestrator opens: `registry_store`, `queue_store`,
+`audit_store`, `secret_store` and `config_store`, on the `lib` `DbStore` base.
+Import the modules directly.
 """

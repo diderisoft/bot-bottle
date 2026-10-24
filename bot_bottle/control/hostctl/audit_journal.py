@@ -1,26 +1,13 @@
-"""The host's single audit writer.
+"""The host's single audit writer: an append-only JSONL journal in segment
+files under `host_audit_dir()`, each record chained to the previous across
+segments and restarts.
 
-One append-only JSONL journal per host, split into segment files under
-`host_audit_dir()`. Every record chains onto the one before it, across
-segments and restarts, so an edit, deletion or reorder breaks the chain.
-
-The journal is the only place the chain head and `epoch` live. On start the
-writer reads the last intact record, adopts its `hash` as the next `prev` and
-its `epoch + 1` as the new epoch, and resets `seq`. A torn final line (a crash
-mid-append) is cut back to the last intact record before appending, since a
-line glued onto it would corrupt the next record too.
-
-`id` is the idempotency key: a producer retrying an event reuses it, and the
-writer drops an id it has already written. The ids are read from the journal
-on start, which holds every record while no segment is ever pruned.
-
-Redaction runs here, before anything is written: a credential-shaped key is
-refused, and token-shaped values in the producer-supplied fields (`resource`,
-`payload`, `untrusted`) are scrubbed.
-
-"One writer per host" is enforced, not assumed: the writer holds an exclusive
-lock on the journal directory for its lifetime, so a second writer (a second
-host controller, a stray CLI) is refused instead of forking the chain.
+On start the writer adopts the last intact record's `hash` as `prev` and `epoch
++ 1`, resets `seq`, and cuts a torn final line. `id` is the idempotency key;
+known ids are read from the journal on start. Redaction happens here:
+credential-shaped keys are refused and token-shaped values in `resource`,
+`payload` and `untrusted` scrubbed. An exclusive directory lock refuses a
+second writer.
 """
 
 from __future__ import annotations
@@ -45,7 +32,7 @@ SEGMENT_SUFFIX = ".jsonl"
 TORN_TAIL = "torn_tail"
 _LOCK_NAME = ".writer.lock"
 
-# Exact key names that only ever hold a credential, plus suffixes that do.
+# Key names (and suffixes) that only ever hold a credential.
 _DENIED_KEYS = frozenset({
     "token", "secret", "password", "passwd", "authorization", "cookie",
     "api_key", "private_key",
@@ -54,13 +41,12 @@ _DENIED_SUFFIXES = ("_key", "_token", "_secret", "_password")
 
 
 class AuditJournalBusy(RuntimeError):
-    """Another writer holds the journal. Two writers would both chain onto
-    the same head and fork the chain, so the second one is refused."""
+    """Another writer holds the journal; a second would fork the chain."""
 
 
 class AuditRedactionError(ValueError):
-    """A producer put a credential-shaped key in an event. Always a producer
-    bug: pass a reference (a token id or fingerprint), never the value."""
+    """A producer put a credential-shaped key in an event: pass a reference,
+    never the value."""
 
 
 def _check_keys(value: Any, where: str) -> None:
@@ -85,16 +71,14 @@ def _scrub(value: Any) -> Any:
     return value
 
 
-# Producer-supplied fields that can carry free text: an egress URL, a reason,
-# a commit message. The rest are enums, ids and digests.
+# Producer fields that can carry free text.
 _SCRUBBED_FIELDS = ("resource", "payload", "untrusted")
 
 
 def redact(event: AuditEvent) -> AuditEvent:
-    """The event as it may be written: refused on a credential-shaped key,
-    with token-shaped values in `resource`, `payload` and `untrusted`
-    scrubbed (kept, not dropped, so a producer bug can't make an event
-    vanish)."""
+    """The event as it may be written: refused on a credential-shaped key, with
+    token-shaped values in `resource`, `payload` and `untrusted` scrubbed (not
+    dropped)."""
     _check_keys(event.payload, "payload")
     _check_keys(event.untrusted, "untrusted")
     body = event.to_json()
@@ -113,8 +97,7 @@ def _segments(directory: Path) -> list[Path]:
 
 
 def _cut_torn_tail(path: Path) -> int:
-    """Drop a partial final line left by a crash mid-append. Returns how many
-    bytes were cut (0: the file ended cleanly)."""
+    """Cut a partial final line left by a crash. Returns bytes cut."""
     data = path.read_bytes()
     if not data or data.endswith(b"\n"):
         return 0
@@ -127,8 +110,7 @@ def _cut_torn_tail(path: Path) -> int:
 
 
 def _hold_writer_lock(directory: Path) -> int:
-    """An fd holding an exclusive lock on the journal directory. The kernel
-    releases it when the process exits, however it exits."""
+    """An fd holding an exclusive lock on the journal dir, released at exit."""
     fd = os.open(directory / _LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -197,8 +179,8 @@ class AuditJournal:
             self._path = segments[-1]
             self._segment = self._path.name.removesuffix(SEGMENT_SUFFIX)
         if cut:
-            # Once the bytes are gone, verify can't see that a crash happened,
-            # so the journal says so itself: power loss, not a trimmed log.
+            # Record that a crash cut the tail, since verify can't see it
+            # afterwards.
             self._write(AuditEvent(
                 type="audit.truncation_detected", actor="host",
                 action="audit.truncation_detected", outcome="failure", sensitivity="security",
@@ -227,8 +209,8 @@ class AuditJournal:
         ), producer="audit")
 
     def append(self, event: AuditEvent, *, producer: str) -> dict[str, Any] | None:
-        """Seal `event` onto the chain and write it. Returns the record, or
-        None when an event with its id was already written (a retry)."""
+        """Seal `event` and write it. Returns the record, or None for a retry
+        of an id already written."""
         event = redact(event)
         with self._lock:
             if event.id in self._ids:
@@ -255,7 +237,7 @@ class AuditJournal:
         fd = os.open(self._path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         try:
             written = 0
-            while written < len(line):  # a write may be partial
+            while written < len(line):  # writes may be partial
                 written += os.write(fd, line[written:])
             os.fsync(fd)
         finally:

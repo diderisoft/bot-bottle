@@ -1,6 +1,5 @@
-"""active: list currently-running bot-bottle bottles: the ones the host
-controller holds, with their session state, and whatever else the backends
-find running."""
+"""active: list running bottles: those the host controller holds, with their
+session state, and anything else the backends find."""
 
 from __future__ import annotations
 
@@ -78,15 +77,15 @@ def cmd_active(argv: list[str]) -> int:
     if not active and not held:
         print("no active bot-bottle bottles", file=sys.stderr)
         return 0
-    # One line per bottle: `<backend>\t<slug>\t<label>\t<services>\t<session>`.
-    # Tab-separated keeps the format stable for shell pipelines.
+    # One tab-separated line per bottle:
+    # `<backend>\t<slug>\t<label>\t<services>\t<session>`.
     for b in active:
         services = ",".join(b.services) if b.services else "-"
         display_name = f"{b.label} ({b.agent_name})" if b.label else b.agent_name
         colored_name = _ansi_label(display_name, b.color)
         session = _session_column(held.pop(b.slug, None))
         print(f"{b.backend_name}\t{b.slug}\t{colored_name}\t{services}\t{session}")
-    # Held, but not (or no longer) seen by its backend.
+    # Held, but not seen by its backend.
     for slug, h in held.items():
         label, agent = str(h.get("label") or ""), str(h.get("agent") or "?")
         display_name = f"{label} ({agent})" if label else agent

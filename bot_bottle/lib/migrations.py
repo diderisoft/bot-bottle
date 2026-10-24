@@ -6,7 +6,8 @@ import sqlite3
 
 
 class TableMigrations:
-    """Runs a sequential list of DDL migrations tracked by schema_key in schema_versions."""
+    """Runs sequential DDL migrations, tracked by schema_key in
+    schema_versions."""
 
     def __init__(self, schema_key: str, migrations: list[str]) -> None:
         self.schema_key = schema_key

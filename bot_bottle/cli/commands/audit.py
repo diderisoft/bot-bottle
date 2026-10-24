@@ -68,8 +68,8 @@ def _table(records: list[dict[str, Any]]) -> None:
 
 
 def _matching(ns: argparse.Namespace) -> list[dict[str, Any]] | None:
-    """The indexed records `ns`'s filters select, after syncing the index;
-    None (already reported) when there's no journal or it doesn't chain."""
+    """The indexed records `ns`'s filters select, after syncing the index; None
+    (already reported) when there's no journal or it doesn't chain."""
     index = _index()
     if index is None:
         return None

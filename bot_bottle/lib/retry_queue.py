@@ -1,11 +1,9 @@
 """A bounded queue a background thread delivers in order, retrying.
 
-`put` never blocks the caller. The thread hands the oldest item to `send`,
-which reports whether it's done with it (delivered, or refused for good) or
-should retry it after `retry_seconds`. When the queue is full the oldest
-item is dropped, and once delivery next succeeds `on_gap` is called with how
-many were dropped and the first and last of them, and may return an item to
-deliver next: a record of the gap.
+`put` never blocks. `send` gets the oldest item and reports whether it's done
+(delivered or permanently refused) or should be retried after `retry_seconds`.
+A full queue drops the oldest; after the next success `on_gap` gets the count
+and the first and last dropped, and may return an item recording the gap.
 """
 
 from __future__ import annotations

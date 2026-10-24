@@ -51,8 +51,8 @@ class HostControlClient:
         return list(self.get(JOBS_PATH)["jobs"])  # type: ignore[arg-type]
 
     def events(self, job_id: str, start: int = 0) -> Iterator[dict[str, object]]:
-        """A job's events from `start` until it finishes. No read timeout:
-        a build step can be quiet for minutes."""
+        """A job's events from `start` until done. No read timeout: builds can
+        be quiet for minutes."""
         with self._open(f"{JOBS_PATH}/{job_id}/events?from={start}", timeout=None) as resp:
             for line in resp:
                 if line.strip():
@@ -64,14 +64,14 @@ class HostControlClient:
         path = FIREHOSE_STREAM_PATH + (f"?{query}" if query else "")
         with self._open(path, timeout=None) as resp:
             for line in resp:
-                if line.strip():  # blank lines are the server's keep-alives
+                if line.strip():  # blank lines are keep-alives
                     yield json.loads(line)
 
     def follow(self, job_id: str, write: Callable[[str], None],
                stage: Callable[[str, str], None] | None = None) -> dict[str, object] | None:
-        """Write a job's log lines as they arrive (and pass its `stage`
-        events to ``stage``), and return its final (`result` or `error`)
-        event. On Ctrl-C, return None; the job keeps running."""
+        """Write a job's log lines as they arrive (passing `stage` events to
+        `stage`) and return its final event. None on Ctrl-C; the job keeps
+        running."""
         try:
             for event in self.events(job_id):
                 if event.get("type") == "log":

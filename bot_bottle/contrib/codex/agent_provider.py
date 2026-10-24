@@ -1,11 +1,6 @@
-"""Codex agent provider plugin.
-
-The Codex-specific behavior previously inlined under
-`agent_provider.agent_provision_plan` (config.toml trust marker,
-chatgpt.com / api.openai.com egress routes, optional host-credential
-forwarding with dummy-auth.json + verify), plus the `codex mcp add`
-invocation that registers the supervise daemon in Codex's
-~/.codex/config.toml."""
+"""Codex agent provider: the config.toml trust marker, the chatgpt.com and
+api.openai.com routes, optional host-credential forwarding (dummy auth.json
+plus a verify), and the supervise MCP entry in `~/.codex/config.toml`."""
 
 from __future__ import annotations
 
@@ -43,7 +38,7 @@ if TYPE_CHECKING:
 
 
 _SUPERVISE_MCP_NAME = "supervise"
-# App-layer identity token header (mirrors egress_addon / git_http_backend).
+# Identity token header (as in `contract.identity`).
 _IDENTITY_HEADER = "x-bot-bottle-identity"
 _CODEX_CLI = "/home/node/.codex/packages/standalone/current/bin/codex"
 _CODEX_CLI_PATH = (
@@ -54,7 +49,7 @@ _CODEX_CLI_PATH = (
 
 
 def _toml_basic_string(value: str) -> str:
-    """Quote `value` as a TOML basic (double-quoted) string."""
+    """`value` as a TOML basic string."""
     escaped = (
         value.replace("\\", "\\\\")
         .replace('"', '\\"')
@@ -65,16 +60,9 @@ def _toml_basic_string(value: str) -> str:
 
 
 def _supervise_mcp_config_toml(supervise_url: str, token: str) -> str:
-    """Render the `[mcp_servers.supervise]` streamable-HTTP entry for
-    Codex's `config.toml`.
-
-    The Codex CLI has no `mcp add --header` flag; a static request
-    header on an HTTP MCP server is only expressible via the
-    `http_headers` config key (see `RawMcpServerConfig` /
-    `McpServerTransportConfig::StreamableHttp`). We deliver the
-    mandatory identity token (source_ip, token attribution) that way.
-    Only Codex-supported streamable-HTTP keys (`url`, `http_headers`)
-    are emitted."""
+    """The `[mcp_servers.supervise]` streamable-HTTP entry for `config.toml`.
+    Codex can set a static header only through `http_headers`, which carries
+    the identity token."""
     lines = [
         "",
         f"[mcp_servers.{_SUPERVISE_MCP_NAME}]",
@@ -89,10 +77,7 @@ def _supervise_mcp_config_toml(supervise_url: str, token: str) -> str:
 
 
 def _skills_dir(guest_home: str) -> str:
-    # Codex agents still read skills from the claude-code convention
-    # (~/.claude/skills/) — the bot-bottle-codex image follows the
-    # same layout. If Codex grows native skill discovery later,
-    # change here.
+    # Codex reads skills from claude-code's `~/.claude/skills/` layout.
     return f"{guest_home}/.claude/skills"
 
 
@@ -138,10 +123,9 @@ class CodexAgentProvider(AgentProvider):
         )
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
-        # Mirrors the Dockerfile's standalone install. The base checks a
-        # committed SHA256SUMS; for an arbitrary version the checksum list is
-        # fetched from the same upstream release, which catches a corrupt or
-        # swapped asset but not a compromised release.
+        # As the Dockerfile's standalone install. A bump's checksum list comes
+        # from the same release, catching a corrupt asset but not a compromised
+        # release.
         release = f"https://github.com/openai/codex/releases/download/rust-v{version}"
         return (
             "USER node",
@@ -276,9 +260,8 @@ class CodexAgentProvider(AgentProvider):
         )
 
     def provision_skills(self, plan: "BottlePlan", bottle: "Bottle") -> None:
-        """Copy each named skill tree from `~/.claude/skills/<name>/`
-        on the host into the guest. No-op when the agent has no
-        skills."""
+        """Copy each skill from `~/.claude/skills/<name>/` on the host into the
+        guest."""
         from ...backend.util import host_skill_dir
 
         agent = plan.manifest.agent
@@ -295,19 +278,15 @@ class CodexAgentProvider(AgentProvider):
                 )
             dst = f"{skills_dir}/{name}"
             info(f"copying skill {name} into {bottle.name}:{dst}")
-            # Defense in depth: skill names are validated kebab-case at
-            # manifest load, but quote the path so a future unvalidated
-            # field can't inject shell metacharacters here either.
+            # Skill names are validated at load; quote anyway.
             dst_q = shlex.quote(dst)
             bottle.exec(f"rm -rf {dst_q} && mkdir -p {dst_q}", user="root")
             bottle.cp_in(f"{src}/.", f"{dst}/")
             bottle.exec(f"chown -R node:node {dst_q}", user="root")
 
     def provision_prompt(self, plan: "BottlePlan", bottle: "Bottle") -> str | None:
-        """Copy the prompt file into the guest, fix ownership/mode.
-        Codex reads it via the agent's `Read and follow the
-        instructions in <path>.` bootstrap (see `prompt_args`); the
-        file is copied either way so the path always exists."""
+        """Copy the prompt file into the guest; Codex reads it via the `Read
+        and follow the instructions in <path>.` bootstrap (see `prompt_args`)."""
         prompt_path = _prompt_path(plan.guest_home)
         bottle.cp_in(str(plan.prompt_file), prompt_path)  # type: ignore
         bottle.exec(
@@ -318,10 +297,9 @@ class CodexAgentProvider(AgentProvider):
         return prompt_path if plan.agent_provision.has_prompt or agent.prompt else None
 
     def provision(self, plan: "BottlePlan", bottle: "Bottle") -> None:
-        """Apply the codex-side declarative provision steps from
-        `plan.agent_provision`: the `~/.codex/` dir + config.toml
-        trust marker, plus the dummy-auth.json drop + `codex login
-        status` verify when host-credential forwarding is on."""
+        """Apply the plan's provision steps: `~/.codex/`, the config.toml trust
+        marker, and with host-credential forwarding the dummy auth.json and a
+        `codex login status` check."""
         provision = plan.agent_provision
         for d in provision.dirs:
             path = shlex.quote(d.guest_path)
@@ -360,17 +338,9 @@ class CodexAgentProvider(AgentProvider):
         bottle: "Bottle",
         supervise_url: str,
     ) -> None:
-        """Register the supervise daemon as a streamable-HTTP MCP
-        server in Codex's user config (`~/.codex/config.toml`).
-
-        We write the `[mcp_servers.supervise]` entry directly rather
-        than shelling out to `codex mcp add`: the CLI's `add` has no
-        way to attach a static request header, and the identity token
-        (mandatory (source_ip, token) attribution) MUST ride on the
-        MCP request as `http_headers`. Failure is FATAL when supervise
-        is enabled — a silently-unregistered server leaves the agent
-        with no supervise access and, under mandatory attribution, no
-        way to recover from inside the bottle."""
+        """Write the `[mcp_servers.supervise]` entry directly, since `codex mcp
+        add` can't attach the identity token header. Fatal on failure: without
+        it the agent can't reach supervise."""
         if plan.supervise_plan is None:
             return
         info(f"registering supervise MCP server in agent codex config → {supervise_url}")
@@ -379,9 +349,8 @@ class CodexAgentProvider(AgentProvider):
         auth_dir = plan.agent_provision.guest_env.get("CODEX_HOME") \
             or f"{plan.guest_home}/.codex"
         config_path = f"{auth_dir}/config.toml"
-        # Append via base64 so the TOML payload never has to survive a
-        # shell-quoting round trip. node owns the config file, so append
-        # as node to preserve ownership/mode.
+        # base64 so the TOML survives shell quoting; appended as node, the
+        # owner.
         payload = base64.b64encode(block.encode()).decode()
         script = (
             f"printf %s {shlex.quote(payload)} | base64 -d "
@@ -396,7 +365,7 @@ class CodexAgentProvider(AgentProvider):
             )
 
     def interactive_prompt(self, prompt: str) -> list[str] | None:
-        # `codex <prompt>`: the interactive UI, with the prompt as its first message.
+        # `codex <prompt>`: interactive, with the prompt as the first message.
         return [self.positional_prompt(prompt)]
 
     def headless_prompt(self, prompt: str) -> list[str]:

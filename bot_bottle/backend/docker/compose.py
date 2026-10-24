@@ -1,10 +1,5 @@
-"""Docker compose lifecycle helpers.
-
-Serialize a compose spec to disk, drive `docker compose up/down`,
-dump the merged log on teardown, and enumerate `bot-bottle-*`
-projects. The spec itself is built by `consolidated_compose.py`
-(the consolidated per-host gateway topology); this module owns the
-I/O side that persists and runs it.
+"""Docker compose I/O: write a spec (built by `consolidated_compose`), run `up`
+and `down`, dump logs, and list `bot-bottle-*` projects.
 """
 
 from __future__ import annotations
@@ -20,13 +15,6 @@ from ..base import EnumerationError
 from .util import daemon_running
 
 
-# --- Lifecycle helpers ----------------------------------
-#
-# The renderer above is pure. The helpers below own the I/O side:
-# serialize the spec to disk, drive `docker compose up`, dump the
-# merged log file on teardown, and `docker compose down` to clean up
-# (networks are pre-created externally so `down` leaves them alone;
-# the launch step removes them in its own teardown step).
 
 
 COMPOSE_FILE_NAME = "docker-compose.yml"
@@ -37,17 +25,12 @@ COMPOSE_PROJECT_PREFIX = "bot-bottle-"
 
 
 def compose_project_name(slug: str) -> str:
-    """Stable mapping from slug → compose project. Matches the
-    `name:` field the renderer emits, so `docker compose ls`
-    enumeration and direct CLI invocations agree on the project
-    identifier."""
+    """slug -> compose project name, matching the spec's `name:`."""
     return f"{COMPOSE_PROJECT_PREFIX}{slug}"
 
 
 def slug_from_compose_project(project: str) -> str:
-    """Inverse of `compose_project_name`: strip the prefix to get
-    the underlying slug. Returns empty string if the project name
-    doesn't start with the expected prefix."""
+    """Inverse of `compose_project_name`; "" for a project without the prefix."""
     if not project.startswith(COMPOSE_PROJECT_PREFIX):
         return ""
     return project[len(COMPOSE_PROJECT_PREFIX):]
@@ -59,15 +42,10 @@ def list_compose_projects(
     warn_on_error: bool = True,
     raise_on_error: bool = False,
 ) -> list[str]:
-    """All compose project names starting with `bot-bottle-`.
-    `include_stopped=True` (default) runs `docker compose ls --all`
-    so exited projects appear too; pass False to get only projects
-    with at least one running container.
-
-    Best-effort callers get ``[]`` on Docker errors or malformed output.
-    Enumeration callers pass ``raise_on_error=True`` so a failed query is not
-    reported as an authoritative empty result. A daemon that isn't running is
-    authoritative: nothing runs on it, so that is ``[]`` for every caller.
+    """All `bot-bottle-*` compose project names, stopped ones included unless
+    `include_stopped=False`. Errors give `[]` unless `raise_on_error`, so an
+    enumeration never mistakes a failed query for an empty one. A daemon that
+    isn't running is `[]` either way.
     """
     argv = ["docker", "compose", "ls", "--format", "json"]
     if include_stopped:
@@ -77,9 +55,7 @@ def list_compose_projects(
             argv, capture_output=True, text=True, check=False,
         )
     except OSError as exc:
-        # Not only "not found": docker on PATH but not executable by this
-        # user raises PermissionError. Either way the query never ran, so an
-        # enumeration caller must not read the empty result as authoritative.
+        # Not only "not found": a non-executable docker raises PermissionError.
         if raise_on_error:
             raise EnumerationError(
                 f"docker compose ls failed: docker unavailable ({exc})"
@@ -119,9 +95,7 @@ def list_active_slugs(
     warn_on_error: bool = True,
     raise_on_error: bool = False,
 ) -> list[str]:
-    """Slugs (project name minus prefix) of currently-running
-    bottles. Used by the dashboard's operator-edit verbs to choose
-    a bottle to apply a config edit to."""
+    """Slugs of running bottles."""
     return sorted(
         slug for slug in (
             slug_from_compose_project(p)
@@ -143,11 +117,8 @@ def compose_log_path(state_dir: Path) -> Path:
 
 
 def write_compose_file(spec: dict[str, Any], path: Path) -> Path:
-    """Serialize the compose dict to disk. JSON content with a
-    `.yml` filename — JSON is a strict subset of YAML 1.2 for the
-    constructs the renderer uses (mappings, lists, strings, bools,
-    nulls), and `docker compose -f file.yml` parses it as YAML.
-    Avoids a yaml dependency while keeping the file `cat`-readable.
+    """Write the compose dict as JSON (a YAML subset `docker compose` reads)
+    with a `.yml` name.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(spec, indent=2, sort_keys=False) + "\n")
@@ -170,11 +141,8 @@ def compose_up(
     *,
     env: dict[str, str] | None = None,
 ) -> None:
-    """`docker compose up -d` for the project. Env-inheritance is
-    via `env=` on the subprocess — every `environment: [NAME]` (bare
-    name) entry in the compose file resolves to whatever value
-    `NAME` has in `env` at exec time. Secrets never land on argv or
-    in the compose file."""
+    """`docker compose up -d`. Bare `environment: [NAME]` entries take their
+    value from `env`, so secrets never reach argv or the file."""
     argv = _compose_argv(project, compose_file, "up", "-d")
     result = subprocess.run(
         argv, capture_output=True, text=True, env=env, check=False,
@@ -185,12 +153,7 @@ def compose_up(
 
 
 def compose_dump_logs(project: str, compose_file: Path, output: Path) -> None:
-    """Write the merged stdout/stderr of every service to `output`
-    using `docker compose logs --no-color --timestamps`. Best-effort
-    — failures here shouldn't block teardown. The interleaved single
-    file is what the user reads post-mortem; per-service tail still
-    works through `docker compose logs -f <service>` while the
-    project is up."""
+    """Write every service's merged logs to `output`. Best effort."""
     output.parent.mkdir(parents=True, exist_ok=True)
     argv = _compose_argv(project, compose_file, "logs", "--no-color", "--timestamps")
     try:
@@ -207,11 +170,7 @@ def compose_dump_logs(project: str, compose_file: Path, output: Path) -> None:
 
 
 def compose_down(project: str, compose_file: Path) -> None:
-    """`docker compose down` for the project. External networks are
-    intentionally NOT removed by compose (`external: true` on the
-    networks block); the launch step's own teardown removes them
-    via `network_remove` so the per-bottle ephemeral subnet doesn't
-    accumulate."""
+    """`docker compose down`. External networks aren't removed."""
     argv = _compose_argv(project, compose_file, "down")
     result = subprocess.run(
         argv, capture_output=True, text=True, check=False,

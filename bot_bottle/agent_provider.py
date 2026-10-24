@@ -1,20 +1,8 @@
-"""Agent provider runtime mapping.
+"""Agent provider plugins: the launch-time mapping from a provider template to
+its command, image, auth and guest setup.
 
-The manifest owns the user-facing AgentProvider shape. This module is
-the launch-time table that turns a provider template into an executable
-command, default image, and prompt/auth behavior.
-
-The per-provider implementations live under
-`bot_bottle/contrib/<template>/agent_provider.py`. This module exposes:
-
-  - `AgentProvider` (ABC) — the contract each plugin implements.
-  - `get_provider(template)` — lazy-imported registry; the analogue
-    of `bot_bottle/deploy_key_provisioner.get_provisioner`.
-  - `AgentProvisionPlan` (+ helper dataclasses) — declarative shape
-    each provider produces and the backends consume unchanged.
-  - `agent_provision_plan` / `runtime_for` — thin wrappers around the
-    registry kept so existing callers keep working without per-call
-    edits.
+Built-in providers live in `bot_bottle/contrib/<template>/agent_provider.py`; a
+user plugin in `~/.bot-bottle/contrib/<template>/` shadows a built-in.
 """
 
 from __future__ import annotations
@@ -42,13 +30,12 @@ PROVIDER_CODEX = "codex"
 PROVIDER_PI = "pi"
 PROVIDER_TEMPLATES = frozenset({PROVIDER_CLAUDE, PROVIDER_CODEX, PROVIDER_PI})
 
-# Hosts that egress injects the host ChatGPT bearer on when Codex
-# forward_host_credentials is enabled. Pipelock must pass these through
-# (no TLS MITM) or its header DLP blocks the injected JWT.
+# Hosts egress injects the host ChatGPT bearer on when Codex
+# `forward_host_credentials` is enabled.
 CODEX_HOST_CREDENTIAL_HOSTS = ("api.openai.com", "chatgpt.com")
 
-# Host that egress injects the host Claude bearer on when Claude
-# forward_host_credentials is enabled.
+# Host egress injects the host Claude bearer on when Claude
+# `forward_host_credentials` is enabled.
 CLAUDE_HOST_CREDENTIAL_HOSTS = ("api.anthropic.com",)
 PromptMode = Literal[
     "append_file",
@@ -66,12 +53,8 @@ class AgentProviderRuntime:
     prompt_mode: PromptMode
     bypass_args: tuple[str, ...]
     resume_args: tuple[str, ...]
-    # argv run inside a throwaway container of a freshly built agent
-    # image, right after `build_image()`, to catch a build that
-    # exited 0 but produced a broken CLI (e.g. an npm
-    # optionalDependencies fetch for a platform-native binary that
-    # silently no-ops on a transient failure). Empty tuple skips the
-    # check — not every provider has opted in yet.
+    # argv run in a throwaway container of a freshly built image to catch a
+    # build that exited 0 but produced a broken CLI. Empty skips the check.
     smoke_test: tuple[str, ...] = ()
 
 
@@ -98,21 +81,10 @@ class AgentProvisionCommand:
 
 @dataclass(frozen=True)
 class AgentProvisionPlan:
-    """Provider-owned guest setup.
+    """Provider-owned guest setup, interpreted by each backend.
 
-    Backends interpret this plan with their own copy/exec primitives.
-    Provider-specific content stays here so future provider plugins can
-    return the same shape without adding backend-plan fields.
-
-    `egress_routes` are provider-declared EgressRoutes that backends
-    pass to `Egress.prepare`. This keeps provider logic out of the
-    egress module — it merges provider routes generically without
-    knowing the provider type.
-
-    `hidden_env_names` is the set of env var names the provider injected
-    as non-secret placeholders. `print_util.visible_agent_env_names` uses
-    this to suppress them from the preflight summary so operators don't
-    mistake them for real credentials.
+    `egress_routes` are merged into the egress plan. `hidden_env_names` are
+    placeholder env names the preflight summary hides.
     """
 
     template: str
@@ -138,14 +110,11 @@ class AgentProvisionPlan:
 
 @dataclass(frozen=True)
 class HostDetection:
-    """What a provider found on the host, for `bot-bottle setup` and
-    `doctor`. It only declares; the CLI decides what to do with it.
+    """What a provider found on the host, for `setup` and `doctor`.
 
-    `login_location` names where the login lives (a path, or the macOS
-    Keychain) and never holds the secret itself. `starter_settings` is
-    the `agent_provider.settings` a starter bottle should carry (pi's
-    model source), filled by detection or by the CLI after it picked
-    one."""
+    `login_location` names where the login lives, never the secret.
+    `starter_settings` is the `agent_provider.settings` a starter bottle
+    carries."""
 
     installed: bool = False
     logged_in: bool = False
@@ -155,65 +124,50 @@ class HostDetection:
 
 
 class AgentProvider(ABC):
-    """Per-template plugin: produces the provision plan and applies
-    the provider-specific in-guest setup steps (skills, prompt, the
-    declarative `dirs`/`files`/`pre_copy`/`verify` apply loop, and
-    supervise MCP registration). Concrete subclasses live under
-    `bot_bottle/contrib/<template>/agent_provider.py`."""
+    """Per-template plugin: builds the provision plan and runs the provider's
+    guest setup (skills, prompt, files, supervise MCP registration)."""
 
     @property
     @abstractmethod
     def runtime(self) -> AgentProviderRuntime:
-        """The static command / image / prompt-mode table for this
-        template."""
+        """Command, image and prompt-mode table for this template."""
 
     @property
     def guest_home(self) -> str:
-        """In-guest home directory for the agent user. Defaults to
-        `/home/node` to match the Debian-based bot-bottle-* images
-        (USER node). Override for plugins whose image runs as a
-        different user."""
+        """The agent user's home in the guest."""
         return "/home/node"
 
     @property
     def image_user(self) -> str:
-        """The user the default image ends as (its final `USER`). An overlay
-        layer switches to root for its RUN steps and restores this afterwards.
-        Defaults to `node` to match the Debian-based bot-bottle-* images."""
+        """The user the default image ends as. Overlays restore it after their
+        RUN steps."""
         return "node"
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
-        """Dockerfile lines that replace this provider's pinned harness with
-        `version` in an overlay layer, or None when the provider
-        does not support a harness bump. The lines start as root and may
-        switch user; the overlay restores `image_user` afterwards. They must
-        fail the build unless the installed harness reports exactly
-        `version`. `version` is already validated as semver-shaped."""
+        """Dockerfile lines that install harness `version` in an overlay, or
+        None if unsupported. They start as root and must fail the build unless
+        the installed harness reports exactly `version`."""
         return None
 
     @property
     def dockerfile(self) -> Path:
-        """Path to the provider's Dockerfile.
-
-        Default: the `Dockerfile` file next to this provider's
-        `agent_provider.py` module. Override to point at a non-standard
-        path."""
+        """Path to the provider's Dockerfile; defaults to the one next to its
+        module."""
         return Path(inspect.getfile(type(self))).parent / "Dockerfile"
 
     def detect_host(self, host_env: Mapping[str, str]) -> HostDetection:
-        """Whether this provider can run a starter on this host (PRD 0091).
-        Must not read secrets or prompt. Default: not detected, so `setup`
-        never asks this provider for a starter."""
+        """Whether this provider can run a starter on this host. Must not read
+        secrets or prompt."""
         del host_env
         return HostDetection()
 
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
-        """The starter agent manifest (`agents/<template>.md`)."""
+        """Starter agent manifest (`agents/<template>.md`)."""
         raise NotImplementedError(f"{type(self).__name__} has no starter agent")
 
     def create_default_bottle_manifest(self, detection: HostDetection) -> str:
-        """The starter bottle manifest (`bottles/<template>.md`), with the
-        detected login wired in."""
+        """Starter bottle manifest (`bottles/<template>.md`) with the detected
+        login."""
         raise NotImplementedError(f"{type(self).__name__} has no starter bottle")
 
     @abstractmethod
@@ -233,34 +187,23 @@ class AgentProvider(ABC):
         color: str = "",
         provider_settings: dict[str, object] | None = None,
     ) -> AgentProvisionPlan:
-        """Build the declarative AgentProvisionPlan for one launch.
-        Backends call this during `prepare` and consume the result as
-        before.
+        """Build the AgentProvisionPlan for one launch.
 
-        `auth_token` is a secret's name (an egress token_ref), never its
-        value. `host_env` only locates the host's credential files (`HOME`,
-        `CODEX_HOME`); None means this process's environment."""
+        `auth_token` is a secret's name, never its value. `host_env` locates
+        host credential files; None means this process's environment."""
 
     @abstractmethod
     def provision_skills(self, plan: "BottlePlan", bottle: "Bottle") -> None:
-        """Copy each of the agent's named skills from the host into
-        the guest. No-op when the agent has no skills. The in-guest
-        layout is provider-specific (claude-code's
-        `~/.claude/skills/` today; future providers may differ)."""
+        """Copy the agent's skills from the host into the guest."""
 
     @abstractmethod
     def provision_prompt(self, plan: "BottlePlan", bottle: "Bottle") -> str | None:
-        """Copy the prompt file into the guest, fix ownership/mode,
-        and return the in-guest path iff the agent has a non-empty
-        prompt (drives the `--append-system-prompt-file` flag).
-
-        The file is copied either way so the path always exists."""
+        """Copy the prompt file into the guest and return its guest path iff
+        the prompt is non-empty."""
 
     @abstractmethod
     def provision(self, plan: "BottlePlan", bottle: "Bottle") -> None:
-        """Apply the provider's declarative
-        `dirs`/`pre_copy`/`files`/`verify` steps from
-        `plan.agent_provision`."""
+        """Apply the plan's `dirs`/`pre_copy`/`files`/`verify` steps."""
 
     @abstractmethod
     def provision_supervise_mcp(
@@ -269,54 +212,38 @@ class AgentProvider(ABC):
         bottle: "Bottle",
         supervise_url: str,
     ) -> None:
-        """Register the per-bottle supervise daemon as an MCP server
-        in the provider's in-guest config. Called by the backend after
-        the supervise daemon is reachable. No-op when
-        `plan.supervise_plan is None`."""
+        """Register the supervise server as an MCP server in the provider's
+        config. No-op without a supervise plan."""
 
     @abstractmethod
     def headless_prompt(self, prompt: str) -> list[str]:
-        """Return the agent CLI args that deliver `prompt` as the
-        initial task in a non-interactive (headless) session.
-
-        Called only when ``--prompt`` is passed to
-        ``bot-bottle start --headless``; the returned args are appended
-        after the provider's ``bypass_args`` and ``startup_args``."""
+        """Agent CLI args that run `prompt` as the task of a headless session,
+        appended after `bypass_args` and `startup_args`."""
 
     @staticmethod
     def positional_prompt(prompt: str) -> str:
-        """`prompt` made safe as a positional CLI argument: one starting with
-        `-` would parse as an option, and pi reads a leading `@` as a file
-        reference. A leading space changes neither for the model."""
+        """`prompt` made safe as a positional argument: a leading `-` parses as
+        an option and pi reads a leading `@` as a file. A leading space changes
+        neither for the model."""
         return " " + prompt if prompt[:1] in ("-", "@") else prompt
 
     def interactive_prompt(self, prompt: str) -> list[str] | None:
-        """Return the agent CLI args that start a normal interactive session
-        with `prompt` as its first message, or None if the agent CLI can't.
-
-        Used for a launch that carries a prompt but isn't headless (a console
-        launch): the session stays open for the operator after the first
-        turn. Appended after ``bypass_args`` and ``startup_args``."""
-        del prompt  # an agent CLI that can't returns None
+        """Agent CLI args that start an interactive session with `prompt` as
+        its first message, or None if unsupported."""
+        del prompt
 
     def remote_view_args(self) -> tuple[str, ...]:
-        """Extra agent CLI args for a session the console launched and relays
-        to a phone, which has its own message box: e.g. hide an input
-        editor that would only be noise there. Default: none."""
+        """Extra agent CLI args for a session relayed to the console. Default:
+        none."""
         return ()
 
     def provision_ca(self, bottle: "Bottle", plan: "BottlePlan") -> None:
-        """Install the egress MITM CA into the agent's trust store.
-
-        Default: Debian-style — cp the cert to the standard source path,
-        run update-ca-certificates, log the fingerprint. Override for
-        non-Debian base images or non-standard trust mechanisms."""
+        """Install the egress CA into the agent's trust store (Debian-style by
+        default)."""
         from .backend.util import AGENT_CA_PATH, log_ca_fingerprint, select_ca_cert
         from .lib.log import die
         cert_host_path, label = select_ca_cert(plan.egress_plan)
-        # Ensure the target directory exists. A backend's rootfs build
-        # may not preserve the empty /usr/local/share/ca-certificates/
-        # directory; mkdir -p is idempotent and safe for all backends.
+        # Some rootfs builds drop the empty directory.
         bottle.exec("mkdir -p /usr/local/share/ca-certificates", user="root")
         bottle.cp_in(str(cert_host_path), AGENT_CA_PATH)
         r = bottle.exec(
@@ -332,19 +259,12 @@ class AgentProvider(ABC):
         log_ca_fingerprint(cert_host_path, label)
 
     def provision_git(self, bottle: "Bottle", plan: "BottlePlan") -> None:
-        """Configure git inside the agent container.
-
-        Default: Debian/node — writes the git-gate insteadOf gitconfig
-        and sets user.name/email as node. Workspace copy runs through
-        BottleBackend.provision_workspace against the running bottle."""
+        """Write the git-gate gitconfig and set the git identity in the guest."""
         from .lib.log import die, info
 
-        # Firecracker exports image rootfs files through an unprivileged host
-        # tar extraction, so image-time ownership of XDG directories is not
-        # preserved.  Git consults ~/.config/git even when the actual config
-        # is ~/.gitconfig; an unreadable directory there can prevent the
-        # git-gate insteadOf rules below from taking effect.  Repair this at
-        # runtime, after every backend's copy/export path has completed.
+        # Firecracker's rootfs export doesn't preserve XDG directory ownership,
+        # and an unreadable ~/.config/git can stop git from reading the
+        # insteadOf rules.
         git_xdg_dir = f"{plan.guest_home}/.config/git"
         repair = bottle.exec(
             f"chown node:node {shlex.quote(plan.guest_home)} && "
@@ -420,10 +340,9 @@ class AgentProvider(ABC):
 
 
 def _load_user_plugin(template: str) -> AgentProvider | None:
-    """Check ~/.bot-bottle/contrib/<template>/agent_provider.py for a
-    user-defined AgentProvider subclass. Returns an instance if found,
-    None if the plugin directory doesn't exist, raises ValueError if
-    the file exists but exports no AgentProvider subclass."""
+    """A user-defined AgentProvider from ~/.bot-bottle/contrib/<template>/, or
+    None when there's no plugin directory. Raises ValueError if the file
+    exports no subclass."""
     plugin_path = (
         Path.home() / ".bot-bottle" / "contrib" / template / "agent_provider.py"
     )
@@ -449,12 +368,8 @@ def _load_user_plugin(template: str) -> AgentProvider | None:
 
 
 def get_provider(template: str) -> AgentProvider:
-    """Resolve a provider template name to its plugin instance.
-
-    Checks ~/.bot-bottle/contrib/<template>/agent_provider.py first so
-    users can shadow a built-in for local testing. Falls through to the
-    built-in registry; raises ValueError for unknown names with no
-    matching user plugin."""
+    """Resolve a template name to its provider: a user plugin first, then the
+    built-ins. Raises ValueError for an unknown name."""
     user_plugin = _load_user_plugin(template)
     if user_plugin is not None:
         return user_plugin
@@ -490,8 +405,7 @@ def build_agent_provision_plan(
     color: str = "",
     provider_settings: dict[str, object] | None = None,
 ) -> AgentProvisionPlan:
-    """Back-compat shim — `prepare` callers stay the same; the work
-    now lives on the provider plugin."""
+    """Delegates to the provider plugin."""
     return get_provider(template).provision_plan(
         dockerfile=dockerfile,
         state_dir=state_dir,

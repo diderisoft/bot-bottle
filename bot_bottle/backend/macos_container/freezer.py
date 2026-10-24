@@ -1,8 +1,6 @@
-"""MacosContainerFreezer — snapshot a macOS container bottle.
-
-Apple Container removes containers when they stop, making stop-then-export
-impossible. Instead, commit_container execs into the running container and
-streams the root filesystem via tar. The bottle continues running after commit.
+"""`MacosContainerFreezer`: Apple removes stopped containers, so the root
+filesystem is streamed out of the running container with tar. The bottle keeps
+running.
 """
 
 from __future__ import annotations
@@ -14,7 +12,6 @@ from ...lib.log import info
 
 
 class MacosContainerFreezer(Freezer):
-    """Freezes a macOS-container bottle via exec-tar + image rebuild."""
 
     backend_name = "macos-container"
 

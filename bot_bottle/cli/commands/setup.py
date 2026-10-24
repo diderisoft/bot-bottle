@@ -1,15 +1,12 @@
-"""bot-bottle setup — write starter agents for the providers on this host.
+"""bot-bottle setup: write starter agents for the providers on this host.
 
-For Claude and Codex, a starter is written when the CLI is installed and
-logged in; it reuses that login (`forward_host_credentials`). For pi, the
-starter uses your own pi config when a bottle can use it. Otherwise it runs
-a free OpenRouter model: setup signs you in to OpenRouter in your browser
-(free, no key to copy) and picks a free model that supports tools. Keys go
-in the host secrets file (`~/.bot-bottle/secrets`, mode 0600).
+Claude and Codex starters reuse an installed, logged-in CLI's login
+(`forward_host_credentials`). The pi starter uses your pi config when it can,
+else a free OpenRouter model with tool support, signing in through the browser.
+Keys go in `~/.bot-bottle/secrets` (0600).
 
-Existing files are never overwritten unless you pass --force, so re-running
-restores starters you deleted. At the end, setup offers `bot-bottle pair` to
-drive the agents from your phone.
+Existing files are kept unless --force. At the end, setup offers `bot-bottle
+pair`.
 
 Usage:
   bot-bottle setup [--force] [--refresh-model] [--no-browser] [--no-pair]
@@ -51,7 +48,7 @@ FREE_LIMIT_NOTE = (
 
 @dataclasses.dataclass
 class Setup:
-    """One run's choices and I/O, so tests can drive it without a terminal."""
+    """One run's choices and I/O, so tests can drive it."""
 
     home: Path
     host_env: Mapping[str, str]
@@ -86,7 +83,7 @@ class Setup:
     def starter_exists(self, name: str) -> bool:
         return all((self.manifests / k / f"{name}.md").exists() for k in ("agents", "bottles"))
 
-    # -- providers -------------------------------------------------------------
+    # --- providers ---
 
     def run(self) -> int:
         for name in PROVIDERS:
@@ -110,8 +107,8 @@ class Setup:
 
     def pi_detection(  # pylint: disable=too-many-return-statements  # one per outcome
             self, detection: HostDetection) -> HostDetection | None:
-        """pi's model source: the host's pi config, else free OpenRouter.
-        None when there's nothing to write."""
+        """pi's model source: the host's pi config, else free OpenRouter. None
+        when there's nothing to write."""
         if detection.logged_in:
             return detection
         local = pi_starter.read_local_model(self.host_env)
@@ -171,7 +168,7 @@ def _offer_pair(setup: Setup, console_url: str) -> None:
         return
     try:
         remote.load_console()
-        return  # already paired / logged in
+        return  # already paired or logged in
     except remote.RemoteError:
         pass
     if setup.confirm("Pair this host with your phone now?"):

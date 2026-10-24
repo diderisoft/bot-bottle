@@ -1,10 +1,6 @@
-"""Claude agent provider plugin.
-
-The Claude-specific behavior previously inlined under
-`agent_provider.agent_provision_plan` (claude.json trust marker,
-api.anthropic.com egress route, OAuth-token placeholder), plus
-the `claude mcp add` invocation that registers the supervise
-gateway in claude-code's user config."""
+"""Claude agent provider: the claude.json trust marker, the api.anthropic.com
+route, the OAuth-token placeholder, and supervise registration via `claude mcp
+add`."""
 
 from __future__ import annotations
 
@@ -37,12 +33,11 @@ if TYPE_CHECKING:
 
 
 _SUPERVISE_MCP_NAME = "supervise"
-# App-layer identity token header (mirrors egress_addon / git_http_backend).
+# Identity token header (as in `contract.identity`).
 _IDENTITY_HEADER = "x-bot-bottle-identity"
-# Placeholder stood in for the real identity token in the manual-recovery hint.
-# The token is a per-bottle credential, so it must never be rendered into the
-# host-side launch log; the operator substitutes the value from
-# inside the bottle (it rides in the agent's HTTPS_PROXY credentials).
+# Stands in for the identity token in the manual-recovery hint, which goes to
+# the host launch log. The operator takes the value from the bottle's
+# HTTPS_PROXY.
 _IDENTITY_TOKEN_PLACEHOLDER = "<bottle-identity-token>"
 
 
@@ -134,9 +129,8 @@ class ClaudeAgentProvider(AgentProvider):
         )
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
-        # The base installs from a committed lock in /opt/claude; a bump can't
-        # have one, so npm verifies the tarball against the registry's
-        # published integrity instead.
+        # The base installs from a committed lock; a bump has none, so npm
+        # checks the registry's integrity.
         return (
             "RUN cd /opt/claude "
             "&& npm install --omit=dev --no-save --no-fund --no-audit "
@@ -264,9 +258,8 @@ class ClaudeAgentProvider(AgentProvider):
         )
 
     def provision_skills(self, plan: "BottlePlan", bottle: "Bottle") -> None:
-        """Copy each named skill tree from `~/.claude/skills/<name>/`
-        on the host into the guest's claude-code skills dir. No-op
-        when the agent has no skills."""
+        """Copy each skill from `~/.claude/skills/<name>/` on the host into
+        claude-code's skills dir in the guest."""
         from ...backend.util import host_skill_dir
 
         agent = plan.manifest.agent
@@ -283,19 +276,15 @@ class ClaudeAgentProvider(AgentProvider):
                 )
             dst = f"{skills_dir}/{name}"
             info(f"copying skill {name} into {bottle.name}:{dst}")
-            # Defense in depth: skill names are validated kebab-case at
-            # manifest load, but quote the path so a future unvalidated
-            # field can't inject shell metacharacters here either.
+            # Skill names are validated at load; quote anyway.
             dst_q = shlex.quote(dst)
             bottle.exec(f"rm -rf {dst_q} && mkdir -p {dst_q}", user="root")
             bottle.cp_in(f"{src}/.", f"{dst}/")
             bottle.exec(f"chown -R node:node {dst_q}", user="root")
 
     def provision_prompt(self, plan: "BottlePlan", bottle: "Bottle") -> str | None:
-        """Copy the prompt file into the guest, fix ownership/mode.
-        Returns the in-guest path iff the agent has a non-empty
-        prompt (drives `--append-system-prompt-file`); the file is
-        copied either way so the path always exists."""
+        """Copy the prompt file into the guest. Returns its guest path iff the
+        prompt is non-empty (drives `--append-system-prompt-file`)."""
         prompt_path = _prompt_path(plan.guest_home)
         bottle.cp_in(str(plan.prompt_file), prompt_path)  # type: ignore
         bottle.exec(
@@ -306,10 +295,7 @@ class ClaudeAgentProvider(AgentProvider):
         return prompt_path if plan.agent_provision.has_prompt or agent.prompt else None
 
     def provision(self, plan: "BottlePlan", bottle: "Bottle") -> None:
-        """Apply the claude-side declarative provision steps from
-        `plan.agent_provision` — today that's the `claude.json`
-        trust-marker file. Hot-replace this with a richer flow as
-        claude-code's harness shape evolves."""
+        """Apply the plan's provision steps (the `claude.json` trust marker)."""
         provision = plan.agent_provision
         for d in provision.dirs:
             path = shlex.quote(d.guest_path)
@@ -348,16 +334,12 @@ class ClaudeAgentProvider(AgentProvider):
         bottle: "Bottle",
         supervise_url: str,
     ) -> None:
-        """Run `claude mcp add` inside the agent guest to register the
-        supervise daemon in claude-code's user config (~/.claude.json).
-
-        Failure is logged but not fatal — the bottle still works without
-        the entry; the operator can register it manually."""
+        """Register the supervise server in claude-code's user config with
+        `claude mcp add`. A failure is logged, not fatal."""
         if plan.supervise_plan is None:
             return
         info(f"registering supervise MCP server in agent claude config → {supervise_url}")
-        # Deliver the identity token as an MCP request header — the supervise
-        # daemon requires it (mandatory (source_ip, token) attribution).
+        # supervise requires the identity token as an MCP header.
         token = getattr(plan, "identity_token", "")
         header = (
             f" --header {shlex.quote(f'{_IDENTITY_HEADER}: {token}')}" if token else ""
@@ -368,10 +350,7 @@ class ClaudeAgentProvider(AgentProvider):
             user="node",
         )
         if r.returncode != 0:
-            # A placeholder — never the real token — keeps this per-bottle
-            # credential out of the host launch log. The operator
-            # substitutes it from inside the bottle (it rides in the agent's
-            # HTTPS_PROXY credentials).
+            # A placeholder keeps the token out of the host log.
             manual_header = (
                 f" --header {shlex.quote(f'{_IDENTITY_HEADER}: {_IDENTITY_TOKEN_PLACEHOLDER}')}"
                 if token else ""
@@ -385,7 +364,7 @@ class ClaudeAgentProvider(AgentProvider):
             )
 
     def interactive_prompt(self, prompt: str) -> list[str] | None:
-        # `claude <prompt>`: the interactive UI, with the prompt as its first message.
+        # `claude <prompt>`: interactive, with the prompt as the first message.
         return [self.positional_prompt(prompt)]
 
     def headless_prompt(self, prompt: str) -> list[str]:

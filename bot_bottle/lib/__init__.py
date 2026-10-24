@@ -1,4 +1,2 @@
-"""Stdlib-only utilities shared by the host and the services.
-
-Not part of the wire contract; imports nothing in bot_bottle outside this
-package."""
+"""Stdlib-only utilities shared by the host and the services; not part of the
+wire contract."""

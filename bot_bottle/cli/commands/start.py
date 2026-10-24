@@ -1,16 +1,13 @@
-"""start: launch a sandboxed bottle for a named agent and attach to its
-interactive session.
+"""start: launch a bottle for a named agent and attach to its session.
 
-The CLI resolves everything interactive (agent and bottle pickers, label
-and color, secret prompts, host-key and launch confirmations), then asks
-the host controller to launch. The agent runs in a tmux session the
-controller owns; this terminal attaches to it. Ctrl-] detaches and leaves
-the agent running (`bot-bottle attach <id>` rejoins); the bottle is torn
-down when the agent exits, and `start` exits with the agent's code.
+The CLI resolves everything interactive (pickers, label, color, secrets, host
+keys, confirmations), then asks the host controller to launch. The agent runs
+in a controller-owned tmux session. Ctrl-] detaches (`bot-bottle attach <id>`
+rejoins); the bottle is torn down when the agent exits, and `start` exits with
+its code.
 
-`--headless` takes agent/bottles/label from flags and skips every prompt,
-for orchestrators, CI and webhooks; it still attaches on the inherited PTY.
-`--dry-run` prepares locally and prints the preflight without the daemon.
+`--headless` takes everything from flags and skips prompts, still attaching on
+the inherited PTY. `--dry-run` prepares locally and prints the preflight.
 """
 
 from __future__ import annotations
@@ -139,10 +136,9 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
         if agent_name is None:
             return 0
 
-    # An agent that names its bottle starts on it with no more questions
-    # (PRD 0094): its own label (deduplicated), no color, local images when
-    # present (else pulled or built), no launch confirmation. `--pick` brings back the pickers to
-    # compose bottles or set a label and color.
+    # An agent that names its bottle starts straight away: its own label, no
+    # color, local images when present, no confirmation. `--pick` brings back
+    # the pickers.
     default_bottle = _peek_agent_bottle(manifest, agent_name)
     if default_bottle and not args.pick:
         request = LaunchRequest(
@@ -158,8 +154,7 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
         )
         return _launch_bottle(request, manifest, dry_run=dry_run, verbose=args.verbose)
 
-    # Bottle multiselect: compose bottles at launch time without editing
-    # agent manifests.
+    # Compose bottles at launch without editing agent manifests.
     available_bottles = manifest.all_bottle_names
     lineage_map = _bottle_lineage(manifest)
     display_labels = [lineage_map.get(n, n) for n in available_bottles]
@@ -174,8 +169,7 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
         return 0
     bottle_names = tuple(label_to_name.get(lbl, lbl) for lbl in selected_labels)
 
-    # Launches are named after the agent; `--pick` asks for a label, color
-    # and image mode instead.
+    # `--pick` asks for a label, color and image mode.
     if args.pick:
         label, color = tui.name_color_modal(default_label=agent_name)
         label, color = _resolve_unique_label(settings, label, color)
@@ -199,7 +193,7 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
     return _launch_bottle(request, manifest, dry_run=dry_run, verbose=args.verbose)
 
 
-# --- Headless launch -----------------------------------------------------
+# --- Headless launch ---
 
 
 def _start_headless(
@@ -209,12 +203,9 @@ def _start_headless(
     *,
     dry_run: bool,
 ) -> int:
-    """Non-interactive launch path for orchestrators / CI / webhooks.
-
-    Resolves agent, bottles, label, and color from flags + manifest
-    defaults instead of the TUI selectors, and auto-confirms the
-    preflight. The session is still attached on the inherited PTY, which
-    an orchestrator allocates and relays to its clients."""
+    """Non-interactive launch: agent, bottles, label and color from flags and
+    manifest defaults; the preflight is auto-confirmed. Still attaches on the
+    inherited PTY."""
     try:
         stdin_fd = sys.stdin.fileno()
     except io.UnsupportedOperation:
@@ -264,15 +255,13 @@ def _start_headless(
         copy_cwd=args.cwd,
         mount_cwd=args.mount,
     )
-    # Orchestrators relay this PTY and keep its output: stream everything.
+    # Stream everything; callers relay this PTY.
     return _launch_bottle(request, manifest, dry_run=dry_run, verbose=True)
 
 
 def _uniquify_label(settings: Settings, label: str) -> str:
-    """Non-interactive analog of `_resolve_unique_label`: if the label's
-    slug collides with a running bottle, append -2, -3, … until free,
-    logging the chosen label. Orchestrators fire-and-forget many bottles,
-    so silently picking a free name beats erroring on every collision."""
+    """Headless `_resolve_unique_label`: append -2, -3, ... until the slug is
+    free, logging the choice."""
     active_slugs = {a.slug for a in enumerate_active_agents(settings)}
     if slugify(label) not in active_slugs:
         return label
@@ -284,18 +273,14 @@ def _uniquify_label(settings: Settings, label: str) -> str:
     return chosen
 
 
-# --- Launch helpers ------------------------------------------------------
+# --- Launch helpers ---
 
 
 def _peek_agent_bottle(manifest: ManifestIndex, agent_name: str) -> str:
-    """Return the `bottle:` value from the named agent's frontmatter without
-    fully parsing the agent file, or "" when absent or unreadable.
-
-    Used to pre-populate the bottle multiselect with the agent's default
-    bottle so operators who haven't removed `bottle:` from their manifests
-    don't need to re-select it every time."""
+    """The `bottle:` value from the agent's frontmatter without fully parsing
+    it, or "" when absent or unreadable. Pre-selects the agent's bottle."""
     if manifest.home_md is None:
-        # Eager mode (from_json_obj): agent is pre-parsed.
+        # Eager mode: the agent is pre-parsed.
         if agent_name in manifest.agents:
             return manifest.agents[agent_name].bottle
         return ""
@@ -320,9 +305,7 @@ def _peek_agent_bottle(manifest: ManifestIndex, agent_name: str) -> str:
 
 
 def _resolve_unique_label(settings: Settings, label: str, color: str) -> tuple[str, str]:
-    """Re-prompt with a disclaimer until the label's slug is not already
-    in use among running bottles.  Passes through unchanged when no
-    collision is found on the first check."""
+    """Re-prompt until the label's slug isn't used by a running bottle."""
     while True:
         slug_candidate = slugify(label)
         active_slugs = {a.slug for a in enumerate_active_agents(settings)}
@@ -350,10 +333,8 @@ def _text_render_preflight():
 
 
 def _bottle_lineage(manifest: ManifestIndex) -> dict[str, str]:
-    """Return {bottle_name: lineage_label} for bottles that have an extends chain.
-
-    Bottles without a parent are omitted (the caller falls back to the bare name).
-    Labels show the chain root-first: e.g. 'dev -> bot-bottle-dev -> claude-dev'."""
+    """{bottle: lineage label} for bottles with an extends chain, root first
+    (e.g. 'dev -> bot-bottle-dev -> claude-dev')."""
     if manifest.home_md is None:
         return {}
     bottles_dir = manifest.home_md / "bottles"
@@ -391,10 +372,9 @@ def _bottle_lineage(manifest: ManifestIndex) -> dict[str, str]:
 
 def _launch_bottle(request: LaunchRequest, manifest: ManifestIndex, *, dry_run: bool,
                    verbose: bool = False) -> int:
-    """Shared launch core for `start` and `resume`: a local dry run, or the
-    request (with its secrets and confirmed host keys) sent to the host
-    controller, then attached. ``verbose`` (or `BOT_BOTTLE_VERBOSE=1`)
-    streams the launch log instead of one line per stage."""
+    """Shared launch for `start` and `resume`: a local dry run, or the request
+    (with secrets and confirmed host keys) sent to the host controller and
+    attached. `verbose` (or `BOT_BOTTLE_VERBOSE=1`) streams the launch log."""
     try:
         request.check()
     except ValueError as e:
@@ -407,8 +387,7 @@ def _launch_bottle(request: LaunchRequest, manifest: ManifestIndex, *, dry_run: 
 
 
 def _dry_run(request: LaunchRequest, manifest: ManifestIndex) -> int:
-    """Prepare locally and print the preflight; nothing starts and the
-    host controller isn't involved."""
+    """Prepare locally and print the preflight; nothing starts."""
     # pylint: disable=import-outside-toplevel
     from ...backend import BottleSpec, get_bottle_backend
 

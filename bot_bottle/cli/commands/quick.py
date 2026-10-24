@@ -1,22 +1,19 @@
-"""`bot-bottle` with no command: start an agent on this directory (PRD 0094).
+"""`bot-bottle` with no command: start an agent on this directory.
 
-  bot-bottle             the agent last used here, else your default
+  bot-bottle             the agent last used here, else the default
                          (`bot-bottle default <agent>`), else the first ready
                          starter: claude, codex, then pi
   bot-bottle <agent>     that agent
   bot-bottle --copy      copy this directory in instead of mounting it
   bot-bottle default <agent>
-                         set the agent bare `bot-bottle` falls back to
+                         set the default agent
 
-The bottle is the agent's own, plus the project's bottle when the project
-ships one (`./.bot-bottle/bottles/<directory name>.md`, trusted on this host
-first) or else the built-in `basic` (package registries and public code,
-read-only). This directory is mounted into the bottle, so
-the agent edits your files in place (not your home directory or `/`). With
---copy, or on Firecracker, which can't mount, it's copied in instead (a git
-repo filtered by its .gitignore), and when the agent exits its changes are
-saved as a patch to apply here. With no starter yet, `bot-bottle setup` runs
-first. `bot-bottle start` keeps the pickers.
+The bottle is the agent's own plus the project's bottle
+(`./.bot-bottle/bottles/<directory name>.md`, once trusted) or else the
+built-in `basic`. The directory is mounted so the agent edits it in place; with
+--copy, or on firecracker, it's copied in (filtered by .gitignore) and the
+agent's changes are saved as a patch at exit. With no starter yet, `bot-bottle
+setup` runs first.
 """
 
 from __future__ import annotations
@@ -60,8 +57,8 @@ def _save_state(state: dict[str, object]) -> None:
 
 
 def pick_agent(manifest: ManifestIndex, cwd: Path) -> str | None:
-    """The agent for bare `bot-bottle` here: last used in ``cwd``, else the
-    default, else the first starter that exists."""
+    """The agent for bare `bot-bottle` in `cwd`: last used here, else the
+    default, else the first starter."""
     state = _load_state()
     last = state.get("last")
     candidates = [
@@ -102,7 +99,7 @@ def cmd_default(argv: list[str]) -> int:
 
 
 def _ensure_starters(manifest: ManifestIndex, cwd: Path) -> ManifestIndex:
-    """With no agent to pick, run `setup` in a terminal, then look again."""
+    """With no agent to pick, run `setup` in a terminal and look again."""
     if not sys.stdin.isatty():
         return manifest
     info("no agent yet; running setup first")
@@ -112,13 +109,13 @@ def _ensure_starters(manifest: ManifestIndex, cwd: Path) -> ManifestIndex:
 
 
 def project_bottle(cwd: Path) -> str:
-    """The project's own bottle, named after its directory, if it ships one."""
+    """The project's own bottle, named after its directory, if any."""
     name = slugify(cwd.name)
     return name if (cwd / ".bot-bottle" / "bottles" / f"{name}.md").is_file() else ""
 
 
 def _uncommitted(cwd: Path) -> int:
-    """How many files have uncommitted changes in a git repo (0 elsewhere)."""
+    """Files with uncommitted changes in a git repo (0 elsewhere)."""
     try:
         out = subprocess.run(["git", "-C", str(cwd), "status", "--porcelain"],
                              capture_output=True, text=True, check=True).stdout

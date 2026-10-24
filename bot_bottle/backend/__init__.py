@@ -1,19 +1,8 @@
-"""The bottle-backend package: abstract contract + backend selection.
+"""The bottle-backend package: the abstract contract and backend selection.
 
-Thin by design — nothing framework-heavy is imported at package init, so
-importing any `backend.*` submodule (e.g. `backend.docker.util`) doesn't drag
-the manifest / egress / git-gate framework into memory. The public names are
-re-exported lazily:
-
-  * the abstract contract (`BottleBackend`, `BottleSpec`, `Bottle`, …) lives in
-    `backend.base`;
-  * backend selection / enumeration (`get_bottle_backend`,
-    `enumerate_active_agents`, …) in `backend.selection`;
-  * the concrete backends and the freeze helpers in their own submodules.
-
-`from bot_bottle.backend import X` resolves X on first access via `__getattr__`
-and caches it at package level, so existing call-sites (and
-`patch.object(backend_mod, X, …)`) keep working.
+Public names are re-exported lazily from `base`, `selection` and the backend
+subpackages, so importing a `backend.*` submodule doesn't load the whole
+framework.
 """
 
 from __future__ import annotations
@@ -47,9 +36,7 @@ if TYPE_CHECKING:
     from .freeze import CommitCancelled, Freezer, get_freezer
 
 
-# Public name -> submodule that defines it. Contract types resolve from `base`,
-# selection/enumeration from `selection`, the concrete backends + freeze helpers
-# from their own subpackages.
+# Public name -> the submodule that defines it.
 _LAZY_MODULES: dict[str, str] = {
     "BottleSpec": "base",
     "BottlePlan": "base",
@@ -78,10 +65,8 @@ _LAZY_MODULES: dict[str, str] = {
 
 
 def __getattr__(name: str) -> Any:
-    """Lazily surface the package's public names from their submodules and
-    cache them at package level — so `from bot_bottle.backend import X` and
-    `patch.object(backend_mod, X, …)` keep working without importing the
-    framework (or every backend) at package-init time."""
+    """Resolve a public name from its submodule on first access and cache it,
+    so `from bot_bottle.backend import X` and `patch.object` both work."""
     mod = _LAZY_MODULES.get(name)
     if mod is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

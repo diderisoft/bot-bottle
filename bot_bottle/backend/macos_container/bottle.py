@@ -63,19 +63,11 @@ class MacosContainerBottle(Bottle):
         self.terminal_color = terminal_color
         self.agent_provider_template = agent_provider_template
         self.agent_workdir = agent_workdir
-        # Env applied to the agent process at `container exec` time, on top of
-        # what the container was run with. This is how the identity token
-        # reaches the agent: registration mints it *after* the
-        # container exists — its source IP is the registration key and Apple
-        # Container assigns that by DHCP — so it cannot be in the run-time env
-        # the way docker's compose spec does it.
-        #
-        # `container exec --env` does NOT override a run-time value — it
-        # appends, leaving duplicate entries in the agent's `environ` whose
-        # resolution is runtime-specific (Node last-wins, Rust first-wins). So
-        # nothing here may rely on superseding: the proxy vars are supplied
-        # *only* at exec time and are deliberately absent from the run-time
-        # env. See `launch._agent_env_entries`.
+        # Env applied at `container exec` time. The identity token is minted
+        # after the container exists (its DHCP address is the registration
+        # key), so it can't be in the run-time env. `exec --env` appends rather
+        # than overrides, so the proxy vars are supplied only here, never at
+        # run time.
         self._exec_env = dict(exec_env or {})
         self._closed = False
 
@@ -89,33 +81,29 @@ class MacosContainerBottle(Bottle):
             )
         )
         container_exec = ["container", "exec"]
-        # Bare env names, same rule as the terminal hints below: the value
-        # stays in the child env `exec_agent` builds and never reaches argv —
-        # the proxy URL here carries the identity token, which `ps` would
-        # otherwise expose to every process on the host.
+        # Bare names: the proxy URL carries the identity token, which `ps`
+        # would show.
         for name in sorted(self._exec_env):
             container_exec.extend(["--env", name])
         if tty:
             container_exec.extend(["--interactive", "--tty"])
-            # Forward terminal capability hints so TUIs can enable modified-key
-            # protocols. Use bare env names: values stay in the child env, not
-            # on argv, and pty_forward supplies a TERM fallback when needed.
+            # Forward terminal capability hints as bare names; pty_forward
+            # supplies a TERM fallback.
             for name in _terminal_env_names():
                 container_exec.extend(["--env", name])
         if self.agent_workdir and self.agent_workdir != "/home/node":
             container_exec.extend(["--workdir", self.agent_workdir])
         container_exec.extend([self.name, self.agent_executable, *full_argv])
         if tty:
-            # Wrap with the raw-mode forwarder: container exec does not put
-            # the host terminal into raw mode itself, so the line discipline
-            # buffers modifier-key sequences until CR.  The wrapper sets raw
-            # mode before exec and restores it on exit.
+            # `container exec` doesn't put the terminal in raw mode, so the
+            # line discipline would buffer modifier-key sequences; the wrapper
+            # sets it.
             return [sys.executable, _PTY_FORWARD_SCRIPT, "--", *container_exec]
         return container_exec
 
     def agent_command(self, argv: list[str]) -> tuple[list[str], dict[str, str]]:
-        # The env carries the values behind the bare `--env` names in
-        # `agent_argv`; `sh -lc` passes it through to `container exec`.
+        # `sh -lc` passes the env behind the bare `--env` names to `container
+        # exec`.
         command = agent_shell_command(
             self.agent_argv(argv, tty=True), self.terminal_title, self.terminal_color)
         return command, dict(self._exec_env)
@@ -129,10 +117,8 @@ class MacosContainerBottle(Bottle):
         return subprocess.run(command, env=env, check=False).returncode
 
     def exec(self, script: str, *, user: str = "node") -> ExecResult:
-        # Carry the same exec env the agent gets: provisioning steps run
-        # through here, and a provider whose provision step fetches anything
-        # would egress without the identity token and be denied by /resolve.
-        # Bare `--env NAME` again, so the token stays off argv.
+        # Provisioning gets the agent's exec env too, so its egress carries the
+        # token. Bare names again.
         argv = ["container", "exec", "--user", user, "--interactive"]
         for name in sorted(self._exec_env):
             argv.extend(["--env", name])

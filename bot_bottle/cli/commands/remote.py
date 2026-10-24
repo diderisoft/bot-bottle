@@ -1,13 +1,13 @@
-"""bot-bottle remote — let the console you logged in to reach this host.
+"""bot-bottle remote: let the console you logged in to reach this host.
 
   bot-bottle remote enable    bind this host's iroh node id with the console
                               and start the link (ADR 0007)
   bot-bottle remote disable   stop the link
   bot-bottle remote status    show whether the link is enabled and connected
 
-`enable` needs `bot-bottle login` first, and the iroh bindings
-(`pip install 'bot-bottle[remote]'`; not available on Intel Macs). The running
-host controller picks the change up within a few seconds.
+`enable` needs `bot-bottle login` and the iroh bindings (`pip install
+'bot-bottle[remote]'`; not on Intel Macs). The host controller picks up the
+change within seconds.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def _request(method: str, url: str, body: dict[str, Any], token: str = "") -> di
 
 def _bind(console: dict[str, Any], node_id: str) -> dict[str, Any]:
     """`PUT /api/v1/hosts/iroh` with the host's access token, refreshing it
-    once if it expired."""
+    once if expired."""
     url = console["url"].rstrip("/")
     try:
         return _request("PUT", f"{url}/api/v1/hosts/iroh", {"node_id": node_id},

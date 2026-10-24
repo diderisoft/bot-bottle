@@ -1,28 +1,10 @@
-"""Orchestrator bottle registry — the per-host runtime-state store.
+"""The bottle registry: each live bottle's source IP and identity token, and
+fail-closed attribution (both must match one active record), in the shared host
+DB.
 
-SQLite-backed registry mapping each live bottle to its source IP and
-per-bottle identity token, plus the **fail-closed attribution** the data
-plane relies on: a request is attributed to a bottle only when its source
-IP *and* its identity token both match a single active record.
-
-The registry co-tenants the shared host `bot-bottle.db` (the `DbStore`
-framework namespaces each store by `schema_key`), so all bot-bottle
-runtime state lives in one queryable file — one place to back up, inspect,
-and integrate a console against.
-
-This is the "runtime state" tier (leases / approvals / registry) —
-deliberately NOT config (which stays declarative under `~/.bot-bottle/`) and NOT the build-time constants (a flat file). It is the
-source of truth the orchestrator sweeps on restart to re-adopt running
-bottles, so it lives in a durable store rather than process memory.
-
-Attribution combines two independent signals, and needs both:
-
-  * source IP  — the network-layer invariant (on Firecracker the `/31` TAP
-    + nft make it unspoofable by construction; weaker on other backends).
-  * identity token — an application-layer per-bottle secret, defence in
-    depth that doesn't lean on network anti-spoof. A bottle can only ever
-    prove it is *itself* (it can't learn another bottle's token), so a
-    hostile agent gains nothing by presenting it.
+The source IP is the network-layer signal (unspoofable on firecracker, weaker
+elsewhere); the identity token is an application-layer secret a bottle can't
+learn for another.
 """
 
 from __future__ import annotations
@@ -38,13 +20,11 @@ from pathlib import Path
 from ...lib.db_store import DbStore
 from ...lib.migrations import TableMigrations
 
-# 256 bits of urandom, URL-safe — unguessable per-bottle identity token.
+# 256 bits, URL-safe.
 IDENTITY_TOKEN_BYTES = 32
 
-# How recently a row must have been registered to be exempt from
-# `reap_absent`. Covers the window between `container run` and the address
-# becoming visible to another launch's enumeration, so reconciliation never
-# reaps a bottle that is still coming up.
+# Rows newer than this are exempt from `reap_absent`, covering a launch whose
+# address isn't visible yet.
 DEFAULT_REAP_GRACE_SECONDS = 120.0
 
 
@@ -62,16 +42,13 @@ class BottleRecord:
     identity_token: str
     state: str = "active"
     created_at: float = 0.0
-    # Opaque JSON blob for forward-compat (pool slot, ...) — the registry
-    # doesn't interpret it, so new fields need no migration.
+    # Opaque JSON, so new fields need no migration.
     metadata: str = ""
-    # The bottle's gateway policy (opaque JSON — egress allowlist / routes /
-    # git config). The registry stores and serves it verbatim, keyed by
-    # source IP; the multi-tenant gateway interprets it.
+    # The bottle's gateway policy, opaque JSON stored and served verbatim.
     policy: str = ""
 
     def redacted(self) -> dict[str, object]:
-        """Public view for listing — never exposes the identity token."""
+        """Listing view; never includes the identity token."""
         return {
             "bottle_id": self.bottle_id,
             "source_ip": self.source_ip,
@@ -85,7 +62,7 @@ class BottleRecord:
 _MIGRATIONS = TableMigrations(
     "orchestrator_registry",
     [
-        # v1 — the live bottle registry.
+        # v1: the registry.
         """
         CREATE TABLE IF NOT EXISTS orchestrator_bottles (
             bottle_id      TEXT PRIMARY KEY,
@@ -96,19 +73,13 @@ _MIGRATIONS = TableMigrations(
             metadata       TEXT NOT NULL DEFAULT ''
         )
         """,
-        # source_ip is the data-plane attribution key — index it, and make
-        # the "one active bottle per source IP" check cheap.
+        # The attribution key; indexed.
         "CREATE INDEX IF NOT EXISTS idx_orchestrator_bottles_source_ip "
         "ON orchestrator_bottles (source_ip)",
-        # v3 — per-bottle policy (opaque JSON the gateway interprets): the
-        # egress allowlist / routes / git config selected by source IP. The
-        # multi-tenant gateway resolves it per request via `attribute`.
+        # v3: per-bottle policy.
         "ALTER TABLE orchestrator_bottles ADD COLUMN policy TEXT NOT NULL DEFAULT ''",
-        # v4 — per-bottle encrypted egress secrets.
-        # One row per env-var: key (env-var name) is plaintext for auditing;
-        # value is the encrypted token string. The encryption key (ENV_VAR_SECRET)
-        # lives only in the agent's environment — a row alone cannot recover the
-        # credential.
+        # v4: encrypted egress secrets, one row per env var (name in
+        # plaintext). The key lives only in the agent's env.
         """
         CREATE TABLE IF NOT EXISTS bottled_agent_secrets (
             bottled_agent_id TEXT NOT NULL,
@@ -117,12 +88,11 @@ _MIGRATIONS = TableMigrations(
             type             TEXT NOT NULL DEFAULT 'injected_env_var'
         )
         """,
-        # v5 — index for fast per-bottle lookups and bulk DELETE on teardown.
+        # v5: per-bottle index.
         "CREATE INDEX IF NOT EXISTS idx_bottled_agent_secrets_id "
         "ON bottled_agent_secrets (bottled_agent_id, type)",
-        # v6 — unauthenticated legacy ciphertext must never be selected by
-        # attacker-controlled blob contents. Existing local agents are
-        # intentionally reprovisioned instead of retaining downgrade support.
+        # v6: drop unauthenticated legacy ciphertext; affected bottles
+        # reprovision.
         "DELETE FROM bottled_agent_secrets",
     ],
 )
@@ -148,12 +118,9 @@ class RegistryStore(DbStore):
         super().__init__(db_path, _MIGRATIONS)
 
     def _connect(self) -> sqlite3.Connection:
-        """Open a connection with a busy timeout for the shared DB."""
+        """A connection with a busy timeout."""
         conn = super()._connect()
-        # The registry co-tenants the shared bot-bottle.db, so a busy_timeout
-        # rides out brief lock contention with the other stores. WAL for the
-        # shared DB is a deliberate future change (it affects supervise/audit
-        # and is finicky over guest shares) — not flipped here.
+        # Ride out lock contention with the other stores on the shared DB.
         conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
@@ -166,16 +133,9 @@ class RegistryStore(DbStore):
         metadata: str = "",
         policy: str = "",
     ) -> BottleRecord:
-        """Register (or replace) a bottle. Mints a bottle_id / identity token
-        when not supplied. Live — this is the control-plane reload path.
-
-        Supersedes any *other* active bottle at the same source IP first:
-        `by_source_ip` fail-closes on ambiguity (>1 active row → None), so a
-        leftover row at a reused IP — from an untorn-down bottle, crash
-        recovery, or a persisted DB — would otherwise *brick* the new bottle's
-        attribution. The new registration is authoritative for its IP; the
-        stale rows go. INSERT OR REPLACE handles a same-`bottle_id` reload in
-        place (its own row is exempt from the sweep)."""
+        """Register or replace a bottle, minting its id and token if not given.
+        Other active rows at the same source IP are removed first, since an
+        ambiguous IP attributes to nothing."""
         rec = BottleRecord(
             bottle_id=bottle_id or secrets.token_hex(8),
             source_ip=source_ip,
@@ -209,8 +169,7 @@ class RegistryStore(DbStore):
         return rec
 
     def set_policy(self, bottle_id: str, policy: str) -> bool:
-        """Update a bottle's policy in place (live reload). Returns True if
-        the bottle exists."""
+        """Replace a bottle's policy. True if it exists."""
         with self._connection() as conn:
             cur = conn.execute(
                 "UPDATE orchestrator_bottles SET policy = ? WHERE bottle_id = ?",
@@ -250,35 +209,14 @@ class RegistryStore(DbStore):
         grace_seconds: float = DEFAULT_REAP_GRACE_SECONDS,
         now: float | None = None,
     ) -> list[BottleRecord]:
-        """Delete active rows whose source IP is not held by a live bottle.
+        """Delete active rows whose source IP no live bottle holds, leaving at
+        most one row per live address.
 
-        A row only ever leaves the registry two ways: an explicit
-        `teardown_bottle` (the launcher's cleanup callback) or the supersede
-        sweep in `register`. Neither runs when the launching CLI dies hard —
-        SIGKILL, a closed terminal, a host sleep/crash — so the row outlives
-        its container. That orphan is not inert: source IPs are recycled by
-        the backend's DHCP, and `by_source_ip` fail-closes on ambiguity, so a
-        leftover row at a reused address can brick the *next* bottle that
-        lands on it (no policy resolved -> every host denied, reported to the
-        agent as "not in the allowlist"). Reconciling against the live set at
-        launch keeps the registry from accumulating those landmines.
-
-        Restores the invariant the data plane needs: **at most one active row
-        per live address, and none at all for a dead one.** Two cases, because
-        a dead bottle's address may already have been handed to a live one:
-
-          * no live bottle holds the address — every row there is an orphan;
-          * a live bottle holds it but several rows claim it — the newest
-            registration is authoritative and the rest are orphans, the same
-            rule `register`'s same-IP supersede sweep applies. Without this
-            second case a recycled address stays ambiguous, which is exactly
-            the state that resolves no policy.
-
-        `grace_seconds` protects an in-flight launch: registration happens
-        moments after `container run`, and a concurrent launch's address may
-        not be visible to the caller's enumeration yet. Rows younger than the
-        grace window are never reaped, so reconciliation can't race a bottle
-        that is still coming up. Returns the deleted records."""
+        Rows outlive a hard-killed launcher, and a recycled address with a
+        stale row resolves no policy for the next bottle. Two cases: no live
+        bottle at the address (all rows are orphans), or several rows at a live
+        address (the newest wins). Rows younger than `grace_seconds` are kept
+        so an in-flight launch isn't raced. Returns the deleted records."""
         live = {ip for ip in live_source_ips if ip}
         cutoff = (time.time() if now is None else now) - grace_seconds
         with self._connection() as conn:
@@ -294,7 +232,7 @@ class RegistryStore(DbStore):
                 if ip not in live:
                     candidates.extend(recs)
                     continue
-                # Keep the newest claim on a live address; supersede the rest.
+                # Keep the newest claim; drop the rest.
                 recs.sort(key=lambda r: r.created_at)
                 candidates.extend(recs[:-1])
             doomed = [r for r in candidates if r.created_at <= cutoff]
@@ -308,12 +246,9 @@ class RegistryStore(DbStore):
         return doomed
 
     def by_source_ip(self, source_ip: str) -> BottleRecord | None:
-        """Network-layer attribution: the single active bottle at this source
-        IP, or None if unknown or ambiguous (more than one — a
-        misconfiguration). Safe as the *sole* attributor only where the
-        source IP is unspoofable (Firecracker `/31` + nft) and the control
-        plane is reachable only by the trusted gateway; pair with the
-        identity token (`attribute`) elsewhere."""
+        """The single active bottle at this source IP, or None if unknown or
+        ambiguous. Pair with the identity token (`attribute`) unless the IP is
+        unspoofable."""
         with self._connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM orchestrator_bottles "
@@ -325,9 +260,8 @@ class RegistryStore(DbStore):
         return _row_to_record(rows[0])
 
     def attribute(self, source_ip: str, identity_token: str) -> BottleRecord | None:
-        """Fail-closed attribution: `by_source_ip` AND a matching identity
-        token (constant-time). Either signal alone is insufficient here — an
-        unknown/ambiguous IP, an empty token, or a token mismatch all deny."""
+        """Fail-closed attribution: `by_source_ip` and a matching token
+        (constant-time)."""
         if not identity_token:
             return None
         rec = self.by_source_ip(source_ip)
@@ -337,7 +271,7 @@ class RegistryStore(DbStore):
             return None
         return rec
 
-    # --- encrypted egress secret store ------------------------------------
+    # --- encrypted egress secrets ---
 
     def store_agent_secrets(
         self,
@@ -345,9 +279,8 @@ class RegistryStore(DbStore):
         encrypted_values: dict[str, str],
         secret_type: str = "injected_env_var",
     ) -> None:
-        """Replace all stored secrets for *bottle_id* with *encrypted_values*
-        (env-var name → encrypted ciphertext). Deletes then re-inserts so a
-        re-registration is always consistent with the current token set."""
+        """Replace `bottle_id`'s stored secrets with `encrypted_values` (env
+        name -> ciphertext)."""
         with self._connection() as conn:
             conn.execute(
                 "DELETE FROM bottled_agent_secrets "
@@ -368,10 +301,7 @@ class RegistryStore(DbStore):
         encrypted_value: str,
         secret_type: str = "injected_env_var",
     ) -> None:
-        """Upsert ONE encrypted secret row (env-var name → ciphertext) for
-        *bottle_id*, leaving the bottle's other secrets untouched — the per-key
-        counterpart of ``store_agent_secrets``' replace-all. Delete-then-insert
-        because the table carries no unique constraint to `ON CONFLICT` against."""
+        """Upsert one encrypted row for `bottle_id`, leaving the others."""
         with self._connection() as conn:
             conn.execute(
                 "DELETE FROM bottled_agent_secrets "
@@ -390,7 +320,7 @@ class RegistryStore(DbStore):
         bottle_id: str,
         secret_type: str = "injected_env_var",
     ) -> dict[str, str]:
-        """Return {env_var_name: encrypted_value} for *bottle_id*, or {} if none."""
+        """{env name: ciphertext} for `bottle_id`, or {}."""
         with self._connection() as conn:
             rows = conn.execute(
                 "SELECT key, value FROM bottled_agent_secrets "
@@ -404,7 +334,7 @@ class RegistryStore(DbStore):
         bottle_id: str,
         secret_type: str = "injected_env_var",
     ) -> None:
-        """Remove all stored secrets for *bottle_id* (e.g. on teardown)."""
+        """Remove `bottle_id`'s stored secrets."""
         with self._connection() as conn:
             conn.execute(
                 "DELETE FROM bottled_agent_secrets "

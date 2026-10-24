@@ -1,4 +1,4 @@
-"""Egress routing manifest dataclasses and helpers."""
+"""Egress route manifest dataclasses."""
 
 from __future__ import annotations
 
@@ -172,7 +172,7 @@ class ManifestEgressRoute:
                 f"the 'role' field is reserved for future use"
             )
 
-        # --- DLP settings (inspection-only) ---
+        # --- DLP settings ---
         outbound_detectors: tuple[str, ...] | None = None
         inbound_detectors: tuple[str, ...] | None = None
         outbound_on_match = ""

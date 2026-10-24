@@ -1,4 +1,4 @@
-"""Agent configuration manifest dataclasses."""
+"""Agent manifest dataclasses."""
 
 from __future__ import annotations
 
@@ -12,31 +12,23 @@ from .git import ManifestGitUser
 from .schema import AGENT_MODEL_KEYS, is_valid_entity_name
 
 
-# A harness version is interpolated into overlay RUN lines, so it is held to a
-# strict semver shape (optional prerelease) rather than shell-quoted ad hoc.
+# A harness version lands in overlay RUN lines, so it must be strict semver.
 HARNESS_VERSION_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.]*)?")
 
-# Debian package names (policy 5.6.1), with an optional `:arch` and `=version`.
-# Overlay apt entries land in a RUN line, so anything else (a newline above
-# all, which would start a new Dockerfile instruction) is refused.
+# Debian package names (policy 5.6.1) with optional `:arch` and `=version`.
+# Anything else, above all a newline, is refused, since entries land in RUN.
 APT_PACKAGE_RE = re.compile(r"[a-z0-9][a-z0-9+.-]*(:[a-z0-9-]+)?(=[A-Za-z0-9.+:~-]+)?")
 
 
 @dataclass(frozen=True)
 class ManifestImageOverlay:
-    """A small tweak layered on the pinned default agent image.
+    """A thin layer on the pinned default agent image: a harness version, apt
+    packages, and extra files, built `FROM` the verified base. A harness bump
+    replaces the tested harness, so compatibility is the author's.
 
-    Rendered as a thin `FROM <pinned-default>` layer — a pinned
-    harness version, extra apt packages, and extra files COPYed in — so the base
-    stays the verified release image. A harness bump is the exception: it
-    replaces the harness the release was tested with, so compatibility is the
-    author's to own. This is the
-    middle path between "pull the default as-is" and "bring your own image": a
-    one-layer build, expressible without a `contrib` folder.
-
-    `dockerfile` is the free-form alternative to the structured fields: a
-    Dockerfile whose single stage is `FROM ${BASE}`, built with its own
-    directory as the context. Mutually exclusive with the other fields."""
+    `dockerfile` is the free-form alternative: a single-stage Dockerfile built
+    `FROM ${BASE}` with its own directory as context. Exclusive with the other
+    fields."""
 
     harness_version: str = ""
     apt: tuple[str, ...] = ()
@@ -93,8 +85,8 @@ class ManifestImageOverlay:
 
 
 def _check_overlay_path(what: str, path: str) -> None:
-    # Resolved against the launch directory; it lands in the build context
-    # and (for `files`) in a COPY line.
+    # Relative to the launch directory; it lands in the build context and a
+    # COPY.
     if path.startswith("/") or ".." in path.split("/"):
         raise ManifestError(
             f"{what} {path!r} must be a relative path inside the launch directory "
@@ -112,21 +104,11 @@ def _overlay_str_list(where: str, key: str, raw: object) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class ManifestAgentProvider:
-    """Provider/template for the agent process inside a bottle.
-
-    `template` selects a built-in launch/runtime contract. `dockerfile`
-    optionally points at a custom agent-image Dockerfile while leaving
-    bot-bottle's gateway infrastructure intact.
-
-    `auth_token` names the host env var that holds the provider's OAuth
-    token (Claude only). The provisioner injects a provider-owned egress
-    route for api.anthropic.com that re-injects this token as the Bearer
-    header, and sets a placeholder CLAUDE_CODE_OAUTH_TOKEN in the agent
-    so the Claude Code CLI starts.
-
-    `forward_host_credentials` forwards the host provider auth token into
-    the egress sidecar (Codex and Claude). For Codex this reads
-    `~/.codex/auth.json`; for Claude it reads `~/.claude/.credentials.json`.
+    """The agent process's provider. `template` picks a built-in runtime;
+    `dockerfile` optionally names a custom agent image. `auth_token` names the
+    host var holding Claude's OAuth token, injected by a provider egress route
+    while the agent gets a placeholder. `forward_host_credentials` forwards the
+    host's Codex or Claude login token through egress.
     """
 
     template: str = "claude"
@@ -138,8 +120,8 @@ class ManifestAgentProvider:
 
     @property
     def builds_custom_image(self) -> bool:
-        """The bottle names its own `dockerfile`, so its image is built from
-        that, never swapped for the published default."""
+        """The bottle names its own `dockerfile`, so its image is always built
+        from it."""
         return bool(self.dockerfile)
 
     @classmethod
@@ -240,17 +222,14 @@ class ManifestAgentProvider:
 
 @dataclass(frozen=True)
 class ManifestAgent:
-    # Optional: when empty the operator selects bottles at launch time.
+    # Empty: bottles are picked at launch.
     bottle: str = ""
     skills: tuple[str, ...] = ()
     prompt: str = ""
-    # Per-agent git identity. Overlays the referenced
-    # bottle's git-gate.user per-field at `Manifest.bottle_for`. Only
-    # `user` is allowed at the agent level; `repos` stays bottle-only
-    # because it carries credentials and host trust.
+    # The agent's git identity, overlaid per field on the bottle's. Agents may
+    # set only `user`; `repos` carries credentials and stays bottle-only.
     git_user: ManifestGitUser = ManifestGitUser()
-    # `remote.writable`: whether remote viewers of this agent's session may
-    # type. They're read-only otherwise.
+    # `remote.writable`: whether remote viewers may type.
     remote_writable: bool = False
 
     @classmethod
@@ -295,11 +274,8 @@ class ManifestAgent:
                         f"agent '{name}' skills[{i}] must be a string "
                         f"(was {type(skill).__name__})"
                     )
-                # Skill names become host/guest path segments and are
-                # interpolated into provisioning shell commands, so they
-                # must fit the same kebab-case convention as bottle/agent
-                # filenames — rejecting anything that could break out of a
-                # path segment or inject shell metacharacters.
+                # Skill names become path segments and land in shell commands,
+                # so they must be kebab-case like entity filenames.
                 if not is_valid_entity_name(skill):
                     raise ManifestError(
                         f"agent '{name}' skills[{i}] {skill!r} is not a valid "
@@ -319,8 +295,7 @@ class ManifestAgent:
                 f"(was {type(prompt_raw).__name__})"
             )
 
-        # git-gate: agents may declare only `git-gate.user` (name/email).
-        # `git-gate.repos` is bottle-only — it carries credentials and host trust.
+        # Agents may declare only `git-gate.user`; `repos` is bottle-only.
         git_user = ManifestGitUser()
         git_raw = d.get("git-gate")
         if git_raw is not None:

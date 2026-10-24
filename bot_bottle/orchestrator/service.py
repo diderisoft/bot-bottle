@@ -1,17 +1,8 @@
-"""The per-host orchestrator core.
-
-`OrchestratorCore` is the single backend-neutral object the control plane talks
-to: it owns the registry (runtime state). Bottles are launched by the host
-controller; the host registers each one here during its launch.
-
-  * `register_bottle` mints the bottle (registry: source IP + identity token)
-    with its gateway policy and egress tokens.
-  * `deregister_bottle` drops it.
-  * `reconcile` sweeps rows whose bottle is no longer running — the
-    self-heal for the teardown paths that never got to run (a hard-killed
-    launcher), since an orphan row at a recycled source IP bricks the next
-    bottle that lands on it. It asks the host controller which bottles
-    are live, and runs on a timer as well as on request.
+"""`OrchestratorCore`: the backend-neutral object the control plane wraps. It
+owns the registry and the supervise queue. The host controller registers each
+bottle during launch; `reconcile` (on request and on a timer) removes rows for
+bottles no longer running, since an orphan row on a recycled IP breaks the next
+bottle there.
 """
 
 from __future__ import annotations
@@ -40,8 +31,8 @@ from .supervisor import Supervisor
 from ..lib.text import render_diff
 
 
-# Operator decision → Response.status. The apply half (egress tools) runs
-# for approve/modify only.
+# Operator decision -> Response.status. Egress changes apply for approve and
+# modify only.
 _RESPOND_STATUS = {
     "approve": STATUS_APPROVED,
     "modify": STATUS_MODIFIED,
@@ -57,7 +48,7 @@ class LiveSource(Protocol):
 
 
 class OrchestratorCore:
-    """Owns the registry of bottles and the supervise queue. Backend-neutral."""
+    """Owns the bottle registry and the supervise queue."""
 
     def __init__(
         self,
@@ -65,14 +56,10 @@ class OrchestratorCore:
         supervisor: Supervisor | None = None,
     ) -> None:
         self.registry = registry
-        # The supervise service (queue + audit I/O). Injectable for tests;
-        # defaults to the registry's DB, which co-tenants the supervise tables.
+        # Injectable for tests; defaults to the registry's DB.
         self._supervisor = supervisor or Supervisor(registry.db_path)
-        # Per-bottle egress auth tokens (env_name -> value), keyed by bottle_id.
-        # Held **in memory only** — never written to the registry DB — so the
-        # gateway can inject each bottle's upstream credential without secrets
-        # at rest. Lost on restart (re-launch re-registers them); the future
-        # SecretProvider replaces this with per-request minting.
+        # Per-bottle egress tokens (env name -> value), in memory only;
+        # encrypted copies live in the DB for restart recovery.
         self._tokens: dict[str, dict[str, str]] = {}
 
     def register_bottle(
@@ -84,12 +71,9 @@ class OrchestratorCore:
         tokens: dict[str, str] | None = None,
         env_var_secret: str = "",
     ) -> BottleRecord:
-        """Register a bottle with its gateway policy and in-memory egress auth
-        tokens.
-
-        When *env_var_secret* is provided alongside *tokens*, the token values
-        are also encrypted and written to ``bottled_agent_secrets`` so they can
-        survive an orchestrator restart (see ``reprovision_from_secret``)."""
+        """Register a bottle with its policy and egress tokens. With
+        `env_var_secret`, the tokens are also stored encrypted for
+        `reprovision_from_secret`."""
         rec = self.registry.register(source_ip, metadata=metadata, policy=policy)
         if tokens:
             self._tokens[rec.bottle_id] = dict(tokens)
@@ -105,7 +89,7 @@ class OrchestratorCore:
             return False
         self.registry.deregister(bottle_id)
         self._tokens.pop(bottle_id, None)
-        # Reap any supervise proposals the gone bottle never acknowledged.
+        # Archive the bottle's unanswered proposals.
         self._supervisor.archive_all_proposals(bottle_id)
         return True
 
@@ -115,22 +99,11 @@ class OrchestratorCore:
         *,
         grace_seconds: float = DEFAULT_REAP_GRACE_SECONDS,
     ) -> list[str]:
-        """Drop registry rows for bottles that are no longer running, and
-        forget their in-memory egress tokens. Returns the reaped bottle ids.
-
-        The live set comes from the host controller (`hostctl`):
-        the orchestrator runs *inside* the infra container and has no view
-        of the backend. The bottles are already gone, so there is nothing to
-        stop.
-
-        Without a complete live set nothing is reaped: with no host
-        controller (an orchestrator brought up outside one), one that doesn't
-        answer, or one that couldn't list a backend, this logs and raises
-        `LiveBottlesUnknown`. A missing answer must never read as "nothing is
-        running", which would reap every healthy bottle.
-
-        See `RegistryStore.reap_absent` for why orphans accumulate and why
-        they are harmful rather than merely untidy."""
+        """Drop rows (and tokens) for bottles no longer running; returns the
+        reaped ids. The live set comes from the host controller. Without a
+        complete live set nothing is reaped and `LiveBottlesUnknown` is raised,
+        since a missing answer must never read as "nothing running". See
+        `RegistryStore.reap_absent`."""
         try:
             if hostctl is None:
                 raise LiveBottlesUnknown("no host controller to ask")
@@ -141,60 +114,40 @@ class OrchestratorCore:
         reaped = self.registry.reap_absent(live, grace_seconds=grace_seconds)
         for rec in reaped:
             self._tokens.pop(rec.bottle_id, None)
-            # Reap any supervise proposals the gone bottle never acknowledged.
+            # Archive the bottle's unanswered proposals.
             self._supervisor.archive_all_proposals(rec.bottle_id)
         return [rec.bottle_id for rec in reaped]
 
     def tokens_for(self, bottle_id: str) -> dict[str, str]:
-        """The bottle's in-memory egress auth tokens (env_name -> value), or
-        empty. The gateway injects these per request; they are never
-        persisted."""
+        """The bottle's in-memory egress tokens, or {}."""
         return dict(self._tokens.get(bottle_id, {}))
 
     def attribute(self, source_ip: str, identity_token: str) -> BottleRecord | None:
-        """Fail-closed attribution (delegates to the registry)."""
+        """Fail-closed attribution (the registry's)."""
         return self.registry.attribute(source_ip, identity_token)
 
     def resolve(self, source_ip: str, identity_token: str) -> BottleRecord | None:
-        """Resolve the bottle behind a request — the per-request lookup the
-        multi-tenant gateway makes; the returned record carries its `policy`.
-
-        **Mandatory pair**: requires a matching `(source_ip, identity_token)`
-        (constant-time). There is no source-IP-only fallback — the app-layer
-        token is delivered on every attributed data plane (egress proxy
-        credentials, git-gate/supervise headers), so a missing or mismatched
-        token fail-closes. This keeps a spoofed source IP (which the /31 TAP
-        alone does not prevent) from selecting another bottle's policy/tokens
-        without also holding that bottle's unguessable token."""
+        """The bottle behind a request; the record carries its `policy`.
+        Requires a matching `(source_ip, identity_token)` (constant-time), with
+        no IP-only fallback, so a spoofed address alone selects nothing."""
         return self.registry.attribute(source_ip, identity_token)
 
     def set_policy(self, bottle_id: str, policy: str) -> bool:
-        """Update a bottle's gateway policy in place (live reload). False if
-        the bottle is unknown."""
+        """Replace a bottle's policy in place. False if unknown."""
         return self.registry.set_policy(bottle_id, policy)
 
-    # --- supervise queue (operator approvals) ------------------------------
+    # --- supervise queue ---
     #
-    # The orchestrator owns the single DB *and* the live policy, so operator
-    # decisions are applied here, server-side, and reached over HTTP by the
-    # host TUI (no direct-DB access, one path for every backend).
-    #
-    # The *agent* half of the queue (queue a proposal, poll for its response)
-    # is served here too: the data plane never opens the DB, so
-    # supervise_server / egress / git-gate reach the queue over the control
-    # plane. Both are keyed on the caller's orchestrator-resolved bottle id —
-    # never a caller-supplied slug — so a bottle can only queue or read its own
-    # proposals even if the data plane is compromised.
+    # Operator decisions and the agent side of the queue both go through here,
+    # keyed by the orchestrator-resolved bottle id, so a bottle can only queue
+    # and read its own proposals.
 
     def supervise_queue_proposal(
         self, bottle_id: str, *, tool: str, proposed_file: str, justification: str,
     ) -> str:
-        """Queue an agent-side proposal under `bottle_id` and return its id.
-
-        `bottle_id` is the caller resolved from `(source_ip, identity_token)` by
-        the control plane, so the proposal is attributed to the calling bottle,
-        not to anything the (possibly hostile) data plane asserts. The
-        proposed-file self-hash is computed here so the agent never supplies it."""
+        """Queue a proposal under `bottle_id` (resolved by the control plane,
+        not claimed by the caller) and return its id. The file hash is computed
+        here."""
         proposal = Proposal.new(
             bottle_slug=bottle_id,
             tool=tool,
@@ -205,22 +158,10 @@ class OrchestratorCore:
         return proposal.id
 
     def supervise_poll_response(self, bottle_id: str, proposal_id: str) -> dict[str, object]:
-        """Non-blocking, **idempotent** poll of one of `bottle_id`'s proposals.
-
-        Returns `{"status": ...}`: a terminal decision (`approved`/`modified`/
-        `rejected`, with `notes` + `final_file`) once the operator has responded,
-        `pending` while it's still queued undecided, or `unknown` when no such
-        queued proposal exists for this bottle (wrong id, or already archived).
-
-        Poll does **not** archive — a decided proposal keeps returning the same
-        decision so a client whose connection drops after the decision but before
-        it consumes the response still gets it on retry. A
-        decided proposal is already excluded from the operator's pending list (a
-        response row exists), so it doesn't linger there; the row itself is reaped
-        when the bottle is torn down / reconciled.
-
-        Reads are scoped to `bottle_id` (the queue key), so a caller can never
-        read another bottle's proposal even with a guessed id."""
+        """Non-blocking, idempotent poll of one of `bottle_id`'s proposals:
+        `{"status": ...}` with a decision (plus `notes` and `final_file`),
+        `pending`, or `unknown`. Polling doesn't archive, so a client that lost
+        a reply gets it again. Scoped to `bottle_id`."""
         try:
             response = self._supervisor.read_response(bottle_id, proposal_id)
         except FileNotFoundError:
@@ -236,35 +177,28 @@ class OrchestratorCore:
         }
 
     def supervise_pending(self) -> list[dict[str, object]]:
-        """All pending proposals across bottles, FIFO, as JSON dicts
-        (`Proposal.to_dict`, round-trippable via `Proposal.from_dict`).
-
-        Each dict carries an extra `bottle_label`, and for an egress tool a
-        `current_file` (the policy it would replace). `bottle_label` is the
-        bottle's human slug
-        resolved from the registry (the proposal itself is keyed by the
-        orchestrator-assigned bottle_id, which is opaque to an operator). The
-        CLI renders the label but still responds against `bottle_slug`."""
+        """Pending proposals across bottles, FIFO, as `Proposal.to_dict` dicts
+        plus a `bottle_label` (the human slug) and, for egress tools, the
+        `current_file` it would replace. Responses still use `bottle_slug`."""
         out: list[dict[str, object]] = []
         for p in self._supervisor.list_all_pending_proposals():
             d = p.to_dict()
             d["bottle_label"] = self._label_for(p.bottle_slug)
             if p.tool in _APPLY_TOOLS:
-                # What the proposal would replace, so a reviewer can see just
-                # the change (an egress proposal carries the whole policy).
+                # What the proposal would replace, so a reviewer sees just the
+                # change.
                 rec = self.registry.get(p.bottle_slug)
                 d["current_file"] = rec.policy if rec is not None else ""
             out.append(d)
         return out
 
     def session_for(self, bottle_id: str) -> str:
-        """The host controller's name for a bottle: the slug a registry
-        bottle registered with, or `bottle_id` itself."""
+        """The host controller's name for a bottle: its registered slug, or the
+        id."""
         return self._label_for(bottle_id)
 
     def audit_delivery(self, bottle_id: str) -> str:
-        """The bottle's `audit.delivery` from its registration metadata;
-        `best_effort` for an unknown bottle or one registered without it."""
+        """The bottle's `audit.delivery`, `best_effort` when unknown or unset."""
         rec = self.registry.get(bottle_id)
         try:
             meta = json.loads(rec.metadata) if rec is not None and rec.metadata else {}
@@ -274,9 +208,8 @@ class OrchestratorCore:
         return "required" if value == "required" else "best_effort"
 
     def _label_for(self, bottle_slug: str) -> str:
-        """The human slug recorded in registry metadata for a proposal's
-        bottle, or the bottle_slug unchanged when the bottle is gone or has no
-        recorded slug — so the label is always non-empty."""
+        """The proposal's bottle slug from registry metadata, else
+        `bottle_slug` unchanged."""
         rec = self.registry.get(bottle_slug)
         if rec is None:
             return bottle_slug
@@ -288,14 +221,9 @@ class OrchestratorCore:
         return slug if isinstance(slug, str) and slug else bottle_slug
 
     def _record_for_slug(self, slug: str) -> BottleRecord | None:
-        """The live registry record for a proposal's bottle, or None (e.g. the
-        bottle was torn down before the operator responded).
-
-        In consolidated mode the supervise server attributes each proposal to
-        the orchestrator-assigned bottle_id and stores that as the proposal's
-        `bottle_slug` (see supervise_server `_attributed_config`), so the fast
-        path is a direct bottle_id lookup. The metadata-slug scan is the
-        fallback for legacy single-tenant proposals keyed by the human slug."""
+        """The live record for a proposal's bottle, or None if it's gone.
+        Proposals are keyed by bottle id; the metadata-slug scan covers older
+        ones keyed by slug."""
         rec = self.registry.get(slug)
         if rec is not None:
             return rec
@@ -317,15 +245,10 @@ class OrchestratorCore:
         notes: str = "",
         final_file: str | None = None,
     ) -> tuple[bool, str]:
-        """Record an operator decision on a queued proposal, applying it
-        server-side. `decision` is approve/modify/reject.
-
-        Approve/modify on an egress tool rewrites the bottle's policy so the
-        gateway serves the new routes on its next `/resolve` (the live apply);
-        then the queued Response is written (unblocking the agent's MCP call)
-        and an audit entry recorded — all against the one DB. Returns
-        (ok, error): ok=False with a message when the proposal or decision is
-        unknown, or the bottle is gone so an approval can't be applied."""
+        """Record and apply an operator decision (approve, modify or reject).
+        An egress approval rewrites the bottle's policy (served on the next
+        `/resolve`), then the Response unblocks the agent and an audit entry is
+        written. Returns (ok, error)."""
         status = _RESPOND_STATUS.get(decision)
         if status is None:
             return False, f"unknown decision {decision!r}"
@@ -365,15 +288,11 @@ class OrchestratorCore:
             ))
         return True, ""
 
-    # --- secret reprovision -----------------------------------------------
+    # --- secret reprovision ---
 
     def reprovision_from_secret(self, bottle_id: str, env_var_secret: str) -> bool:
-        """Re-inject a bottle's egress tokens from its ENV_VAR_SECRET.
-
-        Reads the encrypted rows from ``bottled_agent_secrets``, decrypts each
-        value with *env_var_secret*, and restores ``_tokens[bottle_id]``.
-        Returns True on success, False when no stored secrets exist for this
-        bottle or decryption fails (wrong key / corrupt data)."""
+        """Restore a bottle's egress tokens by decrypting its stored rows with
+        `env_var_secret`. False with no rows or on a decryption failure."""
         from .store.secret_store import decrypt_value
         encrypted = self.registry.get_agent_secrets(bottle_id)
         if not encrypted:
@@ -390,19 +309,9 @@ class OrchestratorCore:
     def update_agent_secret(
         self, bottle_id: str, name: str, value: str, env_var_secret: str,
     ) -> bool:
-        """Update ONE egress token for a known bottle in place — the
-        single-secret form of ``reprovision_from_secret``.
-
-        Sets the in-memory token AND upserts the single re-encrypted row under
-        *env_var_secret* (the same key the rest of the rows are encrypted with, so
-        the whole set stays decryptable by a later ``reprovision_from_secret``),
-        leaving every other token untouched. Returns False if the bottle is
-        unknown.
-
-        Unlike ``reprovision_from_secret`` (which restores the values captured at
-        launch), this pushes a *caller-supplied* value — used to refresh a
-        short-lived host credential (e.g. the Codex access token) into a
-        still-running bottle without a relaunch."""
+        """Replace one egress token of a known bottle: in memory and as one row
+        re-encrypted under `env_var_secret`. False if unknown. For refreshing a
+        short-lived host credential without a relaunch."""
         from .store.secret_store import encrypt_value
         if self.registry.get(bottle_id) is None:
             return False
@@ -411,16 +320,11 @@ class OrchestratorCore:
             bottle_id, name, encrypt_value(env_var_secret, value))
         return True
 
-    # --- consolidated gateway ----------------------------------------------
+    # --- gateway ---
 
     def gateway_status(self) -> dict[str, object]:
-        """Report the shared gateway for the control plane / console.
-
-        The orchestrator does not own the gateway's lifecycle — the
-        consolidated flow runs the gateway data plane inside the per-host infra
-        container/VM (see `backend/*/gateway`), so this reports `configured:
-        false`. Retained for the documented `GET /gateway` control-plane
-        contract."""
+        """The gateway status for `GET /gateway`. The orchestrator doesn't run
+        the gateway, so this reports `configured: false`."""
         return {"configured": False}
 
 

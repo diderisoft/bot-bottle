@@ -9,6 +9,6 @@ from .. import BottlePlan
 
 @dataclass(frozen=True)
 class FirecrackerBottlePlan(BottlePlan):
-    # The agent's egress proxy URL, carrying the identity token as proxy
-    # credentials. Stamped by launch (empty at prepare time).
+    # The agent's proxy URL with the identity token as credentials. Set by
+    # launch.
     agent_proxy_url: str = ""

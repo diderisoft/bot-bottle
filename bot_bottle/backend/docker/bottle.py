@@ -1,4 +1,4 @@
-"""DockerBottle — concrete Bottle handle yielded by DockerBottleBackend."""
+"""`DockerBottle`: the Bottle handle the docker backend yields."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from ..terminal import agent_shell_command
 
 
 class DockerBottle(Bottle):
-    """Concrete Bottle for Docker."""
 
     def __init__(
         self,
@@ -64,12 +63,7 @@ class DockerBottle(Bottle):
         return subprocess.run(command, check=False).returncode
 
     def exec(self, script: str, *, user: str = "node") -> ExecResult:
-        # Pipe via stdin to `sh -s` so the caller never has to worry
-        # about quoting; the script source lands inside the container
-        # without crossing argv. `-u <user>` overrides the image's
-        # default USER — defaults to `node` which is already the
-        # image's USER, so the explicit flag is a no-op there but
-        # keeps the cross-backend contract uniform.
+        # Pipe the script to `sh -s` so it never crosses argv.
         result = subprocess.run(
             ["docker", "exec", "-u", user, "-i", self.name, "sh", "-s"],
             input=script,

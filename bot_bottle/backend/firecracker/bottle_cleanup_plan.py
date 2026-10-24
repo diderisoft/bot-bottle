@@ -10,8 +10,7 @@ from .. import BottleCleanupPlan
 
 @dataclass(frozen=True)
 class FirecrackerBottleCleanupPlan(BottleCleanupPlan):
-    # PIDs of orphaned firecracker VMM processes and the per-bottle run
-    # dirs left behind by previous bottles.
+    # Orphaned firecracker VMM pids and leftover per-bottle run dirs.
     vm_pids: tuple[int, ...] = ()
     run_dirs: tuple[str, ...] = ()
 

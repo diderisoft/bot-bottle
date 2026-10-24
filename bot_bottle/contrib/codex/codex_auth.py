@@ -1,8 +1,6 @@
-"""Host Codex auth helpers.
-
-Reads the host's Codex ChatGPT/device-login auth state and returns only
-the short-lived access token needed by egress. This module deliberately
-does not expose refresh tokens or raw auth payloads.
+"""Host Codex auth: read the host's ChatGPT/device-login state and return only
+the short-lived access token egress needs, never refresh tokens or raw
+payloads.
 """
 
 from __future__ import annotations
@@ -29,8 +27,8 @@ def codex_auth_path(host_env: Mapping[str, str] | None = None) -> Path:
 
 
 def codex_login_location(host_env: Mapping[str, str] | None = None) -> str:
-    """The host Codex auth file if it holds a user/device login that
-    `forward_host_credentials` can use, else "". Never returns a token."""
+    """The host Codex auth file if it holds a login `forward_host_credentials`
+    can use, else "". Never returns a token."""
     path = codex_auth_path(host_env)
     try:
         raw = json.loads(path.read_text())
@@ -96,17 +94,10 @@ def codex_dummy_auth_json(
     *,
     now: datetime | None = None,
 ) -> str:
-    """Return a non-secret `auth.json` that keeps Codex in the host's
-    auth branch while egress owns the real bearer token.
-
-    The dummy access/id tokens carry the *host* token's real `exp` so
-    Codex's proactive refresh lifecycle (it refreshes when its local
-    access token is at/past expiry) tracks the real token instead of
-    firing after an artificial TTL. Codex cannot refresh inside the
-    bottle — the refresh token is a placeholder and the OpenAI token
-    endpoint is off-route — so a shorter dummy exp would drop Codex to
-    the sign-in screen the moment it lapsed, even while egress still
-    holds a valid bearer."""
+    """A non-secret `auth.json` keeping Codex on the host-auth path while
+    egress holds the real bearer. Its tokens carry the host token's real `exp`,
+    since Codex can't refresh inside the bottle and would drop to sign-in when
+    a shorter dummy expired."""
     path = codex_auth_path(host_env)
     access = codex_host_access_token(host_env, now=now)
     raw = _read_auth_object(path)
@@ -246,9 +237,8 @@ def _redact_auth_claim(value: object) -> dict[str, object]:
         if lower == "chatgpt_plan_type" and isinstance(inner, str) and inner:
             out[key] = inner
         elif lower == "chatgpt_account_id" and isinstance(inner, str) and inner:
-            # Current Codex uses the selected account id when building
-            # ChatGPT requests. Keep that non-secret identifier aligned
-            # with the host while egress owns the real bearer token.
+            # Codex uses the selected account id in ChatGPT requests; keep it
+            # in step with the host.
             out[key] = inner
         elif lower == "localhost" and isinstance(inner, bool):
             out[key] = inner
@@ -279,8 +269,7 @@ def _redact_codex_auth(
         elif lower == "openai_api_key":
             out[key] = None
         elif lower == "last_refresh":
-            # Codex parses this as a timestamp on startup. Keep the
-            # schema valid without copying host-side session metadata.
+            # Codex parses this as a timestamp at startup.
             out[key] = _dummy_timestamp(now)
         elif lower == "tokens":
             out[key] = _redact_token_block(inner, now=now, exp_ts=exp_ts)
@@ -299,8 +288,7 @@ def _redact_token_block(
         if lower in {"access_token", "id_token"}:
             out[key] = _dummy_jwt_from_host(inner, now=now, exp_ts=exp_ts)
         elif lower == "account_id" and isinstance(inner, str) and inner:
-            # Current Codex uses this non-secret selected account id
-            # while egress owns the real bearer token.
+            # Codex uses this non-secret account id.
             out[key] = inner
         else:
             out[key] = _redact_unknown_auth_value(inner)

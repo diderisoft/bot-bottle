@@ -1,14 +1,7 @@
-"""Host setup + status for the Firecracker backend.
-
-`setup()` prints the host-appropriate config for the privileged,
-one-time network pool (TAP devices + isolation nftables table) the
-backend needs. On NixOS it points at the flake module (and prints a
-paste-able fallback); elsewhere it prints the sudo command for the
-bundled setup script. `status()` reports what's present, including
-whether the pool range collides with an existing route.
-
-Called through `FirecrackerBottleBackend.setup` / `.status`, which the
-generic `bot-bottle backend {setup,status}` command dispatches to.
+"""Firecracker setup and status. `setup()` prints the one-time network pool
+config: the flake module on NixOS (with a fallback), else the sudo command for
+the bundled script. `status()` reports what's present, including route
+overlaps.
 """
 
 from __future__ import annotations
@@ -26,7 +19,7 @@ from ...contract.hostctl import Settings
 from . import netpool
 from . import util
 
-# KVM_GET_API_VERSION = _IO(KVMIO=0xAE, 0x00): cheapest proof of KVM access.
+# KVM_GET_API_VERSION = _IO(0xAE, 0x00): the cheapest proof of KVM access.
 _KVM_GET_API_VERSION = 0xAE00
 
 
@@ -35,8 +28,7 @@ _UNIT_PATH = Path("/etc/systemd/system") / netpool.SYSTEMD_UNIT
 
 
 def _owner() -> str:
-    # Under `sudo`, USER is root but SUDO_USER is the real invoker — the
-    # TAPs must be owned by them so `bot-bottle start` stays rootless.
+    # Under sudo, SUDO_USER is the real user, who must own the TAPs.
     return os.environ.get("SUDO_USER") or os.environ.get("USER") or "youruser"
 
 
@@ -45,18 +37,17 @@ def _has_systemd() -> bool:
 
 
 def _module_path() -> str:
-    """Absolute path to the importable NixOS module (checkout or wheel)."""
+    """The NixOS module's path (checkout or wheel)."""
     return str(resources.nix_netpool_module())
 
 
 def _script_path() -> str:
-    """Absolute path to the bundled bring-up script (checkout or wheel)."""
+    """The bundled setup script's path (checkout or wheel)."""
     return str(resources.netpool_script())
 
 
 def _print_prereqs() -> None:
-    """The firecracker binary + KVM + guest artifacts, shown before the
-    privileged network-pool step so operators see the full picture."""
+    """Print the firecracker binary, KVM and guest artifact prerequisites."""
     fc = shutil.which("firecracker")
     if fc:
         sys.stderr.write(f"1) firecracker binary: found ({fc}).\n")
@@ -94,8 +85,7 @@ def _is_nixos() -> bool:
 
 
 def _warn_overlaps(pool: netpool.NetPool) -> None:
-    """Warn if the chosen pool range collides with an existing host route
-    (Tailscale CGNAT peer, a docker/libvirt bridge, the LAN…)."""
+    """Warn if the pool range overlaps an existing host route."""
     conflicts = pool.overlapping_routes()
     if not conflicts:
         return
@@ -146,9 +136,8 @@ def setup(settings: Settings) -> int:
 
 
 def _setup_systemd(pool: netpool.NetPool) -> None:
-    """Install the pool as a persistent systemd unit — the portable path,
-    identical on every systemd distro. Performs the install directly when
-    run as root; otherwise prints a self-contained copy-paste block."""
+    """Install the pool as a persistent systemd unit: directly when root,
+    otherwise print a copy-paste block."""
     unit = netpool.render_systemd_unit(pool, _owner(), _script_path())
     sys.stderr.write(
         f"Persistent install (systemd — same on every systemd distro). Needs "
@@ -229,7 +218,7 @@ def teardown(settings: Settings) -> int:
 
 
 def _firecracker_binary_ok() -> bool:
-    """True iff the firecracker binary is on PATH and `--version` exits 0."""
+    """True iff `firecracker --version` runs and exits 0."""
     if shutil.which("firecracker") is None:
         return False
     try:
@@ -242,10 +231,8 @@ def _firecracker_binary_ok() -> bool:
 
 
 def _kvm_accessible() -> bool:
-    """True iff /dev/kvm can be opened read-write and responds to KVM_GET_API_VERSION.
-
-    VM creation requires write access; opening read-only may satisfy the
-    ioctl but fails at boot time, so O_RDWR is the permission check."""
+    """True iff /dev/kvm opens read-write and answers KVM_GET_API_VERSION. VM
+    creation needs write access."""
     if not os.path.exists(util._KVM_DEVICE):
         return False
     try:
@@ -261,12 +248,9 @@ def _kvm_accessible() -> bool:
 
 def status(settings: Settings) -> int:
     pool = netpool.from_settings(settings.infra)
-    # Readiness == what the launch preflight hard-requires: the binary
-    # executable, /dev/kvm accessible, the TAP pool present, and no range
-    # overlap. Listing the nft table usually needs root, so — like the
-    # preflight — an unconfirmable table is reported but NOT treated as
-    # not-ready; the post-boot isolation probe is the authoritative check.
-    # This keeps an unprivileged `backend status` usable as a launch gate.
+    # Ready means what the launch preflight requires: binary, /dev/kvm, TAP
+    # pool, no overlap. An unconfirmable nft table is reported but not fatal;
+    # the post-boot probe is authoritative.
     ok = True
     if _firecracker_binary_ok():
         sys.stderr.write(f"firecracker binary: ok ({shutil.which('firecracker')})\n")
@@ -313,8 +297,7 @@ def status(settings: Settings) -> int:
     else:
         sys.stderr.write("mke2fs: NOT found on PATH (install e2fsprogs)\n")
         ok = False
-    # Pulled agent images are prepared rootless with the rest of e2fsprogs:
-    # debugfs writes the guest boot bits in, e2fsck + resize2fs add slack.
+    # debugfs, e2fsck and resize2fs prepare pulled images rootless.
     missing_e2fs = [t for t in ("debugfs", "e2fsck", "resize2fs") if shutil.which(t) is None]
     if missing_e2fs:
         sys.stderr.write(f"e2fsprogs: missing {', '.join(missing_e2fs)} (install e2fsprogs)\n")
@@ -366,9 +349,7 @@ def status(settings: Settings) -> int:
 
 
 def _report_persistence() -> None:
-    """Report whether the pool is installed as the persistent systemd
-    unit (so it survives reboot) vs brought up imperatively. Advisory —
-    doesn't affect launch readiness."""
+    """Report whether the pool is a persistent systemd unit. Advisory."""
     if not _has_systemd():
         return
     state = subprocess.run(

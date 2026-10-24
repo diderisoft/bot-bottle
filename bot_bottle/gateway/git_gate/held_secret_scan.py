@@ -1,23 +1,15 @@
-"""Refuse a push that carries a secret the pushing bottle holds.
+"""Refuse a push carrying a secret the pushing bottle holds.
 
-gitleaks only recognises secrets by shape, so a value it has no rule for (an
-arbitrary API key, a hex blob, the exfil canary) would leave in a commit even
-though egress blocks the same value. This scan closes that gap. The
-pre-receive hook runs it after gitleaks: it resolves the pushing bottle's
-registered secrets from the orchestrator (`contract.held_secrets`) and looks
-for them, with the egress DLP's known-secret matcher, in everything the push
-introduces.
+gitleaks knows secrets by shape only; this looks for the bottle's registered
+secret values (`contract.held_secrets`), with the egress known-secret matcher,
+in everything the push introduces: ref names, new commits' messages and
+identities, diff paths and added lines (binary as text), and annotated tag
+bodies.
 
-What a push introduces, per ref: the new ref's name, the messages and author
-and committer identities of its new commits, the paths and added lines of
-their diffs (binary files included, as text), and the body of an annotated
-tag. Removed and context lines are already on the gate, so they aren't
-scanned.
+    python3 -m bot_bottle.gateway.git_gate.held_secret_scan <refs-file>
 
-Run as `python3 -m bot_bottle.gateway.git_gate.held_secret_scan <refs-file>`
-from the repository, with the pushing bottle's attribution in the
-environment. Exit codes: 0 = clean, 1 = a held secret was found (refuse),
-2 = the scan could not run (refuse: fail closed).
+Run from the repo with the bottle's attribution in the env. Exit 0 clean, 1
+found, 2 couldn't scan (refuse).
 """
 
 from __future__ import annotations
@@ -46,7 +38,7 @@ def _git(*args: str) -> str:
 
 
 def pushed_text(refs: list[tuple[str, str, str]]) -> Iterator[tuple[str, str]]:
-    """(where, text) for everything the push introduces. `refs` holds the
+    """(where, text) for everything the push introduces; `refs` holds the
     pre-receive `(old, new, ref)` lines."""
     for _old, new, ref in refs:
         yield f"ref name {ref}", ref
@@ -69,8 +61,7 @@ def pushed_text(refs: list[tuple[str, str, str]]) -> Iterator[tuple[str, str]]:
 def find_held_secret(
     secrets: Mapping[str, str], texts: Iterator[tuple[str, str]],
 ) -> str | None:
-    """A description of the first held secret found, naming its key and where
-    it was — never its value — or None."""
+    """The first held secret found, by key and location (never value), or None."""
     for where, text in texts:
         result = scan_known_secrets(
             text, location=where, env=secrets, sensitive_prefixes=PUSH_SCAN_PREFIXES)
@@ -80,8 +71,8 @@ def find_held_secret(
 
 
 def _resolve_secrets(environ: Mapping[str, str]) -> dict[str, str] | None:
-    """The pushing bottle's registered secrets, or None if it can't be
-    attributed or the orchestrator can't be reached."""
+    """The pushing bottle's registered secrets, or None if unattributed or
+    unreachable."""
     source_ip = environ.get("SUPERVISE_SOURCE_IP", "")
     token = environ.get("SUPERVISE_IDENTITY_TOKEN", "")
     orch_url = environ.get("BOT_BOTTLE_ORCHESTRATOR_URL", "")

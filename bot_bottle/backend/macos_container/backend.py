@@ -1,4 +1,4 @@
-"""MacosContainerBottleBackend — Apple Container implementation."""
+"""`MacosContainerBottleBackend`: agents in Apple containers."""
 
 from __future__ import annotations
 
@@ -31,9 +31,7 @@ if TYPE_CHECKING:
 class MacosContainerBottleBackend(
     BottleBackend["MacosContainerBottlePlan", "MacosContainerBottleCleanupPlan"]
 ):
-    """Apple Container backend. Selected by
-    `BOT_BOTTLE_BACKEND=macos-container` or
-    `--backend=macos-container`."""
+    """The Apple Container backend (`--backend=macos-container`)."""
 
     name = "macos-container"
     supports_nested_containers = True

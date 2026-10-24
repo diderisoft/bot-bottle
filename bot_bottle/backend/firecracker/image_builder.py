@@ -1,19 +1,12 @@
-"""Agent bases for the Firecracker backend.
+"""Agent rootfs bases for firecracker, each cached under the host cache dir:
 
-Three sources, each cached under the host cache dir: a published ext4 image,
-downloaded, verified and prepared on the host; an overlay on the published
-OCI image, built with a host Docker/Podman when one is present; and agent
-Dockerfiles (and overlays on hosts with no engine), which build **inside the
-persistent per-host orchestrator VM** (`infra_vm.py`) with buildah, so no host
-Docker daemon or root-equivalent `docker` group is required. In-VM builds run
-over SSH and stream the rootfs back to the host.
+- a published ext4, downloaded, verified and prepared on the host;
+- an overlay on the published OCI image, built with a host Docker/Podman;
+- an agent Dockerfile (or an overlay with no host engine), built with buildah
+  in the orchestrator VM over SSH and streamed back.
 
-Builds run on the control-plane (orchestrator) side — not the data-plane
-gateway: it owns
-launches and already carries buildah. Tradeoff: an untrusted Dockerfile's
-`RUN` steps share the VM with the control plane (buildah `--isolation chroot`
-isn't a hard boundary) — the accepted blast-radius tradeoff, re-splittable
-into a disposable builder (booted from this same image on its own TAP) later.
+Untrusted `RUN` steps share the orchestrator VM with the control plane, an
+accepted tradeoff for needing no host Docker.
 """
 
 from __future__ import annotations
@@ -47,14 +40,9 @@ from . import infra_vm
 from .infra_vm import GUEST_BUILD_STORE
 from .orchestrator import build_store_volume_path
 
-# overlay + chroot: buildah works as root in the microVM on the guest kernel's
-# overlayfs (vfs copied every layer in full, ~8x a large image, and filled the
-# VM disk). The store root is the orchestrator's persistent build-store volume,
-# so pulled bases survive VM restarts (and an older vfs store never trips
-# buildah's driver-mismatch check). `--isolation` is a build/run-only flag;
-# `from`/`mount` take just the store. Every command that writes the store
-# ends in `sync`: the infra VM is stopped by killing it, and unflushed layer
-# metadata comes back empty and breaks the next mount.
+# overlay + chroot on the orchestrator's persistent build-store volume.
+# `--isolation` is build/run only. Every store write ends in `sync`, since the
+# VM is stopped by killing it.
 _STORE_FLAG = ("--storage-driver overlay"
                f" --root {GUEST_BUILD_STORE}"
                " --runroot /run/containers/overlay-storage")
@@ -63,9 +51,7 @@ _BUILD_FLAGS = f"--isolation chroot {_STORE_FLAG}"
 _BUILD_TIMEOUT_SECONDS = 900.0
 _SMOKE_TIMEOUT_SECONDS = 120.0
 
-# Below this much free space in the build store, drop every image before a
-# build. The store is a cache: a wipe costs one re-pull, while a full store
-# fails the build.
+# Below this free space, wipe the store before a build (it's a cache).
 _STORE_MIN_FREE_MIB = 4096
 _PRUNE_LOW_STORE = (
     f"[ \"$(df -Pm {GUEST_BUILD_STORE} | awk 'NR==2 {{print $4}}')\" -ge "
@@ -74,26 +60,15 @@ _PRUNE_LOW_STORE = (
 
 
 def _dockerfile_hash(dockerfile: Path) -> str:
-    """The Dockerfile's content hash. Agent Dockerfiles mostly COPY nothing
-    from the build context, so their text nearly determines the built image;
-    any files they *do* COPY are folded into `_rootfs_digest` (so a changed
-    input busts the cache) and shipped to the VM-side context by
-    `_send_build_context`."""
+    """The Dockerfile's content hash. Files it COPYs are folded into
+    `_rootfs_digest` separately."""
     return hashlib.sha256(dockerfile.read_bytes()).hexdigest()[:16]
 
 
 def _context_copy_sources(dockerfile: Path) -> list[str]:
-    """The build-context-relative paths a Dockerfile ``COPY``s or ``ADD``s in.
-
-    Agent Dockerfiles are meant to pull nothing from the context (the VM-side
-    build ships only the Dockerfile), but one may pin an input by COPYing or
-    ADDing a committed file — a checksum list, an npm lockfile. Return those
-    source paths so the builder can both ship them to the VM context and fold
-    them into the cache key. ``COPY --from=<stage>`` reads a build stage, not
-    the context, so it is excluded; an ``ADD`` of a remote URL or git ref is
-    fetched by the builder, not shipped from the context, so it is excluded too;
-    the JSON/exec form is unused by the shipped images and is skipped rather
-    than mis-parsed."""
+    """Context paths a Dockerfile COPYs or ADDs, to ship to the VM and fold
+    into the cache key. Skips `COPY --from`, remote ADD sources and the JSON
+    form."""
     joined = re.sub(r"\\\n", " ", dockerfile.read_text(encoding="utf-8"))
     sources: list[str] = []
     for line in joined.splitlines():
@@ -106,7 +81,7 @@ def _context_copy_sources(dockerfile: Path) -> list[str]:
         args = [t for t in tokens if not t.startswith("--")]
         if len(args) < 2 or args[0].startswith("["):
             continue
-        # ADD sources may be remote (URL / git ref); those are not context files.
+        # Remote ADD sources aren't context files.
         sources.extend(
             a for a in args[:-1] if not re.match(r"(?i)^(https?|git)://", a)
         )
@@ -114,10 +89,9 @@ def _context_copy_sources(dockerfile: Path) -> list[str]:
 
 
 def _context_files(dockerfile: Path) -> list[tuple[str, Path]]:
-    """``(context-relative path, host path)`` for every existing file a
-    Dockerfile COPYs from the build root — globs expanded, sorted, de-duped.
-    Absolute or traversing (`..`) sources are dropped: the shipped context
-    only ever mirrors files under the build root."""
+    """`(context path, host path)` for every existing file a Dockerfile COPYs
+    from the build root: globs expanded, sorted, de-duped. Absolute or `..`
+    sources are dropped."""
     root = resources.build_root()
     resolved: dict[str, Path] = {}
     for src in _context_copy_sources(dockerfile):
@@ -137,9 +111,8 @@ def _context_files(dockerfile: Path) -> list[tuple[str, Path]]:
 
 
 def _boot_bits_hash(infra: InfraSettings) -> str:
-    """The guest boot bits written into every agent rootfs: the init script and
-    the static dropbear. Part of every agent cache key, so a change to either
-    re-prepares the rootfs instead of reusing one that carries the old bits."""
+    """Hash of the guest boot bits (init script, static dropbear) every agent
+    rootfs carries; part of every cache key."""
     h = hashlib.sha256(util._GUEST_INIT.encode())
     h.update(b"\0")
     h.update(hashlib.sha256(util.dropbear_path(infra).read_bytes()).digest())
@@ -147,10 +120,8 @@ def _boot_bits_hash(infra: InfraSettings) -> str:
 
 
 def _rootfs_digest(dockerfile: Path, infra: InfraSettings) -> str:
-    """Cache key for a rootfs built from `dockerfile`: the Dockerfile, the
-    centralized build args, the guest boot bits, and the content of any files
-    the Dockerfile COPYs from the build context (so a repinned input, e.g. a
-    changed npm lockfile, rebuilds)."""
+    """Cache key for a rootfs from `dockerfile`: the Dockerfile, build args,
+    boot bits and any COPYed context files."""
     h = hashlib.sha256()
     h.update(_dockerfile_hash(dockerfile).encode())
     h.update(b"\0")
@@ -178,9 +149,7 @@ def _ready_dir(name: str) -> Path | None:
 
 
 def _force_rmtree(path: Path) -> None:
-    """Remove a rootfs tree, including read-only directories an exported image
-    may carry (a 0555 dir can't have its entries unlinked until it is made
-    writable). Symlinks are never followed."""
+    """Remove a rootfs tree, including read-only dirs. Never follows symlinks."""
     if path.is_symlink() or not path.exists():
         path.unlink(missing_ok=True)
         return
@@ -197,17 +166,15 @@ def _publish_rootfs_dir(
     name: str, build: Callable[[Path], None], infra: InfraSettings,
 ) -> Path:
     """The cached rootfs dir `name`, built on a miss: `build(staging)` fills a
-    staging dir, the guest boot bits are injected, and the result is published
-    by atomic rename, all under the host build lock (the infra VM's buildah
-    store and this cache dir are shared between launches). A failed build
-    leaves nothing behind; a partial build is never visible under `name`."""
+    staging dir, boot bits are injected, and it's published by atomic rename,
+    all under the host build lock."""
     ready = _ready_dir(name)
     if ready is not None:
         info(f"using cached agent rootfs {name}")
         return ready
     with _build_lock():
         ready = _ready_dir(name)
-        if ready is not None:  # another launch built it while we waited
+        if ready is not None:  # another launch built it meanwhile
             info(f"using cached agent rootfs {name}")
             return ready
         base = _rootfs_dir(name)
@@ -226,34 +193,31 @@ def _publish_rootfs_dir(
 
 
 def cached_agent_rootfs_dir(dockerfile: Path, infra: InfraSettings) -> Path | None:
-    """Return the ready cached rootfs for ``dockerfile``, if one exists."""
+    """The cached rootfs for `dockerfile`, if ready."""
     return _ready_dir(f"agent-{_rootfs_digest(dockerfile, infra)}")
 
 
-# Free space added to a pulled agent image beyond what it was published with,
-# matching the slack a directory-built bottle disk gets (`build_rootfs_ext4`).
+# Slack added to a pulled image, matching a directory-built disk.
 _PULLED_IMAGE_SLACK_MIB = 1024
 
 
 def _image_ext4_path(artifact: Artifact, infra: InfraSettings) -> Path:
-    """Where the prepared ext4 base for published `artifact` is cached, keyed by
-    the published file's digest plus this host's guest boot bits."""
+    """Cache path of the prepared ext4 for `artifact`: its digest plus the boot
+    bits."""
     h = hashlib.sha256(f"{artifact.digest}\0{_boot_bits_hash(infra)}".encode())
     return _rootfs_dir(f"agent-ext4-{h.hexdigest()[:16]}.ext4")
 
 
 def cached_agent_image_ext4(artifact: Artifact, infra: InfraSettings) -> Path | None:
-    """A prepared ext4 base previously made from published `artifact`, or None."""
+    """A prepared ext4 base from `artifact`, or None."""
     image = _image_ext4_path(artifact, infra)
     return image if image.with_suffix(".ready").is_file() else None
 
 
 def acquire_agent_image_ext4(artifact: Artifact, settings: Settings) -> Path:
-    """The bootable agent base for a published ext4 `artifact`:
-    download and verify it on the host (`image_registry.ensure_ext4`, digest
-    checked, fail closed), decompress it, add slack, and write this host's
-    guest boot bits into it. Prepared once and cached; each bottle then gets a
-    sparse copy (`util.make_bottle_rootfs`)."""
+    """The bootable base for a published ext4 `artifact`: downloaded and
+    verified (fail closed), decompressed, grown, and given this host's boot
+    bits. Cached; each bottle gets a sparse copy."""
     if artifact.format != FORMAT_EXT4:
         die(f"firecracker agent base must be an ext4 artifact, got {artifact.format!r}")
     infra = settings.infra
@@ -263,7 +227,7 @@ def acquire_agent_image_ext4(artifact: Artifact, settings: Settings) -> Path:
         info(f"using cached agent rootfs {image.name}")
         return image
     with _build_lock():
-        if ready.is_file():  # another launch prepared it while we waited
+        if ready.is_file():  # another launch prepared it meanwhile
             info(f"using cached agent rootfs {image.name}")
             return image
         try:
@@ -296,8 +260,7 @@ def cached_agent_overlay_rootfs_dir(
     artifact: Artifact, overlay: ManifestImageOverlay, infra: InfraSettings,
     *, template: str, source_root: Path,
 ) -> Path | None:
-    """A ready rootfs previously built for `overlay` on the pinned OCI
-    `artifact`, or None."""
+    """A ready rootfs for `overlay` on `artifact`, or None."""
     with agent_overlay.staged_overlay(
         image_registry.pinned_reference(artifact), overlay,
         template=template, source_root=source_root,
@@ -314,13 +277,10 @@ def acquire_agent_overlay_rootfs_dir(
     source_root: Path,
     smoke_test: tuple[str, ...] = (),
 ) -> Path:
-    """The rootfs of `overlay` built as a thin layer on the pinned OCI
-    `artifact`, cached by the staged build context and the
-    guest boot bits. Builds with a host Docker/Podman when one is present (it
-    shares the user's layer cache), else in the infra VM. The pin's tag is
-    checked against its digest only when building, so a cached overlay
-    launches offline. `source_root` is where the overlay's inputs resolve from
-    (the launch cwd)."""
+    """The rootfs of `overlay` on the pinned OCI `artifact`, cached by staged
+    context and boot bits. Built with a host engine if present, else in the
+    infra VM. The tag is verified only when building, so a cached overlay
+    launches offline. Inputs resolve from `source_root`."""
     base_ref = image_registry.pinned_reference(artifact)
     with agent_overlay.staged_overlay(
         base_ref, overlay, template=template, source_root=source_root,
@@ -356,14 +316,9 @@ def acquire_agent_overlay_rootfs_dir(
 def build_agent_rootfs_dir(
     dockerfile: Path, settings: Settings, *, image_tag: str, smoke_test: tuple[str, ...] = (),
 ) -> Path:
-    """Build `dockerfile` in the infra VM (buildah, no host docker), export its
-    rootfs, inject the guest boot bits, and return the cached base dir — the
-    same shape `util.build_rootfs_ext4` consumes. Cached by `_rootfs_digest`,
-    so a repeat launch skips the rebuild but an input change rebuilds.
-
-    `smoke_test` (the provider's declared argv, e.g. `("claude","--version")`)
-    is run in the freshly built image before export, catching an npm
-    silent-failure image at build time rather than at first agent use."""
+    """Build `dockerfile` in the infra VM, smoke-test it, export its rootfs
+    with the boot bits, and return the cached base dir. Cached by
+    `_rootfs_digest`."""
     digest = _rootfs_digest(dockerfile, settings.infra)
 
     def build(out: Path) -> None:
@@ -381,8 +336,7 @@ def build_agent_rootfs_dir(
 
 @contextmanager
 def _build_lock() -> Generator[None, None, None]:
-    """Host-level exclusive lock serializing agent-image builds (shared infra
-    buildah store + cache dir). flock auto-releases on a crash."""
+    """Host lock serializing builds over the shared buildah store and cache."""
     lock_path = util.cache_dir() / "rootfs" / ".build.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     handle = open(lock_path, "w", encoding="utf-8")
@@ -405,12 +359,10 @@ def _infra_build(
     settings: Settings,
     registry: str = "",
 ) -> None:
-    """`buildah build` `dockerfile` in the orchestrator VM, with the paths
-    `ctx_rels` (under `ctx_root`) as its context, smoke-test the image, and
-    stream its rootfs into `out`. With `registry` and an artifact token,
-    buildah logs in first (token on stdin) so a FROM can pull a private base.
-    The infra VMs persist; only this build's containers, image, login and
-    context are cleaned up, never another build's."""
+    """`buildah build` `dockerfile` in the orchestrator VM with `ctx_rels` as
+    context, smoke-test it and stream its rootfs into `out`. With `registry`
+    and a token, log in first (token on stdin). Cleans up only this build's
+    state."""
     service = FirecrackerInfraService(settings)
     service.ensure_running()
     key, ip = service.orchestrator().ssh_target()
@@ -426,13 +378,13 @@ def _infra_build(
              f"{logout}rm -rf {ctx}; sync",
              timeout=60)
 
-    _cleanup()  # clear leftovers from a crashed prior build of this tag
+    _cleanup()  # clear leftovers from a crashed build of this tag
     try:
         prep = _ssh(key, ip, f"mkdir -p {ctx}/ctx")
         if prep.returncode != 0:
             die(f"preparing the build dir in the infra VM failed: {prep.stderr.strip()}")
         if token:
-            # Gitea accepts any username with a valid token as the password.
+            # Gitea takes any username with the token as password.
             login = _ssh(
                 key, ip,
                 f"buildah login --username bot-bottle --password-stdin {shlex.quote(registry)}",
@@ -457,10 +409,9 @@ def _build_overlay_on_host(
     out: Path,
     smoke_test: tuple[str, ...],
 ) -> None:
-    """Build the staged overlay with a host container engine, smoke-test it,
-    and unpack its rootfs into `out`. With an artifact token the private base
-    is pulled first with throwaway credentials (`_pull_with_token`); the build
-    and later steps then use the engine as the user has it configured."""
+    """Build the staged overlay with a host engine, smoke-test it and unpack
+    its rootfs into `out`. A token pulls the private base first
+    (`_pull_with_token`)."""
     token = os.environ.get(_ARTIFACT_TOKEN_ENV, "").strip()
     try:
         if token:
@@ -489,11 +440,9 @@ def _build_overlay_on_host(
 
 
 def _pull_with_token(engine: str, ref: str, token: str) -> None:
-    """Pull `ref` with the artifact token held in a throwaway credentials
-    location (`docker --config` / `podman --authfile`), so the user's own
-    registry login is neither used nor changed. A separate `--config` also
-    drops the user's current Docker context, so the pull is pointed at that
-    context's daemon explicitly, the one the build will use."""
+    """Pull `ref` with the token in throwaway credentials, leaving the user's
+    login alone. The pull targets the current context's daemon explicitly,
+    since `--config` drops it."""
     registry = ref.split("/", 1)[0]
     with tempfile.TemporaryDirectory(prefix="bb-auth-") as auth:
         if engine == "docker":
@@ -522,8 +471,7 @@ def _pull_with_token(engine: str, ref: str, token: str) -> None:
 def _ssh(private_key: Path, guest_ip: str, script: str,
          *, timeout: float = 60.0, input: str | None = None,
          ) -> subprocess.CompletedProcess[str]:
-    # `input` is how secrets reach the guest: never in `script`, which is an
-    # argument to the host's ssh and visible in `ps`.
+    # Secrets go over stdin, never in `script` (visible in `ps`).
     return subprocess.run(
         util.ssh_base_argv(private_key, guest_ip) + [script],
         input=input, capture_output=True, text=True, timeout=timeout, check=False,
@@ -532,9 +480,7 @@ def _ssh(private_key: Path, guest_ip: str, script: str,
 
 def _ssh_streamed(private_key: Path, guest_ip: str, script: str,
                   *, timeout: float) -> int:
-    """Run an SSH command letting the remote's stdout/stderr flow straight to
-    ours (no capture), for long chatty steps where live progress beats a
-    silent wait. Returns the exit code."""
+    """Run an SSH command with output passed through. Returns the exit code."""
     proc = subprocess.run(
         util.ssh_base_argv(private_key, guest_ip) + [script],
         timeout=timeout, check=False,
@@ -555,10 +501,7 @@ def _send_dockerfile(private_key: Path, guest_ip: str, dockerfile: Path, ctx: st
 def _tar_into_vm(
     private_key: Path, guest_ip: str, root: Path, rels: list[str], dest: str,
 ) -> None:
-    """Stream the paths `rels` (relative to `root`, directories recursively,
-    symlinks as links) into the infra VM's `dest`, preserving their relative
-    paths. A no-op for an empty list: most agent Dockerfiles COPY nothing, so
-    the context stays empty."""
+    """Stream `rels` under `root` into the infra VM's `dest`. No-op when empty."""
     if not rels:
         return
     tar = subprocess.Popen(
@@ -588,10 +531,7 @@ def _buildah_build(
     tag: str,
     build_args: dict[str, str],
 ) -> None:
-    # Stream buildah's step-by-step output straight to our stderr (like the
-    # docker backend's `docker build`), so a long first build (base pull +
-    # apt/npm installs) shows live progress instead of a silent wait. The
-    # remote stderr is where buildah writes its `STEP i/n` lines.
+    # Stream buildah's output to stderr for live progress.
     info(f"buildah build {tag} in the infra VM (streaming output)")
     arg_flags = " ".join(
         f"--build-arg {shlex.quote(f'{name}={value}')}"
@@ -617,10 +557,8 @@ def _buildah_build(
 
 def _smoke_test(private_key: Path, guest_ip: str, tag: str, ctr: str,
                 argv: tuple[str, ...]) -> None:
-    """Run the provider's smoke argv inside the freshly built image
-    (`buildah run`, which uses the image's own PATH), failing the build
-    loudly if the CLI is a broken stub. No-op without a declared test. Uses a
-    named working container (`ctr`) so cleanup is scoped to this build."""
+    """Run the provider's smoke argv in the built image (`buildah run`). No-op
+    without one."""
     if not argv:
         return
     cmd = (
@@ -636,10 +574,8 @@ def _smoke_test(private_key: Path, guest_ip: str, tag: str, ctr: str,
 
 
 def _stream_rootfs(private_key: Path, guest_ip: str, tag: str, ctr: str, base: Path) -> None:
-    """`buildah mount` the built image in the infra VM and pipe its rootfs tar
-    straight into `base` on the host (extracted as the non-root host user, so
-    uid 0 isn't preserved — the guest init restores /root ownership). Uses a
-    named working container so cleanup is scoped to this build."""
+    """`buildah mount` the image and pipe its rootfs into `base` on the host
+    (extracted as the host user; the guest init restores /root ownership)."""
     export = (
         f"set -e; buildah from {_STORE_FLAG} --name {ctr} {tag} >/dev/null; "
         f"mnt=$(buildah mount {_STORE_FLAG} {ctr}); "
@@ -650,9 +586,7 @@ def _stream_rootfs(private_key: Path, guest_ip: str, tag: str, ctr: str, base: P
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     assert ssh_proc.stdout is not None
-    # --no-overwrite-dir: the stream's `.` entry carries the mount root's mode
-    # (0555 on overlay), which would leave `base` unwritable for the guest
-    # boot bits injected next.
+    # --no-overwrite-dir: keep `base` writable despite the mount root's 0555.
     untar = subprocess.run(
         ["tar", "-x", "--no-overwrite-dir", "-C", str(base)],
         stdin=ssh_proc.stdout, check=False,

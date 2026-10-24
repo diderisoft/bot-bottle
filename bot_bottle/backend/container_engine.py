@@ -1,9 +1,8 @@
 """Detect a usable host container engine (Docker or Podman).
 
-Optional everywhere it is used: the firecracker backend runs without one, but
-when one is present it builds agent overlays on the host, sharing its layer
-cache, instead of with buildah inside the infra VM. `BOT_BOTTLE_BUILD_ENGINE` picks one explicitly (`docker`,
-`podman`) or turns host builds off (`vm`).
+Optional: when present, firecracker builds agent overlays with it instead of
+buildah in the infra VM. `BOT_BOTTLE_BUILD_ENGINE` picks one (`docker`,
+`podman`) or disables host builds (`vm`).
 """
 
 from __future__ import annotations
@@ -17,8 +16,7 @@ _PROBE_TIMEOUT_SECONDS = 15
 
 
 def _usable(engine: str) -> bool:
-    """The engine is on PATH and answers `info` (a Docker daemon is reachable;
-    rootless Podman needs no daemon)."""
+    """The engine is on PATH and answers `info`."""
     if shutil.which(engine) is None:
         return False
     try:
@@ -31,15 +29,14 @@ def _usable(engine: str) -> bool:
 
 
 class EngineUnavailable(RuntimeError):
-    """`BOT_BOTTLE_BUILD_ENGINE` names an engine that can't be used, or isn't
-    one of the accepted values. An explicit choice fails loudly rather than
-    quietly building somewhere else."""
+    """`BOT_BOTTLE_BUILD_ENGINE` names an unusable or unknown engine. An
+    explicit choice fails rather than building elsewhere."""
 
 
 def host_container_engine(forced: str) -> str | None:
-    """The host engine to build with: `forced` (`InfraSettings.build_engine`,
-    raising `EngineUnavailable` if it isn't usable), else the first usable of
-    Docker then Podman, else None. `vm` forces None."""
+    """The engine to build with: `forced` (raising `EngineUnavailable` if
+    unusable), else the first usable of Docker and Podman, else None. `vm`
+    forces None."""
     forced = forced.strip().lower()
     if forced == "vm":
         return None

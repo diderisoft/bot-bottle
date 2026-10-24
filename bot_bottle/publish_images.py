@@ -1,22 +1,14 @@
-"""Build the fixed images off-host and publish them (PRD: OCI image publishing).
+"""Build the fixed images and publish them, off-host (launch hosts have no
+build tool).
 
-Runs off-host — it needs a container build tool, which launch hosts do not have.
-Same split `firecracker.publish_infra` already draws.
-
-Per image, per platform: build, push OCI and record the registry digest, then
-export the rootfs to a gzipped ext4 and PUT it as a generic package. Finally
-write `published-artifacts.json`.
-
-Interchangeability is enforced here rather than in the manifest, which records
-one `inputs_hash` per image and so cannot express disagreement. This is the only
-place that sees both the inputs and the artifacts they produced.
-
-One mode, one machine: build and publish everything.
+Per image and platform: build, push the OCI image and record its digest, export
+a gzipped ext4 and PUT it as a generic package. Then write
+`published-artifacts.json`. Formats are checked to share one `inputs_hash`.
 
   python3 -m bot_bottle.publish_images [--platform linux/amd64 ...]
 
-Auth: a `write:package` token from `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN`, never on a
-command line. The container runtime needs its own registry login for the push.
+Auth: a `write:package` token in `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN`; the
+container runtime needs its own registry login.
 """
 
 from __future__ import annotations
@@ -49,8 +41,7 @@ from .published_artifacts import (
 
 _CHUNK = 1 << 20
 _HTTP_TIMEOUT_SECONDS = 60.0
-# After the body of a multi-hundred-MB rootfs is sent, the registry stores and
-# hashes it before answering, which can outlast the normal timeout.
+# The registry hashes a large rootfs before answering.
 _UPLOAD_TIMEOUT_SECONDS = 900.0
 
 _DEFAULT_BASE = "https://gitea.dideric.is"
@@ -60,9 +51,8 @@ TOKEN_ENV = "BOT_BOTTLE_INFRA_ARTIFACT_TOKEN"
 
 
 class PublishError(RuntimeError):
-    """A build, upload, or invariant check failed. Always aborts the publish:
-    a partially published version is worse than an unpublished one, because a
-    host can resolve it and get an incoherent set."""
+    """A build, upload or invariant check failed. Aborts the publish: a partial
+    version is worse than none."""
 
 
 @dataclass
@@ -72,9 +62,7 @@ class BuiltArtifact:
     digest: str
     locator: str
     namespace: str
-    # The inputs hash this artifact was actually built from — carried per
-    # artifact precisely so the cross-format check below has something to
-    # compare, rather than trusting that one build equals another.
+    # What this artifact was built from, compared across formats.
     inputs_hash: str
 
 
@@ -83,8 +71,8 @@ class BuiltImage:
     name: str
     version: str
     artifacts: list[BuiltArtifact] = field(default_factory=list)
-    # The agent <-> infra protocol these bytes speak: the source's at build
-    # time, or the tested manifest's when promoting (never re-stamped).
+    # The protocol these bytes speak: the source's at build time, or the tested
+    # manifest's when promoting.
     protocol: int = PROTOCOL_VERSION
 
 
@@ -97,9 +85,7 @@ def _config() -> tuple[str, str, str]:
 
 def repo_version(repo_root: Path | None = None) -> str:
     """The release version every image is published under, from
-    `pyproject.toml`.
-
-    One number per release, so images resolved together were built together."""
+    `pyproject.toml`."""
     if repo_root is None:
         repo_root = resources.build_root()
     text = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
@@ -116,19 +102,15 @@ def _platform_suffix(plat: str) -> str:
 
 
 def current_build_platform() -> str:
-    """The platform this host builds natively — the default when none is given."""
+    """The platform this host builds natively."""
     from .published_artifacts import current_platform
     return current_platform()
 
 
 def source_url() -> str:
-    """The repository these images are built from.
-
-    Applied as `org.opencontainers.image.source`, which is what makes Gitea
-    attach a pushed container to the repo — packages are otherwise owner-scoped
-    and never appear on a repo's Packages tab. Deliberately independent of the
-    artifact owner, which a rehearsal may override: the source is where the code
-    lives, not where the bytes were pushed."""
+    """The repository the images are built from, set as
+    `org.opencontainers.image.source` so Gitea links containers to the repo.
+    Independent of the artifact owner a rehearsal may override."""
     return os.environ.get(
         "BOT_BOTTLE_IMAGE_SOURCE_URL", f"{_DEFAULT_BASE}/didericis/bot-bottle",
     )
@@ -153,11 +135,8 @@ def ext4_filename(plat: str) -> str:
 
 
 def local_tag(image: str, plat: str) -> str:
-    """The build-local tag for one image on one platform.
-
-    Deliberately not `:latest`. Builds run concurrently, so a name shared
-    between an image's two platforms would race: whichever finished last would
-    decide what got pushed and what got packaged."""
+    """Build-local tag for one image and platform. Not `:latest`, since the
+    platforms build concurrently."""
     return f"{image}:build-{_platform_suffix(plat)}"
 
 
@@ -188,11 +167,7 @@ def _gzip(src: Path, dest: Path) -> None:
 
 
 def push_oci(image: str, version: str, plat: str, *, runtime: str = "docker") -> str:
-    """Push `image` for `plat` and return the digest the registry assigned.
-
-    The digest is read back from the registry rather than computed locally:
-    it is the registry's identifier for the manifest it stored, and inventing
-    it locally would defeat the point of pinning to it."""
+    """Push `image` for `plat` and return the registry's digest."""
     ref, tag = oci_ref(image), oci_tag(version, plat)
     target = f"{ref}:{tag}"
     _run([runtime, "tag", local_tag(image, plat), target], what=f"tagging {target}")
@@ -207,7 +182,7 @@ def push_oci(image: str, version: str, plat: str, *, runtime: str = "docker") ->
 
 
 def put_generic(url: str, body: Path, token: str) -> None:
-    """PUT a (hundreds-of-MB) file, streamed rather than buffered."""
+    """PUT a large file, streamed."""
     length = body.stat().st_size
     with open(body, "rb") as handle:
         req = urllib.request.Request(url, data=handle, method="PUT")  # type: ignore[arg-type]
@@ -241,12 +216,8 @@ def ext4_url(image: str, version: str, plat: str) -> str:
 
 
 def _head(url: str, token: str, *, basic: bool = False) -> int:
-    """HTTP status of a HEAD, without downloading the body. 0 if unreachable.
-
-    `basic` picks HTTP Basic over Gitea's REST `token` scheme: the OCI `/v2/`
-    distribution API rejects `token <PAT>` with 401 and wants Basic (Gitea
-    accepts any username with the token as the password). The generic-package
-    API served under `/api/packages` keeps the `token` scheme."""
+    """HTTP status of a HEAD, or 0 if unreachable. `basic` uses HTTP Basic,
+    which the OCI `/v2/` API needs; `/api/packages` keeps the `token` scheme."""
     req = urllib.request.Request(url, method="HEAD")
     if token:
         if basic:
@@ -266,12 +237,8 @@ def _head(url: str, token: str, *, basic: bool = False) -> int:
 def already_published(
     images: list[str], platforms: list[str], version: str, token: str,
 ) -> list[str]:
-    """Artifacts that already exist at `version`, as URLs. Empty when clear.
-
-    Checked before building rather than at upload time. Uploads only start once
-    every image is built, so without this a collision on the second image
-    surfaces after the whole matrix has been built — ten minutes of work thrown
-    away to learn something one HTTP round trip could have said up front."""
+    """URLs of artifacts already published at `version`. Checked before
+    building so a collision fails fast."""
     base, owner, _ = _config()
     found: list[str] = []
     for image in images:
@@ -279,9 +246,7 @@ def already_published(
             ext4 = ext4_url(image, version, plat)
             if _head(ext4, token) == 200:
                 found.append(ext4)
-            # The OCI half needs checking too, and more urgently: `docker push`
-            # silently overwrites an existing tag, so nothing downstream would
-            # ever report it.
+            # `docker push` silently overwrites a tag, so check OCI too.
             manifest = (
                 f"{base}/v2/{owner}/{image}/manifests/{oci_tag(version, plat)}"
             )
@@ -295,12 +260,8 @@ _RELEASE_PLATFORMS = ["linux/amd64", "linux/arm64"]
 
 
 def next_release_version(start: str, token: str) -> str:
-    """The first version from `start` up, bumping the patch, that nothing is
-    published at.
-
-    A release picks its own number, so nobody has to commit a version bump
-    before cutting one. Every image and both arches are checked: a release
-    ships all of them, so any one existing means the number is taken."""
+    """The first unpublished version from `start` up, bumping the patch. Any
+    image or arch already at a version takes it."""
     match = _RELEASE_VERSION.match(start)
     if not match:
         raise PublishError(f"{start!r} is not a MAJOR.MINOR.PATCH release version")
@@ -316,10 +277,8 @@ def next_release_version(start: str, token: str) -> str:
 def delete_published(
     images: list[str], platforms: list[str], version: str, token: str,
 ) -> None:
-    """Remove everything published at `version` so it can be republished.
-
-    Only reachable via `--force`. Generic packages reject a PUT over an
-    existing file, so republishing means deleting first."""
+    """Remove everything at `version` so it can be republished (`--force`).
+    Generic packages reject a PUT over an existing file."""
     base, owner, _ = _config()
     for image in images:
         url = f"{base}/api/packages/{owner}/generic/{ext4_package(image)}/{version}"
@@ -341,22 +300,10 @@ def delete_published(
 
 
 def link_to_repo(images: list[str], token: str) -> None:
-    """Attach every published package to the repository.
-
-    Packages are owner-scoped, so without this they publish under
-    `/{owner}/-/packages` and never appear on the repo's Packages tab.
-
-    Both types are linked explicitly. `org.opencontainers.image.source` is set
-    on the containers too, but it is not sufficient on its own: Gitea reads it
-    when it *creates* a package, so an image whose package already exists —
-    every republish — stays unlinked. The API call is idempotent and does not
-    care.
-
-    The endpoint is keyed on the package *name*, not a version, so one call
-    covers every version of it.
-
-    Best effort: this runs after the artifacts are uploaded, so a failure
-    leaves them published and usable, only harder to find."""
+    """Link every published package to the repository, so it shows on the
+    repo's Packages tab. Both types are linked explicitly, since Gitea reads
+    `org.opencontainers.image.source` only when it creates a package. Best
+    effort: a failure leaves the artifacts published."""
     base, owner, _ = _config()
     repo = source_url().rstrip("/").rsplit("/", 1)[-1]
     packages = [("container", image) for image in images]
@@ -371,8 +318,7 @@ def link_to_repo(images: list[str], token: str) -> None:
             with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT_SECONDS):
                 print(f"  linked {kind}/{package} -> {owner}/{repo}")
         except urllib.error.HTTPError as e:
-            # Gitea answers 400 when the package is already linked, which is
-            # the steady state on every republish — not worth reporting.
+            # 400 means already linked.
             if e.code not in (400, 409):
                 print(f"  warning: could not link {kind}/{package} "
                       f"(HTTP {e.code})", file=sys.stderr)
@@ -382,11 +328,8 @@ def link_to_repo(images: list[str], token: str) -> None:
 
 
 def check_interchangeable(built: BuiltImage) -> None:
-    """Every artifact of an image must come from one `inputs_hash`, or the
-    publish aborts.
-
-    Consumers pick a format by preference, so the formats must be substitutes;
-    built from different commits they would not be."""
+    """Abort unless every artifact of an image shares one `inputs_hash`, since
+    consumers treat formats as substitutes."""
     hashes = {a.inputs_hash for a in built.artifacts}
     if len(hashes) > 1:
         detail = "\n".join(
@@ -400,9 +343,8 @@ def check_interchangeable(built: BuiltImage) -> None:
 
 
 def artifacts_manifest_entry(built: BuiltImage) -> dict[str, object]:
-    """One image's manifest entry, in the committed schema: one flat
-    `{type, platform, url, digest}` asset per (type, platform), keyed by
-    `<type>_<platform>` (the loader asserts the key matches the fields)."""
+    """One image's manifest entry: a `{type, platform, url, digest}` asset per
+    (type, platform), keyed `<type>_<platform>`."""
     check_interchangeable(built)
     artifacts: dict[str, dict[str, object]] = {}
     for a in built.artifacts:
@@ -423,9 +365,7 @@ def artifacts_manifest_entry(built: BuiltImage) -> dict[str, object]:
 
 
 def write_artifacts_manifest(images: list[BuiltImage], dest: Path) -> None:
-    """Write `published-artifacts.json` for every built image, sorted for a stable
-    diff (this file is committed, and a churning key order would make every
-    publish look like a change)."""
+    """Write `published-artifacts.json`, sorted for a stable diff."""
     data = {img.name: artifacts_manifest_entry(img) for img in sorted(images, key=lambda i: i.name)}
     dest.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"wrote {dest}")
@@ -434,11 +374,9 @@ def write_artifacts_manifest(images: list[BuiltImage], dest: Path) -> None:
 def rootfs_source_tag(
     image: str, plat: str, *, repo_root: Path, runtime: str = "docker",
 ) -> str:
-    """The local image `image`'s rootfs is exported from.
-
-    Usually the one already built for the OCI push. The orchestrator is the
-    exception: its rootfs comes from `Dockerfile.orchestrator.fc`, which is
-    `FROM` the OCI image and adds buildah, so it is built here on top of it."""
+    """The local image `image`'s rootfs is exported from. For the orchestrator
+    that's `Dockerfile.orchestrator.fc` (`FROM` the OCI image plus buildah),
+    built here."""
     dockerfile = image_inputs.rootfs_dockerfile(image)
     if dockerfile == image_inputs.DOCKERFILES[image]:
         return local_tag(image, plat)
@@ -450,10 +388,8 @@ def rootfs_source_tag(
     ):
         build_args += ["--build-arg", f"{name}={value}"]
 
-    # The base image the derived Dockerfile builds `FROM`. Passed as a
-    # digest-pinned local ref, not a tag: the ARG has no default precisely so
-    # the FROM cannot silently resolve a stale `:latest` instead of the image
-    # this run just built.
+    # The derived Dockerfile's base, passed as a digest-pinned local ref (the
+    # ARG has no default).
     base_arg = image_inputs.ROOTFS_BASE_ARG.get(image)
     if base_arg:
         from .backend.docker import util as docker_util
@@ -477,12 +413,9 @@ def build_ext4(
     repo_root: Path,
     runtime: str = "docker",
 ) -> BuiltArtifact:
-    """Export `image`'s filesystem into a bootable, gzipped ext4.
-
-    Delegates to the firecracker rootfs machinery: `build_base_rootfs_dir`
-    exports and injects the guest boot bits, `build_rootfs_ext4` populates the
-    filesystem with `mke2fs -d`. The infra pair boots a role-specific PID 1;
-    agent images take the default init (`init_script=None`)."""
+    """Export `image`'s filesystem into a bootable, gzipped ext4 via the
+    firecracker rootfs builder. Infra images boot a role-specific PID 1; agent
+    images the default init."""
     from .backend.firecracker import infra_vm, util as fc_util
     from .cli.settings import settings_from_env
 
@@ -495,10 +428,7 @@ def build_ext4(
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Per-platform, like the .gz beside it. An image's two platforms are built
-    # concurrently, and `mke2fs -d` populating one path from two processes
-    # corrupts the filesystem it is writing ("Directory block checksum does not
-    # match") — nondeterministically, only when the two windows overlap.
+    # Per-platform: concurrent `mke2fs -d` into one path corrupts it.
     ext4 = out_dir / f"{image}.{_platform_suffix(plat)}.ext4"
     print(f"  building rootfs for {image} ({plat})")
     fc_util.build_rootfs_ext4(
@@ -525,19 +455,14 @@ def build_image(
     out_dir: Path,
     runtime: str = "docker",
 ) -> list[BuiltArtifact]:
-    """Build, push, and package one image on one platform, returning everything
-    produced.
-
-    Both formats come from one build, with a single `inputs_hash` stamped onto
-    each — which is what makes them interchangeable."""
+    """Build, push and package one image on one platform. Both formats come
+    from one build and carry its `inputs_hash`."""
     inputs = image_inputs.inputs_hash(image, repo_root=repo_root)
     print(f"building {image} {version} ({plat}) inputs={inputs}")
 
     dockerfile = repo_root / image_inputs.DOCKERFILES[image]
-    # The digest-pinned base images have no Dockerfile defaults on purpose —
-    # they live in image-build-args.json and every supported build path resolves
-    # them through this helper. Omitting them does not build an unpinned image,
-    # it fails outright, which is the intended shape.
+    # Digest-pinned bases have no Dockerfile defaults; they come from
+    # image-build-args.json, and omitting them fails the build.
     build_args: list[str] = []
     for name, value in sorted(resources.image_build_args(dockerfile).items()):
         build_args += ["--build-arg", f"{name}={value}"]
@@ -564,20 +489,12 @@ def build_image(
 def promote(
     manifest: Path, to_version: str, token: str, *, runtime: str = "docker",
 ) -> list[BuiltImage]:
-    """Copy every artifact in a tested manifest to `to_version`.
+    """Copy every artifact in a tested manifest to `to_version`, never
+    rebuilding.
 
-    Copy, never rebuild. A rebuild at the release version produces bytes nobody
-    tested, which is the whole reason the dev version exists — the artifact that
-    passed is the artifact that ships.
-
-    The formats are not symmetric and this does not pretend otherwise: an OCI
-    image is re-tagged from its digest, so the registry moves nothing and the
-    digest must come back unchanged; a generic package has no copy API, so its
-    bytes are downloaded (verified against the manifest on the way in) and
-    re-uploaded.
-
-    Verified on both sides. A promotion that silently shipped something other
-    than what passed would defeat the point of testing a dev version at all."""
+    OCI images are re-tagged from their digest, which must come back unchanged.
+    Generic packages have no copy API, so their bytes are downloaded (verified)
+    and re-uploaded."""
     from .published_artifacts import parse_artifacts_manifest
 
     entries = parse_artifacts_manifest(json.loads(manifest.read_text()))
@@ -600,9 +517,8 @@ def promote(
                 fmt=artifact.format, platform=artifact.platform, digest=digest,
                 locator=(oci_tag(to_version, artifact.platform) if is_oci
                          else ext4_filename(artifact.platform)),
-                # OCI ref from the tested manifest (url minus tag); ext4's
-                # namespace is unused by the writer (it recomputes the url from
-                # name/version/platform), so a config-derived package is fine.
+                # OCI ref from the tested manifest; ext4's namespace is unused
+                # by the writer.
                 namespace=(artifact.url.rsplit(":", 1)[0] if is_oci
                            else ext4_package(artifact.image)),
                 inputs_hash=entry.inputs_hash,
@@ -614,11 +530,9 @@ def promote(
 def _promote_oci(
     artifact: "Artifact", to_version: str, *, runtime: str = "docker",
 ) -> str:
-    """Re-tag a published image at the new version and return its digest.
-
-    Pulled by digest, so what gets re-tagged is exactly what was tested."""
-    # The repo ref comes from the tested manifest (url minus its tag), not from
-    # config — promote copies exactly what passed, wherever it was published.
+    """Re-tag a published image at the new version (pulled by digest) and
+    return its digest."""
+    # From the tested manifest, so promote copies exactly what passed.
     ref = artifact.url.rsplit(":", 1)[0]
     source = f"{ref}@{artifact.digest}"
     target = f"{ref}:{oci_tag(to_version, artifact.platform)}"
@@ -635,10 +549,8 @@ def _promote_oci(
 
 
 def _promote_ext4(artifact: "Artifact", to_version: str, token: str) -> str:
-    """Re-upload a published rootfs at the new version and return its digest.
-
-    Downloaded through the same verified path a launch host uses, so the bytes
-    re-uploaded are provably the tested ones."""
+    """Re-upload a published rootfs, downloaded through the verified path, at
+    the new version and return its digest."""
     from . import image_registry
     from .cli.settings import settings_from_env
     from .paths import host_artifact_cache_dir
@@ -696,13 +608,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def default_jobs() -> int:
-    """How many builds to run at once by default.
-
-    Each build occupies roughly one core: emulated builds are dominated by a
-    single-threaded qemu, and native ones by serial `apt`/`npm` steps. So the
-    machine sits mostly idle building one image at a time — a 24-core host
-    measured a load average under 3. Quarter of the cores leaves room for
-    buildkit's own parallelism and for anything else on a shared runner."""
+    """Default build concurrency: a quarter of the cores. Each build mostly
+    uses one core."""
     return max(1, min(8, (os.cpu_count() or 4) // 4))
 
 
@@ -716,14 +623,8 @@ def build_all(
     runtime: str = "docker",
     jobs: int | None = None,
 ) -> list[BuiltImage]:
-    """Build every (image, platform) pair, up to `jobs` at a time.
-
-    The pairs are independent — separate build contexts, separate local tags,
-    separate output dirs — so wall time falls to roughly the slowest single
-    build rather than the sum of all of them.
-
-    Every failure is collected and raised together: a publish that is going to
-    fail should name every image that broke, not stop at the first."""
+    """Build every (image, platform) pair, up to `jobs` at a time. Failures are
+    collected and raised together."""
     if jobs is None:
         jobs = default_jobs()
     tasks = [(name, plat) for name in images for plat in platforms]
@@ -742,9 +643,7 @@ def build_all(
             try:
                 produced[name].extend(future.result())
             # pylint: disable=broad-exception-caught
-            # Deliberately broad: one build blowing up in an unforeseen way
-            # must not swallow the results of the others, and every failure is
-            # re-raised together below.
+            # Broad so one failure can't swallow the others' results.
             except Exception as exc:  # noqa: BLE001
                 failures.append(f"{name} ({plat}): {exc}")
 
@@ -763,14 +662,10 @@ def build_all(
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
-    # Builds take minutes and print as they go; block-buffered output would
-    # withhold all of it until the end, and interleave wrongly with the
-    # unbuffered stderr — so a traceback lands above the work that caused it.
+    # Line-buffer so output interleaves correctly with stderr.
     sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
 
-    # Before building anything: an OCI push is not undoable, so discovering a
-    # missing token afterwards would leave the registry holding images with no
-    # matching rootfs or manifest.
+    # Check the token first: an OCI push can't be undone.
     _, _, token = _config()
     if not token:
         print(
@@ -788,7 +683,7 @@ def main(argv: list[str] | None = None) -> int:
             version = next_release_version(version, token)
         elif existing := already_published(
                 list(image_inputs.IMAGES), _RELEASE_PLATFORMS, version, token):
-            # `docker tag` + push overwrites silently, so check up front.
+            # `docker tag` + push overwrites silently.
             print(
                 f"{len(existing)} artifact(s) already published at {version}; "
                 f"pick a free version or omit --version",

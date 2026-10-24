@@ -1,12 +1,5 @@
-# bot-bottle container image.
-#
-# Goal: a small, cache-friendly base that ships claude-code (the
-# `@anthropic-ai/claude-code` npm package, CLI name `claude`) ready to run
-# interactively. The container is ephemeral; per PRD 0001 v1 the host
-# filesystem is not mounted in.
-#
-# Layer ordering is deliberate: the npm install lives in its own layer so
-# changes to the rest of the repo (or to the CMD) don't bust it.
+# Claude agent image: claude-code (`@anthropic-ai/claude-code`, CLI `claude`).
+# The npm install is its own layer for caching.
 
 # Version-qualified Node LTS, pinned to its multi-architecture manifest.
 ARG NODE_BASE_IMAGE
@@ -20,14 +13,8 @@ RUN sed -i \
       -e "s|https://deb.debian.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
       /etc/apt/sources.list.d/debian.sources
 
-# Install runtime system deps. claude-code shells out to git for several
-# features (status checks, commits, PR creation) — without git in the
-# image, those features fail in surprising ways once the user does any
-# real work. ca-certificates is already in the slim base; listed for
-# clarity in case the base ever drops it. curl is here so any
-# HTTPS_PROXY-aware tool (curl itself, plus anything that shells out
-# to it) works against egress's bumped TLS without the agent needing
-# local DNS.
+# Runtime deps: claude-code shells out to git; curl works through the egress
+# proxy.
 RUN apt-get -o Acquire::Check-Valid-Until=false update \
   && apt-get install -y --no-install-recommends \
   git \
@@ -39,10 +26,7 @@ RUN apt-get -o Acquire::Check-Valid-Until=false update \
   dnsutils \
   && rm -rf /var/lib/apt/lists/*
 
-# App-specific deps. Python isn't required by claude-code itself
-# (claude-code is a Node CLI), but is convenient for the agent to
-# shell out to for ad-hoc scripts. Kept on its own layer so it can
-# be moved to a downstream image if the base ever needs to shrink.
+# Python for the agent's ad-hoc scripts.
 RUN apt-get -o Acquire::Check-Valid-Until=false update \
   && apt-get install -y --no-install-recommends python3 python3-pip python3-venv \
   && rm -rf /var/lib/apt/lists/*
@@ -61,21 +45,14 @@ RUN cd /opt/claude \
 # suppress bot-bottle's git-gate insteadOf rules.
 RUN install -d -o node -g node -m 755 /home/node/.config /home/node/.config/git
 
-# Run as a non-root user. The node image already provides a `node` user
-# (uid 1000) with a home directory, which is where claude-code will write
-# its session state.
+# Run as the image's non-root `node` user (uid 1000).
 USER node
 WORKDIR /home/node
 
-# Pre-create the skills directory so PRD 0002's host->container skill
-# copier (bot_bottle/skills.py) drops files into a path owned by the
-# `node` user. `skills_copy_into` also `mkdir -p`s defensively, but
-# baking it into the image avoids a permission-confusion footgun if a
-# future change to the launcher copies in as a different user.
+# Skills are copied here; owned by `node`.
 RUN mkdir -p /home/node/.claude/skills
 
-# Heredoc delimiter is unquoted so $HOME expands; no other `$` appears
-# in the body, so this is safe under dash (Docker's default RUN shell).
+# Unquoted delimiter so $HOME expands (no other `$` in the body).
 RUN cat > "$HOME/.claude.json" <<JSON
 {
   "hasCompletedOnboarding": true,
@@ -87,8 +64,5 @@ RUN cat > "$HOME/.claude.json" <<JSON
 }
 JSON
 
-# Default to an interactive claude session. In the v1 launcher,
-# `bot_bottle/cli/start.py` runs the container detached and uses `docker exec`
-# to attach a TTY, but this CMD makes `docker run -it bot-bottle-claude` also
-# do something useful for ad-hoc debugging.
+# Interactive claude, for `docker run -it` debugging.
 CMD ["claude"]

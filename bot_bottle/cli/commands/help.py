@@ -1,9 +1,5 @@
-"""help: print the top-level command list and usage.
-
-Rendered by the dispatcher for the `help` command and for its
-`-h`/`--help`, no-args, and unknown-command fallbacks. The per-command
-summaries live here; keep them in sync with the COMMANDS table in
-`bot_bottle.cli`.
+"""help: print the command list and usage, for `help`, `-h`, no args and
+unknown commands. Keep the summaries in sync with `COMMANDS`.
 """
 
 from __future__ import annotations
@@ -14,10 +10,9 @@ from ..constants import PROG
 
 
 def cmd_help(argv: list[str] | None = None) -> int:
-    """Write the top-level usage + command list to stderr. Returns 0;
-    the dispatcher chooses the process exit code per entry path (0 for an
-    explicit `help`/`-h`, 2 for the bare no-args usage error)."""
-    del argv  # help takes no arguments
+    """Write usage and the command list to stderr. Returns 0; the dispatcher
+    picks the exit code."""
+    del argv  # no arguments
     w = sys.stderr.write
     w(f"usage: {PROG} [agent]           start an agent on this directory\n")
     w(f"       {PROG} <command> [args...]\n\n")

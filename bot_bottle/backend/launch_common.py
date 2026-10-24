@@ -1,11 +1,6 @@
-"""Launch steps every backend shares.
-
-All three backends launch a bottle onto the same per-host topology:
-mint the bottle's git-gate deploy keys, register it with the orchestrator,
-install the shared gateway's CA, and point the agent at the gateway's
-git-gate and supervise endpoints. They differ in how the agent runs and how
-it gets its address, so each backend's `launch` keeps its own order and calls
-these helpers for the common steps.
+"""Launch steps every backend shares: git-gate deploy keys, orchestrator
+registration, the gateway CA, and the agent's gateway URLs. Each backend's
+`launch` keeps its own order.
 """
 
 from __future__ import annotations
@@ -25,13 +20,9 @@ from .base import BottlePlan, BottleSpec
 
 
 class LaunchTeardown:
-    """Releases what a launch acquired: closes `stack` (callbacks run in
-    reverse order of registration), then revokes the bottle's git-gate deploy
-    keys whether or not that succeeded.
-
-    A failure while closing is reported with `label`, then re-raised unless
-    `reraise` is false. Safe to call more than once: the bottle handle may
-    call it on close and the launch context again on exit."""
+    """Releases what a launch acquired: closes `stack`, then revokes the
+    bottle's deploy keys either way. A close failure is reported with `label`
+    and re-raised unless `reraise` is false. Safe to call more than once."""
 
     def __init__(self, plan: BottlePlan, label: str, *, reraise: bool = True) -> None:
         self.stack = ExitStack()
@@ -54,8 +45,8 @@ class LaunchTeardown:
 
 
 def provision_git_gate_keys(plan: BottlePlan) -> GitGatePlan:
-    """Mint the bottle's dynamic (gitea) deploy keys, if it has upstreams.
-    Must run before the bottle's repos are provisioned into the gateway."""
+    """Mint the bottle's gitea deploy keys, before its repos go into the
+    gateway."""
     if not plan.git_gate_plan.upstreams:
         return plan.git_gate_plan
     return GitGate().provision_dynamic_keys(
@@ -66,10 +57,8 @@ def provision_git_gate_keys(plan: BottlePlan) -> GitGatePlan:
 
 def registration_tokens(plan: BottlePlan) -> dict[str, str]:
     """The map the bottle registers with the orchestrator (see
-    `contract.held_secrets`): its egress auth tokens, resolved from the plan's
-    secrets for the gateway to inject (the agent never sees them), plus the
-    secrets the bottle holds, which the gateway scans pushes and requests
-    for."""
+    `contract.held_secrets`): egress tokens for the gateway to inject, plus the
+    secrets the bottle holds, which the gateway scans requests and pushes for."""
     tokens = Egress().resolve_token_values(
         plan.egress_plan.token_env_map, plan.egress_secrets,
     )
@@ -77,9 +66,9 @@ def registration_tokens(plan: BottlePlan) -> dict[str, str]:
 
 
 def held_secret_values(plan: BottlePlan) -> dict[str, str]:
-    """The secrets inside the bottle: its exfil canary, and the values of its
-    `?` secret env entries (not `${VAR}` interpolations, which carry ordinary
-    host values). Values shorter than `MIN_HELD_SECRET_LEN` are left out."""
+    """The secrets inside the bottle: its canary and its `?` env values (not
+    `${VAR}` interpolations), excluding values shorter than
+    `MIN_HELD_SECRET_LEN`."""
     held: dict[str, str] = {}
     if plan.egress_plan.canary and plan.egress_plan.canary_env:
         held[CANARY_KEY] = plan.egress_plan.canary
@@ -91,9 +80,8 @@ def held_secret_values(plan: BottlePlan) -> dict[str, str]:
 
 
 def stage_gateway_ca(plan: BottlePlan, ca_pem: str) -> EgressPlan:
-    """Write the shared gateway's CA to a stable host path for the provisioner
-    to install in the agent, and return the egress plan pointing at it. Every
-    bottle on the host trusts this one CA."""
+    """Write the gateway CA to a stable host path for the provisioner and
+    return the egress plan pointing at it."""
     ca_dir = egress_state_dir(plan.slug) / "gateway-ca"
     ca_dir.mkdir(parents=True, exist_ok=True)
     ca_file = ca_dir / "gateway-ca.pem"
@@ -108,9 +96,8 @@ def stage_gateway_ca(plan: BottlePlan, ca_pem: str) -> EgressPlan:
 def gateway_agent_urls(
     plan: BottlePlan, gateway_host: str, git_gate_plan: GitGatePlan,
 ) -> tuple[str, str]:
-    """The agent's git-gate and supervise URLs on the shared gateway, or ""
-    for whichever the bottle doesn't use. Both bypass the egress proxy: the
-    agent's NO_PROXY covers `gateway_host`."""
+    """The agent's git-gate and supervise URLs, or "" for one the bottle
+    doesn't use. Both are in the agent's NO_PROXY."""
     git_gate_url = (
         f"http://{gateway_host}:{GIT_HTTP_PORT}" if git_gate_plan.upstreams else ""
     )

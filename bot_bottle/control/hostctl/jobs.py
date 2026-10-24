@@ -1,9 +1,6 @@
-"""Long-running host controller operations as jobs.
-
-A job runs in its own thread with its output redirected to its event list, so
-concurrent jobs never interleave. Events are `log` lines followed by one
-`result` or `error`; readers can wait for new events and see the whole history.
-Jobs live in memory and finished ones are dropped after `RETENTION_SECONDS`.
+"""Long-running host-controller operations as jobs. Each runs in its own thread
+with output captured as events (`log` lines, then one `result` or `error`).
+Jobs live in memory; finished ones are dropped after `RETENTION_SECONDS`.
 """
 
 from __future__ import annotations
@@ -49,7 +46,7 @@ class Job:
 
     def follow(self, start: int = 0, timeout: float | None = None) -> Iterator[dict[str, object]]:
         """Yield events from `start` on, waiting for new ones until the job
-        finishes. `timeout` bounds each wait; on expiry the iterator ends."""
+        finishes. `timeout` bounds each wait."""
         index = start
         while True:
             with self._cond:
@@ -71,9 +68,9 @@ class JobRegistry:
         self._retention = retention
 
     def start(self, kind: str, owner: str, work: Callable[[], dict[str, object]]) -> Job:
-        """Run `work` as a job owned by role `owner`. Its return value is the
-        `result` event; an exception (including `log.die`) is the `error` event,
-        carrying the exception's `job_error_code` as `code` when it has one."""
+        """Run `work` as a job owned by `owner`. Its return value is the
+        `result` event; an exception (including `log.die`) is the `error`
+        event, with its `job_error_code` as `code` if any."""
         job = Job(id=uuid.uuid4().hex[:12], kind=kind, owner=owner)
         with self._lock:
             self._prune()
@@ -102,7 +99,7 @@ class JobRegistry:
                 else:
                     job.record({"type": "result", "value": value}, final=SUCCEEDED)
 
-        # A fresh context so this job's sink can't leak into the caller's.
+        # A fresh context so the job's sink can't leak into the caller's.
         threading.Thread(target=contextvars.Context().run, args=(run,), daemon=True,
                          name=f"hostctl-job-{job.id}").start()
         return job

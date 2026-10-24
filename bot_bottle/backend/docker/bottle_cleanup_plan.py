@@ -1,18 +1,5 @@
-"""DockerBottleCleanupPlan — concrete subclass of BottleCleanupPlan.
-
-Cleanup is centered on compose projects. `docker
-compose ls` is the source of truth for what's running; the plan
-carries the projects to `compose down`, plus two fallback buckets
-for legacy / orphan resources:
-
-  - stray_containers: pre-compose `bot-bottle-*` containers not
-    attached to any compose project. Cleared via `docker rm -f`.
-  - stray_networks: same idea for networks. Cleared via
-    `docker network rm`.
-
-Compose-managed networks are removed by `compose down --volumes`,
-so they don't appear in stray_networks for a normal project — only
-truly leftover ones.
+"""`DockerBottleCleanupPlan`: compose projects to `compose down`, plus
+`bot-bottle-*` containers and networks not owned by any compose project.
 """
 
 from __future__ import annotations
@@ -26,8 +13,7 @@ from .. import BottleCleanupPlan
 
 @dataclass(frozen=True)
 class DockerBottleCleanupPlan(BottleCleanupPlan):
-    """Resources DockerBottleBackend.cleanup will remove. Produced by
-    `prepare_cleanup`; sorted so the y/N output is stable."""
+    """What `cleanup` will remove, sorted for stable y/N output."""
 
     projects: tuple[str, ...]
     stray_containers: tuple[str, ...]

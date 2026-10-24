@@ -1,14 +1,5 @@
-"""Host setup + status for the Docker backend.
-
-Unlike Firecracker, the Docker backend needs no privileged one-time
-host provisioning (no TAP pool / nft table) — networks and the gateway
-bundle are created per-launch. So `setup()` is mostly an install/daemon
-pointer, and `status()` reports whether docker is usable.
-
-This is intentionally minimal; a richer version (daemon config checks,
-gVisor/runsc install guidance, rootless-docker hints) is tracked
-separately. Reached via `DockerBottleBackend.setup` / `.status`, which
-the generic `bot-bottle backend {setup,status}` dispatches to.
+"""Docker backend setup and status. Docker needs no privileged host setup, so
+`setup()` is an install pointer and `status()` checks docker is usable.
 """
 
 from __future__ import annotations

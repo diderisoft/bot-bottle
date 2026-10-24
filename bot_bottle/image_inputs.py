@@ -1,12 +1,6 @@
-"""`inputs_hash` — a content hash of everything baked into a published image.
-
-Computable from a checkout before anything is built, so a host can ask whether a
-published artifact came from its source, and so an image's formats can be shown
-interchangeable (same inputs in, either artifact out).
-
-Architecture-independent: the pinned bases are multi-arch index digests, so one
-set of inputs describes both arches and `--platform` selects at build time.
-Architecture is carried by the manifest's platform keys instead.
+"""`inputs_hash`: a content hash of everything baked into a published image,
+computable from a checkout before building. Architecture-independent (bases are
+multi-arch index digests).
 """
 
 from __future__ import annotations
@@ -16,13 +10,11 @@ from pathlib import Path
 
 from . import resources
 
-# Bumped when the *meaning* of the hash changes (inputs added or removed, or the
-# framing bytes reordered), forcing a republish rather than letting an old
-# artifact answer to a new hash.
+# Bump when the hash's meaning changes, forcing a republish.
 _SCHEMA = "image-inputs-v1"
 
-# Per-image build inputs, relative to the build root. The `bot_bottle` paths an
-# image bakes are added separately (see `PACKAGE_PATHS`).
+# Per-image build inputs, relative to the build root; package paths are in
+# `PACKAGE_PATHS`.
 BUILD_INPUTS: dict[str, tuple[str, ...]] = {
     "bot-bottle-gateway": (
         "image-build-args.json",
@@ -54,12 +46,8 @@ BUILD_INPUTS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# The slice of the `bot_bottle` package each infrastructure image bakes (the
-# orchestrator COPYs it, the gateway pip-installs it): the contract, the shared
-# lib and the image's own service, never host code. Each entry is a
-# file or a directory taken whole, and must match the Dockerfile's `COPY` lines
-# (a unit test checks), so a host-only change leaves both hashes alone. Agent
-# images carry a harness, not our package.
+# The `bot_bottle` slice each infra image bakes: contract, lib and its own
+# service. Must match the Dockerfile `COPY` lines (a unit test checks).
 _SHARED_PACKAGE_PATHS = (
     "bot_bottle/__init__.py",
     "bot_bottle/contract",
@@ -70,9 +58,8 @@ PACKAGE_PATHS: dict[str, tuple[str, ...]] = {
     "bot-bottle-orchestrator": (*_SHARED_PACKAGE_PATHS, "bot_bottle/orchestrator"),
 }
 
-# The Dockerfile each image builds from, named explicitly rather than positioned
-# inside BUILD_INPUTS: the input list is a hashing concern and its order must
-# stay free to change without silently repointing a build.
+# Each image's Dockerfile, named explicitly so reordering BUILD_INPUTS can't
+# repoint a build.
 DOCKERFILES: dict[str, str] = {
     "bot-bottle-gateway": "Dockerfile.gateway",
     "bot-bottle-orchestrator": "Dockerfile.orchestrator",
@@ -81,32 +68,26 @@ DOCKERFILES: dict[str, str] = {
     "bot-bottle-pi": "bot_bottle/contrib/pi/Dockerfile",
 }
 
-# Images whose rootfs boots with a role-specific PID 1 rather than the default
-# agent init. Maps to the firecracker infra role name.
+# Images whose rootfs boots a role-specific PID 1; maps to the firecracker
+# infra role.
 INFRA_ROLES: dict[str, str] = {
     "bot-bottle-gateway": "gateway",
     "bot-bottle-orchestrator": "orchestrator",
 }
 
-# Build inputs are a property of (image, format), not of an image. The
-# orchestrator's OCI image is the lean control plane; its bootable rootfs is the
-# `.fc` variant, `FROM` that image plus buildah for in-VM agent builds. Only
-# images that differ appear here.
+# Rootfs Dockerfiles that differ from the OCI one (each is `FROM` that image).
 ROOTFS_DOCKERFILES: dict[str, str] = {
     "bot-bottle-orchestrator": "Dockerfile.orchestrator.fc",
 }
 
-# The build arg a rootfs Dockerfile takes its base image through. These
-# deliberately have no default — the `FROM` would otherwise silently resolve a
-# stale `:latest` instead of the image just built — so the value has to be
-# supplied, and as a digest-pinned local ref rather than a tag.
+# Build arg a rootfs Dockerfile takes its base through. No default, so it must
+# be supplied as a digest-pinned ref rather than resolving a stale `:latest`.
 ROOTFS_BASE_ARG: dict[str, str] = {
     "bot-bottle-orchestrator": "ORCHESTRATOR_BASE_IMAGE",
 }
 
-# Free space to leave in a rootfs beyond its contents. The orchestrator builds
-# agent images inside itself, so it needs far more than anything else; the
-# default is what every other image gets.
+# Free rootfs space beyond its contents. The orchestrator builds agent images
+# inside itself, so it needs more.
 DEFAULT_ROOTFS_SLACK_MIB = 1024
 ROOTFS_SLACK_MIB: dict[str, int] = {
     "bot-bottle-orchestrator": 8192,
@@ -114,10 +95,8 @@ ROOTFS_SLACK_MIB: dict[str, int] = {
 
 
 def rootfs_dockerfile(image: str) -> str:
-    """The Dockerfile whose image becomes `image`'s bootable rootfs.
-
-    Usually the same one the OCI image is built from. When it differs, it is
-    `FROM` the OCI image, so that one must be built first."""
+    """The Dockerfile whose image becomes `image`'s rootfs. When it differs
+    from the OCI one it is `FROM` that image, which must be built first."""
     return ROOTFS_DOCKERFILES.get(image, DOCKERFILES[image])
 
 
@@ -133,11 +112,8 @@ class UnknownImageError(KeyError):
 
 
 def package_files(image: str, repo_root: Path) -> list[Path]:
-    """Every regular file under `image`'s `PACKAGE_PATHS`, sorted.
-
-    All files, not just `*.py` — each path is baked in wholesale, shell scripts
-    and data included. `__pycache__`/`.pyc` are excluded as build artifacts
-    that are never copied (`.dockerignore`)."""
+    """Every regular file under `image`'s `PACKAGE_PATHS`, sorted, excluding
+    `__pycache__`/`.pyc`."""
     files: set[Path] = set()
     for name in PACKAGE_PATHS.get(image, ()):
         root = repo_root / name
@@ -159,10 +135,8 @@ def _hash_package(h: "hashlib._Hash", image: str, repo_root: Path) -> None:
 
 
 def inputs_hash(image: str, *, repo_root: Path | None = None) -> str:
-    """The 16-hex content hash of everything baked into `image`.
-
-    Deterministic across publish and launch hosts on the same checkout, and
-    identical on every architecture."""
+    """16-hex content hash of everything baked into `image`, identical across
+    hosts and architectures for one checkout."""
     try:
         inputs = BUILD_INPUTS[image]
     except KeyError:
@@ -174,7 +148,7 @@ def inputs_hash(image: str, *, repo_root: Path | None = None) -> str:
         repo_root = resources.build_root()
 
     h = hashlib.sha256()
-    # Frame every field so a value can never be confused for a boundary.
+    # Frame every field so a value can't be mistaken for a boundary.
     h.update(f"schema={_SCHEMA}\nimage={image}\n".encode())
     _hash_package(h, image, repo_root)
     for name in inputs:

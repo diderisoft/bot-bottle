@@ -1,9 +1,6 @@
-"""Post-boot isolation probe for Firecracker VMs.
-
-The pre-boot nft check can't be trusted on every host (listing an nftables
-table typically needs root; the launcher runs unprivileged), so before the
-agent runs we prove the boundary from inside the VM over SSH. See
-`backend.isolation_probe` for how the check works.
+"""Post-boot isolation probe for firecracker VMs, run over SSH. Listing the nft
+table usually needs root, so the boundary is proven from inside. See
+`backend.isolation_probe`.
 """
 
 from __future__ import annotations
@@ -16,8 +13,8 @@ from . import util
 
 
 def verify_isolation(private_key: Path, guest_ip: str) -> None:
-    """Prove the VM cannot reach the host's primary address. Dies
-    (fail-closed) on a leak or an inconclusive probe."""
+    """Prove the VM can't reach the host's primary address. Dies on a leak or
+    an inconclusive probe."""
     ssh = util.ssh_base_argv(private_key, guest_ip)
 
     def run_guest(script: str) -> str:

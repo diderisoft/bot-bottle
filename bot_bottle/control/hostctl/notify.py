@@ -15,7 +15,7 @@ def main(argv: list[str]) -> int:
     try:
         request(Path(sock), {"op": "died", "session": session, "status": status, "signal": signal})
     except OSError:
-        return 1  # the daemon is down; it finishes the session when it re-adopts
+        return 1  # daemon down; it finishes the session on re-adopt
     return 0
 
 

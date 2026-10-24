@@ -1,14 +1,6 @@
-"""Docker network plumbing for the per-agent egress topology.
-
-The agent container sits on a Docker `--internal` network (no default
-gateway). Egress straddles that network and a per-agent user-defined
-bridge for upstream traffic. We deliberately do NOT use Docker's legacy
-`bridge` network because only user-defined bridges run Docker's
-embedded DNS resolver, which egress needs to resolve upstream hostnames.
-
-Naming: bot-bottle-net-<slug> (internal),
-bot-bottle-egress-<slug> (egress). Numeric suffix on conflict
-(-2, -3, ..., capped at 100).
+"""Docker network helpers. Names are `bot-bottle-net-<slug>` (internal) and
+`bot-bottle-egress-<slug>`, suffixed `-2`, `-3`, ... (up to 100) on conflict.
+User-defined bridges are used because only they run Docker's embedded DNS.
 """
 
 from __future__ import annotations
@@ -27,8 +19,7 @@ def network_egress_name_for_slug(slug: str) -> str:
 
 
 def network_exists(name: str) -> bool:
-    """Uses `docker network inspect`, not `docker network ls -f name=...`,
-    because the latter does substring matching."""
+    """`network inspect`, since `network ls -f name=` matches substrings."""
     return (
         subprocess.run(
             ["docker", "network", "inspect", name],
@@ -41,9 +32,8 @@ def network_exists(name: str) -> bool:
 
 
 def _network_create_with_prefix(base: str, internal: bool) -> str:
-    """Create a per-agent Docker network whose name is <base> (with
-    -2, -3, ... appended on conflict, capped at 100). Returns the
-    resolved name."""
+    """Create a network named `base`, suffixed on conflict (up to 100). Returns
+    the name."""
     name = base
     suffix = 2
     while network_exists(name):
@@ -69,19 +59,17 @@ def _network_create_with_prefix(base: str, internal: bool) -> str:
 
 
 def network_create_internal(slug: str) -> str:
-    """Create a Docker `--internal` network for the agent. Returns the
-    resolved name."""
+    """Create an `--internal` network. Returns the name."""
     return _network_create_with_prefix(network_name_for_slug(slug), internal=True)
 
 
 def network_create_egress(slug: str) -> str:
-    """Create a per-agent user-defined bridge (NOT the legacy `bridge`)
-    so the egress daemon has working DNS for upstream hostnames."""
+    """Create a user-defined bridge, which has DNS for upstream names."""
     return _network_create_with_prefix(network_egress_name_for_slug(slug), internal=False)
 
 
 def network_inspect_cidr(name: str) -> str:
-    """Return the IPv4 CIDR Docker assigned to a user-defined network."""
+    """The IPv4 CIDR Docker assigned to a user-defined network."""
     result = subprocess.run(
         ["docker", "network", "inspect",
          "--format", "{{range .IPAM.Config}}{{.Subnet}}{{end}}", name],
@@ -107,9 +95,7 @@ def network_attach(network: str, container: str) -> None:
 
 
 def network_remove(name: str) -> bool:
-    """Idempotent: a missing network is treated as success so this can
-    be called from a teardown trap. Returns True if removal succeeded
-    (or the network was already gone)."""
+    """Remove a network. A missing one is success; returns True if it's gone."""
     if not network_exists(name):
         return True
     result = subprocess.run(

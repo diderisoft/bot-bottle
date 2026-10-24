@@ -1,9 +1,4 @@
-"""DockerBottlePlan — concrete subclass of BottlePlan.
-
-Carries the Docker-specific resolved fields produced by
-DockerBottleBackend.prepare. The launch step consumes it without
-further resolution; preflight rendering is inherited from BottlePlan.
-"""
+"""`DockerBottlePlan`: the docker backend's resolved launch plan."""
 
 from __future__ import annotations
 
@@ -14,8 +9,7 @@ from .. import BottlePlan
 
 @dataclass(frozen=True)
 class DockerBottlePlan(BottlePlan):
-    """Docker-specific resolved fields produced by
-    DockerBottleBackend.prepare."""
+    """Docker-specific resolved fields."""
 
-    # Run the agent under gVisor's `runsc` runtime.
+    # Run the agent under gVisor's `runsc`.
     use_runsc: bool = field(kw_only=True)

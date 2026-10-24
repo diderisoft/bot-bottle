@@ -1,19 +1,15 @@
-"""Roll the gateway's mitmproxy CA over to a new one, in place.
+"""Roll the gateway's mitmproxy CA over in place.
 
     python3 -m bot_bottle.gateway.ca_rollover <confdir>
 
-Runs inside the gateway (it needs `cryptography`, which the host CLI doesn't
-have). Mints a new CA key, writes the new CA self-signed as
-`mitmproxy-ca-cert.pem` (what agents install), and writes `mitmproxy-ca.pem` as
-the new key, the new CA cross-signed by the current one, then the current CA.
-mitmproxy issues leaves from the first cert's key and hands the file to
-OpenSSL as the store it auto-builds the served chain from, so the gateway
-serves `leaf → new CA (issued by current) → current CA`: agents that loaded the
-current CA still validate, new ones trust the new CA. The current CA has to be
-in the file for that chain to complete (without it OpenSSL sends the leaf
-alone), and the self-signed new CA must not be, or clients that trust only the
-current CA stop at it. Files keep their owner and mode and are replaced
-atomically; mitmproxy picks them up on its next start.
+Runs in the gateway (needs `cryptography`). Writes the new self-signed CA as
+`mitmproxy-ca-cert.pem` (what agents install) and `mitmproxy-ca.pem` as the new
+key, the new CA cross-signed by the current one, then the current CA. The
+gateway then serves `leaf -> new CA (issued by current) -> current CA`, so
+agents that loaded the current CA still validate. The current CA must be in the
+file for the chain to complete, and the self-signed new CA must not be. Files
+keep owner and mode, are replaced atomically, and take effect on mitmproxy's
+next start.
 """
 
 from __future__ import annotations
@@ -29,9 +25,9 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import pkcs12
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
-KEY_FILE = "mitmproxy-ca.pem"        # key + issuing cert (+ chain), mitmproxy's CA
+KEY_FILE = "mitmproxy-ca.pem"  # key + issuing cert (+ chain)
 CERT_FILE = "mitmproxy-ca-cert.pem"  # the CA agents install
-_KEY_BITS = 2048                     # mitmproxy's own CA size
+_KEY_BITS = 2048  # mitmproxy's own CA size
 _VALIDITY = dt.timedelta(days=3650)  # mitmproxy's own CA lifetime
 
 
@@ -56,8 +52,8 @@ def _ca_builder(subject: x509.Name, issuer: x509.Name, *, public_key: rsa.RSAPub
 
 
 def not_after(cert: x509.Certificate) -> dt.datetime:
-    """`cert`'s expiry, timezone-aware (`not_valid_after_utc` is cryptography
-    42+; the gateway pins 44, the dev floor is 41)."""
+    """`cert`'s expiry, timezone-aware (`not_valid_after_utc` needs
+    cryptography 42+)."""
     aware = getattr(cert, "not_valid_after_utc", None)
     return aware if aware is not None else cert.not_valid_after.replace(tzinfo=dt.timezone.utc)
 
@@ -67,9 +63,8 @@ def _pem(cert: x509.Certificate) -> bytes:
 
 
 def roll_over(confdir: Path, *, now: dt.datetime | None = None) -> x509.Certificate:
-    """Replace the CA in `confdir` and return the new (self-signed) CA cert.
-    Raises FileNotFoundError when `confdir` has no current CA to cross-sign
-    with."""
+    """Replace the CA in `confdir`; return the new self-signed CA cert. Raises
+    FileNotFoundError without a current CA."""
     now = now or dt.datetime.now(dt.timezone.utc)
     current_key = serialization.load_pem_private_key((confdir / KEY_FILE).read_bytes(), None)
     if not isinstance(current_key, rsa.RSAPrivateKey):
@@ -77,14 +72,13 @@ def roll_over(confdir: Path, *, now: dt.datetime | None = None) -> x509.Certific
     current = x509.load_pem_x509_certificate((confdir / CERT_FILE).read_bytes())
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=_KEY_BITS)
-    # Unique per key, so the old and new CA never share a name, however close
-    # together two rotations run.
+    # Unique per key, so the old and new CA never share a name.
     key_id = x509.SubjectKeyIdentifier.from_public_key(key.public_key()).digest.hex()[:12]
     subject = x509.Name([
         x509.NameAttribute(NameOID.COMMON_NAME, f"bot-bottle gateway CA {now:%Y-%m-%d} {key_id}"),
         x509.NameAttribute(NameOID.ORGANIZATION_NAME, "bot-bottle"),
     ])
-    not_before = now - dt.timedelta(days=1)  # tolerate clock skew in agents
+    not_before = now - dt.timedelta(days=1)  # tolerate agent clock skew
     expires = now + _VALIDITY
     new_ca = _ca_builder(
         subject, subject, public_key=key.public_key(), issuer_public_key=key.public_key(),

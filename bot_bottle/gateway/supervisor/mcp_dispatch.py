@@ -20,11 +20,11 @@ class Request(Protocol):
 
 
 class MethodNotFoundError(Exception):
-    """Raised when a JSON-RPC method has no MCP handler."""
+    """A JSON-RPC method with no MCP handler."""
 
 
 class RouteResolutionError(Exception):
-    """The caller's live route table could not be resolved authoritatively."""
+    """The caller's route table couldn't be resolved authoritatively."""
 
 
 Handler = Callable[[dict[str, object]], object]
@@ -40,7 +40,7 @@ class Handlers:
 
 
 def dispatch(request: Request, handlers: Handlers) -> object:
-    """Route one parsed request without depending on the HTTP server."""
+    """Route one parsed request, independent of the HTTP server."""
     if request.method == "initialize":
         return handlers.initialize(request.params)
     if request.method == "notifications/initialized":
@@ -63,7 +63,7 @@ def resolved_routes_payload(
     source_ip: str,
     identity_token: str,
 ) -> dict[str, object]:
-    """Render an authoritatively resolved route table for the calling bottle."""
+    """The calling bottle's resolved route table."""
     try:
         policy, bottle_id, _tokens = resolver.resolve_policy_and_bottle_id(
             source_ip, identity_token,

@@ -1,8 +1,5 @@
-"""Compatibility exports for the egress addon's pure logic.
-
-New code imports the focused `types`, `schema`, `context`, `matching`,
-and `dlp` modules directly. This facade preserves the historical public
-surface for downstream callers while keeping implementation concerns separate.
+"""Compatibility exports for the egress addon's pure logic; new code imports
+`types`, `schema`, `context`, `matching` and `dlp` directly.
 """
 
 from .context import (

@@ -1,8 +1,6 @@
 """Relay a remote viewer's WebSocket to the host controller's attach stream.
-
-Frames pass through unchanged both ways: terminal bytes as binary, JSON
-control messages (`resize`, `writable`, `exit`, `detached`) as text. The host
-controller decides whether the viewer may type; the relay never does.
+Frames pass through unchanged; the host controller decides whether the viewer
+may type.
 """
 
 from __future__ import annotations

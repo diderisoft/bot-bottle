@@ -1,14 +1,10 @@
-"""Docker's primitives for reattaching running agent containers to the gateway;
-the flow itself is `backend.gateway_attach`.
+"""Docker primitives for reattaching running agents (the flow is in
+`backend.gateway_attach`).
 
-Each bottle is a compose project whose `agent` service holds a pinned address
-on the shared gateway network, which is how the orchestrator knows it. The
-gateway is pinned too, so its address in the agent's proxy env stays valid
-across gateway restarts; reattach only confirms it. The CA
-install runs as root inside the agent through an absolute `/bin/sh` with a
-pinned system PATH, so nothing the agent planted on its own PATH runs as root;
-the secret is read from the container's config on the host side, without
-running agent code at all.
+Agents and the gateway have pinned addresses on the gateway network, so
+reattach only confirms the proxy address. The CA install runs as root through
+`/bin/sh` with a pinned PATH; the secret is read from the container config on
+the host, without running agent code.
 """
 
 from __future__ import annotations
@@ -36,7 +32,7 @@ class DockerGatewayAttacher(GatewayAttacher):
         for slug in list_active_slugs(raise_on_error=True, warn_on_error=False):
             container = self._agent_container(slug)
             if not container:
-                continue  # project up but its agent container isn't running
+                continue  # project up, agent container not running
             source_ip = self._docker(
                 ["inspect", "--format",
                  f'{{{{with index .NetworkSettings.Networks "{self._network}"}}}}'
@@ -47,8 +43,7 @@ class DockerGatewayAttacher(GatewayAttacher):
         return bottles
 
     def point_at_gateway(self, bottle: RunningBottle, address: str) -> None:
-        # The proxy URL is baked into the agent's environ, which can't be
-        # rewritten; the pinned gateway address keeps it valid, so confirm it.
+        # The proxy URL is in the agent's environ and can't change; confirm it.
         proxy = self._env_value(bottle, "HTTPS_PROXY")
         target = urlsplit(proxy).hostname if proxy else None
         if target != address:

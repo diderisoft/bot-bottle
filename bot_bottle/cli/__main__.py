@@ -1,10 +1,6 @@
-"""Entry point + dispatcher for `python -m bot_bottle.cli`.
-
-Maps `bot-bottle <command>` to its handler in the COMMANDS registry
-(`bot_bottle.cli.commands`), enforces the schema-migration gate, and
-translates handler exceptions into process exit codes. The repo-root
-`cli.py` is the usual way in; this makes the package runnable too, so the
-CLI works from an installed copy where there is no `cli.py` on disk.
+"""Entry point and dispatcher for `python -m bot_bottle.cli`: maps `bot-bottle
+<command>` to its handler, enforces the migration gate, and turns exceptions
+into exit codes.
 """
 
 from __future__ import annotations

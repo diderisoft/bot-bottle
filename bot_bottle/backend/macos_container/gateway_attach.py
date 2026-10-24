@@ -1,11 +1,7 @@
-"""macOS's primitives for reattaching running agent containers to the gateway;
-the flow itself is `backend.gateway_attach`.
-
-Agents are `container` instances named by slug, attributed by their address on
-the shared agent network. The CA is staged under root-only `/root` (not
-world-writable `/tmp`, where the agent could plant a symlink) and installed
-through an absolute `/bin/sh` with a pinned system PATH; the secret is read
-from the container's config on the host side.
+"""macOS primitives for reattaching running agents (the flow is in
+`backend.gateway_attach`). The CA is staged under root-only `/root`, never
+`/tmp`, and installed through `/bin/sh` with a pinned PATH; the secret is read
+from the container config on the host.
 """
 
 from __future__ import annotations
@@ -45,15 +41,13 @@ class MacosGatewayAttacher(GatewayAttacher):
         return bottles
 
     def point_at_gateway(self, bottle: RunningBottle, address: str) -> None:
-        # vmnet's DHCP moves the gateway on every recreate; bottles name it
-        # through /etc/hosts, which is rewritten here.
+        # DHCP moves the gateway on recreate; bottles name it via /etc/hosts.
         self._run(["container", "exec", "--user", "root", bottle.ref,
                    *gateway_host_argv(address)],
                   what="pointing the bottle at the gateway")
 
     def install_ca(self, bottle: RunningBottle, ca_pem: str) -> None:
-        # `container exec` has no stdin we can rely on, so stage the PEM with
-        # `container cp`, then install it as root.
+        # No reliable stdin for `container exec`: stage with `container cp`.
         with tempfile.TemporaryDirectory(prefix="bb-ca-") as tmp:
             pem = Path(tmp) / "gateway-ca.pem"
             pem.write_text(ca_pem)

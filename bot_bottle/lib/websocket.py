@@ -1,8 +1,6 @@
-"""Minimal RFC 6455 framing over a socket's file objects (stdlib only).
-
-Enough for the host controller's attach stream: the opening handshake key,
-and reading and writing single frames (text, binary, close, ping/pong).
-Fragmented messages are joined; extensions are not supported.
+"""Minimal RFC 6455 framing over a socket's file objects (stdlib only): the
+handshake key and single-frame reads and writes. Fragments are joined; no
+extensions.
 """
 
 from __future__ import annotations
@@ -85,8 +83,8 @@ def write_frame(stream: BinaryIO, opcode: int, payload: bytes, *, mask: bool = F
 
 def connect(host: str, port: int, path: str, headers: dict[str, str] | None = None,
             timeout: float | None = 10.0) -> tuple[socket.socket, BinaryIO, BinaryIO]:
-    """Open a client WebSocket; returns (socket, reader, writer). Frames the
-    caller writes must be `mask`ed."""
+    """Open a client WebSocket; returns (socket, reader, writer). Written
+    frames must be masked."""
     sock = socket.create_connection((host, port), timeout=timeout)
     key = client_key()
     lines = [f"GET {path} HTTP/1.1", f"Host: {host}:{port}", "Upgrade: websocket",

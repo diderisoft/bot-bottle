@@ -1,12 +1,6 @@
-"""tui.py — minimal curses filter-select picker for CLI prompts.
-
-Exposed surface:
-
-  filter_select(items, *, title="", tty_path="/dev/tty") -> str | None
-  name_color_modal(default_label, *, tty_path="/dev/tty") -> (str, str)
-
-Opens /dev/tty directly so the picker works even when stdout/stdin are
-redirected.  Returns the selected item or None on cancel.
+"""Curses pickers for CLI prompts: `filter_select`, `filter_multiselect` and
+`name_color_modal`. They open /dev/tty directly so they work when stdio is
+redirected.
 """
 
 from __future__ import annotations
@@ -26,18 +20,9 @@ def filter_multiselect(
     initial: Optional[list[str]] = None,
     tty_path: str = "/dev/tty",
 ) -> Optional[list[str]]:
-    """Render a multi-select picker over *items*.
-
-    Returns the ordered list of selected items, or ``None`` if the user
-    cancelled (Esc / ``q`` / Ctrl-C / Ctrl-D with no items).
-
-    Press Space to toggle the item under the cursor.
-    Press Enter to confirm the current selection.
-    Press Ctrl-D to confirm the current selection (returns even if empty).
-    Press Esc/q to cancel (returns None).
-
-    *initial* pre-populates the selection in insertion order. Items
-    added are appended; removed items leave the remaining order unchanged.
+    """Multi-select picker over `items`: Space toggles, Enter or Ctrl-D
+    confirms (Ctrl-D even when empty), Esc or q cancels (None). `initial`
+    pre-selects, in order; Tab switches to reordering the selection.
     """
     if not items:
         return []
@@ -66,13 +51,9 @@ def filter_select(
     title: str = "",
     tty_path: str = "/dev/tty",
 ) -> Optional[str]:
-    """Render a filter-select picker over *items*.
-
-    Returns the selected item string, or ``None`` if the user cancelled
-    (Esc / ``q`` / Ctrl-C / Ctrl-D) or if the terminal is too small.
-
-    The picker opens *tty_path* directly so it works even when
-    stdout/stdin are redirected.
+    """Filter-select picker over `items`. Returns the choice, or None on cancel
+    (Esc, q, Ctrl-C, Ctrl-D) or a too-small terminal. Opens `tty_path`
+    directly.
     """
     if not items:
         return None
@@ -87,18 +68,14 @@ def filter_select(
         return None
 
     try:
-        # Use os.dup() to duplicate the fd so the original file object
-        # and FileIO in _run_picker each manage independent copies,
-        # preventing double-close errors.
+        # Duplicate the fd so each file object closes its own copy.
         fd_dup = os.dup(tty_fd.fileno())
         return _run_picker(items, title=title, tty_fd=fd_dup)
     finally:
         tty_fd.close()
 
 
-# ---------------------------------------------------------------------------
-# Internal implementation
-# ---------------------------------------------------------------------------
+# --- internals ---
 
 _KEY_ESC = 27
 _KEY_CTRL_C = 3
@@ -110,12 +87,11 @@ _CANCEL_KEYS = frozenset([_KEY_ESC, _KEY_CTRL_C, _KEY_CTRL_D, ord("q")])
 
 
 def _run_picker(items: list[str], *, title: str, tty_fd: int) -> Optional[str]:
-    """Drive a curses session on *tty_fd* and return the picked item."""
-    # newterm lets us run curses on an arbitrary fd rather than the
-    # process's controlling tty / stdout — crucial when stdout is piped.
+    """Run a curses session on `tty_fd` and return the pick."""
+    # newterm runs curses on any fd, not just the controlling tty.
     os.environ.setdefault("TERM", "xterm-256color")
 
-    # Save / restore the real stdin/stdout so curses newterm can use tty_fd.
+    # Save and restore the real stdin/stdout around newterm.
     orig_stdin = sys.__stdin__
     orig_stdout = sys.__stdout__
 
@@ -125,8 +101,8 @@ def _run_picker(items: list[str], *, title: str, tty_fd: int) -> Optional[str]:
         sys.__stdin__ = tty_text   # type: ignore[assignment]
         sys.__stdout__ = tty_text  # type: ignore[assignment]
 
-        # curses.wrapper calls initscr which honours sys.__stdin__ / __stdout__
-        # on some builds; use newterm where available.
+        # Some builds' initscr honours sys.__stdin__/__stdout__; prefer
+        # newterm.
         screen = curses.initscr()
         curses.noecho()
         curses.cbreak()
@@ -159,7 +135,7 @@ def _picker_loop(screen: Any, items: list[str], *, title: str) -> Optional[str]:
     while True:
         filtered = _filter_items(items, query)
 
-        # Clamp cursor into the visible list.
+        # Clamp the cursor into the list.
         if not filtered:
             cursor = 0
         elif cursor >= len(filtered):
@@ -168,7 +144,7 @@ def _picker_loop(screen: Any, items: list[str], *, title: str) -> Optional[str]:
         try:
             _render(screen, filtered, cursor, query=query, title=title)
         except curses.error:
-            # Terminal too small or write error — bail out.
+            # Terminal too small or write error.
             return None
 
         try:
@@ -192,14 +168,13 @@ def _picker_loop(screen: Any, items: list[str], *, title: str) -> Optional[str]:
 
         elif key in (curses.KEY_BACKSPACE, _KEY_BACKSPACE_WIN, 127):
             query = query[:-1]
-            # After narrowing the filter, keep cursor in range.
+            # Keep the cursor in range after narrowing.
             new_filtered = _filter_items(items, query)
             if cursor >= len(new_filtered):
                 cursor = max(0, len(new_filtered) - 1)
 
         elif 32 <= key <= 126:
-            # Printable ASCII — append to query and reset cursor so the
-            # top of the newly-filtered list is selected.
+            # Printable: extend the query and select the top of the new list.
             query += chr(key)
             cursor = 0
 
@@ -236,12 +211,12 @@ def _render(screen: Any, filtered: list[str], cursor: int, *, query: str, title:
         row += 1
 
     list_start = row
-    # Reserve two rows for separator + help line at bottom.
+    # Two rows for the separator and help line.
     list_rows = rows - list_start - 2
     if list_rows < 1:
         return
 
-    # Scroll window: keep cursor visible.
+    # Keep the cursor visible.
     scroll = max(0, cursor - list_rows + 1)
     visible = filtered[scroll: scroll + list_rows]
 
@@ -272,9 +247,7 @@ def _addstr_safe(screen: Any, row: int, col: int, text: str, attr: int = curses.
         pass
 
 
-# ---------------------------------------------------------------------------
-# filter_multiselect internals
-# ---------------------------------------------------------------------------
+# --- filter_multiselect internals ---
 
 _KEY_SPACE = 32
 
@@ -282,7 +255,7 @@ _KEY_SPACE = 32
 def _run_multiselect(
     items: list[str], *, title: str, initial: list[str], tty_fd: int
 ) -> Optional[list[str]]:
-    """Drive a curses multi-select session on *tty_fd*."""
+    """Run a curses multi-select session on `tty_fd`."""
     os.environ.setdefault("TERM", "xterm-256color")
 
     orig_stdin = sys.__stdin__
@@ -320,7 +293,7 @@ def _run_multiselect(
 
 
 def _toggle_membership(items: list[str], item: str) -> None:
-    """Add `item` if absent, remove it if present (in place)."""
+    """Toggle `item`'s membership in place."""
     if item in items:
         items.remove(item)
     else:
@@ -328,9 +301,8 @@ def _toggle_membership(items: list[str], item: str) -> None:
 
 
 def _handle_order_key(key: int, selected: list[str], order_cursor: int) -> int:
-    """Apply a keypress in 'order' focus: navigate, reorder, or remove the
-    item at `order_cursor`. Mutates `selected` in place and returns the new
-    order cursor."""
+    """Apply a key in 'order' focus (navigate, reorder, remove) to `selected`
+    in place; returns the new order cursor."""
     if key in (curses.KEY_UP, ord("k")):
         if order_cursor > 0:
             order_cursor -= 1
@@ -338,19 +310,19 @@ def _handle_order_key(key: int, selected: list[str], order_cursor: int) -> int:
         if order_cursor < len(selected) - 1:
             order_cursor += 1
     elif key == ord("K"):
-        # Move selected item up (earlier in order).
+        # Move up.
         if order_cursor > 0:
             i = order_cursor
             selected[i - 1], selected[i] = selected[i], selected[i - 1]
             order_cursor -= 1
     elif key == ord("J"):
-        # Move selected item down (later in order).
+        # Move down.
         if order_cursor < len(selected) - 1:
             i = order_cursor
             selected[i], selected[i + 1] = selected[i + 1], selected[i]
             order_cursor += 1
     elif key in (curses.KEY_ENTER, _KEY_ENTER_ALT, ord("\r"), _KEY_SPACE):
-        # Remove item from selection while in order mode.
+        # Remove from the selection.
         del selected[order_cursor]
         if order_cursor >= len(selected) and order_cursor > 0:
             order_cursor -= 1
@@ -363,8 +335,7 @@ def _multiselect_loop(
     query = ""
     cursor = 0
     selected: list[str] = [s for s in initial if s in items]
-    # focus = "filter": navigate + toggle items in the filterable list
-    # focus = "order":  navigate + reorder items in the selected list
+    # "filter": navigate and toggle the list; "order": reorder the selection.
     focus = "filter"
     order_cursor = 0
 
@@ -403,7 +374,7 @@ def _multiselect_loop(
         if key == _KEY_CTRL_D:
             return list(selected)
 
-        # Tab toggles between filter and order focus.
+        # Tab switches focus.
         if key == ord("\t"):
             if focus == "filter" and selected:
                 focus = "order"
@@ -467,7 +438,7 @@ def _render_multiselect(
         _addstr_safe(screen, row, 0, title[:cols - 1], curses.A_BOLD)
         row += 1
 
-    # Filter line — dim when focus is on the order panel.
+    # Dim when the order panel has focus.
     filter_label = f"Filter: {query}"
     filter_hint = "  [Tab: reorder]" if focus == "filter" and selected else ""
     filter_attr = curses.A_DIM if focus == "order" else curses.A_NORMAL
@@ -479,10 +450,9 @@ def _render_multiselect(
         _addstr_safe(screen, row, 0, sep)
         row += 1
 
-    # Compute how many rows the bottom order panel needs.
-    # Cap the visible selected list to keep the filter list legible.
+    # Order panel height, capped to keep the filter list legible.
     order_rows = min(len(selected), max(1, (rows - row) // 3)) if selected else 0
-    # Bottom reserved: sep + order_rows + sep + help = order_rows + 3
+    # separator + order rows + separator + help
     bottom_reserved = order_rows + 3
 
     list_start = row
@@ -539,9 +509,7 @@ def _render_multiselect(
     screen.refresh()
 
 
-# ---------------------------------------------------------------------------
-# name_color_modal — two-step label + color picker
-# ---------------------------------------------------------------------------
+# --- name_color_modal ---
 
 _ANSI_COLORS = [
     "red", "green", "yellow", "blue", "magenta",
@@ -564,15 +532,10 @@ def name_color_modal(
     disclaimer: str = "",
     tty_path: str = "/dev/tty",
 ) -> tuple[str, str]:
-    """Present a two-step curses modal: first edit the agent label,
-    then optionally pick a color.
-
-    ``disclaimer`` is shown below the input field — use it to surface
-    an error from a previous attempt (e.g. name already in use).
-
-    Returns ``(label, color)`` where ``color`` is one of the 16 ANSI
-    color name strings or ``""`` for no color. Falls back to
-    ``(default_label, "")`` on any error (terminal too small, not a tty).
+    """Two-step modal: edit the agent label, then optionally pick a color.
+    `disclaimer` shows under the input (e.g. a previous attempt's error).
+    Returns `(label, color)`, color one of the 16 ANSI names or "". Falls back
+    to `(default_label, "")` on any error.
     """
     try:
         tty_fd = open(tty_path, "r+b", buffering=0)  # pylint: disable=consider-using-with
@@ -625,10 +588,9 @@ def _run_name_color(default_label: str, *, tty_fd: int, disclaimer: str = "") ->
 
 
 def _label_step(screen: Any, default_label: str, *, disclaimer: str = "") -> str:
-    """Step 1: edit the label. First printable key replaces the
-    pre-fill; subsequent keys append. Enter confirms."""
+    """Step 1: edit the label. The first printable key replaces the pre-fill."""
     text = default_label
-    replaced = False  # True once the user has typed their first char
+    replaced = False  # the user has typed
 
     while True:
         _render_label(screen, text, disclaimer=disclaimer)
@@ -673,11 +635,11 @@ def _render_label(screen: Any, text: str, *, disclaimer: str = "") -> None:
 
 
 def _color_step(screen: Any, confirmed_label: str) -> str:
-    """Step 2: pick a color from the list, or skip."""
+    """Step 2: pick a color, or skip."""
     items = [_COLOR_NONE] + _ANSI_COLORS
     cursor = 0
 
-    # Initialise color pairs once; index 0 = none, 1..16 = palette.
+    # Index 0 is none, 1..16 the palette.
     color_attrs = _init_color_pairs()
 
     while True:
@@ -701,12 +663,12 @@ def _color_step(screen: Any, confirmed_label: str) -> str:
 
 
 def _init_color_pairs() -> dict[str, int]:
-    """Return {color_name: curses_attr} for the palette items."""
+    """{color name: curses attr} for the palette."""
     attrs: dict[str, int] = {_COLOR_NONE: curses.A_NORMAL}
     try:
         curses.start_color()
         curses.use_default_colors()
-        pair_idx = 2  # pair 1 reserved for other uses
+        pair_idx = 2  # pair 1 is reserved
         for name in _ANSI_COLORS:
             fg = _CURSES_COLOR_MAP.get(name, curses.COLOR_WHITE)
             try:

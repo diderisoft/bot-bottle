@@ -1,8 +1,4 @@
-"""Starter manifests written by `bot-bottle setup` (PRD 0091).
-
-Providers build their starters as data and render them here, so every
-starter is a plain Markdown manifest the user owns and can edit.
-"""
+"""Render the starter manifests `bot-bottle setup` writes."""
 
 from __future__ import annotations
 
@@ -12,18 +8,18 @@ STARTER_MARKER = "Written by `bot-bottle setup`"
 
 
 def render_manifest(frontmatter: dict[str, object], body: str) -> str:
-    """A manifest file: YAML-subset frontmatter, then the Markdown body."""
+    """YAML-subset frontmatter, then the Markdown body."""
     return f"---\n{serialize_yaml_subset(frontmatter)}---\n\n{body.strip()}\n"
 
 
 def starter_agent(bottle: str, prompt: str) -> str:
-    """A starter agent bound to ``bottle``; its body is the agent's prompt."""
+    """A starter agent bound to `bottle`; the body is its prompt."""
     return render_manifest({"bottle": bottle}, prompt)
 
 
 def starter_bottle(agent_provider: dict[str, object], description: str) -> str:
-    """A starter bottle with only an `agent_provider` block. Its egress is
-    whatever route the provider injects for its model API."""
+    """A starter bottle with only an `agent_provider` block; its egress is the
+    provider's model API route."""
     return render_manifest(
         {"agent_provider": agent_provider},
         f"{description}\n\n{STARTER_MARKER}; edit it freely.",

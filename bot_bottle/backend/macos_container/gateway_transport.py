@@ -1,9 +1,4 @@
-"""The `GatewayTransport` for the Apple gateway container.
-
-How the launcher stages files + runs commands in the running gateway container:
-the `container` CLI's exec/cp equivalents. The backend-neutral provisioning
-logic that drives it lives in `backend.provision_gateway`; Docker uses
-`docker exec`/`docker cp` and Firecracker uses SSH.
+"""`GatewayTransport` for the Apple gateway container: `container` exec and cp.
 """
 
 from __future__ import annotations
@@ -14,7 +9,6 @@ from .gateway import GATEWAY_NAME
 
 
 class MacosGatewayTransport:
-    """`GatewayTransport` for the gateway daemons in the Apple gateway container."""
 
     def __init__(self, gateway: str = GATEWAY_NAME) -> None:
         self.gateway = gateway

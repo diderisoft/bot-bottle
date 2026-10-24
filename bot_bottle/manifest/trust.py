@@ -1,15 +1,9 @@
-"""Trust for bottles that come with a project (PRD 0094).
+"""Per-host trust for project bottles (`./.bot-bottle/bottles/`).
 
-A project can ship bottles in `./.bot-bottle/bottles/`, committed with its
-code. They're untrusted input: cloning a repo must not silently widen what an
-agent may do. So a project bottle runs only once this host has trusted its
-exact contents, by the hash of the project files in its chain. A changed file
-is a new hash and needs trusting again. Bottles under `~/.bot-bottle/` (the
-user's own) and the built-in `basic` need no trust.
-
-The trust file (`trusted-bottles.json`, mode 0600) keeps each trusted hash
-with the bottle's path and what it granted, so a changed bottle can be shown
-as what changed.
+A project bottle runs only once this host has trusted the hash of the project
+files in its chain; any change needs trusting again. The user's own bottles and
+the built-in `basic` need none. `trusted-bottles.json` (0600) keeps each hash
+with the bottle's path and grants, to show what changed.
 """
 
 from __future__ import annotations
@@ -31,8 +25,8 @@ TRUST_FILE = "trusted-bottles.json"
 
 
 def bottle_hash(sources: Sequence[BottleSource]) -> str:
-    """sha256 over the project files in a chain (name and bytes), so moving
-    the repo keeps the trust and any edit loses it."""
+    """sha256 over the chain's project files (name and bytes): moving the repo
+    keeps the trust, any edit loses it."""
     digest = hashlib.sha256()
     for source in sorted((s for s in sources if s.project), key=lambda s: s.name):
         digest.update(source.name.encode() + b"\0" + source.path.read_bytes() + b"\0")
@@ -40,7 +34,7 @@ def bottle_hash(sources: Sequence[BottleSource]) -> str:
 
 
 def grants(bottle: ManifestBottle) -> list[str]:
-    """What a bottle lets the agent do, one line each, for the trust prompt."""
+    """What a bottle grants, one line each, for the trust prompt."""
     lines: list[str] = []
     for route in bottle.egress.routes:
         methods = sorted({m for match in route.Matches for m in match.Methods})
@@ -64,7 +58,7 @@ def grants(bottle: ManifestBottle) -> list[str]:
 
 
 def beyond_basic(granted: list[str]) -> list[str]:
-    """``granted`` without what the built-in `basic` bottle already allows."""
+    """`granted` minus what `basic` already allows."""
     basic, _ = load_bottle_chain("basic", ((BUILTIN_BOTTLES_DIR, False),))
     known = set(grants(basic))
     return [g for g in granted if g not in known]
@@ -126,14 +120,13 @@ def _save(entries: list[Trusted]) -> None:
 
 
 def check(bottle_name: str, bottle: ManifestBottle, sources: Sequence[BottleSource]) -> None:
-    """Raise UntrustedBottleError unless the chain's project files are
-    trusted. A chain with no project files needs no trust."""
+    """Raise UntrustedBottleError unless the chain's project files are trusted."""
     project = [s for s in sources if s.project]
     if not project:
         return
     granted = beyond_basic(grants(bottle))
     if not granted:
-        return  # nothing more than the built-in basic bottle allows
+        return  # nothing beyond basic
     digest = bottle_hash(sources)
     entries = load_trusted()
     if any(e.hash == digest for e in entries):
@@ -145,8 +138,7 @@ def check(bottle_name: str, bottle: ManifestBottle, sources: Sequence[BottleSour
 
 
 def trust(error: UntrustedBottleError) -> None:
-    """Record the bottle in ``error`` as trusted on this host, replacing any
-    earlier version of the same file."""
+    """Trust the bottle in `error` on this host, replacing an earlier version."""
     entries = [e for e in load_trusted() if e.path != str(error.path)]
     entries.append(Trusted(error.hash, error.bottle, str(error.path), tuple(error.grants),
                            time.strftime("%Y-%m-%d")))

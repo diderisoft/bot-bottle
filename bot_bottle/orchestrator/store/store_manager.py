@@ -1,9 +1,5 @@
-"""The orchestrator's store manager.
-
-The orchestrator is the sole opener of `bot-bottle.db`, so it owns migrating
-every table in it: the supervise `queue_store` and `audit_store` plus the host
-settings `config_store`. The data plane never touches these; it reaches state
-over the control-plane RPC.
+"""The orchestrator's store manager: as sole opener of `bot-bottle.db` it
+migrates every table in it.
 """
 
 from __future__ import annotations
@@ -16,8 +12,7 @@ from ...lib.config_store import ConfigStore
 
 
 class StoreManager:
-    """Owns db_path and delegates migrate/is_migrated across the orchestrator's
-    stores."""
+    """Runs migrate/is_migrated across the orchestrator's stores at `db_path`."""
 
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path

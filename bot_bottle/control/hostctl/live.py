@@ -1,14 +1,7 @@
-"""Bottles running on the backends: `GET /bottles/live`.
-
-What's actually up, whoever launched it, including bottles from before this
-daemon started. Each backend lists its bottles through the `GatewayAttacher`
-its reattach flow already uses (macos-container's container scan, firecracker's
-live run dirs, docker's labelled compose projects), which also reads each
-bottle's source IP: the key the orchestrator's registry matches on.
-
-A backend whose listing fails is reported under `errors` rather than dropped
-silently: a partial list would make its bottles look gone, and the
-orchestrator reaps registry rows for bottles that look gone.
+"""`GET /bottles/live`: bottles running on the backends, whoever launched
+them, with each one's source IP (the registry's key), listed through each
+backend's `GatewayAttacher`. A backend whose listing fails goes under `errors`,
+since the orchestrator reaps rows for bottles that look gone.
 """
 
 from __future__ import annotations
@@ -44,8 +37,7 @@ def _names() -> tuple[str, ...]:
 
 
 class LiveBottles:
-    """Lists the bottles running on each available backend, on the infra
-    settings its last bring-up recorded (its networks)."""
+    """Lists running bottles per backend, on its recorded infra settings."""
 
     def __init__(
         self, *,
@@ -64,8 +56,7 @@ class LiveBottles:
 
     def list(self, backend: str = "") -> dict[str, object]:
         """`{"bottles": [{"backend", "slug", "source_ip"}], "errors": {backend:
-        message}}` for `backend`, or every backend when it's "". A bottle
-        without an address yet (mid-launch) has `source_ip` ""."""
+        message}}` for `backend`, or all when "". `source_ip` is "" mid-launch."""
         bottles: list[dict[str, object]] = []
         errors: dict[str, str] = {}
         for name in self._names():
@@ -76,8 +67,7 @@ class LiveBottles:
                     continue
                 running = self._running(name, self._recorded(name))
             except (Exception, SystemExit) as e:  # pylint: disable=broad-exception-caught
-                # Any backend failure (a CLI that errors, a die()) makes its
-                # list unknown, not empty.
+                # Any failure makes the list unknown, not empty.
                 errors[name] = getattr(e, "message", "") or str(e) or type(e).__name__
                 continue
             bottles.extend({"backend": name, "slug": b.slug, "source_ip": b.source_ip}

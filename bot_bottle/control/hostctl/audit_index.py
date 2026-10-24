@@ -1,13 +1,9 @@
-"""A searchable SQLite index of the audit journal.
+"""A searchable SQLite index of the audit journal, in the host DB: a derived
+cache that `rebuild` replays from the journal.
 
-A derived cache in the shared host DB, not a second source of truth: every
-row comes from a journal line, and `rebuild` throws the rows away and replays
-the journal.
-
-`sync` indexes whatever the writer appended since the last call, checking
-each new record's hash and its link to the last indexed one, so a query never
-shows a record that doesn't chain. A break stops indexing; `audit verify`
-then says where.
+`sync` indexes new records, checking each one's hash and link, so a query never
+shows a record that doesn't chain. A break stops indexing; `audit verify` says
+where.
 """
 
 from __future__ import annotations
@@ -96,8 +92,8 @@ class AuditIndex(DbStore):
                 UNIQUE (host, epoch, seq)
             )
             """,
-            # Where `sync` resumes: the segment, its byte offset, and the hash
-            # of the last record indexed.
+            # Where `sync` resumes: segment, byte offset, and the last indexed
+            # hash.
             """
             CREATE TABLE audit_index_cursor (
                 one INTEGER PRIMARY KEY CHECK (one = 1),
@@ -155,8 +151,8 @@ class AuditIndex(DbStore):
         return added
 
     def rebuild(self) -> int:
-        """Drop every row and replay the journal and every imported chain.
-        Refuses if any of them is broken."""
+        """Drop every row and replay the journal and imported chains. Refuses
+        if any is broken."""
         chains = imported_chains(self._journal_dir)
         for directory in [self._journal_dir, *chains]:
             if not verify(directory).ok:
@@ -170,9 +166,8 @@ class AuditIndex(DbStore):
         return count
 
     def add_records(self, records: list[tuple[dict[str, Any], str]]) -> int:
-        """Index already-verified records from outside the local journal, all
-        or none. A record whose id is already indexed is skipped; one that
-        takes an indexed record's (host, epoch, seq) is refused."""
+        """Index verified records from outside the local journal, all or none.
+        Known ids are skipped; a clash on (host, epoch, seq) is refused."""
         before = self._count()
         try:
             with self._connection() as conn:

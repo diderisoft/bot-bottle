@@ -1,15 +1,9 @@
 """Firecracker microVM process lifecycle.
 
-A bottle VM is one `firecracker` process booted from a JSON config
-(kernel + writable rootfs ext4 + one TAP network interface). We run it
-`--no-api`: all configuration is in the config file, and teardown is a
-process signal — the microVM dies with its VMM, which is exactly the
-ephemeral-bottle semantics we want. No API socket, no runtime
-reconfiguration.
-
-The guest gets its IP from the kernel `ip=` cmdline (kernel-level
-autoconfig, no in-guest iproute2) and its SSH pubkey from a `bb_pubkey=`
-cmdline arg the init decodes.
+A VM is one `firecracker --no-api` process booted from a JSON config (kernel,
+writable rootfs, one TAP). Teardown is a signal; the guest dies with its VMM.
+The guest takes its IP from the kernel `ip=` arg and its SSH pubkey from
+`bb_pubkey=`.
 """
 
 from __future__ import annotations
@@ -27,10 +21,8 @@ from ...lib.log import die, info
 from . import util
 
 
-# Serial console off the critical path but captured to a log for
-# debugging boot failures. `reboot=k panic=1 pci=off` are the standard
-# Firecracker guest args; `i8042.*` skip the (absent) PS/2 probe to
-# shave boot time.
+# Console captured to a log; standard Firecracker args; `i8042.*` skip the
+# absent PS/2 probe.
 _BASE_BOOT_ARGS = (
     "console=ttyS0 reboot=k panic=1 pci=off "
     "i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd "
@@ -40,7 +32,7 @@ _BASE_BOOT_ARGS = (
 
 @dataclass
 class VmHandle:
-    """A running microVM: its VMM process, guest IP, and console log."""
+    """A running microVM: VMM process, guest IP, console log."""
 
     process: subprocess.Popen[bytes]
     guest_ip: str
@@ -50,7 +42,7 @@ class VmHandle:
         return self.process.poll() is None
 
     def terminate(self) -> None:
-        """Stop the VMM (and thus the guest). SIGTERM, then SIGKILL."""
+        """Stop the VMM: SIGTERM, then SIGKILL."""
         if self.process.poll() is not None:
             return
         self.process.send_signal(signal.SIGTERM)
@@ -64,14 +56,12 @@ class VmHandle:
 def _boot_args(
     guest_ip: str, host_ip: str, pubkey: str, extra: str = "",
 ) -> str:
-    # ip=<client>::<gw>:<netmask>::<dev>:off — /31 point-to-point link,
-    # so netmask is 255.255.255.254 and the gateway is the host TAP IP.
+    # /31 point-to-point: netmask 255.255.255.254, gateway is the host TAP IP.
     ip_arg = f"ip={guest_ip}::{host_ip}:255.255.255.254::eth0:off"
     pub_b64 = base64.b64encode(pubkey.encode()).decode()
     args = f"{_BASE_BOOT_ARGS} {ip_arg} bb_pubkey={pub_b64}"
-    # `extra` carries caller-supplied cmdline params the guest init reads
-    # (e.g. the gateway VM's `bb_orch=<orchestrator guest IP>`). Agent VMs pass
-    # nothing.
+    # Extra cmdline params the guest init reads (e.g. the gateway VM's
+    # `bb_orch=`).
     return f"{args} {extra}".rstrip() if extra else args
 
 
@@ -97,9 +87,8 @@ def _config(
             "is_read_only": False,
         }
     ]
-    # Further virtio-block devices (guest /dev/vdb, /dev/vdc, ... in order) —
-    # the infra VM's persistent "volumes", host-side ext4 files that outlive
-    # the ephemeral rootfs across VM restarts.
+    # Extra virtio-block devices (/dev/vdb, ... in order): an infra VM's
+    # persistent volumes.
     for i, drive in enumerate(data_drives):
         drives.append({
             "drive_id": f"data{i}",
@@ -144,13 +133,8 @@ def boot(
     data_drives: Sequence[Path] = (),
     extra_boot_args: str = "",
 ) -> VmHandle:
-    """Write the config and launch the VMM. Returns once the process is
-    spawned; callers wait for SSH readiness separately.
-
-    `detached` starts the VMM in its own session (`start_new_session`) so it
-    survives the launcher exiting — used for the persistent per-host infra
-    VM, which must outlive the short-lived `start` process (agent VMs stay
-    attached and are torn down with the launcher)."""
+    """Write the config and spawn the VMM; callers wait for SSH. `detached`
+    puts it in its own session so it outlives the launcher (the infra VMs)."""
     run_dir.mkdir(parents=True, exist_ok=True)
     config_path = run_dir / "config.json"
     console_log = run_dir / "console.log"
@@ -176,9 +160,8 @@ def boot(
 def wait_for_ssh(
     vm: VmHandle, private_key: Path, *, timeout: float = 30.0,
 ) -> None:
-    """Poll SSH until the guest accepts a command or the deadline
-    passes. Dies (with the console tail) if the VMM exits early or the
-    guest never comes up — a boot failure must be loud, not a hang."""
+    """Poll SSH until the guest answers. Dies with the console tail if the VMM
+    exits or the guest never comes up."""
     deadline = time.monotonic() + timeout
     probe = util.ssh_base_argv(private_key, vm.guest_ip) + ["true"]
     while time.monotonic() < deadline:

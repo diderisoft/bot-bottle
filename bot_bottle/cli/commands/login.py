@@ -1,15 +1,14 @@
-"""bb login — register this host with a bot-bottle console.
+"""bb login: register this host with a bot-bottle console.
 
-Opens a device-authorization flow against the target console, waits for the
-operator to approve, then writes access and refresh tokens to
-~/.bot-bottle/console.json (or $BOT_BOTTLE_ROOT/console.json), along with the
-console's iroh identity when it returns one, which `bot-bottle remote` pins.
+Runs a device-authorization flow, then writes the access and refresh tokens
+(and the console's iroh identity, which `bot-bottle remote` pins) to
+`$BOT_BOTTLE_ROOT/console.json`.
 
 Usage:
   bb login [--console-url URL] [--label LABEL]
 
 Flags:
-  --console-url URL   Target console URL (overrides BB_CONSOLE_URL env var)
+  --console-url URL   Target console URL (overrides BB_CONSOLE_URL)
   --label LABEL       Host label shown in the console (default: hostname)
 """
 
@@ -30,7 +29,7 @@ from typing import Any
 from ...paths import bot_bottle_root
 
 _CONSOLE_URL_ENV = "BB_CONSOLE_URL"
-_POLL_SLEEP = 2  # seconds between polls; matches console's poll_interval default
+_POLL_SLEEP = 2  # seconds between polls, the console's default
 
 
 def _usage() -> None:
@@ -134,11 +133,9 @@ def run_device_flow(
     console_url: str, label: str, show: Callable[[dict[str, Any]], None],
     *, confirm: bool = False, prog: str = "bb login",
 ) -> int:
-    """Start a device flow, let ``show`` tell the operator where to approve
-    it, then poll until it's approved and save the host's tokens.
-
-    ``confirm`` asks the console for a confirm code (`bot-bottle pair`); it
-    comes back in the response ``show`` gets."""
+    """Start a device flow, let `show` tell the operator where to approve it,
+    poll until approved, and save the tokens. `confirm` asks for a confirm code
+    (`bot-bottle pair`), returned in the response `show` gets."""
     try:
         resp = _post(f"{console_url}/api/v1/hosts/authorize",
                      {"label": label, **({"confirm": True} if confirm else {})})

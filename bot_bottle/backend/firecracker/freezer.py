@@ -1,12 +1,6 @@
-"""FirecrackerFreezer — snapshot a running microVM to a rootfs tar.
-
-The VM is live and can't be block-copied safely, so — like the macOS
-backend — we stream the guest root filesystem out over the control
-channel (SSH here). Unlike the other backends this needs no Docker: the
-tar *is* the resumable artifact. `resume` extracts it and rebuilds a
-fresh per-bottle ext4 with `mke2fs -d` (see `util.build_committed_rootfs_dir`
-and `launch.build_or_load_agent_base`). The bottle keeps running after the
-snapshot.
+"""`FirecrackerFreezer`: stream a running VM's root filesystem over SSH to a
+tar, the resumable artifact. `resume` rebuilds an ext4 from it. The bottle
+keeps running.
 """
 
 from __future__ import annotations
@@ -42,20 +36,13 @@ class FirecrackerFreezer(Freezer):
 
 
 def _commit_rootfs_via_ssh(private_key: Path, guest_ip: str, tar_path: Path) -> None:
-    """Stream the guest rootfs out over SSH into `tar_path`. Excludes the
-    virtual/live mounts (proc/sys/dev/run) — resume recreates those empty
-    mount points. Written to a `.partial` sibling and renamed on success so
-    a failed freeze never leaves a truncated artifact in its place."""
+    """Stream the guest rootfs to `tar_path`, excluding proc/sys/dev/run, via a
+    `.partial` renamed on success."""
     tar_path.parent.mkdir(parents=True, exist_ok=True)
     partial = tar_path.with_name(tar_path.name + ".partial")
     ssh = util.ssh_base_argv(private_key, guest_ip)
-    # The snapshot can contain the bottle's private workspace, so keep it
-    # owner-only (0600) for the whole stream. The `os.open` mode only applies
-    # on *creation*, so unlink any leftover partial (a prior interrupted run
-    # could have left it world-readable, or something could swap in a symlink
-    # at this predictable name) and exclusively recreate it — O_EXCL|O_NOFOLLOW
-    # — then fchmod immediately so umask can't loosen it. Re-assert after the
-    # rename too (os.replace carries the source mode, but be explicit).
+    # The snapshot may hold the workspace: recreate the partial with
+    # O_EXCL|O_NOFOLLOW at 0600 and fchmod it, then re-assert after rename.
     partial.unlink(missing_ok=True)
     fd = os.open(
         partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600

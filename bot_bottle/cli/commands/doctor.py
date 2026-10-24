@@ -1,11 +1,5 @@
-"""`doctor` CLI command — validate host prerequisites for running
-bot-bottle and report what's ready.
-
-Fails (non-zero exit) only on the two hard requirements: a new-enough
-Python and at least one backend that is *ready* (passes its full status
-checks, so `start` can actually work). The config directory is a soft
-check — `install.sh` creates it, but a missing one only warrants a note,
-not a failure, since `start` provisions what it needs on first run.
+"""doctor: check host prerequisites. Fails only without a new-enough Python, a
+ready backend, or tmux; the config directory is advisory.
 """
 
 from __future__ import annotations
@@ -50,12 +44,8 @@ def _check_python() -> bool:
 
 
 def _check_backends() -> bool:
-    """At least one backend must be *ready* to run a bottle — i.e. pass its
-    full status() checks (daemon reachable, network pool present, KVM usable),
-    not merely have a binary on PATH. A binary-only check would report `ok`
-    on a host with a stopped Docker daemon or a half-configured Firecracker,
-    where `start` still can't work. Each not-ready backend prints its own
-    diagnostics (quiet=False) so the operator sees exactly what's missing."""
+    """At least one backend must pass its full `status()` checks, not just have
+    a binary on PATH. Each not-ready backend prints what's missing."""
     settings = settings_from_env()
     ready = []
     for name in known_backend_names():
@@ -97,8 +87,8 @@ def _check_config_dir() -> None:
 
 
 def _check_providers() -> None:
-    """What `setup` would find for each provider, and whether its starter
-    is there. Advisory only: it never writes, and never fails the run."""
+    """What `setup` would find for each provider and whether its starter
+    exists. Advisory; never writes."""
     env = dict(os.environ)
     manifests = Path.home() / CONFIG_DIR
     missing: list[str] = []
@@ -139,7 +129,7 @@ def _check_pi_model(bottle: Path) -> None:
     try:
         still_free = openrouter.listed(model)
     except openrouter.OpenRouterError:
-        return  # offline: nothing to say
+        return  # offline
     if not still_free:
         _warn("pi", f"{model} is no longer a free OpenRouter model; "
                     f"run `{PROG} setup --refresh-model`")
@@ -152,7 +142,7 @@ def cmd_doctor(argv: list[str]) -> int:
     )
     parser.parse_args(argv)
 
-    # Hard requirements gate the exit code; the config note is advisory.
+    # Hard requirements set the exit code.
     required = [_check_python(), _check_backends(), _check_tmux()]
     _check_config_dir()
     _check_providers()

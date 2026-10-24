@@ -1,26 +1,10 @@
-"""Launch-time proof that an agent cannot reach the network except through
-the gateway — the authoritative, fail-closed egress-boundary check.
+"""Launch-time, fail-closed proof that an agent can't reach the network except
+through the gateway.
 
-Configuration can't be trusted to describe the boundary (a network created
-by an older release, a firewall rule that didn't load, a runtime that changed
-its defaults), so before the agent runs we test it from inside: open a canary
-TCP listener on the host's primary address, which an isolated agent must not
-be able to reach, and have the guest try to connect. A reachable canary means
-the agent has a route off the box that bypasses the gateway, and we refuse to
-continue.
-
-The listener is load-bearing: without it a "blocked" result could just be
-connection-refused. With it, a reachable canary means a real leak and a
-timeout means a real drop.
-
-The guest also tries a public address directly: blocked proves nothing (the
-host may be offline), but a connection is an unambiguous leak, and it catches
-hosts whose firewall happens to drop traffic to the canary.
-
-Optionally the guest also tries to resolve a public name. An agent that can
-resolve names without the gateway has a DNS channel out of the box (the
-container runtime's own resolver forwarding queries), which can carry data
-even with no TCP route.
+The guest tries to connect to a canary TCP listener on the host's primary
+address and to a public address, and optionally to resolve a public name. The
+listener makes a block a real drop rather than connection-refused. Any success
+is a leak and the launch is refused.
 """
 
 from __future__ import annotations
@@ -34,16 +18,15 @@ from typing import Callable
 from ..lib.log import die, info, warn
 
 # Guest exit codes.
-_LEAK = 0          # reached the canary
-_BLOCKED = 1       # could not reach it (and, if checked, could not resolve)
-_NO_TOOL = 2       # no python3 / bash / nc to test with
-_DNS_LEAK = 3      # resolved a public name without the gateway
-_PUBLIC_LEAK = 4   # connected to a public address without the gateway
+_LEAK = 0  # reached the canary
+_BLOCKED = 1  # blocked (and, if checked, couldn't resolve)
+_NO_TOOL = 2  # no python3 / bash / nc to test with
+_DNS_LEAK = 3  # resolved a public name without the gateway
+_PUBLIC_LEAK = 4  # connected to a public address without the gateway
 
 _DNS_NAME = "example.com"
-# A public address the agent must not reach directly. Unlike the canary this
-# proves nothing when blocked (the host may be offline), but a connection to
-# it is unambiguous.
+# A public address the agent must not reach directly. Blocked proves nothing;
+# connected is a leak.
 _PUBLIC_IP = "1.1.1.1"
 
 _GUEST_PROBE = r"""
@@ -83,10 +66,8 @@ _RESULT = re.compile(r"^bb-isolation-probe=(\d+)$", re.MULTILINE)
 
 
 def guest_probe_script(canary_ip: str, canary_port: int, *, check_dns: bool) -> str:
-    """The shell script the guest runs. It prints `bb-isolation-probe=<n>`:
-    0 = reached the canary, 1 = blocked, 2 = no tool to test with, 3 =
-    resolved a public name, 4 = reached a public address. No such line means
-    the script never ran (e.g. the exec itself failed)."""
+    """The guest script. It prints `bb-isolation-probe=<n>` (an exit code
+    above); no such line means it never ran."""
     header = (
         f"h={shlex.quote(canary_ip)}; p={canary_port}; "
         f"pub={_PUBLIC_IP}; dns={1 if check_dns else 0}; name={shlex.quote(_DNS_NAME)}\n"
@@ -95,10 +76,8 @@ def guest_probe_script(canary_ip: str, canary_port: int, *, check_dns: bool) -> 
 
 
 def host_canary_ip() -> str:
-    """The source address the host uses for off-box traffic (its LAN
-    address) — a canary the agent must not reach. Empty if the host has no
-    such route (an isolated box). Sends nothing: connecting a UDP socket only
-    selects the route."""
+    """The host's source address for off-box traffic, the canary target, or ""
+    if it has no such route. Sends nothing."""
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("1.1.1.1", 53))
@@ -114,12 +93,10 @@ def verify_isolation(
     remedy: str,
     check_dns: bool = False,
 ) -> None:
-    """Prove the agent (`what`, e.g. "the VM") cannot reach the host's
-    primary address, and with `check_dns` cannot resolve a public name.
-    `run_guest(script)` runs the shell script inside the agent and returns its
-    stdout. Dies (fail-closed) on a confirmed leak or when the guest has no
-    tool to test with; `remedy` tells the operator what to check. Warns and
-    skips when the host has no address to test against."""
+    """Prove the agent (`what`) can't reach the host's primary address or a
+    public address, and with `check_dns` can't resolve a public name.
+    `run_guest(script)` returns the guest's stdout. Dies on a leak or a missing
+    tool, with `remedy`; warns and skips when the host has no address to test."""
     canary_ip = host_canary_ip()
     if not canary_ip:
         warn("isolation probe skipped: host has no off-box route to test "
@@ -132,9 +109,9 @@ def verify_isolation(
         listener.listen(1)
         canary_port = listener.getsockname()[1]
         out = run_guest(guest_probe_script(canary_ip, canary_port, check_dns=check_dns))
-        # A connection that completed its handshake waits in the listen backlog
-        # whether or not anyone accepted it, so the listener — not the guest's
-        # exit code — is the authority on whether the canary was reached.
+        # A completed handshake sits in the backlog whether or not it was
+        # accepted, so the listener is the authority on whether the canary was
+        # reached.
         reached, _, _ = select.select([listener], [], [], 0.5)
 
     match = _RESULT.search(out)

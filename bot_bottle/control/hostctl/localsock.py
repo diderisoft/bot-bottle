@@ -1,8 +1,6 @@
-"""The host controller's local Unix socket, for the processes tmux runs.
-
-A session's launcher fetches its command and environment (`spec`, handed out
-once); the `pane-died` hook reports the agent's exit (`died`). One JSON line
-in, one JSON line out. The socket lives in the 0700 state dir and is 0600.
+"""The host controller's Unix socket for processes tmux runs: the launcher
+fetches its `spec` (once) and the `pane-died` hook reports `died`. One JSON
+line each way. 0600, in the 0700 state dir.
 """
 
 from __future__ import annotations
@@ -62,7 +60,7 @@ def _answer(body: dict[str, object], manager: SessionManager) -> dict[str, objec
         status = str(body.get("status", ""))
         exit_status = ExitStatus(int(status) if status.lstrip("-").isdigit() else 0,
                                  str(body.get("signal", "")))
-        # Finishing tears the bottle down; don't hold tmux's hook open for it.
+        # Finishing tears the bottle down; don't hold tmux's hook open.
         threading.Thread(target=manager.died, args=(session_id, exit_status), daemon=True).start()
         return {"ok": True}
     log.warn(f"hostctl local socket: unknown op {op!r}")
@@ -70,7 +68,7 @@ def _answer(body: dict[str, object], manager: SessionManager) -> dict[str, objec
 
 
 def request(path: Path, body: dict[str, object]) -> dict[str, object]:
-    """One request to the daemon's local socket (used by launch and notify)."""
+    """One request to the daemon's socket."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
         conn.connect(str(path))
         with conn.makefile("rw", encoding="utf-8") as stream:

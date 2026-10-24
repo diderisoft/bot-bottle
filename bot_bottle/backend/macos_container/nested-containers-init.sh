@@ -7,11 +7,9 @@ if [ "$uid" -eq 0 ]; then
     exit 1
 fi
 
-# Every piece of podman 5's networking stack is checked here, because each
-# one fails at a different and misleading layer if it is absent: no pasta and
-# nothing starts at all; no nft and netavark cannot build the bridge every
-# compose file expects; no aardvark-dns and DNS inside nested containers fails
-# while everything else looks healthy.
+# Check each piece of podman 5's networking: without pasta nothing starts,
+# without nft there's no compose bridge, without aardvark-dns nested DNS
+# fails.
 for command in podman docker fuse-overlayfs pasta nft slirp4netns; do
     command -v "$command" >/dev/null 2>&1 || {
         echo "missing nested-container prerequisite: $command" >&2
@@ -19,11 +17,8 @@ for command in podman docker fuse-overlayfs pasta nft slirp4netns; do
     }
 done
 
-# The inverse of the rootless-Docker check, and the whole point of the podman
-# variant: a subordinate range would push podman onto newuidmap, which cannot
-# write a multi-range uid_map without CAP_SYS_ADMIN in this guest.  An empty
-# range keeps it on the single-UID self-mapping an unprivileged process may
-# write itself.
+# No subordinate ranges: one would send podman to newuidmap, which needs
+# CAP_SYS_ADMIN here. An empty range keeps the single-UID self-mapping.
 if grep -q "^$(id -un):" /etc/subuid 2>/dev/null; then
     echo "unexpected subordinate UID range for $(id -un): podman would" >&2
     echo "require CAP_SYS_ADMIN via newuidmap in this guest" >&2
@@ -37,27 +32,19 @@ for device in /dev/fuse /dev/net/tun; do
     }
 done
 
-# Short by necessity, not by accident: conmon's attach socket lives under
-# this directory and must fit in a 108-byte sun_path. See nested_containers.py.
-# Must stay in step with AGENT_CA_BUNDLE in bot_bottle/backend/util.py; a unit
-# test pins the two together.
+# Short: conmon's attach socket must fit in a 108-byte sun_path (see
+# nested_containers.py). Must match AGENT_CA_BUNDLE in backend/util.py (a unit
+# test checks).
 CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
 [ -r "$CA_BUNDLE" ] || {
     echo "gateway CA bundle $CA_BUNDLE is missing or unreadable" >&2
     exit 1
 }
 
-# The proxy URL the agent inherits names `bot-bottle-gateway`, which resolves
-# only through this bottle's /etc/hosts. A nested container gets its own hosts
-# file, so it cannot resolve the name and dies at "Could not resolve proxy".
-#
-# podman's containers.conf `hosts_file` would fix that, except the
-# Docker-compatible API ignores it — it only takes effect for native
-# `podman run`, and the agent types `docker`. So the name is resolved *here*
-# and the address, not the name, goes into the proxy URL the nested container
-# receives. Verified on macOS 26 / podman 5.4.2: with the address in place,
-# https://quay.io returns 200 and a non-allowlisted host still gets 403, so
-# the egress boundary applies inside nested containers too.
+# The agent's proxy URL names `bot-bottle-gateway`, which resolves only via
+# this bottle's /etc/hosts, not a nested container's. containers.conf
+# `hosts_file` doesn't apply to the Docker-compatible API, so resolve it here
+# and give nested containers the address.
 GATEWAY_NAME="bot-bottle-gateway"
 gateway_ip="$(
     awk -v name="$GATEWAY_NAME" '$2 == name { print $1; exit }' /etc/hosts
@@ -73,9 +60,7 @@ config="$HOME/.config/containers"
 mkdir -p "$XDG_RUNTIME_DIR" "$config"
 chmod 700 "$XDG_RUNTIME_DIR"
 
-# ignore_chown_errors is required, not incidental: with a single-UID mapping
-# there is no second UID for image layers to be chowned to, so layers that
-# record other owners would otherwise fail to extract.
+# Required: a single-UID mapping has no other owners for layers to chown to.
 cat > "$config/storage.conf" <<'CONF'
 [storage]
 driver="overlay"
@@ -84,26 +69,16 @@ mount_program="/usr/bin/fuse-overlayfs"
 ignore_chown_errors="true"
 CONF
 
-# No cgroup delegation reaches this guest, so asking podman to manage cgroups
-# fails; events_logger=file avoids the journald socket that is equally absent.
+# No cgroup delegation reaches this guest, and no journald socket
+# (events_logger=file).
 #
-# The rest of this config is what lets a nested container reach the network:
+#   hosts_file   native `podman run` only; the compat API ignores it.
+#   volumes/env  the bottle's CA bundle, so TLS through the gateway verifies
+#                for curl, wget, python and node.
 #
-#   hosts_file   only takes effect for native `podman run` — the
-#                Docker-compatible API ignores it, and the agent types
-#                `docker`. Kept anyway because it costs nothing and makes
-#                podman-native use behave; the compat path is covered by the
-#                address-bearing proxy URL below.
-#   volumes/env  the gateway TLS-intercepts, so a container that does not
-#                trust the bottle's CA bundle gets "unable to get local issuer
-#                certificate". Mounting the bundle read-only and pointing the
-#                usual env vars at it covers curl, wget, python, and node
-#                without distro-specific trust commands.
-#
-# The proxy URL carries the bottle's identity token. podman already forwards
-# that same URL into every nested container from the agent's own environment,
-# so writing it to a 0600 file inside this disposable VM hands it to nobody
-# new. It is never echoed.
+# The proxy URL carries the identity token, which podman already forwards from
+# the agent's env; the 0600 file in this disposable VM exposes it to no one
+# new.
 CA_BUNDLE="$CA_BUNDLE" GATEWAY_NAME="$GATEWAY_NAME" GATEWAY_IP="$gateway_ip" \
 CONTAINERS_CONF="$config/containers.conf" python3 - <<'PY'
 import os
@@ -119,14 +94,12 @@ entries = [
     f"REQUESTS_CA_BUNDLE={ca}",
     f"NODE_EXTRA_CA_CERTS={ca}",
 ]
-# The gateway name resolves only through the bottle's /etc/hosts, which a
-# nested container does not inherit, so hand it the address instead.
+# Nested containers don't inherit /etc/hosts: give them the address.
 for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     value = os.environ.get(var)
     if value:
         entries.append(f"{var}={value.replace(name, ip)}")
-# NO_PROXY keeps the name: it is matched against what a client asks for, and
-# code inside a nested container still says "bot-bottle-gateway".
+# NO_PROXY keeps the name: clients still ask for "bot-bottle-gateway".
 for var in ("NO_PROXY", "no_proxy"):
     value = os.environ.get(var)
     if value:
@@ -136,9 +109,8 @@ path = Path(os.environ["CONTAINERS_CONF"])
 path.write_text("\n".join([
     "[containers]",
     'cgroups="disabled"',
-    # podman copies the host's proxy vars into every container by default,
-    # and that copy *wins* over the env below — putting the unresolvable
-    # gateway name back. Turn it off so the address-bearing URLs stand.
+    # podman copies the host's proxy vars into containers, overriding the env
+# below with the unresolvable name. Turn that off.
     "http_proxy=false",
     'hosts_file="/etc/hosts"',
     f'volumes=["{ca}:{ca}:ro"]',
@@ -153,16 +125,8 @@ path.write_text("\n".join([
 path.chmod(0o600)
 PY
 
-# Registry pulls egress through the bottle's proxy like everything else. The
-# token-bearing proxy URL is already in the agent's environment; persisting it
-# inside this disposable VM does not broaden its authority.
-#
-# This file is also what the Docker CLI copies into every container it starts,
-# and being client-side it beats anything the podman service does — it is why
-# containers.conf `env`, `http_proxy=false`, and the service's own environment
-# all failed to change what a nested container saw. The address goes in here
-# for the same reason it goes everywhere else: `bot-bottle-gateway` resolves
-# in the bottle, never inside a nested container.
+# Registry pulls go through the bottle's proxy too; the token-bearing URL is
+# already in the agent's env.
 GATEWAY_NAME="$GATEWAY_NAME" GATEWAY_IP="$gateway_ip" python3 - <<'PY'
 import json
 import os
@@ -190,14 +154,9 @@ if docker info >/dev/null 2>&1; then
     exit 0
 fi
 
-# Belt to the ~/.docker/config.json braces above, which is what actually
-# decides this for `docker run`. The service environment is what podman falls
-# back to for anything the CLI does not stamp — its own registry pulls, and
-# containers created through the API by something other than the Docker CLI.
-# Cheap, and it keeps the address consistent across both paths.
-#
-# Assigned via parameter expansion, never echoed: these carry the bottle's
-# identity token.
+# Also for the podman service's env, used where the Docker CLI's config
+# doesn't apply (podman's own pulls, API clients other than the CLI). Never
+# echoed: these carry the identity token.
 for var in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do
     eval "value=\${$var:-}"
     [ -n "$value" ] || continue

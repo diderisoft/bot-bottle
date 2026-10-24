@@ -1,16 +1,10 @@
-"""The request firehose's configured sinks (PRD 0093).
+"""Configured firehose sinks, each with its own bounded queue and thread. A
+sink that falls behind drops its oldest records and reports
+`{"firehose_dropped": n}` in its stream.
 
-Each sink has its own bounded queue and thread, so one that falls behind (or
-whose endpoint is down) drops its own oldest records, never slows the others,
-and reports the drop in its stream as a `{"firehose_dropped": n}` record.
-
-- `exec`: the host controller starts the command and writes each record to
-  its stdin as a JSON line, restarting it with backoff if it exits. It's the
-  universal adapter: Vector, Fluent Bit, an encrypting file writer.
-- `https`: records are POSTed as NDJSON in batches, with a bearer token read
-  from the secrets file by name. A failed batch is dropped and counted.
-
-`SinkSet` keeps the running sinks in line with the configured ones.
+- `exec`: a command fed JSON lines on stdin, restarted with backoff.
+- `https`: NDJSON batches with a bearer token from the secrets file; failed
+  batches are dropped and counted.
 """
 
 from __future__ import annotations
@@ -75,8 +69,8 @@ class _Sink:
             return batch
 
     def lost(self, batch: list[dict[str, Any]]) -> None:
-        """A batch that didn't arrive: its records, plus any drop it was
-        carrying, are reported with the next one."""
+        """A batch that didn't arrive; its records (and any drop) are reported
+        with the next."""
         count = sum(int(r.get("firehose_dropped", 0)) if "firehose_dropped" in r else 1
                     for r in batch)
         with self._cond:

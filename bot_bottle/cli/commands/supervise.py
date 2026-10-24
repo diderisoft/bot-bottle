@@ -1,9 +1,5 @@
-"""supervise: list pending supervise proposals across all bottles and
-act on them (approve / modify / reject).
-
-Curses-based TUI; modify-then-approve shells out to $EDITOR. The
-Egress proposals are queued for operator review as full routes.yaml
-updates.
+"""supervise: a curses TUI listing pending supervise proposals across bottles,
+to approve, modify (in $EDITOR) or reject.
 """
 
 from __future__ import annotations
@@ -41,45 +37,32 @@ from ..settings import settings_from_env
 
 _REFRESH_INTERVAL_MS = 1000
 
-# Proposal tools whose payload is a read-only report, not a file the operator
-# edits: modify is unavailable and approval requires a recorded reason for the
-# audit trail.
+# Tools whose payload is a read-only report: no modify, and approval needs a
+# recorded reason.
 _REPORT_ONLY_TOOLS: tuple[str, ...] = (TOOL_GITLEAKS_ALLOW, TOOL_EGRESS_TOKEN_ALLOW)
 
 
 @dataclass(frozen=True)
 class QueuedProposal:
-    """A pending proposal from the supervise queue.
-
-    `label` is the operator-facing bottle name (the human slug the
-    orchestrator resolved from the registry); `proposal.bottle_slug` is the
-    opaque bottle_id every operator action is keyed by. Display uses `label`;
-    respond calls use `proposal.bottle_slug`."""
+    """A pending proposal. `label` is the bottle's display name;
+    `proposal.bottle_slug` is the bottle_id actions are keyed by."""
 
     proposal: Proposal
     label: str = ""
 
 
-# A failed operator action (orchestrator unreachable, bottle torn down,
-# 409) is caught by the TUI key handlers and surfaced in the status line so
-# the proposal stays pending rather than crashing curses.
+# Action failures are shown in the status line and leave the proposal pending.
 ApplyError = (OrchestratorClientError,)
 
 
-# The one per-host orchestrator, discovered lazily on first use. Every
-# operator action — list, approve, reject — goes through its HTTP control
-# plane (the orchestrator owns the single DB + live policy); there is no
-# direct-DB path and no backend branching here.
+# The orchestrator, discovered on first use. Every action goes through its HTTP
+# control plane.
 _client_instance: OrchestratorClient | None = None
 
 
 def _resolve_orchestrator_url() -> str:
-    """URL of the running orchestrator control plane, starting one on demand.
-
-    Supervise is often the first thing an operator runs — before any bottle
-    has booted the control plane. So when discovery finds nothing, bring up
-    the selected backend's orchestrator + gateway (idempotent) rather than
-    failing with "launch a bottle first"."""
+    """The orchestrator URL, starting the backend's infra pair if none is
+    running (supervise is often the first thing run)."""
     settings = settings_from_env()
     try:
         return discover_orchestrator_url(settings)
@@ -98,7 +81,7 @@ def _client() -> OrchestratorClient:
 
 
 def discover_pending() -> list[QueuedProposal]:
-    """Collect pending proposals across bottles from the orchestrator."""
+    """Pending proposals across bottles, from the orchestrator."""
     out = [
         QueuedProposal(
             proposal=Proposal.from_dict(d),
@@ -121,7 +104,7 @@ def _detail_lines(
     *,
     green_attr: int = 0,
 ) -> list[tuple[str, int]]:
-    """Return the detail-view body as (text, curses-attr) tuples."""
+    """The detail view as (text, curses attr) tuples."""
     p = qp.proposal
     out: list[tuple[str, int]] = [
         (f"bottle: {qp.label}", 0),
@@ -148,7 +131,7 @@ def _suffix_for_tool(tool: str) -> str:
     return ".txt"
 
 
-# --- Operator actions ------------------------------------------------------
+# --- Operator actions ---
 
 
 def approve(
@@ -157,10 +140,9 @@ def approve(
     notes: str = "",
     final_file: str | None = None,
 ) -> None:
-    """Approve (or, with `final_file`, modify-then-approve) via the
-    orchestrator: it applies the route change to the bottle's live policy,
-    writes the response that unblocks the agent, and audits it — one atomic
-    server-side op. Raises `OrchestratorClientError` on failure."""
+    """Approve, or modify-then-approve with `final_file`. The orchestrator
+    applies the change, unblocks the agent and audits it in one operation.
+    Raises `OrchestratorClientError`."""
     _client().supervise_respond(
         qp.proposal.id,
         bottle_slug=qp.proposal.bottle_slug,
@@ -171,7 +153,7 @@ def approve(
 
 
 def reject(qp: QueuedProposal, *, reason: str) -> None:
-    """Reject via the orchestrator (writes the response + audit)."""
+    """Reject via the orchestrator."""
     _client().supervise_respond(
         qp.proposal.id,
         bottle_slug=qp.proposal.bottle_slug,
@@ -187,7 +169,7 @@ def _approve_from_tui(
     final_file: str | None = None,
     notes: str = "",
 ) -> str:
-    """Approve from curses, prompting for any tool-specific audit note."""
+    """Approve from curses, prompting for any required audit note."""
     if qp.proposal.tool in _REPORT_ONLY_TOOLS and final_file is None:
         notes = _prompt(stdscr, "allow reason (false positive / legitimately needed): ")
         if not notes:
@@ -197,11 +179,11 @@ def _approve_from_tui(
     return _approval_status(qp, verb)
 
 
-# --- $EDITOR integration --------------------------------------------------
+# --- $EDITOR integration ---
 
 
 def edit_in_editor(content: str, *, suffix: str = ".tmp") -> str | None:
-    """Open `content` in $EDITOR and return edited content, if changed."""
+    """Open `content` in $EDITOR; return the edit if changed."""
     editor = os.environ.get("EDITOR", "vim")
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=suffix, delete=False, prefix="supervise-modify.",
@@ -220,7 +202,7 @@ def edit_in_editor(content: str, *, suffix: str = ".tmp") -> str | None:
             pass
 
 
-# --- TUI -------------------------------------------------------------------
+# --- TUI ---
 
 
 def cmd_supervise(argv: list[str]) -> int:
@@ -231,16 +213,15 @@ def cmd_supervise(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    # Establish the orchestrator connection up front so a missing control
-    # plane is a clean one-line error, not a curses crash mid-loop. This also
-    # starts the orchestrator on demand when none is running (see `_client`).
+    # Connect first, so a missing control plane is a clean error, not a curses
+    # crash. Starts the orchestrator if needed.
     try:
         _client()
     except OrchestratorClientError as e:
         error(str(e))
         return 1
     except Die as e:
-        # Backend has no orchestrator to start (e.g. macos-container).
+        # The backend has no orchestrator to start.
         if e.message:
             error(e.message)
         return e.code if isinstance(e.code, int) else 1
@@ -269,7 +250,7 @@ def cmd_supervise(argv: list[str]) -> int:
 
 
 def _write_crash_log(exc: BaseException) -> Path:
-    """Persist `exc`'s traceback to a stable file under ~/.bot-bottle/."""
+    """Write `exc`'s traceback to a stable file under ~/.bot-bottle/."""
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     body = "".join(
         traceback.format_exception(type(exc), exc, exc.__traceback__)
@@ -308,7 +289,7 @@ def _list_once() -> int:
 
 
 def _try_init_green() -> int:  # pragma: no cover
-    """Initialise a green color pair and return its attr, or 0."""
+    """A green color pair's attr, or 0."""
     try:
         curses.start_color()
         curses.use_default_colors()
@@ -460,7 +441,7 @@ def _detail_view(
     *,
     green_attr: int = 0,
 ) -> str:  # pragma: no cover
-    """Render the full proposal. Scrollable. Press q to return."""
+    """Render the full proposal, scrollable. q returns."""
     lines = _detail_lines(qp, green_attr=green_attr)
     offset = 0
     while True:
@@ -515,7 +496,7 @@ def _modify(
     stdscr: "curses._CursesWindow",  # type: ignore
     qp: QueuedProposal,
 ) -> str | None:  # pragma: no cover
-    """Suspend curses, open $EDITOR on the proposed file, return edited content."""
+    """Suspend curses and edit the proposed file in $EDITOR."""
     suffix = _suffix_for_tool(qp.proposal.tool)
     curses.endwin()
     try:

@@ -1,19 +1,7 @@
-"""The Firecracker gateway data plane as a microVM.
-
-`FirecrackerGateway` is the Firecracker implementation of the backend-neutral
-`Gateway` service, and owns the gateway's host-side logic directly: booting the
-gateway microVM on its NAT'd link, seeding the pre-minted `gateway` token,
-fetching the mitmproxy CA, and the SSH exec/cp provisioning transport. The
-gateway VM never opens `bot-bottle.db`, so it holds no signing key —
-only the token the host hands it via `connect_to_orchestrator`.
-
-The plane-agnostic VM substrate the orchestrator VM also uses stays in
-`infra_vm` — booting a VM from a per-plane rootfs (`boot_vm`), the stable SSH
-keypair, the secret-push retry loop, the PID lifecycle, and the
-adoption/version helpers. The guest-side gateway daemon startup lives in the
-gateway rootfs's guest init (`_gateway_init` in `infra_vm`), so it can't live in
-a host-side method either. The pair coordinator (orchestrator-first, under a
-singleton flock) is `FirecrackerInfraService` (`infra.py`).
+"""`FirecrackerGateway`: the gateway as a microVM on its NAT'd link. Boots it,
+seeds the `gateway` token, persists and restores the CA, and provides the SSH
+provisioning transport. Shared VM plumbing is in `infra_vm`; the pair is
+coordinated by `FirecrackerInfraService`.
 """
 
 from __future__ import annotations
@@ -37,41 +25,30 @@ from .. import util as backend_util
 from . import infra_vm, netpool, util
 from .gateway_transport import FirecrackerGatewayTransport
 
-# The gateway microVM's name (its run dir). Fixed per host — one gateway VM,
-# shared by every agent VM.
+# The gateway VM's run-dir name; one per host.
 GATEWAY_NAME = "bot-bottle-gateway"
 
-# The gateway VM's slim memory ceiling — the data plane carries no build
-# tooling (buildah lives only on the orchestrator rootfs).
+# No build tooling on the gateway, so less memory.
 _GW_MEM_MIB = 2048
 
-# The pre-minted `gateway` JWT path in the guest. The gateway init (in
-# `infra_vm`) waits for it before starting the data plane, so its canonical
-# definition lives with that init; imported here for the push so the
-# load-bearing path isn't duplicated.
+# Defined with the gateway init in `infra_vm`, which waits for it.
 _GUEST_GATEWAY_JWT_PATH = infra_vm._GUEST_GATEWAY_JWT_PATH
-# mitmproxy writes its CA here a beat after start; agents install it to trust
-# the gateway's TLS interception. Host-side only (SSH cat), so it lives here.
+# Where mitmproxy writes its CA shortly after start.
 _GATEWAY_CA_PATH = f"{MITMPROXY_HOME}/mitmproxy-ca-cert.pem"
-# mitmproxy's signing identity (cert + key); the CA is persisted iff it is.
+# mitmproxy's cert+key; the CA is persisted iff this is.
 _CA_KEY_FILE = "mitmproxy-ca.pem"
 
 _CA_FETCH_TIMEOUT_SECONDS = 15.0
 
 
 class FirecrackerGateway(Gateway):
-    """The consolidated gateway as a Firecracker microVM on the gateway link.
-
-    The gateway rootfs is built/downloaded by `infra_vm.ensure_built` (the ABC's
-    `ensure_built` no-op here); `connect_to_orchestrator` boots the VM resolving
-    policy against the orchestrator and seeds the pre-minted `gateway` token."""
+    """The gateway VM. Its rootfs comes from `infra_vm.ensure_built`;
+    `connect_to_orchestrator` boots it and seeds the token."""
 
     name = GATEWAY_NAME
 
     def __init__(self, settings: Settings, vm: infra_vm.InfraVm | None = None) -> None:
-        # The live VM handle when this process booted it; None when adapting an
-        # already-running gateway (CA fetch / provisioning go through the stable
-        # key + fixed link, so no live handle is needed).
+        # The live VM handle if this process booted it; None when adopting one.
         self._settings = settings
         self._slot = netpool.from_settings(settings.infra).gw_slot()
         self._vm = vm
@@ -79,13 +56,9 @@ class FirecrackerGateway(Gateway):
         self._gateway_token = ""
 
     def connect_to_orchestrator(self, orchestrator_url: str, gateway_token: str) -> bool:
-        """Boot the gateway VM on its link resolving policy against
-        `orchestrator_url`, then seed `gateway_token` over SSH. The orchestrator's
-        guest IP is parsed from the URL and passed on the cmdline (`bb_orch=`), so
-        the baked init stays IP-independent. Boot the orchestrator first — the
-        gateway daemons reach it at startup. The gateway never mints, so it holds
-        no signing key, only this token. Always a fresh boot (adoption
-        happens a level up, in `FirecrackerInfraService`), so returns True."""
+        """Boot the gateway VM pointed at `orchestrator_url` (its IP goes on
+        the cmdline as `bb_orch=`) and seed `gateway_token` over SSH. The
+        orchestrator must be up first. Always a fresh boot, so returns True."""
         self._orchestrator_url = orchestrator_url
         self._gateway_token = gateway_token
         if not self._orchestrator_url:
@@ -103,9 +76,8 @@ class FirecrackerGateway(Gateway):
             raise GatewayError(
                 f"cannot resolve orchestrator guest IP from {self._orchestrator_url!r}"
             )
-        # Boot on the gateway link from the gateway rootfs, restore the
-        # persisted CA, then push the token the init waits for before starting
-        # the data plane (so mitmproxy finds the CA rather than minting one).
+        # Restore the persisted CA, then push the token the init waits for, so
+        # mitmproxy finds the CA instead of minting one.
         vm = infra_vm.boot_vm(
             settings=self._settings,
             name=GATEWAY_NAME, slot=self._slot, run_dir=infra_vm._gw_dir(),
@@ -123,11 +95,8 @@ class FirecrackerGateway(Gateway):
         return True
 
     def _restore_ca(self, vm: infra_vm.InfraVm) -> bool:
-        """Push the persisted CA into the freshly booted VM's mitmproxy
-        confdir. The rootfs is rebuilt every boot, so without this each boot
-        minted a new CA, and running agents (Node reads its CA file once, at
-        start) kept trusting the old one. False when nothing is persisted
-        yet."""
+        """Push the persisted CA into the fresh VM, since the rootfs is rebuilt
+        each boot. False when nothing is persisted yet."""
         files = sorted(infra_vm.gateway_ca_dir().glob(GATEWAY_CA_GLOB))
         if not any(f.name == _CA_KEY_FILE for f in files):
             return False
@@ -143,14 +112,12 @@ class FirecrackerGateway(Gateway):
         return True
 
     def _persist_ca(self, vm: infra_vm.InfraVm) -> None:
-        """Save the CA mitmproxy just minted on first boot, so every later
-        boot reuses it."""
+        """Save the CA mitmproxy minted on first boot."""
         self.ca_cert_pem()  # waits until mitmproxy has written it
         self._save_ca(vm.private_key, vm.guest_ip)
 
     def _save_rolled_over_ca(self) -> None:
-        # The VM's rootfs is rebuilt every boot: the rolled-over CA only
-        # survives the restart if it's in the host dir `_restore_ca` pushes.
+        # Keep a rolled-over CA across reboots.
         self._save_ca(infra_vm._infra_dir() / "id_ed25519", self._slot.guest_ip)
 
     def _save_ca(self, key: Path, ip: str) -> None:
@@ -182,23 +149,17 @@ class FirecrackerGateway(Gateway):
         return infra_vm._pidfile_alive(infra_vm._gw_dir())
 
     def stop(self) -> None:
-        """Stop only the gateway VM (idempotent — absent is success). A dead
-        gateway already fails `infra_vm.adoptable`, so no version marker to
-        clear here."""
+        """Stop the gateway VM. Idempotent."""
         infra_vm._kill_pidfile(infra_vm._gw_dir())
         infra_vm._pid_file(infra_vm._gw_dir()).unlink(missing_ok=True)
 
     def address(self) -> str:
-        """The gateway VM's guest IP — the agent-facing target agent VMs'
-        gateway-port traffic is DNAT'd to."""
+        """The gateway VM's guest IP, which agent traffic is DNAT'd to."""
         return self._slot.guest_ip
 
     def ca_cert_pem(self, *, timeout: float = DEFAULT_CA_TIMEOUT_SECONDS) -> str:
-        """The gateway's mitmproxy CA (PEM) agents install to trust its TLS
-        interception. Fetched from the gateway VM over SSH; polls because
-        mitmproxy writes it a beat after boot. Works from any later launcher —
-        falls back to the stable key + fixed link when this process didn't boot
-        the VM."""
+        """The gateway's CA PEM, fetched over SSH and polled for. Works from
+        any launcher via the stable key and fixed link."""
         key = self._vm.private_key if self._vm else infra_vm._infra_dir() / "id_ed25519"
         ip = self._vm.guest_ip if self._vm else self._slot.guest_ip
 
@@ -217,10 +178,8 @@ class FirecrackerGateway(Gateway):
             raise GatewayError(str(exc)) from exc
 
     def provisioning_transport(self) -> GatewayTransport:
-        """The exec/cp transport git-gate provisioning stages per-bottle repos +
-        deploy keys through (over SSH to the gateway VM). Needs no live handle —
-        built from the stable key + the gateway link's guest IP, so teardown can
-        use it too."""
+        """The SSH exec/cp transport for git-gate provisioning. Needs no live
+        handle."""
         return FirecrackerGatewayTransport(
             infra_vm._infra_dir() / "id_ed25519", self._slot.guest_ip)
 

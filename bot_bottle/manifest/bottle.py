@@ -1,13 +1,5 @@
-"""The `ManifestBottle` value type.
-
-Split out of the package facade (`manifest/__init__.py`) so the `extends:`/
-loader resolvers can import it without a circular dependency: the facade
-imports those resolvers, while they only need this value type. Everything here
-depends on leaf modules (`util`, `agent`, `egress`, `git`, `schema`), so this
-module sits at the bottom of the manifest layer.
-
-The facade re-exports `ManifestBottle`, so existing
-`from bot_bottle.manifest import ManifestBottle` callers are unaffected.
+"""The `ManifestBottle` value type, separate from the package facade so the
+`extends:` and loader resolvers can import it without a cycle.
 """
 
 from __future__ import annotations
@@ -34,15 +26,13 @@ FIREHOSE_MODES = ("full", "metadata")
 
 @dataclass(frozen=True)
 class ManifestAudit:
-    """`audit:` in a bottle. Empty fields weren't set.
+    """`audit:` in a bottle; empty fields weren't set.
 
-    - `delivery`: what happens when an audit event can't be written.
-      `best_effort` goes ahead and records the gap, `required` refuses the
-      action. Unset: the host-wide default.
-    - `firehose`: what the request firehose carries for this bottle. `full`
-      (the default) is each request as sent, bodies included; `metadata` is
-      only the method, host, port, decision, status, size and timing, for a
-      bottle whose data must not leave the host even to the user's own sink."""
+    - `delivery`: `best_effort` records the gap and goes ahead, `required`
+      refuses an action whose event can't be written. Unset: the host default.
+    - `firehose`: `full` (default) records each request as sent, bodies
+      included; `metadata` records only method, host, port, decision, status,
+      size and timing."""
 
     delivery: str = ""
     firehose: str = ""
@@ -69,26 +59,19 @@ class ManifestBottle:
     env: Mapping[str, str] = field(default_factory=_empty_str_dict)
     agent_provider: ManifestAgentProvider = field(default_factory=ManifestAgentProvider)
     git: tuple[ManifestGitEntry, ...] = ()
-    # Per-bottle git identity. Empty default — bottles
-    # that don't set `git-gate.user:` in the manifest skip the
-    # `git config --global` step entirely. A bottle can declare a user
-    # identity without any git-gate.repos upstreams, and vice versa.
+    # The bottle's git identity; empty skips `git config`. Independent of
+    # repos.
     git_user: ManifestGitUser = field(default_factory=ManifestGitUser)
     egress: ManifestEgressConfig = field(default_factory=ManifestEgressConfig)
-    # Per-bottle stuck-recovery daemon. When true (the
-    # default), the launch step brings up a supervise
-    # daemon that exposes egress MCP tools to the agent. Set
-    # `supervise: false` to skip the gateway.
+    # Run the supervise server for this bottle (default true).
     supervise: bool = True
-    # Guest-local container engine. Not a host-daemon grant:
-    # backends implement it inside the bottle or reject it. Gated because it
-    # costs image weight, a resident service, and relaxed guest device modes
-    # that the majority of bottles never need.
+    # Guest-local container engine, implemented inside the bottle or rejected.
+    # Off by default for its image weight, resident service and relaxed device
+    # modes.
     nested_containers: bool = False
     audit: ManifestAudit = field(default_factory=ManifestAudit)
-    # Source fields retained across extends/runtime composition. Boolean
-    # defaults otherwise erase the distinction between "omitted" and an
-    # explicitly declared value (especially False).
+    # Fields the source declared, so an explicit `false` survives extends
+    # merging.
     declared_fields: frozenset[str] = frozenset()
 
     @classmethod

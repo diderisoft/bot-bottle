@@ -1,8 +1,4 @@
-"""Docker-side egress helpers: port pin, in-container CA paths,
-container naming, and the host-side mitmproxy CA mint. The
-prepare-time routes-yaml rendering itself lives on the
-platform-neutral `Egress` ABC — backends instantiate it directly.
-The gateway runs egress under its python init supervisor."""
+"""Docker egress constants and the host-side mitmproxy CA mint."""
 
 from __future__ import annotations
 
@@ -13,56 +9,38 @@ from ...contract.hostctl import DEFAULT_EGRESS_PORT
 from ...lib.log import die
 
 
-# Default listening port of the egress daemon in the gateway; launches use
-# `InfraSettings.egress_port`.
+# The gateway's default egress port; launches use `InfraSettings.egress_port`.
 EGRESS_PORT = DEFAULT_EGRESS_PORT
 
-# In-container path for mitmproxy's CA. The format is a single PEM
-# file holding BOTH the cert and the private key, concatenated.
+# mitmproxy's CA in the container: one PEM holding cert and key.
 EGRESS_CA_IN_CONTAINER = "/home/mitmproxy/.mitmproxy/mitmproxy-ca.pem"
 
 
 def egress_tls_init(stage_dir: Path) -> tuple[Path, Path]:
-    """Mint the per-bottle egress MITM CA via host `openssl req`.
+    """Mint an egress CA with host `openssl req`. Returns `(mitmproxy_pem,
+    cert_only_pem)`: the cert+key concat mitmproxy reads, and the cert alone
+    for the agent's trust store.
 
-    Returns `(mitmproxy_pem, cert_only_pem)`:
-      - `mitmproxy_pem` is the single-PEM concat (cert + key)
-        mitmproxy reads from `~/.mitmproxy/mitmproxy-ca.pem`.
-      - `cert_only_pem` is the cert alone — installed into the agent's
-        trust store by `provision_ca` so the agent trusts the bumped
-        CONNECT cert egress presents.
-
-    openssl req's `subjectKeyIdentifier=hash` extension uses
-    SHA-1(pubkey), matching mitmproxy's AKI computation on leaves.
-
-    Both files live under `<stage_dir>/egress-ca/` (mode 644 —
-    `docker cp` preserves the mode into the container, where the
-    mitmproxy user (uid 1000) reads them; the host stage_dir is
-    mode 700 so the private key isn't world-exposed)."""
+    Files live under `<stage_dir>/egress-ca/` at 0644 so mitmproxy (uid 1000)
+    can read them; the 0700 stage dir protects the key."""
     work = stage_dir / "egress-ca"
     work.mkdir(exist_ok=True)
     key_path = work / "ca-key.pem"
     cert_path = work / "ca.pem"
     cnf_path = work / "ca.cnf"
 
-    # RSA-2048 — broad mitmproxy compatibility (its default leaf-cert
-    # config matches RSA CAs without surprise), and openssl req's
-    # default behavior here is exactly what we want.
+    # RSA-2048, which mitmproxy's leaf config expects.
     keygen = subprocess.run(
         ["openssl", "genrsa", "-out", str(key_path), "2048"],
         capture_output=True, text=True, check=False,
     )
     if keygen.returncode != 0:
         die(f"egress ca keygen failed: {keygen.stderr.strip()}")
-    # Standalone private key — never docker-cp'd, never bind-mounted
-    # (mitmproxy reads the cert+key concat below). Lock to owner-
-    # only so it doesn't sit at the default umask on disk.
+    # The standalone key is never copied or mounted; owner-only.
     key_path.chmod(0o600)
 
-    # `subjectKeyIdentifier=hash` makes openssl compute the SKI as
-    # SHA-1(pubkey), matching how mitmproxy computes the AKI on the
-    # leaves it later mints. Without this, chain validation breaks
-    # despite the CA being present in the trust store.
+    # `subjectKeyIdentifier=hash` (SHA-1 of the pubkey) matches the AKI
+    # mitmproxy puts on leaves; without it chain validation fails.
     cnf_path.write_text(
         "[req]\n"
         "distinguished_name = req_dn\n"
@@ -92,13 +70,8 @@ def egress_tls_init(stage_dir: Path) -> tuple[Path, Path]:
         die(f"egress ca cert generation failed: {req.stderr.strip()}")
 
     cert_path.chmod(0o644)
-    # mitmproxy reads cert + key from a single concatenated PEM file.
-    # This file is bind-mounted into the egress container, where
-    # mitmproxy runs as uid 1000 — so the host file has to be
-    # world-readable for the container's user to read it through the
-    # mount. Owner-only mode on the parent dir (state/<slug>/, under
-    # ~/.bot-bottle which inherits ~'s 0o700) is what actually
-    # restricts who can reach this file on the host.
+    # World-readable for mitmproxy's uid through the mount; the 0700 parent dir
+    # restricts it on the host.
     mitm = work / "mitmproxy-ca.pem"
     mitm.write_bytes(cert_path.read_bytes() + key_path.read_bytes())
     mitm.chmod(0o644)

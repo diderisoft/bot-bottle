@@ -1,26 +1,13 @@
-"""Launch flow for the Firecracker backend.
+"""Firecracker launch.
 
-Per bottle:
-  1. build the agent rootfs in a builder VM (buildah, no host docker), or
-     resume a frozen bottle from its committed rootfs tar; cache the ext4;
-  2. ensure the per-host orchestrator + shared gateway are up;
-  3. claim a free TAP pool slot (rootless flock);
-  4. register the bottle on the orchestrator by the VM's guest IP (the
-     attribution key) and provision its git-gate state into the gateway;
-  5. boot the microVM on that TAP; wait for SSH;
-  6. provision (shared gateway CA, prompt, skills, workspace, git, supervise)
-     over SSH.
+Resolve the agent base (cached, published, built in the infra VM, or a
+committed snapshot), ensure the infra VMs, claim a TAP slot, register by guest
+IP and provision git-gate, boot the VM, run the isolation probe, and provision
+over SSH.
 
-The per-bottle Docker sidecar bundle is gone. The shared gateway (its own
-data-plane VM) handles egress / git-gate / supervise for every VM; the nft
-netpool's PREROUTING DNAT routes the VMs' gateway-port traffic to that gateway
-VM, and the nft table's `ct status dnat accept` rule in the forward chain lets
-it pass. The VM still sends to `host_tap_ip:PORT` — the address its world is,
-by nft design, limited to.
-
-Isolation is enforced by the operator-provisioned nft table (checked
-fail-closed in preflight): a VM reaches only the gateway (DNAT'd from the host
-TAP IP) and nothing else — not even the orchestrator control plane.
+The VM sends gateway traffic to its TAP's host IP; the netpool DNATs it to the
+gateway VM. The nft table (checked in preflight) lets the VM reach nothing
+else, including the orchestrator.
 """
 
 from __future__ import annotations
@@ -70,27 +57,23 @@ def launch(
     *,
     provision: Callable[[FirecrackerBottlePlan, "FirecrackerBottle"], str | None],
 ) -> Generator[FirecrackerBottle, None, None]:
-    """Build, launch, and provision a Firecracker bottle via the consolidated
-    orchestrator. Teardown on exit."""
+    """Launch and provision a firecracker bottle. Tears down on exit."""
     teardown = LaunchTeardown(plan, "firecracker")
     stack = teardown.stack
 
     try:
-        # Step 1 (rootfs resolution/build) runs in BottleBackend.launch before
-        # this context starts resources. ``agent_base`` is the selected cache,
-        # fresh build, or committed snapshot.
-        # Step 2: mint the git-gate dynamic (gitea) deploy keys, if any.
+        # The agent base was resolved in `BottleBackend.launch`. Mint deploy
+        # keys.
         git_gate_plan = provision_git_gate_keys(plan)
 
-        # Step 3: claim a TAP slot; the flock is held until teardown.
+        # Claim a TAP slot; the flock is held until teardown.
         slot, lock = netpool.from_settings(plan.settings.infra).allocate(plan.slug)
         stack.callback(lock.close)
         info(f"firecracker slot {slot.iface}: host={slot.host_ip} "
              f"guest={slot.guest_ip}")
 
-        # Step 4: register on the orchestrator + provision this bottle's
-        # git-gate state into the shared gateway.
-        # Attribution is by the VM's guest IP (unspoofable via /31 TAP + nft).
+        # Register by guest IP (unspoofable via the /31 TAP and nft) and
+        # provision git-gate state.
         token_values = registration_tokens(plan)
         teardown_timeout = resolve_teardown_timeout(host_db_path())
         service = FirecrackerInfraService(plan.settings)
@@ -103,11 +86,8 @@ def launch(
         stack.callback(deprovision_consolidated, ctx.bottle_id, service=service,
                        timeout=teardown_timeout)
 
-        # Step 5: stage the shared gateway CA for the provisioner to copy
-        # over SSH, and point the agent's git-gate insteadOf rewrites and
-        # supervise MCP URL at the shared gateway (reached at the slot's host
-        # TAP IP — the VM sends there and the nft netpool DNAT routes to the
-        # gateway VM).
+        # Stage the gateway CA and point git-gate and supervise at the slot's
+        # host TAP IP, which DNATs to the gateway VM.
         egress_plan = stage_gateway_ca(plan, ctx.gateway_ca_pem)
         git_gate_url, supervise_url = gateway_agent_urls(
             plan, slot.host_ip, git_gate_plan)
@@ -117,10 +97,8 @@ def launch(
             egress_plan=egress_plan,
             identity_token=ctx.identity_token,
             env_var_secret=ctx.env_var_secret,
-            # Deliver the identity token as egress proxy credentials — clients
-            # honor `HTTPS_PROXY=http://id:token@gw` without app changes; the
-            # gateway reads Proxy-Authorization, validates the (source_ip,
-            # token) pair, and strips it before upstream.
+            # The identity token as proxy credentials; the gateway checks and
+            # strips it.
             agent_proxy_url=(
                 f"http://bottle:{ctx.identity_token}"
                 f"@{slot.host_ip}:{plan.settings.infra.egress_port}"
@@ -129,16 +107,14 @@ def launch(
             agent_supervise_url=supervise_url,
         )
 
-        # Step 6: build the per-bottle rootfs + SSH key, then boot.
-        # Cleanup takes the same lock while refreshing its process snapshot.
-        # Hold it until the VMM exists so a newly-created run dir can never be
-        # mistaken for an orphan in the build-before-boot window.
+        # Build the per-bottle rootfs and key, then boot. Cleanup takes the
+        # same lock, held until the VMM exists so a new run dir is never taken
+        # for an orphan.
         with lifecycle_lock.hold():
             run_dir = util.cache_dir() / "run" / plan.slug
             run_dir.mkdir(parents=True, exist_ok=True)
-            # Remove the run dir on teardown so the per-bottle rootfs.ext4 (~1G)
-            # doesn't leak. Registered before vm.terminate below so it runs
-            # *after* it (ExitStack is LIFO).
+            # Remove the run dir (~1G rootfs) on teardown; registered first so
+            # it runs after `vm.terminate`.
             stack.callback(lambda: shutil.rmtree(run_dir, ignore_errors=True))
             rootfs = run_dir / "rootfs.ext4"
             util.make_bottle_rootfs(agent_base, rootfs)
@@ -158,8 +134,7 @@ def launch(
         firecracker_vm.wait_for_ssh(vm, private_key)
         persist_env_var_secret(private_key, slot.guest_ip, ctx.env_var_secret)
 
-        # Authoritative fail-closed egress-boundary check, before the agent
-        # runs: prove the VM cannot reach the host directly.
+        # Prove the VM can't reach the host directly before the agent runs.
         isolation_probe.verify_isolation(private_key, slot.guest_ip)
 
         bottle = FirecrackerBottle(
@@ -187,11 +162,8 @@ def launch(
 def _smoke_test_published_base(
     bottle: FirecrackerBottle, agent_base: Path, smoke_test: tuple[str, ...],
 ) -> None:
-    """Run the provider's smoke test once in the first bottle booted from a
-    prepared published ext4, as docker does after a pull. Images built here
-    are smoke-tested before export; a published ext4 can only be run by
-    booting it, so the first launch does it and a `.smoked` marker skips it
-    after that."""
+    """Run the provider's smoke test in the first bottle booted from a
+    published ext4; a `.smoked` marker skips it after that."""
     marker = agent_base.with_suffix(".smoked")
     if not smoke_test or not agent_base.is_file() or marker.is_file():
         return
@@ -203,13 +175,11 @@ def _smoke_test_published_base(
 
 
 def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
-    """The agent's base: a rootfs dir or a prepared ext4 file, which
-    `util.make_bottle_rootfs` turns into this bottle's disk. In order: a
-    committed snapshot (freeze/migrate) resumed from the freezer's tar; the
-    release-pinned published ext4, or an overlay built on the pinned OCI
-    image; else the bottle's Dockerfile, built in the infra VM. A
-    custom agent_provider.dockerfile is built as written, never replaced by
-    the published default for its template."""
+    """The agent base (a rootfs dir or a prepared ext4) for
+    `util.make_bottle_rootfs`, in order: a committed snapshot, the published
+    ext4 or an overlay on the pinned OCI image, else the bottle's Dockerfile
+    built in the infra VM. A custom `agent_provider.dockerfile` is always
+    built."""
     committed = read_committed_image(plan.slug)
     committed_tar = committed_rootfs_path(plan.slug)
     if committed and committed_tar.is_file():
@@ -245,10 +215,9 @@ def build_or_load_agent_base(plan: FirecrackerBottlePlan) -> Path:
 
 
 def _agent_pin(plan: FirecrackerBottlePlan) -> Artifact | None:
-    """The published artifact this bottle's base comes from: the ext4 image,
-    or the OCI image an overlay builds on. None means build the bottle's own
-    Dockerfile; an overlay with no published base fails closed instead of
-    building the default without it."""
+    """The published artifact this base comes from (the ext4, or the OCI image
+    an overlay builds on). None means build the bottle's Dockerfile; an overlay
+    without a published base fails closed."""
     provider = plan.manifest.bottle.agent_provider
     if provider.builds_custom_image:
         return None
@@ -266,7 +235,7 @@ def _agent_pin(plan: FirecrackerBottlePlan) -> Artifact | None:
 
 
 def _cached_agent_base(plan: FirecrackerBottlePlan) -> Path | None:
-    """The cached base `build_or_load_agent_base` would produce, or None."""
+    """The cached base `build_or_load_agent_base` would use, or None."""
     pin = _agent_pin(plan)
     if pin is None:
         return image_builder.cached_agent_rootfs_dir(
@@ -281,7 +250,7 @@ def _cached_agent_base(plan: FirecrackerBottlePlan) -> Path | None:
 
 
 def stale_checks(plan: FirecrackerBottlePlan) -> None:
-    """Raise when the cached base selected by this plan is stale."""
+    """Raise when the selected cached base is stale."""
     if plan.spec.image_policy not in ("cached", "prefer-cached"):
         return
     committed = read_committed_image(plan.slug)
@@ -295,23 +264,20 @@ def stale_checks(plan: FirecrackerBottlePlan) -> None:
         check_stale_path(f"agent rootfs {cached}", marker)
 
 
-# --- agent guest env -------------------------------------------------
+# --- agent guest env ---
 
 def _agent_guest_env(plan: FirecrackerBottlePlan, host_ip: str) -> dict[str, str]:
-    """Env injected into every agent/exec call over SSH. The VM has no
-    baked process env (it just runs init), so the proxy/CA/git/supervise
-    wiring is applied per-invocation."""
-    # Carries the identity token as proxy credentials (set in `launch`).
+    """Env for every agent and exec call over SSH, since the VM has no process
+    env."""
+    # Carries the identity token (set in `launch`).
     proxy_url = plan.agent_proxy_url or f"http://{host_ip}:{plan.settings.infra.egress_port}"
     no_proxy = f"localhost,127.0.0.1,{host_ip}"
     env: dict[str, str] = {
         "HTTPS_PROXY": proxy_url, "HTTP_PROXY": proxy_url,
         "https_proxy": proxy_url, "http_proxy": proxy_url,
         "NO_PROXY": no_proxy, "no_proxy": no_proxy,
-        # Rootfs export can leave Git's implicit XDG paths unreadable even
-        # after the runtime repair. Bypass that discovery and name the
-        # provisioned global config explicitly so insteadOf can never fall
-        # through to the credential-bearing upstream URL.
+        # Name the global gitconfig explicitly so the insteadOf rules always
+        # apply.
         "GIT_CONFIG_GLOBAL": f"{plan.guest_home}/.gitconfig",
         "NODE_EXTRA_CA_CERTS": AGENT_CA_PATH,
         "SSL_CERT_FILE": AGENT_CA_BUNDLE,
@@ -327,7 +293,6 @@ def _agent_guest_env(plan: FirecrackerBottlePlan, host_ip: str) -> dict[str, str
         key, _, value = entry.partition("=")
         env[key] = value
     env.update(plan.agent_provision.guest_env)
-    # Forwarded env carries resolved values; the VM can't inherit them from
-    # a `docker run --env NAME`.
+    # Forwarded values, passed explicitly.
     env.update(plan.forwarded_env)
     return env

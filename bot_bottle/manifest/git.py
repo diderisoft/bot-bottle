@@ -1,4 +1,4 @@
-"""Git-related manifest dataclasses and helpers."""
+"""Git manifest dataclasses and helpers."""
 
 from __future__ import annotations
 
@@ -7,9 +7,7 @@ from dataclasses import dataclass
 
 from .util import ManifestError, as_json_object
 
-# Shell-safe characters for git-gate repo names. Names are embedded in
-# the generated entrypoint shell script (shlex.quote is the primary
-# defence; this regex is belt-and-suspenders and documents intent).
+# Shell-safe repo names (they appear in generated scripts, also quoted).
 _GIT_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 _KEY_PROVIDERS = {"static", "gitea"}
@@ -24,9 +22,8 @@ def _opt_str(value: object, label: str) -> str:
 
 
 def parse_git_upstream(url: str, label: str) -> tuple[str, str, str, str]:
-    """Parse `ssh://user@host[:port]/path` into (user, host, port, path).
-    Dies if `url` doesn't match the ssh:// shape v1 supports. Default
-    port is 22 (matches OpenSSH)."""
+    """Parse `ssh://user@host[:port]/path` into (user, host, port, path); port
+    defaults to 22. Raises for any other shape."""
     if not url.startswith("ssh://"):
         raise ManifestError(f"{label} must be an ssh:// URL (was {url!r})")
     rest = url[len("ssh://"):]
@@ -71,17 +68,9 @@ def validate_unique_git_names(bottle_name: str, git: tuple[ManifestGitEntry, ...
 
 @dataclass(frozen=True)
 class ManifestKeyConfig:
-    """Configuration for a repo's SSH key in git-gate.repos.
-
-    `provider` is either `"static"` (a pre-existing key on the host) or
-    `"gitea"` (automatic deploy-key lifecycle via the Gitea API).
-
-    For `static`: `path` is the host-side absolute path to the SSH private key.
-
-    For `gitea`: `forge_token_env` is the name of a host-side env var
-    carrying the Gitea API token; the value is read at provision time,
-    never stored on the plan. `api_url` is the forge's HTTP API root; if
-    empty, it is derived from the upstream URL's host at provision time."""
+    """A repo's SSH key: `provider` `static` (`path`, a host key file) or
+    `gitea` (a deploy key via the API; `forge_token_env` names the token's host
+    var, read at provision time; `api_url` defaults from the upstream host)."""
 
     provider: str
     path: str = ""
@@ -91,21 +80,12 @@ class ManifestKeyConfig:
 
 @dataclass(frozen=True)
 class ManifestGitEntry:
-    """One upstream the per-agent git-gate is allowed to
-    talk to. `Upstream` is the real remote URL the agent would push to
-    if there were no gate; the gate hosts a bare repo at /git/<Name>.git
-    and `IdentityFile` is the SSH key the gate uses to push that repo
-    upstream after gitleaks passes. The agent itself never holds the
-    upstream credential.
+    """One upstream the git-gate may reach. `Upstream` is the real remote; the
+    gate hosts `/git/<Name>.git` and pushes upstream with `IdentityFile` after
+    the scans. The URL is parsed once into the `Upstream*` fields.
 
-    The Upstream URL is parsed once at construction and the pieces are
-    stashed in the `Upstream*` fields so the git-gate render step
-    doesn't have to re-parse.
-
-    Manifest source: `git-gate.repos.<Name>`. A `key`
-    block is required; `key.provider` is `"static"` or `"gitea"`. For
-    `static`, `IdentityFile` is populated at parse time from `key.path`.
-    For `gitea`, `IdentityFile` is populated at provision time."""
+    From `git-gate.repos.<Name>`. `IdentityFile` comes from `key.path` for
+    `static`, or at provision time for `gitea`."""
 
     Name: str
     Upstream: str
@@ -122,11 +102,8 @@ class ManifestGitEntry:
     def from_repos_entry(
         cls, bottle_name: str, repo_name: str, raw: object
     ) -> "ManifestGitEntry":
-        """Parse one entry from `git-gate.repos.<repo_name>`.
-
-        YAML keys: `url` (required), `key` (required object with
-        `provider`, and provider-specific fields), `host_key` (optional).
-        The repo_name becomes `Name`."""
+        """Parse `git-gate.repos.<repo_name>`: `url` and `key` required,
+        `host_key` optional."""
         if not repo_name:
             raise ManifestError(
                 f"bottle '{bottle_name}' git-gate.repos has an empty key"
@@ -237,15 +214,8 @@ def _parse_key_config(
 
 @dataclass(frozen=True)
 class ManifestGitUser:
-    """Per-bottle `git config --global user.name` / `user.email`
-    pair. The agent's commits inside the bottle are
-    attributed to this identity rather than the agent image's
-    image-baked default (no user, or whatever the image dropped
-    in). Either or both fields can be set independently.
-
-    `from_dict` is forgiving on shape (a single missing field is
-    fine — we just skip that config line at provisioning) but
-    strict on types (string-or-die)."""
+    """The bottle's `git config --global` user.name/email; either may be set.
+    Loose on shape, strict on types."""
 
     name: str = ""
     email: str = ""

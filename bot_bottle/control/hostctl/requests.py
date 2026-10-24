@@ -1,11 +1,7 @@
-"""Put an agent's pending requests in its session's status bar (PRD 0094).
-
-While bottles run, a thread polls the orchestrator for pending supervise
-proposals and sets each held session's `@bb_request` tmux option to a one-
-line summary ("pi wants GET, POST api.stripe.com"), or clears it. The status
-bar shows it in copper with the key that opens the review popup
-(`bot-bottle approve`). tmux draws it outside the agent's pane, so the agent
-can't fake or hide it.
+"""Show agents' pending requests in their session status bars. A thread polls
+the orchestrator and sets each held session's `@bb_request` tmux option to a
+one-line summary, drawn outside the agent's pane where the agent can't fake or
+hide it.
 """
 
 from __future__ import annotations

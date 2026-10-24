@@ -1,13 +1,7 @@
-"""Run the orchestrator control plane as a plain process.
+"""Run the orchestrator control plane.
 
-    BOT_BOTTLE_ORCHESTRATOR_TOKEN=<signing-key> \
+    BOT_BOTTLE_ORCHESTRATOR_TOKEN=<signing-key> \\
         python -m bot_bottle.orchestrator --db PATH [--host H] [--port P]
-
-The PRD sequences the orchestrator as a plain-process dev-harness first, so
-the consolidation core (registry + attribution + HTTP control plane + live
-reload) can be exercised with fast iteration, decoupled from any VM /
-container packaging. Wrapping this exact service in a backend-native unit
-(docker container, then Firecracker VM) comes later.
 """
 
 from __future__ import annotations
@@ -41,10 +35,8 @@ def main(argv: list[str] | None = None) -> int:
 
     registry = RegistryStore(args.db)
     registry.migrate()
-    # One DB per host: the supervise queue + audit tables live in the SAME
-    # SQLite file the registry owns, so the control plane is the single
-    # source of truth. The in-VM supervise daemon writes here; the host
-    # operator reaches it over HTTP (never a second, disconnected DB).
+    # One DB per host: the supervise and audit tables share the registry's
+    # file.
     StoreManager(registry.db_path).migrate()
 
     orchestrator = OrchestratorCore(registry)

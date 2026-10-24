@@ -1,8 +1,5 @@
-"""Per-host orchestrator configuration store (settings in bot-bottle.db).
-
-Co-tenants the shared `bot-bottle.db` via the `DbStore` framework.  Settings
-are readable by the host launch path directly (no HTTP round-trip to the
-orchestrator), so they take effect even before the orchestrator is reachable.
+"""Orchestrator settings in the host DB, readable by the host launch path
+directly.
 """
 
 from __future__ import annotations
@@ -73,11 +70,9 @@ class OrchestratorConfigStore(DbStore):
 
 
 def resolve_teardown_timeout(db_path: Path) -> float:
-    """Return the teardown timeout to use, in priority order:
-
-    1. ``BOT_BOTTLE_ORCHESTRATOR_TEARDOWN_TIMEOUT_SECONDS`` env var
-    2. ``teardown_timeout_seconds`` in the orchestrator config DB
-    3. ``DEFAULT_TEARDOWN_TIMEOUT_SECONDS`` (30 s)
+    """The teardown timeout:
+    `BOT_BOTTLE_ORCHESTRATOR_TEARDOWN_TIMEOUT_SECONDS`, else the stored value,
+    else `DEFAULT_TEARDOWN_TIMEOUT_SECONDS` (30 s).
     """
     raw = os.environ.get(TEARDOWN_TIMEOUT_ENV, "").strip()
     if raw:

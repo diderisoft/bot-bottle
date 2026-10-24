@@ -1,13 +1,9 @@
-"""Bring in a journal segment from another host or a backup.
+"""Import a journal segment from another host or a backup.
 
-An imported segment is kept verbatim and never grafted onto the local chain:
-rewriting its `prev` would change every hash after it. It goes under
-`imported/<host>/<chain>/`, keeping its own `host`, `id`, `epoch` and `seq`, so
-it stays attributable and verifiable on its own.
-
-A segment whose first `prev` is the head of a chain already imported from that
-host extends that chain. Anything else starts a new one, named after the hash
-of its first record.
+Segments are stored verbatim under `imported/<host>/<chain>/`, never grafted
+onto the local chain, so they stay verifiable on their own. One whose first
+`prev` is the head of an imported chain from that host extends it; otherwise it
+starts a chain named after its first record's hash.
 """
 
 from __future__ import annotations
@@ -34,8 +30,8 @@ class AuditImportError(Exception):
 class ImportResult:
     chain: Path
     records: int
-    extended: bool          # continued a chain already imported
-    already_imported: bool  # the same segment was imported before
+    extended: bool  # continued an imported chain
+    already_imported: bool  # imported before
 
 
 def _records(source: Path) -> list[tuple[dict[str, Any], str]]:

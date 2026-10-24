@@ -1,10 +1,7 @@
-"""The optional user service that keeps the host controller running across
-reboots: a launchd LaunchAgent on macOS, a `systemd --user` unit
-on Linux. Nothing requires it; without it the CLI starts the daemon on demand.
-
-The unit runs the daemon from the package that installed it, with that
-CLI's PATH and bot-bottle root, since service managers start with a minimal
-environment. A deliberate stop (exit 0) isn't restarted; a crash is.
+"""The optional user service keeping the host controller up across reboots: a
+launchd LaunchAgent on macOS, a `systemd --user` unit on Linux. Without it the
+CLI starts the daemon on demand. The unit runs the installing package with that
+CLI's PATH and root. A clean exit isn't restarted; a crash is.
 """
 
 from __future__ import annotations
@@ -93,8 +90,7 @@ def render_systemd(spec: ServiceSpec) -> str:
 
 
 def installed() -> bool:
-    """True if a unit is installed for this bot-bottle root (a unit for
-    another root runs a different daemon)."""
+    """True if a unit is installed for this root."""
     try:
         path = unit_path()
         if not path.is_file():

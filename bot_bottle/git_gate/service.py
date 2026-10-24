@@ -1,14 +1,5 @@
-"""The `GitGate` host-side service.
-
-The git-gate fronts a bottle's declared git upstreams as a transparent mirror:
-a `pre-receive` hook gitleaks-scans pushes and forwards clean refs to the real
-upstream with a gate-resident credential; an `--access-hook` refreshes from the
-upstream before fetches. The agent never sees the upstream credential.
-
-`GitGate` is the host-side service the backend drives at launch: build the plan
-(`prepare`), provision / revoke the per-upstream deploy keys, and preflight the
-upstream host keys. The rendering it emits + the in-gateway hook execution live
-in `bot_bottle.control.git_gate_render`.
+"""The `GitGate` host service the backend drives at launch: build the plan,
+provision and revoke deploy keys, and check upstream host keys.
 """
 
 from __future__ import annotations
@@ -35,10 +26,9 @@ from . import host_key as _host_key
 def stage_git_gate_scripts(
     stage_dir: Path, upstreams: tuple[GitGateUpstream, ...],
 ) -> tuple[Path, Path, Path, Path]:
-    """Render the git-gate entrypoint, pre-receive hook, access hook and
-    gitleaks config from the current code into `stage_dir`, returning their
-    paths in that order. Used at launch and when a restarted gateway is
-    re-provisioned, so both always install current hooks."""
+    """Render the entrypoint, pre-receive hook, access hook and gitleaks config
+    from the current code into `stage_dir`; returns their paths in that order.
+    Used at launch and on re-provision."""
     entrypoint = stage_dir / "git_gate_entrypoint.sh"
     entrypoint.write_text(git_gate_render_entrypoint(upstreams))
     entrypoint.chmod(0o600)
@@ -47,11 +37,8 @@ def stage_git_gate_scripts(
     hook.chmod(0o600)
     access_hook = stage_dir / "git_gate_access_hook.sh"
     access_hook.write_text(git_gate_render_access_hook())
-    # 0o700 (not 0o600): git daemon execs --access-hook directly, not via
-    # `sh`, so the script needs the x bit. The gateway copy does not
-    # necessarily preserve this mode (`docker cp` does, the Apple `container
-    # cp` does not), so provisioning re-applies +x on the gateway side — see
-    # backend/provision_gateway.py.
+    # Executable: the hook is exec'd directly. Provisioning re-applies +x in
+    # the gateway (see `backend/provision_gateway.py`).
     access_hook.chmod(0o700)
     gitleaks_config = stage_dir / "git_gate_gitleaks.toml"
     gitleaks_config.write_text(git_gate_render_gitleaks_config())
@@ -59,23 +46,12 @@ def stage_git_gate_scripts(
     return entrypoint, hook, access_hook, gitleaks_config
 
 class GitGate:
-    """The per-agent git-gate host-side service. Stateless — the backend's
-    launch step drives `prepare` → `provision_dynamic_keys` and, at teardown,
-    `revoke_provisioned_keys`; `preflight_host_keys` gates a launch on the
-    upstream host keys being known."""
+    """The stateless git-gate host service."""
 
     def prepare(self, bottle: ManifestBottle, slug: str, stage_dir: Path) -> GitGatePlan:
-        """Compute the upstream table from `bottle.git` and write the
-        entrypoint, pre-receive hook, and access-hook scripts (mode 600) under
-        `stage_dir`. Pure host-side, no docker subprocess.
-
-        For `gitea` key entries, the returned upstream intentionally has an
-        empty identity file. Backend launch fills that in after the operator
-        confirms the preflight.
-
-        Returned plan is incomplete: the launch step must fill
-        `internal_network` / `egress_network` via `dataclasses.replace` before
-        passing the plan to `.start`."""
+        """Compute the upstream table from `bottle.git` and write the scripts
+        under `stage_dir`. No side effects beyond the files. gitea upstreams
+        get their identity file at launch."""
         upstreams = git_gate_upstreams_for_bottle(bottle)
         entrypoint, hook, access_hook, gitleaks_config = stage_git_gate_scripts(
             stage_dir, upstreams)
@@ -114,23 +90,21 @@ class GitGate:
         self, bottle: ManifestBottle, plan: GitGatePlan, stage_dir: Path,
         secrets: SecretSource,
     ) -> GitGatePlan:
-        """Mint the `gitea` upstreams' ephemeral deploy keys via the forge API
-        (forge tokens from `secrets`) and return the plan with their identity
-        files filled in."""
+        """Mint the gitea deploy keys (forge tokens from `secrets`) and return
+        the plan with their identity files."""
         return _provision.provision_git_gate_dynamic_keys(bottle, plan, stage_dir, secrets)
 
     def revoke_provisioned_keys(
         self, bottle: ManifestBottle, stage_dir: Path, secrets: SecretSource,
     ) -> None:
-        """Revoke every deploy key provisioned for `bottle` (teardown)."""
+        """Revoke every deploy key provisioned for `bottle`."""
         _provision.revoke_git_gate_provisioned_keys(bottle, stage_dir, secrets)
 
     def preflight_host_keys(
         self, manifest: Manifest, *, headless: bool, home_md: Path | None,
     ) -> Manifest:
-        """Ensure every git-gate upstream has a known host key, populating
-        missing ones (or erroring in headless mode). Returns the manifest,
-        possibly updated with fetched keys."""
+        """Ensure every upstream has a host key (fetching, or failing
+        headless). Returns the possibly updated manifest."""
         return _host_key.preflight_host_keys(
             manifest, headless=headless, home_md=home_md,
         )

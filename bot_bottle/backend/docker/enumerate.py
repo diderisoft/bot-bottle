@@ -1,12 +1,5 @@
-"""Active-agent enumeration for the docker backend.
-
-Returns `ActiveAgent` records the CLI `active` command and the
-dashboard agents pane consume. Docker query failures raise rather
-than masquerading as an authoritative empty result.
-
-The parser (`_parse_services_by_project`) is exposed for direct
-unit testing; the docker `docker ps` invocation is in
-`_query_services_by_project`."""
+"""Active-agent listing for the docker backend. Query failures raise rather
+than read as an empty result."""
 
 from __future__ import annotations
 
@@ -18,7 +11,7 @@ from .compose import compose_project_name, list_active_slugs
 
 
 def enumerate_active() -> list[ActiveAgent]:
-    """All currently-running docker-backed agents."""
+    """All running docker agents."""
     slugs = list_active_slugs(
         include_stopped=False,
         warn_on_error=False,
@@ -45,10 +38,8 @@ def enumerate_active() -> list[ActiveAgent]:
 
 
 def _parse_services_by_project(stdout: str) -> dict[str, set[str]]:
-    """Parse `docker ps` output formatted as
-    `<project-label>\\t<service-label>` (one line per container)
-    into a `{project: {service, ...}}` mapping. Pure function for
-    testing — the docker invocation is in `_query_services_by_project`."""
+    """Parse `docker ps` lines of `<project>\\t<service>` into `{project:
+    {service, ...}}`."""
     out: dict[str, set[str]] = {}
     for line in stdout.splitlines():
         project, _, service = line.partition("\t")
@@ -59,9 +50,7 @@ def _parse_services_by_project(stdout: str) -> dict[str, set[str]]:
 
 
 def _query_services_by_project() -> dict[str, set[str]]:
-    """One `docker ps` call → `{project: {service, ...}}`. Used
-    by the CLI's `active` and the dashboard's agents pane —
-    one subprocess per refresh tick, not one per bottle."""
+    """One `docker ps` call -> `{project: {service, ...}}`."""
     try:
         r = subprocess.run(
             [
@@ -75,7 +64,7 @@ def _query_services_by_project() -> dict[str, set[str]]:
             capture_output=True, text=True, check=False,
         )
     except OSError as exc:
-        # Missing, or on PATH but not executable by this user (PermissionError).
+        # Missing, or not executable by this user.
         raise EnumerationError(f"docker ps failed: docker unavailable ({exc})") from exc
     if r.returncode != 0:
         raise EnumerationError(f"docker ps failed: {r.stderr.strip()}")

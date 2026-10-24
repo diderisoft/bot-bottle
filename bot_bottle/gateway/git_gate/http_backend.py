@@ -1,19 +1,11 @@
-"""Tiny smart-HTTP wrapper for git-gate repos.
+"""git-gate's smart-HTTP server: serves the bare repos through `git
+http-backend`, so pre-receive and upstream forwarding stay the enforcement
+point.
 
-Used where `git://` push traffic over a host-published Docker port can
-hang before receive-pack reaches hooks (e.g. the firecracker backend,
-where the guest reaches the gateway over the point-to-point TAP). The
-wrapper serves the same `/git/*.git` bare repos through
-`git http-backend`, so pre-receive and upstream forwarding remain the
-git-gate enforcement point.
-
-One shared gateway serves every bottle: each request is served
-from the calling bottle's repo namespace (`<root>/<bottle_id>`), attributed
-from the unspoofable source IP via the orchestrator. Per-repo credentials +
-hooks scope by repo directory, so isolating the *root* per bottle isolates
-its creds too. Unattributed clients — and a missing/unreachable orchestrator
-— fail closed (404). `BOT_BOTTLE_ORCHESTRATOR_URL` is mandatory: there is no
-single-tenant flat-root fallback.
+Each request is served from the calling bottle's namespace
+(`<root>/<bottle_id>`), attributed through the orchestrator. Credentials and
+hooks live per repo, so separate roots keep each bottle's credentials apart.
+Unattributed clients or an unreachable orchestrator get 404.
 """
 
 from __future__ import annotations
@@ -39,20 +31,15 @@ from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolve
 
 DEFAULT_PORT = GIT_HTTP_PORT
 
-# The per-host orchestrator control plane the backend attributes each request
-# to, serving from the *calling* bottle's repo namespace selected by source IP.
-# Mandatory — the same env the egress addon requires; there is no single flat
-# repo-root fallback.
+# The orchestrator each request is attributed through. Mandatory.
 ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
 
-# The base under which each bottle's `<bottle_id>` repo namespace is nested.
+# Base under which each `<bottle_id>` namespace is nested.
 DEFAULT_REPO_ROOT = "/git"
 
 
 class ResolverLike(typing.Protocol):
-    """Structural type for the resolver `resolve_sandbox_root` needs — just
-    `resolve_bottle_id`. A Protocol so tests can pass a fake without
-    importing PolicyResolver (mirrors egress_addon_core.PolicyResolverLike)."""
+    """What `resolve_sandbox_root` needs from a resolver."""
 
     def resolve_bottle_id(
         self, source_ip: str, identity_token: str = ...,
@@ -65,24 +52,21 @@ def resolve_sandbox_root(
     source_ip: str,
     identity_token: str = "",
 ) -> Path | None:
-    """The per-sandbox repo root to serve this request from — `base_root/
-    <bottle_id>`, where the sandbox is attributed from the source IP via the
-    orchestrator — or None to deny (404). Fail-closed: an unattributed client, a
-    resolver error, or a namespace that would escape `base_root` all deny, so one
-    sandbox can never reach another's repos."""
+    """`base_root/<bottle_id>` for this request, or None (404) if unattributed,
+    on a resolver error, or if the id would escape `base_root`."""
     try:
         bottle_id = resolver.resolve_bottle_id(source_ip, identity_token)
     except PolicyResolveError:
-        return None  # orchestrator unreachable/errored → deny
+        return None  # orchestrator error: deny
     if not bottle_id:
-        return None  # unattributed → deny
+        return None  # unattributed: deny
     base = base_root.resolve()
     namespace = (base / bottle_id).resolve()
     if base not in namespace.parents:
-        return None  # bottle_id tried to escape the root → deny
+        return None  # escapes the root: deny
     return namespace
 
-# Bound memory use while still allowing ordinary git push packfiles.
+# Bounds memory while allowing ordinary push packfiles.
 MAX_BODY_BYTES = 100 * 1024 * 1024
 REQUEST_BODY_TIMEOUT_SECONDS = 30.0
 MAX_REQUEST_WORKERS = 16
@@ -100,20 +84,19 @@ class GitHttpHandler(BaseHTTPRequestHandler):
         self._run_backend()
 
     def _sandbox_root(self) -> Path | None:
-        """This request's per-sandbox repo root (the calling bottle's source-IP-
-        selected `<base>/<bottle_id>` namespace), or None to deny. `GIT_PROJECT_
-        ROOT` keeps git's own env-var name."""
+        """This request's namespace root, or None to deny. `GIT_PROJECT_ROOT`
+        is git's own env name."""
         base = Path(os.environ.get("GIT_PROJECT_ROOT", DEFAULT_REPO_ROOT))
         resolver = getattr(self.server, "policy_resolver", None)
         if resolver is None:
-            return None  # server started without a resolver (misconfig) → deny
+            return None  # no resolver: deny
         token = self.headers.get(IDENTITY_HEADER, "")
         return resolve_sandbox_root(resolver, base, self.client_address[0], token)
 
     def _run_backend(self) -> None:
         sandbox_root = self._sandbox_root()
         if sandbox_root is None:
-            # Unattributed / resolver error: deny before touching any repo.
+            # Deny before touching any repo.
             self.send_error(404)
             return
         parsed = urlsplit(self.path)
@@ -134,11 +117,8 @@ class GitHttpHandler(BaseHTTPRequestHandler):
                     timeout=GIT_GATE_TIMEOUT_SECS,
                 )
             except (OSError, subprocess.SubprocessError) as exc:
-                # The access-hook couldn't be run (missing, not executable,
-                # timed out, …). Fail closed with a real HTTP error rather
-                # than letting the exception kill the handler thread — an
-                # unhandled exception closes the socket with no response, which
-                # the client sees as an opaque "empty reply from server".
+                # Return a real error if the access hook can't run, rather than
+                # an empty reply from a dead handler thread.
                 self.log_message(
                     "access-hook could not run for %s: %s", parsed.path, exc,
                 )
@@ -178,16 +158,11 @@ class GitHttpHandler(BaseHTTPRequestHandler):
             "SERVER_PORT": str(self.server.server_port),  # type: ignore
             "SERVER_PROTOCOL": self.request_version,
         })
-        # Attribute the gitleaks-allow supervise proposal (queued by
-        # receive-pack's pre-receive hook, a child of the CGI we spawn below) to
-        # the calling bottle. The hook queues over the control-plane RPC, which
-        # re-resolves the bottle from these — the same
-        # (source_ip, identity_token) pair that selected the namespaced root
-        # above — so it can only ever queue its own proposals.
+        # Lets the pre-receive hook attribute any gitleaks-allow proposal to
+        # the same (source_ip, identity_token) that picked the namespace.
         env["SUPERVISE_SOURCE_IP"] = self.client_address[0]
         env["SUPERVISE_IDENTITY_TOKEN"] = self.headers.get(IDENTITY_HEADER, "")
-        # The namespace is the calling bottle's id; the hook's audit events
-        # name it.
+        # The namespace is the bottle id; the hook's audit events name it.
         env["GIT_GATE_BOTTLE"] = sandbox_root.name
         for header, variable in (
             ("accept", "HTTP_ACCEPT"),
@@ -293,8 +268,7 @@ def main() -> int:
     port = int(os.environ.get("GIT_HTTP_PORT", str(DEFAULT_PORT)))
     orch_url = os.environ.get(ORCHESTRATOR_URL_ENV, "").strip()
     if not orch_url:
-        # Resolver-only: without an orchestrator the backend can't attribute a
-        # request to a bottle namespace, so it must not serve (fail-closed).
+        # Without an orchestrator nothing can be attributed: don't serve.
         sys.stderr.write(
             f"git-http: {ORCHESTRATOR_URL_ENV} is required "
             "(no single-tenant flat-root fallback)\n"
@@ -303,8 +277,7 @@ def main() -> int:
     server = BoundedThreadingHTTPServer(
         ("0.0.0.0", port), GitHttpHandler, max_workers=MAX_REQUEST_WORKERS,
     )
-    # Resolve each request's sandbox namespace by source IP against the
-    # orchestrator control plane.
+    # Attribute each request through the orchestrator.
     server.policy_resolver = PolicyResolver(orch_url)  # type: ignore[attr-defined]
     sys.stdout.write(f"git-http listening on 0.0.0.0:{port} (multi-tenant)\n")
     sys.stdout.flush()

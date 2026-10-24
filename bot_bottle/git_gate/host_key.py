@@ -1,11 +1,6 @@
-"""Preflight host-key population for git-gate upstreams.
-
-When a git-gate repo entry lacks a `host_key`, this module either:
-- headless: dies with a clear config error.
-- interactive: fetches the key via ssh-keyscan, prompts the operator to
-  confirm, and optionally persists it to the bottle config file on disk.
-
-Public entry point: `preflight_host_keys(manifest, headless=..., home_md=...)`.
+"""Fill in missing git-gate upstream host keys before launch: headless dies;
+interactive fetches with ssh-keyscan, asks, and can save it to the bottle file.
+Entry point: `preflight_host_keys`.
 """
 
 from __future__ import annotations
@@ -33,17 +28,9 @@ _KEY_TYPE_PREFERENCE = (
 
 
 def fetch_host_key(host: str, port: str) -> str:
-    """Return an SSH public key for `host`:`port` via ssh-keyscan.
-
-    Returns the key in `<type> <base64-data>` format (the host prefix is
-    stripped so the result can be stored in `host_key` and later formatted
-    into a known_hosts line by `git_gate_known_hosts_line`).
-
-    Prefers ed25519 > ecdsa > rsa; falls back to the first key type
-    returned if none of the preferred types are present.
-
-    Raises `RuntimeError` on subprocess failure, timeout, or no result.
-    Uses only the Python stdlib (subprocess)."""
+    """An SSH public key for `host`:`port` from ssh-keyscan, as `<type>
+    <data>`. Prefers ed25519, then ecdsa, then rsa, else the first returned.
+    Raises `RuntimeError` on failure, timeout or no result."""
     args = ["ssh-keyscan"]
     if port and port != "22":
         args += ["-p", port]
@@ -59,8 +46,8 @@ def fetch_host_key(host: str, port: str) -> str:
     except subprocess.TimeoutExpired as e:
         raise RuntimeError(f"ssh-keyscan timed out for {host}:{port}") from e
 
-    # known_hosts format: "[host]:port type data"  or  "host type data"
-    # Strip the host/port prefix; collect "type -> type data" by type.
+    # known_hosts lines are "[host]:port type data" or "host type data"; strip
+    # the host and keep "type data" by type.
     found: dict[str, str] = {}
     for line in result.stdout.splitlines():
         line = line.strip()
@@ -82,19 +69,13 @@ def fetch_host_key(host: str, port: str) -> str:
     )
 
 
-# ---------------------------------------------------------------------------
-# Frontmatter editing
-# ---------------------------------------------------------------------------
+# --- Frontmatter editing ---
 
 
 def add_host_key_to_frontmatter(file_text: str, repo_name: str, host_key: str) -> str:
-    """Return an updated copy of `file_text` with `host_key` set on the
-    named repo entry in the YAML frontmatter.
-
-    Parses the frontmatter into a dict, sets the key, and re-serializes.
-    Returns the original text unchanged when: the file has no frontmatter,
-    the git-gate.repos.<repo_name> entry is absent or already has a
-    host_key, or the frontmatter cannot be parsed."""
+    """`file_text` with `host_key` set on `git-gate.repos.<repo_name>`.
+    Unchanged when there's no frontmatter, no such entry, an existing key, or a
+    parse failure."""
     try:
         fm, body = parse_frontmatter(file_text)
     except YamlSubsetError:
@@ -117,8 +98,8 @@ def add_host_key_to_frontmatter(file_text: str, repo_name: str, host_key: str) -
 
 
 def find_repo_bottle_file(bottles_dir: Path, repo_name: str) -> Path | None:
-    """Return the first `bottles_dir/*.md` that declares `repo_name` without
-    a `host_key`, without modifying anything.  Returns None if not found."""
+    """The first `bottles_dir/*.md` declaring `repo_name` without a `host_key`,
+    or None."""
     if not bottles_dir.is_dir():
         return None
     for path in sorted(bottles_dir.glob("*.md")):
@@ -143,10 +124,8 @@ def find_repo_bottle_file(bottles_dir: Path, repo_name: str) -> Path | None:
 def find_and_update_bottle_file(
     bottles_dir: Path, repo_name: str, host_key: str,
 ) -> bool:
-    """Write `host_key` into the bottle file returned by `find_repo_bottle_file`.
-
-    Returns True on success, False when no suitable file is found or the
-    write fails."""
+    """Write `host_key` into that file. False when none is found or the write
+    fails."""
     path = find_repo_bottle_file(bottles_dir, repo_name)
     if path is None:
         return False
@@ -162,9 +141,7 @@ def find_and_update_bottle_file(
     return True
 
 
-# ---------------------------------------------------------------------------
-# Interactive prompt helper
-# ---------------------------------------------------------------------------
+# --- Interactive prompt ---
 
 
 def prompt_tty(message: str) -> str:
@@ -178,14 +155,12 @@ def prompt_tty(message: str) -> str:
         return sys.stdin.readline().rstrip("\n")
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+# --- Public API ---
 
 
 def with_host_keys(manifest: Manifest, keys: Mapping[str, str]) -> Manifest:
-    """`manifest` with each repo that has no host key given the one in
-    `keys` (repo name -> key), if any."""
+    """`manifest` with host keys from `keys` (repo name -> key) filled in where
+    missing."""
     bottle = manifest.bottle
     entries = tuple(
         dataclasses.replace(e, KnownHostKey=keys[e.Name])
@@ -203,18 +178,9 @@ def preflight_host_keys(
     headless: bool,
     home_md: Path | None,
 ) -> Manifest:
-    """Ensure every git-gate repo entry has a `host_key` configured.
-
-    For entries whose `KnownHostKey` is empty:
-    - headless: calls `die()` with a clear message naming the repos.
-    - interactive: fetches the key via ssh-keyscan, shows it to the
-      operator, and requests confirmation.  If accepted, optionally
-      persists it to the bottle config file on disk; the key is always
-      applied in memory for this launch regardless of the persistence
-      choice.  Aborted confirmation calls `die()`.
-
-    Returns a (possibly updated) Manifest.  If all entries already have
-    host keys the original manifest is returned unchanged."""
+    """Ensure every git-gate repo has a `host_key`. Missing ones: headless dies
+    naming them; interactive fetches, shows and asks (abort dies), always
+    applying it for this launch and optionally saving it. Returns the manifest."""
     bottle = manifest.bottle
     missing = [e for e in bottle.git if not e.KnownHostKey]
     if not missing:

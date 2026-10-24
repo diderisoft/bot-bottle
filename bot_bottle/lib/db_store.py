@@ -1,4 +1,4 @@
-"""Shared SQLite-backed store base class for bot-bottle."""
+"""SQLite store base class."""
 
 from __future__ import annotations
 
@@ -12,11 +12,12 @@ from .migrations import TableMigrations
 
 
 class DbVersionError(Exception):
-    """Raised when the on-disk schema is behind the current migration list."""
+    """The on-disk schema is behind the migration list."""
 
 
 class DbStore:
-    """Base for SQLite-backed stores. Subclasses resolve db_path then call super().__init__."""
+    """Base for SQLite stores; subclasses resolve db_path, then call
+    super().__init__."""
 
     def __init__(self, db_path: Path, migrations: TableMigrations) -> None:
         self.db_path = db_path
@@ -39,11 +40,8 @@ class DbStore:
             raise PermissionError(f"database directory is not mode 0700: {parent}")
 
     def _secure_db_file(self) -> None:
-        """Create the database without a permissive filesystem window.
-
-        SQLite otherwise creates a missing database using the process umask.
-        This store contains control-plane identity tokens, so both creation and
-        repair are fail-closed rather than best-effort.
+        """Create the database with no permissive window (SQLite would use the
+        umask). It holds identity tokens, so creation and repair fail closed.
         """
         flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
         fd = os.open(
@@ -65,7 +63,7 @@ class DbStore:
             os.close(fd)
 
     def _secure_open_file(self, fd: int) -> None:
-        """Pin, validate, and secure an opened database filesystem object."""
+        """Pin, validate and secure an opened database file."""
         file_stat = os.fstat(fd)
         if not stat.S_ISREG(file_stat.st_mode):
             raise PermissionError(
@@ -91,7 +89,7 @@ class DbStore:
             conn.close()
 
     def is_migrated(self) -> bool:
-        """Return True if the DB is fully up-to-date, False if migration is needed."""
+        """True if the DB is up to date."""
         if not self.db_path.exists():
             return False
         try:
@@ -106,7 +104,7 @@ class DbStore:
         return version == len(self._migrations.migrations)
 
     def migrate(self) -> None:
-        """Apply any pending migrations to the already-secured DB file."""
+        """Apply pending migrations."""
         with self._connection() as conn:
             self._migrations.apply(conn)
 

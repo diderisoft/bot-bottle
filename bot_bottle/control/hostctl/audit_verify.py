@@ -1,28 +1,17 @@
-"""Offline check of the audit journal's hash chain.
+"""Offline check of the audit journal's hash chain, from the segment files
+alone. Reports:
 
-Needs only the segment files: every record's `hash` is recomputed and
-checked against the next record's `prev`, across segment seams, so an edit,
-deletion or reorder shows up at the record where the chain breaks.
-
-What it reports, and what each one means:
-
-- `truncated-tail`: the last segment ends in a partial line, or the writer
-  recorded cutting one (an `audit.truncation_detected` record with cause
-  `torn_tail`). A crash mid-append, not tampering.
+- `truncated-tail`: a partial last line, or a recorded `torn_tail` cut. A
+  crash, not tampering.
 - `unreadable`: a complete line that isn't a JSON record.
-- `edited`: a record no longer hashes to its own `hash`.
-- `gap`: records are missing from inside an epoch (`seq` skipped forward,
-  and never goes back).
-- `chain-break`: `prev` doesn't match the record before it, for any other
-  reason (a reorder, an insert, records missing across an epoch boundary).
+- `edited`: a record no longer hashes to its `hash`.
+- `gap`: `seq` skips forward within an epoch.
+- `chain-break`: `prev` doesn't match for any other reason (reorder, insert,
+  loss across epochs).
 
-After a break, checking continues from the broken record's own `hash`, so one
-pass finds every break rather than only the first.
-
-A chain doesn't record its own length, so a cut that removes whole records
-from the end of the newest segment leaves a valid, shorter chain. Catching
-that needs the head anchored somewhere else (an exporter's cursor, or the
-external anchoring planned as a follow-up).
+Checking continues past a break, so one pass finds them all. Whole records cut
+from the end of the newest segment leave a valid shorter chain; catching that
+needs the head anchored elsewhere (an exporter's cursor).
 """
 
 from __future__ import annotations
@@ -52,14 +41,14 @@ class VerifyReport:
     segments: int = 0
     records: int = 0
     head: str = ""
-    # `prev` of the first record. Empty for a chain that starts at genesis;
-    # set when older segments were pruned and the journal starts mid-chain.
+    # `prev` of the first record: empty at genesis, set when older segments
+    # were pruned.
     starts_after: str = ""
     problems: list[Problem] = field(default_factory=list)
 
     @property
     def breaks(self) -> list[Problem]:
-        """Problems that mean the record trail was altered, not just a crash."""
+        """Problems meaning the trail was altered, not just a crash."""
         return [p for p in self.problems if p.kind != "truncated-tail"]
 
     @property
@@ -134,7 +123,7 @@ def verify_segments(segments: list[Path]) -> VerifyReport:
             prev = str(record.get("hash", ""))
             before = record
             report.records += 1
-    # A seq that jumps forward and later comes back is a reorder, not a gap.
+    # A seq that jumps forward and later comes back is a reorder.
     for i, epoch in gap_epochs:
         if epoch in reordered:
             p = report.problems[i]

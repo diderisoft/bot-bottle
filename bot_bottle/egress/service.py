@@ -1,10 +1,6 @@
-"""The `Egress` host-side service.
-
-`Egress` builds a bottle's egress plan at launch: resolve the manifest's egress
-routes, render the gateway's `routes.yaml`, assign per-route token slots, and
-plant the exfil canary. The service also resolves the launch-time token values
-and the agent/gateway env entries the backend injects. The runtime enforcement
-(the mitmproxy addon) lives in `bot_bottle.gateway.egress.addon*`.
+"""The `Egress` host service: build a bottle's egress plan (routes, the
+gateway's `routes.yaml`, token slots, the canary), resolve token values at
+launch, and the env entries backends inject.
 """
 
 from __future__ import annotations
@@ -66,7 +62,7 @@ def _random_canary_env() -> str:
 
 
 def egress_gateway_env_entries(plan: "EgressPlan") -> tuple[str, ...]:
-    """Return gateway env entries needed by egress across all backends."""
+    """Gateway env entries egress needs on every backend."""
     env: list[str] = []
     if plan.routes:
         env.extend(sorted(plan.token_env_map.keys()))
@@ -77,7 +73,7 @@ def egress_gateway_env_entries(plan: "EgressPlan") -> tuple[str, ...]:
 
 
 def egress_agent_env_entries(plan: "EgressPlan") -> tuple[str, ...]:
-    """Return agent-visible egress env entries shared by all backends."""
+    """Agent-visible egress env entries shared by every backend."""
     if plan.canary and plan.canary_env:
         return (f"{plan.canary_env}={plan.canary}",)
     return ()
@@ -135,11 +131,8 @@ def egress_routes_for_bottle(
 def _default_provider_on_match(
     provider_routes: tuple[EgressRoute, ...],
 ) -> tuple[EgressRoute, ...]:
-    """Provider routes (the agent talking to its own LLM API) default to the
-    `redact` on-match policy: high-volume conversation payloads are
-    the worst source of token-shaped false positives, so a match is scrubbed
-    and forwarded rather than hard-blocked or queued for the operator. A
-    provider that sets `outbound_on_match` explicitly keeps its choice."""
+    """Provider routes default to `redact`: conversation payloads produce the
+    most token-shaped false positives. An explicit `outbound_on_match` wins."""
     return tuple(
         r if r.outbound_on_match
         else dataclasses.replace(r, outbound_on_match=ON_MATCH_REDACT)
@@ -183,7 +176,7 @@ def egress_token_env_map(
 
 
 def _yaml_str_escape(s: str) -> str:
-    """Escape a string for use inside a YAML double-quoted scalar."""
+    """Escape a string for a YAML double-quoted scalar."""
     return (
         s.replace("\\", "\\\\")
          .replace('"', '\\"')
@@ -364,9 +357,8 @@ def egress_resolve_token_values(
 
 
 class Egress:
-    """The host-side egress service. The backend drives `prepare` at launch,
-    then `resolve_token_values` to resolve the routes' upstream credentials and
-    `agent_env_entries` for the agent's egress env. Stateless."""
+    """The stateless egress service: `prepare` at launch, then
+    `resolve_token_values` and `agent_env_entries`."""
 
     def prepare(
         self,
@@ -384,9 +376,8 @@ class Egress:
         routes_path.write_text(egress_render_routes(
             routes, log=log, audit_delivery=audit_delivery, firehose=firehose))
         routes_path.chmod(0o600)
-        # Generate a per-session fake secret under a plausible random env name.
-        # The gateway marks that exact env name as sensitive for known-secret
-        # scanning; the agent receives the same name/value as exfil bait.
+        # A per-session fake secret under a random env name: the gateway treats
+        # it as sensitive and the agent gets it as bait.
         canary = secrets.token_urlsafe(32)
         return EgressPlan(
             slug=slug,
@@ -403,10 +394,10 @@ class Egress:
     def resolve_token_values(
         self, token_env_map: dict[str, str], source: SecretSource,
     ) -> dict[str, str]:
-        """Resolve each route's upstream credential from `source` at launch.
-        Raises `MissingEnvVarError` for an unset/empty referenced secret."""
+        """Each route's upstream credential from `source`. Raises
+        `MissingEnvVarError` for an unset or empty secret."""
         return egress_resolve_token_values(token_env_map, source)
 
     def agent_env_entries(self, plan: EgressPlan) -> tuple[str, ...]:
-        """The agent-visible egress env entries (the exfil canary)."""
+        """The agent-visible egress env entries (the canary)."""
         return egress_agent_env_entries(plan)
