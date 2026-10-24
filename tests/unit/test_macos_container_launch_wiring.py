@@ -508,13 +508,18 @@ class TestLaunchIsolationProbe(unittest.TestCase):
         self.assertEqual(["echo probe"], calls)
 
     def test_ipv6_on_the_agent_bridge_stops_the_launch(self) -> None:
+        def probe(*_a: object, **_k: object) -> None:
+            pass
         with self.assertRaises(Die) as cm:
-            self._launch(lambda *_a, **_k: None, _no_provision, ipv6_off=False)
+            self._launch(probe, _no_provision, ipv6_off=False)
         self.assertIn("IPv6", cm.exception.message)
 
     def test_the_probe_also_tests_the_hosts_agent_network_address(self) -> None:
         seen: dict[str, object] = {}
-        self._launch(lambda _g, **kw: seen.update(kw), _no_provision)
+
+        def probe(_run_guest: object, **kwargs: object) -> None:
+            seen.update(kwargs)
+        self._launch(probe, _no_provision)
         self.assertEqual(("192.168.128.1",), seen["host_ips"])
 
     def test_a_leak_stops_the_launch_before_provisioning(self) -> None:
