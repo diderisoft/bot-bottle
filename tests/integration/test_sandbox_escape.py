@@ -121,12 +121,11 @@ class TestSandboxEscape(unittest.TestCase):
                     # renamed gitleaks rule doesn't silently let one
                     # shape through.
                     "env": {**_FAKE_SECRETS, **{k: "?" for k in _HELD_SECRET}},
-                    # Single allowlisted route. Attack 1 reaches for
-                    # `evil.example.com` (not on the list); attack 3
-                    # reaches THIS host with the secret embedded.
-                    "egress": {
-                        "routes": [{"host": "api.anthropic.com"}],
-                    },
+                    # No routes of its own: the Claude provider's
+                    # api.anthropic.com route is the single allowlisted
+                    # host (a bottle may not redeclare it). Attack 1
+                    # reaches for `evil.example.com` (not on the list);
+                    # attack 3 reaches THAT host with the secret embedded.
                     # git-gate daemon so attack 5 can push. Upstream
                     # is intentionally unreachable — the pre-receive
                     # gitleaks hook must reject BEFORE git-gate
