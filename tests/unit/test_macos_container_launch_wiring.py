@@ -7,6 +7,8 @@ Replaces the argv coverage from the per-bottle companion-container era
 
 from __future__ import annotations
 
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +17,8 @@ from typing import cast
 from unittest.mock import ANY, patch
 
 from bot_bottle.contract.hostctl import Settings
+from bot_bottle.backend import BottleImages
+from bot_bottle.backend.macos_container import launch as launch_mod
 from bot_bottle.backend.macos_container.bottle import MacosContainerBottle
 from bot_bottle.backend.macos_container.bottle_plan import MacosContainerBottlePlan
 from bot_bottle.backend.macos_container.consolidated_launch import GatewayEndpoint
@@ -386,6 +390,122 @@ class TestPlanIdentityToken(unittest.TestCase):
         self.assertEqual(
             f"http://bottle:s3cret@{GATEWAY_HOSTNAME}:9099", kwargs["env"]["HTTP_PROXY"],
         )
+
+
+def _replace(obj: object, **changes: object) -> SimpleNamespace:
+    """`dataclasses.replace` for the SimpleNamespace plans these tests use."""
+    return SimpleNamespace(**{**vars(obj), **changes})
+
+
+class _Teardown:
+    """Stands in for LaunchTeardown: closes the stack, revokes nothing."""
+
+    def __init__(self) -> None:
+        self.stack = contextlib.ExitStack()
+
+    def __call__(self) -> None:
+        self.stack.close()
+
+
+class TestLaunchIsolationProbe(unittest.TestCase):
+    """The probe runs after registration, through the bottle's exec, and a
+    leak stops the launch before provisioning (#603)."""
+
+    def setUp(self) -> None:
+        self._tmp = Path(tempfile.mkdtemp(prefix="macos-launch-probe-test."))
+        self.addCleanup(lambda: __import__("shutil").rmtree(self._tmp, ignore_errors=True))
+
+    def _launch(self, probe: object, provision: object) -> list[str]:
+        plan = _replace(
+            _plan(self._tmp),
+            agent_command="claude",
+            agent_prompt_mode="append_file",
+            spec=SimpleNamespace(image_policy="fresh", label="", color="", agent_name="demo"),
+            workspace_plan=SimpleNamespace(workdir="/home/node/workspace"),
+        )
+        order: list[str] = []
+        teardown = _Teardown()
+        ctx = SimpleNamespace(bottle_id="b1", identity_token="tok")
+
+        def register(*_a: object, **_k: object) -> object:
+            order.append("register")
+            return ctx
+
+        def run_probe(run_guest: object, **kwargs: object) -> None:
+            order.append("probe")
+            assert callable(probe)
+            probe(run_guest, **kwargs)
+
+        def run_provision(*args: object) -> None:
+            order.append("provision")
+            assert callable(provision)
+            provision(*args)
+
+        with patch.object(launch_mod, "dataclasses", SimpleNamespace(replace=_replace)), \
+             patch.object(launch_mod, "LaunchTeardown", return_value=teardown), \
+             patch.object(launch_mod, "MacosInfraService"), \
+             patch.object(launch_mod, "ensure_gateway", return_value=_endpoint()), \
+             patch.object(launch_mod, "_provision_git_gate_keys", side_effect=lambda p: p), \
+             patch.object(launch_mod, "_install_gateway_ca", side_effect=lambda p, e: p), \
+             patch.object(launch_mod, "_stamp_agent_urls", side_effect=lambda p, e: p), \
+             patch.object(launch_mod, "new_env_var_secret", return_value="s"), \
+             patch.object(launch_mod, "_start_agent"), \
+             patch.object(launch_mod.container_mod, "force_remove_container"), \
+             patch.object(launch_mod, "set_gateway_host"), \
+             patch.object(launch_mod.container_mod, "wait_container_ipv4_on_network",
+                          return_value="192.168.128.9"), \
+             patch.object(launch_mod, "registration_tokens", return_value={}), \
+             patch.object(launch_mod, "resolve_teardown_timeout", return_value=5), \
+             patch.object(launch_mod, "register_agent", side_effect=register), \
+             patch.object(launch_mod, "deprovision_consolidated"), \
+             patch.object(launch_mod.isolation_probe, "verify_isolation",
+                          side_effect=run_probe), \
+             contextlib.redirect_stderr(io.StringIO()):
+            images = BottleImages(agent="bot-bottle-agent:latest")
+            with launch_mod.launch(plan, images, provision=run_provision):
+                pass
+        return order
+
+    def test_the_probe_runs_after_registration_and_before_provisioning(self) -> None:
+        seen: dict[str, object] = {}
+
+        def probe(run_guest: object, **kwargs: object) -> None:
+            seen.update(kwargs)
+            seen["run_guest"] = run_guest
+
+        order = self._launch(probe, lambda *_a: None)
+
+        self.assertEqual(["register", "probe", "provision"], order)
+        self.assertTrue(seen["check_dns"])
+        self.assertIn("bot-bottle-dev-abc", str(seen["what"]))
+        self.assertIn("bot-bottle-mac-gateway", str(seen["remedy"]))
+
+    def test_the_probe_runs_through_the_bottle_exec(self) -> None:
+        calls: list[str] = []
+
+        def probe(run_guest: object, **_kwargs: object) -> None:
+            assert callable(run_guest)
+            self.assertEqual("guest-out", run_guest("echo probe"))
+
+        def fake_exec(_self: object, script: str, **_k: object) -> object:
+            calls.append(script)
+            return SimpleNamespace(stdout="guest-out")
+
+        with patch.object(MacosContainerBottle, "exec", fake_exec):
+            self._launch(probe, lambda *_a: None)
+
+        self.assertEqual(["echo probe"], calls)
+
+    def test_a_leak_stops_the_launch_before_provisioning(self) -> None:
+        provision_calls: list[object] = []
+
+        def probe(*_a: object, **_k: object) -> None:
+            raise Die(1, "ISOLATION FAILURE")
+
+        with self.assertRaises(Die):
+            self._launch(probe, lambda *a: provision_calls.append(a))
+
+        self.assertEqual([], provision_calls)
 
 
 if __name__ == "__main__":

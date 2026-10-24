@@ -28,7 +28,7 @@ from ...egress import Egress
 from ...image_cache import check_stale
 from ...lib.log import die, info
 from ... import resources
-from .. import BottleImages, oci_agent_image
+from .. import BottleImages, isolation_probe, oci_agent_image
 from ..launch_common import (
     LaunchTeardown,
     registration_tokens,
@@ -217,6 +217,14 @@ def launch(
             terminal_color=plan.spec.color,
             agent_workdir=plan.workspace_plan.workdir,
             exec_env=exec_env,
+        )
+        # Prove the only way out is the gateway, then provision.
+        isolation_probe.verify_isolation(
+            lambda script: bottle.exec(script).stdout,
+            what=f"agent container {plan.container_name}",
+            remedy=(f"Its network ({endpoint.network}) must be host-only; stop "
+                    "running bottles and relaunch so it is recreated."),
+            check_dns=True,
         )
         bottle.prompt_path = provision(plan, bottle)
 
