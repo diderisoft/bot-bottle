@@ -52,7 +52,7 @@ class StatusBar(unittest.TestCase):
                                capture_output=True, text=True, check=True).stdout.strip()
 
         def render(width: int, **options: str) -> str:
-            for name in ("blocks", "block_now", "block_host", "request"):
+            for name in ("blocks", "block_now", "block_host", "request", "warning"):
                 subprocess.run([*server, "set-option", "-t", "=pi:", f"@bb_{name}",
                                 options.get(name, "")], check=True)
             # No client attaches here, so stand the width in for client_width.
@@ -72,6 +72,44 @@ class StatusBar(unittest.TestCase):
         request = "pi wants api.example.com and more besides"
         self.assertIn(request, render(120, blocks="A1", request=request))
         self.assertIn(request[:30] + " · Ctrl-", render(80, blocks="A1", request=request))
+        warning = "isolation gap: agent can reach the host at 10.0.0.1 (+1 more)"
+        self.assertEqual(f"⚠ {warning}  Ctrl-] detach", render(120, warning=warning))
+        self.assertEqual(f"⊘ A1 ⚠ {warning[:30]}…", render(80, blocks="A1", warning=warning))
+        self.assertNotIn("⚠", render(120, warning=warning, request=request))
+
+    def test_the_status_warning_is_short_and_safe(self) -> None:
+        long = ("isolation gap: agent can reach the host at 10.0.0.1; public addresses "
+                "and DNS are blocked. See #678.")
+        self.assertEqual("isolation gap: agent can reach the host at 10.0.0.1",
+                         sessions.status_warning([long]))
+        self.assertEqual("image is 9 days old (+1 more)",
+                         sessions.status_warning(["image is 9 days old. Rebuild it.", long]))
+        self.assertEqual("a ##[fg=red] b", sessions.status_warning(["a #[fg=red] b"]))
+        self.assertEqual("", sessions.status_warning([]))
+
+    @unittest.skipUnless(shutil.which("tmux"), "needs tmux")
+    def test_tmux_shows_a_launch_warning_before_the_detach_key(self) -> None:
+        conf = sessions.write_config()
+        server = ["tmux", "-L", f"bb-test-w-{os.getpid()}", "-f", str(conf)]
+        self.addCleanup(subprocess.run, [*server, "kill-server"], capture_output=True, check=False)
+        subprocess.run([*server, "new-session", "-d", "-s", "pi-3", "sleep 30"], check=True)
+
+        def right() -> str:
+            fmt = subprocess.run([*server, "show-options", "-gv", "status-right"],
+                                 capture_output=True, text=True, check=True).stdout.strip()
+            # No client attaches here, so stand a 120-column one in.
+            return subprocess.run([*server, "display-message", "-p", "-t", "pi-3:",
+                                   fmt.replace("#{client_width}", "120")],
+                                  capture_output=True, text=True, check=True).stdout
+
+        self.assertNotIn("⚠", right())
+        warning = sessions.status_warning(["isolation gap: agent can reach the host #1; more"])
+        subprocess.run([*server, "set-option", "-t", "=pi-3:", "@bb_warning", warning], check=True)
+        shown = right()
+        # Expanded, not yet drawn: `##` is what the drawing turns into `#`, so a
+        # warning can't smuggle in a style.
+        self.assertIn("#[fg=colour178]⚠ isolation gap: agent can reach the host ##1", shown)
+        self.assertIn("Ctrl-] detach", shown)
 
 
 if __name__ == "__main__":

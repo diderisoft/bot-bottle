@@ -35,6 +35,7 @@ from bot_bottle.control.hostctl.bottles import BottleService, ConfirmationNeeded
 from bot_bottle.control.hostctl.jobs import JobRegistry
 from bot_bottle.control.hostctl.server import HostControlServer
 from bot_bottle.image_cache import StaleImageError
+from bot_bottle.lib import log
 from bot_bottle.lib.log import Die
 
 from . import use_bottle_root
@@ -112,6 +113,7 @@ class FakeBackend:
         self.bottle = FakeBottle(script)
         self.stale = False
         self.fail_launch = False
+        self.launch_warning = ""
         self.specs: list[Any] = []
         self.secrets: list[Any] = []
         self.torn_down = threading.Event()
@@ -142,6 +144,8 @@ class FakeBackend:
         del plan
         if self.fail_launch:
             raise RuntimeError("no network")
+        if self.launch_warning:
+            log.warn(self.launch_warning)
         self.launched.set()
         try:
             yield self.bottle
@@ -297,6 +301,16 @@ class TestHeldBottles(_Root):
                                 ROLE_REMOTE)
             self.manager.wait_exit("r2", timeout=15)
         self.assertEqual([False, True], [c.kwargs["remote_view"] for c in args.call_args_list])
+
+    def test_a_launch_warning_reaches_the_sessions_status_bar(self) -> None:
+        self.backend.bottle.script = "echo up; sleep 30"
+        self.backend.launch_warning = ("isolation gap: agent can reach the host at 10.0.0.1; "
+                                       "public addresses and DNS are blocked.")
+        self.launch("w1")
+        shown = subprocess.run(sessions.tmux("show-options", "-v", "-t", "=w1:", "@bb_warning"),
+                               capture_output=True, text=True, check=False).stdout.strip()
+        self.assertEqual("isolation gap: agent can reach the host at 10.0.0.1", shown)
+        self.service.teardown("w1")
 
     def test_list_and_delete(self) -> None:
         self.backend.bottle.script = "echo up; sleep 30"

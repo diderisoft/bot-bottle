@@ -18,6 +18,7 @@ import os
 import shutil
 import signal
 import sys
+import textwrap
 import threading
 import time
 from pathlib import Path
@@ -32,6 +33,8 @@ KEEP_LAUNCH_LOGS = 50
 _TAIL_LINES = 12
 # Log lines shown even when the rest is hidden.
 _SHOWN = ("bot-bottle: warning:", "bot-bottle: error:")
+# Most lines the launch screen gives to warnings and errors.
+_NOTE_LINES = 8
 _RESET = "\x1b[0m"
 # Layout, centered: a fixed-width stage column, a gap, then the bottle.
 _MARGIN = 2
@@ -366,7 +369,7 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
         left = [self._stage_text(s, stage_width) for s in self._stages]
         if self._notes:
             left.append("")
-            left.extend(note[:stage_width] for note in self._notes[-3:])
+            left.extend(self._note_lines(stage_width))
         height = min(max(len(left), len(art)), max(rows - 2, 1))
         block_width = stage_width + (_GAP + art_width if art else 0)
         pad = " " * max((columns - block_width) // 2, _MARGIN)
@@ -380,6 +383,18 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
                 line += " " * (stage_width - len(_strip(text)) + _GAP) + art[i]
             lines.append(line)
         return lines
+
+    def _note_lines(self, width: int) -> list[str]:
+        """The newest warnings and errors, wrapped to `width` (not cut off),
+        at most _NOTE_LINES lines, in amber."""
+        lines: list[str] = []
+        for note in reversed(self._notes):
+            wrapped = textwrap.wrap(note, max(width, 10)) or [""]
+            if lines and len(lines) + len(wrapped) > _NOTE_LINES:
+                break
+            lines = wrapped + lines
+        lines = lines[:_NOTE_LINES]
+        return [f"\x1b[38;5;178m{line}{_RESET}" if self.color else line for line in lines]
 
     def _draw(self) -> None:
         if not self.tty or self.verbose or self._paused:

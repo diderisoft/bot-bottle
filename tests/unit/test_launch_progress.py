@@ -136,6 +136,18 @@ class Screen(unittest.TestCase):
                          "warning: image is 9 days old", "✓ pi is running", "launch log:"):
             self.assertIn(expected, plain_after)
 
+    def test_a_long_warning_wraps_instead_of_being_cut_off(self) -> None:
+        progress, _ = self.progress()
+        progress.stage("start", "Starting the bottle")
+        warning = ("isolation gap: agent can reach the host at 192.168.64.1; public "
+                   "addresses and DNS are blocked. See #678.")
+        progress.line(f"bot-bottle: warning: {warning}")
+        shown = " ".join(re.sub(r"\x1b\[[0-9;]*m", "", line).split("▀")[0].strip()
+                         for line in progress._layout())  # pylint: disable=protected-access
+        progress.close()
+        self.assertIn("isolation gap: agent can reach the host at", shown)
+        self.assertIn("See #678.", shown)  # all of it, over several lines
+
     def test_only_changed_lines_are_rewritten(self) -> None:
         progress, out = self.progress()
         progress.stage("image", "Getting images")

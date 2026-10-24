@@ -16,7 +16,7 @@ import shlex
 import subprocess
 import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -90,9 +90,10 @@ def _python_command(module: str, *args: str) -> str:
 
 
 # Status bar: copper "bot-bottle", the session label and agent on the left, the
-# detach key on the right. `@bb_agent` is empty when the label is the agent.
+# detach key on the right. `@bb_agent` is empty when the label is the agent;
+# `@bb_warning` is the launch's warnings, shortened (see `status_warning`).
 # Fits the client: the full block notice and the detach hint need 150 columns,
-# and under 100 the request summary is cut (PRD 0099).
+# and under 100 the request summary and the warning are cut (PRD 0099).
 _WIDE = "#{e|>=:#{client_width},150}"
 _NARROW = "#{e|<:#{client_width},100}"
 # What the bottle blocked (`blocks.py`): the latest block, red, for a few
@@ -104,12 +105,14 @@ _BLOCKS = (
     "#[default] ,#[fg=colour131]⊘ }"
     "#[fg=colour131]#{@bb_blocks} #[default],}"
 )
-# A pending request turns its segment copper, with the review key; otherwise
-# the detach key, when there's room.
+# A pending request turns its segment copper, with the review key; otherwise a
+# launch warning in amber, then the detach key, when there's room.
 _REQUEST = (
     "#{?@bb_request,"
     f"#[bg=colour173#,fg=colour232#,bold] #{{?{_NARROW},#{{=30:@bb_request}},#{{@bb_request}}}}"
     " · Ctrl-\\\\ review ,"
+    f"#{{?@bb_warning,#[fg=colour178]⚠ #{{?{_NARROW},#{{=/30/…:@bb_warning}},"
+    "#{=/70/…:@bb_warning}}  ,}"
     f"#{{?#{{||:{_WIDE},#{{?@bb_blocks,0,1}}}},#[fg=colour244]Ctrl-] detach ,}}}}"
 )
 _STATUS_BAR = (
@@ -126,6 +129,17 @@ _STATUS_BAR = (
     'set -g window-status-format ""',
     'set -g window-status-current-format ""',
 )
+
+
+def status_warning(warnings: Sequence[str]) -> str:
+    """The status bar's form of a launch's warnings: the first one up to its
+    first clause, a count of the rest, and `#` doubled so tmux shows it
+    rather than reading a style or format from it."""
+    if not warnings:
+        return ""
+    first = re.split(r";|\. ", warnings[0].strip(), maxsplit=1)[0].rstrip(".")
+    more = f" (+{len(warnings) - 1} more)" if len(warnings) > 1 else ""
+    return (first + more).replace("#", "##")
 
 
 def write_config() -> Path:
@@ -208,7 +222,8 @@ class SessionManager:
 
     # --- lifecycle ---
 
-    def start(self, record: SessionRecord, argv: list[str], env: dict[str, str]) -> None:
+    def start(self, record: SessionRecord, argv: list[str], env: dict[str, str],
+              warnings: Sequence[str] = ()) -> None:
         """Start `argv` with `env` as session `record.id`."""
         if not _SESSION_ID.match(record.id):
             raise SessionError(f"invalid session id {record.id!r}")
@@ -225,6 +240,9 @@ class SessionManager:
         agent = str(record.meta.get("agent", ""))
         shown = [";", "set-option", "-t", f"={record.id}:", "@bb_agent", agent] \
             if agent and agent != record.id else []
+        warning = status_warning(warnings)
+        if warning:
+            shown += [";", "set-option", "-t", f"={record.id}:", "@bb_warning", warning]
         proc = subprocess.run(
             tmux("new-session", "-d", "-s", record.id, "-x", "120", "-y", "40", launcher, *shown),
             capture_output=True, text=True, check=False,

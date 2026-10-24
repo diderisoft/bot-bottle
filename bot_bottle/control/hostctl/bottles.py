@@ -152,6 +152,10 @@ def _save_work(bottle: Any, workspace: Any, identity: str) -> None:
         log.info(f"saved the agent's changes to {path}")
 
 
+# How a warning line reads in the launch log.
+_WARNING = "bot-bottle: warning:"
+
+
 def _stderr_line(line: str) -> None:
     marker = log.parse_stage(line)
     sys.stderr.write((f"bot-bottle: {marker[1]}" if marker else line) + "\n")
@@ -297,8 +301,12 @@ class BottleService:
         harness = str(getattr(plan, "harness", "claude"))
         policy = digest_manifest(plan.manifest)
 
+        warnings: list[str] = []  # the launch's, for the session's status bar
+
         def sink(line: str) -> None:
             # Into the launch job until it returns, then the daemon's log.
+            if not is_ready.is_set() and line.startswith(_WARNING):
+                warnings.append(line[len(_WARNING):].strip())
             (_stderr_line if is_ready.is_set() else job_sink)(line)
 
         error: BaseException | None = None
@@ -324,7 +332,7 @@ class BottleService:
                               "label": request.label, "provider": harness,
                               "activation": activation, "manifest_digest": policy},
                         writable_allowed=plan.manifest.agent.remote_writable,
-                    ), command, env)
+                    ), command, env, warnings)
                     log.info(f"agent running in session {identity}")
                     self.audit.bottled_agent_start(
                         bottle=identity, activation=activation, manifest_digest=policy,
