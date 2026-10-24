@@ -48,8 +48,9 @@ PY
 }
 report() { echo "bb-isolation-probe=$1"; exit 0; }
 try_connect "$h" "$p"; rc=$?
-[ "$rc" -eq 0 ] && report 0
 [ "$rc" -eq 2 ] && report 2
+# With the host check warn-only, keep going so the other checks still run.
+[ "$rc" -eq 0 ] && [ "$eh" = 1 ] && report 0
 try_connect "$pub" 443 && report 4
 if [ "$dns" = 1 ]; then
   if command -v getent >/dev/null 2>&1; then
@@ -65,12 +66,15 @@ report 1
 _RESULT = re.compile(r"^bb-isolation-probe=(\d+)$", re.MULTILINE)
 
 
-def guest_probe_script(canary_ip: str, canary_port: int, *, check_dns: bool) -> str:
+def guest_probe_script(
+    canary_ip: str, canary_port: int, *, check_dns: bool, enforce_host: bool = True,
+) -> str:
     """The guest script. It prints `bb-isolation-probe=<n>` (an exit code
     above); no such line means it never ran."""
     header = (
         f"h={shlex.quote(canary_ip)}; p={canary_port}; "
-        f"pub={_PUBLIC_IP}; dns={1 if check_dns else 0}; name={shlex.quote(_DNS_NAME)}\n"
+        f"pub={_PUBLIC_IP}; dns={1 if check_dns else 0}; name={shlex.quote(_DNS_NAME)}; "
+        f"eh={1 if enforce_host else 0}\n"
     )
     return header + _GUEST_PROBE
 
@@ -92,11 +96,16 @@ def verify_isolation(
     what: str,
     remedy: str,
     check_dns: bool = False,
+    host_gap: str = "",
 ) -> None:
     """Prove the agent (`what`) can't reach the host's primary address or a
     public address, and with `check_dns` can't resolve a public name.
     `run_guest(script)` returns the guest's stdout. Dies on a leak or a missing
-    tool, with `remedy`; warns and skips when the host has no address to test."""
+    tool, with `remedy`; warns and skips when the host has no address to test.
+
+    A non-empty `host_gap` makes reaching the host a warning that cites it,
+    for a backend with a known, tracked gap there; the other checks still
+    fail closed."""
     canary_ip = host_canary_ip()
     if not canary_ip:
         warn("isolation probe skipped: host has no off-box route to test "
@@ -108,7 +117,8 @@ def verify_isolation(
         listener.bind((canary_ip, 0))
         listener.listen(1)
         canary_port = listener.getsockname()[1]
-        out = run_guest(guest_probe_script(canary_ip, canary_port, check_dns=check_dns))
+        out = run_guest(guest_probe_script(
+            canary_ip, canary_port, check_dns=check_dns, enforce_host=not host_gap))
         # A completed handshake sits in the backlog whether or not it was
         # accepted, so the listener is the authority on whether the canary was
         # reached.
@@ -116,7 +126,7 @@ def verify_isolation(
 
     match = _RESULT.search(out)
     rc = int(match.group(1)) if match else None
-    if rc == _LEAK or reached:
+    if not host_gap and (rc == _LEAK or reached):
         die(f"ISOLATION FAILURE: {what} reached the host canary "
             f"{canary_ip}:{canary_port}. The egress boundary is not in "
             f"force — refusing to run the agent (fail-closed). {remedy}")
@@ -135,4 +145,8 @@ def verify_isolation(
         die(f"isolation probe did not run in {what} "
             f"(result {rc if rc is not None else 'missing'}). Refusing to "
             f"continue (fail-closed).")
+    if reached:
+        warn(f"isolation gap: {what} can reach the host at {canary_ip}; "
+             f"public addresses and DNS are blocked. {host_gap}")
+        return
     info(f"isolation verified: {what} cannot reach host {canary_ip}")

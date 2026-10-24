@@ -27,7 +27,7 @@
 - **Apple Container backend (macOS default when available)** — runs the agent and gateway with Apple's `container` CLI, using a host-only agent network plus a separate gateway egress network.
 - **Firecracker backend (Linux default when available)** — runs the agent in a KVM Firecracker microVM reached over SSH on a point-to-point TAP; the orchestrator and gateway run in their own per-host microVMs, so the host needs no Docker. A dedicated, fail-closed `nftables` table isolates the guest. Requires KVM (`/dev/kvm`) and a one-time privileged network-pool setup.
 - **Docker backend (fallback)** — for CI and hosts without Apple Container or KVM, via `BOT_BOTTLE_BACKEND=docker` or `--backend=docker`. It is the weakest boundary: agents are containers sharing the host kernel (gVisor narrows that when installed). Their network is `--internal`, so the gateway is still the only way out.
-- **Launch-time isolation probe** — before an agent runs, bot-bottle proves from inside it that it cannot reach the host or a public address without the gateway (and, on Docker, cannot resolve public names), and refuses to start it otherwise. Firecracker and Docker run it today.
+- **Launch-time isolation probe** — before an agent runs, bot-bottle proves from inside it that it cannot reach the host or a public address without the gateway (and, on Docker, cannot resolve public names), and refuses to start it otherwise. On macos-container, agents can currently reach host services on the host's LAN and vmnet gateway addresses ([#678](https://gitea.dideric.is/didericis/bot-bottle/issues/678)), so there the host check only warns; the public-address and DNS checks still refuse the launch.
 
 ## Architecture
 

@@ -488,6 +488,8 @@ class TestLaunchIsolationProbe(unittest.TestCase):
         self.assertTrue(seen["check_dns"])
         self.assertIn("bot-bottle-dev-abc", str(seen["what"]))
         self.assertIn("bot-bottle-mac-gateway", str(seen["remedy"]))
+        # Host reach is warn-only on this backend until #678.
+        self.assertIn("#678", str(seen["host_gap"]))
 
     def test_the_probe_runs_through_the_bottle_exec(self) -> None:
         calls: list[str] = []

@@ -225,6 +225,8 @@ def launch(
             remedy=(f"Its network ({endpoint.network}) must be host-only; stop "
                     "running bottles and relaunch so it is recreated."),
             check_dns=True,
+            # Measured: vmnet guests reach the host's LAN and gateway addresses.
+            host_gap="Host services on those addresses are exposed to the agent (#678).",
         )
         bottle.prompt_path = provision(plan, bottle)
 
