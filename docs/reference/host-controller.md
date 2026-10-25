@@ -148,6 +148,13 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
   and unchanged for the host's retention (`bot-bottle audit
   transcript-retention [DAYS]`, default 30), at start and daily after, with
   a `transcript.deleted` event listing each copy's size and SHA-256.
+- The console reads a conversation over the link (`transcript_serve.py`):
+  `transcript` returns a page of the agent's entries from the copy its
+  console agent id names, on the harness's active branch, and
+  `transcript_appended` tells it when more landed. Entries are parsed when
+  read and masked before they leave the host, with the egress scanner's
+  `redact_tokens`: token patterns, and every value in the host's secrets
+  file in its common encodings. The copy itself stays as read.
 - A restarted daemon resumes each re-adopted session's copies from the
   saved offsets, exec'ing through `BottleBackend.attach_adopted` (which
   never tears the bottle down). Copies of sessions that ended while it was

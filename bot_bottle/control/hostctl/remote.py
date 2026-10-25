@@ -29,6 +29,12 @@ The control stream (JSON lines):
 - Terminals relay on uni streams (`console_terminal`); `input`, `resize` and
   `history` (`lines` -> `text`, `size`, `limit`) act on them.
 - `audit_query` -> `audit_events` for the link's agents' bottles.
+- `transcript` (`agent_id`, `before` or `around`, `limit`) ->
+  `transcript_entries` (`entries`, `first`, `last`, `available`): a page of the agent's
+  conversation from its host copy, masked (`transcript_serve`), for running
+  and stopped agents alike. `transcript_appended` (`agent_id`, `last`) tells
+  the console new entries landed. `agent_started` and `agent_present` carry
+  `transcript` when the agent's harness keeps one.
 
 `iroh` (`bot-bottle[remote]`) is imported only here, only when the link runs.
 """
@@ -54,6 +60,7 @@ from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
 from ...lib import log
 from ...paths import bot_bottle_root
 from .console_terminal import HISTORY_LINES, valid_size
+from .transcript_serve import PAGE, TranscriptReader
 
 if TYPE_CHECKING:
     import iroh  # pyright: ignore[reportMissingImports]  # the optional `remote` extra
@@ -335,6 +342,9 @@ class ConsoleLink:
         # Bottles being torn down: still listed as running until they're gone,
         # but not to be presented again.
         self._stopping: set[str] = set()
+        self.transcripts = TranscriptReader()
+        # console agent id -> the last transcript entry the console was told of
+        self._transcript_last: dict[str, int] = {}
 
     async def handle(self, msg: dict[str, Any]) -> None:
         kind = msg.get("type")
@@ -357,6 +367,8 @@ class ConsoleLink:
                                 msg.get("lines"))
         elif kind == "audit_query":
             await self._audit_query(msg)
+        elif kind == "transcript":
+            await self._transcript(msg)
         elif kind != "hello":  # hello only opens the stream
             log.debug(f"remote: ignoring console message {kind!r}")
 
@@ -396,7 +408,9 @@ class ConsoleLink:
         terminal = await self._open_terminal(agent_id, bottle)
         started: dict[str, Any] = {"type": "agent_started", "agent_id": agent_id,
                                    "bottle": bottle,
-                                   "writable": bool(terminal and terminal.writable)}
+                                   "writable": bool(terminal and terminal.writable),
+                                   "transcript": await asyncio.to_thread(
+                                       self.transcripts.has_transcript, agent_id)}
         if result.get("activation"):
             started["activation"] = str(result["activation"])
         await self._send(started)
@@ -445,6 +459,31 @@ class ConsoleLink:
             await asyncio.to_thread(terminal.history, count)
         await self._send({"type": "history", "request_id": request_id, "text": text,
                           "size": size, "limit": limit})
+
+    async def _transcript(self, msg: dict[str, Any]) -> None:
+        agent_id = str(msg.get("agent_id", ""))
+
+        def number(name: str) -> int | None:
+            value = msg.get(name)
+            return value if type(value) is int else None  # pylint: disable=unidiomatic-typecheck
+
+        page = await asyncio.to_thread(self.transcripts.page, agent_id, before=number("before"),
+                                       around=number("around"), limit=number("limit") or PAGE)
+        await self._send({"type": "transcript_entries", "request_id": msg.get("request_id"),
+                          "agent_id": agent_id, **page})
+
+    async def push_transcripts(self) -> None:
+        """Tell the console which of its agents' conversations grew."""
+        for agent_id in list(self.running):
+            try:
+                last = await asyncio.to_thread(self.transcripts.last, agent_id)
+            except Exception as e:  # pylint: disable=broad-exception-caught  # retried next round
+                log.debug(f"remote: can't read {agent_id}'s transcript: {e}")
+                continue
+            if last is not None and last != self._transcript_last.get(agent_id):
+                self._transcript_last[agent_id] = last
+                await self._send({"type": "transcript_appended", "agent_id": agent_id,
+                                  "last": last})
 
     async def _audit_query(self, msg: dict[str, Any]) -> None:
         bottle, activation = msg.get("bottle"), msg.get("activation")
@@ -524,7 +563,8 @@ class ConsoleLink:
                 "label": str(entry.get("label", "")) or bottle,
                 "definition": str(entry.get("agent", "")),
                 "origin": str(entry.get("origin", "")),
-                "writable": bool(terminal and terminal.writable)}
+                "writable": bool(terminal and terminal.writable),
+                "transcript": await asyncio.to_thread(self.transcripts.has_transcript, agent_id)}
             if activation:
                 present["activation"] = activation
             self.present[agent_id] = present
@@ -669,6 +709,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
             await link.reap()
             await link.discover()
             await link.push_attention()
+            await link.push_transcripts()
 
     watcher = asyncio.create_task(watch())
     try:

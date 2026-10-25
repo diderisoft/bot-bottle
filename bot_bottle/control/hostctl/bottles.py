@@ -402,14 +402,15 @@ class BottleService:
         # pylint: disable=import-outside-toplevel
         from ...agent_provider import get_provider
         from .remote import terminal_agent_id
+        harness = str(getattr(plan, "harness", "claude"))
         try:
-            glob = get_provider(str(getattr(plan, "harness", "claude"))).transcript_glob(plan)
+            glob = get_provider(harness).transcript_glob(plan)
             if glob is None:
                 return
             follower = TranscriptFollower.begin(
                 bottle, session=identity, activation=activation, glob=glob,
                 agent_id=request.agent_id or terminal_agent_id(identity, activation),
-                audit=self.audit)
+                audit=self.audit, harness=harness)
         except Exception as e:  # pylint: disable=broad-exception-caught  # the agent runs regardless
             # Not a launch warning: the agent runs as usual, without a copy.
             log.info(f"bottle {identity}: not copying its transcript: {e}")

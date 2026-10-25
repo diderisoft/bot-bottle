@@ -184,6 +184,7 @@ class TestFollower(_Root):
         for d in (transcripts.transcripts_root(), self.copy_dir().parent, self.copy_dir()):
             self.assertEqual(0o700, d.stat().st_mode & 0o777)
         meta = json.loads((self.copy_dir() / "s.meta.json").read_text())
+        self.assertGreater(meta.pop("opened"), 0)
         self.assertEqual({"guest_path": str(new), "offset": 16, "agent_id": "t-abc"}, meta)
         self.assertEqual([str(self.guest / "old.jsonl")],
                          json.loads((self.copy_dir() / "follow.json").read_text())["skip"])
