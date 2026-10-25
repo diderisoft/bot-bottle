@@ -443,6 +443,9 @@ class PiAgentProvider(AgentProvider):
                          seq: int = 0) -> list[TranscriptEntry]:
         return transcript.parse(lines, offset=offset, seq=seq)
 
+    def active_entries(self, entries: list[TranscriptEntry]) -> list[TranscriptEntry]:
+        return transcript.active_branch(entries)
+
 
 def _exec(bottle: "Bottle", script: str, error: str) -> None:
     result = bottle.exec(script, user="root")

@@ -11,12 +11,11 @@ a new file.
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
-from ...agent_provider import TranscriptEntry, TranscriptKind
+from ...transcript import Line, Part, TranscriptEntry, dumps, entries, system, walk_branch
 
 
 def session_dir_name(cwd: str) -> str:
@@ -44,45 +43,38 @@ def _text(content: Any) -> str:
 
 
 def _arguments(value: Any) -> str:
-    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    return value if isinstance(value, str) else dumps(value)
 
 
-_Part = tuple[TranscriptKind, str, str, bool]  # kind, text, tool, error
-
-
-def _system(text: str) -> list[_Part]:
-    return [("system", text, "", False)]
-
-
-def _assistant(message: dict[str, Any]) -> list[_Part]:
+def _assistant(message: dict[str, Any]) -> list[Part]:
     content = message.get("content")
-    out: list[_Part] = []
+    blocks = [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+    out = [Part("assistant", str(b.get("thinking", "")), thinking=True)
+           for b in blocks if b.get("type") == "thinking" and b.get("thinking")]
     failed = message.get("stopReason") == "error"
     text = _text(content) or (str(message.get("errorMessage") or "") if failed else "")
     if text or failed:
-        out.append(("assistant", text, "", failed))
-    for block in content if isinstance(content, list) else []:
-        if isinstance(block, dict) and block.get("type") == "toolCall":
-            out.append(("tool_call", _arguments(block.get("arguments", {})),
-                        str(block.get("name", "")), False))
+        out.append(Part("assistant", text, error=failed))
+    out.extend(Part("tool_call", _arguments(b.get("arguments", {})), tool=str(b.get("name", "")))
+               for b in blocks if b.get("type") == "toolCall")
     return out
 
 
-def _bash(message: dict[str, Any]) -> list[_Part]:
+def _bash(message: dict[str, Any]) -> list[Part]:
     """The user's own `!command`."""
     failed = message.get("exitCode") not in (0, None) or bool(message.get("cancelled"))
-    return [("tool_result", f"$ {message.get('command', '')}\n{message.get('output', '')}",
-             "bash", failed)]
+    return [Part("tool_result", f"$ {message.get('command', '')}\n{message.get('output', '')}",
+                 tool="bash", error=failed)]
 
 
-_BY_ROLE: dict[str, Callable[[dict[str, Any]], list[_Part]]] = {
-    "user": lambda m: [("user", _text(m.get("content")), "", False)],
+_BY_ROLE: dict[str, Callable[[dict[str, Any]], list[Part]]] = {
+    "user": lambda m: [Part("user", _text(m.get("content")))],
     "assistant": _assistant,
-    "toolResult": lambda m: [("tool_result", _text(m.get("content")),
-                              str(m.get("toolName", "")), bool(m.get("isError")))],
+    "toolResult": lambda m: [Part("tool_result", _text(m.get("content")),
+                                  tool=str(m.get("toolName", "")), error=bool(m.get("isError")))],
     "bashExecution": _bash,
-    "branchSummary": lambda m: _system(str(m.get("summary", ""))),
-    "compactionSummary": lambda m: _system(str(m.get("summary", ""))),
+    "branchSummary": lambda m: [system(str(m.get("summary", "")))],
+    "compactionSummary": lambda m: [system(str(m.get("summary", "")))],
 }
 
 # Entry types other than `message`, as one line of text.
@@ -97,61 +89,33 @@ _DESCRIBE: dict[str, Callable[[dict[str, Any]], str]] = {
 }
 
 
-def _message(message: dict[str, Any]) -> list[_Part]:
+def _message(message: dict[str, Any]) -> list[Part]:
     handler = _BY_ROLE.get(str(message.get("role")))
     if handler is not None:
         return handler(message)
-    return _system(_text(message.get("content")) or json.dumps(message, ensure_ascii=False))
+    return [system(_text(message.get("content")) or dumps(message))]
 
 
-def _entry(raw: dict[str, Any]) -> list[_Part]:
+def parse_line(raw: dict[str, Any]) -> Line:
     if raw.get("type") == "message" and isinstance(raw.get("message"), dict):
-        return _message(raw["message"])
-    # `custom`, `label` and anything newer are kept as they are.
-    describe = _DESCRIBE.get(str(raw.get("type")), lambda r: json.dumps(r, ensure_ascii=False))
-    return _system(describe(raw))
+        parts = _message(raw["message"])
+    else:
+        # `custom`, `label` and anything newer are kept as they are.
+        parts = [system(_DESCRIBE.get(str(raw.get("type")), dumps)(raw))]
+    # The header's `id` is the session's, not a tree node's.
+    ident = "" if raw.get("type") == "session" else str(raw.get("id") or "")
+    return Line(parts, ts=str(raw.get("timestamp", "")), id=ident,
+                parent=str(raw.get("parentId") or ""))
 
 
 def parse(lines: Iterable[str], *, offset: int = 0, seq: int = 0) -> list[TranscriptEntry]:
-    """Entries for raw session `lines`. A line that isn't a JSON object is
-    kept as a `system` entry with its text."""
-    entries: list[TranscriptEntry] = []
-    for line in lines:
-        try:
-            raw = json.loads(line)
-        except ValueError:
-            raw = None
-        parts: list[_Part]
-        if isinstance(raw, dict):
-            parts = _entry(raw)
-            ts = str(raw.get("timestamp", ""))
-            # The header's `id` is the session's, not a tree node's.
-            ident = "" if raw.get("type") == "session" else str(raw.get("id") or "")
-            parent = str(raw.get("parentId") or "")
-        else:
-            parts, ts, ident, parent = _system(line.rstrip("\n")), "", "", ""
-        for kind, text, tool, error in parts:
-            entries.append(TranscriptEntry(seq=seq + len(entries), ts=ts, kind=kind,
-                                           text=text, raw_offset=offset, tool=tool,
-                                           error=error, id=ident, parent=parent))
-        offset += len(line.encode("utf-8"))
-    return entries
+    return entries(lines, parse_line, offset=offset, seq=seq)
 
 
-def active_branch(entries: Sequence[TranscriptEntry]) -> list[TranscriptEntry]:
-    """The entries on the branch pi has active: the walk up from the last
-    entry's line, plus the lines with no tree id (the header, unparsable
-    lines), in file order."""
-    parents: dict[str, str] = {}
-    for e in entries:
-        if e.id:
-            parents.setdefault(e.id, e.parent)
-    keep: set[str] = set()
-    leaf = next((e.id for e in reversed(entries) if e.id), "")
-    while leaf and leaf not in keep:
-        keep.add(leaf)
-        leaf = parents.get(leaf, "")
-    return [e for e in entries if not e.id or e.id in keep]
+def active_branch(entries_: Sequence[TranscriptEntry]) -> list[TranscriptEntry]:
+    """The branch pi has active: the walk up from the last entry, plus the
+    header and unparsable lines."""
+    return walk_branch(entries_)
 
 
-__all__ = ["active_branch", "parse", "session_dir_name", "transcript_glob"]
+__all__ = ["active_branch", "parse", "parse_line", "session_dir_name", "transcript_glob"]

@@ -1,0 +1,174 @@
+"""Unit: Claude's and Codex's transcripts parse into entries (PRD 0095), from
+real sessions of the pinned harness versions (secrets and vendor prompts
+scrubbed)."""
+
+from __future__ import annotations
+
+import json
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from bot_bottle.agent_provider import get_provider
+from bot_bottle.contrib.claude import transcript as claude
+from bot_bottle.contrib.codex import transcript as codex
+from bot_bottle.transcript import TranscriptEntry, entries, walk_branch
+
+_DATA = Path(__file__).parent / "data" / "transcripts"
+
+
+def _lines(name: str) -> list[str]:
+    return (_DATA / name).read_text(encoding="utf-8").splitlines(keepends=True)
+
+
+def _plan(workdir: str = "/home/node/workspace", env: dict[str, str] | None = None) -> mock.Mock:
+    plan = mock.Mock(guest_home="/home/node")
+    plan.workspace_plan.workdir = workdir
+    plan.agent_provision.env_vars = env or {}
+    return plan
+
+
+def _shown(entries_: list[TranscriptEntry]) -> list[TranscriptEntry]:
+    return [e for e in entries_ if not e.meta]
+
+
+class TestClaude(unittest.TestCase):
+    def setUp(self) -> None:
+        self.provider = get_provider("claude")
+        self.entries = self.provider.parse_transcript(_lines("claude-rewound.jsonl"))
+
+    def test_glob(self) -> None:
+        self.assertEqual("/home/node/.claude/projects/-home-node-workspace/*.jsonl",
+                         self.provider.transcript_glob(_plan()))
+        self.assertEqual("-a-b-c-d", claude.project_dir_name("/a.b_c d"))
+
+    def test_tools_calls_and_results_pair_up(self) -> None:
+        calls = [(e.tool, json.loads(e.text)) for e in self.entries if e.kind == "tool_call"]
+        self.assertEqual(("Read", {"file_path": "/home/node/workspace/notes.txt"}), calls[0])
+        results = [e for e in self.entries if e.kind == "tool_result"]
+        self.assertEqual(["Read", "Bash", "Bash", "Write", "Read"], [r.tool for r in results])
+        self.assertIn("pelican", results[0].text)
+        self.assertIn("not in the bottle's egress.routes", results[2].text)
+        self.assertEqual([False] * 4 + [True], [r.error for r in results])
+
+    def test_bookkeeping_is_meta(self) -> None:
+        meta = {e.text.split(":")[0] for e in self.entries if e.meta}
+        self.assertTrue({"mode", "permission mode", "file history snapshot", "title",
+                         "attachment"} <= meta)
+        self.assertTrue(any(e.thinking for e in self.entries))
+
+    def test_the_active_branch_is_the_rewound_one(self) -> None:
+        branch = _shown(self.provider.active_entries(self.entries))
+        users = [e.text for e in branch if e.kind == "user"]
+        self.assertEqual(2, len(users))
+        self.assertTrue(users[0].startswith("Read notes.txt"))
+        self.assertEqual("Instead, just tell me how many lines notes.txt has.", users[1])
+        # Both parallel results stay, though each hangs off its own call.
+        self.assertEqual(3, len([e for e in branch if e.kind == "tool_result"]))
+        self.assertFalse(any("out.txt" in e.text for e in branch))
+
+    def test_other_shapes(self) -> None:
+        parsed = claude.parse([
+            json.dumps({"type": "user", "uuid": "u1", "message": {"content": "<command-name>/x"}}),
+            json.dumps({"type": "user", "uuid": "u2", "isMeta": True,
+                        "message": {"content": [{"type": "text", "text": "caveat"}]}}),
+            json.dumps({"type": "user", "uuid": "u3", "message": {"content": [
+                {"type": "image"}, "junk"]}}),
+            json.dumps({"type": "assistant", "uuid": "a1", "isApiErrorMessage": True,
+                        "message": {"content": "overloaded"}}),
+            json.dumps({"type": "assistant", "uuid": "a2", "message": {"content": [
+                {"type": "server_thing"}, "junk"]}}),
+            json.dumps({"type": "system", "subtype": "api_error", "level": "error",
+                        "content": "retrying"}),
+            json.dumps({"type": "summary", "summary": "earlier work"}),
+            json.dumps({"type": "user", "isSidechain": True, "message": {"content": "sub"}}),
+            json.dumps({"type": "queue-operation", "operation": "enqueue"}),
+        ])
+        self.assertEqual(
+            [("system", True), ("system", True), ("user", False), ("assistant", False),
+             ("system", False), ("system", False), ("system", False), ("user", True),
+             ("system", False)],
+            [(e.kind, e.meta) for e in parsed])
+        self.assertEqual("[image]", parsed[2].text)
+        self.assertTrue(parsed[3].error and parsed[5].error)
+        self.assertIn("queue-operation", parsed[8].text)
+
+
+class TestCodex(unittest.TestCase):
+    def setUp(self) -> None:
+        self.provider = get_provider("codex")
+
+    def test_glob_follows_codex_home(self) -> None:
+        self.assertEqual("/home/node/.codex/sessions/*/*/*/rollout-*.jsonl",
+                         self.provider.transcript_glob(_plan()))
+        self.assertEqual("/x/sessions/*/*/*/rollout-*.jsonl",
+                         self.provider.transcript_glob(_plan(env={"CODEX_HOME": "/x"})))
+
+    def test_a_real_rollout(self) -> None:
+        shown = _shown(self.provider.parse_transcript(_lines("codex.jsonl")))
+        self.assertEqual(["Read and follow the instructions in /home/node/.bot-bottle-prompt.txt.",
+                          "Read notes.txt and tell me the secret word. Then run the shell "
+                          "command: ls -la && uname -s. Then run: curl -sS -m 10 "
+                          "https://example.com | head -5 and tell me what happened. Do not "
+                          "request egress access, just report."],
+                         [e.text for e in shown if e.kind == "user"])
+        results = [e for e in shown if e.kind == "tool_result"]
+        self.assertEqual({"exec"}, {r.tool for r in results})
+        self.assertIn("not in the bottle's egress.routes", results[-1].text)
+        self.assertTrue(shown[-1].text.startswith("The secret word is **pelican**"))
+        # The TUI's copies of each message aren't shown twice.
+        self.assertEqual(1, len([e for e in shown if "secret word is **pelican**" in e.text]))
+        # Injected context and developer instructions are bookkeeping.
+        self.assertFalse(any("<environment_context>" in e.text for e in shown))
+
+    def test_an_edited_message_is_a_new_rollout(self) -> None:
+        shown = _shown(self.provider.parse_transcript(_lines("codex-forked.jsonl")))
+        self.assertEqual("Instead, just tell me how many lines notes.txt has.",
+                         [e.text for e in shown if e.kind == "user"][-1])
+        self.assertEqual("`notes.txt` has 2 lines.", shown[-1].text)
+        self.assertTrue(any(e.thinking for e in shown))
+        # No tree: every entry is active.
+        entries_ = self.provider.parse_transcript(_lines("codex-forked.jsonl"))
+        self.assertEqual(entries_, self.provider.active_entries(entries_))
+
+    def test_other_shapes(self) -> None:
+        def item(**p: object) -> str:
+            return json.dumps({"timestamp": "t", "type": "response_item", "payload": p})
+        parsed = codex.parse([
+            item(type="function_call", name="shell", arguments='{"cmd":"ls"}', call_id="c1"),
+            item(type="function_call_output", call_id="c1",
+                 output={"content": "nope", "success": False}),
+            item(type="local_shell_call", action={"command": ["ls"]}),
+            item(type="web_search_call", action={"query": "q"}),
+            item(type="message", role="user", content=[{"type": "input_image"}]),
+            item(type="mystery"),
+            json.dumps({"type": "event_msg", "payload": {"type": "error", "message": "boom"}}),
+            json.dumps({"type": "event_msg", "payload": {"type": "turn_aborted",
+                                                         "reason": "interrupted"}}),
+            json.dumps({"type": "compacted", "payload": {"message": "summary"}}),
+            json.dumps({"type": "turn_context", "payload": {}}),
+        ])
+        self.assertEqual(["tool_call", "tool_result", "tool_call", "tool_call", "user", "system",
+                          "system", "system", "system", "system"], [e.kind for e in parsed])
+        self.assertEqual(("shell", True, "nope"), (parsed[1].tool, parsed[1].error, parsed[1].text))
+        self.assertEqual(("shell", "web_search"), (parsed[2].tool, parsed[3].tool))
+        self.assertEqual("[image]", parsed[4].text)
+        self.assertTrue(parsed[6].error)
+        self.assertEqual("turn aborted: interrupted", parsed[7].text)
+        self.assertTrue(parsed[9].meta)
+
+
+class TestShared(unittest.TestCase):
+    def test_wire_form_leaves_defaults_out(self) -> None:
+        entry = TranscriptEntry(seq=1, ts="t", kind="tool_result", text="x", raw_offset=3,
+                                tool="bash", error=True)
+        self.assertEqual({"seq": 1, "ts": "t", "kind": "tool_result", "text": "x",
+                          "raw_offset": 3, "tool": "bash", "error": True}, entry.to_json())
+
+    def test_walk_without_ids_keeps_everything(self) -> None:
+        parsed = entries(["x\n", "y\n"], lambda raw: None)  # type: ignore[arg-type,return-value]
+        self.assertEqual(parsed, walk_branch(parsed))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -8,7 +8,7 @@ import base64
 import os
 import shlex
 import shutil
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,6 +24,8 @@ from ...agent_provider import (
     provider_startup_args,
 )
 from ...starter import GENERAL_PROMPT, starter_agent, starter_bottle
+from ...transcript import TranscriptEntry
+from . import transcript
 from .codex_auth import (
     codex_host_access_token,
     codex_login_location,
@@ -370,6 +372,14 @@ class CodexAgentProvider(AgentProvider):
 
     def headless_prompt(self, prompt: str) -> list[str]:
         return [prompt]
+
+    def transcript_glob(self, plan: "BottlePlan") -> str | None:
+        return transcript.transcript_glob(
+            plan.agent_provision.env_vars.get("CODEX_HOME") or f"{plan.guest_home}/.codex")
+
+    def parse_transcript(self, lines: Iterable[str], *, offset: int = 0,
+                         seq: int = 0) -> list[TranscriptEntry]:
+        return transcript.parse(lines, offset=offset, seq=seq)
 
 
 def _exec(bottle: "Bottle", script: str, error: str) -> None:

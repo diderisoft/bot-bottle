@@ -8,7 +8,7 @@ import json
 import os
 import shlex
 import shutil
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,6 +25,8 @@ from ...contract.identity import IDENTITY_HEADER
 from ...egress import CLAUDE_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
 from ...lib.log import die, info, warn
 from ...starter import GENERAL_PROMPT, starter_agent, starter_bottle
+from ...transcript import TranscriptEntry
+from . import transcript
 from ...util import slugify
 from .claude_auth import claude_host_access_token, claude_login_location
 
@@ -368,6 +370,16 @@ class ClaudeAgentProvider(AgentProvider):
 
     def headless_prompt(self, prompt: str) -> list[str]:
         return ["-p", prompt]
+
+    def transcript_glob(self, plan: "BottlePlan") -> str | None:
+        return transcript.transcript_glob(plan.guest_home, plan.workspace_plan.workdir)
+
+    def parse_transcript(self, lines: Iterable[str], *, offset: int = 0,
+                         seq: int = 0) -> list[TranscriptEntry]:
+        return transcript.parse(lines, offset=offset, seq=seq)
+
+    def active_entries(self, entries: list[TranscriptEntry]) -> list[TranscriptEntry]:
+        return transcript.active_branch(entries)
 
 
 def _exec(bottle: "Bottle", script: str, error: str) -> None:

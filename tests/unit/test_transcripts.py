@@ -107,8 +107,11 @@ class TestPiTranscript(unittest.TestCase):
             starts.append(at)
             at += len(line.encode("utf-8"))
         self.assertEqual(starts, offsets)
-        # Thinking isn't shown as text.
-        self.assertFalse(any("The user wants me to" in e.text for e in entries))
+        # Thinking is its own entry, never mixed into a reply's text.
+        thinking = [e for e in entries if e.thinking]
+        self.assertTrue(thinking[0].text.startswith("The user wants me to"))
+        self.assertEqual({"assistant"}, {e.kind for e in thinking})
+        self.assertFalse(any("The user wants me to" in e.text for e in entries if not e.thinking))
 
     def test_the_active_branch_is_the_edited_resubmission(self) -> None:
         branch = pi_transcript.active_branch(pi_transcript.parse(self.lines))
