@@ -9,7 +9,7 @@ import base64
 import json
 import os
 import shlex
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -21,12 +21,14 @@ from ...agent_provider import (
     AgentProvisionFile,
     AgentProvisionPlan,
     HostDetection,
+    TranscriptEntry,
     provider_startup_args,
 )
 from ...contract.identity import IDENTITY_HEADER
 from ...egress import EgressRoute
 from ...starter import GENERAL_PROMPT, starter_agent, starter_bottle
 from .starter import has_secret, local_starter_settings, read_local_model
+from . import transcript
 from ...lib.log import die, info
 
 
@@ -433,6 +435,13 @@ class PiAgentProvider(AgentProvider):
 
     def remote_view_args(self) -> tuple[str, ...]:
         return (_REMOTE_VIEW_FLAG,)
+
+    def transcript_glob(self, plan: "BottlePlan") -> str | None:
+        return transcript.transcript_glob(plan.guest_home, plan.workspace_plan.workdir)
+
+    def parse_transcript(self, lines: Iterable[str], *, offset: int = 0,
+                         seq: int = 0) -> list[TranscriptEntry]:
+        return transcript.parse(lines, offset=offset, seq=seq)
 
 
 def _exec(bottle: "Bottle", script: str, error: str) -> None:

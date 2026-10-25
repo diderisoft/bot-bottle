@@ -35,9 +35,10 @@ from ...util import slugify
 from ...backend import adoption
 from .audit_events import HostAudit, digest_manifest, digest_request
 from .sessions import ExitStatus, SessionManager, SessionRecord
+from .transcripts import TranscriptFollower, close_stale
 
 if TYPE_CHECKING:
-    from ...backend import BottleBackend, BottlePlan
+    from ...backend import Bottle, BottleBackend, BottlePlan
     from ...manifest import ManifestIndex
 
 SESSION_KIND = "bottle"
@@ -188,6 +189,8 @@ class BottleService:
         self._held: dict[str, _Held] = {}
         # What adopted bottles hold until they end (e.g. a Firecracker slot).
         self._adopted: dict[str, Callable[[], None]] = {}
+        # Each running session's transcript follower (PRD 0095).
+        self._followers: dict[str, TranscriptFollower] = {}
         self._lock = threading.Lock()
         sessions.register(SESSION_KIND, self._finish)
 
@@ -322,6 +325,7 @@ class BottleService:
                         headless=request.headless, remote_view=remote_view))
                     with self._lock:
                         self._held[identity] = held
+                    self._follow(plan, bottle, request, identity=identity, activation=activation)
                     # Lets a restarted controller finish this bottle.
                     try:
                         adoption.write(identity, adoption.record_for(plan, bottle))
@@ -351,6 +355,7 @@ class BottleService:
                         exit_code=code, stop_requested=held.stop_requested)
                     log.info(f"session {identity} ended (exit {code}); "
                              f"removing {bottle.name}")
+                    self._unfollow(identity, bottle)
                     _save_work(bottle, plan.workspace_plan, identity)
                     if harness == "claude":
                         capture_claude_session_state(identity, code)
@@ -360,6 +365,7 @@ class BottleService:
                 else:
                     error = e
             finally:
+                self._unfollow(identity)  # if teardown failed before it
                 with self._lock:
                     self._held.pop(identity, None)
                 settle_state(identity)
@@ -385,6 +391,66 @@ class BottleService:
             if release is not None:
                 with self._lock:
                     self._adopted[record.id] = release
+            self._refollow(backend, record)
+        close_stale({r.id for r in self._sessions.records()}, self.audit)
+
+    # --- transcripts ---
+
+    def _follow(self, plan: "BottlePlan", bottle: "Bottle", request: LaunchRequest, *,
+                identity: str, activation: str) -> None:
+        """Start copying the session's transcript, if its harness keeps one."""
+        # pylint: disable=import-outside-toplevel
+        from ...agent_provider import get_provider
+        from .remote import terminal_agent_id
+        try:
+            glob = get_provider(str(getattr(plan, "harness", "claude"))).transcript_glob(plan)
+            if glob is None:
+                return
+            follower = TranscriptFollower.begin(
+                bottle, session=identity, activation=activation, glob=glob,
+                agent_id=request.agent_id or terminal_agent_id(identity, activation),
+                audit=self.audit)
+        except Exception as e:  # pylint: disable=broad-exception-caught  # the agent runs regardless
+            log.warn(f"bottle {identity}: not copying its transcript: {e}")
+            return
+        follower.start(bottle)
+        with self._lock:
+            self._followers[identity] = follower
+
+    def _refollow(self, backend: "BottleBackend[Any, Any]", record: SessionRecord) -> None:
+        """Resume a re-adopted session's transcript copy from its offsets."""
+        try:
+            follower = TranscriptFollower.resume(
+                session=record.id, activation=str(record.meta.get("activation", "")),
+                audit=self.audit)
+            adopted = adoption.read(record.id)
+            bottle = backend.attach_adopted(record.id, adopted) if adopted else None
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            log.warn(f"bottle {record.id}: couldn't resume copying its transcript: {e}")
+            return
+        if follower is None:
+            return
+        if bottle is None:
+            follower.close()
+            return
+        follower.start(bottle)
+        with self._lock:
+            self._followers[record.id] = follower
+
+    def _unfollow(self, identity: str, bottle: "Bottle | None" = None,
+                  activation: str = "") -> None:
+        """After the agent exits: read the transcript once more and close the
+        copy. Never raises."""
+        with self._lock:
+            follower = self._followers.pop(identity, None)
+        try:
+            if follower is None and activation:
+                follower = TranscriptFollower.resume(session=identity, activation=activation,
+                                                     audit=self.audit)
+            if follower is not None:
+                follower.close(bottle)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            log.warn(f"bottle {identity}: couldn't close its transcript copy: {e}")
 
     def _finish(self, record: SessionRecord, exit_status: ExitStatus) -> None:
         """The `bottle` finisher: hand the exit to the holder and wait for
@@ -424,6 +490,7 @@ class BottleService:
         name = str(record.meta.get("backend", ""))
         adopted = adoption.read(record.id)
         if adopted is None or not name:
+            self._unfollow(record.id, None, str(record.meta.get("activation", "")))
             log.warn(f"bottle {record.id} ({name or '?'}): its agent exited (exit {code}) "
                      f"with nothing holding the bottle; run `bot-bottle cleanup` to remove it")
             return
@@ -432,6 +499,7 @@ class BottleService:
             backend = self._backend_for(
                 with_recorded_infra(Settings(), name, self._recorded_infra))
             with backend.adopted_bottle(record.id, adopted) as bottle:
+                self._unfollow(record.id, bottle, str(record.meta.get("activation", "")))
                 _save_work(bottle, adopted.workspace, record.id)
         except Exception as e:  # pylint: disable=broad-exception-caught  # still revoke keys
             log.warn(f"bottle {record.id}: teardown failed: {e}; run `bot-bottle cleanup`")

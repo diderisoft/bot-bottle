@@ -122,6 +122,9 @@ class MacosContainerBottleBackend(
     ) -> AbstractContextManager[MacosContainerBottle]:
         return _launch.adopted(bottle_id, record, self.settings)
 
+    def attach_adopted(self, bottle_id: str, record: "AdoptionRecord") -> MacosContainerBottle:
+        return _launch.attach(bottle_id, record)
+
     def prepare_cleanup(self) -> MacosContainerBottleCleanupPlan:
         return _cleanup.prepare_cleanup()
 

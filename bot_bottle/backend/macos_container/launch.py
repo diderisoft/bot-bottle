@@ -264,14 +264,19 @@ def adopted(
 ) -> Generator[MacosContainerBottle, None, None]:
     """A bottle a previous host controller launched: exec into it, then tear it
     down as its holder would have (remove the container, then deregister)."""
-    del bottle_id
     try:
-        yield MacosContainerBottle(record.container, lambda: None, None)
+        yield attach(bottle_id, record)
     finally:
         container_mod.force_remove_container(record.container)
         if record.registry_id:
             deprovision_consolidated(record.registry_id, service=MacosInfraService(settings),
                                      timeout=resolve_teardown_timeout(host_db_path()))
+
+
+def attach(bottle_id: str, record: "AdoptionRecord") -> MacosContainerBottle:
+    """A bottle a previous host controller launched, to exec into."""
+    del bottle_id
+    return MacosContainerBottle(record.container, lambda: None, None)
 
 
 def stale_checks(plan: MacosContainerBottlePlan) -> None:

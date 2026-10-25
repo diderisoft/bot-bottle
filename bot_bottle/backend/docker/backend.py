@@ -119,6 +119,9 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     ) -> AbstractContextManager[DockerBottle]:
         return _launch.adopted(bottle_id, record, self.settings)
 
+    def attach_adopted(self, bottle_id: str, record: "AdoptionRecord") -> DockerBottle:
+        return _launch.attach(bottle_id, record)
+
     def prepare_cleanup(self) -> DockerBottleCleanupPlan:
         return _cleanup.prepare_cleanup(self.settings)
 

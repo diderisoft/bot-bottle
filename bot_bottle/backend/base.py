@@ -316,6 +316,12 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         `Bottle` to exec into and, on exit, tears it down as its holder would
         have, minus the deploy keys (the caller revokes those)."""
 
+    def attach_adopted(self, bottle_id: str, record: "AdoptionRecord") -> Bottle | None:
+        """A running bottle a previous host controller launched, to exec into
+        without tearing it down; None when this backend can't."""
+        del bottle_id, record
+        return None
+
     def hold_adopted(self, bottle_id: str) -> "Callable[[], None] | None":
         """After a host controller restart, re-take what a running bottle needs
         held in the controller's process, before anything new launches.
