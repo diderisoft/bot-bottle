@@ -267,9 +267,9 @@ class OrchestratorClient:
                 f"POST /supervise/respond: HTTP {status} {detail}".rstrip())
 
 
-def discover_orchestrator_url(settings: "Settings", *, timeout: float = 2.0) -> str:
-    """The running orchestrator's URL, probing each backend's well-known
-    address. Raises if none answers `/health`."""
+def _candidates(settings: "Settings") -> tuple[list[str], list[BackendProbeFailure]]:
+    """Each backend's well-known orchestrator address, and the backends that
+    couldn't be probed."""
     candidates: list[str] = []
     failures: list[BackendProbeFailure] = []
     try:  # docker: loopback publish
@@ -292,15 +292,17 @@ def discover_orchestrator_url(settings: "Settings", *, timeout: float = 2.0) -> 
             candidates.append(url)
     except Exception as exc:  # noqa: BLE001 — backend optional / not macOS
         failures.append(_probe_failure("macos-container", exc))
-    for url in candidates:
-        if OrchestratorClient(url, timeout=timeout).health():
-            return url
+    return candidates, failures
+
+
+def _none_running(candidates: list[str],
+                  failures: list[BackendProbeFailure]) -> OrchestratorClientError:
     detail = ""
     if failures:
         detail = "; optional probes unavailable: " + ", ".join(
             f"{failure.backend} ({failure.error_type})" for failure in failures
         )
-    raise OrchestratorClientError(
+    return OrchestratorClientError(
         "no running orchestrator control plane found (tried "
         + ", ".join(candidates)
         + ")"
@@ -309,10 +311,60 @@ def discover_orchestrator_url(settings: "Settings", *, timeout: float = 2.0) -> 
     )
 
 
+def discover_orchestrator_url(settings: "Settings", *, timeout: float = 2.0) -> str:
+    """The first running orchestrator's URL, probing each backend's well-known
+    address. Raises if none answers `/health`. A host can run one per backend;
+    to act on a bottle's requests, use `discover_orchestrator_urls`."""
+    candidates, failures = _candidates(settings)
+    for url in candidates:
+        if OrchestratorClient(url, timeout=timeout).health():
+            return url
+    raise _none_running(candidates, failures)
+
+
+def discover_orchestrator_urls(settings: "Settings", *, timeout: float = 2.0) -> list[str]:
+    """Every running orchestrator's URL, one per backend with infra up.
+    Raises if none answers `/health`."""
+    candidates, failures = _candidates(settings)
+    found = [url for url in candidates if OrchestratorClient(url, timeout=timeout).health()]
+    if not found:
+        raise _none_running(candidates, failures)
+    return found
+
+
+# The key `pending_everywhere` adds to each proposal: the orchestrator holding it.
+ORCHESTRATOR_KEY = "orchestrator_url"
+
+
+def pending_everywhere(settings: "Settings") -> list[dict[str, object]]:
+    """Pending proposals from every running orchestrator, each tagged with the
+    one holding it (`ORCHESTRATOR_KEY`), so its answer can go back there. One
+    that can't be asked (down, or refusing this host's token) is skipped;
+    raises only if none could be."""
+    pending: list[dict[str, object]] = []
+    errors: list[str] = []
+    urls = discover_orchestrator_urls(settings)
+    for url in urls:
+        try:
+            proposals = OrchestratorClient(url).supervise_pending()
+        except OrchestratorClientError as e:
+            errors.append(str(e))
+            continue
+        pending += [{**p, ORCHESTRATOR_KEY: url} for p in proposals]
+    if errors:
+        debug("orchestrator: couldn't list proposals from " + "; ".join(errors))
+        if len(errors) == len(urls):
+            raise OrchestratorClientError("; ".join(errors))
+    return pending
+
+
 __all__ = [
     "OrchestratorClient",
     "OrchestratorClientError",
     "RegisteredBottle",
     "DEFAULT_TIMEOUT_SECONDS",
     "discover_orchestrator_url",
+    "discover_orchestrator_urls",
+    "ORCHESTRATOR_KEY",
+    "pending_everywhere",
 ]

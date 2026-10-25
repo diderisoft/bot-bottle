@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 from bot_bottle.contract.auth import ROLE_CLI, verify
 from bot_bottle.control.client import (
+    ORCHESTRATOR_KEY,
     AlreadyAnswered,
     OrchestratorClient,
     OrchestratorClientError,
@@ -19,6 +20,8 @@ from bot_bottle.control.client import (
     BackendProbeFailure,
     _host_auth_token,
     _probe_failure,
+    discover_orchestrator_urls,
+    pending_everywhere,
 )
 
 _URLOPEN = "bot_bottle.control.client.urllib.request.urlopen"
@@ -263,3 +266,44 @@ class TestSuperviseRespond(unittest.TestCase):
                 self.c.supervise_respond("p1", bottle_slug="demo", decision="approve")
         self.assertNotIsInstance(caught.exception, AlreadyAnswered)
         self.assertIn("no such proposal", str(caught.exception))
+
+
+class TestEveryOrchestrator(unittest.TestCase):
+    """A host runs one orchestrator per backend with infra up (docker and
+    firecracker, say); requests come from all of them."""
+
+    _URLS = ["http://127.0.0.1:8099", "http://10.243.255.1:8099"]
+
+    def _discover(self, healthy: list[str]):
+        def health(client: OrchestratorClient) -> bool:
+            return client._base in healthy  # pylint: disable=protected-access
+        return (patch("bot_bottle.control.client._candidates", return_value=(self._URLS, [])),
+                patch.object(OrchestratorClient, "health", health))
+
+    def test_every_healthy_orchestrator_is_found(self) -> None:
+        a, b = self._discover(self._URLS)
+        with a, b:
+            self.assertEqual(self._URLS, discover_orchestrator_urls(MagicMock()))
+        a, b = self._discover([])
+        with a, b, self.assertRaises(OrchestratorClientError):
+            discover_orchestrator_urls(MagicMock())
+
+    def test_pending_is_gathered_and_tagged_and_a_refusing_one_skipped(self) -> None:
+        def pending(client: OrchestratorClient) -> list[dict[str, object]]:
+            if client._base == self._URLS[0]:  # pylint: disable=protected-access
+                raise OrchestratorClientError("HTTP 401 control-plane authentication required")
+            return [{"id": "p1", "bottle_slug": "b"}]
+
+        a, b = self._discover(self._URLS)
+        with a, b, patch.object(OrchestratorClient, "supervise_pending", pending):
+            got = pending_everywhere(MagicMock())
+        self.assertEqual([{"id": "p1", "bottle_slug": "b", ORCHESTRATOR_KEY: self._URLS[1]}], got)
+
+    def test_pending_raises_when_none_can_be_asked(self) -> None:
+        def refuse(_client: OrchestratorClient) -> list[dict[str, object]]:
+            raise OrchestratorClientError("HTTP 401")
+
+        a, b = self._discover(self._URLS)
+        with a, b, patch.object(OrchestratorClient, "supervise_pending", refuse), \
+                self.assertRaises(OrchestratorClientError):
+            pending_everywhere(MagicMock())

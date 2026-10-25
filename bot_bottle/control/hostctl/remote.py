@@ -308,7 +308,7 @@ class ConsoleLink:
     def __init__(self, bottles: Bottles, send: Callable[[dict[str, Any]], Awaitable[None]],
                  agents: Callable[[], list[str]] | None = None, *,
                  requests: Callable[[], list[dict[str, Any]]] | None = None,
-                 orchestrator: Callable[[], Any] | None = None,
+                 orchestrator: Callable[[str], Any] | None = None,
                  terminals: TerminalFactory | None = None,
                  audit: Callable[[str, str | None, int], list[dict[str, Any]]] | None = None,
                  state: "LinkState | None" = None,
@@ -572,7 +572,8 @@ class ConsoleLink:
             log.warn(f"remote: ignoring a stale or unknown approval for {agent_id}")
             return
         try:
-            message = await asyncio.to_thread(answer, self._orchestrator(), request, chosen,
+            client = self._orchestrator(request.orchestrator)
+            message = await asyncio.to_thread(answer, client, request, chosen,
                                               via="the phone")
             log.info(f"remote: {request.session}: {message}")
         except AlreadyAnswered as e:
@@ -620,11 +621,13 @@ def _pending_requests() -> list[dict[str, Any]]:
     return orchestrator_pending()
 
 
-def _orchestrator() -> Any:
+def _orchestrator(url: str = "") -> Any:
+    """A client for the orchestrator holding a request (`url`), or the first
+    found when it isn't known."""
     # pylint: disable=import-outside-toplevel  # only when a request is answered
     from ...contract.hostctl import Settings
     from ..client import OrchestratorClient, discover_orchestrator_url
-    return OrchestratorClient(discover_orchestrator_url(Settings()))
+    return OrchestratorClient(url or discover_orchestrator_url(Settings()))
 
 
 # --- the connection ---

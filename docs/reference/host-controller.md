@@ -68,9 +68,12 @@ Each agent runs in tmux on bot-bottle's own tmux server, never the user's
   the secrets file. A token that was only in the launching CLI's environment
   can't be found then, so that key is reported for revoking by hand. Without a
   record, `bot-bottle cleanup` removes the bottle.
-- `requests.py` polls the orchestrator for pending supervise proposals and
-  shows a one-line summary in the session's tmux status bar, outside the
-  agent's pane where the agent can't fake or hide it.
+- `requests.py` polls every running orchestrator (one per backend with infra
+  up, say docker and firecracker) for pending supervise proposals and shows a
+  one-line summary in the session's tmux status bar, outside the agent's pane
+  where the agent can't fake or hide it. Each proposal is tagged with the
+  orchestrator holding it, and the terminal popup and the phone send its
+  answer back there. One that's down or refuses the host's token is skipped.
 - `blocks.py` hears the gateway's block events as the journal writes them
   (`HostAudit.listen`) and shows them in the same bar
   ([PRD 0099](../prds/0099-status-bar-blocks.md)). Each block shows for five

@@ -16,13 +16,13 @@ from __future__ import annotations
 import sys
 import termios
 import tty
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 
 from ...approvals import (
     ALLOW_ONCE, ALLOW_PROJECT, DENY, Request, answer, route_lines, session_project,
 )
 from ...control.client import (
-    AlreadyAnswered, OrchestratorClient, OrchestratorClientError, discover_orchestrator_url,
+    AlreadyAnswered, OrchestratorClient, OrchestratorClientError, pending_everywhere,
 )
 from ..settings import settings_from_env
 
@@ -62,16 +62,20 @@ def describe(request: Request) -> list[str]:
 class Reviewer:  # pylint: disable=too-few-public-methods
     """Walks one session's pending requests, or every session's."""
 
-    def __init__(self, client: OrchestratorClient, session: str = "",
+    def __init__(self, fetch: Callable[[], Sequence[Mapping[str, object]]],
+                 client_for: Callable[[str], OrchestratorClient], session: str = "",
                  key: Callable[[], str] = read_key, out: Callable[[str], None] = print) -> None:
-        self.client = client
+        # Pending proposals from every orchestrator, and a client for the one
+        # holding a request (its answer goes back there).
+        self.fetch = fetch
+        self.client_for = client_for
         self.session = session
         self.key = key
         self.out = out
         self.skipped: set[str] = set()
 
     def pending(self) -> list[Request]:
-        requests = [Request.from_dict(d) for d in self.client.supervise_pending()]
+        requests = [Request.from_dict(dict(d)) for d in self.fetch()]
         return [r for r in requests if r.id not in self.skipped
                 and (not self.session or r.session == self.session)]
 
@@ -102,7 +106,8 @@ class Reviewer:  # pylint: disable=too-few-public-methods
             self.skipped.add(request.id)
         elif key in _DECISION:
             try:
-                self.out(answer(self.client, request, _DECISION[key], via="the terminal"))
+                self.out(answer(self.client_for(request.orchestrator), request, _DECISION[key],
+                                via="the terminal"))
             except AlreadyAnswered as e:
                 self.out(f"already answered elsewhere: {e.decided_as}; yours wasn't applied "
                          "(press a key)")
@@ -117,9 +122,10 @@ def cmd_approve(argv: list[str]) -> int:
     if argv and argv[0] in ("-h", "--help"):
         sys.stderr.write(__doc__ or "")
         return 0
+    settings = settings_from_env()
     try:
-        client = OrchestratorClient(discover_orchestrator_url(settings_from_env()))
-        return Reviewer(client, argv[0] if argv else "").run()
+        return Reviewer(lambda: pending_everywhere(settings), OrchestratorClient,
+                        argv[0] if argv else "").run()
     except OrchestratorClientError as e:
         print(f"couldn't reach the orchestrator: {e}")
         return 1

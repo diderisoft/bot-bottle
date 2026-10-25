@@ -43,6 +43,9 @@ class Request:
     proposed: str
     current: str
     arrived: str = ""  # ISO timestamp
+    # The orchestrator holding it, when listed from several; its answer goes
+    # back there.
+    orchestrator: str = ""
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Request":
@@ -51,7 +54,8 @@ class Request:
                    tool=str(d["tool"]), justification=str(d.get("justification", "")),
                    proposed=str(d.get("proposed_file", "")),
                    current=str(d.get("current_file", "")),
-                   arrived=str(d.get("arrival_timestamp", "")))
+                   arrived=str(d.get("arrival_timestamp", "")),
+                   orchestrator=str(d.get("orchestrator_url", "")))
 
     def new_routes(self) -> list[Route]:
         """The routes an egress-allow proposal adds or changes, by host."""

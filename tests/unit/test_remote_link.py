@@ -181,7 +181,7 @@ class TestApprovals(unittest.TestCase):
 
         client.supervise_respond.side_effect = respond
         link = remote.ConsoleLink(_Bottles(), send, agents=lambda: ["implementer"],
-                                  requests=lambda: list(pending), orchestrator=lambda: client)
+                                  requests=lambda: list(pending), orchestrator=lambda _url: client)
         asyncio.run(link.handle({"type": "launch", "agent_id": "a1",
                                  "definition": {"name": "implementer"}}))
         return link, sent, client
@@ -225,6 +225,20 @@ class TestApprovals(unittest.TestCase):
         asyncio.run(link.handle({"type": "approval", "agent_id": "a1", "decision": "deny",
                                  "since": "2026-10-23T18:00:01.123456"}))
         self.assertEqual({"type": "activity", "agent_id": "a1"}, sent[-1])
+
+    def test_an_answer_goes_to_the_orchestrator_holding_the_request(self) -> None:
+        pending = [{**_pending(), "orchestrator_url": "http://10.243.255.1:8099"}]
+        link, _sent, client = self.link(pending)
+        asked: list[str] = []
+        def orchestrator(url: str) -> mock.MagicMock:
+            asked.append(url)
+            return client
+        link._orchestrator = orchestrator  # pylint: disable=protected-access
+        asyncio.run(link.push_attention())
+        asyncio.run(link.handle({"type": "approval", "agent_id": "a1", "decision": "allow",
+                                 "since": "2026-10-23T18:00:01.123456"}))
+        self.assertEqual(["http://10.243.255.1:8099"], asked)
+        self.assertEqual("approve", client.supervise_respond.call_args.kwargs["decision"])
 
     def test_a_stale_or_unknown_approval_is_ignored(self) -> None:
         link, _, client = self.link([_pending()])

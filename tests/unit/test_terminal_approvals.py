@@ -136,7 +136,8 @@ class Review(unittest.TestCase):
         client.supervise_pending.side_effect = lambda: list(queue)
         client.supervise_respond.side_effect = respond
         it = iter(keys)
-        return Reviewer(client, "pi", key=lambda: next(it), out=lambda _s: None), client
+        return Reviewer(client.supervise_pending, lambda _url: client, "pi",
+                        key=lambda: next(it), out=lambda _s: None), client
 
     def test_allow_once_then_deny(self) -> None:
         reviewer, client = self.reviewer("ad", [_pending(_CURRENT + _STRIPE),
@@ -184,6 +185,23 @@ class Review(unittest.TestCase):
             self.assertEqual(0, reviewer.run())
         self.assertIn("already answered elsewhere: rejected; yours wasn't applied "
                       "(press a key)", shown)
+
+    def test_each_answer_goes_to_the_orchestrator_holding_it(self) -> None:
+        docker, firecracker = MagicMock(), MagicMock()
+        clients = {"http://docker": docker, "http://fc": firecracker}
+        queue = [{**_pending(_CURRENT + _STRIPE), "orchestrator_url": "http://fc"}]
+
+        def respond(pid: str, **_kwargs: object) -> None:
+            queue[:] = [p for p in queue if p["id"] != pid]
+
+        firecracker.supervise_respond.side_effect = respond
+        it = iter("a")
+        reviewer = Reviewer(lambda: list(queue), clients.__getitem__, "pi",
+                            key=lambda: next(it), out=lambda _s: None)
+        with patch("bot_bottle.cli.commands.approve.session_project", return_value=None):
+            self.assertEqual(0, reviewer.run())
+        firecracker.supervise_respond.assert_called_once()
+        docker.supervise_respond.assert_not_called()
 
     def test_another_sessions_requests_are_not_shown(self) -> None:
         reviewer, client = self.reviewer("", [_pending(_CURRENT + _STRIPE, label="other")])
