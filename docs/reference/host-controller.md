@@ -117,8 +117,11 @@ manifest sets `remote.writable`.
 
 The daemon copies each session's harness transcript to the host as it's
 written (`transcripts.py`, [PRD 0095](../prds/0095-conversation-view.md)).
-Only pi declares one so far (`AgentProvider.transcript_glob`); other
-harnesses aren't followed.
+pi, Claude and Codex declare one (`AgentProvider.transcript_glob`); a
+provider that doesn't isn't followed. `bot_bottle/transcript.py` holds the
+entry type the parsers share (`contrib/<harness>/transcript.py`), with
+`AgentProvider.active_entries` choosing the branch a tree-shaped transcript
+(pi, Claude) has active.
 
 - At launch a follower notes the files already matching the glob (another
   session's, never copied) and writes `follow.json`. Then, once a second and

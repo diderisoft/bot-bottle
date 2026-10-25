@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Literal
 
 from .egress import EgressRoute
 from .paths import bot_bottle_root
+from .transcript import TranscriptEntry
 
 
 if TYPE_CHECKING:
@@ -120,30 +121,7 @@ class HostDetection:
     starter_settings: Mapping[str, object] = field(default_factory=dict)
 
 
-TranscriptKind = Literal["user", "assistant", "tool_call", "tool_result", "system"]
-
-
-@dataclass(frozen=True)
-class TranscriptEntry:
-    """One normalized entry of a harness transcript (PRD 0095).
-
-    `raw_offset` is the byte offset of the line it came from in the host copy;
-    one line can yield several entries (a reply and its tool calls). `id` and
-    `parent` carry a harness's own tree links, for following its active
-    branch; "" when it has none."""
-
-    seq: int
-    ts: str
-    kind: TranscriptKind
-    text: str
-    raw_offset: int
-    tool: str = ""
-    error: bool = False
-    id: str = ""
-    parent: str = ""
-
-
-class AgentProvider(ABC):
+class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plugin interface
     """Per-harness plugin: builds the provision plan and runs the provider's
     guest setup (skills, prompt, files, supervise MCP registration)."""
 
@@ -267,11 +245,16 @@ class AgentProvider(ABC):
         """New raw transcript `lines` (each with its newline) as entries,
         numbered from `seq`, the first line at byte `offset` of the copy.
         Default: each line as a `system` entry."""
-        entries = []
+        out = []
         for line in lines:
-            entries.append(TranscriptEntry(seq=seq + len(entries), ts="", kind="system",
-                                           text=line.rstrip("\n"), raw_offset=offset))
+            out.append(TranscriptEntry(seq=seq + len(out), ts="", kind="system",
+                                       text=line.rstrip("\n"), raw_offset=offset))
             offset += len(line.encode("utf-8"))
+        return out
+
+    def active_entries(self, entries: list[TranscriptEntry]) -> list[TranscriptEntry]:
+        """The entries on the branch the harness has active, for a harness
+        whose transcript is a tree. Default: all of them."""
         return entries
 
     def provision_ca(self, bottle: "Bottle", plan: "BottlePlan") -> None:
