@@ -33,6 +33,7 @@ from .plan import BottlePlan, BottleSpec
 from .util import host_skill_dir
 
 if TYPE_CHECKING:
+    from .cache_entries import CacheEntry
     from .host_resources import HostResource
     from .adoption import AdoptionRecord
     from .infra_service import InfraService
@@ -356,6 +357,17 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     def teardown(self) -> int:
         """Print how to undo `setup()` and return a shell exit code. Run by
         `bot-bottle backend teardown`."""
+
+    def cache_entries(self) -> "list[CacheEntry]":
+        """The cached images this backend keeps on the host (PRD 0088), for
+        `bot-bottle prune`. None by default."""
+        return []
+
+    def prune_build_store(self, *, dry_run: bool) -> tuple[int, str] | None:
+        """Empty this backend's image build store, if it has one (`prune
+        --build-store`): (bytes freed, a line to report). None when it has none."""
+        del dry_run
+        return None
 
     def host_resources(self, *, purge: bool) -> "list[HostResource]":
         """What this backend left on the host besides bottles (infra

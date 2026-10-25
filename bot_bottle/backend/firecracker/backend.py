@@ -28,6 +28,7 @@ from .bottle_cleanup_plan import FirecrackerBottleCleanupPlan
 from .bottle_plan import FirecrackerBottlePlan
 
 if TYPE_CHECKING:
+    from ..cache_entries import CacheEntry
     from ..adoption import AdoptionRecord
     from .infra import FirecrackerInfraService
 
@@ -57,6 +58,14 @@ class FirecrackerBottleBackend(
             with redirect_stderr(io.StringIO()):
                 return _setup.status(self.settings)
         return _setup.status(self.settings)
+
+    def cache_entries(self) -> "list[CacheEntry]":
+        from . import cache_entries as _cache
+        return _cache.list_entries(self.settings.infra)
+
+    def prune_build_store(self, *, dry_run: bool) -> tuple[int, str] | None:
+        from . import cache_entries as _cache
+        return _cache.prune_build_store(dry_run=dry_run)
 
     def teardown(self) -> int:
         from . import setup as _setup

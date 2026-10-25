@@ -27,6 +27,7 @@ from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
 
 if TYPE_CHECKING:
+    from ..cache_entries import CacheEntry
     from ..host_resources import HostResource
     from ..adoption import AdoptionRecord
     from .infra import DockerInfraService
@@ -51,6 +52,10 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
             with redirect_stderr(io.StringIO()):
                 return _setup.status()
         return _setup.status()
+
+    def cache_entries(self) -> "list[CacheEntry]":
+        from . import cache_entries as _cache
+        return _cache.list_entries()
 
     def teardown(self) -> int:
         from . import setup as _setup

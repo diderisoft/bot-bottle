@@ -23,7 +23,7 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w("  audit     check, search and configure the audit journal "
       "(tail|verify|query|export|rebuild|import|delivery|forward|firehose)\n")
     w("  backend   set up / check / undo a backend's host prerequisites (setup|status|teardown)\n")
-    w("  cleanup   stop and remove all active bot-bottle containers\n")
+    w("  cleanup   stop and remove leftover bottles and their state\n")
     w("  commit    snapshot a running bottle's container state to a Docker image\n")
     w("  default   set the agent bare `bot-bottle` starts when none was used here\n")
     w("  doctor    check host prerequisites (Python, backend, config dir)\n")
@@ -34,6 +34,7 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w("  list      list available agents (~/.bot-bottle/agents and ./.bot-bottle/agents)\n")
     w("  login     register this host with a bot-bottle console\n")
     w("  pair      link this host to your phone (QR code + passkey)\n")
+    w("  prune     free disk: delete cached images this install no longer needs\n")
     w("  resume    re-launch a bottle by its identity (continues its saved state)\n")
     w("  setup     write starter agents for Claude, Codex and pi (then offers pair)\n")
     w("  start     boot a container for a named agent and attach an interactive session\n")

@@ -25,6 +25,7 @@ from .bottle_cleanup_plan import MacosContainerBottleCleanupPlan
 from .bottle_plan import MacosContainerBottlePlan
 
 if TYPE_CHECKING:
+    from ..cache_entries import CacheEntry
     from ..host_resources import HostResource
     from ..adoption import AdoptionRecord
     from .infra import MacosInfraService
@@ -52,6 +53,10 @@ class MacosContainerBottleBackend(
             with redirect_stderr(io.StringIO()):
                 return _setup.status()
         return _setup.status()
+
+    def cache_entries(self) -> "list[CacheEntry]":
+        from . import cache_entries as _cache
+        return _cache.list_entries()
 
     def teardown(self) -> int:
         from . import setup as _setup

@@ -34,6 +34,7 @@ _HANDLERS: dict[str, str] = {
     "status": "lifecycle:cmd_status",
     "supervise": "supervise:cmd_supervise",
     "trust": "trust:cmd_trust",
+    "prune": "prune:cmd_prune",
     "uninstall": "uninstall:cmd_uninstall",
     "up": "lifecycle:cmd_up",
 }
@@ -57,7 +58,7 @@ COMMANDS = {name: _lazy(spec) for name, spec in _HANDLERS.items()}
 # DB (where the migration prompt can't be answered on a non-TTY runner).
 NO_MIGRATION_COMMANDS = frozenset({
     "approve", "attach", "audit", "backend", "doctor", "down", "help", "install", "jobs", "login",
-    "pair", "remote", "setup", "trust", "status", "uninstall", "up",
+    "pair", "prune", "remote", "setup", "trust", "status", "uninstall", "up",
 })
 
 __all__ = ["COMMANDS", "NO_MIGRATION_COMMANDS"]

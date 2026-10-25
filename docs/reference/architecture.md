@@ -135,7 +135,7 @@ Roles, routes and env vars are in [runtime-contract.md](runtime-contract.md).
 | Gateway CA | `~/.bot-bottle/gateway-ca/`, mounted at mitmproxy's confdir (firecracker: the infra VM dir's `gateway-ca/`) | gateway |
 | Audit journal | `~/.bot-bottle/audit/` | host controller |
 | Per-bottle metadata, compose files, logs | `~/.bot-bottle/state/<identity>/` | backend |
-| Image and kernel caches | `~/.cache/bot-bottle/` | backend |
+| Image and kernel caches | `~/.cache/bot-bottle/`, and the runtime's own image store; `bot-bottle prune` removes superseded releases at once and unused builds after 14 days, never a current pin or an image in use ([PRD 0088](../prds/0088-prune-cached-agent-images.md)) | backend |
 
 The gateway keeps no durable per-bottle state. When it restarts, the launcher
 re-provisions every running bottle: CA, git-gate repos and credentials, and

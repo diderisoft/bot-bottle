@@ -11,6 +11,7 @@ accepted tradeoff for needing no host Docker.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import gzip
 import hashlib
@@ -144,8 +145,15 @@ def _rootfs_dir(name: str) -> Path:
 
 
 def _ready_dir(name: str) -> Path | None:
+    """The ready tree `name`, its marker refreshed so its age is time since last
+    use (`bot-bottle prune`); None if it isn't built."""
     base = _rootfs_dir(name)
-    return base if (base / ".bb-ready").is_file() else None
+    ready = base / ".bb-ready"
+    if not ready.is_file():
+        return None
+    with contextlib.suppress(OSError):
+        ready.touch()
+    return base
 
 
 def _force_rmtree(path: Path) -> None:
@@ -211,7 +219,12 @@ def _image_ext4_path(artifact: Artifact, infra: InfraSettings) -> Path:
 def cached_agent_image_ext4(artifact: Artifact, infra: InfraSettings) -> Path | None:
     """A prepared ext4 base from `artifact`, or None."""
     image = _image_ext4_path(artifact, infra)
-    return image if image.with_suffix(".ready").is_file() else None
+    ready = image.with_suffix(".ready")
+    if not ready.is_file():
+        return None
+    with contextlib.suppress(OSError):
+        ready.touch()  # a hit: its age is time since last use
+    return image
 
 
 def acquire_agent_image_ext4(artifact: Artifact, settings: Settings) -> Path:
@@ -225,6 +238,8 @@ def acquire_agent_image_ext4(artifact: Artifact, settings: Settings) -> Path:
     ready = image.with_suffix(".ready")
     if ready.is_file():
         info(f"using cached agent rootfs {image.name}")
+        with contextlib.suppress(OSError):
+            ready.touch()  # a hit: its age is time since last use
         return image
     with _build_lock():
         if ready.is_file():  # another launch prepared it meanwhile
