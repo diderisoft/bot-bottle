@@ -60,6 +60,19 @@ class TestRoleInits(unittest.TestCase):
         self.assertIn("python3 -m bot_bottle.orchestrator", init)
         self.assertIn("--db /var/lib/bot-bottle/db/bot-bottle.db", init)
 
+    def test_the_signing_key_is_never_read_from_the_persistent_volume(self):
+        # A copy an earlier boot left on /dev/vdb was read before the fresh
+        # one arrived, so a changed host key got every call a 401.
+        init = infra_vm.role_init("orchestrator")
+        volume = "/var/lib/bot-bottle"
+        self.assertIn(f"mount -t ext4 /dev/vdb {volume}", init)
+        self.assertFalse(infra_vm._GUEST_SIGNING_KEY_PATH.startswith(volume + "/"))
+        self.assertTrue(infra_vm._GUEST_SIGNING_KEY_PATH.startswith("/run/"))
+        # The old copy goes, after the mount and before the wait for the key.
+        rm = init.index(f"rm -f {infra_vm._STALE_SIGNING_KEY_PATH}")
+        self.assertLess(init.index("mount -t ext4 /dev/vdb"), rm)
+        self.assertLess(rm, init.index(f"cat {infra_vm._GUEST_SIGNING_KEY_PATH}"))
+
     def test_gateway_init_starts_only_the_data_plane(self):
         init = infra_vm.role_init("gateway")
         self.assertNotIn("bb_role=", init)

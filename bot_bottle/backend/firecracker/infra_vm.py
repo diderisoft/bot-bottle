@@ -36,9 +36,12 @@ from ...paths import HOST_DB_FILENAME
 from ..docker import util as docker_mod
 from . import firecracker_vm, infra_rootfs, netpool, util
 
-# The signing key on the orchestrator's `/dev/vdb` volume, pushed over SSH
-# after boot from the host key file.
-_GUEST_SIGNING_KEY_PATH = "/var/lib/bot-bottle/orchestrator-token"
+# The signing key, pushed over SSH after boot from the host key file. On the
+# rootfs, not the `/dev/vdb` volume: a copy left there by an earlier boot was
+# read before the fresh one arrived, so a changed host key got every call a
+# 401. Where earlier versions kept it, the init deletes it.
+_GUEST_SIGNING_KEY_PATH = "/run/bot-bottle-orchestrator-token"
+_STALE_SIGNING_KEY_PATH = "/var/lib/bot-bottle/orchestrator-token"
 # The gateway's `gateway` token, on the rootfs (the gateway has no volume),
 # pushed after boot.
 _GUEST_GATEWAY_JWT_PATH = "/var/lib/bot-bottle/gateway-jwt"
@@ -453,6 +456,7 @@ def _orchestrator_init() -> str:
 # Persistent registry volume (second virtio-block device, /dev/vdb) mounted at
 # the DB dir, so bot-bottle.db survives orchestrator-VM restarts.
 mount -t ext4 /dev/vdb /var/lib/bot-bottle 2>/dev/null || true
+rm -f {_STALE_SIGNING_KEY_PATH}
 # Persistent buildah store (/dev/vdc), so pulled bases and layer cache survive
 # restarts. Unmounted, buildah falls back to the ephemeral rootfs.
 mkdir -p {GUEST_BUILD_STORE}
