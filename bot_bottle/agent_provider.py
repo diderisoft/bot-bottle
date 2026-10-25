@@ -13,7 +13,7 @@ import os
 import shlex
 import tempfile
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -118,6 +118,29 @@ class HostDetection:
     login_location: str = ""
     login_command: str = ""
     starter_settings: Mapping[str, object] = field(default_factory=dict)
+
+
+TranscriptKind = Literal["user", "assistant", "tool_call", "tool_result", "system"]
+
+
+@dataclass(frozen=True)
+class TranscriptEntry:
+    """One normalized entry of a harness transcript (PRD 0095).
+
+    `raw_offset` is the byte offset of the line it came from in the host copy;
+    one line can yield several entries (a reply and its tool calls). `id` and
+    `parent` carry a harness's own tree links, for following its active
+    branch; "" when it has none."""
+
+    seq: int
+    ts: str
+    kind: TranscriptKind
+    text: str
+    raw_offset: int
+    tool: str = ""
+    error: bool = False
+    id: str = ""
+    parent: str = ""
 
 
 class AgentProvider(ABC):
@@ -233,6 +256,23 @@ class AgentProvider(ABC):
         """Extra agent CLI args for a session relayed to the console. Default:
         none."""
         return ()
+
+    def transcript_glob(self, plan: "BottlePlan") -> str | None:
+        """The guest path pattern (shell glob) of the harness's transcript
+        files for `plan`, or None when it keeps none. Default: none."""
+        del plan
+
+    def parse_transcript(self, lines: Iterable[str], *, offset: int = 0,
+                         seq: int = 0) -> list[TranscriptEntry]:
+        """New raw transcript `lines` (each with its newline) as entries,
+        numbered from `seq`, the first line at byte `offset` of the copy.
+        Default: each line as a `system` entry."""
+        entries = []
+        for line in lines:
+            entries.append(TranscriptEntry(seq=seq + len(entries), ts="", kind="system",
+                                           text=line.rstrip("\n"), raw_offset=offset))
+            offset += len(line.encode("utf-8"))
+        return entries
 
     def provision_ca(self, bottle: "Bottle", plan: "BottlePlan") -> None:
         """Install the egress CA into the agent's trust store (Debian-style by

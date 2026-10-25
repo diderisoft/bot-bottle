@@ -113,6 +113,39 @@ Viewers:
 Every non-local viewer starts read-only. It can type only if the agent's
 manifest sets `remote.writable`.
 
+## Transcripts
+
+The daemon copies each session's harness transcript to the host as it's
+written (`transcripts.py`, [PRD 0095](../prds/0095-conversation-view.md)).
+Only pi declares one so far (`AgentProvider.transcript_glob`); other
+harnesses aren't followed.
+
+- At launch a follower notes the files already matching the glob (another
+  session's, never copied) and writes `follow.json`. Then, once a second and
+  once more after the agent exits, one `exec` into the bottle reads each new
+  file's new bytes by offset (up to 4 MiB a poll) and the 64 bytes before
+  the offset.
+- The bytes are appended exactly as read to
+  `~/.bot-bottle/transcripts/<session>/<activation>/<file>.jsonl` (0600, in
+  0700 directories), with
+  `<file>.meta.json` beside it: the guest path, the offset read and the
+  console agent id (the console's for a console launch, otherwise
+  `terminal_agent_id`). The copy isn't parsed or masked; entries are parsed
+  when read (`AgentProvider.parse_transcript`).
+- A guest file that shrinks, or whose bytes before the offset changed, keeps
+  its copy as it was; the file is copied again from its start to
+  `<file>.rewrite-<n>.jsonl`, with a `transcript.rewritten` audit event.
+- `transcript.captured` records a copy's size and running SHA-256 every five
+  minutes while it grows, when a restarted daemon resumes it, and when it
+  closes (`final: true`). The payload
+  marks it `agent-claimed`: the harness writes the file inside the bottle,
+  so it's the agent's account, not evidence. The guest path is under
+  `untrusted`.
+- A restarted daemon resumes each re-adopted session's copies from the
+  saved offsets, exec'ing through `BottleBackend.attach_adopted` (which
+  never tears the bottle down). Copies of sessions that ended while it was
+  down close with what they have.
+
 ## Audit
 
 The host controller is the host's only audit writer

@@ -65,14 +65,20 @@ def adopted(
     from .cleanup import stop_vmms  # pylint: disable=import-outside-toplevel
     run_dir = util.cache_dir() / "run" / bottle_id
     try:
-        yield FirecrackerBottle(record.container, private_key=run_dir / "bottle_id_ed25519",
-                                guest_ip=firecracker_vm.guest_ip_of(run_dir))
+        yield attach(bottle_id, record)
     finally:
         stop_vmms(run_dir)
         shutil.rmtree(run_dir, ignore_errors=True)
         if record.registry_id:
             deprovision_consolidated(record.registry_id, service=FirecrackerInfraService(settings),
                                      timeout=resolve_teardown_timeout(host_db_path()))
+
+def attach(bottle_id: str, record: "AdoptionRecord") -> FirecrackerBottle:
+    """A bottle a previous host controller launched, to exec into over SSH."""
+    run_dir = util.cache_dir() / "run" / bottle_id
+    return FirecrackerBottle(record.container, private_key=run_dir / "bottle_id_ed25519",
+                             guest_ip=firecracker_vm.guest_ip_of(run_dir))
+
 
 @contextmanager
 def launch(

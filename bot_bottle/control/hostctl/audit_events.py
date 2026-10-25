@@ -132,6 +132,37 @@ class HostAudit:
                      "stop_requested": stop_requested},
         ))
 
+    # --- transcript.* ---
+
+    def transcript_captured(self, *, bottle: str, activation: str, copy: str, guest_path: str,
+                            size: int, sha256: str, final: bool) -> None:
+        """A checkpoint of a session's host transcript copy: its size and
+        running SHA-256. The content is the agent's account (agent-claimed);
+        the guest path is the bottle's to choose, so it's untrusted."""
+        self.record(AuditEvent(
+            type="transcript.captured", actor=ACTOR, action="transcript.captured",
+            outcome="success", sensitivity="normal", ts_event=self._now(), resource=copy,
+            bottle=bottle, bottled_agent=bottle, activation=activation,
+            correlation_id=activation,
+            payload={"copy": copy, "bytes": size, "sha256": sha256, "final": final,
+                     "provenance": "agent-claimed"},
+            untrusted={"guest_path": guest_path},
+        ))
+
+    def transcript_rewritten(self, *, bottle: str, activation: str, copy: str, new_copy: str,
+                             guest_path: str, offset: int, size: int) -> None:
+        """A transcript file changed before the bytes already copied: `copy`
+        is kept as it was and `new_copy` holds the file as it is now."""
+        self.record(AuditEvent(
+            type="transcript.rewritten", actor=ACTOR, action="transcript.rewritten",
+            outcome="success", sensitivity="security", ts_event=self._now(), resource=copy,
+            bottle=bottle, bottled_agent=bottle, activation=activation,
+            correlation_id=activation,
+            payload={"copy": copy, "new_copy": new_copy, "copied_bytes": offset,
+                     "guest_bytes": size, "provenance": "agent-claimed"},
+            untrusted={"guest_path": guest_path},
+        ))
+
     # --- hostctl.* ---
 
     def brokered(self, kind: str, op: str, *, role: str, success: bool,

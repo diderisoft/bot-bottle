@@ -206,13 +206,19 @@ def adopted(
     """A bottle a previous host controller launched: exec into it, then tear it
     down as its holder would have (compose down, then deregister)."""
     try:
-        yield DockerBottle(record.container, lambda: None, None)
+        yield attach(bottle_id, record)
     finally:
         compose_down(compose_project_name(bottle_id),
                      compose_file_path(bottle_state_dir(bottle_id)))
         if record.registry_id:
             deprovision_consolidated(record.registry_id, service=DockerInfraService(settings),
                                      timeout=resolve_teardown_timeout(host_db_path()))
+
+
+def attach(bottle_id: str, record: "AdoptionRecord") -> DockerBottle:
+    """A bottle a previous host controller launched, to exec into."""
+    del bottle_id
+    return DockerBottle(record.container, lambda: None, None)
 
 
 def stale_checks(plan: DockerBottlePlan) -> None:

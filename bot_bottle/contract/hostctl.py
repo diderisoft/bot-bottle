@@ -214,6 +214,8 @@ class LaunchRequest:
     secrets: dict[str, str] = field(default_factory=dict, repr=False)
     # Repo name -> the upstream host key the user confirmed.
     host_keys: dict[str, str] = field(default_factory=dict)
+    # The console's id for a session it launched; empty for a terminal launch.
+    agent_id: str = ""
 
     def to_json(self) -> dict[str, object]:
         body = dataclasses.asdict(self)

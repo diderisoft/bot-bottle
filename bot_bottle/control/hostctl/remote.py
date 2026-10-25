@@ -382,7 +382,8 @@ class ConsoleLink:
         prompt, bottles, label = extras
         # The console click is the launch confirmation.
         request = LaunchRequest(agent=name, assume_yes=True, prompt=prompt,
-                                bottles=bottles, label=label, headless=False)
+                                bottles=bottles, label=label, headless=False,
+                                agent_id=agent_id)
         try:
             result = await asyncio.to_thread(self._bottles.launch, request, ROLE_REMOTE)
         except (Exception, SystemExit) as e:  # pylint: disable=broad-exception-caught
