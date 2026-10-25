@@ -55,6 +55,7 @@ class TestConfigStore(unittest.TestCase):
                 "firehose_request_bodies",
                 "firehose_response_bodies",
                 "firehose_max_body_bytes",
+                "transcript_retention_days",
             ], columns)
 
     def test_firehose_settings_round_trip(self) -> None:
