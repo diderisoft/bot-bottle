@@ -411,7 +411,8 @@ class BottleService:
                 agent_id=request.agent_id or terminal_agent_id(identity, activation),
                 audit=self.audit)
         except Exception as e:  # pylint: disable=broad-exception-caught  # the agent runs regardless
-            log.warn(f"bottle {identity}: not copying its transcript: {e}")
+            # Not a launch warning: the agent runs as usual, without a copy.
+            log.info(f"bottle {identity}: not copying its transcript: {e}")
             return
         follower.start(bottle)
         with self._lock:
