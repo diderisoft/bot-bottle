@@ -14,6 +14,7 @@ from .migrations import TableMigrations
 DEFAULT_CACHED_IMAGE_STALE_WARNING_DAYS = 1
 # The default for bottles that don't set `audit.delivery`.
 DEFAULT_AUDIT_DELIVERY = "best_effort"
+DEFAULT_TRANSCRIPT_RETENTION_DAYS = 30
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,12 @@ class ConfigStore(DbStore):
             """
             ALTER TABLE bot_bottle_config
             ADD COLUMN firehose_max_body_bytes INTEGER NOT NULL DEFAULT 65536
+            """,
+            # v10: how long transcript copies are kept
+            f"""
+            ALTER TABLE bot_bottle_config
+            ADD COLUMN transcript_retention_days INTEGER NOT NULL
+                DEFAULT {DEFAULT_TRANSCRIPT_RETENTION_DAYS}
             """,
         ])
         super().__init__(db_path, migrations)
@@ -218,6 +225,34 @@ class ConfigStore(DbStore):
                 """,
                 (json.dumps([s.to_json() for s in settings.sinks]), int(settings.request_bodies),
                  int(settings.response_bodies), settings.max_body_bytes),
+            )
+        self._chmod()
+        return self.db_path
+
+    def transcript_retention_days(self) -> int:
+        """Days a closed session's transcript copies are kept (PRD 0095)."""
+        if not self.db_path.is_file():
+            return DEFAULT_TRANSCRIPT_RETENTION_DAYS
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT transcript_retention_days FROM bot_bottle_config WHERE id = 1",
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return DEFAULT_TRANSCRIPT_RETENTION_DAYS  # not migrated yet
+        return int(row["transcript_retention_days"]) if row is not None \
+            else DEFAULT_TRANSCRIPT_RETENTION_DAYS
+
+    def set_transcript_retention_days(self, days: int) -> Path:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO bot_bottle_config (id, transcript_retention_days)
+                VALUES (1, ?)
+                ON CONFLICT(id) DO UPDATE
+                SET transcript_retention_days = excluded.transcript_retention_days
+                """,
+                (days,),
             )
         self._chmod()
         return self.db_path

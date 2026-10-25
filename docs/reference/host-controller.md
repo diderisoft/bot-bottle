@@ -144,6 +144,10 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
   marks it `agent-claimed`: the harness writes the file inside the bottle,
   so it's the agent's account, not evidence. The guest path is under
   `untrusted`.
+- `transcript_retention.py` deletes a run's copies once the run is closed
+  and unchanged for the host's retention (`bot-bottle audit
+  transcript-retention [DAYS]`, default 30), at start and daily after, with
+  a `transcript.deleted` event listing each copy's size and SHA-256.
 - A restarted daemon resumes each re-adopted session's copies from the
   saved offsets, exec'ing through `BottleBackend.attach_adopted` (which
   never tears the bottle down). Copies of sessions that ended while it was

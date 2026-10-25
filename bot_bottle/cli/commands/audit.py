@@ -149,6 +149,18 @@ def _delivery(ns: argparse.Namespace) -> int:
     return 0
 
 
+def _transcript_retention(ns: argparse.Namespace) -> int:
+    store = ConfigStore(host_db_path())
+    if ns.days is not None:
+        if ns.days < 1:
+            sys.stderr.write("transcript-retention: DAYS must be at least 1\n")
+            return 2
+        store.migrate()
+        store.set_transcript_retention_days(ns.days)
+    sys.stdout.write(f"{store.transcript_retention_days()} days\n")
+    return 0
+
+
 def _forward(ns: argparse.Namespace) -> int:
     store = ConfigStore(host_db_path())
     if ns.off or ns.url:
@@ -286,6 +298,11 @@ def cmd_audit(args: list[str]) -> int:
         help="show or set the default audit.delivery for bottles that don't set it")
     delivery.add_argument("mode", nargs="?", choices=AUDIT_DELIVERIES)
     delivery.set_defaults(run=_delivery)
+    retention = sub.add_parser(
+        "transcript-retention",
+        help="show or set how many days ended sessions' transcript copies are kept")
+    retention.add_argument("days", nargs="?", type=int)
+    retention.set_defaults(run=_transcript_retention)
     forward = sub.add_parser(
         "forward", help="show or set where the host controller forwards the journal")
     forward.add_argument("--url", help="an https endpoint that accepts NDJSON POSTs")

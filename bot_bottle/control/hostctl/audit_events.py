@@ -163,6 +163,18 @@ class HostAudit:
             untrusted={"guest_path": guest_path},
         ))
 
+    def transcript_deleted(self, *, bottle: str, activation: str, copies: list[dict[str, Any]],
+                           retention_days: int) -> None:
+        """A run's transcript copies, deleted after `retention_days`: what
+        each held, by size and digest."""
+        self.record(AuditEvent(
+            type="transcript.deleted", actor=ACTOR, action="transcript.deleted",
+            outcome="success", sensitivity="normal", ts_event=self._now(),
+            resource=f"{bottle}/{activation}", bottle=bottle, bottled_agent=bottle,
+            activation=activation, correlation_id=activation,
+            payload={"copies": copies, "retention_days": retention_days},
+        ))
+
     # --- hostctl.* ---
 
     def brokered(self, kind: str, op: str, *, role: str, success: bool,

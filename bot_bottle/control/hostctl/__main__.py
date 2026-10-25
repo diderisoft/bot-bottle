@@ -32,6 +32,7 @@ from .remote import Supervisor
 from .blocks import BlockNotifier
 from .requests import RequestNotifier, orchestrator_pending
 from .server import HostControlServer
+from .transcript_retention import RetentionSweeper
 from .sessions import SessionManager, control_socket_path, tmux_version, write_config
 
 # Guest listeners never accept `cli`.
@@ -117,6 +118,9 @@ def main() -> int:
         write_config()
         sessions.adopt()
         bottles.adopt()
+    # Deletes ended sessions' transcript copies past the host's retention.
+    retention = RetentionSweeper(audit)
+    retention.start()
     build_id, key, jobs = current_build_id(), signing_key(HOST_CONTROL), JobRegistry()
     live, firehose = LiveBottles(), start_firehose()
     server = HostControlServer(("127.0.0.1", port), build_id, key, sessions, bottles,
@@ -155,6 +159,7 @@ def main() -> int:
         remote_link.close()
         requests.stop()
         blocks.stop()
+        retention.stop()
         if forwarder is not None:
             forwarder.close()
         firehose.close()
