@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import os
+import pty
 import re
+import select
+import signal
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -110,6 +114,36 @@ class StatusBar(unittest.TestCase):
         # warning can't smuggle in a style.
         self.assertIn("#[fg=colour178]⚠ isolation gap: agent can reach the host ##1", shown)
         self.assertIn("Ctrl-] detach", shown)
+
+    @unittest.skipUnless(shutil.which("tmux"), "needs tmux")
+    def test_a_viewer_never_gets_the_agents_clipboard_or_passthrough_escapes(self) -> None:
+        conf = sessions.write_config()
+        tm = ["tmux", "-L", f"bb-test-esc-{os.getpid()}", "-f", str(conf)]
+        self.addCleanup(subprocess.run, [*tm, "kill-server"], capture_output=True, check=False)
+        hostile = (r"sleep 1; printf '\033]52;c;RVZJTA==\a'; "
+                   r"printf '\033Ptmux;\033\033]52;c;UEFTUw==\a\033\\'; "
+                   r"printf '\033]8;;https://evil.example/\alink\033]8;;\a'; "
+                   r"printf ' agent-done'; sleep 30")
+        subprocess.run([*tm, "new-session", "-d", "-s", "esc", "-x", "80", "-y", "10",
+                        "sh", "-c", hostile], check=True)
+        pid, fd = pty.fork()
+        if pid == 0:  # a viewer, attached the way the console terminal attaches
+            os.environ["TERM"] = "xterm-256color"
+            os.execvp("tmux", [*tm, "attach", "-r", "-t", "esc"])
+        self.addCleanup(os.kill, pid, signal.SIGKILL)
+        seen, deadline = b"", time.monotonic() + 8
+        while b"agent-done" not in seen and time.monotonic() < deadline:
+            if select.select([fd], [], [], 0.2)[0]:
+                try:
+                    seen += os.read(fd, 65536)
+                except OSError:
+                    break
+        self.assertIn(b"agent-done", seen)
+        for needle in (b"\x1b]52", b"RVZJTA", b"UEFTUw", b"\x1bPtmux", b"evil.example"):
+            self.assertNotIn(needle, seen)
+        show = subprocess.run([*tm, "show-options", "-g", "set-clipboard"], capture_output=True,
+                              text=True, check=True).stdout
+        self.assertEqual("set-clipboard off", show.strip())
 
 
 if __name__ == "__main__":

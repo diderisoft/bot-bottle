@@ -173,6 +173,12 @@ def write_config() -> Path:
         "set -g remain-on-exit on",
         "set -g default-terminal tmux-256color",
         "set -g escape-time 10",
+        # Viewers (local, WebSocket, the phone) are tmux clients, so they get
+        # tmux's redraw, never the agent's raw bytes. Pin what keeps an
+        # agent's escapes from reaching them: no clipboard writes (OSC 52)
+        # and no passthrough (DCS), whatever tmux's defaults become.
+        "set -g set-clipboard off",
+        "set -g allow-passthrough off",
         'set-hook -g pane-died "run-shell \\"' + hook.replace('"', '\\"') + '\\""',
     ]
     path = config_path()
