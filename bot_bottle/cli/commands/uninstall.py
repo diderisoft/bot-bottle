@@ -57,7 +57,8 @@ def _cache_dir() -> Path:
 
 
 def _shims(venv: Path) -> list[Path]:
-    """`bot-bottle` links on PATH (or in ~/.local/bin) that point into `venv`."""
+    """`bot-bottle` links on PATH (or in ~/.local/bin) that point into `venv`
+    (a venv, or the installer's private uv)."""
     found = []
     dirs = os.environ.get("PATH", "").split(os.pathsep) + [str(Path.home() / ".local" / "bin")]
     for directory in dict.fromkeys(dirs):
@@ -76,6 +77,11 @@ def _package() -> _Package:
     venv = Path(os.environ.get("BOT_BOTTLE_VENV") or bot_bottle_root() / "venv").resolve()
     if prefix == venv:
         return _Package(f"the installer's venv at {venv}", paths=(*_shims(venv), venv))
+    # The installer's own uv, with the Python and tool it installed (#694).
+    private_uv = (bot_bottle_root() / "uv").resolve()
+    if prefix.is_relative_to(private_uv):
+        return _Package(f"the installer's uv at {private_uv}",
+                        paths=(*_shims(private_uv), private_uv))
     parts = prefix.parts
     if "pipx" in parts and "venvs" in parts:
         return _Package("pipx", remove=["pipx", "uninstall", "bot-bottle"])

@@ -187,6 +187,23 @@ class TestPackageDetection(unittest.TestCase):
         self.assertEqual(["uv", "tool", "uninstall", "bot-bottle"],
                          self.detect("/home/u/.local/share/uv/tools/bot-bottle").remove)
 
+    def test_the_installers_private_uv_goes_whole(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".bot-bottle"
+            tool = root / "uv" / "tools" / "bot-bottle"
+            (tool / "bin").mkdir(parents=True)
+            (tool / "bin" / "bot-bottle").write_text("#!/bin/sh\n")
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            (bin_dir / "bot-bottle").symlink_to(tool / "bin" / "bot-bottle")
+            with mock.patch.object(uninstall.sys, "prefix", str(tool)), \
+                    mock.patch.dict(os.environ, {"BOT_BOTTLE_ROOT": str(root),
+                                                 "PATH": str(bin_dir)}):
+                package = uninstall._package()  # pylint: disable=protected-access
+        self.assertIsNone(package.remove)
+        self.assertIn((root / "uv").resolve(), package.paths)
+        self.assertIn(bin_dir / "bot-bottle", package.paths)
+
     def test_a_checkout_is_left_alone(self) -> None:
         package = self.detect("/home/u/Code/bot-bottle/.venv")
         self.assertIsNone(package.remove)

@@ -25,6 +25,10 @@
 #                            (bot-bottle[remote] from the repo; no extra on Intel Macs)
 #   BOT_BOTTLE_VENV          where the venv install lives, without uv or pipx (~/.bot-bottle/venv)
 #
+# With no Python 3.11+ at all, uv supplies one: yours if you have uv, else a
+# pinned uv release (checksum-verified) kept privately under ~/.bot-bottle/uv
+# with its Python and the bot-bottle tool, so it never touches a uv of yours.
+#
 # Uninstall (keeps ~/.bot-bottle; pass --purge after --uninstall to delete it):
 #   curl -fsSL "<the URL above>" | sh -s -- --uninstall
 # This runs `bot-bottle uninstall` (see `bot-bottle uninstall --help`), or, if
@@ -36,6 +40,12 @@ REPO_SPEC="git+https://gitea.dideric.is/didericis/bot-bottle.git"
 VENV="${BOT_BOTTLE_VENV:-${HOME}/.bot-bottle/venv}"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=11
+# The Python uv installs when the machine has no suitable one.
+UV_PYTHON=3.13
+# The uv release fetched when there's no Python and no uv: pinned, with its
+# published SHA-256 per platform (musl on Linux: static, so it runs on NixOS).
+UV_VERSION=0.12.24
+UV_HOME="${HOME}/.bot-bottle/uv"
 
 say() {
     printf 'bot-bottle install: %s\n' "$*" >&2
@@ -139,36 +149,99 @@ fi
 
 PYTHON="$(find_python || true)"
 
-if [ -z "${PYTHON}" ]; then
-    path_python="$(command -v python3 2>/dev/null || true)"
-    if [ -n "${path_python}" ]; then
-        found="the python3 on your PATH is ${path_python} ($(python_version "${path_python}")), which is too old"
+# --- no suitable Python: let uv supply one ------------------------------------
+
+# The uv build for this machine, and its published SHA-256.
+uv_target() {
+    case "$(uname -s)/$(uname -m)" in
+        Darwin/arm64) echo "aarch64-apple-darwin 0c4346de7abdb49495b393b9ec809fe387aa43e586be20fecb972216c1e71732" ;;
+        Darwin/x86_64) echo "x86_64-apple-darwin 4fa82e37cb94767661f532b001e470b67a186c7260e305bd84ddb78fd545c0b6" ;;
+        Linux/x86_64) echo "x86_64-unknown-linux-musl 48170bd200a5430298c18f3b264485a1f3a8605f01088277daf6e37633edf0f5" ;;
+        Linux/aarch64|Linux/arm64) echo "aarch64-unknown-linux-musl 7f9ab4726d743b6a92e310477a7840c8a8a7b3938cb3c4657d541342fca75011" ;;
+        *) return 1 ;;
+    esac
+}
+
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
     else
-        found="no python3 was found on your PATH"
+        return 1
     fi
-    case "$(uname -s)" in
-        Darwin) fix="  brew install python@3.12
+}
+
+# Fetch the pinned uv into ${UV_HOME}/bin, verify it, and print its path.
+# Fails (returning 1) when this machine can't, so the caller can explain.
+fetch_uv() {
+    target_sum="$(uv_target)" || return 1
+    target="${target_sum% *}"
+    want="${target_sum#* }"
+    url="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${target}.tar.gz"
+    tmp="$(mktemp -d)" || return 1
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL -o "${tmp}/uv.tar.gz" "${url}" || { rm -rf "${tmp}"; return 1; }
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -O "${tmp}/uv.tar.gz" "${url}" || { rm -rf "${tmp}"; return 1; }
+    else
+        rm -rf "${tmp}"; return 1
+    fi
+    got="$(sha256_of "${tmp}/uv.tar.gz")" || { rm -rf "${tmp}"; return 1; }
+    if [ "${got}" != "${want}" ]; then
+        rm -rf "${tmp}"
+        die "the downloaded uv ${UV_VERSION} (${target}) doesn't match its published checksum; not using it"
+    fi
+    tar -xzf "${tmp}/uv.tar.gz" -C "${tmp}" || { rm -rf "${tmp}"; return 1; }
+    mkdir -p "${UV_HOME}/bin"
+    mv "${tmp}/uv-${target}/uv" "${UV_HOME}/bin/uv"
+    rm -rf "${tmp}"
+    echo "${UV_HOME}/bin/uv"
+}
+
+# UV is set when uv installs bot-bottle on a Python it supplies; PRIVATE_UV
+# when that uv is ours (its tools and Pythons kept under ${UV_HOME}).
+UV=""
+PRIVATE_UV=no
+if [ -z "${PYTHON}" ]; then
+    if command -v uv >/dev/null 2>&1; then
+        UV="$(command -v uv)"
+        say "no Python ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}+ found; uv will install Python ${UV_PYTHON}"
+    elif [ -x "${UV_HOME}/bin/uv" ] || { say "no Python ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}+ found; fetching uv ${UV_VERSION} to install Python ${UV_PYTHON}" && fetch_uv >/dev/null; }; then
+        UV="${UV_HOME}/bin/uv"
+        PRIVATE_UV=yes
+    else
+        path_python="$(command -v python3 2>/dev/null || true)"
+        if [ -n "${path_python}" ]; then
+            found="the python3 on your PATH is ${path_python} ($(python_version "${path_python}")), which is too old"
+        else
+            found="no python3 was found on your PATH"
+        fi
+        case "$(uname -s)" in
+            Darwin) fix="  brew install python@3.12
   # or install from https://www.python.org/downloads/macos/
   # macOS itself ships only /usr/bin/python3, which is too old" ;;
-        *) fix="  sudo apt install python3.12    # Debian/Ubuntu
+            *) fix="  sudo apt install python3.12    # Debian/Ubuntu
   sudo dnf install python3.12    # Fedora/RHEL" ;;
-    esac
-    die "bot-bottle needs python3 ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR} or newer, and none was found.
+        esac
+        die "bot-bottle needs python3 ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR} or newer, and none was found.
   ${found}.
   Also checked: python3.11-3.14, /opt/homebrew/bin, /usr/local/bin,
-  ~/.local/bin, and python.org framework builds.
+  ~/.local/bin, and python.org framework builds. Fetching uv to supply
+  one failed too (it needs curl or wget, and sha256sum or shasum).
 
 Install a newer Python, then re-run this installer:
 ${fix}
 
 Already have one somewhere? Point at it directly:
   BOT_BOTTLE_PYTHON=/path/to/python3 sh install.sh"
+    fi
 fi
 
 # Be explicit when the interpreter isn't the obvious one, so nobody is left
 # wondering which Python their install ended up on.
 path_python="$(command -v python3 2>/dev/null || true)"
-if [ "${PYTHON}" != "${path_python}" ]; then
+if [ -n "${PYTHON}" ] && [ "${PYTHON}" != "${path_python}" ]; then
     say "using ${PYTHON} ($(python_version "${PYTHON}"))"
     if [ -n "${path_python}" ]; then
         say "note: 'python3' on your PATH is ${path_python} ($(python_version "${path_python}")), which is below the ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR} floor"
@@ -180,9 +253,13 @@ fi
 # it. Decided by the interpreter the install uses, which is what pip matches
 # wheels against (and stays right under Rosetta).
 REMOTE=yes
-if [ "$(uname -s)" = Darwin ] && \
-        [ "$("${PYTHON}" -c 'import platform; print(platform.machine())')" = x86_64 ]; then
-    REMOTE=no
+if [ "$(uname -s)" = Darwin ]; then
+    if [ -n "${PYTHON}" ]; then
+        machine="$("${PYTHON}" -c 'import platform; print(platform.machine())')"
+    else
+        machine="$(uname -m)"  # uv's Python matches the uv build we picked
+    fi
+    [ "${machine}" = x86_64 ] && REMOTE=no
 fi
 if [ "${REMOTE}" = yes ]; then
     PACKAGE_SPEC="${BOT_BOTTLE_INSTALL_SPEC:-bot-bottle[remote] @ ${REPO_SPEC}}"
@@ -212,7 +289,19 @@ mkdir -p \
 
 BIN_DIR="${HOME}/.local/bin"
 
-if command -v uv >/dev/null 2>&1; then
+if [ -n "${UV}" ]; then
+    # No suitable Python: uv installs one. Ours keeps its tools and Pythons
+    # under ${UV_HOME}, so `bot-bottle uninstall` removes them all and a uv of
+    # the user's never sees them.
+    if [ "${PRIVATE_UV}" = yes ]; then
+        export UV_TOOL_DIR="${UV_HOME}/tools" UV_PYTHON_INSTALL_DIR="${UV_HOME}/python"
+        export UV_TOOL_BIN_DIR="${BIN_DIR}"
+    fi
+    say "installing with uv on Python ${UV_PYTHON}"
+    "${UV}" tool install --python "${UV_PYTHON}" --force "${PACKAGE_SPEC}"
+    uv_bin="$("${UV}" tool dir --bin 2>/dev/null || true)"
+    [ -n "${uv_bin}" ] && BIN_DIR="${uv_bin}"
+elif command -v uv >/dev/null 2>&1; then
     # uv first: fastest, and someone with uv manages their Python tools with
     # it. --python pins the tool's venv to the interpreter we vetted, as for
     # pipx below.
