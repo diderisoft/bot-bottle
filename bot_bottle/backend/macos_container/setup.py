@@ -22,12 +22,13 @@ def _summary(subnet: str) -> str:
     """What installing the firewall changes on this Mac, and how to undo it."""
     return (
         "The macOS backend needs a one-time privileged step. It changes, system-wide:\n"
-        f"  - {host_firewall.RULES_PATH}: pf rules that drop traffic from the agent\n"
-        f"    network ({subnet}, {AGENT_SUBNET_V6}) to this Mac and to anything but\n"
-        "    the gateway. Nothing else on this Mac matches them.\n"
-        f"  - {host_firewall.DAEMON_PATH}: a root job that loads them at boot and\n"
-        "    every minute, turns pf on if it's off (/etc/pf.conf isn't edited), and\n"
-        "    turns IPv6 off on the agent network's bridge only.\n"
+        f"  - pf rules in {host_firewall.RULES_PATH}\n"
+        f"    that drop traffic from the agent network ({subnet}, {AGENT_SUBNET_V6})\n"
+        "    to this Mac and to anything but the gateway. Nothing else matches them.\n"
+        f"  - a root job, {host_firewall.DAEMON_PATH},\n"
+        "    that loads them at boot and every minute, turns pf on if it's off\n"
+        "    (/etc/pf.conf isn't edited), and turns IPv6 off on the agent network's\n"
+        "    bridge only.\n"
         "  Undo it with: bot-bottle backend teardown --backend=macos-container\n\n"
     )
 
