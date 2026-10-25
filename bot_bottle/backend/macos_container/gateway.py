@@ -22,6 +22,7 @@ from ...lib.log import die
 from ...paths import host_gateway_ca_dir
 from ... import resources
 from .. import util as backend_util
+from . import host_firewall
 from . import util as container_mod
 from ...image_registry import RegistryError
 from ...infra_image import (
@@ -33,8 +34,10 @@ from ...published_artifacts import FORMAT_OCI
 # address here is its attribution key. Named apart from docker's so both
 # backends can coexist.
 GATEWAY_NETWORK = "bot-bottle-mac-gateway"
-# The agent network's subnets, pinned so the host firewall can name them.
-AGENT_SUBNET = "192.168.128.0/24"
+# The agent network's IPv6 subnet, pinned so the host firewall can name it.
+# The IPv4 one is whatever the installed firewall blocks
+# (`host_firewall.agent_subnet`), chosen at setup to avoid this Mac's LAN,
+# VPNs and other interfaces.
 AGENT_SUBNET_V6 = "fd62:6f74:6274:6c65::/64"
 # NAT network giving only the gateway a route out.
 GATEWAY_EGRESS_NETWORK = "bot-bottle-mac-egress"
@@ -59,16 +62,23 @@ def ensure_networks(
 ) -> None:
     """Create the agent, egress and control networks. Idempotent. Dies when
     the agent network exists with other subnets than the host firewall
-    blocks."""
+    blocks, or when something else on this Mac uses its subnet."""
+    subnet = host_firewall.agent_subnet()
+    clashes = host_firewall.conflicts(subnet)
+    if clashes:
+        die(f"the agent network's {subnet} is also used on this Mac "
+            f"({'; '.join(clashes)}), so agents could reach it or cut it off. "
+            "Run `bot-bottle backend setup --backend=macos-container` to move "
+            "agents to a free range.")
     container_mod.create_network(egress_network)
     container_mod.create_network(
-        network, internal=True, subnet=AGENT_SUBNET, subnet_v6=AGENT_SUBNET_V6)
+        network, internal=True, subnet=subnet, subnet_v6=AGENT_SUBNET_V6)
     container_mod.create_network(control_network, internal=True)
     found = container_mod.network_subnets(network)
-    if found != (AGENT_SUBNET, AGENT_SUBNET_V6):
+    if found != (subnet, AGENT_SUBNET_V6):
         die(
             f"network {network} has subnets {found}, not the "
-            f"{AGENT_SUBNET} and {AGENT_SUBNET_V6} the host firewall blocks. "
+            f"{subnet} and {AGENT_SUBNET_V6} the host firewall blocks. "
             f"Stop running bottles, then `container network rm {network}`; "
             "the next launch recreates it."
         )
@@ -235,7 +245,6 @@ class MacosGateway(Gateway):
 
 
 __all__ = [
-    "AGENT_SUBNET",
     "AGENT_SUBNET_V6",
     "GATEWAY_NETWORK",
     "GATEWAY_EGRESS_NETWORK",

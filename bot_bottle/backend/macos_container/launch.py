@@ -41,7 +41,6 @@ from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import util as container_mod
 from . import host_firewall
 from .bottle import MacosContainerBottle
-from .gateway import AGENT_SUBNET
 from .gateway_hosts import GATEWAY_HOSTNAME, set_gateway_host
 from . import nested_containers as nested_containers_mod
 from .bottle_plan import MacosContainerBottlePlan
@@ -227,7 +226,8 @@ def launch(
         # IPv6 on the agent bridge reaches the host where pf can't name it
         # (#720); the host firewall's daemon turns it off, within a minute of
         # the network being (re)created.
-        if not host_firewall.wait_ipv6_off(AGENT_SUBNET):
+        agent_subnet = host_firewall.agent_subnet()
+        if not host_firewall.wait_ipv6_off(agent_subnet):
             die("ISOLATION FAILURE: IPv6 is still on on the agent network's bridge, "
                 "so agents can reach this Mac over it. Refusing to run the agent "
                 "(fail-closed). Install or update the host firewall with "
@@ -241,7 +241,7 @@ def launch(
             check_dns=True,
             # The host's own address on the agent network: the agents' default
             # route and resolver, which a host-only network still reaches.
-            host_ips=(host_firewall.host_address(AGENT_SUBNET),),
+            host_ips=(host_firewall.host_address(agent_subnet),),
         )
         bottle.prompt_path = provision(plan, bottle)
 

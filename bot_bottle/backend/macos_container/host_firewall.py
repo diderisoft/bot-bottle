@@ -11,6 +11,10 @@ It lives under the `com.apple/*` hook already in `/etc/pf.conf`, so that file
 is never edited. A root LaunchDaemon loads it at boot and re-applies it every
 minute, in case something reloads pf. Installing it needs root once; the
 launch-time isolation probe proves it's in force.
+
+The installed rules are where the agent subnet is recorded: setup picks a
+range no LAN, VPN or other interface on this Mac uses, and the network and
+launch read it back (`agent_subnet`).
 """
 
 from __future__ import annotations
@@ -28,6 +32,9 @@ DAEMON_LABEL = "io.bot-bottle.pf"
 DAEMON_PATH = Path("/Library/LaunchDaemons") / f"{DAEMON_LABEL}.plist"
 # Re-apply this often (seconds): a pf reload elsewhere can drop the anchor.
 REAPPLY_SECONDS = 60
+# Agent subnets setup tries, in order, skipping any this Mac already uses.
+CANDIDATE_SUBNETS = ("192.168.128.0/24", "192.168.200.0/24", "10.213.128.0/24",
+                     "172.30.128.0/24")
 
 
 def host_address(subnet: str) -> str:
@@ -57,10 +64,13 @@ def render_rules(subnet: str, subnet_v6: str) -> str:
 
 def _bridge_lookup(subnet: str) -> str:
     """Shell that prints the bridge holding the host's address on `subnet`.
-    Its name changes whenever the agent network is recreated."""
+    Its name changes whenever the agent network is recreated. Only `bridge*`
+    interfaces count, so a LAN that happens to use the address is never
+    touched."""
     address = host_address(subnet).replace(".", r"\.")
     return ("/sbin/ifconfig | /usr/bin/awk "
-            f"'/^[a-z]/{{i=$1}} /inet {address} /{{sub(\":\",\"\",i); print i}}'")
+            "'/^[a-z]/{i=\"\"} /^bridge[0-9]+:/{i=$1} "
+            f"i!=\"\" && /inet {address} /{{sub(\":\",\"\",i); print i}}'")
 
 
 def _apply_script(subnet: str) -> str:
@@ -156,15 +166,108 @@ def uninstall_commands(subnet: str) -> str:
 def agent_bridge(subnet: str) -> str | None:
     """The bridge interface holding the host's address on `subnet`, or None
     when there's none (the network doesn't exist yet)."""
+    wanted = host_address(subnet)
+    for iface, address, _ in _interface_addresses():
+        if iface.startswith("bridge") and address == wanted:
+            return iface
+    return None
+
+
+def _interface_addresses() -> list[tuple[str, str, int]]:
+    """(interface, IPv4 address, prefix length) for every address on this Mac."""
     out = subprocess.run(["/sbin/ifconfig"], capture_output=True, text=True,
                          check=False).stdout
-    iface, wanted = None, f"inet {host_address(subnet)} "
+    found: list[tuple[str, str, int]] = []
+    iface = ""
     for line in out.splitlines():
         if line and not line[0].isspace():
             iface = line.split(":", 1)[0]
-        elif wanted in line:
-            return iface
+            continue
+        words = line.split()
+        if len(words) >= 4 and words[0] == "inet" and words[2] == "netmask":
+            try:
+                prefix = bin(int(words[3], 16)).count("1")
+            except ValueError:
+                continue
+            found.append((iface, words[1], prefix))
+    return found
+
+
+def _route_network(destination: str) -> ipaddress.IPv4Network | None:
+    """`netstat -rn` destination as a network: `192.168.1` is a /24, `127` a
+    /8, `100.64/10` explicit, a full address a host route."""
+    if destination == "default":
+        return None
+    address, _, length = destination.partition("/")
+    octets = address.split(".")
+    if not all(o.isdigit() for o in octets) or len(octets) > 4:
+        return None
+    prefix = int(length) if length.isdigit() else 8 * len(octets)
+    try:
+        return ipaddress.IPv4Network(
+            ".".join(octets + ["0"] * (4 - len(octets))) + f"/{prefix}", strict=False)
+    except ValueError:
+        return None
+
+
+def conflicts(subnet: str) -> list[str]:
+    """What else on this Mac uses `subnet`: interface addresses (other than
+    the agent bridge's own) and routes via anything but a vmnet bridge. Each
+    is a line naming the interface."""
+    net = ipaddress.ip_network(subnet)
+    ours = host_address(subnet)
+    found = []
+    for iface, address, prefix in _interface_addresses():
+        if iface.startswith("bridge") and address == ours:
+            continue
+        if ipaddress.ip_network(f"{address}/{prefix}", strict=False).overlaps(net):
+            found.append(f"{iface} has {address}/{prefix}")
+    out = subprocess.run(["/usr/sbin/netstat", "-rn", "-f", "inet"], capture_output=True,
+                         text=True, check=False).stdout
+    for line in out.splitlines():
+        words = line.split()
+        if len(words) < 4 or words[3].startswith(("bridge", "lo")):
+            continue
+        route = _route_network(words[0])
+        if route is not None and route.prefixlen > 0 and route.overlaps(net):
+            entry = f"{words[3]} routes {route}"
+            if entry not in found and not any(e.startswith(f"{words[3]} has") for e in found):
+                found.append(entry)
+    return found
+
+
+def installed_subnet() -> str | None:
+    """The agent subnet the installed rules block, or None when there are none."""
+    try:
+        rules = RULES_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in rules.splitlines():
+        words = line.split()
+        # block drop in quick inet from <subnet> to ! <subnet>
+        if words[:6] == ["block", "drop", "in", "quick", "inet", "from"] and "!" in words:
+            return words[6]
     return None
+
+
+def agent_subnet() -> str:
+    """The agent network's IPv4 subnet: the installed firewall's, else the
+    first candidate."""
+    return installed_subnet() or CANDIDATE_SUBNETS[0]
+
+
+def choose_subnet() -> tuple[str, list[str]]:
+    """The subnet setup should install, and what (if anything) ruled out the
+    one installed now. Keeps the installed subnet while nothing else uses it."""
+    current = installed_subnet()
+    rejected = conflicts(current) if current else []
+    if current and not rejected:
+        return current, []
+    for candidate in CANDIDATE_SUBNETS:
+        if not conflicts(candidate):
+            return candidate, rejected
+    raise RuntimeError("every candidate agent subnet is in use on this Mac: "
+                       + ", ".join(CANDIDATE_SUBNETS))
 
 
 def ipv6_off(bridge: str) -> bool:
@@ -192,7 +295,8 @@ def wait_ipv6_off(subnet: str, *, timeout: float = REAPPLY_SECONDS + 15,
 
 __all__ = [
     "ANCHOR", "DAEMON_LABEL", "DAEMON_PATH", "RULES_PATH",
-    "agent_bridge", "host_address", "install", "install_commands", "ipv6_off",
+    "CANDIDATE_SUBNETS", "agent_bridge", "agent_subnet", "choose_subnet", "conflicts",
+    "host_address", "install", "install_commands", "installed_subnet", "ipv6_off",
     "render_daemon", "render_rules", "state", "wait_ipv6_off",
     "uninstall", "uninstall_commands",
 ]

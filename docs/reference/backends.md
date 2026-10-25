@@ -60,8 +60,7 @@ running agent to an image that `bot-bottle resume` can start again.
 Agents are on the agent network only. That network is `--internal` (vmnet
 host-only), which removes the internet route but still lets guests reach the
 host's own addresses, and with IP forwarding on, anything that NATs the subnet
-would let them out. So its subnets are pinned (`192.168.128.0/24` and
-`fd62:6f74:6274:6c65::/64`, `gateway.py`) and a host pf anchor,
+would let them out. So its subnets are pinned and a host pf anchor,
 `com.apple/io.bot-bottle` (`host_firewall.py`), drops traffic from them to the
 host itself (named as the subnet's first address, since pf's `(self)` misses
 the vmnet bridge's own address) and to anything off the subnet. Agent-to-gateway
@@ -74,7 +73,17 @@ on the ULA prefix) can't be named in pf, and the bridge's name changes whenever
 the network is recreated. Nothing on the agent network uses IPv6, so each
 minute the daemon finds the bridge holding `192.168.128.1` and turns IPv6 off
 on it (`ifconfig <bridge> inet6 ifdisabled`, host-side, so an agent can't undo
-it). An existing agent network with other subnets is refused at launch; so is a
+it). The IPv6 subnet is fixed (`fd62:6f74:6274:6c65::/64`, `gateway.py`). The IPv4
+one is recorded in the installed rules (`host_firewall.agent_subnet`): setup
+keeps it while nothing else on the Mac uses it, and otherwise picks the first
+free one of `192.168.128.0/24`, `192.168.200.0/24`, `10.213.128.0/24` and
+`172.30.128.0/24`, checking interface addresses and routes other than vmnet
+bridges (`conflicts`). A launch is refused while something else uses it, with
+setup as the remedy. Setup lists what it changes before printing the `sudo`
+block, and the daemon only ever touches `bridge*` interfaces, so a LAN that
+happens to use the agent subnet's first address is left alone.
+
+An existing agent network with other subnets is refused at launch; so is a
 launch while the bridge still has IPv6 on (it waits out the daemon's minute
 first), and the isolation probe refuses one where the agent reaches the host's
 LAN address or `192.168.128.1`.

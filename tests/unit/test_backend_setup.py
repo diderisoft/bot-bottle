@@ -270,6 +270,11 @@ class TestMacosSetupStatus(unittest.TestCase):
         self.enterContext(patch.object(mc._container, "is_macos", return_value=True))
         self.install = self.enterContext(patch.object(mc.host_firewall, "install"))
         self.uninstall = self.enterContext(patch.object(mc.host_firewall, "uninstall"))
+        # The host's own interfaces and installed rules don't decide these.
+        self.subnet = "192.168.128.0/24"
+        self.enterContext(patch.object(mc.host_firewall, "installed_subnet",
+                                       return_value=self.subnet))
+        self.enterContext(patch.object(mc.host_firewall, "conflicts", return_value=[]))
 
     def _ready(self, firewall: str = "ok") -> contextlib.ExitStack:
         stack = contextlib.ExitStack()
@@ -313,12 +318,44 @@ class TestMacosSetupStatus(unittest.TestCase):
             self.assertIn("sudo launchctl bootstrap system", out)
             self.install.assert_not_called()
 
+    def test_setup_says_what_it_changes_before_asking_for_sudo(self):
+        with self._ready("missing"):
+            _rc, out = _cap(mc.setup)
+        self.assertIn("system-wide", out)
+        self.assertIn(str(mc.host_firewall.DAEMON_PATH), out)
+        self.assertIn("backend teardown --backend=macos-container", out)
+        self.assertLess(out.index("system-wide"), out.index("sudo tee"))
+
+    def test_setup_moves_agents_off_a_subnet_this_mac_uses(self):
+        with self._ready("ok"), patch.object(
+                mc.host_firewall, "choose_subnet",
+                return_value=("192.168.200.0/24", ["en0 has 192.168.128.7/24"])):
+            rc, out = _cap(mc.setup)
+        self.assertEqual(0, rc)
+        self.assertIn("en0 has 192.168.128.7/24", out)
+        self.assertIn("agents move to 192.168.200.0/24", out)
+        self.assertIn(f"container network rm {mc.GATEWAY_NETWORK}", out)
+
+    def test_setup_fails_when_every_subnet_is_taken(self):
+        with self._ready("missing"), patch.object(
+                mc.host_firewall, "choose_subnet", side_effect=RuntimeError("all taken")):
+            rc, out = _cap(mc.setup)
+        self.assertEqual(1, rc)
+        self.assertIn("all taken", out)
+
+    def test_status_reports_a_subnet_clash(self):
+        with self._ready("ok"), patch.object(mc.host_firewall, "conflicts",
+                                             return_value=["utun4 routes 192.168.0.0/16"]):
+            rc, out = _cap(mc.status)
+        self.assertEqual(1, rc)
+        self.assertIn("utun4 routes 192.168.0.0/16", out)
+
     def test_setup_as_root_installs_the_firewall_only(self):
         with patch.object(mc.os, "geteuid", return_value=0), \
              patch.object(mc.shutil, "which") as which:
             rc, out = _cap(mc.setup)
         self.assertEqual(0, rc)
-        self.install.assert_called_once_with(mc.AGENT_SUBNET, mc.AGENT_SUBNET_V6)
+        self.install.assert_called_once_with(self.subnet, mc.AGENT_SUBNET_V6)
         which.assert_not_called()  # the container service is per-user
         self.assertIn("Installed the host firewall", out)
 
@@ -353,7 +390,7 @@ class TestMacosSetupStatus(unittest.TestCase):
         with patch.object(mc.os, "geteuid", return_value=0):
             rc, _ = _cap(mc.teardown)
         self.assertEqual(0, rc)
-        self.uninstall.assert_called_once_with(mc.AGENT_SUBNET)
+        self.uninstall.assert_called_once_with(self.subnet)
 
     def test_service_running_false_without_cli(self):
         with patch.object(mc.shutil, "which", return_value=None):
