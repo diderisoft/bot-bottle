@@ -34,7 +34,9 @@ The control stream (JSON lines):
   conversation from its host copy, masked (`transcript_serve`), for running
   and stopped agents alike. `transcript_appended` (`agent_id`, `last`) tells
   the console new entries landed. `agent_started` and `agent_present` carry
-  `transcript` when the agent's harness keeps one.
+  `transcript` when the agent's harness keeps one. `transcript_search`
+  (`query`, `kinds`) -> `transcript_matches`: the newest matching entries'
+  `seq` with a snippet, searched on the host over the masked text.
 
 `iroh` (`bot-bottle[remote]`) is imported only here, only when the link runs.
 """
@@ -369,6 +371,8 @@ class ConsoleLink:
             await self._audit_query(msg)
         elif kind == "transcript":
             await self._transcript(msg)
+        elif kind == "transcript_search":
+            await self._transcript_search(msg)
         elif kind != "hello":  # hello only opens the stream
             log.debug(f"remote: ignoring console message {kind!r}")
 
@@ -471,6 +475,14 @@ class ConsoleLink:
                                        around=number("around"), limit=number("limit") or PAGE)
         await self._send({"type": "transcript_entries", "request_id": msg.get("request_id"),
                           "agent_id": agent_id, **page})
+
+    async def _transcript_search(self, msg: dict[str, Any]) -> None:
+        agent_id, query, kinds = str(msg.get("agent_id", "")), msg.get("query"), msg.get("kinds")
+        matches = await asyncio.to_thread(
+            self.transcripts.search, agent_id, query if isinstance(query, str) else "",
+            kinds=[str(k) for k in kinds] if isinstance(kinds, list) else None)
+        await self._send({"type": "transcript_matches", "request_id": msg.get("request_id"),
+                          "agent_id": agent_id, "matches": matches})
 
     async def push_transcripts(self) -> None:
         """Tell the console which of its agents' conversations grew."""

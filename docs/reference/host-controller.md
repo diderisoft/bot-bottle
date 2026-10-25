@@ -155,6 +155,9 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
   read and masked before they leave the host, with the egress scanner's
   `redact_tokens`: token patterns, and every value in the host's secrets
   file in its common encodings. The copy itself stays as read.
+  `transcript_search` finds the newest entries containing a query
+  (case-insensitive, over the masked text, so a query can't confirm a
+  secret), optionally of given kinds, with a snippet around each match.
 - A restarted daemon resumes each re-adopted session's copies from the
   saved offsets, exec'ing through `BottleBackend.attach_adopted` (which
   never tears the bottle down). Copies of sessions that ended while it was

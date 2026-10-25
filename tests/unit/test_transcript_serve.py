@@ -155,6 +155,41 @@ class TestReader(_Root):
             self.assertEqual({}, transcript_serve._secret_values())  # pylint: disable=protected-access
 
 
+class TestSearch(_Root):
+    def test_finds_the_newest_matches_with_a_snippet(self) -> None:
+        self.copy("s1", "a1", "f")
+        reader = TranscriptReader()
+        matches = reader.search("c-1", "LINE TWO")
+        self.assertTrue(matches)
+        self.assertEqual(sorted((m["seq"] for m in matches), reverse=True),
+                         [m["seq"] for m in matches])
+        self.assertIn("Line two", matches[0]["snippet"])
+        self.assertEqual([], reader.search("c-1", "  "))
+        self.assertEqual([], reader.search("c-9", "x"))
+
+    def test_kinds_filter_and_meta(self) -> None:
+        self.copy("s1", "a1", "f")
+        reader = TranscriptReader()
+        kinds = {m["kind"] for m in reader.search("c-1", "line two", kinds=["tool_result"])}
+        self.assertEqual({"tool_result"}, kinds)
+        self.assertTrue(reader.search("c-1", "session started", kinds=["system"]))
+        line = json.dumps({"type": "custom", "id": "z", "parentId": None}) + "\n"
+        claude_meta = json.dumps({"type": "mode", "mode": "normal"}) + "\n"
+        self.copy("s2", "a1", "g", agent_id="c-2", data=(line + claude_meta).encode(),
+                  harness="claude", guest="/home/node/.claude/projects/-w/g.jsonl")
+        self.assertEqual([], reader.search("c-2", "mode: normal"))
+        self.assertEqual(1, len(reader.search("c-2", "mode: normal", kinds=["meta"])))
+
+    def test_long_text_is_cut_around_the_match(self) -> None:
+        text = "a" * 300 + "needle" + "b" * 300
+        line = json.dumps({"type": "message", "id": "m", "parentId": None, "message": {
+            "role": "user", "content": text}}) + "\n"
+        self.copy("s1", "a1", "f", data=line.encode())
+        [match] = TranscriptReader().search("c-1", "needle", limit=5)
+        self.assertTrue(match["snippet"].startswith("…") and match["snippet"].endswith("…"))
+        self.assertLess(len(match["snippet"]), 140)
+
+
 class TestOnTheLink(_Root):
     def link(self) -> tuple[remote.ConsoleLink, list[dict[str, Any]]]:
         sent: list[dict[str, Any]] = []
@@ -191,6 +226,17 @@ class TestOnTheLink(_Root):
         asyncio.run(link.push_transcripts())
         self.assertEqual(2, len(sent))
         self.assertGreater(sent[1]["last"], sent[0]["last"])
+
+    def test_search_request(self) -> None:
+        self.copy("s1", "a1", "f")
+        link, sent = self.link()
+        asyncio.run(link.handle({"type": "transcript_search", "agent_id": "c-1",
+                                 "query": "line two", "kinds": ["tool_result"],
+                                 "request_id": "r2"}))
+        self.assertEqual(("transcript_matches", "r2"), (sent[0]["type"], sent[0]["request_id"]))
+        self.assertTrue(sent[0]["matches"])
+        asyncio.run(link.handle({"type": "transcript_search", "agent_id": "c-1", "query": 3}))
+        self.assertEqual([], sent[1]["matches"])
 
     def test_a_failed_read_is_retried(self) -> None:
         link, sent = self.link()

@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 
 PAGE = 50
 MAX_PAGE = 200
+MAX_MATCHES = 100
+SNIPPET = 60  # characters of context either side of a match
 
 # Where each harness keeps its transcripts, for copies whose follow record
 # predates naming the harness.
@@ -161,6 +163,34 @@ class TranscriptReader:
             # Whether there's a conversation to show at all, copied yet or not.
             "available": bool(all_entries) or self.has_transcript(agent_id),
         }
+
+    def search(self, agent_id: str, query: str, *, kinds: list[str] | None = None,
+               limit: int = MAX_MATCHES) -> list[dict[str, Any]]:
+        """The newest `limit` entries whose masked text contains `query`
+        (case-insensitive), as `seq`, `kind`, `ts` and a snippet around the
+        first match. Bookkeeping (`meta`) entries match only when `kinds`
+        asks for `meta`."""
+        needle = query.strip().casefold()
+        if not needle:
+            return []
+        wanted = set(kinds or ())
+        matches: list[dict[str, Any]] = []
+        for e in reversed(self.entries(agent_id) or []):
+            if e.meta and "meta" not in wanted:
+                continue
+            if wanted - {"meta"} and e.kind not in wanted:
+                continue
+            at = e.text.casefold().find(needle)
+            if at < 0:
+                continue
+            start, end = max(0, at - SNIPPET), at + len(needle) + SNIPPET
+            snippet = ("…" if start else "") + e.text[start:end].replace("\n", " ") + \
+                ("…" if end < len(e.text) else "")
+            matches.append({"seq": e.seq, "kind": e.kind, "ts": e.ts, "tool": e.tool,
+                            "snippet": snippet})
+            if len(matches) >= max(1, min(limit, MAX_MATCHES)):
+                break
+        return matches
 
     def last(self, agent_id: str) -> int | None:
         found = self.entries(agent_id)
