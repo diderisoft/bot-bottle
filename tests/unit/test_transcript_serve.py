@@ -241,7 +241,7 @@ class TestOnTheLink(_Root):
     def test_a_failed_read_is_retried(self) -> None:
         link, sent = self.link()
         link.running["c-1"] = "s1"
-        with mock.patch.object(link.transcripts, "last", side_effect=OSError("x")):
+        with mock.patch.object(link.transcripts.reader, "last", side_effect=OSError("x")):
             asyncio.run(link.push_transcripts())
         self.assertEqual([], sent)
 

@@ -13,8 +13,10 @@ a secret.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -204,4 +206,54 @@ class TranscriptReader:
             _read(p).get("agent_id") == agent_id for p in root.glob("*/*/follow.json"))
 
 
-__all__ = ["Copy", "MAX_PAGE", "PAGE", "TranscriptReader", "find_copy", "mask"]
+class TranscriptLink:
+    """The console link's side: `transcript` and `transcript_search`
+    requests, and `transcript_appended` when an agent's conversation grows."""
+
+    REQUESTS = ("transcript", "transcript_search")
+
+    def __init__(self, send: Callable[[dict[str, Any]], Awaitable[None]],
+                 reader: TranscriptReader | None = None) -> None:
+        self.reader = reader or TranscriptReader()
+        self._send = send
+        # console agent id -> the last entry the console was told of
+        self._last: dict[str, int] = {}
+
+    async def available(self, agent_id: str) -> bool:
+        return await asyncio.to_thread(self.reader.has_transcript, agent_id)
+
+    async def handle(self, msg: dict[str, Any]) -> None:
+        agent_id = str(msg.get("agent_id", ""))
+        reply: dict[str, Any] = {"request_id": msg.get("request_id"), "agent_id": agent_id}
+        if msg.get("type") == "transcript_search":
+            query, kinds = msg.get("query"), msg.get("kinds")
+            reply["matches"] = await asyncio.to_thread(
+                self.reader.search, agent_id, query if isinstance(query, str) else "",
+                kinds=[str(k) for k in kinds] if isinstance(kinds, list) else None)
+            await self._send({"type": "transcript_matches", **reply})
+            return
+
+        def number(name: str) -> int | None:
+            value = msg.get(name)
+            return value if type(value) is int else None  # pylint: disable=unidiomatic-typecheck
+
+        page = await asyncio.to_thread(self.reader.page, agent_id, before=number("before"),
+                                       around=number("around"), limit=number("limit") or PAGE)
+        await self._send({"type": "transcript_entries", **reply, **page})
+
+    async def push(self, agent_ids: Iterable[str]) -> None:
+        """Tell the console which of these agents' conversations grew."""
+        for agent_id in agent_ids:
+            try:
+                last = await asyncio.to_thread(self.reader.last, agent_id)
+            except Exception as e:  # pylint: disable=broad-exception-caught  # retried next round
+                log.debug(f"remote: can't read {agent_id}'s transcript: {e}")
+                continue
+            if last is not None and last != self._last.get(agent_id):
+                self._last[agent_id] = last
+                await self._send({"type": "transcript_appended", "agent_id": agent_id,
+                                  "last": last})
+
+
+__all__ = ["Copy", "MAX_PAGE", "PAGE", "TranscriptLink", "TranscriptReader", "find_copy",
+           "mask"]
