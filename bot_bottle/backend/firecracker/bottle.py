@@ -22,10 +22,14 @@ from . import util
 
 
 _HOME_FOR = {"node": "/home/node", "root": "/root"}
+# The VM has no image `ENV`, so every built-in harness's `ENV PATH` entries
+# must be here (a test checks the contrib Dockerfiles), or its command exits
+# 127 on firecracker alone.
 _DEFAULT_PATH_FOR = {
     "node": (
         "/home/node/.local/bin:"
         "/home/node/.codex/packages/standalone/current/bin:"
+        "/home/node/.pi/agent/node_modules/.bin:"
         "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     ),
     "root": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
