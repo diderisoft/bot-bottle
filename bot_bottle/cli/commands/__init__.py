@@ -34,7 +34,7 @@ _HANDLERS: dict[str, str] = {
     "status": "lifecycle:cmd_status",
     "supervise": "supervise:cmd_supervise",
     "trust": "trust:cmd_trust",
-    "uninstall": "lifecycle:cmd_uninstall",
+    "uninstall": "uninstall:cmd_uninstall",
     "up": "lifecycle:cmd_up",
 }
 

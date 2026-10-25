@@ -25,6 +25,7 @@ from .bottle_cleanup_plan import MacosContainerBottleCleanupPlan
 from .bottle_plan import MacosContainerBottlePlan
 
 if TYPE_CHECKING:
+    from ..host_resources import HostResource
     from ..adoption import AdoptionRecord
     from .infra import MacosInfraService
 
@@ -55,6 +56,10 @@ class MacosContainerBottleBackend(
     def teardown(self) -> int:
         from . import setup as _setup
         return _setup.teardown()
+
+    def host_resources(self, *, purge: bool) -> "list[HostResource]":
+        from . import host_resources as _host_resources
+        return _host_resources.list_resources(purge=purge)
 
     def _preflight(self) -> None:
         _resolve_plan.preflight()

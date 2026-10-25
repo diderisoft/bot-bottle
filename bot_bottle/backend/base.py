@@ -33,6 +33,7 @@ from .plan import BottlePlan, BottleSpec
 from .util import host_skill_dir
 
 if TYPE_CHECKING:
+    from .host_resources import HostResource
     from .adoption import AdoptionRecord
     from .infra_service import InfraService
 
@@ -355,3 +356,10 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     def teardown(self) -> int:
         """Print how to undo `setup()` and return a shell exit code. Run by
         `bot-bottle backend teardown`."""
+
+    def host_resources(self, *, purge: bool) -> "list[HostResource]":
+        """What this backend left on the host besides bottles (infra
+        containers, networks, volumes, images), for `bot-bottle uninstall`.
+        Frozen bottles' images only with `purge`. None by default."""
+        del purge
+        return []

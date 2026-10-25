@@ -98,6 +98,15 @@ curl -fsSL "https://gitea.dideric.is/api/v1/repos/didericis/bot-bottle/raw/insta
 
 The installer is a bootstrapper: it finds a suitable Python, installs bot-bottle with its `remote` extra for phone pairing (none on Intel Macs, which iroh has no build for) using `uv` or `pipx` if you have either, or a private venv at `~/.bot-bottle/venv`, creates `~/.bot-bottle`, and runs `bot-bottle setup` and `bot-bottle doctor`. It is idempotent and never uses `sudo`. Python-native users can skip it entirely: `uv tool install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git"` (or the same with `pipx install`).
 
+### Uninstall
+
+```sh
+bot-bottle uninstall            # everything bot-bottle set up; keeps ~/.bot-bottle
+bot-bottle uninstall --purge    # also your agents, bottles, secrets, audit journal and frozen bottles
+```
+
+It shows what it will remove and asks first. It stops the host controller and each backend's orchestrator and gateway, and removes autostart. It removes each backend's containers, networks, volumes and images, and undoes each backend's privileged setup (on macOS that prints the `sudo` lines for the pf firewall; `--keep-backend` skips this). Then it removes `~/.cache/bot-bottle` and the package itself (the installer's venv and shim, or `pipx`/`uv tool uninstall`). Base images it pulled to build on, such as `python` or `node`, stay. If `bot-bottle` itself won't run, `curl -fsSL "<the install URL>" | sh -s -- --uninstall` removes the installer's venv and shim and says what's left.
+
 ### Requirements
 
 **Python ≥ 3.11**, and this is the one that trips people up on macOS: the `python3` Apple ships at `/usr/bin/python3` is **3.9.6**, which is too old. Bare `python3` resolves to that stub far more often than people expect. `path_helper` builds a login shell's `PATH` from `/etc/paths` and then appends `/etc/paths.d/*`, and `/usr/bin` sits in the former — so even when `/opt/homebrew/bin` *is* on the `PATH` (via `/etc/paths.d/homebrew`), it comes after `/usr/bin` and loses. Prepending a newer Python is something your shell profile does, and a fresh account, a launchd job, or a CI runner has no such profile. So the installer looks past bare `python3` before giving up: it tries `python3`, then the versioned `python3.11`–`python3.14` names, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, and python.org framework builds — and tells you which one it picked when it isn't the obvious one. Point it somewhere specific with `BOT_BOTTLE_PYTHON=/path/to/python3`.

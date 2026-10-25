@@ -27,6 +27,7 @@ from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .bottle_plan import DockerBottlePlan
 
 if TYPE_CHECKING:
+    from ..host_resources import HostResource
     from ..adoption import AdoptionRecord
     from .infra import DockerInfraService
 class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanupPlan"]):
@@ -54,6 +55,10 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     def teardown(self) -> int:
         from . import setup as _setup
         return _setup.teardown()
+
+    def host_resources(self, *, purge: bool) -> "list[HostResource]":
+        from . import host_resources as _host_resources
+        return _host_resources.list_resources(purge=purge)
 
     def _preflight(self) -> None:
         _resolve_plan.preflight()

@@ -24,6 +24,12 @@
 #   BOT_BOTTLE_INSTALL_SPEC  pip/git spec to install instead of the default
 #                            (bot-bottle[remote] from the repo; no extra on Intel Macs)
 #   BOT_BOTTLE_VENV          where the venv install lives, without uv or pipx (~/.bot-bottle/venv)
+#
+# Uninstall (keeps ~/.bot-bottle; pass --purge after --uninstall to delete it):
+#   curl -fsSL "<the URL above>" | sh -s -- --uninstall
+# This runs `bot-bottle uninstall` (see `bot-bottle uninstall --help`), or, if
+# that command is gone or broken, removes the installer's venv and shim and
+# says what's left.
 set -eu
 
 REPO_SPEC="git+https://gitea.dideric.is/didericis/bot-bottle.git"
@@ -39,6 +45,43 @@ die() {
     say "error: $*"
     exit 1
 }
+
+# --- uninstall -----------------------------------------------------------------
+
+if [ "${1:-}" = "--uninstall" ]; then
+    shift
+    bin=""
+    for candidate in "$(command -v bot-bottle 2>/dev/null || true)" \
+                     "${HOME}/.local/bin/bot-bottle" "${VENV}/bin/bot-bottle"; do
+        if [ -n "${candidate}" ] && [ -x "${candidate}" ] && "${candidate}" --help >/dev/null 2>&1; then
+            bin="${candidate}"
+            break
+        fi
+    done
+    if [ -n "${bin}" ]; then
+        say "running '${bin} uninstall $*'"
+        exec "${bin}" uninstall "$@"
+    fi
+    # No working command: remove what this script installs.
+    say "bot-bottle isn't runnable; removing what the installer put here"
+    if command -v uv >/dev/null 2>&1 && uv tool list 2>/dev/null | grep -q '^bot-bottle '; then
+        uv tool uninstall bot-bottle
+    fi
+    if command -v pipx >/dev/null 2>&1 && pipx list --short 2>/dev/null | grep -q '^bot-bottle '; then
+        pipx uninstall bot-bottle
+    fi
+    shim="${HOME}/.local/bin/bot-bottle"
+    if [ -L "${shim}" ]; then
+        rm -f "${shim}" && say "removed ${shim}"
+    fi
+    if [ -d "${VENV}" ]; then
+        rm -rf "${VENV}" && say "removed ${VENV}"
+    fi
+    say "left in place: ~/.bot-bottle (your data), ~/.cache/bot-bottle, autostart,"
+    say "backend setup, images and networks. Reinstall and run 'bot-bottle uninstall'"
+    say "to remove those too."
+    exit 0
+fi
 
 # --- prerequisites: find an interpreter new enough ----------------------------
 

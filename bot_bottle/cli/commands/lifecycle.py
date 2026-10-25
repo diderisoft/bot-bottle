@@ -1,5 +1,5 @@
-"""The bot-bottle host service as one unit: `install`, `uninstall`, `up`,
-`down`, `status` and `jobs`, across the host controller and each backend's
+"""The bot-bottle host service as one unit: `install`, `up`, `down`,
+`status` and `jobs`, across the host controller and each backend's
 infra pair.
 """
 
@@ -127,22 +127,4 @@ def cmd_install(argv: list[str]) -> int:
     return 0
 
 
-def cmd_uninstall(argv: list[str]) -> int:
-    parser = _parser("uninstall", "Stop bot-bottle on this host and remove autostart.")
-    parser.add_argument("--backend-teardown", action="store_true",
-                        help="also undo the backend's host setup (e.g. the firecracker TAP pool)")
-    parser.add_argument("--force", action="store_true", help="even while bottles are running")
-    ns = parser.parse_args(argv)
-    down = ["--force"] if ns.force else []
-    if ns.backend:
-        down += ["--backend", ns.backend]
-    code = cmd_down(down)
-    if code != 0:
-        return code
-    print("autostart: removed" if service_unit.uninstall() else "autostart: not installed")
-    if ns.backend_teardown:
-        return get_bottle_backend(settings_from_env(), ns.backend).teardown()
-    return 0
-
-
-__all__ = ["cmd_down", "cmd_install", "cmd_jobs", "cmd_status", "cmd_uninstall", "cmd_up"]
+__all__ = ["cmd_down", "cmd_install", "cmd_jobs", "cmd_status", "cmd_up"]

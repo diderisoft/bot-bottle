@@ -1,4 +1,4 @@
-"""Unit: the host-service commands (`install`, `uninstall`, `up`, `down`,
+"""Unit: the host-service commands (`install`, `up`, `down`,
 `status`, `jobs`). The daemon, backends and service manager are mocked."""
 
 from __future__ import annotations
@@ -126,20 +126,6 @@ class TestInstallUninstall(_Mocked):
             self.service.install.assert_not_called()
             self.backend.setup.return_value = 3
             self.assertEqual(3, self.run_cmd(lifecycle.cmd_install, [])[0])
-
-    def test_uninstall_stops_removes_autostart_and_optionally_tears_down(self) -> None:
-        self.service.uninstall.return_value = True
-        code, out, _ = self.run_cmd(lifecycle.cmd_uninstall, [])
-        self.assertEqual(0, code)
-        self.assertIn("autostart: removed", out)
-        self.backend.teardown.assert_not_called()
-        self.run_cmd(lifecycle.cmd_uninstall, ["--backend-teardown"])
-        self.backend.teardown.assert_called_once()
-
-    def test_uninstall_refuses_while_bottles_run(self) -> None:
-        self.runner.held_bottles.return_value = ["b1"]
-        self.assertEqual(1, self.run_cmd(lifecycle.cmd_uninstall, [])[0])
-        self.service.uninstall.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -40,7 +40,7 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w("  status    show the host controller, orchestrator and running bottles\n")
     w("  supervise view + approve/modify/reject pending supervise proposals\n")
     w("  trust     review and trust a project's bottles on this host\n")
-    w("  uninstall stop bot-bottle on this host and remove autostart\n")
+    w("  uninstall remove bot-bottle from this host (keeps ~/.bot-bottle unless --purge)\n")
     w("  up        start the host controller, orchestrator and gateway (--restart)\n\n")
     w(f"Run '{PROG} <command> --help' for command-specific usage.\n")
     return 0
