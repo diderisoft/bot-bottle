@@ -43,7 +43,8 @@ class TestTerminalSessions(unittest.TestCase):
         agent_id = remote.terminal_agent_id("app", "act-t")
         self.assertEqual([{"type": "agent_present", "agent_id": agent_id, "bottle": "app",
                            "label": "app", "definition": "implementer", "origin": "terminal",
-                           "writable": True, "activation": "act-t"}], self.presented())
+                           "writable": True, "transcript": False, "activation": "act-t"}],
+                         self.presented())
         self.assertEqual({agent_id: "app"}, link.running)
         self.assertIn(agent_id, self.terms)  # its terminal is relayed
         self.assertTrue(agent_id.startswith("t-"))

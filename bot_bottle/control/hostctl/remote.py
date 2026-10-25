@@ -29,6 +29,14 @@ The control stream (JSON lines):
 - Terminals relay on uni streams (`console_terminal`); `input`, `resize` and
   `history` (`lines` -> `text`, `size`, `limit`) act on them.
 - `audit_query` -> `audit_events` for the link's agents' bottles.
+- `transcript` (`agent_id`, `before` or `around`, `limit`) ->
+  `transcript_entries` (`entries`, `first`, `last`, `available`): a page of the agent's
+  conversation from its host copy, masked (`transcript_serve`), for running
+  and stopped agents alike. `transcript_appended` (`agent_id`, `last`) tells
+  the console new entries landed. `agent_started` and `agent_present` carry
+  `transcript` when the agent's harness keeps one. `transcript_search`
+  (`query`, `kinds`) -> `transcript_matches`: the newest matching entries'
+  `seq` with a snippet, searched on the host over the masked text.
 
 `iroh` (`bot-bottle[remote]`) is imported only here, only when the link runs.
 """
@@ -54,6 +62,7 @@ from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
 from ...lib import log
 from ...paths import bot_bottle_root
 from .console_terminal import HISTORY_LINES, valid_size
+from .transcript_serve import TranscriptLink
 
 if TYPE_CHECKING:
     import iroh  # pyright: ignore[reportMissingImports]  # the optional `remote` extra
@@ -335,6 +344,7 @@ class ConsoleLink:
         # Bottles being torn down: still listed as running until they're gone,
         # but not to be presented again.
         self._stopping: set[str] = set()
+        self.transcripts = TranscriptLink(self._send)
 
     async def handle(self, msg: dict[str, Any]) -> None:
         kind = msg.get("type")
@@ -357,6 +367,8 @@ class ConsoleLink:
                                 msg.get("lines"))
         elif kind == "audit_query":
             await self._audit_query(msg)
+        elif kind in TranscriptLink.REQUESTS:
+            await self.transcripts.handle(msg)
         elif kind != "hello":  # hello only opens the stream
             log.debug(f"remote: ignoring console message {kind!r}")
 
@@ -396,7 +408,8 @@ class ConsoleLink:
         terminal = await self._open_terminal(agent_id, bottle)
         started: dict[str, Any] = {"type": "agent_started", "agent_id": agent_id,
                                    "bottle": bottle,
-                                   "writable": bool(terminal and terminal.writable)}
+                                   "writable": bool(terminal and terminal.writable),
+                                   "transcript": await self.transcripts.available(agent_id)}
         if result.get("activation"):
             started["activation"] = str(result["activation"])
         await self._send(started)
@@ -445,6 +458,9 @@ class ConsoleLink:
             await asyncio.to_thread(terminal.history, count)
         await self._send({"type": "history", "request_id": request_id, "text": text,
                           "size": size, "limit": limit})
+
+    async def push_transcripts(self) -> None:
+        await self.transcripts.push(list(self.running))
 
     async def _audit_query(self, msg: dict[str, Any]) -> None:
         bottle, activation = msg.get("bottle"), msg.get("activation")
@@ -524,7 +540,8 @@ class ConsoleLink:
                 "label": str(entry.get("label", "")) or bottle,
                 "definition": str(entry.get("agent", "")),
                 "origin": str(entry.get("origin", "")),
-                "writable": bool(terminal and terminal.writable)}
+                "writable": bool(terminal and terminal.writable),
+                "transcript": await self.transcripts.available(agent_id)}
             if activation:
                 present["activation"] = activation
             self.present[agent_id] = present
@@ -669,6 +686,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
             await link.reap()
             await link.discover()
             await link.push_attention()
+            await link.push_transcripts()
 
     watcher = asyncio.create_task(watch())
     try:

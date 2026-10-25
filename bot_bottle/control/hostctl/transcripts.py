@@ -102,6 +102,7 @@ class _Copy:
     size: int = 0
     checkpointed_size: int = -1
     checkpointed_at: float = 0.0
+    opened: float = 0.0  # wall clock; the run's first file is the one shown
 
     @property
     def meta_path(self) -> Path:
@@ -169,10 +170,11 @@ class TranscriptFollower:
     """Follows one session's transcript files into host copies."""
 
     def __init__(self, *, session: str, activation: str, glob: str, agent_id: str,
-                 skip: list[str], audit: "HostAudit",
+                 skip: list[str], audit: "HostAudit", harness: str = "",
                  clock: Callable[[], float] = time.monotonic) -> None:
         self.session, self.activation = session, activation
         self.glob, self.agent_id, self.skip = glob, agent_id, skip
+        self.harness = harness
         self.dir = copy_dir(session, activation)
         self._audit = audit
         self._clock = clock
@@ -186,16 +188,16 @@ class TranscriptFollower:
 
     @classmethod
     def begin(cls, bottle: "Bottle", *, session: str, activation: str, glob: str,
-              agent_id: str, audit: "HostAudit") -> "TranscriptFollower":
+              agent_id: str, audit: "HostAudit", harness: str = "") -> "TranscriptFollower":
         """A follower for a session about to start: files already there are
         another session's and never copied."""
         r = bottle.exec(f'for f in {shell_glob(glob)}; do '
                         '[ -f "$f" ] && printf "%s\\n" "$f"; done; :')
         skip = r.stdout.splitlines() if r.returncode == 0 else []
         follower = cls(session=session, activation=activation, glob=glob, agent_id=agent_id,
-                       skip=skip, audit=audit)
+                       skip=skip, audit=audit, harness=harness)
         _make_dir(follower.dir)
-        _write_json(follower.dir / _FOLLOW, {"glob": glob, "skip": skip, "agent_id": agent_id})
+        follower._save_follow()
         return follower
 
     @classmethod
@@ -208,7 +210,8 @@ class TranscriptFollower:
             return None
         follower = cls(session=session, activation=activation, glob=str(follow.get("glob", "")),
                        agent_id=str(follow.get("agent_id", "")),
-                       skip=[str(p) for p in follow.get("skip", [])], audit=audit)
+                       skip=[str(p) for p in follow.get("skip", [])], audit=audit,
+                       harness=str(follow.get("harness", "")))
         for meta_path in sorted(follower.dir.glob("*.meta.json")):
             meta = _read_json(meta_path)
             if meta is None or meta.get("closed"):
@@ -219,7 +222,8 @@ class TranscriptFollower:
         return follower
 
     def _load(self, path: Path, meta: dict[str, Any]) -> _Copy:
-        copy = _Copy(path, str(meta.get("guest_path", "")), offset=int(meta.get("offset", 0)))
+        copy = _Copy(path, str(meta.get("guest_path", "")), offset=int(meta.get("offset", 0)),
+                     opened=float(meta.get("opened", 0.0)))
         try:
             data = path.read_bytes()
         except OSError:
@@ -260,8 +264,7 @@ class TranscriptFollower:
                 self._close_copy(copy)
             self._copies.clear()
         if self.dir.is_dir():
-            _write_json(self.dir / _FOLLOW, {"glob": self.glob, "skip": self.skip,
-                                             "agent_id": self.agent_id, "closed": True})
+            self._save_follow(closed=True)
 
     def poll(self, bottle: "Bottle | None" = None) -> None:
         """Read what's new. Failures are logged and retried next poll."""
@@ -306,7 +309,7 @@ class TranscriptFollower:
 
     def _new_copy(self, guest_path: str, suffix: str = "") -> _Copy:
         _make_dir(self.dir)
-        copy = _Copy(self._copy_path(guest_path, suffix), guest_path)
+        copy = _Copy(self._copy_path(guest_path, suffix), guest_path, opened=time.time())
         os.close(os.open(copy.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600))
         copy.checkpointed_size, copy.checkpointed_at = 0, self._clock()
         self._copies[guest_path] = copy
@@ -350,10 +353,17 @@ class TranscriptFollower:
 
     def _save_meta(self, copy: _Copy, *, closed: bool = False) -> None:
         meta: dict[str, Any] = {"guest_path": copy.guest_path, "offset": copy.offset,
-                                "agent_id": self.agent_id}
+                                "agent_id": self.agent_id, "opened": copy.opened}
         if closed:
             meta["closed"] = True
         _write_json(copy.meta_path, meta)
+
+    def _save_follow(self, *, closed: bool = False) -> None:
+        follow: dict[str, Any] = {"glob": self.glob, "skip": self.skip,
+                                  "agent_id": self.agent_id, "harness": self.harness}
+        if closed:
+            follow["closed"] = True
+        _write_json(self.dir / _FOLLOW, follow)
 
     def _rel(self, path: Path) -> str:
         return str(path.relative_to(transcripts_root()))

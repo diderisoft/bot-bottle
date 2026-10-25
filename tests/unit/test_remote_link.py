@@ -100,7 +100,7 @@ class TestConsoleLink(unittest.TestCase):
                          (request.agent, request.assume_yes, role))
         # No terminal relay in this link, so the console can't type into it.
         self.assertEqual([{"type": "agent_started", "agent_id": "a1", "bottle": "bottle-1",
-                           "writable": False}], sent)
+                           "writable": False, "transcript": False}], sent)
 
     def test_refuses_console_supplied_agent_content(self) -> None:
         # Agents and the bottles they pick come from this host (ADR 0007).
@@ -362,7 +362,7 @@ class TestConsoleSession(unittest.TestCase):
         self.assertEqual(("Fix the flaky test", ("python-dev",), "fix-it", False),
                          (request.prompt, request.bottles, request.label, request.headless))
         self.assertEqual({"type": "agent_started", "agent_id": "a1", "bottle": "bottle-1",
-                          "activation": "act-1", "writable": True}, sent[-1])
+                          "activation": "act-1", "writable": True, "transcript": False}, sent[-1])
 
     def test_bad_launch_extras_are_refused(self) -> None:
         for extra in ({"prompt": 5}, {"prompt": "x" * 20_001}, {"bottles": "python-dev"},
