@@ -4,7 +4,9 @@ backend lists its cached images."""
 from __future__ import annotations
 
 import io
+import json
 import os
+import subprocess
 import tempfile
 import time
 import unittest
@@ -226,6 +228,174 @@ class PruneCommand(unittest.TestCase):
         _code, out = self.run_cmd(["--build-store", "--dry-run"])
         self.backend.prune_build_store.assert_called_once_with(dry_run=True)
         self.assertIn("macos-container: removed it", out)
+
+class Helpers(unittest.TestCase):
+    def test_disk_size_mtime_and_remove(self) -> None:
+        from bot_bottle.backend.cache_entries import disk_size, mtime, remove_paths
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp) / "tree"
+            (tree / "sub").mkdir(parents=True)
+            (tree / "sub" / "f").write_bytes(b"x" * 8192)
+            self.assertGreater(disk_size(tree), 0)
+            self.assertEqual(0, disk_size(Path(tmp) / "missing"))
+            self.assertEqual(7.0, mtime(Path(tmp) / "missing", 7.0))
+            single = Path(tmp) / "one"
+            single.write_text("x")
+            self.assertTrue(remove_paths(tree, single, Path(tmp) / "never")())
+            self.assertFalse(tree.exists() or single.exists())
+        self.assertEqual("1.2 TB", human(1_200_000_000_000))
+
+    def test_backends_without_caches_list_nothing(self) -> None:
+        from bot_bottle.backend.base import BottleBackend
+        self.assertEqual([], BottleBackend.cache_entries(mock.Mock()))
+        self.assertIsNone(BottleBackend.prune_build_store(mock.Mock(), dry_run=True))
+
+
+class Pins(unittest.TestCase):
+    def test_oci_pins_name_each_harness_tag_and_digest(self) -> None:
+        pin = SimpleNamespace(digest="sha256:" + "e" * 64)
+        with mock.patch.object(oci, "resolve_agent_pin", return_value=pin):
+            tags, digests = oci._pins()  # pylint: disable=protected-access
+        self.assertIn(f"bot-bottle-pi:pin-{'e' * 16}", tags)
+        self.assertEqual({pin.digest}, digests)
+
+    def test_a_ref_splits_into_repo_and_tag(self) -> None:
+        split = oci._split  # pylint: disable=protected-access
+        self.assertEqual(("bot-bottle-pi", "pin-1"), split("docker.io/library/bot-bottle-pi:pin-1"))
+        self.assertEqual(("bot-bottle-pi", "@sha256:ab"),
+                         split("reg:5000/x/bot-bottle-pi@sha256:ab"))
+        self.assertEqual(("bot-bottle-pi", ""), split("reg:5000/x/bot-bottle-pi"))
+
+    def test_firecracker_pins_cover_agent_bases_and_infra_roles(self) -> None:
+        pin = SimpleNamespace(digest="sha256:" + "f" * 64)
+        role = SimpleNamespace(digest="sha256:" + "9" * 64)
+        infra = SimpleNamespace()
+        ext4 = Path("/c/agent-ext4-x.ext4")
+        with mock.patch.object(fc, "resolve_agent_pin", return_value=pin), \
+                mock.patch.object(fc.infra_rootfs, "role_artifact", return_value=role), \
+                mock.patch.object(fc.image_builder, "_image_ext4_path", return_value=ext4):
+            digests = fc._pinned_digests(infra)  # type: ignore[arg-type]  # pylint: disable=protected-access
+            paths = fc._pinned_ext4_paths(infra)  # type: ignore[arg-type]  # pylint: disable=protected-access
+        self.assertEqual(({pin.digest, role.digest}, {ext4}), (digests, paths))
+        with mock.patch.object(fc, "resolve_agent_pin", side_effect=RuntimeError("no manifest")), \
+                mock.patch.object(fc.infra_rootfs, "role_artifact", side_effect=RuntimeError()):
+            self.assertEqual(set(), fc._pinned_digests(infra))  # type: ignore[arg-type]  # pylint: disable=protected-access
+
+
+def _completed(out: str) -> "subprocess.CompletedProcess[str]":
+    return subprocess.CompletedProcess([], 0, out, "")
+
+
+class RuntimeListers(unittest.TestCase):
+    def setUp(self) -> None:
+        self.enterContext(mock.patch.object(oci, "_pins", return_value=(set(), set())))
+
+    def test_macos_reads_images_sizes_dates_and_containers(self) -> None:
+        from bot_bottle.backend.macos_container import cache_entries as mac
+        listings = {
+            "list": [{"configuration": {"image": {
+                "reference": "docker.io/library/bot-bottle-gateway:src-a"}}}],
+            "image": [
+                {"configuration": {"name": "bot-bottle-gateway:src-a",
+                                   "creationDate": "2026-10-01T00:00:00Z"},
+                 "variants": [{"size": 100}, {"size": 20}]},
+                {"configuration": {"name": "bot-bottle-gateway:src-b",
+                                   "creationDate": "not a date"}, "variants": []},
+                {"configuration": {}},
+            ],
+        }
+
+        def run(argv: list[str], **_k: object) -> "subprocess.CompletedProcess[str]":
+            return _completed(json.dumps(listings[argv[1]]))
+        with mock.patch("bot_bottle.backend.host_resources.subprocess.run", side_effect=run):
+            found = {e.what: e for e in mac.list_entries()}
+        src_a = found["image bot-bottle-gateway:src-a"]
+        self.assertEqual((120, "in use by a container"), (src_a.size, src_a.keep))
+        self.assertEqual(0.0, found["image bot-bottle-gateway:src-b"].last_used)
+
+    def test_docker_reads_images_sizes_dates_and_containers(self) -> None:
+        from bot_bottle.backend.docker import cache_entries as dock
+        rows = [
+            {"Repository": "bot-bottle-claude", "Tag": "pin-1", "ID": "abc", "Size": "1.5GB",
+             "CreatedAt": "2026-10-24 21:51:29 -0400 EDT"},
+            {"Repository": "bot-bottle-claude", "Tag": "overlay-2", "ID": "def", "Size": "12kB",
+             "CreatedAt": "garbage"},
+            {"Repository": "bot-bottle-claude", "Tag": "<none>", "ID": "x", "Size": "1MB"},
+        ]
+
+        def run(argv: list[str], **_k: object) -> "subprocess.CompletedProcess[str]":
+            if argv[1] == "ps":
+                return _completed("abc\n")
+            return _completed("\n".join(json.dumps(r) for r in rows) + "\nnot json\n")
+        with mock.patch("bot_bottle.backend.host_resources.subprocess.run", side_effect=run):
+            found = {e.what: e for e in dock.list_entries()}
+        pin = found["image bot-bottle-claude:pin-1"]
+        self.assertEqual((1_500_000_000, "in use by a container"), (pin.size, pin.keep))
+        self.assertGreater(pin.last_used, 0)
+        self.assertEqual(12_000, found["image bot-bottle-claude:overlay-2"].size)
+        self.assertEqual(2, len(found))
+        self.assertEqual(0, dock._size("lots"))  # pylint: disable=protected-access
+
+
+class BackendWiring(unittest.TestCase):
+    def test_each_backend_hands_over_its_listing(self) -> None:
+        from bot_bottle.backend.docker.backend import DockerBottleBackend
+        from bot_bottle.backend.firecracker.backend import FirecrackerBottleBackend
+        from bot_bottle.backend.macos_container.backend import MacosContainerBottleBackend
+        for cls, module in ((DockerBottleBackend, "bot_bottle.backend.docker.cache_entries"),
+                            (MacosContainerBottleBackend,
+                             "bot_bottle.backend.macos_container.cache_entries"),
+                            (FirecrackerBottleBackend,
+                             "bot_bottle.backend.firecracker.cache_entries")):
+            backend = cls.__new__(cls)
+            backend.settings = SimpleNamespace(infra=SimpleNamespace())  # type: ignore[assignment]
+            with mock.patch(f"{module}.list_entries", return_value=["x"]):
+                self.assertEqual(["x"], backend.cache_entries())
+        fcb = FirecrackerBottleBackend.__new__(FirecrackerBottleBackend)
+        with mock.patch("bot_bottle.backend.firecracker.cache_entries.prune_build_store",
+                        return_value=(1, "ok")):
+            self.assertEqual((1, "ok"), fcb.prune_build_store(dry_run=True))
+
+
+class AgentBaseHits(unittest.TestCase):
+    def test_a_cached_agent_ext4_refreshes_its_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "agent-ext4-x.ext4"
+            image.write_bytes(b"x")
+            ready = image.with_suffix(".ready")
+            ready.write_text("ok\n")
+            os.utime(ready, (100, 100))
+            with mock.patch.object(image_builder, "_image_ext4_path", return_value=image):
+                self.assertEqual(image, image_builder.cached_agent_image_ext4(
+                    mock.Mock(), mock.Mock()))
+            self.assertGreater(ready.stat().st_mtime, time.time() - 60)
+            ready.unlink()
+            with mock.patch.object(image_builder, "_image_ext4_path", return_value=image):
+                self.assertIsNone(image_builder.cached_agent_image_ext4(mock.Mock(), mock.Mock()))
+
+
+class CommandEdges(unittest.TestCase):
+    def test_a_backend_that_cannot_list_is_reported_and_skipped(self) -> None:
+        broken = SimpleNamespace(name="docker",
+                                 cache_entries=mock.Mock(side_effect=OSError("down")))
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(prune, "_backends", return_value=[broken]), \
+                redirect_stdout(out), mock.patch("sys.stderr", err):
+            self.assertEqual(0, prune.cmd_prune([]))
+        self.assertIn("couldn't list cached images", err.getvalue())
+
+    def test_backends_are_the_usable_ones(self) -> None:
+        def usable(_settings: object, name: str) -> bool:
+            return name == "b"
+
+        def backend(_settings: object, name: str) -> str:
+            return name
+        with mock.patch.object(prune, "known_backend_names", return_value=["a", "b"]), \
+                mock.patch.object(prune, "has_backend", side_effect=usable), \
+                mock.patch.object(prune, "get_bottle_backend", side_effect=backend), \
+                mock.patch.object(prune, "settings_from_env"):
+            self.assertEqual(["b"], prune._backends())  # pylint: disable=protected-access
+
 
 if __name__ == "__main__":
     unittest.main()
