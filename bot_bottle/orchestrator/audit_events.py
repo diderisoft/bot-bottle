@@ -133,5 +133,17 @@ class OrchestratorAudit:
                      payload={"proposal_id": proposal_id, "operator_action": decision,
                               "operator_notes": notes})
 
+    def answered_late(self, *, bottle_id: str, proposal_id: str, decision: str,
+                      notes: str, first: str) -> None:
+        """An answer to a proposal that already had one (`first`), refused:
+        the first stands. Kept so both answers, and where each came from
+        (`notes`), are on record."""
+        self._record(type="decision.late", actor="role:cli", action=f"supervise.{decision}",
+                     outcome="failure", sensitivity="security", resource=bottle_id,
+                     bottle=bottle_id, bottled_agent=bottle_id, correlation_id=proposal_id,
+                     payload={"proposal_id": proposal_id, "operator_action": decision,
+                              "operator_notes": notes, "decided_as": first,
+                              "reason_code": "already_answered"})
+
 
 __all__ = ["OrchestratorAudit", "fingerprint"]

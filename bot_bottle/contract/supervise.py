@@ -35,6 +35,10 @@ STATUSES: tuple[str, ...] = (STATUS_APPROVED, STATUS_MODIFIED, STATUS_REJECTED)
 POLL_STATUS_PENDING = "pending"
 POLL_STATUS_UNKNOWN = "unknown"
 
+# The start of `/supervise/respond`'s 409 detail for a proposal that already
+# has a decision; the first answer stands.
+ALREADY_ANSWERED = "already answered"
+
 ACTION_OPERATOR_EDIT = "operator-edit"
 
 # Supervise constants shared by the gateway and the backends.
@@ -161,6 +165,7 @@ class AuditEntry:
 
 __all__ = [
     "ACTION_OPERATOR_EDIT",
+    "ALREADY_ANSWERED",
     "AuditEntry",
     "Proposal",
     "Response",

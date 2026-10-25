@@ -101,9 +101,15 @@ A proposal is queued with the orchestrator (`POST /supervise/propose`), which
 attributes it to the calling bottle. The server polls for up to
 `SUPERVISE_RESPONSE_TIMEOUT_SECONDS` (30). If there's no decision by then, it
 returns `pending` with the proposal id, and `check-proposal` picks up the
-answer later. The operator decides in `bot-bottle supervise`. The orchestrator
-applies approved egress changes to the bottle's stored policy, so the next
-request resolves the new routes. The gateway never opens `bot-bottle.db`.
+answer later. The operator decides in `bot-bottle supervise`, the terminal's
+request popup, or the console. The orchestrator applies approved egress
+changes to the bottle's stored policy, so the next request resolves the new
+routes. The gateway never opens `bot-bottle.db`.
+
+A proposal takes one decision: the first answer stands. A later answer, such
+as the phone answering after the terminal did, gets a 409 (`already
+answered`), changes nothing, and is recorded as a `decision.late` audit event
+naming the decision it lost to, so both answers are on record.
 
 Proposals that git-gate raises (`gitleaks-allow`) and the egress proxy raises
 (`egress-token-allow`) use the same queue.

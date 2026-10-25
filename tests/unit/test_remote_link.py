@@ -20,6 +20,7 @@ from unittest import mock
 from bot_bottle.cli.commands import remote as remote_cmd
 from bot_bottle.cli.commands.login import _save_credentials
 from bot_bottle.contract.hostctl import LaunchRequest
+from bot_bottle.control.client import AlreadyAnswered
 from bot_bottle.control.hostctl import remote
 from bot_bottle.lib.log import Die
 from tests.unit import use_bottle_root
@@ -196,6 +197,20 @@ class TestApprovals(unittest.TestCase):
                                  "since": "2026-10-23T18:00:01.123456"}))
         self.assertEqual("reject", client.supervise_respond.call_args.kwargs["decision"])
         self.assertIn("the phone", client.supervise_respond.call_args.kwargs["notes"])
+        self.assertEqual({"type": "activity", "agent_id": "a1"}, sent[-1])
+
+    def test_an_answer_from_the_terminal_first_clears_the_phone(self) -> None:
+        pending = [_pending()]
+        link, sent, client = self.link(pending)
+        asyncio.run(link.push_attention())
+
+        def answered_in_the_terminal(pid: str, **_kwargs: object) -> None:
+            pending.clear()
+            raise AlreadyAnswered("approved")
+
+        client.supervise_respond.side_effect = answered_in_the_terminal
+        asyncio.run(link.handle({"type": "approval", "agent_id": "a1", "decision": "deny",
+                                 "since": "2026-10-23T18:00:01.123456"}))
         self.assertEqual({"type": "activity", "agent_id": "a1"}, sent[-1])
 
     def test_a_stale_or_unknown_approval_is_ignored(self) -> None:

@@ -8,10 +8,12 @@ bottle there.
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timezone
 from typing import Protocol
 
 from ..contract.supervise import (
+    ALREADY_ANSWERED,
     AuditEntry,
     COMPONENT_FOR_TOOL,
     POLL_STATUS_PENDING,
@@ -61,6 +63,9 @@ class OrchestratorCore:
         # Per-bottle egress tokens (env name -> value), in memory only;
         # encrypted copies live in the DB for restart recovery.
         self._tokens: dict[str, dict[str, str]] = {}
+        # Held across a decision's check, audit record and apply, so two
+        # answers to one proposal can't both apply: the first stands.
+        self.respond_lock = threading.RLock()
 
     def register_bottle(
         self,
@@ -225,6 +230,13 @@ class OrchestratorCore:
         bottle id), or None if it's gone."""
         return self.registry.get(slug)
 
+    def supervise_answer(self, bottle_slug: str, proposal_id: str) -> str | None:
+        """The status a proposal was already decided with, or None."""
+        try:
+            return self._supervisor.read_response(bottle_slug, proposal_id).status
+        except FileNotFoundError:
+            return None
+
     def supervise_respond(
         self,
         proposal_id: str,
@@ -237,14 +249,23 @@ class OrchestratorCore:
         """Record and apply an operator decision (approve, modify or reject).
         An egress approval rewrites the bottle's policy (served on the next
         `/resolve`), then the Response unblocks the agent and an audit entry is
-        written. Returns (ok, error)."""
+        written. Returns (ok, error). A proposal that already has a decision
+        keeps it: the error starts with `ALREADY_ANSWERED`."""
         status = _RESPOND_STATUS.get(decision)
         if status is None:
             return False, f"unknown decision {decision!r}"
+        with self.respond_lock:
+            return self._respond(proposal_id, bottle_slug, status, notes, final_file)
+
+    def _respond(self, proposal_id: str, bottle_slug: str, status: str, notes: str,
+                 final_file: str | None) -> tuple[bool, str]:
         try:
             proposal = self._supervisor.read_proposal(bottle_slug, proposal_id)
         except FileNotFoundError:
             return False, "no such proposal"
+        first = self.supervise_answer(bottle_slug, proposal_id)
+        if first is not None:
+            return False, f"{ALREADY_ANSWERED} ({first})"
 
         diff_before, diff_after = "", ""
         if status in (STATUS_APPROVED, STATUS_MODIFIED) and proposal.tool in _APPLY_TOOLS:

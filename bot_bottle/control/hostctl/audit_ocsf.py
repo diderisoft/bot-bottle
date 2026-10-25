@@ -59,6 +59,7 @@ _BY_TYPE: dict[str, tuple[int, int]] = {
     "audit.segment_open": (EVENT_LOG_ACTIVITY, 5),  # Rotate
     "audit.export_failed": (EVENT_LOG_ACTIVITY, 3),  # Export
     "decision.resolved": (API_ACTIVITY, 3),  # Update
+    "decision.late": (API_ACTIVITY, 3),
     "hostctl.broker_teardown": (API_ACTIVITY, 4),  # Delete
     "auth.authz_denied": (API_ACTIVITY, _OTHER),
 }

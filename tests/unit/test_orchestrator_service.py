@@ -282,6 +282,21 @@ class TestOrchestratorSupervise(unittest.TestCase):
         self.assertEqual("routes:\n  - host: existing.com\n", rec.policy)
         self.assertEqual("rejected", Supervisor(self.db).read_response("demo", pid).status)
 
+    def test_a_second_answer_keeps_the_first(self) -> None:
+        # The terminal and the phone both answer: the first stands, and the
+        # second neither replaces its response nor rewrites the policy.
+        bottle_id = self._register("demo", "routes: []\n")
+        pid = self._queue(bottle_id, "routes:\n  - host: google.com\n")
+        ok, _ = self.orch.supervise_respond(pid, bottle_slug=bottle_id, decision="reject")
+        self.assertTrue(ok)
+        ok, err = self.orch.supervise_respond(pid, bottle_slug=bottle_id, decision="approve")
+        self.assertFalse(ok)
+        self.assertEqual("already answered (rejected)", err)
+        rec = self.store.get(bottle_id)
+        assert rec is not None
+        self.assertEqual("routes: []\n", rec.policy)
+        self.assertEqual("rejected", self.orch.supervise_answer(bottle_id, pid))
+
     def test_unknown_proposal_is_error(self) -> None:
         ok, err = self.orch.supervise_respond(
             "ghost", bottle_slug="demo", decision="approve")

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from ..lib.log import debug
 from ..contract.auth import CONTROL_PLANE, ROLE_CLI
 from ..contract.hostctl import Settings
+from ..contract.supervise import ALREADY_ANSWERED
 from ..trust_domain import mint
 from ..contract.http import ORCHESTRATOR_AUTH_HEADER
 
@@ -31,6 +32,15 @@ def _host_auth_token() -> str:
 
 class OrchestratorClientError(RuntimeError):
     """A control-plane call failed: unreachable, or an unexpected status."""
+
+
+class AlreadyAnswered(OrchestratorClientError):
+    """A supervise proposal had a decision before ours; the first stands.
+    `decided_as` is that decision's status ("approved", "rejected", ...)."""
+
+    def __init__(self, decided_as: str) -> None:
+        super().__init__(f"already answered ({decided_as})")
+        self.decided_as = decided_as
 
 
 @dataclass(frozen=True)
@@ -237,7 +247,9 @@ class OrchestratorClient:
         final_file: str | None = None,
     ) -> None:
         """Record a decision (`POST /supervise/respond`): approve, modify or
-        reject. Raises if the proposal is gone or can't be applied (409)."""
+        reject. Raises `AlreadyAnswered` if it already had a decision (the
+        first stands), and `OrchestratorClientError` if the proposal is gone
+        or can't be applied."""
         body: dict[str, object] = {
             "proposal_id": proposal_id,
             "bottle_slug": bottle_slug,
@@ -246,7 +258,13 @@ class OrchestratorClient:
         }
         if final_file is not None:
             body["final_file"] = final_file
-        self._ok("POST", "/supervise/respond", body)
+        status, payload = self._request("POST", "/supervise/respond", body)
+        detail = str(payload.get("detail") or payload.get("error") or "")
+        if status == 409 and detail.startswith(ALREADY_ANSWERED):
+            raise AlreadyAnswered(detail[len(ALREADY_ANSWERED):].strip(" ()") or "unknown")
+        if not 200 <= status < 300:
+            raise OrchestratorClientError(
+                f"POST /supervise/respond: HTTP {status} {detail}".rstrip())
 
 
 def discover_orchestrator_url(settings: "Settings", *, timeout: float = 2.0) -> str:

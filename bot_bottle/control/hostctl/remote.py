@@ -500,6 +500,7 @@ class ConsoleLink:
         match the request still shown."""
         # pylint: disable=import-outside-toplevel  # the link's only approvals use
         from ...approvals import ALLOW_ONCE, ALLOW_PROJECT, DENY, answer
+        from ..client import AlreadyAnswered
         request = self._asking.get(agent_id)
         chosen = {"allow": ALLOW_ONCE, "allow_project": ALLOW_PROJECT, "deny": DENY}.get(decision)
         if request is None or chosen is None or not _same_moment(since, request.arrived):
@@ -509,6 +510,11 @@ class ConsoleLink:
             message = await asyncio.to_thread(answer, self._orchestrator(), request, chosen,
                                               via="the phone")
             log.info(f"remote: {request.session}: {message}")
+        except AlreadyAnswered as e:
+            # Answered in the terminal first; it stands. The push below clears
+            # the phone's prompt.
+            log.info(f"remote: {request.session}: already answered ({e.decided_as}); "
+                     "the phone's answer wasn't applied")
         except Exception as e:  # pylint: disable=broad-exception-caught  # logged; still pending
             log.warn(f"remote: couldn't answer {request.session}'s request: {e}")
             return

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 from bot_bottle.contract.auth import ROLE_CLI, verify
 from bot_bottle.control.client import (
+    AlreadyAnswered,
     OrchestratorClient,
     OrchestratorClientError,
     RegisteredBottle,
@@ -234,3 +236,30 @@ class TestReconcile(unittest.TestCase):
             with patch(_URLOPEN, side_effect=_http_error(code)):
                 with self.assertRaises(OrchestratorClientError):
                     self.c.reconcile()
+
+
+class TestSuperviseRespond(unittest.TestCase):
+    def setUp(self) -> None:
+        self.c = OrchestratorClient("http://orch:8080")
+
+    @staticmethod
+    def _conflict(detail: str) -> urllib.error.HTTPError:
+        body = io.BytesIO(json.dumps({"detail": detail}).encode())
+        return urllib.error.HTTPError("http://x", 409, "conflict", {}, body)  # type: ignore[arg-type]
+
+    def test_success(self) -> None:
+        with patch(_URLOPEN, return_value=_resp(200, {"responded": True})):
+            self.c.supervise_respond("p1", bottle_slug="demo", decision="approve")
+
+    def test_an_answered_proposal_raises_already_answered(self) -> None:
+        with patch(_URLOPEN, side_effect=self._conflict("already answered (rejected)")):
+            with self.assertRaises(AlreadyAnswered) as caught:
+                self.c.supervise_respond("p1", bottle_slug="demo", decision="approve")
+        self.assertEqual("rejected", caught.exception.decided_as)
+
+    def test_another_conflict_is_a_client_error(self) -> None:
+        with patch(_URLOPEN, side_effect=self._conflict("no such proposal")):
+            with self.assertRaises(OrchestratorClientError) as caught:
+                self.c.supervise_respond("p1", bottle_slug="demo", decision="approve")
+        self.assertNotIsInstance(caught.exception, AlreadyAnswered)
+        self.assertIn("no such proposal", str(caught.exception))

@@ -53,7 +53,7 @@ gets a `gateway` token for each domain it calls, never a key.
 | `POST /reconcile` | `cli` | reap rows for bottles that aren't running (`grace_seconds`, default 120); 503 if the live set is unknown |
 | `POST /attribute` | `cli` | the `bottle_id` for a `source_ip` and `identity_token`; 403 if neither matches |
 | `GET /supervise/proposals` | `cli` | pending supervise proposals |
-| `POST /supervise/respond` | `cli` | approve or deny a proposal |
+| `POST /supervise/respond` | `cli` | approve or deny a proposal; 409 `already answered` if it has a decision |
 | `POST /resolve` | `gateway`, `cli` | resolve a source IP and identity token to a bottle's policy and tokens |
 | `POST /supervise/propose` | `gateway`, `cli` | file a proposal |
 | `POST /supervise/poll` | `gateway`, `cli` | wait for a decision |

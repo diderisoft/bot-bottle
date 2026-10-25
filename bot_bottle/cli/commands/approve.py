@@ -21,7 +21,9 @@ from collections.abc import Callable
 from ...approvals import (
     ALLOW_ONCE, ALLOW_PROJECT, DENY, Request, answer, route_lines, session_project,
 )
-from ...control.client import OrchestratorClient, OrchestratorClientError, discover_orchestrator_url
+from ...control.client import (
+    AlreadyAnswered, OrchestratorClient, OrchestratorClientError, discover_orchestrator_url,
+)
 from ..settings import settings_from_env
 
 _DECISION = {"a": ALLOW_ONCE, "p": ALLOW_PROJECT, "d": DENY}
@@ -101,6 +103,10 @@ class Reviewer:  # pylint: disable=too-few-public-methods
         elif key in _DECISION:
             try:
                 self.out(answer(self.client, request, _DECISION[key], via="the terminal"))
+            except AlreadyAnswered as e:
+                self.out(f"already answered elsewhere: {e.decided_as}; yours wasn't applied "
+                         "(press a key)")
+                self.key()
             except (OrchestratorClientError, ValueError) as e:
                 self.out(f"couldn't answer it: {e} (press a key)")
                 self.key()

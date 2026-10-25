@@ -228,6 +228,29 @@ class ApiEvents(unittest.TestCase):
                          (resolved.type, resolved.outcome, resolved.actor))
         self.assertEqual(proposed.correlation_id, resolved.correlation_id)
 
+    def test_a_late_answer_is_refused_and_recorded(self) -> None:
+        rec = self.store.register("10.243.0.9", metadata=json.dumps({"slug": "demo"}),
+                                  policy="routes: []\n")
+        _, body = self.call("POST", "/supervise/propose", {
+            "source_ip": rec.source_ip, "identity_token": rec.identity_token,
+            "tool": TOOL_EGRESS_ALLOW, "proposed_file": "routes:\n  - host: g.com\n",
+            "justification": "need it"}, role=ROLE_GATEWAY)
+        answer = {"proposal_id": body["proposal_id"], "bottle_slug": rec.bottle_id}
+        self.assertEqual(200, self.call("POST", "/supervise/respond", {
+            **answer, "decision": "reject", "notes": "denied from the terminal"})[0])
+        status, reply = self.call("POST", "/supervise/respond", {
+            **answer, "decision": "approve", "notes": "allowed once, from the phone"})
+        self.assertEqual(409, status)
+        self.assertTrue(str(reply.get("detail", "")).startswith("already answered"))
+        resolved, late = self.sink.events[-2:]
+        self.assertEqual(("decision.resolved", "blocked"), (resolved.type, resolved.outcome))
+        self.assertEqual(("decision.late", "failure", "supervise.approve"),
+                         (late.type, late.outcome, late.action))
+        assert late.payload is not None
+        self.assertEqual(("rejected", "allowed once, from the phone"),
+                         (late.payload["decided_as"], late.payload["operator_notes"]))
+        self.assertEqual(resolved.correlation_id, late.correlation_id)
+
 
 class _FirehoseRelay:
     """Stands in for HostControlRelay on the firehose route."""

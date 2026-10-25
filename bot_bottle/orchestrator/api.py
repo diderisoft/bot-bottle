@@ -20,7 +20,7 @@ from ..contract.audit import AUDIT_EVENTS_PATH, GATEWAY_PRODUCERS, AuditEvent
 from ..contract.firehose import FIREHOSE_PATH, Capture
 from ..contract.auth import CONTROL_PLANE, ROLE_CLI, ROLES
 from ..contract.hostctl import BOTTLES_PATH, JOBS_PATH, ROLE_ORCHESTRATOR, LaunchRequest
-from ..contract.supervise import TOOLS
+from ..contract.supervise import ALREADY_ANSWERED, TOOLS
 from ..contract.http import (
     MAX_BODY_BYTES,
     ORCHESTRATOR_AUTH_HEADER,
@@ -456,25 +456,35 @@ def create_app(
     @app.post("/supervise/respond")
     def respond(body: RespondBody) -> dict[str, object]:
         bottle_slug = _required(body.bottle_slug, "bottle_slug")
-        # A `required` bottle's decision is recorded before it's applied, and
-        # not applied if it can't be.
-        required = orch.audit_delivery(bottle_slug) == "required"
-        if required and not audit.resolved(
-                bottle_id=bottle_slug, proposal_id=body.proposal_id,
-                decision=body.decision, notes=body.notes, required=True):
-            raise HTTPException(503, "audit event not written; decision not applied")
-        ok, error = orch.supervise_respond(
-            _required(body.proposal_id, "proposal_id"),
-            bottle_slug=bottle_slug,
-            decision=_required(body.decision, "decision"),
-            notes=body.notes,
-            final_file=body.final_file,
-        )
-        if not ok:
-            raise HTTPException(409, error)
-        if not required:
-            audit.resolved(bottle_id=bottle_slug, proposal_id=body.proposal_id,
-                           decision=body.decision, notes=body.notes)
+        proposal_id = _required(body.proposal_id, "proposal_id")
+        decision = _required(body.decision, "decision")
+        # One decision per proposal: the first answer stands, and a later one
+        # (the terminal and the phone both answering) is recorded as late.
+        with orch.respond_lock:
+            first = orch.supervise_answer(bottle_slug, proposal_id)
+            if first is not None:
+                audit.answered_late(bottle_id=bottle_slug, proposal_id=proposal_id,
+                                    decision=decision, notes=body.notes, first=first)
+                raise HTTPException(409, f"{ALREADY_ANSWERED} ({first})")
+            # A `required` bottle's decision is recorded before it's applied,
+            # and not applied if it can't be.
+            required = orch.audit_delivery(bottle_slug) == "required"
+            if required and not audit.resolved(
+                    bottle_id=bottle_slug, proposal_id=proposal_id,
+                    decision=decision, notes=body.notes, required=True):
+                raise HTTPException(503, "audit event not written; decision not applied")
+            ok, error = orch.supervise_respond(
+                proposal_id,
+                bottle_slug=bottle_slug,
+                decision=decision,
+                notes=body.notes,
+                final_file=body.final_file,
+            )
+            if not ok:
+                raise HTTPException(409, error)
+            if not required:
+                audit.resolved(bottle_id=bottle_slug, proposal_id=proposal_id,
+                               decision=decision, notes=body.notes)
         return {"responded": True}
 
     @app.post("/supervise/propose", status_code=201)

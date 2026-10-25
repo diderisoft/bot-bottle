@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 from bot_bottle.approvals import Request, save_to_project
 from bot_bottle.cli.commands.approve import Reviewer, describe
 from bot_bottle.contract.yaml_subset import parse_frontmatter
+from bot_bottle.control.client import AlreadyAnswered
 from bot_bottle.control.hostctl.requests import RequestNotifier, summaries
 from bot_bottle.manifest import ManifestIndex, trust
 
@@ -167,6 +168,22 @@ class Review(unittest.TestCase):
         self.assertEqual(Path("/proj"), save.call_args.args[0])
         self.assertIn("allowed, and saved to ./.bot-bottle/bottles/proj.md in the project", shown)
         self.assertEqual(["api.stripe.com"], [r.host for r in save.call_args.args[1]])
+
+    def test_an_answer_from_the_phone_first_is_shown(self) -> None:
+        reviewer, client = self.reviewer("ax", [_pending(_CURRENT + _STRIPE)])
+        shown: list[str] = []
+        reviewer.out = shown.append
+
+        def answered_elsewhere(pid: str, **_kwargs: object) -> None:
+            raise AlreadyAnswered("rejected")
+
+        client.supervise_respond.side_effect = answered_elsewhere
+        # Then it's gone from the queue.
+        client.supervise_pending.side_effect = [[_pending(_CURRENT + _STRIPE)], []]
+        with patch("bot_bottle.cli.commands.approve.session_project", return_value=None):
+            self.assertEqual(0, reviewer.run())
+        self.assertIn("already answered elsewhere: rejected; yours wasn't applied "
+                      "(press a key)", shown)
 
     def test_another_sessions_requests_are_not_shown(self) -> None:
         reviewer, client = self.reviewer("", [_pending(_CURRENT + _STRIPE, label="other")])
