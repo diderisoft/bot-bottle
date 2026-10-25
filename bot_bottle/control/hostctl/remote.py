@@ -30,6 +30,7 @@ The control stream (JSON lines):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -61,7 +62,8 @@ POLL_SECONDS = 3.0
 BACKOFF_SECONDS = (1.0, 2.0, 5.0, 10.0, 30.0)
 # How often launched agents are checked.
 WATCH_SECONDS = 2.0
-_REFUSED = 1  # application close code
+_REFUSED = 1  # application close codes
+_HOST_STOPPING = 2
 # Bounds on a console launch.
 MAX_PROMPT_CHARS = 20_000
 MAX_BOTTLES = 8
@@ -606,18 +608,41 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
         link.close()
 
 
+class _Stopped(Exception):
+    """`stop` was set while the link was dialing or serving."""
+
+
+async def _unless_stopped(coro: Awaitable[Any], stopped: "asyncio.Future[Any]") -> Any:
+    """`coro`'s result, or `_Stopped` (with `coro` cancelled) once `stopped`
+    resolves. `stopped` is shared and never cancelled here."""
+    task = asyncio.ensure_future(coro)
+    await asyncio.wait({task, stopped}, return_when=asyncio.FIRST_COMPLETED)
+    if task.done():
+        return task.result()
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await task
+    raise _Stopped
+
+
 async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> None:
-    """Dial the pinned console and serve it, reconnecting until `stop`."""
+    """Dial the pinned console and serve it, reconnecting until `stop`. A
+    `stop` while connected ends the connection at once, so the host
+    controller shuts down without waiting on the console."""
     iroh = import_iroh()
     endpoint = await iroh.Endpoint.bind(iroh.EndpointOptions(
         preset=iroh.preset_n0(), secret_key=secret_key(), alpns=[]))
     attempt = 0
     state = LinkState()  # agents launched over this link, across reconnects
+    # One waiter for the whole loop: a thread blocked on `stop` per attempt
+    # would pile up across reconnects.
+    stopped = asyncio.ensure_future(asyncio.to_thread(stop.wait))
     try:
         while not stop.is_set():
+            conn = None
             try:
                 addr = iroh.EndpointTicket.from_string(config.console_ticket).endpoint_addr()
-                conn = await endpoint.connect(addr, ALPN)
+                conn = await _unless_stopped(endpoint.connect(addr, ALPN), stopped)
                 remote = str(conn.remote_id())
                 if remote != config.console_node_id:
                     conn.close(_REFUSED, b"unexpected console")
@@ -625,8 +650,12 @@ async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> 
                 attempt = 0
                 write_status(connected=True, console_node_id=remote)
                 log.info("remote: connected to the console")
-                await serve_connection(conn, bottles, state=state)
+                await _unless_stopped(serve_connection(conn, bottles, state=state), stopped)
                 write_status(connected=False, error="console closed the connection")
+            except _Stopped:
+                if conn is not None:
+                    conn.close(_HOST_STOPPING, b"host controller stopping")
+                break
             except Exception as e:  # pylint: disable=broad-exception-caught
                 write_status(connected=False, error=str(e)[:300] or type(e).__name__)
                 log.debug(f"remote: link down: {e}")

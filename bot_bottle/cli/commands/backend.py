@@ -5,6 +5,7 @@ prerequisites, dispatched to its `setup()`, `status()` and `teardown()`.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from ...backend import get_bottle_backend, known_backend_names
@@ -53,8 +54,11 @@ def cmd_backend(args: list[str]) -> int:
 
     backend = get_bottle_backend(settings_from_env(), ns.backend)
     if ns.action == "setup":
-        _note_tmux()
-        _note_service()
+        # Under sudo, setup installs only the privileged pieces; the user's
+        # tmux and autostart are their own account's business.
+        if os.geteuid() != 0:
+            _note_tmux()
+            _note_service()
         return backend.setup()
     if ns.action == "teardown":
         return backend.teardown()

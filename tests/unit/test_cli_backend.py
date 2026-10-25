@@ -8,6 +8,7 @@ test_firecracker_backend via netpool)."""
 
 from __future__ import annotations
 
+import io
 import subprocess
 import unittest
 from unittest.mock import ANY, MagicMock, patch
@@ -32,6 +33,19 @@ class TestCmdBackendDispatch(unittest.TestCase):
         b.setup.assert_called_once_with()
         b.status.assert_not_called()
         self.assertEqual(0, rc)
+
+    def test_setup_as_root_skips_the_users_notes(self):
+        b = self._fake_backend()
+        for euid, noted in ((501, True), (0, False)):
+            with self.subTest(euid=euid), \
+                    patch.object(cmd, "get_bottle_backend", return_value=b), \
+                    patch.object(cmd.os, "geteuid", return_value=euid), \
+                    patch.object(cmd.service_unit, "installed", return_value=False), \
+                    patch.object(cmd, "tmux_version", return_value=None), \
+                    patch("sys.stderr", new_callable=io.StringIO) as err:
+                cmd.cmd_backend(["setup", "--backend", "firecracker"])
+            self.assertEqual(noted, "autostart" in err.getvalue())
+            self.assertEqual(noted, "tmux" in err.getvalue())
 
     def test_status_dispatches_and_returns_backend_code(self):
         b = self._fake_backend()

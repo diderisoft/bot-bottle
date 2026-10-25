@@ -10,6 +10,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 from pathlib import Path
@@ -504,7 +505,6 @@ class TestConsoleTerminal(unittest.TestCase):
 
     def test_history_is_what_scrolled_off_with_colors(self) -> None:
         import subprocess
-        import time
         _text, size, _limit = self.manager.history("s1", 3000)
         self.assertEqual(0, size)  # nothing has scrolled off yet
         subprocess.run(self.tmux("send-keys", "-t", "=s1:", "-l", "\x1b[31mred\x1b[0m"), check=True)
@@ -824,6 +824,40 @@ class TestOverRealIroh(_RootCase):
         outcome["status"] = remote.read_status()
         return outcome
 
+    def test_stop_ends_a_connected_link_promptly(self) -> None:
+        lib: Any = iroh
+        elapsed: dict[str, float] = {}
+
+        async def console_side() -> None:
+            ep = await lib.Endpoint.bind(lib.EndpointOptions(
+                preset=lib.preset_n0(), secret_key=os.urandom(32), alpns=[remote.ALPN]))
+            remote.save_config(remote.RemoteConfig(
+                True, str(ep.id()), str(lib.EndpointTicket.from_addr(ep.addr()))))
+            stop = threading.Event()
+            host = threading.Thread(target=lambda: asyncio.run(
+                remote.run(remote.load_config(), _Bottles(), stop)), daemon=True)
+            host.start()
+            try:
+                incoming = await asyncio.wait_for(ep.accept_next(), 15)
+                # Hold the connection and its control stream open, as the
+                # console does while a phone is paired.
+                conn = await (await incoming.accept()).connect()
+                bi = await conn.open_bi()
+                await bi.send().write_all(b'{"type":"list_local","request_id":"r1"}\n')
+                await _next_message(bi.recv(), "local_definitions", 5)
+                started = time.monotonic()
+                stop.set()
+                await asyncio.to_thread(host.join, 15)
+                elapsed["join"] = time.monotonic() - started
+                elapsed["alive"] = float(host.is_alive())
+            finally:
+                await ep.close()
+
+        with mock.patch.object(remote, "local_agents", return_value=[]):
+            asyncio.run(console_side())
+        self.assertFalse(elapsed["alive"])
+        self.assertLess(elapsed["join"], 5)
+
     def test_the_host_dials_and_serves_the_pinned_console(self) -> None:
         outcome = self._session(pin_console=True)
         self.assertEqual(remote.node_id(), outcome["host_node"])
@@ -898,6 +932,26 @@ class TestOverRealIroh(_RootCase):
         self.assertTrue(outcome["started"]["writable"])
         self.assertTrue(outcome["terminal"].startswith(b"a1\n"))
         self.assertIn(b"typed-over-iroh", outcome["terminal"])
+
+
+class TestUnlessStopped(unittest.TestCase):
+    def test_returns_the_result_or_cancels_once_stopped(self) -> None:
+        async def go() -> tuple[object, bool]:
+            stopped: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+            quick = await remote._unless_stopped(asyncio.sleep(0, "done"), stopped)  # pylint: disable=protected-access
+            cancelled = asyncio.Event()
+
+            async def forever() -> None:
+                try:
+                    await asyncio.sleep(3600)
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+            asyncio.get_running_loop().call_later(0.05, stopped.set_result, None)
+            with self.assertRaises(remote._Stopped):  # pylint: disable=protected-access
+                await remote._unless_stopped(forever(), stopped)  # pylint: disable=protected-access
+            return quick, cancelled.is_set()
+        self.assertEqual(("done", True), asyncio.run(go()))
 
 
 if __name__ == "__main__":
