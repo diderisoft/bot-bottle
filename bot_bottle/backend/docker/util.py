@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from datetime import datetime, timezone
 import shutil
 import subprocess
@@ -108,7 +110,10 @@ def build_image(
     if no_cache:
         args.append("--no-cache")
     if dockerfile:
-        args.extend(["-f", dockerfile])
+        # `docker build` resolves -f against the cwd, not the context, and the
+        # host controller runs from its state dir.
+        path = dockerfile if os.path.isabs(dockerfile) else os.path.join(context, dockerfile)
+        args.extend(["-f", path])
     effective_build_args = resources.image_build_args(
         dockerfile,
         context=context,

@@ -156,7 +156,7 @@ class TestBuildImage(unittest.TestCase):
         self.assertEqual(
             [
                 "docker", "build", "-t", "derived:test",
-                "-f", "Dockerfile.derived",
+                "-f", "/context/Dockerfile.derived",
                 "--build-arg", "BASE_IMAGE=sha256:" + "a" * 64,
                 "/context",
             ],
