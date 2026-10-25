@@ -20,6 +20,7 @@ from bot_bottle.control.client import (
     BackendProbeFailure,
     _host_auth_token,
     _probe_failure,
+    discover_orchestrator_url,
     discover_orchestrator_urls,
     pending_everywhere,
 )
@@ -307,3 +308,30 @@ class TestEveryOrchestrator(unittest.TestCase):
         with a, b, patch.object(OrchestratorClient, "supervise_pending", refuse), \
                 self.assertRaises(OrchestratorClientError):
             pending_everywhere(MagicMock())
+
+
+class TestDiscoverFirst(unittest.TestCase):
+    def test_the_first_healthy_candidate_wins_and_none_raises(self) -> None:
+        def on_8099(client: OrchestratorClient) -> bool:
+            return client._base.endswith(":8099")  # pylint: disable=protected-access
+
+        def down(_client: OrchestratorClient) -> bool:
+            return False
+
+        with patch.object(OrchestratorClient, "health", on_8099):
+            self.assertTrue(discover_orchestrator_url(MagicMock()).endswith(":8099"))
+        with patch.object(OrchestratorClient, "health", down), \
+                self.assertRaises(OrchestratorClientError) as caught:
+            discover_orchestrator_url(MagicMock())
+        self.assertIn("no running orchestrator", str(caught.exception))
+
+    def test_the_host_controller_wrappers_use_every_orchestrator(self) -> None:
+        # pylint: disable=import-outside-toplevel
+        from bot_bottle.control.hostctl import remote, requests
+
+        with patch("bot_bottle.control.client.pending_everywhere", return_value=[{"id": "p"}]):
+            self.assertEqual([{"id": "p"}], requests.orchestrator_pending())
+        self.assertEqual("http://fc:8099", remote._orchestrator("http://fc:8099")._base)  # pylint: disable=protected-access
+        with patch("bot_bottle.control.client.discover_orchestrator_url",
+                   return_value="http://first:8099"):
+            self.assertEqual("http://first:8099", remote._orchestrator()._base)  # pylint: disable=protected-access

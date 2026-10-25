@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 from bot_bottle.approvals import Request, save_to_project
 from bot_bottle.cli.commands.approve import Reviewer, describe
 from bot_bottle.contract.yaml_subset import parse_frontmatter
-from bot_bottle.control.client import AlreadyAnswered
+from bot_bottle.control.client import AlreadyAnswered, OrchestratorClientError
 from bot_bottle.control.hostctl.requests import RequestNotifier, summaries
 from bot_bottle.manifest import ManifestIndex, trust
 
@@ -202,6 +202,20 @@ class Review(unittest.TestCase):
             self.assertEqual(0, reviewer.run())
         firecracker.supervise_respond.assert_called_once()
         docker.supervise_respond.assert_not_called()
+
+    def test_the_command_lists_every_orchestrator_and_reports_none(self) -> None:
+        from bot_bottle.cli.commands import approve  # pylint: disable=import-outside-toplevel
+
+        with patch.object(approve, "pending_everywhere", return_value=[]) as listed, \
+                patch("sys.stdout", io.StringIO()) as out:
+            self.assertEqual(0, approve.cmd_approve(["pi"]))
+        listed.assert_called_once()
+        self.assertIn("nothing waiting", out.getvalue())
+        with patch.object(approve, "pending_everywhere",
+                          side_effect=OrchestratorClientError("none running")), \
+                patch("sys.stdout", io.StringIO()) as out:
+            self.assertEqual(1, approve.cmd_approve([]))
+        self.assertIn("couldn't reach the orchestrator: none running", out.getvalue())
 
     def test_another_sessions_requests_are_not_shown(self) -> None:
         reviewer, client = self.reviewer("", [_pending(_CURRENT + _STRIPE, label="other")])
