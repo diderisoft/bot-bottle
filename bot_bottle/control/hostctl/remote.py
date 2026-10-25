@@ -15,14 +15,20 @@ The control stream (JSON lines):
   that exit on their own.
 - `hello` opens the stream. On every (re)connect the host reports agents
   that exited, reopens running ones' relays, and sends `agents_running`.
-- `attention` (from the host): a pending supervise request for an agent this
-  link launched, with `since`, `message` and `options`; `activity` once
+- `agent_present` (from the host): a running session the console didn't
+  launch (`bot-bottle`, `start`), with a host-made `agent_id`, its `bottle`,
+  `activation`, `label`, `definition`, `writable` and `origin`. Sent on every
+  (re)connect and when one starts. From then on it's one of the link's
+  agents like any other: attention, approvals, the terminal relay, history,
+  the audit query and `stop` all work on it.
+- `attention` (from the host): a pending supervise request for one of the
+  link's agents, with `since`, `message` and `options`; `activity` once
   nothing waits.
 - `approval` -> `allow`, `allow_project` or `deny`, echoing `since` so a
   stale click can't answer a newer request.
 - Terminals relay on uni streams (`console_terminal`); `input`, `resize` and
   `history` (`lines` -> `text`, `size`, `limit`) act on them.
-- `audit_query` -> `audit_events` for bottles this link launched.
+- `audit_query` -> `audit_events` for the link's agents' bottles.
 
 `iroh` (`bot-bottle[remote]`) is imported only here, only when the link runs.
 """
@@ -31,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -43,7 +50,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from ...contract.hostctl import LaunchRequest
+from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
 from ...lib import log
 from ...paths import bot_bottle_root
 from .console_terminal import HISTORY_LINES, valid_size
@@ -198,6 +205,15 @@ class Bottles(Protocol):
     def launch(self, request: LaunchRequest, role: str = ...) -> dict[str, object]: ...
     def teardown(self, bottle_id: str, role: str = ...) -> dict[str, object]: ...
     def session_state(self, session_id: str) -> dict[str, object]: ...
+    def list(self) -> list[dict[str, object]]: ...
+
+
+def terminal_agent_id(bottle: str, activation: str) -> str:
+    """The console agent id of a session the console didn't launch: derived
+    from its bottle and run, so a reconnect or a host controller restart
+    names it the same without storing anything."""
+    digest = hashlib.sha256(f"{bottle}\0{activation}".encode()).hexdigest()[:32]
+    return f"t-{digest}"
 
 
 def local_agents() -> list[str]:
@@ -276,11 +292,13 @@ def session_terminals(conn: "iroh.Connection", sessions: Any) -> TerminalFactory
 
 @dataclass
 class LinkState:
-    """What survives reconnects: running agents (console id -> bottle id) and
-    every bottle launched."""
+    """What survives reconnects: running agents (console id -> bottle id),
+    every bottle shown, and the `agent_present` of each session the console
+    didn't launch, to send again on reconnect."""
 
     running: dict[str, str] = field(default_factory=dict)
     launched: set[str] = field(default_factory=set)
+    present: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class ConsoleLink:
@@ -305,12 +323,18 @@ class ConsoleLink:
         state = state if state is not None else LinkState()
         # console agent id -> bottle id
         self.running = state.running
-        # Every bottle launched; only their journals may be read.
+        # Every bottle shown (launched or present); only their journals may be
+        # read.
         self.launched = state.launched
+        # console agent id -> its `agent_present`, for sessions found running
+        self.present = state.present
         # console agent id -> terminal relay
         self.terminals: dict[str, Terminal] = {}
         # console agent id -> the request raised for it
         self._asking: dict[str, Any] = {}
+        # Bottles being torn down: still listed as running until they're gone,
+        # but not to be presented again.
+        self._stopping: set[str] = set()
 
     async def handle(self, msg: dict[str, Any]) -> None:
         kind = msg.get("type")
@@ -441,10 +465,12 @@ class ConsoleLink:
 
     async def _stop(self, agent_id: str) -> None:
         bottle = self.running.pop(agent_id, "")
+        self.present.pop(agent_id, None)
         self._close_terminal(agent_id)
         if not bottle:
             return
         exit_code = 0
+        self._stopping.add(bottle)
         try:
             result = await asyncio.to_thread(self._bottles.teardown, bottle, ROLE_REMOTE)
             exit_info = result.get("exit")
@@ -452,20 +478,59 @@ class ConsoleLink:
                 exit_code = int(exit_info.get("status", 0) or 0)  # type: ignore[arg-type]
         except (Exception, SystemExit) as e:  # pylint: disable=broad-exception-caught
             log.warn(f"remote: stopping {bottle} failed: {e}")
+        finally:
+            self._stopping.discard(bottle)
         await self._send({"type": "agent_stopped", "agent_id": agent_id, "exit_code": exit_code})
 
     async def resume(self) -> None:
         """A (re)connected console: report agents that exited, reopen running
-        ones' relays, and send `agents_running` so the console can stop the
-        rest."""
+        ones' relays, present the sessions it didn't launch, and send
+        `agents_running` so the console can stop the rest."""
         await self.reap()
         for agent_id, bottle in list(self.running.items()):
             if agent_id not in self.terminals:
                 await self._open_terminal(agent_id, bottle)
+        for agent_id, present in list(self.present.items()):
+            if agent_id in self.running:
+                await self._send(present)
+        await self.discover()
         await self._send({"type": "agents_running", "agent_ids": sorted(self.running)})
 
+    async def discover(self) -> None:
+        """Present each running session the console didn't launch (#717): the
+        console shows every session on a paired host, wherever it started."""
+        try:
+            listed = await asyncio.to_thread(self._bottles.list)
+        except Exception as e:  # pylint: disable=broad-exception-caught  # retried next round
+            log.debug(f"remote: can't list sessions: {e}")
+            return
+        shown = set(self.running.values()) | self._stopping
+        for entry in listed:
+            bottle = str(entry.get("id", ""))
+            session = entry.get("session")
+            # A console launch is recorded as one before it returns, so a launch
+            # in flight is never presented as well.
+            if (not bottle or bottle in shown or entry.get("origin") == ORIGIN_CONSOLE
+                    or not isinstance(session, dict) or not session.get("running")):
+                continue
+            activation = str(entry.get("activation", ""))
+            agent_id = terminal_agent_id(bottle, activation)
+            self.running[agent_id] = bottle
+            self.launched.add(bottle)
+            terminal = await self._open_terminal(agent_id, bottle)
+            present: dict[str, Any] = {
+                "type": "agent_present", "agent_id": agent_id, "bottle": bottle,
+                "label": str(entry.get("label", "")) or bottle,
+                "definition": str(entry.get("agent", "")),
+                "origin": str(entry.get("origin", "")),
+                "writable": bool(terminal and terminal.writable)}
+            if activation:
+                present["activation"] = activation
+            self.present[agent_id] = present
+            await self._send(present)
+
     async def push_attention(self) -> None:
-        """For each agent this link launched, raise its oldest pending request
+        """For each of the link's agents, raise its oldest pending request
         as `attention`, or `activity` once nothing waits. Only changes are
         sent."""
         # pylint: disable=import-outside-toplevel  # the link's only approvals use
@@ -530,6 +595,7 @@ class ConsoleLink:
             if state.get("running"):
                 continue
             self.running.pop(agent_id, None)
+            self.present.pop(agent_id, None)
             self._close_terminal(agent_id)
             exit_info = state.get("exit")
             code = int(exit_info.get("status", 0) or 0) if isinstance(exit_info, dict) else 0  # type: ignore[arg-type]
@@ -597,6 +663,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
         while True:
             await asyncio.sleep(WATCH_SECONDS)
             await link.reap()
+            await link.discover()
             await link.push_attention()
 
     watcher = asyncio.create_task(watch())
@@ -639,7 +706,7 @@ async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> 
     endpoint = await iroh.Endpoint.bind(iroh.EndpointOptions(
         preset=iroh.preset_n0(), secret_key=secret_key(), alpns=[]))
     attempt = 0
-    state = LinkState()  # agents launched over this link, across reconnects
+    state = LinkState()  # the link's agents, across reconnects
     # One waiter for the whole loop: a thread blocked on `stop` per attempt
     # would pile up across reconnects.
     stopped = asyncio.ensure_future(asyncio.to_thread(stop.wait))
@@ -725,5 +792,5 @@ class Supervisor:
 __all__ = [
     "ALPN", "ConsoleLink", "RemoteConfig", "RemoteError", "ROLE_REMOTE", "Supervisor",
     "load_config", "load_console", "node_id", "read_status", "save_config",
-    "save_console", "secret_key", "serve_connection",
+    "save_console", "secret_key", "serve_connection", "terminal_agent_id",
 ]

@@ -25,7 +25,10 @@ from typing import TYPE_CHECKING, Any
 
 from ...bottle_state import capture_claude_session_state, settle_state
 from ...contract.auth import ROLE_CLI
-from ...contract.hostctl import CONFIRM_ERROR, InfraSettings, LaunchRequest, Settings, exit_code
+from ...contract.hostctl import (
+    CONFIRM_ERROR, ORIGIN_CONSOLE, ORIGIN_TERMINAL, InfraSettings, LaunchRequest, Settings,
+    exit_code,
+)
 from ...lib import log
 from ...paths import host_secrets_path
 from ...util import slugify
@@ -329,7 +332,8 @@ class BottleService:
                         id=identity, kind=SESSION_KIND,
                         meta={"backend": backend.name, "agent": request.agent,
                               "label": request.label, "provider": harness,
-                              "activation": activation, "manifest_digest": policy},
+                              "activation": activation, "manifest_digest": policy,
+                              "origin": ORIGIN_CONSOLE if remote_view else ORIGIN_TERMINAL},
                         writable_allowed=plan.manifest.agent.remote_writable,
                     ), command, env, warnings)
                     log.info(f"agent running in session {identity}")
@@ -465,8 +469,10 @@ class BottleService:
             held = set(self._held)
         return [
             {"id": r.id, "backend": r.meta.get("backend", ""), "agent": r.meta.get("agent", ""),
-             "label": r.meta.get("label", ""), "held": r.id in held,
-             "session": self.session_state(r.id)}
+             "label": r.meta.get("label", ""), "activation": r.meta.get("activation", ""),
+             # Sessions recorded before origins were: from anywhere but the console.
+             "origin": r.meta.get("origin", ORIGIN_TERMINAL), "writable": r.writable_allowed,
+             "held": r.id in held, "session": self.session_state(r.id)}
             for r in self._sessions.records() if r.kind == SESSION_KIND
         ]
 

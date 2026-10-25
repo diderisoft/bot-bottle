@@ -35,9 +35,14 @@ ORCHESTRATOR_PATH = "/orchestrator"
 # GET /sessions/{id}/attach upgrades to the attach WebSocket.
 SESSIONS_PATH = "/sessions"
 # POST /bottles (a `LaunchRequest`) starts a `bottle.launch` job ({"bottle",
-# "session"}); GET lists held bottles; DELETE /bottles/{id} starts a
-# `bottle.teardown` job.
+# "session"}); GET lists held bottles ({"id", "backend", "agent", "label",
+# "activation", "origin", "writable", "held", "session"}); DELETE
+# /bottles/{id} starts a `bottle.teardown` job.
 BOTTLES_PATH = "/bottles"
+# A session's `origin`: launched by the console over the remote link, or
+# anywhere else (`bot-bottle`, `start`, the API).
+ORIGIN_CONSOLE = "console"
+ORIGIN_TERMINAL = "terminal"
 # GET /bottles/live: {"bottles": [{"backend", "slug", "source_ip"}], "errors":
 # {backend: message}}. `?backend=` narrows it; a guest listener answers only
 # for its own backend. A backend in `errors` couldn't be listed.
@@ -308,5 +313,6 @@ __all__ = [
     "DEFAULT_EGRESS_PORT", "DEFAULT_GATEWAY_IMAGE", "DEFAULT_ORCHESTRATOR_IMAGE", "GUEST_PORT",
     "HOSTCTL_URL_ENV",
     "HOST_CONTROL", "InfraSettings", "JOBS_PATH", "LIVE_BOTTLES_PATH", "ORCHESTRATOR_PATH", "OperationSettings", "PORT_ENV",
+    "ORIGIN_CONSOLE", "ORIGIN_TERMINAL",
     "ROLE_ORCHESTRATOR", "SERVICE_NAME", "SESSIONS_PATH", "STATUS_PATH", "Settings", "bearer", "status_body",
 ]

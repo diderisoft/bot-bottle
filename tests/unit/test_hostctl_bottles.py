@@ -301,6 +301,14 @@ class TestHeldBottles(_Root):
             self.manager.wait_exit("r2", timeout=15)
         self.assertEqual([False, True], [c.kwargs["remote_view"] for c in args.call_args_list])
 
+    def test_a_console_launch_is_listed_with_its_origin(self) -> None:
+        from bot_bottle.control.hostctl.remote import ROLE_REMOTE
+
+        self.backend.bottle.script = "echo up; sleep 30"
+        self.service.launch(LaunchRequest(agent="demo", label="c1", assume_yes=True), ROLE_REMOTE)
+        self.assertEqual(["console"], [b["origin"] for b in self.service.list()])
+        self.service.teardown("c1")
+
     def test_a_launch_warning_reaches_the_sessions_status_bar(self) -> None:
         self.backend.bottle.script = "echo up; sleep 30"
         self.backend.launch_warning = ("isolation gap: agent can reach the host at 10.0.0.1; "
@@ -318,6 +326,9 @@ class TestHeldBottles(_Root):
         self.assertEqual([("b2", "fake", "demo", True, True)],
                          [(b["id"], b["backend"], b["agent"], b["held"],
                            cast(dict[str, object], b["session"])["running"]) for b in listed])
+        # What the console link presents a session it didn't launch with.
+        self.assertEqual(("terminal", True), (listed[0]["origin"], listed[0]["writable"]))
+        self.assertTrue(listed[0]["activation"])
         self.assertTrue(self.manager.record("b2").writable_allowed)  # type: ignore[union-attr]
         result = self.service.teardown("b2")
         self.assertEqual({"bottle": "b2", "exit": {"status": 0, "signal": "SIGHUP"}}, result)

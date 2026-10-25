@@ -38,6 +38,8 @@ class _Bottles:
         self.launched: list[tuple[LaunchRequest, str]] = []
         self.torn_down: list[str] = []
         self.running: set[str] = set()
+        # GET /bottles entries for sessions started elsewhere.
+        self.listed: list[dict[str, object]] = []
         self._error = launch_error
 
     def launch(self, request: LaunchRequest, role: str = "cli") -> dict[str, object]:
@@ -57,6 +59,17 @@ class _Bottles:
         if session_id in self.running:
             return {"running": True, "exit": None}
         return {"running": False, "exit": {"status": 3, "signal": ""}}
+
+    def list(self) -> list[dict[str, object]]:
+        return [{**entry, "session": self.session_state(str(entry["id"]))}
+                for entry in self.listed]
+
+    def start_elsewhere(self, bottle: str, *, origin: str = "terminal",
+                        activation: str = "act-t") -> None:
+        """A session the link didn't launch, as `bot-bottle` starts one."""
+        self.running.add(bottle)
+        self.listed.append({"id": bottle, "agent": "implementer", "label": bottle,
+                            "activation": activation, "origin": origin, "writable": True})
 
 
 def _link(bottles: _Bottles) -> tuple[remote.ConsoleLink, list[dict[str, Any]]]:

@@ -156,3 +156,16 @@ The console can list local agents, launch a **local agent by name** (with an
 optional prompt, bottle names and label), stop one, and view or type into
 sessions. Agent and bottle definitions always come from this host, never from
 the console.
+
+The console sees **every session on the host**, not only the ones it
+launched. Each session record carries its `origin` (`console` or
+`terminal`). The link presents each running `terminal` session with
+`agent_present`, under an agent id derived from its bottle and activation
+(`t-…`), so it keeps the same id across reconnects and host controller
+restarts. It sends this on every connect and within a couple of seconds of a
+session starting. After that the session is one of the link's agents like any
+other: its requests are raised on the phone, its terminal is relayed (typing
+still follows the agent's `remote.writable`), its history and audit journal
+can be read, and the console can stop it. When the terminal and the phone
+both answer a request, the first answer stands (see
+[gateway.md](gateway.md#supervise)).
