@@ -41,7 +41,7 @@ class _Project(unittest.TestCase):
         self.bottles = self.project / ".bot-bottle" / "bottles"
         self.bottles.mkdir(parents=True)
         env = patch.dict(os.environ, {"HOME": str(self.home),
-                                      "BOT_BOTTLE_ROOT": str(base / "root")})
+                                      "BOT_BOTTLE_ROOT": str(self.home / ".bot-bottle")})
         env.start()
         self.addCleanup(env.stop)
 

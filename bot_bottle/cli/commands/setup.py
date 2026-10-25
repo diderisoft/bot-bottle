@@ -33,7 +33,7 @@ from ...agent_provider import HostDetection, get_provider
 from ...contrib.pi import starter as pi_starter
 from ...control.hostctl import remote
 from ...errors import SecretsFileError
-from ...paths import host_secrets_path
+from ...paths import bot_bottle_root, host_secrets_path
 from ...secret_source import write_secret
 from ...starter import STARTER_MARKER
 from ..constants import PROG
@@ -64,7 +64,7 @@ class Setup:
 
     @property
     def manifests(self) -> Path:
-        return self.home / ".bot-bottle"
+        return bot_bottle_root(self.home)
 
     def confirm(self, question: str) -> bool:
         if not self.interactive:

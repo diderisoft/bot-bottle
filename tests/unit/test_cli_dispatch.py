@@ -120,10 +120,14 @@ class TestMigrationGate(unittest.TestCase):
     """The dispatcher's schema-migration gate (cli/__init__.py)."""
 
     def setUp(self) -> None:
-        # Force the "schema out of date" branch for every test here.
+        # Force the "schema out of date" branch for every test here, for a
+        # DB that exists (a missing one is a new install, created silently).
         patcher = patch.object(StoreManager, "is_migrated", return_value=False)
         patcher.start()
         self.addCleanup(patcher.stop)
+        fresh = patch("bot_bottle.cli.__main__._fresh_db", return_value=False)
+        fresh.start()
+        self.addCleanup(fresh.stop)
 
     def test_store_command_blocks_when_stdin_cannot_confirm(self) -> None:
         # Non-TTY stdin at EOF (as in CI): the [y/N] prompt reads "" and the

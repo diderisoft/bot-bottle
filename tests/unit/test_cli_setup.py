@@ -27,7 +27,7 @@ class _Host(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.home = Path(tmp.name) / "home"
         self.bin = Path(tmp.name) / "bin"
-        self.root = Path(tmp.name) / "root"
+        self.root = self.home / ".bot-bottle"  # manifests and data, as by default
         for d in (self.home, self.bin):
             d.mkdir()
         env = patch.dict(os.environ, {"HOME": str(self.home), "BOT_BOTTLE_ROOT": str(self.root)})

@@ -22,6 +22,7 @@ from .loader import (
     scan_agent_names,
     scan_bottle_names,
 )
+from ..paths import bot_bottle_root
 from .trust import check as trust_check
 from .trust import check_agent as trust_check_agent
 from .schema import validate_agent_frontmatter_keys
@@ -156,8 +157,8 @@ class ManifestIndex:
     def resolve(cls, cwd: str, *, missing_ok: bool = False) -> "ManifestIndex":
         """Build a ManifestIndex from the per-file tree:
 
-          $HOME/.bot-bottle/bottles/<name>.md  user bottles
-          $HOME/.bot-bottle/agents/<name>.md   home agents
+          $HOME/.bot-bottle/bottles/<name>.md  user bottles ($BOT_BOTTLE_ROOT
+          $HOME/.bot-bottle/agents/<name>.md   home agents   moves both)
           $CWD/.bot-bottle/agents/<name>.md    cwd agents (win on a name clash)
           $CWD/.bot-bottle/bottles/<name>.md   project bottles (need trust)
           built-in bottles (`basic`)
@@ -168,7 +169,7 @@ class ManifestIndex:
         with a pointer to the per-file format."""
         home_dir = Path(os.environ["HOME"])
         cwd_dir = Path(cwd)
-        home_md = home_dir / ".bot-bottle"
+        home_md = bot_bottle_root(home_dir)
         cwd_md = cwd_dir / ".bot-bottle"
 
         check_stale_json(home_dir, home_md, "$HOME")
@@ -184,7 +185,7 @@ class ManifestIndex:
             )
 
         # When CWD is HOME, pass the same dir; _load_md_dirs dedupes.
-        cwd_md_arg = cwd_md if cwd_md.is_dir() and cwd_dir.resolve() != home_dir.resolve() else None
+        cwd_md_arg = cwd_md if cwd_md.is_dir() and cwd_md.resolve() != home_md.resolve() else None
         return cls.from_md_dirs(home_md, cwd_md_arg)
 
     @classmethod

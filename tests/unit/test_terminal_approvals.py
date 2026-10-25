@@ -73,7 +73,7 @@ class SaveToProject(unittest.TestCase):
         (self.home / ".bot-bottle" / "agents").mkdir(parents=True)
         self.project.mkdir()
         env = patch.dict(os.environ, {"HOME": str(self.home),
-                                      "BOT_BOTTLE_ROOT": str(base / "root")})
+                                      "BOT_BOTTLE_ROOT": str(self.home / ".bot-bottle")})
         env.start()
         self.addCleanup(env.stop)
 

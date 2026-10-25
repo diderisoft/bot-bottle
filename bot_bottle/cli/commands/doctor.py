@@ -16,11 +16,11 @@ from ...backend import (
 from ...contract.yaml_subset import YamlSubsetError, parse_frontmatter
 from .. import openrouter
 from ...control.hostctl.sessions import MIN_TMUX_VERSION, tmux_version
+from ...paths import bot_bottle_root
 from ..constants import PROG
 from ..settings import settings_from_env
 
 MIN_PYTHON = (3, 11)
-CONFIG_DIR = ".bot-bottle"
 
 
 def _ok(label: str, detail: str) -> None:
@@ -91,7 +91,7 @@ def _check_tmux() -> bool:
 
 
 def _check_config_dir() -> None:
-    config = Path.home() / CONFIG_DIR
+    config = bot_bottle_root()
     if config.is_dir():
         _ok("config", str(config))
     else:
@@ -102,7 +102,7 @@ def _check_providers() -> None:
     """What `setup` would find for each provider and whether its starter
     exists. Advisory; never writes."""
     env = dict(os.environ)
-    manifests = Path.home() / CONFIG_DIR
+    manifests = bot_bottle_root()
     missing: list[str] = []
     for name in ("claude", "codex", "pi"):
         detection = get_provider(name).detect_host(env)

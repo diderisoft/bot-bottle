@@ -5,8 +5,11 @@ into exit codes.
 
 from __future__ import annotations
 
+import contextlib
 import os
+import sqlite3
 import sys
+from pathlib import Path
 
 from ..errors import MissingEnvVarError, SecretsFileError
 from ..lib.log import Die, die, error
@@ -21,6 +24,19 @@ def _is_agent(name: str) -> bool:
     try:
         return name in ManifestIndex.resolve(os.getcwd()).all_agent_names
     except ManifestError:
+        return False
+
+
+def _fresh_db(path: Path) -> bool:
+    """Whether the host DB is missing or holds no tables yet: a new install,
+    with nothing in it to migrate."""
+    if not path.exists():
+        return True
+    try:
+        with contextlib.closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as db:
+            return db.execute("SELECT count(*) FROM sqlite_master WHERE type = 'table'"
+                              ).fetchone()[0] == 0
+    except sqlite3.Error:
         return False
 
 
@@ -41,7 +57,12 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-retu
         cmd_help()
         die(f"unknown command or agent: {command}")
     mgr = StoreManager(host_db_path())
-    if command not in NO_MIGRATION_COMMANDS and not mgr.is_migrated():
+    fresh = _fresh_db(host_db_path())  # before is_migrated, which creates the file
+    if command in NO_MIGRATION_COMMANDS or mgr.is_migrated():
+        pass
+    elif fresh:
+        mgr.migrate()  # a new install: nothing to migrate from, so don't ask
+    else:
         sys.stderr.write("bot-bottle: database schema is out of date\n")
         sys.stderr.write("Migrate now? [y/N] ")
         sys.stderr.flush()

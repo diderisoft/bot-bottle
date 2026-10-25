@@ -27,10 +27,14 @@ SECRETS_FILENAME = "secrets"
 AUDIT_DIRNAME = "audit"
 
 
-def bot_bottle_root() -> Path:
-    """The app data root — `$BOT_BOTTLE_ROOT` if set, else `~/.bot-bottle`."""
+def bot_bottle_root(home: Path | None = None) -> Path:
+    """The app root, data and manifests (agents/, bottles/, contrib/) alike:
+    `$BOT_BOTTLE_ROOT` if set, else `<home>/.bot-bottle` (`home` defaults to
+    the user's)."""
     override = os.environ.get("BOT_BOTTLE_ROOT")
-    return Path(override) if override else Path.home() / ".bot-bottle"
+    if override:
+        return Path(override)
+    return (home if home is not None else Path.home()) / ".bot-bottle"
 
 
 def host_secrets_path() -> Path:

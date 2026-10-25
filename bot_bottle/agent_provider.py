@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from .egress import EgressRoute
+from .paths import bot_bottle_root
 
 
 if TYPE_CHECKING:
@@ -334,12 +335,11 @@ class AgentProvider(ABC):
 
 
 def _load_user_plugin(harness: str) -> AgentProvider | None:
-    """A user-defined AgentProvider from ~/.bot-bottle/contrib/<harness>/, or
+    """A user-defined AgentProvider from ~/.bot-bottle/contrib/<harness>/
+    (under `$BOT_BOTTLE_ROOT` when set), or
     None when there's no plugin directory. Raises ValueError if the file
     exports no subclass."""
-    plugin_path = (
-        Path.home() / ".bot-bottle" / "contrib" / harness / "agent_provider.py"
-    )
+    plugin_path = bot_bottle_root() / "contrib" / harness / "agent_provider.py"
     if not plugin_path.exists():
         return None
     spec = importlib.util.spec_from_file_location(
