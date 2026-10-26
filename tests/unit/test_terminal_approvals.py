@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from bot_bottle.approvals import Request, save_to_project
+from bot_bottle.approvals import KeepTarget, Request, keep, keep_target, save_to_project
 from bot_bottle.cli.commands.approve import Reviewer, describe
 from bot_bottle.contract.yaml_subset import parse_frontmatter
 from bot_bottle.control.client import AlreadyAnswered, OrchestratorClientError
@@ -62,6 +62,44 @@ class Requests(unittest.TestCase):
 
     def test_unparseable_proposals_add_nothing(self) -> None:
         self.assertEqual([], Request.from_dict(_pending("routes: [nonsense")).new_routes())
+
+
+class KeepInAHostBottle(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name) / "root"
+        (self.root / "bottles").mkdir(parents=True)
+        self.bottle = self.root / "bottles" / "pi.md"
+        self.bottle.write_text("---\nenv:\n  A: b\n---\n\nMine.\n")
+        env = patch.dict(os.environ, {"BOT_BOTTLE_ROOT": str(self.root)})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def test_without_a_project_it_keeps_in_the_launched_host_bottle(self) -> None:
+        from bot_bottle.bottle_state import BottleMetadata  # pylint: disable=import-outside-toplevel
+        meta = BottleMetadata(identity="s1", agent_name="pi", cwd="", copy_cwd=False,
+                              started_at="", bottle_names=("./main", "basic", "pi"))
+        with patch("bot_bottle.approvals.session_project", return_value=None), \
+                patch("bot_bottle.bottle_state.read_metadata", return_value=meta):
+            target = keep_target("s1")
+        self.assertEqual(KeepTarget(self.bottle, None), target)
+        assert target is not None
+        self.assertEqual("pi", target.label())
+        request = Request.from_dict(_pending(_CURRENT + _STRIPE))
+        self.assertEqual(self.bottle, keep(target, request))
+        fm, body = parse_frontmatter(self.bottle.read_text())
+        self.assertEqual({"A": "b"}, fm["env"])
+        self.assertEqual("Mine.", body.strip())
+        self.assertIn("api.stripe.com", self.bottle.read_text())
+        from bot_bottle.manifest.versions import history  # pylint: disable=import-outside-toplevel
+        self.assertTrue(history(self.bottle, root=self.root)[0].message.startswith(
+            "keep egress-allow api.stripe.com (request "))
+
+    def test_nowhere_to_keep(self) -> None:
+        with patch("bot_bottle.approvals.session_project", return_value=None), \
+                patch("bot_bottle.bottle_state.read_metadata", return_value=None):
+            self.assertIsNone(keep_target("s1"))
 
 
 class SaveToProject(unittest.TestCase):
@@ -142,32 +180,34 @@ class Review(unittest.TestCase):
     def test_allow_once_then_deny(self) -> None:
         reviewer, client = self.reviewer("ad", [_pending(_CURRENT + _STRIPE),
                                                 _pending(_CURRENT + _TOKEN, pid="p2")])
-        with patch("bot_bottle.cli.commands.approve.session_project", return_value=None):
+        with patch("bot_bottle.cli.commands.approve.keep_target", return_value=None):
             self.assertEqual(0, reviewer.run())
         decisions = [c.kwargs["decision"] for c in client.supervise_respond.call_args_list]
         self.assertEqual(["approve", "reject"], decisions)
         self.assertEqual("b-123", client.supervise_respond.call_args.kwargs["bottle_slug"])
 
-    def test_p_is_ignored_without_a_project_and_skip_leaves_it_pending(self) -> None:
-        reviewer, client = self.reviewer("ps", [_pending(_CURRENT + _STRIPE)])
-        with patch("bot_bottle.cli.commands.approve.session_project", return_value=None):
+    def test_k_is_ignored_with_nowhere_to_keep_and_skip_leaves_it_pending(self) -> None:
+        reviewer, client = self.reviewer("ks", [_pending(_CURRENT + _STRIPE)])
+        with patch("bot_bottle.cli.commands.approve.keep_target", return_value=None):
             reviewer.run()
         client.supervise_respond.assert_not_called()
 
-    def test_allow_for_project_answers_and_saves(self) -> None:
-        reviewer, client = self.reviewer("p", [_pending(_CURRENT + _STRIPE)])
+    def test_keep_in_the_project_answers_and_saves(self) -> None:
+        reviewer, client = self.reviewer("k", [_pending(_CURRENT + _STRIPE)])
         shown: list[str] = []
         reviewer.out = shown.append
-        with patch("bot_bottle.cli.commands.approve.session_project",
-                   return_value=Path("/proj")), \
-                patch("bot_bottle.approvals.session_project", return_value=Path("/proj")), \
+        target = KeepTarget(Path("/proj/.bot-bottle/bottles/main.md"), Path("/proj"))
+        with patch("bot_bottle.cli.commands.approve.keep_target", return_value=target), \
+                patch("bot_bottle.approvals.keep_target", return_value=target), \
                 patch("bot_bottle.approvals.save_to_project",
-                      return_value=Path("/proj/.bot-bottle/bottles/proj.md")) as save, \
+                      return_value=Path("/proj/.bot-bottle/bottles/main.md")) as save, \
                 patch("sys.stdout", io.StringIO()):
             reviewer.run()
         self.assertEqual("approve", client.supervise_respond.call_args.kwargs["decision"])
+        self.assertIn("kept in ./main in proj", client.supervise_respond.call_args.kwargs["notes"])
         self.assertEqual(Path("/proj"), save.call_args.args[0])
-        self.assertIn("allowed, and saved to ./.bot-bottle/bottles/proj.md in the project", shown)
+        self.assertIn("allowed, and kept in ./.bot-bottle/bottles/main.md in the project; "
+                      "it applies from the next launch", shown)
         self.assertEqual(["api.stripe.com"], [r.host for r in save.call_args.args[1]])
 
     def test_an_answer_from_the_phone_first_is_shown(self) -> None:
@@ -181,7 +221,7 @@ class Review(unittest.TestCase):
         client.supervise_respond.side_effect = answered_elsewhere
         # Then it's gone from the queue.
         client.supervise_pending.side_effect = [[_pending(_CURRENT + _STRIPE)], []]
-        with patch("bot_bottle.cli.commands.approve.session_project", return_value=None):
+        with patch("bot_bottle.cli.commands.approve.keep_target", return_value=None):
             self.assertEqual(0, reviewer.run())
         self.assertIn("already answered elsewhere: rejected; yours wasn't applied "
                       "(press a key)", shown)
@@ -198,7 +238,7 @@ class Review(unittest.TestCase):
         it = iter("a")
         reviewer = Reviewer(lambda: list(queue), clients.__getitem__, "pi",
                             key=lambda: next(it), out=lambda _s: None)
-        with patch("bot_bottle.cli.commands.approve.session_project", return_value=None):
+        with patch("bot_bottle.cli.commands.approve.keep_target", return_value=None):
             self.assertEqual(0, reviewer.run())
         firecracker.supervise_respond.assert_called_once()
         docker.supervise_respond.assert_not_called()

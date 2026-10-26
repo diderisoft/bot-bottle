@@ -22,6 +22,8 @@ from .gateway.egress.schema import load_config
 from .gateway.egress.types import Route
 from .manifest import ManifestIndex, trust
 from .manifest.loader import PROJECT_BOTTLE, bottle_ref, load_bottle_chain
+from .manifest.versions import record_or_warn
+from .paths import bot_bottle_root
 
 _TOOL_WORDS = {
     TOOL_EGRESS_BLOCK: "wants to block a host",
@@ -121,9 +123,59 @@ def save_to_project(project: Path, routes: list[Route]) -> Path:
     """Add `routes` to the project's bottle (creating one that extends
     `basic`), replacing same-host routes, then trust the result."""
     path = project_bottle_path(project)
+    _add_routes(path, routes)
+    trust_project_bottle(project, path.stem)
+    return path
+
+
+@dataclass(frozen=True)
+class KeepTarget:
+    """Where "keep in bottle" writes: the project's `./main` when the bottle
+    shared a project, else the first host bottle it was launched with."""
+
+    path: Path
+    project: Path | None
+
+    def label(self) -> str:
+        if self.project is not None:
+            return f"./{PROJECT_BOTTLE} in {self.project.name}"
+        return self.path.stem
+
+
+def keep_target(session: str) -> KeepTarget | None:
+    """Where a request from `session` can be kept, or None."""
+    project = session_project(session)
+    if project is not None:
+        return KeepTarget(project_bottle_path(project), project)
+    # pylint: disable-next=import-outside-toplevel
+    from .bottle_state import read_metadata
+    metadata = read_metadata(session)
+    host_bottles = bot_bottle_root() / "bottles"
+    for name in metadata.bottle_names if metadata else ():
+        if not name.startswith("./") and (host_bottles / f"{name}.md").is_file():
+            return KeepTarget(host_bottles / f"{name}.md", None)
+    return None
+
+
+def keep(target: KeepTarget, request: "Request") -> Path:
+    """Write the request's routes into `target`: the project's bottle (trusted,
+    left for you to commit), or a host bottle as a new version naming the
+    request."""
+    routes = request.new_routes()
+    if target.project is not None:
+        return save_to_project(target.project, routes)
+    _add_routes(target.path, routes)
+    hosts = ", ".join(sorted({r.host for r in routes}))
+    record_or_warn(f"keep egress-allow {hosts} (request {request.id[:8]})")
+    return target.path
+
+
+def _add_routes(path: Path, routes: list[Route]) -> None:
+    """Add `routes` to the bottle at `path` (creating a project bottle that
+    extends `basic`), replacing same-host routes."""
     frontmatter: dict[str, object] = {"extends": "basic"}
     body = ("The bottle for this project. bot-bottle adds a route here when you\n"
-            "allow a request \"for project\"; review changes like any other code.")
+            "keep an allowed request in it; review changes like any other code.")
     if path.is_file():
         frontmatter, body = parse_frontmatter(path.read_text())
     egress = frontmatter.get("egress")
@@ -136,8 +188,6 @@ def save_to_project(project: Path, routes: list[Route]) -> Path:
     frontmatter["egress"] = egress
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"---\n{serialize_yaml_subset(frontmatter)}---\n\n{body.strip()}\n")
-    trust_project_bottle(project, path.stem)
-    return path
 
 
 def trust_project_bottle(project: Path, name: str) -> None:
@@ -162,19 +212,21 @@ def answer(client: Any, request: Request, decision: str, *, via: str) -> str:
     if the request can't be saved. `via` is noted on the decision."""
     if decision not in DECISIONS:
         raise ValueError(f"unknown decision {decision!r}")
-    project = session_project(request.session) if decision == ALLOW_PROJECT else None
-    if decision == ALLOW_PROJECT and (project is None or not request.can_save_to_project()):
+    target = keep_target(request.session) if decision == ALLOW_PROJECT else None
+    if decision == ALLOW_PROJECT and (target is None or not request.can_save_to_project()):
         raise ValueError("this request can only be allowed once")
     if decision == DENY:
         client.supervise_respond(request.id, bottle_slug=request.bottle,
                                  decision="reject", notes=f"denied from {via}")
         return "denied"
-    note = "allowed for the project" if project is not None else "allowed once"
+    note = f"allowed and kept in {target.label()}" if target is not None else "allowed once"
     client.supervise_respond(request.id, bottle_slug=request.bottle, decision="approve",
                              notes=f"{note}, from {via}")
-    if project is not None:
-        saved = save_to_project(project, request.new_routes())
-        return f"allowed, and saved to ./{saved.relative_to(project)} in the project"
+    if target is not None:
+        saved = keep(target, request)
+        where = (f"./{saved.relative_to(target.project)} in the project"
+                 if target.project is not None else f"{saved} (a new version)")
+        return f"allowed, and kept in {where}; it applies from the next launch"
     return "allowed once"
 
 
@@ -207,6 +259,7 @@ def session_project(session: str) -> Path | None:
     return path if path.is_dir() and path != Path(os.path.expanduser("~")) else None
 
 
-__all__ = ["ALLOW_ONCE", "ALLOW_PROJECT", "DECISIONS", "DENY", "Request", "answer",
-           "manifest_route", "project_bottle_path", "route_lines", "save_to_project",
+__all__ = ["ALLOW_ONCE", "ALLOW_PROJECT", "DECISIONS", "DENY", "KeepTarget", "Request", "answer",
+           "keep", "keep_target", "manifest_route", "project_bottle_path", "route_lines",
+           "save_to_project",
            "session_project", "trust_project_bottle"]

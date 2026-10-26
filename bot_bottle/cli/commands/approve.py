@@ -4,7 +4,8 @@
 
 Opened by Ctrl-\\ in a session whose status bar shows a request. Keys:
 
-  a  allow once          p  allow for this project (saved in its bottle)
+  a  allow once          k  allow and keep in its bottle (the project's ./main,
+                           or the bottle it launched with), from the next launch
   d  deny                s  skip for now           q  close
 
 "Allow for project" adds the route to `./.bot-bottle/bottles/<directory>.md`
@@ -19,14 +20,14 @@ import tty
 from collections.abc import Callable, Mapping, Sequence
 
 from ...approvals import (
-    ALLOW_ONCE, ALLOW_PROJECT, DENY, Request, answer, route_lines, session_project,
+    ALLOW_ONCE, ALLOW_PROJECT, DENY, Request, answer, keep_target, route_lines,
 )
 from ...control.client import (
     AlreadyAnswered, OrchestratorClient, OrchestratorClientError, pending_everywhere,
 )
 from ..settings import settings_from_env
 
-_DECISION = {"a": ALLOW_ONCE, "p": ALLOW_PROJECT, "d": DENY}
+_DECISION = {"a": ALLOW_ONCE, "k": ALLOW_PROJECT, "d": DENY}
 _DIM, _COPPER, _BOLD, _RESET = "\x1b[2m", "\x1b[38;5;173m", "\x1b[1m", "\x1b[0m"
 
 
@@ -91,16 +92,16 @@ class Reviewer:  # pylint: disable=too-few-public-methods
     def answer(self, request: Request, *, left: int) -> str:
         """Show one request and act on the key pressed; returns the key."""
         self.out("\x1b[2J\x1b[H" + "\n".join(describe(request)))
-        project = session_project(request.session) if request.can_save_to_project() else None
+        target = keep_target(request.session) if request.can_save_to_project() else None
         choices = ["[a] allow once"]
-        if project is not None:
-            choices.append("[p] allow for this project")
+        if target is not None:
+            choices.append(f"[k] allow and keep in {target.label()}")
         choices += ["[d] deny", "[s] skip", "[q] close"]
         more = f"   {_DIM}({left} more waiting){_RESET}" if left else ""
         self.out("\n" + "   ".join(choices) + more)
         while True:
             key = self.key()
-            if key in ("a", "d", "s", "q") or (key == "p" and project is not None):
+            if key in ("a", "d", "s", "q") or (key == "k" and target is not None):
                 break
         if key == "s":
             self.skipped.add(request.id)

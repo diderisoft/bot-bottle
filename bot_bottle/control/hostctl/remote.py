@@ -580,7 +580,7 @@ class ConsoleLink:
         as `attention`, or `activity` once nothing waits. Only changes are
         sent."""
         # pylint: disable=import-outside-toplevel  # the link's only approvals use
-        from ...approvals import Request, route_lines, session_project
+        from ...approvals import Request, keep_target, route_lines
         try:
             pending = [Request.from_dict(raw) for raw in await asyncio.to_thread(self._requests)]
         except Exception as e:  # pylint: disable=broad-exception-caught  # retried next round
@@ -600,8 +600,10 @@ class ConsoleLink:
             lines = [request.summary(), *route_lines(request)]
             if request.justification.strip():
                 lines.append(f"why: {request.justification.strip()}")
-            options = (["allow_project"] if request.can_save_to_project()
-                       and session_project(request.session) is not None else [])
+            target = keep_target(request.session) if request.can_save_to_project() else None
+            if target is not None:
+                lines.append(f"keep: in {target.label()}, from the next launch")
+            options = ["allow_project"] if target is not None else []
             await self._send({"type": "attention", "agent_id": agent_id, "reason": "approval",
                               "since": request.arrived, "message": "\n".join(lines),
                               "options": options})

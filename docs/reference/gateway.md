@@ -110,6 +110,14 @@ request popup, or the console. The orchestrator applies approved egress
 changes to the bottle's stored policy, so the next request resolves the new
 routes. The gateway never opens `bot-bottle.db`.
 
+An approved egress addition can also be kept (`approvals.py`): the terminal's
+`[k]`, or the phone's second option, writes its routes into the bottle as
+well, from the next launch. It goes to the project's `./main` when the bottle
+shared a project (trusted, left for you to commit), else to the first host
+bottle it launched with, as a version naming the request
+([PRD 0103](../prds/0103-forge-connect-and-bottle-onboarding.md)). A route
+carrying a credential can only be allowed once.
+
 A proposal takes one decision: the first answer stands. A later answer, such
 as the phone answering after the terminal did, gets a 409 (`already
 answered`), changes nothing, and is recorded as a `decision.late` audit event
