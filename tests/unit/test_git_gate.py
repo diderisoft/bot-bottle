@@ -152,7 +152,7 @@ class TestHookRender(unittest.TestCase):
         # Phase 1: gitleaks. Phase 2: forward to origin.
         self.assertIn("gitleaks git", hook)
         self.assertIn("git push", hook)
-        self.assertIn("origin \"$refspec\"", hook)
+        self.assertIn("\"$upstream_url\" \"$refspec\"", hook)
         # KnownHostKey absence is fail-closed.
         self.assertIn("refusing to push", hook)
         # Stdin is buffered to a tempfile so both phases can re-read.
@@ -196,7 +196,15 @@ class TestHookRender(unittest.TestCase):
         self.assertIn("push_option_count=${GIT_PUSH_OPTION_COUNT:-0}", hook)
         self.assertIn('opt=$(printenv "GIT_PUSH_OPTION_$i" || :)', hook)
         self.assertIn('set -- "$@" --push-option="$opt"', hook)
-        self.assertIn('git push "$@" origin "$refspec"', hook)
+        self.assertIn('git push "$@" "$upstream_url" "$refspec"', hook)
+
+    def test_forward_pushes_to_the_url_not_the_mirror_remote(self):
+        # Pushing to the mirror remote also updates the local ref, which git
+        # forbids inside pre-receive's quarantine: a push that succeeds
+        # upstream still printed "update_ref failed". The URL avoids that.
+        hook = git_gate_render_hook()
+        self.assertIn("upstream_url=$(git config --get remote.origin.url)", hook)
+        self.assertNotIn('git push "$@" origin', hook)
 
     def test_agit_review_refs_rejected_before_scan(self):
         # Creating/updating refs/for/*, refs/draft/*, or refs/for-review/*

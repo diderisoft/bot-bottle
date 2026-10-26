@@ -484,7 +484,12 @@ while IFS=' ' read -r old new ref; do
     fi
   fi
   echo "git-gate: forwarding $ref to origin" >&2
-  if ! GIT_SSH_COMMAND="$ssh_cmd" git push "$@" origin "$refspec" 1>&2; then
+  # To origin's URL, not the remote: pushing to a mirror remote also updates
+  # the matching local ref, which git forbids inside pre-receive's quarantine
+  # ("update_ref failed ... inside quarantine environment"). The next fetch
+  # brings the ref in.
+  upstream_url=$(git config --get remote.origin.url)
+  if ! GIT_SSH_COMMAND="$ssh_cmd" git push "$@" "$upstream_url" "$refspec" 1>&2; then
     echo "git-gate: upstream push failed for $ref" >&2
     audit_push forge.push_rejected failure "$ref" --detail "upstream push failed"
     exit 1
