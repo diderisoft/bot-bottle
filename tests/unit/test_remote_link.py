@@ -370,6 +370,23 @@ class TestConsoleSession(unittest.TestCase):
                 self.assertIn(why, sent[-1]["message"])
         self.assertEqual([], bottles.launched)
 
+    def test_refresh_credentials_answers_with_the_outcome(self) -> None:
+        link, bottles, sent = self._link()
+        asyncio.run(link.handle({"type": "refresh_credentials", "agent_id": "a1",
+                                 "request_id": "q1"}))
+        self.assertEqual({"type": "credentials_refreshed", "request_id": "q1", "agent_id": "a1",
+                          "error": "that agent isn't running on this host"}, sent[-1])
+        self._launch(link)
+        asyncio.run(link.handle({"type": "refresh_credentials", "agent_id": "a1",
+                                 "request_id": "q2"}))
+        self.assertIn("can't refresh", str(sent[-1]["error"]))
+        bottles.refresh_credentials = lambda bottle: {  # type: ignore[attr-defined]
+            "refreshed": True, "expires_at": "x", "bottle": bottle}
+        asyncio.run(link.handle({"type": "refresh_credentials", "agent_id": "a1",
+                                 "request_id": "q3"}))
+        self.assertEqual(("q3", True, "bottle-1"), (sent[-1]["request_id"], sent[-1]["refreshed"],
+                                                    sent[-1]["bottle"]))
+
     def test_a_relay_that_ended_is_reopened(self) -> None:
         # A broken console stream ends a relay; typing, the watch and a
         # reconnect each bring it back rather than leaving the agent mute.

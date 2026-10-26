@@ -447,6 +447,10 @@ class BottleService:
         with self._lock:
             self._followers[identity] = follower
 
+    def refresh_credentials(self, identity: str) -> dict[str, object]:
+        """Refresh a running bottle's forwarded host login now."""
+        return self.credentials.refresh_now(identity)
+
     def _recredential(self, backend: "BottleBackend[Any, Any]", record: SessionRecord) -> None:
         """Keep a re-adopted bottle's forwarded host login current."""
         adopted = adoption.read(record.id)

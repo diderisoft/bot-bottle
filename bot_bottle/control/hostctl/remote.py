@@ -32,6 +32,9 @@ The control stream (JSON lines):
 - Terminals relay on uni streams (`console_terminal`); `input`, `resize` and
   `history` (`lines` -> `text`, `size`, `limit`) act on them.
 - `audit_query` -> `audit_events` for the link's agents' bottles.
+- `refresh_credentials` -> `credentials_refreshed` (`refreshed`, `expires_at`,
+  or `error`): re-reads the agent's forwarded host login now
+  (`credential_refresh`).
 - `snapshot` -> `snapshot_taken` (`snapshot`, or `error`): the agent's
   workspace patch and conversation position, kept on the host (`snapshots`).
 - `transcript` (`agent_id`, `before` or `around`, `limit`) ->
@@ -65,6 +68,7 @@ from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
 from ...lib import log
 from ...paths import bot_bottle_root
 from ...util import same_instant
+from .audit_index import query_host_journal
 from .console_terminal import HISTORY_LINES, session_terminals, type_into, valid_size
 from .remote_requests import launch_extras, resume_request
 from .transcript_serve import TranscriptLink
@@ -254,21 +258,6 @@ class Terminal(Protocol):
 TerminalFactory = Callable[[str, str], Awaitable["Terminal | None"]]
 
 
-def query_audit(bottle: str, activation: str | None, limit: int) -> list[dict[str, Any]]:
-    """`audit query --bottle --activation --limit` on this host's journal;
-    empty without one."""
-    # pylint: disable=import-outside-toplevel
-    from ...paths import host_audit_dir, host_db_path
-    from .audit_index import AuditIndex, Query
-
-    directory = host_audit_dir()
-    if not directory.is_dir():
-        return []
-    index = AuditIndex(directory, host_db_path())
-    index.sync()
-    return index.query(Query(bottle=bottle, activation=activation, limit=limit))
-
-
 @dataclass
 class LinkState:
     """What survives reconnects: running agents (console id -> bottle id),
@@ -298,7 +287,7 @@ class ConsoleLink:
         self._requests = requests if requests is not None else _pending_requests
         self._orchestrator = orchestrator if orchestrator is not None else _orchestrator
         self._terminal_factory = terminals
-        self._audit = audit if audit is not None else query_audit
+        self._audit = audit if audit is not None else query_host_journal
         state = state if state is not None else LinkState()
         # console agent id -> bottle id
         self.running = state.running
@@ -343,6 +332,8 @@ class ConsoleLink:
             await self._audit_query(msg)
         elif kind in TranscriptLink.REQUESTS:
             await self.transcripts.handle(msg)
+        elif kind == "refresh_credentials":
+            await self._refresh_credentials(msg)
         elif kind == "snapshot":
             await self._snapshot(msg)
         elif kind != "hello":  # hello only opens the stream
@@ -488,6 +479,19 @@ class ConsoleLink:
             log.warn(f"remote: snapshot of {bottle} failed: {e}")
             reply["error"] = "the snapshot failed; see the host controller's log"
         await self._send(reply)
+
+    async def _refresh_credentials(self, msg: dict[str, Any]) -> None:
+        """Re-read a running agent's forwarded host login now and hand it to
+        the gateway (`credential_refresh`)."""
+        agent_id = str(msg.get("agent_id", ""))
+        bottle = self.running.get(agent_id)
+        refresh = getattr(self._bottles, "refresh_credentials", None)  # BottleService's
+        result: dict[str, object] = (
+            {"error": "that agent isn't running on this host"} if not bottle
+            else {"error": "this host controller can't refresh credentials"} if refresh is None
+            else await asyncio.to_thread(refresh, bottle))
+        await self._send({"type": "credentials_refreshed", "request_id": msg.get("request_id"),
+                          "agent_id": agent_id, **result})
 
     async def push_transcripts(self) -> None:
         await self.transcripts.push(list(self.running))

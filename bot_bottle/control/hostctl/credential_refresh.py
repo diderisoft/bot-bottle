@@ -103,7 +103,24 @@ class CredentialRefresher:
             except Exception as e:  # pylint: disable=broad-exception-caught  # one bottle mustn't stop the rest
                 self._warn(target, f"couldn't refresh its {target.credentials.harness} login: {e}")
 
-    def refresh(self, target: _Target) -> None:
+    def refresh_now(self, identity: str) -> dict[str, object]:
+        """Refresh `identity`'s login now (the console's Refresh credentials):
+        `refreshed` (whether a new value was pushed) and `expires_at`, or
+        `error` saying why not."""
+        with self._lock:
+            target = self._targets.get(identity)
+        if target is None:
+            return {"error": "this bottle doesn't forward a host login that bot-bottle "
+                             "refreshes (one launched before it could is refreshed once "
+                             "relaunched)"}
+        try:
+            return self.refresh(target)
+        except Exception as e:  # pylint: disable=broad-exception-caught  # reported to the console
+            self._warn(target, f"couldn't refresh its {target.credentials.harness} login: {e}")
+            return {"error": f"couldn't refresh it: {e}"}
+
+    def refresh(self, target: _Target) -> dict[str, object]:
+        """One refresh of `target`: what `refresh_now` reports."""
         # pylint: disable-next=import-outside-toplevel
         from ...agent_provider import CredentialRefreshSpec, get_provider
         creds = target.credentials
@@ -113,7 +130,7 @@ class CredentialRefresher:
         except HostLoginError as e:
             if self._warn(target, str(e)):
                 self._record(target, "credential.renew_failed", reason=str(e))
-            return
+            return {"error": str(e)}
         changed = sorted(ref for ref, value in fresh.values.items()
                          if target.pushed.get(ref) != value)
         if changed:
@@ -135,6 +152,8 @@ class CredentialRefresher:
                                f"on the host to refresh it")
         else:
             target.warned = ""
+        return {"refreshed": bool(changed),
+                "expires_at": fresh.expires_at.isoformat() if fresh.expires_at else ""}
 
     def _warn(self, target: _Target, message: str) -> bool:
         """Warn once per distinct message, not every round; whether it's new."""

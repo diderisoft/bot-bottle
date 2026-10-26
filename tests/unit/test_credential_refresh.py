@@ -133,6 +133,27 @@ class TestRefresher(unittest.TestCase):
         self.assertEqual([], self.pushed)
 
 
+class TestRefreshNow(TestRefresher):
+    def test_reports_what_happened(self) -> None:
+        self.refresher.add("b1", CREDS, registry_id="r1", bottle=cast(Any, _Bottle()),
+                           current={REF: "tok-0"})
+        self.assertEqual({"refreshed": True, "expires_at": "2026-10-31T12:00:00+00:00"},
+                         self.refresher.refresh_now("b1"))
+        self.assertFalse(self.refresher.refresh_now("b1")["refreshed"])
+        self.provider.result = HostLoginError("run `claude` on the host")
+        self.assertEqual({"error": "run `claude` on the host"}, self.refresher.refresh_now("b1"))
+
+    def test_a_bottle_without_a_forwarded_login(self) -> None:
+        self.assertIn("doesn't forward a host login", str(self.refresher.refresh_now("nope")))
+
+    def test_a_failed_push(self) -> None:
+        def push(*_args: str) -> None:
+            raise RuntimeError("orchestrator down")
+        self.refresher._push = push  # pylint: disable=protected-access
+        self.refresher.add("b1", CREDS, registry_id="r1", bottle=cast(Any, _Bottle()))
+        self.assertIn("orchestrator down", str(self.refresher.refresh_now("b1")["error"]))
+
+
 class TestAdoptionRecord(unittest.TestCase):
     def test_credentials_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -230,7 +230,22 @@ class AuditIndex(DbStore):
             return [json.loads(row["raw"]) for row in conn.execute(sql, args)]
 
 
+def query_host_journal(bottle: str, activation: str | None,
+                       limit: int) -> list[dict[str, Any]]:
+    """`audit query --bottle --activation --limit` on this host's journal;
+    empty without one."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...paths import host_audit_dir, host_db_path
+    directory = host_audit_dir()
+    if not directory.is_dir():
+        return []
+    index = AuditIndex(directory, host_db_path())
+    index.sync()
+    return index.query(Query(bottle=bottle, activation=activation, limit=limit))
+
+
 __all__ = [
+    "query_host_journal",
     "AuditIndex",
     "IMPORTED_DIRNAME",
     "IndexBreak",
