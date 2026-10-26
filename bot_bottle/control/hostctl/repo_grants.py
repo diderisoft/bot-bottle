@@ -85,7 +85,7 @@ def grant_repo(backend: Any, identity: str, grant: str, *,
         if adopted is None or guest is None:
             raise GrantError("can't reach the running bottle")
         provision_live(entry, slug=identity, stage_dir=git_gate_state_dir(identity),
-                       secrets=FileSecrets(secrets_file))
+                       secrets=FileSecrets(secrets_file), grant=grant)
         reprovision_git_gate(backend.infra_service().gateway().provisioning_transport(),
                              adopted.registry_id, identity)
         point_agent_at_gate(guest, entry)

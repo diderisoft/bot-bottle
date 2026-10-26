@@ -265,3 +265,11 @@ file in its chain as they are now, and what they resolve to:
 - its repos, including any granted while it runs;
 - its forges;
 - its env, names only.
+
+It also sends `running`: the bottle "keep" writes to, as it would read with
+this run's changes, meaning egress routes the live policy has beyond the ones
+it launched with (`state/<bottle>/egress/routes.yaml`) and repos granted while
+it runs. The answer includes the changes, what can't be kept (a route carrying
+a credential), and a digest. `manifest_save` writes that bottle as a new
+version, or trusts a project's `./main`, if the digest still matches. A
+console launch that names no bottles keeps into the bottle its agent names.

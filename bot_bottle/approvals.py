@@ -155,10 +155,28 @@ def keep_target(session: str) -> KeepTarget | None:
     from .bottle_state import read_metadata
     metadata = read_metadata(session)
     host_bottles = bot_bottle_root() / "bottles"
-    for name in metadata.bottle_names if metadata else ():
+    names = metadata.bottle_names if metadata else ()
+    if metadata is not None and not names:
+        names = _agent_bottle(metadata.agent_name)
+    for name in names:
         if not name.startswith("./") and (host_bottles / f"{name}.md").is_file():
             return KeepTarget(host_bottles / f"{name}.md", None)
     return None
+
+
+def _agent_bottle(agent: str) -> tuple[str, ...]:
+    """The bottle a host agent names (`bottle:`), used when it was launched
+    without naming any."""
+    # pylint: disable-next=import-outside-toplevel
+    from .manifest.loader import scan_agent_names
+    path = scan_agent_names(bot_bottle_root() / "agents").get(agent)
+    if path is None:
+        return ()
+    try:
+        bottle = parse_frontmatter(path.read_text())[0].get("bottle")
+    except Exception:  # pylint: disable=broad-exception-caught  # no fallback, then
+        return ()
+    return (bottle,) if isinstance(bottle, str) and bottle else ()
 
 
 def keep(target: KeepTarget, request: "Request") -> Path:
@@ -179,9 +197,18 @@ def keep_grant(target: KeepTarget, grant: str, *, extends: str = "") -> Path:
     the same repo name, and extend `extends` (the bottle declaring its forge)
     when the target's chain doesn't. Trusted for a project, a version for a
     host bottle."""
+    fm, body = read_bottle(target.path)
+    return save_bottle(target, bottle_text(with_grant(fm, grant, extends=extends), body),
+                       f"keep add-repo {grant}")
+
+
+def with_grant(frontmatter: dict[str, object], grant: str, *,
+               extends: str = "") -> dict[str, object]:
+    """`frontmatter` with the repo grant added (replacing one for the same repo
+    name) and `extends` added to its parents if it isn't one."""
     # pylint: disable-next=import-outside-toplevel
     from .manifest.forges import parse_grant
-    fm, body = _bottle_file(target.path)
+    fm = dict(frontmatter)
     git = fm.get("git-gate")
     git = dict(git) if isinstance(git, dict) else {}
     repo = parse_grant(grant, "the grant")[2]
@@ -200,43 +227,58 @@ def keep_grant(target: KeepTarget, grant: str, *, extends: str = "") -> Path:
             [str(p) for p in raw] if isinstance(raw, list) else []
         if extends not in parents:
             fm["extends"] = [*parents, extends]
-    _write_bottle_file(target.path, fm, body)
-    if target.project is not None:
-        trust_project_bottle(target.project, target.path.stem)
-    else:
-        record_or_warn(f"keep add-repo {grant}")
-    return target.path
+    return fm
 
 
-_PROJECT_BODY = ("The bottle for this project. bot-bottle adds a route here when you\n"
-                 "keep an allowed request in it; review changes like any other code.")
-
-
-def _bottle_file(path: Path) -> tuple[dict[str, object], str]:
-    """A bottle file's frontmatter and body, or a new project bottle's."""
-    if path.is_file():
-        return parse_frontmatter(path.read_text())
-    return {"extends": "basic"}, _PROJECT_BODY
-
-
-def _write_bottle_file(path: Path, frontmatter: dict[str, object], body: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\n{serialize_yaml_subset(frontmatter)}---\n\n{body.strip()}\n")
-
-
-def _add_routes(path: Path, routes: list[Route]) -> None:
-    """Add `routes` to the bottle at `path` (creating a project bottle that
-    extends `basic`), replacing same-host routes."""
-    frontmatter, body = _bottle_file(path)
-    egress = frontmatter.get("egress")
+def with_routes(frontmatter: dict[str, object], routes: list[Route]) -> dict[str, object]:
+    """`frontmatter` with `routes` added to its egress, replacing same-host
+    routes."""
+    fm = dict(frontmatter)
+    egress = fm.get("egress")
     egress = dict(egress) if isinstance(egress, dict) else {}
     existing = egress.get("routes")
     kept = [r for r in existing if isinstance(r, dict)] if isinstance(existing, list) else []
     hosts = {r.host for r in routes}
     kept = [r for r in kept if r.get("host") not in hosts]
     egress["routes"] = kept + [manifest_route(r) for r in routes]
-    frontmatter["egress"] = egress
-    _write_bottle_file(path, frontmatter, body)
+    fm["egress"] = egress
+    return fm
+
+
+_PROJECT_BODY = ("The bottle for this project. bot-bottle adds a route here when you\n"
+                 "keep an allowed request in it; review changes like any other code.")
+
+
+def read_bottle(path: Path) -> tuple[dict[str, object], str]:
+    """A bottle file's frontmatter and body, or a new project bottle's."""
+    if path.is_file():
+        return parse_frontmatter(path.read_text())
+    return {"extends": "basic"}, _PROJECT_BODY
+
+
+def bottle_text(frontmatter: dict[str, object], body: str) -> str:
+    """A bottle file's text."""
+    return f"---\n{serialize_yaml_subset(frontmatter)}---\n\n{body.strip()}\n"
+
+
+def save_bottle(target: KeepTarget, text: str, message: str) -> Path:
+    """Write `text` to `target`: trusted for a project bottle (left for you to
+    commit), a new version named `message` for a host bottle."""
+    target.path.parent.mkdir(parents=True, exist_ok=True)
+    target.path.write_text(text)
+    if target.project is not None:
+        trust_project_bottle(target.project, target.path.stem)
+    else:
+        record_or_warn(message)
+    return target.path
+
+
+def _add_routes(path: Path, routes: list[Route]) -> None:
+    """Add `routes` to the bottle at `path` (creating a project bottle that
+    extends `basic`), replacing same-host routes."""
+    frontmatter, body = read_bottle(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(bottle_text(with_routes(frontmatter, routes), body))
 
 
 def trust_project_bottle(project: Path, name: str) -> None:
@@ -316,5 +358,6 @@ def session_project(session: str) -> Path | None:
 
 
 __all__ = ["ALLOW_ONCE", "ALLOW_PROJECT", "DECISIONS", "DENY", "KeepTarget", "Request", "answer",
-           "keep", "keep_grant", "keep_target", "manifest_route", "project_bottle_path",
-           "route_lines", "save_to_project", "session_project", "trust_project_bottle"]
+           "bottle_text", "keep", "keep_grant", "keep_target", "manifest_route",
+           "project_bottle_path", "read_bottle", "route_lines", "save_bottle", "save_to_project",
+           "session_project", "trust_project_bottle", "with_grant", "with_routes"]

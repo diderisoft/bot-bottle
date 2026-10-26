@@ -50,7 +50,7 @@ def grant_entry(grant: str, forge: ManifestForge) -> ManifestGitEntry:
 
 
 def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
-                   secrets: SecretSource) -> GitGateUpstream:
+                   secrets: SecretSource, grant: str = "") -> GitGateUpstream:
     """Mint `entry`'s deploy key and add it to the bottle's upstream snapshot.
     The ref is recorded before minting, so a key can't outlive the bottle
     unrevoked. Re-provisioning the gateway then picks the repo up.
@@ -62,7 +62,15 @@ def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
     writable = not entry.Key.read_only
     if current is not None and current.upstream_url != entry.Upstream:
         raise GrantError(f"the bottle already has a different repo named {entry.Name!r}")
+    ref = DeployKeyRef(
+        name=entry.Name, forge_token_env=entry.Key.forge_token_env, api_url=entry.Key.api_url,
+        upstream_host=entry.UpstreamHost, upstream_path=entry.UpstreamPath, grant=grant)
     if current is not None and current.writable == writable:
+        # Already granted with this access: nothing to mint; just record the
+        # grant, so it can be kept.
+        if grant and any(r.name == entry.Name for r in live_grant_refs(stage_dir)):
+            record_live_grant(stage_dir, ref)
+            return current
         raise GrantError(f"the bottle already has {entry.Name} "
                          f"({'write' if writable else 'read-only'})")
     if entry.Key.provider != "gitea":
@@ -78,13 +86,9 @@ def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
             upstream.upstream_host, upstream.upstream_port, upstream.known_host_key))
         known_hosts.chmod(0o600)
         upstream = dataclasses.replace(upstream, known_hosts_file=known_hosts)
-    ref = DeployKeyRef(
-        name=entry.Name, forge_token_env=entry.Key.forge_token_env, api_url=entry.Key.api_url,
-        upstream_host=entry.UpstreamHost, upstream_path=entry.UpstreamPath)
     id_file = stage_dir / f"{entry.Name}-deploy-key-id"
     old_key = id_file.read_text().strip() if current is not None and id_file.is_file() else ""
-    if not any(r.name == entry.Name for r in live_grant_refs(stage_dir)):
-        record_live_grant(stage_dir, ref)
+    record_live_grant(stage_dir, ref)
     suffix = "" if current is None else (":write" if writable else ":read")
     identity_file = _provision_dynamic_key(entry, slug, stage_dir, secrets, title_suffix=suffix)
     upstream = dataclasses.replace(upstream, identity_file=identity_file)

@@ -117,6 +117,17 @@ class TestLiveGrant(_Root):
         with self.assertRaisesRegex(live_grant.GrantError, "different repo named 'app'"):
             live_grant.provision_live(other, slug="s1", stage_dir=stage, secrets=mock.Mock())
 
+    def test_the_same_access_again_records_the_grant(self) -> None:
+        stage = git_gate_state_dir("s1")
+        entry = live_grant.grant_entry("gitea.example.com/acme/app", FORGE)
+        with mock.patch.object(live_grant, "_provision_dynamic_key", return_value="/k") as mint:
+            live_grant.provision_live(entry, slug="s1", stage_dir=stage, secrets=mock.Mock())
+            live_grant.provision_live(entry, slug="s1", stage_dir=stage, secrets=mock.Mock(),
+                                      grant="gitea.example.com/acme/app")
+        self.assertEqual(1, mint.call_count)  # no second key
+        self.assertEqual(["gitea.example.com/acme/app"],
+                         [r.grant for r in live_grant_refs(stage)])
+
     def test_regranting_with_write_replaces_the_key(self) -> None:
         stage = git_gate_state_dir("s1")
         keys = iter(["7", "8"])

@@ -151,3 +151,106 @@ class TestManifestRequest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+LAUNCH_POLICY = """routes:
+  - host: "api.example.com"
+    inspect:
+      auth_scheme: "Bearer"
+      token_env: "EGRESS_TOKEN_0"
+"""
+LIVE_POLICY = LAUNCH_POLICY + """  - host: "docs.example.com"
+  - host: "keyed.example.com"
+    inspect:
+      auth_scheme: "Bearer"
+      token_env: "EGRESS_TOKEN_1"
+"""
+
+
+class TestRunningBottle(TestAgentManifest):
+    def setUp(self) -> None:
+        super().setUp()
+        from bot_bottle.bottle_state import egress_state_dir  # pylint: disable=import-outside-toplevel
+        egress = egress_state_dir("s1")
+        egress.mkdir(parents=True, exist_ok=True)
+        (egress / "routes.yaml").write_text(LAUNCH_POLICY)
+        project = mock.patch("bot_bottle.approvals.session_project", return_value=None)
+        project.start()
+        self.addCleanup(project.stop)
+
+    def grant(self, name: str, grant: str) -> None:
+        from bot_bottle.git_gate.provision import (  # pylint: disable=import-outside-toplevel
+            DeployKeyRef, record_live_grant)
+        stage = git_gate_state_dir("s1")
+        stage.mkdir(parents=True, exist_ok=True)
+        record_live_grant(stage, DeployKeyRef(name, "T", "", "h", f"o/{name}.git", grant=grant))
+
+    def test_this_runs_changes_against_the_file(self) -> None:
+        self.grant("app", "gitea.example.com/o/app:write")
+        self.grant("old", "")
+        with mock.patch("bot_bottle.control.hostctl.repo_grants.find_forge",
+                        return_value=None):
+            r = manifest_view.running_bottle("s1", LIVE_POLICY)
+        assert r is not None
+        self.assertEqual(("work", "~/.bot-bottle/bottles/work.md", False),
+                         (r["target"], r["path"], r["project"]))
+        self.assertEqual([{"kind": "egress", "what": "docs.example.com"},
+                          {"kind": "repo", "what": "gitea.example.com/o/app:write"}],
+                         r["changes"])
+        self.assertEqual(["keyed.example.com", "old"], [u["what"] for u in r["unkept"]])
+        self.assertIn("host: docs.example.com", r["updated"])
+        self.assertIn("gitea.example.com/o/app:write", r["updated"])
+        self.assertNotIn("keyed.example.com", r["updated"])
+        self.assertIn("SECRET_ISH", r["original"])
+
+    def test_nothing_to_keep(self) -> None:
+        r = manifest_view.running_bottle("s1", LAUNCH_POLICY)
+        assert r is not None
+        self.assertEqual(([], r["original"]), (r["changes"], r["updated"]))
+        self.assertIsNotNone(manifest_view.running_bottle("s1", None))
+
+    def test_save_checks_what_was_shown(self) -> None:
+        from bot_bottle.manifest.versions import history  # pylint: disable=import-outside-toplevel
+        with mock.patch.object(manifest_view, "_live_policy", return_value=LIVE_POLICY):
+            shown = manifest_view.running_bottle("s1", LIVE_POLICY)
+            assert shown is not None
+            with self.assertRaisesRegex(manifest_view.ManifestViewError, "changed since"):
+                manifest_view.save_running("s1", "stale")
+            self.assertEqual("work", manifest_view.save_running("s1", shown["digest"]))
+            work = Path(os.environ["BOT_BOTTLE_ROOT"]) / "bottles" / "work.md"
+            self.assertIn("docs.example.com", work.read_text())
+            self.assertTrue(history(work, root=Path(os.environ["BOT_BOTTLE_ROOT"]))[0]
+                            .message.startswith("keep from the console: docs.example.com"))
+            after = manifest_view.running_bottle("s1", LIVE_POLICY)
+            assert after is not None
+            self.assertEqual([], after["changes"])  # kept now
+            with self.assertRaisesRegex(manifest_view.ManifestViewError, "nothing to keep"):
+                manifest_view.save_running("s1", after["digest"])
+
+    def test_keep_target_falls_back_to_the_agents_bottle(self) -> None:
+        from bot_bottle.approvals import keep_target  # pylint: disable=import-outside-toplevel
+        write_metadata(BottleMetadata(identity="s3", agent_name="helper", cwd="",
+                                      copy_cwd=False, started_at="", bottle_names=()))
+        target = keep_target("s3")
+        assert target is not None
+        self.assertEqual("work", target.label())
+
+
+class TestManifestSaveRequest(unittest.TestCase):
+    def ask(self, running: dict[str, str], digest: str = "d") -> dict[str, object]:
+        return asyncio.run(remote_actions.manifest_save(
+            {"request_id": "q", "agent_id": "a1", "digest": digest}, running))
+
+    def test_reply(self) -> None:
+        with mock.patch.object(manifest_view, "save_running", return_value="work") as save:
+            reply = self.ask({"a1": "s1"})
+        save.assert_called_once_with("s1", "d")
+        self.assertEqual(("manifest_saved", "work"), (reply["type"], reply["saved"]))
+
+    def test_errors(self) -> None:
+        self.assertIn("isn't running", str(self.ask({})["error"]))
+        with mock.patch.object(manifest_view, "save_running",
+                               side_effect=manifest_view.ManifestViewError("changed")):
+            self.assertEqual("changed", self.ask({"a1": "s1"})["error"])
+        with mock.patch.object(manifest_view, "save_running", side_effect=OSError("ro")):
+            self.assertIn("host controller's log", str(self.ask({"a1": "s1"})["error"]))

@@ -252,11 +252,36 @@ async def manifest(msg: Mapping[str, Any], running: Mapping[str, str],
     return reply
 
 
+async def manifest_save(msg: Mapping[str, Any], running: Mapping[str, str],
+                        _bottles: Any = None) -> dict[str, Any]:
+    """Keep a running agent's changes in its bottle from the Manifest tab
+    (`manifest_view.save_running`), if they're still the ones shown."""
+    # pylint: disable-next=import-outside-toplevel
+    from .manifest_view import ManifestViewError, save_running
+    agent_id = str(msg.get("agent_id", ""))
+    reply: dict[str, Any] = {"type": "manifest_saved", "request_id": msg.get("request_id"),
+                             "agent_id": agent_id}
+    bottle = running.get(agent_id)
+    if not bottle:
+        reply["error"] = "that agent isn't running on this host"
+        return reply
+    try:
+        reply["saved"] = await asyncio.to_thread(save_running, bottle, _text(msg, "digest"))
+    except ManifestViewError as e:
+        reply["error"] = str(e)
+    except Exception as e:  # pylint: disable=broad-exception-caught  # reported, not raised
+        log.warn(f"remote: keeping {bottle}'s changes failed: {type(e).__name__}: {e}")
+        reply["error"] = "keeping the changes failed; see the host controller's log"
+    return reply
+
+
 # Console requests about one running agent, by message type.
-QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest}
+QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest,
+           "manifest_save": manifest_save}
 
 # Console answers to a card that carry more than allow/deny, by message type.
 ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer}
 
 __all__ = ["ANSWERS", "QUERIES", "add_repo_answer", "card", "forge_attention", "forge_connect",
-           "forge_connect_answer", "manifest", "refresh_credentials", "repo_attention"]
+           "forge_connect_answer", "manifest", "manifest_save", "refresh_credentials",
+           "repo_attention"]

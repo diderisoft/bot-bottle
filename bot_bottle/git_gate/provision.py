@@ -74,6 +74,8 @@ class DeployKeyRef:
     api_url: str
     upstream_host: str
     upstream_path: str
+    # A live grant's `<forge>/<owner>/<repo>[:write]`, so it can be kept.
+    grant: str = ""
 
 
 def deploy_key_refs(bottle: ManifestBottle) -> tuple[DeployKeyRef, ...]:
@@ -100,8 +102,9 @@ def live_grant_refs(stage_dir: Path) -> tuple[DeployKeyRef, ...]:
 
 
 def record_live_grant(stage_dir: Path, ref: DeployKeyRef) -> None:
+    """Record `ref`, replacing one for the same repo name (a re-grant)."""
     path = stage_dir / _LIVE_GRANTS
-    refs = [*live_grant_refs(stage_dir), ref]
+    refs = [*(r for r in live_grant_refs(stage_dir) if r.name != ref.name), ref]
     path.write_text(json.dumps([dataclasses.asdict(r) for r in refs], indent=2))
     path.chmod(0o600)
 
