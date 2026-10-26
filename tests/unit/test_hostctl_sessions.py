@@ -204,6 +204,24 @@ class TestAttachRoute(_TmuxTest):
         self.assertTrue(_until(lambda: received.text))
         self.assertEqual({"type": "exit", "status": 0, "signal": ""}, received.text[0])
 
+    def test_turning_writable_keeps_the_viewer_on_its_own_session(self) -> None:
+        # tmux's `switch-client -r` without a target also moves the client to
+        # the most recently used session; typing would reach another agent.
+        self.start("a1", "echo READY; exec cat", writable=True)
+        self.assertTrue(_until(lambda: "READY" in self.pane("a1")))
+        self.start("a2", "echo OTHER; exec cat", writable=True)
+        self.assertTrue(_until(lambda: "OTHER" in self.pane("a2")))
+        writer, received = self.connect("a1")
+        self.assertTrue(_until(lambda: b"READY" in received.bytes))
+        # a2 is the most recently used session: it has the newest activity.
+        subprocess.run(sessions.tmux("send-keys", "-t", "=a2:", "x"), capture_output=True,
+                       check=False)
+        self.send(writer, ws.TEXT, json.dumps({"type": "writable", "value": True}).encode())
+        time.sleep(0.3)
+        self.send(writer, ws.BINARY, b"mine\r")
+        self.assertTrue(_until(lambda: self.pane("a1").count("mine") >= 2))
+        self.assertNotIn("mine", self.pane("a2"))
+
     def test_writable_is_refused_when_the_agent_does_not_allow_it(self) -> None:
         self.start("a2", "echo READY; exec cat", writable=False)
         self.assertTrue(_until(lambda: "READY" in self.pane("a2")))

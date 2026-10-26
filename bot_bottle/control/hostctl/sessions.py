@@ -356,13 +356,16 @@ class SessionManager:
 
     def set_read_only(self, client_tty: str, read_only: bool) -> None:
         """Make the viewer on `client_tty` read-only or writable
-        (`switch-client -r` toggles, so only on a change)."""
-        proc = subprocess.run(tmux("list-clients", "-F", "#{client_tty} #{client_readonly}"),
-                              capture_output=True, text=True, check=False)
+        (`switch-client -r` toggles, so only on a change). It names the
+        client's own session: without `-t`, tmux also switches the client to
+        the most recently used session, so typing would reach another agent."""
+        proc = subprocess.run(
+            tmux("list-clients", "-F", "#{client_tty} #{client_readonly} #{client_session}"),
+            capture_output=True, text=True, check=False)
         for line in proc.stdout.splitlines():
-            tty, _, flag = line.partition(" ")
-            if tty == client_tty and (flag == "1") != read_only:
-                subprocess.run(tmux("switch-client", "-c", client_tty, "-r"),
+            tty, flag, session = (line.split(" ", 2) + ["", ""])[:3]
+            if tty == client_tty and session and (flag == "1") != read_only:
+                subprocess.run(tmux("switch-client", "-c", client_tty, "-t", f"={session}", "-r"),
                                capture_output=True, check=False)
                 return
 
