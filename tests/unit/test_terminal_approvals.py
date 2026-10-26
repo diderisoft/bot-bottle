@@ -263,5 +263,37 @@ class Review(unittest.TestCase):
         client.supervise_respond.assert_not_called()
 
 
+class TestMergingRoutes(unittest.TestCase):
+    def route(self, raw: str) -> list[Any]:
+        from bot_bottle.gateway.egress.schema import load_config  # pylint: disable=import-outside-toplevel
+        return list(load_config(raw).routes)
+
+    def test_a_same_host_route_gains_matches_and_keeps_its_own(self) -> None:
+        from bot_bottle.approvals import with_routes  # pylint: disable=import-outside-toplevel
+        fm: dict[str, object] = {"egress": {"routes": [{"host": "h", "inspect": {
+            "outbound_on_match": "redact",
+            "matches": [{"methods": ["GET"], "paths": [{"type": "prefix", "value": "/pkg/"}]}]}}]}}
+        new = self.route('routes:\n  - host: "h"\n    inspect:\n      matches:\n'
+                         '        - methods: ["GET"]\n          paths:\n'
+                         '            - type: "prefix"\n              value: "/api/"\n')
+        out = with_routes(fm, new)
+        (route,) = out["egress"]["routes"]  # type: ignore[index]
+        self.assertEqual("redact", route["inspect"]["outbound_on_match"])
+        self.assertEqual(["/pkg/", "/api/"], [m["paths"][0]["value"]
+                                             for m in route["inspect"]["matches"]])
+        self.assertEqual(out, with_routes(out, new))  # adding it again changes nothing
+
+    def test_any_request_wins(self) -> None:
+        from bot_bottle.approvals import with_routes  # pylint: disable=import-outside-toplevel
+        anything: dict[str, object] = {"egress": {"routes": [{"host": "h"}]}}
+        narrow = self.route('routes:\n  - host: "h"\n    inspect:\n      matches:\n'
+                            '        - methods: ["GET"]\n')
+        self.assertEqual(anything, with_routes(anything, narrow))
+        fm: dict[str, object] = {
+            "egress": {"routes": [{"host": "h", "inspect": {"matches": [{"methods": ["GET"]}]}}]}}
+        out = with_routes(fm, self.route('routes:\n  - host: "h"\n'))
+        self.assertNotIn("matches", out["egress"]["routes"][0]["inspect"])  # type: ignore[index]
+
+
 if __name__ == "__main__":
     unittest.main()

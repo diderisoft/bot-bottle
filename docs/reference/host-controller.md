@@ -274,7 +274,11 @@ latest version with the supervisor's changes since: egress routes the live
 policy has beyond the launch routes (`state/<bottle>/egress/routes.yaml`), and
 repos granted while it runs. It also lists what can't be kept (a route
 carrying a credential) and a digest. `manifest_save` writes it as the next
-version if the digest still matches, and with `bottle` also writes the run's
-changes into the bottle "keep" writes to. With `new_bottle` it writes the
-manifest as a new host bottle of that name instead: the whole chain flattened,
-no `extends`, refused if the name is taken. It's recorded as a version too.
+version if the digest still matches. With `bottle` (one of the reply's
+`bottle_targets`: the agent's chain, then the host's other bottles) it also
+writes the run's changes into that bottle. With `new_bottle` it writes a new
+host bottle of that name instead, recorded as a version too and refused if
+the name is taken. Without `extend` it's flattened: the whole chain, no
+`extends`. With `extend` it extends the agent's bottles and holds only the
+run's changes. Adding a route for a host a bottle already has merges in the
+new matches (`approvals.with_routes`), so nothing it allowed is dropped.

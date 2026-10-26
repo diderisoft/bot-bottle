@@ -230,17 +230,42 @@ def with_grant(frontmatter: dict[str, object], grant: str, *,
     return fm
 
 
+def _merge_route(old: dict[str, object], new: dict[str, object]) -> dict[str, object]:
+    """A host's route with another route for it merged in: what the old one
+    allowed stays allowed (its settings too), plus the new one's matches. A
+    route that already allows any request is left as it is."""
+    old_inspect = old.get("inspect", {})
+    if old_inspect is False or not isinstance(old_inspect, dict):
+        return old
+    old_matches = old_inspect.get("matches")
+    if not old_matches:
+        return old  # any request already
+    new_inspect = new.get("inspect", {})
+    new_matches = new_inspect.get("matches") if isinstance(new_inspect, dict) else None
+    if not new_matches:  # the new one allows any request
+        return {**old, "inspect": {k: v for k, v in old_inspect.items() if k != "matches"}}
+    merged = list(old_matches) if isinstance(old_matches, list) else []  # type: ignore[arg-type]
+    merged += [m for m in new_matches if m not in merged]  # type: ignore[union-attr]
+    return {**old, "inspect": {**old_inspect, "matches": merged}}
+
+
 def with_routes(frontmatter: dict[str, object], routes: list[Route]) -> dict[str, object]:
-    """`frontmatter` with `routes` added to its egress, replacing same-host
-    routes."""
+    """`frontmatter` with `routes` added to its egress. A host it already has a
+    route for gets the new matches merged into that route (`_merge_route`),
+    so nothing it allowed is dropped."""
     fm = dict(frontmatter)
     egress = fm.get("egress")
     egress = dict(egress) if isinstance(egress, dict) else {}
     existing = egress.get("routes")
     kept = [r for r in existing if isinstance(r, dict)] if isinstance(existing, list) else []
-    hosts = {r.host for r in routes}
-    kept = [r for r in kept if r.get("host") not in hosts]
-    egress["routes"] = kept + [manifest_route(r) for r in routes]
+    for route in routes:
+        new = manifest_route(route)
+        at = next((i for i, r in enumerate(kept) if r.get("host") == route.host), None)
+        if at is None:
+            kept.append(new)
+        else:
+            kept[at] = _merge_route(kept[at], new)
+    egress["routes"] = kept
     fm["egress"] = egress
     return fm
 

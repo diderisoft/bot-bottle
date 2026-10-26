@@ -78,7 +78,8 @@ class TestAgentManifest(unittest.TestCase):
                          (current["version"], current["message"], current["changes"]))
         self.assertIn("LANG: C.UTF-8", current["text"])  # the whole chain, flattened
         self.assertIn("SECRET_ISH", current["text"])
-        self.assertEqual("work", m["bottle_file"]["target"])
+        self.assertEqual([("work", True), ("base", True)],
+                         [(t["name"], t["in_chain"]) for t in m["bottle_targets"]])
         r = m["resolved"]
         self.assertEqual(["LANG", "SECRET_ISH"], r["env"])  # names only
         self.assertNotIn("literal-value", repr(r))
@@ -242,23 +243,26 @@ class TestRunningBottle(TestAgentManifest):
             _, manifest = manifest_view._load("s1")  # pylint: disable=protected-access
             shown = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
             with self.assertRaisesRegex(manifest_view.ManifestViewError, "changed since"):
-                manifest_view.save_manifest("s1", "stale", also_bottle=False)
-            self.assertEqual({"version": 2},
-                             manifest_view.save_manifest("s1", shown["digest"], also_bottle=False))
+                manifest_view.save_manifest("s1", "stale")
+            self.assertEqual({"version": 2}, manifest_view.save_manifest("s1", shown["digest"]))
             self.assertNotIn("docs.example.com", work.read_text())  # the file untouched
             after = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
             self.assertEqual(([], after["base"]), (after["changes"], after["text"]))
             with self.assertRaisesRegex(manifest_view.ManifestViewError, "nothing new"):
-                manifest_view.save_manifest("s1", after["digest"], also_bottle=True)
+                manifest_view.save_manifest("s1", after["digest"], bottle="work")
             self.assertEqual("saved: docs.example.com", run_manifest.versions("s1")[-1]["message"])
         # A fresh run of changes, saved to the bottle file as well.
         run_manifest.record("s1", run_manifest.read("s1", 1), "back to the start")
         with mock.patch.object(manifest_view, "_live_policy", return_value=LIVE_POLICY):
             shown = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
-            saved = manifest_view.save_manifest("s1", shown["digest"], also_bottle=True)
-        self.assertEqual({"version": 4, "bottle": "work"}, saved)
-        self.assertIn("docs.example.com", work.read_text())
-        self.assertTrue(history(work, root=Path(os.environ["BOT_BOTTLE_ROOT"]))[0]
+            with self.assertRaisesRegex(manifest_view.ManifestViewError, "no bottle nope"):
+                manifest_view.save_manifest("s1", shown["digest"], bottle="nope")
+            saved = manifest_view.save_manifest("s1", shown["digest"], bottle="base")
+        self.assertEqual({"version": 4, "bottle": "base"}, saved)
+        base = work.parent / "base.md"
+        self.assertIn("docs.example.com", base.read_text())
+        self.assertNotIn("docs.example.com", work.read_text())
+        self.assertTrue(history(base, root=Path(os.environ["BOT_BOTTLE_ROOT"]))[0]
                         .message.startswith("keep from the console: docs.example.com"))
 
     def test_save_as_a_new_bottle(self) -> None:
@@ -285,6 +289,31 @@ class TestRunningBottle(TestAgentManifest):
         self.assertIn("docs.example.com", [r.Host for r in snap.egress.routes])
         self.assertEqual("saved as bottle snap", run_manifest.versions("s1")[-1]["message"])
 
+    def test_save_as_a_bottle_extending_its_bottles(self) -> None:
+        from bot_bottle.contract.yaml_subset import parse_frontmatter  # pylint: disable=import-outside-toplevel
+        from bot_bottle.manifest.loader import load_bottle_chain  # pylint: disable=import-outside-toplevel
+        root = Path(os.environ["BOT_BOTTLE_ROOT"])
+        with mock.patch.object(manifest_view, "_live_policy", return_value=LIVE_POLICY):
+            _, manifest = manifest_view._load("s1")  # pylint: disable=protected-access
+            shown = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
+            manifest_view.save_as_bottle("s1", shown["digest"], "more", extend=True)
+        fm = parse_frontmatter((root / "bottles" / "more.md").read_text())[0]
+        self.assertEqual(["work"], fm["extends"])
+        self.assertNotIn("env", fm)  # only the run's changes
+        more, _ = load_bottle_chain("more", [(root / "bottles", False)])
+        self.assertEqual({"LANG": "C.UTF-8", "SECRET_ISH": "literal-value"}, dict(more.env))
+        self.assertEqual(["example.com", "docs.example.com"], [r.Host for r in more.egress.routes])
+
+    def test_extending_a_project_bottle_is_refused(self) -> None:
+        write_metadata(BottleMetadata(identity="s1", agent_name="helper", cwd="",
+                                      copy_cwd=False, started_at="", bottle_names=("./main",)))
+        with mock.patch.object(manifest_view, "_load",
+                               return_value=(mock.Mock(bottle_names=("./main",)), mock.Mock())), \
+                mock.patch.object(manifest_view, "current_manifest", return_value={"digest": "d"}), \
+                mock.patch.object(manifest_view, "_live_policy", return_value=None):
+            with self.assertRaisesRegex(manifest_view.ManifestViewError, "project's bottle"):
+                manifest_view.save_as_bottle("s1", "d", "more", extend=True)
+
     def test_keep_target_falls_back_to_the_agents_bottle(self) -> None:
         from bot_bottle.approvals import keep_target  # pylint: disable=import-outside-toplevel
         write_metadata(BottleMetadata(identity="s3", agent_name="helper", cwd="",
@@ -302,17 +331,17 @@ class TestManifestSaveRequest(unittest.TestCase):
     def test_reply(self) -> None:
         with mock.patch.object(manifest_view, "save_manifest",
                                return_value={"version": 2, "bottle": "work"}) as save:
-            reply = self.ask({"a1": "s1"}, bottle=True)
-        save.assert_called_once_with("s1", "d", also_bottle=True)
+            reply = self.ask({"a1": "s1"}, bottle="work")
+        save.assert_called_once_with("s1", "d", bottle="work")
         self.assertEqual(("manifest_saved", 2, "work"),
                          (reply["type"], reply["version"], reply["bottle"]))
         with mock.patch.object(manifest_view, "save_manifest", return_value={"version": 3}) as save:
-            self.ask({"a1": "s1"}, bottle="yes")  # only a real true
-        save.assert_called_once_with("s1", "d", also_bottle=False)
+            self.ask({"a1": "s1"}, bottle=True)  # a name, not a flag
+        save.assert_called_once_with("s1", "d", bottle="")
         with mock.patch.object(manifest_view, "save_as_bottle",
                                return_value={"version": 4, "new_bottle": "snap"}) as save_as:
-            reply = self.ask({"a1": "s1"}, new_bottle="snap")
-        save_as.assert_called_once_with("s1", "d", "snap")
+            reply = self.ask({"a1": "s1"}, new_bottle="snap", extend=True)
+        save_as.assert_called_once_with("s1", "d", "snap", extend=True)
         self.assertEqual("snap", reply["new_bottle"])
 
     def test_errors(self) -> None:

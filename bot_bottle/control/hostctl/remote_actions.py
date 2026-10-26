@@ -269,10 +269,11 @@ async def manifest_save(msg: Mapping[str, Any], running: Mapping[str, str],
     try:
         if _text(msg, "new_bottle"):
             reply.update(await asyncio.to_thread(save_as_bottle, bottle, _text(msg, "digest"),
-                                                 _text(msg, "new_bottle")))
+                                                 _text(msg, "new_bottle"),
+                                                 extend=msg.get("extend") is True))
         else:
             reply.update(await asyncio.to_thread(save_manifest, bottle, _text(msg, "digest"),
-                                                 also_bottle=msg.get("bottle") is True))
+                                                 bottle=_text(msg, "bottle")))
     except ManifestViewError as e:
         reply["error"] = str(e)
     except Exception as e:  # pylint: disable=broad-exception-caught  # reported, not raised
