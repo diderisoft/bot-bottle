@@ -97,7 +97,10 @@ its key is minted with which secret.
   `http://<gateway>:9420/<name>.git`;
 - an `http.extraHeader` sending `x-bot-bottle-identity: <token>`, scoped to
   the gate's URL. It's written even for a bottle without repos, so a repo
-  granted later only adds a rewrite.
+  granted later only adds a rewrite. A bottle launched before that gets it
+  when it's first granted a repo, from its agent's proxy URL
+  (`http://bottle:<token>@<gateway>:<port>`), whose host is the gate's on
+  every backend.
 
 The agent's `NO_PROXY` covers the gateway, so git traffic to it skips the
 egress proxy. Smart-HTTP push to a forge through the egress proxy is blocked,

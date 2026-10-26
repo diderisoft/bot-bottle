@@ -9,10 +9,13 @@ The refs of keys minted this way are kept in the bottle's git-gate state dir
 from __future__ import annotations
 
 import dataclasses
+import re
 import shlex
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import TYPE_CHECKING
 
+from ..contract.identity import GIT_HTTP_PORT, IDENTITY_HEADER
 from ..control.git_gate_render import (
     GitGateUpstream, git_gate_known_hosts_line, git_gate_upstreams_for_bottle,
 )
@@ -73,14 +76,41 @@ def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
     return upstream
 
 
+# The agent processes' proxy URL carries the identity token as its password
+# (`http://bottle:<token>@<gateway>:<port>`), on every backend.
+_PROXY_PROBE = ("for f in /proc/[0-9]*/environ; do "
+                "tr '\\0' '\\n' < \"$f\" 2>/dev/null | grep -m1 '^HTTPS_PROXY=http://bottle:' "
+                "&& break; done")
+_TOKEN_RE = re.compile(r"^[A-Za-z0-9._~-]+$")
+
+
+def _gate_from_proxy(bottle: "Bottle") -> str:
+    """For a bottle launched before launch always wrote the gate's identity
+    header: write it from the agent's proxy URL, whose host is the gate's on
+    every backend. Returns the gate URL, or "". The token is never put in an
+    error or a log."""
+    found = bottle.exec(_PROXY_PROBE)  # as the agent: root may not read its env
+    url = urlparse((found.stdout or "").strip().partition("=")[2])
+    token, host = url.password or "", url.hostname or ""
+    if not (token and host and _TOKEN_RE.match(token)):
+        return ""
+    gate = f"http://{host}:{GIT_HTTP_PORT}/"
+    wrote = bottle.exec(f"git config --global {shlex.quote(f'http.{gate}.extraHeader')} "
+                        f"{shlex.quote(f'{IDENTITY_HEADER}: {token}')}")
+    return gate if wrote.returncode == 0 else ""
+
+
 def point_agent_at_gate(bottle: "Bottle", entry: ManifestGitEntry) -> None:
     """Add the gate's `insteadOf` rewrite for `entry` to the agent's git
-    config, next to the identity header launch wrote."""
+    config, next to the identity header (written first if the bottle predates
+    launch always writing it)."""
     found = bottle.exec("git config --global --get-regexp '^http\\..*\\.extraheader$'")
     key = (found.stdout or "").split(" ", 1)[0] if found.returncode == 0 else ""
     gate = key.removeprefix("http.").removesuffix(".extraheader")
     if not gate.startswith("http://"):
-        raise GrantError("the agent's git isn't set up for the gate; relaunch the bottle")
+        gate = _gate_from_proxy(bottle)
+    if not gate:
+        raise GrantError("couldn't find the agent's git-gate address; relaunch the bottle")
     rewrite = f"url.{gate.rstrip('/')}/{entry.Name}.git.insteadOf"
     added = bottle.exec(
         f"git config --global --add {shlex.quote(rewrite)} {shlex.quote(entry.Upstream)}")

@@ -62,15 +62,18 @@ class _Guest:
     """A running bottle's exec, recording each script."""
 
     def __init__(self, header: str = "http.http://10.0.0.2:9420/.extraheader x-id: t\n",
-                 add_code: int = 0) -> None:
+                 add_code: int = 0, proxy: str = "") -> None:
         self.scripts: list[str] = []
-        self.header, self.add_code = header, add_code
+        self.header, self.add_code, self.proxy = header, add_code, proxy
 
     def exec(self, script: str, *, user: str = "node") -> Any:
         del user
         self.scripts.append(script)
         if "--get-regexp" in script:
             return SimpleNamespace(returncode=0 if self.header else 1, stdout=self.header,
+                                   stderr="")
+        if "/proc/" in script:
+            return SimpleNamespace(returncode=0 if self.proxy else 1, stdout=self.proxy,
                                    stderr="")
         return SimpleNamespace(returncode=self.add_code, stdout="", stderr="locked")
 
@@ -135,6 +138,17 @@ class TestLiveGrant(_Root):
                          "ssh://git@gitea.example.com:2222/acme/app.git", guest.scripts[-1])
         with self.assertRaisesRegex(live_grant.GrantError, "relaunch"):
             live_grant.point_agent_at_gate(_Guest(header=""), entry)  # type: ignore[arg-type]
+        with self.assertRaisesRegex(live_grant.GrantError, "relaunch"):  # a malformed token
+            live_grant.point_agent_at_gate(_Guest(  # type: ignore[arg-type]
+                header="", proxy="HTTPS_PROXY=http://bottle:a'b@gw:9099\n"), entry)
+
+    def test_a_bottle_without_the_header_gets_it_from_its_proxy(self) -> None:
+        entry = live_grant.grant_entry("gitea.example.com/acme/app", FORGE)
+        guest = _Guest(header="", proxy="HTTPS_PROXY=http://bottle:tok-1@bot-bottle-gateway:9099\n")
+        live_grant.point_agent_at_gate(guest, entry)  # type: ignore[arg-type]
+        self.assertEqual("git config --global http.http://bot-bottle-gateway:9420/.extraHeader "
+                         "'x-bot-bottle-identity: tok-1'", guest.scripts[2])
+        self.assertIn("url.http://bot-bottle-gateway:9420/app.git.insteadOf", guest.scripts[3])
         with self.assertRaisesRegex(live_grant.GrantError, "locked"):
             live_grant.point_agent_at_gate(_Guest(add_code=1), entry)  # type: ignore[arg-type]
 
