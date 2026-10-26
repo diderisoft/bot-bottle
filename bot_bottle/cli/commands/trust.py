@@ -1,6 +1,6 @@
 """bot-bottle trust: review and trust a project's bottles and agents on this host.
 
-  bot-bottle trust <name>       show what the bottle grants beyond `basic` (or
+  bot-bottle trust <name>       show what the bottle (`./<name>`) grants beyond `basic` (or
                                 what the agent's provider grants) and trust it
                                 (asks first; --yes skips)
   bot-bottle trust show <name>
@@ -9,9 +9,9 @@
 
 Project bottles (`./.bot-bottle/bottles/`), and project agents
 (`./.bot-bottle/agents/`) that declare an `agent_provider`, run only once
-their exact contents are trusted; any change asks again. A name that is both
-a project bottle and a project agent means the bottle. Run in the project's
-directory.
+their exact contents are trusted; any change asks again. A project bottle is
+named `./<name>` (`./main`); a bare name is a project agent. Run in the
+project's directory.
 """
 
 from __future__ import annotations
@@ -25,15 +25,15 @@ from pathlib import Path
 from ...manifest import ManifestIndex, trust
 from ...manifest.agent import ManifestAgentProvider
 from ...contract.yaml_subset import parse_frontmatter
-from ...manifest.loader import load_bottle_chain
+from ...manifest.loader import PROJECT_PREFIX, load_bottle_chain
 from ...util import read_tty_line
 from ..constants import PROG
 
 
 def _project_agent(index: ManifestIndex, name: str) -> tuple[Path, ManifestAgentProvider] | None:
-    """The project agent `name` (path and provider) unless a project bottle
-    has that name."""
-    if index.cwd_md is None or (index.cwd_md / "bottles" / f"{name}.md").is_file():
+    """The project agent `name` (path and provider); None for a bottle
+    (`./<name>`)."""
+    if index.cwd_md is None or name.startswith(PROJECT_PREFIX):
         return None
     path = index.cwd_md / "agents" / f"{name}.md"
     if not path.is_file():

@@ -15,6 +15,7 @@ from bot_bottle.cli.commands.trust import cmd_trust
 from bot_bottle.cli.launch_client import load_trusting
 from bot_bottle.lib.log import Die
 from bot_bottle.manifest import ManifestIndex, trust
+from bot_bottle.manifest.util import ManifestError
 
 _STRIPE = """---
 extends: basic
@@ -85,38 +86,52 @@ class Basic(_Project):
 class ProjectBottles(_Project):
     def test_an_untrusted_project_bottle_stops_and_shows_only_its_additions(self) -> None:
         (self.bottles / "app.md").write_text(_STRIPE)
-        error = self.untrusted("pi", "app")
+        error = self.untrusted("pi", "./app")
         self.assertEqual(1, len(error.grants))
         self.assertIn("api.stripe.com", error.grants[0])
         self.assertIn("GET, POST", error.grants[0])
-        self.assertIn("untrusted bottle: app", trust.prompt_text(error))
+        self.assertIn("untrusted bottle: ./app", trust.prompt_text(error))
 
     def test_once_trusted_it_loads_and_a_change_asks_again_with_the_diff(self) -> None:
         (self.bottles / "app.md").write_text(_STRIPE)
-        trust.trust(self.untrusted("pi", "app"))
-        hosts = {r.Host for r in self.load("pi", "app").bottle.egress.routes}
+        trust.trust(self.untrusted("pi", "./app"))
+        hosts = {r.Host for r in self.load("pi", "./app").bottle.egress.routes}
         self.assertIn("api.stripe.com", hosts)
         (self.bottles / "app.md").write_text(_STRIPE.replace(
             "          - methods: [GET, POST]\n",
             "          - methods: [GET, POST]\n    - host: api.segment.io\n"))
-        changed = self.untrusted("pi", "app")
+        changed = self.untrusted("pi", "./app")
         self.assertIsNotNone(changed.previous)
         text = trust.prompt_text(changed)
-        self.assertIn("bottle changed: app", text)
+        self.assertIn("bottle changed: ./app", text)
         self.assertIn("+ reach   api.segment.io", text)
 
     def test_a_bottle_that_adds_nothing_beyond_basic_needs_no_trust(self) -> None:
         (self.bottles / "app.md").write_text("---\nextends: basic\n---\n")
-        self.load("pi", "app")
+        self.load("pi", "./app")
 
     def test_the_users_bottle_wins_a_name_clash_without_asking(self) -> None:
         (self.bottles / "pi.md").write_text(_STRIPE)
         hosts = {r.Host for r in self.load("pi").bottle.egress.routes}
         self.assertNotIn("api.stripe.com", hosts)
 
+    def test_project_bottles_have_their_own_names(self) -> None:
+        # A bare name never reaches a project bottle, and a host bottle of the
+        # same name never shadows `./<name>` (PRD 0103).
+        (self.bottles / "main.md").write_text("---\nextends: basic\n---\n")
+        (self.home / ".bot-bottle" / "bottles" / "main.md").write_text(_STRIPE)
+        self.assertNotIn("api.stripe.com",
+                         {r.Host for r in self.load("./main").bottle.egress.routes})
+        (self.bottles / "only.md").write_text("---\nextends: basic\n---\n")
+        with self.assertRaisesRegex(ManifestError, "named ./<name>"):
+            self.load("only")
+        names = ManifestIndex.resolve(str(self.project)).all_bottle_names
+        self.assertIn("./main", names)
+        self.assertIn("main", names)
+
     def test_the_trust_file_is_private(self) -> None:
         (self.bottles / "app.md").write_text(_STRIPE)
-        trust.trust(self.untrusted("pi", "app"))
+        trust.trust(self.untrusted("pi", "./app"))
         path = Path(os.environ["BOT_BOTTLE_ROOT"]) / trust.TRUST_FILE
         self.assertEqual(0o600, stat.S_IMODE(path.stat().st_mode))
 
@@ -130,20 +145,20 @@ class Launching(_Project):
     def test_yes_trusts_and_loads(self) -> None:
         with patch("bot_bottle.cli.launch_client.read_tty_line", return_value="y"), \
                 patch("sys.stderr", io.StringIO()):
-            manifest = load_trusting(self.index, "pi", ("pi", "app"), interactive=True)
+            manifest = load_trusting(self.index, "pi", ("pi", "./app"), interactive=True)
         self.assertIn("api.stripe.com", {r.Host for r in manifest.bottle.egress.routes})
         self.assertEqual(1, len(trust.load_trusted()))
 
     def test_no_stops_the_launch(self) -> None:
         with patch("bot_bottle.cli.launch_client.read_tty_line", return_value=""), \
                 patch("sys.stderr", io.StringIO()), self.assertRaises(Die):
-            load_trusting(self.index, "pi", ("pi", "app"), interactive=True)
+            load_trusting(self.index, "pi", ("pi", "./app"), interactive=True)
         self.assertEqual([], trust.load_trusted())
 
     def test_without_a_terminal_it_fails_with_a_pointer(self) -> None:
         with self.assertRaises(trust.UntrustedBottleError) as caught:
-            load_trusting(self.index, "pi", ("pi", "app"), interactive=False)
-        self.assertIn("bot-bottle trust app", str(caught.exception))
+            load_trusting(self.index, "pi", ("pi", "./app"), interactive=False)
+        self.assertIn("bot-bottle trust ./app", str(caught.exception))
 
 
 class TrustCommand(_Project):
@@ -151,11 +166,11 @@ class TrustCommand(_Project):
         (self.bottles / "app.md").write_text(_STRIPE)
         with patch("os.getcwd", return_value=str(self.project)), \
                 patch("sys.stderr", io.StringIO()):
-            self.assertEqual(0, cmd_trust(["app", "--yes"]))
+            self.assertEqual(0, cmd_trust(["./app", "--yes"]))
         with patch("builtins.print") as out:
             cmd_trust(["--list"])
         self.assertIn("app", str(out.call_args_list[0]))
-        self.load("pi", "app")
+        self.load("pi", "./app")
 
 
 _PI_OWN_HOST = """---

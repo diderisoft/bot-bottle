@@ -8,7 +8,7 @@
                          set the default agent
 
 The bottle is the agent's own, plus the project's bottle when the project
-ships one (`./.bot-bottle/bottles/<directory name>.md`, trusted on this host
+ships one (`./main`, from `./.bot-bottle/bottles/main.md`, trusted on this host
 first) or else the built-in `basic` (package registries and public code,
 read-only). This directory is copied into the bottle (not your home
 directory or `/`; a git repo filtered by its .gitignore), and when the agent
@@ -28,8 +28,8 @@ from pathlib import Path
 from ...contract.hostctl import LaunchRequest
 from ...lib.log import die, info
 from ...manifest import ManifestIndex
+from ...manifest.loader import PROJECT_BOTTLE, bottle_ref
 from ...paths import bot_bottle_root
-from ...util import slugify
 from ..constants import PROG
 from ..settings import settings_from_env
 from .start import _launch_bottle, _peek_agent_bottle, _uniquify_label
@@ -110,9 +110,9 @@ def _ensure_starters(manifest: ManifestIndex, cwd: Path) -> ManifestIndex:
 
 
 def project_bottle(cwd: Path) -> str:
-    """The project's own bottle, named after its directory, if any."""
-    name = slugify(cwd.name)
-    return name if (cwd / ".bot-bottle" / "bottles" / f"{name}.md").is_file() else ""
+    """The project's own bottle, `./main`, if it has one."""
+    path = cwd / ".bot-bottle" / "bottles" / f"{PROJECT_BOTTLE}.md"
+    return bottle_ref(PROJECT_BOTTLE, True) if path.is_file() else ""
 
 
 def cmd_quick(argv: list[str]) -> int:

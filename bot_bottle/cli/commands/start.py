@@ -26,6 +26,7 @@ from ...bottle_state import settle_state
 from ...contract.hostctl import LaunchRequest, Settings
 from ...lib.log import info, die, warn
 from ...manifest import ManifestIndex
+from ...manifest.loader import PROJECT_PREFIX
 from ...manifest.preview import manifest_to_yaml
 from ..constants import PROG
 from ..launch_client import launch, prepare_request
@@ -152,8 +153,13 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
         return _launch_bottle(request, manifest, dry_run=dry_run, verbose=args.verbose)
 
     # Compose bottles at launch without editing agent manifests.
-    available_bottles = manifest.all_bottle_names
-    lineage_map = _bottle_lineage(manifest)
+    # A project's own bottles (`./<name>`) first, marked as this project's.
+    available_bottles = sorted(manifest.all_bottle_names,
+                               key=lambda n: (not n.startswith(PROJECT_PREFIX), n))
+    project_mark = f"  · this project ({Path(os.getcwd()).name})"
+    lineage_map = {n: n + project_mark for n in available_bottles
+                   if n.startswith(PROJECT_PREFIX)}
+    lineage_map.update(_bottle_lineage(manifest))
     display_labels = [lineage_map.get(n, n) for n in available_bottles]
     label_to_name = {lineage_map.get(n, n): n for n in available_bottles}
     initial_labels = [lineage_map.get(default_bottle, default_bottle)] if default_bottle else []

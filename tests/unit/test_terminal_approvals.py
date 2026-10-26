@@ -80,14 +80,14 @@ class SaveToProject(unittest.TestCase):
     def test_creates_a_trusted_bottle_extending_basic(self) -> None:
         routes = Request.from_dict(_pending(_CURRENT + _STRIPE)).new_routes()
         path = save_to_project(self.project, routes)
-        self.assertEqual(self.project / ".bot-bottle" / "bottles" / "app.md", path)
+        self.assertEqual(self.project / ".bot-bottle" / "bottles" / "main.md", path)
         frontmatter, _ = parse_frontmatter(path.read_text())
         self.assertEqual("basic", frontmatter["extends"])
         # Trusted already: it loads without asking.
         index = ManifestIndex.resolve(str(self.project))
         from bot_bottle.manifest.loader import load_bottle_chain  # pylint: disable=import-outside-toplevel
-        bottle, sources = load_bottle_chain("app", index.bottle_dirs())
-        trust.check("app", bottle, sources)
+        bottle, sources = load_bottle_chain("./main", index.bottle_dirs())
+        trust.check("./main", bottle, sources)
         route = next(r for r in bottle.egress.routes if r.Host == "api.stripe.com")
         self.assertEqual(("GET", "POST"), route.Matches[0].Methods)
         self.assertEqual("/v1/", route.Matches[0].Paths[0].Value)

@@ -81,6 +81,28 @@ class BottleSource:
     project: bool
 
 
+# A project's bottles are named `./<name>`; a bare name is a host or built-in
+# bottle, so the two never shadow each other (PRD 0103).
+PROJECT_PREFIX = "./"
+# A project's default bottle: what `bot-bottle` uses there, and what
+# onboarding writes.
+PROJECT_BOTTLE = "main"
+
+
+def bottle_ref(name: str, project: bool) -> str:
+    """How a bottle file is referred to: `./<name>` for a project's."""
+    return PROJECT_PREFIX + name if project else name
+
+
+def find_bottle(name: str, dirs: Sequence[tuple[Path, bool]]) -> tuple[Path, bool] | None:
+    """`name`'s file and whether it's a project bottle: `./<name>` from the
+    project's directory, a bare name from the others, the first that has it."""
+    project = name.startswith(PROJECT_PREFIX)
+    stem = name[len(PROJECT_PREFIX):] if project else name
+    return next(((d / f"{stem}.md", is_project) for d, is_project in dirs
+                 if is_project == project and (d / f"{stem}.md").is_file()), None)
+
+
 def load_bottle_chain(
     bottle_name: str, dirs: Sequence[tuple[Path, bool]],
 ) -> tuple[ManifestBottle, tuple[BottleSource, ...]]:
@@ -94,12 +116,16 @@ def load_bottle_chain(
         name = to_load.pop()
         if name in raws:
             continue
-        found = next(((d / f"{name}.md", project) for d, project in dirs
-                      if (d / f"{name}.md").is_file()), None)
+        found = find_bottle(name, dirs)
         if found is None:
-            avail = ", ".join(sorted({p.stem for d, _ in dirs if d.is_dir()
-                                      for p in d.glob("*.md") if p.is_file()})) or "(none)"
-            raise ManifestError(f"bottle '{name}' not found. Available: {avail}")
+            avail = ", ".join(sorted({bottle_ref(p.stem, project) for d, project in dirs
+                                      if d.is_dir() for p in d.glob("*.md")
+                                      if p.is_file()})) or "(none)"
+            hint = ("; a project's bottles are named ./<name>"
+                    if not name.startswith(PROJECT_PREFIX)
+                    and any(project and (d / f"{name}.md").is_file() for d, project in dirs)
+                    else "")
+            raise ManifestError(f"bottle '{name}' not found. Available: {avail}{hint}")
         path, project = found
         try:
             fm, _body = parse_frontmatter(path.read_text())

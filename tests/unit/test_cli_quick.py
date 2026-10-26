@@ -64,8 +64,8 @@ class Quick(unittest.TestCase):
     def test_a_project_bottle_replaces_basic(self) -> None:
         bottles = self.project / ".bot-bottle" / "bottles"
         bottles.mkdir(parents=True)
-        (bottles / "app.md").write_text("---\nextends: basic\n---\n")
-        self.assertEqual(("pi", "app"), self.run_quick([], ["pi"]).bottles)
+        (bottles / "main.md").write_text("---\nextends: basic\n---\n")
+        self.assertEqual(("pi", "./main"), self.run_quick([], ["pi"]).bottles)
 
     def test_the_last_agent_used_here_wins_then_the_default(self) -> None:
         self.run_quick(["zeta"], ["codex", "zeta"])

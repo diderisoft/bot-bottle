@@ -21,8 +21,7 @@ from .contract.yaml_subset import parse_frontmatter, serialize_yaml_subset
 from .gateway.egress.schema import load_config
 from .gateway.egress.types import Route
 from .manifest import ManifestIndex, trust
-from .manifest.loader import load_bottle_chain
-from .util import slugify
+from .manifest.loader import PROJECT_BOTTLE, bottle_ref, load_bottle_chain
 
 _TOOL_WORDS = {
     TOOL_EGRESS_BLOCK: "wants to block a host",
@@ -115,7 +114,7 @@ def manifest_route(route: Route) -> dict[str, object]:
 
 
 def project_bottle_path(project: Path) -> Path:
-    return project / ".bot-bottle" / "bottles" / f"{slugify(project.name)}.md"
+    return project / ".bot-bottle" / "bottles" / f"{PROJECT_BOTTLE}.md"
 
 
 def save_to_project(project: Path, routes: list[Route]) -> Path:
@@ -142,7 +141,10 @@ def save_to_project(project: Path, routes: list[Route]) -> Path:
 
 
 def trust_project_bottle(project: Path, name: str) -> None:
+    """Trust the project bottle `name` (its file's stem), which bot-bottle just
+    wrote."""
     index = ManifestIndex.resolve(str(project))
+    name = bottle_ref(name, True)
     bottle, sources = load_bottle_chain(name, index.bottle_dirs())
     try:
         trust.check(name, bottle, sources)

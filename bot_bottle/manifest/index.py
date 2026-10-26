@@ -17,6 +17,7 @@ from .extends import merge_bottles_runtime, resolve_bottles
 from .git import ManifestGitUser
 from .loader import (
     BUILTIN_BOTTLES_DIR,
+    bottle_ref,
     check_stale_json,
     load_bottle_chain,
     scan_agent_names,
@@ -223,7 +224,8 @@ class ManifestIndex:
     def all_bottle_names(self) -> list[str]:
         """Sorted bottle names (filenames in lazy mode)."""
         if self.home_md is not None:
-            return sorted({n for d, _ in self.bottle_dirs() for n in scan_bottle_names(d)})
+            return sorted({bottle_ref(n, project) for d, project in self.bottle_dirs()
+                           for n in scan_bottle_names(d)})
         return sorted(self.bottles.keys())
 
     def bottle_dirs(self) -> list[tuple[Path, bool]]:

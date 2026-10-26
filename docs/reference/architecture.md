@@ -129,7 +129,7 @@ Roles, routes and env vars are in [runtime-contract.md](runtime-contract.md).
 | What | Where | Owner |
 |---|---|---|
 | User agents and bottles | `~/.bot-bottle/{agents,bottles}/`, versioned in a git repo in `~/.bot-bottle/` that tracks only those two directories (`manifest/versions.py`, [PRD 0103](../prds/0103-forge-connect-and-bottle-onboarding.md)). bot-bottle commits its own writes, and hand edits as "edited by hand" before a launch reads them; it refuses a commit holding a value from the secrets file. The launch audit event records the version (`bottle_versions`), and `bot-bottle bottle history` / `revert` read and restore them | user |
-| Project agents and bottles | `<repo>/.bot-bottle/` (bottles, and agents whose `agent_provider` grants anything, need `bot-bottle trust`) | repo |
+| Project agents and bottles | `<repo>/.bot-bottle/` (bottles, and agents whose `agent_provider` grants anything, need `bot-bottle trust`). A project bottle is named `./<name>`, so it never shadows or is shadowed by a host bottle; bare `bot-bottle` uses `./main` when the project has one | repo |
 | Registry, supervise queue, encrypted egress secrets, settings | `bot-bottle.db`: `~/.bot-bottle/db/` mounted into the orchestrator; on firecracker, the orchestrator VM's `/dev/vdb` volume | orchestrator |
 | Signing keys | `~/.bot-bottle/<key file>`, mode 0600, pushed to the key holder | host |
 | Gateway CA | `~/.bot-bottle/gateway-ca/`, mounted at mitmproxy's confdir (firecracker: the infra VM dir's `gateway-ca/`) | gateway |
