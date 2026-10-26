@@ -124,6 +124,13 @@ rootfs (`infra_rootfs.py`):
 Agent VMs run dropbear. The launcher reaches them over SSH with a per-bottle
 key; commands, file copies and freezing all go over SSH.
 
+A VM has no process environment of its own, so every command runs under
+`runuser … env` with HOME, USER and PATH set per invocation. A built agent
+image (a custom Dockerfile or an overlay) records its `ENV` with its rootfs
+(`.bb-image-env.json`, read at launch) and applies it under the bottle's own
+env. A published base, a built-in harness, has none; its PATH entries are
+the built-in default (`_DEFAULT_PATH_FOR`).
+
 ## docker
 
 `backend/docker/`. The weakest boundary: agents share the host kernel unless

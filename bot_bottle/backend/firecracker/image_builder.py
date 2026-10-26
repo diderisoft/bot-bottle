@@ -15,6 +15,7 @@ import contextlib
 import fcntl
 import gzip
 import hashlib
+import json
 import os
 import re
 import shlex
@@ -120,10 +121,46 @@ def _boot_bits_hash(infra: InfraSettings) -> str:
     return h.hexdigest()
 
 
+# A built rootfs records its image's ENV (IMAGE_ENV_FILE); part of the build
+# cache keys, so a tree built before it was recorded is built again.
+IMAGE_ENV_FILE = ".bb-image-env.json"
+_BUILT_ROOTFS_FORMAT = b"image-env"
+
+
+def record_image_env(rootfs: Path, env: list[str]) -> None:
+    """Keep an image's `Config.Env` (`KEY=value` strings) at the root of its
+    rootfs: the VM gets no image ENV, so launch applies it per command."""
+    (rootfs / IMAGE_ENV_FILE).write_text(json.dumps(env) + "\n")
+
+
+def image_env(base: Path) -> dict[str, str]:
+    """The image ENV recorded in the rootfs dir `base`; empty for an ext4 base
+    (a published image) or a tree without one."""
+    try:
+        raw = json.loads((base / IMAGE_ENV_FILE).read_text())
+    except (OSError, ValueError):
+        return {}
+    env: dict[str, str] = {}
+    for item in raw if isinstance(raw, list) else []:
+        if isinstance(item, str) and "=" in item:
+            key, _, value = item.partition("=")
+            env[key] = value
+    return env
+
+
+def _parse_env_json(text: str) -> list[str]:
+    """`--format '{{json ...Env}}'` output: a JSON list, or `null`."""
+    try:
+        raw = json.loads(text.strip() or "null")
+    except ValueError:
+        return []
+    return [e for e in raw if isinstance(e, str)] if isinstance(raw, list) else []
+
+
 def _rootfs_digest(dockerfile: Path, infra: InfraSettings) -> str:
     """Cache key for a rootfs from `dockerfile`: the Dockerfile, build args,
     boot bits and any COPYed context files."""
-    h = hashlib.sha256()
+    h = hashlib.sha256(_BUILT_ROOTFS_FORMAT)
     h.update(_dockerfile_hash(dockerfile).encode())
     h.update(b"\0")
     for name, value in resources.image_build_args(dockerfile).items():
@@ -268,6 +305,7 @@ def acquire_agent_image_ext4(artifact: Artifact, settings: Settings) -> Path:
 
 def _overlay_rootfs_name(staged: agent_overlay.StagedOverlay, infra: InfraSettings) -> str:
     h = hashlib.sha256(f"{staged.cache_key}\0{_boot_bits_hash(infra)}".encode())
+    h.update(_BUILT_ROOTFS_FORMAT)
     return f"agent-overlay-{h.hexdigest()[:16]}"
 
 
@@ -412,6 +450,12 @@ def _infra_build(
         _buildah_build(key, ip, ctx, tag, build_args)
         _smoke_test(key, ip, tag, smoke_ctr, smoke_test)
         _stream_rootfs(key, ip, tag, export_ctr, out)
+        inspect = _ssh(key, ip, f"buildah inspect {_STORE_FLAG} --type image "
+                                f"--format '{{{{json .OCIv1.Config.Env}}}}' {tag}")
+        if inspect.returncode != 0:
+            die(f"reading the built image's ENV in the infra VM failed: "
+                f"{inspect.stderr.strip()}")
+        record_image_env(out, _parse_env_json(inspect.stdout))
     finally:
         _cleanup()
 
@@ -447,6 +491,13 @@ def _build_overlay_on_host(
                 die(f"overlay agent image failed its smoke test ({' '.join(smoke_test)}): "
                     f"{(smoke.stderr or smoke.stdout).strip()}")
         util.export_image_rootfs(engine, tag, out)
+        inspect = subprocess.run(
+            [engine, "image", "inspect", "--format", "{{json .Config.Env}}", tag],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+        if inspect.returncode != 0:
+            die(f"{engine} image inspect of the overlay failed: {inspect.stderr.strip()}")
+        record_image_env(out, _parse_env_json(inspect.stdout))
     except subprocess.TimeoutExpired as e:
         die(f"{engine} timed out after {e.timeout:.0f}s building the overlay on {base_ref!r}")
     finally:

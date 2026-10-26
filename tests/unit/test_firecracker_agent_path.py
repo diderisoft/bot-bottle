@@ -42,3 +42,34 @@ class AgentPath(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestImageEnv(unittest.TestCase):
+    """A built image's ENV applies under the bottle's own env (#731)."""
+
+    def env(self, bottle_env: dict[str, str], image_env: dict[str, str] | None) -> dict[str, str]:
+        out = bottle._env_assignments_for("node", bottle_env, image_env)  # pylint: disable=protected-access
+        return dict(a.split("=", 1) for a in out)
+
+    def test_the_image_path_replaces_the_default(self):
+        got = self.env({}, {"PATH": "/opt/x/bin:/usr/bin", "TOOL": "1"})
+        self.assertEqual(("/opt/x/bin:/usr/bin", "1"), (got["PATH"], got["TOOL"]))
+
+    def test_the_bottle_env_wins_and_home_user_stay_ours(self):
+        got = self.env({"TOOL": "2", "PATH": "/p"},
+                       {"TOOL": "1", "PATH": "/opt/x/bin", "HOME": "/root", "USER": "root"})
+        self.assertEqual(("2", "/p", "/home/node", "node"),
+                         (got["TOOL"], got["PATH"], got["HOME"], got["USER"]))
+
+    def test_no_image_env_keeps_the_default_path(self):
+        self.assertEqual(bottle._DEFAULT_PATH_FOR["node"], self.env({}, None)["PATH"])  # pylint: disable=protected-access
+
+    def test_the_bottle_carries_it_into_exec_and_the_agent(self):
+        from unittest import mock
+        b = bottle.FirecrackerBottle("c", private_key=Path("/k"), guest_ip="10.0.0.2",
+                                     image_env={"TOOL": "1"})
+        self.assertIn("TOOL=1", b._agent_remote_argv([]))  # pylint: disable=protected-access
+        with mock.patch.object(bottle.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="", stderr="")) as run:
+            b.exec("true")
+        self.assertIn("TOOL=1", run.call_args.args[0])

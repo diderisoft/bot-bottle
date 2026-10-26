@@ -235,6 +235,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
 
     def _host_build(
         self, engine: str, *, token: str = "", build_rc: int = 0, smoke_rc: int = 0,
+        inspect_rc: int = 0,
     ) -> tuple[list[tuple[list[str], dict[str, Any]]], Any]:
         from bot_bottle.agent_overlay import StagedOverlay
         calls: list[tuple[list[str], dict[str, Any]]] = []
@@ -248,12 +249,15 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
                 rc = smoke_rc
             if argv[:3] == ["docker", "context", "inspect"]:
                 out = "unix:///run/user/1000/docker.sock\n"
+            if argv[1:3] == ["image", "inspect"]:
+                rc, out = inspect_rc, '["PATH=/opt/tool/bin:/usr/bin","TOOL_HOME=/opt/tool"]\n'
             return subprocess.CompletedProcess(argv, rc, out, "boom" if rc else "")
 
         staged = StagedOverlay(
             context=Path("/ctx"), dockerfile=Path("/ctx/.bb-overlay.Dockerfile"),
             cache_key="abc123")
         env = {image_builder._ARTIFACT_TOKEN_ENV: token}  # "" = no token
+        (self.cache / "out").mkdir(exist_ok=True)
         with patch.dict("os.environ", env), \
              patch.object(image_builder.subprocess, "run", side_effect=run), \
              patch.object(image_builder.util, "export_image_rootfs") as export:
@@ -289,6 +293,15 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         build = next(c for c in calls if "build" in c[0])
         self.assertNotIn("--config", build[0])
 
+    def test_host_build_records_the_image_env(self):
+        self._host_build("docker")
+        self.assertEqual({"PATH": "/opt/tool/bin:/usr/bin", "TOOL_HOME": "/opt/tool"},
+                         image_builder.image_env(self.cache / "out"))
+
+    def test_host_build_dies_without_the_image_env(self):
+        with self.assertRaises(SystemExit):
+            self._host_build("docker", inspect_rc=1)
+
     def test_host_build_failure_dies_and_still_cleans_up(self):
         with self.assertRaises(SystemExit):
             self._host_build("docker", build_rc=1)
@@ -323,6 +336,54 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         login = next(c for c in ssh.call_args_list if "buildah login" in c.args[2])
         self.assertEqual("TOK", login.kwargs["input"])
         self.assertTrue(all("TOK" not in c.args[2] for c in ssh.call_args_list))
+
+    def _infra_build_env(self, inspect: "subprocess.CompletedProcess[str]") -> Path:
+        from unittest.mock import MagicMock
+        out = self.cache / "infra-out"
+        out.mkdir(exist_ok=True)
+        svc = MagicMock()
+        svc.orchestrator.return_value.ssh_target.return_value = (Path("/k"), "10.0.0.2")
+        ok = subprocess.CompletedProcess([], 0, "", "")
+
+        def ssh(_key: Any, _ip: Any, script: str, **_kw: Any) -> "subprocess.CompletedProcess[str]":
+            return inspect if "buildah inspect" in script else ok
+
+        with patch.object(image_builder, "FirecrackerInfraService", return_value=svc), \
+             patch.object(image_builder, "_ssh", side_effect=ssh), \
+             patch.object(image_builder, "_send_dockerfile"), \
+             patch.object(image_builder, "_tar_into_vm"), \
+             patch.object(image_builder, "_buildah_build"), \
+             patch.object(image_builder, "_smoke_test"), \
+             patch.object(image_builder, "_stream_rootfs"):
+            image_builder._infra_build(
+                dockerfile=self.dockerfile, ctx_root=self.cache, ctx_rels=[], tag="t",
+                build_args={}, smoke_test=(), out=out, settings=_S)
+        return out
+
+    def test_infra_build_records_the_image_env(self):
+        out = self._infra_build_env(subprocess.CompletedProcess(
+            [], 0, '["PATH=/opt/x/bin:/usr/bin","A=b=c"]\n', ""))
+        self.assertEqual({"PATH": "/opt/x/bin:/usr/bin", "A": "b=c"}, image_builder.image_env(out))
+        # An image with no ENV records none.
+        out = self._infra_build_env(subprocess.CompletedProcess([], 0, "null\n", ""))
+        self.assertEqual({}, image_builder.image_env(out))
+
+    def test_infra_build_dies_without_the_image_env(self):
+        with self.assertRaises(SystemExit):
+            self._infra_build_env(subprocess.CompletedProcess([], 1, "", "no such image"))
+
+    def test_image_env_of_a_base_without_one_is_empty(self):
+        self.assertEqual({}, image_builder.image_env(self.cache / "nowhere"))
+        ext4 = self.cache / "base.ext4"
+        ext4.write_bytes(b"")
+        self.assertEqual({}, image_builder.image_env(ext4))
+        tree = self.cache / "tree"
+        tree.mkdir()
+        (tree / image_builder.IMAGE_ENV_FILE).write_text('{"not": "a list"}')
+        self.assertEqual({}, image_builder.image_env(tree))
+        (tree / image_builder.IMAGE_ENV_FILE).write_text('["NOEQUALS", 3, "K=v"]')
+        self.assertEqual({"K": "v"}, image_builder.image_env(tree))
+        self.assertEqual([], image_builder._parse_env_json("garbage"))
 
     def test_content_addressed_cache_key(self):
         other = self.cache / "Dockerfile2"
