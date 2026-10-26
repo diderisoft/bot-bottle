@@ -553,9 +553,10 @@ def git_gate_render_gitleaks_config() -> str:
 
 
 def git_gate_render_access_hook() -> str:
-    """The access hook (POSIX sh). For `upload-pack` it refreshes the bare repo
-    from upstream first, failing if the upstream is unreachable; other services
-    pass through to pre-receive.
+    """The access hook (POSIX sh). Before a fetch (`upload-pack`) and at the
+    start of a push (`receive-pack`'s ref advertisement) it refreshes the bare
+    repo from upstream, failing if the upstream is unreachable; the push itself
+    is gated by pre-receive.
 
       $1  service name    $2  repo path    $3, $4  client host and address"""
     return r"""#!/bin/sh
@@ -564,11 +565,13 @@ set -u
 service=$1
 repo_dir=$2
 
-# Push path keeps its own gating in pre-receive (gitleaks +
-# forward). Only refresh-from-upstream on fetch operations.
-if [ "$service" != "upload-pack" ]; then
-  exit 0
-fi
+# Refresh before a fetch, and at the start of a push (its ref
+# advertisement) so pre-receive's scan only covers commits upstream lacks.
+# The push itself keeps its own gating in pre-receive.
+case "$service" in
+  upload-pack|receive-pack) ;;
+  *) exit 0 ;;
+esac
 
 keyfile=$(git -C "$repo_dir" config --get git-gate.identityFile 2>/dev/null || true)
 hostsfile=$(git -C "$repo_dir" config --get git-gate.knownHosts 2>/dev/null || true)

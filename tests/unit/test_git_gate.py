@@ -349,11 +349,11 @@ class TestGitleaksConfigRender(unittest.TestCase):
 class TestAccessHookRender(unittest.TestCase):
     def test_access_hook_refreshes_origin_on_upload_pack(self):
         hook = git_gate_render_access_hook()
-        # Service-name guard: only upload-pack (fetch / clone / pull /
-        # ls-remote) triggers the upstream refresh; receive-pack
-        # bypasses this and the pre-receive hook gates it instead.
+        # Service-name guard: a fetch (upload-pack) and the start of a push
+        # (receive-pack's ref advertisement) refresh from upstream; the
+        # push itself is gated by the pre-receive hook.
         self.assertIn('service=$1', hook)
-        self.assertIn('"$service" != "upload-pack"', hook)
+        self.assertIn('upload-pack|receive-pack) ;;', hook)
         # The fetch is what makes the gate a transparent mirror.
         self.assertIn("git -C \"$repo_dir\" fetch origin --prune", hook)
 

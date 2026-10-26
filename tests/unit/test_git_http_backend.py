@@ -58,7 +58,7 @@ class TestGitHttpBackend(unittest.TestCase):
             self.addCleanup(self._restore_env, old_root)
             old_hook = os.environ.get("GIT_GATE_ACCESS_HOOK")
             hook = root / "access-hook"
-            hook.write_text("#!/bin/sh\nexit 0\n")
+            hook.write_text(f"#!/bin/sh\necho \"$1\" >> {root}/hook.log\nexit 0\n")
             hook.chmod(0o700)
             os.environ["GIT_GATE_ACCESS_HOOK"] = str(hook)
             self.addCleanup(self._restore_hook, old_hook)
@@ -105,6 +105,8 @@ class TestGitHttpBackend(unittest.TestCase):
                 text=True,
             ).strip()
             self.assertEqual(head, pushed)
+            # The push's ref advertisement refreshed the repo from upstream.
+            self.assertIn("receive-pack", (root / "hook.log").read_text().split())
             subprocess.run(
                 ["git", "-C", str(bare), "symbolic-ref", "HEAD", "refs/heads/main"],
                 check=True,
@@ -155,6 +157,13 @@ class TestGitHttpBackend(unittest.TestCase):
             old_root = os.environ.get("GIT_PROJECT_ROOT")
             os.environ["GIT_PROJECT_ROOT"] = str(root)  # base; backend nests per bottle
             self.addCleanup(self._restore_env, old_root)
+            # The push's ref advertisement runs the access hook (a refresh).
+            old_access = os.environ.get("GIT_GATE_ACCESS_HOOK")
+            access = root / "access-hook"
+            access.write_text("#!/bin/sh\nexit 0\n")
+            access.chmod(0o700)
+            os.environ["GIT_GATE_ACCESS_HOOK"] = str(access)
+            self.addCleanup(self._restore_hook, old_access)
 
             server = ThreadingHTTPServer(("127.0.0.1", 0), GitHttpHandler)
             server.policy_resolver = _FixedResolver(bottle_id)  # type: ignore[attr-defined]

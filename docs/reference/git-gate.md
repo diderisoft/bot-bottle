@@ -3,7 +3,9 @@
 git-gate is the gateway's git server. Agents push and fetch through it and
 never hold an upstream credential. Pushes are scanned and forwarded upstream
 over SSH. Fetches refresh from upstream first, so the agent sees current
-state.
+state, and so does the start of each push, so its secret scan covers only
+the commits upstream doesn't have (the gateway's repos start empty after it
+restarts).
 
 ## Manifest
 

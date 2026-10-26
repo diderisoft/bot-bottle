@@ -101,7 +101,8 @@ class GitHttpHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         parsed = urlsplit(self.path)
-        if self._is_upload_pack(parsed.path, parsed.query):
+        service = self._refresh_service(parsed.path, parsed.query)
+        if service:
             repo_dir = self._repo_dir(sandbox_root, parsed.path)
             if repo_dir is None:
                 self.send_error(404)
@@ -112,7 +113,7 @@ class GitHttpHandler(BaseHTTPRequestHandler):
             peer = self.client_address[0]
             try:
                 hook = subprocess.run(
-                    [hook_path, "upload-pack", str(repo_dir), peer, peer],
+                    [hook_path, service, str(repo_dir), peer, peer],
                     capture_output=True,
                     check=False,
                     timeout=GIT_GATE_TIMEOUT_SECS,
@@ -231,15 +232,18 @@ class GitHttpHandler(BaseHTTPRequestHandler):
         return candidate
 
     @staticmethod
-    def _is_upload_pack(path: str, query: str) -> bool:
+    def _refresh_service(path: str, query: str) -> str:
+        """The service to refresh the repo from upstream for, or "": every
+        fetch, and the start of a push (its ref advertisement), so a push's
+        gitleaks scan (`<new> --not --all`) only covers commits upstream lacks,
+        even on a repo the gateway just re-created empty."""
         if path.endswith("/git-upload-pack"):
-            return True
+            return "upload-pack"
         if path.endswith("/info/refs"):
-            return any(
-                pair == "service=git-upload-pack"
-                for pair in query.split("&")
-            )
-        return False
+            for service in ("upload-pack", "receive-pack"):
+                if f"service=git-{service}" in query.split("&"):
+                    return service
+        return ""
 
     def _write_cgi_response(self, raw: bytes) -> None:
         head, sep, body = raw.partition(b"\r\n\r\n")
