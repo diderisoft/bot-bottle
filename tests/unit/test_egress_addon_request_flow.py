@@ -501,7 +501,7 @@ class TestGitOverHttps(unittest.TestCase):
         _run_request(addon, flow)
         assert flow.response is not None
         self.assertEqual(403, flow.response.status_code)
-        self.assertIn("git push over HTTPS", flow.response.get_text())
+        self.assertIn("git-gate", flow.response.get_text())
 
     def test_git_fetch_blocked_on_non_fetch_route(self) -> None:
         addon = _addon(Config(routes=(Route(host="git.example.com"),)))

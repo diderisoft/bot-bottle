@@ -319,6 +319,10 @@ class TestHandleInitialize(unittest.TestCase):
             result["serverInfo"]["name"],  # type: ignore[index]
         )
 
+    def test_instructions_disclose_the_git_boundary(self):
+        from bot_bottle.contract.agent_notes import GIT_BOUNDARY
+        self.assertIn(GIT_BOUNDARY, handle_initialize({})["instructions"])
+
 
 class TestHandleToolsList(unittest.TestCase):
     def test_returns_all_tools(self):

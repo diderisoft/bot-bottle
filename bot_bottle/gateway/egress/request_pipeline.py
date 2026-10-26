@@ -17,9 +17,10 @@ from .matching import (
 from .types import LOG_FULL, Config, Route
 
 GIT_PUSH_BLOCK_REASON = (
-    "egress: git push over HTTPS is not supported; "
-    "use the bottle.git SSH path (gitleaks-scanned by "
-    "git-gate's pre-receive hook)."
+    "egress: git push doesn't go through egress, even to allowed hosts. "
+    "Push to the bottle's own repos with their normal remote URLs: git "
+    "rewrites them to git-gate, which scans the push for secrets. A repo "
+    "the bottle doesn't have needs the operator to add it."
 )
 
 

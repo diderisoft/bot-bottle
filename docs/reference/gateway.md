@@ -95,7 +95,11 @@ section.
 
 `gateway/supervisor/server.py` is an MCP server the agent calls when it's
 stuck. Its tools are `egress-allow`, `egress-block`, `list-egress-routes` and
-`check-proposal`.
+`check-proposal`. Its `initialize` instructions and the egress tool
+descriptions say that git never goes out through egress, even to allowed
+hosts: the bottle's repos go through git-gate, and a repo it doesn't have
+needs the operator to add it. The same note is in every agent's prompt
+(`contract/agent_notes.py`, [ADR 0003](../decisions/0003-system-prompts-stay-user-directed.md)).
 
 A proposal is queued with the orchestrator (`POST /supervise/propose`), which
 attributes it to the calling bottle. The server polls for up to

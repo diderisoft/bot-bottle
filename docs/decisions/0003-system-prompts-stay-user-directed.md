@@ -37,6 +37,16 @@ not auto-generate prompt content from a bottle's egress / git config.
   chooses to include would honor this decision; silent auto-injection
   would not.
 
+## Amendment (2026-10-26): fixed operating notes
+
+Agents kept failing to reach git repos: they allowed a host for egress and
+expected git to follow, not knowing that git always goes through git-gate. So
+bot-bottle now appends one fixed section to every agent's prompt
+(`contract/agent_notes.py`): how egress and git-gate work in any bottle. It is
+the same text for every bottle and says nothing derived from the bottle's
+config (no hosts, no repos), so it doesn't tell the agent what it was granted,
+and the decision above still holds for that.
+
 ## Links
 
 - ADR 0002 (`0002-agent-identity-claimed-not-vouched.md`) — related

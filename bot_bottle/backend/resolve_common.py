@@ -7,6 +7,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..contract.agent_notes import with_operating_notes
 from ..agent_provider import AgentProvisionPlan
 from ..bottle_state import (
     BottleMetadata,
@@ -65,7 +66,8 @@ def prepare_agent_state_dir(slug: str, manifest: Manifest) -> tuple[Path, Path]:
     agent_dir = agent_state_dir(slug)
     agent_dir.mkdir(parents=True, exist_ok=True)
     prompt_file = agent_dir / "prompt.txt"
-    prompt_file.write_text(agent.prompt or "")
+    # The operator's prompt, plus bot-bottle's fixed operating notes (ADR 0003).
+    prompt_file.write_text(with_operating_notes(agent.prompt or ""))
     prompt_file.chmod(0o600)
     return agent_dir, prompt_file
 

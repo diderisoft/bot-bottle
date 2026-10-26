@@ -22,6 +22,7 @@ import time
 import typing
 from dataclasses import dataclass
 
+from bot_bottle.contract.agent_notes import GIT_BOUNDARY
 from bot_bottle.contract.identity import IDENTITY_HEADER
 from bot_bottle.gateway.bounded_http import (
     BodyReadError,
@@ -153,7 +154,8 @@ _ROUTES_YAML_DESCRIPTION = (
     "      - paths: [{type: prefix|exact|regex, value: /...}]\n"
     "        methods: [GET, POST, ...]\n"
     "        headers: [{name: X-Hdr, value: val, type: exact|regex}]\n"
-    "    git:  (optional; omit to block git clone/fetch)\n"
+    "    git:  (optional; read-only HTTPS clone/fetch for this host; push is never\n"
+    "           allowed through egress, see git-gate in the tool descriptions)\n"
     "      fetch: true\n"
     "    outbound_detectors: [token_patterns, known_secrets]\n"
     "    inbound_detectors: [naive_injection_detection]\n"
@@ -192,7 +194,7 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "the proxy injects Authorization for the route. Use this "
             "before composing an `egress-allow` or `egress-block` proposal so "
             "the new routes file extends the live one rather than "
-            "replacing it."
+            "replacing it. " + GIT_BOUNDARY
         ),
         "inputSchema": {
             "type": "object",
@@ -207,7 +209,8 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "allowlist. Pass the full proposed routes.yaml content, not "
             "just the new host, plus a justification. Use "
             "`list-egress-routes` first so the proposal preserves existing "
-            "routes."
+            "routes. Allowing a host doesn't let git through to it: "
+            + GIT_BOUNDARY
         ),
         "inputSchema": _proposal_input_schema(),
     },
@@ -291,11 +294,21 @@ class ServerConfig:
     response_timeout_seconds: float = DEFAULT_RESPONSE_TIMEOUT_SECONDS
 
 
+# What the server tells the agent up front (MCP `instructions`).
+SERVER_INSTRUCTIONS = (
+    "Ask the operator for access this bottle doesn't have. Network: "
+    "`list-egress-routes`, then `egress-allow` with the full routes file. "
+    "Each request queues a proposal; if it comes back pending, poll it with "
+    "`check-proposal` rather than asking again. " + GIT_BOUNDARY
+)
+
+
 def handle_initialize(_params: dict[str, object]) -> dict[str, object]:
     return {
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "capabilities": {"tools": {"listChanged": False}},
         "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+        "instructions": SERVER_INSTRUCTIONS,
     }
 
 
