@@ -212,7 +212,8 @@ async def add_repo_answer(msg: Mapping[str, Any], asking: Mapping[str, Any],
             log.warn(f"remote: keeping {grant} failed: {type(e).__name__}: {e}")
             warnings.append(f"granted, but keeping it in {target.label()} failed")
     access = "write" if result.get("writable") else "read-only"
-    notes = f"granted {grant.removesuffix(':write')} ({access}); use its normal URL: {result['url']}"
+    notes = (f"granted {grant.removesuffix(':write')} ({access}); "
+             f"use its normal URL: {result['url']}")
     try:
         await asyncio.to_thread(orchestrator(request.orchestrator).supervise_respond,
                                 request.id, bottle_slug=request.bottle, decision="approve",
