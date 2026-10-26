@@ -163,6 +163,17 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
   never tears the bottle down). Copies of sessions that ended while it was
   down close with what they have.
 
+## Snapshots
+
+The console's snapshot button asks the link for `snapshot`
+(`snapshots.py`): the host attaches to the running bottle through its
+adoption record (`BottleBackend.attach_adopted`), takes the copied git
+workspace's patch since launch (the patch teardown saves), and keeps it as
+`~/.bot-bottle/snapshots/<session>/<activation>/<taken>.patch` (0600) with a
+`.json` record: when, the conversation's newest `seq` then, files and lines
+changed, size and SHA-256. Each is audited as `snapshot.taken`. A workspace
+that isn't a git copy can't be snapshotted. Restoring is not built yet.
+
 ## Audit
 
 The host controller is the host's only audit writer

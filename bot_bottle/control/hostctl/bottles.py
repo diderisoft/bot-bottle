@@ -514,6 +514,25 @@ class BottleService:
 
     # --- list / teardown ---
 
+    def snapshot(self, identity: str, *, seq: int | None = None) -> dict[str, object]:
+        """Snapshot a running bottle's workspace (`snapshots.take`) and audit
+        it. SnapshotUnavailable when there's nothing to take."""
+        # pylint: disable=import-outside-toplevel
+        from .snapshots import SnapshotUnavailable, take
+        record = self._sessions.record(identity)
+        adopted = adoption.read(identity)
+        if record is None or adopted is None or not self._running(identity):
+            raise SnapshotUnavailable(f"bottle {identity} isn't running")
+        name = str(record.meta.get("backend", ""))
+        backend = self._backend_for(with_recorded_infra(Settings(), name, self._recorded_infra))
+        bottle = backend.attach_adopted(identity, adopted)
+        if bottle is None:
+            raise SnapshotUnavailable(f"the {name} backend can't reach bottle {identity}")
+        activation = str(record.meta.get("activation", ""))
+        taken = take(bottle, adopted.workspace, session=identity, activation=activation, seq=seq)
+        self.audit.snapshot_taken(bottle=identity, activation=activation, snapshot=taken)
+        return taken
+
     def held_ids(self) -> list[str]:
         """Sessions of the bottles this daemon holds."""
         with self._lock:
