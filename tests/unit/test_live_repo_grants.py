@@ -21,6 +21,7 @@ from bot_bottle.control.hostctl import remote_actions, repo_grants
 from bot_bottle.git_gate import live_grant
 from bot_bottle.git_gate.provision import live_grant_refs, load_upstreams_snapshot
 from bot_bottle.manifest.forges import ManifestForge
+from bot_bottle.secret_source import MappingSecrets
 
 HOST_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
 FORGE = ManifestForge(name="gitea.example.com", kind="gitea", url="https://gitea.example.com",
@@ -148,7 +149,7 @@ class TestLiveGrant(_Root):
         provisioner = mock.Mock()
         with mock.patch("bot_bottle.deploy_key_provisioner.get_provisioner",
                         return_value=provisioner):
-            revoke_deploy_keys((ref, ref), stage, mock.Mock(get=lambda _n: "tok"))
+            revoke_deploy_keys((ref, ref), stage, MappingSecrets({"GITEA_TOKEN": "tok"}))
         provisioner.delete.assert_called_once_with("acme/app", "8")
 
     def test_needs_a_pinned_host_key(self) -> None:
