@@ -24,6 +24,7 @@ from bot_bottle.contract.identity import GIT_GATE_TIMEOUT_SECS, GIT_HTTP_PORT, I
 from bot_bottle.gateway.bounded_http import (
     BodyReadError,
     BoundedThreadingHTTPServer,
+    copy_chunked_body,
     copy_declared_body,
 )
 from bot_bottle.gateway.policy_resolver import PolicyResolveError, PolicyResolver
@@ -179,15 +180,25 @@ class GitHttpHandler(BaseHTTPRequestHandler):
         try:
             with tempfile.TemporaryFile() as body:
                 try:
-                    copy_declared_body(
-                        self.rfile,
-                        body,
-                        self.connection,
-                        self.headers.get("content-length"),
-                        maximum=MAX_BODY_BYTES,
-                        timeout_seconds=REQUEST_BODY_TIMEOUT_SECONDS,
-                        require_length=False,
-                    )
+                    # A push bigger than git's http.postBuffer comes chunked,
+                    # with no Content-Length.
+                    if "chunked" in self.headers.get("transfer-encoding", "").lower():
+                        length = copy_chunked_body(
+                            self.rfile, body, self.connection,
+                            maximum=MAX_BODY_BYTES,
+                            timeout_seconds=REQUEST_BODY_TIMEOUT_SECONDS,
+                        )
+                    else:
+                        length = copy_declared_body(
+                            self.rfile,
+                            body,
+                            self.connection,
+                            self.headers.get("content-length"),
+                            maximum=MAX_BODY_BYTES,
+                            timeout_seconds=REQUEST_BODY_TIMEOUT_SECONDS,
+                            require_length=False,
+                        )
+                    env["CONTENT_LENGTH"] = str(length)
                 except BodyReadError as exc:
                     self.send_error(exc.status, exc.message)
                     return

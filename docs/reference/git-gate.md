@@ -110,7 +110,9 @@ so the gate is the only way to push.
 
 ## Gateway side
 
-`gateway/git_gate/http_backend.py` serves every bottle from one process:
+`gateway/git_gate/http_backend.py` serves every bottle from one process. It
+reads a request body declared by Content-Length or sent chunked (git sends a
+pack bigger than `http.postBuffer` chunked), up to 100 MiB within 30 seconds:
 
 - It resolves the bottle from (source IP, identity header) through the
   orchestrator. An unattributed or unreachable lookup returns 404.

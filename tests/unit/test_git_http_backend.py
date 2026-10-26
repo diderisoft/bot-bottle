@@ -33,6 +33,14 @@ class _FixedResolver:
 
 class TestGitHttpBackend(unittest.TestCase):
     def test_real_git_push_reaches_bare_repo(self):
+        self._real_push()
+
+    def test_a_chunked_push_reaches_bare_repo(self):
+        # Git sends a pack bigger than http.postBuffer chunked, with no
+        # Content-Length; the gate read that as an empty body and hung up.
+        self._real_push(post_buffer=1024)
+
+    def _real_push(self, post_buffer: int = 0) -> None:
         from http.server import ThreadingHTTPServer
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -70,14 +78,17 @@ class TestGitHttpBackend(unittest.TestCase):
                            cwd=work, check=True)
             subprocess.run(["git", "config", "user.email", "test@example.invalid"],
                            cwd=work, check=True)
-            (work / "README.md").write_text("test\n")
+            # Random, so the pack stays bigger than a small postBuffer.
+            (work / "README.md").write_text(os.urandom(32 * 1024).hex() if post_buffer
+                                            else "test\n")
             subprocess.run(["git", "add", "README.md"], cwd=work, check=True)
             subprocess.run(["git", "commit", "-m", "init"], cwd=work,
                            check=True, capture_output=True, text=True)
 
             url = f"http://127.0.0.1:{server.server_port}/repo.git"
             subprocess.run(
-                ["git", "push", url, "HEAD:refs/heads/main"],
+                ["git", *([] if not post_buffer else ["-c", f"http.postBuffer={post_buffer}"]),
+                 "push", url, "HEAD:refs/heads/main"],
                 cwd=work,
                 check=True,
                 capture_output=True,

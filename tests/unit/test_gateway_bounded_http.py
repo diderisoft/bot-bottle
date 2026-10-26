@@ -10,6 +10,7 @@ import unittest
 from bot_bottle.gateway.bounded_http import (
     BodyReadError,
     BoundedThreadingHTTPServer,
+    copy_chunked_body,
     read_declared_body,
 )
 
@@ -21,6 +22,49 @@ class _Handler:
 class _TimeoutStream:
     def read(self, _size: int = -1, /) -> bytes:
         raise TimeoutError
+
+
+class TestChunkedBody(unittest.TestCase):
+    def setUp(self) -> None:
+        self.left, self.right = socket.socketpair()
+        self.addCleanup(self.left.close)
+        self.addCleanup(self.right.close)
+
+    def decode(self, raw: bytes, maximum: int = 100) -> bytes:
+        out = io.BytesIO()
+        n = copy_chunked_body(io.BytesIO(raw), out, self.left, maximum=maximum,
+                              timeout_seconds=5)
+        self.assertEqual(n, len(out.getvalue()))
+        return out.getvalue()
+
+    def test_decodes_chunks_extensions_and_trailers(self) -> None:
+        self.assertEqual(b"hello world", self.decode(
+            b"5\r\nhello\r\n6;ext=1\r\n world\r\n0\r\nX-Trailer: y\r\n\r\n"))
+        self.assertEqual(b"", self.decode(b"0\r\n\r\n"))
+
+    def test_rejects_bad_bodies(self) -> None:
+        for raw, why in ((b"zz\r\nhello\r\n0\r\n\r\n", "invalid"),
+                         (b"5\r\nhelloXX0\r\n\r\n", "invalid"),
+                         (b"5\r\nhel", "invalid|incomplete"),
+                         (b"-1\r\n", "invalid"),
+                         (b"5" * 2000 + b"\r\n", "invalid")):
+            with self.subTest(raw=raw[:20]), self.assertRaisesRegex(BodyReadError, why):
+                self.decode(raw)
+
+    def test_size_cap_and_timeout(self) -> None:
+        with self.assertRaisesRegex(BodyReadError, "too large"):
+            self.decode(b"a\r\n0123456789\r\n0\r\n\r\n", maximum=5)
+
+        class _Slow:
+            def read(self, _size: int = -1, /) -> bytes:
+                raise TimeoutError
+
+            def readline(self, _size: int = -1, /) -> bytes:
+                raise TimeoutError
+
+        with self.assertRaisesRegex(BodyReadError, "timed out"):
+            copy_chunked_body(_Slow(), io.BytesIO(), self.left, maximum=10,
+                              timeout_seconds=5)
 
 
 class TestDeclaredBody(unittest.TestCase):

@@ -15,6 +15,10 @@ class Readable(Protocol):
     def read(self, size: int = -1, /) -> bytes: ...
 
 
+class LineReadable(Readable, Protocol):
+    def readline(self, size: int = -1, /) -> bytes: ...
+
+
 class Writable(Protocol):
     def write(self, data: bytes, /) -> object: ...
 
@@ -87,6 +91,68 @@ def copy_declared_body(
     return length
 
 
+_CHUNK_LINE_MAX = 1024
+
+
+def copy_chunked_body(
+    stream: LineReadable,
+    output: Writable,
+    connection: socket.socket,
+    *,
+    maximum: int,
+    timeout_seconds: float,
+) -> int:
+    """Decode one `Transfer-Encoding: chunked` body into a sink, under the same
+    size cap and read deadline as a declared one, and return its length. Git
+    sends a push this way when its pack is larger than `http.postBuffer`."""
+    previous_timeout = connection.gettimeout()
+    deadline = time.monotonic() + timeout_seconds
+    total = 0
+
+    def arm() -> None:
+        timeout = deadline - time.monotonic()
+        if timeout <= 0:
+            raise BodyReadError(408, "request body read timed out")
+        connection.settimeout(timeout)
+
+    def line() -> bytes:
+        arm()
+        raw = stream.readline(_CHUNK_LINE_MAX + 1)
+        if not raw.endswith(b"\n") or len(raw) > _CHUNK_LINE_MAX:
+            raise BodyReadError(400, "invalid chunked body")
+        return raw.rstrip(b"\r\n")
+
+    try:
+        while True:
+            try:
+                size = int(line().split(b";", 1)[0].strip(), 16)
+            except ValueError as exc:
+                raise BodyReadError(400, "invalid chunked body") from exc
+            if size < 0:
+                raise BodyReadError(400, "invalid chunked body")
+            if size == 0:
+                while line():  # trailers, up to the blank line
+                    pass
+                return total
+            total += size
+            if total > maximum:
+                raise BodyReadError(413, "request body too large")
+            remaining = size
+            while remaining:
+                arm()
+                chunk = stream.read(min(remaining, 64 * 1024))
+                if not chunk:
+                    raise BodyReadError(400, "incomplete request body")
+                output.write(chunk)
+                remaining -= len(chunk)
+            if line():
+                raise BodyReadError(400, "invalid chunked body")
+    except TimeoutError as exc:
+        raise BodyReadError(408, "request body read timed out") from exc
+    finally:
+        connection.settimeout(previous_timeout)
+
+
 class BoundedThreadingHTTPServer(http.server.ThreadingHTTPServer):
     """ThreadingHTTPServer with a cap on in-flight request threads."""
 
@@ -132,6 +198,7 @@ class BoundedThreadingHTTPServer(http.server.ThreadingHTTPServer):
 __all__ = [
     "BodyReadError",
     "BoundedThreadingHTTPServer",
+    "copy_chunked_body",
     "copy_declared_body",
     "read_declared_body",
 ]
