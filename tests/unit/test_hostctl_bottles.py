@@ -305,8 +305,10 @@ class TestHeldBottles(_Root):
         from bot_bottle.control.hostctl.remote import ROLE_REMOTE
 
         self.backend.bottle.script = "echo up; sleep 30"
-        self.service.launch(LaunchRequest(agent="demo", label="c1", assume_yes=True), ROLE_REMOTE)
-        self.assertEqual(["console"], [b["origin"] for b in self.service.list()])
+        self.service.launch(LaunchRequest(agent="demo", label="c1", assume_yes=True,
+                                          agent_id="console-id"), ROLE_REMOTE)
+        self.assertEqual([("console", "console-id")],
+                         [(b["origin"], b["agent_id"]) for b in self.service.list()])
         self.service.teardown("c1")
 
     def test_a_launch_warning_reaches_the_sessions_status_bar(self) -> None:

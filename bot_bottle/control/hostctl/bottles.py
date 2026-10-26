@@ -341,7 +341,10 @@ class BottleService:
                         meta={"backend": backend.name, "agent": request.agent,
                               "label": request.label, "provider": harness,
                               "activation": activation, "manifest_digest": policy,
-                              "origin": ORIGIN_CONSOLE if remote_view else ORIGIN_TERMINAL},
+                              "origin": ORIGIN_CONSOLE if remote_view else ORIGIN_TERMINAL,
+                              # The console's id for an agent it launched, so a
+                              # restarted host controller can pick it up again.
+                              **({"agent_id": request.agent_id} if request.agent_id else {})},
                         writable_allowed=plan.manifest.agent.remote_writable,
                     ), command, env, warnings)
                     log.info(f"agent running in session {identity}")
@@ -565,6 +568,7 @@ class BottleService:
              "label": r.meta.get("label", ""), "activation": r.meta.get("activation", ""),
              # Sessions recorded before origins were: from anywhere but the console.
              "origin": r.meta.get("origin", ORIGIN_TERMINAL), "writable": r.writable_allowed,
+             "agent_id": r.meta.get("agent_id", ""),
              "held": r.id in held, "session": self.session_state(r.id)}
             for r in self._sessions.records() if r.kind == SESSION_KIND
         ]

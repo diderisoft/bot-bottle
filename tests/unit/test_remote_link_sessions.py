@@ -61,6 +61,27 @@ class TestTerminalSessions(unittest.TestCase):
         asyncio.run(link.discover())
         self.assertEqual([], self.presented())
 
+    def test_a_restarted_host_takes_up_its_console_launches_again(self) -> None:
+        # The link's memory went with the old host controller; the session
+        # record keeps the console's id, so the agent keeps its relay and id.
+        self.bottles.start_elsewhere("from-console", origin="console")
+        self.bottles.listed[-1]["agent_id"] = "c-1"
+        self.bottles.start_elsewhere("unknown", origin="console")  # recorded before ids were
+        link = self.link()
+        asyncio.run(link.resume())
+        self.assertEqual({"c-1": "from-console"}, link.running)
+        self.assertIn("c-1", self.terms)
+        self.assertEqual([], self.presented())  # the console has it already
+        self.assertEqual({"type": "agents_running", "agent_ids": ["c-1"]}, self.sent[-1])
+
+    def test_a_launch_in_flight_is_not_taken_up(self) -> None:
+        self.bottles.start_elsewhere("mid", origin="console")
+        self.bottles.listed[-1]["agent_id"] = "c-2"
+        link = self.link()
+        link._starting.add("c-2")  # pylint: disable=protected-access
+        asyncio.run(link.discover())
+        self.assertEqual({}, link.running)
+
     def test_a_reconnect_presents_it_again_under_the_same_id(self) -> None:
         self.bottles.start_elsewhere("app")
         first = self.link()

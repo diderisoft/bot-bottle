@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+from datetime import datetime, timezone
 
 from .lib.log import die
 
@@ -37,3 +38,16 @@ def slugify(name: str) -> str:
     if not slug:
         die(f"name '{name}' produced an empty slug; use alphanumeric characters")
     return slug
+
+
+def same_instant(a: str, b: str) -> bool:
+    """Whether two ISO timestamps are the same instant, allowing for precision
+    and zone formatting lost in a round trip."""
+    def parse(v: str) -> datetime | None:
+        try:
+            dt = datetime.fromisoformat(v)
+        except ValueError:
+            return None
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+    left, right = parse(a), parse(b)
+    return left is not None and right is not None and abs((left - right).total_seconds()) < 1

@@ -56,13 +56,13 @@ import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
 from ...lib import log
 from ...paths import bot_bottle_root
+from ...util import same_instant
 from .console_terminal import HISTORY_LINES, session_terminals, type_into, valid_size
 from .transcript_serve import TranscriptLink
 
@@ -332,6 +332,7 @@ class ConsoleLink:
         # Bottles being torn down: still listed as running until they're gone,
         # but not to be presented again.
         self._stopping: set[str] = set()
+        self._starting: set[str] = set()  # console agent ids mid-launch
         self.transcripts = TranscriptLink(self._send)
 
     async def handle(self, msg: dict[str, Any]) -> None:
@@ -386,12 +387,15 @@ class ConsoleLink:
         request = LaunchRequest(agent=name, assume_yes=True, prompt=prompt,
                                 bottles=bottles, label=label, headless=False,
                                 agent_id=agent_id)
+        self._starting.add(agent_id)
         try:
             result = await asyncio.to_thread(self._bottles.launch, request, ROLE_REMOTE)
         except (Exception, SystemExit) as e:  # pylint: disable=broad-exception-caught
             message = getattr(e, "message", "") or str(e) or type(e).__name__
             await self._errored(agent_id, f"launch failed: {message}"[:500])
             return
+        finally:
+            self._starting.discard(agent_id)
         bottle = str(result.get("bottle", ""))
         self.running[agent_id] = bottle
         self.launched.add(bottle)
@@ -538,7 +542,9 @@ class ConsoleLink:
 
     async def discover(self) -> None:
         """Present each running session the console didn't launch (#717): the
-        console shows every session on a paired host, wherever it started."""
+        console shows every session on a paired host, wherever it started. A
+        session the console did launch, which this link doesn't know (the host
+        controller restarted), is taken up again under the console's id."""
         try:
             listed = await asyncio.to_thread(self._bottles.list)
         except Exception as e:  # pylint: disable=broad-exception-caught  # retried next round
@@ -548,10 +554,16 @@ class ConsoleLink:
         for entry in listed:
             bottle = str(entry.get("id", ""))
             session = entry.get("session")
-            # A console launch is recorded as one before it returns, so a launch
-            # in flight is never presented as well.
-            if (not bottle or bottle in shown or entry.get("origin") == ORIGIN_CONSOLE
+            if (not bottle or bottle in shown
                     or not isinstance(session, dict) or not session.get("running")):
+                continue
+            if entry.get("origin") == ORIGIN_CONSOLE:
+                # A launch in flight is recorded before it returns; it's _launch's.
+                agent_id = str(entry.get("agent_id", ""))
+                if agent_id and agent_id not in self._starting:
+                    self.running[agent_id] = bottle
+                    self.launched.add(bottle)
+                    await self._open_terminal(agent_id, bottle)
                 continue
             activation = str(entry.get("activation", ""))
             agent_id = terminal_agent_id(bottle, activation)
@@ -611,7 +623,7 @@ class ConsoleLink:
         from ..client import AlreadyAnswered
         request = self._asking.get(agent_id)
         chosen = {"allow": ALLOW_ONCE, "allow_project": ALLOW_PROJECT, "deny": DENY}.get(decision)
-        if request is None or chosen is None or not _same_moment(since, request.arrived):
+        if request is None or chosen is None or not same_instant(since, request.arrived):
             log.warn(f"remote: ignoring a stale or unknown approval for {agent_id}")
             return
         try:
@@ -645,19 +657,6 @@ class ConsoleLink:
             exit_info = state.get("exit")
             code = int(exit_info.get("status", 0) or 0) if isinstance(exit_info, dict) else 0  # type: ignore[arg-type]
             await self._send({"type": "agent_stopped", "agent_id": agent_id, "exit_code": code})
-
-
-def _same_moment(a: str, b: str) -> bool:
-    """Whether two ISO timestamps are the same instant, allowing for precision
-    and zone formatting lost in a round trip."""
-    def parse(v: str) -> datetime | None:
-        try:
-            dt = datetime.fromisoformat(v)
-        except ValueError:
-            return None
-        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
-    left, right = parse(a), parse(b)
-    return left is not None and right is not None and abs((left - right).total_seconds()) < 1
 
 
 def _pending_requests() -> list[dict[str, Any]]:
