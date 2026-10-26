@@ -138,6 +138,9 @@ def find_and_update_bottle_file(
         return False
     path.write_text(updated, encoding="utf-8")
     info(f"wrote host_key for {repo_name!r} to {path}")
+    # pylint: disable-next=import-outside-toplevel
+    from ..manifest.versions import record_or_warn
+    record_or_warn(f"pin the host key for {repo_name}", root=bottles_dir.parent)
     return True
 
 

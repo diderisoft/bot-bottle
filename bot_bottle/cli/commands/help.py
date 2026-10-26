@@ -23,6 +23,7 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w("  audit     check, search and configure the audit journal "
       "(tail|verify|query|export|rebuild|import|delivery|forward|firehose)\n")
     w("  backend   set up / check / undo a backend's host prerequisites (setup|status|teardown)\n")
+    w("  bottle    a bottle's versions: history, and revert to one\n")
     w("  cleanup   stop and remove leftover bottles and their state\n")
     w("  commit    snapshot a running bottle's container state to a Docker image\n")
     w("  default   set the agent bare `bot-bottle` starts when none was used here\n")

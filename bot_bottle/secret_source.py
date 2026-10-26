@@ -59,6 +59,12 @@ class FileSecrets(SecretSource):
             self._values = self._load()
         return self._values.get(name)
 
+    def items(self) -> list[tuple[str, str]]:
+        """Every `(name, value)` in the file."""
+        if self._values is None:
+            self._values = self._load()
+        return list(self._values.items())
+
     def _load(self) -> dict[str, str]:
         try:
             fd = os.open(self.path, os.O_RDONLY)

@@ -33,6 +33,7 @@ from ...agent_provider import HostDetection, get_provider
 from ...contrib.pi import starter as pi_starter
 from ...control.hostctl import remote
 from ...errors import SecretsFileError
+from ...manifest.versions import record_or_warn
 from ...paths import bot_bottle_root, host_secrets_path
 from ...secret_source import write_secret
 from ...starter import STARTER_MARKER
@@ -79,6 +80,7 @@ class Setup:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
         self.say(f"  wrote {path}")
+        record_or_warn(f"setup: write {kind}/{name}", root=self.manifests)
 
     def starter_exists(self, name: str) -> bool:
         return all((self.manifests / k / f"{name}.md").exists() for k in ("agents", "bottles"))

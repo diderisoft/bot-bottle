@@ -109,13 +109,17 @@ class HostAudit:
     # --- lifecycle.* ---
 
     def bottled_agent_start(self, *, bottle: str, activation: str, manifest_digest: str,
-                            backend: str, agent: str) -> None:
+                            backend: str, agent: str,
+                            bottle_versions: Mapping[str, object] | None = None) -> None:
+        """`bottle_versions`: the bottle files' versions it launched from
+        (`manifest.versions.launch_versions`)."""
         self.record(AuditEvent(
             type="lifecycle.bottled_agent_start", actor=ACTOR,
             action="lifecycle.bottled_agent_start", outcome="success", sensitivity="normal",
             ts_event=self._now(), resource=bottle, bottle=bottle, bottled_agent=bottle,
             activation=activation, manifest_digest=manifest_digest, correlation_id=activation,
-            payload={"manifest_digest": manifest_digest, "backend": backend, "agent": agent},
+            payload={"manifest_digest": manifest_digest, "backend": backend, "agent": agent,
+                     **({"bottle_versions": dict(bottle_versions)} if bottle_versions else {})},
         ))
 
     def bottled_agent_exit(self, *, bottle: str, activation: str, manifest_digest: str,

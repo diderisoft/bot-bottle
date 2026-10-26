@@ -223,6 +223,7 @@ class BottleService:
         # pylint: disable=import-outside-toplevel
         from ...backend import BottleSpec
         from ...secret_source import ChainSecrets, FileSecrets, MappingSecrets
+        from ...manifest.versions import launch_versions
         from .remote import ROLE_REMOTE
 
         if self._code_changed():
@@ -237,6 +238,8 @@ class BottleService:
                 request.settings, backend.name, self._recorded_infra))
             backend = self._backend_for(request.settings)
         cwd = request.cwd or str(Path.home())
+        # Hand edits become a version before the launch reads them (PRD 0103).
+        versions = launch_versions(cwd)
         index = self._manifest_for(cwd)
         index.require_agent(request.agent)
         spec = BottleSpec(
@@ -264,7 +267,7 @@ class BottleService:
             threading.Thread(
                 target=contextvars.Context().run,
                 args=(self._hold, backend, plan, request),
-                kwargs={"identity": identity, "stage_dir": stage_dir,
+                kwargs={"identity": identity, "stage_dir": stage_dir, "versions": versions,
                         "job_sink": log.current_sink(), "ready": ready,
                         "remote_view": role == ROLE_REMOTE},
                 daemon=True, name=f"hostctl-bottle-{identity}",
@@ -298,6 +301,7 @@ class BottleService:
 
     def _hold(self, backend: "BottleBackend[Any, Any]", plan: "BottlePlan",
               request: LaunchRequest, *, identity: str, stage_dir: Path,
+              versions: dict[str, object],
               job_sink: Callable[[str], None], ready: "queue.Queue[tuple[str, Any]]",
               remote_view: bool = False) -> None:
         """The holder thread: launch, run the agent, wait, tear down."""
@@ -343,7 +347,7 @@ class BottleService:
                     log.info(f"agent running in session {identity}")
                     self.audit.bottled_agent_start(
                         bottle=identity, activation=activation, manifest_digest=policy,
-                        backend=backend.name, agent=request.agent)
+                        backend=backend.name, agent=request.agent, bottle_versions=versions)
                     ready.put(("ready", {"bottle": identity, "session": identity,
                                          "activation": activation}))
                     is_ready.set()
