@@ -62,9 +62,10 @@ class _Guest:
     """A running bottle's exec, recording each script."""
 
     def __init__(self, header: str = "http.http://10.0.0.2:9420/.extraheader x-id: t\n",
-                 add_code: int = 0, proxy: str = "") -> None:
+                 add_code: int = 0, proxy: str = "", rewrites: str = "") -> None:
         self.scripts: list[str] = []
         self.header, self.add_code, self.proxy = header, add_code, proxy
+        self.rewrites = rewrites
 
     def exec(self, script: str, *, user: str = "node") -> Any:
         del user
@@ -72,6 +73,9 @@ class _Guest:
         if "--get-regexp" in script:
             return SimpleNamespace(returncode=0 if self.header else 1, stdout=self.header,
                                    stderr="")
+        if "--get-all" in script:
+            return SimpleNamespace(returncode=0 if self.rewrites else 1,
+                                   stdout=self.rewrites, stderr="")
         if "/proc/" in script:
             return SimpleNamespace(returncode=0 if self.proxy else 1, stdout=self.proxy,
                                    stderr="")
@@ -106,8 +110,46 @@ class TestLiveGrant(_Root):
         self.assertIn("[gitea.example.com]:2222 ssh-ed25519",
                       (stage / "app-known_hosts").read_text())
         self.assertEqual("acme/app.git", live_grant_refs(stage)[0].upstream_path)
-        with self.assertRaisesRegex(live_grant.GrantError, "already has a repo"):
+        with self.assertRaisesRegex(live_grant.GrantError, r"already has app \(read-only\)"):
             live_grant.provision_live(entry, slug="s1", stage_dir=stage, secrets=mock.Mock())
+        other = live_grant.grant_entry("gitea.example.com/elsewhere/app", FORGE)
+        with self.assertRaisesRegex(live_grant.GrantError, "different repo named 'app'"):
+            live_grant.provision_live(other, slug="s1", stage_dir=stage, secrets=mock.Mock())
+
+    def test_regranting_with_write_replaces_the_key(self) -> None:
+        stage = git_gate_state_dir("s1")
+        keys = iter(["7", "8"])
+
+        def mint(e: Any, slug: str, stage_dir: Path, secrets: Any) -> str:
+            del e, slug, secrets
+            (stage_dir / "app-deploy-key-id").write_text(next(keys))
+            return str(stage_dir / "app-key")
+
+        with mock.patch.object(live_grant, "_provision_dynamic_key", side_effect=mint), \
+                mock.patch.object(live_grant, "revoke_key") as revoke:
+            live_grant.provision_live(live_grant.grant_entry("gitea.example.com/acme/app", FORGE),
+                                      slug="s1", stage_dir=stage, secrets=mock.Mock())
+            revoke.assert_not_called()
+            live_grant.provision_live(
+                live_grant.grant_entry("gitea.example.com/acme/app:write", FORGE),
+                slug="s1", stage_dir=stage, secrets=mock.Mock())
+        self.assertEqual("7", revoke.call_args.args[1])  # the old key, after minting
+        (snap,) = load_upstreams_snapshot(stage)
+        self.assertTrue(snap.writable)
+        self.assertEqual(1, len(live_grant_refs(stage)))
+
+    def test_revoking_once_per_repo(self) -> None:
+        from bot_bottle.git_gate.provision import (  # pylint: disable=import-outside-toplevel
+            DeployKeyRef, revoke_deploy_keys)
+        stage = git_gate_state_dir("s1")
+        stage.mkdir(parents=True)
+        (stage / "app-deploy-key-id").write_text("8")
+        ref = DeployKeyRef("app", "GITEA_TOKEN", "", "gitea.example.com", "acme/app.git")
+        provisioner = mock.Mock()
+        with mock.patch("bot_bottle.deploy_key_provisioner.get_provisioner",
+                        return_value=provisioner):
+            revoke_deploy_keys((ref, ref), stage, mock.Mock(get=lambda _n: "tok"))
+        provisioner.delete.assert_called_once_with("acme/app", "8")
 
     def test_needs_a_pinned_host_key(self) -> None:
         from dataclasses import replace  # pylint: disable=import-outside-toplevel
@@ -155,7 +197,13 @@ class TestLiveGrant(_Root):
         live_grant.point_agent_at_gate(guest, entry)  # type: ignore[arg-type]
         self.assertEqual("git config --global http.http://bot-bottle-gateway:9420/.extraHeader "
                          "'x-bot-bottle-identity: tok-1'", guest.scripts[2])
-        self.assertIn("url.http://bot-bottle-gateway:9420/app.git.insteadOf", guest.scripts[3])
+        self.assertIn("--add url.http://bot-bottle-gateway:9420/app.git.insteadOf", guest.scripts[4])
+
+    def test_an_existing_rewrite_is_kept(self) -> None:
+        entry = live_grant.grant_entry("gitea.example.com/acme/app", FORGE)
+        guest = _Guest(rewrites=f"{entry.Upstream}\n")
+        live_grant.point_agent_at_gate(guest, entry)  # type: ignore[arg-type]
+        self.assertFalse(any("--add" in s for s in guest.scripts))
         with self.assertRaisesRegex(live_grant.GrantError, "locked"):
             live_grant.point_agent_at_gate(_Guest(add_code=1), entry)  # type: ignore[arg-type]
 

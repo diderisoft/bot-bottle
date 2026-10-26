@@ -115,30 +115,37 @@ def revoke_git_gate_provisioned_keys(
 def revoke_deploy_keys(
     refs: "tuple[DeployKeyRef, ...]", stage_dir: Path, secrets: SecretSource,
 ) -> None:
-    """Revoke the provisioned deploy key of each of `refs`. Raises on any
-    failure."""
-    from ..deploy_key_provisioner import get_provisioner
+    """Revoke the provisioned deploy key of each of `refs`, once per repo name
+    (a repo re-granted while running has a launch ref and a live one for the
+    same key). Raises on any failure."""
+    seen: set[str] = set()
     for ref in refs:
         id_file = stage_dir / f"{ref.name}-deploy-key-id"
-        if not id_file.exists():
+        if ref.name in seen or not id_file.exists():
             continue
-        key_id = id_file.read_text().strip()
-        token = secrets.get(ref.forge_token_env)
-        if token is None:
-            raise MissingEnvVarError(
-                ref.forge_token_env,
-                f"git-gate.repos[{ref.name!r}] key.forge_token_env"
-                f" = {ref.forge_token_env!r}: secret is not set;"
-                f" cannot revoke deploy key {key_id}",
-            )
-        api_url = ref.api_url or f"https://{ref.upstream_host}"
-        provisioner = get_provisioner("gitea", token, api_url)
-        owner_repo = ref.upstream_path
-        if owner_repo.endswith(".git"):
-            owner_repo = owner_repo[:-4]
-        info(f"revoking deploy key {key_id} for git-gate.repos[{ref.name!r}]")
-        provisioner.delete(owner_repo, key_id)
-        info(f"revoked deploy key {key_id} for git-gate.repos[{ref.name!r}]")
+        seen.add(ref.name)
+        revoke_key(ref, id_file.read_text().strip(), secrets)
+
+
+def revoke_key(ref: DeployKeyRef, key_id: str, secrets: SecretSource) -> None:
+    """Revoke the deploy key `key_id` of `ref`'s repo."""
+    from ..deploy_key_provisioner import get_provisioner
+    token = secrets.get(ref.forge_token_env)
+    if token is None:
+        raise MissingEnvVarError(
+            ref.forge_token_env,
+            f"git-gate.repos[{ref.name!r}] key.forge_token_env"
+            f" = {ref.forge_token_env!r}: secret is not set;"
+            f" cannot revoke deploy key {key_id}",
+        )
+    api_url = ref.api_url or f"https://{ref.upstream_host}"
+    provisioner = get_provisioner("gitea", token, api_url)
+    owner_repo = ref.upstream_path
+    if owner_repo.endswith(".git"):
+        owner_repo = owner_repo[:-4]
+    info(f"revoking deploy key {key_id} for git-gate.repos[{ref.name!r}]")
+    provisioner.delete(owner_repo, key_id)
+    info(f"revoked deploy key {key_id} for git-gate.repos[{ref.name!r}]")
 
 
 def _resolve_identity_file(
@@ -238,6 +245,7 @@ __all__ = [
     "load_upstreams_snapshot",
     "record_live_grant",
     "revoke_deploy_keys",
+    "revoke_key",
     "revoke_git_gate_provisioned_keys",
     "provision_git_gate_dynamic_keys",
     "_provision_dynamic_key",
