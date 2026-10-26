@@ -144,7 +144,7 @@ class TestRefreshNow(TestRefresher):
         self.assertEqual({"error": "run `claude` on the host"}, self.refresher.refresh_now("b1"))
 
     def test_a_bottle_without_a_forwarded_login(self) -> None:
-        self.assertIn("doesn't forward a host login", str(self.refresher.refresh_now("nope")))
+        self.assertIn("Stop and Resume it", str(self.refresher.refresh_now("nope")))
 
     def test_a_failed_push(self) -> None:
         def push(*_args: str) -> None:

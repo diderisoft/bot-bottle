@@ -110,9 +110,10 @@ class CredentialRefresher:
         with self._lock:
             target = self._targets.get(identity)
         if target is None:
-            return {"error": "this bottle doesn't forward a host login that bot-bottle "
-                             "refreshes (one launched before it could is refreshed once "
-                             "relaunched)"}
+            return {"error": "Nothing to refresh: this agent doesn't forward a host "
+                             "login, or was started before bot-bottle refreshed them. "
+                             "Stop and Resume it to have it refreshed (its conversation "
+                             "continues)."}
         try:
             return self.refresh(target)
         except Exception as e:  # pylint: disable=broad-exception-caught  # reported to the console
