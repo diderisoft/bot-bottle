@@ -126,9 +126,19 @@ class TestMapping(unittest.TestCase):
                 a: 2
             """)
 
-    def test_key_must_be_bare_identifier(self):
+    def test_key_must_be_bare_identifier_or_quoted(self):
         with self.assertRaises(YamlSubsetError):
-            _y('"weird key": 1\n')
+            _y('weird key: 1\n')
+        with self.assertRaises(YamlSubsetError):
+            _y('"esc\\"aped": 1\n')
+        self.assertEqual({"codex@gitea.example.com": 1}, _y('"codex@gitea.example.com": 1\n'))
+
+    def test_keys_that_arent_bare_round_trip_quoted(self):
+        data: dict[str, object] = {"forges": {"codex@h:3000": {"a": 1}, "10.0.0.1": "x"},
+                "routes": [{"x@y": 1, "b": [{"q@r": 2}]}]}
+        text = serialize_yaml_subset(data)
+        self.assertIn('"codex@h:3000":', text)
+        self.assertEqual(data, parse_yaml_subset(text))
 
 
 class TestBlockList(unittest.TestCase):
@@ -377,9 +387,10 @@ class TestEdgeAndErrorBranches(unittest.TestCase):
         with self.assertRaises(YamlSubsetError):
             parse_yaml_subset("justtext\n")
 
-    def test_single_quoted_key_rejected_as_non_bare(self) -> None:
+    def test_single_quoted_key(self) -> None:
+        self.assertEqual({"a b": "v"}, parse_yaml_subset("'a b': v\n"))
         with self.assertRaises(YamlSubsetError):
-            parse_yaml_subset("'ab': v\n")
+            parse_yaml_subset("'': v\n")
 
     def test_list_item_at_mapping_indent_rejected(self) -> None:
         with self.assertRaises(YamlSubsetError):

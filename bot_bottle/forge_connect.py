@@ -1,0 +1,145 @@
+"""`bot-bottle forge connect` (PRD 0103): check a forge token, pin the forge's
+SSH host key, and write the forge into a bottle that others extend.
+
+The token goes to the host secrets file; the bottle gets a `credentials:`
+entry naming it, a `git-gate.forges` entry, and read-only routes for the
+forge's packages and release downloads. A host bottle's write is a version.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urlparse
+
+from .contract.yaml_subset import parse_frontmatter, serialize_yaml_subset
+from .manifest.util import ManifestError
+
+_PACKAGE_ROUTE: dict[str, object] = {
+    "methods": ["GET"],
+    "paths": [{"value": "/api/packages/"},
+              {"type": "regex", "value": "^/[^/]+/[^/]+/releases/download/"}],
+}
+
+
+@dataclass(frozen=True)
+class ForgeEntry:
+    """What `forge connect` learned, ready to write."""
+
+    key: str            # `git-gate.forges` key: the host, or <account>@<host>
+    kind: str
+    url: str
+    ssh: str
+    account: str
+    host_key: str
+
+    @property
+    def host(self) -> str:
+        return urlparse(self.url).hostname or ""
+
+    @property
+    def secret_name(self) -> str:
+        """The host secrets file's name for its token."""
+        return re.sub(r"[^A-Z0-9]+", "_", self.key.upper()).strip("_") + "_TOKEN"
+
+    @property
+    def label(self) -> str:
+        """Its credential's label in the bottle."""
+        label = re.sub(r"[^a-z0-9]+", "-", self.key.lower()).strip("-")
+        return label if label[:1].isalpha() else f"forge-{label}"
+
+
+def default_key(url: str, account: str, existing: Mapping[str, object]) -> str:
+    """The host, or `<account>@<host>` when the bottle already has the host for
+    another account."""
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    taken = existing.get(host)
+    if isinstance(taken, dict) and taken.get("account") not in ("", None, account):
+        return f"{account}@{host}"
+    return host
+
+
+def existing_forges(path: Path) -> dict[str, object]:
+    """The `git-gate.forges` a bottle file declares itself."""
+    if not path.is_file():
+        return {}
+    fm, _ = parse_frontmatter(path.read_text())
+    git = fm.get("git-gate")
+    forges = git.get("forges") if isinstance(git, dict) else None
+    return dict(forges) if isinstance(forges, dict) else {}
+
+
+def write_forge(path: Path, entry: ForgeEntry) -> None:
+    """Add (or replace) `entry` in the bottle at `path`, creating it if needed:
+    its credential, its forge, and a route for its packages unless the bottle
+    already routes its host."""
+    if path.is_file():
+        fm, body = parse_frontmatter(path.read_text())
+    else:
+        fm, body = {}, (
+            f"The {entry.kind} forge at {entry.url}, written by `bot-bottle forge connect`.\n"
+            f"Bottles that extend this one grant its repos in a line:\n\n"
+            f"    git-gate:\n      repos: [{entry.key}/<owner>/<repo>[:write]]")
+
+    credentials = _section(fm, "credentials")
+    credentials[entry.label] = {"source": "secret", "secret": entry.secret_name}
+    fm["credentials"] = credentials
+
+    git = _section(fm, "git-gate")
+    forges = _section(git, "forges")
+    forge: dict[str, object] = {"kind": entry.kind, "url": entry.url, "ssh": entry.ssh,
+                                "token": f"${entry.label}", "account": entry.account}
+    if entry.host_key:
+        forge["host_key"] = entry.host_key
+    forges[entry.key] = forge
+    git["forges"] = forges
+    fm["git-gate"] = git
+
+    egress = _section(fm, "egress")
+    routes = egress.get("routes")
+    routes = list(routes) if isinstance(routes, list) else []
+    if not any(isinstance(r, dict) and r.get("host") == entry.host for r in routes):
+        routes.append({"host": entry.host, "inspect": {"matches": [dict(_PACKAGE_ROUTE)]}})
+    egress["routes"] = routes
+    fm["egress"] = egress
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"---\n{serialize_yaml_subset(fm)}---\n\n{body.strip()}\n")
+
+
+def _section(d: dict[str, object], key: str) -> dict[str, object]:
+    value = d.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ManifestError(f"{key} must be a mapping to add a forge to it")
+    return dict(value)
+
+
+def bottle_path(bottle: str, *, host_bottles: Path, cwd: Path) -> tuple[Path, bool]:
+    """Where `bottle` lives, and whether it's a project bottle (`./name`)."""
+    project = bottle.startswith("./")
+    name = bottle[2:] if project else bottle
+    if not re.fullmatch(r"[a-z][a-z0-9-]*", name):
+        raise ManifestError(f"bottle name {name!r}: lowercase letters, digits and -")
+    base = cwd / ".bot-bottle" / "bottles" if project else host_bottles
+    return base / f"{name}.md", project
+
+
+Keyscan = Callable[[str, str], str]
+
+
+def ssh_host_port(ssh: str) -> tuple[str, str]:
+    """`ssh://user@host[:port]` -> (host, port)."""
+    hostport = ssh[len("ssh://"):].split("@", 1)[-1]
+    host, _, port = hostport.partition(":")
+    return host, port or "22"
+
+
+__all__ = ["ForgeEntry", "bottle_path", "default_key", "existing_forges", "ssh_host_port",
+           "write_forge"]

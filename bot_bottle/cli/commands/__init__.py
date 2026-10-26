@@ -21,6 +21,7 @@ _HANDLERS: dict[str, str] = {
     "down": "lifecycle:cmd_down",
     "default": "quick:cmd_default",
     "doctor": "doctor:cmd_doctor",
+    "forge": "forge:cmd_forge",
     "help": "help:cmd_help",
     "install": "lifecycle:cmd_install",
     "jobs": "lifecycle:cmd_jobs",
@@ -58,7 +59,7 @@ COMMANDS = {name: _lazy(spec) for name, spec in _HANDLERS.items()}
 # Commands that never open the store, so they run before or without a migrated
 # DB (where the migration prompt can't be answered on a non-TTY runner).
 NO_MIGRATION_COMMANDS = frozenset({
-    "approve", "attach", "audit", "backend", "bottle", "doctor", "down", "help", "install", "jobs", "login",
+    "approve", "attach", "audit", "backend", "bottle", "doctor", "down", "forge", "help", "install", "jobs", "login",
     "pair", "prune", "remote", "setup", "trust", "status", "uninstall", "up",
 })
 

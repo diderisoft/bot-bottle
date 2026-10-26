@@ -137,11 +137,11 @@ def save_to_project(project: Path, routes: list[Route]) -> Path:
     frontmatter["egress"] = egress
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"---\n{serialize_yaml_subset(frontmatter)}---\n\n{body.strip()}\n")
-    _trust_project_bottle(project, path.stem)
+    trust_project_bottle(project, path.stem)
     return path
 
 
-def _trust_project_bottle(project: Path, name: str) -> None:
+def trust_project_bottle(project: Path, name: str) -> None:
     index = ManifestIndex.resolve(str(project))
     bottle, sources = load_bottle_chain(name, index.bottle_dirs())
     try:
@@ -207,4 +207,4 @@ def session_project(session: str) -> Path | None:
 
 __all__ = ["ALLOW_ONCE", "ALLOW_PROJECT", "DECISIONS", "DENY", "Request", "answer",
            "manifest_route", "project_bottle_path", "route_lines", "save_to_project",
-           "session_project"]
+           "session_project", "trust_project_bottle"]

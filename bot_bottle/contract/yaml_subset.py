@@ -24,6 +24,7 @@ flow nesting deeper than one level.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import cast
@@ -90,6 +91,18 @@ def _tokenize(text: str) -> list[_Line]:
 
 
 _BARE_RX = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]*$")
+
+
+def _key(raw: str) -> str | None:
+    """A mapping key: a bare identifier, or a quoted string (for keys like
+    `codex@gitea.example.com`) without escapes; None if it's neither."""
+    if _BARE_RX.match(raw):
+        return raw
+    if len(raw) >= 3 and raw[0] == raw[-1] and raw[0] in "'\"":
+        inner = raw[1:-1]
+        if raw[0] not in inner and "\\" not in inner:
+            return inner
+    return None
 _INT_RX = re.compile(r"^-?[0-9]+$")
 _RESERVED_BOOL_LIKE = frozenset({"yes", "no", "on", "off", "y", "n", "Y", "N",
                                  "YES", "NO", "ON", "OFF", "True", "False",
@@ -204,11 +217,13 @@ def _parse_inline(s: str, lineno: int) -> object:
                 )
             k, _, v = raw.partition(":")
             k = k.strip()
-            if not _BARE_RX.match(k):
+            k_key = _key(k)
+            if k_key is None:
                 raise YamlSubsetError(
                     f"yaml-subset: inline dict key on line {lineno} "
-                    f"must be a bare identifier ({k!r})"
+                    f"must be a bare identifier or quoted ({k!r})"
                 )
+            k = k_key
             out[k] = _parse_scalar(v.strip(), lineno)
         return out
     return _parse_scalar(s, lineno)
@@ -304,11 +319,13 @@ def _parse_block_mapping(
                 f"item at mapping indent (got `-`, expected `key:`)"
             )
         key, value_text = _split_key_value(line.content, line.lineno)
-        if not _BARE_RX.match(key):
+        key_key = _key(key)
+        if key_key is None:
             raise YamlSubsetError(
                 f"yaml-subset: line {line.lineno} key {key!r} is not "
-                f"a bare identifier"
+                f"a bare identifier or quoted"
             )
+        key = key_key
         if key in out:
             raise YamlSubsetError(
                 f"yaml-subset: line {line.lineno} duplicate key {key!r}"
@@ -346,11 +363,13 @@ def _parse_block_list(
             # Further keys sit at the column after `- `.
             content_col = base_indent + 2
             first_key, first_value_text = _split_key_value(rest, line.lineno)
-            if not _BARE_RX.match(first_key):
+            first_key_key = _key(first_key)
+            if first_key_key is None:
                 raise YamlSubsetError(
                     f"yaml-subset: line {line.lineno} key {first_key!r} "
-                    f"is not a bare identifier"
+                    f"is not a bare identifier or quoted"
                 )
+            first_key = first_key_key
             item: dict[str, object] = {}
             if first_value_text:
                 item[first_key] = _parse_inline(first_value_text, line.lineno)
@@ -369,11 +388,13 @@ def _parse_block_list(
                 if ln.content.startswith("- "):
                     break  # next list item
                 k, v_text = _split_key_value(ln.content, ln.lineno)
-                if not _BARE_RX.match(k):
+                k_key = _key(k)
+                if k_key is None:
                     raise YamlSubsetError(
                         f"yaml-subset: line {ln.lineno} key {k!r} is "
-                        f"not a bare identifier"
+                        f"not a bare identifier or quoted"
                     )
+                k = k_key
                 if k in item:
                     raise YamlSubsetError(f"yaml-subset: line {ln.lineno} duplicate key {k!r}")
                 if v_text:
@@ -542,6 +563,12 @@ def _yaml_scalar(v: object) -> str:
     return s
 
 
+def _yaml_key(key: object) -> str:
+    """`key` as written: bare when it can be, else double-quoted."""
+    text = str(key)
+    return text if _BARE_RX.match(text) else json.dumps(text)
+
+
 def _serialize_node(node: object, indent: int) -> list[str]:
     """Lines for `node` at `indent`: a non-empty dict or list, or a leaf
     scalar."""
@@ -550,7 +577,7 @@ def _serialize_node(node: object, indent: int) -> list[str]:
         out: list[str] = []
         for key, val in node.items():
             if isinstance(val, (dict, list)) and val:
-                out.append(f"{prefix}{key}:")
+                out.append(f"{prefix}{_yaml_key(key)}:")
                 out.extend(_serialize_node(val, indent + 2))
             else:
                 scalar = (
@@ -558,7 +585,7 @@ def _serialize_node(node: object, indent: int) -> list[str]:
                     else "[]" if isinstance(val, list)
                     else _yaml_scalar(val)
                 )
-                out.append(f"{prefix}{key}: {scalar}")
+                out.append(f"{prefix}{_yaml_key(key)}: {scalar}")
         return out
     if isinstance(node, list):
         out = []
@@ -567,7 +594,7 @@ def _serialize_node(node: object, indent: int) -> list[str]:
                 entries = list(item.items())
                 first_key, first_val = entries[0]
                 if isinstance(first_val, (dict, list)) and first_val:
-                    out.append(f"{prefix}- {first_key}:")
+                    out.append(f"{prefix}- {_yaml_key(first_key)}:")
                     out.extend(_serialize_node(first_val, indent + 4))
                 else:
                     scalar = (
@@ -575,11 +602,11 @@ def _serialize_node(node: object, indent: int) -> list[str]:
                         else "[]" if isinstance(first_val, list)
                         else _yaml_scalar(first_val)
                     )
-                    out.append(f"{prefix}- {first_key}: {scalar}")
+                    out.append(f"{prefix}- {_yaml_key(first_key)}: {scalar}")
                 cont = prefix + "  "
                 for key, val in entries[1:]:
                     if isinstance(val, (dict, list)) and val:
-                        out.append(f"{cont}{key}:")
+                        out.append(f"{cont}{_yaml_key(key)}:")
                         out.extend(_serialize_node(val, indent + 4))
                     else:
                         scalar = (
@@ -587,7 +614,7 @@ def _serialize_node(node: object, indent: int) -> list[str]:
                             else "[]" if isinstance(val, list)
                             else _yaml_scalar(val)
                         )
-                        out.append(f"{cont}{key}: {scalar}")
+                        out.append(f"{cont}{_yaml_key(key)}: {scalar}")
             else:
                 out.append(f"{prefix}- {_yaml_scalar(item)}")
         return out

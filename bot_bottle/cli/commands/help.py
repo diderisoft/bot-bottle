@@ -29,6 +29,7 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w("  default   set the agent bare `bot-bottle` starts when none was used here\n")
     w("  doctor    check host prerequisites (Python, backend, config dir)\n")
     w("  down      stop the orchestrator, gateway and host controller\n")
+    w("  forge     connect a forge (Gitea) so bottles can grant its repos in a line\n")
     w("  help      show this command list\n")
     w("  install   set up this host: backend prerequisites, tmux check, autostart\n")
     w("  jobs      list the host controller's recent jobs\n")

@@ -61,6 +61,20 @@ git-gate:
     - gitea.example.com/acme/lib      # read-only
 ```
 
+`bot-bottle forge connect <url> [<bottle>] [<name>]` writes the forge bottle
+(`cli/commands/forge.py`, `forge_connect.py`). It checks the forge answers as
+Gitea, takes a token (pasted without echo, or `--token-stdin`) and asks the
+forge whose it is and which of its repos it's admin on, warning when none
+(deploy keys need admin). It pins the SSH host key it finds for the forge's
+repos without asking, stores the token in the host secrets file as
+`<NAME>_TOKEN`, and writes the credential, the forge entry and a read-only
+`GET` route for the forge's packages and release downloads into `<bottle>`
+(default `gitea`; `./<name>` writes a project bottle and trusts it), as a
+new version. `<name>` is the forge key: the host by default, or
+`<account>@<host>` when the bottle already has the host for another account.
+Keys that aren't bare identifiers are written quoted
+(`"codex@gitea.example.com":`).
+
 While `extends` is resolved, each grant becomes the long form above: a
 `gitea` key minted per launch with the forge's token, the forge's host key,
 and `read_only` unless the grant ends in `:write`. A mapping
