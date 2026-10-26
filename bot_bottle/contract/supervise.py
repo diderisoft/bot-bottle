@@ -17,6 +17,9 @@ TOOL_LIST_EGRESS_ROUTES = "list-egress-routes"
 # Ask the operator to connect a forge (PRD 0105); `proposed_file` is its URL.
 # The operator supplies the token on the phone; it never reaches the agent.
 TOOL_FORGE_CONNECT = "forge-connect"
+# Ask for a repo on a connected forge (PRD 0105); `proposed_file` is the grant,
+# `<forge>/<owner>/<repo>[:write]`. Approval adds it to the running bottle.
+TOOL_ADD_REPO = "add-repo"
 # Read-only agent tool that polls a proposal's decision. It never becomes a
 # `Proposal.tool`, so it isn't in `TOOLS`.
 TOOL_CHECK_PROPOSAL = "check-proposal"
@@ -27,6 +30,7 @@ TOOLS: tuple[str, ...] = (
     TOOL_EGRESS_TOKEN_ALLOW,
     TOOL_LIST_EGRESS_ROUTES,
     TOOL_FORGE_CONNECT,
+    TOOL_ADD_REPO,
 )
 
 STATUS_APPROVED = "approved"

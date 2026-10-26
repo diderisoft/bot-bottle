@@ -337,11 +337,12 @@ class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plug
             )
 
         manifest_bottle = plan.manifest.bottle
-        if manifest_bottle.git:
+        identity_token = getattr(plan, "identity_token", "")
+        if manifest_bottle.git or identity_token:
             from .control.git_gate_render import git_gate_render_gitconfig
             content = git_gate_render_gitconfig(
                 manifest_bottle.git, plan.git_gate_insteadof_host,
-                identity_token=getattr(plan, "identity_token", ""),
+                identity_token=identity_token,
             )
             guest_gitconfig = f"{plan.guest_home}/.gitconfig"
             with tempfile.NamedTemporaryFile(
@@ -369,8 +370,8 @@ class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plug
             configured = bottle.exec(
                 "git config --global --get-regexp '^url\\..*\\.insteadof$'",
                 user="node",
-            )
-            if configured.returncode != 0:
+            ) if manifest_bottle.git else None
+            if configured is not None and configured.returncode != 0:
                 die(
                     "git provisioning: the runtime user cannot read the "
                     f"git-gate insteadOf rules from {guest_gitconfig}: "

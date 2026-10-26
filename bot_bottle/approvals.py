@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .contract.supervise import (
+    TOOL_ADD_REPO,
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,
     TOOL_EGRESS_TOKEN_ALLOW,
@@ -31,6 +32,7 @@ _TOOL_WORDS = {
     TOOL_GITLEAKS_ALLOW: "wants to push past a secret-scan finding",
     TOOL_EGRESS_TOKEN_ALLOW: "wants a credential sent to a host",
     TOOL_FORGE_CONNECT: "wants a git forge connected",
+    TOOL_ADD_REPO: "wants a repo",
 }
 
 
@@ -172,14 +174,60 @@ def keep(target: KeepTarget, request: "Request") -> Path:
     return target.path
 
 
+def keep_grant(target: KeepTarget, grant: str, *, extends: str = "") -> Path:
+    """Write the repo grant into `target` for later launches, replacing one for
+    the same repo name, and extend `extends` (the bottle declaring its forge)
+    when the target's chain doesn't. Trusted for a project, a version for a
+    host bottle."""
+    # pylint: disable-next=import-outside-toplevel
+    from .manifest.forges import parse_grant
+    fm, body = _bottle_file(target.path)
+    git = fm.get("git-gate")
+    git = dict(git) if isinstance(git, dict) else {}
+    repo = parse_grant(grant, "the grant")[2]
+    repos = git.get("repos")
+    if isinstance(repos, dict):
+        git["repos"] = {**repos, repo: grant}
+    else:
+        kept = [g for g in repos if not (isinstance(g, str)
+                                         and parse_grant(g, "a grant")[2] == repo)] \
+            if isinstance(repos, list) else []
+        git["repos"] = [*kept, grant]
+    fm["git-gate"] = git
+    if extends:
+        raw = fm.get("extends")
+        parents = [raw] if isinstance(raw, str) else \
+            [str(p) for p in raw] if isinstance(raw, list) else []
+        if extends not in parents:
+            fm["extends"] = [*parents, extends]
+    _write_bottle_file(target.path, fm, body)
+    if target.project is not None:
+        trust_project_bottle(target.project, target.path.stem)
+    else:
+        record_or_warn(f"keep add-repo {grant}")
+    return target.path
+
+
+_PROJECT_BODY = ("The bottle for this project. bot-bottle adds a route here when you\n"
+                 "keep an allowed request in it; review changes like any other code.")
+
+
+def _bottle_file(path: Path) -> tuple[dict[str, object], str]:
+    """A bottle file's frontmatter and body, or a new project bottle's."""
+    if path.is_file():
+        return parse_frontmatter(path.read_text())
+    return {"extends": "basic"}, _PROJECT_BODY
+
+
+def _write_bottle_file(path: Path, frontmatter: dict[str, object], body: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"---\n{serialize_yaml_subset(frontmatter)}---\n\n{body.strip()}\n")
+
+
 def _add_routes(path: Path, routes: list[Route]) -> None:
     """Add `routes` to the bottle at `path` (creating a project bottle that
     extends `basic`), replacing same-host routes."""
-    frontmatter: dict[str, object] = {"extends": "basic"}
-    body = ("The bottle for this project. bot-bottle adds a route here when you\n"
-            "keep an allowed request in it; review changes like any other code.")
-    if path.is_file():
-        frontmatter, body = parse_frontmatter(path.read_text())
+    frontmatter, body = _bottle_file(path)
     egress = frontmatter.get("egress")
     egress = dict(egress) if isinstance(egress, dict) else {}
     existing = egress.get("routes")
@@ -188,8 +236,7 @@ def _add_routes(path: Path, routes: list[Route]) -> None:
     kept = [r for r in kept if r.get("host") not in hosts]
     egress["routes"] = kept + [manifest_route(r) for r in routes]
     frontmatter["egress"] = egress
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\n{serialize_yaml_subset(frontmatter)}---\n\n{body.strip()}\n")
+    _write_bottle_file(path, frontmatter, body)
 
 
 def trust_project_bottle(project: Path, name: str) -> None:
@@ -214,6 +261,9 @@ def answer(client: Any, request: Request, decision: str, *, via: str) -> str:
     if the request can't be saved. `via` is noted on the decision."""
     if decision not in DECISIONS:
         raise ValueError(f"unknown decision {decision!r}")
+    if request.tool in (TOOL_FORGE_CONNECT, TOOL_ADD_REPO) and decision != DENY:
+        # Allowing alone would tell the agent it has what it asked for.
+        raise ValueError("answer this request from the console's card, or deny it")
     target = keep_target(request.session) if decision == ALLOW_PROJECT else None
     if decision == ALLOW_PROJECT and (target is None or not request.can_save_to_project()):
         raise ValueError("this request can only be allowed once")
@@ -262,6 +312,5 @@ def session_project(session: str) -> Path | None:
 
 
 __all__ = ["ALLOW_ONCE", "ALLOW_PROJECT", "DECISIONS", "DENY", "KeepTarget", "Request", "answer",
-           "keep", "keep_target", "manifest_route", "project_bottle_path", "route_lines",
-           "save_to_project",
-           "session_project", "trust_project_bottle"]
+           "keep", "keep_grant", "keep_target", "manifest_route", "project_bottle_path",
+           "route_lines", "save_to_project", "session_project", "trust_project_bottle"]

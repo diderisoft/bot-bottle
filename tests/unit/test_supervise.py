@@ -281,6 +281,7 @@ class TestToolConstants(unittest.TestCase):
                 supervise.TOOL_EGRESS_TOKEN_ALLOW,
                 supervise.TOOL_LIST_EGRESS_ROUTES,
                 supervise.TOOL_FORGE_CONNECT,
+                supervise.TOOL_ADD_REPO,
             ),
             supervise.TOOLS,
         )

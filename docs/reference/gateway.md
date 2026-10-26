@@ -95,7 +95,7 @@ section.
 
 `gateway/supervisor/server.py` is an MCP server the agent calls when it's
 stuck. Its tools are `egress-allow`, `egress-block`, `list-egress-routes`,
-`forge-connect` and `check-proposal`. Its `initialize` instructions and the egress tool
+`forge-connect`, `add-repo` and `check-proposal`. Its `initialize` instructions and the egress tool
 descriptions say that git never goes out through egress, even to allowed
 hosts: the bottle's repos go through git-gate, and a repo it doesn't have
 needs the operator to add it. The same note is in every agent's prompt
@@ -126,6 +126,17 @@ agent's proposal, never one from the console, exactly as `bot-bottle forge
 connect` does, then approves the proposal with a note naming the account. A
 failed connect leaves it waiting. The token never reaches the agent
 ([PRD 0105](../prds/0105-forges-and-repos-from-the-phone.md)).
+
+`add-repo(repo, justification)` asks for a repo as a grant,
+`<forge>/<owner>/<repo>[:write]`. The console's card shows it with the access
+asked for. The operator can grant read-only instead of write, and can keep the
+grant in the bottle (the same target as a kept egress route; it also extends
+the forge's bottle when the chain doesn't). Granting adds the repo to the
+running bottle ([git-gate](git-gate.md#live-grants)) and approves with a note
+giving its URL.
+
+Neither request can be plainly allowed (`approvals.answer` refuses): that
+would tell the agent it has what it asked for. The terminal can only deny them.
 
 A proposal takes one decision: the first answer stands. A later answer, such
 as the phone answering after the terminal did, gets a 409 (`already

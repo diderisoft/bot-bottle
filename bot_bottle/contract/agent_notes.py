@@ -15,8 +15,9 @@ GIT_BOUNDARY = (
     "git-gate instead: the bottle's own repos keep their normal remote URLs, "
     "which git rewrites to git-gate, and every push is scanned for secrets "
     "there before it's forwarded. A repo the bottle doesn't have can't be "
-    "fetched from or pushed to through git-gate until the operator adds it; "
-    "allowing its host for egress doesn't help."
+    "fetched from or pushed to through git-gate until the operator adds it "
+    "(ask with the supervise tool `add-repo`); allowing its host for egress "
+    "doesn't help."
 )
 
 OPERATING_NOTES = (

@@ -62,8 +62,10 @@ def git_gate_render_gitconfig(
     entries: tuple[ManifestGitEntry, ...], gate_host: str, *, identity_token: str = "",
 ) -> str:
     """The agent's ~/.gitconfig insteadOf rewrites to the gate at
-    `http://<gate_host>/`. Empty `entries` gives ""."""
-    if not entries:
+    `http://<gate_host>/`, and the identity header. The header is written even
+    without entries, so a repo granted later (PRD 0105) only adds a rewrite.
+    Neither gives ""."""
+    if not entries and not identity_token:
         return ""
     out = [
         "# bot-bottle git-gate: every git operation against\n",

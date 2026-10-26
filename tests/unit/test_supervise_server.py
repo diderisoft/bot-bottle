@@ -165,6 +165,13 @@ class TestValidation(unittest.TestCase):
             with self.assertRaises(_RpcError):
                 validate_proposed_file(_sv.TOOL_FORGE_CONNECT, bad)
 
+    def test_add_repo_wants_a_grant(self):
+        validate_proposed_file(_sv.TOOL_ADD_REPO, "gitea.example.com/acme/app:write")
+        validate_proposed_file(_sv.TOOL_ADD_REPO, "me@gitea.example.com:3000/acme/app")
+        for bad in ("acme/app", "gitea.example.com/acme/app:admin", "a/b/c/d", "a/b c/d"):
+            with self.assertRaises(_RpcError):
+                validate_proposed_file(_sv.TOOL_ADD_REPO, bad)
+
     def test_capability_block_rejected_as_unknown_tool(self):
         with self.assertRaises(_RpcError) as cm:
             validate_proposed_file("capability-block", "FROM python:3.13\n")
@@ -341,6 +348,7 @@ class TestHandleToolsList(unittest.TestCase):
                 _sv.TOOL_LIST_EGRESS_ROUTES,
                 _sv.TOOL_CHECK_PROPOSAL,
                 _sv.TOOL_FORGE_CONNECT,
+                _sv.TOOL_ADD_REPO,
             ]),
             sorted(names),
         )

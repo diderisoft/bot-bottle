@@ -96,7 +96,8 @@ its key is minted with which secret.
 - an `insteadOf` rewrite from each upstream URL to
   `http://<gateway>:9420/<name>.git`;
 - an `http.extraHeader` sending `x-bot-bottle-identity: <token>`, scoped to
-  the gate's URL.
+  the gate's URL. It's written even for a bottle without repos, so a repo
+  granted later only adds a rewrite.
 
 The agent's `NO_PROXY` covers the gateway, so git traffic to it skips the
 egress proxy. Smart-HTTP push to a forge through the egress proxy is blocked,
@@ -114,7 +115,19 @@ so the gate is the only way to push.
   key out of another's repos.
 
 `backend/provision_gateway.py` copies a bottle's keys and known_hosts into
-the running gateway and inits its bare repos at registration. On a gateway
+the running gateway and inits its bare repos at registration.
+
+### Live grants
+
+An approved `add-repo` adds a repo to a running bottle
+(`git_gate/live_grant.py`, `control/hostctl/repo_grants.py`,
+[PRD 0105](../prds/0105-forges-and-repos-from-the-phone.md)). The host finds
+the forge in the bottles the session launched with, as their files are now,
+else in any host bottle. It records the key in the bottle's git-gate state dir
+(`live-grants.json`), mints it, and adds the repo to the upstream snapshot.
+Re-provisioning the gateway then creates the repo there, and `git config --add`
+in the guest adds its `insteadOf` rewrite. Teardown revokes live-granted keys
+with the launch's own. Only forge grants can be added this way. On a gateway
 restart, they are provisioned again (see
 [backends.md](backends.md#gateway-restarts)).
 

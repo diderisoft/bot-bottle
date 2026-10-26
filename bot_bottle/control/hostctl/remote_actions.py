@@ -102,7 +102,7 @@ def forge_attention(request: Any) -> tuple[list[str], list[str]]:
 
 
 async def forge_connect_answer(msg: Mapping[str, Any], asking: Mapping[str, Any],
-                               orchestrator: Any) -> dict[str, Any]:
+                               orchestrator: Any, _bottles: Any = None) -> dict[str, Any]:
     """The phone's answer to an agent's `forge-connect` request: connect the
     forge the *agent* named (never a URL from the console) with the token the
     operator pasted, then approve the request with a note the agent reads. A
@@ -138,4 +138,97 @@ async def forge_connect_answer(msg: Mapping[str, Any], asking: Mapping[str, Any]
     return reply
 
 
-__all__ = ["forge_attention", "forge_connect", "forge_connect_answer", "refresh_credentials"]
+def repo_attention(request: Any) -> tuple[list[str], list[str]]:
+    """What the phone shows for an `add-repo` request: the repo, the access
+    asked for (the operator may lower write to read), and where keeping it
+    would write."""
+    # pylint: disable=import-outside-toplevel
+    from ...approvals import keep_target
+    from .repo_grants import find_forge
+    grant = request.proposed.strip()
+    writable = grant.endswith(":write")
+    repo = grant.removesuffix(":write")
+    lines = [f"repo: {repo}", f"access: {'write' if writable else 'read-only'}"]
+    if request.justification.strip():
+        lines.append(f"why: {request.justification.strip()}")
+    found = find_forge(request.session, repo.split("/", 1)[0])
+    if found is None:
+        lines.append("forge not connected on this host: connect it, then the agent can ask again")
+        return lines, []
+    target = keep_target(request.session)
+    options = ["add_repo", *(["add_repo_write"] if writable else [])]
+    if target is not None:
+        extends = f", extending {found.bottle}" if found.bottle else ""
+        lines.append(f"keep: in {target.label()}{extends}, from the next launch")
+        options.append("add_repo_keep")
+    return lines, options
+
+
+def card(request: Any) -> tuple[list[str], list[str]] | None:
+    """The phone card for a request that takes more than allow/deny, or None."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...contract.supervise import TOOL_ADD_REPO, TOOL_FORGE_CONNECT
+    if request.tool == TOOL_FORGE_CONNECT:
+        return forge_attention(request)
+    if request.tool == TOOL_ADD_REPO:
+        return repo_attention(request)
+    return None
+
+
+async def add_repo_answer(msg: Mapping[str, Any], asking: Mapping[str, Any],
+                          orchestrator: Any, bottles: Any) -> dict[str, Any]:
+    """The phone's grant for an agent's `add-repo` request: grant the repo the
+    agent named to its running bottle (read-only unless the operator chose
+    write and the agent asked for it), keep it in the bottle if asked, then
+    approve with a note giving the URL. A failed grant leaves it waiting."""
+    # pylint: disable=import-outside-toplevel
+    from ...approvals import keep_grant, keep_target
+    from ...contract.supervise import TOOL_ADD_REPO
+    from ...util import same_instant
+    from ..client import AlreadyAnswered
+    agent_id = str(msg.get("agent_id", ""))
+    reply: dict[str, Any] = {"type": "add_repo_answered",
+                             "request_id": msg.get("request_id"), "agent_id": agent_id}
+    request = asking.get(agent_id)
+    if (request is None or request.tool != TOOL_ADD_REPO
+            or not same_instant(_text(msg, "since"), request.arrived)):
+        reply["error"] = "That request is no longer waiting."
+        return reply
+    grant = request.proposed.strip()
+    if grant.endswith(":write") and msg.get("write") is not True:
+        grant = grant.removesuffix(":write")
+    grant_repo = getattr(bottles, "grant_repo", None)  # BottleService's
+    result: dict[str, Any] = (
+        {"error": "this host controller can't grant repos"} if grant_repo is None
+        else await asyncio.to_thread(grant_repo, request.session, grant))
+    if result.get("error"):
+        reply["error"] = result["error"]
+        return reply
+    warnings: list[str] = []
+    target = keep_target(request.session) if msg.get("keep") is True else None
+    if target is not None:
+        try:
+            await asyncio.to_thread(keep_grant, target, grant, extends=result.get("extends", ""))
+            reply["kept"] = target.label()
+        except Exception as e:  # pylint: disable=broad-exception-caught  # granted anyway
+            log.warn(f"remote: keeping {grant} failed: {type(e).__name__}: {e}")
+            warnings.append(f"granted, but keeping it in {target.label()} failed")
+    access = "write" if result.get("writable") else "read-only"
+    notes = (f"granted {grant.removesuffix(':write')} ({access}) to this running bottle; "
+             f"use its normal URL, {result['url']}: git routes it through git-gate")
+    try:
+        await asyncio.to_thread(orchestrator(request.orchestrator).supervise_respond,
+                                request.id, bottle_slug=request.bottle, decision="approve",
+                                notes=notes)
+    except AlreadyAnswered:
+        warnings.append("the request was answered elsewhere meanwhile")
+    reply.update({"repo": result["repo"], "writable": result.get("writable", False),
+                  "warnings": warnings})
+    return reply
+
+
+# Console answers to a card that carry more than allow/deny, by message type.
+ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer}
+
+__all__ = ["ANSWERS", "add_repo_answer", "card", "forge_attention", "forge_connect",
+           "forge_connect_answer", "refresh_credentials", "repo_attention"]

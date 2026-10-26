@@ -82,12 +82,34 @@ def deploy_key_refs(bottle: ManifestBottle) -> tuple[DeployKeyRef, ...]:
     )
 
 
+_LIVE_GRANTS = "live-grants.json"
+
+
+def live_grant_refs(stage_dir: Path) -> tuple[DeployKeyRef, ...]:
+    """The deploy keys granted to the running bottle after launch
+    (`live_grant`), revoked at teardown with the launch's own."""
+    try:
+        raw = json.loads((stage_dir / _LIVE_GRANTS).read_text())
+    except (OSError, ValueError):
+        return ()
+    return tuple(DeployKeyRef(**r) for r in raw if isinstance(r, dict))
+
+
+def record_live_grant(stage_dir: Path, ref: DeployKeyRef) -> None:
+    path = stage_dir / _LIVE_GRANTS
+    refs = [*live_grant_refs(stage_dir), ref]
+    path.write_text(json.dumps([dataclasses.asdict(r) for r in refs], indent=2))
+    path.chmod(0o600)
+
+
 def revoke_git_gate_provisioned_keys(
     bottle: ManifestBottle, stage_dir: Path, secrets: SecretSource,
 ) -> None:
-    """Revoke every deploy key provisioned for `bottle`. Raises on any failure,
-    since a stranded key needs the operator's attention."""
-    revoke_deploy_keys(deploy_key_refs(bottle), stage_dir, secrets)
+    """Revoke every deploy key provisioned for `bottle`, and any granted while
+    it ran. Raises on any failure, since a stranded key needs the operator's
+    attention."""
+    revoke_deploy_keys(deploy_key_refs(bottle) + live_grant_refs(stage_dir), stage_dir,
+                       secrets)
 
 
 def revoke_deploy_keys(
@@ -212,7 +234,9 @@ def load_upstreams_snapshot(stage_dir: Path) -> tuple[GitGateUpstream, ...]:
 __all__ = [
     "DeployKeyRef",
     "deploy_key_refs",
+    "live_grant_refs",
     "load_upstreams_snapshot",
+    "record_live_grant",
     "revoke_deploy_keys",
     "revoke_git_gate_provisioned_keys",
     "provision_git_gate_dynamic_keys",

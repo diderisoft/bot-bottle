@@ -451,6 +451,18 @@ class BottleService:
         """Refresh a running bottle's forwarded host login now."""
         return self.credentials.refresh_now(identity)
 
+    def grant_repo(self, identity: str, grant: str) -> dict[str, object]:
+        """Grant a repo to a running bottle (`repo_grants.grant_repo`)."""
+        # pylint: disable-next=import-outside-toplevel
+        from .repo_grants import grant_repo
+        record = self._sessions.record(identity)
+        name = str(record.meta.get("backend", "")) if record is not None else ""
+        if not name:
+            return {"error": "that bottle isn't running on this host"}
+        backend = self._backend_for(with_recorded_infra(Settings(), name, self._recorded_infra))
+        return grant_repo(backend, identity, grant,
+                          secrets_file=self._secrets_file or host_secrets_path())
+
     def _recredential(self, backend: "BottleBackend[Any, Any]", record: SessionRecord) -> None:
         """Keep a re-adopted bottle's forwarded host login current."""
         adopted = adoption.read(record.id)
@@ -531,7 +543,7 @@ class BottleService:
         """Tear down a bottle a previous controller launched, from the record
         it left: save the work, remove the bottle, revoke its deploy keys."""
         # pylint: disable=import-outside-toplevel
-        from ...git_gate.provision import revoke_deploy_keys
+        from ...git_gate.provision import live_grant_refs, revoke_deploy_keys
         from ...bottle_state import git_gate_state_dir
         from ...secret_source import FileSecrets
 
@@ -553,7 +565,8 @@ class BottleService:
         except Exception as e:  # pylint: disable=broad-exception-caught  # still revoke keys
             log.warn(f"bottle {record.id}: teardown failed: {e}; run `bot-bottle cleanup`")
         try:
-            revoke_deploy_keys(adopted.deploy_keys, git_gate_state_dir(record.id),
+            state = git_gate_state_dir(record.id)
+            revoke_deploy_keys(adopted.deploy_keys + live_grant_refs(state), state,
                                FileSecrets(self._secrets_file or host_secrets_path()))
         except Exception as e:  # pylint: disable=broad-exception-caught  # report, don't crash
             log.warn(f"bottle {record.id}: couldn't revoke its deploy keys: {e}; "

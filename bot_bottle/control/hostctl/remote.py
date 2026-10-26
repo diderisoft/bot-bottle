@@ -342,9 +342,9 @@ class ConsoleLink:
                 msg, self.running, self._bottles))
         elif kind == "forge_connect":
             await self._send(await remote_actions.forge_connect(msg))
-        elif kind == "forge_connect_answer":
-            await self._send(await remote_actions.forge_connect_answer(
-                msg, self._asking, self._orchestrator))
+        elif kind in remote_actions.ANSWERS:  # a card that takes more than allow/deny
+            await self._send(await remote_actions.ANSWERS[kind](
+                msg, self._asking, self._orchestrator, self._bottles))
         elif kind == "snapshot":
             await self._snapshot(msg)
         elif kind != "hello":  # hello only opens the stream
@@ -592,7 +592,6 @@ class ConsoleLink:
         sent."""
         # pylint: disable=import-outside-toplevel  # the link's only approvals use
         from ...approvals import Request, keep_target, route_lines
-        from ...contract.supervise import TOOL_FORGE_CONNECT
         try:
             pending = [Request.from_dict(raw) for raw in await asyncio.to_thread(self._requests)]
         except Exception as e:  # pylint: disable=broad-exception-caught  # retried next round
@@ -616,8 +615,8 @@ class ConsoleLink:
             if target is not None:
                 lines.append(f"keep: in {target.label()}, from the next launch")
             options = ["allow_project"] if target is not None else []
-            if request.tool == TOOL_FORGE_CONNECT:
-                lines, options = remote_actions.forge_attention(request)
+            if (special := remote_actions.card(request)) is not None:
+                lines, options = special
             await self._send({"type": "attention", "agent_id": agent_id, "reason": "approval",
                               "since": request.arrived, "message": "\n".join(lines),
                               "options": options})

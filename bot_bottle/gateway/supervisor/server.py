@@ -1,7 +1,7 @@
 """The supervise MCP server (HTTP + JSON-RPC), shared by every bottle.
 
 Tools: `egress-allow`, `egress-block`, `list-egress-routes`, `forge-connect`,
-`check-proposal`.
+`add-repo`, `check-proposal`.
 A proposal is validated, queued with the orchestrator (`POST
 /supervise/propose`, attributed by (source_ip, identity_token)), then polled
 for up to `SUPERVISE_RESPONSE_TIMEOUT_SECONDS` (30). A decision in time is
@@ -18,6 +18,7 @@ from __future__ import annotations
 import http.server
 import json
 import os
+import re
 import sys
 import time
 import typing
@@ -250,6 +251,28 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
         },
     },
     {
+        "name": _sv.TOOL_ADD_REPO,
+        "description": (
+            "Ask the operator for a repo this bottle doesn't have, on a forge "
+            "this host has connected (if it hasn't, `forge-connect` first). "
+            "Pass the grant `<forge>/<owner>/<repo>`, adding `:write` to push; "
+            "the operator may grant read-only instead. On approval the repo is "
+            "added to this running bottle: use its normal URL (the notes give "
+            "it) and git routes it through git-gate."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string",
+                         "description": "The grant, e.g. gitea.example.com/acme/app:write."},
+                "justification": {"type": "string",
+                                  "description": "Why this repo is needed."},
+            },
+            "required": ["repo", "justification"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": _sv.TOOL_CHECK_PROPOSAL,
         "description": (
             "Poll a previously queued proposal for the operator's decision "
@@ -282,7 +305,10 @@ PROPOSED_FILE_FIELD: dict[str, str] = {
     _sv.TOOL_EGRESS_ALLOW: "routes_yaml",
     _sv.TOOL_EGRESS_BLOCK: "routes_yaml",
     _sv.TOOL_FORGE_CONNECT: "url",
+    _sv.TOOL_ADD_REPO: "repo",
 }
+# `<forge>/<owner>/<repo>[:write]`, as `manifest.forges.parse_grant` reads it.
+_GRANT_RE = re.compile(r"^[A-Za-z0-9._@:-]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(:write)?$")
 
 
 # --- Validation ---
@@ -312,6 +338,10 @@ def validate_proposed_file(tool: str, content: str) -> None:
                 or any(c.isspace() for c in content.strip())):
             raise _RpcClientError(ERR_INVALID_PARAMS,
                                   f"{tool}: 'url' must be the forge's https URL")
+    elif tool == _sv.TOOL_ADD_REPO:
+        if not _GRANT_RE.match(content.strip()):
+            raise _RpcClientError(ERR_INVALID_PARAMS,
+                                  f"{tool}: 'repo' is <forge>/<owner>/<repo>[:write]")
     else:
         raise _RpcClientError(ERR_INVALID_PARAMS, f"unknown tool {tool!r}")
 
@@ -331,7 +361,7 @@ SERVER_INSTRUCTIONS = (
     "`list-egress-routes`, then `egress-allow` with the full routes file. "
     "Each request queues a proposal; if it comes back pending, poll it with "
     "`check-proposal` rather than asking again. A git forge this host hasn't "
-    "connected: `forge-connect`. " + GIT_BOUNDARY
+    "connected: `forge-connect`; a repo on one: `add-repo`. " + GIT_BOUNDARY
 )
 
 
