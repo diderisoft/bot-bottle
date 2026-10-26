@@ -175,6 +175,8 @@ def launch(
             private_key=private_key,
             guest_ip=slot.guest_ip,
             guest_env=_agent_guest_env(plan, slot.host_ip),
+            # A built image's ENV, recorded with its rootfs (#731).
+            image_env=image_builder.image_env(agent_base),
             agent_command=plan.agent_command,
             agent_prompt_mode=plan.agent_prompt_mode,
             harness=plan.harness,

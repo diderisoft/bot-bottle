@@ -22,9 +22,11 @@ from . import util
 
 
 _HOME_FOR = {"node": "/home/node", "root": "/root"}
-# The VM has no image `ENV`, so every built-in harness's `ENV PATH` entries
-# must be here (a test checks the contrib Dockerfiles), or its command exits
-# 127 on firecracker alone.
+# The VM has no image `ENV`. A built image's is recorded with its rootfs and
+# applied per command (`image_env`); a published base (a built-in harness)
+# has none, so every built-in harness's `ENV PATH` entries must be here (a
+# test checks the contrib Dockerfiles), or its command exits 127 on
+# firecracker alone.
 _DEFAULT_PATH_FOR = {
     "node": (
         "/home/node/.local/bin:"
@@ -36,12 +38,18 @@ _DEFAULT_PATH_FOR = {
 }
 
 
-def _env_assignments_for(user: str, env: Mapping[str, str]) -> list[str]:
+def _env_assignments_for(user: str, env: Mapping[str, str],
+                         image_env: Mapping[str, str] | None = None) -> list[str]:
+    """`env` assignments for a command: HOME and USER, then the image's ENV,
+    then the bottle's env over both. PATH is the bottle's, else the image's,
+    else the default."""
     home = _HOME_FOR.get(user, f"/home/{user}")
     out = [f"HOME={home}", f"USER={user}"]
-    if "PATH" not in env:
+    image = {k: v for k, v in (image_env or {}).items()
+             if k not in ("HOME", "USER") and k not in env}
+    if "PATH" not in env and "PATH" not in image:
         out.append(f"PATH={_DEFAULT_PATH_FOR.get(user, _DEFAULT_PATH_FOR['root'])}")
-    for k, v in env.items():
+    for k, v in [*image.items(), *env.items()]:
         out.append(f"{k}={v}")
     return out
 
@@ -54,6 +62,7 @@ class FirecrackerBottle(Bottle):
         private_key: Path,
         guest_ip: str,
         guest_env: Mapping[str, str] | None = None,
+        image_env: Mapping[str, str] | None = None,
         prompt_path_in_guest: str | None = None,
         agent_command: str = "claude",
         agent_prompt_mode: PromptMode = "append_file",
@@ -66,6 +75,7 @@ class FirecrackerBottle(Bottle):
         self._private_key = private_key
         self._guest_ip = guest_ip
         self._guest_env = dict(guest_env or {})
+        self._image_env = dict(image_env or {})
         self.prompt_path = prompt_path_in_guest
         self._agent_prompt_mode = agent_prompt_mode
         self.agent_executable = agent_command
@@ -96,7 +106,7 @@ class FirecrackerBottle(Bottle):
         workdir = self.agent_workdir or _HOME_FOR["node"]
         remote = ["runuser", "-u", "node", "--",
                   "env", f"--chdir={workdir}",
-                  *_env_assignments_for("node", self._guest_env),
+                  *_env_assignments_for("node", self._guest_env, self._image_env),
                   self.agent_executable, *full_argv]
         return remote
 
@@ -114,7 +124,7 @@ class FirecrackerBottle(Bottle):
     def exec(self, script: str, *, user: str = "node") -> ExecResult:
         # Pipe the script to `sh -s`, so nothing is quoted through ssh.
         remote = ["runuser", "-u", user, "--",
-                  "env", *_env_assignments_for(user, self._guest_env),
+                  "env", *_env_assignments_for(user, self._guest_env, self._image_env),
                   "/bin/sh", "-s"]
         result = subprocess.run(
             [*self._ssh(tty=False), "--", *remote],
