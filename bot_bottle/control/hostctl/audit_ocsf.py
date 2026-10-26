@@ -61,6 +61,7 @@ _BY_TYPE: dict[str, tuple[int, int]] = {
     "transcript.captured": (EVENT_LOG_ACTIVITY, 4),  # Archive
     "transcript.rewritten": (DETECTION_FINDING, 1),
     "transcript.deleted": (EVENT_LOG_ACTIVITY, 2),  # Delete
+    "snapshot.taken": (EVENT_LOG_ACTIVITY, 4),  # Archive
     "decision.resolved": (API_ACTIVITY, 3),  # Update
     "decision.late": (API_ACTIVITY, 3),
     "hostctl.broker_teardown": (API_ACTIVITY, 4),  # Delete

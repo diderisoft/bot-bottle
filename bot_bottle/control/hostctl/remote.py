@@ -29,6 +29,8 @@ The control stream (JSON lines):
 - Terminals relay on uni streams (`console_terminal`); `input`, `resize` and
   `history` (`lines` -> `text`, `size`, `limit`) act on them.
 - `audit_query` -> `audit_events` for the link's agents' bottles.
+- `snapshot` -> `snapshot_taken` (`snapshot`, or `error`): the agent's
+  workspace patch and conversation position, kept on the host (`snapshots`).
 - `transcript` (`agent_id`, `before` or `around`, `limit`) ->
   `transcript_entries` (`entries`, `first`, `last`, `available`): a page of the agent's
   conversation from its host copy, masked (`transcript_serve`), for running
@@ -215,6 +217,7 @@ class Bottles(Protocol):
     def teardown(self, bottle_id: str, role: str = ...) -> dict[str, object]: ...
     def session_state(self, session_id: str) -> dict[str, object]: ...
     def list(self) -> list[dict[str, object]]: ...
+    def snapshot(self, identity: str, *, seq: int | None = ...) -> dict[str, object]: ...
 
 
 def terminal_agent_id(bottle: str, activation: str) -> str:
@@ -369,6 +372,8 @@ class ConsoleLink:
             await self._audit_query(msg)
         elif kind in TranscriptLink.REQUESTS:
             await self.transcripts.handle(msg)
+        elif kind == "snapshot":
+            await self._snapshot(msg)
         elif kind != "hello":  # hello only opens the stream
             log.debug(f"remote: ignoring console message {kind!r}")
 
@@ -458,6 +463,27 @@ class ConsoleLink:
             await asyncio.to_thread(terminal.history, count)
         await self._send({"type": "history", "request_id": request_id, "text": text,
                           "size": size, "limit": limit})
+
+    async def _snapshot(self, msg: dict[str, Any]) -> None:
+        """Snapshot a running agent's workspace, pinned to its conversation's
+        newest entry."""
+        # pylint: disable=import-outside-toplevel
+        from .snapshots import SnapshotUnavailable
+        agent_id = str(msg.get("agent_id", ""))
+        reply: dict[str, Any] = {"type": "snapshot_taken", "request_id": msg.get("request_id"),
+                                 "agent_id": agent_id}
+        bottle = self.running.get(agent_id)
+        try:
+            if not bottle:
+                raise SnapshotUnavailable("that agent isn't running on this host")
+            seq = await asyncio.to_thread(self.transcripts.reader.last, agent_id)
+            reply["snapshot"] = await asyncio.to_thread(self._bottles.snapshot, bottle, seq=seq)
+        except SnapshotUnavailable as e:
+            reply["error"] = str(e)
+        except Exception as e:  # pylint: disable=broad-exception-caught  # reported to the console
+            log.warn(f"remote: snapshot of {bottle} failed: {e}")
+            reply["error"] = "the snapshot failed; see the host controller's log"
+        await self._send(reply)
 
     async def push_transcripts(self) -> None:
         await self.transcripts.push(list(self.running))

@@ -175,6 +175,18 @@ class HostAudit:
             payload={"copies": copies, "retention_days": retention_days},
         ))
 
+    def snapshot_taken(self, *, bottle: str, activation: str, snapshot: dict[str, Any]) -> None:
+        """A snapshot of a bottle's workspace, taken from the console: the
+        patch's digest and size, and the conversation position it pins."""
+        self.record(AuditEvent(
+            type="snapshot.taken", actor=ACTOR, action="snapshot.taken", outcome="success",
+            sensitivity="normal", ts_event=self._now(),
+            resource=f"{bottle}/{activation}/{snapshot.get('id', '')}", bottle=bottle,
+            bottled_agent=bottle, activation=activation, correlation_id=activation,
+            payload={k: snapshot.get(k) for k in ("id", "seq", "files", "added", "removed",
+                                                   "bytes", "sha256")},
+        ))
+
     # --- hostctl.* ---
 
     def brokered(self, kind: str, op: str, *, role: str, success: bool,
