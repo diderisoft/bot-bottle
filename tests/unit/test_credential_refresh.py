@@ -228,3 +228,24 @@ class TestProviders(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestServiceAndJournal(unittest.TestCase):
+    def test_the_service_asks_its_refresher(self) -> None:
+        from bot_bottle.control.hostctl.bottles import BottleService  # pylint: disable=import-outside-toplevel
+        service = SimpleNamespace(credentials=mock.Mock())
+        service.credentials.refresh_now.return_value = {"error": "b1"}
+        self.assertEqual({"error": "b1"},
+                         BottleService.refresh_credentials(cast(Any, service), "b1"))
+
+    def test_query_host_journal(self) -> None:
+        from bot_bottle.control.hostctl.audit_index import query_host_journal  # pylint: disable=import-outside-toplevel
+        with tempfile.TemporaryDirectory() as tmp:
+            restore = use_bottle_root(Path(tmp))
+            try:
+                self.assertEqual([], query_host_journal("b1", None, 10))  # no journal yet
+                from bot_bottle.paths import host_audit_dir  # pylint: disable=import-outside-toplevel
+                host_audit_dir().mkdir(parents=True)
+                self.assertEqual([], query_host_journal("b1", None, 10))
+            finally:
+                restore()
