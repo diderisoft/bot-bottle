@@ -583,6 +583,12 @@ ssh_cmd="ssh -i $keyfile -o UserKnownHostsFile=$hostsfile -o StrictHostKeyChecki
 
 echo "git-gate: refreshing $repo_dir from upstream" >&2
 if ! GIT_SSH_COMMAND="$ssh_cmd" git -C "$repo_dir" fetch origin --prune >&2; then
+  if [ "$service" = "receive-pack" ]; then
+    # Best effort for a push: pre-receive still scans it (over more history)
+    # and its forward fails if upstream is really down.
+    echo "git-gate: upstream fetch failed for $repo_dir; scanning the push anyway" >&2
+    exit 0
+  fi
   echo "git-gate: upstream fetch failed for $repo_dir; refusing to serve stale data" >&2
   exit 1
 fi

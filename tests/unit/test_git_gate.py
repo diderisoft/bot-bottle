@@ -364,6 +364,32 @@ class TestAccessHookRender(unittest.TestCase):
         self.assertIn("refusing to serve stale data", hook)
         self.assertIn("exit 1", hook)
 
+    def test_access_hook_unreachable_upstream_fails_fetch_not_push(self):
+        # A fetch must not see stale data; a push still goes on to pre-receive's
+        # scan (the forward then fails if upstream is really down).
+        import subprocess  # pylint: disable=import-outside-toplevel
+        import tempfile  # pylint: disable=import-outside-toplevel
+        from pathlib import Path  # pylint: disable=import-outside-toplevel
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, hook = root / "repo.git", root / "access-hook"
+            subprocess.run(["git", "init", "-q", "--bare", str(repo)], check=True)
+            subprocess.run(["git", "-C", str(repo), "remote", "add", "origin",
+                            str(root / "missing.git")], check=True)
+            for name in ("key", "known_hosts"):
+                (root / name).write_text("")
+            subprocess.run(["git", "-C", str(repo), "config", "git-gate.identityFile",
+                            str(root / "key")], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "git-gate.knownHosts",
+                            str(root / "known_hosts")], check=True)
+            hook.write_text(git_gate_render_access_hook())
+            hook.chmod(0o700)
+            codes = {service: subprocess.run(
+                [str(hook), service, str(repo), "peer", "peer"],
+                capture_output=True, check=False).returncode
+                for service in ("upload-pack", "receive-pack")}
+        self.assertEqual({"upload-pack": 1, "receive-pack": 0}, codes)
+
     def test_access_hook_ssh_is_non_interactive_and_bounded(self):
         # Same hardening as the forward path: the fetch ssh must not
         # prompt and must time out rather than hang upload-pack.

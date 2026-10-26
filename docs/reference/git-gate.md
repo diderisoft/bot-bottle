@@ -5,7 +5,8 @@ never hold an upstream credential. Pushes are scanned and forwarded upstream
 over SSH. Fetches refresh from upstream first, so the agent sees current
 state, and so does the start of each push, so its secret scan covers only
 the commits upstream doesn't have (the gateway's repos start empty after it
-restarts).
+restarts). A fetch is refused if upstream can't be reached; a push is still
+scanned, over more history.
 
 ## Manifest
 
