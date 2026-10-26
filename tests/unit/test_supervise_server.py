@@ -159,6 +159,12 @@ class TestValidation(unittest.TestCase):
         with self.assertRaises(_RpcError):
             validate_proposed_file(_sv.TOOL_EGRESS_ALLOW, "   \n\t")
 
+    def test_forge_connect_wants_an_https_url(self):
+        validate_proposed_file(_sv.TOOL_FORGE_CONNECT, "https://gitea.example.com")
+        for bad in ("http://gitea.example.com", "gitea.example.com", "https://", "https://a b"):
+            with self.assertRaises(_RpcError):
+                validate_proposed_file(_sv.TOOL_FORGE_CONNECT, bad)
+
     def test_capability_block_rejected_as_unknown_tool(self):
         with self.assertRaises(_RpcError) as cm:
             validate_proposed_file("capability-block", "FROM python:3.13\n")
@@ -334,6 +340,7 @@ class TestHandleToolsList(unittest.TestCase):
                 _sv.TOOL_EGRESS_BLOCK,
                 _sv.TOOL_LIST_EGRESS_ROUTES,
                 _sv.TOOL_CHECK_PROPOSAL,
+                _sv.TOOL_FORGE_CONNECT,
             ]),
             sorted(names),
         )

@@ -63,4 +63,79 @@ async def forge_connect(msg: Mapping[str, Any]) -> dict[str, Any]:
     return reply
 
 
-__all__ = ["forge_connect", "refresh_credentials"]
+def _connected_hosts() -> set[str]:
+    """The hostnames of the forges this host's own bottles declare."""
+    # pylint: disable=import-outside-toplevel
+    from urllib.parse import urlparse
+    from ...contract.yaml_subset import YamlSubsetError, parse_frontmatter
+    from ...paths import bot_bottle_root
+    hosts: set[str] = set()
+    for path in sorted((bot_bottle_root() / "bottles").glob("*.md")):
+        try:
+            fm, _ = parse_frontmatter(path.read_text())
+        except (OSError, YamlSubsetError):
+            continue
+        git = fm.get("git-gate")
+        forges = git.get("forges") if isinstance(git, dict) else None
+        for entry in forges.values() if isinstance(forges, dict) else ():
+            if isinstance(entry, dict):
+                hosts.add(urlparse(str(entry.get("url", ""))).hostname or "")
+    return hosts - {""}
+
+
+def forge_attention(request: Any) -> tuple[list[str], list[str]]:
+    """What the phone shows for a `forge-connect` request, and its option. The
+    URL is the agent's, so the card says when this host has never connected
+    it: a token pasted for the wrong host is sent to that host."""
+    # pylint: disable=import-outside-toplevel
+    from urllib.parse import urlparse
+    from ...contrib.gitea.forge_api import TOKEN_SCOPES, token_page
+    url = request.proposed.strip()
+    lines = [f"forge: {url}"]
+    if request.justification.strip():
+        lines.append(f"why: {request.justification.strip()}")
+    if (urlparse(url).hostname or "") not in _connected_hosts():
+        lines.append("new to this host: make sure it's the forge you expect before "
+                     "pasting a token")
+    lines += [f"token page: {token_page(url)}", f"scopes: {', '.join(TOKEN_SCOPES)}"]
+    return lines, ["forge_connect"]
+
+
+async def forge_connect_answer(msg: Mapping[str, Any], asking: Mapping[str, Any],
+                               orchestrator: Any) -> dict[str, Any]:
+    """The phone's answer to an agent's `forge-connect` request: connect the
+    forge the *agent* named (never a URL from the console) with the token the
+    operator pasted, then approve the request with a note the agent reads. A
+    failed connect leaves the request waiting."""
+    # pylint: disable=import-outside-toplevel
+    from ...contract.supervise import TOOL_FORGE_CONNECT
+    from ...util import same_instant
+    from ..client import AlreadyAnswered
+    agent_id = str(msg.get("agent_id", ""))
+    reply: dict[str, Any] = {"type": "forge_connect_answered",
+                             "request_id": msg.get("request_id"), "agent_id": agent_id}
+    request = asking.get(agent_id)
+    if (request is None or request.tool != TOOL_FORGE_CONNECT
+            or not same_instant(_text(msg, "since"), request.arrived)):
+        reply["error"] = "That request is no longer waiting."
+        return reply
+    result = await forge_connect({"url": request.proposed, "token": _text(msg, "token"),
+                                  "bottle": _text(msg, "bottle", "gitea")})
+    if result.get("error"):
+        reply["error"] = result["error"]
+        return reply
+    notes = (f"connected {result['key']} as {result['account']} into the bottle "
+             f"{result['bottle']}; bottles that extend it can be granted its repos "
+             f"({result['key']}/<owner>/<repo>)")
+    try:
+        await asyncio.to_thread(orchestrator(request.orchestrator).supervise_respond,
+                                request.id, bottle_slug=request.bottle, decision="approve",
+                                notes=notes)
+    except AlreadyAnswered:
+        result["warnings"] = [*result.get("warnings", []),
+                              "the request was answered elsewhere meanwhile"]
+    reply.update({k: v for k, v in result.items() if k not in ("type", "request_id")})
+    return reply
+
+
+__all__ = ["forge_attention", "forge_connect", "forge_connect_answer", "refresh_credentials"]

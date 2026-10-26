@@ -94,8 +94,8 @@ section.
 ## Supervise
 
 `gateway/supervisor/server.py` is an MCP server the agent calls when it's
-stuck. Its tools are `egress-allow`, `egress-block`, `list-egress-routes` and
-`check-proposal`. Its `initialize` instructions and the egress tool
+stuck. Its tools are `egress-allow`, `egress-block`, `list-egress-routes`,
+`forge-connect` and `check-proposal`. Its `initialize` instructions and the egress tool
 descriptions say that git never goes out through egress, even to allowed
 hosts: the bottle's repos go through git-gate, and a repo it doesn't have
 needs the operator to add it. The same note is in every agent's prompt
@@ -117,6 +117,15 @@ shared a project (trusted, left for you to commit), else to the first host
 bottle it launched with, as a version naming the request
 ([PRD 0103](../prds/0103-forge-connect-and-bottle-onboarding.md)). A route
 carrying a credential can only be allowed once.
+
+`forge-connect(url, justification)` asks the operator to connect a git forge
+(an https URL). It's answered from the console, whose card shows the URL (marked when
+no host bottle declares that forge yet), the forge's token page and the scopes
+needed. The operator pastes a token there; the host connects the URL from the
+agent's proposal, never one from the console, exactly as `bot-bottle forge
+connect` does, then approves the proposal with a note naming the account. A
+failed connect leaves it waiting. The token never reaches the agent
+([PRD 0105](../prds/0105-forges-and-repos-from-the-phone.md)).
 
 A proposal takes one decision: the first answer stands. A later answer, such
 as the phone answering after the terminal did, gets a 409 (`already

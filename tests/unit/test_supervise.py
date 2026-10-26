@@ -280,6 +280,7 @@ class TestToolConstants(unittest.TestCase):
                 TOOL_GITLEAKS_ALLOW,
                 supervise.TOOL_EGRESS_TOKEN_ALLOW,
                 supervise.TOOL_LIST_EGRESS_ROUTES,
+                supervise.TOOL_FORGE_CONNECT,
             ),
             supervise.TOOLS,
         )

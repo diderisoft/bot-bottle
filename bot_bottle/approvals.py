@@ -15,6 +15,7 @@ from .contract.supervise import (
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,
     TOOL_EGRESS_TOKEN_ALLOW,
+    TOOL_FORGE_CONNECT,
     TOOL_GITLEAKS_ALLOW,
 )
 from .contract.yaml_subset import parse_frontmatter, serialize_yaml_subset
@@ -29,6 +30,7 @@ _TOOL_WORDS = {
     TOOL_EGRESS_BLOCK: "wants to block a host",
     TOOL_GITLEAKS_ALLOW: "wants to push past a secret-scan finding",
     TOOL_EGRESS_TOKEN_ALLOW: "wants a credential sent to a host",
+    TOOL_FORGE_CONNECT: "wants a git forge connected",
 }
 
 

@@ -14,6 +14,9 @@ TOOL_EGRESS_ALLOW = "egress-allow"
 TOOL_GITLEAKS_ALLOW = "gitleaks-allow"
 TOOL_EGRESS_TOKEN_ALLOW = "egress-token-allow"
 TOOL_LIST_EGRESS_ROUTES = "list-egress-routes"
+# Ask the operator to connect a forge (PRD 0105); `proposed_file` is its URL.
+# The operator supplies the token on the phone; it never reaches the agent.
+TOOL_FORGE_CONNECT = "forge-connect"
 # Read-only agent tool that polls a proposal's decision. It never becomes a
 # `Proposal.tool`, so it isn't in `TOOLS`.
 TOOL_CHECK_PROPOSAL = "check-proposal"
@@ -23,6 +26,7 @@ TOOLS: tuple[str, ...] = (
     TOOL_GITLEAKS_ALLOW,
     TOOL_EGRESS_TOKEN_ALLOW,
     TOOL_LIST_EGRESS_ROUTES,
+    TOOL_FORGE_CONNECT,
 )
 
 STATUS_APPROVED = "approved"
