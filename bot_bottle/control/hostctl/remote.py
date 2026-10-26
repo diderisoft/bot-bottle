@@ -63,7 +63,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
 from ...lib import log
 from ...paths import bot_bottle_root
-from .console_terminal import HISTORY_LINES, valid_size
+from .console_terminal import HISTORY_LINES, type_into, valid_size
 from .transcript_serve import TranscriptLink
 
 if TYPE_CHECKING:
@@ -341,6 +341,7 @@ class ConsoleLink:
         self.present = state.present
         # console agent id -> terminal relay
         self.terminals: dict[str, Terminal] = {}
+        self._typed: dict[str, float] = {}  # when each was last typed into
         # console agent id -> the request raised for it
         self._asking: dict[str, Any] = {}
         # Bottles being torn down: still listed as running until they're gone,
@@ -361,7 +362,7 @@ class ConsoleLink:
             await self._approval(str(msg.get("agent_id", "")), str(msg.get("decision", "")),
                                  str(msg.get("since", "")))
         elif kind == "input":
-            self._input(str(msg.get("agent_id", "")), msg.get("data"))
+            await self._input(str(msg.get("agent_id", "")), msg.get("data"))
         elif kind == "resize":
             self._resize(str(msg.get("agent_id", "")), msg.get("cols"), msg.get("rows"))
         elif kind == "history":
@@ -440,13 +441,14 @@ class ConsoleLink:
         for agent_id in list(self.terminals):
             self._close_terminal(agent_id)
 
-    def _input(self, agent_id: str, data: object) -> None:
+    async def _input(self, agent_id: str, data: object) -> None:
         terminal = self.terminals.get(agent_id)
         if terminal is None or not isinstance(data, str) or not data:
             return
-        if not terminal.write(data.encode()):
-            log.debug(f"remote: dropped input for {agent_id}: "
-                      "the agent doesn't allow remote typing")
+        typed = await type_into(terminal, data, self._typed.get(agent_id, 0.0))
+        if typed is None:
+            log.debug(f"remote: dropped input for {agent_id}: the agent doesn't allow typing")
+        self._typed[agent_id] = typed or 0.0
 
     def _resize(self, agent_id: str, cols: object, rows: object) -> None:
         terminal = self.terminals.get(agent_id)

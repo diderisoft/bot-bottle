@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
@@ -166,4 +167,33 @@ def valid_size(cols: Any, rows: Any) -> tuple[int, int] | None:
     return None
 
 
-__all__ = ["ConsoleTerminal", "HISTORY_LINES", "MAX_INPUT_BYTES", "valid_size"]
+
+# The least time between typing and an Enter, so the Enter isn't read as the
+# end of a paste.
+SUBMIT_GAP_SECONDS = 0.15
+
+
+class Typeable(Protocol):
+    def write(self, data: bytes, /) -> bool: ...
+
+
+async def type_into(terminal: Typeable, data: str, typed_at: float) -> float | None:
+    """Type `data` into `terminal`, an Enter as its own keystroke at least
+    SUBMIT_GAP_SECONDS after the typing before it (`typed_at`, from
+    time.monotonic()): Claude Code, and other TUIs that read a burst of input
+    as a paste, would otherwise take it for a newline, as when a message and
+    its Enter arrive together. When it last typed, or None if the terminal
+    refused it."""
+    parts = [data[:-1], "\r"] if len(data) > 1 and data.endswith("\r") else [data]
+    for part in parts:
+        if part == "\r":
+            wait = typed_at + SUBMIT_GAP_SECONDS - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+        if not terminal.write(part.encode()):
+            return None
+        typed_at = time.monotonic()
+    return typed_at
+
+__all__ = ["ConsoleTerminal", "HISTORY_LINES", "MAX_INPUT_BYTES", "SUBMIT_GAP_SECONDS",
+           "type_into", "valid_size"]

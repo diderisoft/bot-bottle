@@ -21,7 +21,7 @@ from bot_bottle.cli.commands import remote as remote_cmd
 from bot_bottle.cli.commands.login import _save_credentials
 from bot_bottle.contract.hostctl import LaunchRequest
 from bot_bottle.control.client import AlreadyAnswered
-from bot_bottle.control.hostctl import remote
+from bot_bottle.control.hostctl import console_terminal, remote
 from bot_bottle.lib.log import Die
 from tests.unit import use_bottle_root
 
@@ -377,7 +377,23 @@ class TestConsoleSession(unittest.TestCase):
         link, _bottles, _sent = self._link()
         self._launch(link)
         asyncio.run(link.handle({"type": "input", "agent_id": "a1", "data": "yes\r"}))
-        self.assertEqual([b"yes\r"], self.terms["a1"].written)
+        self.assertEqual([b"yes", b"\r"], self.terms["a1"].written)
+
+    def test_an_enter_waits_for_its_own_keystroke(self) -> None:
+        # A message and its Enter arriving together would read as a paste,
+        # whose Enter Claude Code takes for a newline.
+        link, _bottles, _sent = self._link()
+        self._launch(link)
+        start = time.monotonic()
+        asyncio.run(link.handle({"type": "input", "agent_id": "a1", "data": "hi"}))
+        asyncio.run(link.handle({"type": "input", "agent_id": "a1", "data": "\r"}))
+        self.assertGreaterEqual(time.monotonic() - start, console_terminal.SUBMIT_GAP_SECONDS * 0.9)
+        self.assertEqual([b"hi", b"\r"], self.terms["a1"].written)
+        # A lone Enter long after typing goes at once.
+        link._typed["a1"] -= 10  # pylint: disable=protected-access
+        start = time.monotonic()
+        asyncio.run(link.handle({"type": "input", "agent_id": "a1", "data": "\r"}))
+        self.assertLess(time.monotonic() - start, console_terminal.SUBMIT_GAP_SECONDS)
 
     def test_input_is_dropped_when_the_agent_disallows_it(self) -> None:
         link, _bottles, sent = self._link(writable=False)
