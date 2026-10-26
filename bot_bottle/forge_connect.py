@@ -209,10 +209,9 @@ def connect(url: str, token: str, *, bottle: str = "gitea", name: str = "", ssh:
     try:
         host_key = fetch_host_key(*ssh_host_port(ssh))
     except RuntimeError as e:
-        host_key = ""
-        warnings.append(f"couldn't fetch the SSH host key of {ssh} ({e}); a launch will "
-                        f"ask for it, or connect again with the SSH address that's "
-                        f"reachable from the host")
+        # Without SSH, git-gate can't reach the forge's repos at all.
+        raise ConnectError(f"couldn't reach {ssh} over SSH from this host ({e}); give the "
+                           f"SSH address that is reachable, e.g. ssh://git@<ip>:<port>") from e
     key = name or default_key(url, check.account, existing_forges(path))
     entry = ForgeEntry(key=key, kind="gitea", url=url, ssh=ssh, account=check.account,
                        host_key=host_key)

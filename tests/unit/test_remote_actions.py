@@ -113,11 +113,13 @@ class TestForgeConnectAnswer(unittest.TestCase):
 
     def test_connects_the_agents_url_and_approves(self) -> None:
         with mock.patch("bot_bottle.forge_connect.connect", return_value=DONE) as connect:
-            reply = self.answer(url="https://evil.example.com", bottle="work")
+            reply = self.answer(url="https://evil.example.com", bottle="work",
+                                ssh="ssh://git@10.0.0.9:2222")
         self.assertEqual(("forge_connect_answered", "q2", "bot"),
                          (reply["type"], reply["request_id"], reply["account"]))
         self.assertNotIn("s3cret", repr(reply))
         self.assertEqual("https://gitea.example.com", connect.call_args.args[0])
+        self.assertEqual("ssh://git@10.0.0.9:2222", connect.call_args.kwargs["ssh"])
         args, kwargs = self.client.supervise_respond.call_args
         self.assertEqual(("p1", "b1", "approve"), (args[0], kwargs["bottle_slug"],
                                                     kwargs["decision"]))

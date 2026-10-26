@@ -59,6 +59,9 @@ def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
         raise GrantError(f"the bottle already has a repo named {entry.Name!r}")
     if entry.Key.provider != "gitea":
         raise GrantError("only forge (gitea) grants can be added to a running bottle")
+    if not entry.KnownHostKey:
+        raise GrantError(f"the forge at {entry.UpstreamHost} has no SSH host key pinned; "
+                         f"connect it again with an SSH address this host can reach")
     stage_dir.mkdir(parents=True, exist_ok=True)
     (upstream,) = git_gate_upstreams_for_bottle(ManifestBottle(git=(entry,)))
     if upstream.known_host_key:

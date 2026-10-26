@@ -66,7 +66,9 @@ git-gate:
 Gitea, takes a token (pasted without echo, or `--token-stdin`) and asks the
 forge whose it is and which of its repos it's admin on, warning when none
 (deploy keys need admin). It pins the SSH host key it finds for the forge's
-repos without asking, stores the token in the host secrets file as
+repos without asking, and fails when it finds none: the forge's SSH address
+(`--ssh`, or the card's SSH field) must be reachable from the host, which a
+public name may not be. It stores the token in the host secrets file as
 `<NAME>_TOKEN`, and writes the credential, the forge entry and a read-only
 `GET` route for the forge's packages and release downloads into `<bottle>`
 (default `gitea`; `./<name>` writes a project bottle and trusts it), as a

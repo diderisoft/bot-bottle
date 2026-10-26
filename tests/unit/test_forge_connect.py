@@ -194,6 +194,11 @@ class TestCommand(_Tmp):
                 cmd_forge(["connect"])
             with self.assertRaises(Die):
                 self.run_cmd("gitea.example.com", token="\n")
+            with mock.patch("bot_bottle.git_gate.host_key.fetch_host_key",
+                            side_effect=RuntimeError("no host key")), \
+                    self.assertRaises(Die):
+                self.run_cmd("gitea.example.com")
+            self.assertFalse((self.root / "secrets").exists())  # nothing stored
             self.check.side_effect = forge_api.ForgeApiError("HTTP 401")
             with self.assertRaises(Die):
                 self.run_cmd("gitea.example.com")

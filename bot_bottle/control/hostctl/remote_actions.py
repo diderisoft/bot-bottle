@@ -95,8 +95,7 @@ def forge_attention(request: Any) -> tuple[list[str], list[str]]:
     if request.justification.strip():
         lines.append(f"why: {request.justification.strip()}")
     if (urlparse(url).hostname or "") not in _connected_hosts():
-        lines.append("new to this host: make sure it's the forge you expect before "
-                     "pasting a token")
+        lines.append("new to this host")
     lines += [f"token page: {token_page(url)}", f"scopes: {', '.join(TOKEN_SCOPES)}"]
     return lines, ["forge_connect"]
 
@@ -120,13 +119,13 @@ async def forge_connect_answer(msg: Mapping[str, Any], asking: Mapping[str, Any]
         reply["error"] = "That request is no longer waiting."
         return reply
     result = await forge_connect({"url": request.proposed, "token": _text(msg, "token"),
-                                  "bottle": _text(msg, "bottle", "gitea")})
+                                  "bottle": _text(msg, "bottle", "gitea"),
+                                  "ssh": _text(msg, "ssh")})
     if result.get("error"):
         reply["error"] = result["error"]
         return reply
-    notes = (f"connected {result['key']} as {result['account']} into the bottle "
-             f"{result['bottle']}; bottles that extend it can be granted its repos "
-             f"({result['key']}/<owner>/<repo>)")
+    notes = (f"connected {result['key']} as {result['account']}; ask for its repos with "
+             f"add-repo")
     try:
         await asyncio.to_thread(orchestrator(request.orchestrator).supervise_respond,
                                 request.id, bottle_slug=request.bottle, decision="approve",
@@ -158,8 +157,7 @@ def repo_attention(request: Any) -> tuple[list[str], list[str]]:
     target = keep_target(request.session)
     options = ["add_repo", *(["add_repo_write"] if writable else [])]
     if target is not None:
-        extends = f", extending {found.bottle}" if found.bottle else ""
-        lines.append(f"keep: in {target.label()}{extends}, from the next launch")
+        lines.append(f"keep: in {target.label()}")
         options.append("add_repo_keep")
     return lines, options
 
@@ -214,8 +212,7 @@ async def add_repo_answer(msg: Mapping[str, Any], asking: Mapping[str, Any],
             log.warn(f"remote: keeping {grant} failed: {type(e).__name__}: {e}")
             warnings.append(f"granted, but keeping it in {target.label()} failed")
     access = "write" if result.get("writable") else "read-only"
-    notes = (f"granted {grant.removesuffix(':write')} ({access}) to this running bottle; "
-             f"use its normal URL, {result['url']}: git routes it through git-gate")
+    notes = f"granted {grant.removesuffix(':write')} ({access}); use its normal URL: {result['url']}"
     try:
         await asyncio.to_thread(orchestrator(request.orchestrator).supervise_respond,
                                 request.id, bottle_slug=request.bottle, decision="approve",

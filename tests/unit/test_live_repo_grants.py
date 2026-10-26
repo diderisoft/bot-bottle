@@ -109,6 +109,13 @@ class TestLiveGrant(_Root):
         with self.assertRaisesRegex(live_grant.GrantError, "already has a repo"):
             live_grant.provision_live(entry, slug="s1", stage_dir=stage, secrets=mock.Mock())
 
+    def test_needs_a_pinned_host_key(self) -> None:
+        from dataclasses import replace  # pylint: disable=import-outside-toplevel
+        entry = live_grant.grant_entry("gitea.example.com/acme/app", replace(FORGE, host_key=""))
+        with self.assertRaisesRegex(live_grant.GrantError, "no SSH host key"):
+            live_grant.provision_live(entry, slug="s1", stage_dir=git_gate_state_dir("s1"),
+                                      secrets=mock.Mock())
+
     def test_only_forge_grants(self) -> None:
         from dataclasses import replace  # pylint: disable=import-outside-toplevel
         entry = live_grant.grant_entry("gitea.example.com/acme/app", FORGE)
@@ -284,7 +291,7 @@ class TestRepoCard(unittest.TestCase):
         self.assertEqual(["add_repo", "add_repo_write", "add_repo_keep"], options)
         text = "\n".join(lines)
         for part in ("repo: gitea.example.com/acme/app", "access: write", "why: need it",
-                     "keep: in pi, extending gitea"):
+                     "keep: in pi"):
             self.assertIn(part, text)
 
     def test_read_only_and_nowhere_to_keep(self) -> None:
