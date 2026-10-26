@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
+from ...errors import HostLoginError
 from ...lib.log import die
 from ...util import expand_tilde
 
@@ -45,14 +46,16 @@ def codex_login_location(host_env: Mapping[str, str] | None = None) -> str:
     return str(path) if isinstance(access, str) and access else ""
 
 
-def codex_host_access_token(
+def read_codex_host_login(
     host_env: Mapping[str, str] | None = None,
     *,
     now: datetime | None = None,
-) -> str:
+) -> tuple[str, datetime]:
+    """The host's Codex access token and when it expires. Raises
+    HostLoginError saying what to run on the host."""
     path = codex_auth_path(host_env)
     if not path.is_file():
-        die(
+        raise HostLoginError(
             f"codex host credentials: auth file missing at {path}. "
             "Run `codex login --device-auth` on the host or disable "
             "agent_provider.forward_host_credentials."
@@ -61,32 +64,43 @@ def codex_host_access_token(
 
     auth_mode = raw.get("auth_mode")
     if not isinstance(auth_mode, str) or auth_mode == "api_key":
-        die(
+        raise HostLoginError(
             "codex host credentials: host Codex auth is not user/device "
             "auth. Run `codex login --device-auth` on the host."
         )
 
     tokens = raw.get("tokens")
     if not isinstance(tokens, dict):
-        die(f"codex host credentials: {path} is missing tokens")
+        raise HostLoginError(f"codex host credentials: {path} is missing tokens")
     tokens_typed = cast(dict[str, object], tokens)
     access = tokens_typed.get("access_token")
     if not isinstance(access, str) or not access:
-        die(
+        raise HostLoginError(
             f"codex host credentials: {path} is missing tokens.access_token. "
             "Run `codex login --device-auth` on the host."
         )
 
     exp = _jwt_exp(access)
     if exp is None:
-        die("codex host credentials: tokens.access_token is not a JWT with exp")
-    check_now = now or datetime.now(timezone.utc)
-    if exp <= check_now:
-        die(
+        raise HostLoginError("codex host credentials: tokens.access_token is not a JWT with exp")
+    if exp <= (now or datetime.now(timezone.utc)):
+        raise HostLoginError(
             "codex host credentials: host Codex access token is expired. "
-            "Run `codex login --device-auth` on the host and restart the bottle."
+            "Run `codex` on the host to refresh it, or `codex login --device-auth`."
         )
-    return access
+    return access, exp
+
+
+def codex_host_access_token(
+    host_env: Mapping[str, str] | None = None,
+    *,
+    now: datetime | None = None,
+) -> str:
+    """The host's Codex access token, for a launch: exits with how to fix it."""
+    try:
+        return read_codex_host_login(host_env, now=now)[0]
+    except HostLoginError as e:
+        die(str(e))
 
 
 def codex_dummy_auth_json(
@@ -99,12 +113,23 @@ def codex_dummy_auth_json(
     since Codex can't refresh inside the bottle and would drop to sign-in when
     a shorter dummy expired."""
     path = codex_auth_path(host_env)
-    access = codex_host_access_token(host_env, now=now)
+    access = read_codex_host_login(host_env, now=now)[0]
     raw = _read_auth_object(path)
     host_exp = _jwt_exp(access)
     exp_ts = int(host_exp.timestamp()) if host_exp is not None else None
     dummy = _redact_codex_auth(deepcopy(raw), now=now, exp_ts=exp_ts)
     return json.dumps(dummy, indent=2, sort_keys=True) + "\n"
+
+
+def auth_json_expiry(text: str) -> datetime | None:
+    """When an `auth.json`'s access token expires, or None if it can't tell."""
+    try:
+        raw = json.loads(text)
+    except ValueError:
+        return None
+    tokens = raw.get("tokens") if isinstance(raw, dict) else None
+    access = tokens.get("access_token") if isinstance(tokens, dict) else None
+    return _jwt_exp(access) if isinstance(access, str) else None
 
 
 def write_codex_dummy_auth_file(
@@ -122,9 +147,10 @@ def _read_auth_object(path: Path) -> dict[str, object]:
     try:
         raw = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as e:
-        die(f"codex host credentials: could not read valid JSON at {path}: {e}")
+        raise HostLoginError(
+            f"codex host credentials: could not read valid JSON at {path}: {e}") from e
     if not isinstance(raw, dict):
-        die(f"codex host credentials: {path} must contain a JSON object")
+        raise HostLoginError(f"codex host credentials: {path} must contain a JSON object")
     return cast(dict[str, object], raw)
 
 
@@ -329,9 +355,11 @@ def _b64url_decode(value: str) -> str:
 
 
 __all__ = [
+    "auth_json_expiry",
     "codex_auth_path",
     "codex_dummy_auth_json",
     "codex_host_access_token",
     "codex_login_location",
+    "read_codex_host_login",
     "write_codex_dummy_auth_file",
 ]

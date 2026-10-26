@@ -118,6 +118,8 @@ def main() -> int:
         write_config()
         sessions.adopt()
         bottles.adopt()
+    # Keeps running bottles' forwarded host logins current.
+    bottles.credentials.start()
     # Deletes ended sessions' transcript copies past the host's retention.
     retention = RetentionSweeper(audit)
     retention.start()

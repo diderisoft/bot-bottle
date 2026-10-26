@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING
 from ...agent_provider import (
     AgentProvider,
     AgentProviderRuntime,
+    CredentialRefresh,
+    CredentialRefreshSpec,
     HostDetection,
     AgentProvisionDir,
     AgentProvisionFile,
@@ -28,7 +30,9 @@ from ...starter import GENERAL_PROMPT, starter_agent, starter_bottle
 from ...transcript import TranscriptEntry
 from . import transcript
 from ...util import slugify
-from .claude_auth import claude_host_access_token, claude_login_location
+from .claude_auth import (
+    claude_host_access_token, claude_login_location, read_claude_host_login,
+)
 
 
 if TYPE_CHECKING:
@@ -294,6 +298,19 @@ class ClaudeAgentProvider(AgentProvider):
         )
         agent = plan.manifest.agent
         return prompt_path if plan.agent_provision.has_prompt or agent.prompt else None
+
+    def credential_refresh_spec(self, plan: "BottlePlan") -> CredentialRefreshSpec | None:
+        if CLAUDE_HOST_CREDENTIAL_TOKEN_REF not in plan.agent_provision.provisioned_env:
+            return None
+        return CredentialRefreshSpec("claude", (CLAUDE_HOST_CREDENTIAL_TOKEN_REF,))
+
+    def refresh_credentials(self, spec: CredentialRefreshSpec, bottle: "Bottle",
+                            host_env: Mapping[str, str] | None = None) -> CredentialRefresh:
+        """The host's Claude token, which `claude` on the host keeps fresh. The
+        agent holds only a placeholder, so nothing in the guest changes."""
+        del spec, bottle
+        token, expires_at = read_claude_host_login(host_env)
+        return CredentialRefresh({CLAUDE_HOST_CREDENTIAL_TOKEN_REF: token}, expires_at)
 
     def provision(self, plan: "BottlePlan", bottle: "Bottle") -> None:
         """Apply the plan's provision steps (the `claude.json` trust marker)."""

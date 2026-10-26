@@ -189,6 +189,7 @@ def launch(
         bottle.prompt_path = provision(plan, bottle)
 
         bottle.registry_id = ctx.bottle_id
+        bottle.env_var_secret = getattr(ctx, "env_var_secret", "")
         yield bottle
     finally:
         teardown()

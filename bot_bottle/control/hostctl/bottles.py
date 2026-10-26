@@ -34,6 +34,7 @@ from ...paths import host_secrets_path
 from ...util import slugify
 from ...backend import adoption
 from .audit_events import HostAudit, digest_manifest, digest_request
+from .credential_refresh import CredentialRefresher
 from .sessions import ExitStatus, SessionManager, SessionRecord
 from .transcripts import TranscriptFollower, close_stale
 
@@ -110,6 +111,16 @@ def with_recorded_infra(settings: Settings, backend: str,
         operation=dataclasses.replace(settings.operation, backend=backend),
         infra=recorded(backend) or InfraSettings(),
     )
+
+
+def _push_credential(registry_id: str, slot: str, value: str, env_var_secret: str) -> None:
+    """Give the orchestrator holding `registry_id` a refreshed egress token."""
+    # pylint: disable=import-outside-toplevel
+    from ..client import OrchestratorClient, discover_orchestrator_urls
+    for url in discover_orchestrator_urls(Settings()):
+        if OrchestratorClient(url).update_agent_secret(registry_id, slot, value, env_var_secret):
+            return
+    raise RuntimeError(f"no running orchestrator knows bottle {registry_id}")
 
 
 def _default_manifest(cwd: str) -> "ManifestIndex":
@@ -191,6 +202,8 @@ class BottleService:
         self._adopted: dict[str, Callable[[], None]] = {}
         # Each running session's transcript follower (PRD 0095).
         self._followers: dict[str, TranscriptFollower] = {}
+        # Keeps forwarded host logins current; started by the daemon.
+        self.credentials = CredentialRefresher(_push_credential, audit=self.audit)
         self._lock = threading.Lock()
         sessions.register(SESSION_KIND, self._finish)
 
@@ -331,11 +344,17 @@ class BottleService:
                         self._held[identity] = held
                     self._follow(plan, bottle, request, identity=identity, activation=activation)
                     # Lets a restarted controller finish this bottle.
+                    record = adoption.record_for(plan, bottle)
                     try:
-                        adoption.write(identity, adoption.record_for(plan, bottle))
+                        adoption.write(identity, record)
                     except OSError as e:
                         log.warn(f"bottle {identity}: couldn't record how to finish it "
                                  f"after a host controller restart: {e}")
+                    if record.credentials is not None:
+                        self.credentials.add(
+                            identity, record.credentials, registry_id=bottle.registry_id,
+                            bottle=bottle, env_var_secret=bottle.env_var_secret,
+                            current=plan.agent_provision.provisioned_env)
                     self._sessions.start(SessionRecord(
                         id=identity, kind=SESSION_KIND,
                         meta={"backend": backend.name, "agent": request.agent,
@@ -355,6 +374,7 @@ class BottleService:
                                          "activation": activation}))
                     is_ready.set()
                     held.exited.wait()
+                    self.credentials.remove(identity)
                     code = exit_code(held.exit_status.status, held.exit_status.signal) \
                         if held.exit_status else 0
                     self.audit.bottled_agent_exit(
@@ -399,6 +419,7 @@ class BottleService:
                 with self._lock:
                     self._adopted[record.id] = release
             self._refollow(backend, record)
+            self._recredential(backend, record)
         close_stale({r.id for r in self._sessions.records()}, self.audit)
 
     # --- transcripts ---
@@ -425,6 +446,20 @@ class BottleService:
         follower.start(bottle)
         with self._lock:
             self._followers[identity] = follower
+
+    def _recredential(self, backend: "BottleBackend[Any, Any]", record: SessionRecord) -> None:
+        """Keep a re-adopted bottle's forwarded host login current."""
+        adopted = adoption.read(record.id)
+        if adopted is None or adopted.credentials is None:
+            return
+        try:
+            bottle = backend.attach_adopted(record.id, adopted)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            log.warn(f"bottle {record.id}: can't refresh its host login: {e}")
+            return
+        if bottle is not None:
+            self.credentials.add(record.id, adopted.credentials,
+                                 registry_id=adopted.registry_id, bottle=bottle)
 
     def _refollow(self, backend: "BottleBackend[Any, Any]", record: SessionRecord) -> None:
         """Resume a re-adopted session's transcript copy from its offsets."""
@@ -496,6 +531,7 @@ class BottleService:
         from ...bottle_state import git_gate_state_dir
         from ...secret_source import FileSecrets
 
+        self.credentials.remove(record.id)
         name = str(record.meta.get("backend", ""))
         adopted = adoption.read(record.id)
         if adopted is None or not name:

@@ -18,6 +18,8 @@ from ...agent_provider import (
     AgentProviderRuntime,
     AgentProvisionDir,
     AgentProvisionCommand,
+    CredentialRefresh,
+    CredentialRefreshSpec,
     HostDetection,
     AgentProvisionFile,
     AgentProvisionPlan,
@@ -27,12 +29,16 @@ from ...starter import GENERAL_PROMPT, starter_agent, starter_bottle
 from ...transcript import TranscriptEntry
 from . import transcript
 from .codex_auth import (
+    auth_json_expiry,
+    codex_dummy_auth_json,
     codex_host_access_token,
     codex_login_location,
+    read_codex_host_login,
     write_codex_dummy_auth_file,
 )
 from ...contract.identity import IDENTITY_HEADER
 from ...egress import CODEX_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
+from ...errors import HostLoginError
 from ...lib.log import die, info
 
 
@@ -365,6 +371,35 @@ class CodexAgentProvider(AgentProvider):
                 f"MCP server in {config_path}: "
                 f"{(r.stderr or r.stdout or '').strip()}"
             )
+
+    def credential_refresh_spec(self, plan: "BottlePlan") -> CredentialRefreshSpec | None:
+        if CODEX_HOST_CREDENTIAL_TOKEN_REF not in plan.agent_provision.provisioned_env:
+            return None
+        auth_dir = plan.agent_provision.guest_env.get("CODEX_HOME") \
+            or f"{plan.guest_home}/.codex"
+        return CredentialRefreshSpec("codex", (CODEX_HOST_CREDENTIAL_TOKEN_REF,),
+                                     guest_dir=auth_dir)
+
+    def refresh_credentials(self, spec: CredentialRefreshSpec, bottle: "Bottle",
+                            host_env: Mapping[str, str] | None = None) -> CredentialRefresh:
+        """The host's Codex token, which `codex` on the host keeps fresh. The
+        guest's placeholder `auth.json` carries the real token's expiry, and
+        Codex drops to its sign-in screen once that passes, so it's rewritten
+        whenever the expiry moves. It holds nothing secret."""
+        token, expires_at = read_codex_host_login(host_env)
+        path = f"{spec.guest_dir}/auth.json"
+        current = bottle.exec(f"cat {shlex.quote(path)} 2>/dev/null", user="node")
+        if auth_json_expiry(current.stdout or "") != expires_at:
+            dummy = codex_dummy_auth_json(host_env)
+            payload = base64.b64encode(dummy.encode()).decode()
+            r = bottle.exec(
+                f"umask 077; printf %s {shlex.quote(payload)} | base64 -d > "
+                f"{shlex.quote(path)}.new && mv {shlex.quote(path)}.new {shlex.quote(path)}",
+                user="node")
+            if r.returncode != 0:
+                raise HostLoginError(f"codex: couldn't update {path} in the bottle: "
+                                     f"{(r.stderr or r.stdout).strip()[:200]}")
+        return CredentialRefresh({CODEX_HOST_CREDENTIAL_TOKEN_REF: token}, expires_at)
 
     def interactive_prompt(self, prompt: str) -> list[str] | None:
         # `codex <prompt>`: interactive, with the prompt as the first message.

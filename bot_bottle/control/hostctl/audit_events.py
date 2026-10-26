@@ -191,6 +191,18 @@ class HostAudit:
                                                    "bytes", "sha256")},
         ))
 
+    def credential_event(self, kind: str, *, bottle: str, activation: str, harness: str,
+                         **payload: object) -> None:
+        """`credential.renewed` / `credential.renew_failed`: a running bottle's
+        forwarded host login was refreshed, or couldn't be. Never the value."""
+        self.record(AuditEvent(
+            type=kind, actor=ACTOR, action=kind,
+            outcome="failure" if kind.endswith("_failed") else "success",
+            sensitivity="normal", ts_event=self._now(), resource=f"{bottle}/{harness}",
+            bottle=bottle, bottled_agent=bottle, activation=activation,
+            correlation_id=activation, payload={"harness": harness, **payload},
+        ))
+
     # --- hostctl.* ---
 
     def brokered(self, kind: str, op: str, *, role: str, success: bool,

@@ -14,3 +14,8 @@ class MissingEnvVarError(Exception):
 class SecretsFileError(Exception):
     """The host secrets file can't be trusted or parsed. Names the file and
     line, never a value."""
+
+
+class HostLoginError(Exception):
+    """A host login a bottle forwards (Claude's, Codex's) is missing, unreadable
+    or expired. The message says how to fix it on the host."""

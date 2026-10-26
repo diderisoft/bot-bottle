@@ -99,6 +99,9 @@ class Bottle(ABC):
     # This run's orchestrator registry id (the audit journal's `activation`).
     # Empty until registered.
     registry_id: str = ""
+    # The key its egress tokens are stored under, for refreshing one; empty
+    # until registered, and for a bottle a previous host controller launched.
+    env_var_secret: str = ""
 
     @abstractmethod
     def agent_argv(

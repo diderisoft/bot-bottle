@@ -15,6 +15,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ...errors import HostLoginError
 from ...lib.log import die
 
 
@@ -79,11 +80,13 @@ def claude_login_location(host_env: Mapping[str, str] | None = None) -> str:
     return ""
 
 
-def claude_host_access_token(
+def read_claude_host_login(
     host_env: Mapping[str, str] | None = None,
     *,
     now: datetime | None = None,
-) -> str:
+) -> tuple[str, datetime | None]:
+    """The host's Claude access token and when it expires. Raises
+    HostLoginError saying what to run on the host."""
     path = claude_auth_path(host_env)
     raw: dict[str, object] | None = None
 
@@ -91,13 +94,14 @@ def claude_host_access_token(
         try:
             raw = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError) as e:
-            die(f"claude host credentials: could not read valid JSON at {path}: {e}")
+            raise HostLoginError(
+                f"claude host credentials: could not read valid JSON at {path}: {e}") from e
         if not isinstance(raw, dict):
-            die(f"claude host credentials: {path} must contain a JSON object")
+            raise HostLoginError(f"claude host credentials: {path} must contain a JSON object")
     else:
         raw = _read_keychain()
         if raw is None:
-            die(
+            raise HostLoginError(
                 f"claude host credentials: auth file missing at {path} and "
                 f"macOS Keychain lookup for '{_KEYCHAIN_SERVICE}' failed. "
                 "Run `claude login` on the host or disable "
@@ -106,7 +110,7 @@ def claude_host_access_token(
 
     oauth = raw.get("claudeAiOauth")
     if not isinstance(oauth, dict):
-        die(
+        raise HostLoginError(
             "claude host credentials: claudeAiOauth is missing from credentials. "
             "Run `claude login` on the host or disable "
             "agent_provider.forward_host_credentials."
@@ -114,27 +118,39 @@ def claude_host_access_token(
 
     access_token = oauth.get("accessToken")
     if not isinstance(access_token, str) or not access_token:
-        die(
+        raise HostLoginError(
             "claude host credentials: claudeAiOauth.accessToken is missing or empty. "
-            "Run `claude login` on the host and restart the bottle."
+            "Run `claude login` on the host."
         )
 
     # milliseconds
     expires_at = oauth.get("expiresAt")
+    exp_dt: datetime | None = None
     if isinstance(expires_at, (int, float)):
-        check_now = now or datetime.now(timezone.utc)
         exp_dt = datetime.fromtimestamp(float(expires_at) / 1000.0, timezone.utc)
-        if exp_dt <= check_now:
-            die(
+        if exp_dt <= (now or datetime.now(timezone.utc)):
+            raise HostLoginError(
                 "claude host credentials: host Claude access token is expired. "
-                "Run `claude login` on the host and restart the bottle."
+                "Run `claude` on the host to refresh it, or `claude login`."
             )
+    return access_token, exp_dt
 
-    return access_token
+
+def claude_host_access_token(
+    host_env: Mapping[str, str] | None = None,
+    *,
+    now: datetime | None = None,
+) -> str:
+    """The host's Claude access token, for a launch: exits with how to fix it."""
+    try:
+        return read_claude_host_login(host_env, now=now)[0]
+    except HostLoginError as e:
+        die(str(e))
 
 
 __all__ = [
     "claude_auth_path",
     "claude_host_access_token",
     "claude_login_location",
+    "read_claude_host_login",
 ]

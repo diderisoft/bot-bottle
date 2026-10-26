@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..bottle_state import bottle_state_dir
@@ -37,11 +37,23 @@ class AdoptedWorkspace:
 
 
 @dataclass(frozen=True)
+class AdoptedCredentials:
+    """How to keep the bottle's forwarded host login current (none of it
+    secret): the provider's refresh spec, and each `token_ref`'s egress slots."""
+
+    harness: str
+    token_refs: tuple[str, ...]
+    guest_dir: str = ""
+    slots: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class AdoptionRecord:
     container: str
     registry_id: str
     workspace: AdoptedWorkspace = AdoptedWorkspace()
     deploy_keys: tuple[DeployKeyRef, ...] = ()
+    credentials: AdoptedCredentials | None = None
 
 
 def record_for(plan: "BottlePlan", bottle: "Bottle") -> AdoptionRecord:
@@ -54,7 +66,25 @@ def record_for(plan: "BottlePlan", bottle: "Bottle") -> AdoptionRecord:
             enabled=ws.enabled, has_host_git_dir=ws.has_host_git_dir,
             guest_path=ws.guest_path),
         deploy_keys=deploy_key_refs(plan.manifest.bottle),
+        credentials=credentials_for(plan),
     )
+
+
+def credentials_for(plan: "BottlePlan") -> AdoptedCredentials | None:
+    """The bottle's forwarded host login, if any, and the egress slots it
+    fills."""
+    # pylint: disable-next=import-outside-toplevel
+    from ..agent_provider import get_provider
+    if not getattr(getattr(plan, "agent_provision", None), "provisioned_env", None):
+        return None  # nothing forwarded
+    spec = get_provider(plan.harness).credential_refresh_spec(plan)
+    if spec is None:
+        return None
+    slots: dict[str, tuple[str, ...]] = {}
+    for slot, ref in plan.egress_plan.token_env_map.items():
+        if ref in spec.token_refs:
+            slots[ref] = (*slots.get(ref, ()), slot)
+    return AdoptedCredentials(spec.harness, spec.token_refs, spec.guest_dir, slots)
 
 
 def _path(identity: str) -> "Path":
@@ -77,9 +107,20 @@ def read(identity: str) -> AdoptionRecord | None:
             registry_id=str(raw["registry_id"]),
             workspace=AdoptedWorkspace(**raw.get("workspace", {})),
             deploy_keys=tuple(DeployKeyRef(**k) for k in raw.get("deploy_keys", [])),
+            credentials=_credentials(raw.get("credentials")),
         )
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
 
-__all__ = ["AdoptedWorkspace", "AdoptionRecord", "read", "record_for", "write"]
+def _credentials(raw: Any) -> AdoptedCredentials | None:
+    if not isinstance(raw, dict):
+        return None
+    return AdoptedCredentials(
+        harness=str(raw["harness"]), token_refs=tuple(raw["token_refs"]),
+        guest_dir=str(raw.get("guest_dir", "")),
+        slots={str(k): tuple(v) for k, v in raw.get("slots", {}).items()})
+
+
+__all__ = ["AdoptedCredentials", "AdoptedWorkspace", "AdoptionRecord", "credentials_for",
+           "read", "record_for", "write"]

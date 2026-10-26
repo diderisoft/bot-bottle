@@ -165,6 +165,26 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
   never tears the bottle down). Copies of sessions that ended while it was
   down close with what they have.
 
+## Forwarded host logins
+
+A bottle with `agent_provider.forward_host_credentials` gets the host's Claude
+or Codex login read once at launch; the gateway injects it and the agent holds
+a placeholder. The host's own CLI keeps refreshing its login, so every five
+minutes the host controller re-reads it through the provider
+(`AgentProvider.refresh_credentials`, `control/hostctl/credential_refresh.py`)
+and pushes a value that changed to the orchestrator
+(`POST /bottles/<id>/secret`), which the gateway reads per request. Codex's
+placeholder `auth.json` in the guest carries the real token's expiry, so it's
+rewritten when that moves.
+
+This covers bottles the host controller launched and those it adopted after a
+restart: the adoption record keeps which egress slots carry the login (nothing
+secret), and the bottle's `ENV_VAR_SECRET` is read back from inside it. A host
+login that's missing, expired or within six hours of expiring is logged once,
+with what to run on the host, and audited as `credential.renew_failed`; a
+refresh is audited as `credential.renewed`. bot-bottle doesn't spend the host's
+refresh token itself (#769).
+
 ## Snapshots
 
 The console's snapshot button asks the link for `snapshot`

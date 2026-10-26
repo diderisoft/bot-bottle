@@ -14,6 +14,7 @@ import shlex
 import tempfile
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
+from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -119,6 +120,27 @@ class HostDetection:
     login_location: str = ""
     login_command: str = ""
     starter_settings: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CredentialRefreshSpec:
+    """What refreshing a bottle's forwarded host login takes later, none of it
+    secret, so the adoption record can keep it for a restarted host
+    controller: the `token_ref`s carrying the login, and a guest directory the
+    provider keeps credential files in, if any."""
+
+    harness: str
+    token_refs: tuple[str, ...]
+    guest_dir: str = ""
+
+
+@dataclass(frozen=True)
+class CredentialRefresh:
+    """A forwarded host login as it is now: each `token_ref`'s value, and when
+    the login expires (None if it doesn't say)."""
+
+    values: Mapping[str, str]
+    expires_at: datetime | None = None
 
 
 class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plugin interface
@@ -256,6 +278,20 @@ class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plug
         """The entries on the branch the harness has active, for a harness
         whose transcript is a tree. Default: all of them."""
         return entries
+
+    def credential_refresh_spec(self, plan: "BottlePlan") -> CredentialRefreshSpec | None:
+        """How to keep this bottle's forwarded host login current, or None (the
+        default) when it forwards none."""
+        del plan
+        return None
+
+    def refresh_credentials(self, spec: CredentialRefreshSpec, bottle: "Bottle",
+                            host_env: Mapping[str, str] | None = None) -> CredentialRefresh:
+        """Re-read the host login `spec` describes and bring the bottle's own
+        copy up to date (a credential file the harness checks, say). The host
+        controller pushes the values to the gateway. Raises HostLoginError when
+        the host login is missing or expired."""
+        raise NotImplementedError(f"{spec.harness} forwards no host login to refresh")
 
     def provision_ca(self, bottle: "Bottle", plan: "BottlePlan") -> None:
         """Install the egress CA into the agent's trust store (Debian-style by
