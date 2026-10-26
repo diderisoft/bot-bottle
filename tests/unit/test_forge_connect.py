@@ -150,7 +150,7 @@ class TestCommand(_Tmp):
         self.check = self.enterContext(mock.patch.object(
             forge_api, "check_token",
             return_value=forge_api.TokenCheck("bot", "ssh://git@10.0.0.1:30009", 1, 1)))
-        self.enterContext(mock.patch("bot_bottle.cli.commands.forge.fetch_host_key",
+        self.enterContext(mock.patch("bot_bottle.git_gate.host_key.fetch_host_key",
                                      return_value="ssh-ed25519 AAAA"))
 
     def run_cmd(self, *argv: str, token: str = "s3cret-token\n") -> None:
@@ -182,7 +182,7 @@ class TestCommand(_Tmp):
                          set(existing_forges(self.root / "bottles" / "work.md")))
 
     def test_into_a_project_bottle_trusts_it(self) -> None:
-        with mock.patch("bot_bottle.cli.commands.forge.trust_project_bottle") as trust:
+        with mock.patch("bot_bottle.approvals.trust_project_bottle") as trust:
             self.run_cmd("gitea.example.com", "./main")
         self.assertTrue((self.tmp / ".bot-bottle" / "bottles" / "main.md").is_file())
         trust.assert_called_once_with(self.tmp.resolve(), "main")

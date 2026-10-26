@@ -28,17 +28,10 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from ...approvals import trust_project_bottle
 from ...contrib.gitea import forge_api
-from ...forge_connect import (
-    ForgeEntry, bottle_path, default_key, existing_forges, ssh_host_port, write_forge,
-)
-from ...git_gate.host_key import fetch_host_key
+from ...forge_connect import ConnectError, connect as connect_forge, normalize_url
 from ...lib.log import die, info, warn
-from ...manifest.util import ManifestError
-from ...manifest.versions import record_or_warn
 from ...paths import bot_bottle_root, host_secrets_path
-from ...secret_source import write_secret
 from ..constants import PROG
 
 
@@ -67,59 +60,27 @@ def connect(argv: list[str]) -> int:
     if not args or len(args) > 3 or flags - {"--token-stdin", "--no-browser"}:
         die(f"usage: {PROG} forge connect <url> [<bottle>] [<name>] [--ssh URL] "
             f"[--token-stdin] [--no-browser]")
-    url = args[0] if "://" in args[0] else f"https://{args[0]}"
-    url = url.rstrip("/")
-    if not forge_api.is_gitea(url):
-        die(f"{url} doesn't answer as Gitea; only Gitea forges can be connected so far")
-    kind = "gitea"
-    bottle = args[1] if len(args) > 1 else kind
-    try:
-        path, project = bottle_path(bottle, host_bottles=bot_bottle_root() / "bottles",
-                                    cwd=Path(os.getcwd()))
-    except ManifestError as e:
-        die(str(e))
-
+    url = normalize_url(args[0])
+    bottle = args[1] if len(args) > 1 else "gitea"
     token = _read_token(url, from_stdin="--token-stdin" in flags,
                         browser="--no-browser" not in flags)
-    if not token:
-        die("no token given")
     try:
-        check = forge_api.check_token(url, token)
-    except forge_api.ForgeApiError as e:
-        die(f"the token didn't work: {e}\n"
-            f"it needs the scopes {' and '.join(forge_api.TOKEN_SCOPES)}")
-    info(f"the token is {check.account}'s, admin on {check.admin_repos} of the "
-         f"{check.repos} repos it can see; deploy keys can only be added where it's admin")
-    if not check.admin_repos:
-        warn(f"{check.account} can't add a deploy key anywhere yet; give it admin on the "
-             f"repos bottles will grant")
-
-    host = url.split("://", 1)[1].split("/", 1)[0].split(":", 1)[0]
-    ssh = ssh_override or check.ssh or f"ssh://git@{host}"
-    try:
-        host_key = fetch_host_key(*ssh_host_port(ssh))
-        info(f"pinned the SSH host key of {ssh}: {host_key.split()[0]} "
-             f"…{host_key.split()[-1][-12:]}")
-    except RuntimeError as e:
-        host_key = ""
-        warn(f"couldn't fetch the SSH host key of {ssh} ({e}); a launch will ask for it. "
-             f"If the forge's SSH is reachable another way, connect again with --ssh")
-
-    key = args[2] if len(args) > 2 else default_key(url, check.account, existing_forges(path))
-    entry = ForgeEntry(key=key, kind=kind, url=url, ssh=ssh, account=check.account,
-                       host_key=host_key)
-    write_secret(host_secrets_path(), entry.secret_name, token)
-    try:
-        write_forge(path, entry)
-    except ManifestError as e:
-        die(f"{path}: {e}")
-    if project:
-        trust_project_bottle(Path(os.getcwd()), path.stem)
-    else:
-        record_or_warn(f"forge connect: {key} in {path.stem}")
-    info(f"wrote {key} to {path} (token in {host_secrets_path()} as {entry.secret_name})")
-    info(f"grant its repos from a bottle that extends {bottle}:")
-    info(f"  git-gate:\n    repos: [{key}/<owner>/<repo>:write]")
+        done = connect_forge(url, token, bottle=bottle, name=args[2] if len(args) > 2 else "",
+                             ssh=ssh_override, cwd=Path(os.getcwd()),
+                             host_bottles=bot_bottle_root() / "bottles")
+    except ConnectError as e:
+        die(str(e))
+    info(f"the token is {done.account}'s, admin on {done.admin_repos} of the "
+         f"{done.repos} repos it can see; deploy keys can only be added where it's admin")
+    if done.host_key:
+        info(f"pinned the SSH host key of {done.ssh}: {done.host_key.split()[0]} "
+             f"…{done.host_key.split()[-1][-12:]}")
+    for line in done.warnings:
+        warn(line)
+    info(f"wrote {done.key} to {done.path} (token in {host_secrets_path()} as "
+         f"{done.secret_name})")
+    info(f"grant its repos from a bottle that extends {done.bottle}:")
+    info(f"  git-gate:\n    repos: [{done.key}/<owner>/<repo>:write]")
     return 0
 
 

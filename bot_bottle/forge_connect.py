@@ -141,5 +141,95 @@ def ssh_host_port(ssh: str) -> tuple[str, str]:
     return host, port or "22"
 
 
-__all__ = ["ForgeEntry", "bottle_path", "default_key", "existing_forges", "ssh_host_port",
-           "write_forge"]
+class ConnectError(Exception):
+    """The forge couldn't be connected; the message says why."""
+
+
+@dataclass(frozen=True)
+class Connected:
+    """A forge connected: where it was written and what the token can do."""
+
+    key: str
+    bottle: str
+    path: Path
+    account: str
+    admin_repos: int
+    repos: int
+    ssh: str
+    host_key: str
+    secret_name: str
+    warnings: tuple[str, ...] = ()
+
+
+def normalize_url(url: str) -> str:
+    url = url.strip()
+    return (url if "://" in url else f"https://{url}").rstrip("/")
+
+
+def connect(url: str, token: str, *, bottle: str = "gitea", name: str = "", ssh: str = "",
+            cwd: Path, host_bottles: Path) -> Connected:
+    """`bot-bottle forge connect`, for the CLI and the console alike: check the
+    forge answers as Gitea and the token works, pin the forge's SSH host key on
+    first use, keep the token in the host secrets file, and write the forge
+    into `bottle` as a new version. Raises ConnectError saying what's wrong.
+    The token is never logged or returned."""
+    # pylint: disable=import-outside-toplevel
+    from .approvals import trust_project_bottle
+    from .contrib.gitea import forge_api
+    from .git_gate.host_key import fetch_host_key
+    from .manifest.versions import record_or_warn
+    from .paths import host_secrets_path
+    from .secret_source import write_secret
+
+    url = normalize_url(url)
+    if not url.startswith("https://") and not url.startswith("http://"):
+        raise ConnectError(f"{url} isn't an http(s) URL")
+    if ssh and not ssh.startswith("ssh://"):
+        raise ConnectError("the SSH address is ssh://user@host[:port]")
+    if not token.strip():
+        raise ConnectError("no token given")
+    if not forge_api.is_gitea(url):
+        raise ConnectError(f"{url} doesn't answer as Gitea; only Gitea forges can be "
+                           f"connected so far")
+    try:
+        path, project = bottle_path(bottle, host_bottles=host_bottles, cwd=cwd)
+    except ManifestError as e:
+        raise ConnectError(str(e)) from e
+    try:
+        check = forge_api.check_token(url, token.strip())
+    except forge_api.ForgeApiError as e:
+        raise ConnectError(f"the token didn't work: {e}; it needs the scopes "
+                           f"{' and '.join(forge_api.TOKEN_SCOPES)}") from e
+    warnings: list[str] = []
+    if not check.admin_repos:
+        warnings.append(f"{check.account} can't add a deploy key anywhere yet; give it "
+                        f"admin on the repos bottles will grant")
+    host = urlparse(url).hostname or ""
+    ssh = ssh.rstrip("/") or check.ssh or f"ssh://git@{host}"
+    try:
+        host_key = fetch_host_key(*ssh_host_port(ssh))
+    except RuntimeError as e:
+        host_key = ""
+        warnings.append(f"couldn't fetch the SSH host key of {ssh} ({e}); a launch will "
+                        f"ask for it, or connect again with the SSH address that's "
+                        f"reachable from the host")
+    key = name or default_key(url, check.account, existing_forges(path))
+    entry = ForgeEntry(key=key, kind="gitea", url=url, ssh=ssh, account=check.account,
+                       host_key=host_key)
+    write_secret(host_secrets_path(), entry.secret_name, token.strip())
+    try:
+        write_forge(path, entry)
+    except ManifestError as e:
+        raise ConnectError(f"{path}: {e}") from e
+    if project:
+        trust_project_bottle(cwd, path.stem)
+    else:
+        record_or_warn(f"forge connect: {key} in {path.stem}")
+    return Connected(key=key, bottle=bottle, path=path, account=check.account,
+                     admin_repos=check.admin_repos, repos=check.repos, ssh=ssh,
+                     host_key=host_key, secret_name=entry.secret_name,
+                     warnings=tuple(warnings))
+
+
+__all__ = ["ConnectError", "Connected", "ForgeEntry", "bottle_path", "connect", "default_key",
+           "existing_forges", "normalize_url", "ssh_host_port", "write_forge"]

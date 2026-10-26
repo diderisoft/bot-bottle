@@ -35,6 +35,10 @@ The control stream (JSON lines):
 - `refresh_credentials` -> `credentials_refreshed` (`refreshed`, `expires_at`,
   or `error`): re-reads the agent's forwarded host login now
   (`credential_refresh`).
+- `forge_connect` (`url`, `token`, `bottle`, `name`, `ssh`) -> `forge_connected`
+  (`key`, `account`, `admin_repos`, `repos`, `host_key`, `warnings`, or
+  `error`): connects a forge into a host bottle (`remote_actions`). The token
+  goes only to the forge and the secrets file.
 - `snapshot` -> `snapshot_taken` (`snapshot`, or `error`): the agent's
   workspace patch and conversation position, kept on the host (`snapshots`).
 - `transcript` (`agent_id`, `before` or `around`, `limit`) ->
@@ -70,6 +74,7 @@ from ...paths import bot_bottle_root
 from ...util import same_instant
 from .audit_index import query_host_journal
 from .console_terminal import HISTORY_LINES, session_terminals, type_into, valid_size
+from . import remote_actions
 from .remote_requests import launch_extras, resume_request
 from .transcript_serve import TranscriptLink
 
@@ -333,7 +338,10 @@ class ConsoleLink:
         elif kind in TranscriptLink.REQUESTS:
             await self.transcripts.handle(msg)
         elif kind == "refresh_credentials":
-            await self._refresh_credentials(msg)
+            await self._send(await remote_actions.refresh_credentials(
+                msg, self.running, self._bottles))
+        elif kind == "forge_connect":
+            await self._send(await remote_actions.forge_connect(msg))
         elif kind == "snapshot":
             await self._snapshot(msg)
         elif kind != "hello":  # hello only opens the stream
@@ -479,19 +487,6 @@ class ConsoleLink:
             log.warn(f"remote: snapshot of {bottle} failed: {e}")
             reply["error"] = "the snapshot failed; see the host controller's log"
         await self._send(reply)
-
-    async def _refresh_credentials(self, msg: dict[str, Any]) -> None:
-        """Re-read a running agent's forwarded host login now and hand it to
-        the gateway (`credential_refresh`)."""
-        agent_id = str(msg.get("agent_id", ""))
-        bottle = self.running.get(agent_id)
-        refresh = getattr(self._bottles, "refresh_credentials", None)  # BottleService's
-        result: dict[str, object] = (
-            {"error": "that agent isn't running on this host"} if not bottle
-            else {"error": "this host controller can't refresh credentials"} if refresh is None
-            else await asyncio.to_thread(refresh, bottle))
-        await self._send({"type": "credentials_refreshed", "request_id": msg.get("request_id"),
-                          "agent_id": agent_id, **result})
 
     async def push_transcripts(self) -> None:
         await self.transcripts.push(list(self.running))
