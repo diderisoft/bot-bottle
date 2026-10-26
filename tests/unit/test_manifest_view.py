@@ -80,32 +80,6 @@ class TestAgentManifest(unittest.TestCase):
         self.assertIn("SECRET_ISH", current["text"])
         self.assertEqual([("work", True), ("base", True)],
                          [(t["name"], t["in_chain"]) for t in m["bottle_targets"]])
-        r = m["resolved"]
-        self.assertEqual(["LANG", "SECRET_ISH"], r["env"])  # names only
-        self.assertNotIn("literal-value", repr(r))
-        self.assertFalse(r["egress_live"])
-        self.assertEqual([{"host": "example.com", "methods": ["GET"], "paths": ["/v1/"],
-                           "credential": False, "git_fetch": False, "declared": True}],
-                         r["egress"])
-
-    def test_live_egress_and_live_repos(self) -> None:
-        from bot_bottle.git_gate.provision import (  # pylint: disable=import-outside-toplevel
-            DeployKeyRef, _write_upstreams_snapshot, record_live_grant)
-        from bot_bottle.control.git_gate_render import (  # pylint: disable=import-outside-toplevel
-            GitGateUpstream)
-        stage = git_gate_state_dir("s1")
-        stage.mkdir(parents=True)
-        record_live_grant(stage, DeployKeyRef("app", "T", "", "h", "o/app.git"))
-        _write_upstreams_snapshot(stage, (GitGateUpstream(
-            name="app", upstream_url="ssh://git@h/o/app.git", upstream_host="h",
-            upstream_port="", identity_file="", known_host_key="", writable=True),))
-        with mock.patch.object(manifest_view, "_live_policy", return_value=POLICY):
-            r = manifest_view.agent_manifest("s1")["resolved"]
-        self.assertTrue(r["egress_live"])
-        self.assertEqual([("example.com", False, True), ("api.example.com", True, False)],
-                         [(e["host"], e["credential"], e["declared"]) for e in r["egress"]])
-        self.assertEqual([{"name": "app", "url": "ssh://git@h/o/app.git", "writable": True,
-                           "live": True}], r["repos"])
 
     def test_errors(self) -> None:
         with self.assertRaisesRegex(manifest_view.ManifestViewError, "launch record"):

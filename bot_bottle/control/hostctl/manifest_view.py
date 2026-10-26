@@ -42,49 +42,6 @@ def _live_policy(identity: str) -> str | None:
     return policy if isinstance(policy, str) else None
 
 
-def _routes(bottle: Any, policy: str | None) -> tuple[list[dict[str, Any]], bool]:
-    """The bottle's egress routes, live from the orchestrator's `policy` when
-    it answered (True), else as its files declare them (False)."""
-    # pylint: disable-next=import-outside-toplevel
-    from ...gateway.egress.schema import load_config
-    declared = {route.Host for route in bottle.egress.routes}
-    if policy is not None:
-        try:
-            out = []
-            for route in load_config(policy).routes:
-                out.append({
-                    "host": route.host,
-                    "methods": sorted({m for e in route.matches for m in e.methods}),
-                    "paths": sorted({p.value for e in route.matches for p in e.paths}),
-                    "credential": bool(route.token_env), "git_fetch": route.git_fetch,
-                    "declared": route.host in declared})
-            return out, True
-        except Exception:  # pylint: disable=broad-exception-caught  # fall back to the files
-            pass
-    return [{"host": r.Host,
-             "methods": sorted({m for match in r.Matches for m in match.Methods}),
-             "paths": sorted({p.Value for match in r.Matches for p in match.Paths}),
-             "credential": False, "git_fetch": False, "declared": True}
-            for r in bottle.egress.routes], False
-
-
-def _repos(bottle: Any, identity: str) -> list[dict[str, Any]]:
-    # pylint: disable=import-outside-toplevel
-    from ...bottle_state import git_gate_state_dir
-    from ...git_gate.provision import live_grant_refs, load_upstreams_snapshot
-    repos: dict[str, dict[str, Any]] = {
-        e.Name: {"name": e.Name, "url": e.Upstream, "writable": not e.Key.read_only,
-                 "live": False}
-        for e in bottle.git}
-    stage = git_gate_state_dir(identity)
-    live = {r.name for r in live_grant_refs(stage)}
-    for u in load_upstreams_snapshot(stage):
-        if u.name in live:  # granted while it runs, possibly over a launch grant
-            repos[u.name] = {"name": u.name, "url": u.upstream_url, "writable": u.writable,
-                             "live": True}
-    return sorted(repos.values(), key=lambda r: r["name"])
-
-
 def _approved_routes(identity: str, policy: str | None) -> list[Any]:
     """Routes the live policy has that the bottle didn't launch with: approved
     while it runs."""
@@ -375,13 +332,13 @@ def save_as_bottle(identity: str, digest: str, name: str, *,
 
 
 def agent_manifest(identity: str) -> dict[str, Any]:
-    """The manifest of the bottle `identity` runs: its current version and
-    changes (`current`), where they could also be kept (`bottle_file`), and a
-    summary of what it allows (`resolved`). Raises ManifestViewError."""
+    """The manifest of the bottle `identity` runs: what it runs with now
+    against its last saved version (`current`), and the bottles the run's
+    changes could also be written into (`bottle_targets`). Raises
+    ManifestViewError."""
     meta, manifest = _load(identity)
     bottle = manifest.bottle
     policy = _live_policy(identity)
-    routes, live = _routes(bottle, policy)
     names = meta.bottle_names or ((manifest.agent.bottle,) if manifest.agent.bottle else ())
     return {
         "current": current_manifest(identity, bottle, policy),
@@ -389,15 +346,6 @@ def agent_manifest(identity: str) -> dict[str, Any]:
         "agent": meta.agent_name,
         "bottles": list(names),
         "harness": manifest.agent.agent_provider.harness,
-        "resolved": {
-            "egress": routes,
-            "egress_live": live,
-            "repos": _repos(bottle, identity),
-            "forges": [{"name": f.name, "url": f.url} for f in bottle.forges],
-            "env": sorted(bottle.env),
-            "supervise": bottle.supervise,
-            "nested_containers": bottle.nested_containers,
-        },
     }
 
 
