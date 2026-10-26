@@ -15,8 +15,11 @@ def render_manifest(frontmatter: dict[str, object], body: str) -> str:
 def starter_agent(bottle: str, prompt: str, agent_provider: dict[str, object]) -> str:
     """A starter agent bound to `bottle`, with its harness and what it needs
     (`agent_provider`); the body is its prompt, so the marker is a frontmatter
-    comment."""
-    rendered = render_manifest({"bottle": bottle, "agent_provider": agent_provider}, prompt)
+    comment. Starters take typing from the console (`remote.writable`), so a
+    paired phone can talk to them; an agent written by hand stays view-only
+    unless it says so."""
+    rendered = render_manifest({"bottle": bottle, "remote": {"writable": True},
+                                "agent_provider": agent_provider}, prompt)
     return rendered.replace("---\n", f"---\n# {STARTER_MARKER}; edit it freely.\n", 1)
 
 

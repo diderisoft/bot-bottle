@@ -111,7 +111,9 @@ Viewers:
 | remote console | `console_terminal.py` | an iroh stream |
 
 Every non-local viewer starts read-only. It can type only if the agent's
-manifest sets `remote.writable`.
+manifest sets `remote.writable`. The starter agents `bot-bottle setup` writes
+set it, so a paired phone can talk to them; an agent written by hand is
+view-only unless it says so.
 
 ## Transcripts
 
