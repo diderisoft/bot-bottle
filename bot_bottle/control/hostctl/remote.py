@@ -13,6 +13,9 @@ The control stream (JSON lines):
   the console is refused.
 - `stop` -> tears the bottle down; `agent_stopped` follows, also for agents
   that exit on their own.
+- `resume` (`agent_id`, `bottle`) -> relaunches a stopped bottle this host ran,
+  under its own identity and state, as `bot-bottle resume` does
+  (`remote_requests`); `agent_started` or `agent_errored` as for `launch`.
 - `hello` opens the stream. On every (re)connect the host reports agents
   that exited, reopens running ones' relays, and sends `agents_running`.
 - `agent_present` (from the host): a running session the console didn't
@@ -50,7 +53,6 @@ import contextlib
 import hashlib
 import json
 import os
-import re
 import tempfile
 import threading
 import time
@@ -64,6 +66,7 @@ from ...lib import log
 from ...paths import bot_bottle_root
 from ...util import same_instant
 from .console_terminal import HISTORY_LINES, session_terminals, type_into, valid_size
+from .remote_requests import launch_extras, resume_request
 from .transcript_serve import TranscriptLink
 
 if TYPE_CHECKING:
@@ -82,12 +85,7 @@ BACKOFF_SECONDS = (1.0, 2.0, 5.0, 10.0, 30.0)
 WATCH_SECONDS = 2.0
 _REFUSED = 1  # application close codes
 _HOST_STOPPING = 2
-# Bounds on a console launch.
-MAX_PROMPT_CHARS = 20_000
-MAX_BOTTLES = 8
-MAX_LABEL_CHARS = 128
 MAX_AUDIT_EVENTS = 500
-_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 class RemoteError(Exception):
@@ -256,21 +254,6 @@ class Terminal(Protocol):
 TerminalFactory = Callable[[str, str], Awaitable["Terminal | None"]]
 
 
-def _launch_extras(msg: dict[str, Any]) -> tuple[str, tuple[str, ...], str] | str:
-    """A console launch's prompt, bottles and label, or why they're refused."""
-    prompt = msg.get("prompt", "")
-    if not isinstance(prompt, str) or len(prompt) > MAX_PROMPT_CHARS:
-        return f"the prompt must be text of at most {MAX_PROMPT_CHARS} characters"
-    bottles = msg.get("bottles", [])
-    if (not isinstance(bottles, list) or len(bottles) > MAX_BOTTLES
-            or not all(isinstance(b, str) and _NAME.match(b) for b in bottles)):
-        return f"bottles must be a list of at most {MAX_BOTTLES} bottle names"
-    label = msg.get("label", "")
-    if not isinstance(label, str) or len(label) > MAX_LABEL_CHARS:
-        return f"the label must be text of at most {MAX_LABEL_CHARS} characters"
-    return prompt, tuple(bottles), label
-
-
 def query_audit(bottle: str, activation: str | None, limit: int) -> list[dict[str, Any]]:
     """`audit query --bottle --activation --limit` on this host's journal;
     empty without one."""
@@ -342,6 +325,8 @@ class ConsoleLink:
                               "definitions": [{"name": n} for n in self._agents()]})
         elif kind == "launch":
             await self._launch(str(msg.get("agent_id", "")), msg.get("definition"), msg)
+        elif kind == "resume":
+            await self._resume(str(msg.get("agent_id", "")), msg.get("bottle"))
         elif kind == "stop":
             await self._stop(str(msg.get("agent_id", "")))
         elif kind == "approval":
@@ -378,7 +363,7 @@ class ConsoleLink:
         if not isinstance(name, str) or name not in self._agents():
             await self._errored(agent_id, f"no local agent named {name!r} on this host")
             return
-        extras = _launch_extras(msg)
+        extras = launch_extras(msg)
         if isinstance(extras, str):
             await self._errored(agent_id, extras)
             return
@@ -387,6 +372,23 @@ class ConsoleLink:
         request = LaunchRequest(agent=name, assume_yes=True, prompt=prompt,
                                 bottles=bottles, label=label, headless=False,
                                 agent_id=agent_id)
+        await self._start(agent_id, request)
+
+    async def _resume(self, agent_id: str, bottle: object) -> None:
+        """Relaunch a stopped bottle under its own identity, its conversation
+        continuing (the console's Resume)."""
+        if not agent_id:
+            return
+        request = resume_request(
+            agent_id, bottle, agents=self._agents(),
+            running=lambda b: b in self.running.values() or bool(
+                self._bottles.session_state(b).get("running")))
+        if isinstance(request, str):
+            await self._errored(agent_id, request)
+            return
+        await self._start(agent_id, request)
+
+    async def _start(self, agent_id: str, request: LaunchRequest) -> None:
         self._starting.add(agent_id)
         try:
             result = await asyncio.to_thread(self._bottles.launch, request, ROLE_REMOTE)

@@ -334,6 +334,42 @@ class TestConsoleSession(unittest.TestCase):
         asyncio.run(again.handle({"type": "stop", "agent_id": "a1"}))
         self.assertEqual("agent_stopped", sent[-1]["type"])
 
+    def test_resume_relaunches_a_stopped_bottle_under_its_identity(self) -> None:
+        from bot_bottle.bottle_state import BottleMetadata, write_metadata  # pylint: disable=import-outside-toplevel
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))  # pylint: disable=consider-using-with
+        self.addCleanup(use_bottle_root(root))
+        write_metadata(BottleMetadata(identity="old-run", agent_name="implementer", cwd="/w",
+                                      copy_cwd=True, started_at="", label="old run",
+                                      bottle_names=("implementer", "basic")))
+        link, bottles, sent = self._link()
+        asyncio.run(link.handle({"type": "resume", "agent_id": "a9", "bottle": "old-run"}))
+        request, role = bottles.launched[-1]
+        self.assertEqual(("implementer", ("implementer", "basic"), "old-run", "old run", "/w",
+                          True, "a9", remote.ROLE_REMOTE),
+                         (request.agent, request.bottles, request.identity, request.label,
+                          request.cwd, request.copy_cwd, request.agent_id, role))
+        self.assertEqual("agent_started", sent[-1]["type"])
+        self.assertEqual("a9", sent[-1]["agent_id"])
+
+    def test_resume_is_refused_for_what_cant_be_resumed(self) -> None:
+        from bot_bottle.bottle_state import BottleMetadata, write_metadata  # pylint: disable=import-outside-toplevel
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))  # pylint: disable=consider-using-with
+        self.addCleanup(use_bottle_root(root))
+        write_metadata(BottleMetadata(identity="gone-agent", agent_name="deleted", cwd="",
+                                      copy_cwd=False, started_at=""))
+        write_metadata(BottleMetadata(identity="busy", agent_name="implementer", cwd="",
+                                      copy_cwd=False, started_at=""))
+        link, bottles, sent = self._link()
+        bottles.running.add("busy")
+        for bottle, why in (("../x", "the bottle it ran as"), ("nothing-saved", "no saved state"),
+                            ("gone-agent", "no longer has the agent"),
+                            ("busy", "still running")):
+            with self.subTest(bottle=bottle):
+                asyncio.run(link.handle({"type": "resume", "agent_id": "a9", "bottle": bottle}))
+                self.assertEqual("agent_errored", sent[-1]["type"])
+                self.assertIn(why, sent[-1]["message"])
+        self.assertEqual([], bottles.launched)
+
     def test_a_relay_that_ended_is_reopened(self) -> None:
         # A broken console stream ends a relay; typing, the watch and a
         # reconnect each bring it back rather than leaving the agent mute.
