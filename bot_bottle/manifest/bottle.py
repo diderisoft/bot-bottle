@@ -9,6 +9,7 @@ from typing import Mapping
 
 from .util import ManifestError, as_json_object
 from .egress import ManifestEgressConfig
+from .forges import ManifestForge
 from .git import ManifestGitEntry, ManifestGitUser, parse_git_gate_config
 from .schema import BOTTLE_KEYS
 
@@ -68,6 +69,9 @@ class ManifestBottle:
     # modes.
     nested_containers: bool = False
     audit: ManifestAudit = field(default_factory=ManifestAudit)
+    # Forges declared in the bottle's chain (`git-gate.forges`), set while
+    # `extends` is resolved.
+    forges: tuple[ManifestForge, ...] = ()
     # Fields the source declared, so an explicit `false` survives extends
     # merging.
     declared_fields: frozenset[str] = frozenset()

@@ -70,12 +70,14 @@ def validate_unique_git_names(bottle_name: str, git: tuple[ManifestGitEntry, ...
 class ManifestKeyConfig:
     """A repo's SSH key: `provider` `static` (`path`, a host key file) or
     `gitea` (a deploy key via the API; `forge_token_env` names the token's host
-    var, read at provision time; `api_url` defaults from the upstream host)."""
+    var, read at provision time; `api_url` defaults from the upstream host;
+    `read_only` mints a key that can't push)."""
 
     provider: str
     path: str = ""
     forge_token_env: str = ""
     api_url: str = ""
+    read_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -174,10 +176,11 @@ def _parse_key_config(
 
     if provider == "gitea":
         for k in d:
-            if k not in {"provider", "forge_token_env", "api_url"}:
+            if k not in {"provider", "forge_token_env", "api_url", "read_only"}:
                 raise ManifestError(
                     f"bottle '{bottle_name}' {label}.key has unknown key {k!r} "
-                    f"for provider 'gitea'; allowed: provider, forge_token_env, api_url"
+                    f"for provider 'gitea'; allowed: provider, forge_token_env, "
+                    f"api_url, read_only"
                 )
         forge_token_env = d.get("forge_token_env")
         if not isinstance(forge_token_env, str) or not forge_token_env:
@@ -190,10 +193,16 @@ def _parse_key_config(
             raise ManifestError(
                 f"bottle '{bottle_name}' {label}.key 'api_url' must be a string"
             )
+        read_only = d.get("read_only", False)
+        if not isinstance(read_only, bool):
+            raise ManifestError(
+                f"bottle '{bottle_name}' {label}.key 'read_only' must be true or false"
+            )
         return ManifestKeyConfig(
             provider=provider,
             forge_token_env=forge_token_env,
             api_url=api_url_raw,
+            read_only=read_only,
         )
 
     # provider == "static"

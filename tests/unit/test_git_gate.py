@@ -94,11 +94,11 @@ class TestProvisionRender(unittest.TestCase):
         self.assertEqual(2, len(lines_with_init))
         self.assertEqual(
             ["init_repo", "bot-bottle",
-             "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git"],
+             "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git", "false"],
             _shlex.split(lines_with_init[0]),
         )
         self.assertEqual(
-            ["init_repo", "foo", "ssh://git@github.com/didericis/foo.git"],
+            ["init_repo", "foo", "ssh://git@github.com/didericis/foo.git", "false"],
             _shlex.split(lines_with_init[1]),
         )
         # Repos must opt in to smart-HTTP pushes.
@@ -141,7 +141,7 @@ class TestProvisionRender(unittest.TestCase):
         script = _render_provision(ups)
         line = next(l for l in script.splitlines() if l.startswith("init_repo "))
         tokens = _shlex.split(line)
-        self.assertEqual(3, len(tokens))
+        self.assertEqual(4, len(tokens))
         self.assertEqual("myrepo", tokens[1])
         self.assertEqual(raw_url, tokens[2])
 

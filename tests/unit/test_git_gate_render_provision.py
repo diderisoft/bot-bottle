@@ -52,8 +52,10 @@ class _FakeProvisioner:
         self.created: list[tuple[str, str]] = []
         self.deleted: list[tuple[str, str]] = []
 
-    def create(self, owner_repo: str, title: str) -> tuple[str, bytes]:
+    def create(self, owner_repo: str, title: str, *,
+               read_only: bool = False) -> tuple[str, bytes]:
         self.created.append((owner_repo, title))
+        self.read_only = read_only
         return "kid123", b"PRIVATE-KEY-BYTES"
 
     def delete(self, owner_repo: str, key_id: str) -> None:

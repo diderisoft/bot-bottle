@@ -67,6 +67,7 @@ class GitGate:
                     identity_file=u.identity_file,
                     known_host_key=u.known_host_key,
                     known_hosts_file=known_hosts_file,
+                    writable=u.writable,
                 )
             )
         return GitGatePlan(

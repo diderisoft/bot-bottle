@@ -27,10 +27,11 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
         self._token = token
         self._api_url = api_url.rstrip("/")
 
-    def create(self, owner_repo: str, title: str) -> tuple[str, bytes]:
-        """Generate an ed25519 keypair, register the public half as a writable
-        deploy key (git-gate pushes with it), and return `(key_id,
-        private_key_bytes)`."""
+    def create(self, owner_repo: str, title: str, *,
+               read_only: bool = False) -> tuple[str, bytes]:
+        """Generate an ed25519 keypair, register the public half as a deploy
+        key (writable unless `read_only`; git-gate pushes with it), and return
+        `(key_id, private_key_bytes)`."""
         with tempfile.TemporaryDirectory() as tmpdir:
             key_path = Path(tmpdir) / "key"
             subprocess.run(
@@ -51,7 +52,7 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
         url = f"{self._api_url}/api/v1/repos/{owner}/{repo}/keys"
         payload = json.dumps({
             "key": public_key,
-            "read_only": False,
+            "read_only": read_only,
             "title": title,
         }).encode()
         req = urllib.request.Request(

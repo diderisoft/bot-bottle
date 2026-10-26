@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 from .bottle import ManifestAudit, ManifestBottle
 from .egress import ManifestEgressConfig, validate_egress_routes
+from .forges import (
+    ManifestForge, credentials_raw, expand_grants, forges_raw, merge_named, resolve_forge, strip_chain_keys,
+)
 from .git import ManifestGitUser, parse_git_gate_config
 from .util import ManifestError, as_json_object
 
@@ -77,8 +82,15 @@ def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle
             base, override, "nested_containers"
         ),
         audit=_overlay_audit(base, override),
+        forges=_union_forges(base, override),
         declared_fields=base.declared_fields | override.declared_fields,
     )
+
+
+def _union_forges(base: ManifestBottle, override: ManifestBottle) -> tuple[ManifestForge, ...]:
+    by_name = {f.name: f for f in base.forges}
+    by_name.update((f.name, f) for f in override.forges)
+    return tuple(by_name.values())
 
 
 def resolve_bottles(raws: dict[str, dict[str, object]]) -> dict[str, ManifestBottle]:
@@ -87,10 +99,37 @@ def resolve_bottles(raws: dict[str, dict[str, object]]) -> dict[str, ManifestBot
     # Each bottle's effective repos as raw dicts, so a child can merge per
     # field against its parent's.
     repos_cache: dict[str, dict[str, object]] = {}
+    # Each bottle's effective credentials and forges, which its repo grants
+    # (and its children's) resolve against.
+    chain_cache: dict[str, tuple[dict[str, object], dict[str, object]]] = {}
     for name in raws:
         if name not in cache:
-            _resolve_one_bottle(name, raws, cache, repos_cache, ())
+            _resolve_one_bottle(name, raws, cache, repos_cache, (), chain_cache=chain_cache)
     return cache
+
+
+def _with_chain(name: str, raw: dict[str, object], parent_names: list[str],
+                chain_cache: dict[str, tuple[dict[str, object], dict[str, object]]],
+                ) -> dict[str, object]:
+    """`raw` with its repo grants expanded against the credentials and forges
+    of its chain (parents merged, then its own on top), and those two keys
+    removed; records the chain's for its children."""
+    creds: dict[str, object] = {}
+    forges: dict[str, object] = {}
+    for pname in parent_names:
+        parent_creds, parent_forges = chain_cache[pname]
+        creds = merge_named(creds, parent_creds, "credential")
+        forges = merge_named(forges, parent_forges, "forge")
+    creds = {**creds, **credentials_raw(name, raw)}
+    forges = {**forges, **forges_raw(name, raw)}
+    chain_cache[name] = (creds, forges)
+    return strip_chain_keys(expand_grants(name, raw, forges, creds))
+
+
+def _chain_forges(name: str, chain_cache: dict[str, tuple[dict[str, object], dict[str, object]]],
+                  ) -> tuple[ManifestForge, ...]:
+    creds, forges = chain_cache[name]
+    return tuple(resolve_forge(f, raw, creds, name) for f, raw in forges.items())
 
 
 def _resolve_one_bottle(
@@ -99,6 +138,8 @@ def _resolve_one_bottle(
     cache: dict[str, ManifestBottle],
     repos_cache: dict[str, dict[str, object]],
     seen: tuple[str, ...],
+    *,
+    chain_cache: dict[str, tuple[dict[str, object], dict[str, object]]],
 ) -> ManifestBottle:
     if name in cache:
         return cache[name]
@@ -111,7 +152,9 @@ def _resolve_one_bottle(
     child_raw = {k: v for k, v in raw.items() if k != "extends"}
 
     if parent_name_raw is None:
-        bottle = ManifestBottle.from_dict(name, child_raw)
+        child_raw = _with_chain(name, child_raw, [], chain_cache)
+        bottle = dataclasses.replace(ManifestBottle.from_dict(name, child_raw),
+                                     forges=_chain_forges(name, chain_cache))
         cache[name] = bottle
         repos_cache[name] = _resolve_repos_raw({}, child_raw)
         return bottle
@@ -149,10 +192,13 @@ def _resolve_one_bottle(
             )
 
     combined_parent, combined_repos_raw = _fold_parents(
-        parent_names, raws, cache, repos_cache, seen + (name,)
+        parent_names, raws, cache, repos_cache, seen + (name,), chain_cache=chain_cache
     )
+    child_raw = _with_chain(name, child_raw, parent_names, chain_cache)
     merged_repos_raw = _resolve_repos_raw(combined_repos_raw, child_raw)
-    bottle = _merge_bottles(combined_parent, child_raw, merged_repos_raw, name)
+    bottle = dataclasses.replace(
+        _merge_bottles(combined_parent, child_raw, merged_repos_raw, name),
+        forges=_chain_forges(name, chain_cache))
     cache[name] = bottle
     repos_cache[name] = merged_repos_raw
     return bottle
@@ -164,14 +210,18 @@ def _fold_parents(
     cache: dict[str, ManifestBottle],
     repos_cache: dict[str, dict[str, object]],
     seen: tuple[str, ...],
+    *,
+    chain_cache: dict[str, tuple[dict[str, object], dict[str, object]]],
 ) -> tuple[ManifestBottle, dict[str, object]]:
     """Resolve each parent and fold left to right, later winning. `seen`
     carries this bottle's name for cycle detection across every parent edge."""
     first = parent_names[0]
-    effective = _resolve_one_bottle(first, raws, cache, repos_cache, seen)
+    effective = _resolve_one_bottle(first, raws, cache, repos_cache, seen,
+                                    chain_cache=chain_cache)
     effective_repos_raw = repos_cache[first]
     for pname in parent_names[1:]:
-        later = _resolve_one_bottle(pname, raws, cache, repos_cache, seen)
+        later = _resolve_one_bottle(pname, raws, cache, repos_cache, seen,
+                                    chain_cache=chain_cache)
         later_repos_raw = repos_cache[pname]
         effective, effective_repos_raw = _fold_two_bottles(
             effective, effective_repos_raw, later, later_repos_raw

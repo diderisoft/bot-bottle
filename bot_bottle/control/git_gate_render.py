@@ -29,6 +29,8 @@ class GitGateUpstream:
     identity_file: str
     known_host_key: str
     known_hosts_file: Path = Path()
+    # False for a read-only grant: the gate refuses pushes to it.
+    writable: bool = True
 
 def git_gate_upstreams_for_bottle(bottle: ManifestBottle) -> tuple[GitGateUpstream, ...]:
     """Each `bottle.git` entry as a GitGateUpstream (names were checked at
@@ -41,6 +43,7 @@ def git_gate_upstreams_for_bottle(bottle: ManifestBottle) -> tuple[GitGateUpstre
             upstream_port=e.UpstreamPort,
             identity_file=e.IdentityFile,
             known_host_key=e.KnownHostKey,
+            writable=not e.Key.read_only,
         )
         for e in bottle.git
     )
@@ -107,6 +110,7 @@ def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
         "init_repo() {",
         "  name=$1",
         "  upstream_url=$2",
+        "  read_only=$3",
         f"  keyfile={creds_dir}/${{name}}-key",
         f"  hostsfile={creds_dir}/${{name}}-known_hosts",
         "",
@@ -128,6 +132,7 @@ def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
         "  git -C \"$repo\" config receive.denyCurrentBranch ignore",
         "  git -C \"$repo\" config receive.advertisePushOptions true",
         "  git -C \"$repo\" config http.receivepack true",
+        "  git -C \"$repo\" config git-gate.readOnly \"$read_only\"",
         "  install -m 755 /etc/git-gate/pre-receive \"$repo/hooks/pre-receive\"",
         "}",
     ]
@@ -152,7 +157,8 @@ def git_gate_render_provision(
     lines += _git_gate_init_repo_fn(repo_root, creds_dir)
     lines += ["", f"mkdir -p {shlex.quote(repo_root)}"]
     for u in upstreams:
-        lines.append(f"init_repo {shlex.quote(u.name)} {shlex.quote(u.upstream_url)}")
+        lines.append(f"init_repo {shlex.quote(u.name)} {shlex.quote(u.upstream_url)} "
+                     f"{'false' if u.writable else 'true'}")
     return "\n".join(lines) + "\n"
 
 
@@ -170,6 +176,13 @@ trap 'rm -f "$refs_file"' EXIT
 cat > "$refs_file"
 
 zero=0000000000000000000000000000000000000000
+
+# A read-only grant: the deploy key can't push, so refuse before scanning.
+if [ "$(git config --bool git-gate.readOnly 2>/dev/null)" = "true" ]; then
+  echo "git-gate: this repo is granted read-only to the bottle; pushing needs" >&2
+  echo "git-gate: a :write grant (ask the operator to change the bottle)" >&2
+  exit 1
+fi
 
 # Record a push decision in the audit journal. Best effort: it never fails
 # or delays the push beyond its short send timeout.

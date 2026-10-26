@@ -49,7 +49,12 @@ def grants(bottle: ManifestBottle) -> list[str]:
             what += f", with ${route.TokenRef}"
         lines.append(f"reach   {route.Host:<30} {what}")
     for repo in bottle.git:
-        lines.append(f"push    {repo.Upstream}")
+        line = f"{'fetch' if repo.Key.read_only else 'push':<7} {repo.Upstream}"
+        if repo.Key.provider == "gitea":
+            # The forge token goes to the API that mints the key.
+            api = repo.Key.api_url or f"https://{repo.UpstreamHost}"
+            line += f" (key minted at {api} with ${repo.Key.forge_token_env})"
+        lines.append(line)
     for name, value in sorted(bottle.env.items()):
         if "${" in value or value == "?":
             lines.append(f"read    {name} (from your environment or secrets)")

@@ -45,7 +45,8 @@ def _provision_dynamic_key(
     title = f"bot-bottle:{globalize_slug(slug)}:{entry.Name}"
 
     info(f"provisioning deploy key for git-gate.repos[{entry.Name!r}]")
-    key_id, private_key_bytes = provisioner.create(owner_repo, title)
+    key_id, private_key_bytes = provisioner.create(owner_repo, title,
+                                                   read_only=pk.read_only)
 
     key_file = stage_dir / f"{entry.Name}-key"
     key_file.write_bytes(private_key_bytes)
@@ -177,6 +178,7 @@ def _write_upstreams_snapshot(
             "upstream_port": u.upstream_port,
             "identity_file": u.identity_file,
             "known_host_key": u.known_host_key,
+            "writable": u.writable,
         }
         for u in upstreams
     ]
@@ -202,6 +204,7 @@ def load_upstreams_snapshot(stage_dir: Path) -> tuple[GitGateUpstream, ...]:
             identity_file=u.get("identity_file", ""),
             known_host_key=u.get("known_host_key", ""),
             known_hosts_file=known_hosts if known_hosts.is_file() else Path(),
+            writable=u.get("writable", True),
         ))
     return tuple(upstreams)
 

@@ -27,11 +27,53 @@ Key providers:
 - `static`: a key file already on the host.
 - `gitea`: a fresh ed25519 deploy key is added through the forge API at
   launch and revoked at teardown (`git_gate/provision.py`,
-  `contrib/gitea/deploy_key_provisioner.py`).
+  `contrib/gitea/deploy_key_provisioner.py`). `read_only: true` mints one
+  that can't push.
 
 Without a `host_key`, an interactive launch fetches one with `ssh-keyscan`,
 asks the operator to confirm it, and can save it to the bottle file
 (`git_gate/host_key.py`). A headless launch refuses to start.
+
+### Forges and one-line grants
+
+A bottle can declare a forge once and grant repos on it in a line
+(`manifest/forges.py`, [PRD 0103](../prds/0103-forge-connect-and-bottle-onboarding.md)).
+The forge usually lives in its own bottle that others extend:
+
+```yaml
+# ~/.bot-bottle/bottles/gitea.md
+credentials:
+  gitea-api: { source: secret, secret: GITEA_TOKEN }   # value in ~/.bot-bottle/secrets
+git-gate:
+  forges:
+    gitea.example.com:                # the host, or <account>@<host>
+      kind: gitea
+      url: https://gitea.example.com
+      ssh: ssh://git@gitea.example.com:30009   # default ssh://git@<url host>
+      token: $gitea-api
+      host_key: ssh-ed25519 AAAA...
+
+# a bottle that extends it
+extends: [gitea, basic]
+git-gate:
+  repos:
+    - gitea.example.com/acme/app:write
+    - gitea.example.com/acme/lib      # read-only
+```
+
+While `extends` is resolved, each grant becomes the long form above: a
+`gitea` key minted per launch with the forge's token, the forge's host key,
+and `read_only` unless the grant ends in `:write`. A mapping
+(`repos: {site: gitea.example.com/acme/app}`) names the gate repo; the list
+form names it after the repo. Forges and credentials merge by name through
+`extends`, a child's winning; two parents declaring one differently is a load
+error. A grant on a forge no bottle in the chain declares fails at load.
+Only the `secret` credential source exists so far.
+
+A read-only repo is marked `git-gate.readOnly` in its bare repo, and the
+pre-receive hook refuses pushes to it before scanning, saying a `:write` grant
+is needed. The trust prompt shows each repo as `fetch` or `push`, and where
+its key is minted with which secret.
 
 ## Agent side
 

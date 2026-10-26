@@ -14,10 +14,12 @@ class DeployKeyProvisioner(ABC):
     """One deploy key's lifecycle on a forge."""
 
     @abstractmethod
-    def create(self, owner_repo: str, title: str) -> tuple[str, bytes]:
+    def create(self, owner_repo: str, title: str, *,
+               read_only: bool = False) -> tuple[str, bytes]:
         """Generate a keypair and register the public half as a deploy key on
-        `owner_repo` (`<owner>/<repo>`) under `title`. Returns `(key_id,
-        private_key_bytes)`; `key_id` is only passed back to `delete`."""
+        `owner_repo` (`<owner>/<repo>`) under `title`, unable to push when
+        `read_only`. Returns `(key_id, private_key_bytes)`; `key_id` is only
+        passed back to `delete`."""
 
     @abstractmethod
     def delete(self, owner_repo: str, key_id: str) -> None:
