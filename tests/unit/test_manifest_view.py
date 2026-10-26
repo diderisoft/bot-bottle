@@ -261,6 +261,30 @@ class TestRunningBottle(TestAgentManifest):
         self.assertTrue(history(work, root=Path(os.environ["BOT_BOTTLE_ROOT"]))[0]
                         .message.startswith("keep from the console: docs.example.com"))
 
+    def test_save_as_a_new_bottle(self) -> None:
+        from bot_bottle import run_manifest  # pylint: disable=import-outside-toplevel
+        from bot_bottle.contract.yaml_subset import parse_frontmatter  # pylint: disable=import-outside-toplevel
+        from bot_bottle.manifest.loader import load_bottle_chain  # pylint: disable=import-outside-toplevel
+        root = Path(os.environ["BOT_BOTTLE_ROOT"])
+        with mock.patch.object(manifest_view, "_live_policy", return_value=LIVE_POLICY):
+            _, manifest = manifest_view._load("s1")  # pylint: disable=protected-access
+            shown = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
+            for name, why in (("work", "already a bottle"), ("../x", "letters, digits"),
+                              ("./main", "letters, digits")):
+                with self.assertRaisesRegex(manifest_view.ManifestViewError, why):
+                    manifest_view.save_as_bottle("s1", shown["digest"], name)
+            with self.assertRaisesRegex(manifest_view.ManifestViewError, "changed since"):
+                manifest_view.save_as_bottle("s1", "stale", "snap")
+            saved = manifest_view.save_as_bottle("s1", shown["digest"], "snap")
+        self.assertEqual({"version": 2, "new_bottle": "snap"}, saved)
+        text = (root / "bottles" / "snap.md").read_text()
+        self.assertNotIn("extends", parse_frontmatter(text)[0])
+        self.assertIn("helper's run", text)
+        snap, _ = load_bottle_chain("snap", [(root / "bottles", False)])
+        self.assertEqual({"LANG": "C.UTF-8", "SECRET_ISH": "literal-value"}, dict(snap.env))
+        self.assertIn("docs.example.com", [r.Host for r in snap.egress.routes])
+        self.assertEqual("saved as bottle snap", run_manifest.versions("s1")[-1]["message"])
+
     def test_keep_target_falls_back_to_the_agents_bottle(self) -> None:
         from bot_bottle.approvals import keep_target  # pylint: disable=import-outside-toplevel
         write_metadata(BottleMetadata(identity="s3", agent_name="helper", cwd="",
@@ -285,6 +309,11 @@ class TestManifestSaveRequest(unittest.TestCase):
         with mock.patch.object(manifest_view, "save_manifest", return_value={"version": 3}) as save:
             self.ask({"a1": "s1"}, bottle="yes")  # only a real true
         save.assert_called_once_with("s1", "d", also_bottle=False)
+        with mock.patch.object(manifest_view, "save_as_bottle",
+                               return_value={"version": 4, "new_bottle": "snap"}) as save_as:
+            reply = self.ask({"a1": "s1"}, new_bottle="snap")
+        save_as.assert_called_once_with("s1", "d", "snap")
+        self.assertEqual("snap", reply["new_bottle"])
 
     def test_errors(self) -> None:
         self.assertIn("isn't running", str(self.ask({})["error"]))

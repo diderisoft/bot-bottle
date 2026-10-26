@@ -275,4 +275,6 @@ policy has beyond the launch routes (`state/<bottle>/egress/routes.yaml`), and
 repos granted while it runs. It also lists what can't be kept (a route
 carrying a credential) and a digest. `manifest_save` writes it as the next
 version if the digest still matches, and with `bottle` also writes the run's
-changes into the bottle "keep" writes to.
+changes into the bottle "keep" writes to. With `new_bottle` it writes the
+manifest as a new host bottle of that name instead: the whole chain flattened,
+no `extends`, refused if the name is taken. It's recorded as a version too.

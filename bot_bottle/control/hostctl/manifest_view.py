@@ -8,6 +8,7 @@ and carry secrets by reference (`$label`, `secret: NAME`), not by value.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -262,6 +263,35 @@ def save_manifest(identity: str, digest: str, *, also_bottle: bool) -> dict[str,
     return saved
 
 
+_BOTTLE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def save_as_bottle(identity: str, digest: str, name: str) -> dict[str, Any]:
+    """Write the manifest the agent runs with now as a new host bottle `name`
+    (standalone: the whole chain flattened), if it's still what the console
+    showed, and record it as the agent's next version. Raises
+    ManifestViewError."""
+    # pylint: disable=import-outside-toplevel
+    from ... import run_manifest
+    from ...approvals import KeepTarget, bottle_text, save_bottle
+    from ...paths import bot_bottle_root
+    if not _BOTTLE_NAME.match(name) or name.endswith(".md"):
+        raise ManifestViewError("a bottle name is letters, digits, '.', '_' and '-'")
+    path = bot_bottle_root() / "bottles" / f"{name}.md"
+    if path.exists():
+        raise ManifestViewError(f"there's already a bottle named {name}")
+    meta, manifest = _load(identity)
+    current = current_manifest(identity, manifest.bottle, _live_policy(identity))
+    if current["digest"] != digest:
+        raise ManifestViewError("the manifest changed since it was shown; refresh and try again")
+    body = (f"Saved from {meta.agent_name}'s run ({identity}) in the console: everything it "
+            f"ran with, its bottles flattened into one.")
+    save_bottle(KeepTarget(path, None), bottle_text(current["data"], body),
+                f"save {identity}'s manifest as {name}")
+    return {"version": run_manifest.record(identity, current["data"], f"saved as bottle {name}"),
+            "new_bottle": name}
+
+
 def agent_manifest(identity: str) -> dict[str, Any]:
     """The manifest of the bottle `identity` runs: its current version and
     changes (`current`), where they could also be kept (`bottle_file`), and a
@@ -293,4 +323,4 @@ def agent_manifest(identity: str) -> dict[str, Any]:
 
 
 __all__ = ["ManifestViewError", "agent_manifest", "current_manifest", "running_bottle",
-           "save_manifest"]
+           "save_as_bottle", "save_manifest"]
