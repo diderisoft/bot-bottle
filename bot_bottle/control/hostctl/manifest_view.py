@@ -21,25 +21,6 @@ def _shown(path: Path) -> str:
     return "~" + str(path)[len(home):] if str(path).startswith(home + "/") else str(path)
 
 
-def _data(text: str) -> dict[str, Any]:
-    """A manifest file's frontmatter as data, for the console's table view."""
-    # pylint: disable-next=import-outside-toplevel
-    from ...contract.yaml_subset import YamlSubsetError, parse_frontmatter
-    try:
-        return dict(parse_frontmatter(text)[0])
-    except YamlSubsetError:
-        return {}
-
-
-def _file(kind: str, name: str, path: Path, project: bool = False) -> dict[str, Any]:
-    try:
-        text = path.read_text()
-    except OSError as e:
-        text = f"# couldn't read {path}: {e.strerror}"
-    return {"kind": kind, "name": name, "path": _shown(path), "project": project, "text": text,
-            "data": _data(text)}
-
-
 def _live_policy(identity: str) -> str | None:
     """The egress policy the orchestrator holds for the running bottle (the
     bottle's routes, the agent provider's, and any approved since launch;
@@ -165,65 +146,140 @@ def running_bottle(identity: str, policy: str | None) -> dict[str, Any] | None:
             "unkept": unkept, "digest": hashlib.sha256(updated.encode()).hexdigest()}
 
 
-def save_running(identity: str, digest: str) -> str:
-    """Keep this run's changes in its bottle, if they're still what the console
-    showed (`digest`). Returns where. Raises ManifestViewError."""
-    # pylint: disable=import-outside-toplevel
-    from ...approvals import keep_target, save_bottle
-    running = running_bottle(identity, _live_policy(identity))
-    target = keep_target(identity)
-    if running is None or target is None:
-        raise ManifestViewError("this bottle has nowhere to keep changes")
-    if running["digest"] != digest:
-        raise ManifestViewError("the bottle changed since it was shown; refresh and try again")
-    if not running["changes"]:
-        raise ManifestViewError("there's nothing to keep")
-    whats = ", ".join(c["what"] for c in running["changes"])
-    save_bottle(target, running["updated"], f"keep from the console: {whats}")
-    return str(running["target"])
-
-
-def agent_manifest(identity: str) -> dict[str, Any]:
-    """The manifest of the bottle `identity` runs. Raises ManifestViewError."""
+def _load(identity: str) -> tuple[Any, Any]:
+    """The bottle's launch record and its agent's manifest as the files are
+    now. Raises ManifestViewError."""
     # pylint: disable=import-outside-toplevel
     from ...bottle_state import read_metadata
     from ...manifest.index import ManifestIndex
-    from ...manifest.loader import load_bottle_chain, scan_agent_names
     from ...manifest.util import ManifestError
     meta = read_metadata(identity)
     if meta is None:
         raise ManifestViewError("this bottle's launch record is missing")
     try:
         index = ManifestIndex.resolve(meta.cwd or str(Path.home()))
-        manifest = index.load_for_agent(meta.agent_name, meta.bottle_names or None)
+        return meta, index.load_for_agent(meta.agent_name, meta.bottle_names or None)
     except ManifestError as e:
         raise ManifestViewError(f"the manifest doesn't load as it is now: {e}") from e
-    files: list[dict[str, Any]] = []
-    agents = {**scan_agent_names(index.home_md / "agents")} if index.home_md else {}
-    if index.cwd_md is not None:
-        agents.update(scan_agent_names(index.cwd_md / "agents"))
-    if meta.agent_name in agents:
-        files.append(_file("agent", meta.agent_name, agents[meta.agent_name]))
-    seen: set[Path] = set()
-    names = meta.bottle_names or ((manifest.agent.bottle,) if manifest.agent.bottle else ())
-    for name in names:
-        try:
-            _, sources = load_bottle_chain(name, index.bottle_dirs())
-        except ManifestError:
+
+
+def _live_repo(ref: Any, upstream: Any) -> dict[str, object]:
+    """A live grant as a long-form repo, like `manifest.document.repo_document`."""
+    key: dict[str, object] = {"provider": "gitea", "forge_token_env": ref.forge_token_env}
+    if ref.api_url:
+        key["api_url"] = ref.api_url
+    if not upstream.writable:
+        key["read_only"] = True
+    repo: dict[str, object] = {"url": upstream.upstream_url, "key": key}
+    if upstream.known_host_key:
+        repo["host_key"] = upstream.known_host_key
+    return repo
+
+
+def current_manifest(identity: str, bottle: Any, policy: str | None) -> dict[str, Any]:
+    """The agent's latest manifest version, and the manifest it runs with now:
+    that version with the supervisor's changes since (egress approved, repos
+    granted). A route carrying a credential is allowed once only, so it's
+    listed, not added. A bottle launched before versions were kept gets
+    version 1 from its files as they are now."""
+    # pylint: disable=import-outside-toplevel
+    import copy
+    import hashlib
+    from ... import run_manifest
+    from ...approvals import with_routes
+    from ...bottle_state import git_gate_state_dir
+    from ...git_gate.provision import live_grant_refs, load_upstreams_snapshot
+    from ...manifest.document import bottle_document
+    last = run_manifest.latest(identity)
+    if last is None:
+        run_manifest.record(identity, bottle_document(bottle),
+                            "the bottle files when first viewed")
+        last = run_manifest.latest(identity)
+        assert last is not None
+    entry, base = last
+    doc = copy.deepcopy(base)
+    changes: list[dict[str, str]] = []
+    unkept: list[dict[str, str]] = []
+    for route in _approved_routes(identity, policy):
+        if route.auth_scheme or route.token_env:
+            unkept.append({"kind": "egress", "what": route.host,
+                           "why": "carries a credential, so it's allowed once only"})
             continue
-        for source in sources:
-            if source.path not in seen:
-                seen.add(source.path)
-                files.append(_file("bottle", source.name, source.path, source.project))
+        after = with_routes(doc, [route])
+        if after != doc:
+            doc = after
+            changes.append({"kind": "egress", "what": route.host})
+    stage = git_gate_state_dir(identity)
+    upstreams = {u.name: u for u in load_upstreams_snapshot(stage)}
+    for ref in live_grant_refs(stage):
+        upstream = upstreams.get(ref.name)
+        if upstream is None:
+            continue
+        raw_git = doc.get("git-gate")
+        git: dict[str, object] = dict(raw_git) if isinstance(raw_git, dict) else {}
+        raw_repos = git.get("repos")
+        repos: dict[str, object] = dict(raw_repos) if isinstance(raw_repos, dict) else {}
+        repo = _live_repo(ref, upstream)
+        if repos.get(ref.name) != repo:
+            repos[ref.name] = repo
+            git["repos"] = repos
+            doc["git-gate"] = git
+            access = "write" if upstream.writable else "read-only"
+            changes.append({"kind": "repo", "what": f"{ref.name} ({access})"})
+    text = run_manifest.document_text(doc)
+    return {"version": entry["version"], "saved_at": entry.get("at", ""),
+            "message": entry.get("message", ""), "versions": len(run_manifest.versions(identity)),
+            "base": run_manifest.document_text(base), "text": text, "data": doc,
+            "changes": changes, "unkept": unkept,
+            "digest": hashlib.sha256(text.encode()).hexdigest()}
+
+
+def save_manifest(identity: str, digest: str, *, also_bottle: bool) -> dict[str, Any]:
+    """Save the manifest the agent runs with now as its next version, if it's
+    still what the console showed (`digest`); with `also_bottle`, also keep
+    the run's changes in its bottle file. Raises ManifestViewError."""
+    # pylint: disable=import-outside-toplevel
+    from ... import run_manifest
+    from ...approvals import keep_target, save_bottle
+    _, manifest = _load(identity)
+    policy = _live_policy(identity)
+    current = current_manifest(identity, manifest.bottle, policy)
+    if current["digest"] != digest:
+        raise ManifestViewError("the manifest changed since it was shown; refresh and try again")
+    if not current["changes"]:
+        raise ManifestViewError("there's nothing new to save")
+    whats = ", ".join(c["what"] for c in current["changes"])
+    saved: dict[str, Any] = {"version": run_manifest.record(identity, current["data"],
+                                                            f"saved: {whats}")}
+    if also_bottle:
+        running = running_bottle(identity, policy)
+        target = keep_target(identity)
+        if running is None or target is None:
+            saved["bottle_error"] = "this bottle has no file to keep changes in"
+        elif running["changes"]:
+            save_bottle(target, running["updated"], f"keep from the console: {whats}")
+            saved["bottle"] = running["target"]
+    return saved
+
+
+def agent_manifest(identity: str) -> dict[str, Any]:
+    """The manifest of the bottle `identity` runs: its current version and
+    changes (`current`), where they could also be kept (`bottle_file`), and a
+    summary of what it allows (`resolved`). Raises ManifestViewError."""
+    meta, manifest = _load(identity)
     bottle = manifest.bottle
     policy = _live_policy(identity)
     routes, live = _routes(bottle, policy)
+    running = running_bottle(identity, policy)
+    names = meta.bottle_names or ((manifest.agent.bottle,) if manifest.agent.bottle else ())
     return {
-        "running": running_bottle(identity, policy),
+        "current": current_manifest(identity, bottle, policy),
+        "bottle_file": None if running is None else {
+            "target": running["target"], "path": running["path"],
+            "project": running["project"], "changes": running["changes"]},
         "agent": meta.agent_name,
         "bottles": list(names),
         "harness": manifest.agent.agent_provider.harness,
-        "files": files,
         "resolved": {
             "egress": routes,
             "egress_live": live,
@@ -236,4 +292,5 @@ def agent_manifest(identity: str) -> dict[str, Any]:
     }
 
 
-__all__ = ["ManifestViewError", "agent_manifest", "running_bottle", "save_running"]
+__all__ = ["ManifestViewError", "agent_manifest", "current_manifest", "running_bottle",
+           "save_manifest"]

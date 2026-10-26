@@ -160,6 +160,8 @@ class _Root(unittest.TestCase):
         self.addCleanup(lambda: subprocess.run(sessions.tmux("kill-server"),
                                                capture_output=True, check=False))
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
+        # The fake plan's bottle isn't a real one to record a version of.
+        self.enterContext(mock.patch("bot_bottle.run_manifest.record_launch"))
         self.manager = sessions.SessionManager({})
         self.backend = FakeBackend()
         self.index = mock.MagicMock()

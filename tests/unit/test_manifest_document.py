@@ -1,0 +1,107 @@
+"""A resolved bottle as one bottle document reads back as the same bottle."""
+
+from __future__ import annotations
+
+import dataclasses
+import unittest
+from pathlib import Path
+
+from bot_bottle.contract.yaml_subset import parse_frontmatter, serialize_yaml_subset
+from bot_bottle.manifest.document import bottle_document
+from bot_bottle.manifest.extends import resolve_bottles
+from bot_bottle.manifest.loader import BUILTIN_BOTTLES_DIR
+
+ROOT = Path(__file__).resolve().parents[2]
+
+# A chain that exercises what the examples don't: a forge with a grant, a
+# credential route, detectors, headers, regex paths, audit and a git identity.
+PARENT = """---
+credentials:
+  gitea-api:
+    source: secret
+    secret: GITEA_TOKEN
+git-gate:
+  user:
+    name: bot
+    email: bot@example.com
+  forges:
+    gitea.example.com:
+      kind: gitea
+      url: https://gitea.example.com
+      ssh: ssh://git@gitea.example.com:2222
+      token: $gitea-api
+      account: bot
+      host_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+egress:
+  routes:
+    - host: api.example.com
+      inspect:
+        auth:
+          scheme: Bearer
+          token_ref: API_TOKEN
+        matches:
+          - methods: [GET, POST]
+            paths:
+              - value: /v1/
+              - type: regex
+                value: ^/v2/[a-z]+$
+            headers:
+              - name: x-kind
+                value: json
+        outbound_detectors: false
+        outbound_on_match: redact
+    - host: raw.example.com
+      inspect: false
+  log: 1
+audit:
+  delivery: required
+---
+"""
+CHILD = """---
+extends: parent
+env:
+  LANG: C.UTF-8
+git-gate:
+  repos:
+    - gitea.example.com/acme/app:write
+nested_containers: true
+---
+"""
+
+
+def _same(a: object, b: object) -> dict[str, object]:
+    """Fields of two bottles, minus what only records how they were declared."""
+    strip = {"declared_fields"}
+    return ({f.name: getattr(a, f.name) for f in dataclasses.fields(a)  # type: ignore[arg-type]
+             if f.name not in strip},
+            {f.name: getattr(b, f.name) for f in dataclasses.fields(b)  # type: ignore[arg-type]
+             if f.name not in strip})  # type: ignore[return-value]
+
+
+class TestRoundTrip(unittest.TestCase):
+    def round_trip(self, raws: dict[str, dict[str, object]], name: str) -> None:
+        original = resolve_bottles(raws)[name]
+        text = serialize_yaml_subset(bottle_document(original))
+        again = resolve_bottles({"doc": parse_frontmatter(f"---\n{text}---\n")[0]})["doc"]
+        mine, theirs = _same(original, again)
+        self.assertEqual(mine, theirs)
+
+    def test_a_chain_with_everything(self) -> None:
+        raws = {"parent": parse_frontmatter(PARENT)[0], "child": parse_frontmatter(CHILD)[0]}
+        self.round_trip(raws, "child")
+        doc = bottle_document(resolve_bottles(raws)["child"])
+        self.assertNotIn("extends", doc)
+        repo = doc["git-gate"]["repos"]["app"]  # type: ignore[index]
+        self.assertEqual("ssh://git@gitea.example.com:2222/acme/app.git", repo["url"])  # type: ignore[index]
+
+    def test_examples_and_builtins(self) -> None:
+        files = [*BUILTIN_BOTTLES_DIR.glob("*.md"), *(ROOT / "examples" / "bottles").glob("*.md")]
+        self.assertTrue(files)
+        raws = {p.stem: parse_frontmatter(p.read_text())[0] for p in files}
+        for name in raws:
+            with self.subTest(bottle=name):
+                self.round_trip(raws, name)
+
+
+if __name__ == "__main__":
+    unittest.main()

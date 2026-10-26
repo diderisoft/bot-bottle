@@ -266,10 +266,13 @@ file in its chain as they are now, and what they resolve to:
 - its forges;
 - its env, names only.
 
-It also sends `running`: the bottle "keep" writes to, as it would read with
-this run's changes, meaning egress routes the live policy has beyond the ones
-it launched with (`state/<bottle>/egress/routes.yaml`) and repos granted while
-it runs. The answer includes the changes, what can't be kept (a route carrying
-a credential), and a digest. `manifest_save` writes that bottle as a new
-version, or trusts a project's `./main`, if the digest still matches. A
-console launch that names no bottles keeps into the bottle its agent names.
+Each bottled agent has manifest versions (`run_manifest.py`,
+`state/<bottle>/manifest/`). Version 1 is its whole bottle chain flattened
+into one document (`manifest/document.py`), recorded at launch. A resume adds
+a version only if the files changed. The `manifest` reply's `current` is the
+latest version with the supervisor's changes since: egress routes the live
+policy has beyond the launch routes (`state/<bottle>/egress/routes.yaml`), and
+repos granted while it runs. It also lists what can't be kept (a route
+carrying a credential) and a digest. `manifest_save` writes it as the next
+version if the digest still matches, and with `bottle` also writes the run's
+changes into the bottle "keep" writes to.

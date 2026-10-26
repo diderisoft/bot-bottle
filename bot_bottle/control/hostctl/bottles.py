@@ -32,6 +32,7 @@ from ...contract.hostctl import (
 from ...lib import log
 from ...paths import host_secrets_path
 from ...util import slugify
+from ... import run_manifest
 from ...backend import adoption
 from .audit_events import HostAudit, digest_manifest, digest_request
 from .credential_refresh import CredentialRefresher
@@ -350,6 +351,7 @@ class BottleService:
                     except OSError as e:
                         log.warn(f"bottle {identity}: couldn't record how to finish it "
                                  f"after a host controller restart: {e}")
+                    run_manifest.record_launch(identity, plan.manifest.bottle)
                     if record.credentials is not None:
                         self.credentials.add(
                             identity, record.credentials, registry_id=bottle.registry_id,

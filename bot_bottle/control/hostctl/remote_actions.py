@@ -254,10 +254,11 @@ async def manifest(msg: Mapping[str, Any], running: Mapping[str, str],
 
 async def manifest_save(msg: Mapping[str, Any], running: Mapping[str, str],
                         _bottles: Any = None) -> dict[str, Any]:
-    """Keep a running agent's changes in its bottle from the Manifest tab
-    (`manifest_view.save_running`), if they're still the ones shown."""
+    """Save a running agent's manifest as its next version from the Manifest
+    tab, and with `bottle` its changes into its bottle file too
+    (`manifest_view.save_manifest`), if they're still the ones shown."""
     # pylint: disable-next=import-outside-toplevel
-    from .manifest_view import ManifestViewError, save_running
+    from .manifest_view import ManifestViewError, save_manifest
     agent_id = str(msg.get("agent_id", ""))
     reply: dict[str, Any] = {"type": "manifest_saved", "request_id": msg.get("request_id"),
                              "agent_id": agent_id}
@@ -266,7 +267,8 @@ async def manifest_save(msg: Mapping[str, Any], running: Mapping[str, str],
         reply["error"] = "that agent isn't running on this host"
         return reply
     try:
-        reply["saved"] = await asyncio.to_thread(save_running, bottle, _text(msg, "digest"))
+        reply.update(await asyncio.to_thread(save_manifest, bottle, _text(msg, "digest"),
+                                             also_bottle=msg.get("bottle") is True))
     except ManifestViewError as e:
         reply["error"] = str(e)
     except Exception as e:  # pylint: disable=broad-exception-caught  # reported, not raised
