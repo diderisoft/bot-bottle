@@ -334,6 +334,23 @@ class TestConsoleSession(unittest.TestCase):
         asyncio.run(again.handle({"type": "stop", "agent_id": "a1"}))
         self.assertEqual("agent_stopped", sent[-1]["type"])
 
+    def test_a_relay_that_ended_is_reopened(self) -> None:
+        # A broken console stream ends a relay; typing, the watch and a
+        # reconnect each bring it back rather than leaving the agent mute.
+        link, _bottles, _sent = self._link()
+        self._launch(link)
+        dead = self.terms["a1"]
+        dead.closed = True
+        asyncio.run(link.handle({"type": "input", "agent_id": "a1", "data": "hello?"}))
+        self.assertIsNot(dead, self.terms["a1"])
+        self.assertEqual([b"hello?"], self.terms["a1"].written)
+        self.terms["a1"].closed = True
+        asyncio.run(link.reap())
+        self.assertFalse(self.terms["a1"].closed)
+        self.terms["a1"].closed = True
+        asyncio.run(link.resume())
+        self.assertFalse(self.terms["a1"].closed)
+
     def test_an_agent_that_exited_while_away_is_reported(self) -> None:
         state = remote.LinkState()
         link, bottles, _sent = self._link(state=state)

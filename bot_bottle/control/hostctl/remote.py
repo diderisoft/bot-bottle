@@ -63,7 +63,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
 from ...lib import log
 from ...paths import bot_bottle_root
-from .console_terminal import HISTORY_LINES, type_into, valid_size
+from .console_terminal import HISTORY_LINES, session_terminals, type_into, valid_size
 from .transcript_serve import TranscriptLink
 
 if TYPE_CHECKING:
@@ -244,6 +244,8 @@ class Terminal(Protocol):
 
     writable: bool
 
+    @property
+    def closed(self) -> bool: ...
     def write(self, data: bytes) -> bool: ...
     def resize(self, cols: int, rows: int) -> None: ...
     def history(self, lines: int) -> tuple[str, int, int]: ...
@@ -282,23 +284,6 @@ def query_audit(bottle: str, activation: str | None, limit: int) -> list[dict[st
     index = AuditIndex(directory, host_db_path())
     index.sync()
     return index.query(Query(bottle=bottle, activation=activation, limit=limit))
-
-
-def session_terminals(conn: "iroh.Connection", sessions: Any) -> TerminalFactory:
-    """Relays for this connection, each a uni stream attached to an agent's
-    tmux session."""
-    from .console_terminal import ConsoleTerminal  # pylint: disable=import-outside-toplevel
-
-    async def start(agent_id: str, bottle: str) -> Terminal | None:
-        record = sessions.record(bottle)
-        if record is None or not sessions.exists(bottle):
-            return None
-        terminal = ConsoleTerminal(sessions, bottle, agent_id,
-                                   writable_allowed=record.writable_allowed)
-        await terminal.start(conn.open_uni)
-        return terminal
-
-    return start
 
 
 @dataclass
@@ -431,6 +416,15 @@ class ConsoleLink:
             self.terminals[agent_id] = terminal
         return terminal
 
+    async def _live_terminal(self, agent_id: str) -> "Terminal | None":
+        """The agent's relay, reopened if it has ended: a broken console stream
+        ends it, and it would otherwise drop typing and output for good."""
+        terminal = self.terminals.get(agent_id)
+        if (terminal is None or terminal.closed) and agent_id in self.running:
+            self.terminals.pop(agent_id, None)
+            terminal = await self._open_terminal(agent_id, self.running[agent_id])
+        return terminal
+
     def _close_terminal(self, agent_id: str) -> None:
         terminal = self.terminals.pop(agent_id, None)
         if terminal is not None:
@@ -442,7 +436,7 @@ class ConsoleLink:
             self._close_terminal(agent_id)
 
     async def _input(self, agent_id: str, data: object) -> None:
-        terminal = self.terminals.get(agent_id)
+        terminal = await self._live_terminal(agent_id)
         if terminal is None or not isinstance(data, str) or not data:
             return
         typed = await type_into(terminal, data, self._typed.get(agent_id, 0.0))
@@ -534,9 +528,8 @@ class ConsoleLink:
         ones' relays, present the sessions it didn't launch, and send
         `agents_running` so the console can stop the rest."""
         await self.reap()
-        for agent_id, bottle in list(self.running.items()):
-            if agent_id not in self.terminals:
-                await self._open_terminal(agent_id, bottle)
+        for agent_id in list(self.running):
+            await self._live_terminal(agent_id)
         for agent_id, present in list(self.present.items()):
             if agent_id in self.running:
                 await self._send(present)
@@ -644,6 +637,7 @@ class ConsoleLink:
             except Exception:  # pylint: disable=broad-exception-caught  # retried next round
                 continue
             if state.get("running"):
+                await self._live_terminal(agent_id)
                 continue
             self.running.pop(agent_id, None)
             self.present.pop(agent_id, None)

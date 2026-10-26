@@ -121,6 +121,11 @@ class ConsoleTerminal:
         self._closed.set()
         os.close(master)
 
+    @property
+    def closed(self) -> bool:
+        """Whether the relay has ended: closed, or its console stream broke."""
+        return self._closed.is_set()
+
     def write(self, data: bytes) -> bool:
         """Type `data` into the session, if the agent allows remote typing."""
         if not self.writable or self._master < 0 or self._closed.is_set():
@@ -173,6 +178,22 @@ def valid_size(cols: Any, rows: Any) -> tuple[int, int] | None:
 SUBMIT_GAP_SECONDS = 0.15
 
 
+def session_terminals(conn: Any, sessions: SessionManager,
+                      ) -> Callable[[str, str], Awaitable["ConsoleTerminal | None"]]:
+    """Relays for the iroh connection `conn`, each a uni stream attached to an
+    agent's tmux session."""
+    async def start(agent_id: str, bottle: str) -> ConsoleTerminal | None:
+        record = sessions.record(bottle)
+        if record is None or not sessions.exists(bottle):
+            return None
+        terminal = ConsoleTerminal(sessions, bottle, agent_id,
+                                   writable_allowed=record.writable_allowed)
+        await terminal.start(conn.open_uni)
+        return terminal
+
+    return start
+
+
 class Typeable(Protocol):
     def write(self, data: bytes, /) -> bool: ...
 
@@ -196,4 +217,4 @@ async def type_into(terminal: Typeable, data: str, typed_at: float) -> float | N
     return typed_at
 
 __all__ = ["ConsoleTerminal", "HISTORY_LINES", "MAX_INPUT_BYTES", "SUBMIT_GAP_SECONDS",
-           "type_into", "valid_size"]
+           "session_terminals", "type_into", "valid_size"]
