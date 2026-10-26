@@ -124,6 +124,10 @@ class TestOnTheLink(_Root):
         bottles.snapshot.side_effect = RuntimeError("disk")
         asyncio.run(link.handle({"type": "snapshot", "agent_id": "c-1"}))
         self.assertIn("the snapshot failed", sent[2]["error"])
+        link, sent = self.link(mock.Mock(spec=["launch"]))  # no snapshot()
+        link.running["c-1"] = "s1"
+        asyncio.run(link.handle({"type": "snapshot", "agent_id": "c-1"}))
+        self.assertIn("can't take snapshots", sent[0]["error"])
 
 
 class TestAuditEvent(unittest.TestCase):

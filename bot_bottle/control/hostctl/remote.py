@@ -217,7 +217,6 @@ class Bottles(Protocol):
     def teardown(self, bottle_id: str, role: str = ...) -> dict[str, object]: ...
     def session_state(self, session_id: str) -> dict[str, object]: ...
     def list(self) -> list[dict[str, object]]: ...
-    def snapshot(self, identity: str, *, seq: int | None = ...) -> dict[str, object]: ...
 
 
 def terminal_agent_id(bottle: str, activation: str) -> str:
@@ -476,8 +475,11 @@ class ConsoleLink:
         try:
             if not bottle:
                 raise SnapshotUnavailable("that agent isn't running on this host")
+            snapshot = getattr(self._bottles, "snapshot", None)  # BottleService.snapshot
+            if snapshot is None:
+                raise SnapshotUnavailable("this host controller can't take snapshots")
             seq = await asyncio.to_thread(self.transcripts.reader.last, agent_id)
-            reply["snapshot"] = await asyncio.to_thread(self._bottles.snapshot, bottle, seq=seq)
+            reply["snapshot"] = await asyncio.to_thread(snapshot, bottle, seq=seq)
         except SnapshotUnavailable as e:
             reply["error"] = str(e)
         except Exception as e:  # pylint: disable=broad-exception-caught  # reported to the console
