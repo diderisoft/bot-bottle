@@ -107,6 +107,8 @@ class ClaudeAndCodex(_Host):
             manifest = self.load(name)
             self.assertEqual(name, manifest.agent.agent_provider.harness)
             self.assertTrue(manifest.agent.agent_provider.forward_host_credentials)
+            # A paired phone can talk to a starter agent.
+            self.assertTrue(manifest.agent.remote_writable)
 
     def test_installed_but_not_logged_in_warns_and_writes_nothing(self) -> None:
         self.install("claude")
@@ -151,6 +153,7 @@ class PiOnOpenRouter(_Host):
                          (settings["provider"], settings["api_key_env"]))
         self.assertEqual((131072, 8192), (settings["context_window"], settings["max_tokens"]))
         self.assertTrue(any("50 requests a day" in line for line in self.lines))
+        self.assertTrue(self.load("pi").agent.remote_writable)
 
     def test_the_free_router_is_the_default(self) -> None:
         self.setup(interactive=True).run()
