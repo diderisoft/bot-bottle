@@ -157,6 +157,21 @@ def _parse_env_json(text: str) -> list[str]:
     return [e for e in raw if isinstance(e, str)] if isinstance(raw, list) else []
 
 
+def _buildah_env(document: str) -> list[str]:
+    """The image ENV in a `buildah inspect --type image` document: its OCI
+    config, else its Docker one."""
+    try:
+        raw = json.loads(document)
+    except ValueError:
+        return []
+    for section in ("OCIv1", "Docker"):
+        env = ((raw.get(section) or {}).get("config") or {}).get("Env") \
+            if isinstance(raw, dict) else None
+        if isinstance(env, list):
+            return [e for e in env if isinstance(e, str)]
+    return []
+
+
 def _rootfs_digest(dockerfile: Path, infra: InfraSettings) -> str:
     """Cache key for a rootfs from `dockerfile`: the Dockerfile, build args,
     boot bits and any COPYed context files."""
@@ -450,12 +465,13 @@ def _infra_build(
         _buildah_build(key, ip, ctx, tag, build_args)
         _smoke_test(key, ip, tag, smoke_ctr, smoke_test)
         _stream_rootfs(key, ip, tag, export_ctr, out)
-        inspect = _ssh(key, ip, f"buildah inspect {_STORE_FLAG} --type image "
-                                f"--format '{{{{json .OCIv1.Config.Env}}}}' {tag}")
+        # The VM's buildah has no `json` template function: read it from the
+        # full inspect document.
+        inspect = _ssh(key, ip, f"buildah inspect {_STORE_FLAG} --type image {tag}")
         if inspect.returncode != 0:
             die(f"reading the built image's ENV in the infra VM failed: "
                 f"{inspect.stderr.strip()}")
-        record_image_env(out, _parse_env_json(inspect.stdout))
+        record_image_env(out, _buildah_env(inspect.stdout))
     finally:
         _cleanup()
 

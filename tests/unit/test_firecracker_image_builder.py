@@ -7,6 +7,7 @@ the smoke-test no-op — the logic that must hold without a VM.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -361,12 +362,19 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         return out
 
     def test_infra_build_records_the_image_env(self):
-        out = self._infra_build_env(subprocess.CompletedProcess(
-            [], 0, '["PATH=/opt/x/bin:/usr/bin","A=b=c"]\n', ""))
+        # The shape buildah 1.39 prints (no `json` template function there).
+        doc = json.dumps({"OCIv1": {"config": {"Env": ["PATH=/opt/x/bin:/usr/bin", "A=b=c"]}},
+                          "Docker": {"config": {"Env": ["PATH=/wrong"]}}})
+        out = self._infra_build_env(subprocess.CompletedProcess([], 0, doc, ""))
         self.assertEqual({"PATH": "/opt/x/bin:/usr/bin", "A": "b=c"}, image_builder.image_env(out))
-        # An image with no ENV records none.
-        out = self._infra_build_env(subprocess.CompletedProcess([], 0, "null\n", ""))
-        self.assertEqual({}, image_builder.image_env(out))
+        # Only a Docker config: that one.
+        doc = json.dumps({"OCIv1": {"config": {}}, "Docker": {"config": {"Env": ["B=1"]}}})
+        out = self._infra_build_env(subprocess.CompletedProcess([], 0, doc, ""))
+        self.assertEqual({"B": "1"}, image_builder.image_env(out))
+        # No ENV, or output that isn't a document: none.
+        for text in ("{}", "garbage", "[1]"):
+            out = self._infra_build_env(subprocess.CompletedProcess([], 0, text, ""))
+            self.assertEqual({}, image_builder.image_env(out))
 
     def test_infra_build_dies_without_the_image_env(self):
         with self.assertRaises(SystemExit):
