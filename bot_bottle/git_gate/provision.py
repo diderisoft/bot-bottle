@@ -23,6 +23,8 @@ def _provision_dynamic_key(
     slug: str,
     stage_dir: Path,
     secrets: SecretSource,
+    *,
+    title_suffix: str = "",
 ) -> str:
     """Generate an ed25519 keypair, register the public half with the forge,
     store the private key and key id under `stage_dir`, and return the key's
@@ -42,7 +44,9 @@ def _provision_dynamic_key(
     owner_repo = entry.UpstreamPath
     if owner_repo.endswith(".git"):
         owner_repo = owner_repo[:-4]
-    title = f"bot-bottle:{globalize_slug(slug)}:{entry.Name}"
+    # A re-grant mints its key while the old one still exists, and the forge
+    # wants titles unique per repo, so it's titled with its access.
+    title = f"bot-bottle:{globalize_slug(slug)}:{entry.Name}{title_suffix}"
 
     info(f"provisioning deploy key for git-gate.repos[{entry.Name!r}]")
     key_id, private_key_bytes = provisioner.create(owner_repo, title,

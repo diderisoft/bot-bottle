@@ -96,7 +96,7 @@ class TestLiveGrant(_Root):
         stage = git_gate_state_dir("s1")
         entry = live_grant.grant_entry("gitea.example.com/acme/app", FORGE)
 
-        def mint(e: Any, slug: str, stage_dir: Path, secrets: Any) -> str:
+        def mint(e: Any, slug: str, stage_dir: Path, secrets: Any, **_kw: Any) -> str:
             del e, secrets
             self.assertEqual(1, len(live_grant_refs(stage_dir)))  # recorded first
             (stage_dir / "app-deploy-key-id").write_text("7")
@@ -121,8 +121,12 @@ class TestLiveGrant(_Root):
         stage = git_gate_state_dir("s1")
         keys = iter(["7", "8"])
 
-        def mint(e: Any, slug: str, stage_dir: Path, secrets: Any) -> str:
+        suffixes: list[str] = []
+
+        def mint(e: Any, slug: str, stage_dir: Path, secrets: Any, *,
+                 title_suffix: str = "") -> str:
             del e, slug, secrets
+            suffixes.append(title_suffix)
             (stage_dir / "app-deploy-key-id").write_text(next(keys))
             return str(stage_dir / "app-key")
 
@@ -135,6 +139,7 @@ class TestLiveGrant(_Root):
                 live_grant.grant_entry("gitea.example.com/acme/app:write", FORGE),
                 slug="s1", stage_dir=stage, secrets=mock.Mock())
         self.assertEqual("7", revoke.call_args.args[1])  # the old key, after minting
+        self.assertEqual(["", ":write"], suffixes)  # titles unique per repo
         (snap,) = load_upstreams_snapshot(stage)
         self.assertTrue(snap.writable)
         self.assertEqual(1, len(live_grant_refs(stage)))

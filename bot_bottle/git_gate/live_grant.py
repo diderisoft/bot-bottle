@@ -85,7 +85,8 @@ def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
     old_key = id_file.read_text().strip() if current is not None and id_file.is_file() else ""
     if not any(r.name == entry.Name for r in live_grant_refs(stage_dir)):
         record_live_grant(stage_dir, ref)
-    identity_file = _provision_dynamic_key(entry, slug, stage_dir, secrets)
+    suffix = "" if current is None else (":write" if writable else ":read")
+    identity_file = _provision_dynamic_key(entry, slug, stage_dir, secrets, title_suffix=suffix)
     upstream = dataclasses.replace(upstream, identity_file=identity_file)
     _write_upstreams_snapshot(
         stage_dir, (*(u for u in upstreams if u.name != entry.Name), upstream))
