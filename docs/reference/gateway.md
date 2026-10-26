@@ -115,7 +115,10 @@ A proposal is queued with the orchestrator (`POST /supervise/propose`), which
 attributes it to the calling bottle. The server polls for up to
 `SUPERVISE_RESPONSE_TIMEOUT_SECONDS` (30). If there's no decision by then, it
 returns `pending` with the proposal id, and `check-proposal` picks up the
-answer later. The operator decides in `bot-bottle supervise`, the terminal's
+answer later. An agent told `pending` usually stops and waits, so when the
+host answers a request older than that wait (the phone, the terminal's popup,
+or a forge or repo card), it types a line saying so into the agent's session
+(`control/hostctl/nudge.py`). The operator decides in `bot-bottle supervise`, the terminal's
 request popup, or the console. The orchestrator applies approved egress
 changes to the bottle's stored policy, so the next request resolves the new
 routes. The gateway never opens `bot-bottle.db`.

@@ -180,6 +180,9 @@ class TestApprovals(unittest.TestCase):
             pending[:] = [p for p in pending if p["id"] != pid]
 
         client.supervise_respond.side_effect = respond
+        nudge = mock.patch("bot_bottle.control.hostctl.nudge.nudge_if_waited")
+        self.nudged = nudge.start()
+        self.addCleanup(nudge.stop)
         link = remote.ConsoleLink(_Bottles(), send, agents=lambda: ["implementer"],
                                   requests=lambda: list(pending), orchestrator=lambda _url: client)
         asyncio.run(link.handle({"type": "launch", "agent_id": "a1",

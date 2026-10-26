@@ -110,6 +110,7 @@ async def forge_connect_answer(msg: Mapping[str, Any], asking: Mapping[str, Any]
     from ...contract.supervise import TOOL_FORGE_CONNECT
     from ...util import same_instant
     from ..client import AlreadyAnswered
+    from .nudge import nudge_if_waited
     agent_id = str(msg.get("agent_id", ""))
     reply: dict[str, Any] = {"type": "forge_connect_answered",
                              "request_id": msg.get("request_id"), "agent_id": agent_id}
@@ -130,6 +131,7 @@ async def forge_connect_answer(msg: Mapping[str, Any], asking: Mapping[str, Any]
         await asyncio.to_thread(orchestrator(request.orchestrator).supervise_respond,
                                 request.id, bottle_slug=request.bottle, decision="approve",
                                 notes=notes)
+        await asyncio.to_thread(nudge_if_waited, request, "approved", notes)
     except AlreadyAnswered:
         result["warnings"] = [*result.get("warnings", []),
                               "the request was answered elsewhere meanwhile"]
@@ -184,6 +186,7 @@ async def add_repo_answer(msg: Mapping[str, Any], asking: Mapping[str, Any],
     from ...contract.supervise import TOOL_ADD_REPO
     from ...util import same_instant
     from ..client import AlreadyAnswered
+    from .nudge import nudge_if_waited
     agent_id = str(msg.get("agent_id", ""))
     reply: dict[str, Any] = {"type": "add_repo_answered",
                              "request_id": msg.get("request_id"), "agent_id": agent_id}
@@ -218,6 +221,7 @@ async def add_repo_answer(msg: Mapping[str, Any], asking: Mapping[str, Any],
         await asyncio.to_thread(orchestrator(request.orchestrator).supervise_respond,
                                 request.id, bottle_slug=request.bottle, decision="approve",
                                 notes=notes)
+        await asyncio.to_thread(nudge_if_waited, request, "approved", notes)
     except AlreadyAnswered:
         warnings.append("the request was answered elsewhere meanwhile")
     reply.update({"repo": result["repo"], "writable": result.get("writable", False),

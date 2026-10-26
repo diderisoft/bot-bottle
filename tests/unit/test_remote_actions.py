@@ -100,6 +100,9 @@ class TestForgeAttention(unittest.TestCase):
 
 class TestForgeConnectAnswer(unittest.TestCase):
     def setUp(self) -> None:
+        nudge = mock.patch("bot_bottle.control.hostctl.nudge.nudge_if_waited")
+        self.nudged = nudge.start()
+        self.addCleanup(nudge.stop)
         self.client = mock.Mock()
         self.asking: dict[str, Any] = {"a1": _ask()}
 

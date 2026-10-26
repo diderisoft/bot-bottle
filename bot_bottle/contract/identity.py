@@ -6,8 +6,12 @@ git-gate renderer."""
 # forwarded upstream.
 IDENTITY_HEADER = "x-bot-bottle-identity"
 
-# Timeout for git-gate subprocess and CGI calls.
-GIT_GATE_TIMEOUT_SECS = 15
+# Timeout for one git-gate step (the access hook, or git http-backend with its
+# pre-receive hook): long enough for the first fetch of a large repo from
+# upstream, a push's scan and forward, and a `# gitleaks:allow` approval (up to
+# SUPERVISE_GITLEAKS_ALLOW_TIMEOUT_SECONDS, 300), short enough that a hung
+# upstream can't hold a request forever.
+GIT_GATE_TIMEOUT_SECS = 600
 
 # git-gate's smart-HTTP port.
 GIT_HTTP_PORT = 9420

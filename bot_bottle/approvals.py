@@ -267,13 +267,17 @@ def answer(client: Any, request: Request, decision: str, *, via: str) -> str:
     target = keep_target(request.session) if decision == ALLOW_PROJECT else None
     if decision == ALLOW_PROJECT and (target is None or not request.can_save_to_project()):
         raise ValueError("this request can only be allowed once")
+    # pylint: disable-next=import-outside-toplevel
+    from .control.hostctl.nudge import nudge_if_waited
     if decision == DENY:
         client.supervise_respond(request.id, bottle_slug=request.bottle,
                                  decision="reject", notes=f"denied from {via}")
+        nudge_if_waited(request, "denied")
         return "denied"
     note = f"allowed and kept in {target.label()}" if target is not None else "allowed once"
     client.supervise_respond(request.id, bottle_slug=request.bottle, decision="approve",
                              notes=f"{note}, from {via}")
+    nudge_if_waited(request, "approved", note)
     if target is not None:
         saved = keep(target, request)
         where = (f"./{saved.relative_to(target.project)} in the project"

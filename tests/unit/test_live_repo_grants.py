@@ -328,6 +328,7 @@ def _ask(proposed: str = "gitea.example.com/acme/app:write") -> Request:
 
 class TestPlainAllowIsRefused(unittest.TestCase):
     def test_only_deny_without_the_card(self) -> None:
+        self.enterContext(mock.patch("bot_bottle.control.hostctl.nudge.nudge_if_waited"))
         client = mock.Mock()
         with self.assertRaisesRegex(ValueError, "console's card"):
             answer(client, _ask(), ALLOW_ONCE, via="the terminal")
@@ -368,6 +369,9 @@ class TestRepoCard(unittest.TestCase):
 
 class TestAddRepoAnswer(unittest.TestCase):
     def setUp(self) -> None:
+        nudge = mock.patch("bot_bottle.control.hostctl.nudge.nudge_if_waited")
+        self.nudged = nudge.start()
+        self.addCleanup(nudge.stop)
         self.client = mock.Mock()
         self.bottles = mock.Mock()
         self.bottles.grant_repo.return_value = {
