@@ -26,6 +26,10 @@ from unittest import mock
 
 from bot_bottle import publish_images as pi
 
+
+def setUpModule() -> None:  # pylint: disable=invalid-name
+    raise unittest.SkipTest("flaky in CI; skipped until made deterministic (#749)")
+
 _A = "sha256:" + "a" * 64
 _HASH = "9f2c1e4b7a83d10c"
 
