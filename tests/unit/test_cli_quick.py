@@ -67,6 +67,17 @@ class Quick(unittest.TestCase):
         (bottles / "main.md").write_text("---\nextends: basic\n---\n")
         self.assertEqual(("pi", "./main"), self.run_quick([], ["pi"]).bottles)
 
+    def test_a_terminal_launch_onboards_a_project_without_a_bottle(self) -> None:
+        with patch("sys.stdin.isatty", return_value=True), \
+                patch("bot_bottle.cli.commands.quick._onboard", return_value="./main") as onboard:
+            self.assertEqual(("pi", "./main"), self.run_quick([], ["pi"]).bottles)
+            onboard.assert_called_once_with(self.project)
+            onboard.return_value = ""
+            self.assertEqual(("pi", "basic"), self.run_quick([], ["pi"]).bottles)
+            onboard.reset_mock()
+            self.assertEqual(("pi", "basic"), self.run_quick(["--no-onboard"], ["pi"]).bottles)
+            onboard.assert_not_called()
+
     def test_the_last_agent_used_here_wins_then_the_default(self) -> None:
         self.run_quick(["zeta"], ["codex", "zeta"])
         self.assertEqual("zeta", self.run_quick([], ["codex", "zeta"]).agent)

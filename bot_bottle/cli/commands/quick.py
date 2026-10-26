@@ -16,6 +16,12 @@ exits its changes are saved as a patch to apply here. The bottle never writes
 to your files: a mount would let the agent plant code the host then runs, such
 as a `.git/config` that git executes. With no starter yet, `bot-bottle setup` runs
 first. `bot-bottle start` keeps the pickers.
+
+In a project with no bottle yet, a launch from a terminal first drafts one from
+the checkout and, once you accept it, writes it as `./main` for the repo to
+share: its `origin`, read-only unless you make it writable, when a bottle of
+yours declares that forge (`bot-bottle forge connect`). `--no-onboard` skips
+the draft and uses `basic`.
 """
 
 from __future__ import annotations
@@ -30,6 +36,7 @@ from ...lib.log import die, info
 from ...manifest import ManifestIndex
 from ...manifest.loader import PROJECT_BOTTLE, bottle_ref
 from ...paths import bot_bottle_root
+from ...util import read_tty_line
 from ..constants import PROG
 from ..settings import settings_from_env
 from .start import _launch_bottle, _peek_agent_bottle, _uniquify_label
@@ -115,9 +122,36 @@ def project_bottle(cwd: Path) -> str:
     return bottle_ref(PROJECT_BOTTLE, True) if path.is_file() else ""
 
 
+def _ask(question: str) -> str:
+    sys.stderr.write(question)
+    sys.stderr.flush()
+    return read_tty_line()
+
+
+def _say(line: str) -> None:
+    sys.stderr.write(line + "\n")
+
+
+def _connect(url: str) -> bool:
+    """`forge connect <url>`, for onboarding; whether it connected."""
+    from .forge import connect  # pylint: disable=import-outside-toplevel
+    try:
+        return connect([url]) == 0
+    except SystemExit:
+        return False
+
+
+def _onboard(cwd: Path) -> str:
+    """Draft and write the project's bottle; "" when the user skips."""
+    from ...onboarding import onboard  # pylint: disable=import-outside-toplevel
+    return onboard(cwd, bot_bottle_root() / "bottles", ask=_ask, say=_say,
+                   connect=_connect) or ""
+
+
 def cmd_quick(argv: list[str]) -> int:
     verbose = "-v" in argv or "--verbose" in argv
-    names = [a for a in argv if a not in ("-v", "--verbose")]
+    no_onboard = "--no-onboard" in argv
+    names = [a for a in argv if a not in ("-v", "--verbose", "--no-onboard")]
     cwd = Path.cwd()
     manifest = ManifestIndex.resolve(str(cwd))
     if names:
@@ -139,10 +173,14 @@ def cmd_quick(argv: list[str]) -> int:
     if not share:
         info(f"not sharing {cwd} with the bottle; cd into a project to work on it")
     remember(cwd, agent)
+    dry_run = os.environ.get("BOT_BOTTLE_DRY_RUN") == "1"
+    project = project_bottle(cwd)
+    if not project and share and not (no_onboard or dry_run) and sys.stdin.isatty():
+        project = _onboard(cwd)
     settings = settings_from_env()
     request = LaunchRequest(
         agent=agent,
-        bottles=(bottle, project_bottle(cwd) or "basic"),
+        bottles=(bottle, project or "basic"),
         label=_uniquify_label(settings, agent),
         image_policy="prefer-cached",
         assume_yes=True,
@@ -150,5 +188,4 @@ def cmd_quick(argv: list[str]) -> int:
         cwd=str(cwd),
         copy_cwd=share,
     )
-    dry_run = os.environ.get("BOT_BOTTLE_DRY_RUN") == "1"
     return _launch_bottle(request, manifest, dry_run=dry_run, verbose=verbose)
