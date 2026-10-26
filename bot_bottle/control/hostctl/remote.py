@@ -35,6 +35,8 @@ The control stream (JSON lines):
 - `refresh_credentials` -> `credentials_refreshed` (`refreshed`, `expires_at`,
   or `error`): re-reads the agent's forwarded host login now
   (`credential_refresh`).
+- `manifest` (`agent_id`) -> `manifest`: its agent and bottle files and what
+  they resolve to (`manifest_view`).
 - `forge_connect` (`url`, `token`, `bottle`, `name`, `ssh`) -> `forge_connected`
   (`key`, `account`, `admin_repos`, `repos`, `host_key`, `warnings`, or
   `error`): connects a forge into a host bottle (`remote_actions`). The token
@@ -337,9 +339,8 @@ class ConsoleLink:
             await self._audit_query(msg)
         elif kind in TranscriptLink.REQUESTS:
             await self.transcripts.handle(msg)
-        elif kind == "refresh_credentials":
-            await self._send(await remote_actions.refresh_credentials(
-                msg, self.running, self._bottles))
+        elif kind in remote_actions.QUERIES:  # about one running agent
+            await self._send(await remote_actions.QUERIES[kind](msg, self.running, self._bottles))
         elif kind == "forge_connect":
             await self._send(await remote_actions.forge_connect(msg))
         elif kind in remote_actions.ANSWERS:  # a card that takes more than allow/deny

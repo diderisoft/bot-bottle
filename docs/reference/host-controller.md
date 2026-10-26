@@ -255,3 +255,13 @@ still follows the agent's `remote.writable`), its history and audit journal
 can be read, and the console can stop it. When the terminal and the phone
 both answer a request, the first answer stands (see
 [gateway.md](gateway.md#supervise)).
+
+The console's Manifest tab asks for a running agent's `manifest`
+(`manifest_view.py`). The host answers with the agent file and each bottle
+file in its chain as they are now, and what they resolve to:
+- the egress routes, live from the orchestrator's stored policy (the
+  provider's routes and any approved since launch included, credentials by
+  slot name only);
+- its repos, including any granted while it runs;
+- its forges;
+- its env, names only.

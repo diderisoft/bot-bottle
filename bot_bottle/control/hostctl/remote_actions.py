@@ -225,8 +225,34 @@ async def add_repo_answer(msg: Mapping[str, Any], asking: Mapping[str, Any],
     return reply
 
 
+async def manifest(msg: Mapping[str, Any], running: Mapping[str, str],
+                   _bottles: Any = None) -> dict[str, Any]:
+    """A running agent's manifest for the console's Manifest tab
+    (`manifest_view.agent_manifest`)."""
+    # pylint: disable-next=import-outside-toplevel
+    from .manifest_view import ManifestViewError, agent_manifest
+    agent_id = str(msg.get("agent_id", ""))
+    reply: dict[str, Any] = {"type": "manifest", "request_id": msg.get("request_id"),
+                             "agent_id": agent_id}
+    bottle = running.get(agent_id)
+    if not bottle:
+        reply["error"] = "that agent isn't running on this host"
+        return reply
+    try:
+        reply.update(await asyncio.to_thread(agent_manifest, bottle))
+    except ManifestViewError as e:
+        reply["error"] = str(e)
+    except Exception as e:  # pylint: disable=broad-exception-caught  # reported, not raised
+        log.warn(f"remote: reading {bottle}'s manifest failed: {type(e).__name__}: {e}")
+        reply["error"] = "reading the manifest failed; see the host controller's log"
+    return reply
+
+
+# Console requests about one running agent, by message type.
+QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest}
+
 # Console answers to a card that carry more than allow/deny, by message type.
 ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer}
 
-__all__ = ["ANSWERS", "add_repo_answer", "card", "forge_attention", "forge_connect",
-           "forge_connect_answer", "refresh_credentials", "repo_attention"]
+__all__ = ["ANSWERS", "QUERIES", "add_repo_answer", "card", "forge_attention", "forge_connect",
+           "forge_connect_answer", "manifest", "refresh_credentials", "repo_attention"]
