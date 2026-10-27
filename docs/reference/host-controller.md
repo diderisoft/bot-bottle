@@ -288,4 +288,7 @@ The reply's `elements` list everything the agent runs with
 declares it (the others are listed too), "this run", or "agent provider".
 `manifest_transfer` copies picked elements into a bottle, or moves them out of
 the file they came from. A built-in bottle's elements, and this run's, are
-copied. Each file changed is saved as a new version.
+copied. With `delete` it takes picked elements out of the file they come from
+(the running agent keeps them until its next launch), and this run's out of
+the running bottle. A built-in bottle's and the provider's stay. Each file
+changed is saved as a new version.

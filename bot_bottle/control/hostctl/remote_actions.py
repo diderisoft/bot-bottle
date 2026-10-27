@@ -292,11 +292,12 @@ async def manifest_save(msg: Mapping[str, Any], running: Mapping[str, str],
 
 
 async def manifest_transfer(msg: Mapping[str, Any], running: Mapping[str, str],
-                            _bottles: Any = None) -> dict[str, Any]:
+                            bottles: Any = None) -> dict[str, Any]:
     """Copy or move picked elements of a running agent's manifest into another
-    bottle (`manifest_elements.transfer`)."""
+    bottle (`manifest_elements.transfer`), or with `delete`, delete them
+    (`manifest_elements.delete`)."""
     # pylint: disable-next=import-outside-toplevel
-    from .manifest_elements import ManifestViewError, transfer
+    from .manifest_elements import ManifestViewError, delete, transfer
     agent_id = str(msg.get("agent_id", ""))
     reply: dict[str, Any] = {"type": "manifest_transferred",
                              "request_id": msg.get("request_id"), "agent_id": agent_id}
@@ -307,8 +308,13 @@ async def manifest_transfer(msg: Mapping[str, Any], running: Mapping[str, str],
     raw = msg.get("keys")
     keys = [k for k in raw if isinstance(k, str)] if isinstance(raw, list) else []
     try:
-        reply.update(await asyncio.to_thread(transfer, bottle, keys, _text(msg, "target"),
-                                             move=msg.get("move") is True))
+        if msg.get("delete") is True:
+            backend_for = getattr(bottles, "backend_for_session", None)  # BottleService's
+            reply.update(await asyncio.to_thread(
+                delete, bottle, keys, backend=backend_for(bottle) if backend_for else None))
+        else:
+            reply.update(await asyncio.to_thread(transfer, bottle, keys, _text(msg, "target"),
+                                                 move=msg.get("move") is True))
     except ManifestViewError as e:
         reply["error"] = str(e)
     except Exception as e:  # pylint: disable=broad-exception-caught  # reported, not raised

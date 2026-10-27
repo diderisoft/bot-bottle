@@ -156,6 +156,29 @@ class TestTransfer(_Chain):
                 manifest_elements.transfer("s1", keys, target, move=False)
 
 
+class TestDelete(_Chain):
+    def test_out_of_their_files(self) -> None:
+        reply = manifest_elements.delete("s1", ["env:TZ", "egress:example.com"])
+        self.assertEqual({"deleted_from": ["base", "work"], "removed": [], "count": 2}, reply)
+        self.assertNotIn("TZ", self.fm("base")["env"])
+        self.assertEqual([], self.fm("work")["egress"]["routes"])
+
+    def test_this_runs_go_from_the_run(self) -> None:
+        with mock.patch.object(manifest_view, "remove_from_run",
+                               return_value={"removed": ["new.example.com"]}) as remove:
+            reply = manifest_elements.delete("s1", ["egress:new.example.com"], backend="b")
+        self.assertEqual(["new.example.com"], reply["removed"])
+        self.assertEqual(["egress:new.example.com"], remove.call_args.args[2])
+        self.assertEqual("b", remove.call_args.kwargs["backend"])
+
+    def test_refusals(self) -> None:
+        for keys, why in (([], "pick the elements"), (["env:NOPE"], "no env:NOPE"),
+                          (["egress:api.example.com"], "can't be deleted")):
+            with self.subTest(keys=keys), \
+                    self.assertRaisesRegex(manifest_view.ManifestViewError, why):
+                manifest_elements.delete("s1", keys)
+
+
 class TestTransferRequest(unittest.TestCase):
     def test_reply(self) -> None:
         import asyncio  # pylint: disable=import-outside-toplevel
@@ -166,6 +189,12 @@ class TestTransferRequest(unittest.TestCase):
                                return_value={"into": "t", "count": 1}) as transfer:
             reply = asyncio.run(remote_actions.manifest_transfer(ask, {"a1": "s1"}))
         transfer.assert_called_once_with("s1", ["env:A"], "t", move=True)
+        bottles = mock.Mock()
+        bottles.backend_for_session.return_value = "the backend"
+        with mock.patch.object(manifest_elements, "delete", return_value={"count": 1}) as delete:
+            asyncio.run(remote_actions.manifest_transfer({**ask, "delete": True}, {"a1": "s1"},
+                                                         bottles))
+        delete.assert_called_once_with("s1", ["env:A"], backend="the backend")
         self.assertEqual(("manifest_transferred", "t"), (reply["type"], reply["into"]))
         self.assertIn("isn't running", asyncio.run(remote_actions.manifest_transfer(ask, {}))["error"])
         with mock.patch.object(manifest_elements, "transfer",

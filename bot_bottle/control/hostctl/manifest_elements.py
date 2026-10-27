@@ -353,4 +353,48 @@ def transfer(identity: str, keys: list[str], target: str, *, move: bool) -> dict
             "moved_from": sorted(taken), "count": len(keys)}
 
 
-__all__ = ["elements", "transfer"]
+def delete(identity: str, keys: list[str], *, backend: Any = None) -> dict[str, Any]:
+    """Delete the elements `keys`: out of the bottle file each comes from (a
+    new version; the running agent keeps it until its next launch), or, for
+    this run's, out of the running bottle (`manifest_view.remove_from_run`).
+    A built-in bottle's, and the agent provider's, stay. Raises
+    ManifestViewError."""
+    # pylint: disable=import-outside-toplevel
+    from ...approvals import KeepTarget, bottle_text, read_bottle, save_bottle
+    from .manifest_view import _live_policy, remove_from_run
+    if not keys:
+        raise ManifestViewError("pick the elements to delete")
+    policy = _live_policy(identity)
+    rows = {r["key"]: r for r in elements(identity, policy)}
+    chain = {f["name"]: f for f in _chain(identity)}
+    from_files: dict[str, list[str]] = {}
+    from_run: list[str] = []
+    for key in keys:
+        row = rows.get(key)
+        if row is None:
+            raise ManifestViewError(f"there's no {key} to delete")
+        if row["fixed"] or row["source"] == "agent provider":
+            raise ManifestViewError(f"{row['name']} can't be deleted here")
+        if row["source"] == "this run":
+            from_run.append(key)
+        elif not chain[row["source"]]["writable"]:
+            raise ManifestViewError(f"{row['name']} is in the built-in bottle "
+                                    f"{row['source']}, which can't be changed")
+        else:
+            from_files.setdefault(row["source"], []).append(key)
+    for source_name, source_keys in from_files.items():
+        source = chain[source_name]
+        fm, body = read_bottle(source["path"])
+        fm = dict(fm)
+        for key in source_keys:
+            _drop(fm, key)
+        project = source["path"].parents[2] if source["project"] else None
+        save_bottle(KeepTarget(source["path"], project), bottle_text(fm, body),
+                    f"delete from the console: "
+                    f"{', '.join(rows[k]['name'] for k in source_keys)}")
+    removed = remove_from_run(identity, policy, from_run, backend=backend)["removed"] \
+        if from_run else []
+    return {"deleted_from": sorted(from_files), "removed": removed, "count": len(keys)}
+
+
+__all__ = ["delete", "elements", "transfer"]

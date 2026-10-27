@@ -357,6 +357,14 @@ def save_manifest(identity: str, digest: str, *, bottle: str = "",
 
 def remove_changes(identity: str, digest: str, keys: list[str], *,
                    backend: Any = None) -> dict[str, Any]:
+    """`remove_from_run`, if the manifest is still the one the console showed
+    (`digest`). Raises ManifestViewError."""
+    _, _, policy, _ = _checked(identity, digest)
+    return remove_from_run(identity, policy, keys, backend=backend)
+
+
+def remove_from_run(identity: str, policy: str | None, keys: list[str], *,
+                    backend: Any = None) -> dict[str, Any]:
     """Take this run's changes `keys` away from the running bottle: an egress
     route goes back to what the bottle launched with (or goes), a repo granted
     while it runs is revoked (through `backend`, the one the bottle runs on).
@@ -371,7 +379,6 @@ def remove_changes(identity: str, digest: str, keys: list[str], *,
     from ...secret_source import FileSecrets
     from ...paths import host_secrets_path
     from ..client import OrchestratorClient, discover_orchestrator_url
-    _, _, policy, _ = _checked(identity, digest)
     hosts = {k.split(":", 1)[1] for k in keys if k.startswith("egress:")}
     repos = [k.split(":", 1)[1] for k in keys if k.startswith("repo:")]
     if not hosts and not repos:
@@ -480,5 +487,5 @@ def agent_manifest(identity: str) -> dict[str, Any]:
 
 
 __all__ = ["ManifestViewError", "agent_manifest", "bottle_targets", "bottle_with_changes",
-           "current_manifest", "remove_changes", "running_bottle", "save_as_bottle",
-           "save_manifest"]
+           "current_manifest", "remove_changes", "remove_from_run", "running_bottle",
+           "save_as_bottle", "save_manifest"]
