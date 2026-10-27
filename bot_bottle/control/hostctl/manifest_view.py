@@ -239,6 +239,33 @@ def _live_repo(ref: Any, upstream: Any) -> dict[str, object]:
     return repo
 
 
+def _granted(identity: str, doc: dict[str, object], ref: Any) -> str:
+    """A live grant as its grant, with the forge it's on put into `doc` (in
+    place) from whichever bottle declares it; "" when it has no grant or the
+    forge can't be found, for the long form."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...manifest.document import forge_document
+    from .repo_grants import find_forge
+    if not ref.grant:
+        return ""
+    found = find_forge(identity, ref.grant.split("/", 1)[0])
+    if found is None:
+        return ""
+    git = _dict(doc.get("git-gate"))
+    forges = _dict(git.get("forges"))
+    if found.forge.name not in forges:
+        label, credential, forges[found.forge.name] = forge_document(found.forge)
+        doc["credentials"] = {**_dict(doc.get("credentials")), label: credential}
+        git["forges"] = forges
+        doc["git-gate"] = git
+    return str(ref.grant)
+
+
+def _dict(value: object) -> dict[str, object]:
+    """A copy of a mapping from a document, or {} for anything else."""
+    return {str(k): v for k, v in value.items()} if isinstance(value, dict) else {}
+
+
 def current_manifest(identity: str, bottle: Any, policy: str | None,
                      only: "set[str] | None" = None) -> dict[str, Any]:
     """The agent's latest manifest version, and the manifest it runs with now:
@@ -283,11 +310,9 @@ def current_manifest(identity: str, bottle: Any, policy: str | None,
         upstream = upstreams.get(ref.name)
         if upstream is None or (only is not None and f"repo:{ref.name}" not in only):
             continue
-        raw_git = doc.get("git-gate")
-        git: dict[str, object] = dict(raw_git) if isinstance(raw_git, dict) else {}
-        raw_repos = git.get("repos")
-        repos: dict[str, object] = dict(raw_repos) if isinstance(raw_repos, dict) else {}
-        repo = _live_repo(ref, upstream)
+        repo = _granted(identity, doc, ref) or _live_repo(ref, upstream)
+        git = _dict(doc.get("git-gate"))
+        repos = _dict(git.get("repos"))
         if repos.get(ref.name) != repo:
             repos[ref.name] = repo
             git["repos"] = repos

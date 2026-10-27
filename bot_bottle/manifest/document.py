@@ -2,15 +2,17 @@
 flattened into the frontmatter of a single bottle file that reads back as the
 same bottle (PRD 0107). Used for a bottled agent's manifest versions.
 
-Repos are written in long form, so the document stands alone; the forges and
-the credentials they take their token from are kept, so a grant against them
-still reads. Secrets appear by name only, as in any bottle file.
+A repo granted on one of the chain's forges is written as its grant
+(`<forge>/<owner>/<repo>[:write]`), others in long form; the forges and the
+credentials they take their token from are kept, so the document stands alone.
+Secrets appear by name only, as in any bottle file.
 """
 
 from __future__ import annotations
 
 from .bottle import ManifestBottle
 from .egress import ManifestEgressRoute, ManifestMatchEntry
+from .forges import ManifestForge
 from .git import ManifestGitEntry
 
 
@@ -73,6 +75,39 @@ def repo_document(entry: ManifestGitEntry) -> dict[str, object]:
     return out
 
 
+def grant_for(entry: ManifestGitEntry, forges: tuple[ManifestForge, ...] | list[ManifestForge],
+              ) -> str:
+    """The grant `entry` was expanded from (`manifest.forges.expand_grants`),
+    if it matches one of `forges`, else ""."""
+    for forge in forges:
+        prefix = f"{forge.ssh}/"
+        if not (entry.Upstream.startswith(prefix) and entry.Upstream.endswith(".git")):
+            continue
+        if (entry.Key.provider, entry.Key.forge_token_env, entry.Key.api_url) != (
+                forge.kind, forge.token_secret, forge.url):
+            continue
+        if (entry.KnownHostKey or "") != forge.host_key:
+            continue
+        path = entry.Upstream[len(prefix):-len(".git")]
+        if path.count("/") != 1:
+            continue
+        return f"{forge.name}/{path}" + ("" if entry.Key.read_only else ":write")
+    return ""
+
+
+def forge_document(forge: ManifestForge) -> tuple[str, dict[str, object], dict[str, object]]:
+    """One forge as a bottle file declares it: its credential's label, the
+    credential, and the `git-gate.forges` entry."""
+    label = f"{forge.name.replace('@', '-at-').replace('.', '-').replace(':', '-')}-token"
+    entry: dict[str, object] = {"kind": forge.kind, "url": forge.url, "ssh": forge.ssh,
+                                "token": f"${label}"}
+    if forge.account:
+        entry["account"] = forge.account
+    if forge.host_key:
+        entry["host_key"] = forge.host_key
+    return label, {"source": "secret", "secret": forge.token_secret}, entry
+
+
 def bottle_document(bottle: ManifestBottle) -> dict[str, object]:
     """`bottle` as one bottle file's frontmatter, without `extends`."""
     doc: dict[str, object] = {}
@@ -87,18 +122,11 @@ def bottle_document(bottle: ManifestBottle) -> dict[str, object]:
     if bottle.forges:
         forges: dict[str, object] = {}
         for forge in bottle.forges:
-            label = f"{forge.name.replace('@', '-at-').replace('.', '-').replace(':', '-')}-token"
-            credentials[label] = {"source": "secret", "secret": forge.token_secret}
-            entry: dict[str, object] = {"kind": forge.kind, "url": forge.url, "ssh": forge.ssh,
-                                        "token": f"${label}"}
-            if forge.account:
-                entry["account"] = forge.account
-            if forge.host_key:
-                entry["host_key"] = forge.host_key
-            forges[forge.name] = entry
+            label, credentials[label], forges[forge.name] = forge_document(forge)
         git["forges"] = forges
     if bottle.git:
-        git["repos"] = {e.Name: repo_document(e) for e in bottle.git}
+        git["repos"] = {e.Name: grant_for(e, bottle.forges) or repo_document(e)
+                        for e in bottle.git}
     if credentials:
         doc["credentials"] = credentials
     if git:
@@ -119,4 +147,4 @@ def bottle_document(bottle: ManifestBottle) -> dict[str, object]:
     return doc
 
 
-__all__ = ["bottle_document", "repo_document", "route_document"]
+__all__ = ["bottle_document", "forge_document", "grant_for", "repo_document", "route_document"]

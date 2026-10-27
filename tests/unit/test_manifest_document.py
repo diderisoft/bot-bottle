@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import unittest
 from pathlib import Path
+from typing import Any
 
 from bot_bottle.contract.yaml_subset import parse_frontmatter, serialize_yaml_subset
 from bot_bottle.manifest.document import bottle_document
@@ -91,8 +92,21 @@ class TestRoundTrip(unittest.TestCase):
         self.round_trip(raws, "child")
         doc = bottle_document(resolve_bottles(raws)["child"])
         self.assertNotIn("extends", doc)
-        repo = doc["git-gate"]["repos"]["app"]  # type: ignore[index]
-        self.assertEqual("ssh://git@gitea.example.com:2222/acme/app.git", repo["url"])  # type: ignore[index]
+        # A repo granted on the chain's forge stays a grant, the forge with it.
+        git: Any = doc["git-gate"]
+        self.assertEqual("gitea.example.com/acme/app:write", git["repos"]["app"])
+        self.assertIn("gitea.example.com", git["forges"])
+
+    def test_a_read_only_grant_and_a_long_form_repo(self) -> None:
+        raws = {"parent": parse_frontmatter(PARENT)[0], "child": parse_frontmatter(CHILD.replace(
+            "    - gitea.example.com/acme/app:write\n",
+            "    app: gitea.example.com/acme/app\n"
+            "    other:\n      url: ssh://git@elsewhere.example/o/r.git\n"
+            "      key: {provider: static, path: /keys/r}\n"))[0]}
+        self.round_trip(raws, "child")
+        git: Any = bottle_document(resolve_bottles(raws)["child"])["git-gate"]
+        self.assertEqual("gitea.example.com/acme/app", git["repos"]["app"])
+        self.assertEqual("ssh://git@elsewhere.example/o/r.git", git["repos"]["other"]["url"])
 
     def test_examples_and_builtins(self) -> None:
         files = [*BUILTIN_BOTTLES_DIR.glob("*.md"), *(ROOT / "examples" / "bottles").glob("*.md")]

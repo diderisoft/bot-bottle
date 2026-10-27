@@ -129,8 +129,25 @@ def _run_elements(identity: str, policy: str | None, declared: dict[str, Any],
         if upstream is not None:
             access = "write" if upstream.writable else "read-only"
             out.append((f"repo:{ref.name}", "repo", ref.name,
-                        f"{access} · {upstream.upstream_url}", "this run", False))
+                        f"{access} · {ref.grant or upstream.upstream_url}", "this run", False))
+            out += _grant_forge(identity, ref.grant, declared, out)
     return out
+
+
+def _grant_forge(identity: str, grant: str, declared: dict[str, Any],
+                 listed: list[tuple[str, str, str, str, str, bool]],
+                 ) -> list[tuple[str, str, str, str, str, bool]]:
+    """The forge a grant made this run is on, when no file in the chain
+    declares it: from the host bottle that does (it stays there)."""
+    # pylint: disable-next=import-outside-toplevel
+    from .repo_grants import find_forge
+    found = find_forge(identity, grant.split("/", 1)[0]) if grant else None
+    if found is None or not found.bottle:
+        return []
+    key = f"forge:{found.forge.name}"
+    if key in declared or any(row[0] == key for row in listed):
+        return []
+    return [(key, "forge", found.forge.name, found.forge.url, found.bottle, True)]
 
 
 def elements(identity: str, policy: str | None) -> list[dict[str, Any]]:

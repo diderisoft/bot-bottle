@@ -137,6 +137,12 @@ class TestTransfer(_Chain):
             name=n, upstream_url=f"ssh://git@h/acme/{n}.git", upstream_host="h",
             upstream_port="", identity_file="", known_host_key="", writable=True)
             for n in ("app", "lib")))
+        rows = {r["key"]: r for r in manifest_elements.elements("s1", None)}
+        self.assertEqual("write · gitea.example.com/acme/app", rows["repo:app"]["detail"])
+        self.assertEqual("write · ssh://git@h/acme/lib.git", rows["repo:lib"]["detail"])
+        # The grant's forge, from the host bottle declaring it, listed but kept there.
+        self.assertEqual(("gitea", True), (rows["forge:gitea.example.com"]["source"],
+                                           rows["forge:gitea.example.com"]["fixed"]))
         manifest_elements.transfer("s1", ["egress:new.example.com", "repo:app", "repo:lib"],
                                    "other", move=True)
         other = self.fm("other")

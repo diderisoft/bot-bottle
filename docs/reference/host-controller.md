@@ -286,6 +286,8 @@ The reply's `elements` list everything the agent runs with
 (`manifest_elements.py`). Each egress route, repo, forge and env var is keyed
 `<kind>:<name>`, with its source: the nearest bottle file in the chain that
 declares it (the others are listed too), "this run", or "agent provider".
+A repo granted this run shows its grant, and the forge it's on is listed with
+the host bottle that declares it when nothing in the chain does.
 `manifest_transfer` copies picked elements into a bottle, or moves them out of
 the file they came from. A built-in bottle's elements, and this run's, are
 copied. With `delete` it takes picked elements out of the file they come from

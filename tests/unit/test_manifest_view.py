@@ -213,6 +213,29 @@ class TestRunningBottle(TestAgentManifest):
         self.assertIn("docs.example.com", current["text"])
         self.assertEqual(1, len(run_manifest.versions("s1")))  # v1 made once
 
+    def test_a_grant_shows_as_its_grant_with_its_forge(self) -> None:
+        # pylint: disable=import-outside-toplevel
+        from bot_bottle.control.git_gate_render import GitGateUpstream
+        from bot_bottle.control.hostctl.repo_grants import FoundForge
+        from bot_bottle.git_gate.provision import _write_upstreams_snapshot
+        from bot_bottle.manifest.forges import ManifestForge
+        self.grant("app", "gitea.example.com/o/app:write")
+        _write_upstreams_snapshot(git_gate_state_dir("s1"), (GitGateUpstream(
+            name="app", upstream_url="ssh://git@h/o/app.git", upstream_host="h",
+            upstream_port="", identity_file="", known_host_key="", writable=True),))
+        forge = ManifestForge("gitea.example.com", "gitea", "https://gitea.example.com",
+                              "ssh://git@h", "GITEA_TOKEN")
+        _, manifest = manifest_view._load("s1")  # pylint: disable=protected-access
+        with mock.patch("bot_bottle.control.hostctl.repo_grants.find_forge",
+                        return_value=FoundForge(forge, "gitea")):
+            current = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
+        git = current["data"]["git-gate"]
+        self.assertEqual("gitea.example.com/o/app:write", git["repos"]["app"])
+        self.assertEqual("$gitea-example-com-token", git["forges"]["gitea.example.com"]["token"])
+        self.assertEqual({"source": "secret", "secret": "GITEA_TOKEN"},
+                         current["data"]["credentials"]["gitea-example-com-token"])
+        self.assertIn("gitea.example.com/o/app:write", current["text"])
+
     def test_save_a_version_and_optionally_the_bottle(self) -> None:
         from bot_bottle import run_manifest  # pylint: disable=import-outside-toplevel
         from bot_bottle.manifest.versions import history  # pylint: disable=import-outside-toplevel
