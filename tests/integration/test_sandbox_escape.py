@@ -309,14 +309,15 @@ class TestSandboxEscape(unittest.TestCase):
             )
             self._assert_sandbox_block("plain HTTP host spoof", r)
 
-        with self.subTest(attack="raw TCP tunnel to unlisted host"):
+        with self.subTest(attack="CONNECT to an unlisted host's other port"):
+            # Refused at CONNECT, so no tunnel exists to carry raw TCP.
             r = self._bottle.exec(  # type: ignore
-                "curl --silent --proxytunnel --max-time 8 --output /dev/null "
-                "--write-out '%{http_connect}' telnet://example.com:22 </dev/null"
+                "curl --silent --insecure --max-time 8 --output /dev/null "
+                "--write-out '%{http_connect}' https://example.com:22/"
             )
             self.assertEqual(
                 "403", (r.stdout or "").strip(),
-                f"CONNECT for a raw TCP tunnel should get 403; "
+                f"CONNECT to example.com:22 should get 403; "
                 f"stdout={r.stdout!r} stderr={r.stderr!r}",
             )
 
@@ -346,8 +347,10 @@ class TestSandboxEscape(unittest.TestCase):
             body = body.rstrip()
         haystack = (body + " " + (r.stderr or "")).lower()  # type: ignore
         has_marker = any(m in haystack for m in self._SANDBOX_BLOCK_MARKERS)
+        # An unlisted host is refused at CONNECT, before any request is sent.
+        refused_at_connect = "connect tunnel failed, response 403" in haystack
         self.assertTrue(
-            has_marker and http_code == "403",
+            (has_marker and http_code == "403") or refused_at_connect,
             f"{label}: expected a sandbox-level block (HTTP 403 with "
             f"egress marker), got HTTP {http_code!r}. "
             f"If the response came from the actual upstream, the "
