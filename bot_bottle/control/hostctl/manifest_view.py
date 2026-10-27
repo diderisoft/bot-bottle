@@ -454,6 +454,12 @@ def save_as_bottle(identity: str, digest: str, name: str, *,
             "new_bottle": name}
 
 
+def _elements(identity: str, policy: str | None) -> list[dict[str, Any]]:
+    # pylint: disable-next=import-outside-toplevel,cyclic-import
+    from .manifest_elements import elements
+    return elements(identity, policy)
+
+
 def agent_manifest(identity: str) -> dict[str, Any]:
     """The manifest of the bottle `identity` runs: what it runs with now
     against its last saved version (`current`), and the bottles the run's
@@ -466,6 +472,7 @@ def agent_manifest(identity: str) -> dict[str, Any]:
     return {
         "current": current_manifest(identity, bottle, policy),
         "bottle_targets": bottle_targets(identity, policy),
+        "elements": _elements(identity, policy),
         "agent": meta.agent_name,
         "bottles": list(names),
         "harness": manifest.agent.agent_provider.harness,

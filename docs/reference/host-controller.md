@@ -281,3 +281,11 @@ instead. Its live policy is rendered again with those routes as they
 launched (or without them) and set on the orchestrator. Repos granted while
 it runs are revoked (`git_gate.live_grant.revoke_live`). A repo it launched
 with is refused.
+
+The reply's `elements` list everything the agent runs with
+(`manifest_elements.py`). Each egress route, repo, forge and env var is keyed
+`<kind>:<name>`, with its source: the nearest bottle file in the chain that
+declares it (the others are listed too), "this run", or "agent provider".
+`manifest_transfer` copies picked elements into a bottle, or moves them out of
+the file they came from. A built-in bottle's elements, and this run's, are
+copied. Each file changed is saved as a new version.

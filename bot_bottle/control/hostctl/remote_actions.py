@@ -291,13 +291,39 @@ async def manifest_save(msg: Mapping[str, Any], running: Mapping[str, str],
     return reply
 
 
+async def manifest_transfer(msg: Mapping[str, Any], running: Mapping[str, str],
+                            _bottles: Any = None) -> dict[str, Any]:
+    """Copy or move picked elements of a running agent's manifest into another
+    bottle (`manifest_elements.transfer`)."""
+    # pylint: disable-next=import-outside-toplevel
+    from .manifest_elements import ManifestViewError, transfer
+    agent_id = str(msg.get("agent_id", ""))
+    reply: dict[str, Any] = {"type": "manifest_transferred",
+                             "request_id": msg.get("request_id"), "agent_id": agent_id}
+    bottle = running.get(agent_id)
+    if not bottle:
+        reply["error"] = "that agent isn't running on this host"
+        return reply
+    raw = msg.get("keys")
+    keys = [k for k in raw if isinstance(k, str)] if isinstance(raw, list) else []
+    try:
+        reply.update(await asyncio.to_thread(transfer, bottle, keys, _text(msg, "target"),
+                                             move=msg.get("move") is True))
+    except ManifestViewError as e:
+        reply["error"] = str(e)
+    except Exception as e:  # pylint: disable=broad-exception-caught  # reported, not raised
+        log.warn(f"remote: copying {bottle}'s elements failed: {type(e).__name__}: {e}")
+        reply["error"] = "copying failed; see the host controller's log"
+    return reply
+
+
 # Console requests about one running agent, by message type.
 QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest,
-           "manifest_save": manifest_save}
+           "manifest_save": manifest_save, "manifest_transfer": manifest_transfer}
 
 # Console answers to a card that carry more than allow/deny, by message type.
 ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer}
 
 __all__ = ["ANSWERS", "QUERIES", "add_repo_answer", "card", "forge_attention", "forge_connect",
-           "forge_connect_answer", "manifest", "manifest_save", "refresh_credentials",
-           "repo_attention"]
+           "forge_connect_answer", "manifest", "manifest_save", "manifest_transfer",
+           "refresh_credentials", "repo_attention"]
