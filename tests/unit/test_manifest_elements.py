@@ -143,12 +143,14 @@ class TestTransfer(_Chain):
         # The grant's forge, from the host bottle declaring it, listed but kept there.
         self.assertEqual(("gitea", True), (rows["forge:gitea.example.com"]["source"],
                                            rows["forge:gitea.example.com"]["fixed"]))
-        manifest_elements.transfer("s1", ["egress:new.example.com", "repo:app", "repo:lib"],
+        # A repo granted with no grant on record can't go into a bottle (ADR 0008).
+        with self.assertRaisesRegex(manifest_view.ManifestViewError, "lib was granted"):
+            manifest_elements.transfer("s1", ["repo:lib"], "other", move=True)
+        manifest_elements.transfer("s1", ["egress:new.example.com", "repo:app"],
                                    "other", move=True)
         other = self.fm("other")
         self.assertEqual(["new.example.com"], [r["host"] for r in other["egress"]["routes"]])
-        self.assertEqual("gitea.example.com/acme/app", other["git-gate"]["repos"]["app"])
-        self.assertEqual("ssh://git@h/acme/lib.git", other["git-gate"]["repos"]["lib"]["url"])
+        self.assertEqual({"app": "gitea.example.com/acme/app"}, other["git-gate"]["repos"])
         self.assertEqual(["gitea"], other["extends"])  # where the grant's forge is
 
     def test_refusals(self) -> None:

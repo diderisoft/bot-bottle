@@ -52,6 +52,21 @@ POLICY = """routes:
 """
 
 
+# The forge this run's grants are on, in its own host bottle.
+GITEA = """---
+credentials:
+  gitea-example-com-token: {source: secret, secret: GITEA_TOKEN}
+git-gate:
+  forges:
+    gitea.example.com:
+      kind: gitea
+      url: "https://gitea.example.com"
+      ssh: "ssh://git@h"
+      token: $gitea-example-com-token
+---
+"""
+
+
 class TestAgentManifest(unittest.TestCase):
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
@@ -63,6 +78,7 @@ class TestAgentManifest(unittest.TestCase):
         (root / "agents" / "helper.md").write_text(AGENT)
         (root / "bottles" / "work.md").write_text(WORK)
         (root / "bottles" / "base.md").write_text(BASE)
+        (root / "bottles" / "gitea.md").write_text(GITEA)
         env = mock.patch.dict(os.environ, {"HOME": str(home), "BOT_BOTTLE_ROOT": str(root)})
         env.start()
         self.addCleanup(env.stop)
@@ -78,7 +94,7 @@ class TestAgentManifest(unittest.TestCase):
                          (current["version"], current["message"], current["changes"]))
         self.assertIn("LANG: C.UTF-8", current["text"])  # the whole chain, flattened
         self.assertIn("SECRET_ISH", current["text"])
-        self.assertEqual([("work", True), ("base", True)],
+        self.assertEqual([("work", True), ("base", True), ("gitea", False)],
                          [(t["name"], t["in_chain"]) for t in m["bottle_targets"]])
 
     def test_errors(self) -> None:
@@ -206,9 +222,10 @@ class TestRunningBottle(TestAgentManifest):
                           {"kind": "repo", "what": "app (read-only)", "key": "repo:app"}],
                          current["changes"])
         self.assertEqual(["keyed.example.com"], [u["what"] for u in current["unkept"]])
-        repo = current["data"]["git-gate"]["repos"]["app"]
-        self.assertEqual(("ssh://git@h/o/app.git", True, "ssh-ed25519 K"),
-                         (repo["url"], repo["key"]["read_only"], repo["host_key"]))
+        # Granted on the gitea bottle's forge: a grant, the forge with it.
+        git = current["data"]["git-gate"]
+        self.assertEqual("gitea.example.com/o/app", git["repos"]["app"])
+        self.assertIn("gitea.example.com", git["forges"])
         self.assertNotIn("docs.example.com", current["base"])
         self.assertIn("docs.example.com", current["text"])
         self.assertEqual(1, len(run_manifest.versions("s1")))  # v1 made once
@@ -337,27 +354,26 @@ class TestRunningBottle(TestAgentManifest):
         self.assertEqual(["egress:docs.example.com"], [c["key"] for c in after["changes"]])
         self.assertIn("app", run_manifest.latest("s1")[1]["git-gate"]["repos"])  # type: ignore[index]
 
-    def test_a_grant_without_its_grant_string_goes_in_long_form(self) -> None:
-        from bot_bottle.approvals import KeepTarget  # pylint: disable=import-outside-toplevel
-        from bot_bottle.contract.yaml_subset import parse_frontmatter  # pylint: disable=import-outside-toplevel
-        from bot_bottle.control.git_gate_render import (  # pylint: disable=import-outside-toplevel
-            GitGateUpstream)
-        from bot_bottle.git_gate.provision import (  # pylint: disable=import-outside-toplevel
-            _write_upstreams_snapshot)
+    def test_a_grant_without_its_grant_string_cant_be_kept(self) -> None:
+        # pylint: disable=import-outside-toplevel
+        from bot_bottle.approvals import KeepTarget
+        from bot_bottle.control.git_gate_render import GitGateUpstream
+        from bot_bottle.git_gate.provision import _write_upstreams_snapshot
         self.grant("app", "")
-        self.grant("lib", "")
-        _write_upstreams_snapshot(git_gate_state_dir("s1"), tuple(GitGateUpstream(
-            name=n, upstream_url=f"ssh://git@h/o/{n}.git", upstream_host="h",
+        _write_upstreams_snapshot(git_gate_state_dir("s1"), (GitGateUpstream(
+            name="app", upstream_url="ssh://git@h/o/app.git", upstream_host="h",
             upstream_port="", identity_file="", known_host_key="ssh-ed25519 K",
-            writable=False) for n in ("app", "lib")))
+            writable=False),))
         work = Path(os.environ["BOT_BOTTLE_ROOT"]) / "bottles" / "work.md"
-        work.write_text("---\ngit-gate:\n  repos:\n    - gitea.example.com/o/lib\n---\n")
         into = manifest_view.bottle_with_changes("s1", LAUNCH_POLICY, KeepTarget(work, None))
-        self.assertEqual(["repo:app"], [c["key"] for c in into["changes"]])  # lib: its own
-        repos = parse_frontmatter(into["updated"])[0]["git-gate"]["repos"]  # type: ignore[index]
-        self.assertEqual("gitea.example.com/o/lib", repos["lib"])  # grants become a mapping
-        self.assertEqual(("ssh://git@h/o/app.git", True),
-                         (repos["app"]["url"], repos["app"]["key"]["read_only"]))
+        self.assertEqual([], into["changes"])
+        self.assertEqual([("repo:app", manifest_view.GRANTLESS)],
+                         [(u["key"], u["why"]) for u in into["unkept"]])
+        self.assertNotIn("ssh://git@h/o/app.git", into["updated"])  # no long form written
+        _, manifest = manifest_view._load("s1")  # pylint: disable=protected-access
+        shown = manifest_view.current_manifest("s1", manifest.bottle, LAUNCH_POLICY)
+        self.assertEqual(["repo:app"], [u["key"] for u in shown["unkept"]])
+        self.assertNotIn("ssh://git@h/o/app.git", shown["text"])
 
     def test_a_bottle_that_cant_take_the_picks_saves_nothing(self) -> None:
         from bot_bottle import run_manifest  # pylint: disable=import-outside-toplevel

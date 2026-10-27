@@ -60,6 +60,11 @@ def _approved_routes(identity: str, policy: str | None) -> list[Any]:
     return [r for r in live if launched.get(r.host) != _comparable(r)]
 
 
+# Why a repo granted with no grant on record can't go into a bottle: its key is
+# forge-minted, and a bottle holds one of those only as a grant (ADR 0008).
+GRANTLESS = "granted with no grant on record, so no bottle can hold it; ask for it again"
+
+
 def _with_run_changes(identity: str, policy: str | None, frontmatter: dict[str, object],
                       only: "set[str] | None" = None,
                       ) -> tuple[dict[str, object], list[dict[str, str]], list[dict[str, str]]]:
@@ -94,45 +99,19 @@ def _with_run_changes(identity: str, policy: str | None, frontmatter: dict[str, 
         key = f"repo:{ref.name}"
         if only is not None and key not in only:
             continue
-        if ref.grant:
-            found = find_forge(identity, ref.grant.split("/", 1)[0])
-            after, what = with_grant(fm, ref.grant, extends=found.bottle if found else ""), \
-                ref.grant
-        elif ref.name in upstreams:
-            # No grant recorded: kept in long form, which needs no forge.
-            upstream = upstreams[ref.name]
-            after = _with_repo(fm, ref.name, _live_repo(ref, upstream))
-            what = f"{ref.name} ({'write' if upstream.writable else 'read-only'})"
-        else:
+        if not ref.grant:
+            # A forge-minted key goes in a bottle only as a grant (ADR 0008).
+            if ref.name in upstreams:
+                unkept.append({"kind": "repo", "what": ref.name, "key": key,
+                               "why": GRANTLESS})
             continue
+        found = find_forge(identity, ref.grant.split("/", 1)[0])
+        after, what = with_grant(fm, ref.grant, extends=found.bottle if found else ""), \
+            ref.grant
         if after != fm:
             fm = after
             changes.append({"kind": "repo", "what": what, "key": key})
     return fm, changes, unkept
-
-
-def _with_repo(frontmatter: dict[str, object], name: str,
-               repo: dict[str, object]) -> dict[str, object]:
-    """`frontmatter` with a long-form repo `name`, unless it already declares a
-    repo of that name (its own setup for it stays). A list of grants becomes
-    the mapping form (`<repo>: <grant>`) so it can hold it."""
-    # pylint: disable-next=import-outside-toplevel
-    from ...manifest.forges import parse_grant
-    fm = dict(frontmatter)
-    raw_git = fm.get("git-gate")
-    git: dict[str, object] = dict(raw_git) if isinstance(raw_git, dict) else {}
-    raw_repos = git.get("repos")
-    if isinstance(raw_repos, list):
-        repos: dict[str, object] = {parse_grant(g, "a grant")[2]: g
-                                    for g in raw_repos if isinstance(g, str)}
-    else:
-        repos = dict(raw_repos) if isinstance(raw_repos, dict) else {}
-    if name in repos:
-        return frontmatter
-    repos[name] = repo
-    git["repos"] = repos
-    fm["git-gate"] = git
-    return fm
 
 
 def bottle_with_changes(identity: str, policy: str | None, target: Any,
@@ -226,23 +205,10 @@ def _load(identity: str) -> tuple[Any, Any]:
         raise ManifestViewError(f"the manifest doesn't load as it is now: {e}") from e
 
 
-def _live_repo(ref: Any, upstream: Any) -> dict[str, object]:
-    """A live grant as a long-form repo, like `manifest.document.repo_document`."""
-    key: dict[str, object] = {"provider": "gitea", "forge_token_env": ref.forge_token_env}
-    if ref.api_url:
-        key["api_url"] = ref.api_url
-    if not upstream.writable:
-        key["read_only"] = True
-    repo: dict[str, object] = {"url": upstream.upstream_url, "key": key}
-    if upstream.known_host_key:
-        repo["host_key"] = upstream.known_host_key
-    return repo
-
-
 def _granted(identity: str, doc: dict[str, object], ref: Any) -> str:
     """A live grant as its grant, with the forge it's on put into `doc` (in
     place) from whichever bottle declares it; "" when it has no grant or the
-    forge can't be found, for the long form."""
+    forge can't be found, so no bottle can hold it."""
     # pylint: disable-next=import-outside-toplevel
     from ...manifest.document import forge_document
     from .repo_grants import find_forge
@@ -310,7 +276,13 @@ def current_manifest(identity: str, bottle: Any, policy: str | None,
         upstream = upstreams.get(ref.name)
         if upstream is None or (only is not None and f"repo:{ref.name}" not in only):
             continue
-        repo = _granted(identity, doc, ref) or _live_repo(ref, upstream)
+        repo = _granted(identity, doc, ref)
+        if not repo:
+            # Not as a grant, so not in a document that may become a bottle.
+            unkept.append({"kind": "repo", "what": ref.name, "key": f"repo:{ref.name}",
+                           "why": GRANTLESS if not ref.grant else
+                           "its forge isn't declared in any bottle now"})
+            continue
         git = _dict(doc.get("git-gate"))
         repos = _dict(git.get("repos"))
         if repos.get(ref.name) != repo:

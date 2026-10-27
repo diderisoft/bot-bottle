@@ -482,17 +482,13 @@ class TestDynamicKeyProvisioning(unittest.TestCase):
         return ManifestIndex.from_json_obj({
             "bottles": {
                 "dev": {
+                    "credentials": {"gitea-api": {"source": "secret", "secret": "GITEA_TOKEN"}},
                     "git-gate": {
-                        "repos": {
-                            "repo": {
-                                "url": "ssh://git@gitea.example.com/org/repo.git",
-                                "key": {
-                                    "provider": "gitea",
-                                    "forge_token_env": "GITEA_TOKEN",
-                                },
-                                "host_key": "ssh-ed25519 AAAA...",
-                            },
-                        },
+                        "forges": {"gitea.example.com": {
+                            "kind": "gitea", "url": "https://gitea.example.com",
+                            "token": "$gitea-api", "host_key": "ssh-ed25519 AAAA...",
+                        }},
+                        "repos": ["gitea.example.com/org/repo:write"],
                     }
                 }
             },

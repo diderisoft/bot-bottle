@@ -27,10 +27,11 @@ def _index(env: dict[str, str], *, egress: bool = False, forge: bool = False) ->
             "host": "api.example", "inspect": {"auth": {"scheme": "Bearer", "token_ref": "TOK"}},
         }]}
     if forge:
-        bottle["git-gate"] = {"repos": {"up": {
-            "url": "ssh://git@example.com:22/x/y.git", "host_key": "ssh-ed25519 AAAA",
-            "key": {"provider": "gitea", "forge_token_env": "FORGE"},
-        }}}
+        bottle["credentials"] = {"forge-api": {"source": "secret", "secret": "FORGE"}}
+        bottle["git-gate"] = {
+            "forges": {"example.com": {"kind": "gitea", "url": "https://example.com",
+                                       "token": "$forge-api", "host_key": "ssh-ed25519 AAAA"}},
+            "repos": ["example.com/x/y"]}
     return ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle},
         "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},

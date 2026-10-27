@@ -20,7 +20,10 @@ A forge is declared in a bottle, under `git-gate.forges`, and shared through
 
 Each grant expands, while `extends` is resolved, into today's long-form repo
 entry: a deploy key minted per launch through the forge, read-only unless
-`:write`. Everything downstream sees only the long form.
+`:write`. Everything downstream sees only the long form. A bottle file can't
+write that long form itself for a forge-minted key (ADR 0008): its forge is
+declared once, so a repo on it is a grant. The long form stays for a `static`
+key, an operator's own key file.
 """
 
 from __future__ import annotations
@@ -195,6 +198,19 @@ def normalize_repos(bottle_name: str, raw: dict[str, object]) -> dict[str, objec
     return {**raw, "git-gate": {**git_d, "repos": mapped}}
 
 
+def refuse_minted_long_form(bottle_name: str, repos: dict[str, object]) -> None:
+    """A bottle file's own repos, as written: a key a forge mints is declared
+    as a grant on that forge, never in long form (ADR 0008)."""
+    for name, entry in repos.items():
+        key = entry.get("key") if isinstance(entry, dict) else None
+        provider = key.get("provider") if isinstance(key, dict) else None
+        if provider in FORGE_KINDS:
+            raise ManifestError(
+                f"bottle '{bottle_name}' git-gate.repos[{name!r}]: a {provider} key is "
+                f"minted through a forge; declare it as a grant on a forge in the chain "
+                f"(<forge>/<owner>/<repo>[:write]); see docs/reference/git-gate.md")
+
+
 def expand_grants(bottle_name: str, raw: dict[str, object], forges: dict[str, object],
                   credentials: dict[str, object]) -> dict[str, object]:
     """`raw` with each grant in `git-gate.repos` replaced by its long form, using
@@ -205,6 +221,8 @@ def expand_grants(bottle_name: str, raw: dict[str, object], forges: dict[str, ob
         return raw
     git_d = as_json_object(git, f"bottle '{bottle_name}' git-gate")
     repos = git_d.get("repos")
+    if isinstance(repos, dict):
+        refuse_minted_long_form(bottle_name, repos)
     if not isinstance(repos, dict) or not any(isinstance(v, str) for v in repos.values()):
         return raw
     expanded: dict[str, object] = {}
@@ -242,5 +260,6 @@ def strip_chain_keys(raw: dict[str, object]) -> dict[str, object]:
 
 __all__ = [
     "FORGE_KINDS", "ManifestForge", "credentials_raw", "expand_grants", "forges_raw",
-    "merge_named", "normalize_repos", "parse_grant", "resolve_forge", "strip_chain_keys",
+    "merge_named", "normalize_repos", "parse_grant", "refuse_minted_long_form", "resolve_forge",
+    "strip_chain_keys",
 ]

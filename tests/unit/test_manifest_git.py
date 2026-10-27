@@ -3,6 +3,7 @@
 import unittest
 
 from bot_bottle.manifest import ManifestError, ManifestIndex
+from bot_bottle.manifest.git import ManifestGitEntry
 
 
 def _manifest(repos: dict) -> dict:  # type: ignore
@@ -288,19 +289,17 @@ class TestStaticKey(unittest.TestCase):
 
 
 class TestGiteaKey(unittest.TestCase):
-    """git-gate.repos entries with key.provider = "gitea"."""
+    """The long form a gitea grant expands to (key.provider = "gitea"), as the
+    parser reads it; a bottle file itself declares a grant instead (ADR 0008)."""
+
+    def _entry(self, name: str, raw: dict) -> ManifestGitEntry:  # type: ignore[type-arg]
+        return ManifestGitEntry.from_repos_entry("dev", name, raw)
 
     def test_gitea_key_minimal(self):
-        m = ManifestIndex.from_json_obj(_manifest({
-            "bot-bottle": {
-                "url": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
-                "key": {
-                    "provider": "gitea",
-                    "forge_token_env": "GITEA_TOKEN",
-                },
-            },
-        }))
-        e = m.bottles["dev"].git[0]
+        e = self._entry("bot-bottle", {
+            "url": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
+            "key": {"provider": "gitea", "forge_token_env": "GITEA_TOKEN"},
+        })
         self.assertEqual("bot-bottle", e.Name)
         self.assertEqual("gitea", e.Key.provider)
         self.assertEqual("GITEA_TOKEN", e.Key.forge_token_env)
@@ -308,48 +307,60 @@ class TestGiteaKey(unittest.TestCase):
         self.assertEqual("", e.IdentityFile)
 
     def test_gitea_key_with_api_url(self):
-        m = ManifestIndex.from_json_obj(_manifest({
-            "repo": {
-                "url": "ssh://git@gitea.example.com/org/repo.git",
-                "key": {
-                    "provider": "gitea",
-                    "forge_token_env": "MY_TOKEN",
-                    "api_url": "https://gitea.example.com",
-                },
-            },
-        }))
-        self.assertEqual("https://gitea.example.com", m.bottles["dev"].git[0].Key.api_url)
-
-    def test_gitea_key_has_no_identity_file_at_parse_time(self):
-        m = ManifestIndex.from_json_obj(_manifest({
-            "foo": {
-                "url": "ssh://git@github.com/didericis/foo.git",
-                "key": {"provider": "gitea", "forge_token_env": "T"},
-            },
-        }))
-        self.assertEqual("", m.bottles["dev"].git[0].IdentityFile)
+        e = self._entry("repo", {
+            "url": "ssh://git@gitea.example.com/org/repo.git",
+            "key": {"provider": "gitea", "forge_token_env": "MY_TOKEN",
+                    "api_url": "https://gitea.example.com"},
+        })
+        self.assertEqual("https://gitea.example.com", e.Key.api_url)
 
     def test_gitea_key_missing_forge_token_env_dies(self):
         with self.assertRaises(ManifestError):
-            ManifestIndex.from_json_obj(_manifest({
-                "foo": {
-                    "url": "ssh://git@github.com/foo.git",
-                    "key": {"provider": "gitea"},
-                },
-            }))
+            self._entry("foo", {"url": "ssh://git@github.com/foo.git",
+                                "key": {"provider": "gitea"}})
 
     def test_gitea_key_unknown_field_dies(self):
         with self.assertRaises(ManifestError):
+            self._entry("foo", {"url": "ssh://git@github.com/foo.git",
+                                "key": {"provider": "gitea", "forge_token_env": "T",
+                                        "key_type": "rsa"}})  # not allowed
+
+
+class TestForgeMintedKeysAreGrants(unittest.TestCase):
+    """ADR 0008: a bottle file grants a forge-minted key in one line."""
+
+    def test_long_form_gitea_in_a_bottle_file_is_refused(self):
+        with self.assertRaises(ManifestError) as ctx:
             ManifestIndex.from_json_obj(_manifest({
-                "foo": {
-                    "url": "ssh://git@github.com/foo.git",
-                    "key": {
-                        "provider": "gitea",
-                        "forge_token_env": "T",
-                        "key_type": "rsa",  # not allowed
-                    },
-                },
+                "app": {"url": "ssh://git@gitea.example.com/org/app.git",
+                        "key": {"provider": "gitea", "forge_token_env": "T"}},
             }))
+        msg = str(ctx.exception)
+        self.assertIn("git-gate.repos['app']", msg)
+        self.assertIn("<forge>/<owner>/<repo>[:write]", msg)
+
+    def test_a_grant_loads_as_the_long_form(self):
+        m = ManifestIndex.from_json_obj({
+            "bottles": {"dev": {
+                "credentials": {"gitea-api": {"source": "secret", "secret": "GITEA_TOKEN"}},
+                "git-gate": {
+                    "forges": {"gitea.example.com": {
+                        "kind": "gitea", "url": "https://gitea.example.com",
+                        "ssh": "ssh://git@gitea.example.com:2222", "token": "$gitea-api"}},
+                    "repos": ["gitea.example.com/org/app:write"]}}},
+            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        })
+        e = m.bottles["dev"].git[0]
+        self.assertEqual(("app", "gitea", "GITEA_TOKEN", False),
+                         (e.Name, e.Key.provider, e.Key.forge_token_env, e.Key.read_only))
+        self.assertEqual("ssh://git@gitea.example.com:2222/org/app.git", e.Upstream)
+
+    def test_static_long_form_still_loads(self):
+        m = ManifestIndex.from_json_obj(_manifest({
+            "lib": {"url": "ssh://git@github.com/org/lib.git",
+                    "key": {"provider": "static", "path": "/dev/null"}},
+        }))
+        self.assertEqual("static", m.bottles["dev"].git[0].Key.provider)
 
 
 class TestKeyBlockValidation(unittest.TestCase):

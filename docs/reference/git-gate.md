@@ -15,23 +15,27 @@ git-gate:
   user:                       # optional: the agent's git identity
     name: implementer-bot
     email: bot@example.com
-  repos:
-    bot-bottle:               # local name: the gate's bare repo
-      url: ssh://git@gitea.example.com:30009/org/bot-bottle.git
+  repos:                      # local name: the gate's bare repo
+    bot-bottle: gitea.example.com/org/bot-bottle:write   # a grant on a forge (below)
+    lib:
+      url: ssh://git@git.example.com/org/lib.git
       key:
-        provider: gitea       # or: static (with path: /host/key)
-        forge_token_env: BOT_BOTTLE_GITEA_TOKEN
+        provider: static
+        path: /host/keys/lib  # a key file already on the host
       host_key: ssh-ed25519 AAAA...   # pins the upstream host key
 ```
 
 Only `ssh://user@host[:port]/path` upstreams are supported (`manifest/git.py`).
 Key providers:
 
-- `static`: a key file already on the host.
+- `static`: a key file already on the host, in the long form above. This is
+  for repos on a forge bot-bottle doesn't support yet.
 - `gitea`: a fresh ed25519 deploy key is added through the forge API at
   launch and revoked at teardown (`git_gate/provision.py`,
-  `contrib/gitea/deploy_key_provisioner.py`). `read_only: true` mints one
-  that can't push.
+  `contrib/gitea/deploy_key_provisioner.py`), read-only unless the grant ends
+  in `:write`. It's declared only as a grant on a forge (below): a bottle
+  file with a long-form `provider: gitea` repo fails to load, naming the
+  grant form ([ADR 0008](../decisions/0008-forge-minted-keys-are-grants.md)).
 
 Without a `host_key`, an interactive launch fetches one with `ssh-keyscan`,
 asks the operator to confirm it, and can save it to the bottle file
@@ -80,8 +84,8 @@ new version. `<name>` is the forge key: the host by default, or
 Keys that aren't bare identifiers are written quoted
 (`"codex@gitea.example.com":`).
 
-While `extends` is resolved, each grant becomes the long form above: a
-`gitea` key minted per launch with the forge's token, the forge's host key,
+While `extends` is resolved, each grant becomes a long-form entry (what
+everything after loading sees): a `gitea` key minted per launch with the forge's token, the forge's host key,
 and `read_only` unless the grant ends in `:write`. A mapping
 (`repos: {site: gitea.example.com/acme/app}`) names the gate repo; the list
 form names it after the repo. Forges and credentials merge by name through

@@ -197,7 +197,7 @@ class TestExtendsGitMerge(unittest.TestCase):
             child={
                 "extends": "base",
                 "git-gate": {"repos": {"repo": {
-                    "key": {"provider": "gitea", "forge_token_env": "GITEA_TOKEN"},
+                    "key": {"provider": "static", "path": "/keys/child"},
                 }}},
             },
         )
@@ -207,8 +207,7 @@ class TestExtendsGitMerge(unittest.TestCase):
         self.assertEqual("repo", e.Name)
         self.assertEqual("ssh://git@host-a/repo.git", e.Upstream)
         self.assertEqual("ecdsa-sha2-nistp256 AAAA", e.KnownHostKey)
-        self.assertEqual("gitea", e.Key.provider)
-        self.assertEqual("GITEA_TOKEN", e.Key.forge_token_env)
+        self.assertEqual("/keys/child", e.Key.path)
 
     def test_child_same_name_repo_overrides_url(self):
         # Child can override url on a same-name repo; other parent fields
@@ -243,7 +242,7 @@ class TestExtendsGitMerge(unittest.TestCase):
             child={
                 "extends": "base",
                 "git-gate": {"repos": {
-                    "repo": {"key": {"provider": "gitea", "forge_token_env": "TOK"}},
+                    "repo": {"key": {"provider": "static", "path": "/keys/child"}},
                     "other": self._GIT_ENTRY_B,
                 }},
             },
@@ -252,7 +251,7 @@ class TestExtendsGitMerge(unittest.TestCase):
         names = {e.Name for e in child.git}
         self.assertEqual({"repo", "other"}, names)
         repo_entry = next(e for e in child.git if e.Name == "repo")
-        self.assertEqual("gitea", repo_entry.Key.provider)
+        self.assertEqual("/keys/child", repo_entry.Key.path)
 
     def test_child_git_user_inherits_parent_repos(self):
         m = _build(
@@ -562,7 +561,7 @@ class TestExtendsMultiParent(unittest.TestCase):
         }
         p2_entry = {
             "url": "ssh://git@host-a/repo.git",  # required, same url
-            "key": {"provider": "gitea", "forge_token_env": "TOK"},
+            "key": {"provider": "static", "path": "/k2"},
         }
         m = _build(
             p1={"git-gate": {"repos": {"repo": p1_entry}}},
@@ -574,7 +573,7 @@ class TestExtendsMultiParent(unittest.TestCase):
         e = entries[0]
         self.assertEqual("ssh://git@host-a/repo.git", e.Upstream)
         self.assertEqual("ecdsa AAAA", e.KnownHostKey)
-        self.assertEqual("gitea", e.Key.provider)
+        self.assertEqual("/k2", e.Key.path)
 
     def test_p1_repos_preserved_when_p2_has_none(self):
         m = _build(

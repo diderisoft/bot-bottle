@@ -250,7 +250,7 @@ def _run_value(identity: str, policy: str | None, key: str) -> Any:
     from ...approvals import manifest_route
     from ...bottle_state import git_gate_state_dir
     from ...git_gate.provision import live_grant_refs, load_upstreams_snapshot
-    from .manifest_view import _approved_routes, _live_repo
+    from .manifest_view import GRANTLESS, _approved_routes
     kind, name = key.split(":", 1)
     if kind == "egress":
         route = next((r for r in _approved_routes(identity, policy) if r.host == name), None)
@@ -261,7 +261,9 @@ def _run_value(identity: str, policy: str | None, key: str) -> Any:
         ref = next((r for r in live_grant_refs(stage) if r.name == name), None)
         upstream = next((u for u in load_upstreams_snapshot(stage) if u.name == name), None)
         if ref is not None and upstream is not None:
-            return ref.grant or _live_repo(ref, upstream)
+            if not ref.grant:
+                raise ManifestViewError(f"{name} was {GRANTLESS}")
+            return ref.grant
     raise ManifestViewError(f"{name} can't be written into a bottle")
 
 
