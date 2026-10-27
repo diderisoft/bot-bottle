@@ -17,6 +17,7 @@ from .extends import merge_bottles_runtime, resolve_bottles
 from .git import ManifestGitUser
 from .loader import (
     BUILTIN_BOTTLES_DIR,
+    BottleSource,
     bottle_ref,
     check_stale_json,
     load_bottle_chain,
@@ -90,11 +91,13 @@ def _resolve_effective_bottle_eager(
     return bottles[agent.bottle]
 
 
-def _load_checked(name: str, dirs: "Sequence[tuple[Path, bool]]") -> "ManifestBottle":
+def _load_checked(
+    name: str, dirs: "Sequence[tuple[Path, bool]]",
+) -> "tuple[ManifestBottle, tuple[BottleSource, ...]]":
     """Load one bottle chain; one with project files must be trusted."""
     bottle, sources = load_bottle_chain(name, dirs)
     trust_check(name, bottle, sources)
-    return bottle
+    return bottle, sources
 
 
 def _resolve_effective_bottle_lazy(
@@ -102,13 +105,15 @@ def _resolve_effective_bottle_lazy(
     agent_bottle: str,
     bottle_names: "tuple[str, ...]",
     dirs: "Sequence[tuple[Path, bool]]",
-) -> "ManifestBottle":
-    """The effective bottle (lazy path), resolved from disk: `bottle_names`
-    merged in order, else `agent_bottle`. Raises ManifestError when neither is
-    set, UntrustedBottleError for an untrusted project bottle."""
+) -> "tuple[ManifestBottle, tuple[BottleSource, ...]]":
+    """The effective bottle (lazy path) and its files, resolved from disk:
+    `bottle_names` merged in order, else `agent_bottle`. Raises ManifestError
+    when neither is set, UntrustedBottleError for an untrusted project
+    bottle."""
     if bottle_names:
-        resolved = [_load_checked(bn, dirs) for bn in bottle_names]
-        return merge_bottles_runtime(resolved)
+        loaded = [_load_checked(bn, dirs) for bn in bottle_names]
+        return (merge_bottles_runtime([b for b, _ in loaded]),
+                tuple(s for _, sources in loaded for s in sources))
 
     if not agent_bottle:
         raise ManifestError(
@@ -309,7 +314,7 @@ class ManifestIndex:
 
         # The effective bottle name(s).
         agent_bottle = fm.get("bottle") or ""
-        raw_bottle = _resolve_effective_bottle_lazy(
+        raw_bottle, bottle_sources = _resolve_effective_bottle_lazy(
             agent_name, str(agent_bottle), bottle_names, self.bottle_dirs()
         )
         effective_bottle_name = (
@@ -334,8 +339,14 @@ class ManifestIndex:
         known = {n for n in (effective_bottle_name, str(agent_bottle), *bottle_names) if n}
         agent = ManifestAgent.from_dict(agent_name, agent_dict, known)
         if agent_name in cwd_agents:
-            # A project agent's provider can spend host logins and secrets.
-            trust_check_agent(agent_name, agent_path, agent.agent_provider)
+            # A project agent's provider can spend host logins and secrets,
+            # and its prompt directs whatever the user's bottle allows.
+            trust_check_agent(
+                agent_name, agent_path, agent.agent_provider,
+                home_agent=home_agents.get(agent_name),
+                bottle_name="+".join(bottle_names) or str(agent_bottle),
+                bottle=raw_bottle, sources=bottle_sources,
+            )
 
         return _manifest_with_merged_git_user(agent, raw_bottle)
 

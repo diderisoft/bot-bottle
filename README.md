@@ -223,7 +223,7 @@ bot-bottle start <agent>   # pulls (or builds) the images on first run, then dro
 
 ## Manifest
 
-Bottles and agents are Markdown files with YAML frontmatter under `~/.bot-bottle/`. An agent's Markdown body is its system prompt; a bottle's is documentation. Bottles live in `~/.bot-bottle/bottles/`; agents may also be shipped by a repo at `<repo>/.bot-bottle/agents/<name>.md`. A repo agent whose `agent_provider` grants something (your login, a model host with a secret, or an image build) runs only once this host trusts it, like a repo bottle (`bot-bottle trust <name>`).
+Bottles and agents are Markdown files with YAML frontmatter under `~/.bot-bottle/`. An agent's Markdown body is its system prompt; a bottle's is documentation. Bottles live in `~/.bot-bottle/bottles/`; agents may also be shipped by a repo at `<repo>/.bot-bottle/agents/<name>.md`. A repo agent whose `agent_provider` grants something (your login, a model host with a secret, or an image build), or that runs on one of your bottles granting more than `basic`, runs only once this host trusts it, like a repo bottle (`bot-bottle trust <name>`). A repo agent with the same name as one of yours replaces it, and the trust prompt says so.
 
 To let bottles push to a Gitea forge, run `bot-bottle forge connect <url>`: it checks a token, pins the forge's host key and writes a `gitea` bottle. A bottle that extends it grants repos in a line, `git-gate: {repos: [gitea.example.com/acme/app:write]}`, each read-only unless `:write`, with its own deploy key per run (see [git-gate.md](docs/reference/git-gate.md)).
 

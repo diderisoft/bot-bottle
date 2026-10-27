@@ -1,8 +1,10 @@
 """Per-host trust for project bottles (`./.bot-bottle/bottles/`) and project
-agents (`./.bot-bottle/agents/`) that declare an `agent_provider`.
+agents (`./.bot-bottle/agents/`).
 
 A project bottle runs only once this host has trusted the hash of the project
-files in its chain; a project agent, the hash of its file. Any change needs
+files in its chain; a project agent whose provider grants something, or that
+runs on one of the user's bottles, the hash of its file and of what it gets
+from the host. Any change needs
 trusting again. The user's own manifests and the built-in `basic` need none.
 `trusted-bottles.json` (0600) keeps each hash with the manifest's path and
 grants, to show what changed.
@@ -164,18 +166,49 @@ def check(bottle_name: str, bottle: ManifestBottle, sources: Sequence[BottleSour
                                previous=previous)
 
 
-def agent_hash(name: str, path: Path) -> str:
-    """sha256 over a project agent file (name and bytes)."""
-    return hashlib.sha256(b"agent\0" + name.encode() + b"\0" + path.read_bytes()).hexdigest()
+def agent_hash(name: str, path: Path, context: Sequence[str] = ()) -> str:
+    """sha256 over a project agent file (name and bytes) and `context`: what
+    it gets from the host beyond its provider, so a change there asks again."""
+    digest = hashlib.sha256(b"agent\0" + name.encode() + b"\0" + path.read_bytes())
+    for line in context:
+        digest.update(b"\0" + line.encode())
+    return digest.hexdigest()
 
 
-def check_agent(name: str, path: Path, provider: ManifestAgentProvider) -> None:
+def _host_bottle(sources: Sequence[BottleSource]) -> bool:
+    """Whether a chain includes one of the user's bottles (not the project's,
+    not a built-in)."""
+    return any(not s.project and BUILTIN_BOTTLES_DIR not in s.path.parents for s in sources)
+
+
+def host_context(name: str, *, home_agent: Path | None = None, bottle_name: str = "",
+                 bottle: ManifestBottle | None = None,
+                 sources: Sequence[BottleSource] = ()) -> list[str]:
+    """What a project agent gets from the host beyond its provider: the user's
+    bottle it runs on, and the user's agent it replaces."""
+    lines: list[str] = []
+    if bottle is not None and _host_bottle(sources):
+        lines += [f"use     your bottle {bottle_name}: {g}"
+                  for g in beyond_basic(grants(bottle))]
+    if home_agent is not None:
+        lines.append(f"replace your agent {name} ({home_agent})")
+    return lines
+
+
+def check_agent(name: str, path: Path, provider: ManifestAgentProvider, *,
+                home_agent: Path | None = None, bottle_name: str = "",
+                bottle: ManifestBottle | None = None,
+                sources: Sequence[BottleSource] = ()) -> None:
     """Raise UntrustedBottleError unless the project agent at `path` is
-    trusted. One whose provider grants nothing needs no trust."""
-    granted = provider_grants(provider)
-    if not granted:
+    trusted. It needs trust when its provider grants something or it runs on
+    one of the user's bottles that grants more than `basic`; replacing the
+    user's agent of the same name is shown, not a reason on its own."""
+    context = host_context(name, home_agent=home_agent, bottle_name=bottle_name,
+                           bottle=bottle, sources=sources)
+    granted = provider_grants(provider) + context
+    if not [g for g in granted if not g.startswith("replace ")]:
         return
-    digest = agent_hash(name, path)
+    digest = agent_hash(name, path, context)
     entries = load_trusted()
     if any(e.hash == digest for e in entries):
         return
@@ -196,7 +229,7 @@ def prompt_text(error: UntrustedBottleError) -> str:
     """The trust question: what the bottle grants, or what changed."""
     if error.previous is None:
         lead = ("  Beyond the basic bottle, it lets the agent:" if error.kind == "bottle"
-                else "  Its provider lets the agent:")
+                else "  It lets the agent:")
         lines = [f"untrusted {error.kind}: {error.bottle}  ({error.path})", "", lead]
         lines += [f"    {g}" for g in error.grants]
         lines += ["", f"Trust this {error.kind} on this host? [y/N] "]
@@ -216,4 +249,5 @@ def prompt_text(error: UntrustedBottleError) -> str:
 
 
 __all__ = ["UntrustedBottleError", "agent_hash", "beyond_basic", "bottle_hash", "check",
-           "check_agent", "grants", "load_trusted", "prompt_text", "provider_grants", "trust"]
+           "check_agent", "grants", "host_context", "load_trusted", "prompt_text",
+           "provider_grants", "trust"]

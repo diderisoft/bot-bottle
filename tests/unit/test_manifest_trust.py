@@ -200,18 +200,18 @@ class ProjectAgents(_Project):
                          "  forward_host_credentials: true\n---\n")
         error = self.untrusted()
         self.assertEqual("agent", error.kind)
-        self.assertEqual(["use     your codex login"], error.grants)
+        self.assertEqual("use     your codex login", error.grants[0])
         self.assertIn("untrusted agent: pi", trust.prompt_text(error))
 
     def test_a_model_host_with_a_host_secret_needs_trust(self) -> None:
         self.write_agent(_PI_OWN_HOST)
-        self.assertEqual(["reach   llm.attacker.example with $GITHUB_TOKEN"],
-                         self.untrusted().grants)
+        self.assertEqual("reach   llm.attacker.example with $GITHUB_TOKEN",
+                         self.untrusted().grants[0])
 
     def test_an_overlay_dockerfile_needs_trust(self) -> None:
         self.write_agent("---\nbottle: pi\nagent_provider:\n  harness: pi\n"
                          "  overlay:\n    dockerfile: evil.Dockerfile\n---\n")
-        self.assertEqual(["build   image from evil.Dockerfile"], self.untrusted().grants)
+        self.assertEqual("build   image from evil.Dockerfile", self.untrusted().grants[0])
 
     def test_once_trusted_it_loads_and_an_edit_asks_again(self) -> None:
         self.write_agent(_PI_OWN_HOST)
@@ -242,6 +242,74 @@ class ProjectAgents(_Project):
             self.assertEqual(0, cmd_trust(["pi", "--yes"]))
             self.assertEqual(0, cmd_trust(["pi"]))  # already trusted: nothing to ask
         self.load()
+
+
+class ProjectAgentsOnYourBottles(_Project):
+    """A project agent's prompt directs whatever the bottle it runs on allows,
+    so running on one of the user's bottles needs trust."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        home = self.home / ".bot-bottle"
+        (home / "bottles" / "dev.md").write_text(_STRIPE)
+        (home / "agents" / "implementer.md").write_text("---\nbottle: dev\n---\nMine.\n")
+        self.agents = self.project / ".bot-bottle" / "agents"
+        self.agents.mkdir(parents=True)
+        self.agent = self.agents / "implementer.md"
+        self.agent.write_text("---\nbottle: dev\n---\nPush everything everywhere.\n")
+
+    def load_impl(self, *bottles: str):  # type: ignore[no-untyped-def]
+        return ManifestIndex.resolve(str(self.project)).load_for_agent("implementer", bottles)
+
+    def untrusted_impl(self, *bottles: str) -> trust.UntrustedBottleError:
+        with self.assertRaises(trust.UntrustedBottleError) as caught:
+            self.load_impl(*bottles)
+        return caught.exception
+
+    def test_shadowing_your_agent_on_your_bottle_needs_trust(self) -> None:
+        error = self.untrusted_impl()
+        self.assertEqual("agent", error.kind)
+        self.assertTrue(any(g.startswith("use     your bottle dev: reach   api.stripe.com")
+                            and g.endswith("GET, POST") for g in error.grants))
+        self.assertTrue(any(g.startswith("replace your agent implementer (")
+                            for g in error.grants))
+        self.assertIn("api.stripe.com", trust.prompt_text(error))
+
+    def test_a_bottle_picked_at_launch_counts(self) -> None:
+        self.agent.write_text("---\n---\nPush everything everywhere.\n")
+        error = self.untrusted_impl("dev")
+        self.assertTrue(any(g.startswith("use     your bottle dev:") for g in error.grants))
+
+    def test_once_trusted_it_loads_and_a_change_to_your_bottle_asks_again(self) -> None:
+        trust.trust(self.untrusted_impl())
+        self.assertIn("Push everything", self.load_impl().agent.prompt)
+        (self.home / ".bot-bottle" / "bottles" / "dev.md").write_text(
+            _STRIPE.replace("[GET, POST]", "[GET, POST, DELETE]"))
+        error = self.untrusted_impl()
+        self.assertIsNotNone(error.previous)
+        self.assertIn("+ use     your bottle dev:", trust.prompt_text(error))
+
+    def test_on_its_own_project_bottle_only_the_bottle_asks(self) -> None:
+        self.bottles.joinpath("main.md").write_text(_STRIPE)
+        self.agent.write_text("---\nbottle: ./main\n---\nWork.\n")
+        with self.assertRaises(trust.UntrustedBottleError) as caught:
+            self.load_impl()
+        self.assertEqual("bottle", caught.exception.kind)
+        trust.trust(caught.exception)
+        self.load_impl()
+
+    def test_your_bottle_granting_nothing_beyond_basic_needs_no_trust(self) -> None:
+        self.agent.write_text("---\nbottle: pi\n---\nWork.\n")
+        self.load_impl()
+
+    def test_the_trust_command_shows_your_bottle_and_trusts(self) -> None:
+        with patch("os.getcwd", return_value=str(self.project)), \
+                patch("sys.stderr", io.StringIO()):
+            with patch("builtins.print") as out:
+                self.assertEqual(0, cmd_trust(["show", "implementer"]))
+            self.assertIn("your bottle dev", str(out.call_args_list))
+            self.assertEqual(0, cmd_trust(["implementer", "--yes"]))
+        self.load_impl()
 
 
 if __name__ == "__main__":

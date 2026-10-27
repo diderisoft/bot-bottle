@@ -10,8 +10,9 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from bot_bottle.manifest import ManifestError, ManifestIndex
+from bot_bottle.manifest import ManifestError, ManifestIndex, trust
 
 
 def _write(p: Path, text: str) -> None:
@@ -112,7 +113,8 @@ class TestAgentFileParses(_ResolveCase):
 
 class TestCwdAgentOverridesHome(_ResolveCase):
     """SC #3: a cwd agent file with the same name as a home agent
-    wins. The home bottle stays intact."""
+    wins once trusted, since it runs on the home bottle. The home bottle
+    stays intact."""
 
     def test_cwd_wins(self):
         _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
@@ -128,7 +130,11 @@ class TestCwdAgentOverridesHome(_ResolveCase):
             CWD-OVERRIDE-PROMPT
             """,
         )
-        m = self.resolve().load_for_agent("implementer")
+        with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": str(self.home_cb)}):
+            with self.assertRaises(trust.UntrustedBottleError) as caught:
+                self.resolve().load_for_agent("implementer")
+            trust.trust(caught.exception)
+            m = self.resolve().load_for_agent("implementer")
         self.assertIn("CWD-OVERRIDE-PROMPT", m.agent.prompt)
         # Home bottle still present with its two egress routes
         self.assertEqual(2, len(m.bottle.egress.routes))
