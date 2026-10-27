@@ -112,6 +112,7 @@ class _Request:
         body: str = "",
     ) -> None:
         self.pretty_host = host
+        self.host = host
         self.port = 443
         self.method = method
         self.path = path
@@ -447,6 +448,37 @@ class TestAuthInjection(unittest.TestCase):
         with patch.dict("os.environ", {"EGRESS_TOKEN_0": "real-gateway-token"}):
             _run_request(addon, flow)
         self.assertEqual("Bearer real-gateway-token", flow.request.headers.get("authorization"))
+        self.assertIsNone(flow.response)
+
+    def test_host_header_naming_listed_host_gets_no_token(self) -> None:
+        # Addressed to attacker.example, naming the listed host: refused
+        # before the token is injected.
+        route = Route(host="api.example.com", auth_scheme="Bearer", token_env="EGRESS_TOKEN_0")
+        addon = _addon(Config(routes=(route,)))
+        flow = _Flow(_Request(host="api.example.com"))
+        flow.request.host = "attacker.example"
+        with patch.dict("os.environ", {"EGRESS_TOKEN_0": "real-gateway-token"}):
+            _run_request(addon, flow)
+        assert flow.response is not None
+        self.assertEqual(403, flow.response.status_code)
+        self.assertIsNone(flow.request.headers.get("authorization"))
+
+    def test_sni_naming_other_host_blocked(self) -> None:
+        route = Route(host="api.example.com")
+        addon = _addon(Config(routes=(route,)))
+        flow = _Flow(_Request(host="api.example.com"))
+        flow.client_conn = types.SimpleNamespace(peername=("10.0.0.1", 1), sni="attacker.example")
+        _run_request(addon, flow)
+        assert flow.response is not None
+        self.assertEqual(403, flow.response.status_code)
+
+    def test_host_header_with_port_and_case_matches(self) -> None:
+        route = Route(host="api.example.com")
+        addon = _addon(Config(routes=(route,)))
+        flow = _Flow(_Request(host="api.example.com"))
+        flow.request.pretty_host = "API.Example.com."
+        flow.client_conn = types.SimpleNamespace(peername=("10.0.0.1", 1), sni="api.example.com")
+        _run_request(addon, flow)
         self.assertIsNone(flow.response)
 
     def test_auth_route_with_unset_env_blocks(self) -> None:
@@ -1151,15 +1183,24 @@ class TestDlpPassthrough(unittest.TestCase):
         addon.http_connect(flow)  # type: ignore[arg-type]
         self.assertNotIn("c2", addon._passthrough_conns)
 
-    def test_http_connect_unlisted_host_not_marked_and_not_blocked(self) -> None:
-        # For non-passthrough hosts http_connect doesn't block (the allowlist
-        # check happens in request()). For passthrough hosts not in the list,
-        # they won't be marked for bypass either.
+    def test_http_connect_unlisted_host_blocked(self) -> None:
+        # Refused at CONNECT, so nothing (raw TCP included) is tunnelled to it.
         addon = self._passthrough_addon()
         flow = _connect_flow("unknown.example.com", conn_id="c3")
         addon.http_connect(flow)  # type: ignore[arg-type]
         self.assertNotIn("c3", addon._passthrough_conns)
-        self.assertIsNone(flow.response)
+        assert flow.response is not None
+        self.assertEqual(flow.response.status_code, 403)
+
+    def test_http_connect_host_header_naming_listed_host_blocked(self) -> None:
+        # CONNECT attacker:443 with `Host: <listed host>` must not pass as it.
+        addon = self._passthrough_addon()
+        flow = _connect_flow("attacker.example", conn_id="c6")
+        flow.request.pretty_host = "registry-1.docker.io"
+        addon.http_connect(flow)  # type: ignore[arg-type]
+        self.assertNotIn("c6", addon._passthrough_conns)
+        assert flow.response is not None
+        self.assertEqual(flow.response.status_code, 403)
 
     def test_tls_clienthello_sets_ignore_for_marked_conn(self) -> None:
         addon = self._passthrough_addon()

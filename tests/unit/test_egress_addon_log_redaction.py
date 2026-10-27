@@ -68,6 +68,7 @@ class _Request:
         body: str = "",
     ) -> None:
         self.pretty_host = host
+        self.host = host
         self.method = method
         self.path = path
         self.headers = _Headers(headers or {})

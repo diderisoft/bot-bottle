@@ -33,28 +33,38 @@ per client connection, then stripped so it never goes upstream.
 
 1. **Resolve** the bottle's policy, slug and env from (source IP, token).
    HTTPS resolves once at `CONNECT` and reuses the result.
-2. **Introspection.** `_egress.local/allowlist` returns the calling bottle's
+2. **Host check.** Policy keys on the host mitmproxy connects to
+   (`request.host`: the `CONNECT` target or the absolute URL's host). A
+   `Host` header, `:authority` or TLS SNI naming any other host gets a 403,
+   so a request can't pass as an allowlisted host while going elsewhere.
+3. **Introspection.** `_egress.local/allowlist` returns the calling bottle's
    own routes.
-3. **Outbound DLP**, on routes with `inspect` enabled. Runs before auth is
+4. **Outbound DLP**, on routes with `inspect` enabled. Runs before auth is
    stripped, so a token smuggled in any header, the path, the query, the body
    or the hostname is caught. The result is handled by the route's
    [on-match policy](#outbound-dlp).
-4. **Git boundary.** Smart-HTTP push to a forge is always blocked; fetch only
+5. **Git boundary.** Smart-HTTP push to a forge is always blocked; fetch only
    when the route sets `git.fetch`. Pushes go through git-gate.
-5. **Route policy** (`request_pipeline.evaluate_route_policy`). A host not on
+6. **Route policy** (`request_pipeline.evaluate_route_policy`). A host not on
    the allowlist, or a request matching no `matches` entry, gets a 403. The
    agent's `Authorization` is stripped unless the route sets `preserve_auth`,
    and the route's `auth` is injected from the bottle's egress tokens.
-6. **First contact.** The first request from a bottle to a host is written to
+7. **First contact.** The first request from a bottle to a host is written to
    the audit journal. With `audit.delivery: required`, the request waits for
    that record and is refused if it can't be written.
 
 Responses on inspected routes go through the inbound detectors before they
 reach the agent.
 
+A `CONNECT` to a host with no route is refused before anything is
+tunnelled. The addon sets mitmproxy's `rawtcp` off, so bytes after a
+`CONNECT` that aren't HTTP (or TLS carrying HTTP) are refused rather than
+relayed as raw TCP.
+
 Routes with `inspect: false` are not TLS-intercepted. The allowlist decision
-happens at `CONNECT`, and the tunnel passes through untouched: no DLP, no auth
-injection, no path matching.
+happens at `CONNECT`, and the TLS tunnel passes through untouched: no DLP, no
+auth injection, no path matching. Only TLS passes: a non-TLS stream on such a
+route is refused like any other raw TCP.
 
 ### Outbound DLP
 

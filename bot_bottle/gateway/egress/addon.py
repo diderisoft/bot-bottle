@@ -64,6 +64,27 @@ from bot_bottle.contract.supervise import (
 
 INTROSPECT_HOST = "_egress.local"
 
+
+def _norm_host(host: str) -> str:
+    return host.strip().strip("[]").rstrip(".").lower()
+
+
+def host_mismatch(flow: typing.Any) -> str:
+    """Why the host a request names differs from the one mitmproxy connects
+    to, or "". Policy keys on that host, so a Host header, `:authority` or SNI
+    naming another one would pass as it."""
+    target = _norm_host(flow.request.host)
+    named = _norm_host(flow.request.pretty_host)
+    if named != target:
+        return (f"egress: request names host {named!r} but is addressed to "
+                f"{target!r}")
+    conn = getattr(flow, "client_conn", None)
+    sni = getattr(conn, "sni", None) if conn is not None else None
+    if sni and _norm_host(sni) != target:
+        return (f"egress: TLS SNI {_norm_host(sni)!r} doesn't match the "
+                f"addressed host {target!r}")
+    return ""
+
 # The orchestrator every request's policy is resolved against. Mandatory.
 ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
 
@@ -174,7 +195,7 @@ class EgressAddon:
         # scrubbed.
         env = self._flow_ctx(flow)[2]
         return {
-            "host": redact_tokens(flow.request.pretty_host, env=env),
+            "host": redact_tokens(flow.request.host, env=env),
             "method": flow.request.method,
             "path": redact_tokens(flow.request.path, env=env),
         }
@@ -260,7 +281,7 @@ class EgressAddon:
         sys.stderr.write(
             json.dumps({
                 "event": "egress_request",
-                "host": redact_tokens(flow.request.pretty_host, env=env),
+                "host": redact_tokens(flow.request.host, env=env),
                 "method": flow.request.method,
                 "path": redact_tokens(flow.request.path, env=env),
                 "headers": headers,
@@ -281,7 +302,7 @@ class EgressAddon:
         sys.stderr.write(
             json.dumps({
                 "event": "egress_response",
-                "host": flow.request.pretty_host,
+                "host": flow.request.host,
                 "status": flow.response.status_code,
                 "headers": headers,
                 "body": body,
@@ -346,8 +367,9 @@ class EgressAddon:
 
     def http_connect(self, flow: http.HTTPFlow) -> None:
         """Capture and strip the identity token from an HTTPS CONNECT, keyed by
-        connection. For `inspect: false` routes, decide the allowlist here,
-        before TLS: block, or mark the tunnel for passthrough."""
+        connection. Refuse a host with no route. For `inspect: false` routes,
+        decide the allowlist here, before TLS: block, or mark the tunnel for
+        passthrough."""
         token = _token_from_proxy_auth(
             flow.request.headers.get("Proxy-Authorization", ""))
         flow.request.headers.pop("Proxy-Authorization", None)
@@ -362,9 +384,15 @@ class EgressAddon:
         client_ip = conn.peername[0] if conn is not None and conn.peername else ""
         config, slug, env = resolve_client_context(self._resolver, client_ip, token)
         self._stash_flow_ctx(flow, config, slug, env)
-        host = flow.request.pretty_host
+        mismatch = host_mismatch(flow)
+        if mismatch:
+            self._block(flow, redact_tokens(mismatch, env=env),
+                        ctx=self._req_ctx(flow), code=blocks.REQUEST)
+            return
+        host = flow.request.host
         route = match_route(config.routes, host)
-        if route is not None and not route.inspect:
+        # An unlisted host is refused here, before anything is tunnelled.
+        if route is None or not route.inspect:
             if self._firehose is not None:  # the tunnel is all there is to record
                 self._firehose.begin(flow, env, metadata_only=config.firehose == "metadata")
             decision = decide(config.routes, host, "/", env, deny_reason=config.deny_reason)
@@ -401,10 +429,15 @@ class EgressAddon:
 
     async def request(self, flow: http.HTTPFlow) -> None:
         config, slug, env = self._request_context(flow)
+        mismatch = host_mismatch(flow)
+        if mismatch:
+            self._block(flow, redact_tokens(mismatch, env=env),
+                        ctx=self._req_ctx(flow), code=blocks.REQUEST)
+            return
         request_path, _, query = flow.request.path.partition("?")
 
         # Introspection reports the calling bottle's own resolved routes.
-        if flow.request.pretty_host == INTROSPECT_HOST:
+        if flow.request.host == INTROSPECT_HOST:
             self._serve_introspection(flow, request_path, config)
             return
         if self._firehose is not None:
@@ -413,7 +446,7 @@ class EgressAddon:
         # Outbound DLP before auth is stripped, so tokens smuggled into any
         # header, path, query, body or the hostname are caught. `inspect:
         # false` skips it.
-        route = match_route(config.routes, flow.request.pretty_host)
+        route = match_route(config.routes, flow.request.host)
         if route is not None and route.inspect:
             if not await self._handle_outbound_dlp(flow, route, slug, env):
                 return
@@ -446,7 +479,7 @@ class EgressAddon:
     ) -> bool:
         """The HTTPS git push/fetch boundary, before general routing."""
         reason = git_block_reason(
-            config.routes, flow.request.pretty_host, request_path, query,
+            config.routes, flow.request.host, request_path, query,
         )
         if not reason:
             return True
@@ -463,7 +496,7 @@ class EgressAddon:
         result = evaluate_route_policy(
             config,
             route,
-            host=flow.request.pretty_host,
+            host=flow.request.host,
             request_path=request_path,
             method=flow.request.method,
             headers=dict(flow.request.headers),
@@ -570,7 +603,7 @@ class EgressAddon:
         proposal and safelist to the calling bottle; `env` redacts secrets from
         the proposal. True if approved (the value is safelisted); False if
         blocked (403 written)."""
-        host = flow.request.pretty_host
+        host = flow.request.host
         payload = build_token_allow_payload(
             redact_tokens(host, env=env),
             flow.request.method,
@@ -667,7 +700,7 @@ class EgressAddon:
         policy."""
         self._firehose_end(flow)  # once per flow; a block already ended it
         config, _slug, env = self._flow_ctx(flow)
-        route = match_route(config.routes, flow.request.pretty_host)
+        route = match_route(config.routes, flow.request.host)
         if route is None or not route.inspect:
             return
         if flow.response is None:
@@ -679,7 +712,7 @@ class EgressAddon:
         if self._inbound_scan_limit and len(body) > self._inbound_scan_limit:
             sys.stderr.write(json.dumps({
                 "event": "egress_scan_truncated",
-                "host": flow.request.pretty_host,
+                "host": flow.request.host,
                 "body_bytes": len(body),
                 "scan_limit_bytes": self._inbound_scan_limit,
             }) + "\n")
@@ -710,9 +743,13 @@ class EgressAddon:
             )
 
     def load(self, loader: typing.Any) -> None:
-        """mitmproxy loaded the addon: start the audit and firehose senders
-        (not in __init__, so importing starts no threads)."""
+        """mitmproxy loaded the addon: refuse raw TCP, and start the audit and
+        firehose senders (not in __init__, so importing starts no threads)."""
         del loader
+        # Non-HTTP bytes after a CONNECT would otherwise be tunnelled to the
+        # host as raw TCP, unscanned. `inspect: false` passthrough is unaffected.
+        from mitmproxy import ctx  # type: ignore[import-not-found]  # pylint: disable=import-error,import-outside-toplevel
+        ctx.options.update(rawtcp=False)
         for sender in self._senders:
             sender.start()
 
@@ -728,7 +765,7 @@ class EgressAddon:
         if flow.websocket is None:  # type: ignore[union-attr]
             return
         config, slug, env = self._flow_ctx(flow)
-        route = match_route(config.routes, flow.request.pretty_host)
+        route = match_route(config.routes, flow.request.host)
         if route is None or not route.inspect:
             return
         message = flow.websocket.messages[-1]  # type: ignore[union-attr]

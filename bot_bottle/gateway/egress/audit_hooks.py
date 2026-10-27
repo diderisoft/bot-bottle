@@ -34,7 +34,7 @@ def egress_event(flow: typing.Any, slug: str, kind: str, outcome: str, *, reason
     carries its `code` (contract.blocks) for the session status bar."""
     conn = flow.client_conn
     src_ip = conn.peername[0] if conn is not None and conn.peername else ""
-    host, port, method = flow.request.pretty_host, flow.request.port, flow.request.method
+    host, port, method = flow.request.host, flow.request.port, flow.request.method
     payload: dict[str, object] = {"method": method, "host": host, "port": port,
                                   "src_ip": src_ip}
     if reason:
@@ -68,7 +68,7 @@ class EgressAudit:
     def first_contact(self, flow: typing.Any, slug: str, *, required: bool) -> bool:
         """Record an allowed request on `slug`'s first contact with its host.
         False when `required` and unwritten; the host isn't remembered then."""
-        key = (slug, flow.request.pretty_host, flow.request.port)
+        key = (slug, flow.request.host, flow.request.port)
         if key in self._contacted:
             return True
         if not self.record(flow, slug, "egress.decision", "allowed", required=required):
