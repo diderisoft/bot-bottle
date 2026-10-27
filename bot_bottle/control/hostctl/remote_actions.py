@@ -323,13 +323,29 @@ async def manifest_transfer(msg: Mapping[str, Any], running: Mapping[str, str],
     return reply
 
 
-# Console requests about one running agent, by message type.
+async def library(msg: Mapping[str, Any], _running: Mapping[str, str],
+                  _bottles: Any = None) -> dict[str, Any]:
+    """The host's agents and bottles, with their text, for the console's
+    Library (`library.host_library`)."""
+    # pylint: disable-next=import-outside-toplevel
+    from .library import host_library
+    reply: dict[str, Any] = {"type": "library", "request_id": msg.get("request_id")}
+    try:
+        reply.update(await asyncio.to_thread(host_library))
+    except Exception as e:  # pylint: disable=broad-exception-caught  # reported, not raised
+        log.warn(f"remote: listing the library failed: {type(e).__name__}: {e}")
+        reply["error"] = "listing the host's agents and bottles failed; see its log"
+    return reply
+
+
+# Console requests (most about one running agent), by message type.
 QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest,
-           "manifest_save": manifest_save, "manifest_transfer": manifest_transfer}
+           "manifest_save": manifest_save, "manifest_transfer": manifest_transfer,
+           "library": library}
 
 # Console answers to a card that carry more than allow/deny, by message type.
 ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer}
 
 __all__ = ["ANSWERS", "QUERIES", "add_repo_answer", "card", "forge_attention", "forge_connect",
-           "forge_connect_answer", "manifest", "manifest_save", "manifest_transfer",
+           "forge_connect_answer", "library", "manifest", "manifest_save", "manifest_transfer",
            "refresh_credentials", "repo_attention"]

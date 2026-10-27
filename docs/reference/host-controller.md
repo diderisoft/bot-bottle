@@ -256,6 +256,12 @@ can be read, and the console can stop it. When the terminal and the phone
 both answer a request, the first answer stands (see
 [gateway.md](gateway.md#supervise)).
 
+The console's Library asks for the host's `library`
+(`control/hostctl/library.py`): each home agent and bottle under
+`~/.bot-bottle/`, and the built-in bottles a home one doesn't shadow, with
+their text (cut at 64 KiB). The console mirrors them read-only and keeps the
+last copy for while the host is offline. Project bottles aren't sent.
+
 The console's Manifest tab asks for a running agent's `manifest`
 (`manifest_view.py`).
 
