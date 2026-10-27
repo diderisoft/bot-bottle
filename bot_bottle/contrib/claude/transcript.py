@@ -8,7 +8,9 @@ tree by `uuid`/`parentUuid`; an assistant reply is one line per content
 block. A tool's result is a `user` line whose parent is its `tool_use` line,
 so parallel calls fork the tree for a moment. Rewinding (Esc Esc) appends the
 new branch to the same file. Bookkeeping lines (`file-history-snapshot`,
-`mode`, `permission-mode`, `ai-title`) carry no `uuid`.
+`mode`, `permission-mode`, `ai-title`, `last-prompt`, `api-request`, and more
+with each release) carry no `uuid`; one of a type not named here is meta, by
+its type alone.
 """
 
 from __future__ import annotations
@@ -93,6 +95,14 @@ def _system_line(raw: dict[str, Any]) -> list[Part]:
     return [Part("system", text, error=raw.get("level") == "error")]
 
 
+def _unknown(raw: dict[str, Any]) -> list[Part]:
+    """A line of a type not named here: a conversation line (it has a `uuid`)
+    shown whole, else bookkeeping, meta and named only."""
+    if raw.get("uuid"):
+        return [system(dumps(raw))]
+    return [system(str(raw.get("type")), meta=True)]
+
+
 _OTHER: dict[str, Callable[[dict[str, Any]], list[Part]]] = {
     "system": _system_line,
     "summary": lambda r: [system(str(r.get("summary", "")))],
@@ -118,7 +128,7 @@ def parse_line(raw: dict[str, Any], names: dict[str, str] | None = None) -> Line
     elif kind == "assistant":
         parts = _assistant(raw, message.get("content"), names)
     else:
-        parts = _OTHER.get(kind, lambda r: [system(dumps(r))])(raw)
+        parts = _OTHER.get(kind, _unknown)(raw)
     if raw.get("isSidechain"):
         parts = [Part(p.kind, p.text, p.tool, p.error, p.thinking, meta=True) for p in parts]
     return Line(parts, ts=str(raw.get("timestamp", "")), id=str(raw.get("uuid") or ""),

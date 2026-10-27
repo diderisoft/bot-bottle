@@ -83,15 +83,20 @@ class TestClaude(unittest.TestCase):
             json.dumps({"type": "summary", "summary": "earlier work"}),
             json.dumps({"type": "user", "isSidechain": True, "message": {"content": "sub"}}),
             json.dumps({"type": "queue-operation", "operation": "enqueue"}),
+            json.dumps({"type": "last-prompt", "lastPrompt": "can you rebase", "leafUuid": "x"}),
+            json.dumps({"type": "new-kind", "uuid": "n1", "parentUuid": "a2"}),
         ])
         self.assertEqual(
             [("system", True), ("system", True), ("user", False), ("assistant", False),
              ("system", False), ("system", False), ("system", False), ("user", True),
-             ("system", False)],
+             ("system", True), ("system", True), ("system", False)],
             [(e.kind, e.meta) for e in parsed])
         self.assertEqual("[image]", parsed[2].text)
         self.assertTrue(parsed[3].error and parsed[5].error)
-        self.assertIn("queue-operation", parsed[8].text)
+        # Bookkeeping of a type not known is named, not dumped; a conversation
+        # line of one is shown whole.
+        self.assertEqual(["queue-operation", "last-prompt"], [parsed[8].text, parsed[9].text])
+        self.assertIn('"new-kind"', parsed[10].text)
 
 
 class TestCodex(unittest.TestCase):
