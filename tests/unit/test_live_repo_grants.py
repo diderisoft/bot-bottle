@@ -155,6 +155,41 @@ class TestLiveGrant(_Root):
         self.assertTrue(snap.writable)
         self.assertEqual(1, len(live_grant_refs(stage)))
 
+    def test_revoke_a_live_grant(self) -> None:
+        stage = git_gate_state_dir("s1")
+        entry = live_grant.grant_entry("gitea.example.com/acme/app", FORGE)
+
+        def mint(e: Any, slug: str, stage_dir: Path, secrets: Any, **_kw: Any) -> str:
+            del e, slug, secrets
+            (stage_dir / "app-deploy-key-id").write_text("7")
+            (stage_dir / "app-key").write_text("k")
+            return str(stage_dir / "app-key")
+
+        with mock.patch.object(live_grant, "_provision_dynamic_key", side_effect=mint):
+            live_grant.provision_live(entry, slug="s1", stage_dir=stage, secrets=mock.Mock(),
+                                      grant="gitea.example.com/acme/app")
+        transport = mock.Mock()
+        guest = _Guest(rewrites="")
+        guest.header = "url.http://gw:9420/app.git.insteadof ssh://git@h/acme/app.git\n"
+        with self.assertRaisesRegex(live_grant.GrantError, "came with the bottle"):
+            live_grant.revoke_live("app", stage_dir=stage, secrets=mock.Mock(),
+                                   transport=transport, registry_id="r",
+                                   bottle=guest, launched=("app",))  # type: ignore[arg-type]
+        with mock.patch.object(live_grant, "revoke_key") as revoke:
+            live_grant.revoke_live("app", stage_dir=stage, secrets=mock.Mock(),
+                                   transport=transport, registry_id="r",
+                                   bottle=guest, launched=())  # type: ignore[arg-type]
+        self.assertEqual("7", revoke.call_args.args[1])
+        self.assertEqual((), load_upstreams_snapshot(stage))
+        self.assertEqual((), live_grant_refs(stage))
+        self.assertFalse((stage / "app-key").exists())
+        self.assertIn("/git/r/app.git", transport.exec.call_args.args[0])
+        self.assertIn("--unset-all url.http://gw:9420/app.git.insteadof", guest.scripts[-1])
+        with self.assertRaisesRegex(live_grant.GrantError, "wasn't granted"):
+            live_grant.revoke_live("app", stage_dir=stage, secrets=mock.Mock(),
+                                   transport=transport, registry_id="r",
+                                   bottle=guest, launched=())  # type: ignore[arg-type]
+
     def test_revoking_once_per_repo(self) -> None:
         from bot_bottle.git_gate.provision import (  # pylint: disable=import-outside-toplevel
             DeployKeyRef, revoke_deploy_keys)

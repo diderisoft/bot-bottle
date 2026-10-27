@@ -253,12 +253,12 @@ async def manifest(msg: Mapping[str, Any], running: Mapping[str, str],
 
 
 async def manifest_save(msg: Mapping[str, Any], running: Mapping[str, str],
-                        _bottles: Any = None) -> dict[str, Any]:
+                        bottles: Any = None) -> dict[str, Any]:
     """Save a running agent's manifest as its next version from the Manifest
     tab, and with `bottle` its changes into its bottle file too
     (`manifest_view.save_manifest`), if they're still the ones shown."""
     # pylint: disable-next=import-outside-toplevel
-    from .manifest_view import ManifestViewError, save_as_bottle, save_manifest
+    from .manifest_view import ManifestViewError, remove_changes, save_as_bottle, save_manifest
     agent_id = str(msg.get("agent_id", ""))
     reply: dict[str, Any] = {"type": "manifest_saved", "request_id": msg.get("request_id"),
                              "agent_id": agent_id}
@@ -267,13 +267,22 @@ async def manifest_save(msg: Mapping[str, Any], running: Mapping[str, str],
         reply["error"] = "that agent isn't running on this host"
         return reply
     try:
-        if _text(msg, "new_bottle"):
-            reply.update(await asyncio.to_thread(save_as_bottle, bottle, _text(msg, "digest"),
+        raw_keys = msg.get("keys")
+        keys = [k for k in raw_keys if isinstance(k, str)] if isinstance(raw_keys, list) \
+            else None
+        digest = _text(msg, "digest")
+        if msg.get("remove") is True:
+            backend_for = getattr(bottles, "backend_for_session", None)  # BottleService's
+            reply.update(await asyncio.to_thread(
+                remove_changes, bottle, digest, keys or [],
+                backend=backend_for(bottle) if backend_for else None))
+        elif _text(msg, "new_bottle"):
+            reply.update(await asyncio.to_thread(save_as_bottle, bottle, digest,
                                                  _text(msg, "new_bottle"),
-                                                 extend=msg.get("extend") is True))
+                                                 extend=msg.get("extend") is True, keys=keys))
         else:
-            reply.update(await asyncio.to_thread(save_manifest, bottle, _text(msg, "digest"),
-                                                 bottle=_text(msg, "bottle")))
+            reply.update(await asyncio.to_thread(save_manifest, bottle, digest,
+                                                 bottle=_text(msg, "bottle"), keys=keys))
     except ManifestViewError as e:
         reply["error"] = str(e)
     except Exception as e:  # pylint: disable=broad-exception-caught  # reported, not raised

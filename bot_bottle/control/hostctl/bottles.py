@@ -453,6 +453,14 @@ class BottleService:
         """Refresh a running bottle's forwarded host login now."""
         return self.credentials.refresh_now(identity)
 
+    def backend_for_session(self, identity: str) -> "BottleBackend[Any, Any] | None":
+        """The backend a running bottle is on, or None if it isn't known."""
+        record = self._sessions.record(identity)
+        name = str(record.meta.get("backend", "")) if record is not None else ""
+        if not name:
+            return None
+        return self._backend_for(with_recorded_infra(Settings(), name, self._recorded_infra))
+
     def grant_repo(self, identity: str, grant: str) -> dict[str, object]:
         """Grant a repo to a running bottle (`repo_grants.grant_repo`)."""
         # pylint: disable-next=import-outside-toplevel

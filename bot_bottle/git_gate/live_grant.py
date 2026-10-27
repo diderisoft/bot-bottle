@@ -13,7 +13,7 @@ import re
 import shlex
 from pathlib import Path
 from urllib.parse import urlparse
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..contract.identity import GIT_HTTP_PORT, IDENTITY_HEADER
 from ..control.git_gate_render import (
@@ -24,8 +24,8 @@ from ..manifest.forges import ManifestForge, parse_grant
 from ..manifest.git import ManifestGitEntry
 from ..secret_source import SecretSource
 from .provision import (
-    DeployKeyRef, _provision_dynamic_key, _write_upstreams_snapshot, live_grant_refs,
-    load_upstreams_snapshot, record_live_grant, revoke_key,
+    DeployKeyRef, _provision_dynamic_key, _write_upstreams_snapshot, forget_live_grant,
+    live_grant_refs, load_upstreams_snapshot, record_live_grant, revoke_key,
 )
 
 if TYPE_CHECKING:
@@ -145,4 +145,34 @@ def point_agent_at_gate(bottle: "Bottle", entry: ManifestGitEntry) -> None:
                          f"{(added.stderr or added.stdout or '').strip()}")
 
 
-__all__ = ["GrantError", "grant_entry", "point_agent_at_gate", "provision_live"]
+def revoke_live(name: str, *, stage_dir: Path, secrets: SecretSource, transport: Any,
+                registry_id: str, bottle: "Bottle", launched: tuple[str, ...]) -> None:
+    """Take the repo `name`, granted while the bottle runs, away again: revoke
+    its deploy key, drop it from the snapshot and the gateway, and remove the
+    agent's rewrite for it. A repo the bottle launched with (`launched`) stays:
+    its launch key isn't this run's to revoke."""
+    ref = next((r for r in live_grant_refs(stage_dir) if r.name == name), None)
+    if ref is None:
+        raise GrantError(f"{name} wasn't granted while the bottle runs")
+    if name in launched:
+        raise GrantError(f"{name} came with the bottle at launch; it can't be removed "
+                         f"while it runs")
+    id_file = stage_dir / f"{name}-deploy-key-id"
+    if id_file.is_file():
+        revoke_key(ref, id_file.read_text().strip(), secrets)
+    _write_upstreams_snapshot(
+        stage_dir, tuple(u for u in load_upstreams_snapshot(stage_dir) if u.name != name))
+    forget_live_grant(stage_dir, name)
+    for suffix in ("-key", "-deploy-key-id", "-known_hosts"):
+        (stage_dir / f"{name}{suffix}").unlink(missing_ok=True)
+    transport.exec(["rm", "-rf", f"/git/{registry_id}/{name}.git",
+                    f"/git-gate/creds/{registry_id}/{name}-key",
+                    f"/git-gate/creds/{registry_id}/{name}-known_hosts"])
+    found = bottle.exec("git config --global --get-regexp '^url\\..*\\.insteadof$'")
+    for line in (found.stdout or "").splitlines():
+        key = line.split(" ", 1)[0]
+        if key.lower().endswith(f"/{name}.git.insteadof".lower()):
+            bottle.exec(f"git config --global --unset-all {shlex.quote(key)}")
+
+
+__all__ = ["GrantError", "grant_entry", "point_agent_at_gate", "provision_live", "revoke_live"]

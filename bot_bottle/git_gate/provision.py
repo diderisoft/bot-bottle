@@ -109,6 +109,14 @@ def record_live_grant(stage_dir: Path, ref: DeployKeyRef) -> None:
     path.chmod(0o600)
 
 
+def forget_live_grant(stage_dir: Path, name: str) -> None:
+    """Drop the live grant of the repo `name` from the record."""
+    path = stage_dir / _LIVE_GRANTS
+    refs = [r for r in live_grant_refs(stage_dir) if r.name != name]
+    path.write_text(json.dumps([dataclasses.asdict(r) for r in refs], indent=2))
+    path.chmod(0o600)
+
+
 def revoke_git_gate_provisioned_keys(
     bottle: ManifestBottle, stage_dir: Path, secrets: SecretSource,
 ) -> None:
@@ -248,6 +256,7 @@ def load_upstreams_snapshot(stage_dir: Path) -> tuple[GitGateUpstream, ...]:
 __all__ = [
     "DeployKeyRef",
     "deploy_key_refs",
+    "forget_live_grant",
     "live_grant_refs",
     "load_upstreams_snapshot",
     "record_live_grant",

@@ -171,8 +171,10 @@ class TestRunningBottle(TestAgentManifest):
         assert r is not None
         self.assertEqual(("work", "~/.bot-bottle/bottles/work.md", False),
                          (r["target"], r["path"], r["project"]))
-        self.assertEqual([{"kind": "egress", "what": "docs.example.com"},
-                          {"kind": "repo", "what": "gitea.example.com/o/app:write"}],
+        self.assertEqual([{"kind": "egress", "what": "docs.example.com",
+                           "key": "egress:docs.example.com"},
+                          {"kind": "repo", "what": "gitea.example.com/o/app:write",
+                           "key": "repo:app"}],
                          r["changes"])
         self.assertEqual(["keyed.example.com", "old"], [u["what"] for u in r["unkept"]])
         self.assertIn("host: docs.example.com", r["updated"])
@@ -199,8 +201,10 @@ class TestRunningBottle(TestAgentManifest):
             writable=False),))
         _, manifest = manifest_view._load("s1")  # pylint: disable=protected-access
         current = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
-        self.assertEqual([{"kind": "egress", "what": "docs.example.com"},
-                          {"kind": "repo", "what": "app (read-only)"}], current["changes"])
+        self.assertEqual([{"kind": "egress", "what": "docs.example.com",
+                           "key": "egress:docs.example.com"},
+                          {"kind": "repo", "what": "app (read-only)", "key": "repo:app"}],
+                         current["changes"])
         self.assertEqual(["keyed.example.com"], [u["what"] for u in current["unkept"]])
         repo = current["data"]["git-gate"]["repos"]["app"]
         self.assertEqual(("ssh://git@h/o/app.git", True, "ssh-ed25519 K"),
@@ -288,6 +292,70 @@ class TestRunningBottle(TestAgentManifest):
             with self.assertRaisesRegex(manifest_view.ManifestViewError, "project's bottle"):
                 manifest_view.save_as_bottle("s1", "d", "more", extend=True)
 
+    def test_save_only_the_picked_changes(self) -> None:
+        from bot_bottle import run_manifest  # pylint: disable=import-outside-toplevel
+        self.grant("app", "gitea.example.com/o/app")
+        from bot_bottle.control.git_gate_render import (  # pylint: disable=import-outside-toplevel
+            GitGateUpstream)
+        from bot_bottle.git_gate.provision import (  # pylint: disable=import-outside-toplevel
+            _write_upstreams_snapshot)
+        _write_upstreams_snapshot(git_gate_state_dir("s1"), (GitGateUpstream(
+            name="app", upstream_url="ssh://git@h/o/app.git", upstream_host="h",
+            upstream_port="", identity_file="", known_host_key="", writable=True),))
+        with mock.patch.object(manifest_view, "_live_policy", return_value=LIVE_POLICY):
+            _, manifest = manifest_view._load("s1")  # pylint: disable=protected-access
+            shown = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
+            self.assertEqual(["egress:docs.example.com", "repo:app"],
+                             [c["key"] for c in shown["changes"]])
+            with self.assertRaisesRegex(manifest_view.ManifestViewError, "none of the picked"):
+                manifest_view.save_manifest("s1", shown["digest"], keys=["egress:keyed.example.com"])
+            manifest_view.save_manifest("s1", shown["digest"], keys=["repo:app"])
+            after = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
+        self.assertEqual(["egress:docs.example.com"], [c["key"] for c in after["changes"]])
+        self.assertIn("app", run_manifest.latest("s1")[1]["git-gate"]["repos"])  # type: ignore[index]
+
+    def test_remove_routes_back_to_launch(self) -> None:
+        from bot_bottle.bottle_state import egress_state_dir  # pylint: disable=import-outside-toplevel
+        from bot_bottle.gateway.egress.schema import load_config  # pylint: disable=import-outside-toplevel
+        (egress_state_dir("s1") / "routes.yaml").write_text(LAUNCH_POLICY + '  - host: "docs.example.com"\n'
+                                                            '    inspect:\n      matches:\n'
+                                                            '        - methods: ["GET"]\n')
+        client = mock.Mock()
+        with mock.patch.object(manifest_view, "_live_policy", return_value=LIVE_POLICY), \
+                mock.patch("bot_bottle.backend.adoption.read",
+                           return_value=mock.Mock(registry_id="reg-1", deploy_keys=())), \
+                mock.patch("bot_bottle.control.client.discover_orchestrator_url",
+                           return_value="http://o"), \
+                mock.patch("bot_bottle.control.client.OrchestratorClient", return_value=client):
+            _, manifest = manifest_view._load("s1")  # pylint: disable=protected-access
+            shown = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
+            with self.assertRaisesRegex(manifest_view.ManifestViewError, "pick the changes"):
+                manifest_view.remove_changes("s1", shown["digest"], [])
+            reply = manifest_view.remove_changes(
+                "s1", shown["digest"], ["egress:docs.example.com", "egress:keyed.example.com"])
+        self.assertEqual({"removed": ["docs.example.com", "keyed.example.com"]}, reply)
+        bottle_id, text = client.set_policy.call_args.args
+        routes = {r.host: r for r in load_config(text).routes}
+        self.assertEqual("reg-1", bottle_id)
+        self.assertEqual({"api.example.com", "docs.example.com"}, set(routes))  # keyed: gone
+        self.assertEqual(("GET",), routes["docs.example.com"].matches[0].methods)  # as launched
+
+    def test_remove_repos_through_the_backend(self) -> None:
+        backend = mock.Mock()
+        self.grant("app", "gitea.example.com/o/app")
+        with mock.patch.object(manifest_view, "_live_policy", return_value=LIVE_POLICY), \
+                mock.patch("bot_bottle.backend.adoption.read",
+                           return_value=mock.Mock(registry_id="reg-1", deploy_keys=())), \
+                mock.patch("bot_bottle.git_gate.live_grant.revoke_live") as revoke:
+            _, manifest = manifest_view._load("s1")  # pylint: disable=protected-access
+            digest = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)["digest"]
+            with self.assertRaisesRegex(manifest_view.ManifestViewError, "can't remove repos"):
+                manifest_view.remove_changes("s1", digest, ["repo:app"])
+            self.assertEqual({"removed": ["app"]}, manifest_view.remove_changes(
+                "s1", digest, ["repo:app"], backend=backend))
+        self.assertEqual("app", revoke.call_args.args[0])
+        self.assertEqual("reg-1", revoke.call_args.kwargs["registry_id"])
+
     def test_keep_target_falls_back_to_the_agents_bottle(self) -> None:
         from bot_bottle.approvals import keep_target  # pylint: disable=import-outside-toplevel
         write_metadata(BottleMetadata(identity="s3", agent_name="helper", cwd="",
@@ -306,16 +374,25 @@ class TestManifestSaveRequest(unittest.TestCase):
         with mock.patch.object(manifest_view, "save_manifest",
                                return_value={"version": 2, "bottle": "work"}) as save:
             reply = self.ask({"a1": "s1"}, bottle="work")
-        save.assert_called_once_with("s1", "d", bottle="work")
+        save.assert_called_once_with("s1", "d", bottle="work", keys=None)
         self.assertEqual(("manifest_saved", 2, "work"),
                          (reply["type"], reply["version"], reply["bottle"]))
         with mock.patch.object(manifest_view, "save_manifest", return_value={"version": 3}) as save:
             self.ask({"a1": "s1"}, bottle=True)  # a name, not a flag
-        save.assert_called_once_with("s1", "d", bottle="")
+        save.assert_called_once_with("s1", "d", bottle="", keys=None)
         with mock.patch.object(manifest_view, "save_as_bottle",
                                return_value={"version": 4, "new_bottle": "snap"}) as save_as:
-            reply = self.ask({"a1": "s1"}, new_bottle="snap", extend=True)
-        save_as.assert_called_once_with("s1", "d", "snap", extend=True)
+            reply = self.ask({"a1": "s1"}, new_bottle="snap", extend=True, keys=["repo:a", 5])
+        save_as.assert_called_once_with("s1", "d", "snap", extend=True, keys=["repo:a"])
+        bottles = mock.Mock()
+        bottles.backend_for_session.return_value = "the backend"
+        with mock.patch.object(manifest_view, "remove_changes",
+                               return_value={"removed": ["a"]}) as remove:
+            removed = asyncio.run(remote_actions.manifest_save(
+                {"agent_id": "a1", "digest": "d", "remove": True, "keys": ["repo:a"]},
+                {"a1": "s1"}, bottles))
+        remove.assert_called_once_with("s1", "d", ["repo:a"], backend="the backend")
+        self.assertEqual(["a"], removed["removed"])
         self.assertEqual("snap", reply["new_bottle"])
 
     def test_errors(self) -> None:

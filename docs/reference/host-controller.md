@@ -275,3 +275,9 @@ the name is taken. Without `extend` it's flattened: the whole chain, no
 `extends`. With `extend` it extends the agent's bottles and holds only the
 run's changes. Adding a route for a host a bottle already has merges in the
 new matches (`approvals.with_routes`), so nothing it allowed is dropped.
+`keys` limits any of these to some of the run's changes (`egress:<host>`,
+`repo:<name>`). With `remove`, they're taken away from the running bottle
+instead. Its live policy is rendered again with those routes as they
+launched (or without them) and set on the orchestrator. Repos granted while
+it runs are revoked (`git_gate.live_grant.revoke_live`). A repo it launched
+with is refused.
