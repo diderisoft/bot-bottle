@@ -176,7 +176,7 @@ class TestRunningBottle(TestAgentManifest):
                           {"kind": "repo", "what": "gitea.example.com/o/app:write",
                            "key": "repo:app"}],
                          r["changes"])
-        self.assertEqual(["keyed.example.com", "old"], [u["what"] for u in r["unkept"]])
+        self.assertEqual(["keyed.example.com"], [u["what"] for u in r["unkept"]])
         self.assertIn("host: docs.example.com", r["updated"])
         self.assertIn("gitea.example.com/o/app:write", r["updated"])
         self.assertNotIn("keyed.example.com", r["updated"])
@@ -313,6 +313,43 @@ class TestRunningBottle(TestAgentManifest):
             after = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
         self.assertEqual(["egress:docs.example.com"], [c["key"] for c in after["changes"]])
         self.assertIn("app", run_manifest.latest("s1")[1]["git-gate"]["repos"])  # type: ignore[index]
+
+    def test_a_grant_without_its_grant_string_goes_in_long_form(self) -> None:
+        from bot_bottle.approvals import KeepTarget  # pylint: disable=import-outside-toplevel
+        from bot_bottle.contract.yaml_subset import parse_frontmatter  # pylint: disable=import-outside-toplevel
+        from bot_bottle.control.git_gate_render import (  # pylint: disable=import-outside-toplevel
+            GitGateUpstream)
+        from bot_bottle.git_gate.provision import (  # pylint: disable=import-outside-toplevel
+            _write_upstreams_snapshot)
+        self.grant("app", "")
+        self.grant("lib", "")
+        _write_upstreams_snapshot(git_gate_state_dir("s1"), tuple(GitGateUpstream(
+            name=n, upstream_url=f"ssh://git@h/o/{n}.git", upstream_host="h",
+            upstream_port="", identity_file="", known_host_key="ssh-ed25519 K",
+            writable=False) for n in ("app", "lib")))
+        work = Path(os.environ["BOT_BOTTLE_ROOT"]) / "bottles" / "work.md"
+        work.write_text("---\ngit-gate:\n  repos:\n    - gitea.example.com/o/lib\n---\n")
+        into = manifest_view.bottle_with_changes("s1", LAUNCH_POLICY, KeepTarget(work, None))
+        self.assertEqual(["repo:app"], [c["key"] for c in into["changes"]])  # lib: its own
+        repos = parse_frontmatter(into["updated"])[0]["git-gate"]["repos"]  # type: ignore[index]
+        self.assertEqual("gitea.example.com/o/lib", repos["lib"])  # grants become a mapping
+        self.assertEqual(("ssh://git@h/o/app.git", True),
+                         (repos["app"]["url"], repos["app"]["key"]["read_only"]))
+
+    def test_a_bottle_that_cant_take_the_picks_saves_nothing(self) -> None:
+        from bot_bottle import run_manifest  # pylint: disable=import-outside-toplevel
+        with mock.patch.object(manifest_view, "_live_policy", return_value=LIVE_POLICY):
+            _, manifest = manifest_view._load("s1")  # pylint: disable=protected-access
+            shown = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
+            manifest_view.save_manifest("s1", shown["digest"], bottle="work")
+            again = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
+            run_manifest.record("s1", run_manifest.read("s1", 1), "back")  # unsaved again
+            shown = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
+            before = len(run_manifest.versions("s1"))
+            with self.assertRaisesRegex(manifest_view.ManifestViewError, "nothing was saved"):
+                manifest_view.save_manifest("s1", shown["digest"], bottle="work")
+        self.assertEqual([], again["changes"])
+        self.assertEqual(before, len(run_manifest.versions("s1")))
 
     def test_remove_routes_back_to_launch(self) -> None:
         from bot_bottle.bottle_state import egress_state_dir  # pylint: disable=import-outside-toplevel

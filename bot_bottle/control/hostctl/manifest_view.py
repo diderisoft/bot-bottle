@@ -71,7 +71,7 @@ def _with_run_changes(identity: str, policy: str | None, frontmatter: dict[str, 
     # pylint: disable=import-outside-toplevel
     from ...approvals import with_grant, with_routes
     from ...bottle_state import git_gate_state_dir
-    from ...git_gate.provision import live_grant_refs
+    from ...git_gate.provision import live_grant_refs, load_upstreams_snapshot
     from .repo_grants import find_forge
     fm = frontmatter
     changes: list[dict[str, str]] = []
@@ -88,21 +88,51 @@ def _with_run_changes(identity: str, policy: str | None, frontmatter: dict[str, 
         if after != fm:
             fm = after
             changes.append({"kind": "egress", "what": route.host, "key": key})
-    for ref in live_grant_refs(git_gate_state_dir(identity)):
+    stage = git_gate_state_dir(identity)
+    upstreams = {u.name: u for u in load_upstreams_snapshot(stage)}
+    for ref in live_grant_refs(stage):
         key = f"repo:{ref.name}"
-        if not ref.grant:
-            unkept.append({"kind": "repo", "what": ref.name, "key": key,
-                           "why": "granted before grants were recorded; grant it again "
-                           "to keep it in a bottle file"})
-            continue
         if only is not None and key not in only:
             continue
-        found = find_forge(identity, ref.grant.split("/", 1)[0])
-        after = with_grant(fm, ref.grant, extends=found.bottle if found else "")
+        if ref.grant:
+            found = find_forge(identity, ref.grant.split("/", 1)[0])
+            after, what = with_grant(fm, ref.grant, extends=found.bottle if found else ""), \
+                ref.grant
+        elif ref.name in upstreams:
+            # No grant recorded: kept in long form, which needs no forge.
+            upstream = upstreams[ref.name]
+            after = _with_repo(fm, ref.name, _live_repo(ref, upstream))
+            what = f"{ref.name} ({'write' if upstream.writable else 'read-only'})"
+        else:
+            continue
         if after != fm:
             fm = after
-            changes.append({"kind": "repo", "what": ref.grant, "key": key})
+            changes.append({"kind": "repo", "what": what, "key": key})
     return fm, changes, unkept
+
+
+def _with_repo(frontmatter: dict[str, object], name: str,
+               repo: dict[str, object]) -> dict[str, object]:
+    """`frontmatter` with a long-form repo `name`, unless it already declares a
+    repo of that name (its own setup for it stays). A list of grants becomes
+    the mapping form (`<repo>: <grant>`) so it can hold it."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...manifest.forges import parse_grant
+    fm = dict(frontmatter)
+    raw_git = fm.get("git-gate")
+    git: dict[str, object] = dict(raw_git) if isinstance(raw_git, dict) else {}
+    raw_repos = git.get("repos")
+    if isinstance(raw_repos, list):
+        repos: dict[str, object] = {parse_grant(g, "a grant")[2]: g
+                                    for g in raw_repos if isinstance(g, str)}
+    else:
+        repos = dict(raw_repos) if isinstance(raw_repos, dict) else {}
+    if name in repos:
+        return frontmatter
+    repos[name] = repo
+    git["repos"] = repos
+    fm["git-gate"] = git
+    return fm
 
 
 def bottle_with_changes(identity: str, policy: str | None, target: Any,
@@ -165,11 +195,14 @@ def _targets(identity: str) -> list[tuple[Any, bool]]:
 def bottle_targets(identity: str, policy: str | None) -> list[dict[str, Any]]:
     """Each bottle the run's changes could be written into, and how many of
     them it would take."""
-    return [{"name": t.label() if t.project is None else f"./{t.path.stem}",
-             "label": t.label(), "path": _shown(t.path), "project": t.project is not None,
-             "in_chain": in_chain,
-             "changes": len(bottle_with_changes(identity, policy, t)["changes"])}
-            for t, in_chain in _targets(identity)]
+    out = []
+    for t, in_chain in _targets(identity):
+        keys = [c["key"] for c in bottle_with_changes(identity, policy, t)["changes"]]
+        out.append({"name": t.label() if t.project is None else f"./{t.path.stem}",
+                    "label": t.label(), "path": _shown(t.path),
+                    "project": t.project is not None, "in_chain": in_chain,
+                    "changes": len(keys), "keys": keys})
+    return out
 
 
 def _index(meta: Any) -> Any:
@@ -305,17 +338,20 @@ def save_manifest(identity: str, digest: str, *, bottle: str = "",
     if not chosen["changes"]:
         raise ManifestViewError("there's nothing new to save" if only is None
                                 else "none of the picked changes can be saved")
-    target = _target(identity, bottle) if bottle else None
+    into = None
+    if bottle:
+        # Checked before anything is written, so a save is all or nothing.
+        into = bottle_with_changes(identity, policy, _target(identity, bottle), only)
+        if not into["changes"]:
+            raise ManifestViewError(f"{into['target']} already has the picked changes, "
+                                    f"or can't take them; nothing was saved")
     whats = ", ".join(c["what"] for c in chosen["changes"])
     saved: dict[str, Any] = {"version": run_manifest.record(identity, chosen["data"],
                                                             f"saved: {whats}")}
-    if target is not None:
-        into = bottle_with_changes(identity, policy, target, only)
-        if into["changes"]:
-            save_bottle(target, into["updated"], f"keep from the console: {whats}")
-            saved["bottle"] = into["target"]
-        else:
-            saved["bottle_error"] = f"none of the changes can go into {into['target']}"
+    if into is not None:
+        save_bottle(_target(identity, bottle), into["updated"],
+                    f"keep from the console: {', '.join(c['what'] for c in into['changes'])}")
+        saved["bottle"] = into["target"]
     return saved
 
 
