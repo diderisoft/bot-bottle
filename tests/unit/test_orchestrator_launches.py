@@ -243,6 +243,7 @@ class TestRealHostController(_App):
         super().setUp()
 
     def test_launch_job_and_events_round_trip(self) -> None:
+        self.backend.stale = True  # stops the job at the one yes/no left
         with mock.patch("bot_bottle.manifest.preview.manifest_to_yaml", return_value=""):
             resp = self.client.post("/launches", headers=self.headers(),
                                     json={"agent": "demo", "label": "r1"})
@@ -253,7 +254,7 @@ class TestRealHostController(_App):
             with self.client.stream("GET", f"/launches/{job_id}/events",
                                     headers=self.headers()) as events:
                 lines = [json.loads(line) for line in events.iter_lines() if line]
-        # Unconfirmed: the job stops for the yes/no the remote caller resends.
+        # The job stops for the yes/no the remote caller resends.
         self.assertEqual(("error", CONFIRM_ERROR), (lines[-1]["type"], lines[-1].get("code")))
         status = self.client.get(f"/launches/{job_id}", headers=self.headers()).json()
         self.assertEqual(job_id, status["id"])

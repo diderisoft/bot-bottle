@@ -243,7 +243,7 @@ class TestLaunchConfirmation(_Root):
                              lambda: self.service.launch(LaunchRequest(agent="demo", label="j1")))
             final = list(job.follow(timeout=10))[-1]
         self.assertEqual(("error", CONFIRM_ERROR), (final["type"], final.get("code")))
-        self.assertIn("Launch anyway?", final["message"])
+        self.assertIn("Launch anyway?", str(final["message"]))
 
     def test_a_failed_launch_is_the_jobs_error(self) -> None:
         self.backend.fail_launch = True

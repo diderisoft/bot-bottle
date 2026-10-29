@@ -33,6 +33,9 @@ class _Mocked(unittest.TestCase):
         self.runner.ensure_running.return_value = _STATE
         self.service = self.enterContext(mock.patch.object(lifecycle, "service_unit"))
         self.service.installed.return_value = False
+        # Not root (CI runs as root): `install` under sudo does only the
+        # privileged part.
+        self.enterContext(mock.patch.object(lifecycle.os, "geteuid", return_value=501))
 
     def run_cmd(self, fn, argv: list[str]) -> tuple[int, str, str]:  # type: ignore[no-untyped-def]
         out, err = io.StringIO(), io.StringIO()
