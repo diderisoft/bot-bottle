@@ -325,6 +325,21 @@ class TestDiscoverFirst(unittest.TestCase):
             discover_orchestrator_url(MagicMock())
         self.assertIn("no running orchestrator", str(caught.exception))
 
+    def test_firecracker_is_only_probed_on_linux(self) -> None:
+        # pylint: disable=import-outside-toplevel
+        from bot_bottle.control.client import _candidates
+
+        settings = MagicMock()
+        with patch("bot_bottle.backend.firecracker.util.is_linux", return_value=False), \
+                patch("bot_bottle.backend.firecracker.netpool.from_settings") as pool:
+            _candidates(settings)
+        pool.assert_not_called()
+        with patch("bot_bottle.backend.firecracker.util.is_linux", return_value=True), \
+                patch("bot_bottle.backend.firecracker.netpool.from_settings") as pool:
+            pool.return_value.orch_slot.return_value.guest_ip = "10.9.9.1"
+            candidates, _ = _candidates(settings)
+        self.assertIn("http://10.9.9.1:8099", candidates)
+
     def test_the_host_controller_wrappers_use_every_orchestrator(self) -> None:
         # pylint: disable=import-outside-toplevel
         from bot_bottle.control.hostctl import remote, requests

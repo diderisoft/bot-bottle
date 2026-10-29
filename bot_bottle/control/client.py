@@ -278,11 +278,14 @@ def _candidates(settings: "Settings") -> tuple[list[str], list[BackendProbeFailu
     except Exception as exc:  # noqa: BLE001 — backend optional
         failures.append(_probe_failure("docker", exc))
         candidates.append("http://127.0.0.1:8099")
-    try:  # firecracker: orchestrator TAP
+    try:  # firecracker: orchestrator TAP; only on Linux, where probing it
+        # elsewhere just waits out the timeout
         from ..backend.firecracker import netpool
         from ..backend.firecracker.infra_vm import ORCHESTRATOR_PORT
-        orch_ip = netpool.from_settings(settings.infra).orch_slot().guest_ip
-        candidates.append(f"http://{orch_ip}:{ORCHESTRATOR_PORT}")
+        from ..backend.firecracker.util import is_linux
+        if is_linux():
+            orch_ip = netpool.from_settings(settings.infra).orch_slot().guest_ip
+            candidates.append(f"http://{orch_ip}:{ORCHESTRATOR_PORT}")
     except Exception as exc:  # noqa: BLE001 — backend optional / not firecracker
         failures.append(_probe_failure("firecracker", exc))
     try:  # macOS: host-only address
