@@ -20,12 +20,15 @@ from .active import held_bottles
 
 _USAGE = f"""usage: {PROG} stopped
 
-List bottles that aren't running and can be resumed, most recently used first.
-Output: <identity>\\t<label>\\t<bottles>\\t<last used>\\t<state>
-<state> is `kept` when the bottle's state was kept for resuming, or `left over`
-when its session didn't end cleanly (`{PROG} cleanup` removes those).
-`{PROG} resume <identity>` starts one again.
+List bottles that aren't running and can be resumed, most recently used first,
+as a table in a terminal. Piped, each is a tab-separated line:
+<identity>\\t<agent>\\t<label>\\t<bottles>\\t<last used>\\t<state>
+(`-` for an empty field). <state> is `kept` when the bottle's state was kept
+for resuming, or `left over` when its session didn't end cleanly
+(`{PROG} cleanup` removes those). `{PROG} resume <identity>` starts one again.
 """
+
+_HEADER = ("IDENTITY", "AGENT", "LABEL", "BOTTLES", "LAST USED", "STATE")
 
 
 def _last_used(path: Path) -> float:
@@ -59,6 +62,24 @@ def stopped_bottles(live: set[str]) -> list[tuple[BottleMetadata, float]]:
     return sorted(found, key=lambda m: m[1], reverse=True)
 
 
+def _row(metadata: BottleMetadata, used: float) -> tuple[str, ...]:
+    # A label that only repeats the identity adds nothing.
+    label = "" if metadata.label == metadata.identity else metadata.label
+    return (metadata.identity, metadata.agent_name or "?", label,
+            ",".join(metadata.bottle_names), _when(used),
+            "kept" if is_preserved(metadata.identity) else "left over")
+
+
+def _print_table(rows: list[tuple[str, ...]]) -> None:
+    """Columns padded to their widest cell, two spaces apart; a column empty
+    in every row (often LABEL) is left out."""
+    keep = [i for i in range(len(rows[0])) if any(row[i] for row in rows[1:])]
+    rows = [tuple(row[i] for i in keep) for row in rows]
+    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+    for row in rows:
+        print("  ".join(cell.ljust(w) for cell, w in zip(row, widths)).rstrip())
+
+
 def _when(ts: float) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
 
@@ -72,12 +93,12 @@ def cmd_stopped(argv: list[str]) -> int:
     if not bottles:
         print("no stopped bot-bottle bottles", file=sys.stderr)
         return 0
-    for metadata, used in bottles:
-        agent = metadata.agent_name or "?"
-        label = f"{metadata.label} ({agent})" if metadata.label else agent
-        names = ",".join(metadata.bottle_names) or "-"
-        state = "kept" if is_preserved(metadata.identity) else "left over"
-        print(f"{metadata.identity}\t{label}\t{names}\t{_when(used)}\t{state}")
+    rows = [_row(metadata, used) for metadata, used in bottles]
+    if sys.stdout.isatty():
+        _print_table([_HEADER, *rows])
+    else:
+        for row in rows:
+            print("\t".join(field or "-" for field in row))
     sys.stdout.flush()  # the list, then the hint, even when piped
     print(f"\nresume one with `{PROG} resume <identity>`", file=sys.stderr)
     return 0

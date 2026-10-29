@@ -57,9 +57,27 @@ class TestStopped(unittest.TestCase):
         self.assertEqual(0, status)
         rows = [line.split("\t") for line in out.splitlines()]
         self.assertEqual(["new", "crashed", "old"], [r[0] for r in rows])
-        self.assertEqual(["new", "fix tests (claude)", "claude,gitea"], rows[0][:3])
-        self.assertEqual(["kept", "left over", "kept"], [r[4] for r in rows])
+        self.assertEqual(["new", "claude", "fix tests", "claude,gitea"], rows[0][:4])
+        self.assertEqual(["-", "-"], [rows[1][2], rows[1][3]])  # empty fields
+        self.assertEqual(["kept", "left over", "kept"], [r[5] for r in rows])
         self.assertIn("resume <identity>", err)
+
+    def test_a_terminal_gets_an_aligned_table(self) -> None:
+        _bottle("a-much-longer-identity", label="a-much-longer-identity")
+        _bottle("short", label="fix tests", bottles=("claude",), kept=False, age=60)
+        out = io.StringIO()
+        out.isatty = lambda: True  # type: ignore[method-assign]
+        with patch.object(stopped, "enumerate_active_agents", return_value=[]), \
+                patch.object(stopped, "held_bottles", return_value={}), \
+                patch.object(stopped, "settings_from_env"), \
+                patch("sys.stdout", out), patch("sys.stderr", io.StringIO()):
+            stopped.cmd_stopped([])
+        lines = out.getvalue().splitlines()
+        self.assertTrue(lines[0].startswith("IDENTITY"))
+        # The agent column starts at the same offset on every line.
+        self.assertEqual({lines[0].index("AGENT")}, {line.index("claude") for line in lines[1:]})
+        # A label that only repeats the identity is left blank.
+        self.assertEqual(1, lines[1].count("a-much-longer-identity"))
 
     def test_a_dir_without_metadata_is_not_a_bottle(self) -> None:
         from bot_bottle.paths import bot_bottle_root
