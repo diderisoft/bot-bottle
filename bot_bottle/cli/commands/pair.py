@@ -58,10 +58,13 @@ def _console_url(argv: list[str]) -> str:
 def _show(console_url: str, ansi: bool):
     def show(resp: dict[str, Any]) -> None:
         url = resp.get("pair_url") or f"{console_url}/pair?code={resp['user_code']}"
+        owned = ("This machine is already paired: sign in on your phone with the "
+                 "passkey for its account.\n\n" if resp.get("owned") else "")
         sys.stderr.write(
             "\nScan this with your phone:\n\n"
             f"{render_qr(url, ansi)}\n\n"
             f"  or open {url}\n\n"
+            f"{owned}"
             f"Then enter this code on your phone:  {resp['confirm_code']}\n\n"
         )
     return show
@@ -76,13 +79,15 @@ def cmd_pair(argv: list[str]) -> int:
         sys.stderr.write("bot-bottle pair: --console-url or BB_CONSOLE_URL is required\n")
         return 1
     try:
-        remote.node_id()  # remote access needs iroh; check before pairing
+        node_id = remote.node_id()  # remote access needs iroh; check before pairing
     except remote.RemoteError as e:
         sys.stderr.write(f"bot-bottle pair: {e}\n")
         return 1
     label = login.flag(argv, "--label") or socket.gethostname()
+    # The node id tells the console which machine this is: a re-pair can then
+    # only be approved by the host's owner (the console's pairing PRD).
     status = login.run_device_flow(console_url, label, _show(console_url, sys.stderr.isatty()),
-                                   confirm=True, prog="bot-bottle pair")
+                                   confirm=True, prog="bot-bottle pair", node_id=node_id)
     if status != 0:
         return status
     return cmd_remote(["enable"])

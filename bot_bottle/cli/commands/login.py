@@ -131,14 +131,16 @@ def cmd_login(argv: list[str]) -> int:
 
 def run_device_flow(
     console_url: str, label: str, show: Callable[[dict[str, Any]], None],
-    *, confirm: bool = False, prog: str = "bb login",
+    *, confirm: bool = False, prog: str = "bb login", node_id: str = "",
 ) -> int:
     """Start a device flow, let `show` tell the operator where to approve it,
     poll until approved, and save the tokens. `confirm` asks for a confirm code
-    (`bot-bottle pair`), returned in the response `show` gets."""
+    (`bot-bottle pair`), returned in the response `show` gets. `node_id` (this
+    machine's iroh id) lets the console tie a re-pair to the host's owner."""
     try:
         resp = _post(f"{console_url}/api/v1/hosts/authorize",
-                     {"label": label, **({"confirm": True} if confirm else {})})
+                     {"label": label, **({"confirm": True} if confirm else {}),
+                      **({"node_id": node_id} if node_id else {})})
     except (OSError, ValueError) as exc:
         sys.stderr.write(f"{prog}: failed to start authorization: {exc}\n")
         return 1

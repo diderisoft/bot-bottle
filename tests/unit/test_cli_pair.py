@@ -76,7 +76,9 @@ class CmdPair(unittest.TestCase):
         status, err, enabled = self.run_pair(["--console-url", "http://console/", "--label", "lap"],
                                              [{"status": "pending"}, _APPROVED])
         self.assertEqual(0, status)
-        self.assertEqual([{"label": "lap", "confirm": True}], self.posted)
+        # It says which machine it is, so a re-pair stays with the host's owner.
+        self.assertEqual([{"label": "lap", "confirm": True, "node_id": "node"}], self.posted)
+        self.assertNotIn("already paired", err)
         self.assertIn("4F-7K", err)
         self.assertIn(_START["pair_url"], err)
         self.assertEqual([["enable"]], enabled)
@@ -84,6 +86,11 @@ class CmdPair(unittest.TestCase):
             saved = json.load(f)
         self.assertEqual(("http://console", "at", "cn"),
                          (saved["url"], saved["access_token"], saved["console_node_id"]))
+
+    def test_an_already_paired_machine_is_told_to_sign_in(self) -> None:
+        _, err, _ = self.run_pair(["--console-url", "http://c"], [_APPROVED],
+                                  start={**_START, "owned": True})
+        self.assertIn("already paired: sign in on your phone", err)
 
     def test_a_denied_pairing_leaves_remote_access_off(self) -> None:
         status, _, enabled = self.run_pair(["--console-url", "http://c"], [{"status": "denied"}])
