@@ -321,6 +321,46 @@ class StagedOverlayKey(unittest.TestCase):
                     self._key(Path(tmp), o)
 
 
+class InputsDigest(unittest.TestCase):
+    """The trust hash's view of an overlay: the cache key's staged context,
+    without the base."""
+
+    def _both(self, root: Path, o: ManifestImageOverlay, base: str = _BASE) -> tuple[str, str]:
+        with ao.staged_overlay(base, o, harness="claude", source_root=root) as st:
+            key = st.cache_key
+        return key, ao.inputs_digest(o, harness="claude", source_root=root)
+
+    def test_follows_the_cache_key_except_for_the_base(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ov").mkdir()
+            (root / "ov" / "Dockerfile").write_text("FROM ${BASE}\n")
+            o = ManifestImageOverlay(dockerfile="ov/Dockerfile")
+            key1, digest1 = self._both(root, o)
+            key2, digest2 = self._both(root, o, base=_BASE[:-1] + "b")
+            self.assertNotEqual(key1, key2)
+            self.assertEqual(digest1, digest2)
+            (root / "ov" / "extra").write_text("x")
+            key3, digest3 = self._both(root, o)
+            self.assertNotEqual(key1, key3)
+            self.assertNotEqual(digest1, digest3)
+
+    def test_empty_overlay_digests_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual("", ao.inputs_digest(
+                ManifestImageOverlay(), harness="claude", source_root=Path(tmp)))
+
+    def test_an_unstageable_overlay_digests_its_error_stably(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            o = ManifestImageOverlay(files=("x",))
+            missing = ao.inputs_digest(o, harness="claude", source_root=root)
+            self.assertEqual(missing, ao.inputs_digest(o, harness="claude", source_root=root))
+            (root / "x").write_text("now here")
+            self.assertNotEqual(missing,
+                                ao.inputs_digest(o, harness="claude", source_root=root))
+
+
 class NoPublishedBase(unittest.TestCase):
     def test_message_names_the_template(self) -> None:
         err = ao.no_published_base_error("claude")

@@ -4,7 +4,8 @@ An overlay is either directives (`apt`, `harness_version`, `files` under
 `OVERLAY_DEST`) or a single-stage `dockerfile` that builds `FROM ${BASE}`. Both
 build on the verified base and end as the provider's `image_user`.
 `staged_overlay`'s `cache_key` hashes the staged context, so every backend
-agrees on when to rebuild.
+agrees on when to rebuild. `inputs_digest` hashes the same staged context
+minus the base, for a project agent's trust hash.
 """
 
 from __future__ import annotations
@@ -296,6 +297,35 @@ def context_digest(ctx: Path) -> str:
     return h.hexdigest()
 
 
+# Stands in for the base ref when staging for `inputs_digest`: the trust hash
+# covers what the project supplies, not which release's base it builds on.
+_INPUTS_BASE = "bot-bottle-trust-base"
+
+
+def inputs_digest(
+    overlay: ManifestImageOverlay, *, harness: str, source_root: Path,
+) -> str:
+    """Digest of everything an overlay build takes from `source_root`: the
+    context `staged_overlay` builds, staged on a placeholder base, so it covers
+    exactly what the cache key does. An overlay that can't be staged (a
+    missing file, a symlink out of `source_root`, a refused Dockerfile) digests
+    its error: it can't build, and fixing it changes the digest. Empty for an
+    empty overlay."""
+    if overlay.is_empty():
+        return ""
+    with tempfile.TemporaryDirectory(prefix="bb-overlay-inputs-") as tmp:
+        ctx = Path(tmp) / "ctx"
+        try:
+            stage_overlay_context(
+                _INPUTS_BASE, overlay, harness=harness, source_root=source_root, dest=ctx)
+        except OverlayError as e:
+            return hashlib.sha256(f"unstageable\0{e}".encode()).hexdigest()
+        except OSError as e:
+            # Not the message: it can name the temporary directory.
+            return hashlib.sha256(f"unstageable\0{type(e).__name__}".encode()).hexdigest()
+        return context_digest(ctx)
+
+
 @dataclass(frozen=True)
 class StagedOverlay:
     """A staged overlay build: context dir, Dockerfile, and `cache_key` (base
@@ -330,6 +360,7 @@ __all__ = [
     "OverlayError",
     "StagedOverlay",
     "context_digest",
+    "inputs_digest",
     "no_published_base_error",
     "render_overlay_dockerfile",
     "render_overlay_dockerfile_text",

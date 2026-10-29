@@ -346,6 +346,7 @@ class ManifestIndex:
                 home_agent=home_agents.get(agent_name),
                 bottle_name="+".join(bottle_names) or str(agent_bottle),
                 bottle=raw_bottle, sources=bottle_sources,
+                source_root=self.cwd_md.parent if self.cwd_md else None,
             )
 
         return _manifest_with_merged_git_user(agent, raw_bottle)

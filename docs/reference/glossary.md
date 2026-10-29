@@ -28,7 +28,8 @@ identity of the model harness. Lives under `~/.bot-bottle/agents/` or a repo's
 `.bot-bottle/agents/`. Specifies which bottle to run under (`bottle:`), which
 skills to load, and its Agent Provider. Agent definitions contain no secrets;
 a repo agent whose provider grants something (a host login, a model host with
-a secret, an image build) needs per-host trust, like a repo bottle.
+a secret, an image build) needs per-host trust, like a repo bottle. The trust
+covers the files its image build takes from the repo, not only the agent file.
 
 ## Bottle / Bottle Definition
 

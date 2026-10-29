@@ -3,9 +3,9 @@ agents (`./.bot-bottle/agents/`).
 
 A project bottle runs only once this host has trusted the hash of the project
 files in its chain; a project agent whose provider grants something, or that
-runs on one of the user's bottles, the hash of its file and of what it gets
-from the host. Any change needs
-trusting again. The user's own manifests and the built-in `basic` need none.
+runs on one of the user's bottles, the hash of its file, of the files its
+image build takes from the project, and of what it gets from the host. Any
+change needs trusting again. The user's own manifests and the built-in `basic` need none.
 `trusted-bottles.json` (0600) keeps each hash with the manifest's path and
 grants, to show what changed.
 """
@@ -28,6 +28,10 @@ from .loader import BUILTIN_BOTTLES_DIR, BottleSource, load_bottle_chain
 from .util import ManifestError
 
 TRUST_FILE = "trusted-bottles.json"
+
+# A trust record's scheme. 2: a project agent's hash covers its image build
+# inputs. Records without one are 1, from before that.
+SCHEME = 2
 
 
 def bottle_hash(sources: Sequence[BottleSource]) -> str:
@@ -98,6 +102,7 @@ class Trusted:
     path: str
     grants: tuple[str, ...]
     trusted_at: str
+    scheme: int = 1
 
 
 class UntrustedBottleError(ManifestError):
@@ -131,9 +136,11 @@ def load_trusted() -> list[Trusted]:
     out: list[Trusted] = []
     for e in entries if isinstance(entries, list) else []:
         if isinstance(e, dict):
+            scheme = e.get("scheme", 1)
             out.append(Trusted(str(e.get("hash", "")), str(e.get("bottle", "")),
                                str(e.get("path", "")), tuple(e.get("grants") or ()),
-                               str(e.get("trusted_at", ""))))
+                               str(e.get("trusted_at", "")),
+                               scheme if isinstance(scheme, int) else 1))
     return out
 
 
@@ -166,13 +173,44 @@ def check(bottle_name: str, bottle: ManifestBottle, sources: Sequence[BottleSour
                                previous=previous)
 
 
-def agent_hash(name: str, path: Path, context: Sequence[str] = ()) -> str:
-    """sha256 over a project agent file (name and bytes) and `context`: what
-    it gets from the host beyond its provider, so a change there asks again."""
+def agent_hash(name: str, path: Path, context: Sequence[str] = (), build: str = "") -> str:
+    """sha256 over a project agent file (name and bytes), `context` (what it
+    gets from the host beyond its provider) and `build` (`build_digest`), so a
+    change to any of them asks again. With no build inputs it is the hash
+    from before builds were covered, so those agents keep their trust."""
     digest = hashlib.sha256(b"agent\0" + name.encode() + b"\0" + path.read_bytes())
     for line in context:
         digest.update(b"\0" + line.encode())
+    if build:
+        digest.update(b"\0build\0" + build.encode())
     return digest.hexdigest()
+
+
+def build_digest(provider: ManifestAgentProvider, source_root: Path) -> str:
+    """Digest of what the agent's image build takes from the project, paths
+    resolved from `source_root` (the launch directory) as the build does:
+    the custom `dockerfile`'s bytes, and the overlay's staged context (its
+    Dockerfile and that Dockerfile's directory, or its `files`). Empty when
+    the agent builds nothing. A missing custom Dockerfile digests as missing,
+    so adding one asks again."""
+    # Imported here: agent_overlay imports this package.
+    from .. import agent_overlay  # pylint: disable=import-outside-toplevel
+    parts: list[str] = []
+    if provider.dockerfile:
+        path = Path(os.path.expanduser(provider.dockerfile))
+        if not path.is_absolute():
+            path = source_root / path
+        try:
+            parts.append("dockerfile\0" + hashlib.sha256(path.read_bytes()).hexdigest())
+        except OSError:
+            parts.append("dockerfile\0missing")
+    overlay = agent_overlay.inputs_digest(
+        provider.overlay, harness=provider.harness, source_root=source_root)
+    if overlay:
+        parts.append("overlay\0" + overlay)
+    if not parts:
+        return ""
+    return hashlib.sha256("\0".join(parts).encode()).hexdigest()
 
 
 def _host_bottle(sources: Sequence[BottleSource]) -> bool:
@@ -198,17 +236,21 @@ def host_context(name: str, *, home_agent: Path | None = None, bottle_name: str 
 def check_agent(name: str, path: Path, provider: ManifestAgentProvider, *,
                 home_agent: Path | None = None, bottle_name: str = "",
                 bottle: ManifestBottle | None = None,
-                sources: Sequence[BottleSource] = ()) -> None:
+                sources: Sequence[BottleSource] = (),
+                source_root: Path | None = None) -> None:
     """Raise UntrustedBottleError unless the project agent at `path` is
     trusted. It needs trust when its provider grants something or it runs on
     one of the user's bottles that grants more than `basic`; replacing the
-    user's agent of the same name is shown, not a reason on its own."""
+    user's agent of the same name is shown, not a reason on its own.
+    `source_root` is the launch directory its build paths resolve from;
+    default, the project holding `path` (`<root>/.bot-bottle/agents/`)."""
     context = host_context(name, home_agent=home_agent, bottle_name=bottle_name,
                            bottle=bottle, sources=sources)
     granted = provider_grants(provider) + context
     if not [g for g in granted if not g.startswith("replace ")]:
         return
-    digest = agent_hash(name, path, context)
+    root = source_root if source_root is not None else path.parent.parent.parent
+    digest = agent_hash(name, path, context, build_digest(provider, root))
     entries = load_trusted()
     if any(e.hash == digest for e in entries):
         return
@@ -221,7 +263,7 @@ def trust(error: UntrustedBottleError) -> None:
     """Trust the bottle in `error` on this host, replacing an earlier version."""
     entries = [e for e in load_trusted() if e.path != str(error.path)]
     entries.append(Trusted(error.hash, error.bottle, str(error.path), tuple(error.grants),
-                           time.strftime("%Y-%m-%d")))
+                           time.strftime("%Y-%m-%d"), SCHEME))
     _save(entries)
 
 
@@ -237,17 +279,25 @@ def prompt_text(error: UntrustedBottleError) -> str:
     before, after = set(error.previous.grants), set(error.grants)
     lines = [f"{error.kind} changed: {error.bottle}  ({error.path})",
              f"  trusted {error.previous.trusted_at}", ""]
+    builds = any(g.startswith("build ") for g in error.grants)
+    if error.kind == "agent" and builds and error.previous.scheme < 2:
+        lines += ["  Trust now also covers the files its image build takes from the",
+                  "  project (the Dockerfile and its directory, or the overlay files),",
+                  "  which your earlier trust didn't. Review them before trusting.", ""]
     added = [g for g in error.grants if g not in before]
     removed = [g for g in error.previous.grants if g not in after]
     if added or removed:
         lines.append("  Now:")
         lines += [f"  + {g}" for g in added] + [f"  - {g}" for g in removed]
     else:
-        lines.append("  It grants the same as before; the file changed in other ways.")
+        lines.append("  It grants the same as before; the file changed in other ways."
+                     if error.kind == "bottle" else
+                     "  It grants the same as before; the file or its build inputs changed.")
     lines += ["", f"Trust the changed {error.kind}? [y/N] "]
     return "\n".join(lines)
 
 
-__all__ = ["UntrustedBottleError", "agent_hash", "beyond_basic", "bottle_hash", "check",
+__all__ = ["UntrustedBottleError", "agent_hash", "beyond_basic", "bottle_hash", "build_digest",
+           "check",
            "check_agent", "grants", "host_context", "load_trusted", "prompt_text",
            "provider_grants", "trust"]

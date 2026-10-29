@@ -116,7 +116,10 @@ rootfs (`infra_rootfs.py`):
 - **Orchestrator VM**: control plane, `bot-bottle.db` on a persistent
   `/dev/vdb` volume, the signing key, and buildah for in-VM agent builds.
   Untrusted Dockerfile `RUN` steps share this VM with the control plane.
-  That's an accepted tradeoff for not needing host Docker.
+  That's an accepted tradeoff for not needing host Docker. It leans on the
+  trust gate: a project agent's trust covers its Dockerfile and overlay build
+  context, so a change to them asks again before it is built
+  ([architecture.md](architecture.md#state)).
 - **Gateway VM**: the data plane, with a `gateway` JWT and the CA, and no
   build tooling. It reaches the orchestrator over the one forward rule its
   link allows.
