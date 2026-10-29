@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Mapping, Sequence
+from urllib.parse import unquote_plus
 
 from .matching import (
     decide,
@@ -22,6 +23,50 @@ GIT_PUSH_BLOCK_REASON = (
     "rewrites them to git-gate, which scans the push for secrets. A repo "
     "the bottle doesn't have needs the operator to add it."
 )
+
+# Request positions an agent can carry a credential in. They're stripped on
+# every route without `preserve_auth`, so the route's injected auth (always
+# `Authorization`) is the only identity that goes upstream. This is a
+# denylist and can't be complete. `Proxy-Authorization` and the identity
+# header belong to the gateway and are stripped earlier. `Cookie` isn't here.
+CREDENTIAL_HEADERS = frozenset({
+    "authorization",
+    "x-api-key",
+    "api-key",
+    "x-goog-api-key",
+    "private-token",
+    "x-auth-token",
+    "x-access-token",
+    "x-gitea-token",
+    "x-vault-token",
+    "x-amz-security-token",
+    "ocp-apim-subscription-key",
+})
+CREDENTIAL_QUERY_PARAMS = frozenset({
+    "access_token",
+    "token",
+    "key",
+    "api_key",
+    "apikey",
+    "private_token",
+})
+
+
+def strip_credential_query(path: str) -> str:
+    """`path` without its credential query parameters. Names are compared
+    decoded and case-insensitively; every other byte is kept."""
+    base, sep, query = path.partition("?")
+    if not sep:
+        return path
+    pairs = query.split("&")
+    kept = [
+        pair for pair in pairs
+        if unquote_plus(pair.partition("=")[0]).strip().lower()
+        not in CREDENTIAL_QUERY_PARAMS
+    ]
+    if len(kept) == len(pairs):
+        return path
+    return f"{base}?{'&'.join(kept)}" if kept else base
 
 
 @dataclass(frozen=True)
@@ -60,12 +105,15 @@ def evaluate_route_policy(
     headers: Mapping[str, str],
     env: Mapping[str, str],
 ) -> RoutePolicyResult:
-    """Auth stripping, matching, injection and logging decisions."""
+    """Auth stripping, matching, injection and logging decisions.
+    `strip_authorization` means every `CREDENTIAL_HEADERS` header and
+    `CREDENTIAL_QUERY_PARAMS` parameter goes; `matches` sees the headers
+    without them, as they go upstream."""
     strip_authorization = route is None or not route.preserve_auth
     effective_headers = {
         name.lower(): value
         for name, value in headers.items()
-        if not (strip_authorization and name.lower() == "authorization")
+        if not (strip_authorization and name.lower() in CREDENTIAL_HEADERS)
     }
     decision = decide(
         config.routes,
@@ -86,8 +134,11 @@ def evaluate_route_policy(
 
 
 __all__ = [
+    "CREDENTIAL_HEADERS",
+    "CREDENTIAL_QUERY_PARAMS",
     "GIT_PUSH_BLOCK_REASON",
     "RoutePolicyResult",
     "evaluate_route_policy",
     "git_block_reason",
+    "strip_credential_query",
 ]

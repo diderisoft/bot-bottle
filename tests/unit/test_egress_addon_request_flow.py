@@ -506,6 +506,39 @@ class TestAuthInjection(unittest.TestCase):
         self.assertEqual("Bearer agent-registry-token", flow.request.headers.get("authorization"))
         self.assertIsNone(flow.response)
 
+    def test_agent_credentials_beyond_authorization_are_stripped(self) -> None:
+        # #807: an attacker's key in `x-api-key` (or a query param) must not
+        # reach the injected-auth route; only the injected identity goes out.
+        route = Route(host="api.example.com", auth_scheme="Bearer", token_env="EGRESS_TOKEN_0")
+        addon = _addon(Config(routes=(route,)))
+        flow = _Flow(_Request(
+            host="api.example.com", method="POST",
+            path="/v1/files?purpose=x&api_key=attacker&Token=t2",
+            headers={"X-Api-Key": "attacker-key", "x-goog-api-key": "g",
+                     "Private-Token": "p", "authorization": "Bearer placeholder",
+                     "anthropic-version": "2023-06-01"},
+        ))
+        with patch.dict("os.environ", {"EGRESS_TOKEN_0": "real-gateway-token"}):
+            _run_request(addon, flow)
+        self.assertIsNone(flow.response)
+        self.assertEqual("Bearer real-gateway-token", flow.request.headers.get("authorization"))
+        for name in ("x-api-key", "x-goog-api-key", "private-token"):
+            self.assertIsNone(flow.request.headers.get(name), name)
+        self.assertEqual("2023-06-01", flow.request.headers.get("anthropic-version"))
+        self.assertEqual("/v1/files?purpose=x", flow.request.path)
+
+    def test_preserve_auth_keeps_every_agent_credential(self) -> None:
+        route = Route(host="registry-1.docker.io", preserve_auth=True)
+        addon = _addon(Config(routes=(route,)))
+        flow = _Flow(_Request(
+            host="registry-1.docker.io", path="/v2/?token=t",
+            headers={"x-api-key": "k"},
+        ))
+        _run_request(addon, flow)
+        self.assertIsNone(flow.response)
+        self.assertEqual("k", flow.request.headers.get("x-api-key"))
+        self.assertEqual("/v2/?token=t", flow.request.path)
+
     def test_default_route_strips_agent_auth(self) -> None:
         route = Route(host="registry-1.docker.io")
         addon = _addon(Config(routes=(route,)))

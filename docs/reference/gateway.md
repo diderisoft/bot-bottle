@@ -50,8 +50,9 @@ Basic`, so a client that waits to be challenged (git's default
    when the route sets `git.fetch`. Pushes go through git-gate.
 6. **Route policy** (`request_pipeline.evaluate_route_policy`). A host not on
    the allowlist, or a request matching no `matches` entry, gets a 403. The
-   agent's `Authorization` is stripped unless the route sets `preserve_auth`,
-   and the route's `auth` is injected from the bottle's egress tokens.
+   agent's [credentials](#agent-credentials) are stripped unless the route
+   sets `preserve_auth`, and then the route's `auth` is injected from the
+   bottle's egress tokens.
 7. **First contact.** The first request from a bottle to a host is written to
    the audit journal. With `audit.delivery: required`, the request waits for
    that record and is refused if it can't be written.
@@ -68,6 +69,28 @@ Routes with `inspect: false` are not TLS-intercepted. The allowlist decision
 happens at `CONNECT`, and the TLS tunnel passes through untouched: no DLP, no
 auth injection, no path matching. Only TLS passes: a non-TLS stream on such a
 route is refused like any other raw TCP.
+
+### Agent credentials
+
+On a route without `preserve_auth`, the only identity that goes upstream is
+the one the gateway injects (the route's `auth`, always as `Authorization`).
+Before injecting, the gateway strips every credential the agent put in the
+request. An agent handed someone else's key, by a prompt injection for
+example, can't act as that account on an allowlisted host.
+
+- **Headers:** `Authorization`, `X-Api-Key`, `Api-Key`, `X-Goog-Api-Key`,
+  `Private-Token`, `X-Auth-Token`, `X-Access-Token`, `X-Gitea-Token`,
+  `X-Vault-Token`, `X-Amz-Security-Token` and `Ocp-Apim-Subscription-Key`.
+- **Query parameters:** `access_token`, `token`, `key`, `api_key`, `apikey`
+  and `private_token`. Names are compared case-insensitively, after
+  URL-decoding.
+
+`matches` header filters see the request without them. The lists are
+`CREDENTIAL_HEADERS` and `CREDENTIAL_QUERY_PARAMS` in
+`gateway/egress/request_pipeline.py`. They are a denylist and can't be
+complete. `Proxy-Authorization` and the identity header belong to the
+gateway and are always stripped before this. Routes with `inspect: false`
+are tunnelled, so nothing is stripped there.
 
 ### Outbound DLP
 
