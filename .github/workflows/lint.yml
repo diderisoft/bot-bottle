@@ -1,0 +1,72 @@
+# GitHub-hosted port of .gitea/workflows/lint.yml: the immutable image-input
+# and published-artifacts checks, pylint (score >= 8.0) and strict pyright.
+# See docs/reference/ci.md.
+
+name: lint
+
+on:
+  push:
+    paths: &lint-paths
+      - '**.py'
+      - 'Dockerfile*'
+      - 'bot_bottle/contrib/*/Dockerfile'
+      - 'bot_bottle/contrib/*/package.json'
+      - 'bot_bottle/contrib/*/package-lock.json'
+      - 'bot_bottle/contrib/codex/codex-package_SHA256SUMS'
+      - 'requirements.gateway.*'
+      - 'image-build-args.json'
+      - 'published-artifacts.json'
+      - 'pyrightconfig.json'
+      - '.pylintrc'
+      - '.github/workflows/lint.yml'
+  pull_request:
+    paths: *lint-paths
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+
+      - name: Enforce immutable image inputs
+        run: python3 scripts/check_image_inputs.py
+
+      - name: Enforce the published-artifacts manifest
+        run: python3 scripts/check_published_artifacts.py
+
+      - name: Install dev dependencies
+        run: python3 -m pip install -r requirements-dev.txt
+
+      - name: Run pylint
+        run: |
+          # Pylint's exit code is nonzero for any finding regardless of
+          # --fail-under. Keep the full report but enforce the score.
+          set +e
+          find . -name '*.py' -not -path './.venv/*' -not -path './.git/*' \
+            | xargs pylint --fail-under=8.0 \
+            | tee "$RUNNER_TEMP/pylint-output.txt"
+          set -e
+          SCORE=$(sed -n \
+            's/^Your code has been rated at \([-0-9.]*\)\/10.*/\1/p' \
+            "$RUNNER_TEMP/pylint-output.txt" | tail -1)
+          test -n "$SCORE"
+          awk -v score="$SCORE" 'BEGIN { exit !(score >= 8.0) }'
+
+      - name: Run pyright
+        run: pyright .

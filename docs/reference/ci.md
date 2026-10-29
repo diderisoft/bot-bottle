@@ -27,8 +27,39 @@ missing backend or runner-topology regression from becoming a green job.
 Combined unit + Docker coverage is informational globally. Two focused gates
 are enforced:
 
-- changed executable Python lines must be at least 90% covered; and
-- the validated critical security/logic core must remain at least 90% covered.
+- changed executable Python lines must be at least 80% covered; and
+- the validated critical security/logic core must remain at least 85% covered
+  (thresholds per [ADR 0004](../decisions/0004-coverage-policy.md)).
+
+## GitHub Actions (hosted runners only)
+
+[`.github/workflows/`](../../.github/workflows/) mirrors the required gate on
+GitHub-hosted `ubuntu-latest` runners while Gitea stays the primary CI:
+
+- [`test.yml`](../../.github/workflows/test.yml): unit, Docker integration
+  (same 22-executed/no-skip gate), image-input builds, and combined coverage
+  with the critical-modules and diff-coverage gates; and
+- [`lint.yml`](../../.github/workflows/lint.yml): image-input and
+  published-artifacts checks, pylint (score >= 8.0), and strict pyright.
+
+Both run on `push` (any branch) and `pull_request`, filtered by the same paths
+as their Gitea counterparts, on Python 3.13 via `actions/setup-python`. The
+Docker job runs directly on the runner VM that owns the Docker daemon, so it
+needs none of the `act_runner` client-network or named-volume overrides, and
+each job's fresh VM removes the need for a shared concurrency group. The
+diff-coverage base is the PR's base branch, or `main` on a push; the coverage
+job checks out full history so the base is present without an authenticated
+fetch.
+
+The workflows are hardened: third-party actions are pinned to full commit
+SHAs (with a version comment), the token is `contents: read`, no workflow uses
+`pull_request_target` or secrets, checkout does not persist credentials, and a
+per-ref concurrency group cancels superseded runs (except on `main`).
+
+Only GitHub-hosted runners are used. The KVM and macOS self-hosted runners are
+never registered with GitHub; the pre-release matrix, canaries, and the
+tracker-policy, PRD-number, and image publish/refresh/prune workflows run only
+on Gitea.
 
 ## Privileged pre-release matrix
 

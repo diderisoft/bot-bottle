@@ -1,0 +1,302 @@
+# GitHub-hosted port of .gitea/workflows/test.yml: the unit suite, the Docker
+# integration suite, combined coverage with the critical-modules and
+# diff-coverage gates, and the image-input builds. See docs/reference/ci.md.
+#
+# GitHub-hosted runners only. The KVM (Firecracker) and macOS suites stay on
+# the self-hosted Gitea runners and are never attached to GitHub, so no
+# self-hosted runner ever executes code from a GitHub pull request.
+#
+# Hardening: actions pinned to commit SHAs, a read-only token, no secrets,
+# no pull_request_target, and checkout without persisted credentials.
+
+name: test
+
+on:
+  push:
+    paths: &test-paths
+      - 'bot_bottle/**'
+      - 'tests/**/*.py'
+      - 'cli.py'
+      - 'install.sh'
+      - 'setup.py'
+      - 'MANIFEST.in'
+      - 'flake.nix'
+      - 'nix/firecracker-netpool.nix'
+      - 'scripts/coverage.sh'
+      - 'scripts/critical-modules.txt'
+      - 'scripts/**/*.py'
+      - 'scripts/firecracker-netpool.sh'
+      - 'Dockerfile*'
+      - 'image-build-args.json'
+      - 'pyproject.toml'
+      - 'requirements-dev.txt'
+      - 'requirements.gateway.*'
+      - '.coveragerc'
+      - '.dockerignore'
+      - '.github/workflows/test.yml'
+  pull_request:
+    paths: *test-paths
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+
+      - name: Install dev requirements
+        run: python3 -m pip install -r requirements-dev.txt
+
+      # The host controller's session tests drive a real tmux (PRD 0092).
+      - name: Install tmux
+        run: |
+          command -v tmux || {
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux
+          }
+          tmux -V
+
+      - name: Run unit tests with coverage
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage.unit
+        run: python3 -m coverage run -m unittest discover -t . -s tests/unit -v
+
+      - name: Report unit coverage
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage.unit
+        run: python3 -m coverage report -m
+
+      - name: Stage unit coverage for upload
+        run: cp .coverage.unit coverage-unit.dat
+
+      - name: Upload unit coverage artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-unit
+          path: coverage-unit.dat
+          retention-days: 7
+
+  integration-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+
+      - name: Install coverage
+        run: python3 -m pip install coverage
+
+      - name: Preflight — Docker backend is ready
+        run: |
+          python3 --version
+          python3 cli.py doctor --backend=docker
+
+      # Unlike Gitea's act_runner, a GitHub-hosted job runs directly on the
+      # VM that owns the Docker daemon, so the workspace and published ports
+      # are visible to it: no client-network or named-volume overrides. Each
+      # job gets a fresh VM, so no cross-run concurrency group is needed for
+      # the fixed singleton names either.
+      - name: Run integration tests (docker) with coverage
+        env:
+          BOT_BOTTLE_BACKEND: docker
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage.docker
+        run: |
+          python3 -m coverage run -m scripts.unittest_gate \
+            -t . -s tests/integration -v \
+            --minimum-executed 22 --fail-on-skip
+
+      - name: Stage docker coverage for upload
+        run: cp .coverage.docker coverage-docker.dat
+
+      - name: Upload docker coverage artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-docker
+          path: coverage-docker.dat
+          retention-days: 7
+
+  image-input-builds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify shared bases cover supported architectures
+        run: |
+          set -euo pipefail
+          python_ref=$(python3 -c \
+            'import json; print(json.load(open("image-build-args.json"))["PYTHON_BASE_IMAGE"])')
+          node_ref=$(python3 -c \
+            'import json; print(json.load(open("image-build-args.json"))["NODE_BASE_IMAGE"])')
+          docker_cli_ref=$(python3 -c \
+            'import json; print(json.load(open("image-build-args.json"))["DOCKER_CLI_BASE_IMAGE"])')
+          test -n "$python_ref"
+          test -n "$node_ref"
+          test -n "$docker_cli_ref"
+          for ref in "$python_ref" "$node_ref" "$docker_cli_ref"; do
+            docker buildx imagetools inspect --raw "$ref" |
+              python3 -c '
+          import json
+          import sys
+          manifest = json.load(sys.stdin)
+          platforms = {
+              (item["platform"]["os"], item["platform"]["architecture"])
+              for item in manifest["manifests"]
+              if item.get("platform", {}).get("os") != "unknown"
+          }
+          required = {("linux", "amd64"), ("linux", "arm64")}
+          missing = required - platforms
+          if missing:
+              raise SystemExit(f"base manifest lacks supported platforms: {missing}")
+          '
+          done
+
+      - name: Verify Codex archives for all supported architectures
+        run: |
+          set -euo pipefail
+          codex_version=$(
+            sed -n 's/^ARG CODEX_VERSION=//p' bot_bottle/contrib/codex/Dockerfile
+          )
+          test -n "$codex_version"
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          for target in \
+            aarch64-unknown-linux-musl \
+            x86_64-unknown-linux-musl
+          do
+            asset="codex-package-${target}.tar.gz"
+            expected=$(
+              awk -v asset="$asset" '$2 == asset { print $1 }' \
+                bot_bottle/contrib/codex/codex-package_SHA256SUMS
+            )
+            test -n "$expected"
+            curl -fsSL \
+              "https://github.com/openai/codex/releases/download/rust-v${codex_version}/${asset}" \
+              -o "$tmp/$asset"
+            echo "$expected  $tmp/$asset" | sha256sum -c -
+            tar -tzf "$tmp/$asset" > "$tmp/$asset.contents"
+            grep -Fx 'bin/codex' "$tmp/$asset.contents"
+            grep -Fx 'bin/codex-code-mode-host' "$tmp/$asset.contents"
+            grep -Fx 'codex-package.json' "$tmp/$asset.contents"
+          done
+
+      - name: Build and smoke-test all supported images
+        run: |
+          set -euo pipefail
+          suffix="${GITHUB_RUN_ID}"
+          orchestrator="bot-bottle-orchestrator-inputs:${suffix}"
+          gateway="bot-bottle-gateway-inputs:${suffix}"
+          orchestrator_fc="bot-bottle-orchestrator-fc-inputs:${suffix}"
+          claude="bot-bottle-claude-inputs:${suffix}"
+          codex="bot-bottle-codex-inputs:${suffix}"
+          pi="bot-bottle-pi-inputs:${suffix}"
+          python_base=$(python3 -c \
+            'import json; print(json.load(open("image-build-args.json"))["PYTHON_BASE_IMAGE"])')
+          node_base=$(python3 -c \
+            'import json; print(json.load(open("image-build-args.json"))["NODE_BASE_IMAGE"])')
+
+          docker build --build-arg "PYTHON_BASE_IMAGE=$python_base" \
+            -t "$orchestrator" -f Dockerfile.orchestrator .
+          orchestrator_id=$(docker image inspect --format '{{.Id}}' "$orchestrator")
+          case "$orchestrator_id" in sha256:*) ;; *) exit 1 ;; esac
+          orchestrator_base="bot-bottle-orchestrator-inputs:sha256-${orchestrator_id#sha256:}"
+          docker image tag "$orchestrator_id" "$orchestrator_base"
+          test "$(
+            docker image inspect --format '{{.Id}}' "$orchestrator_base"
+          )" = "$orchestrator_id"
+          docker build --build-arg "PYTHON_BASE_IMAGE=$python_base" \
+            -t "$gateway" -f Dockerfile.gateway .
+          docker build \
+            --build-arg "ORCHESTRATOR_BASE_IMAGE=$orchestrator_base" \
+            -t "$orchestrator_fc" -f Dockerfile.orchestrator.fc .
+          docker build --build-arg "NODE_BASE_IMAGE=$node_base" \
+            -t "$claude" -f bot_bottle/contrib/claude/Dockerfile .
+          docker build --build-arg "NODE_BASE_IMAGE=$node_base" \
+            -t "$codex" -f bot_bottle/contrib/codex/Dockerfile .
+          docker build --build-arg "NODE_BASE_IMAGE=$node_base" \
+            -t "$pi" -f bot_bottle/contrib/pi/Dockerfile .
+
+          # The infra images bake only their slice of the package (PRD 0087):
+          # every module in it must import with nothing else present.
+          import_all='import importlib, pkgutil, bot_bottle
+          for m in pkgutil.walk_packages(bot_bottle.__path__, "bot_bottle."):
+              importlib.import_module(m.name)'
+          docker run --rm --entrypoint python3 "$orchestrator" -c "$import_all"
+          # The egress addon builds itself at import and needs an orchestrator.
+          docker run --rm -e BOT_BOTTLE_ORCHESTRATOR_URL=http://127.0.0.1:9 \
+            --entrypoint python3 "$gateway" -c "$import_all"
+          docker run --rm --entrypoint mitmdump "$gateway" --version
+          docker run --rm "$claude" claude --version
+          docker run --rm "$codex" codex --version
+          docker run --rm "$pi" pi --version
+
+  coverage:
+    needs: [unit, integration-docker]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # fetch-depth: 0 brings every branch, including the diff base, so the
+      # diff-coverage gate needs no authenticated fetch afterwards.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+
+      - name: Install coverage
+        run: python3 -m pip install coverage
+
+      - name: Download unit coverage artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-unit
+          path: ${{ github.workspace }}
+
+      - name: Download docker coverage artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-docker
+          path: ${{ github.workspace }}
+
+      - name: Reassemble coverage data files
+        run: |
+          mv coverage-unit.dat .coverage.unit
+          mv coverage-docker.dat .coverage.docker
+
+      - name: Combined coverage (unit + docker integration)
+        run: PYTHON=python3 bash scripts/coverage.sh aggregate critical
+
+      - name: Diff-coverage gate (changed lines >= 80%)
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: python3 scripts/diff_coverage.py --base "origin/$BASE_REF" --min 80
