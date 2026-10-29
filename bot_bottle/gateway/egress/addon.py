@@ -29,7 +29,7 @@ from bot_bottle.gateway.egress.dlp_config import (
     ON_MATCH_BLOCK,
     ON_MATCH_REDACT,
 )
-from bot_bottle.gateway.egress.context import resolve_client_context
+from bot_bottle.gateway.egress.context import DENY_UNATTRIBUTED, resolve_client_context
 from bot_bottle.gateway.egress.dlp import (
     build_inbound_scan_text,
     build_token_allow_payload,
@@ -383,6 +383,15 @@ class EgressAddon:
         # `request()`.
         client_ip = conn.peername[0] if conn is not None and conn.peername else ""
         config, slug, env = resolve_client_context(self._resolver, client_ip, token)
+        if not token and config.deny_reason == DENY_UNATTRIBUTED:
+            # Ask for the identity: git (`http.proxyAuthMethod=anyauth`) sends
+            # the proxy URL's credentials only when challenged.
+            flow.response = http.Response.make(
+                407, b"bot-bottle: proxy credentials required\n",
+                {"Proxy-Authenticate": 'Basic realm="bot-bottle"',
+                 "Content-Type": "text/plain; charset=utf-8"},
+            )
+            return
         self._stash_flow_ctx(flow, config, slug, env)
         mismatch = host_mismatch(flow)
         if mismatch:

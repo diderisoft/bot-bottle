@@ -130,11 +130,12 @@ def point_agent_at_gate(bottle: "Bottle", entry: ManifestGitEntry) -> None:
     found = bottle.exec("git config --global --get-regexp '^http\\..*\\.extraheader$'")
     key = (found.stdout or "").split(" ", 1)[0] if found.returncode == 0 else ""
     gate = key.removeprefix("http.").removesuffix(".extraheader")
-    if not gate.startswith("http://"):
+    # A header with no host (`http:///`) names no gate: find it from the proxy.
+    if not gate.startswith("http://") or not urlparse(gate).netloc:
         gate = _gate_from_proxy(bottle)
     if not gate:
         raise GrantError("couldn't find the agent's git-gate address; relaunch the bottle")
-    rewrite = f"url.{gate.rstrip('/')}/{entry.Name}.git.insteadOf"
+    rewrite = f"url.{gate.removesuffix('/')}/{entry.Name}.git.insteadOf"
     have = bottle.exec(f"git config --global --get-all {shlex.quote(rewrite)}")
     if entry.Upstream in (have.stdout or "").split("\n"):
         return  # re-granted with other access: the rewrite is already there

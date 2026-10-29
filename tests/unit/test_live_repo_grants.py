@@ -243,6 +243,15 @@ class TestLiveGrant(_Root):
             live_grant.point_agent_at_gate(_Guest(  # type: ignore[arg-type]
                 header="", proxy="HTTPS_PROXY=http://bottle:a'b@gw:9099\n"), entry)
 
+    def test_a_header_with_no_host_falls_back_to_the_proxy(self) -> None:
+        entry = live_grant.grant_entry("gitea.example.com/acme/app", FORGE)
+        guest = _Guest(
+            header="http.http:///.extraheader x-id: t\n",
+            proxy="HTTPS_PROXY=http://bottle:tok-1@bot-bottle-gateway:9099\n")
+        live_grant.point_agent_at_gate(guest, entry)  # type: ignore[arg-type]
+        self.assertIn("--add url.http://bot-bottle-gateway:9420/app.git.insteadOf",
+                      guest.scripts[-1])
+
     def test_a_bottle_without_the_header_gets_it_from_its_proxy(self) -> None:
         entry = live_grant.grant_entry("gitea.example.com/acme/app", FORGE)
         guest = _Guest(header="", proxy="HTTPS_PROXY=http://bottle:tok-1@bot-bottle-gateway:9099\n")

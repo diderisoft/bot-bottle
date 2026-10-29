@@ -139,7 +139,7 @@ def launch(
         egress_plan = stage_gateway_ca(
             plan, DockerGateway(settings=plan.settings, name=INFRA_NAME).ca_cert_pem())
         git_gate_url, supervise_url = gateway_agent_urls(
-            plan, ctx.gateway_ip, git_gate_plan)
+            plan, ctx.gateway_ip)
         plan = dataclasses.replace(
             plan,
             git_gate_plan=git_gate_plan,

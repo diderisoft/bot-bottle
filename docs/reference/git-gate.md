@@ -105,8 +105,8 @@ its key is minted with which secret.
 - an `insteadOf` rewrite from each upstream URL to
   `http://<gateway>:9420/<name>.git`;
 - an `http.extraHeader` sending `x-bot-bottle-identity: <token>`, scoped to
-  the gate's URL. It's written even for a bottle without repos, so a repo
-  granted later only adds a rewrite. A bottle launched before that gets it
+  the gate's URL. It's written even for a bottle without repos (every bottle
+  is given the gate's address), so a repo granted later only adds a rewrite. A bottle launched before that gets it
   when it's first granted a repo, from its agent's proxy URL
   (`http://bottle:<token>@<gateway>:<port>`), whose host is the gate's on
   every backend.

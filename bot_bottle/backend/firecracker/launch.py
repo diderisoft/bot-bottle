@@ -120,7 +120,7 @@ def launch(
         # host TAP IP, which DNATs to the gateway VM.
         egress_plan = stage_gateway_ca(plan, ctx.gateway_ca_pem)
         git_gate_url, supervise_url = gateway_agent_urls(
-            plan, slot.host_ip, git_gate_plan)
+            plan, slot.host_ip)
         plan = dataclasses.replace(
             plan,
             git_gate_plan=git_gate_plan,

@@ -25,7 +25,10 @@ through `PolicyResolver` (`gateway/policy_resolver.py`).
 
 The agent's `HTTP_PROXY` and `HTTPS_PROXY`. The identity token is the password
 in `Proxy-Authorization`. For HTTPS it is captured at `CONNECT` and remembered
-per client connection, then stripped so it never goes upstream.
+per client connection, then stripped so it never goes upstream. A `CONNECT`
+with no token that resolves to no bottle gets a `407` with `Proxy-Authenticate:
+Basic`, so a client that waits to be challenged (git's default
+`http.proxyAuthMethod=anyauth`) sends its proxy URL's credentials and retries.
 
 ### Per request
 

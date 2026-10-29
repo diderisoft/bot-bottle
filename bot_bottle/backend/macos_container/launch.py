@@ -318,8 +318,7 @@ def _stamp_agent_urls(
     by IP: these URLs are baked in at provision time, and the name resolves
     through the rewritable `/etc/hosts`. Both bypass the proxy."""
     del endpoint  # addressed by name, via /etc/hosts
-    git_gate_url, supervise_url = gateway_agent_urls(
-        plan, GATEWAY_HOSTNAME, plan.git_gate_plan)
+    git_gate_url, supervise_url = gateway_agent_urls(plan, GATEWAY_HOSTNAME)
     return dataclasses.replace(
         plan,
         agent_git_gate_url=git_gate_url,

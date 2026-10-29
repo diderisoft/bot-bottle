@@ -18,6 +18,7 @@ module exposing a `Response` with `.make`, plus the flat
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import sys
@@ -1164,6 +1165,16 @@ class _ClientHelloData:
         self.ignore_connection = False
 
 
+class _UnattributedResolver:
+    """A resolver that knows no bottle by this IP and token."""
+
+    def resolve_policy_and_bottle_id(
+        self, source_ip: str, identity_token: str = "",
+    ) -> tuple[str | None, str | None, dict[str, str]]:
+        del source_ip, identity_token
+        return None, None, {}
+
+
 class TestDlpPassthrough(unittest.TestCase):
     def _passthrough_addon(self) -> EgressAddon:
         route = Route(host="registry-1.docker.io", inspect=False)
@@ -1199,6 +1210,26 @@ class TestDlpPassthrough(unittest.TestCase):
         flow.request.pretty_host = "registry-1.docker.io"
         addon.http_connect(flow)  # type: ignore[arg-type]
         self.assertNotIn("c6", addon._passthrough_conns)
+        assert flow.response is not None
+        self.assertEqual(flow.response.status_code, 403)
+
+    def test_http_connect_without_credentials_is_challenged(self) -> None:
+        # git sends the proxy URL's credentials only after a 407 challenge.
+        addon = self._passthrough_addon()
+        addon._resolver = cast(Any, _UnattributedResolver())
+        flow = _connect_flow("registry-1.docker.io", conn_id="c7")
+        addon.http_connect(flow)  # type: ignore[arg-type]
+        assert flow.response is not None
+        self.assertEqual(flow.response.status_code, 407)
+        self.assertEqual('Basic realm="bot-bottle"', flow.response.headers["Proxy-Authenticate"])
+
+    def test_http_connect_with_unknown_credentials_is_refused(self) -> None:
+        addon = self._passthrough_addon()
+        addon._resolver = cast(Any, _UnattributedResolver())
+        flow = _connect_flow("registry-1.docker.io", conn_id="c8")
+        flow.request.headers["Proxy-Authorization"] = "Basic " + base64.b64encode(
+            b"bottle:not-a-bottle").decode()
+        addon.http_connect(flow)  # type: ignore[arg-type]
         assert flow.response is not None
         self.assertEqual(flow.response.status_code, 403)
 

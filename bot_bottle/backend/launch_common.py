@@ -93,13 +93,13 @@ def stage_gateway_ca(plan: BottlePlan, ca_pem: str) -> EgressPlan:
 
 
 def gateway_agent_urls(
-    plan: BottlePlan, gateway_host: str, git_gate_plan: GitGatePlan,
+    plan: BottlePlan, gateway_host: str,
 ) -> tuple[str, str]:
-    """The agent's git-gate and supervise URLs, or "" for one the bottle
-    doesn't use. Both are in the agent's NO_PROXY."""
-    git_gate_url = (
-        f"http://{gateway_host}:{GIT_HTTP_PORT}" if git_gate_plan.upstreams else ""
-    )
+    """The agent's git-gate and supervise URLs (supervise "" when the bottle
+    doesn't use it). Both are in the agent's NO_PROXY. The gate's is set even
+    for a bottle launched without repos: a repo granted while it runs (PRD
+    0105) is reached through it."""
+    git_gate_url = f"http://{gateway_host}:{GIT_HTTP_PORT}"
     supervise_url = (
         f"http://{gateway_host}:{SUPERVISE_PORT}/"
         if plan.supervise_plan is not None else ""
