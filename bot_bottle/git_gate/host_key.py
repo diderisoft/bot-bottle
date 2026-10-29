@@ -63,9 +63,11 @@ def fetch_host_key(host: str, port: str) -> str:
     if found:
         return next(iter(found.values()))
 
+    # ssh-keyscan repeats the same error once per key type it tries.
+    errors = dict.fromkeys(l.strip() for l in result.stderr.splitlines() if l.strip())
     raise RuntimeError(
-        f"ssh-keyscan returned no host key for {host}:{port}."
-        + (f" stderr: {result.stderr.strip()!r}" if result.stderr.strip() else "")
+        f"ssh-keyscan got no host key from {host}:{port}"
+        + (f" ({'; '.join(errors)})" if errors else "")
     )
 
 

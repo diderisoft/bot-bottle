@@ -108,6 +108,15 @@ class TestFetchHostKey(unittest.TestCase):
                 fetch_host_key("example.com", "22")
         self.assertIn("connection refused", str(cm.exception))
 
+    def test_raises_with_repeated_stderr_once(self) -> None:
+        r = self._run_result("")
+        r.stderr = "write (10.0.0.1): Broken pipe\nwrite (10.0.0.1): Broken pipe\n"
+        with patch("subprocess.run", return_value=r):
+            with self.assertRaises(RuntimeError) as cm:
+                fetch_host_key("10.0.0.1", "30009")
+        self.assertEqual("ssh-keyscan got no host key from 10.0.0.1:30009 "
+                         "(write (10.0.0.1): Broken pipe)", str(cm.exception))
+
     def test_raises_on_os_error(self) -> None:
         with patch("subprocess.run", side_effect=OSError("not found")):
             with self.assertRaises(RuntimeError) as cm:
