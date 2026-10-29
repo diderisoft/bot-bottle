@@ -91,6 +91,11 @@ class TestInstallScript(unittest.TestCase):  # pylint: disable=too-many-public-m
     def test_runs_doctor_after_install(self):
         self.assertIn("doctor", self.text)
 
+    def test_ends_pointing_at_install_for_the_privileged_rest(self):
+        # It never uses sudo, so the backend's host setup is the next step.
+        self.assertIn("next: run '${BOT_BOTTLE_BIN} install'", self.text)
+        self.assertIn("bootstrap", self.text)
+
     def test_runs_setup_before_doctor_reading_the_terminal(self):
         """Under `curl | sh`, stdin is the script: setup's prompts read
         /dev/tty instead, and without a terminal it gets /dev/null."""

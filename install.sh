@@ -373,9 +373,19 @@ fi
 # --- verify ------------------------------------------------------------------
 
 say "running '${BOT_BOTTLE_BIN} doctor'"
+# The installer never uses sudo, so the backend's host setup (the macOS pf
+# firewall, firecracker's network pool) and autostart are left to
+# `bot-bottle install`, which prints any privileged steps.
+next_step() {
+    say "next: run '${BOT_BOTTLE_BIN} install' to set up your backend and autostart"
+    say "(it prints any sudo steps it needs; '${BOT_BOTTLE_BIN} bootstrap' does install,"
+    say "setup and doctor together if you set this host up another way)."
+}
 if "${BOT_BOTTLE_BIN}" doctor; then
     say "done. Run '${BOT_BOTTLE_BIN} --help' to get started."
+    next_step
 else
     say "install completed, but 'doctor' reported unmet prerequisites (see above)."
-    say "resolve them, then re-run '${BOT_BOTTLE_BIN} doctor'."
+    next_step
+    say "then re-run '${BOT_BOTTLE_BIN} doctor'."
 fi
