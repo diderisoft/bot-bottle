@@ -7,8 +7,12 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import re
+import shutil
 import socket
+import subprocess
+import tempfile
 import unittest
 from typing import Callable
 from unittest import mock
@@ -117,6 +121,92 @@ class TestVerifyIsolation(unittest.TestCase):
         _probe(guest, check_dns=True)
         self.assertIn("dns=0", scripts[0])
         self.assertIn("dns=1", scripts[1])
+
+
+class TestPeers(unittest.TestCase):
+    """Sibling agents: any answer from one is a leak."""
+
+    def setUp(self) -> None:
+        self.enterContext(mock.patch.object(
+            isolation_probe, "host_canary_ip", return_value="127.0.0.1"))
+
+    def _probe(self, run_guest: Callable[[str], str], peers: list[str]) -> str:
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            isolation_probe.verify_isolation(
+                run_guest, what="the agent", remedy="fix it", peers=peers)
+        return err.getvalue()
+
+    def test_a_sibling_that_answers_fails_closed_naming_it(self) -> None:
+        out = "bb-isolation-peer=10.242.0.3\n" + _result(5)
+        with self.assertRaises(Die) as cm:
+            self._probe(lambda _s: out, ["10.242.0.3"])
+        self.assertIn("sibling agent at 10.242.0.3", cm.exception.message)
+        self.assertIn("fix it", cm.exception.message)
+
+    def test_silent_siblings_pass_and_are_named(self) -> None:
+        err = self._probe(lambda _s: _result(1), ["10.242.0.11", "10.242.0.3"])
+        self.assertIn("or sibling agents 10.242.0.11, 10.242.0.3", err)
+
+    def test_peers_are_knocked_on_at_the_unserved_port_deduped_and_capped(self) -> None:
+        scripts: list[str] = []
+
+        def guest(script: str) -> str:
+            scripts.append(script)
+            return _result(1)
+        many = [f"10.0.0.{i}" for i in range(1, 10)] + ["10.0.0.1"]
+        self._probe(guest, many)
+        knocks = re.search(r"peers='([^']*)'", scripts[0])
+        assert knocks, scripts[0]
+        listed = knocks.group(1).split()
+        self.assertEqual(isolation_probe.MAX_PEERS, len(listed))
+        self.assertEqual(len(set(listed)), len(listed))
+        self.assertTrue(all(k.endswith(f":{isolation_probe.PEER_PORT}") for k in listed))
+
+    def test_no_peers_knocks_on_nothing(self) -> None:
+        scripts: list[str] = []
+
+        def guest(script: str) -> str:
+            scripts.append(script)
+            return _result(1)
+        self._probe(guest, [])
+        self.assertIn("peers=''", scripts[0])
+
+
+def _closed_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+class TestGuestScriptPeerKnock(unittest.TestCase):
+    """The guest script itself, run in a local shell: a refusal from a peer is
+    an answer, so it reports a leak."""
+
+    def _run(self, path: str | None = None) -> str:
+        script = isolation_probe.guest_probe_script(
+            "127.0.0.1", _closed_port(), check_dns=False, peers=["127.0.0.1"])
+        env = {"PATH": path if path is not None else os.environ.get("PATH", "")}
+        return subprocess.run(["/bin/sh", "-c", script], capture_output=True, text=True,
+                              env=env, check=False, timeout=30).stdout
+
+    @unittest.skipUnless(shutil.which("python3"), "needs python3")
+    def test_python_counts_a_refusal_as_an_answer(self) -> None:
+        out = self._run()
+        self.assertIn("bb-isolation-peer=127.0.0.1", out)
+        self.assertIn("bb-isolation-probe=5", out)
+
+    @unittest.skipUnless(shutil.which("bash") and shutil.which("timeout"),
+                         "needs bash and timeout")
+    def test_bash_counts_a_refusal_as_an_answer(self) -> None:
+        # A PATH with bash and timeout but no python3.
+        with tempfile.TemporaryDirectory() as d:
+            for tool in ("bash", "timeout"):
+                found = shutil.which(tool)
+                assert found
+                os.symlink(found, os.path.join(d, tool))
+            out = self._run(path=d)
+        self.assertIn("bb-isolation-probe=5", out)
 
 
 class TestNoCanary(unittest.TestCase):
