@@ -1,4 +1,4 @@
-"""Agent-only compose spec: the agent on the external shared gateway network at
+"""Agent-only compose spec: the agent on its own external agent network at
 its pinned source IP, proxied through the gateway. Pure.
 """
 
@@ -66,8 +66,8 @@ def consolidated_agent_compose(
     return {
         "name": f"bot-bottle-{plan.slug}",
         "services": {"agent": service},
-        # Owned by the orchestrator; compose attaches but never creates or
-        # removes it.
+        # Owned by the launcher (`agent_network`); compose attaches but
+        # never creates or removes it.
         "networks": {network: {"external": True}},
     }
 

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 from bot_bottle.backend.docker.consolidated_launch import (
     ConsolidatedLaunchError,
-    _network_container_ips,
+    network_container_ips,
     launch_consolidated,
     deprovision_consolidated,
 )
@@ -42,49 +42,59 @@ def _client(*, bottles: list[dict[str, object]] | None = None) -> Mock:
 
 
 class TestLaunchConsolidated(unittest.TestCase):
-    def _run(
-        self, client: Mock, provision: Mock | None = None,
-        *, on_network: tuple[str, ...] = ("172.18.0.2",),
-    ):
+    def setUp(self) -> None:
+        self.create = Mock(return_value="10.242.0.8/29")
+        self.connect = Mock()
+        self.remove = Mock()
+
+    def _run(self, client: Mock, provision: Mock | None = None):
         service = MagicMock()
         service.ensure_running.return_value = "http://orch:8080"
-        # The launch flow reads the gateway's agent-facing address + provisioning
-        # transport off the Gateway service (service.gateway()).
         gateway = service.gateway.return_value
         gateway.name = "bot-bottle-gateway"
-        gateway.address.return_value = "172.18.0.2"
-        with patch(f"{_MOD}._network_cidr", return_value="172.18.0.0/16"), \
-                patch(f"{_MOD}._network_container_ips", return_value=list(on_network)), \
+        with patch(f"{_MOD}.create_agent_network", self.create), \
+                patch(f"{_MOD}.connect_gateway", self.connect), \
+                patch(f"{_MOD}.remove_agent_network", self.remove), \
                 patch(f"{_MOD}.OrchestratorClient", return_value=client), \
                 patch(f"{_UTIL}.provision_git_gate", provision or Mock()):
-            return launch_consolidated(_egress_plan(), _git_plan(), service=service)
+            return launch_consolidated(_egress_plan(), _git_plan(), service=service,
+                                       agent_network="bot-bottle-agent-demo")
 
-    def test_allocates_ip_registers_and_provisions(self) -> None:
+    def test_creates_its_network_joins_the_gateway_registers_and_provisions(self) -> None:
         client = _client()
         provision = Mock()
         ctx = self._run(client, provision)
-        # .1 is the router, .2 is the gateway → first bottle gets .3.
-        self.assertEqual("172.18.0.3", ctx.source_ip)
-        self.assertEqual("172.18.0.2", ctx.gateway_ip)
+        self.create.assert_called_once_with("bot-bottle-agent-demo")
+        # .1 is docker's router, .2 the gateway, .3 the agent.
+        self.connect.assert_called_once_with(
+            "bot-bottle-agent-demo", "bot-bottle-gateway", "10.242.0.10")
+        self.assertEqual("10.242.0.11", ctx.source_ip)
+        self.assertEqual("10.242.0.10", ctx.gateway_ip)
+        self.assertEqual("bot-bottle-agent-demo", ctx.network)
         self.assertEqual("b1", ctx.bottle_id)
         self.assertEqual("tok", ctx.identity_token)
         # Registered with the source IP + the egress policy blob.
         kwargs = client.register_bottle.call_args
-        self.assertEqual("172.18.0.3", kwargs.args[0])
+        self.assertEqual("10.242.0.11", kwargs.args[0])
         self.assertIn("api.example.com", kwargs.kwargs["policy"])
         provision.assert_called_once()
+        self.remove.assert_not_called()
 
-    def test_skips_all_addresses_on_the_network(self) -> None:
-        # Gateway .2 + orchestrator .3 already attached -> agent gets .4.
-        ctx = self._run(_client(), on_network=("172.18.0.2", "172.18.0.3"))
-        self.assertEqual("172.18.0.4", ctx.source_ip)
+    def test_other_bottles_are_its_peers(self) -> None:
+        client = _client(bottles=[
+            {"source_ip": "10.242.0.3"}, {"source_ip": "10.242.0.11"},
+            {"source_ip": "10.242.0.19"}, {"source_ip": None}, {},
+        ])
+        ctx = self._run(client)
+        self.assertEqual(("10.242.0.19", "10.242.0.3"), ctx.peer_ips)
 
-    def test_provision_failure_rolls_back_registration(self) -> None:
+    def test_provision_failure_rolls_back_registration_and_network(self) -> None:
         client = _client()
         provision = Mock(side_effect=RuntimeError("provision boom"))
         with self.assertRaises(RuntimeError):
             self._run(client, provision)
         client.teardown_bottle.assert_called_once_with("b1")  # no orphan left
+        self.remove.assert_called_once_with("bot-bottle-agent-demo", "bot-bottle-gateway")
 
 
 class TestNetworkContainerIps(unittest.TestCase):
@@ -94,7 +104,7 @@ class TestNetworkContainerIps(unittest.TestCase):
             patch(f"{_MOD}.run_docker", return_value=result),
             self.assertRaisesRegex(ConsolidatedLaunchError, "daemon unavailable"),
         ):
-            _network_container_ips("bot-bottle-gateway")
+            network_container_ips("bot-bottle-gateway")
 
 
 class TestTeardownConsolidated(unittest.TestCase):

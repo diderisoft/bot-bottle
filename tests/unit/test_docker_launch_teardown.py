@@ -93,7 +93,7 @@ class TestTeardownWarning(unittest.TestCase):
         gw.ca_cert_pem.return_value = "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n"
         ctx = LaunchContext(
             bottle_id="b1", identity_token="t", source_ip="172.20.0.4",
-            network="bot-bottle-gateway", gateway_ip="172.20.0.2",
+            network="bot-bottle-agent-test-teardown-00001", gateway_ip="172.20.0.2",
             env_var_secret="encryption-key",
         )
 
@@ -103,6 +103,7 @@ class TestTeardownWarning(unittest.TestCase):
              mock.patch.object(launch_mod.docker_mod, "verify_agent_image"), \
              mock.patch.object(launch_mod, "launch_consolidated", return_value=ctx), \
              mock.patch.object(launch_mod, "deprovision_consolidated"), \
+             mock.patch.object(launch_mod, "remove_agent_network"), \
              mock.patch.object(launch_mod, "DockerGateway", return_value=gw), \
              mock.patch.object(
                  launch_mod, "consolidated_agent_compose",
@@ -138,7 +139,7 @@ class TestTeardownWarning(unittest.TestCase):
         gw.ca_cert_pem.return_value = "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n"
         ctx = LaunchContext(
             bottle_id="b1", identity_token="t", source_ip="172.20.0.4",
-            network="bot-bottle-gateway", gateway_ip="172.20.0.2",
+            network="bot-bottle-agent-test-teardown-00001", gateway_ip="172.20.0.2",
             env_var_secret="encryption-key",
         )
         images = BottleImages(agent="bot-bottle-claude:latest")
@@ -146,6 +147,7 @@ class TestTeardownWarning(unittest.TestCase):
 
         with mock.patch.object(launch_mod, "launch_consolidated", return_value=ctx), \
              mock.patch.object(launch_mod, "deprovision_consolidated") as deprovision, \
+             mock.patch.object(launch_mod, "remove_agent_network") as remove_network, \
              mock.patch.object(launch_mod, "DockerGateway", return_value=gw), \
              mock.patch.object(
                  launch_mod, "consolidated_agent_compose",
@@ -170,6 +172,44 @@ class TestTeardownWarning(unittest.TestCase):
         provision.assert_not_called()
         compose_down.assert_called_once()
         deprovision.assert_called_once()
+        remove_network.assert_called_once_with(
+            "bot-bottle-agent-test-teardown-00001", launch_mod.INFRA_NAME)
+
+    def test_the_network_goes_last_and_the_probe_knocks_on_peers(self):
+        plan = _plan(self._tmp)
+        gw = mock.Mock()
+        gw.ca_cert_pem.return_value = "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n"
+        ctx = LaunchContext(
+            bottle_id="b1", identity_token="t", source_ip="10.242.0.11",
+            network="bot-bottle-agent-test-teardown-00001", gateway_ip="10.242.0.10",
+            peer_ips=("10.242.0.3",),
+        )
+        order = mock.Mock()
+        with mock.patch.object(launch_mod, "launch_consolidated", return_value=ctx) as lc, \
+             mock.patch.object(launch_mod, "deprovision_consolidated", order.deprovision), \
+             mock.patch.object(launch_mod, "remove_agent_network", order.remove_network), \
+             mock.patch.object(launch_mod, "DockerGateway", return_value=gw), \
+             mock.patch.object(
+                 launch_mod, "consolidated_agent_compose",
+                 return_value={"services": {"agent": {}}},
+             ), \
+             mock.patch.object(
+                 launch_mod, "write_compose_file", return_value=Path("/tmp/compose.yml"),
+             ), \
+             mock.patch.object(launch_mod, "compose_up"), \
+             mock.patch.object(launch_mod, "compose_dump_logs"), \
+             mock.patch.object(launch_mod, "compose_down", order.compose_down), \
+             mock.patch.object(launch_mod.isolation_probe, "verify_isolation") as probe, \
+             contextlib.redirect_stderr(io.StringIO()):
+            with launch_mod.launch(plan, BottleImages(agent="img"),
+                                   provision=mock.Mock(return_value=None)):
+                pass
+
+        self.assertEqual("bot-bottle-agent-test-teardown-00001",
+                         lc.call_args.kwargs["agent_network"])
+        self.assertEqual(("10.242.0.3",), probe.call_args.kwargs["peers"])
+        self.assertEqual(["compose_down", "deprovision", "remove_network"],
+                         [c[0] for c in order.mock_calls])
 
 
 if __name__ == "__main__":

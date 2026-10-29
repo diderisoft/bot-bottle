@@ -27,6 +27,7 @@ DEFAULT_GATEWAY_SUBNET = "10.242.255.0/24"
 # The gateway's route out; only the gateway is on it.
 GATEWAY_EGRESS_NETWORK = "bot-bottle-gateway-egress"
 _GATEWAY_SUBNET_LABEL = "bot-bottle.gateway-subnet"
+_IP_FORWARD = "net.ipv4.ip_forward"
 
 
 class DockerGateway(Gateway):
@@ -136,6 +137,15 @@ class DockerGateway(Gateway):
             return self.address() == self.pinned_address()
         except GatewayError:
             return False
+
+    def _forwarding_off(self) -> bool:
+        """True iff the running gateway was started with IP forwarding off.
+        One from before that is recreated."""
+        proc = run_docker([
+            "docker", "inspect", "--format",
+            f'{{{{index .HostConfig.Sysctls "{_IP_FORWARD}"}}}}', self.name,
+        ])
+        return proc.returncode == 0 and proc.stdout.strip() == "0"
 
     def _bound_to(self, orchestrator_url: str, gateway_token: str) -> bool:
         """True iff the running gateway uses `orchestrator_url` and
@@ -269,7 +279,7 @@ class DockerGateway(Gateway):
         # Recreate when the running container's image is stale.
         self._ensure_network()
         if (self.is_running() and self._running_image_is_current()
-                and self._at_pinned_address()
+                and self._at_pinned_address() and self._forwarding_off()
                 and self._bound_to(orchestrator_url, gateway_token)):
             return False
         # Clear any stale container holding the fixed name.
@@ -281,6 +291,9 @@ class DockerGateway(Gateway):
             "--network", self.network,
             # Fixed address: agents bake it into their proxy env.
             "--ip", self.pinned_address(),
+            # It sits on every agent's network; it must never route between
+            # them.
+            "--sysctl", f"{_IP_FORWARD}=0",
             # Host directory, so the CA survives recreation and volume pruning
             # (see `host_gateway_ca_dir`).
             "--volume", f"{self._ca_mount_source}:{MITMPROXY_HOME}",
@@ -350,8 +363,9 @@ class DockerGateway(Gateway):
             raise GatewayError(f"gateway failed to stop: {proc.stderr.strip()}")
 
     def address(self) -> str:
-        """The gateway's IPv4 on the agent network: the agents' proxy target.
-        Agents share only this network with the gateway."""
+        """The gateway's IPv4 on the shared gateway network. Bottles launched
+        before per-agent networks proxy through it; newer ones proxy through
+        the gateway's address on their own network."""
         proc = run_docker([
             "docker", "inspect", "--format",
             f'{{{{(index .NetworkSettings.Networks "{self.network}").IPAddress}}}}',

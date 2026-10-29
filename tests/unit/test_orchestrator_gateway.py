@@ -88,7 +88,7 @@ class TestDockerGateway(unittest.TestCase):
             self.assertFalse(self.sc.is_running())
 
     def _running_gateway(self, calls: list[list[str]], *, token: str = _TOKEN,
-                         url: str = _ORCH_URL):
+                         url: str = _ORCH_URL, ip_forward: str = "0"):
         env = json.dumps([f"BOT_BOTTLE_ORCHESTRATOR_URL={url}",
                           f"{ORCHESTRATOR_AUTH_JWT_ENV}={token}"])
 
@@ -102,6 +102,8 @@ class TestDockerGateway(unittest.TestCase):
                 return _proc(stdout="img-A")               # current image id
             if argv[:2] == ["docker", "inspect"] and "IPAddress" in argv[3]:
                 return _proc(stdout="10.242.255.2")        # at its pinned address
+            if argv[:2] == ["docker", "inspect"] and "Sysctls" in argv[3]:
+                return _proc(stdout=ip_forward)            # forwarding off
             if argv[:2] == ["docker", "inspect"] and "Config.Env" in argv[3]:
                 return _proc(stdout=env)                   # its orchestrator binding
             if argv[:2] == ["docker", "inspect"]:
@@ -125,6 +127,20 @@ class TestDockerGateway(unittest.TestCase):
             with patch(_RUN_DOCKER, side_effect=self._running_gateway(calls, **kwargs)):
                 self.assertTrue(self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN), kwargs)
             self.assertEqual(1, len([c for c in calls if c[:2] == ["docker", "run"]]))
+
+    def test_runs_with_ip_forwarding_off(self) -> None:
+        # It is on every agent's network; it must not route between them.
+        calls: list[list[str]] = []
+        with patch(_RUN_DOCKER, side_effect=self._running_gateway(calls, token="old")):
+            self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN)
+        run = next(c for c in calls if c[:2] == ["docker", "run"])
+        self.assertEqual("net.ipv4.ip_forward=0", run[run.index("--sysctl") + 1])
+
+    def test_a_gateway_with_forwarding_on_is_replaced(self) -> None:
+        for answer in ("", "1"):
+            calls: list[list[str]] = []
+            with patch(_RUN_DOCKER, side_effect=self._running_gateway(calls, ip_forward=answer)):
+                self.assertTrue(self.sc.connect_to_orchestrator(_ORCH_URL, _TOKEN), answer)
 
     def test_an_unreadable_binding_counts_as_not_bound(self) -> None:
         for answer in (_proc(returncode=1, stderr="no such container"), _proc(stdout="{not json")):

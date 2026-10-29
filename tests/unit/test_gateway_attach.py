@@ -295,13 +295,40 @@ class DockerAttacher(unittest.TestCase):
 
         def run(argv: list[str], **_: Any) -> "subprocess.CompletedProcess[str]":
             if argv[1] == "ps":
-                return _done(out="c0ffee\n")
-            return _done(out="172.30.0.5\n")
+                return _done(out=f"c0ffee-{argv[-3].rsplit('-', 1)[-1]}\n")
+            if argv[-1] == "c0ffee-a":  # its own agent network
+                return _done(out="bot-bottle-agent-a=10.242.0.3 \n")
+            return _done(out="net=172.30.0.5 \n")  # launched on the shared one
 
-        with patch.object(dga, "list_active_slugs", return_value=["a"]), \
+        with patch.object(dga, "list_active_slugs", return_value=["a", "b"]), \
              patch.object(dga, "run_docker", side_effect=run):
             bottles = dga.DockerGatewayAttacher("net").running_bottles()
-        self.assertEqual([RunningBottle("c0ffee", "a", "172.30.0.5")], bottles)
+        self.assertEqual([RunningBottle("c0ffee-a", "a", "10.242.0.3"),
+                          RunningBottle("c0ffee-b", "b", "172.30.0.5")], bottles)
+
+    def test_the_gateway_rejoins_the_bottles_own_network_at_its_address(self) -> None:
+        from bot_bottle.backend.docker import gateway_attach as dga
+        env = json.dumps(["HTTPS_PROXY=http://id:tok@10.242.0.10:9099"])
+        calls: list[list[str]] = []
+
+        def run(argv: list[str], **_: Any) -> "subprocess.CompletedProcess[str]":
+            calls.append(argv)
+            if "Config.Env" in " ".join(argv):
+                return _done(out=env)
+            if argv[1] == "inspect":
+                return _done(out="bot-bottle-agent-a=10.242.0.11 \n")
+            return _done()
+
+        def network(argv: list[str], **_: Any) -> "subprocess.CompletedProcess[str]":
+            calls.append(argv)
+            return _done(out="1|true|10.242.0.8/29\n")
+
+        with patch.object(dga, "run_docker", side_effect=run), \
+             patch("bot_bottle.backend.docker.agent_network.run_docker", side_effect=network):
+            # The shared network's address doesn't apply to it.
+            dga.DockerGatewayAttacher("net", "gw").point_at_gateway(_A, "10.242.255.2")
+        self.assertIn(["docker", "network", "connect", "--ip", "10.242.0.10",
+                       "bot-bottle-agent-a", "gw"], calls)
 
     def test_ca_installs_as_root_without_the_agents_path(self) -> None:
         # The agent's PATH can include dirs it writes to: an absolute shell and

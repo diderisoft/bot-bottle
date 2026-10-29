@@ -1,10 +1,11 @@
 """Docker launch: each bottle is a compose project holding only the agent, on
-the shared gateway network.
+its own agent network shared only with the gateway.
 
-Resolve the image, mint deploy keys, register (pinning the source IP and
-provisioning git-gate), stage the CA, `docker compose up -d`, run the isolation
-probe, provision, and yield a `DockerBottle`. Teardown, in reverse: dump logs
-to `state/<slug>/compose.log`, `compose down`, deregister, revoke keys.
+Resolve the image, mint deploy keys, create the agent network and register
+(pinning the source IP and provisioning git-gate), stage the CA, `docker
+compose up -d`, run the isolation probe, provision, and yield a
+`DockerBottle`. Teardown, in reverse: dump logs to `state/<slug>/compose.log`,
+`compose down`, deregister, remove the network, revoke keys.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ from .compose import (
     compose_up,
     write_compose_file,
 )
+from .agent_network import agent_network_name, remove_agent_network
 from .consolidated_compose import consolidated_agent_compose
 from ...orchestrator.store.config_store import resolve_teardown_timeout
 from ...paths import host_db_path
@@ -129,8 +131,11 @@ def launch(
         service = DockerInfraService(plan.settings)
         ctx = launch_consolidated(
             plan.egress_plan, git_gate_plan, service=service,
+            agent_network=agent_network_name(plan.slug),
             tokens=token_values,
         )
+        # Last out: after compose down has removed the agent from it.
+        stack.callback(remove_agent_network, ctx.network, INFRA_NAME)
         stack.callback(deprovision_consolidated, ctx.bottle_id, service=service,
                        timeout=teardown_timeout)
 
@@ -164,8 +169,8 @@ def launch(
             from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
             compose_env[ENV_VAR_SECRET_NAME] = plan.env_var_secret
         info(
-            f"docker compose up -d  (project {project}, agent on shared "
-            f"gateway {ctx.gateway_ip}, ip {ctx.source_ip})"
+            f"docker compose up -d  (project {project}, agent on {ctx.network} "
+            f"with gateway {ctx.gateway_ip}, ip {ctx.source_ip})"
         )
         compose_up(project, compose_file, env=compose_env)
         stack.callback(compose_down, project, compose_file)
@@ -189,8 +194,10 @@ def launch(
             lambda script: bottle.exec(script).stdout,
             what=f"agent container {plan.container_name}",
             remedy=(f"Its network ({ctx.network}) must be a docker `--internal` "
-                    "network; stop running bottles and relaunch so it is recreated."),
+                    "network of its own, shared only with the gateway; stop "
+                    "running bottles and relaunch so it is recreated."),
             check_dns=True,
+            peers=ctx.peer_ips,
         )
         bottle.prompt_path = provision(plan, bottle)
         bottle.registry_id = ctx.bottle_id
@@ -211,6 +218,7 @@ def adopted(
     finally:
         compose_down(compose_project_name(bottle_id),
                      compose_file_path(bottle_state_dir(bottle_id)))
+        remove_agent_network(agent_network_name(bottle_id), INFRA_NAME)
         if record.registry_id:
             deprovision_consolidated(record.registry_id, service=DockerInfraService(settings),
                                      timeout=resolve_teardown_timeout(host_db_path()))

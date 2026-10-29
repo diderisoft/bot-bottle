@@ -40,7 +40,7 @@ running bottled agent to an image that `bot-bottle resume` can start again.
 |---|---|---|---|
 | Agent | Apple container (a lightweight VM) | Firecracker microVM, reached over SSH | container, under gVisor `runsc` when Docker has it |
 | Infra pair | two Apple containers | two Firecracker microVMs | two containers |
-| Agent network | host-only agent network with pinned subnets | point-to-point TAP with a /31 per slot | `bot-bottle-gateway` network with an explicit subnet |
+| Agent network | host-only agent network with pinned subnets | point-to-point TAP with a /31 per slot | an `--internal` /29 per agent, shared only with the gateway |
 | Way out | only the gateway is on the NAT egress network; a host pf anchor drops agent traffic to the host and off the subnet | `inet bot_bottle_fc` nft table: agent traffic to the gateway ports is DNAT'd to the gateway VM, everything else dropped | only the gateway is on an egress network |
 | Control plane reachable from agent | no; the agent isn't on the control network | no; no forward rule | no; the agent isn't on the `--internal` control network |
 | Isolation probe | yes, plus a DNS check | yes | yes, plus a DNS check |
@@ -141,13 +141,31 @@ gVisor is registered.
 
 - `bot-bottle-orchestrator`: on the `--internal` control network, plus a
   loopback publish for the CLI.
-- `bot-bottle-gateway`: on the agent-facing `bot-bottle-gateway` network and
-  the control network. It reaches the orchestrator by Docker DNS.
+- `bot-bottle-gateway`: on the shared `bot-bottle-gateway` network, the
+  control network, and each running agent's own network. It reaches the
+  orchestrator by Docker DNS. It runs with `net.ipv4.ip_forward=0`, so it
+  never routes between the agent networks it sits on.
 
-Each agent attaches to the gateway network at a pinned address from
-`gateway_net.py`, which is its attribution key. The agent's compose file
-holds only bare env names. Values such as `ENV_VAR_SECRET` go through the
-subprocess env, never to disk.
+Each agent gets its own `--internal` network, `bot-bottle-agent-<slug>`
+(`agent_network.py`): a /29 from `10.242.0.0/20` (`gateway_net.py`) holding
+only docker's router (`.1`), the gateway (`.2`) and the agent (`.3`). Agents
+share no network, so they can't reach each other; a sibling's address has no
+route. One shared network with `enable_icc=false` wouldn't do, since ICC off
+also drops agent-to-gateway traffic on the bridge. The launcher creates the
+network before registering, skipping every subnet a docker network already
+uses; a subnet a concurrent launch took fails with an overlap and the next is
+tried. The agent's `.3` address is its attribution key, unique because the
+subnets don't overlap.
+
+Teardown (the launch's own, an adopted bottle's, and `cleanup`) detaches the
+gateway before removing the network, since docker won't remove a network with
+endpoints. A recreated gateway has lost its agent-network attachments;
+reattach joins it to each running bottle's network at `.2` again. A bottle
+launched before per-agent networks stays on the shared `bot-bottle-gateway`
+network until it's relaunched.
+
+The agent's compose file holds only bare env names. Values such as
+`ENV_VAR_SECRET` go through the subprocess env, never to disk.
 
 ## Isolation probe
 
@@ -157,6 +175,15 @@ on the host's primary address and has the guest try to connect to it and to a
 public address. On docker it also tries to resolve a public name. Any success
 is a leak, and the launch fails. The canary listener means a "blocked" result
 is a real drop, not a connection refused.
+
+On docker it also knocks on up to four other running bottles (their
+registered source IPs, from the orchestrator) at TCP port 1, which nothing
+serves. There's no listener there, so a refusal counts as a leak as well as a
+connection; only silence or no route passes. This needs python3 or bash in
+the agent image, which can tell a refusal from a drop; with only `nc` the
+probe is inconclusive and the launch fails. The first bottle has no siblings
+to knock on, and each later launch checks itself against those already
+running.
 
 ## Gateway restarts
 

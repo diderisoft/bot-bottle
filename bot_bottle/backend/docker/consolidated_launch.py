@@ -1,6 +1,7 @@
-"""Docker register/teardown sequence: ensure the infra pair, allocate a pinned
-source IP on the gateway network, register the bottle and provision its
-git-gate state. Returns the agent's `LaunchContext`.
+"""Docker register/teardown sequence: ensure the infra pair, create the
+bottle's own agent network with the gateway on it, register the bottle at its
+pinned source IP and provision its git-gate state. Returns the agent's
+`LaunchContext`.
 """
 
 from __future__ import annotations
@@ -11,11 +12,13 @@ from .util import run_docker
 from ...egress import EgressPlan
 from ...git_gate import GitGatePlan
 from ...control.client import OrchestratorClient
-from ...control.gateway import GATEWAY_NETWORK
 from .infra import INFRA_NAME, DockerInfraService
 from ..provision_bottle import deprovision_bottle, provision_bottle
+from .agent_network import (
+    connect_gateway, create_agent_network, remove_agent_network,
+)
 from .gateway_transport import DockerGatewayTransport
-from .gateway_net import next_free_ip
+from .gateway_net import agent_subnet_addresses
 
 
 class ConsolidatedLaunchError(RuntimeError):
@@ -24,18 +27,20 @@ class ConsolidatedLaunchError(RuntimeError):
 
 @dataclass(frozen=True)
 class LaunchContext:
-    """What the agent container needs to join the shared gateway."""
+    """What the agent container needs to join its network."""
 
     bottle_id: str
     identity_token: str
     source_ip: str  # pinned address (attribution key)
-    network: str  # shared gateway network
-    gateway_ip: str  # proxy target
+    network: str  # the bottle's own agent network
+    gateway_ip: str  # proxy target: the gateway's address on that network
     env_var_secret: str = ""  # key for the agent's env
+    # Other registered bottles' addresses, for the isolation probe.
+    peer_ips: tuple[str, ...] = ()
 
 
-def _network_cidr(network: str) -> str:
-    """The gateway network's IPv4 subnet, or raise."""
+def network_cidr(network: str) -> str:
+    """A network's IPv4 subnet, or raise."""
     proc = run_docker([
         "docker", "network", "inspect",
         "--format", "{{range .IPAM.Config}}{{.Subnet}}{{end}}", network,
@@ -48,9 +53,8 @@ def _network_cidr(network: str) -> str:
     return cidr
 
 
-def _network_container_ips(network: str) -> list[str]:
-    """Every address assigned on the gateway network, read from the network
-    itself."""
+def network_container_ips(network: str) -> list[str]:
+    """Every address assigned on a network, read from the network itself."""
     proc = run_docker([
         "docker", "network", "inspect", "--format",
         "{{range .Containers}}{{.IPv4Address}} {{end}}", network,
@@ -66,38 +70,49 @@ def _network_container_ips(network: str) -> list[str]:
     return ips
 
 
+def _peer_ips(client: OrchestratorClient, own: str) -> tuple[str, ...]:
+    """Every other registered bottle's source IP."""
+    ips = {record.get("source_ip") for record in client.list_bottles()}
+    return tuple(sorted(ip for ip in ips if isinstance(ip, str) and ip and ip != own))
+
+
 def launch_consolidated(
     egress_plan: EgressPlan,
     git_gate_plan: GitGatePlan,
     *,
     service: DockerInfraService,
+    agent_network: str,
     tokens: dict[str, str] | None = None,
-    infra_name: str = INFRA_NAME,
-    network: str = GATEWAY_NETWORK,
 ) -> LaunchContext:
-    """Ensure the infra pair, allocate and register the bottle, and provision
-    its git-gate state. Returns the attach context."""
+    """Ensure the infra pair, create `agent_network` with the gateway on it,
+    register the bottle and provision its git-gate state. Returns the attach
+    context; on failure the network is removed again."""
     url = service.ensure_running(launch_stages=True)
     # Agents attribute against the gateway container, not the orchestrator.
     gateway = service.gateway()
     client = OrchestratorClient(url)
 
-    cidr = _network_cidr(network)
-    gateway_ip = gateway.address()
-    source_ip = next_free_ip(cidr, [*_network_container_ips(network), gateway_ip])
-
-    transport = gateway.provisioning_transport()
-    reg = provision_bottle(
-        client, source_ip, egress_plan, git_gate_plan, transport,
-        tokens=tokens,
-    )
+    subnet = create_agent_network(agent_network)
+    try:
+        gateway_ip, source_ip = agent_subnet_addresses(subnet)
+        connect_gateway(agent_network, gateway.name, gateway_ip)
+        peer_ips = _peer_ips(client, source_ip)
+        transport = gateway.provisioning_transport()
+        reg = provision_bottle(
+            client, source_ip, egress_plan, git_gate_plan, transport,
+            tokens=tokens,
+        )
+    except BaseException:
+        remove_agent_network(agent_network, gateway.name)
+        raise
     return LaunchContext(
         bottle_id=reg.bottle_id,
         identity_token=reg.identity_token,
         source_ip=source_ip,
-        network=network,
+        network=agent_network,
         gateway_ip=gateway_ip,
         env_var_secret=reg.env_var_secret,
+        peer_ips=peer_ips,
     )
 
 

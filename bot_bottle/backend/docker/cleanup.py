@@ -12,6 +12,8 @@ from ...lib.log import info
 from .. import EnumerationError
 from ..cleanup_control import CleanupFailures
 from . import util as docker_mod
+from ...control.gateway import GATEWAY_NAME
+from .agent_network import is_agent_network
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
 from .compose import COMPOSE_PROJECT_PREFIX, list_compose_projects
 
@@ -100,6 +102,15 @@ def cleanup(plan: DockerBottleCleanupPlan, settings: Settings) -> None:
 
     for name in plan.stray_networks:
         info(f"removing stray network {name}")
+        if is_agent_network(name):
+            # Docker won't remove a network the gateway is still on. Best
+            # effort: a failure shows up as the `network rm` failing.
+            try:
+                docker_mod.run_docker(
+                    ["docker", "network", "disconnect", "--force", name, GATEWAY_NAME],
+                    timeout=max(settings.operation.cleanup_command_timeout_seconds, 1.0))
+            except (OSError, subprocess.SubprocessError):
+                pass
         failures.run(
             ["docker", "network", "rm", name],
             f"removing stray network {name}",

@@ -2,9 +2,10 @@
 
 - `bot-bottle-orchestrator`: on the `--internal` control network, plus a
   loopback publish for the CLI. Sole opener of `bot-bottle.db`; holds the key.
-- `bot-bottle-gateway`: on the agent network and the control network, so it
-  reaches the orchestrator by name while agents can't reach it at all. Holds
-  the `gateway` token and the CA.
+- `bot-bottle-gateway`: on the shared gateway network, every bottle's own
+  agent network (joined at launch) and the control network, so it reaches the
+  orchestrator by name while agents can't reach it at all. Holds the `gateway`
+  token and the CA.
 """
 
 from __future__ import annotations
@@ -124,7 +125,7 @@ class DockerInfraService(InfraService):
         return orchestrator.url(), orchestrator_restarted or gateway_restarted
 
     def gateway_attacher(self) -> DockerGatewayAttacher:
-        return DockerGatewayAttacher(self.network)
+        return DockerGatewayAttacher(self.network, self._gateway_name)
 
     def stop(self) -> None:
         """Remove both containers. Idempotent."""

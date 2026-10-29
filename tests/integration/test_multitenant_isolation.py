@@ -23,8 +23,8 @@ import unittest
 
 from bot_bottle.cli.settings import settings_from_env
 from bot_bottle.backend.docker.consolidated_launch import (
-    _network_cidr,
-    _network_container_ips,
+    network_cidr,
+    network_container_ips,
 )
 from bot_bottle.contract.hostctl import DEFAULT_EGRESS_PORT as EGRESS_PORT
 from bot_bottle.backend.docker.gateway_net import next_free_ip
@@ -117,8 +117,8 @@ class TestMultitenantIsolation(unittest.TestCase):
         self.assertEqual(0, proc.returncode, f"echo upstream failed: {proc.stderr}")
 
     def _free_ip(self, extra_taken: list[str]) -> str:
-        taken = _network_container_ips(GATEWAY_NETWORK) + extra_taken
-        return next_free_ip(_network_cidr(GATEWAY_NETWORK), taken)
+        taken = network_container_ips(GATEWAY_NETWORK) + extra_taken
+        return next_free_ip(network_cidr(GATEWAY_NETWORK), taken)
 
     def _probe(self, source_ip: str, identity_token: str, host: str) -> str:
         deadline = time.monotonic() + 30

@@ -24,7 +24,7 @@ import unittest
 from pathlib import Path
 
 from bot_bottle.cli.settings import settings_from_env
-from bot_bottle.backend.docker.consolidated_launch import _network_cidr, _network_container_ips
+from bot_bottle.backend.docker.consolidated_launch import network_cidr, network_container_ips
 from bot_bottle.contract.hostctl import DEFAULT_EGRESS_PORT as EGRESS_PORT
 from bot_bottle.backend.docker.gateway_net import next_free_ip
 from bot_bottle.backend.docker.infra import DockerInfraService
@@ -146,8 +146,8 @@ class TestGatewayReattachDocker(unittest.TestCase):
         return self.svc.gateway().ca_cert_pem()
 
     def test_orchestrator_and_gateway_restarts_reattach_the_bottle(self) -> None:
-        taken = _network_container_ips(GATEWAY_NETWORK)
-        source_ip = next_free_ip(_network_cidr(GATEWAY_NETWORK), taken)
+        taken = network_container_ips(GATEWAY_NETWORK)
+        source_ip = next_free_ip(network_cidr(GATEWAY_NETWORK), taken)
         env_var_secret = new_env_var_secret()
         bottle = self.client.register_bottle(
             source_ip, policy=_POLICY, tokens={"EGRESS_TOKEN_0": _TOKEN},
