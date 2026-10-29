@@ -184,6 +184,18 @@ def write_config() -> Path:
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # The script a key binding of an older version ran (`approve` is now
+    # `supervise`); the reload below moves the binding off it.
+    (state_dir() / "approve").unlink(missing_ok=True)
+    # tmux reads -f only when its server starts: a server already running
+    # (sessions kept across a host controller restart) keeps the old key
+    # bindings and hooks unless the new config is loaded into it. With no
+    # server yet this fails quietly; the first session reads the file.
+    try:
+        subprocess.run(tmux("source-file", str(path)), capture_output=True, timeout=10,
+                       check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
     return path
 
 

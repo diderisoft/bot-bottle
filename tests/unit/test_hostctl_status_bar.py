@@ -35,6 +35,30 @@ class StatusBar(unittest.TestCase):
         self.assertIn("Ctrl-] detach", text)
 
     @unittest.skipUnless(shutil.which("tmux"), "needs tmux")
+    def test_a_running_server_gets_the_new_config(self) -> None:
+        # A server started by an older host controller (its Ctrl-\\ running
+        # `approve`) keeps running across a restart; writing the config must
+        # load it into that server, not just the file.
+        conf = sessions.config_path()
+        conf.parent.mkdir(parents=True, exist_ok=True)
+        conf.write_text("bind -n 'C-\\' display-popup -E '/old/approve #{session_name}'\n")
+        stale = sessions.state_dir() / "approve"
+        stale.write_text("#!/bin/sh\n")
+        self.addCleanup(subprocess.run, sessions.tmux("kill-server"), capture_output=True,
+                        check=False)
+        subprocess.run(sessions.tmux("new-session", "-d", "-s", "old", "sleep 30"), check=True)
+        sessions.write_config()
+        keys = subprocess.run(sessions.tmux("list-keys", "-T", "root"), capture_output=True,
+                              text=True, check=True).stdout
+        binding = next(line for line in keys.splitlines() if "C-\\" in line)
+        self.assertIn("hostctl/supervise", binding)
+        self.assertNotIn("/old/approve", binding)
+        self.assertFalse(stale.exists())
+
+    def test_with_no_server_writing_the_config_is_quiet(self) -> None:
+        self.assertTrue(sessions.write_config().exists())
+
+    @unittest.skipUnless(shutil.which("tmux"), "needs tmux")
     def test_tmux_renders_it_with_the_agent(self) -> None:
         conf = sessions.write_config()
         server = ["tmux", "-L", f"bb-test-{os.getpid()}", "-f", str(conf)]
