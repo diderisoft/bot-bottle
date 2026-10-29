@@ -482,7 +482,7 @@ class TestLaunchIsolationProbe(unittest.TestCase):
         self.assertEqual(["register", "probe", "provision"], order)
         self.assertTrue(seen["check_dns"])
         self.assertIn("bot-bottle-dev-abc", str(seen["what"]))
-        self.assertIn("backend setup --backend=macos-container", str(seen["remedy"]))
+        self.assertIn("install --backend=macos-container", str(seen["remedy"]))
         self.assertNotIn("host_gap", seen)
 
     def test_the_probe_runs_through_the_bottle_exec(self) -> None:

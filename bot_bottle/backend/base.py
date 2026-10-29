@@ -355,7 +355,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     def setup(self) -> int:
         """Print this backend's one-time host setup (network pool, daemons,
         install pointers) and return a shell exit code. Run by `bot-bottle
-        backend setup`."""
+        install`."""
 
     @abstractmethod
     def status(self, *, quiet: bool = False) -> int:
@@ -365,7 +365,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
     @abstractmethod
     def teardown(self) -> int:
         """Print how to undo `setup()` and return a shell exit code. Run by
-        `bot-bottle backend teardown`."""
+        `bot-bottle install --undo`."""
 
     def cache_entries(self) -> "list[CacheEntry]":
         """The cached images this backend keeps on the host (PRD 0088), for

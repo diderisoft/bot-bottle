@@ -29,7 +29,7 @@ def _summary(subnet: str) -> str:
         "    that loads them at boot and every minute, turns pf on if it's off\n"
         "    (/etc/pf.conf isn't edited), and turns IPv6 off on the agent network's\n"
         "    bridge only.\n"
-        "  Undo it with: bot-bottle backend teardown --backend=macos-container\n\n"
+        "  Undo it with: bot-bottle install --undo --backend=macos-container\n\n"
     )
 
 
@@ -79,7 +79,7 @@ def _install_firewall(subnet: str) -> int:
     sys.stdout.write(host_firewall.install_commands(subnet, AGENT_SUBNET_V6))
     sys.stderr.write(
         "\n(Or re-run this as root to install it directly: "
-        "sudo bot-bottle backend setup --backend=macos-container)\n"
+        "sudo bot-bottle install --backend=macos-container)\n"
     )
     return 0
 
@@ -150,5 +150,5 @@ def status() -> int:
         sys.stderr.write(f"  also used on this Mac: {clash}\n")
         ok = False
     if not ok:
-        sys.stderr.write("\nRun: bot-bottle backend setup --backend=macos-container\n")
+        sys.stderr.write("\nRun: bot-bottle install --backend=macos-container\n")
     return 0 if ok else 1

@@ -59,7 +59,7 @@ def _print_vm_install_instructions() -> None:
         info("Then start the service:  container system start")
     else:
         info("Install Firecracker: https://github.com/firecracker-microvm/firecracker/releases")
-        info("Configure the host:  bot-bottle backend setup")
+        info("Configure the host:  bot-bottle install")
 
 
 def _auto_select_backend(settings: Settings, prompt: bool = True) -> str:

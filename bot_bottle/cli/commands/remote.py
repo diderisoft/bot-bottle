@@ -1,13 +1,13 @@
-"""bot-bottle remote: let the console you logged in to reach this host.
+"""The host's console link, behind `bot-bottle pair on` / `pair off` and the
+link lines of `bot-bottle status` (no longer a command of its own).
 
-  bot-bottle remote enable    bind this host's iroh node id with the console
-                              and start the link (ADR 0007)
-  bot-bottle remote disable   stop the link
-  bot-bottle remote status    show whether the link is enabled and connected
+  on (enable)   bind this host's iroh node id with the console and start the
+                link (ADR 0007)
+  off (disable) stop the link
 
-`enable` needs `bot-bottle login` and the iroh bindings (`pip install
-'bot-bottle[remote]'`; not on Intel Macs). The host controller picks up the
-change within seconds.
+Turning it on needs a pairing (`bot-bottle pair`) and the iroh bindings
+(`pip install 'bot-bottle[remote]'`; not on Intel Macs). The host controller
+picks up the change within seconds.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from ..constants import PROG
 
 
 def _fail(message: str) -> int:
-    sys.stderr.write(f"{PROG} remote: {message}\n")
+    sys.stderr.write(f"{PROG} pair: {message}\n")
     return 1
 
 
@@ -74,7 +74,7 @@ def _enable() -> int:
     try:
         bound = _bind(console, node_id)
     except urllib.error.HTTPError as e:
-        detail = {401: "the console rejected this host's token; run `bot-bottle login` again",
+        detail = {401: "the console rejected this host's token; run `bot-bottle pair` again",
                   409: _console_detail(e) or "another host on the console already holds "
                                              "this machine's node id"}
         return _fail(detail.get(e.code, f"the console refused the binding (HTTP {e.code})"))
@@ -86,8 +86,8 @@ def _enable() -> int:
         return _fail("the console didn't return its iroh identity; is its iroh node running?")
     pinned = str(console.get("console_node_id", ""))
     if pinned and pinned != console_id:
-        return _fail(f"the console's node id changed since login (pinned {pinned[:10]}, "
-                     f"now {console_id[:10]}); run `bot-bottle login` again if that's expected")
+        return _fail(f"the console's node id changed since pairing (pinned {pinned[:10]}, "
+                     f"now {console_id[:10]}); run `bot-bottle pair` again if that's expected")
     if not pinned:
         console["console_node_id"] = console_id
     console["console_ticket"] = ticket
@@ -103,7 +103,7 @@ def _enable() -> int:
         enabled=True, console_node_id=console_id, console_ticket=ticket))
     print(f"remote access enabled: this host is {node_id[:10]}… on {console['url']}")
     print("the host controller connects within a few seconds "
-          f"(`{PROG} remote status` to check)")
+          f"(`{PROG} status` to check)")
     return 0
 
 
@@ -116,20 +116,24 @@ def _disable() -> int:
     return 0
 
 
-def _status() -> int:
+def link_line() -> str:
+    """One line on the console link, for `bot-bottle status`."""
     config = remote.load_config()
-    print(f"remote access: {'enabled' if config.enabled else 'disabled'}")
-    if config.console_node_id:
-        print(f"console: {config.console_node_id[:10]}…")
+    if not config.enabled:
+        return f"console link: off (`{PROG} pair` to pair, `{PROG} pair on` to turn it on)"
+    console = f" to {config.console_node_id[:10]}…" if config.console_node_id else ""
     status = remote.read_status()
-    if config.enabled and status:
-        age = int(time.time() - float(status.get("updated", 0)))
-        state = "connected" if status.get("connected") else "not connected"
-        error = (f" ({status['error']})"
-                 if status.get("error") and not status.get("connected") else "")
-        print(f"link: {state}{error}, {age}s ago")
-    elif config.enabled:
-        print("link: no report yet; is the host controller running?")
+    if not status:
+        return f"console link{console}: on, no report yet; is the host controller running?"
+    age = int(time.time() - float(status.get("updated", 0)))
+    state = "connected" if status.get("connected") else "not connected"
+    error = (f" ({status['error']})" if status.get("error") and not status.get("connected")
+             else "")
+    return f"console link{console}: {state}{error}, {age}s ago"
+
+
+def _status() -> int:
+    print(link_line())
     return 0
 
 

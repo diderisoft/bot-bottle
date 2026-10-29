@@ -65,7 +65,7 @@ would let them out. So its subnets are pinned and a host pf anchor,
 `com.apple/io.bot-bottle` (`host_firewall.py`), drops traffic from them to the
 host itself (named as the subnet's first address, since pf's `(self)` misses
 the vmnet bridge's own address) and to anything off the subnet. Agent-to-gateway
-traffic stays on the subnet. `backend setup` installs the anchor and a root
+traffic stays on the subnet. `install` installs the anchor and a root
 LaunchDaemon (`io.bot-bottle.pf`) that loads it at boot and re-applies it every
 minute; `/etc/pf.conf` isn't edited.
 

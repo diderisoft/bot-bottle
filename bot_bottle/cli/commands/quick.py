@@ -1,10 +1,10 @@
 """`bot-bottle` with no command: start an agent on this directory.
 
   bot-bottle             the agent last used here, else the default
-                         (`bot-bottle default <agent>`), else the first ready
+                         (`bot-bottle agents default <agent>`), else the first ready
                          starter: claude, codex, then pi
   bot-bottle <agent>     that agent
-  bot-bottle default <agent>
+  bot-bottle agents default <agent>
                          set the default agent
 
 The bottle is the agent's own, plus the project's bottle when the project
@@ -89,16 +89,22 @@ def remember(cwd: Path, agent: str) -> None:
     _save_state(state)
 
 
+def default_agent() -> str:
+    """The agent a bare `bot-bottle` starts where none was used last, or ""."""
+    default = _load_state().get("default")
+    return default if isinstance(default, str) else ""
+
+
 def cmd_default(argv: list[str]) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         default = _load_state().get("default")
-        sys.stderr.write(f"usage: {PROG} default <agent>\n")
+        sys.stderr.write(f"usage: {PROG} agents default <agent>\n")
         if isinstance(default, str):
             sys.stderr.write(f"current default: {default}\n")
         return 0 if argv else 2
     agent = argv[0]
     if agent not in ManifestIndex.resolve(os.getcwd()).all_agent_names:
-        die(f"no agent named {agent!r}; `{PROG} list` shows them")
+        die(f"no agent named {agent!r}; `{PROG} agents` lists them")
     state = _load_state()
     state["default"] = agent
     _save_state(state)
@@ -158,7 +164,7 @@ def cmd_quick(argv: list[str]) -> int:
         agent: str | None = names[0]
         if names[0] not in manifest.all_agent_names:
             die(f"unknown command or agent: {names[0]} (`{PROG} help` lists commands, "
-                f"`{PROG} list` lists agents)")
+                f"`{PROG} agents` lists agents)")
     else:
         agent = pick_agent(manifest, cwd)
         if agent is None:

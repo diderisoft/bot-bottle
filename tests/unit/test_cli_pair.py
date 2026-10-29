@@ -92,6 +92,23 @@ class CmdPair(unittest.TestCase):
                                   start={**_START, "owned": True})
         self.assertIn("already paired: sign in on your phone", err)
 
+    def test_on_and_off_turn_the_link_on_and_off(self) -> None:
+        with patch("bot_bottle.cli.commands.pair.cmd_remote", return_value=0) as rem:
+            self.assertEqual(0, cmd_pair(["on"]))
+            self.assertEqual(0, cmd_pair(["off"]))
+        self.assertEqual([["enable"], ["disable"]], [c.args[0] for c in rem.call_args_list])
+
+    def test_password_pairs_through_the_device_flow_then_turns_the_link_on(self) -> None:
+        with patch("bot_bottle.cli.commands.login.cmd_login", return_value=0) as login, \
+                patch("bot_bottle.cli.commands.pair.cmd_remote", return_value=0) as rem:
+            self.assertEqual(0, cmd_pair(["--password", "--console-url", "http://c"]))
+        login.assert_called_once_with(["--console-url", "http://c"])
+        rem.assert_called_once_with(["enable"])
+        with patch("bot_bottle.cli.commands.login.cmd_login", return_value=1), \
+                patch("bot_bottle.cli.commands.pair.cmd_remote") as rem:
+            self.assertEqual(1, cmd_pair(["--password"]))
+        rem.assert_not_called()
+
     def test_a_denied_pairing_leaves_remote_access_off(self) -> None:
         status, _, enabled = self.run_pair(["--console-url", "http://c"], [{"status": "denied"}])
         self.assertEqual((1, []), (status, enabled))
@@ -100,7 +117,7 @@ class CmdPair(unittest.TestCase):
         start = {k: v for k, v in _START.items() if k not in ("confirm_code", "pair_url")}
         status, err, _ = self.run_pair(["--console-url", "http://c"], [], start)
         self.assertEqual(1, status)
-        self.assertIn("bb login", err)
+        self.assertIn("bot-bottle pair --password", err)
 
     def test_without_iroh_it_stops_before_pairing(self) -> None:
         err = io.StringIO()

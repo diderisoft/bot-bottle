@@ -231,12 +231,12 @@ def launch(
             die("ISOLATION FAILURE: IPv6 is still on on the agent network's bridge, "
                 "so agents can reach this Mac over it. Refusing to run the agent "
                 "(fail-closed). Install or update the host firewall with "
-                "`bot-bottle backend setup --backend=macos-container`.")
+                "`bot-bottle install --backend=macos-container`.")
         isolation_probe.verify_isolation(
             lambda script: bottle.exec(script).stdout,
             what=f"agent container {plan.container_name}",
             remedy=("The host firewall keeps agents off this Mac; install or "
-                    "update it with `bot-bottle backend setup "
+                    "update it with `bot-bottle install "
                     "--backend=macos-container`."),
             check_dns=True,
             # The host's own address on the agent network: the agents' default

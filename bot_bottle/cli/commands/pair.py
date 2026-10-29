@@ -1,18 +1,22 @@
-"""bot-bottle pair: link this host to your phone.
+"""bot-bottle pair: link this host to a bot-bottle console (and your phone).
 
-Prints a QR code and a confirm code. Scan it, type the code and approve with a
-passkey; the first pairing creates an account that is just that passkey, and
-later hosts join it. Then remote access is turned on.
-
-Usage:
   bot-bottle pair [--console-url URL] [--label LABEL]
+      Prints a QR code and a confirm code. Scan it, type the code and approve
+      with a passkey; the first pairing creates an account that is just that
+      passkey, and later hosts join it. Then the link is turned on.
+  bot-bottle pair --password [--console-url URL] [--label LABEL]
+      For a console with operator accounts: open the printed URL in a signed-in
+      browser to approve this host, then the link is turned on.
+  bot-bottle pair on     turn the link on again with this host's pairing
+                         (rebinds its node id; needs no new approval)
+  bot-bottle pair off    turn the link off
 
 Flags:
   --console-url URL   Console to pair with (or BB_CONSOLE_URL, or the console
-                      this host last logged in to)
+                      this host last paired with)
   --label LABEL       Host name shown on the phone (default: hostname)
 
-`bb login` does the same without a QR code, for headless setups.
+`bot-bottle status` shows whether the link is on and connected.
 """
 
 from __future__ import annotations
@@ -70,10 +74,15 @@ def _show(console_url: str, ansi: bool):
     return show
 
 
-def cmd_pair(argv: list[str]) -> int:
+def cmd_pair(argv: list[str]) -> int:  # pylint: disable=too-many-return-statements
     if "--help" in argv or "-h" in argv:
         sys.stderr.write(__doc__ or "")
         return 0
+    if argv and argv[0] in ("on", "off"):
+        return cmd_remote(["enable" if argv[0] == "on" else "disable"])
+    if "--password" in argv:
+        status = login.cmd_login([a for a in argv if a != "--password"])
+        return status if status != 0 else cmd_remote(["enable"])
     console_url = _console_url(argv)
     if not console_url:
         sys.stderr.write("bot-bottle pair: --console-url or BB_CONSOLE_URL is required\n")

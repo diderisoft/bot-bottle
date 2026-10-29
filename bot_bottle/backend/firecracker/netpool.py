@@ -152,7 +152,7 @@ class NetPool:
             return s, handle
         die(f"Firecracker TAP pool exhausted ({self.pool_size} slots, all in "
             f"use). Stop a running bottle or raise BOT_BOTTLE_FC_POOL_SIZE "
-            f"and re-run `bot-bottle backend setup --backend=firecracker`.")
+            f"and re-run `bot-bottle install --backend=firecracker`.")
         raise AssertionError("unreachable")
 
     def reclaim(self, iface: str) -> IO[str] | None:
@@ -268,7 +268,7 @@ def _lock_dir() -> Path:
     return d
 
 
-# --- config renderers (shown by `bot-bottle backend setup`) ---
+# --- config renderers (shown by `bot-bottle install`) ---
 
 # The same systemd oneshot on every systemd distro.
 SYSTEMD_UNIT = "bot-bottle-firecracker-netpool.service"

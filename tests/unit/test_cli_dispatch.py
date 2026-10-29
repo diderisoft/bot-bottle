@@ -31,7 +31,7 @@ class TestMainDispatch(unittest.TestCase):
             seen.append(rest)
             return 0
 
-        with patch.dict(climod.COMMANDS, {"quick": quick}), \
+        with patch("bot_bottle.cli.__main__.QUICK", quick), \
                 patch("bot_bottle.cli.__main__.StoreManager"):
             self.assertEqual(0, main([]))
             self.assertEqual(0, main(["-v"]))
@@ -44,7 +44,7 @@ class TestMainDispatch(unittest.TestCase):
             seen.append(rest)
             return 0
 
-        with patch.dict(climod.COMMANDS, {"quick": quick}), \
+        with patch("bot_bottle.cli.__main__.QUICK", quick), \
                 patch("bot_bottle.cli.__main__.StoreManager"), \
                 patch("bot_bottle.cli.__main__._is_agent", return_value=True):
             main(["pi"])
@@ -138,13 +138,13 @@ class TestMigrationGate(unittest.TestCase):
             ran.append(True)
             return 0
 
-        with patch.dict(climod.COMMANDS, {"list": handler}), \
+        with patch.dict(climod.COMMANDS, {"agents": handler}), \
                 patch("sys.stdin", io.StringIO("")), \
                 patch("sys.stderr", io.StringIO()):
-            self.assertEqual(1, main(["list"]))
+            self.assertEqual(1, main(["agents"]))
         self.assertEqual([], ran, "gated command must not dispatch")
 
-    def test_backend_command_skips_gate(self) -> None:
+    def test_install_command_skips_gate(self) -> None:
         # `backend` provisions/probes the host and never opens the store, so
         # it must run even on an unmigrated DB with unanswerable stdin.
         ran: list[bool] = []
@@ -153,10 +153,10 @@ class TestMigrationGate(unittest.TestCase):
             ran.append(True)
             return 0
 
-        with patch.dict(climod.COMMANDS, {"backend": handler}), \
+        with patch.dict(climod.COMMANDS, {"install": handler}), \
                 patch("sys.stdin", io.StringIO("")), \
                 patch("sys.stderr", io.StringIO()):
-            self.assertEqual(0, main(["backend", "status"]))
+            self.assertEqual(0, main(["install", "--help"]))
         self.assertEqual([True], ran, "exempt command must dispatch")
 
     def test_store_command_migrates_on_confirmation(self) -> None:
@@ -165,12 +165,12 @@ class TestMigrationGate(unittest.TestCase):
         def handler(_rest: list[str]) -> int:
             return 0
 
-        with patch.dict(climod.COMMANDS, {"list": handler}), \
+        with patch.dict(climod.COMMANDS, {"agents": handler}), \
                 patch.object(StoreManager, "migrate",
                              side_effect=lambda: migrated.append(True)), \
                 patch("sys.stdin", io.StringIO("y\n")), \
                 patch("sys.stderr", io.StringIO()):
-            self.assertEqual(0, main(["list"]))
+            self.assertEqual(0, main(["agents"]))
         self.assertEqual([True], migrated, "confirmed gate must migrate")
 
 

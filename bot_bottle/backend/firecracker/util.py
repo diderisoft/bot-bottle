@@ -102,17 +102,17 @@ def _require_network_pool(pool: netpool.NetPool) -> None:
              f"{pool.pool_size} slots) overlaps existing routes: "
              f"{detail}. This can shadow or be shadowed by that route; "
              f"set BOT_BOTTLE_FC_IP_BASE to a free range and re-run "
-             f"bot-bottle backend setup --backend=firecracker.")
+             f"bot-bottle install --backend=firecracker.")
     missing = pool.missing_taps()
     if missing:
         die(f"network pool incomplete — missing TAP devices: "
-            f"{', '.join(missing)}.\n    bot-bottle backend setup --backend=firecracker")
+            f"{', '.join(missing)}.\n    bot-bottle install --backend=firecracker")
     if shutil.which("nft") is not None and not pool.nft_table_present():
         # nft answered and the table is absent: fail now.
         warn(f"isolation table `inet {pool.nft_table}` not found via nft. "
              "If this is a permissions issue it will be re-checked "
              "empirically after boot; otherwise run: "
-             "bot-bottle backend setup --backend=firecracker")
+             "bot-bottle install --backend=firecracker")
 
 
 # --- rootfs pipeline (rootless) ---

@@ -72,12 +72,19 @@ def cmd_down(argv: list[str]) -> int:
 
 
 def cmd_status(argv: list[str]) -> int:
-    ns = _parser("status", "Show the host controller, orchestrator and bottles.").parse_args(argv)
+    parser = _parser("status", "Show the host controller, orchestrator, console link and "
+                               "bottled agents.")
+    parser.add_argument("--jobs", action="store_true", help="also list the host controller's "
+                                                             "recent jobs")
+    ns = parser.parse_args(argv)
     settings = settings_from_env()
     state = runner.running()
     print("host controller: " + (f"running at {state.url} (pid {state.pid}, build {state.build_id})"
                                  if state else "not running"))
     print("autostart: " + ("installed" if service_unit.installed() else "not installed"))
+    # pylint: disable-next=import-outside-toplevel
+    from .remote import link_line
+    print(link_line())
     backend = get_bottle_backend(settings, ns.backend)
     service = backend.infra_service()
     healthy = service.is_healthy()
@@ -85,39 +92,59 @@ def cmd_status(argv: list[str]) -> int:
     print(f"{backend.name} orchestrator: {where}")
     bottles = enumerate_active_agents(settings)
     print(f"bottled agents: {len(bottles)} running" + (f" (see `{PROG} bots`)" if bottles else ""))
+    if ns.jobs and state:
+        print()
+        _print_jobs(state)
     return 0 if state and healthy else 1
 
 
 def cmd_jobs(argv: list[str]) -> int:
+    """The old name for `status --jobs`'s job list, kept unlisted."""
     if argv:
-        sys.stderr.write(f"usage: {PROG} jobs\n\nThe host controller's recent jobs.\n")
+        sys.stderr.write(f"usage: {PROG} status --jobs\n\nThe host controller's recent jobs.\n")
         return 0 if argv in (["-h"], ["--help"]) else 2
     state = runner.running()
     if state is None:
         print("host controller: not running")
         return 1
+    _print_jobs(state)
+    return 0
+
+
+def _print_jobs(state: runner.HostControlState) -> None:
     # pylint: disable-next=import-outside-toplevel
     from ..table import print_table
     jobs = HostControlClient(state, runner.cli_token()).jobs()
     if not jobs:
         print("no recent jobs", file=sys.stderr)
-        return 0
+        return
     print_table(("ID", "KIND", "STATE"),
                 [(str(j["id"]), str(j["kind"]), str(j["state"])) for j in jobs])
-    return 0
 
 
-def cmd_install(argv: list[str]) -> int:
-    parser = _parser("install", "Set up this host: backend prerequisites, tmux, autostart.")
+def cmd_install(argv: list[str]) -> int:  # pylint: disable=too-many-return-statements
+    parser = _parser("install", "Set up this host: backend prerequisites, tmux, autostart. "
+                                "Run the privileged part with sudo where the backend prints it "
+                                "(e.g. `sudo bot-bottle install --backend=macos-container`).")
     parser.add_argument("--no-autostart", action="store_true",
                         help="don't install the service that keeps the host controller running")
+    parser.add_argument("--undo", action="store_true",
+                        help="undo the backend's host setup (its firewall or network pool) "
+                             "instead; `uninstall` removes everything")
     ns = parser.parse_args(argv)
+    backend = get_bottle_backend(settings_from_env(), ns.backend)
+    if ns.undo:
+        return backend.teardown()
+    if os.geteuid() == 0:
+        # Under sudo, only the backend's privileged pieces: tmux and autostart
+        # are the user's own account's business.
+        return backend.setup()
     version = tmux_version()
     if version is None or version < MIN_TMUX_VERSION:
         found = "not installed" if version is None else f"{version[0]}.{version[1]}"
         return _fail(f"tmux {MIN_TMUX_VERSION[0]}.{MIN_TMUX_VERSION[1]}+ is required ({found}); "
                      "install it with brew, apt or nix, then rerun")
-    code = get_bottle_backend(settings_from_env(), ns.backend).setup()
+    code = backend.setup()
     if code != 0:
         return code
     if ns.no_autostart:

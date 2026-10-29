@@ -26,5 +26,5 @@ def verify_isolation(private_key: Path, guest_ip: str) -> None:
     isolation_probe.verify_isolation(
         run_guest,
         what="the VM",
-        remedy="Verify the nft table with: bot-bottle backend setup --backend=firecracker",
+        remedy="Verify the nft table with: bot-bottle install --backend=firecracker",
     )

@@ -1,6 +1,6 @@
 """Remote access: the host end of the console link over iroh (ADR 0007).
 
-With `bot-bottle remote enable`, the host controller dials its console on ALPN
+With `bot-bottle pair` (or `pair on`), the host controller dials its console on ALPN
 `bb-console/1`. Dial-out only; a console whose node id isn't the one pinned at
 login is refused. The console knows the host by its node id.
 
@@ -151,13 +151,13 @@ def save_config(config: RemoteConfig) -> None:
 
 
 def load_console() -> dict[str, Any]:
-    """`console.json`, written by `bot-bottle login`."""
+    """`console.json`, written by `bot-bottle pair`."""
     try:
         raw = json.loads((_root() / CONSOLE_FILE).read_text())
     except (OSError, ValueError) as e:
-        raise RemoteError("not logged in to a console; run `bot-bottle login` first") from e
+        raise RemoteError("not paired with a console; run `bot-bottle pair` first") from e
     if not isinstance(raw, dict) or not raw.get("url") or not raw.get("access_token"):
-        raise RemoteError("console.json is incomplete; run `bot-bottle login` again")
+        raise RemoteError("console.json is incomplete; run `bot-bottle pair` again")
     return raw
 
 
@@ -200,7 +200,7 @@ def node_id() -> str:
 
 
 def write_status(**fields: object) -> None:
-    """`remote.status.json`, for `bot-bottle remote status`."""
+    """`remote.status.json`, for `bot-bottle status`."""
     try:
         _write_private(_root() / STATUS_FILE,
                        json.dumps({"updated": time.time(), **fields}) + "\n")

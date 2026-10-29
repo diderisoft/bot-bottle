@@ -255,14 +255,11 @@ class TestCmdLoginFlow(unittest.TestCase):
 
 
 class TestDispatcherRegistration(unittest.TestCase):
-    def test_login_in_commands(self) -> None:
-        from bot_bottle.cli import COMMANDS
-        self.assertIn("login", COMMANDS)
-
-    def test_login_in_no_migration(self) -> None:
-        from bot_bottle.cli import NO_MIGRATION_COMMANDS
-        self.assertIn("login", NO_MIGRATION_COMMANDS)
-
+    def test_pair_is_the_command_login_is_not(self) -> None:
+        from bot_bottle.cli import COMMANDS, NO_MIGRATION_COMMANDS
+        self.assertIn("pair", COMMANDS)
+        self.assertIn("pair", NO_MIGRATION_COMMANDS)
+        self.assertNotIn("login", COMMANDS)  # `pair --password` now
 
 if __name__ == "__main__":
     unittest.main()

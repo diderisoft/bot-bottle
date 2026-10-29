@@ -24,7 +24,7 @@ class TestModuleEntry(unittest.TestCase):
     def test_help_exits_zero(self) -> None:
         result = _run("--help")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("login", result.stderr)
+        self.assertIn("pair", result.stderr)
 
     def test_help_prints_usage(self) -> None:
         # Bare `bot-bottle` starts an agent now; `--help` prints the usage.
@@ -33,7 +33,7 @@ class TestModuleEntry(unittest.TestCase):
         self.assertIn("usage:", result.stderr)
 
     def test_subcommand_help_reaches_handler(self) -> None:
-        result = _run("login", "--help")
+        result = _run("pair", "--help")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--console-url", result.stderr)
 

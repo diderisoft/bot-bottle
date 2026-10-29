@@ -80,5 +80,5 @@ def status() -> int:
     runsc = _docker_on_path() and _util.runsc_available()
     sys.stderr.write(f"gVisor runsc runtime: {'registered' if runsc else 'not registered (optional)'}\n")
     if not ok:
-        sys.stderr.write("\nRun: bot-bottle backend setup --backend=docker\n")
+        sys.stderr.write("\nRun: bot-bottle install --backend=docker\n")
     return 0 if ok else 1

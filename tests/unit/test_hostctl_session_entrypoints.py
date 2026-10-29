@@ -13,7 +13,6 @@ from pathlib import Path
 from unittest import mock
 
 from bot_bottle.cli.commands import attach as attach_cmd
-from bot_bottle.cli.commands import backend as backend_cmd
 from bot_bottle.cli.commands import doctor as doctor_cmd
 from bot_bottle.control.hostctl import launch, localsock, notify, sessions
 
@@ -122,13 +121,6 @@ class TestTmuxChecks(unittest.TestCase):
             for version, ok in ((None, False), ((3, 0), False), ((3, 4), True)):
                 with mock.patch.object(doctor_cmd, "tmux_version", return_value=version):
                     self.assertEqual(ok, doctor_cmd._check_tmux())  # pyright: ignore[reportPrivateUsage]
-
-    def test_backend_setup_notes_a_missing_or_old_tmux(self) -> None:
-        for version, noted in ((None, True), ((2, 9), True), ((3, 5), False)):
-            with mock.patch.object(backend_cmd, "tmux_version", return_value=version), \
-                 mock.patch("sys.stderr", io.StringIO()) as err:
-                backend_cmd._note_tmux()  # pyright: ignore[reportPrivateUsage]
-            self.assertEqual(noted, "tmux 3.1+" in err.getvalue())
 
 
 if __name__ == "__main__":

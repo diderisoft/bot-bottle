@@ -179,7 +179,7 @@ def boot_vm(
     """Boot the `role` VM from its rootfs on `slot`'s link and record the PID."""
     if not netpool.tap_present(slot.iface):
         die(f"infra link {slot.iface} not present.\n"
-            f"    bot-bottle backend setup --backend=firecracker")
+            f"    bot-bottle install --backend=firecracker")
 
     run_dir.mkdir(parents=True, exist_ok=True)
     rootfs = run_dir / "rootfs.ext4"

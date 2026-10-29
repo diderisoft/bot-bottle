@@ -148,7 +148,7 @@ class TestPinnedAgentNetwork(unittest.TestCase):
             gw.ensure_networks()
         create.assert_not_called()
         self.assertIn("en0 has 192.168.128.7/24", cm.exception.message)
-        self.assertIn("backend setup --backend=macos-container", cm.exception.message)
+        self.assertIn("install --backend=macos-container", cm.exception.message)
 
     def test_creates_the_agent_network_with_the_pinned_subnets(self) -> None:
         with patch.object(gw.container_mod, "create_network") as create, \

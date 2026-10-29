@@ -1,5 +1,5 @@
-"""`bot-bottle bottled-agents` (`bots`): bottled agents, running and stopped,
-and the old `stopped` and `active` names (ADR 0009)."""
+"""`bot-bottle bottled-agents` (`bots`): bottled agents, running and stopped
+(ADR 0009)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from bot_bottle.bottle_state import BottleMetadata, mark_preserved, metadata_path, write_metadata
-from bot_bottle.cli.commands import bottled_agents, stopped
+from bot_bottle.cli.commands import bottled_agents
 
 
 def _bottle(identity: str, *, label: str = "", bottles: tuple[str, ...] = (),
@@ -117,15 +117,6 @@ class TestBottledAgents(_Case):
 
         for name in ("bottled-agents", "bots", "ba"):
             self.assertEqual("bottled_agents:cmd_bottled_agents", _HANDLERS[name])
-
-
-class TestOldNames(_Case):
-    def test_stopped_is_bots_stopped_with_a_note(self) -> None:
-        _bottle("gone")
-        _bottle("up")
-        _, out, err = self.run_cmd([], live=("up",), cmd=stopped.cmd_stopped)
-        self.assertEqual(["gone"], [line.split("\t")[0] for line in out.splitlines()])
-        self.assertIn("is now `bot-bottle bots --stopped`", err)
 
 
 if __name__ == "__main__":

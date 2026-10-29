@@ -152,7 +152,14 @@ def cmd_doctor(argv: list[str]) -> int:
         prog=f"{PROG} doctor",
         description="Check host prerequisites for running bot-bottle.",
     )
-    parser.parse_args(argv)
+    parser.add_argument("--backend", choices=known_backend_names(), default=None,
+                        help="check only this backend's readiness, exiting non-zero "
+                             "unless it's ready (what CI gates on)")
+    ns = parser.parse_args(argv)
+    if ns.backend:
+        # pylint: disable-next=import-outside-toplevel
+        from ...backend import get_bottle_backend
+        return get_bottle_backend(settings_from_env(), ns.backend).status()
 
     # Hard requirements set the exit code.
     required = [_check_python(), _check_backends(), _check_tmux()]

@@ -11,7 +11,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.approvals import KeepTarget, Request, keep, keep_target, save_to_project
-from bot_bottle.cli.commands.approve import Reviewer, describe
+from bot_bottle.cli.commands.supervise import Reviewer, describe
 from bot_bottle.contract.yaml_subset import parse_frontmatter
 from bot_bottle.control.client import AlreadyAnswered, OrchestratorClientError
 from bot_bottle.control.hostctl.requests import RequestNotifier, summaries
@@ -180,7 +180,7 @@ class Review(unittest.TestCase):
     def test_allow_once_then_deny(self) -> None:
         reviewer, client = self.reviewer("ad", [_pending(_CURRENT + _STRIPE),
                                                 _pending(_CURRENT + _TOKEN, pid="p2")])
-        with patch("bot_bottle.cli.commands.approve.keep_target", return_value=None):
+        with patch("bot_bottle.cli.commands.supervise.keep_target", return_value=None):
             self.assertEqual(0, reviewer.run())
         decisions = [c.kwargs["decision"] for c in client.supervise_respond.call_args_list]
         self.assertEqual(["approve", "reject"], decisions)
@@ -188,7 +188,7 @@ class Review(unittest.TestCase):
 
     def test_k_is_ignored_with_nowhere_to_keep_and_skip_leaves_it_pending(self) -> None:
         reviewer, client = self.reviewer("ks", [_pending(_CURRENT + _STRIPE)])
-        with patch("bot_bottle.cli.commands.approve.keep_target", return_value=None):
+        with patch("bot_bottle.cli.commands.supervise.keep_target", return_value=None):
             reviewer.run()
         client.supervise_respond.assert_not_called()
 
@@ -197,7 +197,7 @@ class Review(unittest.TestCase):
         shown: list[str] = []
         reviewer.out = shown.append
         target = KeepTarget(Path("/proj/.bot-bottle/bottles/main.md"), Path("/proj"))
-        with patch("bot_bottle.cli.commands.approve.keep_target", return_value=target), \
+        with patch("bot_bottle.cli.commands.supervise.keep_target", return_value=target), \
                 patch("bot_bottle.approvals.keep_target", return_value=target), \
                 patch("bot_bottle.approvals.save_to_project",
                       return_value=Path("/proj/.bot-bottle/bottles/main.md")) as save, \
@@ -221,7 +221,7 @@ class Review(unittest.TestCase):
         client.supervise_respond.side_effect = answered_elsewhere
         # Then it's gone from the queue.
         client.supervise_pending.side_effect = [[_pending(_CURRENT + _STRIPE)], []]
-        with patch("bot_bottle.cli.commands.approve.keep_target", return_value=None):
+        with patch("bot_bottle.cli.commands.supervise.keep_target", return_value=None):
             self.assertEqual(0, reviewer.run())
         self.assertIn("already answered elsewhere: rejected; yours wasn't applied "
                       "(press a key)", shown)
@@ -238,23 +238,23 @@ class Review(unittest.TestCase):
         it = iter("a")
         reviewer = Reviewer(lambda: list(queue), clients.__getitem__, "pi",
                             key=lambda: next(it), out=lambda _s: None)
-        with patch("bot_bottle.cli.commands.approve.keep_target", return_value=None):
+        with patch("bot_bottle.cli.commands.supervise.keep_target", return_value=None):
             self.assertEqual(0, reviewer.run())
         firecracker.supervise_respond.assert_called_once()
         docker.supervise_respond.assert_not_called()
 
     def test_the_command_lists_every_orchestrator_and_reports_none(self) -> None:
-        from bot_bottle.cli.commands import approve  # pylint: disable=import-outside-toplevel
+        from bot_bottle.cli.commands import supervise  # pylint: disable=import-outside-toplevel
 
-        with patch.object(approve, "pending_everywhere", return_value=[]) as listed, \
+        with patch.object(supervise, "pending_everywhere", return_value=[]) as listed, \
                 patch("sys.stdout", io.StringIO()) as out:
-            self.assertEqual(0, approve.cmd_approve(["pi"]))
+            self.assertEqual(0, supervise.cmd_supervise(["pi"]))
         listed.assert_called_once()
         self.assertIn("nothing waiting", out.getvalue())
-        with patch.object(approve, "pending_everywhere",
+        with patch.object(supervise, "pending_everywhere",
                           side_effect=OrchestratorClientError("none running")), \
                 patch("sys.stdout", io.StringIO()) as out:
-            self.assertEqual(1, approve.cmd_approve([]))
+            self.assertEqual(1, supervise.cmd_supervise([]))
         self.assertIn("couldn't reach the orchestrator: none running", out.getvalue())
 
     def test_another_sessions_requests_are_not_shown(self) -> None:

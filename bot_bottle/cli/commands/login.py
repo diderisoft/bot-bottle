@@ -1,11 +1,12 @@
-"""bb login: register this host with a bot-bottle console.
+"""`bot-bottle pair --password`: register this host with a bot-bottle console
+whose operator approves it in a signed-in browser (no QR code or passkey).
 
 Runs a device-authorization flow, then writes the access and refresh tokens
-(and the console's iroh identity, which `bot-bottle remote` pins) to
+(and the console's iroh identity, which the link pins) to
 `$BOT_BOTTLE_ROOT/console.json`.
 
 Usage:
-  bb login [--console-url URL] [--label LABEL]
+  bot-bottle pair --password [--console-url URL] [--label LABEL]
 
 Flags:
   --console-url URL   Target console URL (overrides BB_CONSOLE_URL)
@@ -34,7 +35,7 @@ _POLL_SLEEP = 2  # seconds between polls, the console's default
 
 def _usage() -> None:
     sys.stderr.write(
-        "usage: bb login [--console-url URL] [--label LABEL]\n"
+        "usage: bot-bottle pair --password [--console-url URL] [--label LABEL]\n"
         "\n"
         "Options:\n"
         "  --console-url URL  Console base URL (or BB_CONSOLE_URL env var)\n"
@@ -113,7 +114,7 @@ def cmd_login(argv: list[str]) -> int:
     console_url = flag(argv, "--console-url") or os.environ.get(_CONSOLE_URL_ENV)
     if not console_url:
         sys.stderr.write(
-            "bb login: --console-url or BB_CONSOLE_URL is required\n"
+            "bot-bottle pair --password: --console-url or BB_CONSOLE_URL is required\n"
         )
         return 1
     console_url = console_url.rstrip("/")
@@ -126,12 +127,12 @@ def cmd_login(argv: list[str]) -> int:
             f"  {console_url}/hosts/authorize?code={resp['user_code']}\n\n"
         )
 
-    return run_device_flow(console_url, label, show, prog="bb login")
+    return run_device_flow(console_url, label, show, prog="bot-bottle pair --password")
 
 
 def run_device_flow(
     console_url: str, label: str, show: Callable[[dict[str, Any]], None],
-    *, confirm: bool = False, prog: str = "bb login", node_id: str = "",
+    *, confirm: bool = False, prog: str = "bot-bottle pair", node_id: str = "",
 ) -> int:
     """Start a device flow, let `show` tell the operator where to approve it,
     poll until approved, and save the tokens. `confirm` asks for a confirm code
@@ -146,7 +147,7 @@ def run_device_flow(
         return 1
     if confirm and not resp.get("confirm_code"):
         sys.stderr.write(f"{prog}: this console can't pair with a confirm code yet; "
-                         "use `bb login` instead\n")
+                         "use `bot-bottle pair --password` instead\n")
         return 1
 
     device_code = resp["device_code"]

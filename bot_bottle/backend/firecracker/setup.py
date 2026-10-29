@@ -142,7 +142,7 @@ def _setup_systemd(pool: netpool.NetPool) -> None:
     sys.stderr.write(
         f"Persistent install (systemd — same on every systemd distro). Needs "
         f"`nft` (nftables) and `ip` (iproute2); install via your package "
-        f"manager if `backend status` reports them missing.\n\n"
+        f"manager if `doctor` reports them missing.\n\n"
     )
     if os.geteuid() == 0:
         _UNIT_PATH.write_text(unit)
@@ -153,7 +153,7 @@ def _setup_systemd(pool: netpool.NetPool) -> None:
         if rc == 0:
             sys.stderr.write(
                 f"Installed and started {netpool.SYSTEMD_UNIT}. Verify with "
-                f"`bot-bottle backend status --backend=firecracker`.\n"
+                f"`bot-bottle doctor`.\n"
             )
         else:
             sys.stderr.write(
@@ -173,7 +173,7 @@ def _setup_systemd(pool: netpool.NetPool) -> None:
     )
     sys.stderr.write(
         f"\n(Or re-run this as root to install it directly: "
-        f"sudo bot-bottle backend setup --backend=firecracker)\n"
+        f"sudo bot-bottle install --backend=firecracker)\n"
     )
 
 
@@ -344,7 +344,7 @@ def status(settings: Settings) -> int:
         sys.stderr.write(f"range overlap: none (base {pool.ip_base})\n")
     _report_persistence()
     if not ok:
-        sys.stderr.write("\nRun: bot-bottle backend setup --backend=firecracker\n")
+        sys.stderr.write("\nRun: bot-bottle install --backend=firecracker\n")
     return 0 if ok else 1
 
 
@@ -362,4 +362,4 @@ def _report_persistence() -> None:
     else:
         sys.stderr.write(f"persistence: {netpool.SYSTEMD_UNIT} {state} — pool "
                          f"is not installed as a persistent unit (install with "
-                         f"`backend setup` so it survives reboot)\n")
+                         f"`install` so it survives reboot)\n")

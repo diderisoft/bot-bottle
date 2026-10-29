@@ -323,7 +323,7 @@ class TestMacosSetupStatus(unittest.TestCase):
             _rc, out = _cap(mc.setup)
         self.assertIn("system-wide", out)
         self.assertIn(str(mc.host_firewall.DAEMON_PATH), out)
-        self.assertIn("backend teardown --backend=macos-container", out)
+        self.assertIn("install --undo --backend=macos-container", out)
         self.assertLess(out.index("system-wide"), out.index("sudo tee"))
 
     def test_setup_moves_agents_off_a_subnet_this_mac_uses(self):
@@ -371,7 +371,7 @@ class TestMacosSetupStatus(unittest.TestCase):
                 rc, out = _cap(mc.status)
             self.assertEqual(1, rc)
             self.assertIn(text, out)
-            self.assertIn("backend setup --backend=macos-container", out)
+            self.assertIn("install --backend=macos-container", out)
 
     def test_status_not_macos_no_cli(self):
         with patch.object(mc._container, "is_macos", return_value=False), \

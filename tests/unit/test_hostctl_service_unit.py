@@ -3,7 +3,6 @@ Nothing here touches the real service manager: commands are captured."""
 
 from __future__ import annotations
 
-import io
 import plistlib
 import subprocess
 import tempfile
@@ -11,7 +10,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from bot_bottle.cli.commands import backend as backend_cmd
 from bot_bottle.control.hostctl import runner, service_unit
 
 from . import use_bottle_root
@@ -104,12 +102,6 @@ class TestRunnerAndCli(_Isolated):
             self.assertEqual(state, runner._start(5))  # pyright: ignore[reportPrivateUsage]
         start.assert_called_once()
         self.assertIsNone(wait.call_args.args[0])
-
-    def test_backend_setup_hint(self) -> None:
-        self.use("launchd")
-        with mock.patch("sys.stderr", io.StringIO()) as err:
-            backend_cmd._note_service()  # pyright: ignore[reportPrivateUsage]
-        self.assertIn("install` also sets up autostart", err.getvalue())
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
-"""Unit: the host-service commands (`install`, `up`, `down`,
-`status`, `jobs`). The daemon, backends and service manager are mocked."""
+"""Unit: the host-service commands (`install`, `up`, `down`, `status`, the
+unlisted `jobs`) and `bootstrap`. The daemon, backends and service manager
+are mocked."""
 
 from __future__ import annotations
 
@@ -97,6 +98,19 @@ class TestStatusJobs(_Mocked):
         self.assertEqual(1, code)
         self.assertIn("host controller: not running", out)
 
+    def test_status_shows_the_console_link_and_jobs_on_request(self) -> None:
+        client = mock.MagicMock()
+        client.jobs.return_value = [{"id": "j1", "kind": "bottle.launch", "state": "succeeded"}]
+        with mock.patch.object(lifecycle, "enumerate_active_agents", return_value=[]), \
+                mock.patch("bot_bottle.cli.commands.remote.link_line",
+                           return_value="console link: off"), \
+                mock.patch.object(lifecycle, "HostControlClient", return_value=client):
+            _, out, _ = self.run_cmd(lifecycle.cmd_status, [])
+            self.assertIn("console link: off", out)
+            self.assertNotIn("j1", out)
+            _, out, _ = self.run_cmd(lifecycle.cmd_status, ["--jobs"])
+        self.assertIn("j1\tbottle.launch\tsucceeded", out)
+
     def test_jobs(self) -> None:
         client = mock.MagicMock()
         client.jobs.return_value = [{"id": "j1", "kind": "bottle.launch", "state": "succeeded"}]
@@ -126,6 +140,51 @@ class TestInstallUninstall(_Mocked):
             self.service.install.assert_not_called()
             self.backend.setup.return_value = 3
             self.assertEqual(3, self.run_cmd(lifecycle.cmd_install, [])[0])
+
+
+
+class TestInstallUndoAndSudo(_Mocked):
+    def test_undo_tears_the_backend_down_only(self) -> None:
+        code, _, _ = self.run_cmd(lifecycle.cmd_install, ["--undo"])
+        self.assertEqual(0, code)
+        self.backend.teardown.assert_called_once()
+        self.backend.setup.assert_not_called()
+        self.service.install.assert_not_called()
+
+    def test_under_sudo_only_the_privileged_part(self) -> None:
+        with mock.patch.object(lifecycle.os, "geteuid", return_value=0), \
+                mock.patch.object(lifecycle, "tmux_version", return_value=None):
+            self.assertEqual(0, self.run_cmd(lifecycle.cmd_install, [])[0])
+        self.backend.setup.assert_called_once()
+        self.service.install.assert_not_called()
+
+
+class TestBootstrap(unittest.TestCase):
+    def test_install_setup_doctor_in_order_stopping_at_a_failure(self) -> None:
+        from bot_bottle.cli.commands import bootstrap  # pylint: disable=import-outside-toplevel
+        calls: list[tuple[str, list[str]]] = []
+
+        def step(name: str, code: int = 0):  # type: ignore[no-untyped-def]
+            def run(argv: list[str]) -> int:
+                calls.append((name, argv))
+                return code
+            return run
+
+        with mock.patch("bot_bottle.cli.commands.lifecycle.cmd_install", step("install")), \
+                mock.patch("bot_bottle.cli.commands.setup.cmd_setup", step("setup")), \
+                mock.patch("bot_bottle.cli.commands.doctor.cmd_doctor", step("doctor")), \
+                redirect_stderr(io.StringIO()):
+            self.assertEqual(0, bootstrap.cmd_bootstrap(["--backend", "docker", "--no-pair"]))
+        self.assertEqual([("install", ["--backend", "docker"]), ("setup", ["--no-pair"]),
+                          ("doctor", [])], calls)
+        calls.clear()
+        err = io.StringIO()
+        with mock.patch("bot_bottle.cli.commands.lifecycle.cmd_install", step("install", 3)), \
+                mock.patch("bot_bottle.cli.commands.setup.cmd_setup", step("setup")), \
+                redirect_stderr(err):
+            self.assertEqual(3, bootstrap.cmd_bootstrap([]))
+        self.assertEqual(["install"], [c[0] for c in calls])
+        self.assertIn("run `bot-bottle bootstrap` again", err.getvalue())
 
 
 if __name__ == "__main__":

@@ -154,10 +154,10 @@ def write_config() -> Path:
         encoding="utf-8")
     notify.chmod(0o700)
     hook = shlex.quote(str(notify)) + " #{q:session_name} #{pane_dead_status} #{pane_dead_signal}"
-    approve = state_dir() / "approve"
-    approve.write_text("#!/bin/sh\nexec " + _python_command("bot_bottle.cli", "approve")
-                       + ' "$@"\n', encoding="utf-8")
-    approve.chmod(0o700)
+    supervise = state_dir() / "supervise"
+    supervise.write_text("#!/bin/sh\nexec " + _python_command("bot_bottle.cli", "supervise")
+                         + ' "$@"\n', encoding="utf-8")
+    supervise.chmod(0o700)
     lines = [
         *_STATUS_BAR,
         "set -g prefix None",
@@ -168,7 +168,7 @@ def write_config() -> Path:
         # the agent.
         "bind -n 'C-\\' if-shell -F '#{@bb_request}' "
         + '"display-popup -E -w 90% -h 70% -T \' bot-bottle request \' '
-        + "'" + str(approve) + " #{session_name}'\" 'send-keys C-\\'",
+        + "'" + str(supervise) + " #{session_name}'\" 'send-keys C-\\'",
         "set -g window-size latest",
         "set -g remain-on-exit on",
         "set -g default-terminal tmux-256color",

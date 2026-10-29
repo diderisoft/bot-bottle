@@ -10,14 +10,16 @@ backends and the host controller, stopped ones from their kept state.
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
 from ...backend import enumerate_active_agents
-from ...bottle_state import is_preserved, read_metadata
+from ...bottle_state import BottleMetadata, bottle_state_dir, is_preserved, read_metadata
+from ...paths import bot_bottle_root
 from ..constants import PROG
 from ..settings import settings_from_env
 from ..table import print_table
 from .active import _ansi_label, held_bottles
-from .stopped import stopped_bottles, when
 
 _USAGE = f"""usage: {PROG} bottled-agents [--running | --stopped]   (or: {PROG} bots)
 
@@ -35,6 +37,42 @@ first; a table in a terminal. Piped, each is a tab-separated line:
 
 _HEADER = ("BOTTLED AGENT", "AGENT", "LABEL", "BOTTLES", "STATE", "TERMINAL", "LAST USED",
            "BACKEND")
+
+
+def _last_used(path: Path) -> float:
+    """When the state dir last changed: its own mtime or its newest entry's."""
+    times = [path.stat().st_mtime]
+    for child in path.iterdir():
+        try:
+            times.append(child.stat().st_mtime)
+        except OSError:
+            continue
+    return max(times)
+
+
+def stopped_bottles(live: set[str]) -> list[tuple[BottleMetadata, float]]:
+    """Resumable bottles not in `live`, with when each was last used, newest
+    first."""
+    state_root = bot_bottle_root() / "state"
+    if not state_root.is_dir():
+        return []
+    found: list[tuple[BottleMetadata, float]] = []
+    for child in state_root.iterdir():
+        if not child.is_dir() or child.name in live:
+            continue
+        metadata = read_metadata(child.name)
+        if metadata is None:
+            continue
+        try:
+            found.append((metadata, _last_used(bottle_state_dir(child.name))))
+        except OSError:
+            continue
+    return sorted(found, key=lambda m: m[1], reverse=True)
+
+
+def when(ts: float) -> str:
+    """A timestamp as local `YYYY-MM-DD HH:MM`."""
+    return datetime.fromtimestamp(ts, timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
 
 
 def _terminal(held: dict[str, object] | None) -> str:
@@ -99,4 +137,4 @@ def cmd_bottled_agents(argv: list[str]) -> int:
     return 0
 
 
-__all__ = ["cmd_bottled_agents"]
+__all__ = ["cmd_bottled_agents", "stopped_bottles"]

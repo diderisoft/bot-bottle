@@ -10,37 +10,31 @@ from typing import Callable
 # command -> "<submodule>:<handler attr>", so building the registry imports
 # nothing.
 _HANDLERS: dict[str, str] = {
-    "active": "active:cmd_active",
-    "approve": "approve:cmd_approve",
+    "active": "active:cmd_active",  # old name for `bots --running`, kept a release
+    "agents": "agents:cmd_agents",
     "attach": "attach:cmd_attach",
     "audit": "audit:cmd_audit",
-    "backend": "backend:cmd_backend",
     "ba": "bottled_agents:cmd_bottled_agents",
+    "bootstrap": "bootstrap:cmd_bootstrap",
     "bottle": "bottle:cmd_bottle",
     "bottled-agents": "bottled_agents:cmd_bottled_agents",
     "bots": "bottled_agents:cmd_bottled_agents",
     "cleanup": "cleanup:cmd_cleanup",
     "commit": "commit:cmd_commit",
-    "down": "lifecycle:cmd_down",
-    "default": "quick:cmd_default",
     "doctor": "doctor:cmd_doctor",
+    "down": "lifecycle:cmd_down",
     "forge": "forge:cmd_forge",
     "help": "help:cmd_help",
     "install": "lifecycle:cmd_install",
-    "jobs": "lifecycle:cmd_jobs",
-    "list": "list:cmd_list",
-    "login": "login:cmd_login",
+    "jobs": "lifecycle:cmd_jobs",  # unlisted; `status --jobs`
     "pair": "pair:cmd_pair",
-    "quick": "quick:cmd_quick",
-    "remote": "remote:cmd_remote",
+    "prune": "prune:cmd_prune",
     "resume": "resume:cmd_resume",
     "setup": "setup:cmd_setup",
     "start": "start:cmd_start",
     "status": "lifecycle:cmd_status",
-    "stopped": "stopped:cmd_stopped",
     "supervise": "supervise:cmd_supervise",
     "trust": "trust:cmd_trust",
-    "prune": "prune:cmd_prune",
     "uninstall": "uninstall:cmd_uninstall",
     "up": "lifecycle:cmd_up",
 }
@@ -60,11 +54,14 @@ def _lazy(spec: str) -> Callable[[list[str]], "int | None"]:
 
 COMMANDS = {name: _lazy(spec) for name, spec in _HANDLERS.items()}
 
+# Bare `bot-bottle` / `bot-bottle <agent>`: not a command you type by name.
+QUICK = _lazy("quick:cmd_quick")
+
 # Commands that never open the store, so they run before or without a migrated
 # DB (where the migration prompt can't be answered on a non-TTY runner).
 NO_MIGRATION_COMMANDS = frozenset({
-    "approve", "attach", "audit", "backend", "bottle", "doctor", "down", "forge", "help", "install", "jobs", "login",
-    "pair", "prune", "remote", "setup", "trust", "status", "uninstall", "up",
+    "attach", "audit", "bootstrap", "bottle", "doctor", "down", "forge", "help", "install",
+    "jobs", "pair", "prune", "setup", "status", "supervise", "trust", "uninstall", "up",
 })
 
-__all__ = ["COMMANDS", "NO_MIGRATION_COMMANDS"]
+__all__ = ["COMMANDS", "NO_MIGRATION_COMMANDS", "QUICK"]

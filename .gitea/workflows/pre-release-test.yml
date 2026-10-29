@@ -89,14 +89,14 @@ jobs:
 
       # Fail loudly if the backend this job promises isn't actually usable,
       # rather than letting every test silently `unittest.skip` and the job
-      # go green on zero coverage. `backend status` prints a clear per-check
+      # go green on zero coverage. `doctor --backend` prints a clear per-check
       # summary (docker on PATH, daemon reachable) and exits non-zero when a
       # prerequisite is missing — the same readiness check the skip guards
       # gate on via `has_backend`.
       - name: Preflight — Docker backend is ready
         run: |
           python3 --version
-          python3 cli.py backend status --backend=docker
+          python3 cli.py doctor --backend=docker
 
       # Same as test.yml: the gateway container and network have fixed names on
       # this shared runner, so drop any a previous job left (both are recreated
@@ -171,9 +171,9 @@ jobs:
           command -v firecracker >/dev/null || {
             echo "firecracker not on PATH — provision the runner (README: Firecracker on Linux)"; exit 1; }
           test -e /dev/kvm || { echo "/dev/kvm missing — KVM not available on this runner"; exit 1; }
-          # `backend status` exits non-zero unless the TAP pool is up + no
-          # range overlap; it prints the exact `backend setup` fix.
-          python3 cli.py backend status --backend=firecracker
+          # `doctor --backend` exits non-zero unless the TAP pool is up + no
+          # range overlap; it prints the exact `install` fix.
+          python3 cli.py doctor --backend=firecracker
 
       # Publish a dev version and test *that*, rather than staging a candidate
       # a host is pointed at instead of the registry. A candidate is exercised
@@ -301,7 +301,7 @@ jobs:
 
       # Fail loudly if the backend this job promises isn't actually usable,
       # rather than letting every test silently `unittest.skip` and the job go
-      # green on zero coverage. `backend status` exits non-zero (and prints the
+      # green on zero coverage. `doctor --backend` exits non-zero (and prints the
       # per-check summary) when the `container` CLI or its system service is
       # missing — the same readiness check the skip guards gate on.
       - name: Preflight — Apple Container backend is ready
@@ -310,7 +310,7 @@ jobs:
             echo "container CLI not on PATH — provision the runner (README: macOS Apple Container)"; exit 1; }
           container system status || {
             echo "container system service not running — run 'container system start'"; exit 1; }
-          python3 cli.py backend status --backend=macos-container
+          python3 cli.py doctor --backend=macos-container
 
       # `coverage` comes from the runner's provisioned Python (no pip install
       # into the host interpreter). Advisory job: report coverage in-line for

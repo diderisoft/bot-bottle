@@ -109,7 +109,7 @@ jobs:
       - name: Preflight — Docker backend is ready
         run: |
           python3 --version
-          python3 cli.py backend status --backend=docker
+          python3 cli.py doctor --backend=docker
 
       - name: Preflight — clear any leftover poisoned gateway network
         run: |

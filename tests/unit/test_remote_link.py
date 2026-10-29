@@ -752,7 +752,7 @@ class TestRemoteEnable(_RootCase):
         self._login(console_node_id="pinned")
         rc, output, _ = self._enable([{"console_node_id": "other", "console_ticket": "tk"}])
         self.assertEqual(1, rc)
-        self.assertIn("changed since login", output)
+        self.assertIn("changed since pairing", output)
         self.assertFalse(remote.load_config().enabled)
 
     def test_a_repaired_machine_takes_its_original_host_id(self) -> None:
@@ -773,10 +773,10 @@ class TestRemoteEnable(_RootCase):
         self.assertIn("paired to another account", output)
         self.assertFalse(remote.load_config().enabled)
 
-    def test_needs_a_login(self) -> None:
+    def test_needs_a_pairing(self) -> None:
         rc, output, _ = self._enable([])
         self.assertEqual(1, rc)
-        self.assertIn("login", output)
+        self.assertIn("not paired", output)
 
     def test_says_how_to_get_the_bindings(self) -> None:
         self._login()
@@ -847,14 +847,14 @@ class TestRemoteCommand(_RootCase):
         self.assertEqual(remote.RemoteConfig(False, "cid", "tk"), remote.load_config())
 
     def test_status_reports_the_link(self) -> None:
-        self.assertIn("disabled", self._run("status")[1])
+        self.assertIn("console link: off", self._run("status")[1])
         remote.save_config(remote.RemoteConfig(True, "cid0123456789", "tk"))
         self.assertIn("no report yet", self._run("status")[1])
         remote.write_status(connected=False, error="console unreachable")
         output = self._run("status")[1]
         self.assertIn("not connected (console unreachable)", output)
         remote.write_status(connected=True)
-        self.assertIn("link: connected", self._run("status")[1])
+        self.assertIn(": connected", self._run("status")[1])
 
     def test_usage(self) -> None:
         self.assertEqual(2, self._run("bogus")[0])

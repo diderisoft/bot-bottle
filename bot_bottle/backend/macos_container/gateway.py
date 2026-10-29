@@ -68,7 +68,7 @@ def ensure_networks(
     if clashes:
         die(f"the agent network's {subnet} is also used on this Mac "
             f"({'; '.join(clashes)}), so agents could reach it or cut it off. "
-            "Run `bot-bottle backend setup --backend=macos-container` to move "
+            "Run `bot-bottle install --backend=macos-container` to move "
             "agents to a free range.")
     container_mod.create_network(egress_network)
     container_mod.create_network(
