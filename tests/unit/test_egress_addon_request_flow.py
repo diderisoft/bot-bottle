@@ -614,7 +614,7 @@ class TestCanary(unittest.TestCase):
         _run_request(addon, flow)
         assert flow.response is not None
         self.assertEqual(403, flow.response.status_code)
-        self.assertNotIn(_CANARY, addon._safe_tokens_for("b"))
+        self.assertNotIn(_CANARY, addon._safe_tokens_for("b", "api.example.com"))
         self.assertNotIn(_CANARY, flow.response.get_text())
 
     def test_is_not_redacted_and_forwarded(self) -> None:
@@ -647,7 +647,7 @@ class TestSuperviseBranch(unittest.TestCase):
         _run_request(addon, flow)
         self.assertIsNone(flow.response)  # forwarded after approval
         # Approval lands in the calling bottle's safelist (keyed by slug).
-        self.assertIn(_OPENAI_KEY, addon._safe_tokens_for("test-bottle"))
+        self.assertIn(_OPENAI_KEY, addon._safe_tokens_for("test-bottle", "api.example.com"))
 
     def test_operator_rejection_blocks(self) -> None:
         addon = self._supervised_addon("rejected")
@@ -754,6 +754,20 @@ class TestWebSocket(unittest.TestCase):
         flow.websocket = _WebSocketData([_Message(b"hello world", from_client=True)])
         addon.websocket_message(flow)  # type: ignore[arg-type]
         self.assertFalse(flow.killed)
+
+    def test_safelist_applies_only_to_its_host(self) -> None:
+        config = Config(routes=(Route(host="api.example.com"), Route(host="other.example.com")))
+        addon = _addon(config)
+        addon._safe_tokens_for("b", "api.example.com").add(_OPENAI_KEY)
+        frame = f"k={_OPENAI_KEY}".encode()
+        approved = _stash(_Flow(_Request(host="api.example.com")), config, slug="b")
+        approved.websocket = _WebSocketData([_Message(frame, from_client=True)])
+        addon.websocket_message(approved)  # type: ignore[arg-type]
+        self.assertFalse(approved.killed)
+        other = _stash(_Flow(_Request(host="other.example.com")), config, slug="b")
+        other.websocket = _WebSocketData([_Message(frame, from_client=True)])
+        addon.websocket_message(other)  # type: ignore[arg-type]
+        self.assertTrue(other.killed)
 
     def test_unlisted_host_websocket_is_noop(self) -> None:
         config = Config(routes=())
@@ -983,8 +997,42 @@ class TestSuperviseMultiTenant(unittest.TestCase):
         self.assertIsNone(flow.response)  # forwarded after approval
         # The approval lands ONLY in bottle-a's safelist — never bottle-b's.
         # A global set here would be the cross-tenant leak this slice closes.
-        self.assertIn(_OPENAI_KEY, addon._safe_tokens_for("bottle-a"))
-        self.assertNotIn(_OPENAI_KEY, addon._safe_tokens_for("bottle-b"))
+        self.assertIn(_OPENAI_KEY, addon._safe_tokens_for("bottle-a", "api.example.com"))
+        self.assertNotIn(_OPENAI_KEY, addon._safe_tokens_for("bottle-b", "api.example.com"))
+
+    def test_approval_is_scoped_to_the_host_it_was_given_for(self) -> None:
+        # #807: an approval covers (bottle, host). The same value sent to
+        # another allowlisted host is flagged and supervised again.
+        config = Config(routes=(Route(host="api.example.com"), Route(host="other.example.com")))
+        addon = _addon(config, slug="bottle-a")
+        resolver = cast(Any, addon._resolver)
+        resolver.supervise_status = "approved"
+        addon._token_allow_timeout = 0.05
+        first = _Flow(_Request(host="api.example.com", method="POST", body=f"k={_OPENAI_KEY}"))
+        _run_request(addon, first)
+        self.assertIsNone(first.response)
+        self.assertEqual(1, len(resolver.propose_calls))
+        self.assertIn(_OPENAI_KEY, addon._safe_tokens_for("bottle-a", "api.example.com"))
+        self.assertNotIn(_OPENAI_KEY, addon._safe_tokens_for("bottle-a", "other.example.com"))
+
+        # Same host again: already approved, no new proposal.
+        again = _Flow(_Request(host="api.example.com", method="POST", body=f"k={_OPENAI_KEY}"))
+        _run_request(addon, again)
+        self.assertIsNone(again.response)
+        self.assertEqual(1, len(resolver.propose_calls))
+
+        # Another host: flagged again; a rejection there blocks it.
+        resolver.supervise_status = "rejected"
+        other = _Flow(_Request(host="other.example.com", method="POST", body=f"k={_OPENAI_KEY}"))
+        _run_request(addon, other)
+        assert other.response is not None
+        self.assertEqual(403, other.response.status_code)
+        self.assertEqual(2, len(resolver.propose_calls))
+
+    def test_host_key_is_normalized(self) -> None:
+        addon = _addon(Config(routes=()))
+        addon._safe_tokens_for("b", "API.Example.com.").add("v")
+        self.assertIn("v", addon._safe_tokens_for("b", "api.example.com"))
 
     def test_proposal_is_attributed_to_the_source_ip_bottle(self) -> None:
         addon = self._consolidated_addon("approved")
@@ -998,8 +1046,8 @@ class TestSuperviseMultiTenant(unittest.TestCase):
         # the addon never asserts a slug. The resolved bottle keys the safelist.
         calls = cast(Any, addon._resolver).propose_calls
         self.assertEqual(["10.0.0.2"], [c["source_ip"] for c in calls])
-        self.assertIn(_OPENAI_KEY, addon._safe_tokens_for("bottle-b"))
-        self.assertNotIn(_OPENAI_KEY, addon._safe_tokens_for("bottle-a"))
+        self.assertIn(_OPENAI_KEY, addon._safe_tokens_for("bottle-b", "api.example.com"))
+        self.assertNotIn(_OPENAI_KEY, addon._safe_tokens_for("bottle-a", "api.example.com"))
 
     def test_auth_token_injected_from_resolved_tokens(self) -> None:
         # The bottle's upstream token comes from /resolve (in-memory on the
@@ -1050,7 +1098,7 @@ class TestSuperviseMultiTenant(unittest.TestCase):
         )
         _run_request(addon, flow)
         self.assertIsNotNone(flow.response)  # blocked (no route, no supervise)
-        self.assertNotIn(_OPENAI_KEY, addon._safe_tokens_for(""))
+        self.assertNotIn(_OPENAI_KEY, addon._safe_tokens_for("", "api.example.com"))
         # Never even reached the queue — no route means no supervise proposal.
         self.assertEqual([], cast(Any, addon._resolver).propose_calls)
 

@@ -90,7 +90,7 @@ blocked.
 
 | Policy | Default for | Does |
 |---|---|---|
-| `supervise` | manifest routes | holds the request and queues an `egress-token-allow` proposal. Approval adds the value to that bottle's safelist for the proxy's life and re-scans. Times out closed after `EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS` (300). If supervise isn't wired for the bottle, it blocks. |
+| `supervise` | manifest routes | holds the request and queues an `egress-token-allow` proposal. Approval adds the value to that bottle's safelist for that host only, for the proxy's life, and re-scans. The same value sent to another host is flagged again. Times out closed after `EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS` (300). If supervise isn't wired for the bottle, it blocks. |
 | `redact` | agent-provider routes | scrubs the value and forwards. Fails closed if a match can't be removed, for example in the hostname. |
 | `block` | | 403 |
 

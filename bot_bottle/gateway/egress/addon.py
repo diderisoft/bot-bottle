@@ -115,8 +115,8 @@ TOKEN_ALLOW_POLL_INTERVAL_SECONDS = 0.5
 _TOKEN_ALLOW_JUSTIFICATION = (
     "egress DLP blocked an outbound request carrying a detected token. "
     "Approve only if this value is a false positive or a credential this "
-    "request legitimately needs; the value is then allowed for the life of "
-    "this bottle's egress proxy."
+    "request legitimately needs; the value is then allowed to this host, "
+    "for the life of this bottle's egress proxy."
 )
 
 
@@ -145,9 +145,11 @@ class EgressAddon:
         audit, firehose = GatewayAudit(orch_url, "egress"), FirehoseClient(orch_url)
         self._audit, self._firehose = EgressAudit(audit), EgressFirehose(firehose)
         self._senders: tuple[GatewayAudit | FirehoseClient, ...] = (audit, firehose)
-        # Operator-approved tokens per bottle, so one bottle's approval never
-        # passes another's scan. In memory; only touched from the asyncio loop.
-        self._safe_tokens: dict[str, set[str]] = {}
+        # Operator-approved tokens per (bottle, host): one bottle's approval
+        # never passes another's scan, and an approval for one host never lets
+        # the value go to another. In memory; only touched from the asyncio
+        # loop.
+        self._safe_tokens: dict[tuple[str, str], set[str]] = {}
         # Per-connection identity token from CONNECT, since bumped HTTPS
         # requests don't repeat it. Cleared on disconnect.
         self._conn_tokens: dict[str, str] = {}
@@ -162,9 +164,10 @@ class EgressAddon:
         """True iff the request resolved to a bottle to attribute proposals to."""
         return bool(slug)
 
-    def _safe_tokens_for(self, slug: str) -> set[str]:
-        """This bottle's approved-token safelist, created on first use."""
-        return self._safe_tokens.setdefault(slug, set())
+    def _safe_tokens_for(self, slug: str, host: str) -> set[str]:
+        """This bottle's approved-token safelist for `host`, created on first
+        use."""
+        return self._safe_tokens.setdefault((slug, _norm_host(host)), set())
 
     def _serve_introspection(
         self, flow: http.HTTPFlow, path: str, config: Config,
@@ -550,7 +553,7 @@ class EgressAddon:
                 flow.request,
                 route,
                 env,
-                safe_tokens=self._safe_tokens_for(slug),
+                safe_tokens=self._safe_tokens_for(slug, flow.request.host),
             )
             if result is None or result.severity != "block":
                 return True
@@ -608,8 +611,8 @@ class EgressAddon:
         slug: str,
         env: "typing.Mapping[str, str]",
     ) -> bool:
-        """Queue a token block for the operator and wait. `slug` scopes the
-        proposal and safelist to the calling bottle; `env` redacts secrets from
+        """Queue a token block for the operator and wait. `slug` and the host
+        scope the safelist entry; `env` redacts secrets from
         the proposal. True if approved (the value is safelisted); False if
         blocked (403 written)."""
         host = flow.request.host
@@ -657,7 +660,7 @@ class EgressAddon:
         if response is not None and response.get("status") in (
             STATUS_APPROVED, STATUS_MODIFIED,
         ):
-            self._safe_tokens_for(slug).add(result.matched)
+            self._safe_tokens_for(slug, host).add(result.matched)
             if self._flow_log(flow) >= LOG_BLOCKS:
                 sys.stderr.write(json.dumps({
                     "event": "egress_token_allowed",
@@ -783,7 +786,8 @@ class EgressAddon:
             # Frames aren't request lines, so no CRLF check.
             result = scan_outbound(
                 route, content, env,
-                safe_tokens=self._safe_tokens_for(slug), crlf_text="",
+                safe_tokens=self._safe_tokens_for(slug, flow.request.host),
+                crlf_text="",
             )
             if result is not None and result.severity == "block":
                 sys.stderr.write(f"egress DLP: {result.reason}\n")
