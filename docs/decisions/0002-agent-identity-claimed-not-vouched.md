@@ -43,6 +43,5 @@ field. `git.remotes` stays bottle-only (home-only).
 
 ## Links
 
-- PRD 0027 (`docs/prds/0027-agent-git-user-identity.md`) — full trust
-  analysis and schema.
+- PRD 0027 (design repo) — full trust analysis and schema.
 - Issue #94, PR #95 — the feature this decision was made for.

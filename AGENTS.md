@@ -38,34 +38,25 @@ backend remains available with `BOT_BOTTLE_BACKEND=docker` or
 - `docs/reference/` — how the system works **now**. Read
   `docs/reference/architecture.md` first; it links the rest (backends,
   gateway, git-gate, host controller, runtime contract, glossary).
-- `docs/prds/` — product requirement docs (see `docs/prds/README.md` for
-  format); superseded ones in `docs/prds/archive/`.
-- `docs/research/` — research notes (see `docs/research/README.md`).
-- `docs/decisions/` — decision records (ADR-lite).
+- `docs/decisions/` — decision records (ADR-lite): why the system is
+  the way it is.
 
 ## Conventions
 
 - Reference pages (`docs/reference/`) describe current behaviour and are
-  edited in place. Read them before PRDs; open a PRD or research note only
-  when you need the reasoning behind something. A change that alters
-  behaviour a reference page describes updates that page in the same PR.
-- Three kinds of history doc, each with its own conventions in-folder; see
-  `docs/README.md` for when to write which:
-  - **PRDs** (`docs/prds/`) — one feature per file. A draft may initially
-    use `prd-new-<kebab>.md`, but its author must assign the next
-    sequential number before merge; CI rejects unnumbered PRDs. A
-    `Status:` line tracks lifecycle: Draft → Active (shipped to `main`) →
-    Superseded/Retargeted; superseded and retargeted PRDs move to
-    `docs/prds/archive/`. Format in `docs/prds/README.md`.
-  - **Research notes** (`docs/research/`) — opinionated investigations;
-    unnumbered kebab-case, freeform and verdict-first. See
-    `docs/research/README.md`.
-  - **Decision records** (`docs/decisions/`) — ADR-lite, numbered
-    `NNNN-kebab.md`, for policies and non-feature decisions. See
-    `docs/decisions/README.md`.
-- Keep decision rationale self-contained in the repo, not in Gitea
-  issue threads. Issues are an ephemeral inbox; the durable "why" lives
-  in a PRD, research note, or decision record.
+  edited in place. A change that alters behaviour a reference page
+  describes updates that page in the same PR.
+- Design rationale lives in `docs/decisions/` and `docs/reference/`.
+  Decision records are ADR-lite, numbered `NNNN-kebab.md`, for policies,
+  boundaries and load-bearing choices; see `docs/decisions/README.md`
+  and `docs/README.md`.
+- PRDs and research notes live in the private `diderisoft/bot-bottle-design`
+  repo (ADR 0010), for those who have access. This repo must make sense
+  without it: mention a PRD in plain text ("PRD 0081 (design repo)"),
+  never link into it, and when a choice in one matters to readers here,
+  write it into a reference page or decision record.
+- Keep decision rationale in a document, not in Gitea issue threads.
+  Issues are an ephemeral inbox.
 - Low dependencies by default. The project is Python, stdlib-first (no
   runtime pip dependencies in the package itself; the only language
   runtime is the Python 3.13 used by the CLI and the orchestrator and gateway images). Ask before

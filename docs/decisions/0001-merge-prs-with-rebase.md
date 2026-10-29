@@ -32,8 +32,8 @@ commit, producing a linear history that preserves each commit verbatim.
   by *branch name* (`/src/branch/<feature>/…`) dies at merge. This is
   why links to not-yet-merged files are pinned to a **commit SHA**
   (`/src/commit/<sha>/…`), which stays reachable via the retained
-  `refs/pull/<n>/head` ref. See
-  `docs/research/issue-tracking-vs-in-repo-decision-history.md`.
+  `refs/pull/<n>/head` ref. See the research note
+  *issue-tracking-vs-in-repo-decision-history* (design repo).
 - **Trade-off accepted:** without a merge commit, the "these commits
   landed together as PR #N" grouping is not recorded in git itself — it
   lives in forge state (the PR). That is a mild concession against the
@@ -42,6 +42,6 @@ commit, producing a linear history that preserves each commit verbatim.
 
 ## Links
 
-- `docs/research/issue-tracking-vs-in-repo-decision-history.md` — the
-  commit-pinning consequence above.
+- Research note *issue-tracking-vs-in-repo-decision-history* (design
+  repo) — the commit-pinning consequence above.
 - Observed practice: PRs #92, #93 merged with rebase; #95 to follow.

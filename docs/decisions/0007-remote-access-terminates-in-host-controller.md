@@ -20,8 +20,7 @@ placed the host end in the orchestrator. Since then:
   with read-only/writable viewers. The orchestrator relays remote launches and
   attaches to it.
 
-The spike in
-[`docs/research/remote-access-iroh-transport.md`](../research/remote-access-iroh-transport.md)
+A spike (research note *remote-access-iroh-transport*, design repo)
 compared the possible placements.
 
 ## Decision
@@ -59,5 +58,6 @@ compared the possible placements.
 
 ## Links
 
-- [`docs/research/remote-access-iroh-transport.md`](../research/remote-access-iroh-transport.md)
-- PRD 0070 (original placement), PRD 0092 (host controller), #478
+- Research note *remote-access-iroh-transport* (design repo)
+- PRD 0070 (original placement), PRD 0092 (host controller), both in the
+  design repo; #478

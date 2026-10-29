@@ -11,8 +11,9 @@ up front and describes what keeps that safe for a security tool.
   request that the maintainer reviews. Agents open PRs and may merge one only
   when the maintainer has told them to.
 - **Design is written down before it's built.** Features start as a PRD
-  (`docs/prds/`); system-wide boundaries are decision records
-  (`docs/decisions/`); how the system works today is in `docs/reference/`.
+  (kept in a private design repo); system-wide boundaries are decision
+  records (`docs/decisions/`); how the system works today is in
+  `docs/reference/`.
   Reviewers check code against those, not against a chat transcript.
 - **Every PR links an issue** (ADR 0005), so each change has a stated reason.
 

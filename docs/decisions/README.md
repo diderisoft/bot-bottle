@@ -6,15 +6,16 @@ practice: capture *what was decided and why* in a versioned file so the
 reasoning lives in the clone, not in a Gitea issue thread or a chat log
 that disappears when the host does.
 
-See `docs/research/issue-tracking-vs-in-repo-decision-history.md` for
-the rationale behind keeping decision history in-repo, and
-[`docs/README.md`](../README.md) for when to write a decision record
-vs. a PRD or research note.
+Decision records and [`docs/reference/`](../reference/architecture.md)
+are the public record of the design. PRDs and research notes live in
+the private design repo (ADR 0010); a record here must stand without
+them. See [`docs/README.md`](../README.md) for when to write a decision
+record.
 
 ## Format
 
 One Markdown file per decision, numbered sequentially and zero-padded
-(`0001-…`, `0002-…`), matching the PRD numbering style. Keep it short —
+(`0001-…`, `0002-…`). Keep it short —
 the discipline is writing it down, not the ceremony.
 
 ```markdown
@@ -34,8 +35,10 @@ What we decided, stated plainly.
 What follows — the good, and the costs/trade-offs accepted.
 
 ## Links
-PRDs, research notes, issues/PRs. Gitea links are convenience
-pointers; the reasoning above must stand without them.
+Other decision records, reference pages, issues/PRs. PRDs and research
+notes are named in plain text (they're in the private design repo).
+Links are convenience pointers; the reasoning above must stand without
+them.
 ```
 
 The records are the index: `ls docs/decisions/` or skim the titles.

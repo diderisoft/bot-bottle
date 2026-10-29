@@ -10,8 +10,8 @@ NVIDIA's OpenShell is the closest project to bot-bottle: a sandbox runtime with
 an L7 egress proxy, credentials swapped in at the boundary, declarative policy,
 and (since mid-2026) workspaces, OIDC and roles in its open-source core. A
 source review on 2026-10-17
-([`nvidia-nemoclaw-openshell.md`](../research/nvidia-nemoclaw-openshell.md),
-addendum) found it at ~634k lines of Rust across 37 crates, with Docker,
+(research note *nvidia-nemoclaw-openshell*, addendum; design
+repo) found it at ~634k lines of Rust across 37 crates, with Docker,
 Podman, microVM and Kubernetes drivers, and an extension point for external
 traffic-inspection services.
 
@@ -76,8 +76,8 @@ depend on being small enough to audit and quick to change, not on breadth.
 
 ## Links
 
-- [`docs/research/nvidia-nemoclaw-openshell.md`](../research/nvidia-nemoclaw-openshell.md)
-  — prior-art note and the 2026-10-17 source-review addendum
-- [`docs/research/agent-sandbox-landscape.md`](../research/agent-sandbox-landscape.md)
-- [PRD 0070](../prds/0070-per-host-orchestrator.md) — the shared gateway and the
+- Research note *nvidia-nemoclaw-openshell* (design repo) — prior-art note
+  and the 2026-10-17 source-review addendum
+- Research note *agent-sandbox-landscape* (design repo)
+- PRD 0070 (design repo) — the shared gateway and the
   source-IP attribution invariant a cluster deployment has to honour

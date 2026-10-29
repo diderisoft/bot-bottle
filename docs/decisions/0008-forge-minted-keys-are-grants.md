@@ -46,6 +46,6 @@ read.
 
 ## Links
 
-- [PRD 0103](../prds/0103-forge-connect-and-bottle-onboarding.md): forge
+- PRD 0103 (design repo): forge
   bottles and one-line grants.
 - [git-gate reference](../reference/git-gate.md).

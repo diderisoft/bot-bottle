@@ -44,7 +44,7 @@ asks the operator to confirm it, and can save it to the bottle file
 ### Forges and one-line grants
 
 A bottle can declare a forge once and grant repos on it in a line
-(`manifest/forges.py`, [PRD 0103](../prds/0103-forge-connect-and-bottle-onboarding.md)).
+(`manifest/forges.py`; PRD 0103, design repo).
 The forge usually lives in its own bottle that others extend:
 
 ```yaml
@@ -134,8 +134,8 @@ the running gateway and inits its bare repos at registration.
 ### Live grants
 
 An approved `add-repo` adds a repo to a running bottle
-(`git_gate/live_grant.py`, `control/hostctl/repo_grants.py`,
-[PRD 0105](../prds/0105-forges-and-repos-from-the-phone.md)). The host finds
+(`git_gate/live_grant.py`, `control/hostctl/repo_grants.py`;
+PRD 0105, design repo). The host finds
 the forge in the bottles the session launched with, as their files are now,
 else in any host bottle. It records the key in the bottle's git-gate state dir
 (`live-grants.json`), mints it, and adds the repo to the upstream snapshot.
@@ -160,7 +160,7 @@ The pre-receive hook (`git_gate_render_hook`) reads every ref first, then:
    `refs/for-review/*`). Push a branch and open the PR from it instead.
 2. Runs gitleaks over the commits the push introduces: those reachable from
    the new tip and not from any ref the gate already has
-   ([PRD 0028](../prds/0028-git-gate-new-branch-scan-scope.md)). The rules
+   (PRD 0028, design repo). The rules
    come from `git_gate_render_gitleaks_config`. A finding refuses the push.
 3. Re-scans ignoring `# gitleaks:allow` comments. A finding hidden only by an
    inline suppression becomes a `gitleaks-allow` supervise proposal. The push

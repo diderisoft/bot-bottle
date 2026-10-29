@@ -14,11 +14,17 @@ Design artifacts have different jobs:
 | Artifact | Authority |
 |---|---|
 | Reference pages (`docs/reference/`) | How the system works now |
-| Decision records | Stable system-wide boundaries, policies, and invariants |
-| PRDs | A feature's design and rationale, as shipped |
-| Research notes | Evidence and tradeoff analysis; informative, not normative |
+| Decision records (`docs/decisions/`) | Stable system-wide boundaries, policies, and invariants |
+| PRDs (private design repo) | A feature's design and rationale, as shipped |
+| Research notes (private design repo) | Evidence and tradeoff analysis; informative, not normative |
 | Issues | Work tracking, open questions, and discussion |
 | Pull-request comments | Review history; never the final home of a design decision |
+
+PRDs and research notes live in the private `diderisoft/bot-bottle-design`
+repository (ADR 0010). This repository must make sense without them: name a
+PRD in plain text ("PRD 0081 (design repo)"), never link into it, and when a
+choice in a PRD matters to a reader here, put it in a reference page or a
+decision record.
 
 When a discussion changes the design, update the relevant PRD or decision
 record before treating the discussion as resolved. A comment may explain why a
@@ -192,7 +198,7 @@ This is a milestone activity, not a recurring documentation ceremony.
 
 Use the relevant items in design and implementation pull requests:
 
-- [ ] The canonical PRD or decision is linked.
+- [ ] The canonical decision is linked, or the PRD is named (design repo).
 - [ ] Design-changing review decisions are reflected in-repo.
 - [ ] Dependencies and blockers are explicit.
 - [ ] State, credential, and trust ownership agree with current architecture.

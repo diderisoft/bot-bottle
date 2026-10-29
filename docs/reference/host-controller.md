@@ -2,7 +2,7 @@
 
 `control/hostctl/` is the per-host daemon behind every bottle operation. The
 CLI, the orchestrator and remote consoles all go through it
-([PRD 0092](../prds/0092-host-controller.md)). It runs as the user and adds
+(PRD 0092, design repo). It runs as the user and adds
 no privilege: it gives every caller one API, and it is not a security
 boundary. Its routes are in
 [runtime-contract.md](runtime-contract.md#host-controller-as-the-orchestrator-sees-it).
@@ -76,7 +76,7 @@ Each agent runs in tmux on bot-bottle's own tmux server, never the user's
   answer back there. One that's down or refuses the host's token is skipped.
 - `blocks.py` hears the gateway's block events as the journal writes them
   (`HostAudit.listen`) and shows them in the same bar
-  ([PRD 0099](../prds/0099-status-bar-blocks.md)). Each block shows for five
+  (PRD 0099, design repo). Each block shows for five
   seconds as `⊘ <host> · <reason>`; a burst shows the newest with `(+N)`,
   and a notice stays up at most ten seconds (then five seconds without one,
   so a retry loop can't keep it up). The session's counts by reason
@@ -118,7 +118,7 @@ view-only unless it says so.
 ## Transcripts
 
 The daemon copies each session's harness transcript to the host as it's
-written (`transcripts.py`, [PRD 0095](../prds/0095-conversation-view.md)).
+written (`transcripts.py`; PRD 0095, design repo).
 pi, Claude and Codex declare one (`AgentProvider.transcript_glob`); a
 provider that doesn't isn't followed. `bot_bottle/transcript.py` holds the
 entry type the parsers share (`contrib/<harness>/transcript.py`), with
@@ -199,7 +199,7 @@ that isn't a git copy can't be snapshotted. Restoring is not built yet.
 ## Audit
 
 The host controller is the host's only audit writer
-([PRD 0089](../prds/0089-audit-event-schema.md)). Producers are the host
+(PRD 0089, design repo). Producers are the host
 controller itself (`lifecycle.*`, `hostctl.*`), the orchestrator, and the
 gateway's `egress`, `git-gate` and `supervise`. Gateway events reach it
 through the orchestrator (`POST /audit/append`).

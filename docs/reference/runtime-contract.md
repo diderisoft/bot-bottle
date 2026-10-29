@@ -6,9 +6,8 @@ Anything built against bot-bottle's services (an operator's own tooling, a
 port) should be built against this, not against host code. Each section names
 the `contract/` module that is its reference implementation.
 
-This covers the host ↔ orchestrator side ([PRD 0087](../prds/0087-host-service-boundary.md),
-[PRD 0092](../prds/0092-host-controller.md)). The agent and gateway sides are
-[PRD 0086](../prds/0086-bring-your-own-orchestration.md)'s to add.
+This covers the host ↔ orchestrator side (PRDs 0087 and 0092, design repo). The agent and gateway sides are still
+to be added (PRD 0086, design repo).
 
 ## Trust domains and tokens
 
@@ -108,4 +107,4 @@ treat it as "nothing is running".
 
 - **2026-10-22:** first version: control-plane routes and roles, the host
   controller's API as an orchestrator sees it, both trust domains, and the env
-  each service reads ([PRD 0087](../prds/0087-host-service-boundary.md) chunk 7).
+  each service reads (PRD 0087 chunk 7, design repo).

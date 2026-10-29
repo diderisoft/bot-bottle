@@ -5,7 +5,7 @@ Podman, not rootless Docker: Apple's bounding set lacks `CAP_SYS_ADMIN`, needed
 to write a multi-range `uid_map`. With no subordinate ranges, podman falls back
 to a single-UID self-mapping, so `build_image` removes the agent's
 `/etc/subuid` and `/etc/subgid` entries. See
-`docs/research/rootless-docker-in-apple-container-spike.md`. The agent still
+the rootless-docker-in-apple-container-spike research note (design repo). The agent still
 uses `docker` and `docker compose` against podman's API socket.
 """
 

@@ -133,8 +133,7 @@ silently ignore it.
 
 Rootless Docker was tried first and does not work here at all: Apple
 Container's capability bounding set omits `CAP_SYS_ADMIN`, which the kernel
-requires to write a multi-range `uid_map`. See
-[`docs/research/rootless-docker-in-apple-container-spike.md`](docs/research/rootless-docker-in-apple-container-spike.md).
+requires to write a multi-range `uid_map`.
 
 The tradeoff to understand before enabling it: podman avoids that requirement
 by falling back to a single-UID mapping, so nested containers provide **no
@@ -305,7 +304,7 @@ You help maintain Gitea-hosted projects.
 
 When an outbound DLP detector matches a token, the route's `inspect.outbound_on_match` policy decides what happens. Under the default `supervise`, the proxy queues an `egress-token-allow` proposal for the operator's `bot-bottle supervise` TUI and holds the request open until it is answered (or `EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS`, default 300s, elapses — after which it fails closed). The operator never sees the raw token, only the host, method, path, and a redacted snippet; approving adds the value to an in-memory safelist for the life of the egress proxy. Under `redact`, the matched value is scrubbed from the body, headers, and path and the request is forwarded (failing closed if a match lands somewhere unredactable, like the hostname). Under `block` it stays a hard `403`. Structural blocks (CRLF injection) and not-in-allowlist host blocks are always hard `403`s regardless of policy.
 
-More examples in `examples/`. How the system works today is in [`docs/reference/`](docs/reference/architecture.md); the design history is under `docs/prds/`, and the trust-boundary rationale is in `docs/prds/0011-per-file-md-manifest.md`.
+More examples in `examples/`. How the system works today is in [`docs/reference/`](docs/reference/architecture.md), and why it is this way is in [`docs/decisions/`](docs/decisions/README.md).
 
 ## Tracker policy
 

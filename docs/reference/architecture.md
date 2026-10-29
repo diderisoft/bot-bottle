@@ -1,9 +1,10 @@
 # Architecture
 
 How bot-bottle is put together today. This page and the others in
-`docs/reference/` describe the current system and are edited in place. PRDs
-record why it got this way; when a PRD ships, it updates the reference page it
-changes.
+`docs/reference/` describe the current system and are edited in place; a
+change updates the pages it affects. Why it got this way is in
+[`docs/decisions/`](../decisions/README.md). PRDs mentioned by number live in
+the private design repo (ADR 0010); nothing here depends on them.
 
 ## Components
 
@@ -40,7 +41,7 @@ port 8098 of its own network, never `0.0.0.0`.
 ## Layers
 
 `bot_bottle/` has three layers, enforced by `tests/unit/test_layering.py`
-([PRD 0087](../prds/0087-host-service-boundary.md)):
+(PRD 0087, design repo):
 
 | Layer | Packages | May import |
 |---|---|---|
@@ -114,7 +115,7 @@ inherit an old bottle's policy.
 ## Trust
 
 Two signing domains keep services from minting each other's credentials
-([PRD 0079](../prds/0079-control-plane-auth-provisioning.md)):
+(PRD 0079, design repo):
 
 - `control-plane`: the orchestrator holds the key and mints `cli` and
   `gateway` tokens.
@@ -128,18 +129,18 @@ Roles, routes and env vars are in [runtime-contract.md](runtime-contract.md).
 
 | What | Where | Owner |
 |---|---|---|
-| User agents and bottles | `~/.bot-bottle/{agents,bottles}/`, versioned in a git repo in `~/.bot-bottle/` that tracks only those two directories (`manifest/versions.py`, [PRD 0103](../prds/0103-forge-connect-and-bottle-onboarding.md)). bot-bottle commits its own writes, and hand edits as "edited by hand" before a launch reads them; it refuses a commit holding a value from the secrets file. The launch audit event records the version (`bottle_versions`), and `bot-bottle bottles history` / `revert` read and restore them | user |
+| User agents and bottles | `~/.bot-bottle/{agents,bottles}/`, versioned in a git repo in `~/.bot-bottle/` that tracks only those two directories (`manifest/versions.py`; PRD 0103, design repo). bot-bottle commits its own writes, and hand edits as "edited by hand" before a launch reads them; it refuses a commit holding a value from the secrets file. The launch audit event records the version (`bottle_versions`), and `bot-bottle bottles history` / `revert` read and restore them | user |
 | Project agents and bottles | `<repo>/.bot-bottle/` (bottles, and agents whose `agent_provider` grants anything or that run on a host bottle granting more than `basic`, need `bot-bottle trust`; a project agent replaces a home agent of the same name, and its trust prompt says so). A project bottle is named `./<name>`, so it never shadows or is shadowed by a host bottle; bare `bot-bottle` uses `./main` when the project has one. A terminal launch in a project with none first drafts one from the checkout (`onboarding.py`: its `origin`, read-only, when a host bottle declares that forge, offering `forge connect` when none does) and, once accepted, writes and trusts it | repo |
 | Registry, supervise queue, encrypted egress secrets, settings | `bot-bottle.db`: `~/.bot-bottle/db/` mounted into the orchestrator; on firecracker, the orchestrator VM's `/dev/vdb` volume | orchestrator |
 | Signing keys | `~/.bot-bottle/<key file>`, mode 0600, pushed to the key holder | host |
 | Gateway CA | `~/.bot-bottle/gateway-ca/`, mounted at mitmproxy's confdir (firecracker: the infra VM dir's `gateway-ca/`) | gateway |
 | Audit journal | `~/.bot-bottle/audit/` | host controller |
 | Per-bottle metadata, compose files, logs | `~/.bot-bottle/state/<identity>/` | backend |
-| Image and kernel caches | `~/.cache/bot-bottle/`, and the runtime's own image store; `bot-bottle cleanup images` removes superseded releases at once and unused builds after 14 days, never a current pin or an image in use ([PRD 0088](../prds/0088-prune-cached-agent-images.md)) | backend |
+| Image and kernel caches | `~/.cache/bot-bottle/`, and the runtime's own image store; `bot-bottle cleanup images` removes superseded releases at once and unused builds after 14 days, never a current pin or an image in use (PRD 0088, design repo) | backend |
 
 The gateway keeps no durable per-bottle state. When it restarts, the launcher
 re-provisions every running bottle: CA, git-gate repos and credentials, and
-egress tokens ([PRD 0081](../prds/0081-reprovision-gateway-state-on-bringup.md)).
+egress tokens (PRD 0081, design repo).
 
 ## Other reference pages
 

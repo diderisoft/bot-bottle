@@ -407,7 +407,7 @@ while IFS=' ' read -r old new ref; do
   # is also correct for non-fast-forward pushes (a rebase can skip
   # commits off the direct path). Security-equivalent because the bare
   # repo's refs come only from trusted upstream mirror-fetch or
-  # gitleaks-gated pushes; see docs/prds/0028-git-gate-new-branch-scan-scope.md.
+  # gitleaks-gated pushes; see docs/reference/git-gate.md.
   log_opts="$new --not --all"
   echo "git-gate: gitleaks scanning $ref ($log_opts)" >&2
   scan_report=$(mktemp)

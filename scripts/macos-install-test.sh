@@ -18,7 +18,7 @@
 # guest VM needs nested virtualization, which Apple gates to M3+ silicon.
 # On M1/M2 a separate user account is the only way to get a clean $HOME
 # while still reaching the real host backend. Full rationale in
-# docs/research/testing-clean-install-on-macos.md.
+# the testing-clean-install-on-macos research note (design repo).
 #
 # Usage:
 #   sudo ./scripts/macos-install-test.sh test        # up -> run -> status -> down

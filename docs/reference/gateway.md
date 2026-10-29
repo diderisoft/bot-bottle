@@ -131,7 +131,7 @@ An approved egress addition can also be kept (`approvals.py`): the terminal's
 well, from the next launch. It goes to the project's `./main` when the bottle
 shared a project (trusted, left for you to commit), else to the first host
 bottle it launched with, as a version naming the request
-([PRD 0103](../prds/0103-forge-connect-and-bottle-onboarding.md)). A route
+(PRD 0103, design repo). A route
 carrying a credential can only be allowed once.
 
 `forge-connect(url, justification)` asks the operator to connect a git forge
@@ -141,7 +141,7 @@ needed. The operator pastes a token there; the host connects the URL from the
 agent's proposal, never one from the console, exactly as `bot-bottle forge
 connect` does, then approves the proposal with a note naming the account. A
 failed connect leaves it waiting. The token never reaches the agent
-([PRD 0105](../prds/0105-forges-and-repos-from-the-phone.md)).
+(PRD 0105, design repo).
 
 `add-repo(repo, justification)` asks for a repo as a grant,
 `<forge>/<owner>/<repo>[:write]`. The console's card shows it with the access
@@ -164,7 +164,7 @@ Proposals that git-gate raises (`gitleaks-allow`) and the egress proxy raises
 
 ## Request firehose
 
-`gateway/egress/firehose.py` ([PRD 0093](../prds/0093-request-firehose.md)).
+`gateway/egress/firehose.py` (PRD 0093, design repo).
 When a consumer is attached, such as `bot-bottle audit tail` or a configured
 sink, the proxy snapshots each request as the agent sent it. It drops
 `Authorization`, `Proxy-Authorization` and `Cookie`, scrubs provisioned
@@ -193,4 +193,4 @@ cross-signed by the old one, then restarts each gateway and reattaches its
 bottles. The gateway serves `leaf → new CA (issued by
 old) → old CA`, so an agent that loaded the old CA keeps working and new
 processes trust the new one
-([PRD 0090](../prds/0090-gateway-ca-rollover.md)).
+(PRD 0090, design repo).
