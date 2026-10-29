@@ -38,8 +38,11 @@ class _LocalSocket(unittest.TestCase):
         self.addCleanup(server.close)
 
     def pending(self, session_id: str, argv: list[str]) -> None:
-        """Register a session's record and spec as `start` does, with tmux faked."""
-        with mock.patch.object(sessions.subprocess, "run", side_effect=[_done(1), _done(0)]):
+        """Register a session's record and spec as `start` does, with tmux faked:
+        `has-session` (none), the config's `source-file` (no server), then
+        `new-session`."""
+        with mock.patch.object(sessions.subprocess, "run",
+                               side_effect=[_done(1), _done(1), _done(0)]):
             self.manager.start(sessions.SessionRecord(id=session_id, kind="test"), argv, {})
 
 
