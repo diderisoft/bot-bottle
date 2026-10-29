@@ -16,6 +16,7 @@ from ...bottle_state import BottleMetadata, bottle_state_dir, is_preserved, read
 from ...paths import bot_bottle_root
 from ..constants import PROG
 from ..settings import settings_from_env
+from ..table import print_table
 from .active import held_bottles
 
 _USAGE = f"""usage: {PROG} stopped
@@ -70,16 +71,6 @@ def _row(metadata: BottleMetadata, used: float) -> tuple[str, ...]:
             "kept" if is_preserved(metadata.identity) else "left over")
 
 
-def _print_table(rows: list[tuple[str, ...]]) -> None:
-    """Columns padded to their widest cell, two spaces apart; a column empty
-    in every row (often LABEL) is left out."""
-    keep = [i for i in range(len(rows[0])) if any(row[i] for row in rows[1:])]
-    rows = [tuple(row[i] for i in keep) for row in rows]
-    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
-    for row in rows:
-        print("  ".join(cell.ljust(w) for cell, w in zip(row, widths)).rstrip())
-
-
 def _when(ts: float) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
 
@@ -93,12 +84,8 @@ def cmd_stopped(argv: list[str]) -> int:
     if not bottles:
         print("no stopped bot-bottle bottles", file=sys.stderr)
         return 0
-    rows = [_row(metadata, used) for metadata, used in bottles]
-    if sys.stdout.isatty():
-        _print_table([_HEADER, *rows])
-    else:
-        for row in rows:
-            print("\t".join(field or "-" for field in row))
+    print_table(_HEADER, [_row(metadata, used) for metadata, used in bottles],
+                drop_empty=True)
     sys.stdout.flush()  # the list, then the hint, even when piped
     print(f"\nresume one with `{PROG} resume <identity>`", file=sys.stderr)
     return 0

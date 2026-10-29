@@ -13,6 +13,7 @@ from ...control.hostctl.client import HostControlClient
 from ...lib.log import warn
 from ..constants import PROG
 from ..settings import settings_from_env
+from ..table import print_table
 
 _ANSI_COLOR_CODES: dict[str, str] = {
     "red": "\033[91m",
@@ -22,6 +23,8 @@ _ANSI_COLOR_CODES: dict[str, str] = {
     "magenta": "\033[95m",
 }
 _ANSI_RESET = "\033[0m"
+
+_HEADER = ("BACKEND", "BOTTLE", "NAME", "SERVICES", "SESSION")
 
 
 def _ansi_label(text: str, color: str) -> str:
@@ -66,8 +69,9 @@ def _session_column(held: dict[str, object] | None) -> str:
 def cmd_active(argv: list[str]) -> int:
     if argv and argv[0] in ("-h", "--help"):
         sys.stderr.write(f"usage: {PROG} active\n")
-        sys.stderr.write("\nList all currently-running bot-bottle bottles.\n")
-        sys.stderr.write("Output: <backend>\\t<slug>\\t<label>\\t<services>\\t<session>\n")
+        sys.stderr.write("\nList all currently-running bot-bottle bottles: a table in a "
+                         "terminal, piped one line each:\n")
+        sys.stderr.write("<backend>\\t<slug>\\t<label>\\t<services>\\t<session>\n")
         sys.stderr.write("<session> is the host controller's session state; "
                          f"`{PROG} attach <slug>` joins a running one.\n")
         return 0
@@ -77,17 +81,22 @@ def cmd_active(argv: list[str]) -> int:
     if not active and not held:
         print("no active bot-bottle bottles", file=sys.stderr)
         return 0
-    # One tab-separated line per bottle:
-    # `<backend>\t<slug>\t<label>\t<services>\t<session>`.
+    # Per bottle: backend, slug, name, services, session; tab-separated when
+    # piped, a table in a terminal.
+    rows: list[tuple[str, ...]] = []
+    colors: list[str] = []
     for b in active:
         services = ",".join(b.services) if b.services else "-"
         display_name = f"{b.label} ({b.agent_name})" if b.label else b.agent_name
-        colored_name = _ansi_label(display_name, b.color)
         session = _session_column(held.pop(b.slug, None))
-        print(f"{b.backend_name}\t{b.slug}\t{colored_name}\t{services}\t{session}")
+        rows.append((b.backend_name, b.slug, display_name, services, session))
+        colors.append(b.color)
     # Held, but not seen by its backend.
     for slug, h in held.items():
         label, agent = str(h.get("label") or ""), str(h.get("agent") or "?")
         display_name = f"{label} ({agent})" if label else agent
-        print(f"{h.get('backend') or '?'}\t{slug}\t{display_name}\t-\t{_session_column(h)}")
+        rows.append((str(h.get("backend") or "?"), slug, display_name, "-", _session_column(h)))
+        colors.append("")
+    print_table(_HEADER, rows,
+                style=lambda r, c, cell: _ansi_label(cell, colors[r]) if c == 2 else cell)
     return 0

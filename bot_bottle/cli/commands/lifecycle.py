@@ -96,8 +96,14 @@ def cmd_jobs(argv: list[str]) -> int:
     if state is None:
         print("host controller: not running")
         return 1
-    for job in HostControlClient(state, runner.cli_token()).jobs():
-        print(f"{job['id']}\t{job['kind']}\t{job['state']}")
+    # pylint: disable-next=import-outside-toplevel
+    from ..table import print_table
+    jobs = HostControlClient(state, runner.cli_token()).jobs()
+    if not jobs:
+        print("no recent jobs", file=sys.stderr)
+        return 0
+    print_table(("ID", "KIND", "STATE"),
+                [(str(j["id"]), str(j["kind"]), str(j["state"])) for j in jobs])
     return 0
 
 
