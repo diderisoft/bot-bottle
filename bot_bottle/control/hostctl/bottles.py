@@ -272,7 +272,7 @@ class BottleService:
             log.stage("prepare", "Reading the bottle")
             plan = backend.prepare(spec, stage_dir=stage_dir, secrets=secrets)
             identity = str(getattr(plan, "slug", ""))
-            if request.headless or not request.assume_yes:
+            if request.headless:
                 _log_preflight(plan, backend.name)
             self._confirm(backend, plan, request)
             if self._running(identity):
@@ -299,7 +299,8 @@ class BottleService:
     @staticmethod
     def _confirm(backend: "BottleBackend[Any, Any]", plan: "BottlePlan",
                  request: LaunchRequest) -> None:
-        """Stop for a yes/no unless the request gave it. A stale image fails a
+        """The pre-launch checks. A launch doesn't ask to go ahead; only a stale
+        image stops for a yes/no (unless the request gave it), and fails a
         headless launch."""
         from ...image_cache import StaleImageError  # pylint: disable=import-outside-toplevel
         try:
@@ -310,8 +311,6 @@ class BottleService:
             if not request.assume_yes:
                 raise ConfirmationNeeded(f"{e}\nLaunch anyway?") from None
             log.warn(str(e))  # launching anyway
-        if not request.assume_yes:
-            raise ConfirmationNeeded("launch this agent?")
 
     def _hold(self, backend: "BottleBackend[Any, Any]", plan: "BottlePlan",
               request: LaunchRequest, *, identity: str, stage_dir: Path,

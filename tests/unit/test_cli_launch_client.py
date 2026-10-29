@@ -141,7 +141,7 @@ class TestLaunch(unittest.TestCase):
         self.assertEqual(0, self.launch(client))
 
     def test_confirmation_resends_with_assume_yes(self) -> None:
-        confirm = {"type": "error", "code": CONFIRM_ERROR, "message": "launch this agent?"}
+        confirm = {"type": "error", "code": CONFIRM_ERROR, "message": "stale image\nLaunch anyway?"}
         client = _client([confirm, self.ready], [{"running": False, "exit": {"status": 0}}])
         with mock.patch.object(launch_client, "read_tty_line", return_value="y"):
             self.assertEqual(0, self.launch(client))
@@ -149,7 +149,7 @@ class TestLaunch(unittest.TestCase):
         self.assertEqual((False, True), (first["assume_yes"], second["assume_yes"]))
 
     def test_declining_stops_without_resending(self) -> None:
-        confirm = {"type": "error", "code": CONFIRM_ERROR, "message": "launch this agent?"}
+        confirm = {"type": "error", "code": CONFIRM_ERROR, "message": "stale image\nLaunch anyway?"}
         client = _client([confirm], [])
         with mock.patch.object(launch_client, "read_tty_line", return_value="n"):
             self.assertEqual(0, self.launch(client))

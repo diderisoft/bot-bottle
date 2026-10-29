@@ -171,5 +171,23 @@ class TestResumePicker(_Case):
             self.pick(lambda lines: lines[1], tty=False)
 
 
+
+class TestResumeLaunch(_Case):
+    def test_resumes_without_asking_to_confirm(self) -> None:
+        # pylint: disable=import-outside-toplevel
+        from unittest.mock import MagicMock
+
+        from bot_bottle.cli.commands import resume
+
+        _bottle("gone", bottles=("claude",))
+        with patch.object(resume, "ManifestIndex") as index, \
+                patch.object(resume, "_launch_bottle", return_value=0) as launch:
+            index.resolve.return_value = MagicMock()
+            self.assertEqual(0, resume.cmd_resume(["gone"]))
+        request = launch.call_args.args[0]
+        self.assertEqual(("gone", ("claude",), True),
+                         (request.identity, request.bottles, request.assume_yes))
+
+
 if __name__ == "__main__":
     unittest.main()

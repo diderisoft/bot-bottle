@@ -82,5 +82,7 @@ def cmd_resume(argv: list[str]) -> int:
         settings=settings,
         cwd=cwd,
         copy_cwd=metadata.copy_cwd,
+        # Picking or naming it is the yes, so a stale image only warns.
+        assume_yes=True,
     )
     return _launch_bottle(request, manifest, dry_run=args.dry_run)

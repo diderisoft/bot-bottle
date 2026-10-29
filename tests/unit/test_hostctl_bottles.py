@@ -193,20 +193,24 @@ class TestLaunchConfirmation(_Root):
         self.assertIn("up --restart", cm.exception.message)
         self.assertEqual([], self.backend.specs)
 
-    def test_unconfirmed_launch_logs_the_preflight_and_asks(self) -> None:
+    def test_only_a_stale_image_asks_and_without_a_preflight(self) -> None:
+        # A launch doesn't ask to go ahead; a stale image still does, and an
+        # interactive launch gets no preflight summary (only headless logs one).
+        self.backend.stale = True
         lines: list[str] = []
         with mock.patch("bot_bottle.manifest.preview.manifest_to_yaml", return_value="agent:"), \
              mock.patch("bot_bottle.lib.log.current_sink", return_value=lines.append), \
              mock.patch("bot_bottle.lib.log.write_line", side_effect=lines.append):
             with self.assertRaises(ConfirmationNeeded) as cm:
                 self.service.launch(LaunchRequest(agent="demo", label="c1", cwd="/w"))
-        self.assertEqual("launch this agent?", str(cm.exception))
-        self.assertIn("backend: fake", lines)
+        self.assertIn("Launch anyway?", str(cm.exception))
+        self.assertNotIn("backend: fake", lines)
         self.assertFalse(self.backend.launched.is_set())
         # The aborted launch's state dir is reaped.
         self.assertFalse(bottle_state.bottle_state_dir("c1").exists())
 
     def test_the_spec_is_non_interactive_and_secrets_come_from_the_request(self) -> None:
+        self.backend.stale = True  # stops it at the yes/no, after preparing
         with mock.patch("bot_bottle.manifest.preview.manifest_to_yaml", return_value=""), \
              self.assertRaises(ConfirmationNeeded):
             self.service.launch(LaunchRequest(
@@ -232,13 +236,14 @@ class TestLaunchConfirmation(_Root):
         self.assertFalse(self.backend.launched.is_set())
 
     def test_the_job_error_carries_the_confirm_code(self) -> None:
+        self.backend.stale = True
         jobs = JobRegistry()
         with mock.patch("bot_bottle.manifest.preview.manifest_to_yaml", return_value=""):
             job = jobs.start("bottle.launch", ROLE_CLI,
                              lambda: self.service.launch(LaunchRequest(agent="demo", label="j1")))
             final = list(job.follow(timeout=10))[-1]
-        self.assertEqual(("error", CONFIRM_ERROR, "launch this agent?"),
-                         (final["type"], final.get("code"), final["message"]))
+        self.assertEqual(("error", CONFIRM_ERROR), (final["type"], final.get("code")))
+        self.assertIn("Launch anyway?", final["message"])
 
     def test_a_failed_launch_is_the_jobs_error(self) -> None:
         self.backend.fail_launch = True
@@ -250,6 +255,7 @@ class TestLaunchConfirmation(_Root):
 
 class TestLaunchAudit(_Root):
     def test_a_launch_waiting_for_confirmation_records_nothing(self) -> None:
+        self.backend.stale = True  # the one yes/no left
         with mock.patch("bot_bottle.manifest.preview.manifest_to_yaml", return_value=""), \
              self.assertRaises(ConfirmationNeeded):
             self.service.launch(LaunchRequest(agent="demo", label="a1"))
@@ -275,6 +281,11 @@ class TestHeldBottles(_Root):
 
     def launch(self, label: str) -> dict[str, object]:
         return self.service.launch(LaunchRequest(agent="demo", label=label, assume_yes=True))
+
+    def test_a_launch_goes_ahead_without_asking(self) -> None:
+        launched = self.service.launch(LaunchRequest(agent="demo", label="n1"))
+        self.assertEqual("n1", launched["session"])
+        self.manager.wait_exit("n1", timeout=15)
 
     def test_agent_exit_tears_down_and_reports_its_code(self) -> None:
         launched = self.launch("b1")
@@ -493,6 +504,8 @@ class TestOrchestratorLaunchSettings(_Root):
 
     def setUp(self) -> None:
         super().setUp()
+        # Each launch stops at the stale-image yes/no, after preparing.
+        self.backend.stale = True
         self.seen: list[Settings] = []
         self.recorded: InfraSettings | None = None
 

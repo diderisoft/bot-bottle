@@ -206,7 +206,7 @@ class LaunchRequest:
     # Identity to resume; empty mints one.
     identity: str = ""
     image_policy: str = "fresh"
-    # Skip the yes/no a `CONFIRM_ERROR` would ask for.
+    # Skip the yes/no a `CONFIRM_ERROR` would ask for (only a stale image asks).
     assume_yes: bool = False
     settings: Settings = field(default_factory=Settings)
     cwd: str = ""
