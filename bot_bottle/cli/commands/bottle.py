@@ -1,8 +1,8 @@
-"""bot-bottle bottle: a bottle's versions (PRD 0103).
+"""A bottle's versions (PRD 0103), behind `bot-bottle bottles history|revert`.
 
-  bot-bottle bottle history <name>             its versions, newest first
-  bot-bottle bottle history <name> <version>   what that version changed
-  bot-bottle bottle revert <name> <version>    make it what it was then
+  bot-bottle bottles history <name>             its versions, newest first
+  bot-bottle bottles history <name> <version>   what that version changed
+  bot-bottle bottles revert <name> <version>    make it what it was then
 
 Every change to a host bottle (`~/.bot-bottle/bottles/`) is a version, hand
 edits included. A project bottle's versions are the project's commits; a
@@ -50,7 +50,7 @@ def cmd_bottle(argv: list[str]) -> int:
         return 0 if argv and argv[0] in ("-h", "--help") else 2
     verb, args = argv[0], argv[1:]
     if not args or (verb == "revert" and len(args) < 2):
-        die(f"usage: {PROG} bottle {verb} <name>{' <version>' if verb == 'revert' else ''}")
+        die(f"usage: {PROG} bottles {verb} <name>{' <version>' if verb == 'revert' else ''}")
     path = _bottle_path(args[0])
     try:
         if verb == "history" and len(args) == 1:

@@ -16,7 +16,7 @@ _HANDLERS: dict[str, str] = {
     "audit": "audit:cmd_audit",
     "ba": "bottled_agents:cmd_bottled_agents",
     "bootstrap": "bootstrap:cmd_bootstrap",
-    "bottle": "bottle:cmd_bottle",
+    "bottles": "bottles:cmd_bottles",
     "bottled-agents": "bottled_agents:cmd_bottled_agents",
     "bots": "bottled_agents:cmd_bottled_agents",
     "cleanup": "cleanup:cmd_cleanup",
@@ -60,7 +60,7 @@ QUICK = _lazy("quick:cmd_quick")
 # Commands that never open the store, so they run before or without a migrated
 # DB (where the migration prompt can't be answered on a non-TTY runner).
 NO_MIGRATION_COMMANDS = frozenset({
-    "attach", "audit", "bootstrap", "bottle", "doctor", "down", "forge", "help", "install",
+    "attach", "audit", "bootstrap", "bottles", "doctor", "down", "forge", "help", "install",
     "jobs", "pair", "prune", "setup", "status", "supervise", "trust", "uninstall", "up",
 })
 

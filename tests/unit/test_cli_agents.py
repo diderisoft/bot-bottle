@@ -37,7 +37,7 @@ class TestAgents(unittest.TestCase):
         from bot_bottle.cli.commands import _HANDLERS
 
         self.assertEqual("agents:cmd_agents", _HANDLERS["agents"])
-        for gone in ("list", "default", "quick", "backend", "login", "remote", "approve",
+        for gone in ("list", "default", "quick", "backend", "login", "remote", "approve", "bottle",
                      "stopped"):
             self.assertNotIn(gone, _HANDLERS)
 

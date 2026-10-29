@@ -4,7 +4,7 @@ version you can list and revert to.
 Host files (`~/.bot-bottle/agents/`, `bottles/`) live in a git repo bot-bottle
 keeps in `~/.bot-bottle/`, tracking only those two directories, and commits
 every change itself: its own writes as it makes them, and hand edits as
-"edited by hand" the next time a launch (or `bottle history`) looks. A project
+"edited by hand" the next time a launch (or `bottles history`) looks. A project
 bottle's history is the project's own repo; bot-bottle never commits there.
 
 A commit is refused while a tracked file holds a value from the host secrets

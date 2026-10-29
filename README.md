@@ -227,7 +227,7 @@ Bottles and agents are Markdown files with YAML frontmatter under `~/.bot-bottle
 
 To let bottles push to a Gitea forge, run `bot-bottle forge connect <url>`: it checks a token, pins the forge's host key and writes a `gitea` bottle. A bottle that extends it grants repos in a line, `git-gate: {repos: [gitea.example.com/acme/app:write]}`, each read-only unless `:write`, with its own deploy key per run (see [git-gate.md](docs/reference/git-gate.md)).
 
-Every change to a bottle or agent under `~/.bot-bottle/` is a version, hand edits included. `bot-bottle bottle history <name>` lists them (add a version to see what it changed) and `bot-bottle bottle revert <name> <version>` restores one as a new version, taking effect at the next launch. A repo's bottles are versioned by the repo itself.
+Every change to a bottle or agent under `~/.bot-bottle/` is a version, hand edits included. `bot-bottle bottles history <name>` lists them (add a version to see what it changed) and `bot-bottle bottles revert <name> <version>` restores one as a new version, taking effect at the next launch. A repo's bottles are versioned by the repo itself.
 
 **Bottle** (`~/.bot-bottle/bottles/gitea-dev.md`):
 

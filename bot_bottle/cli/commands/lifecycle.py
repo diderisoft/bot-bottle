@@ -90,12 +90,27 @@ def cmd_status(argv: list[str]) -> int:
     healthy = service.is_healthy()
     where = f"running at {service.url()}" if healthy else "not running"
     print(f"{backend.name} orchestrator: {where}")
+    print(_definitions_line())
     bottles = enumerate_active_agents(settings)
     print(f"bottled agents: {len(bottles)} running" + (f" (see `{PROG} bots`)" if bottles else ""))
     if ns.jobs and state:
         print()
         _print_jobs(state)
     return 0 if state and healthy else 1
+
+
+def _definitions_line() -> str:
+    """How many agent and bottle definitions this directory sees."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...manifest import ManifestError, ManifestIndex
+    try:
+        index = ManifestIndex.resolve(os.getcwd(), missing_ok=True)
+        agents = len(index.all_agent_names)
+        bottles = len(index.all_bottle_names) if index.home_md is not None else 0
+    except (ManifestError, OSError) as e:
+        return f"definitions: can't read them ({e})"
+    return (f"definitions: {agents} agents, {bottles} bottles "
+            f"(`{PROG} agents`, `{PROG} bottles`)")
 
 
 def cmd_jobs(argv: list[str]) -> int:

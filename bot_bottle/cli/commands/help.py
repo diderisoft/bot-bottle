@@ -23,7 +23,7 @@ def cmd_help(argv: list[str] | None = None) -> int:
       "(tail|verify|query|export|rebuild|import|delivery|forward|firehose)\n")
     w("  bootstrap first-time setup: install, setup, then doctor\n")
     w("  bots      list bottled agents, running and stopped (also: bottled-agents)\n")
-    w("  bottle    a bottle's versions: history, and revert to one\n")
+    w("  bottles   list bottle definitions; their versions (history|revert)\n")
     w("  cleanup   stop and remove leftover bottled agents and their state\n")
     w("  commit    snapshot a running bottled agent's container state to an image\n")
     w("  doctor    check host prerequisites (Python, backends, tmux, config dir)\n")
