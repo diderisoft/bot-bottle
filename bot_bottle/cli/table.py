@@ -25,17 +25,26 @@ def print_table(header: Sequence[str], rows: Sequence[Sequence[str]], *,
         for row in rows:
             print("\t".join(cell or empty for cell in row))
         return
+    for line in format_table(header, rows, style=style, drop_empty=drop_empty):
+        print(line)
+
+
+def format_table(header: Sequence[str], rows: Sequence[Sequence[str]], *,
+                 style: Style | None = None, drop_empty: bool = False) -> list[str]:
+    """The aligned lines `print_table` prints in a terminal, header first."""
     keep = list(range(len(header)))
     if drop_empty:
         keep = [i for i in keep if any(row[i] for row in rows)]
     table = [[header[i] for i in keep], *([row[i] for i in keep] for row in rows)]
     widths = [max(len(line[i]) for line in table) for i in range(len(keep))]
+    lines = []
     for r, line in enumerate(table):
         cells = []
         for c, cell in enumerate(line):
             padded = cell.ljust(widths[c])
             cells.append(style(r - 1, keep[c], padded) if style and r else padded)
-        print("  ".join(cells).rstrip())
+        lines.append("  ".join(cells).rstrip())
+    return lines
 
 
-__all__ = ["Style", "print_table"]
+__all__ = ["Style", "format_table", "print_table"]

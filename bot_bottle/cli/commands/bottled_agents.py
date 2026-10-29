@@ -114,6 +114,15 @@ def _stopped(running: set[str]) -> list[tuple[str, ...]]:
             for m, used in stopped_bottles(running)]
 
 
+def stopped_table() -> tuple[tuple[str, ...], list[tuple[str, ...]]]:
+    """The header and rows `bots --stopped` shows (without the terminal
+    column, blank for stopped ones), for pickers such as `resume`'s."""
+    running, _ = _running()
+    keep = [i for i, name in enumerate(_HEADER) if name != "TERMINAL"]
+    rows = [tuple(r[i] for i in keep) for r in _stopped({r[0] for r in running})]
+    return tuple(_HEADER[i] for i in keep), rows
+
+
 def cmd_bottled_agents(argv: list[str]) -> int:
     if any(a in ("-h", "--help") for a in argv) or set(argv) - {"--running", "--stopped"} \
             or len(argv) > 1:
@@ -137,4 +146,4 @@ def cmd_bottled_agents(argv: list[str]) -> int:
     return 0
 
 
-__all__ = ["cmd_bottled_agents", "stopped_bottles"]
+__all__ = ["cmd_bottled_agents", "stopped_bottles", "stopped_table"]

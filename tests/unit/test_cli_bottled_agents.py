@@ -119,5 +119,57 @@ class TestBottledAgents(_Case):
             self.assertEqual("bottled_agents:cmd_bottled_agents", _HANDLERS[name])
 
 
+
+def _offer(choose: Callable[[list[str]], str | None]) -> Callable[..., str | None]:
+    """A stand-in for `tui.filter_select` that shows `choose` the header and items."""
+    def select(items: list[str], **kw: str) -> str | None:
+        return choose([kw["header"], *items])
+    return select
+
+
+class TestResumePicker(_Case):
+    """`resume` with no bottled agent named: pick one of the stopped ones."""
+
+    def pick(self, choose: Callable[[list[str]], str | None], *, tty: bool = True) -> str | None:
+        from bot_bottle.cli.commands import resume  # pylint: disable=import-outside-toplevel
+
+        stdin = io.StringIO()
+        stdin.isatty = lambda: tty  # type: ignore[method-assign]
+        with patch.object(bottled_agents, "enumerate_active_agents",
+                          return_value=[_running("up")]), \
+                patch.object(bottled_agents, "held_bottles", return_value={}), \
+                patch.object(bottled_agents, "settings_from_env"), \
+                patch("bot_bottle.cli.tui.filter_select", side_effect=_offer(choose)), \
+                patch("sys.stdin", stdin), patch("sys.stderr", io.StringIO()):
+            return resume.pick_stopped()
+
+    def test_offers_the_stopped_ones_under_a_header_and_returns_the_pick(self) -> None:
+        _bottle("old", age=60)
+        _bottle("new", label="fix tests")
+        _bottle("up")
+        offered: list[str] = []
+
+        def choose(lines: list[str]) -> str:
+            offered.extend(lines)
+            return next(line for line in lines if line.startswith("old"))
+
+        self.assertEqual("old", self.pick(choose))
+        self.assertTrue(offered[0].startswith("BOTTLED AGENT"))
+        self.assertNotIn("TERMINAL", offered[0])
+        self.assertEqual(["new", "old"], [line.split()[0] for line in offered[1:]])
+
+    def test_a_cancelled_pick_and_none_to_pick(self) -> None:
+        self.assertIsNone(self.pick(lambda lines: None))  # nothing stopped
+        _bottle("gone")
+        self.assertIsNone(self.pick(lambda lines: None))  # cancelled
+
+    def test_without_a_terminal_it_says_to_name_one(self) -> None:
+        from bot_bottle.lib.log import Die  # pylint: disable=import-outside-toplevel
+
+        _bottle("gone")
+        with self.assertRaises(Die):
+            self.pick(lambda lines: lines[1], tty=False)
+
+
 if __name__ == "__main__":
     unittest.main()

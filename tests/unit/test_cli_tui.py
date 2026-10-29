@@ -11,7 +11,11 @@ import unittest
 from typing import Any, Optional
 from unittest.mock import patch
 
-from bot_bottle.cli.tui import _filter_items, _multiselect_loop, filter_multiselect, filter_select
+import curses
+
+from bot_bottle.cli.tui import (
+    _filter_items, _multiselect_loop, _picker_loop, filter_multiselect, filter_select,
+)
 
 _KEY_SPACE = 32
 _KEY_ENTER = 10
@@ -96,6 +100,10 @@ class TestMultiselectLoopReordering(unittest.TestCase):
         result = self._run([_KEY_CTRL_D], ["a", "b", "c"], ["a", "b"])
         self.assertEqual(["a", "b"], result)
 
+    def test_down_then_space_selects_the_next_item(self):
+        result = self._run([curses.KEY_DOWN, _KEY_SPACE, _KEY_CTRL_D], ["a", "b", "c"], [])
+        self.assertEqual(["b"], result)
+
     def test_esc_cancels(self):
         result = self._run([_KEY_ESC], ["a", "b"], ["a"])
         self.assertIsNone(result)
@@ -175,6 +183,50 @@ class TestMultiselectLoopReordering(unittest.TestCase):
         # Space selects "a", Enter confirms.
         result = self._run([_KEY_SPACE, _KEY_ENTER], ["a", "b"], [])
         self.assertEqual(["a"], result)
+
+
+
+class TestPickerTypingFilters(unittest.TestCase):
+    """`typing_filters`: every printable key filters (j/k/q too), arrows move,
+    Esc cancels; `header` is drawn but never picked."""
+
+    def _run(self, keys: list[int], items: list[str], **kw: Any) -> tuple[Optional[str], list[str]]:
+        key_iter = iter(keys)
+        drawn: list[str] = []
+
+        class FakeScreen:
+            def erase(self) -> None: pass
+            def getmaxyx(self) -> tuple[int, int]: return (40, 120)
+            def refresh(self) -> None: pass
+            def getch(self) -> int: return next(key_iter)
+            def addstr(self, _row: int, _col: int, text: str, *a: Any) -> None:
+                drawn.append(text)
+            def keypad(self, *a: Any) -> None: pass
+
+        return _picker_loop(FakeScreen(), items, title="t", **kw), drawn  # type: ignore[arg-type]
+
+    def test_j_k_and_q_filter_instead_of_moving_or_cancelling(self) -> None:
+        items = ["alpha", "jake", "quinn"]
+        picked, _ = self._run([ord("q"), _KEY_ENTER], items, typing_filters=True)
+        self.assertEqual("quinn", picked)
+        picked, _ = self._run([ord("j"), _KEY_ENTER], items, typing_filters=True)
+        self.assertEqual("jake", picked)
+
+    def test_arrows_move_and_esc_cancels(self) -> None:
+        items = ["a", "b", "c"]
+        picked, _ = self._run([curses.KEY_DOWN, curses.KEY_DOWN, curses.KEY_UP, _KEY_ENTER],
+                              items, typing_filters=True)
+        self.assertEqual("b", picked)
+        self.assertIsNone(self._run([_KEY_ESC], items, typing_filters=True)[0])
+
+    def test_the_header_is_drawn_above_the_items(self) -> None:
+        _, drawn = self._run([_KEY_ENTER], ["x"], header="NAME  AGE", typing_filters=True)
+        self.assertIn("  NAME  AGE", drawn)
+        self.assertLess(drawn.index("  NAME  AGE"), drawn.index("> x"))
+
+    def test_without_it_j_and_q_still_move_and_cancel(self) -> None:
+        self.assertEqual("b", self._run([ord("j"), _KEY_ENTER], ["a", "b"])[0])
+        self.assertIsNone(self._run([ord("q")], ["a", "b"])[0])
 
 
 if __name__ == "__main__":

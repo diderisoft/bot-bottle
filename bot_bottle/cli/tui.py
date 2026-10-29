@@ -49,11 +49,15 @@ def filter_select(
     items: list[str],
     *,
     title: str = "",
+    header: str = "",
+    typing_filters: bool = False,
     tty_path: str = "/dev/tty",
 ) -> Optional[str]:
     """Filter-select picker over `items`. Returns the choice, or None on cancel
     (Esc, q, Ctrl-C, Ctrl-D) or a too-small terminal. Opens `tty_path`
-    directly.
+    directly. `header` is a line above the list (e.g. a table's column
+    names); with `typing_filters`, every printable key types into the filter,
+    so j/k/q filter too (arrows move, Esc cancels).
     """
     if not items:
         return None
@@ -70,7 +74,8 @@ def filter_select(
     try:
         # Duplicate the fd so each file object closes its own copy.
         fd_dup = os.dup(tty_fd.fileno())
-        return _run_picker(items, title=title, tty_fd=fd_dup)
+        return _run_picker(items, title=title, tty_fd=fd_dup, header=header,
+                           typing_filters=typing_filters)
     finally:
         tty_fd.close()
 
@@ -86,7 +91,8 @@ _KEY_ENTER_ALT = 10
 _CANCEL_KEYS = frozenset([_KEY_ESC, _KEY_CTRL_C, _KEY_CTRL_D, ord("q")])
 
 
-def _run_picker(items: list[str], *, title: str, tty_fd: int) -> Optional[str]:
+def _run_picker(items: list[str], *, title: str, tty_fd: int, header: str = "",
+                typing_filters: bool = False) -> Optional[str]:
     """Run a curses session on `tty_fd` and return the pick."""
     # newterm runs curses on any fd, not just the controlling tty.
     os.environ.setdefault("TERM", "xterm-256color")
@@ -109,7 +115,8 @@ def _run_picker(items: list[str], *, title: str, tty_fd: int) -> Optional[str]:
         screen.keypad(True)
 
         try:
-            result = _picker_loop(screen, items, title=title)
+            result = _picker_loop(screen, items, title=title, header=header,
+                                  typing_filters=typing_filters)
         finally:
             screen.keypad(False)
             curses.nocbreak()
@@ -128,9 +135,14 @@ def _run_picker(items: list[str], *, title: str, tty_fd: int) -> Optional[str]:
     return result
 
 
-def _picker_loop(screen: Any, items: list[str], *, title: str) -> Optional[str]:
+def _picker_loop(screen: Any, items: list[str], *, title: str, header: str = "",
+                 typing_filters: bool = False) -> Optional[str]:
     query = ""
     cursor = 0
+    # Typing into the filter frees j/k/q from moving and cancelling.
+    cancel = _CANCEL_KEYS - {ord("q")} if typing_filters else _CANCEL_KEYS
+    up = (curses.KEY_UP,) if typing_filters else (curses.KEY_UP, ord("k"))
+    down = (curses.KEY_DOWN,) if typing_filters else (curses.KEY_DOWN, ord("j"))
 
     while True:
         filtered = _filter_items(items, query)
@@ -142,7 +154,8 @@ def _picker_loop(screen: Any, items: list[str], *, title: str) -> Optional[str]:
             cursor = len(filtered) - 1
 
         try:
-            _render(screen, filtered, cursor, query=query, title=title)
+            _render(screen, filtered, cursor, query=query, title=title, header=header,
+                    typing_filters=typing_filters)
         except curses.error:
             # Terminal too small or write error.
             return None
@@ -152,17 +165,17 @@ def _picker_loop(screen: Any, items: list[str], *, title: str) -> Optional[str]:
         except KeyboardInterrupt:
             return None
 
-        if key in _CANCEL_KEYS:
+        if key in cancel:
             return None
 
         if key in (curses.KEY_ENTER, _KEY_ENTER_ALT, ord("\r")):
             return filtered[cursor] if filtered else None
 
-        if key in (curses.KEY_UP, ord("k")):
+        if key in up:
             if cursor > 0:
                 cursor -= 1
 
-        elif key in (curses.KEY_DOWN, ord("j")):
+        elif key in down:
             if cursor < len(filtered) - 1:
                 cursor += 1
 
@@ -186,7 +199,8 @@ def _filter_items(items: list[str], query: str) -> list[str]:
     return [i for i in items if q in i.lower()]
 
 
-def _render(screen: Any, filtered: list[str], cursor: int, *, query: str, title: str) -> None:
+def _render(screen: Any, filtered: list[str], cursor: int, *, query: str, title: str,
+            header: str = "", typing_filters: bool = False) -> None:
     screen.erase()
     rows, cols = screen.getmaxyx()
     min_rows = 5
@@ -208,6 +222,11 @@ def _render(screen: Any, filtered: list[str], cursor: int, *, query: str, title:
     sep = "─" * min(cols - 1, 40)
     if row < rows - 1:
         _addstr_safe(screen, row, 0, sep)
+        row += 1
+
+    if header and row < rows - 1:
+        # Indented like the items, which carry a two-column cursor prefix.
+        _addstr_safe(screen, row, 0, ("  " + header)[:cols - 1], curses.A_DIM)
         row += 1
 
     list_start = row
@@ -233,7 +252,8 @@ def _render(screen: Any, filtered: list[str], cursor: int, *, query: str, title:
         _addstr_safe(screen, row, 0, sep)
         row += 1
 
-    help_line = "[↑↓/jk] move  [Enter] select  [Esc/q] cancel"
+    help_line = ("[↑↓] move  [type] filter  [Enter] select  [Esc] cancel" if typing_filters
+                 else "[↑↓/jk] move  [Enter] select  [Esc/q] cancel")
     if row < rows:
         _addstr_safe(screen, min(rows - 1, row), 0, help_line[:cols - 1])
 
