@@ -23,7 +23,7 @@ def cmd_commit(argv: list[str]) -> int:
         nargs="?",
         default=None,
         help=(
-            f"bottle slug from `{PROG} active` "
+            f"bottled agent from `{PROG} bots --running` "
             "(omit to pick interactively)"
         ),
     )

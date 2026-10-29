@@ -69,13 +69,16 @@ def _session_column(held: dict[str, object] | None) -> str:
 def cmd_active(argv: list[str]) -> int:
     if argv and argv[0] in ("-h", "--help"):
         sys.stderr.write(f"usage: {PROG} active\n")
-        sys.stderr.write("\nList all currently-running bot-bottle bottles: a table in a "
+        sys.stderr.write("\nList running bottled agents (now `bots --running`): a table in a "
                          "terminal, piped one line each:\n")
         sys.stderr.write("<backend>\\t<slug>\\t<label>\\t<services>\\t<session>\n")
         sys.stderr.write("<session> is the host controller's session state; "
                          f"`{PROG} attach <slug>` joins a running one.\n")
         return 0
 
+    # The old name, kept for a release (ADR 0009): its output is unchanged
+    # for scripts; the note goes to stderr.
+    print(f"note: `{PROG} active` is now `{PROG} bots --running`", file=sys.stderr)
     held = held_bottles()
     active = enumerate_active_agents(settings_from_env())
     if not active and not held:

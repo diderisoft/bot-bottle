@@ -2,7 +2,7 @@
 
   bot-bottle cleanup [--backend NAME]
 
-The host controller tears down the bottles it holds, then each installed
+The host controller tears down the bottled agents it holds, then each installed
 backend (or just NAME) reaps what's left, then orphaned state dirs go. A
 backend that can't be listed is reported and skipped, and its state dirs are
 left alone. Dirs with `.preserve` are never touched.

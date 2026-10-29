@@ -240,7 +240,7 @@ def settle_state(identity: str) -> None:
     if not identity:
         return
     if is_preserved(identity):
-        info(f"to resume this bottle: bot-bottle resume {identity}")
+        info(f"to resume this bottled agent: bot-bottle resume {identity}")
         return
     cleanup_state(identity)
 

@@ -32,7 +32,7 @@ leaving the box except through the gateway.
 | `setup()` / `status()` / `teardown()` | one-time host setup, readiness, and infra removal |
 
 `Freezer` (`backend/freeze.py`, with one subclass per backend) commits a
-running agent to an image that `bot-bottle resume` can start again.
+running bottled agent to an image that `bot-bottle resume` can start again.
 
 ## Comparison
 

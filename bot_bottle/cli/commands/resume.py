@@ -1,4 +1,4 @@
-"""resume: relaunch a bottle by identity from its recorded metadata (agent,
+"""resume: start a stopped bottled agent again, by identity from its recorded metadata (agent,
 cwd, copy mode, bottles, backend), through the host controller, under the same
 identity and state dir.
 
@@ -24,17 +24,17 @@ def cmd_resume(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog=f"{PROG} resume", add_help=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
-        "identity",
-        help=f"bottle identity from a prior `start` (`{PROG} stopped` lists them)",
+        "identity", metavar="bottled-agent",
+        help=f"the bottled agent to resume (`{PROG} bots --stopped` lists them)",
     )
     args = parser.parse_args(argv)
 
     metadata = read_metadata(args.identity)
     if metadata is None:
         die(
-            f"no state recorded for identity {args.identity!r}; "
-            f"`{PROG} stopped` lists the ones there are, or run `{PROG} start` "
-            f"to create a new bottle"
+            f"no bottled agent {args.identity!r} to resume; "
+            f"`{PROG} bots --stopped` lists the ones there are, or run `{PROG} start` "
+            f"to bottle an agent"
         )
 
     # The host controller resolves the manifest from the same directory.

@@ -88,7 +88,7 @@ class TestStatusJobs(_Mocked):
         self.assertIn("host controller: running at http://127.0.0.1:1234", out)
         self.assertIn("autostart: not installed", out)
         self.assertIn("firecracker orchestrator: running at http://orch:8099", out)
-        self.assertIn("bottles: 1 running", out)
+        self.assertIn("bottled agents: 1 running", out)
 
     def test_status_exits_1_when_something_is_down(self) -> None:
         self.runner.running.return_value = None

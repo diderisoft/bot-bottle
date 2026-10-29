@@ -1,9 +1,6 @@
-"""stopped: list bottles that aren't running but can be resumed: each state dir
-with recorded metadata whose bottle no backend or the host controller has,
-most recently used first.
-
-    bot-bottle stopped
-"""
+"""stopped: the old name for `bots --stopped` (ADR 0009), and finding the
+stopped bottled agents: each state dir with recorded metadata whose bottled
+agent no backend or the host controller has, most recently used first."""
 
 from __future__ import annotations
 
@@ -11,25 +8,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ...backend import enumerate_active_agents
-from ...bottle_state import BottleMetadata, bottle_state_dir, is_preserved, read_metadata
+from ...bottle_state import BottleMetadata, bottle_state_dir, read_metadata
 from ...paths import bot_bottle_root
 from ..constants import PROG
-from ..settings import settings_from_env
-from ..table import print_table
-from .active import held_bottles
-
-_USAGE = f"""usage: {PROG} stopped
-
-List bottles that aren't running and can be resumed, most recently used first,
-as a table in a terminal. Piped, each is a tab-separated line:
-<identity>\\t<agent>\\t<label>\\t<bottles>\\t<last used>\\t<state>
-(`-` for an empty field). <state> is `kept` when the bottle's state was kept
-for resuming, or `left over` when its session didn't end cleanly
-(`{PROG} cleanup` removes those). `{PROG} resume <identity>` starts one again.
-"""
-
-_HEADER = ("IDENTITY", "AGENT", "LABEL", "BOTTLES", "LAST USED", "STATE")
 
 
 def _last_used(path: Path) -> float:
@@ -63,32 +44,18 @@ def stopped_bottles(live: set[str]) -> list[tuple[BottleMetadata, float]]:
     return sorted(found, key=lambda m: m[1], reverse=True)
 
 
-def _row(metadata: BottleMetadata, used: float) -> tuple[str, ...]:
-    # A label that only repeats the identity adds nothing.
-    label = "" if metadata.label == metadata.identity else metadata.label
-    return (metadata.identity, metadata.agent_name or "?", label,
-            ",".join(metadata.bottle_names), _when(used),
-            "kept" if is_preserved(metadata.identity) else "left over")
-
-
-def _when(ts: float) -> str:
+def when(ts: float) -> str:
+    """A timestamp as local `YYYY-MM-DD HH:MM`."""
     return datetime.fromtimestamp(ts, timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
 
 
 def cmd_stopped(argv: list[str]) -> int:
-    if argv and argv[0] in ("-h", "--help"):
-        sys.stderr.write(_USAGE)
-        return 0
-    live = {b.slug for b in enumerate_active_agents(settings_from_env())} | set(held_bottles())
-    bottles = stopped_bottles(live)
-    if not bottles:
-        print("no stopped bot-bottle bottles", file=sys.stderr)
-        return 0
-    print_table(_HEADER, [_row(metadata, used) for metadata, used in bottles],
-                drop_empty=True)
-    sys.stdout.flush()  # the list, then the hint, even when piped
-    print(f"\nresume one with `{PROG} resume <identity>`", file=sys.stderr)
-    return 0
+    """The old name for `bots --stopped`, kept for a release."""
+    # pylint: disable-next=import-outside-toplevel
+    from .bottled_agents import cmd_bottled_agents
+    if not argv:
+        print(f"note: `{PROG} stopped` is now `{PROG} bots --stopped`", file=sys.stderr)
+    return cmd_bottled_agents(argv or ["--stopped"])
 
 
-__all__ = ["cmd_stopped", "stopped_bottles"]
+__all__ = ["cmd_stopped", "stopped_bottles", "when"]

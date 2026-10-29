@@ -46,15 +46,29 @@ the launcher enforces — no further overrides are possible once it is sealed.
 
 ## Bottled Agent
 
-The combination of an Agent Definition and a Sealed Bottle, representing a
-single deployable agent with a fixed identity and fixed boundaries. A bottled
-agent has two observable states:
+The combination of an Agent Definition and a Sealed Bottle under one identity:
+the thing that runs, stops and resumes. "Bottled agent" is the name in docs,
+the console and CLI messages; the CLI's shorthand is `bots`
+(`bot-bottle bottled-agents`, or `bots`, lists them; ADR 0009). To **bottle**
+an agent is to start one ("Bottle agent" in the console, `bot-bottle start`).
+A bottle (the definition) is never the running thing. A bottled agent is:
 
-- **Active** — the agent runtime is running and the agent is executing.
-- **Frozen** — the agent runtime has been snapshotted (Firecracker committed
-  image); the agent is not running but can be resumed from the snapshot.
+- **Running:** its agent runtime is up (`bots --running`).
+- **Stopped:** its runtime is gone but its state is kept, so `bot-bottle
+  resume <bottled agent>` starts it again (`bots --stopped`). A stopped one
+  whose session didn't end cleanly is **left over**: resumable, but
+  `cleanup` removes it.
+- **Frozen:** its runtime has been snapshotted (`bot-bottle commit`), so a
+  resume boots from the snapshot.
 
-## Active Bottle
+## Session
 
-Shorthand for an active (running) Bottled Agent. Used in the supervisor TUI
-and discovery layer to mean "a bottle whose agent runtime is currently up."
+One conversation of the model harness inside a bottled agent: a Claude, Codex
+or pi session, with its own transcript. A bottled agent can hold many. Not
+the bottled agent itself, and not its terminal.
+
+## Terminal
+
+The host controller's terminal for a running bottled agent, the one
+`bot-bottle attach` joins and the console relays: `open` while the harness
+runs in it, `exited` after.

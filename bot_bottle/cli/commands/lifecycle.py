@@ -84,7 +84,7 @@ def cmd_status(argv: list[str]) -> int:
     where = f"running at {service.url()}" if healthy else "not running"
     print(f"{backend.name} orchestrator: {where}")
     bottles = enumerate_active_agents(settings)
-    print(f"bottles: {len(bottles)} running" + (f" (see `{PROG} active`)" if bottles else ""))
+    print(f"bottled agents: {len(bottles)} running" + (f" (see `{PROG} bots`)" if bottles else ""))
     return 0 if state and healthy else 1
 
 
