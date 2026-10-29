@@ -57,7 +57,7 @@ A bottle (the definition) is never the running thing. A bottled agent is:
 - **Stopped:** its runtime is gone but its state is kept, so `bot-bottle
   resume <bottled agent>` starts it again (`bots --stopped`). A stopped one
   whose session didn't end cleanly is **left over**: resumable, but
-  `cleanup` removes it.
+  `cleanup bots` removes it.
 - **Frozen:** its runtime has been snapshotted (`bot-bottle commit`), so a
   resume boots from the snapshot.
 

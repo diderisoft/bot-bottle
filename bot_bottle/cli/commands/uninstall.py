@@ -140,7 +140,7 @@ def _stop(backends: list[BottleBackend[Any, Any]], force: bool) -> bool:
     held = runner.held_bottles(state) if state else []
     if held and not force:
         sys.stderr.write(f"{PROG}: {len(held)} bottle(s) are running ({', '.join(held)}); "
-                         f"tear them down first (`{PROG} cleanup`) or use --force\n")
+                         f"tear them down first (`{PROG} cleanup bots`) or use --force\n")
         return False
     for backend in backends:
         try:

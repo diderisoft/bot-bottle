@@ -198,7 +198,7 @@ def _rootfs_dir(name: str) -> Path:
 
 def _ready_dir(name: str) -> Path | None:
     """The ready tree `name`, its marker refreshed so its age is time since last
-    use (`bot-bottle prune`); None if it isn't built."""
+    use (`bot-bottle cleanup images`); None if it isn't built."""
     base = _rootfs_dir(name)
     ready = base / ".bb-ready"
     if not ready.is_file():

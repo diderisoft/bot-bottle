@@ -228,7 +228,7 @@ class DockerGateway(Gateway):
                 f"agents can reach the network without the gateway. It must be "
                 f"recreated, but bottles are still attached "
                 f"({', '.join(attached) or 'unknown'}). Stop them "
-                f"(`bot-bottle cleanup`) and launch again."
+                f"(`bot-bottle cleanup bots`) and launch again."
             )
 
     def _connect_egress_network(self) -> None:

@@ -369,7 +369,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
 
     def cache_entries(self) -> "list[CacheEntry]":
         """The cached images this backend keeps on the host (PRD 0088), for
-        `bot-bottle prune`. None by default."""
+        `bot-bottle cleanup images`. None by default."""
         return []
 
     def prune_build_store(self, *, dry_run: bool) -> tuple[int, str] | None:

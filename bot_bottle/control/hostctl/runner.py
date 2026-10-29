@@ -193,7 +193,7 @@ def stop(*, force: bool = False) -> bool:
         if held and not force:
             raise HostControlError(
                 f"the host controller holds {len(held)} bottle(s) ({', '.join(held)}); "
-                "stopping it would orphan them. Tear them down first (`cleanup`) "
+                "stopping it would orphan them. Tear them down first (`cleanup bots`) "
                 "or stop it anyway with `down --force`")
         _stop(state)
         return True

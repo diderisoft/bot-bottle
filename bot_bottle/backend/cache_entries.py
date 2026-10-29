@@ -1,4 +1,4 @@
-"""Cached images a backend keeps on the host, for `bot-bottle prune` (PRD 0088).
+"""Cached images a backend keeps on the host, for `bot-bottle cleanup images` (PRD 0088).
 
 Each backend lists its entries with a reason to keep any it must (a current
 pin, the current infra tree, an image a container uses). One rule removes the

@@ -29,7 +29,7 @@ first; a table in a terminal. Piped, each is a tab-separated line:
 (`-` for an empty field).
 
   <state>     running, stopped, or `left over` (stopped without ending
-              cleanly; `{PROG} cleanup` removes those)
+              cleanly; `{PROG} cleanup bots` removes those)
   <terminal>  for a running one, whether its terminal is open (`{PROG} attach`)
 
 `{PROG} resume <bottled agent>` starts a stopped one again.

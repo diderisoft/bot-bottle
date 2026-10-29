@@ -118,7 +118,7 @@ class TestFinishAdopted(_Root):
     def test_without_a_record_it_leaves_the_bottle_for_cleanup(self) -> None:
         self._finish()
         self.backend.adopted_bottle.assert_not_called()
-        self.assertIn("run `bot-bottle cleanup`", self.err.getvalue())
+        self.assertIn("run `bot-bottle cleanup bots`", self.err.getvalue())
 
     def test_a_failed_teardown_still_revokes_the_keys(self) -> None:
         adoption.write("b1", _RECORD)

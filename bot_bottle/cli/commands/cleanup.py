@@ -1,11 +1,15 @@
-"""cleanup: stop and remove orphaned bot-bottle resources.
+"""cleanup: remove what bot-bottle left behind.
 
-  bot-bottle cleanup [--backend NAME]
+  bot-bottle cleanup bots [--backend NAME]
+  bot-bottle cleanup images [--dry-run] [--older-than DAYS] [--build-store]
 
-The host controller tears down the bottled agents it holds, then each installed
-backend (or just NAME) reaps what's left, then orphaned state dirs go. A
-backend that can't be listed is reported and skipped, and its state dirs are
-left alone. Dirs with `.preserve` are never touched.
+`bots` stops and removes leftover bottled agents: the host controller tears
+down the bottled agents it holds, then each installed backend (or just NAME)
+reaps what's left, then orphaned state dirs go. A backend that can't be listed
+is reported and skipped, and its state dirs are left alone. Dirs with
+`.preserve` are never touched.
+
+`images` frees disk: see `bot-bottle cleanup images --help`.
 """
 
 from __future__ import annotations
@@ -22,11 +26,26 @@ from ...control.hostctl.client import HostControlClient
 from ...lib import log
 from ...lib.log import info
 from ...util import read_tty_line
+from ..constants import PROG
 from ..settings import settings_from_env
 from .active import held_bottles
 
 
 def cmd_cleanup(argv: list[str]) -> int:
+    if not argv or argv[0] in ("-h", "--help"):
+        sys.stderr.write(__doc__ or "")
+        return 0 if argv else 2
+    if argv[0] == "images":
+        # pylint: disable-next=import-outside-toplevel
+        from .cleanup_images import cmd_cleanup_images
+        return cmd_cleanup_images(argv[1:])
+    if argv[0] != "bots":
+        sys.stderr.write(f"{PROG} cleanup: unknown target {argv[0]!r}\n\n{__doc__}")
+        return 2
+    return _cleanup_bots(argv[1:])
+
+
+def _cleanup_bots(argv: list[str]) -> int:
     if "-h" in argv or "--help" in argv:
         sys.stderr.write(__doc__ or "")
         return 0
@@ -109,7 +128,7 @@ def _backend_arg(argv: list[str]) -> str | None:
             name = arg.split("=", 1)[1]
         if name is not None:
             if name not in known_backend_names():
-                raise SystemExit(f"bot-bottle cleanup: unknown backend {name!r}; "
+                raise SystemExit(f"bot-bottle cleanup bots: unknown backend {name!r}; "
                                  f"one of {', '.join(known_backend_names())}")
             return name
     return None

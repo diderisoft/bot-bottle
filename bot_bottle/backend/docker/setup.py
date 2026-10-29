@@ -60,7 +60,7 @@ def teardown() -> int:
     sys.stderr.write(
         "Docker backend: nothing to undo — it provisions no privileged host "
         "state (networks and the gateway are per-launch and are "
-        "removed by `bot-bottle cleanup`). Docker itself is left installed.\n"
+        "removed by `bot-bottle cleanup bots`). Docker itself is left installed.\n"
     )
     return 0
 

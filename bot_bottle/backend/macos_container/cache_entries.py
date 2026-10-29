@@ -1,4 +1,4 @@
-"""The macos-container backend's cached images, for `bot-bottle prune`
+"""The macos-container backend's cached images, for `bot-bottle cleanup images`
 (`oci_cache_entries` holds the rule)."""
 
 from __future__ import annotations

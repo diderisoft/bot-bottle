@@ -247,7 +247,7 @@ class TestCleanup(unittest.TestCase):
              mock.patch.object(cleanup_cmd.runner, "cli_token", return_value="t"), \
              mock.patch.object(cleanup_cmd, "HostControlClient", return_value=client), \
              contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(0, cleanup_cmd.cmd_cleanup([]))
+            self.assertEqual(0, cleanup_cmd.cmd_cleanup(["bots"]))
         client.delete.assert_called_once_with(f"{BOTTLES_PATH}/b1")
 
     def test_declining_tears_nothing_down(self) -> None:
@@ -256,7 +256,7 @@ class TestCleanup(unittest.TestCase):
              mock.patch.object(cleanup_cmd, "_prompt_yes", return_value=False), \
              mock.patch.object(cleanup_cmd, "_teardown_held") as teardown, \
              contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(0, cleanup_cmd.cmd_cleanup([]))
+            self.assertEqual(0, cleanup_cmd.cmd_cleanup(["bots"]))
         teardown.assert_not_called()
 
 

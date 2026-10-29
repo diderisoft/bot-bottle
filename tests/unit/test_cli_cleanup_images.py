@@ -1,4 +1,4 @@
-"""Unit: `bot-bottle prune` (PRD 0088): what stays, what goes, and how each
+"""Unit: `bot-bottle cleanup images` (PRD 0088): what stays, what goes, and how each
 backend lists its cached images."""
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from bot_bottle.backend import oci_cache_entries as oci
 from bot_bottle.backend.cache_entries import CacheEntry, human, to_remove
 from bot_bottle.backend.firecracker import cache_entries as fc
 from bot_bottle.backend.firecracker import image_builder
-from bot_bottle.cli.commands import prune
+from bot_bottle.cli.commands import cleanup_images as prune
 
 _DAY = 86400.0
 _LIB = "docker.io/library/"
@@ -186,7 +186,7 @@ class PruneCommand(unittest.TestCase):
     def run_cmd(self, argv: list[str]) -> tuple[int, str]:
         out = io.StringIO()
         with redirect_stdout(out):
-            code = prune.cmd_prune(argv)
+            code = prune.cmd_cleanup_images(argv)
         return code, out.getvalue()
 
     def test_dry_run_lists_and_removes_nothing(self) -> None:
@@ -381,7 +381,7 @@ class CommandEdges(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(prune, "_backends", return_value=[broken]), \
                 redirect_stdout(out), mock.patch("sys.stderr", err):
-            self.assertEqual(0, prune.cmd_prune([]))
+            self.assertEqual(0, prune.cmd_cleanup_images([]))
         self.assertIn("couldn't list cached images", err.getvalue())
 
     def test_backends_are_the_usable_ones(self) -> None:

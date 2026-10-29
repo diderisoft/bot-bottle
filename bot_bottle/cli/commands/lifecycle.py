@@ -60,7 +60,8 @@ def cmd_down(argv: list[str]) -> int:
         held = runner.held_bottles(state) if state else []
         if held and not ns.force:
             return _fail(f"{len(held)} bottle(s) are running ({', '.join(held)}); "
-                         f"tear them down first (`{PROG} cleanup`) or use `{PROG} down --force`")
+                         f"tear them down first (`{PROG} cleanup bots`) "
+                         f"or use `{PROG} down --force`")
         backend = get_bottle_backend(settings, ns.backend)
         backend.infra_service().stop()
         print(f"{backend.name} orchestrator and gateway: stopped")

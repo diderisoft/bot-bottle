@@ -1,6 +1,7 @@
-"""prune: free disk by deleting cached images this install no longer needs.
+"""cleanup images: free disk by deleting cached images this install no longer
+needs.
 
-  bot-bottle prune [--dry-run] [--older-than DAYS] [--build-store]
+  bot-bottle cleanup images [--dry-run] [--older-than DAYS] [--build-store]
 
 Safe to run at any time: it never removes a current pin's image, the current
 infra build, or an image a container uses. Superseded releases (old pins and
@@ -8,8 +9,8 @@ their downloads) go at once; builds (overlays, local and infra builds, base
 trees) once unused for DAYS (default 14). `--build-store` also empties
 firecracker's buildah store when the orchestrator VM is stopped.
 
-Unlike `cleanup`, which stops and removes leftover bottles and their state,
-`prune` only frees disk.
+Unlike `cleanup bots`, which stops and removes leftover bottled agents and
+their state, `cleanup images` only frees disk.
 """
 
 from __future__ import annotations
@@ -31,8 +32,8 @@ def _backends() -> list[BottleBackend[Any, Any]]:
             if has_backend(settings, name)]
 
 
-def cmd_prune(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog=f"{PROG} prune", description=__doc__,
+def cmd_cleanup_images(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog=f"{PROG} cleanup images", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dry-run", action="store_true", help="list what would go; remove nothing")
     parser.add_argument("--older-than", type=float, default=DEFAULT_OLDER_THAN_DAYS,
@@ -71,4 +72,4 @@ def cmd_prune(argv: list[str]) -> int:
     return 1 if failed else 0
 
 
-__all__ = ["cmd_prune"]
+__all__ = ["cmd_cleanup_images"]

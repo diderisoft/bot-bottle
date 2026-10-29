@@ -249,7 +249,7 @@ jobs:
           path: /var/cache/bot-bottle-fc/dropbear
 
       # Base rootfs trees accumulate on the runner (#690) until PRD 0088's
-      # `bot-bottle prune` covers this runner too. Drop trees unused for more than 7
+      # `bot-bottle cleanup images` covers this runner too. Drop trees unused for more than 7
       # days. A cache hit touches the tree's .bb-ready marker but not the
       # directory, so age is the newer of the two. A removed tree is rebuilt
       # on its next miss.

@@ -3,7 +3,7 @@
 A launch job prepares without prompting, then hands off to a holder thread that
 stays inside `backend.launch(plan)` for the bottle's life, runs the agent in
 tmux, and tears down when it exits. A session re-adopted after a daemon restart
-has no holder, so its bottle is left for `cleanup`.
+has no holder, so its bottle is left for `cleanup bots`.
 """
 
 from __future__ import annotations
@@ -524,7 +524,7 @@ class BottleService:
     def _finish(self, record: SessionRecord, exit_status: ExitStatus) -> None:
         """The `bottle` finisher: hand the exit to the holder and wait for
         teardown. Without a holder (re-adopted) the bottle is left for
-        `cleanup`."""
+        `cleanup bots`."""
         with self._lock:
             held = self._held.get(record.id)
         if held is not None:
@@ -562,7 +562,7 @@ class BottleService:
         if adopted is None or not name:
             self._unfollow(record.id, None, str(record.meta.get("activation", "")))
             log.warn(f"bottle {record.id} ({name or '?'}): its agent exited (exit {code}) "
-                     f"with nothing holding the bottle; run `bot-bottle cleanup` to remove it")
+                     f"with nothing holding the bottle; run `bot-bottle cleanup bots` to remove it")
             return
         log.info(f"session {record.id} ended (exit {code}); removing {adopted.container}")
         try:
@@ -572,7 +572,7 @@ class BottleService:
                 self._unfollow(record.id, bottle, str(record.meta.get("activation", "")))
                 _save_work(bottle, adopted.workspace, record.id)
         except Exception as e:  # pylint: disable=broad-exception-caught  # still revoke keys
-            log.warn(f"bottle {record.id}: teardown failed: {e}; run `bot-bottle cleanup`")
+            log.warn(f"bottle {record.id}: teardown failed: {e}; run `bot-bottle cleanup bots`")
         try:
             state = git_gate_state_dir(record.id)
             revoke_deploy_keys(adopted.deploy_keys + live_grant_refs(state), state,

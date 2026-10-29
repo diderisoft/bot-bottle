@@ -1,5 +1,5 @@
 """Cached agent and infra images on the Docker and macOS (Apple container)
-backends, for `bot-bottle prune` (PRD 0088).
+backends, for `bot-bottle cleanup images` (PRD 0088).
 
 Prunable: bot-bottle's own repositories' `pin-<digest>` (published agent
 bases), `overlay-<key>` (overlay builds), registry digest refs a pull left,

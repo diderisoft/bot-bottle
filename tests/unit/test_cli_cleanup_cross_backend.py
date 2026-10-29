@@ -8,6 +8,7 @@ is not installed. Mocks the backends and stdin."""
 
 from __future__ import annotations
 
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -55,7 +56,7 @@ class TestCmdCleanup(_Root):
         ), patch.object(
             cmd, "_prompt_yes", return_value=True,
         ):
-            self.assertEqual(0, cmd.cmd_cleanup([]))
+            self.assertEqual(0, cmd.cmd_cleanup(["bots"]))
 
         self.assertEqual(2, docker.prepare_cleanup.call_count)
         self.assertEqual(2, fc.prepare_cleanup.call_count)
@@ -82,7 +83,7 @@ class TestCmdCleanup(_Root):
         ), patch.object(
             cmd, "_prompt_yes", return_value=True,
         ):
-            self.assertEqual(0, cmd.cmd_cleanup([]))
+            self.assertEqual(0, cmd.cmd_cleanup(["bots"]))
 
         self.assertEqual(2, docker.prepare_cleanup.call_count)
         docker.cleanup.assert_called_once_with(docker_plan)
@@ -104,7 +105,7 @@ class TestCmdCleanup(_Root):
         ), patch.object(
             cmd, "_prompt_yes",
         ) as prompt:
-            self.assertEqual(0, cmd.cmd_cleanup([]))
+            self.assertEqual(0, cmd.cmd_cleanup(["bots"]))
         prompt.assert_not_called()
         docker.cleanup.assert_not_called()
         fc.cleanup.assert_not_called()
@@ -125,7 +126,7 @@ class TestCmdCleanup(_Root):
         ), patch.object(
             cmd, "_prompt_yes", return_value=False,
         ):
-            self.assertEqual(0, cmd.cmd_cleanup([]))
+            self.assertEqual(0, cmd.cmd_cleanup(["bots"]))
         docker.cleanup.assert_not_called()
         fc.cleanup.assert_not_called()
 
@@ -147,7 +148,7 @@ class TestCmdCleanup(_Root):
         ), patch.object(
             cmd, "_prompt_yes", return_value=True,
         ):
-            cmd.cmd_cleanup([])
+            cmd.cmd_cleanup(["bots"])
         docker.cleanup.assert_called_once_with(docker_plan)
         fc.cleanup.assert_not_called()
 
@@ -169,7 +170,7 @@ class TestCmdCleanup(_Root):
         ), patch.object(
             cmd, "_prompt_yes", return_value=True,
         ):
-            self.assertEqual(0, cmd.cmd_cleanup([]))
+            self.assertEqual(0, cmd.cmd_cleanup(["bots"]))
 
         preview.intersect.assert_called_once_with(refreshed)
         backend.cleanup.assert_called_once_with(approved)
@@ -195,7 +196,7 @@ class TestUnreachableAndOneBackend(_Root):
              patch.object(cmd, "get_bottle_backend", side_effect=backend), \
              patch.object(cmd, "has_backend", return_value=True), \
              patch.object(cmd, "_prompt_yes", return_value=True):
-            return cmd.cmd_cleanup(argv)
+            return cmd.cmd_cleanup(["bots", *argv])
 
     def test_a_backend_that_cant_be_listed_is_skipped(self):
         docker = MagicMock()
@@ -236,7 +237,28 @@ class TestUnreachableAndOneBackend(_Root):
     def test_an_unknown_backend_is_refused(self):
         with patch.object(cmd, "known_backend_names", return_value=("docker",)), \
              self.assertRaisesRegex(SystemExit, "unknown backend 'nope'"):
-            cmd.cmd_cleanup(["--backend=nope"])
+            cmd.cmd_cleanup(["bots", "--backend=nope"])
+
+
+class CleanupTargetTests(unittest.TestCase):
+    """`cleanup` needs a target: `bots` or `images`."""
+
+    def test_no_target_prints_usage(self):
+        with patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.assertEqual(2, cmd.cmd_cleanup([]))
+        self.assertIn("cleanup bots", err.getvalue())
+        self.assertIn("cleanup images", err.getvalue())
+
+    def test_an_unknown_target_is_refused(self):
+        with patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.assertEqual(2, cmd.cmd_cleanup(["everything"]))
+        self.assertIn("unknown target 'everything'", err.getvalue())
+
+    def test_images_runs_the_image_cleanup(self):
+        with patch("bot_bottle.cli.commands.cleanup_images.cmd_cleanup_images",
+                   return_value=0) as images:
+            self.assertEqual(0, cmd.cmd_cleanup(["images", "--dry-run"]))
+        images.assert_called_once_with(["--dry-run"])
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ leaving the box except through the gateway.
 | `provision(plan, bottle)` | installs the CA, skills, prompt and workspace into the running agent |
 | `infra_service()` | the backend's `InfraService`: brings up or adopts the orchestrator and gateway |
 | `prepare_cleanup()` / `cleanup(plan)` | find and remove leftover bottles, networks and VMs |
-| `cache_entries()` | the cached images it keeps, each with a reason to stay or none, for `bot-bottle prune` |
+| `cache_entries()` | the cached images it keeps, each with a reason to stay or none, for `bot-bottle cleanup images` |
 | `enumerate_active()` | running bottles, read from the runtime |
 | `setup()` / `status()` / `teardown()` | one-time host setup, readiness, and infra removal |
 

@@ -67,7 +67,7 @@ Each agent runs in tmux on bot-bottle's own tmux server, never the user's
   `BottleBackend.adopted_bottle`, and revokes its deploy keys with tokens from
   the secrets file. A token that was only in the launching CLI's environment
   can't be found then, so that key is reported for revoking by hand. Without a
-  record, `bot-bottle cleanup` removes the bottle.
+  record, `bot-bottle cleanup bots` removes the bottle.
 - `requests.py` polls every running orchestrator (one per backend with infra
   up, say docker and firecracker) for pending supervise proposals and shows a
   one-line summary in the session's tmux status bar, outside the agent's pane

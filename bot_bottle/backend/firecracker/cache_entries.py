@@ -1,4 +1,4 @@
-"""The firecracker backend's cached images, for `bot-bottle prune` (PRD 0088).
+"""The firecracker backend's cached images, for `bot-bottle cleanup images` (PRD 0088).
 
 Under the cache dir's `rootfs/`:
 
