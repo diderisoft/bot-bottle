@@ -34,6 +34,7 @@ _HANDLERS: dict[str, str] = {
     "setup": "setup:cmd_setup",
     "start": "start:cmd_start",
     "status": "lifecycle:cmd_status",
+    "stopped": "stopped:cmd_stopped",
     "supervise": "supervise:cmd_supervise",
     "trust": "trust:cmd_trust",
     "prune": "prune:cmd_prune",

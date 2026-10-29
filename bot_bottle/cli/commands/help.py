@@ -41,6 +41,7 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w("  setup     write starter agents for Claude, Codex and pi (then offers pair)\n")
     w("  start     boot a container for a named agent and attach an interactive session\n")
     w("  status    show the host controller, orchestrator and running bottles\n")
+    w("  stopped   list bottles that aren't running and can be resumed\n")
     w("  supervise view + approve/modify/reject pending supervise proposals\n")
     w("  trust     review and trust a project's bottles on this host\n")
     w("  uninstall remove bot-bottle from this host (keeps ~/.bot-bottle unless --purge)\n")
