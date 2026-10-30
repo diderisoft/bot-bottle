@@ -123,8 +123,13 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "no `uv` or `pipx`.",
            "`~/.bot-bottle/venv`"),
     EnvVar("BOT_BOTTLE_INSTALL_SPEC", "user",
-           "Installer: the pip spec to install instead of the default `git+` URL, "
-           "such as a wheel path or index name."),
+           "Installer: the pip spec to install instead of the default `git+` URL "
+           "at the latest release tag, such as a wheel path or index name."),
+    EnvVar("BOT_BOTTLE_INSTALL_REF", "user",
+           "Installer: the git ref to install instead of the latest release tag, "
+           "such as `v0.1.4`, or `main` (same as `--main`; then run `bot-bottle up "
+           "--build`).",
+           "the latest `vX.Y.Z` tag"),
     # --- dev ---
     EnvVar("BOT_BOTTLE_ORCHESTRATOR_IMAGE", "dev",
            "The orchestrator image to run.",

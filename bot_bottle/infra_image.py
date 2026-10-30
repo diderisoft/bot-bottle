@@ -23,8 +23,12 @@ from .published_artifacts import Artifact, current_platform, load_artifacts_mani
 BUILD_NEEDS_DOCKER = "needs Docker"
 BUILD_WITH_CONTAINER = "with Apple's `container`"
 
-# How to get an install whose infra images are published.
-RELEASE_INSTALL_HINT = "uv tool install bot-bottle   (or pipx install bot-bottle)"
+# How to get an install whose infra images are published: re-running the
+# installer installs the latest release tag. One constant, so a move to
+# another forge or a package index swaps one line.
+RELEASE_INSTALL_HINT = (
+    'curl -fsSL "https://gitea.dideric.is/api/v1/repos/didericis/bot-bottle/raw/'
+    'install.sh?ref=main" | sh')
 
 
 class InfraImagesUnpublished(RegistryError):

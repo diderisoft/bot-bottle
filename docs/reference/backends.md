@@ -51,13 +51,14 @@ Without the opt-in, an install with nothing published to match (one from
 
 ```
 bot-bottle: error: this install (0.1.4 @ 1a2b3c4d5e6f, unreleased) has no published infra images.
-    Install a release: uv tool install bot-bottle   (or pipx install bot-bottle)
+    Install a release: curl -fsSL "https://gitea.dideric.is/api/v1/repos/didericis/bot-bottle/raw/install.sh?ref=main" | sh
     Or build them locally (needs Docker): bot-bottle up --build
     (BOT_BOTTLE_INFRA_BUILD=local does the same for every command.)
 ```
 
 The version is the package's, and the commit comes from git in a checkout or
-from the install's `direct_url.json`. A bring-up a launch triggers keeps the
+from the install's `direct_url.json`. Re-running the installer installs the
+latest release tag (`infra_image.RELEASE_INSTALL_HINT`). A bring-up a launch triggers keeps the
 last recorded bring-up's opt-in, so `bot-bottle up --build` followed by
 `bot-bottle <agent>` keeps building; `bot-bottle up` does only what its flags
 say, so an `up` without `--build` goes back to pulling, or stops.

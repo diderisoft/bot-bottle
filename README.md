@@ -20,13 +20,13 @@ Run coding agents unsupervised without letting them wreck your machine or leak y
 curl -fsSL "https://gitea.dideric.is/api/v1/repos/didericis/bot-bottle/raw/install.sh?ref=main" | sh
 ```
 
-or, with uv (or the same with `pipx install`):
+That installs the latest release. Or, with uv (or the same with `pipx install`), pinning the latest `vX.Y.Z` tag:
 
 ```sh
-uv tool install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git"
+uv tool install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git@v0.1.4"
 ```
 
-The installer runs `bot-bottle setup`, which writes a starter agent for each logged-in harness it finds (Claude Code, Codex, pi). Start one; images are pulled or built on first run:
+The installer runs `bot-bottle setup`, which writes a starter agent for each logged-in harness it finds (Claude Code, Codex, pi). Start one; the release's images are pulled on first run:
 
 ```sh
 bot-bottle start claude
@@ -37,6 +37,8 @@ You also need a backend, which the installer leaves to you (`bot-bottle doctor` 
 - **macOS:** Apple's `container` CLI, plus a one-time host firewall (`bot-bottle install --backend=macos-container` prints the `sudo` lines).
 - **Linux:** Firecracker with KVM, plus a one-time network pool (`bot-bottle install --backend=firecracker`).
 - **Anywhere else:** Docker, with `--backend=docker`.
+
+Running from `main` instead of a release (`sh -s -- --main` on the installer)? Its orchestrator and gateway images aren't published: run `bot-bottle up --build` first ([install](docs/reference/install.md#releases-and-infra-images)).
 
 Details, including Python and tmux requirements, are in [install.md](docs/reference/install.md). To remove it all: `bot-bottle uninstall`.
 

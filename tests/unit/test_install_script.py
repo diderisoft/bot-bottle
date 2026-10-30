@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -111,7 +114,7 @@ class TestInstallScript(unittest.TestCase):  # pylint: disable=too-many-public-m
     def test_installs_the_remote_extra_except_on_intel_macs(self):
         # Pairing a phone needs iroh (the `remote` extra); iroh has no
         # Intel-macOS wheel, decided by the interpreter's machine.
-        self.assertIn('bot-bottle[remote] @ ${REPO_SPEC}', self.text)
+        self.assertIn('bot-bottle[remote] @ ${REPO_SPEC}@${INSTALL_REF}', self.text)
         self.assertIn("platform.machine()", self.text)
         self.assertIn("x86_64", self.text)
         self.assertIn("isn't available here", self.text)
@@ -175,6 +178,105 @@ class TestInstallScript(unittest.TestCase):  # pylint: disable=too-many-public-m
         # it, not just state the requirement.
         self.assertIn("brew install python@", self.text)
         self.assertIn("BOT_BOTTLE_PYTHON=/path/to/python3", self.text)
+
+
+_TAG = '{{"name":"{0}","message":"bot-bottle","id":"abc","commit":{{"sha":"abc"}}}}'
+
+
+def _tags(*names: str) -> str:
+    return "[" + ",".join(_TAG.format(n) for n in names) + "]"
+
+
+# A stub curl serving the tags API from files named by page number: an
+# unlisted page is empty (`[]`), or an HTTP error when `fail` exists.
+_CURL = '''page=$(printf %s "$*" | sed -n 's/.*page=\\([0-9]*\\).*/\\1/p')
+if [ -e "{pages}/$page" ]; then cat "{pages}/$page"; exit 0; fi
+[ -e "{pages}/fail" ] && exit 22
+echo "[]"'''
+
+
+class TestInstallRef(unittest.TestCase):
+    """Runs install.sh with stub `curl`, `uv`, `git` and `bot-bottle` on PATH:
+    which spec it installs, and how tag resolution fails."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        self.pages = self.root / "pages"
+        self.pages.mkdir()
+        (self.bin / "python3").symlink_to(sys.executable)
+        self._stub("curl", _CURL.format(pages=self.pages))
+        self._stub("uv", f'echo "$@" >> "{self.root}/uv.log"\n'
+                         f'[ "$1 $2" = "tool dir" ] && echo "{self.bin}"\nexit 0')
+        self._stub("git", "exit 0")
+        self._stub("bot-bottle", "exit 0")
+
+    def _stub(self, name: str, body: str) -> None:
+        path = self.bin / name
+        path.write_text("#!/bin/sh\n" + body + "\n")
+        path.chmod(0o755)
+
+    def _page(self, n: int, body: str) -> None:
+        (self.pages / str(n)).write_text(body)
+
+    def _run(self, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
+        # Stubs first; the host PATH for coreutils (NixOS has no /usr/bin).
+        path = f"{self.bin}:{os.environ.get('PATH', '/usr/bin:/bin')}"
+        full = {"PATH": path, "HOME": str(self.root / "home"),
+                "SHELL": "/bin/sh", **env}
+        return subprocess.run(["sh", str(INSTALL_SH), *args], env=full, capture_output=True,
+                              text=True, timeout=60, stdin=subprocess.DEVNULL, check=False)
+
+    def _installed(self) -> str:
+        log = (self.root / "uv.log").read_text().splitlines()
+        return next(line for line in log if line.startswith("tool install")).split("--force ")[1]
+
+    def test_installs_the_newest_release_tag_by_semver_across_pages(self) -> None:
+        self._page(1, _tags("v0.9.0", "backup/x", "v0.10.0-rc1", "v0.2.0"))
+        self._page(2, _tags("v0.10.0", "v0.1.4"))
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual("bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/"
+                         "bot-bottle.git@v0.10.0", self._installed())
+        self.assertIn("installing bot-bottle v0.10.0", proc.stderr)
+
+    def test_main_is_explicit_and_says_it_needs_build(self) -> None:
+        for args, env in ((("--main",), {}), ((), {"BOT_BOTTLE_INSTALL_REF": "main"})):
+            with self.subTest(args=args, env=env):
+                (self.root / "uv.log").unlink(missing_ok=True)
+                proc = self._run(*args, **env)
+                self.assertEqual(0, proc.returncode, proc.stderr)
+                self.assertTrue(self._installed().endswith("bot-bottle.git@main"))
+                self.assertIn("bot-bottle up --build", proc.stderr)
+
+    def test_an_explicit_spec_needs_no_tag(self) -> None:
+        (self.pages / "fail").touch()
+        proc = self._run(BOT_BOTTLE_INSTALL_SPEC="/tmp/bot_bottle.whl")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual("/tmp/bot_bottle.whl", self._installed())
+
+    def test_no_tag_fails_clearly_without_falling_back_to_main(self) -> None:
+        for broken in ("unreachable", "no release tags"):
+            with self.subTest(broken=broken):
+                if broken == "unreachable":
+                    (self.pages / "fail").touch()
+                else:
+                    (self.pages / "fail").unlink(missing_ok=True)
+                    self._page(1, _tags("backup/x"))
+                proc = self._run()
+                self.assertNotEqual(0, proc.returncode)
+                self.assertIn("couldn't find the latest bot-bottle release", proc.stderr)
+                self.assertIn("--main", proc.stderr)
+                self.assertFalse((self.root / "uv.log").exists())
+
+    def test_unknown_arguments_are_refused(self) -> None:
+        proc = self._run("--mian")
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("unknown argument '--mian'", proc.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

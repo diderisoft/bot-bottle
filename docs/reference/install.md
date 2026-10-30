@@ -9,30 +9,38 @@ comes off again. The backends themselves are in [backends.md](backends.md).
 curl -fsSL "https://gitea.dideric.is/api/v1/repos/didericis/bot-bottle/raw/install.sh?ref=main" | sh
 ```
 
-`install.sh` is a bootstrapper. It finds a suitable Python, installs
+`install.sh` is a bootstrapper. It installs the latest release: the newest
+`vX.Y.Z` tag, looked up through the forge's tags API (it fails, rather than
+installing `main`, when it can't find one). It finds a suitable Python, installs
 bot-bottle with its `remote` extra for phone pairing (none on Intel Macs,
 which iroh has no build for) using `uv` or `pipx` if you have either, or a
 private venv at `~/.bot-bottle/venv`, creates `~/.bot-bottle`, and runs
 `bot-bottle setup` and `bot-bottle doctor`. It is idempotent and never uses
 `sudo`.
 
-Python-native users can skip it:
+Python-native users can skip it, pinning the latest tag (`v0.1.4` here; use
+the newest one listed under the repository's tags):
 
 ```sh
-uv tool install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git"
+uv tool install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git@v0.1.4"
 # or the same with: pipx install
 ```
 
+To install `main` instead, pass `--main` (`… | sh -s -- --main`) or set
+`BOT_BOTTLE_INSTALL_REF=main`, then build the infra images (below).
+
 The installer's settings (`BOT_BOTTLE_PYTHON`, `BOT_BOTTLE_VENV`,
-`BOT_BOTTLE_INSTALL_SPEC`, all optional) are in [Settings](#settings).
+`BOT_BOTTLE_INSTALL_SPEC`, `BOT_BOTTLE_INSTALL_REF`, all optional) are in
+[Settings](#settings).
 
 ### Releases and infra images
 
 The normal path is a release: its orchestrator and gateway images are
-published, and bot-bottle pulls and verifies them. Both commands above install
-`main`, which matches the last release only until a change to the
-orchestrator or gateway lands after it. An install with no published images to
-match stops on its first bring-up and says so; it never builds them on its own
+published, and bot-bottle pulls and verifies them. Each release is tagged
+`vX.Y.Z` on the commit that pins its images, and both commands above install a
+tag. `main` matches the last release only until a change to the orchestrator or
+gateway lands after it. An install with no published images to match stops on
+its first bring-up and says so; it never builds them on its own
 ([backends.md](backends.md#infra-images)). To run from `main` (developing
 bot-bottle, or a fix not yet released), build them locally:
 
@@ -223,7 +231,8 @@ Generated from `bot_bottle/env_vars.py`: edit that, then run
 | `BOT_BOTTLE_FC_GROUP` | user | firecracker network pool script: a group to own the TAPs instead of one user. | — |
 | `BOT_BOTTLE_PYTHON` | user | Installer: the interpreter to install with; skips the search. | — |
 | `BOT_BOTTLE_VENV` | user | Installer and `uninstall`: where the venv install lives when there's no `uv` or `pipx`. | `~/.bot-bottle/venv` |
-| `BOT_BOTTLE_INSTALL_SPEC` | user | Installer: the pip spec to install instead of the default `git+` URL, such as a wheel path or index name. | — |
+| `BOT_BOTTLE_INSTALL_SPEC` | user | Installer: the pip spec to install instead of the default `git+` URL at the latest release tag, such as a wheel path or index name. | — |
+| `BOT_BOTTLE_INSTALL_REF` | user | Installer: the git ref to install instead of the latest release tag, such as `v0.1.4`, or `main` (same as `--main`; then run `bot-bottle up --build`). | the latest `vX.Y.Z` tag |
 | `BOT_BOTTLE_ORCHESTRATOR_IMAGE` | dev | The orchestrator image to run. | `bot-bottle-orchestrator:latest` |
 | `BOT_BOTTLE_GATEWAY_IMAGE` | dev | The gateway image to run. | `bot-bottle-gateway:latest` |
 | `BOT_BOTTLE_HOSTCTL_PORT` | dev | The host controller's loopback port. | ephemeral |

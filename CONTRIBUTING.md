@@ -19,9 +19,10 @@ git config core.hooksPath .githooks
 
 ## Running from main
 
-A checkout or an install of `main` usually has no published orchestrator and
-gateway images to match it, and bot-bottle won't build them unasked. Build
-them from your source:
+Installs default to the latest release tag. A checkout, or an install of
+`main` (`install.sh --main`), usually has no published orchestrator and gateway
+images to match it, and bot-bottle won't build them unasked. Build them from
+your source:
 
 ```sh
 ./cli.py up --build    # or: BOT_BOTTLE_INFRA_BUILD=local ./cli.py <command>

@@ -7,13 +7,18 @@
 # (The API's raw URL, not /raw/branch/...: the forge sends anonymous visitors
 # of its web raw-file pages to the login page.)
 #
-# Python-native users can skip this entirely:
-#   uv tool install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git"
-#   pipx install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git"
+# It installs the latest release: the newest `vX.Y.Z` tag, whose orchestrator
+# and gateway images are published. To install main instead (development;
+# main's infra images aren't published, so run `bot-bottle up --build`):
+#   curl -fsSL "<the URL above>" | sh -s -- --main
 #
-# This script is a thin bootstrapper: it finds a Python 3.11+ interpreter,
-# installs the package with uv or pipx if you have either (falling back to a
-# private venv), creates the
+# Python-native users can skip this entirely, pinning the latest tag:
+#   uv tool install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git@v0.1.4"
+#   pipx install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git@v0.1.4"
+#
+# This script is a thin bootstrapper: it finds the latest release tag and a
+# Python 3.11+ interpreter, installs the package with uv or pipx if you have
+# either (falling back to a private venv), creates the
 # config dir, runs `bot-bottle setup` (starter agents, then an offer to pair a
 # phone) and `bot-bottle doctor`. It is idempotent (safe to re-run)
 # and never uses sudo. It does NOT install Docker or a VM backend for you —
@@ -22,7 +27,10 @@
 # Env:
 #   BOT_BOTTLE_PYTHON        interpreter to install with (skips the search)
 #   BOT_BOTTLE_INSTALL_SPEC  pip/git spec to install instead of the default
-#                            (bot-bottle[remote] from the repo; no extra on Intel Macs)
+#                            (bot-bottle[remote] at the latest release tag; no
+#                            extra on Intel Macs)
+#   BOT_BOTTLE_INSTALL_REF   git ref to install instead of the latest release
+#                            tag, e.g. `main` (what --main sets) or `v0.1.4`
 #   BOT_BOTTLE_VENV          where the venv install lives, without uv or pipx (~/.bot-bottle/venv)
 #
 # With no Python 3.11+ at all, uv supplies one: yours if you have uv, else a
@@ -37,6 +45,8 @@
 set -eu
 
 REPO_SPEC="git+https://gitea.dideric.is/didericis/bot-bottle.git"
+# Where the release tags are listed (unauthenticated).
+TAGS_API="https://gitea.dideric.is/api/v1/repos/didericis/bot-bottle/tags"
 VENV="${BOT_BOTTLE_VENV:-${HOME}/.bot-bottle/venv}"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=11
@@ -91,6 +101,66 @@ if [ "${1:-}" = "--uninstall" ]; then
     say "backend setup, images and networks. Reinstall and run 'bot-bottle uninstall'"
     say "to remove those too."
     exit 0
+fi
+
+# --- which release ------------------------------------------------------------
+
+if [ "${1:-}" = "--main" ]; then
+    shift
+    BOT_BOTTLE_INSTALL_REF=main
+fi
+[ "$#" -eq 0 ] || die "unknown argument '$1' (expected --main or --uninstall [--purge])"
+
+# Print URL $1's body.
+fetch_url() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$1"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -O - "$1"
+    else
+        return 1
+    fi
+}
+
+# The newest release tag (`vX.Y.Z`, by semver) from the forge's tags API,
+# reading every page. Fails when it can't be fetched or there is none.
+latest_release_tag() {
+    found=""
+    page=1
+    while [ "${page}" -le 20 ]; do
+        body="$(fetch_url "${TAGS_API}?limit=50&page=${page}")" || return 1
+        printf '%s' "${body}" | grep -q '"name"' || break
+        found="${found}
+$(printf '%s' "${body}" \
+    | grep -o '"name": *"v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*"' \
+    | sed 's/.*"v/v/; s/"$//' || true)"
+        page=$((page + 1))
+    done
+    latest="$(printf '%s\n' "${found}" | sed -n 's/^v//p' \
+        | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)"
+    [ -n "${latest}" ] || return 1
+    echo "v${latest}"
+}
+
+# Only the default spec needs a ref; an explicit spec says its own.
+INSTALL_REF=""
+if [ -z "${BOT_BOTTLE_INSTALL_SPEC:-}" ]; then
+    if [ -n "${BOT_BOTTLE_INSTALL_REF:-}" ]; then
+        INSTALL_REF="${BOT_BOTTLE_INSTALL_REF}"
+    else
+        INSTALL_REF="$(latest_release_tag)" || die "couldn't find the latest bot-bottle release
+  tag at ${TAGS_API} (it needs curl or wget, and network access).
+  Retry, or pick what to install yourself:
+    BOT_BOTTLE_INSTALL_REF=v0.1.4 sh install.sh    # a release tag
+    sh install.sh --main                           # main; then 'bot-bottle up --build'"
+    fi
+    if [ "${INSTALL_REF}" = main ]; then
+        say "installing main, not a release: its orchestrator and gateway images"
+        say "aren't published, so build them with 'bot-bottle up --build' (needs Docker,"
+        say "or Apple's container on macOS)"
+    else
+        say "installing bot-bottle ${INSTALL_REF}"
+    fi
 fi
 
 # --- prerequisites: find an interpreter new enough ----------------------------
@@ -262,9 +332,9 @@ if [ "$(uname -s)" = Darwin ]; then
     [ "${machine}" = x86_64 ] && REMOTE=no
 fi
 if [ "${REMOTE}" = yes ]; then
-    PACKAGE_SPEC="${BOT_BOTTLE_INSTALL_SPEC:-bot-bottle[remote] @ ${REPO_SPEC}}"
+    PACKAGE_SPEC="${BOT_BOTTLE_INSTALL_SPEC:-bot-bottle[remote] @ ${REPO_SPEC}@${INSTALL_REF}}"
 else
-    PACKAGE_SPEC="${BOT_BOTTLE_INSTALL_SPEC:-${REPO_SPEC}}"
+    PACKAGE_SPEC="${BOT_BOTTLE_INSTALL_SPEC:-${REPO_SPEC}@${INSTALL_REF}}"
 fi
 
 # Installing a `git+` spec (the default) shells out to git under the hood,

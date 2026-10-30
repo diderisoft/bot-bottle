@@ -71,7 +71,8 @@ class UnpublishedMessage(unittest.TestCase):
             message = infra_image.unpublished_message()
         self.assertEqual(
             "this install (0.1.4 @ abcdef012345, unreleased) has no published infra images.\n"
-            "    Install a release: uv tool install bot-bottle   (or pipx install bot-bottle)\n"
+            "    Install a release: curl -fsSL \"https://gitea.dideric.is/api/v1/repos/"
+            "didericis/bot-bottle/raw/install.sh?ref=main\" | sh\n"
             "    Or build them locally (needs Docker): bot-bottle up --build\n"
             "    (BOT_BOTTLE_INFRA_BUILD=local does the same for every command.)",
             message)

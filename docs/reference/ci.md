@@ -96,7 +96,9 @@ the service down.
 
 When every job passes, it releases: it promotes the tested images to a release
 version and commits their pins (`published-artifacts.json`) to `main`, with
-`pyproject.toml` bumped to that version in the same commit. Leave the `version`
+`pyproject.toml` bumped to that version in the same commit, and tags that
+commit `vX.Y.Z` (annotated; a rerun leaves an existing tag alone). `install.sh`
+installs the newest such tag. Leave the `version`
 input blank to take the first unpublished version at or above `pyproject.toml`'s.
 [`publish-images.yml`](../../.gitea/workflows/publish-images.yml) only rehearses a
 publish: it defaults to a `0.0.0-dev-<run>` version and pins nothing.
