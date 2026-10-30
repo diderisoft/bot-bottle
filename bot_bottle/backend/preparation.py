@@ -17,6 +17,7 @@ from ..secret_source import SecretSource
 from ..supervisor.plan import SupervisePlan
 from ..workspace import workspace_plan
 from .resolve_common import (
+    launch_trailer,
     merge_provision_env_vars,
     mint_slug,
     prepare_agent_state_dir,
@@ -25,6 +26,7 @@ from .resolve_common import (
     prepare_supervise,
     reject_nested_containers,
     resolve_manifest_dockerfile,
+    with_commit_hooks_env,
     write_launch_metadata,
 )
 
@@ -112,7 +114,7 @@ class BottlePreparationPlanner:
             color=spec.color,
             provider_settings=provider_config.settings,
         )
-        provision = merge_provision_env_vars(provision)
+        provision = with_commit_hooks_env(merge_provision_env_vars(provision))
         return PreparedBottle(
             manifest=manifest,
             slug=slug,
@@ -120,6 +122,7 @@ class BottlePreparationPlanner:
             agent_provision_plan=provision,
             egress_plan=prepare_egress(
                 bottle, slug, provision, owner=_egress_owner(spec, manifest)),
-            git_gate_plan=prepare_git_gate(bottle, slug),
+            git_gate_plan=prepare_git_gate(
+                bottle, slug, launch_trailer(spec, manifest, slug)),
             supervise_plan=prepare_supervise(bottle, slug),
         )

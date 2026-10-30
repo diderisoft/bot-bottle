@@ -76,6 +76,7 @@ def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle
         env=merged_env,
         git=merged_git,
         git_user=merged_git_user,
+        git_trailers=override.git_trailers or base.git_trailers,
         egress=merged_egress,
         supervise=_overlay_declared_bool(base, override, "supervise"),
         nested_containers=_overlay_declared_bool(
@@ -270,6 +271,7 @@ def _fold_two_bottles(
         env=merged_env,
         git=merged_git,
         git_user=merged_git_user,
+        git_trailers=later.git_trailers or earlier.git_trailers,
         egress=merged_egress,
         supervise=_overlay_declared_bool(earlier, later, "supervise"),
         nested_containers=_overlay_declared_bool(
@@ -331,6 +333,7 @@ def _merge_bottles(
         env=merged_env,
         git=merged_git,
         git_user=merged_git_user,
+        git_trailers=child.git_trailers or parent.git_trailers,
         egress=merged_egress,
         supervise=merged_supervise,
         nested_containers=merged_nested_containers,

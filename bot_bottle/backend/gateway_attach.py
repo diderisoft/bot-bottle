@@ -19,7 +19,7 @@ from ..bottle_state import git_gate_state_dir
 from ..control.gateway import Gateway, GatewayError
 from ..git_gate.plan import GitGatePlan
 from ..git_gate.provision import load_upstreams_snapshot
-from ..git_gate.service import stage_git_gate_scripts
+from ..git_gate.service import load_trailer_settings, stage_git_gate_scripts
 from ..lib.log import info
 from ..control.client import OrchestratorClient, OrchestratorClientError
 from .provision_gateway import GatewayTransport, provision_git_gate
@@ -132,12 +132,15 @@ def reprovision_git_gate(transport: GatewayTransport, bottle_id: str, slug: str)
     if not upstreams:
         return
     hook, access_hook, gitleaks = stage_git_gate_scripts(state_dir)
+    trailer, trailer_mode = load_trailer_settings(state_dir)
     provision_git_gate(transport, bottle_id, GitGatePlan(
         slug=slug,
         hook_script=hook,
         access_hook_script=access_hook,
         gitleaks_config=gitleaks,
         upstreams=upstreams,
+        trailer=trailer,
+        trailer_mode=trailer_mode,
     ))
 
 

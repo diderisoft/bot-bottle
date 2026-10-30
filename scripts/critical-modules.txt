@@ -42,6 +42,8 @@ bot_bottle/git_gate/provision.py
 bot_bottle/git_gate/service.py
 bot_bottle/control/git_gate_render.py
 bot_bottle/gateway/git_gate/http_backend.py
+bot_bottle/gateway/git_gate/trailer_check.py
+bot_bottle/git_gate/commit_hooks.py
 
 # Supervise proposal protocol and data plane.
 bot_bottle/supervisor/plan.py

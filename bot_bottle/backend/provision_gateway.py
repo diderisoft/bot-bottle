@@ -64,7 +64,9 @@ def provision_git_gate(
     if credential_paths:
         transport.exec(["chmod", "600", *credential_paths])
     # Init the bare repos and per-repo credential config.
-    script = git_gate_render_provision(bottle_id, plan.upstreams)
+    script = git_gate_render_provision(
+        bottle_id, plan.upstreams,
+        trailer_mode=plan.trailer_mode, trailer=plan.trailer)
     transport.exec(["sh", "-c", script])
 
 

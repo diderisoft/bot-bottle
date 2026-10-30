@@ -15,6 +15,7 @@ git-gate:
   user:                       # optional: the agent's git identity
     name: implementer-bot
     email: bot@example.com
+  trailers: require           # optional: require (default) | warn | off
   repos:                      # local name: the gate's bare repo
     bot-bottle: gitea.example.com/org/bot-bottle:write   # a grant on a forge (below)
     lib:
@@ -111,9 +112,78 @@ its key is minted with which secret.
   (`http://bottle:<token>@<gateway>:<port>`), whose host is the gate's on
   every backend.
 
+The agent's env also points `core.hooksPath` at the commit hooks (see
+[Commit trailers](#commit-trailers)).
+
 The agent's `NO_PROXY` covers the gateway, so git traffic to it skips the
 egress proxy. Smart-HTTP push to a forge through the egress proxy is blocked,
 so the gate is the only way to push.
+
+## Commit trailers
+
+Every commit an agent makes carries a trailer naming the bottle and run
+(PRD 0112, design repo), and git-gate checks pushes for it. This is part of
+the core: it works without the console.
+
+```
+Bot-Bottle: <bottle>/<run>
+Co-authored-by: <operator name> <operator email>
+```
+
+- `<bottle>` is the bottles the launch was built from (`--bottle`s, else the
+  agent's `bottle:`), joined with `+`; `<run>` is the bottled agent's
+  identity (its slug, e.g. `implementer-k3x9q`), minted at start and kept
+  across stop and resume, so commits made before a stop still push after a
+  resume. Both are reduced to `[A-Za-z0-9._-]`
+  (`contract/git_trailers.py`, `backend/resolve_common.py:launch_trailer`).
+- `Co-authored-by` credits the operator: the host's global git identity
+  (`git config --global user.name`/`user.email` where the launch runs). It's
+  left out when either is unset, or when the commit's author is the operator
+  (same email). Harnesses add their own model trailers; bot-bottle adds
+  none, and doesn't change the author.
+
+**Adding them** (`git_gate/commit_hooks.py`). The agent's env sets
+`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` to
+`core.hooksPath=~/.config/git/bot-bottle-hooks`, appended after any
+`GIT_CONFIG_*` entries the bottle's env has. Env config overrides a repo's own
+`core.hooksPath` (bot-bottle's `.githooks`, say), so the hooks run in every
+repo. `provision_git` fills the directory with one dispatcher linked under
+every hook name (except `push-to-checkout` and `proc-receive`, whose presence
+alone changes what git does) and `bot-bottle.gitconfig` holding the values.
+The dispatcher runs the hook git would have run without the override (the
+`core.hooksPath` from the repo's and user's config, else
+`<common dir>/hooks/<name>`), with the same args, stdin and exit code, so a
+repo's own hooks still run and can still reject. As `prepare-commit-msg`, once
+the repo's hook succeeds, it adds the trailers with `git interpret-trailers`:
+`Bot-Bottle` replaces an existing one, and `Co-authored-by` is added only if
+not already there, so amending never duplicates them. `prepare-commit-msg`
+runs for merges and amends too, and isn't skipped by `--no-verify`. If the
+hooks can't be installed, launch warns and carries on.
+
+**Checking them** (`gateway/git_gate/trailer_check.py`). Before the gitleaks
+scan, pre-receive checks every commit the push introduces: reachable from the
+new tip and from no ref the gate already has, so commits already upstream are
+never checked. Merge commits made in the bottle are checked. A commit passes
+when it has a `Bot-Bottle` trailer and every one it has equals this bottle's
+value. A failing push is rejected, never rewritten (that would change the
+agent's hashes); the message lists the commits and the command that fixes
+them, e.g.
+
+```
+git rebase --rebase-merges --exec 'git -c trailer.ifexists=replace commit --amend --no-edit --allow-empty --trailer "Bot-Bottle: dev/implementer-k3x9q"' 1a2b3c4d5e6f
+```
+
+`git-gate.trailers` in the bottle sets the mode: `require` (the default)
+refuses, `warn` forwards the push and prints the same message, `off` doesn't
+check. Commits the bottle didn't make are new to the gate too: a copied
+workspace's local commits that were never pushed, or commits fetched from
+another repo. Under `require`, pushing them needs the trailer added (which
+attributes them to the bottle) or a `warn` bottle. Like other `git-gate` fields it merges through `extends`, a child's
+winning. The value and mode are kept in the bottle's git-gate state dir
+(`trailer.json`) for re-provisioning, and set on each bare repo as
+`git-gate.trailer` and `git-gate.trailers`. A bottle launched before the
+check existed has no `trailer.json` and isn't checked after a gateway
+restart, since its guest has no hooks.
 
 ## Gateway side
 
@@ -158,19 +228,21 @@ The pre-receive hook (`git_gate_render_hook`) reads every ref first, then:
 
 1. Rejects Gitea AGit review refs (`refs/for/*`, `refs/draft/*`,
    `refs/for-review/*`). Push a branch and open the PR from it instead.
-2. Runs gitleaks over the commits the push introduces: those reachable from
+2. Checks every new commit carries this bottle's `Bot-Bottle` trailer
+   (see [Commit trailers](#commit-trailers)).
+3. Runs gitleaks over the commits the push introduces: those reachable from
    the new tip and not from any ref the gate already has
    (PRD 0028, design repo). The rules
    come from `git_gate_render_gitleaks_config`. A finding refuses the push.
-3. Re-scans ignoring `# gitleaks:allow` comments. A finding hidden only by an
+4. Re-scans ignoring `# gitleaks:allow` comments. A finding hidden only by an
    inline suppression becomes a `gitleaks-allow` supervise proposal. The push
    waits for the operator and is refused on rejection or timeout.
-4. Runs `gateway/git_gate/held_secret_scan.py`, which looks for the pushing
+5. Runs `gateway/git_gate/held_secret_scan.py`, which looks for the pushing
    bottle's own secrets in every ref name, commit message, identity, path and
    added line the push introduces. Those secrets are its `?` env values, its
    egress tokens and its canary. It matches by value, so it catches secrets
    gitleaks has no rule for.
-5. Forwards each accepted ref to `origin` over SSH, checking the pinned host
+6. Forwards each accepted ref to `origin` over SSH, checking the pinned host
    key.
 
 The hook scans every ref before forwarding any, so a hit on one ref can't

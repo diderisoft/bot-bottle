@@ -119,6 +119,8 @@ def bottle_document(bottle: ManifestBottle) -> dict[str, object]:
                               ("email", bottle.git_user.email)) if v}
     if user:
         git["user"] = user
+    if bottle.git_trailers:
+        git["trailers"] = bottle.git_trailers
     if bottle.forges:
         forges: dict[str, object] = {}
         for forge in bottle.forges:

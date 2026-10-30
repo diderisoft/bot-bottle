@@ -373,6 +373,8 @@ class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plug
                     f"{(configured.stderr or configured.stdout).strip()}"
                 )
 
+        self.provision_commit_hooks(bottle, plan)
+
         gu = manifest_bottle.git_user
         if not gu.is_empty():
             if gu.name:
@@ -387,6 +389,38 @@ class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plug
                     f"git config --global user.email {shlex.quote(gu.email)}",
                     user="node",
                 )
+
+    def provision_commit_hooks(self, bottle: "Bottle", plan: "BottlePlan") -> None:
+        """Install the git hooks that add the `Bot-Bottle` trailer (and the
+        operator's `Co-authored-by`) to every commit; the agent's env already
+        points `core.hooksPath` at them (`git_gate.commit_hooks`). A failure
+        warns: git-gate still refuses commits without the trailer."""
+        from .contract.git_trailers import TRAILER_KEY
+        from .git_gate import commit_hooks
+        from .lib.log import info, warn
+
+        trailer = plan.git_gate_plan.trailer
+        if not trailer:
+            return
+        operator_name, operator_email = commit_hooks.operator_identity()
+        directory = commit_hooks.hooks_dir(plan.guest_home)
+        dispatcher = plan.stage_dir / commit_hooks.DISPATCHER_NAME
+        dispatcher.write_text(commit_hooks.render_dispatcher())
+        config = plan.stage_dir / commit_hooks.CONFIG_NAME
+        config.write_text(commit_hooks.render_hook_config(
+            trailer, operator_name, operator_email))
+        info(f"commit hooks in {directory}: {TRAILER_KEY}: {trailer}"
+             + (f", co-author {operator_name} <{operator_email}>"
+                if operator_name else ""))
+        made = bottle.exec(f"mkdir -p {shlex.quote(directory)}", user="root")
+        if made.returncode == 0:
+            bottle.cp_in(str(dispatcher), f"{directory}/{commit_hooks.DISPATCHER_NAME}")
+            bottle.cp_in(str(config), f"{directory}/{commit_hooks.CONFIG_NAME}")
+            made = bottle.exec(commit_hooks.render_install(directory), user="root")
+        if made.returncode != 0:
+            warn("could not install the commit hooks; commits won't carry the "
+                 f"{TRAILER_KEY} trailer: "
+                 f"{(made.stderr or made.stdout).strip()}")
 
 
 def _load_user_plugin(harness: str) -> AgentProvider | None:

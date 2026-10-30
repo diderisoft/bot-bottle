@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ..contract.git_trailers import TRAILER_MODES
 from .util import ManifestError, as_json_object
 
 # Shell-safe repo names (they appear in generated scripts, also quoted).
@@ -262,16 +263,32 @@ class ManifestGitUser:
         return not self.name and not self.email
 
 
+def parse_git_gate_trailers(bottle_name: str, raw: object) -> str:
+    """`git-gate.trailers`: how git-gate checks pushed commits carry the
+    bottle's `Bot-Bottle` trailer (`require`, `warn` or `off`); "" when
+    unset, which is `require`."""
+    d = as_json_object(raw, f"bottle '{bottle_name}' git-gate")
+    if "trailers" not in d:
+        return ""
+    value = d["trailers"]
+    if not isinstance(value, str) or value not in TRAILER_MODES:
+        raise ManifestError(
+            f"bottle '{bottle_name}' git-gate.trailers must be one of "
+            f"{', '.join(TRAILER_MODES)} (was {value!r})"
+        )
+    return value
+
+
 def parse_git_gate_config(
     bottle_name: str,
     raw: object,
 ) -> tuple[tuple[ManifestGitEntry, ...], ManifestGitUser]:
     d = as_json_object(raw, f"bottle '{bottle_name}' git-gate")
     for k in d:
-        if k not in {"user", "repos"}:
+        if k not in {"user", "repos", "trailers"}:
             raise ManifestError(
                 f"bottle '{bottle_name}' git-gate has unknown key {k!r}; "
-                f"allowed: user, repos"
+                f"allowed: user, repos, trailers"
             )
 
     git_user = (

@@ -19,7 +19,9 @@ from ..bottle_state import (
     write_metadata,
 )
 from ..egress import Egress, EgressPlan
+from ..contract.git_trailers import trailer_value
 from ..git_gate import GitGate, GitGatePlan
+from ..git_gate.commit_hooks import hooks_env
 from ..lib.config_store import ConfigStore
 from ..lib.log import die
 from ..manifest import Manifest, ManifestBottle
@@ -72,10 +74,25 @@ def prepare_agent_state_dir(slug: str, manifest: Manifest) -> tuple[Path, Path]:
     return agent_dir, prompt_file
 
 
-def prepare_git_gate(bottle: ManifestBottle, slug: str) -> GitGatePlan:
+def prepare_git_gate(bottle: ManifestBottle, slug: str, trailer: str = "") -> GitGatePlan:
     git_gate_dir = git_gate_state_dir(slug)
     git_gate_dir.mkdir(parents=True, exist_ok=True)
-    return GitGate().prepare(bottle, slug, git_gate_dir)
+    return GitGate().prepare(bottle, slug, git_gate_dir, trailer=trailer)
+
+
+def launch_trailer(spec: BottleSpec, manifest: Manifest, slug: str) -> str:
+    """The `Bot-Bottle` trailer for this launch: `<bottle>/<run>`, the bottles
+    it was built from (as selected, else the agent's) and its slug."""
+    names = spec.bottle_names or ((manifest.agent.bottle,) if manifest.agent.bottle else ())
+    return trailer_value(names or ("bottle",), slug)
+
+
+def with_commit_hooks_env(provision: AgentProvisionPlan) -> AgentProvisionPlan:
+    """`provision` with the env that points git at the provisioned commit
+    hooks (`git_gate.commit_hooks`), kept out of the preflight summary."""
+    env = hooks_env(provision.guest_home, provision.guest_env)
+    return replace(provision, guest_env={**provision.guest_env, **env},
+                   hidden_env_names=provision.hidden_env_names | frozenset(env))
 
 
 def prepare_egress(

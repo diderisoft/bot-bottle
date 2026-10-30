@@ -10,7 +10,9 @@ from typing import Mapping
 from .util import ManifestError, as_json_object
 from .egress import ManifestEgressConfig
 from .forges import ManifestForge
-from .git import ManifestGitEntry, ManifestGitUser, parse_git_gate_config
+from .git import (
+    ManifestGitEntry, ManifestGitUser, parse_git_gate_config, parse_git_gate_trailers,
+)
 from .schema import BOTTLE_KEYS
 
 __all__ = ["ManifestBottle"]
@@ -61,6 +63,8 @@ class ManifestBottle:
     # The bottle's git identity; empty skips `git config`. Independent of
     # repos.
     git_user: ManifestGitUser = field(default_factory=ManifestGitUser)
+    # `git-gate.trailers`: require, warn or off; "" is unset (require).
+    git_trailers: str = ""
     egress: ManifestEgressConfig = field(default_factory=ManifestEgressConfig)
     # Run the supervise server for this bottle (default true).
     supervise: bool = True
@@ -131,9 +135,11 @@ class ManifestBottle:
 
         git: tuple[ManifestGitEntry, ...] = ()
         git_user = ManifestGitUser()
+        git_trailers = ""
         git_raw = d.get("git-gate")
         if git_raw is not None:
             git, git_user = parse_git_gate_config(name, git_raw)
+            git_trailers = parse_git_gate_trailers(name, git_raw)
 
         if "agent_provider" in d:
             raise ManifestError(
@@ -166,7 +172,8 @@ class ManifestBottle:
 
         return cls(
             env=env, git=git,
-            git_user=git_user, egress=egress, supervise=supervise_raw,
+            git_user=git_user, git_trailers=git_trailers, egress=egress,
+            supervise=supervise_raw,
             nested_containers=nested_raw, audit=audit,
             declared_fields=frozenset(d),
         )

@@ -19,3 +19,8 @@ class GitGatePlan:
     access_hook_script: Path
     upstreams: tuple[GitGateUpstream, ...]
     gitleaks_config: Path = Path()
+    # The `Bot-Bottle` trailer every commit carries (`<bottle>/<run>`), and
+    # how pre-receive checks it (`require`, `warn` or `off`). Off without a
+    # value: a bottle launched before the check existed.
+    trailer: str = ""
+    trailer_mode: str = "off"

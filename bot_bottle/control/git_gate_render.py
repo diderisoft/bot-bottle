@@ -9,6 +9,7 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..contract.git_trailers import TRAILER_MODES, TRAILER_OFF, TRAILER_VALUE_RE
 from ..contract.identity import IDENTITY_HEADER
 from ..manifest import ManifestBottle, ManifestGitEntry
 from ..gateway.egress.dlp_detectors import TOKEN_PATTERNS
@@ -135,6 +136,13 @@ def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
         "  git -C \"$repo\" config receive.advertisePushOptions true",
         "  git -C \"$repo\" config http.receivepack true",
         "  git -C \"$repo\" config git-gate.readOnly \"$read_only\"",
+        # The commit-trailer check (PRD 0112): its mode and the value it wants.
+        "  git -C \"$repo\" config git-gate.trailers \"$trailers_mode\"",
+        "  if [ -n \"$trailer\" ]; then",
+        "    git -C \"$repo\" config git-gate.trailer \"$trailer\"",
+        "  else",
+        "    git -C \"$repo\" config --unset-all git-gate.trailer || true",
+        "  fi",
         "  install -m 755 /etc/git-gate/pre-receive \"$repo/hooks/pre-receive\"",
         "}",
     ]
@@ -147,17 +155,27 @@ _SAFE_BOTTLE_ID = re.compile(r"[A-Za-z0-9_-]+")
 
 def git_gate_render_provision(
     bottle_id: str, upstreams: tuple[GitGateUpstream, ...],
+    *, trailer_mode: str = TRAILER_OFF, trailer: str = "",
 ) -> str:
     """POSIX sh that inits one bottle's bare repos under `/git/<bottle_id>/`
-    with credentials from `/git-gate/creds/<bottle_id>/`. Run in the gateway at
-    registration."""
+    with credentials from `/git-gate/creds/<bottle_id>/`, and sets how
+    pre-receive checks the `Bot-Bottle` trailer (`trailer_mode`) for which
+    value (`trailer`). Run in the gateway at registration."""
     if not _SAFE_BOTTLE_ID.fullmatch(bottle_id):
         raise ValueError(f"git-gate: unsafe bottle id {bottle_id!r}")
+    if trailer_mode not in TRAILER_MODES:
+        raise ValueError(f"git-gate: unknown trailer mode {trailer_mode!r}")
+    if trailer and not TRAILER_VALUE_RE.fullmatch(trailer):
+        raise ValueError(f"git-gate: unsafe trailer value {trailer!r}")
+    if trailer_mode != TRAILER_OFF and not trailer:
+        raise ValueError("git-gate: a trailer mode other than off needs a trailer value")
     repo_root = f"/git/{bottle_id}"
     creds_dir = f"/git-gate/creds/{bottle_id}"
     lines = ["#!/bin/sh", "set -eu", ""]
     lines += _git_gate_init_repo_fn(repo_root, creds_dir)
-    lines += ["", f"mkdir -p {shlex.quote(repo_root)}"]
+    lines += ["", f"trailers_mode={shlex.quote(trailer_mode)}",
+              f"trailer={shlex.quote(trailer)}",
+              f"mkdir -p {shlex.quote(repo_root)}"]
     for u in upstreams:
         lines.append(f"init_repo {shlex.quote(u.name)} {shlex.quote(u.upstream_url)} "
                      f"{'false' if u.writable else 'true'}")
@@ -165,7 +183,8 @@ def git_gate_render_provision(
 
 
 def git_gate_render_hook() -> str:
-    """The shared pre-receive hook (POSIX sh): gitleaks-scan every incoming
+    """The shared pre-receive hook (POSIX sh): check every new commit carries
+    the bottle's `Bot-Bottle` trailer, gitleaks-scan every incoming
     ref, refuse ones carrying a secret the bottle holds, then forward each ref
     to `origin` with the repo's credential. Every ref is scanned before any is
     forwarded. stdin is saved to a temp file, since it can be read only once."""
@@ -217,6 +236,15 @@ while IFS=' ' read -r old new ref; do
       ;;
   esac
 done < "$refs_file"
+
+# Phase 0b: every new commit carries this bottle's Bot-Bottle trailer
+# (git-gate.trailers: require refuses, warn only says so, off or unset skips).
+# Rejected, never rewritten: rewriting would change the agent's hashes.
+if ! PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 -m bot_bottle.gateway.git_gate.trailer_check "$refs_file"; then
+  audit_push forge.push_rejected blocked "*" --detail "commits without this bottle's Bot-Bottle trailer"
+  exit 1
+fi
 
 supervise_gitleaks_allow() {
   log_opts=$1
