@@ -139,8 +139,9 @@ def container_image_id(name: str) -> str:
 
 
 def stop_container(name: str) -> None:
-    """Stop container `name`, keeping it. Best effort."""
-    run_docker(["docker", "stop", name])
+    """Stop container `name`, keeping it. Best effort. Its init is `sleep`,
+    which ignores SIGTERM, and the agent has ended by then: a short wait."""
+    run_docker(["docker", "stop", "--time", "2", name])
 
 
 def rewire_and_start(name: str, network: str, address: str) -> str:

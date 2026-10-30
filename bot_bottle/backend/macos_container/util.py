@@ -373,8 +373,9 @@ def remove_volume(name: str) -> None:
 
 
 def stop_container(name: str) -> None:
-    """Stop container `name`, keeping it. Best effort."""
-    subprocess.run([_CONTAINER, "stop", name], stdout=subprocess.DEVNULL,
+    """Stop container `name`, keeping it. Best effort. Its init is `sleep`,
+    which ignores SIGTERM, and the agent has ended by then: a short wait."""
+    subprocess.run([_CONTAINER, "stop", "--time", "2", name], stdout=subprocess.DEVNULL,
                    stderr=subprocess.DEVNULL, check=False)
 
 
