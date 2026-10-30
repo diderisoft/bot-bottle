@@ -52,7 +52,9 @@ def build_image(
             "COPY --from=docker_cli /usr/local/bin/docker /usr/local/bin/docker\n"
             "COPY --from=docker_cli /usr/local/libexec/docker/cli-plugins/"
             "docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose\n"
-            "RUN apt-get update \\\n"
+            # The base images pin apt to a snapshot.debian.org date, whose
+            # Release files expire; match their flag.
+            "RUN apt-get -o Acquire::Check-Valid-Until=false update \\\n"
             # podman 5's networking, installed explicitly
             # (`--no-install-recommends` omits it):
             #   podman       moved here from the base images

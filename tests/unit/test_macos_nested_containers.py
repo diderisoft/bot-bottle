@@ -121,6 +121,8 @@ class TestNestedContainersImage(unittest.TestCase):
             self.assertIn("FROM ${DOCKER_CLI_BASE_IMAGE} AS docker_cli", text)
             self.assertIn("FROM agent:sha256-deadbeef", text)
             self.assertIn("aardvark-dns fuse-overlayfs netavark nftables passt podman", text)
+            # The base's snapshot.debian.org Release files expire.
+            self.assertIn("apt-get -o Acquire::Check-Valid-Until=false update", text)
             self.assertIn("USER node", text)
             self.assertTrue((Path(context) / "nested-containers-init.sh").is_file())
 
