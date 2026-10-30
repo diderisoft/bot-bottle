@@ -36,6 +36,9 @@ from typing import TYPE_CHECKING, Any
 from ...lib import log
 from ...paths import bot_bottle_root
 
+# An exec reading the guest's transcripts gives up after this long.
+POLL_TIMEOUT_SECONDS = 60.0
+
 if TYPE_CHECKING:
     from ...backend import Bottle
     from .audit_events import HostAudit
@@ -192,7 +195,8 @@ class TranscriptFollower:
         """A follower for a session about to start: files already there are
         another session's and never copied."""
         r = bottle.exec(f'for f in {shell_glob(glob)}; do '
-                        '[ -f "$f" ] && printf "%s\\n" "$f"; done; :')
+                        '[ -f "$f" ] && printf "%s\\n" "$f"; done; :',
+                        timeout=POLL_TIMEOUT_SECONDS)
         skip = r.stdout.splitlines() if r.returncode == 0 else []
         follower = cls(session=session, activation=activation, glob=glob, agent_id=agent_id,
                        skip=skip, audit=audit, harness=harness)
@@ -274,7 +278,10 @@ class TranscriptFollower:
         with self._lock:
             known = {p: c.offset for p, c in self._copies.items()}
             try:
-                r = bottle.exec(poll_script(self.glob, self.skip, known))
+                # Bounded: a poll that never returned held the lock, and
+                # `close` (so the bottle's teardown) waited on it for good.
+                r = bottle.exec(poll_script(self.glob, self.skip, known),
+                                timeout=POLL_TIMEOUT_SECONDS)
             except Exception as e:  # pylint: disable=broad-exception-caught
                 log.debug(f"transcript {self.session}: poll failed: {e}")
                 return

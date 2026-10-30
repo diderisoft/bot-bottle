@@ -10,6 +10,7 @@ from __future__ import annotations
 import enum
 import os
 import shlex
+import subprocess
 import tempfile
 from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager, contextmanager
@@ -75,6 +76,25 @@ class ExecResult:
     stderr: str
 
 
+# The exit status of a timed-out exec, as `timeout(1)` gives. The host
+# controller bounds its background execs: one that never returned (a wedged
+# `container exec`) held its caller, and whatever waited on it, for good.
+TIMED_OUT = 124
+
+
+def run_script(argv: list[str], script: str, *, timeout: float | None = None,
+               env: dict[str, str] | None = None) -> ExecResult:
+    """Run `argv` with `script` on its stdin, capturing its output. Past
+    `timeout` seconds it's killed and the result is `TIMED_OUT`."""
+    try:
+        result = subprocess.run(argv, input=script, capture_output=True, text=True,
+                                env=env, check=False, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return ExecResult(returncode=TIMED_OUT, stdout="",
+                          stderr=f"timed out after {timeout:g}s")
+    return ExecResult(returncode=result.returncode, stdout=result.stdout, stderr=result.stderr)
+
+
 @dataclass(frozen=True)
 class ActiveAgent:
     """One running agent, as `active` renders it. `services` is the gateway
@@ -117,9 +137,11 @@ class Bottle(ABC):
         the host controller runs it in tmux."""
 
     @abstractmethod
-    def exec(self, script: str, *, user: str = "node") -> ExecResult:
+    def exec(self, script: str, *, user: str = "node",
+             timeout: float | None = None) -> ExecResult:
         """Run `script` as a POSIX shell script in the bottle as `user` and
-        return the captured result. Non-zero exit doesn't raise."""
+        return the captured result. Non-zero exit doesn't raise; past
+        `timeout` seconds it's killed (`TIMED_OUT`)."""
 
     @abstractmethod
     def cp_in(self, host_path: str, container_path: str) -> None: ...

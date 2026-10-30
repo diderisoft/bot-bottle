@@ -23,6 +23,9 @@ from typing import TYPE_CHECKING, Any
 
 from ...paths import bot_bottle_root
 
+# Exporting the workspace's changes gives up after this long.
+PATCH_TIMEOUT_SECONDS = 300.0
+
 if TYPE_CHECKING:
     from ...backend import Bottle
 
@@ -49,7 +52,8 @@ def take(bottle: "Bottle", workspace: Any, *, session: str, activation: str,
     if not (workspace.enabled and workspace.has_host_git_dir):
         raise SnapshotUnavailable("only a workspace copied from a git checkout can be "
                                   "snapshotted (start the agent with --cwd in a git repo)")
-    result = bottle.exec(export_patch_script(shlex.quote(workspace.guest_path)))
+    result = bottle.exec(export_patch_script(shlex.quote(workspace.guest_path)),
+                         timeout=PATCH_TIMEOUT_SECONDS)
     if result.returncode != 0:
         raise SnapshotUnavailable(f"couldn't read the workspace: "
                                   f"{(result.stderr or result.stdout).strip()[:200]}")

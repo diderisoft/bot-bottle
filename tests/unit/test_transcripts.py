@@ -34,9 +34,12 @@ class LocalBottle:
 
     def __init__(self) -> None:
         self.fail = False
+        self.timeouts: list[float | None] = []
 
-    def exec(self, script: str, *, user: str = "node") -> ExecResult:
+    def exec(self, script: str, *, user: str = "node",
+             timeout: float | None = None) -> ExecResult:
         del user
+        self.timeouts.append(timeout)
         if self.fail:
             raise RuntimeError("bottle gone")
         r = subprocess.run(["sh", "-c", script], capture_output=True, text=True, check=False)
@@ -167,6 +170,14 @@ class TestDefaultProvider(unittest.TestCase):
 
 
 class TestFollower(_Root):
+    def test_every_read_of_the_guest_is_bounded(self) -> None:
+        # A poll that never returned held the follower's lock, and the
+        # bottle's teardown waited on it for good.
+        from bot_bottle.control.hostctl.transcripts import POLL_TIMEOUT_SECONDS
+        follower = self.begin()
+        follower.poll(cast(Any, self.bottle))
+        self.assertEqual({POLL_TIMEOUT_SECONDS}, set(self.bottle.timeouts))
+
     def test_copies_new_files_only_as_they_grow(self) -> None:
         (self.guest / "old.jsonl").write_text("before the session\n")
         follower = self.begin()

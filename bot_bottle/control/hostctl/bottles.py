@@ -46,6 +46,8 @@ if TYPE_CHECKING:
 SESSION_KIND = "bottle"
 # How long a stopped agent gets before its bottle is finished anyway.
 STOP_GRACE_SECONDS = 15.0
+# Exporting the workspace's changes before teardown gives up after this long.
+PATCH_TIMEOUT_SECONDS = 300.0
 # How long to wait for its report once its session is gone.
 GONE_REPORT_SECONDS = 2.0
 
@@ -153,7 +155,8 @@ def _save_work(bottle: Any, workspace: Any, identity: str) -> None:
     try:
         if not (workspace.enabled and workspace.has_host_git_dir):
             return
-        result = bottle.exec(export_patch_script(shlex.quote(workspace.guest_path)))
+        result = bottle.exec(export_patch_script(shlex.quote(workspace.guest_path)),
+                             timeout=PATCH_TIMEOUT_SECONDS)
     except Exception as e:  # pylint: disable=broad-exception-caught  # never block teardown
         log.warn(f"bottle {identity}: couldn't save the agent's changes: {e}")
         return

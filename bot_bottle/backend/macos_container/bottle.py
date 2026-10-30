@@ -9,6 +9,7 @@ from typing import Callable, cast
 
 from ...agent_provider import PromptMode, prompt_args
 from .. import Bottle, ExecResult
+from ..base import run_script
 from ..terminal import agent_shell_command
 from . import pty_forward as _pty_forward
 
@@ -108,26 +109,16 @@ class MacosContainerBottle(Bottle):
             self.agent_argv(argv, tty=True), self.terminal_title, self.terminal_color)
         return command, dict(self._exec_env)
 
-    def exec(self, script: str, *, user: str = "node") -> ExecResult:
+    def exec(self, script: str, *, user: str = "node",
+             timeout: float | None = None) -> ExecResult:
         # Provisioning gets the agent's exec env too, so its egress carries the
         # token. Bare names again.
         argv = ["container", "exec", "--user", user, "--interactive"]
         for name in sorted(self._exec_env):
             argv.extend(["--env", name])
         argv.extend([self.name, "sh", "-s"])
-        result = subprocess.run(
-            argv,
-            input=script,
-            capture_output=True,
-            text=True,
-            env={**os.environ, **self._exec_env} if self._exec_env else None,
-            check=False,
-        )
-        return ExecResult(
-            returncode=result.returncode,
-            stdout=result.stdout,
-            stderr=result.stderr,
-        )
+        return run_script(argv, script, timeout=timeout,
+                          env={**os.environ, **self._exec_env} if self._exec_env else None)
 
     def cp_in(self, host_path: str, container_path: str) -> None:
         subprocess.run(

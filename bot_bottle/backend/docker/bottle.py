@@ -9,6 +9,7 @@ from typing import cast
 
 from ...agent_provider import PromptMode, prompt_args
 from .. import Bottle, ExecResult
+from ..base import run_script
 from ..terminal import agent_shell_command
 
 
@@ -58,20 +59,11 @@ class DockerBottle(Bottle):
             self.agent_argv(argv, tty=True), self.terminal_title, self.terminal_color)
         return command, {}
 
-    def exec(self, script: str, *, user: str = "node") -> ExecResult:
+    def exec(self, script: str, *, user: str = "node",
+             timeout: float | None = None) -> ExecResult:
         # Pipe the script to `sh -s` so it never crosses argv.
-        result = subprocess.run(
-            ["docker", "exec", "-u", user, "-i", self.name, "sh", "-s"],
-            input=script,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return ExecResult(
-            returncode=result.returncode,
-            stdout=result.stdout,
-            stderr=result.stderr,
-        )
+        return run_script(["docker", "exec", "-u", user, "-i", self.name, "sh", "-s"],
+                          script, timeout=timeout)
 
     def cp_in(self, host_path: str, container_path: str) -> None:
         subprocess.run(

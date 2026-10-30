@@ -35,9 +35,11 @@ class _Bottle:
     def __init__(self, secret: str = "evs") -> None:
         self.secret = secret
         self.execs: list[str] = []
+        self.timeouts: list[float | None] = []
 
-    def exec(self, script: str, *, user: str = "node") -> Any:
+    def exec(self, script: str, *, user: str = "node", timeout: float | None = None) -> Any:
         del user
+        self.timeouts.append(timeout)
         self.execs.append(script)
         return SimpleNamespace(returncode=0, stdout=self.secret + "\n", stderr="")
 
@@ -97,6 +99,7 @@ class TestRefresher(unittest.TestCase):
         self.refresher.refresh_all()
         self.assertEqual("from-guest", self.pushed[0][3])
         self.assertIn("env-var-secret", bottle.execs[0])
+        self.assertIsNotNone(bottle.timeouts[0])  # a wedged exec doesn't hold the refresher
 
     def test_a_missing_login_warns_once(self) -> None:
         self.provider.result = HostLoginError("run `claude` on the host")

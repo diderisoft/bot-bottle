@@ -58,7 +58,6 @@ The control stream (JSON lines):
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import hashlib
 import json
 import os
@@ -78,6 +77,7 @@ from .audit_index import query_host_journal
 from .console_terminal import HISTORY_LINES, session_terminals, type_into, valid_size
 from . import remote_actions
 from .remote_requests import launch_extras, resume_request
+from .remote_tasks import AgentTurns, Stopped, unless_stopped
 from .transcript_serve import TranscriptLink
 
 if TYPE_CHECKING:
@@ -312,7 +312,18 @@ class ConsoleLink:
         # but not to be presented again.
         self._stopping: set[str] = set()
         self._starting: set[str] = set()  # console agent ids mid-launch
+        self.turns = AgentTurns()  # launches, resumes and stops, per agent
         self.transcripts = TranscriptLink(self._send)
+
+    # Wait on the bottle: minutes for a launch, for good if a teardown wedges.
+    SLOW = frozenset({"launch", "resume", "stop"})
+
+    async def take(self, msg: dict[str, Any]) -> None:
+        """Handle `msg` off the link: a slow one in its agent's turn, beside it."""
+        if msg.get("type") in self.SLOW:
+            self.turns.submit(str(msg.get("agent_id", "")), lambda: self.handle(msg))
+        else:
+            await self.handle(msg)
 
     async def handle(self, msg: dict[str, Any]) -> None:
         kind = msg.get("type")
@@ -729,27 +740,10 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
                 log.warn("remote: dropped a malformed console message")
                 continue
             if isinstance(msg, dict):
-                await link.handle(msg)
+                await link.take(msg)
     finally:
         watcher.cancel()
         link.close()
-
-
-class _Stopped(Exception):
-    """`stop` was set while the link was dialing or serving."""
-
-
-async def _unless_stopped(coro: Awaitable[Any], stopped: "asyncio.Future[Any]") -> Any:
-    """`coro`'s result, or `_Stopped` (with `coro` cancelled) once `stopped`
-    resolves. `stopped` is shared and never cancelled here."""
-    task = asyncio.ensure_future(coro)
-    await asyncio.wait({task, stopped}, return_when=asyncio.FIRST_COMPLETED)
-    if task.done():
-        return task.result()
-    task.cancel()
-    with contextlib.suppress(asyncio.CancelledError, Exception):
-        await task
-    raise _Stopped
 
 
 async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> None:
@@ -769,7 +763,7 @@ async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> 
             conn = None
             try:
                 addr = iroh.EndpointTicket.from_string(config.console_ticket).endpoint_addr()
-                conn = await _unless_stopped(endpoint.connect(addr, ALPN), stopped)
+                conn = await unless_stopped(endpoint.connect(addr, ALPN), stopped)
                 remote = str(conn.remote_id())
                 if remote != config.console_node_id:
                     conn.close(_REFUSED, b"unexpected console")
@@ -777,9 +771,9 @@ async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> 
                 attempt = 0
                 write_status(connected=True, console_node_id=remote)
                 log.info("remote: connected to the console")
-                await _unless_stopped(serve_connection(conn, bottles, state=state), stopped)
+                await unless_stopped(serve_connection(conn, bottles, state=state), stopped)
                 write_status(connected=False, error="console closed the connection")
-            except _Stopped:
+            except Stopped:
                 if conn is not None:
                     conn.close(_HOST_STOPPING, b"host controller stopping")
                 break

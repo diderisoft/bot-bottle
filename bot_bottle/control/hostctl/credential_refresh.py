@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from ...backend.adoption import AdoptedCredentials
 
 REFRESH_SECONDS = 300.0
+READ_TIMEOUT_SECONDS = 60.0  # reading the bottle's secret from inside it
 # How long before the host login expires to start warning.
 WARN_BEFORE = timedelta(hours=6)
 # Where firecracker keeps the bottle's ENV_VAR_SECRET; the container backends
@@ -55,7 +56,8 @@ def read_env_var_secret(bottle: "Bottle") -> str:
     # pylint: disable-next=import-outside-toplevel
     from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
     result = bottle.exec(f"cat {_ENV_VAR_SECRET_FILE} 2>/dev/null || "
-                         f"printenv {ENV_VAR_SECRET_NAME}", user="root")
+                         f"printenv {ENV_VAR_SECRET_NAME}", user="root",
+                         timeout=READ_TIMEOUT_SECONDS)
     return (result.stdout or "").strip() if result.returncode == 0 else ""
 
 

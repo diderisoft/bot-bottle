@@ -129,7 +129,10 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
   session's, never copied) and writes `follow.json`. Then, once a second and
   once more after the agent exits, one `exec` into the bottle reads each new
   file's new bytes by offset (up to 4 MiB a poll) and the 64 bytes before
-  the offset.
+  the offset. That `exec` gives up after 60 seconds, so a wedged one can't
+  hold the follower, or the teardown waiting to close it. The daemon's other
+  background `exec`s are bounded too (reading a bottle's secret, exporting a
+  workspace's changes).
 - The bytes are appended exactly as read to
   `~/.bot-bottle/transcripts/<session>/<activation>/<file>.jsonl` (0600, in
   0700 directories), with
@@ -241,7 +244,9 @@ refuses a console whose node id isn't the one pinned at login.
 The console can list local agents, launch a **local agent by name** (with an
 optional prompt, bottle names and label), stop one, and view or type into
 sessions. Agent and bottle definitions always come from this host, never from
-the console.
+the console. A launch, resume or stop runs beside the link, after that agent's
+previous one, so the console's other requests are answered while it waits on
+the bottle.
 
 The console sees **every session on the host**, not only the ones it
 launched. Each session record carries its `origin` (`console` or

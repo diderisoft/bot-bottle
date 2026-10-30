@@ -17,6 +17,7 @@ from typing import Mapping, cast
 
 from ...agent_provider import PromptMode, prompt_args
 from .. import Bottle, ExecResult
+from ..base import run_script
 from ..terminal import agent_shell_command
 from . import util
 
@@ -121,20 +122,13 @@ class FirecrackerBottle(Bottle):
             self.agent_argv(argv, tty=True), self.terminal_title, self.terminal_color)
         return command, {}
 
-    def exec(self, script: str, *, user: str = "node") -> ExecResult:
+    def exec(self, script: str, *, user: str = "node",
+             timeout: float | None = None) -> ExecResult:
         # Pipe the script to `sh -s`, so nothing is quoted through ssh.
         remote = ["runuser", "-u", user, "--",
                   "env", *_env_assignments_for(user, self._guest_env, self._image_env),
                   "/bin/sh", "-s"]
-        result = subprocess.run(
-            [*self._ssh(tty=False), "--", *remote],
-            input=script, capture_output=True, text=True, check=False,
-        )
-        return ExecResult(
-            returncode=result.returncode,
-            stdout=result.stdout,
-            stderr=result.stderr,
-        )
+        return run_script([*self._ssh(tty=False), "--", *remote], script, timeout=timeout)
 
     def cp_in(self, host_path: str, container_path: str) -> None:
         # Stream a tar over the exec channel: dropbear ships no scp or sftp.

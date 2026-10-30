@@ -21,7 +21,7 @@ from bot_bottle.cli.commands import remote as remote_cmd
 from bot_bottle.cli.commands.login import _save_credentials
 from bot_bottle.contract.hostctl import LaunchRequest
 from bot_bottle.control.client import AlreadyAnswered
-from bot_bottle.control.hostctl import console_terminal, remote
+from bot_bottle.control.hostctl import console_terminal, remote, remote_tasks
 from bot_bottle.lib.log import Die
 from tests.unit import use_bottle_root
 
@@ -162,6 +162,40 @@ def _pending(pid: str = "p1", session: str = "bottle-1") -> dict[str, Any]:
     return {"id": pid, "bottle_slug": "b-9", "bottle_label": session, "tool": "egress-allow",
             "justification": "schema", "proposed_file": _PROPOSED, "current_file": _CURRENT,
             "arrival_timestamp": "2026-10-23T18:00:01.123456+00:00"}
+
+
+class _SlowTeardown(_Bottles):
+    """A teardown that waits until `release` is set, as a wedged one did."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = threading.Event()
+
+    def teardown(self, bottle_id: str, role: str = "cli") -> dict[str, object]:
+        self.release.wait(10)
+        return super().teardown(bottle_id, role)
+
+
+class TestSlowRequests(unittest.TestCase):
+    def test_a_stuck_stop_doesnt_hold_the_links_other_requests(self) -> None:
+        bottles = _SlowTeardown()
+        link, sent = _link(bottles)
+
+        async def scenario() -> None:
+            await link.take({"type": "launch", "agent_id": "a1",
+                             "definition": {"name": "implementer"}})
+            await link.take({"type": "stop", "agent_id": "a1"})
+            await link.take({"type": "list_local", "request_id": "r1"})
+            # Answered while the stop still waits on the bottle.
+            self.assertIn("local_definitions", [m["type"] for m in sent])
+            self.assertEqual([], bottles.torn_down)
+            bottles.release.set()
+            await asyncio.gather(*link.turns.pending.values())
+
+        asyncio.run(scenario())
+        # The stop ran after the launch, as it was sent.
+        self.assertEqual(["bottle-1"], bottles.torn_down)
+        self.assertEqual("agent_stopped", sent[-1]["type"])
 
 
 class TestApprovals(unittest.TestCase):
@@ -1084,7 +1118,7 @@ class TestUnlessStopped(unittest.TestCase):
     def test_returns_the_result_or_cancels_once_stopped(self) -> None:
         async def go() -> tuple[object, bool]:
             stopped: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-            quick = await remote._unless_stopped(asyncio.sleep(0, "done"), stopped)  # pylint: disable=protected-access
+            quick = await remote_tasks.unless_stopped(asyncio.sleep(0, "done"), stopped)
             cancelled = asyncio.Event()
 
             async def forever() -> None:
@@ -1094,8 +1128,8 @@ class TestUnlessStopped(unittest.TestCase):
                     cancelled.set()
                     raise
             asyncio.get_running_loop().call_later(0.05, stopped.set_result, None)
-            with self.assertRaises(remote._Stopped):  # pylint: disable=protected-access
-                await remote._unless_stopped(forever(), stopped)  # pylint: disable=protected-access
+            with self.assertRaises(remote_tasks.Stopped):
+                await remote_tasks.unless_stopped(forever(), stopped)
             return quick, cancelled.is_set()
         self.assertEqual(("done", True), asyncio.run(go()))
 
