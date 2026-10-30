@@ -39,13 +39,18 @@ class TestSubnetAllocation(unittest.TestCase):
         self.assertTrue(all(s.startswith("10.242.") for s in subnets))
         self.assertEqual("10.242.0.0/20", AGENT_SUBNET_POOL)
 
+    def test_a_custom_pool_is_carved_the_same_way(self) -> None:
+        subnets = list(free_agent_subnets(["172.31.5.8/29"], "172.31.5.0/27"))
+        self.assertEqual(["172.31.5.0/29", "172.31.5.16/29", "172.31.5.24/29"], subnets)
+
     def test_gateway_is_dot_2_and_agent_dot_3(self) -> None:
         self.assertEqual(("10.242.0.10", "10.242.0.11"), agent_subnet_addresses("10.242.0.8/29"))
 
 
 class TestCreate(unittest.TestCase):
     def _run(self, creates: list["subprocess.CompletedProcess[str]"], *,
-             existing: str = "10.242.0.0/29", inspect: str = "1|true|10.242.0.0/29"):
+             existing: str = "10.242.0.0/29", inspect: str = "1|true|10.242.0.0/29",
+             pool: str = ""):
         calls: list[list[str]] = []
         answers = iter(creates)
 
@@ -59,7 +64,7 @@ class TestCreate(unittest.TestCase):
                 return _done(out=inspect)
             return next(answers)
         with patch.object(an, "run_docker", side_effect=run):
-            return an.create_agent_network("bot-bottle-agent-x"), calls
+            return an.create_agent_network("bot-bottle-agent-x", pool), calls
 
     def test_creates_an_internal_ipv4_network_on_the_first_free_subnet(self) -> None:
         subnet, calls = self._run([_done()])
@@ -70,6 +75,25 @@ class TestCreate(unittest.TestCase):
             "--subnet", "10.242.0.8/29", "--label", "bot-bottle.agent-network=1",
             "bot-bottle-agent-x",
         ]], create)
+
+    def test_a_custom_pool_is_allocated_from(self) -> None:
+        subnet, calls = self._run([_done()], existing="172.31.5.0/29", pool="172.31.5.0/27")
+        self.assertEqual("172.31.5.8/29", subnet)
+        create = next(c for c in calls if c[:3] == ["docker", "network", "create"])
+        self.assertEqual("172.31.5.8/29", create[create.index("--subnet") + 1])
+
+    def test_an_exhausted_custom_pool_names_it_and_the_setting(self) -> None:
+        with self.assertRaises(NoFreeAddressError) as cm:
+            self._run([], existing="172.31.5.0/29", pool="172.31.5.0/29")
+        self.assertIn("172.31.5.0/29", str(cm.exception))
+        self.assertIn("BOT_BOTTLE_DOCKER_AGENT_SUBNETS", str(cm.exception))
+
+    def test_an_invalid_pool_fails_before_touching_docker(self) -> None:
+        # Settings from the wire skip the CLI's env parsing.
+        with patch.object(an, "run_docker") as run, \
+                self.assertRaisesRegex(an.AgentNetworkError, "smaller than one /29"):
+            an.create_agent_network("bot-bottle-agent-x", "10.9.0.0/30")
+        run.assert_not_called()
 
     def test_a_subnet_a_concurrent_launch_took_moves_on_to_the_next(self) -> None:
         overlap = _done(1, err="invalid pool request: Pool overlaps with other one")

@@ -92,7 +92,7 @@ def launch_consolidated(
     gateway = service.gateway()
     client = OrchestratorClient(url)
 
-    subnet = create_agent_network(agent_network)
+    subnet = create_agent_network(agent_network, service.settings.infra.docker_agent_subnets)
     try:
         gateway_ip, source_ip = agent_subnet_addresses(subnet)
         connect_gateway(agent_network, gateway.name, gateway_ip)

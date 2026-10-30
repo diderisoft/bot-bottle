@@ -12,6 +12,7 @@ first, since docker refuses to remove a network with endpoints.
 
 from __future__ import annotations
 
+from ...contract.hostctl import agent_subnet_pool
 from .gateway_net import NoFreeAddressError, free_agent_subnets
 from .util import run_docker
 from ...lib.log import warn
@@ -72,12 +73,16 @@ def network_subnet(name: str) -> str:
     return subnet
 
 
-def create_agent_network(name: str) -> str:
-    """Create the bottle's `--internal` network on a free /29 and return the
-    subnet. An existing per-agent network of that name (a crashed launch's) is
-    reused."""
+def create_agent_network(name: str, pool: str = "") -> str:
+    """Create the bottle's `--internal` network on a free /29 of `pool` ("" is
+    the default pool) and return the subnet. An existing per-agent network of
+    that name (a crashed launch's) is reused."""
+    try:
+        pool = agent_subnet_pool(pool)
+    except ValueError as e:
+        raise AgentNetworkError(f"docker agent subnet pool: {e}") from e
     tried = 0
-    for subnet in free_agent_subnets(_docker_subnets()):
+    for subnet in free_agent_subnets(_docker_subnets(), pool):
         proc = run_docker([
             "docker", "network", "create",
             "--internal",
@@ -97,7 +102,9 @@ def create_agent_network(name: str) -> str:
         tried += 1
         if tried >= _CREATE_ATTEMPTS:
             break
-    raise NoFreeAddressError(f"no free subnet for agent network {name}")
+    raise NoFreeAddressError(
+        f"no free /29 in {pool} for agent network {name}; stop some bottles, or "
+        "set BOT_BOTTLE_DOCKER_AGENT_SUBNETS to a larger or free range")
 
 
 def connect_gateway(network: str, gateway: str, address: str) -> None:

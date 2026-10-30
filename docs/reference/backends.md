@@ -147,8 +147,15 @@ gVisor is registered.
   never routes between the agent networks it sits on.
 
 Each agent gets its own `--internal` network, `bot-bottle-agent-<slug>`
-(`agent_network.py`): a /29 from `10.242.0.0/20` (`gateway_net.py`) holding
-only docker's router (`.1`), the gateway (`.2`) and the agent (`.3`). Agents
+(`agent_network.py`): a /29 from the agent subnet pool (`gateway_net.py`)
+holding only docker's router (`.1`), the gateway (`.2`) and the agent (`.3`).
+The pool defaults to `10.242.0.0/20` (512 agents), below the shared network's
+`10.242.255.0/24`. Override it with `BOT_BOTTLE_DOCKER_AGENT_SUBNETS` if that
+range is used on your host. It must be an IPv4 network with no host bits set,
+a /29 or larger; anything else is refused when the setting is read, naming the
+problem. Left unset or set to the default, it's omitted from the infra
+settings fingerprint, so it doesn't restart the infra pair; another value
+restarts it once. Agents
 share no network, so they can't reach each other; a sibling's address has no
 route. One shared network with `enable_icc=false` wouldn't do, since ICC off
 also drops agent-to-gateway traffic on the bridge. The launcher creates the

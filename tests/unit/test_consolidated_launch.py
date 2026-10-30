@@ -15,6 +15,7 @@ from bot_bottle.backend.docker.consolidated_launch import (
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.control.client import RegisteredBottle
+from bot_bottle.contract.hostctl import InfraSettings, Settings
 
 _MOD = "bot_bottle.backend.docker.consolidated_launch"
 _UTIL = "bot_bottle.backend.provision_bottle"
@@ -50,6 +51,7 @@ class TestLaunchConsolidated(unittest.TestCase):
     def _run(self, client: Mock, provision: Mock | None = None):
         service = MagicMock()
         service.ensure_running.return_value = "http://orch:8080"
+        service.settings = Settings(infra=InfraSettings(docker_agent_subnets="10.9.0.0/24"))
         gateway = service.gateway.return_value
         gateway.name = "bot-bottle-gateway"
         with patch(f"{_MOD}.create_agent_network", self.create), \
@@ -64,7 +66,8 @@ class TestLaunchConsolidated(unittest.TestCase):
         client = _client()
         provision = Mock()
         ctx = self._run(client, provision)
-        self.create.assert_called_once_with("bot-bottle-agent-demo")
+        # From the configured pool.
+        self.create.assert_called_once_with("bot-bottle-agent-demo", "10.9.0.0/24")
         # .1 is docker's router, .2 the gateway, .3 the agent.
         self.connect.assert_called_once_with(
             "bot-bottle-agent-demo", "bot-bottle-gateway", "10.242.0.10")

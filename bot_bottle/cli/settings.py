@@ -9,7 +9,10 @@ import os
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from ..contract.hostctl import InfraSettings, OperationSettings, Settings
+from ..contract.hostctl import (
+    DEFAULT_DOCKER_AGENT_SUBNETS, InfraSettings, OperationSettings, Settings,
+    agent_subnet_pool,
+)
 from ..lib.log import die
 
 # Settings field -> env var.
@@ -27,6 +30,7 @@ INFRA_ENV: dict[str, str] = {
     "gateway_image": "BOT_BOTTLE_GATEWAY_IMAGE",
     "egress_port": "BOT_BOTTLE_EGRESS_PORT",
     "docker_gateway_subnet": "BOT_BOTTLE_DOCKER_GATEWAY_SUBNET",
+    "docker_agent_subnets": "BOT_BOTTLE_DOCKER_AGENT_SUBNETS",
     "docker_ca_mount": "BOT_BOTTLE_DOCKER_CA_MOUNT",
     "docker_root_mount": "BOT_BOTTLE_DOCKER_ROOT_MOUNT",
     "docker_client_network": "BOT_BOTTLE_DOCKER_CLIENT_NETWORK",
@@ -95,11 +99,21 @@ def _timeout(raw: str, default: object) -> object:
         return default
 
 
+def _agent_subnets(raw: str, _default: object) -> object:
+    try:
+        pool = agent_subnet_pool(raw)
+    except ValueError as e:
+        die(f"BOT_BOTTLE_DOCKER_AGENT_SUBNETS: {e}")
+    # Spelling out the default is the default: it leaves the fingerprint be.
+    return "" if pool == DEFAULT_DOCKER_AGENT_SUBNETS else pool
+
+
 # Fields whose env values need custom parsing.
 _SPECIAL: dict[str, Callable[[str, object], object]] = {
     "infra_build_local": lambda raw, _default: raw.lower() == "local",
     "build_engine": lambda raw, _default: raw.lower(),
     "cleanup_command_timeout_seconds": _timeout,
+    "docker_agent_subnets": _agent_subnets,
 }
 
 

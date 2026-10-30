@@ -1,7 +1,8 @@
 """Address allocation for docker agents. Pure `ipaddress` logic.
 
 Each agent gets its own `--internal` network, a /29 carved from
-`AGENT_SUBNET_POOL`, holding only docker's router (`.1`), the gateway (`.2`)
+the pool (`BOT_BOTTLE_DOCKER_AGENT_SUBNETS`, default
+`AGENT_SUBNET_POOL`), holding only docker's router (`.1`), the gateway (`.2`)
 and the agent (`.3`). Agents share no network, so they can't reach each
 other. The agent's address is the key the gateway attributes it by; the
 subnets never overlap, so it's unique.
@@ -15,11 +16,10 @@ from __future__ import annotations
 import ipaddress
 from collections.abc import Iterable, Iterator
 
-
-# Where per-agent subnets come from: 512 /29s, below the shared gateway
-# network's default `10.242.255.0/24`.
-AGENT_SUBNET_POOL = "10.242.0.0/20"
-AGENT_SUBNET_PREFIX = 29
+from ...contract.hostctl import (
+    DEFAULT_DOCKER_AGENT_SUBNETS as AGENT_SUBNET_POOL,
+    DOCKER_AGENT_SUBNET_PREFIX as AGENT_SUBNET_PREFIX,
+)
 
 
 class NoFreeAddressError(RuntimeError):

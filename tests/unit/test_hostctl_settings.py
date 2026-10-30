@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import tempfile
 import unittest
@@ -36,7 +37,26 @@ class TestSettingsJson(unittest.TestCase):
         self.assertEqual({"operation", "infra"}, set(body))
         self.assertEqual({f.name for f in dataclasses.fields(OperationSettings)},
                          set(body["operation"]))
-        self.assertEqual({f.name for f in dataclasses.fields(InfraSettings)}, set(body["infra"]))
+        # Fields added later are left out while at their default.
+        self.assertEqual({f.name for f in dataclasses.fields(InfraSettings)}
+                         - {"docker_agent_subnets"}, set(body["infra"]))
+
+    def test_the_agent_subnet_pool_appears_only_when_set(self) -> None:
+        # So adding it didn't change the default fingerprint, and an upgrade
+        # doesn't restart the infra.
+        self.assertNotIn("docker_agent_subnets", Settings().to_json()["infra"])
+        custom = Settings(infra=InfraSettings(docker_agent_subnets="10.9.0.0/24"))
+        self.assertEqual("10.9.0.0/24", custom.to_json()["infra"]["docker_agent_subnets"])
+        self.assertEqual(custom, Settings.from_json(json.loads(json.dumps(custom.to_json()))))
+        self.assertNotEqual(InfraSettings().fingerprint(), custom.infra.fingerprint())
+
+    def test_default_fingerprint_is_the_one_from_before_the_pool_setting(self) -> None:
+        # The default's canonical JSON, as it was before `docker_agent_subnets`.
+        body = dataclasses.asdict(InfraSettings())
+        del body["docker_agent_subnets"]
+        canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
+        self.assertEqual(hashlib.sha256(canonical.encode()).hexdigest(),
+                         InfraSettings().fingerprint())
 
     def test_missing_keys_take_defaults(self) -> None:
         self.assertEqual(Settings(), Settings.from_json({}))
@@ -124,6 +144,7 @@ class TestEnvLoader(unittest.TestCase):
             "BOT_BOTTLE_GATEWAY_IMAGE": "gw:test",
             "BOT_BOTTLE_EGRESS_PORT": "9199",
             "BOT_BOTTLE_DOCKER_GATEWAY_SUBNET": "10.1.2.0/24",
+            "BOT_BOTTLE_DOCKER_AGENT_SUBNETS": "10.1.64.0/18",
             "BOT_BOTTLE_DOCKER_CA_MOUNT": "ca-volume",
             "BOT_BOTTLE_DOCKER_ROOT_MOUNT": "root-volume",
             "BOT_BOTTLE_DOCKER_CLIENT_NETWORK": "ci-net",
@@ -144,7 +165,8 @@ class TestEnvLoader(unittest.TestCase):
             infra=InfraSettings(
                 infra_build_local=True, build_engine="podman", artifact_cache="/cache/artifacts",
                 orchestrator_image="orch:test", gateway_image="gw:test", egress_port=9199,
-                docker_gateway_subnet="10.1.2.0/24", docker_ca_mount="ca-volume",
+                docker_gateway_subnet="10.1.2.0/24", docker_agent_subnets="10.1.64.0/18",
+                docker_ca_mount="ca-volume",
                 docker_root_mount="root-volume", docker_client_network="ci-net",
                 docker_host_address="172.17.0.1", fc_kernel="/fc/vmlinux",
                 fc_dropbear="/fc/dropbear", fc_pool_size=4, fc_ip_base="10.9.0.0",
@@ -177,6 +199,23 @@ class TestEnvLoader(unittest.TestCase):
                  self.assertRaises(SystemExit):
                 settings_from_env({"BOT_BOTTLE_EGRESS_PORT": raw})
             self.assertIn("BOT_BOTTLE_EGRESS_PORT", die.call_args.args[0])
+
+    def test_agent_subnet_pool_is_normalized(self) -> None:
+        got = settings_from_env({"BOT_BOTTLE_DOCKER_AGENT_SUBNETS": " 10.9.0.0/24 "})
+        self.assertEqual("10.9.0.0/24", got.infra.docker_agent_subnets)
+        # Spelling out the default is the default, fingerprint and all.
+        got = settings_from_env({"BOT_BOTTLE_DOCKER_AGENT_SUBNETS": "10.242.0.0/20"})
+        self.assertEqual(InfraSettings(), got.infra)
+
+    def test_a_bad_agent_subnet_pool_dies_saying_why(self) -> None:
+        for raw, why in (("nonsense", "CIDR"), ("10.9.0.1/24", "host bits"),
+                         ("fd00::/64", "IPv6"), ("10.9.0.0/30", "smaller than one /29")):
+            with self.subTest(raw=raw), \
+                 patch.object(loader, "die", side_effect=SystemExit) as die, \
+                 self.assertRaises(SystemExit):
+                settings_from_env({"BOT_BOTTLE_DOCKER_AGENT_SUBNETS": raw})
+            self.assertIn("BOT_BOTTLE_DOCKER_AGENT_SUBNETS", die.call_args.args[0])
+            self.assertIn(why, die.call_args.args[0])
 
 
 class TestInfraSettingsRecord(unittest.TestCase):

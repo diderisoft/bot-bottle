@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import ipaddress
 import json
 import re
 import signal
@@ -76,6 +77,30 @@ DEFAULT_ORCHESTRATOR_IMAGE = "bot-bottle-orchestrator:latest"
 DEFAULT_GATEWAY_IMAGE = "bot-bottle-gateway:latest"
 DEFAULT_EGRESS_PORT = 9099
 DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS = 120.0
+# Where per-agent docker networks are carved from: 512 /29s, below the shared
+# gateway network's default `10.242.255.0/24`.
+DEFAULT_DOCKER_AGENT_SUBNETS = "10.242.0.0/20"
+# Each docker agent's network: docker's router, the gateway and the agent.
+DOCKER_AGENT_SUBNET_PREFIX = 29
+
+
+def agent_subnet_pool(raw: str) -> str:
+    """`raw` as a normalized per-agent subnet pool: an IPv4 network with no
+    host bits set, /29 or larger. "" is the default pool. Raises ValueError
+    saying what's wrong."""
+    if not raw.strip():
+        return DEFAULT_DOCKER_AGENT_SUBNETS
+    try:
+        net = ipaddress.ip_network(raw.strip())
+    except ValueError as e:
+        raise ValueError(f"{raw!r} is not a network in CIDR form, like "
+                         f"{DEFAULT_DOCKER_AGENT_SUBNETS} ({e})") from e
+    if not isinstance(net, ipaddress.IPv4Network):
+        raise ValueError(f"{raw!r} is IPv6; agent networks are IPv4")
+    if net.prefixlen > DOCKER_AGENT_SUBNET_PREFIX:
+        raise ValueError(f"{raw!r} is smaller than one /{DOCKER_AGENT_SUBNET_PREFIX}, "
+                         "the network each agent needs")
+    return str(net)
 
 _SectionT = TypeVar("_SectionT", "OperationSettings", "InfraSettings")
 
@@ -103,6 +128,9 @@ class InfraSettings:
     gateway_image: str = DEFAULT_GATEWAY_IMAGE
     egress_port: int = DEFAULT_EGRESS_PORT
     docker_gateway_subnet: str = ""
+    # Where per-agent docker networks are carved from, as /29s; "" is
+    # `10.242.0.0/20`.
+    docker_agent_subnets: str = ""
     docker_ca_mount: str = ""
     docker_root_mount: str = ""
     docker_client_network: str = ""
@@ -145,8 +173,18 @@ class Settings:
         )
 
 
+# Fields left out of the JSON (and so the fingerprint) while at their default:
+# ones added after the fingerprint was in use, so an upgrade that doesn't set
+# them neither restarts the infra nor sends a key an older reader rejects.
+_OMIT_AT_DEFAULT = frozenset({"docker_agent_subnets"})
+
+
 def _section_json(section: OperationSettings | InfraSettings) -> dict[str, object]:
-    return dataclasses.asdict(section)
+    body = dataclasses.asdict(section)
+    for f in dataclasses.fields(section):
+        if f.name in _OMIT_AT_DEFAULT and body[f.name] == f.default:
+            del body[f.name]
+    return body
 
 
 def _mapping(data: object, where: str) -> Mapping[str, Any]:
@@ -310,8 +348,9 @@ def bearer(token: str) -> dict[str, str]:
 __all__ = [
     "AUDIT_APPEND_PATH", "AUDIT_PRODUCERS",
     "AUTH_HEADER", "AUTH_SCHEME", "BOTTLES_PATH", "BOTTLE_COLORS", "CONFIRM_ERROR",
-    "DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS", "IMAGE_POLICIES", "LAUNCH_CLI_ONLY",
-    "LaunchRequest", "exit_code",
+    "DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS", "DEFAULT_DOCKER_AGENT_SUBNETS",
+    "DOCKER_AGENT_SUBNET_PREFIX", "IMAGE_POLICIES", "LAUNCH_CLI_ONLY",
+    "LaunchRequest", "agent_subnet_pool", "exit_code",
     "DEFAULT_EGRESS_PORT", "DEFAULT_GATEWAY_IMAGE", "DEFAULT_ORCHESTRATOR_IMAGE", "GUEST_PORT",
     "HOSTCTL_URL_ENV",
     "HOST_CONTROL", "InfraSettings", "JOBS_PATH", "LIVE_BOTTLES_PATH", "ORCHESTRATOR_PATH", "OperationSettings", "PORT_ENV",
