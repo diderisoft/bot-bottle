@@ -154,5 +154,104 @@ class TestFirecrackerHome(_Root):
         self.assertIn("[ ! -e /mnt/bb-home/.bot-bottle-home ]", _GUEST_INIT)
 
 
+class TestVolumeHelpers(unittest.TestCase):
+    def test_macos_lists_checks_and_removes_volumes(self) -> None:
+        from bot_bottle.backend import EnumerationError
+        from bot_bottle.backend.macos_container import util
+        listed = subprocess.CompletedProcess([], 0, "bot-bottle-home-b1\nother\n", "")
+        with mock.patch.object(util.subprocess, "run", return_value=listed):
+            self.assertEqual(["bot-bottle-home-b1", "other"], util.list_volumes())
+            self.assertTrue(util.volume_exists("bot-bottle-home-b1"))
+            self.assertFalse(util.volume_exists("bot-bottle-home-b2"))
+        with mock.patch.object(util.subprocess, "run", return_value=_done(1)):
+            with self.assertRaises(EnumerationError):
+                util.list_volumes()
+            self.assertFalse(util.volume_exists("x"))
+        with mock.patch.object(util, "volume_exists", return_value=True), \
+                mock.patch.object(util.subprocess, "run", side_effect=[_done(), _done(1)]) as run:
+            util.remove_volume("v")
+            self.assertEqual(["container", "volume", "delete", "v"], run.call_args.args[0])
+            with self.assertRaises(RuntimeError):
+                util.remove_volume("v")
+        with mock.patch.object(util, "volume_exists", return_value=False), \
+                mock.patch.object(util.subprocess, "run") as run:
+            util.remove_volume("v")  # nothing to do
+        run.assert_not_called()
+
+    def test_docker_lists_creates_and_removes_volumes(self) -> None:
+        from bot_bottle.backend import EnumerationError
+        from bot_bottle.backend.docker import util
+        listed = subprocess.CompletedProcess([], 0, "bot-bottle-home-b1\n", "")
+        with mock.patch.object(util, "run_docker", return_value=listed):
+            self.assertEqual(["bot-bottle-home-b1"], util.list_volumes())
+            self.assertTrue(util.volume_exists("bot-bottle-home-b1"))
+            util.create_volume("v")
+        with mock.patch.object(util, "run_docker", return_value=_done(1)):
+            with self.assertRaises(EnumerationError):
+                util.list_volumes()
+            with self.assertRaises(RuntimeError):
+                util.create_volume("v")
+        with mock.patch.object(util, "volume_exists", return_value=True), \
+                mock.patch.object(util, "run_docker", side_effect=[_done(), _done(1)]):
+            util.remove_volume("v")
+            with self.assertRaises(RuntimeError):
+                util.remove_volume("v")
+
+    def test_each_backend_removes_its_home(self) -> None:
+        from bot_bottle.backend.docker.backend import DockerBottleBackend
+        from bot_bottle.backend.macos_container.backend import MacosContainerBottleBackend
+        from bot_bottle.contract.hostctl import Settings
+        for backend, module in ((MacosContainerBottleBackend(Settings()),
+                                 "bot_bottle.backend.macos_container.util"),
+                                (DockerBottleBackend(Settings()), "bot_bottle.backend.docker.util")):
+            with self.subTest(backend=backend.name), \
+                    mock.patch(f"{module}.remove_volume") as remove:
+                backend.remove_home("b1")
+            remove.assert_called_once_with("bot-bottle-home-b1")
+
+
+class TestFirecrackerRemovesItsHome(_Root):
+    def test_the_disk_goes(self) -> None:
+        from bot_bottle.backend.firecracker.backend import FirecrackerBottleBackend
+        from bot_bottle.backend.firecracker.util import home_image_path
+        from bot_bottle.contract.hostctl import Settings
+        path = home_image_path("b1")
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"")
+        FirecrackerBottleBackend(Settings()).remove_home("b1")
+        FirecrackerBottleBackend(Settings()).remove_home("b1")  # idempotent
+        self.assertFalse(path.exists())
+
+
+class TestMacosCleanupPlan(unittest.TestCase):
+    def test_home_volumes_are_listed_shown_and_removed(self) -> None:
+        from bot_bottle.backend.macos_container import bottle_cleanup_plan, cleanup
+        from bot_bottle.backend.macos_container.bottle_cleanup_plan import (
+            MacosContainerBottleCleanupPlan)
+        from bot_bottle.contract.hostctl import Settings
+        plan = MacosContainerBottleCleanupPlan(volumes=("bot-bottle-home-b1",))
+        self.assertFalse(plan.empty)
+        self.assertTrue(MacosContainerBottleCleanupPlan().empty)
+        self.assertEqual((), plan.intersect(MacosContainerBottleCleanupPlan()).volumes)
+        with mock.patch.object(bottle_cleanup_plan, "info") as info:
+            plan.print()
+        self.assertIn("bot-bottle-home-b1", str(info.call_args_list))
+        with mock.patch.object(cleanup.CleanupFailures, "run") as run:
+            cleanup.cleanup(plan, Settings())
+        self.assertEqual(["container", "volume", "delete", "bot-bottle-home-b1"],
+                         run.call_args.args[0])
+
+
+class TestAFailedRemovalIsLeftForCleanup(_Root):
+    def test_it_warns_and_goes_on(self) -> None:
+        from bot_bottle.control.hostctl import bottles
+        backend = mock.Mock()
+        backend.remove_home.side_effect = RuntimeError("busy")
+        service = cast(Any, bottles.BottleService.__new__(bottles.BottleService))
+        with mock.patch.object(bottles.log, "warn") as warn:
+            service._settle("gone", backend)  # pylint: disable=protected-access
+        self.assertIn("cleanup bots", warn.call_args.args[0])
+
+
 if __name__ == "__main__":
     unittest.main()
