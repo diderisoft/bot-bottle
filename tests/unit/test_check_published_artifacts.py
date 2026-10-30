@@ -3,12 +3,16 @@ that the pins it commits match the tree it tags."""
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from bot_bottle import image_inputs as ii
+from scripts import check_published_artifacts as cpa
 from scripts.check_published_artifacts import check_manifest
 
 _IMAGE = "bot-bottle-gateway"
@@ -59,6 +63,40 @@ class MatchSources(unittest.TestCase):
     def test_off_by_default(self) -> None:
         self.write("bot_bottle/gateway/bootstrap.py", "x = 2\n")
         self.assertEqual([], check_manifest(self.root))
+
+    def test_an_unknown_image_is_reported_once(self) -> None:
+        data = json.loads((self.root / "published-artifacts.json").read_text())
+        data["bot-bottle-nope"] = data[_IMAGE]
+        self.write("published-artifacts.json", json.dumps(data))
+        problems = check_manifest(self.root, match_sources=True)
+        self.assertEqual(1, len(problems))
+        self.assertIn("bot-bottle-nope: not a known published image", problems[0])
+
+    def run_main(self, *argv: str) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(cpa, "REPO_ROOT", self.root), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cpa.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_main_passes_a_matching_tree(self) -> None:
+        self.write("pyproject.toml", _PYPROJECT.format(version="0.1.5", deps=""))
+        code, out, _ = self.run_main("--match-sources")
+        self.assertEqual(0, code)
+        self.assertIn("matches this tree", out)
+
+    def test_main_fails_a_mismatch_and_names_the_image(self) -> None:
+        self.write("bot_bottle/gateway/bootstrap.py", "x = 2\n")
+        code, _, err = self.run_main("--match-sources")
+        self.assertEqual(1, code)
+        self.assertIn(f"published-artifacts policy: {_IMAGE}: pinned inputs_hash", err)
+
+    def test_main_without_the_flag_keeps_the_old_check(self) -> None:
+        self.write("bot_bottle/gateway/bootstrap.py", "x = 2\n")
+        code, out, err = self.run_main()
+        self.assertEqual(0, code)
+        self.assertIn("artifacts manifest is well-formed", out)
+        self.assertEqual("", err)
 
 
 if __name__ == "__main__":
