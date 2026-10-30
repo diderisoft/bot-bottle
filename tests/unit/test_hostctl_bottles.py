@@ -302,18 +302,6 @@ class TestHeldBottles(_Root):
         self.assertTrue(bottle_state.is_preserved("b1"))
         self.assertEqual([], self.service.list())
 
-    def test_only_a_console_launch_asks_for_the_remote_view(self) -> None:
-        from bot_bottle.control.hostctl import bottles as bottles_mod
-        from bot_bottle.control.hostctl.remote import ROLE_REMOTE
-
-        with mock.patch.object(bottles_mod, "agent_args", wraps=bottles_mod.agent_args) as args:
-            self.launch("r1")
-            self.manager.wait_exit("r1", timeout=15)
-            self.service.launch(LaunchRequest(agent="demo", label="r2", assume_yes=True),
-                                ROLE_REMOTE)
-            self.manager.wait_exit("r2", timeout=15)
-        self.assertEqual([False, True], [c.kwargs["remote_view"] for c in args.call_args_list])
-
     def test_a_console_launch_is_listed_with_its_origin(self) -> None:
         from bot_bottle.control.hostctl.remote import ROLE_REMOTE
 

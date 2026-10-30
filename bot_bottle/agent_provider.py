@@ -252,11 +252,6 @@ class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plug
         its first message, or None if unsupported."""
         del prompt
 
-    def remote_view_args(self) -> tuple[str, ...]:
-        """Extra agent CLI args for a session relayed to the console. Default:
-        none."""
-        return ()
-
     def transcript_glob(self, plan: "BottlePlan") -> str | None:
         """The guest path pattern (shell glob) of the harness's transcript
         files for `plan`, or None when it keeps none. Default: none."""

@@ -51,7 +51,6 @@ bot_bottle = [
     "contrib/pi/package.json",
     "contrib/pi/package-lock.json",
     "contrib/pi/supervise.ts",
-    "contrib/pi/remote_view.ts",
     "backend/firecracker/netpool.defaults.env",
     "backend/macos_container/nested-containers-init.sh",
     "manifest/builtin/basic.md",

@@ -71,16 +71,14 @@ class PromptUnsupported(ValueError):
 
 
 def agent_args(harness: str, startup_args: tuple[str, ...], prompt: str,
-               headless: bool = True, *, remote_view: bool = False) -> list[str]:
-    """The agent CLI's args: bypass flags, startup args (plus
-    `remote_view_args` for a console launch), then the initial task, headless
-    or as the first message."""
+               headless: bool = True) -> list[str]:
+    """The agent CLI's args: bypass flags, startup args, then the initial
+    task, headless or as the first message. A console launch runs the
+    harness's own TUI, input box and all, like a terminal one."""
     # pylint: disable=import-outside-toplevel
     from ...agent_provider import get_provider, runtime_for
 
     args = [*runtime_for(harness).bypass_args, *startup_args]
-    if remote_view:
-        args.extend(get_provider(harness).remote_view_args())
     if prompt and headless:
         args.extend(get_provider(harness).headless_prompt(prompt))
     elif prompt:
@@ -283,7 +281,7 @@ class BottleService:
                 args=(self._hold, backend, plan, request),
                 kwargs={"identity": identity, "stage_dir": stage_dir, "versions": versions,
                         "job_sink": log.current_sink(), "ready": ready,
-                        "remote_view": role == ROLE_REMOTE},
+                        "from_console": role == ROLE_REMOTE},
                 daemon=True, name=f"hostctl-bottle-{identity}",
             ).start()
             handed_off = True
@@ -316,7 +314,7 @@ class BottleService:
               request: LaunchRequest, *, identity: str, stage_dir: Path,
               versions: dict[str, object],
               job_sink: Callable[[str], None], ready: "queue.Queue[tuple[str, Any]]",
-              remote_view: bool = False) -> None:
+              from_console: bool = False) -> None:
         """The holder thread: launch, run the agent, wait, tear down."""
         is_ready = threading.Event()
         held = _Held(identity, backend.name)
@@ -339,7 +337,7 @@ class BottleService:
                     activation = bottle.registry_id or str(uuid.uuid4())
                     command, env = bottle.agent_command(agent_args(
                         harness, plan.agent_provision.startup_args, request.prompt,
-                        headless=request.headless, remote_view=remote_view))
+                        headless=request.headless))
                     with self._lock:
                         self._held[identity] = held
                     self._follow(plan, bottle, request, identity=identity, activation=activation)
@@ -361,7 +359,7 @@ class BottleService:
                         meta={"backend": backend.name, "agent": request.agent,
                               "label": request.label, "provider": harness,
                               "activation": activation, "manifest_digest": policy,
-                              "origin": ORIGIN_CONSOLE if remote_view else ORIGIN_TERMINAL,
+                              "origin": ORIGIN_CONSOLE if from_console else ORIGIN_TERMINAL,
                               # The console's id for an agent it launched, so a
                               # restarted host controller can pick it up again.
                               **({"agent_id": request.agent_id} if request.agent_id else {})},
