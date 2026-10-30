@@ -126,6 +126,12 @@ def _push_credential(registry_id: str, slot: str, value: str, env_var_secret: st
     raise RuntimeError(f"no running orchestrator knows bottle {registry_id}")
 
 
+def _chain(request: LaunchRequest, plan: "BottlePlan") -> tuple[str, ...]:
+    """The agent's bottle chain: the bottles picked at launch, else its own."""
+    own = getattr(getattr(plan.manifest, "agent", None), "bottle", "")
+    return tuple(request.bottles) or ((own,) if own else ())
+
+
 def _default_manifest(cwd: str) -> "ManifestIndex":
     from ...manifest import ManifestIndex  # pylint: disable=import-outside-toplevel
     return ManifestIndex.resolve(cwd)
@@ -356,7 +362,9 @@ class BottleService:
                     except OSError as e:
                         log.warn(f"bottle {identity}: couldn't record how to finish it "
                                  f"after a host controller restart: {e}")
-                    run_manifest.record_launch(identity, plan.manifest.bottle)
+                    run_manifest.record_launch(
+                        identity, plan.manifest.bottle, names=_chain(request, plan),
+                        cwd=request.cwd, host_version=str(versions.get("host", "")))
                     if record.credentials is not None:
                         self.credentials.add(
                             identity, record.credentials, registry_id=bottle.registry_id,

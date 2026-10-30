@@ -464,6 +464,37 @@ def _elements(identity: str, policy: str | None) -> list[dict[str, Any]]:
     return elements(identity, policy)
 
 
+def bottle_versions(identity: str, meta: Any, names: "tuple[str, ...]") -> list[dict[str, Any]]:
+    """Each bottle of the agent's chain, in chain order: whether it still
+    resolves to what it launched with (`latest`; `known` is false for a run
+    launched before that was recorded) and, for a host bottle, the host's
+    version then (`version`, `version_at`). A project's bottle is versioned
+    by its repo and a built-in one by bot-bottle, so neither has one."""
+    # pylint: disable=import-outside-toplevel
+    from ... import run_manifest
+    from ...manifest.fingerprint import chain_hashes
+    from ...manifest.loader import BUILTIN_BOTTLES_DIR, PROJECT_PREFIX, find_bottle
+    from ...manifest.versions import committed_at
+    launch = run_manifest.launch_record(identity)
+    raw = launch.get("bottles")
+    launched: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    host = str(launch.get("host") or "")
+    index = _index(meta)
+    now = chain_hashes(index, names)
+    at = committed_at(host) if host else 0
+    out = []
+    for name in names:
+        found = find_bottle(name, index.bottle_dirs()) if index.home_md is not None else None
+        builtin = found is not None and BUILTIN_BOTTLES_DIR in found[0].parents
+        project = name.startswith(PROJECT_PREFIX)
+        versioned = bool(host) and not (project or builtin)
+        out.append({"name": name, "project": project, "builtin": builtin,
+                    "known": name in launched,
+                    "latest": name in launched and launched[name] == now.get(name),
+                    "version": host if versioned else "", "version_at": at if versioned else 0})
+    return out
+
+
 def agent_manifest(identity: str) -> dict[str, Any]:
     """The manifest of the bottle `identity` runs: what it runs with now
     against its last saved version (`current`), and the bottles the run's
@@ -479,10 +510,12 @@ def agent_manifest(identity: str) -> dict[str, Any]:
         "elements": _elements(identity, policy),
         "agent": meta.agent_name,
         "bottles": list(names),
+        "bottle_versions": bottle_versions(identity, meta, tuple(names)),
         "harness": manifest.agent.agent_provider.harness,
     }
 
 
-__all__ = ["ManifestViewError", "agent_manifest", "bottle_targets", "bottle_with_changes",
+__all__ = ["ManifestViewError", "agent_manifest", "bottle_targets", "bottle_versions",
+           "bottle_with_changes",
            "current_manifest", "remove_changes", "remove_from_run", "running_bottle",
            "save_as_bottle", "save_manifest"]

@@ -7,6 +7,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from bot_bottle.bottle_state import BottleMetadata, git_gate_state_dir, write_metadata
@@ -82,8 +83,34 @@ class TestAgentManifest(unittest.TestCase):
         env = mock.patch.dict(os.environ, {"HOME": str(home), "BOT_BOTTLE_ROOT": str(root)})
         env.start()
         self.addCleanup(env.stop)
+        self.root = root
         write_metadata(BottleMetadata(identity="s1", agent_name="helper", cwd="",
                                       copy_cwd=False, started_at="", bottle_names=("work",)))
+
+    def versions(self) -> list[dict[str, Any]]:
+        with mock.patch.object(manifest_view, "_live_policy", return_value=None):
+            return manifest_view.agent_manifest("s1")["bottle_versions"]
+
+    def test_whether_each_bottle_is_still_what_it_launched_with(self) -> None:
+        # pylint: disable=import-outside-toplevel
+        from bot_bottle import run_manifest
+        from bot_bottle.manifest.versions import launch_versions
+        # Launched before launches recorded their bottles: not known.
+        self.assertEqual([("work", False, False)],
+                         [(v["name"], v["known"], v["latest"]) for v in self.versions()])
+        host = str(launch_versions(str(self.root.parent))["host"])
+        bottle = manifest_view._load("s1")[1].bottle  # pylint: disable=protected-access
+        run_manifest.record_launch("s1", bottle, names=("work",), host_version=host)
+        work = self.versions()[0]
+        self.assertEqual((True, True, False), (work["known"], work["latest"], work["project"]))
+        self.assertEqual(host, work["version"])
+        self.assertGreater(work["version_at"], 0)
+        # The same bottle written in another order is still the one it launched with.
+        (self.root / "bottles" / "base.md").write_text("---\nenv:\n  LANG: C.UTF-8\n---\n\nBase.\n")
+        self.assertTrue(self.versions()[0]["latest"])
+        # A change to a bottle it extends makes it not the latest.
+        (self.root / "bottles" / "base.md").write_text(BASE.replace("C.UTF-8", "C"))
+        self.assertFalse(self.versions()[0]["latest"])
 
     def test_what_it_resolves_to(self) -> None:
         with mock.patch.object(manifest_view, "_live_policy", return_value=None):

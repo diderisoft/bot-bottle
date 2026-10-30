@@ -281,7 +281,15 @@ The console's Manifest tab asks for a running agent's `manifest`
 Each bottled agent has manifest versions (`run_manifest.py`,
 `state/<bottle>/manifest/`). Version 1 is its whole bottle chain flattened
 into one document (`manifest/document.py`), recorded at launch. A resume adds
-a version only if the files changed. The `manifest` reply's `current` is the
+a version only if the files changed. Each launch and resume also records
+`launch.json`: every bottle in the chain's fingerprint
+(`manifest/fingerprint.py`: its full resolution, `extends` merged, in a
+canonical order so key, route and repo order don't count, SHA-256) and the
+host's bottle version then. The `manifest` reply's `bottle_versions` lists
+the chain in order, each with whether it still resolves to what it launched
+with (`latest`; a change to a bottle it extends counts) and, for a host
+bottle, that version (`version`, `version_at`). A project's bottle (versioned
+by its repo) and a built-in one have no version. The `manifest` reply's `current` is the
 latest version with the supervisor's changes since: egress routes the live
 policy has beyond the launch routes (`state/<bottle>/egress/routes.yaml`), and
 repos granted while it runs. It also lists what can't be kept (a route

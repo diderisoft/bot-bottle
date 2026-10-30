@@ -206,6 +206,14 @@ def revert(path: Path, version: str, *, root: Path | None = None) -> str:
     return record(f"revert {rel} to {sha[:9]}", root=root) if host else ""
 
 
+def committed_at(sha: str, *, root: Path | None = None) -> int:
+    """When the host's version `sha` was recorded (Unix time), or 0 if it
+    isn't one."""
+    root = root or bot_bottle_root()
+    out = _git(root, "show", "-s", "--format=%ct", sha, check=False)
+    return int(out.stdout.strip() or 0) if out.returncode == 0 else 0
+
+
 def launch_versions(cwd: str, *, root: Path | None = None) -> dict[str, object]:
     """What a launch records: the host's version (after versioning hand
     edits), and for a project with its own bottles, the project's commit and
@@ -230,6 +238,7 @@ def launch_versions(cwd: str, *, root: Path | None = None) -> dict[str, object]:
 
 
 __all__ = [
-    "SecretInManifestError", "TRACKED", "Version", "VersionError", "history", "is_dirty",
+    "SecretInManifestError", "TRACKED", "Version", "VersionError", "committed_at", "history",
+    "is_dirty",
     "launch_versions", "record", "record_hand_edits", "record_or_warn", "revert", "show",
 ]

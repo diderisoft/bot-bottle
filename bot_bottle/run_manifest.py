@@ -4,6 +4,9 @@ document (`manifest.document`), as it launched and as saved since.
 Kept in the bottle's state dir, `manifest/`: `vNNNN.yaml` per version and
 `log.json` saying when and why each was written. Version 1 is the bottle the
 agent launched with; the console's Save adds one with the run's changes.
+`launch.json` is what its bottles were at the latest launch or resume (PRD
+0111): each one's fingerprint (`manifest.fingerprint`) and the host's bottle
+version then.
 """
 
 from __future__ import annotations
@@ -62,11 +65,27 @@ def record(identity: str, doc: dict[str, object], message: str) -> int:
     return number
 
 
-def record_launch(identity: str, bottle: Any) -> None:
+def launch_record(identity: str) -> dict[str, Any]:
+    """`launch.json`: `bottles` (name -> fingerprint, in chain order) and the
+    host's bottle version (`host`, a commit), or {} if there's none."""
+    try:
+        raw = json.loads((_dir(identity) / "launch.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def record_launch(identity: str, bottle: Any, *, names: tuple[str, ...] = (), cwd: str = "",
+                  host_version: str = "") -> None:
     """Version 1 at launch. A resume keeps the history, adding a version only
-    if the bottle files changed since. Never raises: the launch goes on."""
-    # pylint: disable-next=import-outside-toplevel
+    if the bottle files changed since. The fingerprints of `names` (the
+    agent's bottle chain, resolved from `cwd`) and `host_version` become
+    `launch.json`, at every launch and resume. Never raises: the launch goes
+    on."""
+    # pylint: disable=import-outside-toplevel
     from .manifest.document import bottle_document
+    from .manifest.fingerprint import chain_hashes
+    from .manifest.index import ManifestIndex
     try:
         doc = bottle_document(bottle)
         last = latest(identity)
@@ -74,10 +93,14 @@ def record_launch(identity: str, bottle: Any) -> None:
             record(identity, doc, "launched")
         elif document_text(last[1]) != document_text(doc):
             record(identity, doc, "resumed with the bottle files as they are now")
+        chain = chain_hashes(ManifestIndex.resolve(cwd or str(Path.home())), names)
+        (_dir(identity) / "launch.json").write_text(
+            json.dumps({"bottles": chain, "host": host_version}, indent=2), encoding="utf-8")
     except Exception as e:  # pylint: disable=broad-exception-caught  # the launch goes on
         # pylint: disable-next=import-outside-toplevel
         from .lib.log import warn
         warn(f"bottle {identity}: couldn't record its manifest version: {e}")
 
 
-__all__ = ["document_text", "latest", "read", "record", "record_launch", "versions"]
+__all__ = ["document_text", "latest", "launch_record", "read", "record", "record_launch",
+           "versions"]
