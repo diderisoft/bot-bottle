@@ -147,7 +147,7 @@ jobs:
           export BOT_BOTTLE_DOCKER_CA_MOUNT="bot-bottle-ci-ca-$RUN_KEY"
           python3 -m coverage run -m scripts.unittest_gate \
             -t . -s tests/integration -v \
-            --minimum-executed 22 --fail-on-skip
+            --minimum-executed 25 --fail-on-skip
 
       - name: Clean Docker integration volumes
         if: always()

@@ -125,7 +125,7 @@ jobs:
         run: |
           python3 -m coverage run -m scripts.unittest_gate \
             -t . -s tests/integration -v \
-            --minimum-executed 22 --fail-on-skip
+            --minimum-executed 25 --fail-on-skip
 
       - name: Stage docker coverage for upload
         run: cp .coverage.docker coverage-docker.dat

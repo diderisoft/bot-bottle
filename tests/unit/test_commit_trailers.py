@@ -6,6 +6,7 @@ pre-receive check, both exercised against real git repos in a temp dir."""
 from __future__ import annotations
 
 import dataclasses
+import io
 import os
 import shutil
 import subprocess
@@ -13,6 +14,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -634,6 +636,193 @@ class TestPushAuditRecord(_GitCase):
 
     def test_deleted_ref_lists_no_commits(self):
         self.assertEqual([], audit.pushed_commits("0" * 40))
+
+
+class TestTrailerCheckInProcess(_GitCase):
+    """trailer_check's functions called directly against a real bare gate
+    whose incoming commits sit in its object store (fetched into
+    FETCH_HEAD, which no ref names), as pre-receive sees them."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.gate = self.root / "gate.git"
+        self.git("init", "-q", "--bare", str(self.gate), cwd=self.root)
+        self.work = self.root / "work"
+        self.git("init", "-q", "-b", "main", str(self.work), cwd=self.root)
+        self.git("commit", "-q", "--allow-empty", "-m", "upstream", cwd=self.work)
+        self.git("push", "-q", str(self.gate), "HEAD:refs/heads/main", cwd=self.work)
+        self.upstream = self.head()
+        self.baseline_file = self.root / "baseline"
+        self.baseline_file.write_text("", encoding="utf-8")
+        for key, value in (("git-gate.trailers", "require"), ("git-gate.trailer", VALUE),
+                           ("git-gate.baseline", str(self.baseline_file))):
+            self.git("config", key, value, cwd=self.gate)
+        self.errors: list[str] = []
+
+    def head(self) -> str:
+        return self.git("rev-parse", "HEAD", cwd=self.work).stdout.strip()
+
+    def gate_git(self, *args: str, stdin: str = "") -> str:
+        return subprocess.run(["git", "-C", str(self.gate), *args], input=stdin,
+                              env=self.env, capture_output=True, text=True,
+                              check=True).stdout
+
+    def commit(self, msg: str, *trailers: str) -> str:
+        args = [a for t in trailers for a in ("--trailer", t)]
+        self.git("commit", "-q", "--allow-empty", "-m", msg, *args, cwd=self.work)
+        return self.head()
+
+    def incoming(self) -> str:
+        """Bring the work repo's HEAD into the gate's objects, no ref."""
+        self.git("fetch", "-q", str(self.work), "main", cwd=self.gate)
+        return self.head()
+
+    def run_check(self, new: str, old: str = "") -> int:
+        return trailer_check.check([(old or self.upstream, new, "refs/heads/main")],
+                                   git=self.gate_git, err=self.errors.append)
+
+    def test_accepts_trailered_commits(self):
+        self.commit("feat: ok", f"{TRAILER_KEY}: {VALUE}")
+        self.assertEqual(trailer_check.ACCEPT, self.run_check(self.incoming()))
+        self.assertEqual([], self.errors)
+
+    def test_refuses_and_explains(self):
+        self.commit("feat: bare")
+        bad = self.commit("feat: other", f"{TRAILER_KEY}: x/y")
+        self.assertEqual(trailer_check.REFUSE, self.run_check(self.incoming()))
+        text = "\n".join(self.errors)
+        self.assertIn("refusing refs/heads/main: 2 new commit(s)", text)
+        self.assertIn(f"{bad[:12]} feat: other  (names x/y)", text)
+        self.assertIn("feat: bare  (no Bot-Bottle trailer)", text)
+        self.assertIn("--exec 'git -c trailer.ifexists=replace commit", text)
+        self.assertIn(f" {self.upstream[:12]}", text)
+
+    def test_lists_at_most_ten(self):
+        for i in range(12):
+            self.commit(f"feat: {i}")
+        self.run_check(self.incoming())
+        self.assertIn("git-gate:   ... and 2 more", self.errors)
+
+    def test_warn_accepts_and_off_skips(self):
+        self.commit("feat: bare")
+        new = self.incoming()
+        self.git("config", "git-gate.trailers", "warn", cwd=self.gate)
+        self.assertEqual(trailer_check.ACCEPT, self.run_check(new))
+        self.assertIn("warning refs/heads/main", self.errors[0])
+        self.errors.clear()
+        self.git("config", "git-gate.trailers", "off", cwd=self.gate)
+        self.assertEqual(trailer_check.ACCEPT, self.run_check(new))
+        self.assertEqual([], self.errors)
+
+    def test_baseline_commits_are_exempt(self):
+        operator = self.commit("feat: operator")
+        self.baseline_file.write_text(f"{operator}\n", encoding="utf-8")
+        self.commit("feat: agent", f"{TRAILER_KEY}: {VALUE}")
+        self.assertEqual(trailer_check.ACCEPT, self.run_check(self.incoming()))
+        bare = self.commit("feat: agent bare")
+        self.assertEqual(trailer_check.REFUSE, self.run_check(self.incoming()))
+        text = "\n".join(self.errors)
+        self.assertIn(bare[:12], text)
+        self.assertNotIn("feat: operator", text)
+        self.assertIn(f" {operator[:12]}", text)
+
+    def test_deletions_and_root_commits(self):
+        self.assertEqual(trailer_check.ACCEPT, self.run_check("0" * 40))
+        self.assertEqual("--root", trailer_check.rebase_base(self.gate_git, self.upstream))
+
+    def test_rebase_base_placeholders(self):
+        self.git("checkout", "-q", "-b", "side", cwd=self.work)
+        self.commit("feat: side")
+        self.git("push", "-q", str(self.gate), "HEAD:refs/heads/side", cwd=self.work)
+        self.git("checkout", "-q", "main", cwd=self.work)
+        self.git("merge", "-q", "--no-ff", "-m", "merge", "side", cwd=self.work)
+        excluded = trailer_check.exclusions(self.gate_git, [])
+        new = self.incoming()
+        self.assertEqual("<upstream branch, e.g. origin/main>",
+                         trailer_check.rebase_base(self.gate_git, new, excluded))
+
+        def failing(*args: str, stdin: str = "") -> str:
+            raise subprocess.CalledProcessError(128, ["git", *args], stderr="bad")
+        self.assertEqual("<upstream branch>", trailer_check.rebase_base(failing, new))
+
+    def test_offenders_defaults_to_the_gates_refs(self):
+        self.commit("feat: bare")
+        found = trailer_check.offenders(self.gate_git, self.incoming(), VALUE)
+        self.assertEqual(["feat: bare"], [o.subject for o in found])
+
+    def test_git_failures_refuse(self):
+        def refs_fail(*args: str, stdin: str = "") -> str:
+            if args[0] == "for-each-ref":
+                raise subprocess.CalledProcessError(1, "git", stderr="broken refs")
+            return self.gate_git(*args, stdin=stdin)
+        self.assertEqual(trailer_check.REFUSE, trailer_check.check(
+            [(self.upstream, self.upstream, "refs/heads/main")], git=refs_fail,
+            err=self.errors.append))
+        self.assertIn("could not list the gate's refs: broken refs", self.errors[-1])
+        def log_fails(*args: str, stdin: str = "") -> str:
+            if args[0] == "log":
+                raise subprocess.CalledProcessError(128, "git", stderr="bad object")
+            return self.gate_git(*args, stdin=stdin)
+        self.assertEqual(trailer_check.REFUSE, trailer_check.check(
+            [(self.upstream, "f" * 40, "refs/heads/main")], git=log_fails,
+            err=self.errors.append))
+        self.assertIn("could not read the commits pushed to refs/heads/main", self.errors[-1])
+
+    def test_main_reads_the_refs_file_in_the_repo(self):
+        self.commit("feat: bare")
+        new = self.incoming()
+        refs = self.root / "refs"
+        refs.write_text(f"{self.upstream} {new} refs/heads/main\n", encoding="utf-8")
+        cwd = os.getcwd()
+        stderr = io.StringIO()
+        try:
+            os.chdir(self.gate)
+            with patch.dict(os.environ, {"GIT_CONFIG_NOSYSTEM": "1",
+                                         "GIT_CONFIG_GLOBAL": os.devnull}), \
+                    redirect_stderr(stderr):
+                rc = trailer_check.main(["trailer_check", str(refs)])
+                usage = trailer_check.main(["trailer_check"])
+        finally:
+            os.chdir(cwd)
+        self.assertEqual((trailer_check.REFUSE, trailer_check.REFUSE), (rc, usage))
+        self.assertIn("feat: bare", stderr.getvalue())
+        self.assertIn("usage: trailer_check <refs-file>", stderr.getvalue())
+
+
+    def test_audit_lists_pushed_commits_in_process(self):
+        self.git("config", "git-gate.trailer", VALUE, cwd=self.gate)
+        first = self.commit("feat: one")
+        second = self.commit("feat: two")
+        new = self.incoming()
+        cwd = os.getcwd()
+        try:
+            os.chdir(self.gate)
+            with patch.dict(os.environ, {"GIT_CONFIG_NOSYSTEM": "1",
+                                         "GIT_CONFIG_GLOBAL": os.devnull}):
+                commits = audit.pushed_commits(new)
+                trailer = audit.trailer_value()
+                missing = audit.pushed_commits("e" * 40)
+                with patch.dict(os.environ, {"BOT_BOTTLE_ORCHESTRATOR_URL":
+                                             "http://127.0.0.1:9"}), \
+                        redirect_stderr(io.StringIO()):
+                    rc = audit.main(["forge.push_accepted", "success", "refs/heads/main",
+                                     "--findings", "0", "--new", new])
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(([first, second], VALUE, None, 0), (commits, trailer, missing, rc))
+        self.assertEqual([], audit.pushed_commits(""))
+
+
+class TestSmallFallbacks(unittest.TestCase):
+    def test_hooks_env_with_a_junk_count_starts_at_zero(self):
+        env = commit_hooks.hooks_env("/home/node", {"GIT_CONFIG_COUNT": "lots"})
+        self.assertEqual("1", env["GIT_CONFIG_COUNT"])
+        self.assertEqual("core.hooksPath", env["GIT_CONFIG_KEY_0"])
+
+    def test_workspace_baseline_empty_when_git_cannot_run(self):
+        def run(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+            raise FileNotFoundError("git")
+        self.assertEqual([], workspace_baseline(Path("/x"), run=run))
 
 
 class TestTrailerCheckUnits(unittest.TestCase):

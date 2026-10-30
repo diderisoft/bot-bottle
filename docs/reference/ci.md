@@ -17,9 +17,10 @@ runs use one non-cancelling concurrency group. The shared gateway network and
 each agent's own network have explicit subnets, which Docker requires for the
 pinned source IPs used as the isolation/attribution key.
 
-`scripts.unittest_gate` enforces the Docker job's contract: all 22 integration
+`scripts.unittest_gate` enforces the Docker job's contract: all 25 integration
 tests must execute and none may skip. This includes the real gateway-image,
-control-plane authentication, multitenant policy/token isolation,
+control-plane authentication, multitenant policy/token isolation, commit-trailer
+(git-gate push, refusal and audit record)
 and sandbox-escape tests. Backend skip decorators remain useful
 for local runs, but the CI preflight plus execution-count gate prevents a
 missing backend or runner-topology regression from becoming a green job.
@@ -37,7 +38,7 @@ are enforced:
 GitHub-hosted `ubuntu-latest` runners while Gitea stays the primary CI:
 
 - [`test.yml`](../../.github/workflows/test.yml): unit, Docker integration
-  (same 22-executed/no-skip gate), image-input builds, and combined coverage
+  (same 25-executed/no-skip gate), image-input builds, and combined coverage
   with the critical-modules and diff-coverage gates; and
 - [`lint.yml`](../../.github/workflows/lint.yml): image-input and
   published-artifacts checks, pylint (score >= 8.0), and strict pyright.
