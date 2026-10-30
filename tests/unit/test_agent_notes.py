@@ -11,6 +11,10 @@ class TestOperatingNotes(unittest.TestCase):
         self.assertTrue(out.startswith("Be terse.\n\n## Working in a bot-bottle sandbox"))
         self.assertIn(GIT_BOUNDARY, out)
 
+    def test_says_the_bottles_repos_need_no_key_and_how_to_list_them(self):
+        self.assertIn("need no SSH key or token", GIT_BOUNDARY)
+        self.assertIn("git config --global --get-regexp '^url\\..*\\.insteadof$'", GIT_BOUNDARY)
+
     def test_alone_without_a_prompt(self):
         self.assertEqual(OPERATING_NOTES, with_operating_notes(""))
         self.assertEqual(OPERATING_NOTES, with_operating_notes(None))  # type: ignore[arg-type]

@@ -110,8 +110,9 @@ That blob is rendered from the bottle's `egress.routes` by
 stuck. Its tools are `egress-allow`, `egress-block`, `list-egress-routes`,
 `forge-connect`, `add-repo` and `check-proposal`. Its `initialize` instructions and the egress tool
 descriptions say that git never goes out through egress, even to allowed
-hosts: the bottle's repos go through git-gate, and a repo it doesn't have
-needs the operator to add it. The same note is in every agent's prompt
+hosts: the bottle's repos go through git-gate with their usual URLs and no
+key or token (the agent's global gitconfig lists them as `insteadOf` rules),
+and a repo it doesn't have needs the operator to add it. The same note is in every agent's prompt
 (`contract/agent_notes.py`, [ADR 0003](../decisions/0003-system-prompts-stay-user-directed.md)).
 
 A proposal is queued with the orchestrator (`POST /supervise/propose`), which
