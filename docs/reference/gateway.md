@@ -101,8 +101,8 @@ the policy.
 
 `gateway/egress/schema.py` parses the policy blob the orchestrator stores.
 That blob is rendered from the bottle's `egress.routes` by
-`control/registration.py`. Field reference is in the README's manifest
-section.
+`control/registration.py`. The manifest fields are in
+[manifest.md](manifest.md#egress-routes).
 
 ## Supervise
 

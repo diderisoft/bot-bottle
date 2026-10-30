@@ -150,10 +150,84 @@ LAN address or `192.168.128.1`.
 
 Gateway files and commands go through
 the `container` CLI's exec and cp (`gateway_transport.py`). With
-`nested_containers: true`, the guest runs rootless podman and exposes a
-Docker-compatible socket. It provides no isolation from the agent, since root
-in a nested container is the agent user. See the README for the egress routes
-registries need.
+`nested_containers: true`, the guest runs rootless podman; see
+[Containers inside a bottle](#containers-inside-a-bottle).
+
+### Containers inside a bottle
+
+A bottle may set `nested_containers: true`. On macos-container this starts a
+guest-local, rootless **podman** service after the bottle is registered and
+exposes its Docker-compatible API socket, so the agent still runs `docker` and
+`docker compose`. Nothing is mounted from the host: Docker Desktop's socket
+stays out of the bottle and the guest gains no outer VM capabilities. The
+docker and firecracker backends reject the flag rather than silently ignore
+it.
+
+Rootless Docker doesn't work here at all: Apple Container's capability
+bounding set omits `CAP_SYS_ADMIN`, which the kernel requires to write a
+multi-range `uid_map`. Podman avoids that requirement by falling back to a
+single-UID mapping, so nested containers provide **no isolation from the
+agent itself**: `root` inside a nested container is the agent user outside
+it. Nested containers are a build and test convenience, not a security
+boundary. The bottle remains the boundary.
+
+Pulling images goes through the bottle's egress proxy like every other
+request, so each registry needs a route, **and so does the CDN it redirects
+layer blobs to**, which is a different host. Without the CDN route the pull
+authenticates, fetches the manifest, then 403s partway through. Docker Hub
+and GHCR also need `inspect.preserve_auth: true`: their token dance uses a
+client-fetched per-scope bearer token that the proxy would otherwise strip.
+Turn DLP off on every registry and CDN route. The bodies are compressed layer
+blobs that no detector can read, and buffering them is what triggers the
+shared-proxy OOM in #455.
+
+```yaml
+nested_containers: true
+egress:
+  routes:
+    # Docker Hub: registry, token endpoint, blob CDN.
+    - host: registry-1.docker.io
+      inspect: { preserve_auth: true, outbound_detectors: false, inbound_detectors: false }
+    - host: auth.docker.io
+      inspect: { preserve_auth: true, outbound_detectors: false, inbound_detectors: false }
+    - host: production.cloudfront.docker.com
+      inspect: { outbound_detectors: false, inbound_detectors: false }
+    # GHCR: registry + blob CDN.
+    - host: ghcr.io
+      inspect: { preserve_auth: true, outbound_detectors: false, inbound_detectors: false }
+    - host: pkg-containers.githubusercontent.com
+      inspect: { outbound_detectors: false, inbound_detectors: false }
+    # quay.io: registry + blob CDNs. No preserve_auth needed for public pulls.
+    - host: quay.io
+      inspect: { outbound_detectors: false, inbound_detectors: false }
+    - host: cdn01.quay.io
+      inspect: { outbound_detectors: false, inbound_detectors: false }
+    - host: cdn02.quay.io
+      inspect: { outbound_detectors: false, inbound_detectors: false }
+    - host: cdn03.quay.io
+      inspect: { outbound_detectors: false, inbound_detectors: false }
+```
+
+`mcr.microsoft.com` and `registry.k8s.io` follow the same shape and also
+redirect blobs elsewhere (`*.data.mcr.microsoft.com` and
+`us-*-docker.pkg.dev` respectively); route whichever host the 403 names.
+Route fields are in [manifest.md](manifest.md#egress-routes).
+
+Inside a nested container the same allowlist applies: an allowlisted host
+returns 200 and anything else gets a 403 straight from the proxy. The
+gateway's CA bundle and proxy settings are wired in automatically, so
+`docker run … curl https://…` works with no extra flags (no `--add-host`,
+`-e`, or `-v`).
+
+Two things worth knowing when testing that:
+
+- Public DNS inside a nested container fails **by design**. Everything
+  egresses through the proxy, so `nslookup` failing is expected and is not
+  evidence of a problem.
+- Alpine's BusyBox `wget` drops the connection after the proxy's TLS
+  interception and reports `error getting response`, even though the proxy
+  logs the decrypted request and returns a response. Use `curl` to test
+  egress; BusyBox `wget` will lie to you.
 
 ## firecracker
 
@@ -197,6 +271,11 @@ the built-in default (`_DEFAULT_PATH_FOR`).
 
 `backend/docker/`. The weakest boundary: agents share the host kernel unless
 gVisor is registered.
+
+**gVisor.** When Docker has the `runsc` runtime registered
+(`util.runsc_available`, read from `docker info`), every agent container runs
+under it, for a userspace syscall barrier. There's no manifest setting; the
+plan records it as `use_runsc` and the compose file sets the runtime.
 
 - `bot-bottle-orchestrator`: on the `--internal` control network, plus a
   loopback publish for the CLI.

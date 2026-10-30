@@ -38,6 +38,35 @@ Agents reach only the gateway. The gateway reaches the orchestrator over a
 separate control network. The orchestrator reaches the host controller on
 port 8098 of its own network, never `0.0.0.0`.
 
+The same shape, from the agent's side. Every backend builds it; each agent
+session runs in tmux, so it outlives the terminal that started it and can
+have several viewers ([host-controller.md](host-controller.md#sessions)).
+
+```
+  host CLI ──► host controller ──► backend (launch / teardown)
+                                       │
+  ┌──────────── per host ──────────────┼──────────────────────────────────┐
+  │                                    ▼                                  │
+  │  ┌───────────────┐       ┌─────────────────────────┐                  │
+  │  │ agent         │ HTTPS │ gateway                 │ HTTPS to         │
+  │  │ (claude,      │──────►│  egress proxy (DLP,     │──► allowlisted   │
+  │  │  codex, pi)   │       │   token injection)      │    hosts         │
+  │  │               │  git  │  git-gate (gitleaks)    │ SSH push to      │
+  │  │ env: proxy    │──────►│  supervise              │──► upstreams     │
+  │  │ URLs only,    │       └────────────┬────────────┘                  │
+  │  │ no real       │                    │ control network               │
+  │  │ tokens        │       ┌────────────▼────────────┐                  │
+  │  └───────────────┘       │ orchestrator            │                  │
+  │   one per bottle;        │  registry, signing key, │                  │
+  │   no route to the        │  approval queue         │                  │
+  │   control plane          └─────────────────────────┘                  │
+  └───────────────────────────────────────────────────────────────────────┘
+```
+
+How each backend confines the agent to that picture (a host-only network
+plus a pf anchor, a TAP plus an nft table, or an `--internal` network) is in
+[backends.md](backends.md#comparison).
+
 ## Layers
 
 `bot_bottle/` has three layers, enforced by `tests/unit/test_layering.py`
@@ -145,6 +174,8 @@ egress tokens (PRD 0081, design repo).
 ## Other reference pages
 
 - [backends.md](backends.md): the three backends and their isolation
+- [install.md](install.md): installing, host requirements, uninstalling
+- [manifest.md](manifest.md): bottle and agent files, trust, egress routes
 - [gateway.md](gateway.md): egress proxy, DLP, supervise, firehose, CA
 - [git-gate.md](git-gate.md): the git push and fetch gate
 - [host-controller.md](host-controller.md): sessions, jobs, audit, remote access

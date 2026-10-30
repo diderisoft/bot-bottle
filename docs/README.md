@@ -14,6 +14,8 @@ page describes updates it in the same pull request.
 |---|---|
 | [architecture.md](reference/architecture.md) | components, layers, code map, launch, attribution, trust, state |
 | [backends.md](reference/backends.md) | macos-container, firecracker, docker and their isolation |
+| [install.md](reference/install.md) | the installer, host requirements per backend, uninstall |
+| [manifest.md](reference/manifest.md) | bottle and agent files, trust, versions, egress route fields |
 | [gateway.md](reference/gateway.md) | egress proxy, DLP, supervise, firehose, CA |
 | [git-gate.md](reference/git-gate.md) | the git push and fetch gate |
 | [host-controller.md](reference/host-controller.md) | jobs, sessions, audit journal, remote access |

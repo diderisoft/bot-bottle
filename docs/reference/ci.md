@@ -77,6 +77,23 @@ report; macOS reports advisory coverage in its own job. The macOS infra
 container is a singleton, so its job uses a concurrency group and always tears
 the service down.
 
+### Provisioning the self-hosted runners
+
+- **`kvm` (Firecracker):** provision it like any Firecracker host
+  ([install.md](install.md#linux-firecracker)): `firecracker` on `PATH`,
+  `/dev/kvm`, the cached guest kernel and static dropbear
+  (`/var/cache/bot-bottle-fc/dropbear`), and the TAP/nft pool as a persistent
+  systemd unit. The job's preflight fails when any of these is missing.
+- **`macos` (Apple Container, advisory):** an Apple Silicon host-mode runner;
+  Apple Container can't run inside the Linux pull-request runner. It needs the
+  `container` CLI with `container system status` running, and Python ≥ 3.11
+  with `coverage` importable on the launchd service's explicit `PATH`. Install
+  the host firewall once (`sudo bot-bottle install --backend=macos-container`,
+  or the printed `sudo` block); the runner itself never gets root, and the
+  job's preflight and isolation probe fail without it. The infra container is
+  a singleton (`bot-bottle-mac-infra`), so keep runner concurrency at 1. Its
+  coverage never feeds the required pull-request gate.
+
 When every job passes, it releases: it promotes the tested images to a release
 version and commits their pins (`published-artifacts.json`) to `main`, with
 `pyproject.toml` bumped to that version in the same commit. Leave the `version`

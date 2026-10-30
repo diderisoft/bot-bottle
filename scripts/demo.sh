@@ -18,7 +18,7 @@ if [ -z "${BOT_BOTTLE_CLAUDE_OAUTH_TOKEN:-}" ]; then
   cat <<'EOF' >&2
 demo: BOT_BOTTLE_CLAUDE_OAUTH_TOKEN is unset. The bottle launches claude,
 which needs the token to authenticate. Set it in your shell env (e.g.
-~/.zshrc) — see README §Auth — then re-run.
+~/.zshrc) — see docs/reference/install.md, "Signing in an agent" — then re-run.
 EOF
   exit 1
 fi

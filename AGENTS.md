@@ -29,15 +29,18 @@ backend remains available with `BOT_BOTTLE_BACKEND=docker` or
 
 ## Repository layout
 
-- `README.md` — short public-facing description.
+- `README.md` — short public-facing getting-started page.
 - `AGENTS.md` — this file, orientation for future agent sessions.
+- `CONTRIBUTING.md` — commit format and the PR tracker policy;
+  `AI_POLICY.md` and `SECURITY.md` sit beside it.
 - `.gitignore` — OS junk.
 - `.bot-bottle/` — per-repo agent and bottle manifests (YAML markdown format).
 - `examples/` — example bottles and agents showing the manifest format.
 - `docs/README.md` — docs overview; when to write which document.
 - `docs/reference/` — how the system works **now**. Read
   `docs/reference/architecture.md` first; it links the rest (backends,
-  gateway, git-gate, host controller, runtime contract, glossary).
+  install, manifest, gateway, git-gate, host controller, runtime contract,
+  glossary).
 - `docs/decisions/` — decision records (ADR-lite): why the system is
   the way it is.
 

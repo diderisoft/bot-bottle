@@ -151,7 +151,8 @@ jobs:
   # Manual only: the privileged KVM runner does not execute proposed changes
   # unattended.
   #
-  # Runner prerequisites (provision once; see README "Firecracker on Linux"):
+  # Runner prerequisites (provision once; see docs/reference/ci.md
+  # "Provisioning the self-hosted runners"):
   # `firecracker` on PATH, `/dev/kvm` accessible, cached kernel +
   # static dropbear at /var/cache/bot-bottle-fc/dropbear, and the pool as a
   # persistent systemd unit.
@@ -169,7 +170,7 @@ jobs:
       - name: Preflight — Firecracker host is ready
         run: |
           command -v firecracker >/dev/null || {
-            echo "firecracker not on PATH — provision the runner (README: Firecracker on Linux)"; exit 1; }
+            echo "firecracker not on PATH — provision the runner (docs/reference/ci.md: Provisioning the self-hosted runners)"; exit 1; }
           test -e /dev/kvm || { echo "/dev/kvm missing — KVM not available on this runner"; exit 1; }
           # `doctor --backend` exits non-zero unless the TAP pool is up + no
           # range overlap; it prints the exact `install` fix.
@@ -286,7 +287,7 @@ jobs:
   # `concurrency` group serializes runs so two never collide on it (#425), and
   # the always-run teardown removes it so a crashed run can't wedge the next.
   #
-  # Runner prerequisites (provision once; see README "macOS Apple Container"):
+  # Runner prerequisites (provision once; see docs/reference/ci.md "Provisioning the self-hosted runners"):
   # the `container` CLI on PATH with `container system status` running, and a
   # Python >=3.11 with `coverage` importable on the launchd service PATH.
   integration-macos:
@@ -307,7 +308,7 @@ jobs:
       - name: Preflight — Apple Container backend is ready
         run: |
           command -v container >/dev/null || {
-            echo "container CLI not on PATH — provision the runner (README: macOS Apple Container)"; exit 1; }
+            echo "container CLI not on PATH — provision the runner (docs/reference/ci.md: Provisioning the self-hosted runners)"; exit 1; }
           container system status || {
             echo "container system service not running — run 'container system start'"; exit 1; }
           python3 cli.py doctor --backend=macos-container
