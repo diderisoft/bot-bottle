@@ -57,5 +57,45 @@ class TestHostLibrary(unittest.TestCase):
         self.assertIn("error", reply)
 
 
+class TestResolvedManifest(unittest.TestCase):
+    """The launch page's preview: an agent in bottles, merged as a launch would."""
+
+    def setUp(self) -> None:
+        self.home = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.home, True)
+        env = mock.patch.dict(os.environ, {"HOME": str(self.home)})
+        env.start()
+        self.addCleanup(env.stop)
+        root = self.home / ".bot-bottle"
+        (root / "agents").mkdir(parents=True)
+        (root / "bottles").mkdir()
+        (root / "agents" / "helper.md").write_text("---\nbottle: work\n---\nHelps.\n")
+        (root / "bottles" / "work.md").write_text("---\nenv:\n  A: \"1\"\n  B: \"1\"\n---\n")
+        (root / "bottles" / "more.md").write_text("---\nenv:\n  B: \"2\"\n---\n")
+
+    def _resolve(self, msg: dict) -> dict:
+        with mock.patch.object(Path, "home", return_value=self.home):
+            return asyncio.run(remote_actions.QUERIES["resolve"]({"request_id": "r", **msg}, {}))
+
+    def test_the_bottles_merge_in_order(self) -> None:
+        reply = self._resolve({"agent": "helper", "bottles": ["work", "more"]})
+        self.assertEqual(("resolved", "r", ["work", "more"]),
+                         (reply["type"], reply["request_id"], reply["bottles"]))
+        self.assertEqual({"A": "1", "B": "2"}, reply["data"]["env"])
+        self.assertIn("env:", reply["text"])
+        reply = self._resolve({"agent": "helper", "bottles": ["more", "work"]})
+        self.assertEqual({"A": "1", "B": "1"}, reply["data"]["env"])
+
+    def test_no_bottles_is_the_agents_own(self) -> None:
+        reply = self._resolve({"agent": "helper", "bottles": []})
+        self.assertEqual((["work"], {"A": "1", "B": "1"}), (reply["bottles"], reply["data"]["env"]))
+
+    def test_what_doesnt_resolve_says_why(self) -> None:
+        self.assertIn("not defined", self._resolve({"agent": "nobody"})["error"])
+        self.assertIn("error", self._resolve({"agent": "helper", "bottles": ["missing"]}))
+        self.assertIn("error", self._resolve({"agent": "../x"}))
+        self.assertIn("error", self._resolve({"agent": "helper", "bottles": "work"}))
+
+
 if __name__ == "__main__":
     unittest.main()

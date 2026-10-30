@@ -338,14 +338,39 @@ async def library(msg: Mapping[str, Any], _running: Mapping[str, str],
     return reply
 
 
+async def resolve(msg: Mapping[str, Any], _running: Mapping[str, str],
+                  _bottles: Any = None) -> dict[str, Any]:
+    """What launching the named agent in the named bottles would run with,
+    for the console's launch page (`library.resolved_manifest`). It names
+    things as a launch does, so it's checked as one is."""
+    # pylint: disable=import-outside-toplevel
+    from .library import resolved_manifest
+    from .remote_requests import MAX_BOTTLES, _NAME
+    reply: dict[str, Any] = {"type": "resolved", "request_id": msg.get("request_id")}
+    agent, bottles = msg.get("agent"), msg.get("bottles", [])
+    if not isinstance(agent, str) or not _NAME.match(agent):
+        reply["error"] = "resolve needs an agent's name"
+        return reply
+    if (not isinstance(bottles, list) or len(bottles) > MAX_BOTTLES
+            or not all(isinstance(b, str) and _NAME.match(b) for b in bottles)):
+        reply["error"] = f"bottles must be a list of at most {MAX_BOTTLES} bottle names"
+        return reply
+    try:
+        reply.update(await asyncio.to_thread(resolved_manifest, agent, bottles))
+    except Exception as e:  # pylint: disable=broad-exception-caught  # reported, not raised
+        log.warn(f"remote: resolving {agent}'s manifest failed: {type(e).__name__}: {e}")
+        reply["error"] = "resolving the manifest failed; see the host controller's log"
+    return reply
+
+
 # Console requests (most about one running agent), by message type.
 QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest,
            "manifest_save": manifest_save, "manifest_transfer": manifest_transfer,
-           "library": library}
+           "library": library, "resolve": resolve}
 
 # Console answers to a card that carry more than allow/deny, by message type.
 ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer}
 
 __all__ = ["ANSWERS", "QUERIES", "add_repo_answer", "card", "forge_attention", "forge_connect",
            "forge_connect_answer", "library", "manifest", "manifest_save", "manifest_transfer",
-           "refresh_credentials", "repo_attention"]
+           "refresh_credentials", "repo_attention", "resolve"]

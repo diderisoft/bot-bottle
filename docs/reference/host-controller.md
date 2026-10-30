@@ -275,6 +275,13 @@ The console's Library asks for the host's `library`
 their text (cut at 64 KiB). The console mirrors them read-only and keeps the
 last copy for while the host is offline. Project bottles aren't sent.
 
+The console's launch page asks to `resolve` an agent (by name) in an ordered
+list of bottles before it launches (`library.resolved_manifest`): the reply's
+`text` (and `data`) is what that launch would run with, the bottles merged in
+order as a launch merges them (none means the agent's own `bottle:`), as one
+bottle file's YAML; or `error` when it doesn't resolve. Names are checked as a
+launch's are.
+
 The console's Manifest tab asks for a running agent's `manifest`
 (`manifest_view.py`).
 

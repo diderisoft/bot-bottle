@@ -61,4 +61,25 @@ def host_library() -> dict[str, list[dict[str, Any]]]:
     return out
 
 
-__all__ = ["MAX_BYTES", "host_library"]
+def resolved_manifest(agent: str, bottles: "list[str] | tuple[str, ...]") -> dict[str, Any]:
+    """What launching `agent` in `bottles` (merged in order, 0 the base; none
+    means the agent's own `bottle:`) would run with, before it runs: the
+    launch page's preview. `{agent, bottles, text, data}`, `text` the merged
+    bottle as one bottle file's YAML (as the Manifest tab shows it), or
+    `{error}`."""
+    # pylint: disable=import-outside-toplevel
+    from ... import run_manifest
+    from ...manifest import ManifestError, ManifestIndex
+    from ...manifest.document import bottle_document
+    try:
+        index = ManifestIndex.resolve(str(Path.home()))
+        manifest = index.load_for_agent(agent, tuple(bottles) or None)
+    except ManifestError as e:
+        return {"error": str(e)}
+    doc = bottle_document(manifest.bottle)
+    names = list(bottles) or ([manifest.agent.bottle] if manifest.agent.bottle else [])
+    return {"agent": agent, "bottles": names, "text": run_manifest.document_text(doc),
+            "data": doc}
+
+
+__all__ = ["MAX_BYTES", "host_library", "resolved_manifest"]
