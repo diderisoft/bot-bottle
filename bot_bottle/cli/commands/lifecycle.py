@@ -6,6 +6,7 @@ infra pair.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import os
 import sys
 
@@ -36,8 +37,16 @@ def cmd_up(argv: list[str]) -> int:
     parser.add_argument("--restart", action="store_true",
                         help="restart the host controller (running bottles keep running), "
                              "then the orchestrator and gateway")
+    parser.add_argument("--build", action="store_true",
+                        help="build the orchestrator and gateway images from this install's "
+                             "source instead of pulling a release's (for running from main; "
+                             "same as BOT_BOTTLE_INFRA_BUILD=local). Later launches keep "
+                             "building until an `up` without it")
     ns = parser.parse_args(argv)
     settings = settings_from_env()
+    if ns.build:
+        settings = dataclasses.replace(
+            settings, infra=dataclasses.replace(settings.infra, infra_build_local=True))
     backend = get_bottle_backend(settings, ns.backend).name
     try:
         if ns.restart:

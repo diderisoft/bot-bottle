@@ -18,13 +18,17 @@ def _service(settings: Settings):  # type: ignore[no-untyped-def]
 
 
 def ensure(settings: Settings, *, restart: bool = False) -> dict[str, object]:
-    """Bring the backend's infra pair up (daemon side); `restart` stops it
-    first."""
+    """Bring the backend's infra pair up (daemon side) for `bot-bottle up`;
+    `restart` stops it first. Builds locally only when `settings` asks
+    (`--build`), never on an earlier bring-up's say-so."""
     name, service = _service(settings)
     if restart:
+        # Before stopping anything: a restart that can't come back up is worse
+        # than none.
+        service.require_infra_images(inherit_build=False)
         log.info(f"stopping the {name} orchestrator and gateway")
         service.stop()
-    url = service.ensure_running()
+    url = service.ensure_running(inherit_build=False)
     # An adopted one still needs a listener.
     service.orchestrator().serve_host_control()
     return {"backend": name, "url": url}

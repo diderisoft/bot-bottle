@@ -166,6 +166,11 @@ class InfraServiceTrigger(unittest.TestCase):
         reattach = patch("bot_bottle.backend.infra_service.reattach_running_bottles")
         self.reattach = reattach.start()
         self.addCleanup(reattach.stop)
+        # A release matches: building locally is opt-in (test_infra_build_opt_in).
+        matches = patch("bot_bottle.backend.infra_service.published_infra_matches",
+                        return_value=True)
+        matches.start()
+        self.addCleanup(matches.stop)
         gateway = patch.object(self.svc, "gateway")
         gateway.start()
         self.addCleanup(gateway.stop)

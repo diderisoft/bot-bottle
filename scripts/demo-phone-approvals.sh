@@ -34,7 +34,7 @@ fail() { printf 'demo: %s\n' "$*" >&2; exit 1; }
 
 # -- preflight ----------------------------------------------------------------
 
-bb status >/dev/null 2>&1 || fail "the bot-bottle stack isn't running; run: $repo/cli.py up"
+bb status >/dev/null 2>&1 || fail "the bot-bottle stack isn't running; run: $repo/cli.py up --build"
 [ -f "$root/agents/pi.md" ] || fail "no pi agent; run: $repo/cli.py setup"
 if [ "$mode" = phone ]; then
   python3 - "$root" <<'EOF' \

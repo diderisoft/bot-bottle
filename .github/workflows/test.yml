@@ -121,6 +121,8 @@ jobs:
       - name: Run integration tests (docker) with coverage
         env:
           BOT_BOTTLE_BACKEND: docker
+          # Test this checkout's gateway and orchestrator: building them is opt-in.
+          BOT_BOTTLE_INFRA_BUILD: local
           COVERAGE_FILE: ${{ github.workspace }}/.coverage.docker
         run: |
           python3 -m coverage run -m scripts.unittest_gate \

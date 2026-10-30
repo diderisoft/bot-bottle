@@ -1,7 +1,7 @@
 # Build and publish the fixed images to the Gitea OCI registry, by hand, to
 # rehearse a publish. Releases go through pre-release-test.yml, which tests the
 # images, promotes them to a release version and pins them on main; nothing
-# here is pinned. Development builds locally (BOT_BOTTLE_INFRA_BUILD=local).
+# here is pinned. Development builds locally (`bot-bottle up --build`).
 #
 # One machine builds both architectures; emulation measured at 1.1-1.8x. delphi
 # runs it because rootfs packaging needs e2fsprogs `mke2fs`.

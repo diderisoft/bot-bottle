@@ -48,17 +48,24 @@ def _installed_sha(dist: metadata.Distribution) -> str:
     return str(commit)
 
 
-@functools.cache
-def engine_id() -> str:
+def install_version() -> tuple[str, str]:
+    """This install's `(version, short commit)`; the commit is "" when
+    unknown, the version "unknown"."""
     if resources.is_source_checkout():
         version, sha = _checkout_version(), _checkout_sha()
     else:
         try:
             dist = metadata.distribution(DIST_NAME)
         except metadata.PackageNotFoundError:
-            return f"{DIST_NAME}/unknown"
+            return "unknown", ""
         version, sha = dist.version, _installed_sha(dist)
-    return f"{DIST_NAME}/{version}+{sha[:_SHORT_SHA]}" if sha else f"{DIST_NAME}/{version}"
+    return version, sha[:_SHORT_SHA]
 
 
-__all__ = ["DIST_NAME", "engine_id"]
+@functools.cache
+def engine_id() -> str:
+    version, sha = install_version()
+    return f"{DIST_NAME}/{version}+{sha}" if sha else f"{DIST_NAME}/{version}"
+
+
+__all__ = ["DIST_NAME", "engine_id", "install_version"]

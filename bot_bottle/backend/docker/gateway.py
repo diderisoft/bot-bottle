@@ -83,9 +83,13 @@ class DockerGateway(Gateway):
         if self._dockerfile is None:
             return
         # Pull the release-pinned image when it was built from this install's
-        # code.
-        pin = pinned_infra_artifact(
-            "bot-bottle-gateway", FORMAT_OCI, local_build=self._settings.infra.infra_build_local)
+        # code; build only when asked (`up --build`), else stop.
+        try:
+            pin = pinned_infra_artifact(
+                "bot-bottle-gateway", FORMAT_OCI,
+                local_build=self._settings.infra.infra_build_local)
+        except RegistryError as e:
+            raise GatewayError(str(e)) from e
         if pin is not None:
             try:
                 self.image_ref = pull_pinned_image(

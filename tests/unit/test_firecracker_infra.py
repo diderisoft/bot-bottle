@@ -45,6 +45,13 @@ class TestAccessors(unittest.TestCase):
 
 
 class TestEnsureRunning(unittest.TestCase):
+    def setUp(self) -> None:
+        # A release matches: building locally is opt-in (test_infra_build_opt_in).
+        matches = patch("bot_bottle.backend.infra_service.published_infra_matches",
+                        return_value=True)
+        matches.start()
+        self.addCleanup(matches.stop)
+
     def test_adopts_when_healthy_alive_and_version_matches(self):
         # Healthy control plane + live gateway + existing key + matching version
         # marker -> adopt (no stop/build/boot); returns the orchestrator URL.

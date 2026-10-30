@@ -109,6 +109,8 @@ jobs:
       - name: Run integration tests (docker) with coverage
         env:
           BOT_BOTTLE_BACKEND: docker
+          # Test this checkout's gateway and orchestrator: building them is opt-in.
+          BOT_BOTTLE_INFRA_BUILD: local
           COVERAGE_FILE: ${{ github.workspace }}/.coverage.docker
         run: |
           set -euo pipefail
@@ -319,6 +321,8 @@ jobs:
       - name: Run integration tests (macos-container) with coverage
         env:
           BOT_BOTTLE_BACKEND: macos-container
+          # Test this checkout's gateway and orchestrator: building them is opt-in.
+          BOT_BOTTLE_INFRA_BUILD: local
           COVERAGE_FILE: ${{ github.workspace }}/.coverage.macos
         run: python3 -m coverage run -m unittest discover -t . -s tests/integration -v
 
@@ -461,8 +465,9 @@ jobs:
       # PRD 0085 step 3: installs (git+…main by default) take their pins from
       # the committed manifest, which setup.py bundles into the package. One
       # automated commit per release; an install whose code has since moved
-      # past the release builds the infra images instead of pulling them
-      # (bot_bottle/infra_image.py), so the pins stay safe as main moves.
+      # past the release never pulls them: it stops, and builds the infra
+      # images only with `bot-bottle up --build` (bot_bottle/infra_image.py),
+      # so the pins stay safe as main moves.
       # Needs the BOT_BOTTLE_RELEASE_PUSH_TOKEN secret: a token for a user on
       # main's push allowlist. It reaches git through a credential helper that
       # reads the environment, never the command line. The same commit bumps

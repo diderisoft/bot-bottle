@@ -34,6 +34,11 @@ class TestInfraEnsureRunning(unittest.TestCase):
         reattach = patch("bot_bottle.backend.infra_service.reattach_running_bottles")
         self.reattach = reattach.start()
         self.addCleanup(reattach.stop)
+        # A release matches: building locally is opt-in (test_infra_build_opt_in).
+        matches = patch("bot_bottle.backend.infra_service.published_infra_matches",
+                        return_value=True)
+        matches.start()
+        self.addCleanup(matches.stop)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = patch("bot_bottle.backend.infra_service.bot_bottle_root", return_value=Path(tmp.name))

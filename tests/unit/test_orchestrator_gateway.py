@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from bot_bottle.contract.hostctl import OperationSettings, Settings
+from bot_bottle.contract.hostctl import InfraSettings, OperationSettings, Settings
 from bot_bottle.backend.docker.gateway import (
     DEFAULT_GATEWAY_SUBNET,
     DockerGateway,
@@ -537,7 +537,8 @@ class TestDockerGateway(unittest.TestCase):
 
 class TestDockerGatewayBuild(unittest.TestCase):
     def setUp(self) -> None:
-        self.sc = DockerGateway(settings=Settings())  # defaults to the real bundle image + dockerfile
+        # The real bundle image + dockerfile, built locally (opt-in: `up --build`).
+        self.sc = DockerGateway(settings=Settings(infra=InfraSettings(infra_build_local=True)))
 
     def test_image_exists_reads_docker_inspect(self) -> None:
         with patch(_RUN_DOCKER, return_value=_proc(returncode=0)):
@@ -573,7 +574,8 @@ class TestDockerGatewayBuild(unittest.TestCase):
             calls.append(argv)
             return _proc()
 
-        no_cache = Settings(operation=OperationSettings(no_cache=True))
+        no_cache = Settings(operation=OperationSettings(no_cache=True),
+                            infra=InfraSettings(infra_build_local=True))
         with patch(_RUN_DOCKER, side_effect=rec):
             DockerGateway(settings=no_cache).ensure_built()
         builds = [c for c in calls if c[:2] == ["docker", "build"]]

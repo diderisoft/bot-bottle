@@ -7,7 +7,7 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
-from bot_bottle.contract.hostctl import Settings
+from bot_bottle.contract.hostctl import InfraSettings, Settings
 from bot_bottle.backend.docker.orchestrator import (
     ORCHESTRATOR_NAME,
     ORCHESTRATOR_NETWORK,
@@ -37,6 +37,10 @@ def _health(status: int) -> MagicMock:
 
 def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> Mock:
     return Mock(returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+# Building locally is opt-in (`bot-bottle up --build`).
+_LOCAL = Settings(infra=InfraSettings(infra_build_local=True))
 
 
 class TestDockerOrchestrator(unittest.TestCase):
@@ -235,6 +239,7 @@ class TestDockerOrchestrator(unittest.TestCase):
         self.assertIn("--internal", control[0])
 
     def test_ensure_built_builds_the_orchestrator_image(self) -> None:
+        self.orch = DockerOrchestrator(port=8099, settings=_LOCAL)
         with patch(_RUN, return_value=_proc()) as run:
             self.orch.ensure_built()
         builds = [c.args[0] for c in run.call_args_list if c.args[0][:2] == ["docker", "build"]]
@@ -246,6 +251,7 @@ class TestDockerOrchestrator(unittest.TestCase):
         )
 
     def test_ensure_built_raises_on_build_failure(self) -> None:
+        self.orch = DockerOrchestrator(port=8099, settings=_LOCAL)
         with patch(_RUN, return_value=_proc(returncode=1, stderr="no space left")):
             with self.assertRaises(GatewayError):
                 self.orch.ensure_built()

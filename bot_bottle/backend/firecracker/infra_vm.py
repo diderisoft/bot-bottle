@@ -98,14 +98,16 @@ def _role_version(role: str, infra: InfraSettings) -> str:
 
 def ensure_built(settings: Settings) -> None:
     """Make both infra rootfs artifacts available before boot: download and
-    verify the published ones, or build from source with host Docker when
-    `BOT_BOTTLE_INFRA_BUILD=local` or nothing published matches this code."""
+    verify the published ones, or build from source with host Docker when asked
+    to (`--build` / `BOT_BOTTLE_INFRA_BUILD=local`). Raises
+    `InfraImagesUnpublished` when nothing published matches this code and
+    building wasn't asked for."""
     infra = settings.infra
     if infra_rootfs.builds_locally(infra):
-        if not infra.infra_build_local and shutil.which("docker") is None:
-            die("no published infra image matches this install's code (installed "
-                "from main after the last release?) and Docker isn't available to "
-                "build one. Install a release, or install Docker.")
+        if shutil.which("docker") is None:
+            die("building the infra images locally (`--build` / "
+                "BOT_BOTTLE_INFRA_BUILD=local) needs Docker, and it isn't on PATH. "
+                "Install Docker, or install a release to use its published images.")
         build_infra_images_with_docker(no_cache=settings.operation.no_cache)
         return
     infra_rootfs.ensure_available(infra)

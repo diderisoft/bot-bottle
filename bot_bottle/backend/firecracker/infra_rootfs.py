@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ... import image_inputs, image_registry
 from ...contract.hostctl import InfraSettings
-from ...infra_image import pinned_infra_artifact
+from ...infra_image import require_infra_images
 from ...paths import host_artifact_cache_dir
 from ...lib.log import info
 from ...published_artifacts import (
@@ -31,12 +31,12 @@ _CHUNK = 1 << 20
 
 
 def builds_locally(infra: InfraSettings) -> bool:
-    """Whether this host builds the infra rootfs from source: when asked to
-    (`infra_build_local`), or when nothing published matches this install's
+    """Whether this host builds the infra rootfs from source, which only
+    `infra_build_local` (`--build`) asks for. Raises `InfraImagesUnpublished`
+    when it wasn't asked for and nothing published matches this install's
     code."""
-    return any(
-        pinned_infra_artifact(role_image(r), FORMAT_EXT4, local_build=infra.infra_build_local)
-        is None for r in ROLES)
+    require_infra_images(FORMAT_EXT4, local_build=infra.infra_build_local)
+    return infra.infra_build_local
 
 
 def role_image(role: str) -> str:
@@ -62,8 +62,9 @@ def role_version(role: str, infra: InfraSettings) -> str:
     `inputs_hash`, not the release version, which doesn't move per commit.
     Decides whether a running VM may be adopted.
 
-    From the manifest when pulling; computed from the checkout under
-    `BOT_BOTTLE_INFRA_BUILD=local`, so a local rebuild isn't adopted as stale."""
+    From the manifest when pulling; computed from the checkout under `--build`
+    (`BOT_BOTTLE_INFRA_BUILD=local`), so a local rebuild isn't adopted as
+    stale."""
     image = role_image(role)
     if builds_locally(infra):
         return image_inputs.inputs_hash(image)

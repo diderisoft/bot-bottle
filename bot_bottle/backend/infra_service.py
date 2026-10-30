@@ -5,6 +5,7 @@ per backend (`backend/*/infra.py`).
 from __future__ import annotations
 
 import abc
+import dataclasses
 import fcntl
 import json
 from collections.abc import Generator
@@ -13,10 +14,14 @@ from pathlib import Path
 
 from ..contract.hostctl import InfraSettings, Settings
 from ..control.gateway import Gateway
+from ..infra_image import (
+    BUILD_NEEDS_DOCKER, published_infra_matches, unpublished_message,
+)
 from ..lib import log
 from ..lib.log import die, info
 from ..control.lifecycle import DEFAULT_STARTUP_TIMEOUT_SECONDS, Orchestrator
 from ..paths import bot_bottle_root
+from ..published_artifacts import FORMAT_OCI
 from .gateway_attach import (
     GatewayAttachError,
     GatewayAttacher,
@@ -83,6 +88,10 @@ class InfraService(abc.ABC):
     # Names this backend's "reattach pending" marker.
     name: str = "infra"
     settings: Settings
+    # The published artifact format the pair runs from, and how a local build
+    # of it is described in the stop message.
+    infra_format: str = FORMAT_OCI
+    infra_build_note: str = BUILD_NEEDS_DOCKER
 
     @abc.abstractmethod
     def orchestrator(self) -> Orchestrator:
@@ -97,10 +106,17 @@ class InfraService(abc.ABC):
         *,
         startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
         launch_stages: bool = False,
+        inherit_build: bool = True,
     ) -> str:
         """Bring the pair up (adopting a healthy one) and reattach running
         bottles if either plane restarted. Returns the host control-plane URL;
         raises `OrchestratorStartError` on timeout.
+
+        Stops before touching anything when nothing published matches this
+        install and building locally wasn't asked for (`require_infra_images`).
+        `inherit_build` lets an implicit bring-up (a launch) keep building
+        locally when the last bring-up was asked to; `bot-bottle up` passes
+        False, so it does exactly what its flags say.
 
         Holds the bring-up lock. A "reattach pending" marker is written first
         and removed only on success, so an interrupted bring-up is retried by
@@ -108,13 +124,34 @@ class InfraService(abc.ABC):
         if launch_stages:
             log.stage("services", "Starting bot-bottle services")
         try:
-            return self._ensure_running(startup_timeout=startup_timeout)
+            return self._ensure_running(startup_timeout=startup_timeout,
+                                        inherit_build=inherit_build)
         finally:
             if launch_stages:
                 log.stage("start", "Starting the bottle")
 
-    def _ensure_running(self, *, startup_timeout: float) -> str:
+    def require_infra_images(self, *, inherit_build: bool = True) -> None:
+        """Die unless the infra images can be pulled (a published release
+        matches this install's code) or building them locally was asked for.
+        With `inherit_build`, a request that didn't ask takes the opt-in from
+        the last recorded bring-up, so `bot-bottle up --build` then
+        `bot-bottle <agent>` keeps working (and keeps its fingerprint)."""
+        infra = self.settings.infra
+        if infra.infra_build_local or published_infra_matches(self.infra_format):
+            return
+        if inherit_build:
+            recorded = recorded_infra_settings(self.name)
+            if recorded is not None and recorded.infra_build_local:
+                info("no published infra images match this install; building them "
+                     "locally, as the last `bot-bottle up --build` asked")
+                self.settings = dataclasses.replace(
+                    self.settings, infra=dataclasses.replace(infra, infra_build_local=True))
+                return
+        die(unpublished_message(self.infra_build_note))
+
+    def _ensure_running(self, *, startup_timeout: float, inherit_build: bool) -> str:
         with self.bring_up_lock():
+            self.require_infra_images(inherit_build=inherit_build)
             marker = self._reattach_pending_marker()
             pending = marker.exists()
             marker.parent.mkdir(parents=True, exist_ok=True)

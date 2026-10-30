@@ -8,7 +8,7 @@ from __future__ import annotations
 from ...contract.hostctl import Settings
 from ...lib.log import die, info
 from ...image_registry import RegistryError
-from ...published_artifacts import ArtifactsManifestError
+from ...published_artifacts import FORMAT_EXT4, ArtifactsManifestError
 from ..infra_service import InfraService
 from . import infra_vm
 from .gateway import FirecrackerGateway
@@ -20,6 +20,7 @@ class FirecrackerInfraService(InfraService):
     """Bring up the orchestrator + gateway VM pair as a per-host singleton."""
 
     name = "firecracker"
+    infra_format = FORMAT_EXT4
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings

@@ -17,6 +17,20 @@ per clone:
 git config core.hooksPath .githooks
 ```
 
+## Running from main
+
+A checkout or an install of `main` usually has no published orchestrator and
+gateway images to match it, and bot-bottle won't build them unasked. Build
+them from your source:
+
+```sh
+./cli.py up --build    # or: BOT_BOTTLE_INFRA_BUILD=local ./cli.py <command>
+```
+
+Launches after it keep building locally until an `up` without `--build`. It
+needs Docker (Apple's `container` on macOS). See
+[docs/reference/backends.md](docs/reference/backends.md#infra-images).
+
 ## Pull requests and the tracker
 
 Issues are the canonical work items and own their labels; every issue has at

@@ -34,6 +34,34 @@ leaving the box except through the gateway.
 `Freezer` (`backend/freeze.py`, with one subclass per backend) commits a
 running bottled agent to an image that `bot-bottle resume` can start again.
 
+## Infra images
+
+The orchestrator and gateway run from a release's published images (OCI for
+docker and macos-container, ext4 root filesystems for firecracker), pulled and
+verified by digest from the pins in `published-artifacts.json`. A pin is used
+only when its `inputs_hash` matches this install's sources
+(`infra_image.py`).
+
+Building them from source is opt-in, never a fallback: `bot-bottle up
+--build`, or `BOT_BOTTLE_INFRA_BUILD=local` for every command. docker and
+firecracker build with Docker; macos-container with Apple's `container`.
+Without the opt-in, an install with nothing published to match (one from
+`main` after the last release) stops before bring-up touches anything
+(`InfraService.require_infra_images`):
+
+```
+bot-bottle: error: this install (0.1.4 @ 1a2b3c4d5e6f, unreleased) has no published infra images.
+    Install a release: uv tool install bot-bottle   (or pipx install bot-bottle)
+    Or build them locally (needs Docker): bot-bottle up --build
+    (BOT_BOTTLE_INFRA_BUILD=local does the same for every command.)
+```
+
+The version is the package's, and the commit comes from git in a checkout or
+from the install's `direct_url.json`. A bring-up a launch triggers keeps the
+last recorded bring-up's opt-in, so `bot-bottle up --build` followed by
+`bot-bottle <agent>` keeps building; `bot-bottle up` does only what its flags
+say, so an `up` without `--build` goes back to pulling, or stops.
+
 ## The agent's home
 
 A bottled agent's home (the guest user's home, `/home/node` in the current

@@ -1,8 +1,9 @@
 """Pull or build the infra images (gateway + orchestrator).
 
 Pull the release-pinned image only when its recorded `inputs_hash` matches this
-install's sources, otherwise build. `local_build`
-(`BOT_BOTTLE_INFRA_BUILD=local`) always builds.
+install's sources. Building them locally is opt-in (`bot-bottle up --build` or
+`BOT_BOTTLE_INFRA_BUILD=local`), never a fallback: without the opt-in, an
+install with nothing published to match stops with `InfraImagesUnpublished`.
 """
 
 from __future__ import annotations
@@ -11,35 +12,79 @@ from collections.abc import Callable
 from functools import cache
 
 from . import image_inputs, image_registry
+from .engine import install_version
+from .image_registry import RegistryError
 from .lib import log
 from .lib.log import info
 from .published_artifacts import Artifact, current_platform, load_artifacts_manifest_optional
 
+# How the backends that build with Docker (docker, firecracker) and with
+# Apple's `container` (macos-container) describe a local build.
+BUILD_NEEDS_DOCKER = "needs Docker"
+BUILD_WITH_CONTAINER = "with Apple's `container`"
 
-def pinned_infra_artifact(image: str, fmt: str, *, local_build: bool) -> Artifact | None:
-    """The published `fmt` artifact of infra `image` to pull, or None to build
-    locally."""
-    if local_build:
-        return None
+# How to get an install whose infra images are published.
+RELEASE_INSTALL_HINT = "uv tool install bot-bottle   (or pipx install bot-bottle)"
+
+
+class InfraImagesUnpublished(RegistryError):
+    """Nothing published matches this install's infra code and building them
+    locally wasn't asked for."""
+
+
+def unpublished_message(build_note: str = BUILD_NEEDS_DOCKER) -> str:
+    """Why bring-up stopped, and the two ways forward."""
+    version, sha = install_version()
+    label = f"{version} @ {sha}" if sha else version
+    return (f"this install ({label}, unreleased) has no published infra images.\n"
+            f"    Install a release: {RELEASE_INSTALL_HINT}\n"
+            f"    Or build them locally ({build_note}): bot-bottle up --build\n"
+            "    (BOT_BOTTLE_INFRA_BUILD=local does the same for every command.)")
+
+
+def published_infra_artifact(image: str, fmt: str) -> Artifact | None:
+    """The published `fmt` artifact of infra `image` for this platform, when
+    it was built from this install's code; else None."""
     entries = load_artifacts_manifest_optional()
     entry = entries.get(image) if entries else None
-    if entry is None:
-        return None
-    if entry.inputs_hash != _local_inputs_hash(image):
-        _note_mismatch(image, entry.version)
+    if entry is None or entry.inputs_hash != _local_inputs_hash(image):
         return None
     return entry.for_format(fmt, current_platform())
+
+
+def published_infra_matches(fmt: str) -> bool:
+    """Whether every infra image has a published `fmt` artifact built from
+    this install's code."""
+    return all(published_infra_artifact(image, fmt) is not None
+               for image in image_inputs.INFRA_ROLES)
+
+
+def require_infra_images(fmt: str, *, local_build: bool,
+                         build_note: str = BUILD_NEEDS_DOCKER) -> None:
+    """Raise `InfraImagesUnpublished` unless the infra images can be pulled
+    or building them was asked for."""
+    if not local_build and not published_infra_matches(fmt):
+        raise InfraImagesUnpublished(unpublished_message(build_note))
+
+
+def pinned_infra_artifact(
+    image: str, fmt: str, *, local_build: bool, build_note: str = BUILD_NEEDS_DOCKER,
+) -> Artifact | None:
+    """The published `fmt` artifact of infra `image` to pull, or None to build
+    locally, which only `local_build` asks for. Raises
+    `InfraImagesUnpublished` when nothing published matches and building
+    wasn't asked for."""
+    if local_build:
+        return None
+    artifact = published_infra_artifact(image, fmt)
+    if artifact is None:
+        raise InfraImagesUnpublished(unpublished_message(build_note))
+    return artifact
 
 
 @cache
 def _local_inputs_hash(image: str) -> str:
     return image_inputs.inputs_hash(image)
-
-
-@cache
-def _note_mismatch(image: str, version: str) -> None:
-    info(f"published {image} {version} was built from different code than this "
-         "install; building it locally")
 
 
 def local_build_tag(image: str, local_ref: str) -> str:
@@ -83,4 +128,14 @@ def _repo(ref: str) -> str:
     return name if name and "/" not in tag else ref
 
 
-__all__ = ["pinned_infra_artifact", "pull_pinned_image"]
+__all__ = [
+    "BUILD_NEEDS_DOCKER",
+    "BUILD_WITH_CONTAINER",
+    "InfraImagesUnpublished",
+    "published_infra_artifact",
+    "published_infra_matches",
+    "pinned_infra_artifact",
+    "pull_pinned_image",
+    "require_infra_images",
+    "unpublished_message",
+]

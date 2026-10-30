@@ -23,6 +23,7 @@ from ...control.lifecycle import (
     DEFAULT_PORT,
     OrchestratorStartError,
 )
+from ...infra_image import BUILD_WITH_CONTAINER
 from ..infra_service import InfraService
 from . import util as container_mod
 from .gateway import (
@@ -53,6 +54,7 @@ class MacosInfraService(InfraService):
     """Composes the per-host orchestrator + gateway containers. Callers use
     `ensure_running()` (returns the control-plane URL), the `orchestrator()` /
     `gateway()` accessors, and `ca_cert_pem()`."""
+    infra_build_note = BUILD_WITH_CONTAINER
 
     def __init__(
         self,

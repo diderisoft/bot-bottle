@@ -27,7 +27,8 @@ from ...control.lifecycle import (
 from . import util as container_mod
 from ...image_registry import RegistryError
 from ...infra_image import (
-    local_build_tag, note_local_build, pinned_infra_artifact, pull_pinned_image,
+    BUILD_WITH_CONTAINER, local_build_tag, note_local_build, pinned_infra_artifact,
+    pull_pinned_image,
 )
 from ...published_artifacts import FORMAT_OCI
 from .gateway import CONTROL_NETWORK
@@ -104,10 +105,14 @@ class MacosOrchestrator(Orchestrator):
     def ensure_built(self) -> None:
         """Build the image, or pull the release-pinned one when it was built
         from this install's code. The source is mounted, so code changes need
-        no rebuild."""
-        pin = pinned_infra_artifact(
-            "bot-bottle-orchestrator", FORMAT_OCI,
-            local_build=self._settings.infra.infra_build_local)
+        no rebuild. Builds only when asked (`up --build`); otherwise stops."""
+        try:
+            pin = pinned_infra_artifact(
+                "bot-bottle-orchestrator", FORMAT_OCI,
+                local_build=self._settings.infra.infra_build_local,
+                build_note=BUILD_WITH_CONTAINER)
+        except RegistryError as e:
+            raise OrchestratorStartError(str(e)) from e
         if pin is not None:
             try:
                 self.image_ref = pull_pinned_image(

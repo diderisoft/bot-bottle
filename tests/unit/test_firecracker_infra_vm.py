@@ -120,19 +120,18 @@ class TestEnsureBuilt(unittest.TestCase):
         # to fetch the other leaves half a control plane running.
         pull.assert_called_once_with(settings.infra)
 
-    def test_unmatched_published_images_without_docker_die_clearly(self):
-        # Installed from main past the last release, on a host with no Docker:
-        # neither pulling (stale) nor building works, so say so.
+    def test_asked_to_build_without_docker_dies_clearly(self):
         with patch.object(infra_vm.infra_rootfs, "builds_locally", return_value=True), \
                 patch.object(infra_vm.shutil, "which", return_value=None), \
                 patch.object(infra_vm, "die", side_effect=SystemExit) as die, \
                 self.assertRaises(SystemExit):
-            infra_vm.ensure_built(Settings())
-        self.assertIn("no published infra image matches", die.call_args.args[0])
+            infra_vm.ensure_built(Settings(infra=InfraSettings(infra_build_local=True)))
+        self.assertIn("needs Docker, and it isn't on PATH", die.call_args.args[0])
 
     def test_local_mode_builds_orchestrator_before_its_fc_image(self):
         local = Settings(infra=InfraSettings(infra_build_local=True))
-        with patch.object(infra_vm.docker_mod, "build_image") as build, \
+        with patch.object(infra_vm.shutil, "which", return_value="/usr/bin/docker"), \
+                patch.object(infra_vm.docker_mod, "build_image") as build, \
                 patch.object(
                     infra_vm.docker_mod,
                     "pinned_local_image_ref",

@@ -39,6 +39,6 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w("  supervise answer bottled agents' pending requests (Ctrl-\\ in a terminal)\n")
     w("  trust     review and trust a project's bottles on this host\n")
     w("  uninstall remove bot-bottle from this host (keeps ~/.bot-bottle unless --purge)\n")
-    w("  up        start the host controller, orchestrator and gateway (--restart)\n\n")
+    w("  up        start the host controller, orchestrator and gateway (--restart, --build)\n\n")
     w(f"Run '{PROG} <command> --help' for command-specific usage.\n")
     return 0

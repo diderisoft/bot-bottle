@@ -50,7 +50,10 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "`info`"),
     EnvVar("BOT_BOTTLE_INFRA_BUILD", "user",
            "`local` builds the orchestrator and gateway images from source "
-           "instead of pulling a release's.",
+           "instead of pulling a release's, for every command; `bot-bottle up "
+           "--build` is the flag form. Building is never automatic: an install "
+           "with no published images that match (e.g. from `main`) stops "
+           "without it.",
            "pull"),
     EnvVar("BOT_BOTTLE_BUILD_ENGINE", "user",
            "Image build engine: `docker`, `podman` or `vm`.",

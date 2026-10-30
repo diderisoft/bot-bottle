@@ -26,6 +26,24 @@ uv tool install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot
 The installer's settings (`BOT_BOTTLE_PYTHON`, `BOT_BOTTLE_VENV`,
 `BOT_BOTTLE_INSTALL_SPEC`, all optional) are in [Settings](#settings).
 
+### Releases and infra images
+
+The normal path is a release: its orchestrator and gateway images are
+published, and bot-bottle pulls and verifies them. Both commands above install
+`main`, which matches the last release only until a change to the
+orchestrator or gateway lands after it. An install with no published images to
+match stops on its first bring-up and says so; it never builds them on its own
+([backends.md](backends.md#infra-images)). To run from `main` (developing
+bot-bottle, or a fix not yet released), build them locally:
+
+```sh
+bot-bottle up --build    # or set BOT_BOTTLE_INFRA_BUILD=local
+```
+
+That needs Docker on docker and firecracker hosts, and Apple's `container` on
+macOS. Launches after it keep building locally until an `up` without
+`--build`.
+
 ## Requirements
 
 ### Python
@@ -81,7 +99,7 @@ reports what's missing afterwards. Which backend a host gets is in
 | Backend | Needs |
 |---|---|
 | macos-container (macOS default) | Apple's `container` CLI, and the one-time host firewall. No Docker. |
-| firecracker (Linux default with KVM) | `/dev/kvm`, the `firecracker` binary, e2fsprogs, and the one-time network pool. Docker only to build the infra images from source instead of using a release. |
+| firecracker (Linux default with KVM) | `/dev/kvm`, the `firecracker` binary, e2fsprogs, and the one-time network pool. Docker only for `bot-bottle up --build` (infra images from source instead of a release's). |
 | docker (fallback) | Docker |
 
 #### macOS: Apple Container
@@ -103,8 +121,9 @@ A KVM-capable Linux host defaults to the Firecracker backend. It needs:
   <https://github.com/firecracker-microvm/firecracker/releases>. Start flows
   print this pointer when the binary is missing.
 - **e2fsprogs** (`mke2fs`, `debugfs`, `e2fsck`, `resize2fs`) for building root
-  filesystems. Docker is optional: it is used only to build the infra images
-  from source rather than downloading a release's prebuilt ones.
+  filesystems. Docker is optional: it is used only by `bot-bottle up
+  --build`, which builds the infra images from source rather than downloading
+  a release's prebuilt ones.
 - **A one-time privileged network setup**: the per-bottle TAP pool plus the
   fail-closed `nftables` isolation table. `bot-bottle install
   --backend=firecracker` gives the host-appropriate config (a NixOS module, a
@@ -122,7 +141,7 @@ BOT_BOTTLE_BACKEND=firecracker bot-bottle start <agent>
 **NixOS.** Load the KVM module (`boot.kernelModules = [ "kvm-intel" ];` or
 `kvm-amd`) and add your user to the `kvm` group. Docker
 (`virtualisation.docker`, plus the `docker` group) is only needed to build the
-infra images from source. For the network pool, use the flake module, then
+infra images from source (`bot-bottle up --build`). For the network pool, use the flake module, then
 `nixos-rebuild switch`; imperative nft and TAP rules don't survive a rebuild.
 
 ```nix
@@ -162,8 +181,11 @@ fields are in [manifest.md](manifest.md#agents).
 ## First run
 
 ```sh
-bot-bottle start <agent>   # pulls (or builds) the images on first run, then drops you into the agent
+bot-bottle start <agent>   # pulls the images on first run, then drops you into the agent
 ```
+
+From `main` rather than a release, run `bot-bottle up --build` first
+([Releases and infra images](#releases-and-infra-images)).
 
 ## Settings
 
@@ -180,7 +202,7 @@ Generated from `bot_bottle/env_vars.py`: edit that, then run
 | `BOT_BOTTLE_BACKEND` | user | Backend to use: `macos-container`, `firecracker` or `docker`. Same as `--backend`. | the host default |
 | `BOT_BOTTLE_ROOT` | user | State root: manifests, keys, secrets, the host DB and audit journal. | `~/.bot-bottle` |
 | `BOT_BOTTLE_LOG_LEVEL` | user | `debug`, `info`, `warn` or `error`. `debug` also turns on the orchestrator's access log. | `info` |
-| `BOT_BOTTLE_INFRA_BUILD` | user | `local` builds the orchestrator and gateway images from source instead of pulling a release's. | pull |
+| `BOT_BOTTLE_INFRA_BUILD` | user | `local` builds the orchestrator and gateway images from source instead of pulling a release's, for every command; `bot-bottle up --build` is the flag form. Building is never automatic: an install with no published images that match (e.g. from `main`) stops without it. | pull |
 | `BOT_BOTTLE_BUILD_ENGINE` | user | Image build engine: `docker`, `podman` or `vm`. | the first usable one |
 | `BOT_BOTTLE_ARTIFACT_CACHE` | user | Where verified artifact downloads (infra rootfs, image layers) are cached. | `~/.cache/bot-bottle/artifacts` |
 | `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN` | user | Token for pulling from, or with `write:package` publishing to, the private image registry. Removed at the GitHub cutover. | — |
