@@ -187,5 +187,99 @@ class TestFirecracker(_Root):
         self.assertEqual(2, made.call_count)
 
 
+class TestRestartingTheKeptGuest(_Root):
+    def test_macos_starts_it_again_and_notes_an_older_image(self) -> None:
+        from bot_bottle.backend.macos_container import launch, util
+        plan = cast(Any, SimpleNamespace(container_name="bot-bottle-b1", slug="b1", image="i:2"))
+        cm = launch.container_mod
+        with mock.patch.object(cm, "container_is_running", return_value=True), \
+                mock.patch.object(cm, "stop_container") as stop, \
+                mock.patch.object(cm, "container_image_digest", return_value="old"), \
+                mock.patch.object(cm, "image_digest", return_value="new"), \
+                mock.patch.object(cm, "start_container", return_value=""), \
+                mock.patch.object(launch, "info") as info:
+            self.assertTrue(launch._restart_agent(plan))  # pylint: disable=protected-access
+        stop.assert_called_once_with("bot-bottle-b1")  # left running by a run that ended badly
+        self.assertIn("resume --fresh b1", str(info.call_args_list))
+        with mock.patch.object(util.subprocess, "run",
+                               side_effect=[_done(), _done(), _done(1)]) as run:
+            util.stop_container("c")
+            self.assertEqual("", util.start_container("c"))
+            self.assertEqual("boom", util.start_container("c"))
+        self.assertEqual(["container", "stop", "--time", "2", "c"], run.call_args_list[0].args[0])
+
+    def test_docker_starts_it_on_this_runs_network_or_replaces_it(self) -> None:
+        from bot_bottle.backend.docker import launch
+        plan = cast(Any, SimpleNamespace(container_name="bot-bottle-b1", slug="b1", image="i:2"))
+        dm = launch.docker_mod
+        for why, started in (("", True), ("no such network", False)):
+            with self.subTest(why=why), \
+                    mock.patch.object(dm, "stop_container"), \
+                    mock.patch.object(dm, "container_image_id", return_value="old"), \
+                    mock.patch.object(dm, "image_id", return_value="new"), \
+                    mock.patch.object(dm, "rewire_and_start", return_value=why) as rewire, \
+                    mock.patch.object(dm, "force_remove_container") as remove:
+                self.assertEqual(started, launch._restart_agent(plan, "n1", "10.0.0.3"))  # pylint: disable=protected-access
+            rewire.assert_called_once_with("bot-bottle-b1", "n1", "10.0.0.3")
+            self.assertEqual(not started, remove.called)
+
+    def test_docker_reads_a_containers_env_and_image(self) -> None:
+        from bot_bottle.backend.docker import util
+
+        def docker(argv: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            out = '["ENV_VAR_SECRET=s", "PATH=/bin"]' if "Config.Env" in argv[3] else "sha256:x"
+            return subprocess.CompletedProcess(argv, 0, out, "")
+
+        with mock.patch.object(util, "run_docker", side_effect=docker):
+            self.assertEqual({"ENV_VAR_SECRET": "s", "PATH": "/bin"}, util.container_env("c"))
+            self.assertEqual("sha256:x", util.container_image_id("c"))
+        with mock.patch.object(util, "run_docker", return_value=_done(1)):
+            self.assertEqual({}, util.container_env("c"))
+            self.assertEqual("", util.container_image_id("c"))
+            self.assertEqual("boom", util.rewire_and_start("c", "n", "10.0.0.3"))
+        with mock.patch.object(util, "run_docker") as run:
+            util.stop_container("c")
+        self.assertEqual(["docker", "stop", "--time", "2", "c"], run.call_args.args[0])
+
+
+class TestListingAndCleanup(_Root):
+    def test_firecracker_says_its_guest_disk_is_kept(self) -> None:
+        from bot_bottle.backend.firecracker.backend import FirecrackerBottleBackend
+        from bot_bottle.backend.firecracker.util import guest_image_path
+        from bot_bottle.contract.hostctl import Settings
+        backend = FirecrackerBottleBackend(Settings())
+        self.assertFalse(backend.kept_guest("b1"))
+        guest_image_path("b1").parent.mkdir(parents=True)
+        guest_image_path("b1").write_bytes(b"")
+        self.assertTrue(backend.kept_guest("b1"))
+
+    def test_macos_cleanup_leaves_a_kept_guest(self) -> None:
+        from bot_bottle.backend.macos_container import cleanup
+        bottle_state.mark_preserved("kept")
+        with mock.patch.object(cleanup.container_mod, "require_container"), \
+                mock.patch.object(cleanup, "_list_prefixed_containers",
+                                  return_value=["bot-bottle-kept", "bot-bottle-gone"]), \
+                mock.patch.object(cleanup, "_list_prefixed_networks", return_value=[]), \
+                mock.patch.object(cleanup.container_mod, "list_volumes", return_value=[]):
+            self.assertEqual(("bot-bottle-gone",), cleanup.prepare_cleanup().containers)
+
+    def test_the_listing_leaves_kept_blank_when_it_cant_tell(self) -> None:
+        from bot_bottle.cli.commands import bottled_agents
+        bottle_state.mark_preserved("b1")
+        metadata = cast(Any, SimpleNamespace(identity="b1", backend="docker"))
+        with mock.patch.object(bottled_agents, "settings_from_env"), \
+                mock.patch.object(bottled_agents, "get_bottle_backend",
+                                  side_effect=RuntimeError("down")):
+            self.assertEqual("", bottled_agents._kept_guest(metadata))  # pylint: disable=protected-access
+
+    def test_the_preview_shows_it(self) -> None:
+        from bot_bottle.manifest import Manifest
+        from bot_bottle.manifest.agent import ManifestAgent
+        from bot_bottle.manifest.preview import manifest_to_yaml
+        manifest = Manifest(agent=ManifestAgent(),
+                            bottle=ManifestBottle(preserve_container=True))
+        self.assertIn("preserve_container: true", manifest_to_yaml(manifest))
+
+
 if __name__ == "__main__":
     unittest.main()
