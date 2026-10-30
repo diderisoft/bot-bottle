@@ -309,6 +309,13 @@ class TestCommitTrailersEndToEnd(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls._backend = selected_backend()
+        if cls._backend == "macos-container":
+            # The stand-in upstream is a second bottle's guest SSH server.
+            # Firecracker guests run one (the backend drives them over SSH);
+            # Apple containers are driven with `container exec` and have none.
+            raise unittest.SkipTest(
+                "needs an SSH-capable bottle as the stand-in upstream; "
+                "macos-container bottles have no SSH server")
         cls._tmp = Path(tempfile.mkdtemp(prefix="trailers-e2e."))
         cls._settings = settings_from_env()
         try:
