@@ -52,32 +52,32 @@ The control stream (JSON lines):
   (`query`, `kinds`) -> `transcript_matches`: the newest matching entries'
   `seq` with a snippet, searched on the host over the masked text.
 
-`iroh` (`bot-bottle[remote]`) is imported only here, only when the link runs.
+The pairing on disk (`remote.json`, `console.json`, the iroh key) is
+`pairing.py`. `iroh` (`bot-bottle[remote]`) is imported only when the link
+runs or the node id is asked for.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
-import os
-import tempfile
 import threading
-import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
 from ...lib import log
-from ...paths import bot_bottle_root
 from ...util import same_instant
 from .audit_index import query_host_journal
 from .console_terminal import HISTORY_LINES, session_terminals, type_into, valid_size
 from . import remote_actions
+from .pairing import (RemoteConfig, RemoteError, import_iroh, load_config, secret_key,
+                      write_status)
 from .remote_requests import launch_extras, resume_request
-from .remote_tasks import AgentTurns, Stopped, unless_stopped
 from .transcript_serve import TranscriptLink
 
 if TYPE_CHECKING:
@@ -85,10 +85,6 @@ if TYPE_CHECKING:
 
 ALPN = b"bb-console/1"
 ROLE_REMOTE = "remote"
-CONSOLE_FILE = "console.json"
-REMOTE_FILE = "remote.json"
-STATUS_FILE = "remote.status.json"
-KEY_FILE = "remote.key"
 # How often remote.json is reread, and the reconnect backoff.
 POLL_SECONDS = 3.0
 BACKOFF_SECONDS = (1.0, 2.0, 5.0, 10.0, 30.0)
@@ -97,123 +93,6 @@ WATCH_SECONDS = 2.0
 _REFUSED = 1  # application close codes
 _HOST_STOPPING = 2
 MAX_AUDIT_EVENTS = 500
-
-
-class RemoteError(Exception):
-    """Remote access can't be configured or can't run."""
-
-
-# --- configuration ---
-
-
-@dataclass(frozen=True)
-class RemoteConfig:
-    """`remote.json`: whether the link runs, and the pinned console identity."""
-
-    enabled: bool = False
-    console_node_id: str = ""
-    console_ticket: str = ""
-
-
-def _root() -> Path:
-    return bot_bottle_root()
-
-
-def _write_private(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}-")
-    try:
-        os.chmod(tmp, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(text)
-        os.replace(tmp, path)
-    except OSError:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-
-
-def load_config() -> RemoteConfig:
-    try:
-        raw = json.loads((_root() / REMOTE_FILE).read_text())
-    except (OSError, ValueError):
-        return RemoteConfig()
-    if not isinstance(raw, dict):
-        return RemoteConfig()
-    return RemoteConfig(
-        enabled=raw.get("enabled") is True,
-        console_node_id=str(raw.get("console_node_id", "")),
-        console_ticket=str(raw.get("console_ticket", "")),
-    )
-
-
-def save_config(config: RemoteConfig) -> None:
-    _write_private(_root() / REMOTE_FILE, json.dumps(asdict(config), indent=2) + "\n")
-
-
-def load_console() -> dict[str, Any]:
-    """`console.json`, written by `bot-bottle pair`."""
-    try:
-        raw = json.loads((_root() / CONSOLE_FILE).read_text())
-    except (OSError, ValueError) as e:
-        raise RemoteError("not paired with a console; run `bot-bottle pair` first") from e
-    if not isinstance(raw, dict) or not raw.get("url") or not raw.get("access_token"):
-        raise RemoteError("console.json is incomplete; run `bot-bottle pair` again")
-    return raw
-
-
-def save_console(console: dict[str, Any]) -> None:
-    _write_private(_root() / CONSOLE_FILE, json.dumps(console, indent=2) + "\n")
-
-
-def secret_key() -> bytes:
-    """This host's iroh secret key (32 bytes, 0600), created on first use. Its
-    public half is the node id."""
-    path = _root() / KEY_FILE
-    try:
-        data = path.read_bytes()
-        if len(data) == 32:
-            return data
-    except OSError:
-        pass
-    key = os.urandom(32)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as f:
-        f.write(key)
-    return key
-
-
-def import_iroh() -> "Any":
-    try:
-        import iroh  # pylint: disable=import-outside-toplevel  # pyright: ignore[reportMissingImports]
-    except ImportError as e:
-        raise RemoteError(
-            "remote access needs the iroh bindings: install `bot-bottle[remote]` "
-            "(not available on Intel Macs)") from e
-    return iroh
-
-
-def node_id() -> str:
-    """This host's iroh node id."""
-    iroh = import_iroh()
-    return str(iroh.SecretKey.from_bytes(secret_key()).public())
-
-
-def write_status(**fields: object) -> None:
-    """`remote.status.json`, for `bot-bottle status`."""
-    try:
-        _write_private(_root() / STATUS_FILE,
-                       json.dumps({"updated": time.time(), **fields}) + "\n")
-    except OSError:
-        pass
-
-
-def read_status() -> dict[str, Any]:
-    try:
-        raw = json.loads((_root() / STATUS_FILE).read_text())
-    except (OSError, ValueError):
-        return {}
-    return raw if isinstance(raw, dict) else {}
 
 
 # --- the protocol ---
@@ -263,6 +142,35 @@ class Terminal(Protocol):
 
 # console agent id, bottle id -> a started relay, or None without a session.
 TerminalFactory = Callable[[str, str], Awaitable["Terminal | None"]]
+
+
+class AgentTurns:
+    """Runs each agent's slow requests (launch, resume, stop) one after
+    another, beside the caller: a teardown that wedged held every request
+    behind it, for any agent."""
+
+    def __init__(self) -> None:
+        # agent id -> its latest request, still running
+        self.pending: dict[str, asyncio.Task[None]] = {}
+
+    def submit(self, agent_id: str, work: Callable[[], Awaitable[None]]) -> None:
+        """Start `work` once `agent_id`'s previous request is done."""
+        before = self.pending.get(agent_id)
+
+        async def in_turn() -> None:
+            if before is not None:
+                await asyncio.wait({before})
+            await work()
+
+        task = asyncio.create_task(in_turn())
+        self.pending[agent_id] = task
+        task.add_done_callback(lambda t: self._done(agent_id, t))
+
+    def _done(self, agent_id: str, task: "asyncio.Task[None]") -> None:
+        if self.pending.get(agent_id) is task:
+            del self.pending[agent_id]
+        if not task.cancelled() and task.exception() is not None:
+            log.warn(f"remote: {agent_id}: {task.exception()}")
 
 
 @dataclass
@@ -746,6 +654,23 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
         link.close()
 
 
+class _Stopped(Exception):
+    """`stop` was set while the link was dialing or serving."""
+
+
+async def _unless_stopped(coro: Awaitable[Any], stopped: "asyncio.Future[Any]") -> Any:
+    """`coro`'s result, or `_Stopped` (with `coro` cancelled) once `stopped`
+    resolves. `stopped` is shared and never cancelled here."""
+    task = asyncio.ensure_future(coro)
+    await asyncio.wait({task, stopped}, return_when=asyncio.FIRST_COMPLETED)
+    if task.done():
+        return task.result()
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await task
+    raise _Stopped
+
+
 async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> None:
     """Dial the pinned console and serve it, reconnecting until `stop`. A
     `stop` while connected ends the connection at once, so the host
@@ -763,7 +688,7 @@ async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> 
             conn = None
             try:
                 addr = iroh.EndpointTicket.from_string(config.console_ticket).endpoint_addr()
-                conn = await unless_stopped(endpoint.connect(addr, ALPN), stopped)
+                conn = await _unless_stopped(endpoint.connect(addr, ALPN), stopped)
                 remote = str(conn.remote_id())
                 if remote != config.console_node_id:
                     conn.close(_REFUSED, b"unexpected console")
@@ -771,9 +696,9 @@ async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> 
                 attempt = 0
                 write_status(connected=True, console_node_id=remote)
                 log.info("remote: connected to the console")
-                await unless_stopped(serve_connection(conn, bottles, state=state), stopped)
+                await _unless_stopped(serve_connection(conn, bottles, state=state), stopped)
                 write_status(connected=False, error="console closed the connection")
-            except Stopped:
+            except _Stopped:
                 if conn is not None:
                     conn.close(_HOST_STOPPING, b"host controller stopping")
                 break
@@ -838,7 +763,6 @@ class Supervisor:
 
 
 __all__ = [
-    "ALPN", "ConsoleLink", "RemoteConfig", "RemoteError", "ROLE_REMOTE", "Supervisor",
-    "load_config", "load_console", "node_id", "read_status", "save_config",
-    "save_console", "secret_key", "serve_connection", "terminal_agent_id",
+    "ALPN", "AgentTurns", "ConsoleLink", "ROLE_REMOTE", "Supervisor", "serve_connection",
+    "terminal_agent_id",
 ]

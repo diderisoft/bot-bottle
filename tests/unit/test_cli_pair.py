@@ -11,7 +11,7 @@ from typing import Any
 from unittest.mock import patch
 
 from bot_bottle.cli.commands.pair import cmd_pair, render_qr
-from bot_bottle.control.hostctl import remote
+from bot_bottle.control.hostctl import pairing
 from bot_bottle.lib import qrcodegen
 
 _START = {"device_code": "dc", "user_code": "ABC-DEF", "expires_in": 300, "poll_interval": 0,
@@ -67,7 +67,7 @@ class CmdPair(unittest.TestCase):
         with patch("bot_bottle.cli.commands.login._post", side_effect=fake_post), \
                 patch("bot_bottle.cli.commands.login._get", side_effect=fake_get), \
                 patch("time.sleep"), patch("sys.stderr", err), \
-                patch.object(remote, "node_id", return_value="node"), \
+                patch.object(pairing, "node_id", return_value="node"), \
                 patch("bot_bottle.cli.commands.pair.cmd_remote", side_effect=fake_remote):
             status = cmd_pair(argv)
         return status, err.getvalue(), enabled
@@ -121,14 +121,14 @@ class CmdPair(unittest.TestCase):
 
     def test_without_iroh_it_stops_before_pairing(self) -> None:
         err = io.StringIO()
-        with patch.object(remote, "node_id", side_effect=remote.RemoteError("needs iroh")), \
+        with patch.object(pairing, "node_id", side_effect=pairing.RemoteError("needs iroh")), \
                 patch("bot_bottle.cli.commands.login._post") as post, patch("sys.stderr", err):
             self.assertEqual(1, cmd_pair(["--console-url", "http://c"]))
         post.assert_not_called()
         self.assertIn("needs iroh", err.getvalue())
 
     def test_falls_back_to_the_console_last_logged_in_to(self) -> None:
-        remote.save_console({"url": "http://remembered", "access_token": "x"})
+        pairing.save_console({"url": "http://remembered", "access_token": "x"})
         urls: list[str] = []
 
         def fake_post(url: str, _payload: dict[str, Any]) -> dict[str, Any]:
@@ -136,7 +136,7 @@ class CmdPair(unittest.TestCase):
             raise OSError("stop here")
 
         with patch("bot_bottle.cli.commands.login._post", side_effect=fake_post), \
-                patch.object(remote, "node_id", return_value="node"), \
+                patch.object(pairing, "node_id", return_value="node"), \
                 patch("sys.stderr", io.StringIO()):
             cmd_pair([])
         self.assertEqual(["http://remembered/api/v1/hosts/authorize"], urls)

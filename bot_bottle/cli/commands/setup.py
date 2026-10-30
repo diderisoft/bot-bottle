@@ -31,7 +31,7 @@ from pathlib import Path
 
 from ...agent_provider import HostDetection, get_provider
 from ...contrib.pi import starter as pi_starter
-from ...control.hostctl import remote
+from ...control.hostctl import pairing
 from ...errors import SecretsFileError
 from ...manifest.versions import record_or_warn
 from ...paths import bot_bottle_root, host_secrets_path
@@ -170,9 +170,9 @@ def _offer_pair(setup: Setup, console_url: str) -> None:
     if not setup.interactive or not console_url:
         return
     try:
-        remote.load_console()
+        pairing.load_console()
         return  # already paired or logged in
-    except remote.RemoteError:
+    except pairing.RemoteError:
         pass
     if setup.confirm("Pair this host with your phone now?"):
         from .pair import cmd_pair  # pylint: disable=import-outside-toplevel

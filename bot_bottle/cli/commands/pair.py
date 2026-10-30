@@ -26,7 +26,7 @@ import socket
 import sys
 from typing import Any
 
-from ...control.hostctl import remote
+from ...control.hostctl import pairing
 from ...lib import qrcodegen
 from . import login
 from .remote import cmd_remote
@@ -53,8 +53,8 @@ def _console_url(argv: list[str]) -> str:
     url = login.flag(argv, "--console-url") or os.environ.get("BB_CONSOLE_URL", "")
     if not url:
         try:
-            url = str(remote.load_console().get("url", ""))
-        except remote.RemoteError:
+            url = str(pairing.load_console().get("url", ""))
+        except pairing.RemoteError:
             url = ""
     return url.rstrip("/")
 
@@ -88,8 +88,8 @@ def cmd_pair(argv: list[str]) -> int:  # pylint: disable=too-many-return-stateme
         sys.stderr.write("bot-bottle pair: --console-url or BB_CONSOLE_URL is required\n")
         return 1
     try:
-        node_id = remote.node_id()  # remote access needs iroh; check before pairing
-    except remote.RemoteError as e:
+        node_id = pairing.node_id()  # remote access needs iroh; check before pairing
+    except pairing.RemoteError as e:
         sys.stderr.write(f"bot-bottle pair: {e}\n")
         return 1
     label = login.flag(argv, "--label") or socket.gethostname()

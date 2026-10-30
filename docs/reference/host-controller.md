@@ -239,7 +239,10 @@ consuming, the gateway stops building records. Settings are re-read every
 `remote.py` ([ADR 0007](../decisions/0007-remote-access-terminates-in-host-controller.md)).
 With `bot-bottle pair` (or `pair on`), the daemon dials out to the console it logged
 in to over iroh (ALPN `bb-console/1`). It accepts no inbound connections and
-refuses a console whose node id isn't the one pinned at login.
+refuses a console whose node id isn't the one pinned at login. What pairing
+keeps under `~/.bot-bottle/` (`remote.json`, `console.json`, the iroh key
+`remote.key`, and `remote.status.json` for `bot-bottle status`) is
+`pairing.py`.
 
 The console can list local agents, launch a **local agent by name** (with an
 optional prompt, bottle names and label), stop one, and view or type into

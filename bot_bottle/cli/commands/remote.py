@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from ...control.hostctl import remote
+from ...control.hostctl import pairing
 from ..constants import PROG
 
 
@@ -60,16 +60,16 @@ def _bind(console: dict[str, Any], node_id: str) -> dict[str, Any]:
     refreshed = _request("POST", f"{url}/api/v1/hosts/token/refresh",
                          {"refresh_token": console["refresh_token"]})
     console["access_token"] = refreshed["access_token"]
-    remote.save_console(console)
+    pairing.save_console(console)
     return _request("PUT", f"{url}/api/v1/hosts/iroh", {"node_id": node_id},
                     console["access_token"])
 
 
 def _enable() -> int:
     try:
-        console = remote.load_console()
-        node_id = remote.node_id()
-    except remote.RemoteError as e:
+        console = pairing.load_console()
+        node_id = pairing.node_id()
+    except pairing.RemoteError as e:
         return _fail(str(e))
     try:
         bound = _bind(console, node_id)
@@ -98,8 +98,8 @@ def _enable() -> int:
         if console.get("host_id"):
             print("this machine was already paired: kept its original host on the console")
         console["host_id"] = host_id
-    remote.save_console(console)
-    remote.save_config(remote.RemoteConfig(
+    pairing.save_console(console)
+    pairing.save_config(pairing.RemoteConfig(
         enabled=True, console_node_id=console_id, console_ticket=ticket))
     print(f"remote access enabled: this host is {node_id[:10]}… on {console['url']}")
     print("the host controller connects within a few seconds "
@@ -108,8 +108,8 @@ def _enable() -> int:
 
 
 def _disable() -> int:
-    config = remote.load_config()
-    remote.save_config(remote.RemoteConfig(
+    config = pairing.load_config()
+    pairing.save_config(pairing.RemoteConfig(
         enabled=False, console_node_id=config.console_node_id,
         console_ticket=config.console_ticket))
     print("remote access disabled")
@@ -118,11 +118,11 @@ def _disable() -> int:
 
 def link_line() -> str:
     """One line on the console link, for `bot-bottle status`."""
-    config = remote.load_config()
+    config = pairing.load_config()
     if not config.enabled:
         return f"console link: off (`{PROG} pair` to pair, `{PROG} pair on` to turn it on)"
     console = f" to {config.console_node_id[:10]}…" if config.console_node_id else ""
-    status = remote.read_status()
+    status = pairing.read_status()
     if not status:
         return f"console link{console}: on, no report yet; is the host controller running?"
     age = int(time.time() - float(status.get("updated", 0)))

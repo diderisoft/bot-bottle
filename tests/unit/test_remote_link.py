@@ -21,7 +21,7 @@ from bot_bottle.cli.commands import remote as remote_cmd
 from bot_bottle.cli.commands.login import _save_credentials
 from bot_bottle.contract.hostctl import LaunchRequest
 from bot_bottle.control.client import AlreadyAnswered
-from bot_bottle.control.hostctl import console_terminal, remote, remote_tasks
+from bot_bottle.control.hostctl import console_terminal, pairing, remote
 from bot_bottle.lib.log import Die
 from tests.unit import use_bottle_root
 
@@ -703,17 +703,17 @@ class TestConsoleTerminal(unittest.TestCase):
 
 class TestConfig(_RootCase):
     def test_config_round_trips_privately(self) -> None:
-        remote.save_config(remote.RemoteConfig(True, "cid", "ticket"))
-        self.assertEqual(remote.RemoteConfig(True, "cid", "ticket"), remote.load_config())
-        self.assertEqual(0o600, (self.root / remote.REMOTE_FILE).stat().st_mode & 0o777)
+        pairing.save_config(pairing.RemoteConfig(True, "cid", "ticket"))
+        self.assertEqual(pairing.RemoteConfig(True, "cid", "ticket"), pairing.load_config())
+        self.assertEqual(0o600, (self.root / pairing.REMOTE_FILE).stat().st_mode & 0o777)
 
     def test_missing_config_is_disabled(self) -> None:
-        self.assertFalse(remote.load_config().enabled)
+        self.assertFalse(pairing.load_config().enabled)
 
     def test_the_secret_key_persists_privately(self) -> None:
-        key = remote.secret_key()
-        self.assertEqual((32, key), (len(key), remote.secret_key()))
-        self.assertEqual(0o600, (self.root / remote.KEY_FILE).stat().st_mode & 0o777)
+        key = pairing.secret_key()
+        self.assertEqual((32, key), (len(key), pairing.secret_key()))
+        self.assertEqual(0o600, (self.root / pairing.KEY_FILE).stat().st_mode & 0o777)
 
     def test_login_pins_the_console_identity(self) -> None:
         _save_credentials("https://console", "h1", "at", "rt",
@@ -744,7 +744,7 @@ class TestLocalAgents(unittest.TestCase):
 
 class TestRemoteEnable(_RootCase):
     def _login(self, **extra: str) -> None:
-        remote.save_console({"url": "https://console", "host_id": "h1",
+        pairing.save_console({"url": "https://console", "host_id": "h1",
                              "access_token": "at", "refresh_token": "rt", **extra})
 
     def _enable(self, responses: list[object]) -> tuple[int, str, list[tuple[Any, ...]]]:
@@ -759,7 +759,7 @@ class TestRemoteEnable(_RootCase):
 
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(remote_cmd, "_request", side_effect=fake), \
-                mock.patch.object(remote, "node_id", return_value="hostnode"), \
+                mock.patch.object(pairing, "node_id", return_value="hostnode"), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             rc = remote_cmd.cmd_remote(["enable"])
         return rc, out.getvalue() + err.getvalue(), calls
@@ -770,8 +770,8 @@ class TestRemoteEnable(_RootCase):
         self.assertEqual(0, rc)
         self.assertEqual(("PUT", "https://console/api/v1/hosts/iroh",
                           {"node_id": "hostnode"}, "at"), calls[0])
-        self.assertEqual(remote.RemoteConfig(True, "cid", "tk"), remote.load_config())
-        self.assertEqual("cid", remote.load_console()["console_node_id"])
+        self.assertEqual(pairing.RemoteConfig(True, "cid", "tk"), pairing.load_config())
+        self.assertEqual("cid", pairing.load_console()["console_node_id"])
 
     def test_refreshes_an_expired_token_once(self) -> None:
         self._login()
@@ -780,21 +780,21 @@ class TestRemoteEnable(_RootCase):
                                      {"console_node_id": "cid", "console_ticket": "tk"}])
         self.assertEqual(0, rc)
         self.assertEqual("at2", calls[-1][3])
-        self.assertEqual("at2", remote.load_console()["access_token"])
+        self.assertEqual("at2", pairing.load_console()["access_token"])
 
     def test_refuses_a_console_whose_identity_changed(self) -> None:
         self._login(console_node_id="pinned")
         rc, output, _ = self._enable([{"console_node_id": "other", "console_ticket": "tk"}])
         self.assertEqual(1, rc)
         self.assertIn("changed since pairing", output)
-        self.assertFalse(remote.load_config().enabled)
+        self.assertFalse(pairing.load_config().enabled)
 
     def test_a_repaired_machine_takes_its_original_host_id(self) -> None:
         self._login()  # the new pairing's host, h1
         rc, output, _ = self._enable([{"host_id": "h0", "console_node_id": "cid",
                                        "console_ticket": "tk"}])
         self.assertEqual(0, rc)
-        self.assertEqual("h0", remote.load_console()["host_id"])
+        self.assertEqual("h0", pairing.load_console()["host_id"])
         self.assertIn("already paired", output)
 
     def test_a_machine_paired_to_another_account_says_so(self) -> None:
@@ -805,7 +805,7 @@ class TestRemoteEnable(_RootCase):
         rc, output, _ = self._enable([refused])
         self.assertEqual(1, rc)
         self.assertIn("paired to another account", output)
-        self.assertFalse(remote.load_config().enabled)
+        self.assertFalse(pairing.load_config().enabled)
 
     def test_needs_a_pairing(self) -> None:
         rc, output, _ = self._enable([])
@@ -815,8 +815,8 @@ class TestRemoteEnable(_RootCase):
     def test_says_how_to_get_the_bindings(self) -> None:
         self._login()
         err = io.StringIO()
-        with mock.patch.object(remote, "import_iroh",
-                               side_effect=remote.RemoteError("install `bot-bottle[remote]`")), \
+        with mock.patch.object(pairing, "import_iroh",
+                               side_effect=pairing.RemoteError("install `bot-bottle[remote]`")), \
                 contextlib.redirect_stderr(err):
             self.assertEqual(1, remote_cmd.cmd_remote(["enable"]))
         self.assertIn("bot-bottle[remote]", err.getvalue())
@@ -830,14 +830,14 @@ class TestRemoteCommand(_RootCase):
         with contextlib.ExitStack() as stack:
             for name, value in patches.items():
                 stack.enter_context(mock.patch.object(remote_cmd, name, value))
-            stack.enter_context(mock.patch.object(remote, "node_id", return_value="hostnode"))
+            stack.enter_context(mock.patch.object(pairing, "node_id", return_value="hostnode"))
             stack.enter_context(contextlib.redirect_stdout(out))
             stack.enter_context(contextlib.redirect_stderr(out))
             rc = remote_cmd.cmd_remote(list(argv))
         return rc, out.getvalue()
 
     def _login(self) -> None:
-        remote.save_console({"url": "https://console", "host_id": "h1",
+        pairing.save_console({"url": "https://console", "host_id": "h1",
                              "access_token": "at", "refresh_token": "rt"})
 
     def test_request_sends_json_with_the_bearer_token(self) -> None:
@@ -873,21 +873,21 @@ class TestRemoteCommand(_RootCase):
         self.assertEqual((1, True), (rc, "couldn't reach the console" in output))
         rc, output = self._run("enable", _bind=mock.Mock(return_value={}))
         self.assertEqual((1, True), (rc, "iroh identity" in output))
-        self.assertFalse(remote.load_config().enabled)
+        self.assertFalse(pairing.load_config().enabled)
 
     def test_disable_keeps_the_pinned_console(self) -> None:
-        remote.save_config(remote.RemoteConfig(True, "cid", "tk"))
+        pairing.save_config(pairing.RemoteConfig(True, "cid", "tk"))
         self.assertEqual(0, self._run("disable")[0])
-        self.assertEqual(remote.RemoteConfig(False, "cid", "tk"), remote.load_config())
+        self.assertEqual(pairing.RemoteConfig(False, "cid", "tk"), pairing.load_config())
 
     def test_status_reports_the_link(self) -> None:
         self.assertIn("console link: off", self._run("status")[1])
-        remote.save_config(remote.RemoteConfig(True, "cid0123456789", "tk"))
+        pairing.save_config(pairing.RemoteConfig(True, "cid0123456789", "tk"))
         self.assertIn("no report yet", self._run("status")[1])
-        remote.write_status(connected=False, error="console unreachable")
+        pairing.write_status(connected=False, error="console unreachable")
         output = self._run("status")[1]
         self.assertIn("not connected (console unreachable)", output)
-        remote.write_status(connected=True)
+        pairing.write_status(connected=True)
         self.assertIn(": connected", self._run("status")[1])
 
     def test_usage(self) -> None:
@@ -895,8 +895,8 @@ class TestRemoteCommand(_RootCase):
         self.assertEqual(0, self._run("--help")[0])
 
     def test_a_malformed_status_file_reads_as_no_report(self) -> None:
-        (self.root / remote.STATUS_FILE).write_text("[not, an, object")
-        self.assertEqual({}, remote.read_status())
+        (self.root / pairing.STATUS_FILE).write_text("[not, an, object")
+        self.assertEqual({}, pairing.read_status())
 
 
 class TestSupervisor(_RootCase):
@@ -905,10 +905,10 @@ class TestSupervisor(_RootCase):
     def setUp(self) -> None:
         super().setUp()
         self.enterContext(mock.patch.object(remote, "POLL_SECONDS", 0.05))
-        self.started: list[remote.RemoteConfig] = []
+        self.started: list[pairing.RemoteConfig] = []
         self.stopped = threading.Event()
 
-        async def fake_run(config: remote.RemoteConfig, bottles: Any,
+        async def fake_run(config: pairing.RemoteConfig, bottles: Any,
                            stop: threading.Event) -> None:
             del bottles
             self.started.append(config)
@@ -929,24 +929,24 @@ class TestSupervisor(_RootCase):
         supervisor.start()
         self.addCleanup(supervisor.close)
         self.assertFalse(self._wait(lambda: self.started))  # disabled: nothing runs
-        remote.save_config(remote.RemoteConfig(True, "cid", "tk"))
+        pairing.save_config(pairing.RemoteConfig(True, "cid", "tk"))
         self.assertTrue(self._wait(lambda: self.started))
-        remote.save_config(remote.RemoteConfig(False, "cid", "tk"))
+        pairing.save_config(pairing.RemoteConfig(False, "cid", "tk"))
         self.assertTrue(self.stopped.wait(2))
         self.assertTrue(self._wait(
-            lambda: "disabled" in str(remote.read_status().get("error"))))
+            lambda: "disabled" in str(pairing.read_status().get("error"))))
 
     def test_a_link_that_cannot_run_reports_why(self) -> None:
         async def failing(*_args: Any) -> None:
-            raise remote.RemoteError("install `bot-bottle[remote]`")
+            raise pairing.RemoteError("install `bot-bottle[remote]`")
 
-        remote.save_config(remote.RemoteConfig(True, "cid", "tk"))
+        pairing.save_config(pairing.RemoteConfig(True, "cid", "tk"))
         with mock.patch.object(remote, "run", failing):
             supervisor = remote.Supervisor(_Bottles())
             supervisor.start()
             self.addCleanup(supervisor.close)
             self.assertTrue(self._wait(
-                lambda: "bot-bottle[remote]" in str(remote.read_status().get("error"))))
+                lambda: "bot-bottle[remote]" in str(pairing.read_status().get("error"))))
 
 
 async def _next_message(recv: Any, kind: str, timeout: float) -> dict[str, Any]:
@@ -979,11 +979,11 @@ class TestOverRealIroh(_RootCase):
                 preset=lib.preset_n0(), secret_key=os.urandom(32), alpns=[remote.ALPN]))
             pinned = str(ep.id()) if pin_console else str(
                 lib.SecretKey.from_bytes(os.urandom(32)).public())
-            remote.save_config(remote.RemoteConfig(
+            pairing.save_config(pairing.RemoteConfig(
                 True, pinned, str(lib.EndpointTicket.from_addr(ep.addr()))))
             stop = threading.Event()
             host = threading.Thread(target=lambda: asyncio.run(
-                remote.run(remote.load_config(), _Bottles(), stop)), daemon=True)
+                remote.run(pairing.load_config(), _Bottles(), stop)), daemon=True)
             host.start()
             try:
                 incoming = await asyncio.wait_for(ep.accept_next(), 15)
@@ -1001,7 +1001,7 @@ class TestOverRealIroh(_RootCase):
 
         with mock.patch.object(remote, "local_agents", return_value=["implementer"]):
             asyncio.run(console_side())
-        outcome["status"] = remote.read_status()
+        outcome["status"] = pairing.read_status()
         return outcome
 
     def test_stop_ends_a_connected_link_promptly(self) -> None:
@@ -1011,11 +1011,11 @@ class TestOverRealIroh(_RootCase):
         async def console_side() -> None:
             ep = await lib.Endpoint.bind(lib.EndpointOptions(
                 preset=lib.preset_n0(), secret_key=os.urandom(32), alpns=[remote.ALPN]))
-            remote.save_config(remote.RemoteConfig(
+            pairing.save_config(pairing.RemoteConfig(
                 True, str(ep.id()), str(lib.EndpointTicket.from_addr(ep.addr()))))
             stop = threading.Event()
             host = threading.Thread(target=lambda: asyncio.run(
-                remote.run(remote.load_config(), _Bottles(), stop)), daemon=True)
+                remote.run(pairing.load_config(), _Bottles(), stop)), daemon=True)
             host.start()
             try:
                 incoming = await asyncio.wait_for(ep.accept_next(), 15)
@@ -1040,7 +1040,7 @@ class TestOverRealIroh(_RootCase):
 
     def test_the_host_dials_and_serves_the_pinned_console(self) -> None:
         outcome = self._session(pin_console=True)
-        self.assertEqual(remote.node_id(), outcome["host_node"])
+        self.assertEqual(pairing.node_id(), outcome["host_node"])
         self.assertEqual({"type": "local_definitions", "request_id": "r1",
                           "definitions": [{"name": "implementer"}]}, outcome["reply"])
 
@@ -1074,11 +1074,11 @@ class TestOverRealIroh(_RootCase):
         async def console_side() -> None:
             ep = await lib.Endpoint.bind(lib.EndpointOptions(
                 preset=lib.preset_n0(), secret_key=os.urandom(32), alpns=[remote.ALPN]))
-            remote.save_config(remote.RemoteConfig(
+            pairing.save_config(pairing.RemoteConfig(
                 True, str(ep.id()), str(lib.EndpointTicket.from_addr(ep.addr()))))
             stop = threading.Event()
             host = threading.Thread(target=lambda: asyncio.run(
-                remote.run(remote.load_config(), _SessionBottles(), stop)), daemon=True)
+                remote.run(pairing.load_config(), _SessionBottles(), stop)), daemon=True)
             host.start()
             try:
                 incoming = await asyncio.wait_for(ep.accept_next(), 15)
@@ -1118,7 +1118,7 @@ class TestUnlessStopped(unittest.TestCase):
     def test_returns_the_result_or_cancels_once_stopped(self) -> None:
         async def go() -> tuple[object, bool]:
             stopped: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-            quick = await remote_tasks.unless_stopped(asyncio.sleep(0, "done"), stopped)
+            quick = await remote._unless_stopped(asyncio.sleep(0, "done"), stopped)  # pylint: disable=protected-access
             cancelled = asyncio.Event()
 
             async def forever() -> None:
@@ -1128,8 +1128,8 @@ class TestUnlessStopped(unittest.TestCase):
                     cancelled.set()
                     raise
             asyncio.get_running_loop().call_later(0.05, stopped.set_result, None)
-            with self.assertRaises(remote_tasks.Stopped):
-                await remote_tasks.unless_stopped(forever(), stopped)
+            with self.assertRaises(remote._Stopped):  # pylint: disable=protected-access
+                await remote._unless_stopped(forever(), stopped)  # pylint: disable=protected-access
             return quick, cancelled.is_set()
         self.assertEqual(("done", True), asyncio.run(go()))
 
