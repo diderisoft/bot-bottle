@@ -6,12 +6,18 @@ multi-arch index digests).
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 
 from . import resources
 
 # Bump when the hash's meaning changes, forcing a republish.
-_SCHEMA = "image-inputs-v1"
+# v2: pyproject.toml's `[project] version` no longer counts (see
+# `_versionless_pyproject`).
+_SCHEMA = "image-inputs-v2"
+
+_TABLE_HEADER = re.compile(r"^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(#.*)?$")
+_VERSION_KEY = re.compile(r"^(\s*version\s*=).*$")
 
 # Per-image build inputs, relative to the build root; package paths are in
 # `PACKAGE_PATHS`.
@@ -134,6 +140,29 @@ def _hash_package(h: "hashlib._Hash", image: str, repo_root: Path) -> None:
         h.update(path.read_bytes())
 
 
+def _versionless_pyproject(data: bytes) -> bytes:
+    """`pyproject.toml` with its `[project] version` value blanked.
+
+    A release publishes and tests images from one commit, then bumps the
+    version in the release commit it tags. If the version counted, a release's
+    pins could never match the tagged code. No image reads the version: the
+    gateway pip-installs the package, so its dist-info carries the tested
+    commit's version string, but nothing compares it.
+    """
+    lines = data.decode("utf-8").splitlines(keepends=True)
+    table = ""
+    for i, line in enumerate(lines):
+        header = _TABLE_HEADER.match(line)
+        if header:
+            table = header.group(1)
+        elif table == "project":
+            body = line.rstrip("\r\n")
+            match = _VERSION_KEY.match(body)
+            if match:
+                lines[i] = match.group(1) + ' ""' + line[len(body):]
+    return "".join(lines).encode("utf-8")
+
+
 def inputs_hash(image: str, *, repo_root: Path | None = None) -> str:
     """16-hex content hash of everything baked into `image`, identical across
     hosts and architectures for one checkout."""
@@ -157,7 +186,7 @@ def inputs_hash(image: str, *, repo_root: Path | None = None) -> str:
         h.update(b"\0")
         h.update(path.read_bytes())
     h.update(b"pyproject.toml\0")
-    h.update((repo_root / "pyproject.toml").read_bytes())
+    h.update(_versionless_pyproject((repo_root / "pyproject.toml").read_bytes()))
     return h.hexdigest()[:16]
 
 

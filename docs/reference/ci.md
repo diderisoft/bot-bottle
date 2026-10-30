@@ -98,7 +98,14 @@ When every job passes, it releases: it promotes the tested images to a release
 version and commits their pins (`published-artifacts.json`) to `main`, with
 `pyproject.toml` bumped to that version in the same commit, and tags that
 commit `vX.Y.Z` (annotated; a rerun leaves an existing tag alone). `install.sh`
-installs the newest such tag. Leave the `version`
+installs the newest such tag. The release commit goes only directly on the
+tested commit: if `main` moved during the run, the job fails ("main moved past
+the tested commit …; re-run the release") before promoting, or before pushing
+if it moves later. Before committing, `scripts/check_published_artifacts.py
+--match-sources` checks that every pinned `inputs_hash` equals the release
+tree's, so a release whose pins its own installs can't use fails instead of
+shipping. `inputs_hash` ignores `pyproject.toml`'s `[project] version`, which
+is the one thing the release commit changes after the images are built. Leave the `version`
 input blank to take the first unpublished version at or above `pyproject.toml`'s.
 [`publish-images.yml`](../../.gitea/workflows/publish-images.yml) only rehearses a
 publish: it defaults to a `0.0.0-dev-<run>` version and pins nothing.

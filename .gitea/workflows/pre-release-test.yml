@@ -429,6 +429,26 @@ jobs:
       - name: Checkout the tested revision
         uses: actions/checkout@v4
 
+      # The tag must carry the code the suite tested. If main moved during the
+      # run, stop before promoting anything; the commit step checks again. A
+      # rerun after the tag push failed finds this release's own commit on
+      # the tested one, which is fine.
+      - name: Check main is still the tested commit
+        env:
+          RELEASE_PUSH_TOKEN: ${{ secrets.BOT_BOTTLE_RELEASE_PUSH_TOKEN }}
+          TESTED_SHA: ${{ github.sha }}
+        run: |
+          helper='!f() { echo username=release; echo "password=$RELEASE_PUSH_TOKEN"; }; f'
+          git -c credential.helper="$helper" fetch https://gitea.dideric.is/didericis/bot-bottle.git main
+          main_sha=$(git rev-parse FETCH_HEAD)
+          if [ "$main_sha" != "$TESTED_SHA" ] && ! {
+              [ "$(git rev-parse -q --verify "$main_sha^" || true)" = "$TESTED_SHA" ] &&
+              [ -z "$(git diff --name-only "$TESTED_SHA" "$main_sha" -- . ':!published-artifacts.json' ':!pyproject.toml')" ]
+            }; then
+            echo "main moved past the tested commit $TESTED_SHA (now $main_sha); re-run the release" >&2
+            exit 1
+          fi
+
       - name: Download the tested manifest
         uses: actions/download-artifact@v3
         with:
@@ -451,10 +471,16 @@ jobs:
           if [ -n "$VERSION" ]; then set -- "$@" --version "$VERSION"; fi
           python3 -m bot_bottle.publish_images "$@"
 
-      - name: Verify the released manifest
+      # Check the tree the release commit will hold: the released pins and the
+      # bumped pyproject. Every pinned inputs_hash must equal that tree's, or
+      # installs of the tag could never use the pins (as with v0.1.4/v0.1.5).
+      - name: Verify the released manifest matches the release tree
         run: |
+          version=$(python3 -c 'import json; print(next(iter(json.load(open("released/published-artifacts.json")).values()))["version"])')
           cp released/published-artifacts.json published-artifacts.json
-          python3 scripts/check_published_artifacts.py
+          sed -i "s/^version = \".*\"$/version = \"$version\"/" pyproject.toml
+          python3 scripts/check_published_artifacts.py --match-sources
+          git checkout -- published-artifacts.json pyproject.toml
 
       - name: Upload the released manifest
         uses: actions/upload-artifact@v3
@@ -473,9 +499,13 @@ jobs:
       # reads the environment, never the command line. The same commit bumps
       # pyproject to the released version, so the next release starts above it,
       # and the release commit is tagged `vX.Y.Z` for install.sh to install.
+      # The release commit goes only directly on the tested commit: if main
+      # moved during the run the tag would carry untested code, so the step
+      # fails and the release is re-run instead.
       - name: Commit the released manifest to main
         env:
           RELEASE_PUSH_TOKEN: ${{ secrets.BOT_BOTTLE_RELEASE_PUSH_TOKEN }}
+          TESTED_SHA: ${{ github.sha }}
         run: |
           if [ -z "$RELEASE_PUSH_TOKEN" ]; then
             echo "BOT_BOTTLE_RELEASE_PUSH_TOKEN is not set; installs won't get this release's pins." >&2
@@ -499,28 +529,31 @@ jobs:
             git tag -f -a "$tag" -m "bot-bottle $version" "$1"
             git -c credential.helper="$helper" push "$remote" "refs/tags/$tag"
           }
-          # Retry against a moved main: the commit only touches the manifest.
-          for attempt in 1 2 3; do
-            git -c credential.helper="$helper" fetch "$remote" main
-            git checkout -B release-pins FETCH_HEAD
-            cp released/published-artifacts.json published-artifacts.json
-            sed -i "s/^version = \".*\"$/version = \"$version\"/" pyproject.toml
-            git add published-artifacts.json pyproject.toml
-            if git diff --cached --quiet; then
-              echo "main already pins $version"
-              # A rerun after the tag push failed: tag the commit that pinned
-              # it, the newest to touch the manifest (deepen a shallow clone).
-              git -c credential.helper="$helper" fetch --deepen=500 "$remote" main || true
-              release_commit=$(git log -1 --format=%H HEAD -- published-artifacts.json)
-              test -n "$release_commit"
-              tag_release "$release_commit"
+          git -c credential.helper="$helper" fetch "$remote" main
+          main_sha=$(git rev-parse FETCH_HEAD)
+          if [ "$main_sha" != "$TESTED_SHA" ]; then
+            # A rerun after the tag push failed: main is this release's own
+            # commit, directly on the tested one. Tag it.
+            if [ "$(git rev-parse -q --verify "$main_sha^" || true)" = "$TESTED_SHA" ] &&
+                git show "$main_sha:published-artifacts.json" | cmp -s - released/published-artifacts.json; then
+              echo "main already pins $version on the tested commit"
+              tag_release "$main_sha"
               exit 0
             fi
-            git commit -m "chore(release): release $version"
-            if git -c credential.helper="$helper" push "$remote" HEAD:main; then
-              tag_release HEAD
-              exit 0
-            fi
-            echo "push rejected (attempt $attempt); retrying on the new main" >&2
-          done
-          exit 1
+            echo "main moved past the tested commit $TESTED_SHA (now $main_sha); re-run the release" >&2
+            exit 1
+          fi
+          git checkout -B release-pins "$TESTED_SHA"
+          cp released/published-artifacts.json published-artifacts.json
+          sed -i "s/^version = \".*\"$/version = \"$version\"/" pyproject.toml
+          python3 scripts/check_published_artifacts.py --match-sources
+          git add published-artifacts.json pyproject.toml
+          git commit -m "chore(release): release $version"
+          # Never forced and never retried on a newer main: a push rejected
+          # because main moved fails the release rather than landing it on
+          # untested code.
+          if ! git -c credential.helper="$helper" push "$remote" HEAD:main; then
+            echo "main moved past the tested commit $TESTED_SHA while releasing; re-run the release" >&2
+            exit 1
+          fi
+          tag_release HEAD

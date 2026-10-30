@@ -63,6 +63,16 @@ class DockerfilesMatchHash(unittest.TestCase):
                         self.assertNotEqual("bot_bottle", source)
 
 
+_PYPROJECT = """[build-system]
+requires = ["setuptools>=68"]
+
+[project]
+name = "bot-bottle"
+version = "{version}"
+dependencies = [{deps}]
+"""
+
+
 class HashScope(unittest.TestCase):
     """A host-only change leaves the infra hashes alone; a contract change
     bumps both; a service change bumps only its own image."""
@@ -114,6 +124,32 @@ class HashScope(unittest.TestCase):
         self.assertEqual(before, source_hash(self.root))
         self.write("bot_bottle/contract/http.py", "x = 2\n")
         self.assertNotEqual(before, source_hash(self.root))
+
+    def all_hashes(self) -> dict[str, str]:
+        return {image: ii.inputs_hash(image, repo_root=self.root) for image in ii.IMAGES}
+
+    def test_project_version_is_ignored(self) -> None:
+        """A release bumps only the version after its images are published;
+        the pins must still match the tagged tree."""
+        self.write("pyproject.toml", _PYPROJECT.format(version="0.1.4", deps=""))
+        before = self.all_hashes()
+        self.write("pyproject.toml", _PYPROJECT.format(version="0.1.5", deps=""))
+        self.assertEqual(before, self.all_hashes())
+
+    def test_other_pyproject_changes_count(self) -> None:
+        self.write("pyproject.toml", _PYPROJECT.format(version="0.1.4", deps=""))
+        before = self.all_hashes()
+        self.write("pyproject.toml", _PYPROJECT.format(version="0.1.4", deps='"x>=1"'))
+        after = self.all_hashes()
+        self.assertTrue(all(before[i] != after[i] for i in ii.IMAGES))
+
+    def test_only_the_project_version_is_ignored(self) -> None:
+        """A `version` key in another table still counts."""
+        text = _PYPROJECT.format(version="0.1.4", deps="") + '[tool.x]\nversion = "1"\n'
+        self.write("pyproject.toml", text)
+        before = self.all_hashes()
+        self.write("pyproject.toml", text.replace('version = "1"', 'version = "2"'))
+        self.assertNotEqual(before, self.all_hashes())
 
     def test_bytecode_is_ignored(self) -> None:
         self.assertEqual(
