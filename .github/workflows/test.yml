@@ -93,6 +93,9 @@ jobs:
 
   integration-docker:
     runs-on: ubuntu-latest
+    # Its own environment, as on the self-hosted runners.
+    env:
+      BOT_BOTTLE_ENV: ci-${{ github.run_id }}
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -116,8 +119,8 @@ jobs:
       # Unlike Gitea's act_runner, a GitHub-hosted job runs directly on the
       # VM that owns the Docker daemon, so the workspace and published ports
       # are visible to it: no client-network or named-volume overrides. Each
-      # job gets a fresh VM, so no cross-run concurrency group is needed for
-      # the fixed singleton names either.
+      # job gets a fresh VM, and its own environment, so no cross-run
+      # concurrency group is needed.
       - name: Run integration tests (docker) with coverage
         env:
           BOT_BOTTLE_BACKEND: docker
@@ -128,6 +131,11 @@ jobs:
           python3 -m coverage run -m scripts.unittest_gate \
             -t . -s tests/integration -v \
             --minimum-executed 25 --fail-on-skip
+
+      - name: Remove the CI environment
+        if: always()
+        continue-on-error: true
+        run: python3 cli.py envs rm "$BOT_BOTTLE_ENV" --force
 
       - name: Stage docker coverage for upload
         run: cp .coverage.docker coverage-docker.dat

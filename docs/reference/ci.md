@@ -73,9 +73,18 @@ coverage, then runs:
 
 These privileged host-mode runners never execute unreviewed pull-request code
 automatically. Firecracker coverage is combined in the manual pre-release
-report; macOS reports advisory coverage in its own job. The macOS infra
-container is a singleton, so its job uses a concurrency group and always tears
-the service down.
+report; macOS reports advisory coverage in its own job.
+
+Every integration job (Gitea and GitHub) runs in its own environment
+([install.md](install.md#environments)). Docker and firecracker jobs use
+`BOT_BOTTLE_ENV=ci-<run id>`, so the state root, container and VM names,
+docker subnets and firecracker pool slice are the run's own, and an always-run
+step removes it (`bot-bottle envs rm "$BOT_BOTTLE_ENV" --force`). Jobs never
+touch a host's live install or each other, so there are no
+`integration-*-infra` concurrency groups. macOS uses the fixed `ci-macos`,
+because each environment needs its own pf anchor, installed once as root; the
+single host-mode runner runs one job at a time. Two docker runs on one daemon
+collide only if their names hash to the same gateway /24 (1 in 256).
 
 ### Provisioning the self-hosted runners
 
@@ -83,16 +92,21 @@ the service down.
   ([install.md](install.md#linux-firecracker)): `firecracker` on `PATH`,
   `/dev/kvm`, the cached guest kernel and static dropbear
   (`/var/cache/bot-bottle-fc/dropbear`), and the TAP/nft pool as a persistent
-  systemd unit. The job's preflight fails when any of these is missing.
+  systemd unit. The pool must reserve environment slices (the default 4):
+  each concurrent firecracker run claims one, and a run with none free fails
+  saying so. Slots are recorded per user, so CI runs and a developer's `dev`
+  environment share them safely only when they run as the same user. The
+  job's preflight fails when any of these is missing.
 - **`macos` (Apple Container, advisory; it never gates `promote`, since the runner is a laptop that may be asleep):** an Apple Silicon host-mode runner;
   Apple Container can't run inside the Linux pull-request runner. It needs the
   `container` CLI with `container system status` running, and Python ≥ 3.11
   with `coverage` importable on the launchd service's explicit `PATH`. Install
-  the host firewall once (`sudo bot-bottle install --backend=macos-container`,
-  or the printed `sudo` block); the runner itself never gets root, and the
-  job's preflight and isolation probe fail without it. The infra container is
-  a singleton (`bot-bottle-mac-infra`), so keep runner concurrency at 1. Its
-  coverage never feeds the required pull-request gate.
+  the `ci-macos` environment's host firewall once (`sudo env
+  BOT_BOTTLE_ENV=ci-macos bot-bottle install --backend=macos-container`, or
+  the printed `sudo` block); the runner itself never gets root, and the job's
+  preflight and isolation probe fail without it. Keep runner concurrency at 1,
+  since every run shares `ci-macos`. Its coverage never feeds the required
+  pull-request gate.
 
 When every job passes, it releases: it promotes the tested images to a release
 version and commits their pins (`published-artifacts.json`) to `main`, with

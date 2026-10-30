@@ -75,9 +75,10 @@ jobs:
 
   integration-docker:
     runs-on: ubuntu-latest
-    concurrency:
-      group: integration-docker-infra
-      cancel-in-progress: false
+    # Its own environment, so it never collides with another run on the
+    # shared runner; no concurrency group.
+    env:
+      BOT_BOTTLE_ENV: ci-${{ github.run_id }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -97,14 +98,6 @@ jobs:
         run: |
           python3 --version
           python3 cli.py doctor --backend=docker
-
-      # Same as test.yml: the gateway container and network have fixed names on
-      # this shared runner, so drop any a previous job left (both are recreated
-      # by ensure_running).
-      - name: Preflight — clear any leftover gateway
-        run: |
-          docker rm --force bot-bottle-orch-gateway 2>/dev/null || true
-          docker network rm bot-bottle-gateway 2>/dev/null || true
 
       - name: Run integration tests (docker) with coverage
         env:
@@ -137,6 +130,13 @@ jobs:
             "bot-bottle-ci-root-$RUN_KEY" \
             "bot-bottle-ci-ca-$RUN_KEY" 2>/dev/null || true
 
+      # Tear this run's environment down whatever happened: its containers,
+      # networks, volumes, host controller and state (images are shared).
+      - name: Remove the CI environment
+        if: always()
+        continue-on-error: true
+        run: python3 cli.py envs rm "$BOT_BOTTLE_ENV" --force
+
       # Non-dot name so upload-artifact's dotfile-skipping glob picks it up.
       - name: Stage docker coverage for upload
         run: cp .coverage.docker coverage-docker.dat
@@ -165,6 +165,10 @@ jobs:
   integration-firecracker:
     runs-on: [self-hosted, kvm]
     if: github.event_name == 'workflow_dispatch'
+    # Its own environment: state root, VM names and a reserved network-pool
+    # slice, so it never touches the host's live install or another run.
+    env:
+      BOT_BOTTLE_ENV: ci-${{ github.run_id }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -217,9 +221,6 @@ jobs:
       - name: Point the resolver at the dev manifest under test
         run: cp "${{ github.workspace }}/candidate/published-artifacts.json" published-artifacts.json
 
-      - name: Replace the persistent infra VM so it re-pulls
-        run: python3 -c 'from bot_bottle.backend.firecracker import infra_vm; infra_vm.stop()'
-
       # No dev-requirements install: `coverage` is already provided by the
       # self-hosted runner's Nix python env, and that env has no `pip`
       # module to install into anyway.
@@ -250,6 +251,13 @@ jobs:
         with:
           name: firecracker-inputs
           path: /var/cache/bot-bottle-fc/dropbear
+
+      # Tear this run's environment down whatever happened: its VMs, host
+      # controller, run directories and state, freeing its pool slice.
+      - name: Remove the CI environment
+        if: always()
+        continue-on-error: true
+        run: python3 cli.py envs rm "$BOT_BOTTLE_ENV" --force
 
       # Base rootfs trees accumulate on the runner (#690) until PRD 0088's
       # `bot-bottle cleanup images` covers this runner too. Drop trees unused for more than 7
@@ -285,9 +293,11 @@ jobs:
   # feeds the diff-coverage gate. Dispatch-only also means no fork PR (or any
   # push) ever executes on the host-mode runner.
   #
-  # The infra container is a singleton (`bot-bottle-mac-infra`); the
-  # `concurrency` group serializes runs so two never collide on it (#425), and
-  # the always-run teardown removes it so a crashed run can't wedge the next.
+  # It runs in the `ci-macos` environment, never the Mac's live install. Not a
+  # per-run name: each environment needs its own pf anchor, installed once as
+  # root (docs/reference/ci.md), and the single host-mode runner runs one job
+  # at a time anyway. The always-run teardown removes the environment so a
+  # crashed run can't wedge the next.
   #
   # Runner prerequisites (provision once; see docs/reference/ci.md "Provisioning the self-hosted runners"):
   # the `container` CLI on PATH with `container system status` running, and a
@@ -295,9 +305,8 @@ jobs:
   integration-macos:
     runs-on: [self-hosted, macos]
     if: github.event_name == 'workflow_dispatch'
-    concurrency:
-      group: integration-macos-infra
-      cancel-in-progress: false
+    env:
+      BOT_BOTTLE_ENV: ci-macos
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -341,10 +350,10 @@ jobs:
         run: |
           set +e
           echo "=== containers ==="
-          container ls -a | grep bot-bottle-mac || echo "(no bot-bottle-mac containers)"
+          container ls -a | grep "bb-$BOT_BOTTLE_ENV-" || echo "(no bb-$BOT_BOTTLE_ENV- containers)"
           echo "=== networks ==="
-          container network ls | grep bot-bottle-mac || echo "(no bot-bottle-mac networks)"
-          for c in bot-bottle-mac-orchestrator bot-bottle-mac-infra; do
+          container network ls | grep "bb-$BOT_BOTTLE_ENV-" || echo "(no bb-$BOT_BOTTLE_ENV- networks)"
+          for c in "bb-$BOT_BOTTLE_ENV-mac-orchestrator" "bb-$BOT_BOTTLE_ENV-mac-infra"; do
             echo "=== inspect $c ==="
             container inspect "$c" || echo "($c not found)"
             echo "=== logs $c ==="
@@ -352,15 +361,12 @@ jobs:
           done
           exit 0
 
-      # Remove the singleton infra container so a crashed or cancelled run
-      # cannot leave `bot-bottle-mac-infra` wedged for the next job.
-      - name: Teardown infra singleton
+      # Remove the environment's containers, networks, volume, host
+      # controller and state so a crashed or cancelled run can't wedge the
+      # next. Its pf anchor (root, installed once) stays.
+      - name: Remove the CI environment
         if: always()
-        run: |
-          python3 -c '
-          from bot_bottle.backend.macos_container.infra import MacosInfraService
-          from bot_bottle.cli.settings import settings_from_env
-          MacosInfraService(settings_from_env()).stop()'
+        run: python3 cli.py envs rm "$BOT_BOTTLE_ENV" --force
 
   # Combined coverage gate: aggregates .coverage.* artifacts uploaded by each
   # test job, then runs the diff-coverage gate (new/changed lines >= 90%).
