@@ -419,6 +419,12 @@ class TestLaunchIsolationProbe(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = Path(tempfile.mkdtemp(prefix="macos-launch-probe-test."))
         self.addCleanup(lambda: __import__("shutil").rmtree(self._tmp, ignore_errors=True))
+        # Here, not in `_launch`'s `with`: one more there passes CPython's limit
+        # of 20 statically nested blocks.
+        for patcher in (patch.object(launch_mod.container_mod, "force_remove_container"),
+                        patch.object(launch_mod, "_ensure_home", return_value=False)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def _launch(self, probe: object, provision: object, *, ipv6_off: bool = True) -> list[str]:
         plan = _replace(
@@ -455,8 +461,6 @@ class TestLaunchIsolationProbe(unittest.TestCase):
              patch.object(launch_mod, "_stamp_agent_urls", side_effect=_same_plan), \
              patch.object(launch_mod, "new_env_var_secret", return_value="s"), \
              patch.object(launch_mod, "_start_agent"), \
-             patch.object(launch_mod.container_mod, "force_remove_container"), \
-             patch.object(launch_mod, "_ensure_home", return_value=False), \
              patch.object(launch_mod, "set_gateway_host"), \
              patch.object(launch_mod.container_mod, "wait_container_ipv4_on_network",
                           return_value="192.168.128.9"), \
