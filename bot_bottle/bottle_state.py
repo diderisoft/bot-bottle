@@ -226,9 +226,9 @@ def cleanup_state(identity: str) -> None:
         shutil.rmtree(state_dir, ignore_errors=True)
 
 
-def capture_claude_session_state(identity: str, exit_code: int) -> None:
-    """After a claude session ends: preserve its state if claude exited
-    non-zero."""
+def capture_session_state(identity: str, exit_code: int) -> None:
+    """After an agent's session ends: keep its state (and its home) for
+    `resume` if the agent exited non-zero, as a stop does."""
     if identity and exit_code != 0:
         mark_preserved(identity)
 
@@ -247,7 +247,7 @@ def settle_state(identity: str) -> None:
 
 __all__ = [
     "BottleMetadata",
-    "capture_claude_session_state",
+    "capture_session_state",
     "settle_state",
     "agent_state_dir",
     "bottle_identity",

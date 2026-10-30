@@ -6,7 +6,7 @@ import subprocess
 
 from .. import EnumerationError
 from ...contract.hostctl import Settings
-from ..cleanup_control import CleanupFailures
+from ..cleanup_control import CleanupFailures, orphan_homes
 from ...lib.log import info
 from . import util as container_mod
 from .bottle_cleanup_plan import MacosContainerBottleCleanupPlan
@@ -51,6 +51,7 @@ def prepare_cleanup() -> MacosContainerBottleCleanupPlan:
     return MacosContainerBottleCleanupPlan(
         containers=tuple(_list_prefixed_containers()),
         networks=tuple(_list_prefixed_networks()),
+        volumes=tuple(orphan_homes(container_mod.list_volumes())),
     )
 
 
@@ -67,5 +68,11 @@ def cleanup(plan: MacosContainerBottleCleanupPlan, settings: Settings) -> None:
         failures.run(
             ["container", "network", "delete", name],
             f"deleting network {name}",
+        )
+    for name in plan.volumes:
+        info(f"container volume delete {name}")
+        failures.run(
+            ["container", "volume", "delete", name],
+            f"deleting home volume {name}",
         )
     failures.raise_if_any()

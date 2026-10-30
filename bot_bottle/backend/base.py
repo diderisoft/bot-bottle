@@ -95,6 +95,12 @@ def run_script(argv: list[str], script: str, *, timeout: float | None = None,
     return ExecResult(returncode=result.returncode, stdout=result.stdout, stderr=result.stderr)
 
 
+def home_volume_name(slug: str) -> str:
+    """The volume a bottled agent's home lives on, kept across stop and resume
+    while its state is (PRD 0110)."""
+    return f"bot-bottle-home-{slug}"
+
+
 @dataclass(frozen=True)
 class ActiveAgent:
     """One running agent, as `active` renders it. `services` is the gateway
@@ -122,6 +128,10 @@ class Bottle(ABC):
     # The key its egress tokens are stored under, for refreshing one; empty
     # until registered, and for a bottle a previous host controller launched.
     env_var_secret: str = ""
+    # Whether its home (`home_volume_name`) held an earlier run of this bottled
+    # agent: its conversation and workspace are there, so the workspace isn't
+    # copied again and the agent continues its last conversation.
+    home_kept: bool = False
 
     @abstractmethod
     def agent_argv(
@@ -163,7 +173,9 @@ class BottleImages:
     agent: str | Path
 
 
-class BottleBackend(ABC, Generic[PlanT, CleanupT]):
+# The interface every backend implements; each method is a hook the launcher,
+# the host controller or the CLI calls.
+class BottleBackend(ABC, Generic[PlanT, CleanupT]):  # pylint: disable=too-many-public-methods
     """Abstract base for bottle backends, parameterized over the concrete plan
     and cleanup-plan types."""
 
@@ -292,9 +304,14 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         return prompt_path
 
     def provision_workspace(self, plan: PlanT, bottle: "Bottle") -> None:
-        """Copy the operator workspace into the running bottle."""
+        """Copy the operator workspace into the running bottle, unless its home
+        was kept: the agent's copy, with its changes, is already there (and the
+        copy starts with `rm -rf`)."""
         workspace = plan.workspace_plan
         if not (workspace.enabled and workspace.copy_contents):
+            return
+        if getattr(bottle, "home_kept", False) is True:
+            info(f"keeping the workspace from {bottle.name}'s last run")
             return
 
         guest_path = shlex.quote(workspace.guest_path)
@@ -329,6 +346,11 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):
         """The agent-side URL of the supervise server, or "" when there is
         none."""
         return plan.agent_supervise_url
+
+    def remove_home(self, slug: str) -> None:
+        """Remove the bottled agent's home (`home_volume_name`), once its
+        state isn't kept. Idempotent. Nothing by default."""
+        del slug
 
     @abstractmethod
     def infra_service(self) -> "InfraService":

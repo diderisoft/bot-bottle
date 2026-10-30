@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ...bottle_state import capture_claude_session_state, settle_state
+from ...bottle_state import capture_session_state, is_preserved, settle_state
 from ...contract.auth import ROLE_CLI
 from ...contract.hostctl import (
     CONFIRM_ERROR, ORIGIN_CONSOLE, ORIGIN_TERMINAL, InfraSettings, LaunchRequest, Settings,
@@ -73,14 +73,16 @@ class PromptUnsupported(ValueError):
 
 
 def agent_args(harness: str, startup_args: tuple[str, ...], prompt: str,
-               headless: bool = True) -> list[str]:
-    """The agent CLI's args: bypass flags, startup args, then the initial
-    task, headless or as the first message. A console launch runs the
+               headless: bool = True, *, resume: bool = False) -> list[str]:
+    """The agent CLI's args: with `resume` (its home kept from its last run)
+    the harness's continue args, then bypass flags, startup args, then the
+    initial task, headless or as the first message. A console launch runs the
     harness's own TUI, input box and all, like a terminal one."""
     # pylint: disable=import-outside-toplevel
     from ...agent_provider import get_provider, runtime_for
 
-    args = [*runtime_for(harness).bypass_args, *startup_args]
+    args = [*(get_provider(harness).continue_args() if resume else ()),
+            *runtime_for(harness).bypass_args, *startup_args]
     if prompt and headless:
         args.extend(get_provider(harness).headless_prompt(prompt))
     elif prompt:
@@ -338,9 +340,11 @@ class BottleService:
                 with backend.launch(plan) as bottle:
                     # The registry id names this run in the journal.
                     activation = bottle.registry_id or str(uuid.uuid4())
+                    # Onto its kept home, the agent picks up its last conversation.
                     command, env = bottle.agent_command(agent_args(
                         harness, plan.agent_provision.startup_args, request.prompt,
-                        headless=request.headless))
+                        headless=request.headless,
+                        resume=getattr(bottle, "home_kept", False) is True))
                     with self._lock:
                         self._held[identity] = held
                     self._follow(plan, bottle, request, identity=identity, activation=activation)
@@ -386,8 +390,7 @@ class BottleService:
                              f"removing {bottle.name}")
                     self._unfollow(identity, bottle)
                     _save_work(bottle, plan.workspace_plan, identity)
-                    if harness == "claude":
-                        capture_claude_session_state(identity, code)
+                    capture_session_state(identity, code)
             except BaseException as e:  # pylint: disable=broad-exception-caught
                 if is_ready.is_set():
                     log.warn(f"bottle {identity}: teardown failed: {e}")
@@ -397,7 +400,7 @@ class BottleService:
                 self._unfollow(identity)  # if teardown failed before it
                 with self._lock:
                     self._held.pop(identity, None)
-                settle_state(identity)
+                self._settle(identity, backend)
                 shutil.rmtree(stage_dir, ignore_errors=True)
                 held.done.set()
                 if error is not None:
@@ -538,6 +541,7 @@ class BottleService:
             bottle=record.id, activation=str(record.meta.get("activation", "")),
             manifest_digest=str(record.meta.get("manifest_digest", "")),
             exit_code=code, stop_requested=False)
+        capture_session_state(record.id, code)
         try:
             self._finish_adopted(record, code)
         finally:
@@ -545,9 +549,22 @@ class BottleService:
                 release = self._adopted.pop(record.id, None)
             if release is not None:
                 release()
-        if record.meta.get("provider") == "claude":
-            capture_claude_session_state(record.id, code)
-        settle_state(record.id)
+        name = str(record.meta.get("backend", ""))
+        self._settle(record.id, self._backend_for(
+            with_recorded_infra(Settings(), name, self._recorded_infra)) if name else None)
+
+    def _settle(self, identity: str, backend: "BottleBackend[Any, Any] | None") -> None:
+        """After teardown: keep the state and the agent's home for `resume`,
+        or remove both."""
+        settle_state(identity)
+        remove_home = getattr(backend, "remove_home", None)
+        if remove_home is None or not identity or is_preserved(identity):
+            return
+        try:
+            remove_home(identity)
+        except Exception as e:  # pylint: disable=broad-exception-caught  # cleanup finds it later
+            log.warn(f"bottle {identity}: couldn't remove its home: {e}; "
+                     "`bot-bottle cleanup bots` will")
 
     def _finish_adopted(self, record: SessionRecord, code: int) -> None:
         """Tear down a bottle a previous controller launched, from the record

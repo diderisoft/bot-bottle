@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import os
+import shlex
 import subprocess
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Callable, Generator
@@ -37,6 +38,7 @@ from ..launch_common import (
     stage_gateway_ca,
     terminal_title,
 )
+from ..base import home_volume_name
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import util as container_mod
 from . import host_firewall
@@ -168,8 +170,9 @@ def launch(
         plan = _stamp_agent_urls(plan, endpoint)
         plan = dataclasses.replace(plan, env_var_secret=new_env_var_secret())
 
-        # Run the agent. It has no token yet.
+        # Run the agent on its home volume. It has no token yet.
         container_mod.force_remove_container(plan.container_name)
+        home_kept = _ensure_home(plan)
         _start_agent(plan, endpoint)
         stack.callback(container_mod.force_remove_container, plan.container_name)
 
@@ -222,6 +225,7 @@ def launch(
             agent_workdir=plan.workspace_plan.workdir,
             exec_env=exec_env,
         )
+        bottle.home_kept = home_kept
         # Prove the only way out is the gateway, then provision.
         # IPv6 on the agent bridge reaches the host where pf can't name it
         # (#720); the host firewall's daemon turns it off, within a minute of
@@ -355,6 +359,37 @@ def _identity_proxy_env(
     }
 
 
+def _ensure_home(plan: MacosContainerBottlePlan) -> bool:
+    """The bottled agent's home volume (PRD 0110): made on its first launch and
+    seeded from the image's home, since an Apple volume starts empty. Whether
+    it was already there, from an earlier run."""
+    name = home_volume_name(plan.slug)
+    if container_mod.volume_exists(name):
+        info(f"using {plan.slug}'s home from its last run ({name})")
+        return True
+    made = subprocess.run(["container", "volume", "create", name],
+                          capture_output=True, text=True, check=False)
+    if made.returncode != 0:
+        die(f"container volume create {name} failed: "
+            f"{(made.stderr or '').strip() or '<no stderr>'}")
+    home = shlex.quote(plan.guest_home)
+    # The image's home, with its owner and mode on the volume's root; ext4's
+    # lost+found isn't the agent's.
+    seed = (f"set -e; cp -a {home}/. /bb-seed/; rm -rf /bb-seed/lost+found; "
+            f'chown "$(stat -c %u:%g {home})" /bb-seed; chmod "$(stat -c %a {home})" /bb-seed')
+    seeded = subprocess.run(
+        ["container", "run", "--rm", "--name", f"{plan.container_name}-home",
+         "--user", "root", "--entrypoint", "sh", "--volume", f"{name}:/bb-seed",
+         plan.image, "-c", seed],
+        capture_output=True, text=True, check=False)
+    if seeded.returncode != 0:
+        container_mod.remove_volume(name)
+        die(f"seeding {name} from {plan.image} failed: "
+            f"{(seeded.stderr or '').strip() or '<no stderr>'}")
+    info(f"made {plan.slug}'s home ({name}) from {plan.image}")
+    return False
+
+
 def _start_agent(plan: MacosContainerBottlePlan, endpoint: GatewayEndpoint) -> None:
     argv = _agent_run_argv(plan, endpoint)
     env = {**os.environ, **plan.forwarded_env}
@@ -381,6 +416,8 @@ def _agent_run_argv(
         # Without NET_RAW the agent can't spoof neighbours' addresses. See the
         # module docstring.
         "--cap-drop", "CAP_NET_RAW",
+        # Its home, kept across stop and resume (`_ensure_home`).
+        "--volume", f"{home_volume_name(plan.slug)}:{plan.guest_home}",
     ]
     for entry in _agent_env_entries(plan, endpoint):
         argv += ["--env", entry]

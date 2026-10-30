@@ -11,6 +11,7 @@ from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from .bottle_plan import DockerBottlePlan
 
+from ..base import home_volume_name
 
 def consolidated_agent_compose(
     plan: DockerBottlePlan,
@@ -59,6 +60,9 @@ def consolidated_agent_compose(
         # Without NET_RAW, root can't forge addresses to impersonate another
         # bottle.
         "cap_drop": ["NET_RAW"],
+        # Its home, kept across stop and resume. Docker fills an empty named
+        # volume from the image's home on first use.
+        "volumes": [f"{home_volume_name(plan.slug)}:{plan.guest_home}"],
     }
     if plan.use_runsc:
         service["runtime"] = "runsc"
@@ -69,6 +73,9 @@ def consolidated_agent_compose(
         # Owned by the launcher (`agent_network`); compose attaches but
         # never creates or removes it.
         "networks": {network: {"external": True}},
+        # Likewise the home (`launch._ensure_home`): `compose down --volumes`
+        # leaves an external volume alone.
+        "volumes": {home_volume_name(plan.slug): {"external": True}},
     }
 
 

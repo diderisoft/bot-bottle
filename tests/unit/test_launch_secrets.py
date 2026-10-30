@@ -131,9 +131,12 @@ class TestFirecrackerLaunchSecrets(_LaunchCase):
                 mock.Mock(iface="t0", host_ip="10.0.0.0", guest_ip="10.0.0.1"), mock.Mock())
             util.cache_dir.return_value = self.stage
             util.generate_keypair.return_value = (self.stage / "key", "ssh-ed25519 AAAA")
+            util.ensure_home_image.return_value = (self.stage / "home.ext4", False)
             with fc_launch.launch(plan, self.stage / "base", provision=mock.Mock()):
                 pass
         self.assertTrue(boot.call_args.kwargs["detached"])
+        # Its home, kept across stop and resume, is the VM's second drive.
+        self.assertEqual((self.stage / "home.ext4",), boot.call_args.kwargs["data_drives"])
 
     def test_guest_env_takes_forwarded_values_from_the_plan(self) -> None:
         plan = FirecrackerBottlePlan(**_fields(self.stage))

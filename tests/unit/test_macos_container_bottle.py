@@ -129,14 +129,21 @@ class TestMacosContainerBottle(unittest.TestCase):
         )
         self.assertEqual("", run.call_args.kwargs["input"])
 
-    def test_cp_in_uses_container_cp(self):
+    def test_cp_in_stages_through_tmp(self):
+        # `container cp` writes under a volume's mount point, hidden by the
+        # volume (the home is one), so it lands in /tmp and moves into place.
         bottle = MacosContainerBottle("bot-bottle-dev-abc", lambda: None, None)
         with patch("bot_bottle.backend.macos_container.bottle.subprocess.run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = run.return_value.stderr = ""
             bottle.cp_in("/tmp/src", "/home/node/src")
-        self.assertEqual(
-            ["container", "cp", "/tmp/src", "bot-bottle-dev-abc:/home/node/src"],
-            run.call_args.args[0],
-        )
+        copy, move = (c.args[0] for c in run.call_args_list)
+        self.assertEqual(["container", "cp", "/tmp/src"], copy[:3])
+        staged = copy[3].split(":", 1)[1]
+        self.assertTrue(staged.startswith("/tmp/bot-bottle-cp-"))
+        self.assertEqual(["container", "exec", "--user", "root", "bot-bottle-dev-abc", "sh", "-c"],
+                         move[:7])
+        self.assertIn(f"rm -rf /home/node/src && mv {staged} /home/node/src", move[7])
 
 
 if __name__ == "__main__":

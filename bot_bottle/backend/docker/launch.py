@@ -29,6 +29,7 @@ from ..launch_common import (
     terminal_title,
 )
 from . import util as docker_mod
+from ..base import home_volume_name
 from .bottle import DockerBottle
 from .bottle_plan import DockerBottlePlan
 from ...bottle_state import bottle_state_dir, read_committed_image
@@ -168,6 +169,7 @@ def launch(
         if plan.env_var_secret:
             from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
             compose_env[ENV_VAR_SECRET_NAME] = plan.env_var_secret
+        home_kept = _ensure_home(plan)
         info(
             f"docker compose up -d  (project {project}, agent on {ctx.network} "
             f"with gateway {ctx.gateway_ip}, ip {ctx.source_ip})"
@@ -190,6 +192,7 @@ def launch(
             terminal_color=plan.spec.color,
             agent_workdir=plan.workspace_plan.workdir,
         )
+        bottle.home_kept = home_kept
         isolation_probe.verify_isolation(
             lambda script: bottle.exec(script).stdout,
             what=f"agent container {plan.container_name}",
@@ -205,6 +208,22 @@ def launch(
         yield bottle
     finally:
         teardown()
+
+
+def _ensure_home(plan: DockerBottlePlan) -> bool:
+    """The bottled agent's home volume (PRD 0110), made on its first launch;
+    docker fills it from the image's home when compose first mounts it.
+    Whether it was already there, from an earlier run."""
+    name = home_volume_name(plan.slug)
+    if docker_mod.volume_exists(name):
+        info(f"using {plan.slug}'s home from its last run ({name})")
+        return True
+    try:
+        docker_mod.create_volume(name)
+    except RuntimeError as e:
+        die(str(e))
+    info(f"made {plan.slug}'s home ({name})")
+    return False
 
 
 @contextmanager

@@ -85,6 +85,9 @@ class TestTeardownWarning(unittest.TestCase):
         self._tmp = tempfile.mkdtemp(prefix="docker-launch-teardown-test.")
         self.addCleanup(lambda: __import__("shutil").rmtree(self._tmp, ignore_errors=True))
         self.addCleanup(use_bottle_root(Path(self._tmp)))  # sandbox the gateway CA write
+        home = mock.patch.object(launch_mod, "_ensure_home", return_value=False)  # no daemon
+        home.start()
+        self.addCleanup(home.stop)
 
     def test_teardown_failure_emits_warning_with_container_and_operation(self):
         plan = _plan(self._tmp)

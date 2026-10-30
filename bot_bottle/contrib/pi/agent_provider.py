@@ -406,6 +406,9 @@ class PiAgentProvider(AgentProvider):
             die("agent provider provisioning: could not install pi's supervise tools: "
                 f"{(r.stderr or r.stdout or '').strip()}")
 
+    def continue_args(self) -> tuple[str, ...]:
+        return ("--continue",)
+
     def interactive_prompt(self, prompt: str) -> list[str] | None:
         # `pi <prompt>`: interactive, with the prompt as the first message.
         return [self.positional_prompt(prompt)]

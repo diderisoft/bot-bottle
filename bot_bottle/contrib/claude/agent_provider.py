@@ -381,6 +381,9 @@ class ClaudeAgentProvider(AgentProvider):
                 f"supervise {supervise_url}{manual_header}"
             )
 
+    def continue_args(self) -> tuple[str, ...]:
+        return ("--continue",)
+
     def interactive_prompt(self, prompt: str) -> list[str] | None:
         # `claude <prompt>`: interactive, with the prompt as the first message.
         return [self.positional_prompt(prompt)]

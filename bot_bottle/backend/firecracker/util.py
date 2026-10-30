@@ -257,6 +257,35 @@ def build_rootfs_ext4(base_dir: Path, out_path: Path, *, slack_mib: int = 1024) 
         die(f"mke2fs for {out_path} failed: {result.stderr.strip()}")
 
 
+# A bottled agent's home (`/dev/vdb`, PRD 0110): sparse, so it takes only what
+# the agent writes. The guest init seeds it from the image's home on first boot.
+HOME_IMAGE_SIZE = "16G"
+
+
+def home_image_path(slug: str) -> Path:
+    """Where a bottled agent's home disk lives: its state dir, so it's kept
+    and removed with its state."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...bottle_state import bottle_state_dir
+    return bottle_state_dir(slug) / "home.ext4"
+
+
+def ensure_home_image(slug: str) -> tuple[Path, bool]:
+    """The bottled agent's home disk, made empty on its first launch, and
+    whether it was already there from an earlier run."""
+    path = home_image_path(slug)
+    if path.exists():
+        info(f"using {slug}'s home from its last run ({path})")
+        return path, True
+    path.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(["mke2fs", "-q", "-t", "ext4", "-F", str(path), HOME_IMAGE_SIZE],
+                          capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        path.unlink(missing_ok=True)
+        die(f"creating {slug}'s home disk failed: {proc.stderr.strip()}")
+    return path, False
+
+
 def make_bottle_rootfs(agent_base: Path, out_path: Path) -> None:
     """The per-bottle disk from `agent_base`: a prepared ext4 is copied
     sparsely; a rootfs dir goes through `mke2fs -d`. The base stays pristine."""
@@ -399,6 +428,21 @@ mkdir -p /tmp && chmod 1777 /tmp
 # restore the home-directory boundary before any SSH provisioning runs.
 chown node:node /home/node 2>/dev/null || true
 chmod 755 /home/node 2>/dev/null || true
+
+# A bottled agent's home disk (/dev/vdb), kept across stop and resume: seeded
+# from the image's home on its first boot, then mounted over it.
+if [ -b /dev/vdb ]; then
+    mkdir -p /mnt/bb-home
+    if mount /dev/vdb /mnt/bb-home; then
+        if [ ! -e /mnt/bb-home/.bot-bottle-home ]; then
+            cp -a /home/node/. /mnt/bb-home/ && rm -rf /mnt/bb-home/lost+found \
+                && touch /mnt/bb-home/.bot-bottle-home
+        fi
+        umount /mnt/bb-home && mount /dev/vdb /home/node
+    fi
+    chown node:node /home/node 2>/dev/null || true
+    chmod 755 /home/node 2>/dev/null || true
+fi
 
 # Install the per-bottle SSH pubkey from the kernel cmdline.
 KEY=$(sed -n 's/.*bb_pubkey=\([^ ]*\).*/\1/p' /proc/cmdline | base64 -d 2>/dev/null)

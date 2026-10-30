@@ -140,6 +140,12 @@ class FirecrackerBottleBackend(
     def attach_adopted(self, bottle_id: str, record: "AdoptionRecord") -> FirecrackerBottle:
         return _launch.attach(bottle_id, record)
 
+    def remove_home(self, slug: str) -> None:
+        # Its state dir's; gone with it, unless the state outlived it.
+        # pylint: disable-next=import-outside-toplevel
+        from .util import home_image_path
+        home_image_path(slug).unlink(missing_ok=True)
+
     def prepare_cleanup(self) -> FirecrackerBottleCleanupPlan:
         return _cleanup.prepare_cleanup()
 

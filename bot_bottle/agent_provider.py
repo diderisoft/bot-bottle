@@ -247,6 +247,12 @@ class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plug
         neither for the model."""
         return " " + prompt if prompt[:1] in ("-", "@") else prompt
 
+    def continue_args(self) -> tuple[str, ...]:
+        """Agent CLI args that pick up its last conversation, for a bottled
+        agent resumed onto its kept home (it comes first, as Codex's is a
+        subcommand). Default: none, a new conversation."""
+        return ()
+
     def interactive_prompt(self, prompt: str) -> list[str] | None:
         """Agent CLI args that start an interactive session with `prompt` as
         its first message, or None if unsupported."""

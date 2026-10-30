@@ -401,6 +401,10 @@ class CodexAgentProvider(AgentProvider):
                                      f"{(r.stderr or r.stdout).strip()[:200]}")
         return CredentialRefresh({CODEX_HOST_CREDENTIAL_TOKEN_REF: token}, expires_at)
 
+    def continue_args(self) -> tuple[str, ...]:
+        # A subcommand, so first; it takes the same options as `codex`.
+        return ("resume", "--last")
+
     def interactive_prompt(self, prompt: str) -> list[str] | None:
         # `codex <prompt>`: interactive, with the prompt as the first message.
         return [self.positional_prompt(prompt)]

@@ -342,6 +342,36 @@ def container_is_running(name: str) -> bool:
     return name in {line.strip() for line in result.stdout.splitlines()}
 
 
+def list_volumes() -> list[str]:
+    """Every volume's name. Raises EnumerationError when they can't be listed."""
+    # pylint: disable-next=import-outside-toplevel
+    from .. import EnumerationError
+    result = subprocess.run([_CONTAINER, "volume", "list", "--quiet"],
+                            capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise EnumerationError(f"container volume list failed: "
+                               f"{result.stderr.strip() or f'exit {result.returncode}'}")
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def volume_exists(name: str) -> bool:
+    try:
+        return name in list_volumes()
+    except Exception:  # pylint: disable=broad-exception-caught  # treat as absent
+        return False
+
+
+def remove_volume(name: str) -> None:
+    """Delete volume `name` if it's there. Raises if it can't be."""
+    if not volume_exists(name):
+        return
+    result = subprocess.run([_CONTAINER, "volume", "delete", name],
+                            capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"container volume delete {name}: "
+                           f"{result.stderr.strip() or f'exit {result.returncode}'}")
+
+
 def force_remove_container(name: str) -> None:
     if container_exists(name):
         subprocess.run(

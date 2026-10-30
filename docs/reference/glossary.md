@@ -55,8 +55,10 @@ an agent is to start one ("Bottle agent" in the console, `bot-bottle start`).
 A bottle (the definition) is never the running thing. A bottled agent is:
 
 - **Running:** its agent runtime is up (`bots --running`).
-- **Stopped:** its runtime is gone but its state is kept, so `bot-bottle
-  resume <bottled agent>` starts it again (`bots --stopped`). A stopped one
+- **Stopped:** its runtime is gone but its state and its home (its
+  conversation and workspace, see [backends](backends.md#the-agents-home))
+  are kept, so `bot-bottle resume <bottled agent>` starts it again, continuing
+  its last conversation (`bots --stopped`). A stopped one
   whose session didn't end cleanly is **left over**: resumable, but
   `cleanup bots` removes it.
 - **Frozen:** its runtime has been snapshotted (`bot-bottle commit`), so a

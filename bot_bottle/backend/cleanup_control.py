@@ -51,4 +51,14 @@ class CleanupFailures:
             raise CleanupError("; ".join(self._messages))
 
 
-__all__ = ["CleanupError", "CleanupFailures"]
+def orphan_homes(volumes: "list[str] | tuple[str, ...]") -> list[str]:
+    """The bottled agents' home volumes among `volumes` (`home_volume_name`)
+    whose state isn't kept for resume: the ones cleanup removes."""
+    # pylint: disable-next=import-outside-toplevel
+    from ..bottle_state import is_preserved
+    prefix = "bot-bottle-home-"
+    return sorted(v for v in volumes
+                  if v.startswith(prefix) and not is_preserved(v[len(prefix):]))
+
+
+__all__ = ["CleanupError", "CleanupFailures", "orphan_homes"]

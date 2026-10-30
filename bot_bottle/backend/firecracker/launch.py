@@ -148,6 +148,8 @@ def launch(
             stack.callback(lambda: shutil.rmtree(run_dir, ignore_errors=True))
             rootfs = run_dir / "rootfs.ext4"
             util.make_bottle_rootfs(agent_base, rootfs)
+            # Its home, kept across stop and resume, unlike the rootfs.
+            home, home_kept = util.ensure_home_image(plan.slug)
             private_key, pubkey = util.generate_keypair(run_dir)
 
             vm = firecracker_vm.boot(
@@ -162,6 +164,7 @@ def launch(
                 # Its own session, so it outlives a host controller restart;
                 # the next controller adopts it.
                 detached=True,
+                data_drives=(home,),
             )
         stack.callback(vm.terminate)
         firecracker_vm.wait_for_ssh(vm, private_key)
@@ -184,6 +187,7 @@ def launch(
             terminal_color=plan.spec.color,
             agent_workdir=plan.workspace_plan.workdir,
         )
+        bottle.home_kept = home_kept
         _smoke_test_published_base(
             bottle, agent_base, runtime_for(plan.harness).smoke_test)
         bottle.prompt_path = provision(plan, bottle)

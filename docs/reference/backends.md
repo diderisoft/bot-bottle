@@ -34,6 +34,34 @@ leaving the box except through the gateway.
 `Freezer` (`backend/freeze.py`, with one subclass per backend) commits a
 running bottled agent to an image that `bot-bottle resume` can start again.
 
+## The agent's home
+
+A bottled agent's home (the guest user's home, `/home/node` in the current
+images, which holds the workspace copy, the harness's conversations and
+config, and anything the agent put there) lives on a volume of its own,
+`bot-bottle-home-<bottled agent>` (`base.home_volume_name`), so a stop and a
+resume keep it while the guest itself starts fresh from the image:
+
+- **macos-container:** a named `container volume`. It starts empty, so the
+  first launch fills it from the image's home with a throwaway container
+  (`launch._ensure_home`). `container cp` writes under a volume's mount
+  point, where the volume hides it, so `cp_in` copies to `/tmp` and moves the
+  file into place from inside.
+- **docker:** an external named volume in the compose file, so `compose down
+  --volumes` leaves it; docker fills it from the image's home on first use.
+- **firecracker:** a sparse ext4 disk (`home.ext4`, 16G) in the bottled
+  agent's state dir, the VM's second drive. The guest init fills it from the
+  image's home on its first boot and mounts it over the home.
+
+`Bottle.home_kept` says whether the home held an earlier run. If so, the
+workspace isn't copied again (the copy starts with `rm -rf`, and the agent's
+copy has its changes), and the host controller starts the harness with its
+continue arguments (`AgentProvider.continue_args`: `claude --continue`, `pi
+--continue`, `codex resume --last`). A home goes with its bottled agent's
+state: when its session ends without being kept for resume (any harness that
+exits non-zero, as a stop does, is kept; `bottle_state.capture_session_state`),
+and in `cleanup bots`, which removes the homes of bottled agents not kept.
+
 ## Comparison
 
 | | macos-container | firecracker | docker |

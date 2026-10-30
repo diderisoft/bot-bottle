@@ -75,6 +75,7 @@ def _plan(
         manifest=_MANIFEST,
         stage_dir=stage_dir,
         slug="dev-abc",
+        guest_home="/home/node",
         nested_containers=nested_containers,
         container_name="bot-bottle-dev-abc",
         image="bot-bottle-agent:latest",
@@ -238,9 +239,11 @@ class TestAgentRunArgv(unittest.TestCase):
 
     def test_the_project_is_never_mounted(self) -> None:
         """The agent never gets a host directory: one it could write would let
-        it plant code the host runs (a `.git/config` that git executes)."""
+        it plant code the host runs (a `.git/config` that git executes). Its
+        only volume is its home, a named volume the backend owns."""
         self.assertNotIn("--mount", self.argv)
-        self.assertNotIn("--volume", self.argv)
+        volumes = [self.argv[i + 1] for i, a in enumerate(self.argv) if a == "--volume"]
+        self.assertEqual(["bot-bottle-home-dev-abc:/home/node"], volumes)
 
     def test_drops_net_raw(self) -> None:
         """The attribution invariant: Apple grants CAP_NET_RAW by default,
@@ -453,6 +456,7 @@ class TestLaunchIsolationProbe(unittest.TestCase):
              patch.object(launch_mod, "new_env_var_secret", return_value="s"), \
              patch.object(launch_mod, "_start_agent"), \
              patch.object(launch_mod.container_mod, "force_remove_container"), \
+             patch.object(launch_mod, "_ensure_home", return_value=False), \
              patch.object(launch_mod, "set_gateway_host"), \
              patch.object(launch_mod.container_mod, "wait_container_ipv4_on_network",
                           return_value="192.168.128.9"), \

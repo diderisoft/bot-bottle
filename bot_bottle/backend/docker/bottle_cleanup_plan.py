@@ -18,6 +18,8 @@ class DockerBottleCleanupPlan(BottleCleanupPlan):
     projects: tuple[str, ...]
     stray_containers: tuple[str, ...]
     stray_networks: tuple[str, ...]
+    # Bottled agents' homes whose state isn't kept for resume.
+    volumes: tuple[str, ...] = ()
 
     @property
     def empty(self) -> bool:
@@ -25,6 +27,7 @@ class DockerBottleCleanupPlan(BottleCleanupPlan):
             not self.projects
             and not self.stray_containers
             and not self.stray_networks
+            and not self.volumes
         )
 
     def intersect(self, current: BottleCleanupPlan) -> "DockerBottleCleanupPlan":
@@ -38,6 +41,7 @@ class DockerBottleCleanupPlan(BottleCleanupPlan):
             stray_networks=tuple(
                 x for x in self.stray_networks if x in current.stray_networks
             ),
+            volumes=tuple(x for x in self.volumes if x in current.volumes),
         )
 
     def print(self) -> None:
@@ -48,4 +52,6 @@ class DockerBottleCleanupPlan(BottleCleanupPlan):
             info(f"stray container: {name}")
         for name in self.stray_networks:
             info(f"stray network:   {name}")
+        for name in self.volumes:
+            info(f"home volume:     {name}")
         print(file=sys.stderr)

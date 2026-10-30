@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
+import uuid
 from typing import Callable, cast
 
 from ...agent_provider import PromptMode, prompt_args
@@ -126,11 +128,24 @@ class MacosContainerBottle(Bottle):
                           env={**os.environ, **self._exec_env} if self._exec_env else None)
 
     def cp_in(self, host_path: str, container_path: str) -> None:
+        # Like `docker cp`, `container_path` becomes a copy of `host_path`.
+        # `container cp` writes under a volume's mount point, where the volume
+        # hides it (silently), and the home is a volume; so it lands in /tmp
+        # and moves into place from inside.
+        staged = f"/tmp/bot-bottle-cp-{uuid.uuid4().hex}"
         subprocess.run(
-            ["container", "cp", host_path, f"{self.name}:{container_path}"],
+            ["container", "cp", host_path, f"{self.name}:{staged}"],
             stdout=subprocess.DEVNULL,
             check=True,
         )
+        dest = shlex.quote(container_path.rstrip("/") or "/")
+        moved = self.exec(
+            f"mkdir -p \"$(dirname {dest})\" && rm -rf {dest} && mv {staged} {dest}",
+            user="root", private=False)
+        if moved.returncode != 0:
+            raise subprocess.CalledProcessError(
+                moved.returncode, ["container", "cp", host_path, container_path],
+                stderr=moved.stderr)
 
     def close(self) -> None:
         if self._closed:

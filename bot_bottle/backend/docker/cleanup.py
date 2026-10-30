@@ -10,7 +10,7 @@ import subprocess
 from ...contract.hostctl import Settings
 from ...lib.log import info
 from .. import EnumerationError
-from ..cleanup_control import CleanupFailures
+from ..cleanup_control import CleanupFailures, orphan_homes
 from . import util as docker_mod
 from ...control.gateway import GATEWAY_NAME
 from .agent_network import is_agent_network
@@ -80,6 +80,7 @@ def prepare_cleanup(settings: Settings) -> DockerBottleCleanupPlan:
         projects=tuple(projects),
         stray_containers=tuple(_list_prefixed_containers()),
         stray_networks=tuple(_list_prefixed_networks()),
+        volumes=tuple(orphan_homes(docker_mod.list_volumes())),
     )
 
 
@@ -115,4 +116,8 @@ def cleanup(plan: DockerBottleCleanupPlan, settings: Settings) -> None:
             ["docker", "network", "rm", name],
             f"removing stray network {name}",
         )
+    # After the projects, which were the volumes' only users.
+    for name in plan.volumes:
+        info(f"docker volume rm {name}")
+        failures.run(["docker", "volume", "rm", name], f"removing home volume {name}")
     failures.raise_if_any()

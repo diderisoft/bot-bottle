@@ -25,7 +25,7 @@ class _FakeHomeMixin:
 
 
 class TestCaptureSessionState(_FakeHomeMixin, unittest.TestCase):
-    # capture_claude_session_state handles the preserve marker for
+    # capture_session_state handles the preserve marker for
     # non-zero agent exits.
     def setUp(self):
         self._setup_fake_home()
@@ -34,23 +34,23 @@ class TestCaptureSessionState(_FakeHomeMixin, unittest.TestCase):
         self._teardown_fake_home()
 
     def test_clean_exit_does_not_mark(self):
-        bottle_state.capture_claude_session_state("dev-abc", exit_code=0)
+        bottle_state.capture_session_state("dev-abc", exit_code=0)
         self.assertFalse(bottle_state.is_preserved("dev-abc"))
 
     def test_crash_marks_preserved(self):
-        bottle_state.capture_claude_session_state("dev-abc", exit_code=137)
+        bottle_state.capture_session_state("dev-abc", exit_code=137)
         self.assertTrue(bottle_state.is_preserved("dev-abc"))
 
     def test_ctrl_c_treated_as_crash(self):
         # SIGINT delivers exit 130; the operator may have Ctrl-C'd
         # because something went wrong, so we preserve.
-        bottle_state.capture_claude_session_state("dev-abc", exit_code=130)
+        bottle_state.capture_session_state("dev-abc", exit_code=130)
         self.assertTrue(bottle_state.is_preserved("dev-abc"))
 
     def test_empty_identity_is_noop(self):
         # Backends without an identity field shouldn't crash this
         # path (the _identity_from_plan helper falls back to "").
-        bottle_state.capture_claude_session_state("", exit_code=137)
+        bottle_state.capture_session_state("", exit_code=137)
         self.assertFalse(bottle_state.is_preserved(""))
 
 

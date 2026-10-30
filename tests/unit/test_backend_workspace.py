@@ -174,7 +174,8 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
 class TestWorkspaceNeverMounted(_FakeStateMixin, unittest.TestCase):
     def test_docker_binds_nothing_into_the_agent(self) -> None:
         """The project is copied in, never bound: a directory the agent could
-        write would let it plant code the host runs."""
+        write would let it plant code the host runs. Its only volume is its
+        home, a named volume docker owns."""
         from bot_bottle.backend.docker.consolidated_compose import (  # pylint: disable=import-outside-toplevel
             consolidated_agent_compose,
         )
@@ -190,7 +191,10 @@ class TestWorkspaceNeverMounted(_FakeStateMixin, unittest.TestCase):
         spec = consolidated_agent_compose(
             plan,  # type: ignore[arg-type]
             gateway_ip="10.0.0.2", source_ip="10.0.0.3", network="gw")
-        self.assertNotIn("volumes", spec["services"]["agent"])
+        [volume] = spec["services"]["agent"]["volumes"]
+        source, target = volume.split(":")
+        self.assertEqual((f"bot-bottle-home-{plan.slug}", "/home/node"), (source, target))
+        self.assertEqual({"external": True}, spec["volumes"][source])
 
 
 class TestWorkspaceTrustPath(_FakeStateMixin, unittest.TestCase):

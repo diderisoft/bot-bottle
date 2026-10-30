@@ -88,6 +88,39 @@ def container_exists(name: str) -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
+def list_volumes() -> list[str]:
+    """Every volume's name. Raises EnumerationError when they can't be listed."""
+    # pylint: disable-next=import-outside-toplevel
+    from .. import EnumerationError
+    result = run_docker(["docker", "volume", "ls", "-q"])
+    if result.returncode != 0:
+        raise EnumerationError(f"docker volume ls failed: "
+                               f"{result.stderr.strip() or f'exit {result.returncode}'}")
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def volume_exists(name: str) -> bool:
+    return run_docker(["docker", "volume", "inspect", name]).returncode == 0
+
+
+def create_volume(name: str) -> None:
+    """Create volume `name`. Raises if it can't be."""
+    result = run_docker(["docker", "volume", "create", name])
+    if result.returncode != 0:
+        raise RuntimeError(f"docker volume create {name}: "
+                           f"{result.stderr.strip() or f'exit {result.returncode}'}")
+
+
+def remove_volume(name: str) -> None:
+    """Remove volume `name` if it's there. Raises if it can't be."""
+    if not volume_exists(name):
+        return
+    result = run_docker(["docker", "volume", "rm", name])
+    if result.returncode != 0:
+        raise RuntimeError(f"docker volume rm {name}: "
+                           f"{result.stderr.strip() or f'exit {result.returncode}'}")
+
+
 def force_remove_container(name: str) -> None:
     """`docker rm -f` the container if it exists. Best effort."""
     if container_exists(name):
