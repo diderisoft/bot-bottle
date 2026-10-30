@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Iterable
 
 from ... import resources
-from ...lib.proc import run_streaming
+from ...lib.proc import build_failure, run_streaming
 from ...lib.log import die, info
 
 
@@ -102,7 +102,10 @@ def build_image(
         args.extend(["--build-arg", f"{name}={value}"])
     args.append(context)
     # Streamed so a host-controller job captures the output.
-    run_streaming(args, check=True)
+    try:
+        run_streaming(args, check=True)
+    except subprocess.CalledProcessError as e:
+        die(build_failure(ref, e))
 
 
 def verify_agent_image(image: str, argv: tuple[str, ...]) -> None:

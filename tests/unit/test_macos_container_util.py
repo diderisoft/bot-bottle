@@ -81,8 +81,10 @@ resolver #2
             return failed if argv[:2] == ["container", "build"] else status
 
         with patch.object(util.subprocess, "run", side_effect=run), \
-             self.assertRaises(util.subprocess.CalledProcessError):
+             self.assertRaises(SystemExit) as caught:
             util.build_image("bot-bottle-agent:latest", "/repo", dns_override="9.9.9.9")
+        self.assertEqual("building bot-bottle-agent:latest failed (exit 1); see its build output",
+                         getattr(caught.exception, "message", ""))
 
     def test_build_image_anchors_relative_dockerfile_to_context(self):
         status = util.subprocess.CompletedProcess(

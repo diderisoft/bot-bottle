@@ -12,7 +12,7 @@ import subprocess
 
 from ... import resources
 from ...lib.log import die, info
-from ...lib.proc import run_streaming
+from ...lib.proc import build_failure, run_streaming
 
 
 def run_docker(
@@ -194,7 +194,10 @@ def build_image(
         args.extend(["--build-arg", f"{name}={value}"])
     args.append(context)
     # Streamed so a host-controller job captures the output.
-    run_streaming(args, check=True)
+    try:
+        run_streaming(args, check=True)
+    except subprocess.CalledProcessError as e:
+        die(build_failure(ref, e))
 
 
 def image_id(ref: str) -> str:
