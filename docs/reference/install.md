@@ -23,13 +23,8 @@ uv tool install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot
 # or the same with: pipx install
 ```
 
-Installer settings, all optional:
-
-| Variable | Does |
-|---|---|
-| `BOT_BOTTLE_PYTHON` | the interpreter to install with; skips the search |
-| `BOT_BOTTLE_VENV` | where the venv install lives when there's no `uv` or `pipx` (default `~/.bot-bottle/venv`) |
-| `BOT_BOTTLE_INSTALL_SPEC` | the pip spec to install instead of the default `git+` URL, such as a wheel path or index name |
+The installer's settings (`BOT_BOTTLE_PYTHON`, `BOT_BOTTLE_VENV`,
+`BOT_BOTTLE_INSTALL_SPEC`, all optional) are in [Settings](#settings).
 
 ## Requirements
 
@@ -169,6 +164,54 @@ fields are in [manifest.md](manifest.md#agents).
 ```sh
 bot-bottle start <agent>   # pulls (or builds) the images on first run, then drops you into the agent
 ```
+
+## Settings
+
+Every `BOT_BOTTLE_*` variable you might set, all optional. Unset or empty
+means the default. The ones bot-bottle sets for its own processes are in
+[runtime-contract.md](runtime-contract.md#internal-environment).
+
+Generated from `bot_bottle/env_vars.py`: edit that, then run
+`python3 scripts/gen_env_docs.py`.
+
+<!-- env-vars:settings:begin -->
+| Variable | For | Does | Default |
+|---|---|---|---|
+| `BOT_BOTTLE_BACKEND` | user | Backend to use: `macos-container`, `firecracker` or `docker`. Same as `--backend`. | the host default |
+| `BOT_BOTTLE_ROOT` | user | State root: manifests, keys, secrets, the host DB and audit journal. | `~/.bot-bottle` |
+| `BOT_BOTTLE_LOG_LEVEL` | user | `debug`, `info`, `warn` or `error`. `debug` also turns on the orchestrator's access log. | `info` |
+| `BOT_BOTTLE_INFRA_BUILD` | user | `local` builds the orchestrator and gateway images from source instead of pulling a release's. | pull |
+| `BOT_BOTTLE_BUILD_ENGINE` | user | Image build engine: `docker`, `podman` or `vm`. | the first usable one |
+| `BOT_BOTTLE_ARTIFACT_CACHE` | user | Where verified artifact downloads (infra rootfs, image layers) are cached. | `~/.cache/bot-bottle/artifacts` |
+| `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN` | user | Token for pulling from, or with `write:package` publishing to, the private image registry. Removed at the GitHub cutover. | — |
+| `BOT_BOTTLE_ORCHESTRATOR_TEARDOWN_TIMEOUT_SECONDS` | user | How long a bottle's teardown waits on the orchestrator. Read by the process that runs the launch (the host controller), so set it in that process's environment. | `30` |
+| `BOT_BOTTLE_DOCKER_GATEWAY_SUBNET` | user | docker: the gateway network's subnet. | `10.242.255.0/24` |
+| `BOT_BOTTLE_DOCKER_AGENT_SUBNETS` | user | docker: the range per-agent networks are carved from, as /29s. | `10.242.0.0/20` |
+| `BOT_BOTTLE_MACOS_CONTAINER_DNS` | user | macos-container: DNS server for the gateway, orchestrator and image builder. When set, a builder running with other DNS is restarted with it. | the host's IPv4 resolver, else `1.1.1.1` |
+| `BOT_BOTTLE_FC_CACHE` | user | firecracker: cache root for the kernel, root filesystems and run dirs. | `~/.cache/bot-bottle/firecracker` |
+| `BOT_BOTTLE_FC_KERNEL` | user | firecracker: the guest kernel. | `vmlinux` in the firecracker cache |
+| `BOT_BOTTLE_FC_DROPBEAR` | user | firecracker: the static dropbear put in every guest as its SSH server. | `dropbear` in the firecracker cache |
+| `BOT_BOTTLE_FC_POOL_SIZE` | user | firecracker: TAP pool slots, so concurrent bottles. Must match the host's network pool. | `8` |
+| `BOT_BOTTLE_FC_IP_BASE` | user | firecracker: base IPv4 of the pool's /31s. Must match the host's network pool. | `10.243.0.0` |
+| `BOT_BOTTLE_FC_IFACE_PREFIX` | user | firecracker: agent TAP name prefix. Must match the host's network pool. | `bbfc` |
+| `BOT_BOTTLE_FC_NFT_TABLE` | user | firecracker: the nftables isolation table. Must match the host's network pool. | `bot_bottle_fc` |
+| `BOT_BOTTLE_FC_ORCH_IFACE` | user | firecracker: the orchestrator VM's TAP. Must match the host's network pool. | `bborch0` |
+| `BOT_BOTTLE_FC_GW_IFACE` | user | firecracker: the gateway VM's TAP. Must match the host's network pool. | `bbgw0` |
+| `BOT_BOTTLE_FC_OWNER` | user | firecracker network pool script: the user that owns the TAPs. | `$SUDO_USER`, else `$USER` |
+| `BOT_BOTTLE_FC_GROUP` | user | firecracker network pool script: a group to own the TAPs instead of one user. | — |
+| `BOT_BOTTLE_PYTHON` | user | Installer: the interpreter to install with; skips the search. | — |
+| `BOT_BOTTLE_VENV` | user | Installer and `uninstall`: where the venv install lives when there's no `uv` or `pipx`. | `~/.bot-bottle/venv` |
+| `BOT_BOTTLE_INSTALL_SPEC` | user | Installer: the pip spec to install instead of the default `git+` URL, such as a wheel path or index name. | — |
+| `BOT_BOTTLE_ORCHESTRATOR_IMAGE` | dev | The orchestrator image to run. | `bot-bottle-orchestrator:latest` |
+| `BOT_BOTTLE_GATEWAY_IMAGE` | dev | The gateway image to run. | `bot-bottle-gateway:latest` |
+| `BOT_BOTTLE_HOSTCTL_PORT` | dev | The host controller's loopback port. | ephemeral |
+| `BOT_BOTTLE_DOCKER_CA_MOUNT` | dev | docker in CI: a named volume for the gateway CA, for a runner that shares the host's Docker socket. Removed at the GitHub cutover. | — |
+| `BOT_BOTTLE_DOCKER_ROOT_MOUNT` | dev | docker in CI: a named volume for the state root the orchestrator mounts. Removed at the GitHub cutover. | — |
+| `BOT_BOTTLE_DOCKER_CLIENT_NETWORK` | dev | docker in CI: the job container's network, which the orchestrator joins. Removed at the GitHub cutover. | — |
+| `BOT_BOTTLE_INFRA_ARTIFACT_BASE` | release | The registry the infra images are published to. Removed at the GitHub cutover. | `https://gitea.dideric.is` |
+| `BOT_BOTTLE_INFRA_ARTIFACT_OWNER` | release | The registry owner the infra images are published under. Removed at the GitHub cutover. | `didericis` |
+| `BOT_BOTTLE_IMAGE_SOURCE_URL` | release | The image's `org.opencontainers.image.source` label. Removed at the GitHub cutover. | `https://gitea.dideric.is/didericis/bot-bottle` |
+<!-- env-vars:settings:end -->
 
 ## Uninstall
 

@@ -69,7 +69,7 @@ has no host controller.
 
 **Process inputs:** `python -m bot_bottle.orchestrator --host H --port P --db
 PATH`, with the signing key in `BOT_BOTTLE_ORCHESTRATOR_TOKEN` (it refuses to
-start without one). `BOT_BOTTLE_ORCHESTRATOR_DEBUG` turns on the access log.
+start without one). `BOT_BOTTLE_LOG_LEVEL=debug` turns on the access log.
 
 ## Host controller (as the orchestrator sees it)
 
@@ -103,8 +103,34 @@ orchestrator it brought up reaches it through these:
 A backend in `errors` means its list is unknown, not empty. Callers must not
 treat it as "nothing is running".
 
+## Internal environment
+
+The `BOT_BOTTLE_*` variables bot-bottle sets for its own processes. None is a
+knob; the ones you can set are in [install.md](install.md#settings).
+Generated from `bot_bottle/env_vars.py` by `scripts/gen_env_docs.py`.
+
+<!-- env-vars:internal:begin -->
+| Variable | Does | Default |
+|---|---|---|
+| `BOT_BOTTLE_ORCHESTRATOR_URL` | The orchestrator's control-plane URL, for the gateway's daemons. | — |
+| `BOT_BOTTLE_ORCHESTRATOR_TOKEN` | The `control-plane` signing key; the orchestrator refuses to start without it. | — |
+| `BOT_BOTTLE_ORCHESTRATOR_AUTH_JWT` | The gateway's `gateway`-role token for the control plane. | — |
+| `BOT_BOTTLE_HOSTCTL_URL` | The host controller's URL, for an orchestrator it brought up. | — |
+| `BOT_BOTTLE_HOSTCTL_KEY` | The `host-control` signing key. | — |
+| `BOT_BOTTLE_HOSTCTL_JWT` | A `host-control` token: `orchestrator`-role for the orchestrator, `gateway`-role for the gateway. | — |
+| `BOT_BOTTLE_GATEWAY_DAEMONS` | Which gateway daemons run (`egress`, `git-http`, `supervise`). | all |
+| `BOT_BOTTLE_GIT_GATE_READY_FILE` | When set, `git-http` waits for this file before it starts. | — |
+| `BOT_BOTTLE_SENSITIVE_PREFIXES` | Comma-separated env var name prefixes whose values egress DLP blocks as known secrets (the canary). | — |
+| `BOT_BOTTLE_SOURCE_HASH` | macos-container: the source hash the running orchestrator was built from, to spot a stale one. | — |
+| `BOT_BOTTLE_CLAUDE_HOST_ACCESS_TOKEN` | Secret name the gateway injects a forwarded Claude login under. | — |
+| `BOT_BOTTLE_CODEX_HOST_ACCESS_TOKEN` | Secret name the gateway injects a forwarded Codex login under. | — |
+<!-- env-vars:internal:end -->
+
 ## Changelog
 
 - **2026-10-22:** first version: control-plane routes and roles, the host
   controller's API as an orchestrator sees it, both trust domains, and the env
   each service reads (PRD 0087 chunk 7, design repo).
+- **2026-10-30:** the internal environment table, generated from
+  `bot_bottle/env_vars.py`. `BOT_BOTTLE_ORCHESTRATOR_DEBUG` is gone; use
+  `BOT_BOTTLE_LOG_LEVEL=debug`.
