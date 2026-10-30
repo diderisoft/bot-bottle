@@ -525,11 +525,27 @@ class TestEnvsRm(_TmpHome):
         self.assertEqual(root, plan.root)
         self.assertEqual(("/py", "-P", "-m", "bot_bottle.cli", "envs", "_teardown"),
                          plan.teardown)
-        self.assertEqual({"PATH": "/bin", "BOT_BOTTLE_ENV": "dev", "BOT_BOTTLE_ROOT": str(root)},
-                         plan.env)
+        self.assertEqual({"PATH": "/bin", "BOT_BOTTLE_ENV": "dev", "BOT_BOTTLE_ROOT": str(root),
+                          "PYTHONPATH": str(REPO)}, plan.env)
         self.assertEqual((root, self.home / ".cache" / "bot-bottle" / "firecracker" / "envs"
                           / "dev"), plan.remove)
         self.assertEqual((), plan.kept)
+
+    def test_the_teardown_runs_this_package(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.cli.commands.envs import plan_rm
+        plan = plan_rm("dev", home=self.home, python=sys.executable,
+                       environ={"PATH": os.environ.get("PATH", ""), "PYTHONPATH": "/extra",
+                                "HOME": str(self.home)})
+        self.assertEqual(os.pathsep.join([str(REPO), "/extra"]), plan.env["PYTHONPATH"])
+        # From an unrelated directory, `-P` and all: the hidden subcommand is
+        # reached and refuses to tear down without being in the environment.
+        env_live = dict(plan.env)
+        del env_live["BOT_BOTTLE_ENV"]
+        proc = subprocess.run(list(plan.teardown), env=env_live, cwd=self.home,
+                              capture_output=True, text=True, check=False)
+        self.assertEqual(2, proc.returncode, proc.stderr)
+        self.assertIn("refusing to tear down live", proc.stderr)
 
     def test_an_unregistered_name_still_plans_its_default_dirs(self) -> None:
         plan = self._plan("ci-9")

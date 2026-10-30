@@ -34,6 +34,8 @@ from ..constants import PROG
 # The hidden subcommand `rm` runs inside the environment it removes: names are
 # fixed per process, so the teardown has to run as that environment.
 TEARDOWN = "_teardown"
+# The directory holding the `bot_bottle` package this CLI runs.
+_PACKAGE_PARENT = Path(environment.__file__).resolve().parents[1]
 
 
 @dataclass(frozen=True)
@@ -166,6 +168,10 @@ def plan_rm(name: str, *, home: Path | None = None, python: str = sys.executable
     env = dict(base)
     env[ENV_VAR] = name
     env["BOT_BOTTLE_ROOT"] = str(root)
+    # Import this same package (`-P` keeps the caller's directory off the path,
+    # #706), installed or run from a checkout.
+    env["PYTHONPATH"] = os.pathsep.join(
+        p for p in (str(_PACKAGE_PARENT), base.get("PYTHONPATH", "")) if p)
     remove: list[Path] = [own_dir]
     kept: list[str] = []
     live_root = environment.default_root(LIVE, home)
