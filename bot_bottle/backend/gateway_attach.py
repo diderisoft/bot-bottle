@@ -19,7 +19,7 @@ from ..bottle_state import git_gate_state_dir
 from ..control.gateway import Gateway, GatewayError
 from ..git_gate.plan import GitGatePlan
 from ..git_gate.provision import load_upstreams_snapshot
-from ..git_gate.service import load_trailer_settings, stage_git_gate_scripts
+from ..git_gate.service import load_baseline, load_trailer_settings, stage_git_gate_scripts
 from ..lib.log import info
 from ..control.client import OrchestratorClient, OrchestratorClientError
 from .provision_gateway import GatewayTransport, provision_git_gate
@@ -141,6 +141,7 @@ def reprovision_git_gate(transport: GatewayTransport, bottle_id: str, slug: str)
         upstreams=upstreams,
         trailer=trailer,
         trailer_mode=trailer_mode,
+        baseline_file=load_baseline(state_dir),
     ))
 
 

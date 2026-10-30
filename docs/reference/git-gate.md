@@ -125,6 +125,12 @@ Every commit an agent makes carries a trailer naming the bottle and run
 (PRD 0112, design repo), and git-gate checks pushes for it. This is part of
 the core: it works without the console.
 
+The trailer is a visible label that git-gate verifies at push time, not
+proof: anyone can write one into a commit made elsewhere. The authoritative
+record of what a bottle pushed is git-gate's audit journal, where every
+forwarded commit is listed with its bottle and push time (see
+[The push record](#the-push-record)).
+
 ```
 Bot-Bottle: <bottle>/<run>
 Co-authored-by: <operator name> <operator email>
@@ -161,9 +167,9 @@ runs for merges and amends too, and isn't skipped by `--no-verify`. If the
 hooks can't be installed, launch warns and carries on.
 
 **Checking them** (`gateway/git_gate/trailer_check.py`). Before the gitleaks
-scan, pre-receive checks every commit the push introduces: reachable from the
-new tip and from no ref the gate already has, so commits already upstream are
-never checked. Merge commits made in the bottle are checked. A commit passes
+scan, pre-receive checks every commit the push introduces that neither a ref
+the gate already has (upstream) nor the bottle's baseline (below) reaches.
+Merge commits made in the bottle are checked. A commit passes
 when it has a `Bot-Bottle` trailer and every one it has equals this bottle's
 value. A failing push is rejected, never rewritten (that would change the
 agent's hashes); the message lists the commits and the command that fixes
@@ -175,15 +181,45 @@ git rebase --rebase-merges --exec 'git -c trailer.ifexists=replace commit --amen
 
 `git-gate.trailers` in the bottle sets the mode: `require` (the default)
 refuses, `warn` forwards the push and prints the same message, `off` doesn't
-check. Commits the bottle didn't make are new to the gate too: a copied
-workspace's local commits that were never pushed, or commits fetched from
-another repo. Under `require`, pushing them needs the trailer added (which
-attributes them to the bottle) or a `warn` bottle. Like other `git-gate` fields it merges through `extends`, a child's
+check. Like other `git-gate` fields it merges through `extends`, a child's
 winning. The value and mode are kept in the bottle's git-gate state dir
 (`trailer.json`) for re-provisioning, and set on each bare repo as
 `git-gate.trailer` and `git-gate.trailers`. A bottle launched before the
 check existed has no `trailer.json` and isn't checked after a gateway
 restart, since its guest has no hooks.
+
+**The baseline.** A copied workspace can hold commits the operator made but
+never pushed. Those push untouched: when the workspace is a git repo copied in,
+launch records `git rev-list --all --not --remotes` on the host copy (the
+commits its local refs reach and its remote-tracking refs don't) in the
+git-gate state dir (`baseline-commits`, one SHA a line;
+`git_gate/service.py:workspace_baseline`). Commits a remote-tracking ref
+reaches are left out to keep the file small; they're upstream, which the gate
+already exempts. A resume adds the host repo's new unpushed commits to it.
+Provisioning copies it to `/git-gate/creds/<bottle_id>/baseline-commits` and
+names it in each bare repo's `git-gate.baseline`; the check excludes those
+commits and everything they reach (`git log --stdin --ignore-missing`, so a
+baseline commit the push doesn't carry is skipped). A baseline commit the
+agent rewrites (amends, rebases) is a new commit and is checked. A bottle
+without a baseline (no copied git workspace, or launched before baselines)
+exempts nothing beyond upstream. Commits the bottle brings in from elsewhere,
+such as another repo, still need the trailer, or a `warn` bottle.
+
+### The push record
+
+Each ref git-gate forwards is a `forge.push_accepted` audit event
+(`gateway/git_gate/audit.py`). Its payload lists `commits`: every commit the
+push brings to the gate (reachable from the new tip and no ref the gate had),
+oldest first, with `commit_count` and the repo's `bot_bottle_trailer` value.
+Baseline commits are listed too: this is what was
+forwarded, whether or not the trailer check looked at it. The orchestrator
+relays the event named by the bottle's slug, with the registry id as
+`activation`, and the event's time is the push time. Under
+`audit.delivery: required` the record is written before the ref is
+forwarded, and the ref is refused if it can't be. More than 10,000 commits in
+one ref are counted and the list truncated (`commits_truncated`). git-gate
+doesn't write git notes: pushing `refs/notes/*` upstream would add a ref the
+forge has to accept for every push.
 
 ## Gateway side
 

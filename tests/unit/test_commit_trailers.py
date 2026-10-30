@@ -11,8 +11,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from bot_bottle.backend.resolve_common import launch_trailer, with_commit_hooks_env
@@ -22,13 +24,17 @@ from bot_bottle.contract.git_trailers import (
 from bot_bottle.control.git_gate_render import (
     git_gate_render_hook, git_gate_render_provision,
 )
-from bot_bottle.gateway.git_gate import trailer_check
+from bot_bottle.gateway.git_gate import audit, trailer_check
 from bot_bottle.git_gate import GitGate, commit_hooks
-from bot_bottle.git_gate.service import load_trailer_settings, save_trailer_settings
+from bot_bottle.git_gate.service import (
+    load_baseline, load_trailer_settings, save_baseline, save_trailer_settings,
+    workspace_baseline,
+)
 from bot_bottle.manifest import ManifestIndex
 from bot_bottle.manifest.document import bottle_document
 from bot_bottle.manifest.util import ManifestError
 from tests.unit.test_docker_provision_git_user import _PROVIDER, _make_bottle, _plan
+from tests.unit.test_git_gate_audit import _Orchestrator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VALUE = "dev+gitea/demo-abc12"
@@ -335,7 +341,7 @@ class TestCommitHooksChaining(_GitCase):
         self.assertEqual([], self.trailers(self.repo))
 
 
-class TestGateTrailerCheck(_GitCase):
+class _GateCase(_GitCase):
     """A bare gate repo whose pre-receive runs only the trailer check."""
 
     def setUp(self) -> None:
@@ -371,6 +377,9 @@ class TestGateTrailerCheck(_GitCase):
         args = [a for t in trailers for a in ("--trailer", t)]
         self.git("commit", "-q", "--allow-empty", "-m", msg, *args, cwd=self.work)
 
+
+
+class TestGateTrailerCheck(_GateCase):
     def test_accepts_commits_with_this_bottles_trailer(self):
         self.commit("feat: ok", f"{TRAILER_KEY}: {VALUE}")
         self.push()
@@ -441,6 +450,177 @@ class TestGateTrailerCheck(_GitCase):
     def test_deletion_is_not_checked(self):
         self.push("HEAD:refs/heads/topic")
         self.push(":refs/heads/topic")
+
+
+class TestBaseline(_GateCase):
+    """A workspace copied with an unpushed operator commit: that commit is in
+    the baseline and pushes untouched; the agent's commits are checked."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        # The operator's local, unpushed commit, made before launch.
+        self.commit("feat: operator work in progress")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD~1", cwd=self.work)
+        baseline = commit_hooks_baseline(self.work)
+        self.operator_sha = self.git("rev-parse", "HEAD", cwd=self.work).stdout.strip()
+        self.assertEqual([self.operator_sha], baseline)
+        (self.root / "state").mkdir()
+        path = save_baseline(self.root / "state", baseline)
+        self.git("config", "git-gate.baseline", str(path), cwd=self.gate)
+
+    def test_operator_commit_pushes_untouched_with_agent_commit(self):
+        self.commit("feat: agent", f"{TRAILER_KEY}: {VALUE}")
+        self.push()
+        self.assertEqual(self.operator_sha, self.git(
+            "rev-parse", "HEAD~1", cwd=self.work).stdout.strip())
+
+    def test_agent_commit_without_trailer_is_refused_alone(self):
+        self.commit("feat: agent bare")
+        proc = self.push(check=False)
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("1 new commit(s)", proc.stderr)
+        self.assertIn("feat: agent bare", proc.stderr)
+        self.assertNotIn("operator work in progress", proc.stderr)
+        # The fix rebases onto the operator's commit, leaving it alone.
+        self.assertIn(self.operator_sha[:12], proc.stderr)
+
+    def test_rewritten_baseline_commit_is_checked(self):
+        self.git("commit", "-q", "--amend", "--allow-empty", "-m", "feat: reworded",
+                 cwd=self.work)
+        # The original is in the baseline but never reaches the gate.
+        proc = self.push(check=False)
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("feat: reworded  (no Bot-Bottle trailer)", proc.stderr)
+
+    def test_without_a_baseline_the_operator_commit_is_checked(self):
+        self.git("config", "--unset", "git-gate.baseline", cwd=self.gate)
+        self.commit("feat: agent", f"{TRAILER_KEY}: {VALUE}")
+        proc = self.push(check=False)
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("operator work in progress", proc.stderr)
+
+
+def commit_hooks_baseline(repo: Path) -> list[str]:
+    def run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
+        return subprocess.run(argv, env=env, **kw)  # pylint: disable=subprocess-run-check
+    return workspace_baseline(repo, run=run)
+
+
+class TestBaselineFiles(unittest.TestCase):
+    def test_save_unions_and_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stage = Path(tmp)
+            self.assertEqual(Path(), load_baseline(stage))
+            self.assertEqual(Path(), save_baseline(stage, []))
+            path = save_baseline(stage, ["a" * 40, "b" * 40])
+            save_baseline(stage, ["b" * 40, "c" * 40])
+            self.assertEqual(["a" * 40, "b" * 40, "c" * 40], path.read_text(encoding="utf-8").split())
+            self.assertEqual(path, load_baseline(stage))
+            self.assertEqual(["a" * 40, "b" * 40, "c" * 40],
+                             trailer_check.read_baseline(str(path)))
+
+    def test_read_baseline_ignores_junk_and_missing_files(self):
+        self.assertEqual([], trailer_check.read_baseline(""))
+        self.assertEqual([], trailer_check.read_baseline("/nonexistent/baseline"))
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as f:
+            f.write("not-a-sha\n" + "d" * 40 + "\n--all\n")
+        try:
+            self.assertEqual(["d" * 40], trailer_check.read_baseline(f.name))
+        finally:
+            os.unlink(f.name)
+
+    def test_workspace_baseline_empty_when_git_fails(self):
+        def run(argv: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(argv, 128, "", "not a repo")
+        self.assertEqual([], workspace_baseline(Path("/x"), run=run))
+
+    def test_prepare_records_baseline_only_with_a_trailer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bottle = _bottles({"dev": {}}).bottles["dev"]
+            plan = GitGate().prepare(bottle, "s", Path(tmp), trailer=VALUE,
+                                     baseline=["e" * 40])
+            self.assertEqual(Path(tmp) / "baseline-commits", plan.baseline_file)
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = GitGate().prepare(bottle, "s", Path(tmp), baseline=["e" * 40])
+            self.assertEqual(Path(), plan.baseline_file)
+
+    def test_provision_render_sets_and_validates_baseline(self):
+        path = "/git-gate/creds/b1/baseline-commits"
+        script = git_gate_render_provision("b1", (), trailer_mode="require", trailer=VALUE,
+                                           baseline=path)
+        self.assertIn(f"baseline={path}", script)
+        self.assertIn('config git-gate.baseline "$baseline"', script)
+        with self.assertRaises(ValueError):
+            git_gate_render_provision("b1", (), trailer_mode="require", trailer=VALUE,
+                                      baseline="/etc/passwd")
+
+
+class TestPushAuditRecord(_GitCase):
+    """pre-receive's push_accepted event lists the commits a push forwards."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.server = _Orchestrator()
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.gate = self.root / "gate.git"
+        self.git("init", "-q", "--bare", str(self.gate), cwd=self.root)
+        self.git("config", "git-gate.trailer", VALUE, cwd=self.gate)
+        hook = self.gate / "hooks" / "pre-receive"
+        hook.write_text(
+            "#!/bin/sh\n"
+            "while read -r old new ref; do\n"
+            f"  PYTHONPATH={REPO_ROOT} {sys.executable} -m bot_bottle.gateway.git_gate.audit "
+            "forge.push_accepted success \"$ref\" --findings 0 --new \"$new\" || exit 1\n"
+            "done\n")
+        hook.chmod(0o755)
+        self.env.update({"BOT_BOTTLE_ORCHESTRATOR_URL":
+                         f"http://127.0.0.1:{self.server.server_address[1]}",
+                         "GIT_GATE_BOTTLE": "reg-id-1"})
+        self.work = self.root / "work"
+        self.git("init", "-q", "-b", "main", str(self.work), cwd=self.root)
+        self.git("remote", "add", "origin", str(self.gate), cwd=self.work)
+
+    def head(self) -> str:
+        return self.git("rev-parse", "HEAD", cwd=self.work).stdout.strip()
+
+    def test_each_forwarded_commit_is_recorded_once(self):
+        self.git("commit", "-q", "--allow-empty", "-m", "one", cwd=self.work)
+        first = self.head()
+        self.git("push", "-q", "origin", "HEAD:refs/heads/main", cwd=self.work)
+        self.git("commit", "-q", "--allow-empty", "-m", "two", cwd=self.work)
+        self.git("commit", "-q", "--allow-empty", "-m", "three", cwd=self.work)
+        self.git("push", "-q", "origin", "HEAD:refs/heads/main", cwd=self.work)
+        events = [b["event"] for b in self.server.received]
+        self.assertEqual(2, len(events))
+        self.assertEqual([first], events[0]["payload"]["commits"])
+        second = events[1]["payload"]
+        self.assertEqual([self.git("rev-parse", "HEAD~1", cwd=self.work).stdout.strip(),
+                          self.head()], second["commits"])
+        self.assertEqual(2, second["commit_count"])
+        self.assertEqual(VALUE, second["bot_bottle_trailer"])
+        self.assertEqual("reg-id-1", events[1]["bottle"])
+        self.assertTrue(events[1]["ts_event"])
+
+    def test_build_event_without_new_lists_nothing(self):
+        event = audit.build_event("forge.push_accepted", "success", "refs/heads/x",
+                                  bottle="b", src_ip="", repo="r", findings=0,
+                                  detail="", now=0.0)
+        self.assertNotIn("commits", event.payload or {})
+
+    def test_build_event_truncates_huge_lists(self):
+        with patch.object(audit, "COMMIT_LIST_LIMIT", 2):
+            event = audit.build_event("forge.push_accepted", "success", "refs/heads/x",
+                                      bottle="b", src_ip="", repo="r", findings=0,
+                                      detail="", now=0.0, commits=["1", "2", "3"])
+        payload = event.payload or {}
+        self.assertEqual((["1", "2"], 3, True), (payload["commits"], payload["commit_count"],
+                                                 payload["commits_truncated"]))
+
+    def test_deleted_ref_lists_no_commits(self):
+        self.assertEqual([], audit.pushed_commits("0" * 40))
 
 
 class TestTrailerCheckUnits(unittest.TestCase):

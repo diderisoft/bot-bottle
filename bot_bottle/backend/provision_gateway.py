@@ -9,6 +9,7 @@ keys out of another's repos.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from ..control.git_gate_render import git_gate_render_provision
 from ..git_gate import GitGatePlan
@@ -59,6 +60,11 @@ def provision_git_gate(
             known_hosts_path = f"{creds}/{u.name}-known_hosts"
             transport.cp_into(known_hosts, known_hosts_path)
             credential_paths.append(known_hosts_path)
+    baseline = ""
+    if plan.baseline_file != Path() and plan.baseline_file.is_file():
+        baseline = f"{creds}/baseline-commits"
+        transport.cp_into(str(plan.baseline_file), baseline)
+        credential_paths.append(baseline)
     # Copy modes differ per transport, so set credential permissions in the
     # gateway.
     if credential_paths:
@@ -66,7 +72,7 @@ def provision_git_gate(
     # Init the bare repos and per-repo credential config.
     script = git_gate_render_provision(
         bottle_id, plan.upstreams,
-        trailer_mode=plan.trailer_mode, trailer=plan.trailer)
+        trailer_mode=plan.trailer_mode, trailer=plan.trailer, baseline=baseline)
     transport.exec(["sh", "-c", script])
 
 

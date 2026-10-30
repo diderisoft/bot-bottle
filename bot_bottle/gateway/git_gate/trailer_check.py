@@ -5,9 +5,12 @@ trailer (PRD 0112).
 
 Run from the bare repo by pre-receive. The repo's `git-gate.trailers` is the
 mode (`require`, `warn`, `off`; unset is `off`, for repos provisioned before
-the check existed) and `git-gate.trailer` the expected value. A commit is new
-when no ref the gate already has reaches it (`<new> --not --all`), so commits
-already upstream are never checked; merge commits made in the bottle are.
+the check existed) and `git-gate.trailer` the expected value. A commit is
+checked when neither a ref the gate already has (so it's upstream) nor the
+bottle's baseline reaches it; merge commits made in the bottle are. The
+baseline (`git-gate.baseline`, a file of SHAs) is the commits the copied
+workspace had at launch that its remotes didn't: the operator's own unpushed
+work, which pushes untouched. A repo without one exempts nothing.
 A commit passes when it has a `Bot-Bottle` trailer and every one it has names
 this bottle and run. The check rejects, it never rewrites.
 
@@ -36,10 +39,34 @@ _LIST_LIMIT = 10
 Git = Callable[..., str]
 
 
-def _git(*args: str) -> str:
+def _git(*args: str, stdin: str = "") -> str:
     return subprocess.run(
-        ["git", *args], capture_output=True, text=True, errors="replace", check=True,
+        ["git", *args], input=stdin, capture_output=True, text=True, errors="replace",
+        check=True,
     ).stdout
+
+
+_HEX = frozenset("0123456789abcdef")
+
+
+def read_baseline(path: str) -> list[str]:
+    """The baseline file's SHAs; [] when there's none or it can't be read."""
+    if not path:
+        return []
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return []
+    shas = (line.strip() for line in text.splitlines())
+    return [s for s in shas if len(s) in (40, 64) and set(s) <= _HEX]
+
+
+def exclusions(git: Git, baseline: list[str]) -> str:
+    """`--stdin` input excluding every ref the gate has and the baseline (one
+    `^<sha>` per line). Baseline commits the gate never received are skipped
+    by `--ignore-missing`."""
+    tips = git("for-each-ref", "--format=%(objectname)").split()
+    return "".join(f"^{sha}\n" for sha in [*tips, *baseline])
 
 
 def _config(git: Git, key: str) -> str:
@@ -61,13 +88,16 @@ class Offender:
         return f"{self.sha[:12]} {self.subject[:60]}  ({why})"
 
 
-def offenders(git: Git, new: str, expected: str) -> list[Offender]:
-    """Commits reachable from `new` and no ref the gate has whose trailers
-    don't name `expected`."""
+def offenders(git: Git, new: str, expected: str, excluded: str | None = None) -> list[Offender]:
+    """Commits reachable from `new` and nothing `excluded` (`exclusions`;
+    default the gate's refs) names whose trailers don't name `expected`."""
+    if excluded is None:
+        excluded = exclusions(git, [])
     # Unit separator between fields, record separator between commits.
     fmt = (f"%H%x1f%s%x1f%(trailers:key={TRAILER_KEY},valueonly,"
            "separator=%x1d)%x1e")
-    out = git("log", f"--format={fmt}", new, "--not", "--all")
+    out = git("log", f"--format={fmt}", "--ignore-missing", "--stdin", new,
+              stdin=excluded)
     bad: list[Offender] = []
     for record in out.split("\x1e"):
         record = record.strip("\n")
@@ -80,12 +110,13 @@ def offenders(git: Git, new: str, expected: str) -> list[Offender]:
     return bad
 
 
-def rebase_base(git: Git, new: str) -> str:
-    """What to rebase onto to amend the push's new commits: the one commit
-    already on the gate they start from, `--root` when they reach none, else
-    a placeholder."""
+def rebase_base(git: Git, new: str, excluded: str = "") -> str:
+    """What to rebase onto to amend the checked commits: the one commit
+    (upstream or baseline) they start from, `--root` when they reach none,
+    else a placeholder."""
     try:
-        out = git("rev-list", "--boundary", new, "--not", "--all")
+        out = git("rev-list", "--boundary", "--ignore-missing", "--stdin", new,
+                  stdin=excluded)
     except subprocess.CalledProcessError:
         return "<upstream branch>"
     boundary = [line[1:] for line in out.splitlines() if line.startswith("-")]
@@ -102,24 +133,38 @@ def fix_command(expected: str, base: str) -> str:
     return f"git rebase --rebase-merges --exec '{amend}' {base}"
 
 
-def check(refs: list[tuple[str, str, str]], *, git: Git = _git,
-          err: Callable[[str], None] = lambda s: print(s, file=sys.stderr)) -> int:
+def _settings(git: Git, err: Callable[[str], None]) -> tuple[str, str] | None:
+    """(mode, expected value), or None when the repo's settings are broken."""
     mode = _config(git, "git-gate.trailers") or TRAILER_OFF
     if mode not in TRAILER_MODES:
         err(f"git-gate: unknown git-gate.trailers {mode!r}; refusing push")
+        return None
+    expected = _config(git, "git-gate.trailer") if mode != TRAILER_OFF else ""
+    if mode != TRAILER_OFF and not expected:
+        err("git-gate: this repo has no git-gate.trailer to check; refusing push")
+        return None
+    return mode, expected
+
+
+def check(refs: list[tuple[str, str, str]], *, git: Git = _git,
+          err: Callable[[str], None] = lambda s: print(s, file=sys.stderr)) -> int:
+    settings = _settings(git, err)
+    if settings is None:
         return REFUSE
+    mode, expected = settings
     if mode == TRAILER_OFF:
         return ACCEPT
-    expected = _config(git, "git-gate.trailer")
-    if not expected:
-        err("git-gate: this repo has no git-gate.trailer to check; refusing push")
+    try:
+        excluded = exclusions(git, read_baseline(_config(git, "git-gate.baseline")))
+    except subprocess.CalledProcessError as e:
+        err(f"git-gate: could not list the gate's refs: {(e.stderr or '').strip()}")
         return REFUSE
     failed = False
     for _old, new, ref in refs:
         if new == _ZERO:
             continue
         try:
-            bad = offenders(git, new, expected)
+            bad = offenders(git, new, expected, excluded)
         except subprocess.CalledProcessError as e:
             err(f"git-gate: could not read the commits pushed to {ref}: "
                 f"{(e.stderr or '').strip()}")
@@ -137,7 +182,7 @@ def check(refs: list[tuple[str, str, str]], *, git: Git = _git,
             err(f"git-gate:   ... and {len(bad) - _LIST_LIMIT} more")
         err("git-gate: add it to each commit (the commit hooks bot-bottle "
             "provisions do this for new commits), then push again:")
-        err(f"git-gate:   {fix_command(expected, rebase_base(git, new))}")
+        err(f"git-gate:   {fix_command(expected, rebase_base(git, new, excluded))}")
     if failed and mode != TRAILER_WARN:
         return REFUSE
     return ACCEPT

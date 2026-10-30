@@ -123,6 +123,6 @@ class BottlePreparationPlanner:
             egress_plan=prepare_egress(
                 bottle, slug, provision, owner=_egress_owner(spec, manifest)),
             git_gate_plan=prepare_git_gate(
-                bottle, slug, launch_trailer(spec, manifest, slug)),
+                bottle, slug, launch_trailer(spec, manifest, slug), workspace),
             supervise_plan=prepare_supervise(bottle, slug),
         )

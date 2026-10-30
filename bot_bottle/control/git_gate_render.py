@@ -143,6 +143,11 @@ def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
         "  else",
         "    git -C \"$repo\" config --unset-all git-gate.trailer || true",
         "  fi",
+        "  if [ -n \"$baseline\" ]; then",
+        "    git -C \"$repo\" config git-gate.baseline \"$baseline\"",
+        "  else",
+        "    git -C \"$repo\" config --unset-all git-gate.baseline || true",
+        "  fi",
         "  install -m 755 /etc/git-gate/pre-receive \"$repo/hooks/pre-receive\"",
         "}",
     ]
@@ -155,18 +160,21 @@ _SAFE_BOTTLE_ID = re.compile(r"[A-Za-z0-9_-]+")
 
 def git_gate_render_provision(
     bottle_id: str, upstreams: tuple[GitGateUpstream, ...],
-    *, trailer_mode: str = TRAILER_OFF, trailer: str = "",
+    *, trailer_mode: str = TRAILER_OFF, trailer: str = "", baseline: str = "",
 ) -> str:
     """POSIX sh that inits one bottle's bare repos under `/git/<bottle_id>/`
     with credentials from `/git-gate/creds/<bottle_id>/`, and sets how
     pre-receive checks the `Bot-Bottle` trailer (`trailer_mode`) for which
-    value (`trailer`). Run in the gateway at registration."""
+    value (`trailer`), exempting the commits listed in the gateway file
+    `baseline`. Run in the gateway at registration."""
     if not _SAFE_BOTTLE_ID.fullmatch(bottle_id):
         raise ValueError(f"git-gate: unsafe bottle id {bottle_id!r}")
     if trailer_mode not in TRAILER_MODES:
         raise ValueError(f"git-gate: unknown trailer mode {trailer_mode!r}")
     if trailer and not TRAILER_VALUE_RE.fullmatch(trailer):
         raise ValueError(f"git-gate: unsafe trailer value {trailer!r}")
+    if baseline and baseline != f"/git-gate/creds/{bottle_id}/baseline-commits":
+        raise ValueError(f"git-gate: unexpected baseline path {baseline!r}")
     if trailer_mode != TRAILER_OFF and not trailer:
         raise ValueError("git-gate: a trailer mode other than off needs a trailer value")
     repo_root = f"/git/{bottle_id}"
@@ -175,6 +183,7 @@ def git_gate_render_provision(
     lines += _git_gate_init_repo_fn(repo_root, creds_dir)
     lines += ["", f"trailers_mode={shlex.quote(trailer_mode)}",
               f"trailer={shlex.quote(trailer)}",
+              f"baseline={shlex.quote(baseline)}",
               f"mkdir -p {shlex.quote(repo_root)}"]
     for u in upstreams:
         lines.append(f"init_repo {shlex.quote(u.name)} {shlex.quote(u.upstream_url)} "
@@ -501,10 +510,10 @@ while IFS=' ' read -r old new ref; do
   if [ "$new" = "$zero" ]; then
     accepted="--detail ref-deleted"
   else
-    accepted="--findings 0"
+    accepted="--findings 0 --new $new"
   fi
   if [ "$audit_delivery" = required ]; then
-    # shellcheck disable=SC2086 # $accepted is two words on purpose
+    # shellcheck disable=SC2086 # $accepted is several words on purpose
     if ! python3 -m bot_bottle.gateway.git_gate.audit --required \
         forge.push_accepted success "$ref" $accepted 1>&2; then
       echo "git-gate: refusing push to $ref: its audit record could not be written" >&2

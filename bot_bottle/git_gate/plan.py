@@ -24,3 +24,6 @@ class GitGatePlan:
     # value: a bottle launched before the check existed.
     trailer: str = ""
     trailer_mode: str = "off"
+    # The commits the copied workspace had that its remotes didn't, one SHA a
+    # line: exempt from the trailer check. Path() for none.
+    baseline_file: Path = Path()

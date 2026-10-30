@@ -2,14 +2,19 @@
 never fails the push (a lost event is reported on stderr).
 
     audit <type> <outcome> <ref> [--report FILE | --findings N] [--detail TEXT]
-          [--required]
+          [--new SHA] [--required]
     audit delivery
 
 `--required` exits 1 unless the event was written, so the hook can refuse.
 `delivery` prints the bottle's `audit.delivery`, or `required` when it can't be
 resolved. `--report` is a gitleaks JSON report (findings counted, never
-copied); `--findings 0` means scanned clean. The bottle comes from
-`GIT_GATE_BOTTLE`, set by the HTTP backend.
+copied); `--findings 0` means scanned clean. `--new` is the ref's new tip:
+the event then lists every commit the push brings to the gate (`commits`,
+reachable from it and no ref the gate has) and the repo's `Bot-Bottle`
+trailer value. That list, with the bottle and the event's time, is the
+authoritative record of which commits a bottle pushed; trailers are only a
+label. The bottle comes from `GIT_GATE_BOTTLE`, set by the HTTP backend (the
+orchestrator names it by slug when it relays the event).
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -31,6 +37,33 @@ ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
 BOTTLE_ENV = "GIT_GATE_BOTTLE"
 TIMEOUT_SECONDS = 3.0
 TYPES = ("forge.push_accepted", "forge.push_rejected")
+# More commits than this in one ref's push are counted, not listed.
+COMMIT_LIST_LIMIT = 10_000
+_ZERO = "0" * 40
+
+
+def pushed_commits(new: str) -> list[str] | None:
+    """The commits `new` brings to the gate, oldest first: reachable from it
+    and no ref the gate has (run in pre-receive, before refs move). None when
+    git can't list them."""
+    if not new or new == _ZERO:
+        return []
+    try:
+        out = subprocess.run(
+            ["git", "rev-list", "--reverse", new, "--not", "--all"],
+            capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return out.split()
+
+
+def trailer_value() -> str:
+    """The repo's expected `Bot-Bottle` value; "" when it has none."""
+    try:
+        return subprocess.run(["git", "config", "--get", "git-gate.trailer"],
+                              capture_output=True, text=True, check=False).stdout.strip()
+    except OSError:
+        return ""
 
 
 def _findings(report: str) -> int | None:
@@ -49,7 +82,8 @@ def repository(cwd: Path) -> str:
 
 
 def build_event(kind: str, outcome: str, ref: str, *, bottle: str, src_ip: str,
-                repo: str, findings: int | None, detail: str, now: float) -> AuditEvent:
+                repo: str, findings: int | None, detail: str, now: float,
+                commits: list[str] | None = None, trailer: str = "") -> AuditEvent:
     if findings is None:
         gitleaks_result = "not_scanned"
     else:
@@ -61,6 +95,13 @@ def build_event(kind: str, outcome: str, ref: str, *, bottle: str, src_ip: str,
         payload["src_ip"] = src_ip
     if detail:
         payload["detail"] = detail
+    if commits is not None:
+        payload["commit_count"] = len(commits)
+        payload["commits"] = commits[:COMMIT_LIST_LIMIT]
+        if len(commits) > COMMIT_LIST_LIMIT:
+            payload["commits_truncated"] = True
+    if trailer:
+        payload["bot_bottle_trailer"] = trailer
     if outcome == "blocked":
         payload[REASON_CODE_KEY] = PUSH
     return AuditEvent(
@@ -106,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report", default="")
     parser.add_argument("--findings", type=int, default=None)
     parser.add_argument("--detail", default="")
+    parser.add_argument("--new", default="")
     parser.add_argument("--required", action="store_true")
     ns = parser.parse_args(args)
     if not url:
@@ -114,7 +156,8 @@ def main(argv: list[str] | None = None) -> int:
         ns.type, ns.outcome, ns.ref, bottle=os.environ.get(BOTTLE_ENV, ""),
         src_ip=os.environ.get("SUPERVISE_SOURCE_IP", ""), repo=repository(Path.cwd()),
         findings=_findings(ns.report) if ns.report else ns.findings, detail=ns.detail,
-        now=time.time())
+        now=time.time(), commits=pushed_commits(ns.new) if ns.new else None,
+        trailer=trailer_value() if ns.new else "")
     try:
         send(url, event, required=ns.required)
     except (urllib.error.URLError, TimeoutError, OSError) as e:

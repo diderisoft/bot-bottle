@@ -5,9 +5,12 @@ provision and revoke deploy keys, and check upstream host keys.
 from __future__ import annotations
 
 import json
+import subprocess
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
-from ..contract.git_trailers import TRAILER_OFF, trailer_mode
+from ..contract.git_trailers import TRAILER_KEY, TRAILER_OFF, trailer_mode
+from ..lib.log import warn
 from ..manifest import Manifest, ManifestBottle
 from ..secret_source import SecretSource
 from ..control.git_gate_render import (
@@ -63,16 +66,65 @@ def load_trailer_settings(stage_dir: Path) -> tuple[str, str]:
     return (trailer, mode) if trailer else ("", TRAILER_OFF)
 
 
+BASELINE_FILE = "baseline-commits"
+
+
+def workspace_baseline(
+    workspace: Path,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> list[str]:
+    """The commits `workspace`'s repo has that its remote-tracking refs don't
+    reach (`rev-list --all --not --remotes`): the operator's unpushed work
+    when the workspace is copied in. Commits a remote reaches are upstream,
+    which git-gate already exempts. [] when git can't read the repo."""
+    try:
+        proc = run(["git", "-C", str(workspace), "rev-list", "--all", "--not", "--remotes"],
+                   capture_output=True, text=True, check=False, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if proc.returncode != 0:
+        warn(f"git-gate: couldn't list {workspace}'s unpushed commits; commits "
+             f"already in the workspace will need the {TRAILER_KEY} trailer to push")
+        return []
+    return proc.stdout.split()
+
+
+def save_baseline(stage_dir: Path, commits: Iterable[str]) -> Path:
+    """Add `commits` to the bottle's baseline (kept across resumes, which add
+    the host repo's new unpushed commits) and return its path; Path() when
+    it's empty."""
+    path = stage_dir / BASELINE_FILE
+    try:
+        known = path.read_text().split()
+    except OSError:
+        known = []
+    merged = list(dict.fromkeys([*known, *commits]))
+    if not merged:
+        return Path()
+    path.write_text("".join(f"{sha}\n" for sha in merged))
+    path.chmod(0o600)
+    return path
+
+
+def load_baseline(stage_dir: Path) -> Path:
+    """The baseline `save_baseline` kept, or Path() for none (a bottle
+    launched before baselines existed, or without a copied git workspace)."""
+    path = stage_dir / BASELINE_FILE
+    return path if path.is_file() and path.stat().st_size else Path()
+
+
 class GitGate:
     """The stateless git-gate host service."""
 
     def prepare(self, bottle: ManifestBottle, slug: str, stage_dir: Path,
-                trailer: str = "") -> GitGatePlan:
+                trailer: str = "", baseline: Iterable[str] = ()) -> GitGatePlan:
         """Compute the upstream table from `bottle.git` and write the scripts
         under `stage_dir`. No side effects beyond the files. gitea upstreams
         get their identity file at launch. `trailer` is the `Bot-Bottle`
         value commits must carry, checked as `bottle.git_trailers` says
-        (saved with the scripts, for a re-provision); "" checks nothing."""
+        (saved with the scripts, for a re-provision); "" checks nothing.
+        `baseline` is the commits the workspace brought in, which needn't
+        carry it."""
         upstreams = git_gate_upstreams_for_bottle(bottle)
         hook, access_hook, gitleaks_config = stage_git_gate_scripts(stage_dir)
         upstreams_with_files: list[GitGateUpstream] = []
@@ -108,6 +160,7 @@ class GitGate:
             upstreams=tuple(upstreams_with_files),
             trailer=trailer,
             trailer_mode=mode,
+            baseline_file=save_baseline(stage_dir, baseline) if trailer else Path(),
         )
 
     def provision_dynamic_keys(

@@ -22,6 +22,8 @@ from ..egress import Egress, EgressPlan
 from ..contract.git_trailers import trailer_value
 from ..git_gate import GitGate, GitGatePlan
 from ..git_gate.commit_hooks import hooks_env
+from ..git_gate.service import workspace_baseline
+from ..workspace import WorkspacePlan
 from ..lib.config_store import ConfigStore
 from ..lib.log import die
 from ..manifest import Manifest, ManifestBottle
@@ -74,10 +76,17 @@ def prepare_agent_state_dir(slug: str, manifest: Manifest) -> tuple[Path, Path]:
     return agent_dir, prompt_file
 
 
-def prepare_git_gate(bottle: ManifestBottle, slug: str, trailer: str = "") -> GitGatePlan:
+def prepare_git_gate(bottle: ManifestBottle, slug: str, trailer: str = "",
+                     workspace: WorkspacePlan | None = None) -> GitGatePlan:
+    """`workspace`, when it's a copied git repo, gives the trailer check's
+    baseline: its unpushed commits, which push without the trailer."""
     git_gate_dir = git_gate_state_dir(slug)
     git_gate_dir.mkdir(parents=True, exist_ok=True)
-    return GitGate().prepare(bottle, slug, git_gate_dir, trailer=trailer)
+    baseline: list[str] = []
+    if (trailer and workspace is not None and workspace.enabled
+            and workspace.copy_contents and workspace.has_host_git_dir):
+        baseline = workspace_baseline(workspace.host_path)
+    return GitGate().prepare(bottle, slug, git_gate_dir, trailer=trailer, baseline=baseline)
 
 
 def launch_trailer(spec: BottleSpec, manifest: Manifest, slug: str) -> str:
