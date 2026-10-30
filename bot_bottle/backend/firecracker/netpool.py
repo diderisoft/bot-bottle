@@ -25,8 +25,9 @@ named environment never needs root. Slice k (live is 0) is:
 
 Every slice has the live pool's size, so the reservation costs N * (size + 2)
 TAPs. `bb{k}fc*` never matches another slice's `bbfc*` or `bb{j}fc*`
-wildcard. A named environment claims the lowest free slice on first use
-(`environment.claim_slot`); `bot-bottle envs rm` frees it.
+wildcard. A named environment claims the lowest free slice on first use, in a
+host-wide directory the setup creates (`slice_claims`, so two users' environments
+never share one); `bot-bottle envs rm` releases it.
 
 The default block `10.243.0.0/16` avoids Docker, libvirt, k8s, common LANs and
 Tailscale's 100.64.0.0/10. `overlapping_routes()` catches collisions.
@@ -36,14 +37,17 @@ from __future__ import annotations
 
 import fcntl
 import ipaddress
+import os
+import pwd
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
 from ...contract.hostctl import InfraSettings
-from ...environment import LIVE, NoFreeSlotError, active_name, claim_slot
+from ...environment import LIVE, active_name, registration_file
 from ...lib.log import die
+from . import slice_claims
 
 
 # A packaged data file; a missing one is a hard error.
@@ -262,8 +266,8 @@ def from_settings(infra: InfraSettings, env: str | None = None) -> NetPool:
     slot = 0
     if name != LIVE:
         try:
-            slot = claim_slot(name, count)
-        except NoFreeSlotError as e:
+            slot = claim_slice(infra, name, count)
+        except slice_claims.SliceClaimError as e:
             die(str(e))
     try:
         sl = env_slice(slot, infra.fc_pool_size)
@@ -281,6 +285,52 @@ def from_settings(infra: InfraSettings, env: str | None = None) -> NetPool:
     )
 
 
+def slices_dir(infra: InfraSettings) -> Path:
+    """The host-wide slice claims directory the setup creates."""
+    return Path(infra.fc_slices_dir or _default("BOT_BOTTLE_FC_SLICES_DIR"))
+
+
+def _carrier(iface: str) -> bool:
+    """Whether a process holds `iface` open: a TAP has carrier only then."""
+    try:
+        return Path(f"/sys/class/net/{iface}/carrier").read_text(encoding="ascii").strip() == "1"
+    except OSError:  # absent, or down
+        return False
+
+
+def slice_in_use(slot: int, pool_size: int = 0) -> bool:
+    """Whether any of slice `slot`'s TAPs is attached to a running VM."""
+    sl = env_slice(slot, pool_size)
+    size = pool_size or int(_default("BOT_BOTTLE_FC_POOL_SIZE"))
+    ifaces = [sl.orch_iface, sl.gw_iface, *(f"{sl.iface_prefix}{i}" for i in range(size))]
+    return any(_carrier(i) for i in ifaces)
+
+
+def _user() -> str:
+    try:
+        return pwd.getpwuid(os.getuid()).pw_name
+    except KeyError:
+        return ""
+
+
+def claim_slice(infra: InfraSettings, name: str, count: int) -> int:
+    """This user's environment `name`'s slice, claimed host-wide."""
+    return slice_claims.claim(
+        slices_dir(infra), env=name, count=count, uid=os.getuid(), user=_user(),
+        registration=registration_file(name),
+        in_use=lambda k: slice_in_use(k, infra.fc_pool_size))
+
+
+def held_slice(infra: InfraSettings, name: str) -> int | None:
+    """The slice this user's environment `name` holds, if any."""
+    return slice_claims.find(slices_dir(infra), name, os.getuid())
+
+
+def release_slice(infra: InfraSettings, name: str) -> bool:
+    """Give back this user's environment `name`'s slice."""
+    return slice_claims.release(slices_dir(infra), env=name, uid=os.getuid())
+
+
 def host_pool(infra: InfraSettings) -> NetPool:
     """The live pool, which the host setup provisions with every slice after
     it, whichever environment is active. A named environment's own `fc_*`
@@ -288,7 +338,8 @@ def host_pool(infra: InfraSettings) -> NetPool:
     if active_name() == LIVE:
         return from_settings(infra, env=LIVE)
     return from_settings(InfraSettings(fc_pool_size=infra.fc_pool_size,
-                                       fc_env_slots=infra.fc_env_slots), env=LIVE)
+                                       fc_env_slots=infra.fc_env_slots,
+                                       fc_slices_dir=infra.fc_slices_dir), env=LIVE)
 
 
 # --- fail-closed verification ---

@@ -11,19 +11,19 @@ import sys
 
 from . import host_firewall
 from . import util as _container
-from .gateway import AGENT_SUBNET_V6, GATEWAY_NETWORK
+from .gateway import GATEWAY_NETWORK
 
 
 def _service_running() -> bool:
     return _container.service_running()
 
 
-def _summary(subnet: str) -> str:
+def _summary(subnet: str, subnet_v6: str) -> str:
     """What installing the firewall changes on this Mac, and how to undo it."""
     return (
         "The macOS backend needs a one-time privileged step. It changes, system-wide:\n"
         f"  - pf rules in {host_firewall.RULES_PATH}\n"
-        f"    that drop traffic from the agent network ({subnet}, {AGENT_SUBNET_V6})\n"
+        f"    that drop traffic from the agent network ({subnet}, {subnet_v6})\n"
         "    to this Mac and to anything but the gateway. Nothing else matches them.\n"
         f"  - a root job, {host_firewall.DAEMON_PATH},\n"
         "    that loads them at boot and every minute, turns pf on if it's off\n"
@@ -58,25 +58,31 @@ def _firewall() -> int:
     subnet = _choose()
     if subnet is None:
         return 1
-    if os.geteuid() != 0 and host_firewall.state(subnet, AGENT_SUBNET_V6) == "ok":
+    try:
+        subnet_v6 = host_firewall.choose_subnet_v6()
+    except RuntimeError as e:
+        sys.stderr.write(f"macos-container backend: {e}.\n")
+        return 1
+    if os.geteuid() != 0 and host_firewall.state(subnet, subnet_v6) == "ok":
         sys.stderr.write("macos-container backend: ready.\n")
         return 0
-    return _install_firewall(subnet)
+    return _install_firewall(subnet, subnet_v6)
 
 
-def _install_firewall(subnet: str) -> int:
-    """Install the host firewall for `subnet`: directly as root, else print
-    the sudo block."""
+def _install_firewall(subnet: str, subnet_v6: str) -> int:
+    """Install the host firewall for `subnet` and `subnet_v6`: directly as
+    root, else print the sudo block. The installed rules record both."""
     if os.geteuid() == 0:
-        host_firewall.install(subnet, AGENT_SUBNET_V6)
+        host_firewall.install(subnet, subnet_v6)
         sys.stderr.write(
             f"Installed the host firewall ({host_firewall.DAEMON_LABEL}): agents "
-            f"on {subnet} / {AGENT_SUBNET_V6} can't reach this Mac or "
+            f"on {subnet} / {subnet_v6} can't reach this Mac or "
             "anything but the gateway.\n"
         )
         return 0
-    sys.stderr.write(_summary(subnet) + "Install it (one copy-paste; needs your password):\n\n")
-    sys.stdout.write(host_firewall.install_commands(subnet, AGENT_SUBNET_V6))
+    sys.stderr.write(_summary(subnet, subnet_v6)
+                     + "Install it (one copy-paste; needs your password):\n\n")
+    sys.stdout.write(host_firewall.install_commands(subnet, subnet_v6))
     sys.stderr.write(
         "\n(Or re-run this as root to install it directly: "
         "sudo bot-bottle install --backend=macos-container)\n"
@@ -137,7 +143,7 @@ def status() -> int:
         if not _service_running():
             ok = False
     subnet = host_firewall.agent_subnet()
-    firewall = host_firewall.state(subnet, AGENT_SUBNET_V6)
+    firewall = host_firewall.state(subnet, host_firewall.agent_subnet_v6())
     sys.stderr.write({
         "ok": "host firewall: installed\n",
         "missing": "host firewall: NOT installed\n",

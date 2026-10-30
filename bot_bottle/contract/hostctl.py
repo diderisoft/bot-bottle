@@ -146,6 +146,8 @@ class InfraSettings:
     macos_container_dns: str = ""
     # Named-environment slices the firecracker pool reserves; 0 is the default.
     fc_env_slots: int = 0
+    # The host-wide slice claims directory; "" is the default.
+    fc_slices_dir: str = ""
 
     def fingerprint(self) -> str:
         """sha256 of the canonical JSON."""
@@ -178,7 +180,7 @@ class Settings:
 # Fields left out of the JSON (and so the fingerprint) while at their default:
 # ones added after the fingerprint was in use, so an upgrade that doesn't set
 # them neither restarts the infra nor sends a key an older reader rejects.
-_OMIT_AT_DEFAULT = frozenset({"docker_agent_subnets", "fc_env_slots"})
+_OMIT_AT_DEFAULT = frozenset({"docker_agent_subnets", "fc_env_slots", "fc_slices_dir"})
 
 
 def _section_json(section: OperationSettings | InfraSettings) -> dict[str, object]:

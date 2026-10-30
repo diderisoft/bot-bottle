@@ -42,6 +42,7 @@ INFRA_ENV: dict[str, str] = {
     "fc_orch_iface": "BOT_BOTTLE_FC_ORCH_IFACE",
     "fc_gw_iface": "BOT_BOTTLE_FC_GW_IFACE",
     "fc_env_slots": "BOT_BOTTLE_FC_ENV_SLOTS",
+    "fc_slices_dir": "BOT_BOTTLE_FC_SLICES_DIR",
     "macos_container_dns": "BOT_BOTTLE_MACOS_CONTAINER_DNS",
 }
 

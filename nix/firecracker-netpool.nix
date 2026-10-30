@@ -69,6 +69,7 @@ let
     BOT_BOTTLE_FC_ORCH_IFACE = cfg.orchIface;
     BOT_BOTTLE_FC_GW_IFACE = cfg.gwIface;
     BOT_BOTTLE_FC_ENV_SLOTS = toString cfg.envSlots;
+    BOT_BOTTLE_FC_SLICES_DIR = cfg.slicesDir;
   } // ownEnv;
 
   # Every slice's orchestrator TAP: live's, then bborch1..bborch<envSlots>
@@ -125,8 +126,10 @@ in
       description = ''
         Group that owns the TAP devices instead of a single user. Any
         member of this group can open the pool, so an interactive user
-        and a CI-runner user can share one pool. Set exactly one of
-        `owner` or `group`.
+        and a CI-runner user can share one pool. It also owns the
+        host-wide slice claims (`slicesDir`), so each member's named
+        environments get their own slice. Set exactly one of `owner` or
+        `group`.
       '';
     };
 
@@ -174,6 +177,20 @@ in
         ipBase + 256k, nft tables `<tableName><k>*`, and infra links
         `bborch<k>` / `bbgw<k>`. Each slice costs poolSize + 2 TAPs. Must
         be at least BOT_BOTTLE_FC_ENV_SLOTS where the CLI runs.
+      '';
+    };
+
+    slicesDir = lib.mkOption {
+      type = lib.types.str;
+      default = defaults.BOT_BOTTLE_FC_SLICES_DIR;
+      defaultText = lib.literalMD "the shared `netpool.defaults.env` value";
+      description = ''
+        Host-wide claims on the environment slices, one file per claimed
+        slice, so environments of different users (a developer's `dev`, a
+        CI runner's `ci-<run>`) never share one. The bring-up creates it
+        mode 2775, owned by `group` (else `owner`'s primary group): put
+        every user that runs bot-bottle in that group. Must match
+        BOT_BOTTLE_FC_SLICES_DIR where the CLI runs.
       '';
     };
 
@@ -240,6 +257,7 @@ in
         BOT_BOTTLE_FC_ORCH_IFACE=${cfg.orchIface}
         BOT_BOTTLE_FC_GW_IFACE=${cfg.gwIface}
         BOT_BOTTLE_FC_ENV_SLOTS=${toString cfg.envSlots}
+        BOT_BOTTLE_FC_SLICES_DIR=${cfg.slicesDir}
       '';
     };
   };

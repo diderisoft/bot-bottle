@@ -40,6 +40,9 @@ GATEWAY_NETWORK = resource_prefix() + "mac-gateway"
 # The IPv4 one is whatever the installed firewall blocks
 # (`host_firewall.agent_subnet`), chosen at setup to avoid this Mac's LAN,
 # VPNs and other interfaces.
+# This environment's default: live's fixed /64. A named environment's is
+# allocated at setup and recorded in its installed rules
+# (`host_firewall.agent_subnet_v6`).
 AGENT_SUBNET_V6 = macos_agent_subnet_v6()
 # NAT network giving only the gateway a route out.
 GATEWAY_EGRESS_NETWORK = resource_prefix() + "mac-egress"
@@ -66,6 +69,7 @@ def ensure_networks(
     the agent network exists with other subnets than the host firewall
     blocks, or when something else on this Mac uses its subnet."""
     subnet = host_firewall.agent_subnet()
+    subnet_v6 = host_firewall.agent_subnet_v6()
     clashes = host_firewall.conflicts(subnet)
     if clashes:
         die(f"the agent network's {subnet} is also used on this Mac "
@@ -74,13 +78,13 @@ def ensure_networks(
             "agents to a free range.")
     container_mod.create_network(egress_network)
     container_mod.create_network(
-        network, internal=True, subnet=subnet, subnet_v6=AGENT_SUBNET_V6)
+        network, internal=True, subnet=subnet, subnet_v6=subnet_v6)
     container_mod.create_network(control_network, internal=True)
     found = container_mod.network_subnets(network)
-    if found != (subnet, AGENT_SUBNET_V6):
+    if found != (subnet, subnet_v6):
         die(
             f"network {network} has subnets {found}, not the "
-            f"{subnet} and {AGENT_SUBNET_V6} the host firewall blocks. "
+            f"{subnet} and {subnet_v6} the host firewall blocks. "
             f"Stop running bottles, then `container network rm {network}`; "
             "the next launch recreates it."
         )

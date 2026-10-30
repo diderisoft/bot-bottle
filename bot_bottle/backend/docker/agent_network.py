@@ -54,6 +54,10 @@ def _docker_subnets() -> list[str]:
     return proc.stdout.split()
 
 
+# Every docker network's subnets, for other allocators (the gateway network's).
+docker_subnets = _docker_subnets
+
+
 def network_subnet(name: str) -> str:
     """The network's IPv4 subnet, if it's an `--internal` per-agent network;
     raises otherwise."""
@@ -136,6 +140,7 @@ __all__ = [
     "agent_network_name",
     "connect_gateway",
     "create_agent_network",
+    "docker_subnets",
     "is_agent_network",
     "network_subnet",
     "remove_agent_network",

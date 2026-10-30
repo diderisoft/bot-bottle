@@ -174,3 +174,18 @@ def enumerate_active_agents(settings: Settings) -> list[ActiveAgent]:
         out.extend(backends[name].enumerate_active())
     out.sort(key=lambda a: (a.started_at, a.slug))
     return out
+
+
+def environment_slice(settings: Settings, env: str) -> int | None:
+    """The firecracker network-pool slice this user's environment `env`
+    holds, host-wide, or None."""
+    # pylint: disable-next=import-outside-toplevel
+    from .firecracker import netpool
+    return netpool.held_slice(settings.infra, env)
+
+
+def release_environment_slice(settings: Settings, env: str) -> bool:
+    """Give back this user's environment `env`'s firecracker slice."""
+    # pylint: disable-next=import-outside-toplevel
+    from .firecracker import netpool
+    return netpool.release_slice(settings.infra, env)

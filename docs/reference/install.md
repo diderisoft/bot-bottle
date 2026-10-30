@@ -209,12 +209,12 @@ running CI never touches the live install (`bot_bottle/environment.py`).
 | State root | `~/.bot-bottle` | `~/.bot-bottle-envs/<name>` |
 | Containers, VMs, networks, volumes | `bot-bottle-*` | `bb-<name>-*` |
 | Host controller | `bot-bottle-hostctl.service` / `io.bot-bottle.hostctl` | `bb-<name>-hostctl.service` / `io.bot-bottle.<name>.hostctl` |
-| docker gateway network | `10.242.255.0/24` | `10.241.<n>.0/24`, `<n>` from a hash of the name |
+| docker gateway network | `10.242.255.0/24` | a free /24 of `10.241.0.0/16`, allocated and recorded |
 | docker agent /29s | `10.242.0.0/20` | `10.240.0.0/16`, shared by named environments (allocation skips any subnet in use) |
 | firecracker pool | slice 0 (`bbfc*`, `bot_bottle_fc`, `bborch0`/`bbgw0`) | the slice it claims (below) |
 | firecracker run and infra dirs | `~/.cache/bot-bottle/firecracker/{run,infra}` | `~/.cache/bot-bottle/firecracker/envs/<name>/{run,infra}` |
 | macOS pf anchor | `com.apple/io.bot-bottle` | `com.apple/io.bot-bottle.<name>` |
-| macOS agent IPv6 /64 | `fd62:6f74:6274:6c65::/64` | `fd62:6f74:6275:<h>::/64` |
+| macOS agent IPv6 /64 | `fd62:6f74:6274:6c65::/64` | a free `fd62:6f74:6275:<n>::/64`, allocated and recorded |
 
 Explicit settings still win: `BOT_BOTTLE_ROOT`, `BOT_BOTTLE_DOCKER_*` and
 `BOT_BOTTLE_FC_*` override what the environment derives. Image, artifact and
@@ -261,7 +261,25 @@ Each slice costs pool size + 2 TAPs. No slice's TAP wildcard (`bbfc*`,
 `bb<k>fc*`) matches another's, so each slice's nft tables isolate only their
 own VMs. With every slice held, a named environment stops and says to remove
 one (`envs rm`) or raise `BOT_BOTTLE_FC_ENV_SLOTS` and rerun the pool setup.
-Slots are recorded per user, in `~/.bot-bottle-envs/`.
+Claims are host-wide, so two users' environments (a developer's `dev`, a CI
+runner's `ci-<run>`) never share a slice: one file per claimed slice in
+`/var/lib/bot-bottle-fc/slices` (`BOT_BOTTLE_FC_SLICES_DIR`, NixOS `slicesDir`),
+which the pool setup creates mode 2775 for the pool's group
+(`BOT_BOTTLE_FC_GROUP` / NixOS `group`, else the owner's primary group). Every
+user that runs bot-bottle must be in that group. A claim names its
+environment, user and registration file, is created atomically under a lock,
+and is replaced only when stale: its registration is confirmed gone and none
+of the slice's TAPs is in use. A live claim is never taken; `envs rm` releases
+it (`backend/firecracker/slice_claims.py`).
+
+**Docker and macOS subnets.** A named environment allocates its docker gateway
+/24: it tries the `10.241.0.0/16` /24s in an order that starts at its name's
+hash, skips any a docker network already has, and moves on when docker reports
+a pool overlap (another environment got there first). The one it gets is
+recorded in its state root (`docker-gateway-subnet`), so it's stable across
+restarts, and an existing gateway network's subnet is adopted. The macOS agent
+IPv6 /64 is allocated the same way at setup, skipping the ones other
+environments' anchors block, and recorded in the installed pf rules.
 
 The host controller's loopback port is ephemeral and published under each
 environment's own root. Its guest listener keeps port 8098 in every
@@ -295,7 +313,7 @@ Generated from `bot_bottle/env_vars.py`: edit that, then run
 | `BOT_BOTTLE_ARTIFACT_CACHE` | user | Where verified artifact downloads (infra rootfs, image layers) are cached. | `~/.cache/bot-bottle/artifacts` |
 | `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN` | user | Token for pulling from, or with `write:package` publishing to, the private image registry. Removed at the GitHub cutover. | — |
 | `BOT_BOTTLE_ORCHESTRATOR_TEARDOWN_TIMEOUT_SECONDS` | user | How long a bottle's teardown waits on the orchestrator. Read by the process that runs the launch (the host controller), so set it in that process's environment. | `30` |
-| `BOT_BOTTLE_DOCKER_GATEWAY_SUBNET` | user | docker: the gateway network's subnet. | `10.242.255.0/24`; a named environment's is `10.241.<n>.0/24`, `<n>` from its name |
+| `BOT_BOTTLE_DOCKER_GATEWAY_SUBNET` | user | docker: the gateway network's subnet. | `10.242.255.0/24`; a named environment allocates a free /24 of `10.241.0.0/16` and records it |
 | `BOT_BOTTLE_DOCKER_AGENT_SUBNETS` | user | docker: the range per-agent networks are carved from, as /29s. | `10.242.0.0/20`; `10.240.0.0/16` in a named environment |
 | `BOT_BOTTLE_MACOS_CONTAINER_DNS` | user | macos-container: DNS server for the gateway, orchestrator and image builder. When set, a builder running with other DNS is restarted with it. | the host's IPv4 resolver, else `1.1.1.1` |
 | `BOT_BOTTLE_FC_CACHE` | user | firecracker: cache root for the kernel, root filesystems and run dirs. | `~/.cache/bot-bottle/firecracker` |
@@ -303,6 +321,7 @@ Generated from `bot_bottle/env_vars.py`: edit that, then run
 | `BOT_BOTTLE_FC_DROPBEAR` | user | firecracker: the static dropbear put in every guest as its SSH server. | `dropbear` in the firecracker cache |
 | `BOT_BOTTLE_FC_POOL_SIZE` | user | firecracker: TAP pool slots, so concurrent bottles. Must match the host's network pool. | `8` |
 | `BOT_BOTTLE_FC_ENV_SLOTS` | user | firecracker: network-pool slices the host reserves for named environments, after the live pool. Must be at most the host's. | `4` |
+| `BOT_BOTTLE_FC_SLICES_DIR` | user | firecracker: the host-wide claims on those slices, created by the network pool setup for the pool's group. Must match the host's. | `/var/lib/bot-bottle-fc/slices` |
 | `BOT_BOTTLE_FC_IP_BASE` | user | firecracker: base IPv4 of the pool's /31s. Must match the host's network pool. | `10.243.0.0`; `10.243.<k>.0` for a named environment's slice k |
 | `BOT_BOTTLE_FC_IFACE_PREFIX` | user | firecracker: agent TAP name prefix. Must match the host's network pool. | `bbfc`; `bb<k>fc` for slice k |
 | `BOT_BOTTLE_FC_NFT_TABLE` | user | firecracker: the nftables isolation table. Must match the host's network pool. | `bot_bottle_fc`; `bot_bottle_fc<k>` for slice k |

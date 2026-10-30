@@ -6,11 +6,11 @@ and volume, so `dev` and `ci-<run>` never touch the live install.
 |---|---|---|
 | state root | `~/.bot-bottle` | `~/.bot-bottle-envs/<name>` |
 | resource names | `bot-bottle-*` | `bb-<name>-*` |
-| docker gateway subnet | `10.242.255.0/24` | `10.241.<h>.0/24`, `h` from the name |
+| docker gateway subnet | `10.242.255.0/24` | a free /24 of `10.241.0.0/16`, recorded |
 | docker agent /29s | `10.242.0.0/20` | `10.240.0.0/16`, shared by named envs |
-| firecracker pool | the defaults | the slice of a claimed slot (`netpool`) |
+| firecracker pool | the defaults | a host-wide claimed slice (`slice_claims`) |
 | launchd labels, pf anchor | `io.bot-bottle*` | `io.bot-bottle.<name>*` |
-| macOS agent IPv6 /64 | `fd62:6f74:6274:6c65::` | `fd62:6f74:6275:<h>::` |
+| macOS agent IPv6 /64 | `fd62:6f74:6274:6c65::` | a free `fd62:6f74:6275:<n>::`, recorded |
 | host controller units | `bot-bottle-hostctl.service` | `bb-<name>-hostctl.service` |
 
 Explicit settings (`BOT_BOTTLE_ROOT`, `BOT_BOTTLE_DOCKER_*`, `BOT_BOTTLE_FC_*`)
@@ -29,7 +29,7 @@ import ipaddress
 import json
 import os
 import re
-from collections.abc import Generator, Mapping
+from collections.abc import Generator, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,9 +52,10 @@ LIVE_REVERSE_DNS = "io.bot-bottle"
 LIVE_MACOS_AGENT_SUBNET_V6 = "fd62:6f74:6274:6c65::/64"
 
 # Docker: live keeps its defaults; named environments use the two /16s below
-# it. Each gets its own gateway /24 (picked by name hash), and they share one
-# agent pool, since per-agent allocation already skips any subnet in use on
-# the daemon.
+# it. Each allocates a gateway /24 (trying the /24s in an order that starts at
+# its name's hash, so environments rarely contend) and records it; they share
+# one agent pool, since per-agent allocation already skips any subnet in use
+# on the daemon.
 LIVE_DOCKER_GATEWAY_SUBNET = "10.242.255.0/24"
 LIVE_DOCKER_AGENT_SUBNETS = "10.242.0.0/20"
 NAMED_DOCKER_GATEWAY_BLOCK = "10.241.0.0/16"
@@ -105,14 +106,22 @@ def reverse_dns(name: str | None = None) -> str:
     return LIVE_REVERSE_DNS if name == LIVE else f"{LIVE_REVERSE_DNS}.{name}"
 
 
-def macos_agent_subnet_v6(name: str | None = None) -> str:
-    """The macOS agent network's IPv6 /64: live's fixed one, else one per
-    name (third group `6275`, so never live's)."""
+def macos_agent_subnet_v6_candidates(name: str | None = None) -> Iterator[str]:
+    """The macOS agent network's IPv6 /64s to try, in order: live's fixed one,
+    else every `fd62:6f74:6275:<n>::/64` (never live's group) starting at the
+    name's hash. Setup records the one it installs in the pf rules."""
     name = active_name() if name is None else name
     if name == LIVE:
-        return LIVE_MACOS_AGENT_SUBNET_V6
-    digest = hashlib.sha256(name.encode()).digest()
-    return f"fd62:6f74:6275:{int.from_bytes(digest[:2], 'big'):x}::/64"
+        yield LIVE_MACOS_AGENT_SUBNET_V6
+        return
+    start = int.from_bytes(hashlib.sha256(name.encode()).digest()[:2], "big")
+    for i in range(1 << 16):
+        yield f"fd62:6f74:6275:{(start + i) % (1 << 16):x}::/64"
+
+
+def macos_agent_subnet_v6(name: str | None = None) -> str:
+    """The first candidate: what an environment uses before setup records one."""
+    return next(macos_agent_subnet_v6_candidates(name))
 
 
 def envs_dir(home: Path | None = None) -> Path:
@@ -129,17 +138,23 @@ def default_root(name: str | None = None, home: Path | None = None) -> Path:
     return envs_dir(base) / name
 
 
-def _hash_byte(name: str) -> int:
-    return hashlib.sha256(name.encode()).digest()[0]
+def docker_gateway_candidates(name: str | None = None) -> Iterator[str]:
+    """The docker gateway subnets to try, in order: live's fixed one, else
+    every /24 of `10.241.0.0/16` starting at the name's hash."""
+    name = active_name() if name is None else name
+    if name == LIVE:
+        yield LIVE_DOCKER_GATEWAY_SUBNET
+        return
+    block = ipaddress.IPv4Network(NAMED_DOCKER_GATEWAY_BLOCK)
+    start = hashlib.sha256(name.encode()).digest()[0]
+    for i in range(256):
+        yield str(ipaddress.IPv4Network(
+            (int(block.network_address) + (((start + i) % 256) << 8), 24)))
 
 
 def docker_gateway_subnet(name: str | None = None) -> str:
-    """The docker gateway network's default subnet for `name`."""
-    name = active_name() if name is None else name
-    if name == LIVE:
-        return LIVE_DOCKER_GATEWAY_SUBNET
-    block = ipaddress.IPv4Network(NAMED_DOCKER_GATEWAY_BLOCK)
-    return str(ipaddress.IPv4Network((int(block.network_address) + (_hash_byte(name) << 8), 24)))
+    """The first candidate: what an environment tries before one is recorded."""
+    return next(docker_gateway_candidates(name))
 
 
 def docker_agent_subnets(name: str | None = None) -> str:
@@ -156,23 +171,25 @@ class Registration:
 
     name: str
     root: str
-    # Firecracker pool slot (1..N), 0 until one is claimed.
-    slot: int = 0
 
     def to_json(self) -> dict[str, object]:
-        return {"name": self.name, "root": self.root, "slot": self.slot}
+        return {"name": self.name, "root": self.root}
 
 
-def _env_file(name: str, home: Path | None = None) -> Path:
+def registration_file(name: str, home: Path | None = None) -> Path:
+    """`name`'s `env.json`. A host-wide firecracker slice claim names it, so
+    its absence marks the claim stale."""
     return envs_dir(home) / name / ENV_FILENAME
+
+
+_env_file = registration_file
 
 
 def read(name: str, home: Path | None = None) -> Registration | None:
     """`name`'s registration, or None if it has none (or it's unreadable)."""
     try:
         raw = json.loads(_env_file(name, home).read_text(encoding="utf-8"))
-        return Registration(name=str(raw["name"]), root=str(raw["root"]),
-                            slot=int(raw.get("slot", 0)))
+        return Registration(name=str(raw["name"]), root=str(raw["root"]))
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
@@ -227,7 +244,7 @@ def prefix_clash(name: str, others: list[str]) -> str:
 
 
 def register(name: str, root: Path, home: Path | None = None) -> Registration:
-    """Record `name` (idempotent), keeping a claimed slot. Raises
+    """Record `name` (idempotent). Raises
     InvalidEnvironmentError for live or a name whose prefix clashes with a
     registered environment's."""
     validate(name)
@@ -243,8 +260,7 @@ def register(name: str, root: Path, home: Path | None = None) -> Registration:
                 f"environment {name!r} would share resource names with {clash!r} "
                 f"({resource_prefix(name)}* vs {resource_prefix(clash)}*); pick another "
                 f"name or remove it with `bot-bottle envs rm {clash}`")
-        reg = Registration(name=name, root=str(root),
-                           slot=existing.slot if existing is not None else 0)
+        reg = Registration(name=name, root=str(root))
         _write(reg, home)
         return reg
 
@@ -259,38 +275,8 @@ def ensure_active_registered() -> str:
     return name
 
 
-class NoFreeSlotError(InvalidEnvironmentError):
-    """Every reserved firecracker slot is held by another environment."""
-
-
-def claim_slot(name: str, count: int, home: Path | None = None) -> int:
-    """`name`'s firecracker pool slot in 1..`count`: the one it holds, else the
-    lowest free one, recorded in its registration. Live is slot 0 and claims
-    nothing. Raises NoFreeSlotError when all `count` are held."""
-    validate(name)
-    if name == LIVE:
-        return 0
-    with _locked(home):
-        mine = read(name, home)
-        if mine is not None and 1 <= mine.slot <= count:
-            return mine.slot
-        held = {r.slot: r.name for r in registered(home) if r.name != name and r.slot}
-        for slot in range(1, count + 1):
-            if slot not in held:
-                root = mine.root if mine is not None else str(default_root(name, home))
-                _write(Registration(name=name, root=root, slot=slot), home)
-                return slot
-    owners = ", ".join(f"{s}: {n}" for s, n in sorted(held.items()))
-    raise NoFreeSlotError(
-        f"environment {name!r} needs a firecracker network-pool slot, but all {count} "
-        f"reserved slots are held ({owners}). Remove one with `bot-bottle envs rm "
-        f"<name>`, or reserve more: set BOT_BOTTLE_FC_ENV_SLOTS (or the NixOS "
-        f"module's `envSlots`) higher and re-run the network pool setup "
-        f"(`bot-bottle install --backend=firecracker`)")
-
-
 def unregister(name: str, home: Path | None = None) -> None:
-    """Forget `name`'s registration (and so free its slot)."""
+    """Forget `name`'s registration."""
     validate(name)
     with _locked(home):
         _env_file(name, home).unlink(missing_ok=True)
@@ -298,8 +284,9 @@ def unregister(name: str, home: Path | None = None) -> None:
 
 __all__ = [
     "ENV_VAR", "ENVS_DIRNAME", "LIVE", "LIVE_PREFIX", "MAX_NAME_LENGTH",
-    "InvalidEnvironmentError", "NoFreeSlotError", "Registration", "active_name",
-    "claim_slot", "default_root", "docker_agent_subnets", "docker_gateway_subnet",
-    "ensure_active_registered", "envs_dir", "is_live", "prefix_clash", "read",
-    "register", "registered", "resource_prefix", "unregister", "validate",
+    "InvalidEnvironmentError", "Registration", "active_name", "default_root",
+    "docker_agent_subnets", "docker_gateway_candidates", "docker_gateway_subnet",
+    "ensure_active_registered", "envs_dir", "is_live", "macos_agent_subnet_v6",
+    "macos_agent_subnet_v6_candidates", "prefix_clash", "read", "register", "registered",
+    "registration_file", "resource_prefix", "reverse_dns", "unregister", "validate",
 ]

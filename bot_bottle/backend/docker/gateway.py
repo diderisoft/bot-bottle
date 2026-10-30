@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import subprocess
 import os
 import time
 from pathlib import Path
 
-from ...environment import docker_gateway_subnet, resource_prefix
+from ...environment import (
+    docker_gateway_candidates, docker_gateway_subnet, is_live, resource_prefix,
+)
 from .util import image_exists as docker_image_exists
 from .util import daemon_running, run_docker
 from .util import tag_image as docker_tag_image
@@ -16,7 +19,7 @@ from ...published_artifacts import FORMAT_OCI
 from .gateway_transport import DockerGatewayTransport
 from ...contract.hostctl import Settings
 from ...contract.identity import ORCHESTRATOR_AUTH_JWT_ENV
-from ...paths import host_gateway_ca_dir
+from ...paths import bot_bottle_root, host_gateway_ca_dir
 from ... import resources
 from ...control.gateway import (
   Gateway, GatewayTransport, GATEWAY_NAME, GATEWAY_NETWORK,
@@ -29,7 +32,35 @@ DEFAULT_GATEWAY_SUBNET = "10.242.255.0/24"
 # The gateway's route out; only the gateway is on it.
 GATEWAY_EGRESS_NETWORK = resource_prefix() + "gateway-egress"
 _GATEWAY_SUBNET_LABEL = "bot-bottle.gateway-subnet"
+# A named environment's allocated gateway subnet, under its state root, so it
+# stays put across restarts.
+GATEWAY_SUBNET_FILENAME = "docker-gateway-subnet"
+# Candidates a named environment tries before giving up.
+_ALLOCATE_ATTEMPTS = 32
 _IP_FORWARD = "net.ipv4.ip_forward"
+
+
+def _subnet_file() -> Path:
+    return bot_bottle_root() / GATEWAY_SUBNET_FILENAME
+
+
+def recorded_gateway_subnet() -> str:
+    """The environment's recorded gateway subnet, "" if none (or garbage)."""
+    try:
+        raw = _subnet_file().read_text(encoding="utf-8").strip()
+        return str(ipaddress.IPv4Network(raw))
+    except (OSError, ValueError):
+        return ""
+
+
+def record_gateway_subnet(subnet: str) -> None:
+    path = _subnet_file()
+    if recorded_gateway_subnet() == subnet:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{GATEWAY_SUBNET_FILENAME}.{os.getpid()}")
+    tmp.write_text(subnet + "\n", encoding="utf-8")
+    os.replace(tmp, path)
 
 
 class DockerGateway(Gateway):
@@ -67,9 +98,13 @@ class DockerGateway(Gateway):
         # Resolved lazily so reading the CA never stages a build root.
         self._build_context = build_context
         self._dockerfile = dockerfile
-        self._subnet = (
-            subnet or settings.infra.docker_gateway_subnet or docker_gateway_subnet()
-        )
+        explicit = subnet or settings.infra.docker_gateway_subnet
+        # A named environment allocates its subnet (and records it) rather
+        # than assume one; live and an explicit setting keep theirs.
+        self._allocate = not explicit and not is_live()
+        self._subnet = (explicit
+                        or (recorded_gateway_subnet() if self._allocate else "")
+                        or docker_gateway_subnet())
         self._ca_mount_source = str(
             ca_mount_source or settings.infra.docker_ca_mount or host_gateway_ca_dir()
         )
@@ -179,6 +214,10 @@ class DockerGateway(Gateway):
         ])
         if inspected.returncode == 0:
             marker, _, internal = inspected.stdout.strip().rpartition("|")
+            if self._allocate and marker and internal == "true":
+                # Ours, on whatever subnet it was allocated.
+                self._adopt(marker)
+                return
             if marker in {"", self._subnet} and internal == "true":
                 return
             if internal != "true":
@@ -214,20 +253,71 @@ class DockerGateway(Gateway):
                     f"{self._subnet} but could not be replaced: "
                     f"{removed.stderr.strip()}"
                 )
-        proc = run_docker([
+        if self._allocate:
+            self._create_allocated()
+            return
+        proc = self._create(self._subnet)
+        if proc.returncode != 0 and "already exists" not in proc.stderr:
+            raise GatewayError(
+                f"gateway network {self.network} failed to create: {proc.stderr.strip()}"
+            )
+
+    def _create(self, subnet: str) -> "subprocess.CompletedProcess[str]":
+        return run_docker([
             "docker", "network", "create",
             # IPv4 only; default-enabled IPv6 can attach a subnet that breaks
             # `network inspect`.
             "--ipv6=false",
             "--internal",
-            "--subnet", self._subnet,
-            "--label", f"{_GATEWAY_SUBNET_LABEL}={self._subnet}",
+            "--subnet", subnet,
+            "--label", f"{_GATEWAY_SUBNET_LABEL}={subnet}",
             self.network,
         ])
-        if proc.returncode != 0 and "already exists" not in proc.stderr:
-            raise GatewayError(
-                f"gateway network {self.network} failed to create: {proc.stderr.strip()}"
-            )
+
+    def _adopt(self, subnet: str) -> None:
+        self._subnet = subnet
+        record_gateway_subnet(subnet)
+
+    def _create_allocated(self) -> None:
+        """Create the network on the first free candidate /24, the recorded or
+        first one first, skipping any subnet a docker network has and moving
+        on when docker reports an overlap (another environment got there
+        first). The one that worked is recorded."""
+        # pylint: disable-next=import-outside-toplevel
+        from .agent_network import AgentNetworkError, docker_subnets
+        try:
+            taken = [ipaddress.ip_network(t, strict=False) for t in docker_subnets()]
+        except AgentNetworkError as e:
+            raise GatewayError(str(e)) from e
+        ordered = [self._subnet, *(c for c in docker_gateway_candidates() if c != self._subnet)]
+        tried: list[str] = []
+        for candidate in ordered:
+            net = ipaddress.IPv4Network(candidate)
+            if any(isinstance(t, ipaddress.IPv4Network) and t.overlaps(net) for t in taken):
+                continue
+            proc = self._create(candidate)
+            if proc.returncode == 0:
+                self._adopt(candidate)
+                return
+            err = proc.stderr.lower()
+            if "already exists" in err:
+                # A concurrent launch in this environment created it.
+                marker = run_docker([
+                    "docker", "network", "inspect", "--format",
+                    f'{{{{index .Labels "{_GATEWAY_SUBNET_LABEL}"}}}}', self.network,
+                ]).stdout.strip()
+                self._adopt(marker or candidate)
+                return
+            if "overlap" not in err:
+                raise GatewayError(
+                    f"gateway network {self.network} failed to create: {proc.stderr.strip()}")
+            tried.append(candidate)
+            if len(tried) >= _ALLOCATE_ATTEMPTS:
+                break
+        raise GatewayError(
+            f"no free subnet for gateway network {self.network} in "
+            f"{', '.join(tried) or 'the named-environment range'}; set "
+            "BOT_BOTTLE_DOCKER_GATEWAY_SUBNET to a free /24")
 
     def _refuse_replacing_with_bottles_attached(self) -> None:
         """Fail closed when the network must be replaced while bottles run on

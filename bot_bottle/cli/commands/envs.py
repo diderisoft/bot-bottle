@@ -11,8 +11,8 @@ slice, and registers itself the first time a command runs in it.
 available backend's leftover bottles, orchestrator, gateway, containers,
 networks and volumes (images are shared caches and stay), its host controller
 and autostart unit. Then it deletes NAME's state root and firecracker run
-directory and frees its pool slice. If any teardown step fails the state is
-kept, so it can be retried; `--force` deletes it anyway. `live` can't be
+directory and releases its host-wide pool slice claim. If any teardown step
+fails the state is kept, so it can be retried; `--force` deletes it anyway. `live` can't be
 removed this way (`bot-bottle uninstall` removes the install).
 """
 
@@ -54,11 +54,13 @@ class EnvRow:
 class Probe:
     """What `envs` asks the host, injectable for tests: whether a host
     controller answers from a state root, the running container names (docker
-    and macOS), and whether an environment's firecracker infra VMs run."""
+    and macOS), whether an environment's firecracker infra VMs run, and the
+    firecracker slice it holds."""
 
     hostctl: Callable[[Path], bool]
     containers: Callable[[], Sequence[str]]
     firecracker_infra: Callable[[str], bool]
+    slice: Callable[[str], "int | None"]
 
 
 def _firecracker_cache() -> Path:
@@ -110,8 +112,22 @@ def _firecracker_infra_running(name: str) -> bool:
     return False
 
 
+def _held_slice(name: str) -> int | None:
+    # pylint: disable-next=import-outside-toplevel
+    from ...backend import environment_slice
+    from ..settings import settings_from_env  # pylint: disable=import-outside-toplevel
+    return environment_slice(settings_from_env(), name)
+
+
+def _release_slice(name: str) -> bool:
+    # pylint: disable-next=import-outside-toplevel
+    from ...backend import release_environment_slice
+    from ..settings import settings_from_env  # pylint: disable=import-outside-toplevel
+    return release_environment_slice(settings_from_env(), name)
+
+
 HOST_PROBE = Probe(hostctl=_hostctl_running, containers=_running_containers,
-                   firecracker_infra=_firecracker_infra_running)
+                   firecracker_infra=_firecracker_infra_running, slice=_held_slice)
 
 
 def collect(probe: Probe = HOST_PROBE, *, home: Path | None = None,
@@ -122,7 +138,8 @@ def collect(probe: Probe = HOST_PROBE, *, home: Path | None = None,
     live_root = (Path(env["BOT_BOTTLE_ROOT"]) if active == LIVE and env.get("BOT_BOTTLE_ROOT")
                  else environment.default_root(LIVE, home))
     entries = [(LIVE, str(live_root), 0)]
-    entries += [(r.name, r.root, r.slot) for r in environment.registered(home)]
+    entries += [(r.name, r.root, probe.slice(r.name) or 0)
+                for r in environment.registered(home)]
     containers = list(probe.containers())
     rows = []
     for name, root, slot in entries:
@@ -247,9 +264,11 @@ def _cmd_rm(argv: list[str]) -> int:
 
 
 def execute_rm(plan: RmPlan, *, force: bool = False,
-               run: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run) -> int:
+               run: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+               release: Callable[[str], bool] = _release_slice) -> int:
     """Run `plan`: the teardown, then (when it worked, or `force`) the
-    deletes. 0 when everything went."""
+    deletes and the release of its firecracker slice. 0 when everything
+    went."""
     code = run(list(plan.teardown), env=plan.env, check=False).returncode
     if code != 0 and not force:
         sys.stderr.write(f"{PROG} envs rm: tearing down {plan.name} failed; its state is "
@@ -258,6 +277,7 @@ def execute_rm(plan: RmPlan, *, force: bool = False,
     for path in plan.remove:
         shutil.rmtree(path, ignore_errors=True)
     environment.unregister(plan.name)
+    release(plan.name)
     for note in plan.kept:
         sys.stderr.write(f"{PROG} envs rm: kept {note}\n")
     print(f"{plan.name}: removed")

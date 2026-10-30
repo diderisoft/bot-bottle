@@ -21,6 +21,7 @@ from bot_bottle.contract.hostctl import InfraSettings, Settings
 from bot_bottle.backend.firecracker import netpool
 from bot_bottle.backend.firecracker import setup as fc
 from bot_bottle.backend.macos_container import setup as mc
+from bot_bottle.backend.macos_container.gateway import AGENT_SUBNET_V6
 
 
 _S = Settings()
@@ -355,7 +356,7 @@ class TestMacosSetupStatus(unittest.TestCase):
              patch.object(mc.shutil, "which") as which:
             rc, out = _cap(mc.setup)
         self.assertEqual(0, rc)
-        self.install.assert_called_once_with(self.subnet, mc.AGENT_SUBNET_V6)
+        self.install.assert_called_once_with(self.subnet, AGENT_SUBNET_V6)
         which.assert_not_called()  # the container service is per-user
         self.assertIn("Installed the host firewall", out)
 

@@ -78,8 +78,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "`30`"),
     EnvVar("BOT_BOTTLE_DOCKER_GATEWAY_SUBNET", "user",
            "docker: the gateway network's subnet.",
-           "`10.242.255.0/24`; a named environment's is `10.241.<n>.0/24`, "
-           "`<n>` from its name"),
+           "`10.242.255.0/24`; a named environment allocates a free /24 of "
+           "`10.241.0.0/16` and records it"),
     EnvVar("BOT_BOTTLE_DOCKER_AGENT_SUBNETS", "user",
            "docker: the range per-agent networks are carved from, as /29s.",
            "`10.242.0.0/20`; `10.240.0.0/16` in a named environment"),
@@ -104,6 +104,10 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "firecracker: network-pool slices the host reserves for named "
            "environments, after the live pool. Must be at most the host's.",
            "`4`"),
+    EnvVar("BOT_BOTTLE_FC_SLICES_DIR", "user",
+           "firecracker: the host-wide claims on those slices, created by the "
+           "network pool setup for the pool's group. Must match the host's.",
+           "`/var/lib/bot-bottle-fc/slices`"),
     EnvVar("BOT_BOTTLE_FC_IP_BASE", "user",
            "firecracker: base IPv4 of the pool's /31s. Must match the host's "
            "network pool.",

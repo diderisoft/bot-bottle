@@ -39,7 +39,8 @@ class TestSettingsJson(unittest.TestCase):
                          set(body["operation"]))
         # Fields added later are left out while at their default.
         self.assertEqual({f.name for f in dataclasses.fields(InfraSettings)}
-                         - {"docker_agent_subnets", "fc_env_slots"}, set(body["infra"]))
+                         - {"docker_agent_subnets", "fc_env_slots", "fc_slices_dir"},
+                         set(body["infra"]))
 
     def test_the_agent_subnet_pool_appears_only_when_set(self) -> None:
         # So adding it didn't change the default fingerprint, and an upgrade
@@ -56,6 +57,7 @@ class TestSettingsJson(unittest.TestCase):
         body = dataclasses.asdict(InfraSettings())
         del body["docker_agent_subnets"]
         del body["fc_env_slots"]
+        del body["fc_slices_dir"]
         canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
         self.assertEqual(hashlib.sha256(canonical.encode()).hexdigest(),
                          InfraSettings().fingerprint())
@@ -165,6 +167,7 @@ class TestEnvLoader(unittest.TestCase):
             "BOT_BOTTLE_FC_ORCH_IFACE": "bbciorch0",
             "BOT_BOTTLE_FC_GW_IFACE": "bbcigw0",
             "BOT_BOTTLE_FC_ENV_SLOTS": "6",
+            "BOT_BOTTLE_FC_SLICES_DIR": "/run/claims",
             "BOT_BOTTLE_MACOS_CONTAINER_DNS": "9.9.9.9",
         }
         expected = Settings(
@@ -179,6 +182,7 @@ class TestEnvLoader(unittest.TestCase):
                 fc_dropbear="/fc/dropbear", fc_pool_size=4, fc_ip_base="10.9.0.0",
                 fc_iface_prefix="bbci", fc_nft_table="bb_ci", fc_orch_iface="bbciorch0",
                 fc_gw_iface="bbcigw0", macos_container_dns="9.9.9.9", fc_env_slots=6,
+                fc_slices_dir="/run/claims",
             ),
         )
         self.assertEqual(expected, settings_from_env(env))

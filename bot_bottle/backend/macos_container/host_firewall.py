@@ -27,7 +27,9 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from ...environment import LIVE_REVERSE_DNS, reverse_dns
+from ...environment import (
+    LIVE_REVERSE_DNS, macos_agent_subnet_v6, macos_agent_subnet_v6_candidates, reverse_dns,
+)
 
 # One anchor per environment: `io.bot-bottle` for live, `io.bot-bottle.<name>`
 # for a named one (each installed by its own `backend setup`).
@@ -257,24 +259,67 @@ def installed_subnet(path: Path | None = None) -> str | None:
     return None
 
 
+def installed_subnet_v6(path: Path | None = None) -> str | None:
+    """The agent IPv6 /64 the installed rules (this environment's, or `path`)
+    block, or None. The rules are where setup records it."""
+    try:
+        rules = (path or RULES_PATH).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in rules.splitlines():
+        words = line.split()
+        # block drop in quick inet6 from <subnet> to ! <subnet>
+        if words[:6] == ["block", "drop", "in", "quick", "inet6", "from"] and "!" in words:
+            return words[6]
+    return None
+
+
+def agent_subnet_v6() -> str:
+    """The agent network's IPv6 /64: the installed firewall's, else this
+    environment's first candidate (live's fixed one)."""
+    return installed_subnet_v6() or macos_agent_subnet_v6()
+
+
 def agent_subnet() -> str:
     """The agent network's IPv4 subnet: the installed firewall's, else the
     first candidate."""
     return installed_subnet() or CANDIDATE_SUBNETS[0]
 
 
+def _other_rules(rules_dir: Path | None = None) -> list[Path]:
+    directory = rules_dir or _RULES_DIR
+    try:
+        return [p for p in directory.iterdir()
+                if (p.name == LIVE_REVERSE_DNS or p.name.startswith(f"{LIVE_REVERSE_DNS}."))
+                and p.name != RULES_PATH.name]
+    except OSError:
+        return []
+
+
 def other_environments_subnets(rules_dir: Path | None = None) -> set[str]:
     """Agent subnets other environments' installed anchors claim, so two
     environments never share one (their networks may not be up to show a
     conflict)."""
-    directory = rules_dir or _RULES_DIR
-    try:
-        paths = [p for p in directory.iterdir()
-                 if (p.name == LIVE_REVERSE_DNS or p.name.startswith(f"{LIVE_REVERSE_DNS}."))
-                 and p.name != RULES_PATH.name]
-    except OSError:
-        return set()
-    return {s for s in (installed_subnet(p) for p in paths) if s}
+    return {s for s in (installed_subnet(p) for p in _other_rules(rules_dir)) if s}
+
+
+def other_environments_subnets_v6(rules_dir: Path | None = None) -> set[str]:
+    """Agent IPv6 /64s other environments' installed anchors claim."""
+    return {s for s in (installed_subnet_v6(p) for p in _other_rules(rules_dir)) if s}
+
+
+def choose_subnet_v6(rules_dir: Path | None = None) -> str:
+    """The IPv6 /64 setup should install: the installed one, else this
+    environment's first candidate no other environment's anchor claims.
+    Installing it records it."""
+    current = installed_subnet_v6()
+    if current:
+        return current
+    others = other_environments_subnets_v6(rules_dir)
+    for candidate in macos_agent_subnet_v6_candidates():
+        if candidate not in others:
+            return candidate
+    raise RuntimeError("every candidate agent IPv6 /64 is taken by another environment")
 
 
 def choose_subnet() -> tuple[str, list[str]]:
@@ -318,7 +363,8 @@ def wait_ipv6_off(subnet: str, *, timeout: float = REAPPLY_SECONDS + 15,
 __all__ = [
     "ANCHOR", "DAEMON_LABEL", "DAEMON_PATH", "RULES_PATH",
     "CANDIDATE_SUBNETS", "agent_bridge", "agent_subnet", "choose_subnet", "conflicts",
-    "other_environments_subnets",
+    "agent_subnet_v6", "choose_subnet_v6", "installed_subnet_v6",
+    "other_environments_subnets", "other_environments_subnets_v6",
     "host_address", "install", "install_commands", "installed_subnet", "ipv6_off",
     "render_daemon", "render_rules", "state", "wait_ipv6_off",
     "uninstall", "uninstall_commands",

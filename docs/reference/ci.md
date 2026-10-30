@@ -83,8 +83,8 @@ step removes it (`bot-bottle envs rm "$BOT_BOTTLE_ENV" --force`). Jobs never
 touch a host's live install or each other, so there are no
 `integration-*-infra` concurrency groups. macOS uses the fixed `ci-macos`,
 because each environment needs its own pf anchor, installed once as root; the
-single host-mode runner runs one job at a time. Two docker runs on one daemon
-collide only if their names hash to the same gateway /24 (1 in 256).
+single host-mode runner runs one job at a time. Docker runs on one daemon
+allocate their gateway /24s, moving on from any another run holds.
 
 ### Provisioning the self-hosted runners
 
@@ -94,9 +94,10 @@ collide only if their names hash to the same gateway /24 (1 in 256).
   (`/var/cache/bot-bottle-fc/dropbear`), and the TAP/nft pool as a persistent
   systemd unit. The pool must reserve environment slices (the default 4):
   each concurrent firecracker run claims one, and a run with none free fails
-  saying so. Slots are recorded per user, so CI runs and a developer's `dev`
-  environment share them safely only when they run as the same user. The
-  job's preflight fails when any of these is missing.
+  saying so. Slice claims are host-wide (`/var/lib/bot-bottle-fc/slices`), so the
+  runner's user and a developer's must both be in the pool's group (NixOS
+  `services.bot-bottle-firecracker.group`). The job's preflight fails when
+  any of these is missing.
 - **`macos` (Apple Container, advisory; it never gates `promote`, since the runner is a laptop that may be asleep):** an Apple Silicon host-mode runner;
   Apple Container can't run inside the Linux pull-request runner. It needs the
   `container` CLI with `container system status` running, and Python ≥ 3.11

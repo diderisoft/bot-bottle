@@ -1,8 +1,10 @@
 """Unit: named environments (`BOT_BOTTLE_ENV`): validation, what each
-environment derives, live's values unchanged, the slot registry, the
-firecracker slice math (Python and the setup script agree), and `envs`
+environment derives, live's values unchanged, host-wide slice claims, the
+firecracker slice math (Python and the setup script agree), docker and macOS
+subnet allocation, and `envs`
 listing and removal planning with the host mocked out."""
 
+# pylint: disable=reimported,too-many-return-statements
 from __future__ import annotations
 
 import contextlib
@@ -17,9 +19,24 @@ from pathlib import Path
 from unittest import mock
 
 from bot_bottle import environment as env
-from bot_bottle.backend.firecracker import netpool
+# Imported here, with no BOT_BOTTLE_ENV set, so the live names they fix at
+# import are the ones every test sees, whatever a test patches later.
+from bot_bottle.backend.docker import agent_network as _agent_network
+from bot_bottle.backend.docker import gateway as _docker_gateway
+from bot_bottle.backend.firecracker import netpool, slice_claims
+from bot_bottle.backend.macos_container import host_firewall as _host_firewall
+from bot_bottle.backend.macos_container import enumerate as _menum
+from bot_bottle.backend.macos_container import orchestrator as _morch
+from bot_bottle.backend.docker import compose as _compose
+from bot_bottle.backend.docker import orchestrator as _dorch
+from bot_bottle.backend.firecracker import gateway as _fgw, orchestrator as _forch
+from bot_bottle.control import gateway as _cgw
+from bot_bottle.control.hostctl import service_unit as _service_unit
 from bot_bottle.contract.hostctl import InfraSettings
 from bot_bottle.lib.log import Die
+
+_IMPORTED_AS_LIVE = (_agent_network, _docker_gateway, _host_firewall, _menum, _morch, _compose,
+                     _dorch, _fgw, _forch, _cgw, _service_unit)
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -233,18 +250,17 @@ class TestNamedDerivations(unittest.TestCase):
 
 
 class TestRegistry(_TmpHome):
-    def test_register_is_idempotent_and_keeps_the_slot(self) -> None:
+    def test_register_is_idempotent(self) -> None:
         root = env.default_root("dev", self.home)
-        env.register("dev", root, self.home)
-        self.assertEqual(1, env.claim_slot("dev", 4, self.home))
         reg = env.register("dev", root, self.home)
-        self.assertEqual(env.Registration("dev", str(root), 1), reg)
+        self.assertEqual(env.Registration("dev", str(root)), reg)
+        self.assertEqual(reg, env.register("dev", root, self.home))
         self.assertEqual([reg], env.registered(self.home))
+        self.assertEqual(root / "env.json", env.registration_file("dev", self.home))
 
     def test_live_isnt_registered(self) -> None:
         with self.assertRaises(env.InvalidEnvironmentError):
             env.register("live", self.home / ".bot-bottle", self.home)
-        self.assertEqual(0, env.claim_slot("live", 4, self.home))
         self.assertEqual([], env.registered(self.home))
 
     def test_a_name_sharing_a_prefix_is_refused(self) -> None:
@@ -256,30 +272,6 @@ class TestRegistry(_TmpHome):
         env.register("dev2", env.default_root("dev2", self.home), self.home)  # no clash
         self.assertEqual("", env.prefix_clash("ci-12", ["ci-1", "ci-123"]))
         self.assertEqual("ci", env.prefix_clash("ci-1", ["ci"]))
-
-    def test_slots_are_lowest_free_and_stable(self) -> None:
-        self.assertEqual(1, env.claim_slot("a", 3, self.home))
-        self.assertEqual(2, env.claim_slot("b", 3, self.home))
-        self.assertEqual(1, env.claim_slot("a", 3, self.home))
-        self.assertEqual(3, env.claim_slot("c", 3, self.home))
-        env.unregister("a", self.home)
-        self.assertEqual(1, env.claim_slot("d", 3, self.home))
-
-    def test_exhaustion_says_how_to_raise_it(self) -> None:
-        env.claim_slot("a", 1, self.home)
-        with self.assertRaises(env.NoFreeSlotError) as cm:
-            env.claim_slot("b", 1, self.home)
-        message = str(cm.exception)
-        for part in ("all 1 reserved", "1: a", "envs rm", "BOT_BOTTLE_FC_ENV_SLOTS", "envSlots",
-                     "install --backend=firecracker"):
-            self.assertIn(part, message)
-
-    def test_a_slot_beyond_a_lowered_count_is_reclaimed(self) -> None:
-        env.claim_slot("a", 4, self.home)
-        env.claim_slot("b", 4, self.home)
-        self.assertEqual(1, env.claim_slot("a", 1, self.home))
-        with self.assertRaises(env.NoFreeSlotError):
-            env.claim_slot("b", 1, self.home)
 
     def test_ensure_active_registered(self) -> None:
         with mock.patch.dict(os.environ, {"BOT_BOTTLE_ENV": "dev", "HOME": str(self.home)}):
@@ -302,6 +294,133 @@ class TestRegistry(_TmpHome):
             json.dumps({"name": "different", "root": "/r"}))
         self.assertEqual([], env.registered(self.home))
         self.assertEqual([], env.registered(self.home / "missing"))
+
+
+class TestSliceClaims(_TmpHome):
+    """Host-wide claims: one directory, users simulated by uid and home."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.dir = self.home / "slices"
+        self.dir.mkdir()
+        self.busy: set[int] = set()
+
+    def _home(self, user: str) -> Path:
+        home = self.home / user
+        home.mkdir(exist_ok=True)
+        return home
+
+    def _claim(self, user: str, uid: int, name: str, count: int = 3) -> int:
+        home = self._home(user)
+        env.register(name, env.default_root(name, home), home)
+        return slice_claims.claim(self.dir, env=name, count=count, uid=uid, user=user,
+                                  registration=env.registration_file(name, home),
+                                  in_use=lambda k: k in self.busy)
+
+    def test_two_users_never_share_a_slice(self) -> None:
+        self.assertEqual(1, self._claim("alice", 1000, "dev"))
+        self.assertEqual(2, self._claim("runner", 1001, "ci-7"))
+        # The same name for another user is another environment.
+        self.assertEqual(3, self._claim("runner", 1001, "dev"))
+        self.assertEqual(1, self._claim("alice", 1000, "dev"))
+        claims = slice_claims.read_all(self.dir)
+        self.assertEqual({1: ("dev", 1000), 2: ("ci-7", 1001), 3: ("dev", 1001)},
+                         {k: (c.env, c.uid) for k, c in claims.items() if c})
+        self.assertEqual("0o664", oct((self.dir / "1").stat().st_mode & 0o777))
+
+    def test_exhaustion_names_the_holders_and_how_to_raise_it(self) -> None:
+        self._claim("alice", 1000, "dev", count=1)
+        with self.assertRaises(slice_claims.NoFreeSliceError) as cm:
+            self._claim("runner", 1001, "ci-7", count=1)
+        message = str(cm.exception)
+        for part in ("all 1 reserved", "1: alice:dev", "envs rm",
+                     "BOT_BOTTLE_FC_ENV_SLOTS", "envSlots", "install --backend=firecracker"):
+            self.assertIn(part, message)
+
+    def test_release_frees_only_the_owners_claim(self) -> None:
+        self._claim("alice", 1000, "dev")
+        self.assertFalse(slice_claims.release(self.dir, env="dev", uid=1001))
+        self.assertTrue(slice_claims.release(self.dir, env="dev", uid=1000))
+        self.assertFalse(slice_claims.release(self.dir, env="dev", uid=1000))
+        self.assertEqual(1, self._claim("runner", 1001, "ci-7"))
+
+    def test_a_stale_claim_is_replaced(self) -> None:
+        self._claim("alice", 1000, "dev")
+        # alice's registration is gone (her env was deleted by hand).
+        (self._home("alice") / ".bot-bottle-envs" / "dev" / "env.json").unlink()
+        self.assertEqual(1, self._claim("runner", 1001, "ci-7"))
+
+    def test_a_live_claim_is_never_stolen(self) -> None:
+        self._claim("alice", 1000, "dev")
+        (self._home("alice") / ".bot-bottle-envs" / "dev" / "env.json").unlink()
+        self.busy.add(1)  # but its VMs still hold the TAPs
+        self.assertEqual(2, self._claim("runner", 1001, "ci-7"))
+
+    def test_an_unreadable_registration_counts_as_present(self) -> None:
+        self.assertFalse(slice_claims.registration_gone(""))
+        with mock.patch("os.stat", side_effect=PermissionError):
+            self.assertFalse(slice_claims.registration_gone("/home/other/x"))
+        self.assertTrue(slice_claims.registration_gone(str(self.home / "nope")))
+
+    def test_an_unreadable_claim_is_held(self) -> None:
+        (self.dir / "1").write_text("{garbage")
+        self.assertEqual(2, self._claim("alice", 1000, "dev"))
+
+    def test_concurrent_claims_get_distinct_slices(self) -> None:
+        import threading  # pylint: disable=import-outside-toplevel
+        got: list[int] = []
+        lock = threading.Lock()
+
+        def worker(i: int) -> None:
+            slot = self._claim(f"user{i}", 2000 + i, f"env{i}", count=8)
+            with lock:
+                got.append(slot)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(list(range(1, 9)), sorted(got))
+
+    def test_concurrent_claims_across_processes(self) -> None:
+        code = (
+            "import sys; from pathlib import Path\n"
+            "from bot_bottle.backend.firecracker import slice_claims as c\n"
+            "print(c.claim(Path(sys.argv[1]), env=sys.argv[2], count=6, uid=int(sys.argv[3]),"
+            " user='u', registration=Path(sys.argv[4]), in_use=lambda k: False))\n")
+        reg = self.home / "reg"
+        reg.write_text("{}")
+        procs = [subprocess.Popen(  # pylint: disable=consider-using-with
+            [sys.executable, "-c", code, str(self.dir), f"e{i}", str(3000 + i), str(reg)],
+            env=dict(os.environ, PYTHONPATH=str(REPO)), stdout=subprocess.PIPE, text=True)
+            for i in range(6)]
+        slots = sorted(int(p.communicate()[0]) for p in procs)
+        self.assertEqual([1, 2, 3, 4, 5, 6], slots)
+
+    def test_a_missing_directory_says_to_rerun_the_setup(self) -> None:
+        with self.assertRaises(slice_claims.SliceClaimError) as cm:
+            slice_claims.claim(self.home / "absent", env="dev", count=1, uid=1, user="u",
+                               registration=self.home / "r", in_use=lambda k: False)
+        self.assertIn("install --backend=firecracker", str(cm.exception))
+
+    def test_netpool_claims_in_the_configured_directory(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.backend import environment_slice, release_environment_slice
+        from bot_bottle.cli.settings import settings_from_env  # pylint: disable=import-outside-toplevel
+        settings = settings_from_env({"BOT_BOTTLE_FC_SLICES_DIR": str(self.dir)})
+        self.assertEqual(str(self.dir), settings.infra.fc_slices_dir)
+        with mock.patch.dict(os.environ, {"HOME": str(self.home)}):
+            pool = netpool.from_settings(settings.infra, env="dev")
+            self.assertEqual(1, pool.env_slot)
+            self.assertEqual(1, environment_slice(settings, "dev"))
+            self.assertTrue(release_environment_slice(settings, "dev"))
+            self.assertIsNone(environment_slice(settings, "dev"))
+
+    def test_slice_in_use_reads_tap_carrier(self) -> None:
+        with mock.patch.object(netpool, "_carrier", side_effect="bbgw2".__eq__):
+            self.assertTrue(netpool.slice_in_use(2))
+            self.assertFalse(netpool.slice_in_use(1))
 
 
 class TestFirecrackerSlices(_TmpHome):
@@ -349,16 +468,16 @@ class TestFirecrackerSlices(_TmpHome):
                     self.assertNotEqual(a.nft_table, b.nft_table)
 
     def test_a_named_environment_claims_its_slice(self) -> None:
-        with mock.patch.object(netpool, "claim_slot", return_value=2) as claim:
+        with mock.patch.object(netpool, "claim_slice", return_value=2) as claim:
             pool = netpool.from_settings(InfraSettings(), env="dev")
-        claim.assert_called_once_with("dev", 4)
+        claim.assert_called_once_with(InfraSettings(), "dev", 4)
         self.assertEqual(("10.243.2.0", "bb2fc", "bot_bottle_fc2", "bborch2", "bbgw2", 2),
                          (pool.ip_base, pool.iface_prefix, pool.nft_table, pool.orch_iface,
                           pool.gw_iface, pool.env_slot))
         self.assertEqual("10.243.255.8", pool.orch_slot().host_ip)
 
     def test_explicit_settings_win(self) -> None:
-        with mock.patch.object(netpool, "claim_slot", return_value=2):
+        with mock.patch.object(netpool, "claim_slice", return_value=2):
             pool = netpool.from_settings(InfraSettings(fc_ip_base="10.9.0.0",
                                                        fc_iface_prefix="bbx",
                                                        fc_env_slots=7), env="dev")
@@ -367,15 +486,15 @@ class TestFirecrackerSlices(_TmpHome):
 
     def test_no_free_slice_dies_clearly(self) -> None:
         err = io.StringIO()
-        with mock.patch.object(netpool, "claim_slot",
-                               side_effect=env.NoFreeSlotError("all 4 reserved slots are held")), \
+        with mock.patch.object(netpool, "claim_slice", side_effect=slice_claims.NoFreeSliceError(
+                "all 4 reserved slices are held")), \
                 contextlib.redirect_stderr(err), self.assertRaises(Die):
             netpool.from_settings(InfraSettings(), env="dev")
-        self.assertIn("all 4 reserved slots are held", err.getvalue())
+        self.assertIn("all 4 reserved slices are held", err.getvalue())
 
     def test_the_host_pool_is_lives_from_any_environment(self) -> None:
         with mock.patch.dict(os.environ, {"BOT_BOTTLE_ENV": "dev"}), \
-                mock.patch.object(netpool, "claim_slot") as claim:
+                mock.patch.object(netpool, "claim_slice") as claim:
             pool = netpool.host_pool(InfraSettings(fc_ip_base="10.9.0.0", fc_env_slots=6))
         claim.assert_not_called()
         self.assertEqual(("10.243.0.0", "bbfc", 0, 6),
@@ -449,16 +568,154 @@ class TestMacosAnchors(_TmpHome):
             self.assertEqual((hf.CANDIDATE_SUBNETS[1], []), hf.choose_subnet())
 
 
+class _FakeDocker:
+    """`docker network` with a set of subnets other environments hold."""
+
+    def __init__(self, listed: set[str], racing: set[str] | None = None,
+                 existing: dict[str, str] | None = None) -> None:
+        # Subnets of networks `docker network ls` shows; ones another
+        # environment takes between our listing and our create.
+        self.listed, self.racing = set(listed), set(racing or ())
+        self.networks = dict(existing or {})  # name -> subnet
+        self.creates: list[str] = []
+
+    def __call__(self, argv: list[str], **_kw: object) -> subprocess.CompletedProcess[str]:
+        def done(code: int, out: str = "", err: str = "") -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(argv, code, out, err)
+        if argv[:3] == ["docker", "network", "ls"]:
+            return done(0, " ".join(f"id-{s}" for s in [*self.listed, *self.networks.values()]))
+        if argv[:3] == ["docker", "network", "inspect"] and argv[-1].startswith("id-"):
+            return done(0, " ".join(a[3:] for a in argv[5:]))
+        if argv[:3] == ["docker", "network", "inspect"]:
+            name = argv[-1]
+            if name not in self.networks:
+                return done(1, err=f"Error: No such network: {name}")
+            return done(0, f"{self.networks[name]}|true")
+        if argv[:3] == ["docker", "network", "create"]:
+            subnet = argv[argv.index("--subnet") + 1]
+            self.creates.append(subnet)
+            if subnet in self.listed | self.racing:
+                return done(1, err="Error response from daemon: Pool overlaps with other one "
+                                   "on this address space")
+            self.networks[argv[-1]] = subnet
+            return done(0, "netid")
+        return done(0)
+
+
+class TestDockerGatewayAllocation(_TmpHome):
+    def _gateway(self, fake: _FakeDocker):  # type: ignore[no-untyped-def]
+        # pylint: disable=import-outside-toplevel
+        from bot_bottle.backend.docker import agent_network, gateway
+        from bot_bottle.contract.hostctl import Settings
+        patches = [mock.patch.object(gateway, "run_docker", fake),
+                   mock.patch.object(agent_network, "run_docker", fake)]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        return gateway.DockerGateway(settings=Settings(), network="bb-dev-gateway")
+
+    def _env(self) -> "contextlib.AbstractContextManager[object]":
+        return mock.patch.dict(os.environ, {"BOT_BOTTLE_ENV": "dev",
+                                            "BOT_BOTTLE_ROOT": str(self.home / "root")})
+
+    def test_an_overlap_moves_to_the_next_free_24_and_records_it(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.backend.docker import gateway
+        first, second, third = list(env.docker_gateway_candidates("dev"))[:3]
+        # `first` only reports an overlap (another environment raced us to
+        # it); `second` is a network docker lists, so it isn't even tried.
+        fake = _FakeDocker(listed={second}, racing={first})
+        with self._env():
+            gw = self._gateway(fake)
+            self.assertEqual(first, gw._subnet)  # pylint: disable=protected-access
+            gw._ensure_network()  # pylint: disable=protected-access
+            self.assertEqual(third, gw._subnet)  # pylint: disable=protected-access
+            self.assertEqual(third, gateway.recorded_gateway_subnet())
+            # Restarted: the recorded subnet is used, with no new create.
+            again = self._gateway(fake)
+            self.assertEqual(third, again._subnet)  # pylint: disable=protected-access
+            again._ensure_network()  # pylint: disable=protected-access
+        self.assertEqual(third, fake.networks["bb-dev-gateway"])
+        self.assertNotIn(second, fake.creates)  # skipped: docker already listed it
+        self.assertEqual([first, third], fake.creates)
+
+    def test_an_existing_network_is_adopted_and_recorded(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.backend.docker import gateway
+        fake = _FakeDocker(listed=set(), existing={"bb-dev-gateway": "10.241.9.0/24"})
+        with self._env():
+            gw = self._gateway(fake)
+            gw._ensure_network()  # pylint: disable=protected-access
+            self.assertEqual("10.241.9.0/24", gw._subnet)  # pylint: disable=protected-access
+            self.assertEqual("10.241.9.0/24", gateway.recorded_gateway_subnet())
+        self.assertEqual([], fake.creates)
+
+    def test_live_and_explicit_subnets_never_allocate(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.contract.hostctl import Settings
+        fake = _FakeDocker(listed=set(), racing={"10.242.255.0/24"})
+        gw = self._gateway(fake)
+        with self.assertRaises(Exception) as cm:
+            gw._ensure_network()  # pylint: disable=protected-access
+        self.assertIn("Pool overlaps", str(cm.exception))
+        self.assertEqual(["10.242.255.0/24"], fake.creates)
+        with self._env():
+            # pylint: disable-next=import-outside-toplevel
+            from bot_bottle.backend.docker import gateway
+            explicit = gateway.DockerGateway(settings=Settings(), network="n",
+                                             subnet="10.9.9.0/24")
+            self.assertFalse(explicit._allocate)  # pylint: disable=protected-access
+
+    def test_every_candidate_taken_says_how_to_choose(self) -> None:
+        fake = _FakeDocker(listed=set(env.docker_gateway_candidates("dev")))
+        with self._env():
+            gw = self._gateway(fake)
+            with self.assertRaises(Exception) as cm:
+                gw._ensure_network()  # pylint: disable=protected-access
+        self.assertIn("BOT_BOTTLE_DOCKER_GATEWAY_SUBNET", str(cm.exception))
+        self.assertEqual(0, len(fake.creates))  # docker listed them all as taken
+
+
+class TestMacosV6Allocation(_TmpHome):
+    def test_skips_other_environments_and_keeps_the_installed_one(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.backend.macos_container import host_firewall as hf
+        rules = self.home / "anchors"
+        rules.mkdir()
+        first, second = list(env.macos_agent_subnet_v6_candidates("dev"))[:2]
+        (rules / "io.bot-bottle.ci-macos").write_text(hf.render_rules("10.213.128.0/24", first))
+        mine = rules / "io.bot-bottle.dev"
+        with mock.patch.dict(os.environ, {"BOT_BOTTLE_ENV": "dev"}), \
+                mock.patch.object(hf, "RULES_PATH", mine):
+            self.assertEqual({first}, hf.other_environments_subnets_v6(rules))
+            self.assertEqual(second, hf.choose_subnet_v6(rules))
+            self.assertEqual(first, hf.agent_subnet_v6())  # nothing recorded yet
+            mine.write_text(hf.render_rules("192.168.200.0/24", second))
+            self.assertEqual(second, hf.installed_subnet_v6())
+            self.assertEqual(second, hf.agent_subnet_v6())
+            self.assertEqual(second, hf.choose_subnet_v6(rules))
+
+    def test_live_keeps_its_fixed_64(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.backend.macos_container import host_firewall as hf
+        with mock.patch.object(hf, "RULES_PATH", self.home / "none"):
+            self.assertEqual("fd62:6f74:6274:6c65::/64", hf.choose_subnet_v6(self.home))
+            self.assertEqual("fd62:6f74:6274:6c65::/64", hf.agent_subnet_v6())
+
+
 class _Probe:
-    def __init__(self, hostctl: set[str], containers: list[str], fc: set[str]) -> None:
+    def __init__(self, hostctl: set[str], containers: list[str], fc: set[str],
+                 slices: dict[str, int] | None = None) -> None:
         self.hostctl, self.containers_, self.fc = hostctl, containers, fc
+        self.slices = slices or {}
 
     def make(self):  # type: ignore[no-untyped-def]
         # pylint: disable-next=import-outside-toplevel
         from bot_bottle.cli.commands.envs import Probe
         return Probe(hostctl=lambda root: str(root) in self.hostctl,
                      containers=lambda: self.containers_,
-                     firecracker_infra=lambda name: name in self.fc)
+                     firecracker_infra=lambda name: name in self.fc,
+                     slice=self.slices.get)
 
 
 class TestEnvsList(_TmpHome):
@@ -467,12 +724,11 @@ class TestEnvsList(_TmpHome):
         from bot_bottle.cli.commands.envs import EnvRow, collect
         dev_root = env.default_root("dev", self.home)
         env.register("dev", dev_root, self.home)
-        env.claim_slot("dev", 4, self.home)
         env.register("ci-7", env.default_root("ci-7", self.home), self.home)
         probe = _Probe(hostctl={str(self.home / ".bot-bottle")},
                        containers=["bot-bottle-orchestrator", "bot-bottle-s1", "bb-dev-gateway",
                                    "unrelated", "bb-ci-70-x"],
-                       fc={"dev"}).make()
+                       fc={"dev"}, slices={"dev": 1}).make()
         rows = collect(probe, home=self.home, environ={"BOT_BOTTLE_ENV": "dev"})
         self.assertEqual([
             EnvRow("live", str(self.home / ".bot-bottle"), 0, False, True, ("2 containers",)),
@@ -567,6 +823,7 @@ class TestEnvsRm(_TmpHome):
         self.assertIn("live install", plan.kept[0])
 
     def _execute(self, plan, code: int, force: bool = False) -> tuple[int, list[object]]:  # type: ignore[no-untyped-def]
+        self.released: list[str] = []  # pylint: disable=attribute-defined-outside-init
         # pylint: disable-next=import-outside-toplevel
         from bot_bottle.cli.commands.envs import execute_rm
         calls: list[object] = []
@@ -578,12 +835,12 @@ class TestEnvsRm(_TmpHome):
         with mock.patch.dict(os.environ, {"HOME": str(self.home)}), \
                 contextlib.redirect_stdout(io.StringIO()), \
                 contextlib.redirect_stderr(io.StringIO()):
-            return execute_rm(plan, force=force, run=run), calls
+            return execute_rm(plan, force=force, run=run,
+                              release=lambda n: self.released.append(n) is None), calls
 
     def _registered_dev(self):  # type: ignore[no-untyped-def]
         root = env.default_root("dev", self.home)
         env.register("dev", root, self.home)
-        env.claim_slot("dev", 4, self.home)
         (root / "db").mkdir(parents=True)
         fc = self.home / ".cache" / "bot-bottle" / "firecracker" / "envs" / "dev"
         fc.mkdir(parents=True)
@@ -597,7 +854,7 @@ class TestEnvsRm(_TmpHome):
         self.assertFalse(root.exists())
         self.assertFalse(fc.exists())
         self.assertIsNone(env.read("dev", self.home))
-        self.assertEqual(1, env.claim_slot("other", 4, self.home))
+        self.assertEqual(["dev"], self.released)
 
     def test_a_failed_teardown_keeps_state(self) -> None:
         root, fc = self._registered_dev()
@@ -606,6 +863,7 @@ class TestEnvsRm(_TmpHome):
         self.assertTrue(root.exists())
         self.assertTrue(fc.exists())
         self.assertIsNotNone(env.read("dev", self.home))
+        self.assertEqual([], self.released)
 
     def test_force_deletes_state_after_a_failed_teardown(self) -> None:
         root, _ = self._registered_dev()

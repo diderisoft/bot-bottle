@@ -26,12 +26,14 @@ if TYPE_CHECKING:
         backend_os_requirement,
         docker_isolation_summary,
         enumerate_active_agents,
+        environment_slice,
         get_bottle_backend,
         has_backend,
         is_backend_available,
         is_backend_ready,
         known_backend_names,
         launch_isolation_note,
+        release_environment_slice,
     )
     from .docker import DockerBottleBackend
     from .firecracker import FirecrackerBottleBackend
@@ -60,6 +62,8 @@ _LAZY_MODULES: dict[str, str] = {
     "is_backend_available": "selection",
     "is_backend_ready": "selection",
     "enumerate_active_agents": "selection",
+    "environment_slice": "selection",
+    "release_environment_slice": "selection",
     "_print_vm_install_instructions": "selection",
     "DockerBottleBackend": "docker",
     "FirecrackerBottleBackend": "firecracker",
@@ -101,12 +105,14 @@ __all__ = [
     "FirecrackerBottleBackend",
     "MacosContainerBottleBackend",
     "enumerate_active_agents",
+    "environment_slice",
     "get_bottle_backend",
     "has_backend",
     "is_backend_available",
     "is_backend_ready",
     "known_backend_names",
     "launch_isolation_note",
+    "release_environment_slice",
     "backend_os_requirement",
     "docker_isolation_summary",
 ]

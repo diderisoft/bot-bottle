@@ -42,6 +42,10 @@
 #   BOT_BOTTLE_FC_NFT_TABLE     isolation table name
 #   BOT_BOTTLE_FC_ENV_SLOTS     named-environment slices reserved after the
 #                               live pool (BOT_BOTTLE_ENV; 0..63)
+#   BOT_BOTTLE_FC_SLICES_DIR    host-wide claims on those slices; created
+#                               mode 2775, owned by GROUP (else OWNER's
+#                               primary group), so every user of the pool
+#                               can claim one
 #   BOT_BOTTLE_FC_OWNER        owning user (default $SUDO_USER or $USER)
 #   BOT_BOTTLE_FC_GROUP         owning group; if set, TAPs are group-owned
 #                               instead of user-owned, so any group member
@@ -73,6 +77,8 @@ ENV_SLOTS="${BOT_BOTTLE_FC_ENV_SLOTS:-$(_default BOT_BOTTLE_FC_ENV_SLOTS)}"
 # Unresolved means none: an older unit or copy without it still brings the
 # live pool up.
 ENV_SLOTS="${ENV_SLOTS:-0}"
+SLICES_DIR="${BOT_BOTTLE_FC_SLICES_DIR:-$(_default BOT_BOTTLE_FC_SLICES_DIR)}"
+SLICES_DIR="${SLICES_DIR:-/var/lib/bot-bottle-fc/slices}"
 
 # Fail loudly rather than provisioning a half/empty range if a value
 # resolved to nothing (env unset AND the shared file unreadable).
@@ -165,7 +171,24 @@ cmd_up() {
     sysctl -qw net.ipv4.ip_forward=1
 
     _each_slice _up_slice
+    _install_slices_dir
     echo "done."
+}
+
+# Host-wide slice claims (netpool/slice_claims.py): one directory every pool
+# user can write, setgid so claims stay in the pool's group. Claims are kept
+# across `down` and reboots: they belong to environments, not to the TAPs.
+_install_slices_dir() {
+    [ "$ENV_SLOTS" -gt 0 ] || return 0
+    local grp
+    if [ -n "$GROUP" ]; then grp="$GROUP"; else grp="$(id -gn "$OWNER")"; fi
+    mkdir -p "$SLICES_DIR"
+    chgrp "$grp" "$SLICES_DIR"
+    chmod 2775 "$SLICES_DIR"
+    touch "$SLICES_DIR/.lock"
+    chgrp "$grp" "$SLICES_DIR/.lock"
+    chmod 0664 "$SLICES_DIR/.lock"
+    echo "slice claims: $SLICES_DIR (group $grp, mode 2775)"
 }
 
 _up_slice() {
