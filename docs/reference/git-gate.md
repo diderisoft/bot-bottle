@@ -133,7 +133,7 @@ forwarded commit is listed with its bottle and push time (see
 
 ```
 Bot-Bottle: <bottle>/<run>
-Co-authored-by: <operator name> <operator email>
+Co-Authored-By: <operator name> <operator email>
 ```
 
 - `<bottle>` is the bottles the launch was built from (`--bottle`s, else the
@@ -142,7 +142,7 @@ Co-authored-by: <operator name> <operator email>
   across stop and resume, so commits made before a stop still push after a
   resume. Both are reduced to `[A-Za-z0-9._-]`
   (`contract/git_trailers.py`, `backend/resolve_common.py:launch_trailer`).
-- `Co-authored-by` credits the operator: the host's global git identity
+- `Co-Authored-By` credits the operator: the host's global git identity
   (`git config --global user.name`/`user.email` where the launch runs). It's
   left out when either is unset, or when the commit's author is the operator
   (same email). Harnesses add their own model trailers; bot-bottle adds
@@ -161,7 +161,7 @@ The dispatcher runs the hook git would have run without the override (the
 `<common dir>/hooks/<name>`), with the same args, stdin and exit code, so a
 repo's own hooks still run and can still reject. As `prepare-commit-msg`, once
 the repo's hook succeeds, it adds the trailers with `git interpret-trailers`:
-`Bot-Bottle` replaces an existing one, and `Co-authored-by` is added only if
+`Bot-Bottle` replaces an existing one, and `Co-Authored-By` is added only if
 not already there, so amending never duplicates them. `prepare-commit-msg`
 runs for merges and amends too, and isn't skipped by `--no-verify`. If the
 hooks can't be installed, launch warns and carries on.

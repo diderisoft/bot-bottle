@@ -9,7 +9,7 @@ args, stdin and exit code. As `prepare-commit-msg` it then adds the trailers
 with `git interpret-trailers`, never twice:
 
     Bot-Bottle: <bottle>/<run>
-    Co-authored-by: <operator>     # when known and not the commit's author
+    Co-Authored-By: <operator>     # when known and not the commit's author
 
 The trailer values are in `bot-bottle.gitconfig` next to the hooks.
 """
@@ -154,7 +154,7 @@ if [ -n "$op_name" ] && [ -n "$op_email" ]; then
   lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
   if [ "$(lower "$author")" != "$(lower "$op_email")" ]; then
     set -- "$@" --if-exists addIfDifferent \
-      --trailer "Co-authored-by: $op_name <$op_email>"
+      --trailer "Co-Authored-By: $op_name <$op_email>"
   fi
 fi
 if ! git interpret-trailers --in-place "$@" "$msg"; then

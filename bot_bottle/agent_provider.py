@@ -392,7 +392,7 @@ class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plug
 
     def provision_commit_hooks(self, bottle: "Bottle", plan: "BottlePlan") -> None:
         """Install the git hooks that add the `Bot-Bottle` trailer (and the
-        operator's `Co-authored-by`) to every commit; the agent's env already
+        operator's `Co-Authored-By`) to every commit; the agent's env already
         points `core.hooksPath` at them (`git_gate.commit_hooks`). A failure
         warns: git-gate still refuses commits without the trailer."""
         from .contract.git_trailers import TRAILER_KEY

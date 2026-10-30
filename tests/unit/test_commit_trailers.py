@@ -282,7 +282,7 @@ class TestCommitHooksChaining(_GitCase):
         self.assertEqual([
             "Co-Authored-By: Claude <noreply@anthropic.com>",
             f"{TRAILER_KEY}: {VALUE}",
-            "Co-authored-by: Op Erator <op@example.com>",
+            "Co-Authored-By: Op Erator <op@example.com>",
         ], self.trailers(self.repo))
 
     def test_amend_never_duplicates(self):
@@ -290,7 +290,7 @@ class TestCommitHooksChaining(_GitCase):
         self.commit("--amend", "--no-edit")
         self.commit("--amend", "-m", "feat: y", "--trailer", f"{TRAILER_KEY}: other/run")
         self.assertEqual([f"{TRAILER_KEY}: {VALUE}",
-                          "Co-authored-by: Op Erator <op@example.com>"],
+                          "Co-Authored-By: Op Erator <op@example.com>"],
                          self.trailers(self.repo))
 
     def test_no_co_author_when_operator_is_the_author(self):
