@@ -124,6 +124,25 @@ class TestParseRoutes(unittest.TestCase):
             }]})
         self.assertIn("both set or both empty", str(cm.exception))
 
+    def test_auth_header_parses_lowercased(self):
+        (route,) = parse_routes({"routes": [{
+            "host": "x.example", "auth_header": "X-Api-Key", "token_env": "EGRESS_TOKEN_0",
+        }]})
+        self.assertEqual(("", "x-api-key"), (route.auth_scheme, route.auth_header))
+        self.assertTrue(route.injects_auth)
+
+    def test_auth_header_without_token_env_rejected(self):
+        with self.assertRaises(ValueError) as cm:
+            parse_routes({"routes": [{"host": "x.example", "auth_header": "x-api-key"}]})
+        self.assertIn("both set or both empty", str(cm.exception))
+
+    def test_reserved_or_invalid_auth_header_rejected(self):
+        for header in ("host", "Cookie", "bad header"):
+            with self.subTest(header=header), self.assertRaises(ValueError):
+                parse_routes({"routes": [{
+                    "host": "x.example", "auth_header": header, "token_env": "T",
+                }]})
+
     def test_top_level_must_be_object(self):
         with self.assertRaises(ValueError):
             parse_routes(["not", "an", "object"])
@@ -896,6 +915,15 @@ class TestOutboundScanHeaders(unittest.TestCase):
         })
         self.assertNotIn("Authorization", headers)
         self.assertEqual({"x-api-key": "still-scanned"}, headers)
+
+    def test_named_header_route_omits_that_header_from_scan(self):
+        route = Route(host="api.anthropic.com", auth_header="x-api-key",
+                      token_env="EGRESS_TOKEN_0")
+        headers = outbound_scan_headers(route, {
+            "X-Api-Key": "egress-placeholder",
+            "Authorization": "still-scanned",
+        })
+        self.assertEqual({"Authorization": "still-scanned"}, headers)
 
     def test_authed_route_omits_lowercase_authorization_header_from_scan(self):
         route = Route(

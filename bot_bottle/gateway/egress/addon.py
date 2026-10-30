@@ -42,7 +42,6 @@ from bot_bottle.gateway.egress.matching import (
     match_route,
 )
 from bot_bottle.gateway.egress.request_pipeline import (
-    CREDENTIAL_HEADERS,
     evaluate_route_policy,
     git_block_reason,
     strip_credential_query,
@@ -505,9 +504,10 @@ class EgressAddon:
         request_path: str, env: "typing.Mapping[str, str]",
     ) -> None:
         """Strip agent credentials, evaluate the route, inject gateway auth."""
-        # Agent credentials (every CREDENTIAL_HEADERS header and
-        # CREDENTIAL_QUERY_PARAMS parameter) are stripped after the DLP scan
-        # and before injection, unless the route sets `preserve_auth`.
+        # Agent credentials (every CREDENTIAL_HEADERS header, the header the
+        # route injects into, and every CREDENTIAL_QUERY_PARAMS parameter) are
+        # stripped after the DLP scan and before injection, unless the route
+        # sets `preserve_auth`.
         result = evaluate_route_policy(
             config,
             route,
@@ -519,7 +519,7 @@ class EgressAddon:
         )
         if result.strip_authorization:
             for name in [n for n in flow.request.headers.keys()
-                         if n.lower() in CREDENTIAL_HEADERS]:
+                         if n.lower() in result.strip_headers]:
                 flow.request.headers.pop(name, None)
             stripped_path = strip_credential_query(flow.request.path)
             if stripped_path != flow.request.path:
@@ -531,7 +531,7 @@ class EgressAddon:
             return
 
         if result.inject_authorization is not None:
-            flow.request.headers["authorization"] = result.inject_authorization
+            flow.request.headers[result.inject_header] = result.inject_authorization
 
         if result.log_request:
             self._log_request(flow, env)

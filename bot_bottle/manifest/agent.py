@@ -204,6 +204,14 @@ class ManifestAgentProvider:
                 "and auth_token both set; use one or the other"
             )
         settings = _parse_provider_settings(agent_name, harness, d.get("settings"))
+        if harness == "claude" and settings.get("api_key_env") and (
+            auth_token or forward_host_credentials
+        ):
+            raise ManifestError(
+                f"agent '{agent_name}' agent_provider.settings.api_key_env "
+                "can't be combined with auth_token or forward_host_credentials; "
+                "use one"
+            )
         overlay = ManifestImageOverlay()
         if "overlay" in d:
             overlay = ManifestImageOverlay.from_dict(agent_name, d["overlay"])
@@ -362,7 +370,10 @@ def _parse_provider_settings(
     }
     if harness == "pi":
         allowed = common_allowed | pi_allowed
-    elif harness in ("claude", "codex"):
+    elif harness == "claude":
+        # `api_key_env`: the host secret holding an Anthropic API key.
+        allowed = common_allowed | {"api_key_env"}
+    elif harness == "codex":
         allowed = common_allowed
     elif harness not in BUILTIN_HARNESSES:
         return dict(settings)
@@ -388,6 +399,13 @@ def _parse_provider_settings(
                     f"agent '{agent_name}' agent_provider.settings."
                     f"startup_args[{i}] must be a non-empty string"
                 )
+    if harness == "claude":
+        key_env = settings.get("api_key_env")
+        if key_env is not None and (not isinstance(key_env, str) or not key_env):
+            raise ManifestError(
+                f"agent '{agent_name}' agent_provider.settings.api_key_env "
+                "must be a non-empty string"
+            )
     if harness != "pi":
         return dict(settings)
 

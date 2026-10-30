@@ -73,14 +73,15 @@ route is refused like any other raw TCP.
 ### Agent credentials
 
 On a route without `preserve_auth`, the only identity that goes upstream is
-the one the gateway injects (the route's `auth`, always as `Authorization`).
-Before injecting, the gateway strips every credential the agent put in the
-request. An agent handed someone else's key, by a prompt injection for
-example, can't act as that account on an allowlisted host.
+the one the gateway injects (the route's `auth`). Before injecting, the
+gateway strips every credential the agent put in the request. An agent
+handed someone else's key, by a prompt injection for example, can't act as
+that account on an allowlisted host.
 
 - **Headers:** `Authorization`, `X-Api-Key`, `Api-Key`, `X-Goog-Api-Key`,
   `Private-Token`, `X-Auth-Token`, `X-Access-Token`, `X-Gitea-Token`,
-  `X-Vault-Token`, `X-Amz-Security-Token` and `Ocp-Apim-Subscription-Key`.
+  `X-Vault-Token`, `X-Amz-Security-Token` and `Ocp-Apim-Subscription-Key`,
+  plus the header the route injects into.
 - **Query parameters:** `access_token`, `token`, `key`, `api_key`, `apikey`
   and `private_token`. Names are compared case-insensitively, after
   URL-decoding.
@@ -91,6 +92,26 @@ example, can't act as that account on an allowlisted host.
 complete. `Proxy-Authorization` and the identity header belong to the
 gateway and are always stripped before this. Routes with `inspect: false`
 are tunnelled, so nothing is stripped there.
+
+The route's `auth` is injected after stripping, so the gateway's value is
+the one that goes out. The policy fields are `auth_scheme`, `token_env`
+and, optionally, `auth_header` (manifest `auth.scheme`, `auth.token_ref`,
+`auth.header`):
+
+- With no `auth_header`, the token is sent as
+  `Authorization: <scheme> <token>`.
+- A route that names an `auth_header` puts the token in that header:
+  `<scheme> <token>`, or the raw token when there's no scheme.
+- `Host`, `Cookie`, `Proxy-Authorization` and the framing headers can't
+  be auth headers.
+- Outbound DLP doesn't scan the agent's value of the injected header,
+  because it's replaced.
+
+The Claude provider uses a named header for an Anthropic API key. With
+`agent_provider.settings.api_key_env: <host secret>`, its
+`api.anthropic.com` route injects the key raw into `x-api-key`. The agent
+gets `ANTHROPIC_API_KEY=egress-placeholder`, hidden from the launch
+summary, and its `~/.claude.json` pre-approves that placeholder.
 
 ### Outbound DLP
 

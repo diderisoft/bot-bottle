@@ -245,6 +245,34 @@ class TestAgentProviderRuntime(unittest.TestCase):
             self.assertEqual("", r.auth_scheme)
             self.assertEqual("", r.token_ref)
 
+    def test_claude_api_key_injects_x_api_key_and_hides_placeholder(self):
+        # #807: an Anthropic API key stays on the host; the gateway injects it
+        # raw into `x-api-key`, the header Claude Code sends it in.
+        with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
+            plan = build_agent_provision_plan(
+                harness="claude",
+                dockerfile="",
+                state_dir=Path(tmp),
+                instance_name="bot-bottle-test",
+                prompt_file=Path(tmp) / "prompt.txt",
+                provider_settings={"api_key_env": "ANTHROPIC_API_KEY"},
+            )
+            claude_config = json.loads(Path(tmp, "claude.json").read_text())
+        self.assertEqual(1, len(plan.egress_routes))
+        route = plan.egress_routes[0]
+        self.assertEqual("api.anthropic.com", route.host)
+        self.assertEqual("", route.auth_scheme)
+        self.assertEqual("x-api-key", route.auth_header)
+        self.assertEqual("ANTHROPIC_API_KEY", route.token_ref)
+        self.assertEqual("egress-placeholder", plan.env_vars["ANTHROPIC_API_KEY"])
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", plan.env_vars)
+        self.assertEqual(frozenset({"ANTHROPIC_API_KEY"}), plan.hidden_env_names)
+        self.assertEqual({}, plan.provisioned_env)
+        self.assertEqual(
+            {"approved": ["egress-placeholder"], "rejected": []},
+            claude_config["customApiKeyResponses"],
+        )
+
     def test_claude_without_auth_token_has_passthrough_egress_route(self):
         with tempfile.TemporaryDirectory(prefix="bb-provider.") as tmp:
             plan = build_agent_provision_plan(

@@ -76,8 +76,20 @@ class RoutePolicyResult:
     block_reason: str = ""
     block_code: str = ""
     strip_authorization: bool = False
+    # The headers stripped when `strip_authorization` (lowercased).
+    strip_headers: frozenset[str] = frozenset()
     inject_authorization: str | None = None
+    # The header `inject_authorization` goes in (lowercased).
+    inject_header: str = "authorization"
     log_request: bool = False
+
+
+def credential_headers(route: Route | None) -> frozenset[str]:
+    """The agent headers stripped on `route`: `CREDENTIAL_HEADERS`, plus the
+    header the route injects its auth into."""
+    if route is not None and route.injects_auth:
+        return CREDENTIAL_HEADERS | {route.injected_header}
+    return CREDENTIAL_HEADERS
 
 
 def git_block_reason(
@@ -106,14 +118,15 @@ def evaluate_route_policy(
     env: Mapping[str, str],
 ) -> RoutePolicyResult:
     """Auth stripping, matching, injection and logging decisions.
-    `strip_authorization` means every `CREDENTIAL_HEADERS` header and
+    `strip_authorization` means every `strip_headers` header and
     `CREDENTIAL_QUERY_PARAMS` parameter goes; `matches` sees the headers
     without them, as they go upstream."""
     strip_authorization = route is None or not route.preserve_auth
+    strip_headers = credential_headers(route) if strip_authorization else frozenset()
     effective_headers = {
         name.lower(): value
         for name, value in headers.items()
-        if not (strip_authorization and name.lower() in CREDENTIAL_HEADERS)
+        if name.lower() not in strip_headers
     }
     decision = decide(
         config.routes,
@@ -128,7 +141,9 @@ def evaluate_route_policy(
         block_reason=decision.reason if decision.action == "block" else "",
         block_code=decision.code if decision.action == "block" else "",
         strip_authorization=strip_authorization,
+        strip_headers=strip_headers,
         inject_authorization=decision.inject_authorization,
+        inject_header=decision.inject_header,
         log_request=config.log >= LOG_FULL,
     )
 
@@ -138,6 +153,7 @@ __all__ = [
     "CREDENTIAL_QUERY_PARAMS",
     "GIT_PUSH_BLOCK_REASON",
     "RoutePolicyResult",
+    "credential_headers",
     "evaluate_route_policy",
     "git_block_reason",
     "strip_credential_query",

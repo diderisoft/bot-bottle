@@ -527,6 +527,33 @@ class TestAuthInjection(unittest.TestCase):
         self.assertEqual("2023-06-01", flow.request.headers.get("anthropic-version"))
         self.assertEqual("/v1/files?purpose=x", flow.request.path)
 
+    def test_named_header_route_replaces_the_agents_value(self) -> None:
+        # The Claude API-key route: the agent's placeholder `x-api-key` is
+        # stripped and the gateway's raw key injected in its place.
+        route = Route(host="api.anthropic.com", auth_header="x-api-key", token_env="EGRESS_TOKEN_0")
+        addon = _addon(Config(routes=(route,)))
+        flow = _Flow(_Request(
+            host="api.anthropic.com", method="POST",
+            headers={"X-Api-Key": "egress-placeholder", "authorization": "Bearer x"},
+        ))
+        with patch.dict("os.environ", {"EGRESS_TOKEN_0": "sk-ant-real"}):
+            _run_request(addon, flow)
+        self.assertIsNone(flow.response)
+        self.assertEqual("sk-ant-real", flow.request.headers.get("x-api-key"))
+        self.assertIsNone(flow.request.headers.get("authorization"))
+
+    def test_custom_named_header_is_stripped_then_injected(self) -> None:
+        # A header outside CREDENTIAL_HEADERS that a route injects into is
+        # still the gateway's: the agent's value never goes out.
+        route = Route(host="api.example.com", auth_header="x-custom-key",
+                      auth_scheme="Bearer", token_env="EGRESS_TOKEN_0")
+        addon = _addon(Config(routes=(route,)))
+        flow = _Flow(_Request(host="api.example.com", headers={"X-Custom-Key": "attacker"}))
+        with patch.dict("os.environ", {"EGRESS_TOKEN_0": "real"}):
+            _run_request(addon, flow)
+        self.assertEqual("Bearer real", flow.request.headers.get("x-custom-key"))
+        self.assertIsNone(flow.request.headers.get("authorization"))
+
     def test_preserve_auth_keeps_every_agent_credential(self) -> None:
         route = Route(host="registry-1.docker.io", preserve_auth=True)
         addon = _addon(Config(routes=(route,)))

@@ -96,7 +96,7 @@ class Request:
 
 def _comparable(route: Route) -> tuple[object, ...]:
     """A route as plain data (its matches hold compiled regexes)."""
-    return (manifest_route(route), route.auth_scheme, route.token_env)
+    return (manifest_route(route), route.auth_scheme, route.auth_header, route.token_env)
 
 
 def manifest_route(route: Route) -> dict[str, object]:

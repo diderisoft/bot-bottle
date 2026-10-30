@@ -19,6 +19,7 @@ from .types import (
     MatchEntry,
     PathMatch,
     Route,
+    auth_header_error,
 )
 
 # --- Parsing ---
@@ -198,12 +199,18 @@ def _parse_one(idx: int, raw: object) -> Route:
         raise ValueError(f"{label} ({host}): 'auth_scheme' must be a string")
     if not isinstance(token_env, str):
         raise ValueError(f"{label} ({host}): 'token_env' must be a string")
-    if bool(auth_scheme) != bool(token_env):
+    auth_header: object = settings.get("auth_header", "")
+    if not isinstance(auth_header, str):
+        raise ValueError(f"{label} ({host}): 'auth_header' must be a string")
+    if bool(auth_scheme or auth_header) != bool(token_env):
         raise ValueError(
-            f"{label} ({host}): 'auth_scheme' and 'token_env' must be both "
-            f"set or both empty (got auth_scheme={auth_scheme!r}, "
+            f"{label} ({host}): 'token_env' and 'auth_scheme' (or "
+            f"'auth_header') must be both set or both empty (got auth_scheme="
+            f"{auth_scheme!r}, auth_header={auth_header!r}, "
             f"token_env={token_env!r})"
         )
+    if auth_header and auth_header_error(auth_header):
+        raise ValueError(f"{label} ({host}): {auth_header_error(auth_header)}")
 
     # git-over-HTTPS policy
     git_fetch = False
@@ -238,8 +245,9 @@ def _parse_one(idx: int, raw: object) -> Route:
 
     for k in settings:
         if k not in (
-            "matches", "auth_scheme", "token_env", "git", "preserve_auth",
-            "outbound_detectors", "inbound_detectors", "outbound_on_match",
+            "matches", "auth_scheme", "token_env", "auth_header", "git",
+            "preserve_auth", "outbound_detectors", "inbound_detectors",
+            "outbound_on_match",
         ):
             raise ValueError(
                 f"{label} ({host}): inspect has unknown key {k!r}"
@@ -256,6 +264,7 @@ def _parse_one(idx: int, raw: object) -> Route:
         matches=matches,
         auth_scheme=auth_scheme,
         token_env=token_env,
+        auth_header=auth_header.lower(),
         git_fetch=git_fetch,
         outbound_detectors=outbound_detectors,
         inbound_detectors=inbound_detectors,
@@ -298,8 +307,11 @@ def route_to_yaml_dict(r: Route) -> dict[str, object]:
         d["inspect"] = False
         return d
     inspected: dict[str, object] = {}
-    if r.auth_scheme:
-        inspected["auth_scheme"] = r.auth_scheme
+    if r.injects_auth:
+        if r.auth_scheme:
+            inspected["auth_scheme"] = r.auth_scheme
+        if r.auth_header:
+            inspected["auth_header"] = r.auth_header
         inspected["token_env"] = r.token_env
     if r.matches:
         inspected["matches"] = [_match_entry_to_dict(m) for m in r.matches]

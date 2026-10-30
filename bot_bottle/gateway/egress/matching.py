@@ -94,13 +94,14 @@ def decide(
         return Decision("block", (
             f"egress: request {request_method} {request_path!r} does not match any "
             f"entry in matches for {route.host!r}"), code=blocks.ROUTE)
-    if route.auth_scheme and route.token_env:
+    if route.injects_auth:
         token = environ.get(route.token_env, "")
         if not token:
             return Decision("block", (
                 f"egress: route for {route.host!r} declared auth but env var "
                 f"{route.token_env!r} is unset"), code=blocks.CONFIG)
-        return Decision("forward", inject_authorization=f"{route.auth_scheme} {token}")
+        return Decision("forward", inject_authorization=route.auth_value(token),
+                        inject_header=route.injected_header)
     return Decision("forward")
 
 

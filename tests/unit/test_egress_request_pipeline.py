@@ -94,6 +94,16 @@ class TestRoutePolicy(unittest.TestCase):
         self.assertFalse(result.strip_authorization)
         self.assertTrue(result.log_request)
 
+    def test_named_header_injects_the_raw_token(self) -> None:
+        route = Route(host="api.example.com", auth_header="x-custom-key", token_env="T")
+        result = evaluate_route_policy(
+            Config(routes=(route,)), route, host="api.example.com",
+            request_path="/", method="GET", headers={}, env={"T": "raw-key"})
+        self.assertEqual("raw-key", result.inject_authorization)
+        self.assertEqual("x-custom-key", result.inject_header)
+        self.assertIn("x-custom-key", result.strip_headers)
+        self.assertIn("authorization", result.strip_headers)
+
     def test_matching_sees_headers_without_agent_credentials(self) -> None:
         route = Route(host="api.example.com", matches=(MatchEntry(
             headers=(HeaderMatch(name="x-api-key", value="k"),)),))

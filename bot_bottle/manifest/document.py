@@ -41,8 +41,13 @@ def route_document(route: ManifestEgressRoute) -> dict[str, object]:
     inspect: dict[str, object] = {}
     if route.Matches:
         inspect["matches"] = [_match(m) for m in route.Matches]
-    if route.AuthScheme:
-        inspect["auth"] = {"scheme": route.AuthScheme, "token_ref": route.TokenRef}
+    if route.AuthScheme or route.AuthHeader:
+        auth: dict[str, object] = {}
+        if route.AuthScheme:
+            auth["scheme"] = route.AuthScheme
+        if route.AuthHeader:
+            auth["header"] = route.AuthHeader
+        inspect["auth"] = {**auth, "token_ref": route.TokenRef}
     if route.GitFetch:
         inspect["git"] = {"fetch": True}
     if route.PreserveAuth:

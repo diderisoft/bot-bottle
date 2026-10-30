@@ -21,10 +21,11 @@ def build_outbound_scan_text(host: str, path: str, query: str,
 
 
 def outbound_scan_headers(route: Route, headers: typing.Mapping[str, str]) -> dict[str, str]:
-    """Drop agent Authorization when the route injects gateway-owned auth."""
-    skip_auth = bool(route.auth_scheme and route.token_env)
+    """Drop the agent's value for the header the route injects gateway-owned
+    auth into."""
+    skip = route.injected_header if route.injects_auth else ""
     return {name: value for name, value in headers.items()
-            if not (skip_auth and name.lower() == "authorization")}
+            if not (skip and name.lower() == skip)}
 
 
 def build_inbound_scan_text(headers: typing.Mapping[str, str], body: str) -> str:

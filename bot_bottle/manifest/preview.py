@@ -58,9 +58,12 @@ def manifest_to_yaml(manifest: Manifest) -> str:
         lines.append("    routes:")
         for r in bottle.egress.routes:
             lines.append(f"      - host: {r.Host}")
-            if r.AuthScheme:
+            if r.AuthScheme or r.AuthHeader:
                 lines.append("        auth:")
-                lines.append(f"          scheme: {r.AuthScheme}")
+                if r.AuthScheme:
+                    lines.append(f"          scheme: {r.AuthScheme}")
+                if r.AuthHeader:
+                    lines.append(f"          header: {r.AuthHeader}")
 
     lines.append(f"  supervise: {'true' if bottle.supervise else 'false'}")
     if bottle.nested_containers:
