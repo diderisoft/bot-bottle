@@ -35,8 +35,9 @@ Key providers:
   launch and revoked at teardown (`git_gate/provision.py`,
   `contrib/gitea/deploy_key_provisioner.py`), read-only unless the grant ends
   in `:write`. It's declared only as a grant on a forge (below): a bottle
-  file with a long-form `provider: gitea` repo fails to load, naming the
-  grant form ([ADR 0008](../decisions/0008-forge-minted-keys-are-grants.md)).
+  file with a long-form `provider: gitea` repo fails to load
+  ([ADR 0008](../decisions/0008-forge-minted-keys-are-grants.md)); see
+  [Migrating from the old format](#migrating-from-the-old-format).
 
 Without a `host_key`, an interactive launch fetches one with `ssh-keyscan`,
 asks the operator to confirm it, and can save it to the bottle file
@@ -98,6 +99,53 @@ A read-only repo is marked `git-gate.readOnly` in its bare repo, and the
 pre-receive hook refuses pushes to it before scanning, saying a `:write` grant
 is needed. The trust prompt shows each repo as `fetch` or `push`, and where
 its key is minted with which secret.
+
+### Migrating from the old format
+
+Before forges, each repo with a forge-minted key carried its own copy of the
+forge's settings:
+
+```yaml
+git-gate:
+  repos:
+    app:
+      url: ssh://git@10.0.0.5:30009/acme/app.git
+      host_key: ssh-ed25519 AAAA...
+      key: { provider: gitea, forge_token_env: GITEA_ADMIN_TOKEN, api_url: https://gitea.example.com }
+```
+
+A bottle written like this no longer loads. The error lists every such repo
+in the bottle, says whether a bottle already declares the forge, and shows the
+replacement (`manifest/legacy_git_gate.py`). To convert it:
+
+1. Connect the forge once, unless the error says a bottle already declares it:
+   `bot-bottle forge connect https://gitea.example.com`. When the repos' SSH
+   address isn't `ssh://git@<forge host>` (here an IP and port), the error's
+   command adds `--ssh` with the address they used.
+2. `bot-bottle bottles migrate <bottle>` (`manifest/migrate.py`).
+
+`migrate` adds the forge bottle to the front of `extends` (unless the chain
+already has the forge), so the bottle's own parents still win, and replaces
+each old repo with its grant. The forge is the `api_url`'s host, not the SSH
+URL's (the old default, the upstream's host, when there's no `api_url`); the
+owner and repo come from the SSH URL's path. A key without `read_only: true`
+could push, so its grant ends in `:write`; a `read_only: true` key's doesn't.
+When every repo converts and is named after its repo, they're written as a
+list, else as a mapping that keeps the gate's names (and any `static` repos).
+The repos' `host_key` and `forge_token_env` lines go: the grant uses the
+forge's pinned host key and token. `migrate` notes when those differ from the
+old ones, or the forge pins no host key.
+
+Only those lines change; comments, `env`, `egress` and the rest stay as they
+were, and the result is parsed back to check that before it's written. It
+shows the diff and asks first (`--yes` doesn't ask; without a terminal it
+needs `--yes`). A host bottle's migration is a version, after any hand edits
+are versioned, so `bot-bottle bottles revert <bottle> <version>` undoes it; a
+project bottle's is left for the project to commit. With no bottle declaring
+the forge, `migrate` refuses with the same steps: connecting takes a token
+typed by the operator, so it never connects one itself. A repo whose SSH path
+isn't `<owner>/<repo>`, or a file laid out in flow style, is left to edit by
+hand.
 
 ## Agent side
 

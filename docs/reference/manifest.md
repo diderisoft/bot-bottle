@@ -131,6 +131,12 @@ extends it grants repos in a line,
 `:write`, with its own deploy key per run. Details in
 [git-gate.md](git-gate.md#forges-and-one-line-grants).
 
+A bottle written before forges, with each repo's own `url`,
+`key: {provider: gitea, ...}` and `host_key`, no longer loads; its error says
+how to convert it, and `bot-bottle bottles migrate <name>` does it as a new
+version. See
+[Migrating from the old format](git-gate.md#migrating-from-the-old-format).
+
 ## Versions
 
 Every change to a bottle or agent under `~/.bot-bottle/` is a version, hand
@@ -140,6 +146,9 @@ edits included.
   changed.
 - `bot-bottle bottles revert <name> <version>` restores one as a new version,
   taking effect at the next launch.
+- `bot-bottle bottles migrate <name>` rewrites a bottle's old-format git-gate
+  repos as forge grants, as a new version
+  ([git-gate.md](git-gate.md#migrating-from-the-old-format)).
 
 A repo's bottles are versioned by the repo itself. Where versions are kept is
 in [architecture.md](architecture.md#state).

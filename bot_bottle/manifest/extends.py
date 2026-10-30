@@ -10,6 +10,7 @@ from .forges import (
     ManifestForge, credentials_raw, expand_grants, forges_raw, merge_named, resolve_forge, strip_chain_keys,
 )
 from .git import ManifestGitUser, parse_git_gate_config
+from .legacy_git_gate import OldGitGateFormatError, forges_by_host
 from .util import ManifestError, as_json_object
 
 
@@ -104,9 +105,15 @@ def resolve_bottles(raws: dict[str, dict[str, object]]) -> dict[str, ManifestBot
     # Each bottle's effective credentials and forges, which its repo grants
     # (and its children's) resolve against.
     chain_cache: dict[str, tuple[dict[str, object], dict[str, object]]] = {}
-    for name in raws:
-        if name not in cache:
-            _resolve_one_bottle(name, raws, cache, repos_cache, (), chain_cache=chain_cache)
+    try:
+        for name in raws:
+            if name not in cache:
+                _resolve_one_bottle(name, raws, cache, repos_cache, (), chain_cache=chain_cache)
+    except OldGitGateFormatError as e:
+        # The fix depends on which bottles declare the forge; these are the
+        # ones loaded (all of them, from a JSON manifest).
+        raise e.explained(extends=raws[e.bottle].get("extends"),
+                          forge_bottles=forges_by_host(raws.items())) from None
     return cache
 
 

@@ -4,6 +4,8 @@
     bot-bottle bottles history <name>            its versions, newest first
     bot-bottle bottles history <name> <version>  what that version changed
     bot-bottle bottles revert <name> <version>   make it what it was then
+    bot-bottle bottles migrate <name> [--yes]    rewrite old-format git-gate
+                                                 repos as forge grants
 
 A bottle comes from your host (`~/.bot-bottle/bottles/`), this project
 (`./<name>`, from `./.bot-bottle/bottles/`, trusted per host) or bot-bottle
@@ -65,7 +67,7 @@ def cmd_bottles(argv: list[str]) -> int:
     if argv and argv[0] in ("-h", "--help"):
         sys.stderr.write(__doc__ or "")
         return 0
-    if argv and argv[0] in ("history", "revert"):
+    if argv and argv[0] in ("history", "revert", "migrate"):
         # pylint: disable-next=import-outside-toplevel
         from .bottle import cmd_bottle
         return cmd_bottle(argv)

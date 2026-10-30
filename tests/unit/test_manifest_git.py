@@ -336,8 +336,9 @@ class TestForgeMintedKeysAreGrants(unittest.TestCase):
                         "key": {"provider": "gitea", "forge_token_env": "T"}},
             }))
         msg = str(ctx.exception)
-        self.assertIn("git-gate.repos['app']", msg)
-        self.assertIn("<forge>/<owner>/<repo>[:write]", msg)
+        self.assertIn("bottle 'dev' uses the old git-gate format", msg)
+        self.assertIn("(app)", msg)
+        self.assertIn("- gitea.example.com/org/app:write", msg)
 
     def test_a_grant_loads_as_the_long_form(self):
         m = ManifestIndex.from_json_obj({

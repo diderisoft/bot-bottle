@@ -32,6 +32,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from .legacy_git_gate import OldGitGateFormatError, old_repos
 from .util import ManifestError, as_json_object
 
 FORGE_KINDS = ("gitea",)
@@ -198,17 +199,14 @@ def normalize_repos(bottle_name: str, raw: dict[str, object]) -> dict[str, objec
     return {**raw, "git-gate": {**git_d, "repos": mapped}}
 
 
-def refuse_minted_long_form(bottle_name: str, repos: dict[str, object]) -> None:
+def refuse_minted_long_form(bottle_name: str, repos: dict[str, object],
+                            chain_forges: dict[str, object] | None = None) -> None:
     """A bottle file's own repos, as written: a key a forge mints is declared
-    as a grant on that forge, never in long form (ADR 0008)."""
-    for name, entry in repos.items():
-        key = entry.get("key") if isinstance(entry, dict) else None
-        provider = key.get("provider") if isinstance(key, dict) else None
-        if provider in FORGE_KINDS:
-            raise ManifestError(
-                f"bottle '{bottle_name}' git-gate.repos[{name!r}]: a {provider} key is "
-                f"minted through a forge; declare it as a grant on a forge in the chain "
-                f"(<forge>/<owner>/<repo>[:write]); see docs/reference/git-gate.md")
+    as a grant on that forge, never in long form (ADR 0008). The error names
+    every such repo and how to convert them (`manifest/legacy_git_gate.py`)."""
+    if old_repos(repos, FORGE_KINDS):
+        raise OldGitGateFormatError(bottle_name, repos, FORGE_KINDS,
+                                    chain_forges=chain_forges)
 
 
 def expand_grants(bottle_name: str, raw: dict[str, object], forges: dict[str, object],
@@ -222,7 +220,7 @@ def expand_grants(bottle_name: str, raw: dict[str, object], forges: dict[str, ob
     git_d = as_json_object(git, f"bottle '{bottle_name}' git-gate")
     repos = git_d.get("repos")
     if isinstance(repos, dict):
-        refuse_minted_long_form(bottle_name, repos)
+        refuse_minted_long_form(bottle_name, repos, forges)
     if not isinstance(repos, dict) or not any(isinstance(v, str) for v in repos.values()):
         return raw
     expanded: dict[str, object] = {}

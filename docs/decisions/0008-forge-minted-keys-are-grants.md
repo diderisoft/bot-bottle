@@ -40,7 +40,9 @@ read.
   with no grant string on record can't be kept or copied into a bottle; it
   has to be granted again.
 - Existing bottle files with long-form gitea repos stop loading until they
-  are rewritten as grants. There is no automatic migration.
+  are rewritten as grants. (Later: the load error lists every such repo
+  and the fix, and `bot-bottle bottles migrate` rewrites the file once the
+  forge is connected; see the git-gate reference.)
 - Adding a forge kind means adding it to `FORGE_KINDS`, which then also
   refuses that kind's long form.
 
