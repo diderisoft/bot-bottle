@@ -122,8 +122,9 @@ class FirecrackerBottle(Bottle):
             self.agent_argv(argv, tty=True), self.terminal_title, self.terminal_color)
         return command, {}
 
-    def exec(self, script: str, *, user: str = "node",
-             timeout: float | None = None) -> ExecResult:
+    def exec(self, script: str, *, user: str = "node", timeout: float | None = None,
+             private: bool = True) -> ExecResult:
+        del private  # stdin always: ssh doesn't leak
         # Pipe the script to `sh -s`, so nothing is quoted through ssh.
         remote = ["runuser", "-u", user, "--",
                   "env", *_env_assignments_for(user, self._guest_env, self._image_env),

@@ -59,8 +59,9 @@ class DockerBottle(Bottle):
             self.agent_argv(argv, tty=True), self.terminal_title, self.terminal_color)
         return command, {}
 
-    def exec(self, script: str, *, user: str = "node",
-             timeout: float | None = None) -> ExecResult:
+    def exec(self, script: str, *, user: str = "node", timeout: float | None = None,
+             private: bool = True) -> ExecResult:
+        del private  # stdin always: `docker exec -i` doesn't leak
         # Pipe the script to `sh -s` so it never crosses argv.
         return run_script(["docker", "exec", "-u", user, "-i", self.name, "sh", "-s"],
                           script, timeout=timeout)

@@ -129,7 +129,12 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
   session's, never copied) and writes `follow.json`. Then, once a second and
   once more after the agent exits, one `exec` into the bottle reads each new
   file's new bytes by offset (up to 4 MiB a poll) and the 64 bytes before
-  the offset. That `exec` gives up after 60 seconds, so a wedged one can't
+  the offset. A quiet transcript is polled less often, doubling up to every 5
+  seconds; new bytes, or the console typing into the agent, bring it back to
+  every second. The poll's script (paths and offsets) goes as an argument,
+  not on stdin: on macOS every `container exec --interactive` leaks a pipe in
+  the bottle's runtime ([apple/container#2439](https://github.com/apple/container/issues/2439)),
+  which polled each second ran the host out of open files. That `exec` gives up after 60 seconds, so a wedged one can't
   hold the follower, or the teardown waiting to close it. The daemon's other
   background `exec`s are bounded too (reading a bottle's secret, exporting a
   workspace's changes).

@@ -35,11 +35,13 @@ class LocalBottle:
     def __init__(self) -> None:
         self.fail = False
         self.timeouts: list[float | None] = []
+        self.private: list[bool] = []
 
-    def exec(self, script: str, *, user: str = "node",
-             timeout: float | None = None) -> ExecResult:
+    def exec(self, script: str, *, user: str = "node", timeout: float | None = None,
+             private: bool = True) -> ExecResult:
         del user
         self.timeouts.append(timeout)
+        self.private.append(private)
         if self.fail:
             raise RuntimeError("bottle gone")
         r = subprocess.run(["sh", "-c", script], capture_output=True, text=True, check=False)
@@ -177,6 +179,46 @@ class TestFollower(_Root):
         follower = self.begin()
         follower.poll(cast(Any, self.bottle))
         self.assertEqual({POLL_TIMEOUT_SECONDS}, set(self.bottle.timeouts))
+        # Paths and offsets only: no stdin, so no leaked pipe per poll.
+        self.assertEqual({False}, set(self.bottle.private))
+
+    def test_a_poll_says_whether_the_transcript_grew(self) -> None:
+        follower = self.begin()
+        self.assertFalse(follower.poll(cast(Any, self.bottle)))
+        (self.guest / "s.jsonl").write_bytes(b'{"a":1}\n')
+        self.assertTrue(follower.poll(cast(Any, self.bottle)))
+        self.assertFalse(follower.poll(cast(Any, self.bottle)))
+
+    def test_a_quiet_transcript_is_polled_less_often(self) -> None:
+        from bot_bottle.control.hostctl import transcripts as tr
+        follower = self.begin()
+        # Each round: (woken by `wake`?, did the poll find new bytes?)
+        rounds = [(False, False), (False, False), (False, False), (False, False),
+                  (False, True), (False, False), (True, False), (False, False)]
+        waits: list[float] = []
+
+        class Wake:
+            def wait(self, timeout: float) -> bool:
+                waits.append(timeout)
+                if len(waits) > len(rounds):
+                    follower._stop.set()  # pylint: disable=protected-access
+                    return True
+                return rounds[len(waits) - 1][0]
+
+            def clear(self) -> None: ...
+
+        polls = iter(grew for _, grew in rounds)
+
+        def poll(*_args: object) -> bool:
+            return next(polls)
+
+        follower._wake = Wake()  # type: ignore[assignment]  # pylint: disable=protected-access
+        with mock.patch.object(follower, "poll", poll):
+            follower._run()  # pylint: disable=protected-access
+        one, idle = tr.POLL_SECONDS, tr.POLL_IDLE_SECONDS
+        # Doubling up to the idle cap, back to every second on new bytes, and
+        # after a wake (the console typed into the agent).
+        self.assertEqual([one, 2 * one, 4 * one, idle, idle, one, 2 * one, one, 2 * one], waits)
 
     def test_copies_new_files_only_as_they_grow(self) -> None:
         (self.guest / "old.jsonl").write_text("before the session\n")

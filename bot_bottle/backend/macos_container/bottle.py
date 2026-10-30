@@ -109,15 +109,20 @@ class MacosContainerBottle(Bottle):
             self.agent_argv(argv, tty=True), self.terminal_title, self.terminal_color)
         return command, dict(self._exec_env)
 
-    def exec(self, script: str, *, user: str = "node",
-             timeout: float | None = None) -> ExecResult:
+    def exec(self, script: str, *, user: str = "node", timeout: float | None = None,
+             private: bool = True) -> ExecResult:
         # Provisioning gets the agent's exec env too, so its egress carries the
         # token. Bare names again.
-        argv = ["container", "exec", "--user", user, "--interactive"]
+        argv = ["container", "exec", "--user", user]
+        # Every `exec --interactive` leaks a pipe in the bottle's runtime
+        # (apple/container#2439); polled each second, that ran the host out
+        # of open files. A script with nothing secret goes as an argument.
+        if private:
+            argv.append("--interactive")
         for name in sorted(self._exec_env):
             argv.extend(["--env", name])
-        argv.extend([self.name, "sh", "-s"])
-        return run_script(argv, script, timeout=timeout,
+        argv.extend([self.name, "sh", "-s"] if private else [self.name, "sh", "-c", script])
+        return run_script(argv, script if private else "", timeout=timeout,
                           env={**os.environ, **self._exec_env} if self._exec_env else None)
 
     def cp_in(self, host_path: str, container_path: str) -> None:

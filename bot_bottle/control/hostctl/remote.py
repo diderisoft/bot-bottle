@@ -370,6 +370,8 @@ class ConsoleLink:
         typed = await type_into(terminal, data, self._typed.get(agent_id, 0.0))
         if typed is None:
             log.debug(f"remote: dropped input for {agent_id}: the agent doesn't allow typing")
+        elif wake := getattr(self._bottles, "wake_transcript", None):
+            wake(self.running.get(agent_id, ""))  # its reply shows without the idle wait
         self._typed[agent_id] = typed or 0.0
 
     def _resize(self, agent_id: str, cols: object, rows: object) -> None:

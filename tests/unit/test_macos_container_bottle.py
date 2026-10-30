@@ -115,6 +115,20 @@ class TestMacosContainerBottle(unittest.TestCase):
         )
         self.assertEqual("echo hi", run.call_args.kwargs["input"])
 
+    def test_a_script_with_nothing_secret_skips_interactive(self):
+        # Every `exec --interactive` leaks a pipe in the bottle's runtime
+        # (apple/container#2439): a non-private script goes as an argument.
+        bottle = MacosContainerBottle("bot-bottle-dev-abc", lambda: None, None)
+        with patch("bot_bottle.backend.macos_container.bottle.subprocess.run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = run.return_value.stderr = ""
+            bottle.exec("ls /tmp", private=False)
+        self.assertEqual(
+            ["container", "exec", "--user", "node", "bot-bottle-dev-abc", "sh", "-c", "ls /tmp"],
+            run.call_args.args[0],
+        )
+        self.assertEqual("", run.call_args.kwargs["input"])
+
     def test_cp_in_uses_container_cp(self):
         bottle = MacosContainerBottle("bot-bottle-dev-abc", lambda: None, None)
         with patch("bot_bottle.backend.macos_container.bottle.subprocess.run") as run:

@@ -44,6 +44,9 @@ if TYPE_CHECKING:
     from .audit_events import HostAudit
 
 POLL_SECONDS = 1.0
+# A quiet transcript is polled less and less often, up to this. New bytes, or
+# the console typing into the agent (`wake`), bring it back to POLL_SECONDS.
+POLL_IDLE_SECONDS = 5.0
 CHECKPOINT_SECONDS = 300.0
 # Bytes read per file per poll; a longer backlog takes a few polls.
 READ_LIMIT = 4 * 1024 * 1024
@@ -183,6 +186,7 @@ class TranscriptFollower:
         self._clock = clock
         self._copies: dict[str, _Copy] = {}  # guest path -> its current copy
         self._stop = threading.Event()
+        self._wake = threading.Event()  # set by `wake` and `detach`
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._bottle: "Bottle | None" = None
@@ -196,7 +200,7 @@ class TranscriptFollower:
         another session's and never copied."""
         r = bottle.exec(f'for f in {shell_glob(glob)}; do '
                         '[ -f "$f" ] && printf "%s\\n" "$f"; done; :',
-                        timeout=POLL_TIMEOUT_SECONDS)
+                        timeout=POLL_TIMEOUT_SECONDS, private=False)
         skip = r.stdout.splitlines() if r.returncode == 0 else []
         follower = cls(session=session, activation=activation, glob=glob, agent_id=agent_id,
                        skip=skip, audit=audit, harness=harness)
@@ -246,13 +250,24 @@ class TranscriptFollower:
         self._thread.start()
 
     def _run(self) -> None:
-        while not self._stop.wait(POLL_SECONDS):
-            self.poll()
+        interval = POLL_SECONDS
+        while True:
+            woken = self._wake.wait(interval)
+            self._wake.clear()
+            if self._stop.is_set():
+                return
+            grew = self.poll()
+            interval = POLL_SECONDS if grew or woken else min(interval * 2, POLL_IDLE_SECONDS)
+
+    def wake(self) -> None:
+        """Poll now, and every second again: the agent was just typed into."""
+        self._wake.set()
 
     def detach(self) -> None:
         """Stop polling and leave the copies open, as a host controller that
         exits does; the next one resumes them."""
         self._stop.set()
+        self._wake.set()
         if self._thread is not None:
             self._thread.join()
 
@@ -270,33 +285,38 @@ class TranscriptFollower:
         if self.dir.is_dir():
             self._save_follow(closed=True)
 
-    def poll(self, bottle: "Bottle | None" = None) -> None:
-        """Read what's new. Failures are logged and retried next poll."""
+    def poll(self, bottle: "Bottle | None" = None) -> bool:
+        """Read what's new; whether anything was. Failures are logged and
+        retried next poll."""
         bottle = bottle or self._bottle
         if bottle is None:
-            return
+            return False
         with self._lock:
             known = {p: c.offset for p, c in self._copies.items()}
             try:
                 # Bounded: a poll that never returned held the lock, and
                 # `close` (so the bottle's teardown) waited on it for good.
+                # Paths and offsets only, so not on stdin (see `Bottle.exec`).
                 r = bottle.exec(poll_script(self.glob, self.skip, known),
-                                timeout=POLL_TIMEOUT_SECONDS)
+                                timeout=POLL_TIMEOUT_SECONDS, private=False)
             except Exception as e:  # pylint: disable=broad-exception-caught
                 log.debug(f"transcript {self.session}: poll failed: {e}")
-                return
+                return False
             if r.returncode != 0:
                 log.debug(f"transcript {self.session}: poll failed: {r.stderr.strip()[:200]}")
-                return
+                return False
+            grew = False
             for listing in parse_listing(r.stdout):
-                self._take(listing)
+                grew = self._take(listing) or grew
             now = self._clock()
             for copy in self._copies.values():
                 if copy.size != copy.checkpointed_size and \
                         now - copy.checkpointed_at >= CHECKPOINT_SECONDS:
                     self._checkpoint(copy, final=False)
+        return grew
 
-    def _take(self, listing: Listing) -> None:
+    def _take(self, listing: Listing) -> bool:
+        """Copy `listing`'s new bytes; whether the file changed."""
         copy = self._copies.get(listing.guest_path)
         if copy is None:
             copy = self._new_copy(listing.guest_path)
@@ -305,10 +325,11 @@ class TranscriptFollower:
                 and listing.check != copy.tail[-len(listing.check):]):
             # Edited after we read it: keep what we have, copy it afresh. The
             # new bytes are from the old offset, so read again from the start.
-            copy = self._rewritten(copy, listing)
-            return
+            self._rewritten(copy, listing)
+            return True
         if listing.data:
             self._append(copy, listing.data)
+        return bool(listing.data)
 
     def _copy_path(self, guest_path: str, suffix: str = "") -> Path:
         stem = Path(guest_path).name.removesuffix(".jsonl") or "transcript"

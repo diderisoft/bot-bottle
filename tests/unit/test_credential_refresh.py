@@ -37,8 +37,9 @@ class _Bottle:
         self.execs: list[str] = []
         self.timeouts: list[float | None] = []
 
-    def exec(self, script: str, *, user: str = "node", timeout: float | None = None) -> Any:
-        del user
+    def exec(self, script: str, *, user: str = "node", timeout: float | None = None,
+             private: bool = True) -> Any:
+        del user, private
         self.timeouts.append(timeout)
         self.execs.append(script)
         return SimpleNamespace(returncode=0, stdout=self.secret + "\n", stderr="")

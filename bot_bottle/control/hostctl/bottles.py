@@ -614,6 +614,14 @@ class BottleService:
                 return True
         return self._sessions.record(bottle_id) is not None and self._sessions.exists(bottle_id)
 
+    def wake_transcript(self, bottle_id: str) -> None:
+        """The agent was typed into: read its transcript now (a quiet one
+        is polled less often)."""
+        with self._lock:
+            follower = self._followers.get(bottle_id)
+        if follower is not None:
+            follower.wake()
+
     def session_state(self, session_id: str) -> dict[str, object]:
         """`GET /sessions/{id}`: whether the agent runs, and how it exited."""
         status = self._sessions.exit_status(session_id)

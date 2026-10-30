@@ -68,8 +68,9 @@ class _Guest:
         self.header, self.add_code, self.proxy = header, add_code, proxy
         self.rewrites = rewrites
 
-    def exec(self, script: str, *, user: str = "node", timeout: float | None = None) -> Any:
-        del user, timeout
+    def exec(self, script: str, *, user: str = "node", timeout: float | None = None,
+             private: bool = True) -> Any:
+        del user, timeout, private
         self.scripts.append(script)
         if "--get-regexp" in script:
             return SimpleNamespace(returncode=0 if self.header else 1, stdout=self.header,

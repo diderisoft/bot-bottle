@@ -137,11 +137,13 @@ class Bottle(ABC):
         the host controller runs it in tmux."""
 
     @abstractmethod
-    def exec(self, script: str, *, user: str = "node",
-             timeout: float | None = None) -> ExecResult:
+    def exec(self, script: str, *, user: str = "node", timeout: float | None = None,
+             private: bool = True) -> ExecResult:
         """Run `script` as a POSIX shell script in the bottle as `user` and
         return the captured result. Non-zero exit doesn't raise; past
-        `timeout` seconds it's killed (`TIMED_OUT`)."""
+        `timeout` seconds it's killed (`TIMED_OUT`). The script goes on
+        stdin, off the command line any host process can read; a script with
+        nothing secret in it (`private=False`) may go as an argument."""
 
     @abstractmethod
     def cp_in(self, host_path: str, container_path: str) -> None: ...

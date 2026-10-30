@@ -501,6 +501,15 @@ class TestConsoleSession(unittest.TestCase):
         asyncio.run(link.handle({"type": "input", "agent_id": "a1", "data": "yes\r"}))
         self.assertEqual([b"yes", b"\r"], self.terms["a1"].written)
 
+    def test_typing_wakes_the_agents_transcript(self) -> None:
+        # A quiet transcript is polled less often; the reply to what was just
+        # typed shouldn't wait for that.
+        link, bottles, _sent = self._link()
+        bottles.wake_transcript = mock.Mock()  # type: ignore[attr-defined]
+        self._launch(link)
+        asyncio.run(link.handle({"type": "input", "agent_id": "a1", "data": "yes\r"}))
+        bottles.wake_transcript.assert_called_once_with("bottle-1")  # type: ignore[attr-defined]
+
     def test_an_enter_waits_for_its_own_keystroke(self) -> None:
         # A message and its Enter arriving together would read as a paste,
         # whose Enter Claude Code takes for a newline.
