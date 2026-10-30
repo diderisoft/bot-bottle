@@ -26,7 +26,7 @@ def check_stale_json(dir_path: Path, md_dir: Path, label: str) -> None:
             f"found {legacy} but {md_dir} does not exist. The manifest "
             f"format changed — rewrite the JSON content "
             f"as per-file Markdown under {md_dir}/bottles/ and "
-            f"{md_dir}/agents/. See README.md for the schema. "
+            f"{md_dir}/agents/. See docs/reference/manifest.md for the schema. "
             f"({label})"
         )
 

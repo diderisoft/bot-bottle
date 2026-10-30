@@ -187,7 +187,7 @@ class ManifestIndex:
                 return cls.from_json_obj({"bottles": {}, "agents": {}})
             raise ManifestError(
                 f"no manifest found: {home_md} does not exist. "
-                f"See README.md for the per-file Markdown layout."
+                f"See docs/reference/manifest.md for the per-file Markdown layout."
             )
 
         # When CWD is HOME, pass the same dir; _load_md_dirs dedupes.

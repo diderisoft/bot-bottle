@@ -376,8 +376,8 @@ class TestBrokenAgentOnlyFailsAtPreflight(_ResolveCase):
 
 class TestStaleJsonDies(_ResolveCase):
     """If `bot-bottle.json` exists in $HOME alongside no
-    `.bot-bottle/` dir, die with a clear pointer at the README's
-    new manifest section. Don't silently ignore the JSON content."""
+    `.bot-bottle/` dir, die with a clear pointer at the manifest
+    reference (docs/reference/manifest.md). Don't silently ignore the JSON content."""
 
     def test_dies(self):
         (self.home_root / "bot-bottle.json").write_text('{"bottles": {}}')
