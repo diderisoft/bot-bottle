@@ -21,7 +21,7 @@ from .bottle_cleanup_plan import FirecrackerBottleCleanupPlan
 
 
 def _run_root() -> Path:
-    return util.cache_dir() / "run"
+    return util.env_dir() / "run"
 
 
 def _run_dir_of(args: Sequence[str], run_root: Path) -> Path | None:

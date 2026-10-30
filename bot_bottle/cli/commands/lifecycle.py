@@ -89,6 +89,9 @@ def cmd_status(argv: list[str]) -> int:
     ns = parser.parse_args(argv)
     settings = settings_from_env()
     state = runner.running()
+    # pylint: disable-next=import-outside-toplevel
+    from .doctor import environment_line
+    print(f"environment: {environment_line()}")
     print("host controller: " + (f"running at {state.url} (pid {state.pid}, build {state.build_id})"
                                  if state else "not running"))
     print("autostart: " + ("installed" if service_unit.installed() else "not installed"))

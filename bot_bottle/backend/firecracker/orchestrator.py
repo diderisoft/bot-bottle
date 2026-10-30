@@ -10,6 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from ...environment import resource_prefix
 from ...lib.log import die, info
 from ...control.lifecycle import (
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
@@ -21,7 +22,7 @@ from . import firecracker_vm, infra_vm, netpool, util
 from .infra_vm import ORCHESTRATOR_PORT
 
 # The orchestrator VM's run-dir name; one per host.
-ORCHESTRATOR_NAME = "bot-bottle-orchestrator"
+ORCHESTRATOR_NAME = resource_prefix() + "orchestrator"
 
 # Fixed at boot, demand-paged; room for in-VM buildah builds.
 _ORCH_MEM_MIB = 4096

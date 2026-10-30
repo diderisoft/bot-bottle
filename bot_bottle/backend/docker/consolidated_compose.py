@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ...environment import resource_prefix
 from ...egress import Egress
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
@@ -56,7 +57,7 @@ def consolidated_agent_compose(
         service["runtime"] = "runsc"
 
     return {
-        "name": f"bot-bottle-{plan.slug}",
+        "name": f"{resource_prefix()}{plan.slug}",
         "services": {"agent": service},
         # Owned by the launcher (`agent_network`); compose attaches but
         # never creates or removes it.

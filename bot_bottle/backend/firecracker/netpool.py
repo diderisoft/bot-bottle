@@ -11,6 +11,23 @@ Per slot i: TAP `bbfc{i}` with no shared bridge, a /31 with host base + 2i and
 guest base + 2i + 1. A VM reaches only its own gateway, DNAT'd from the host
 TAP IP.
 
+Environment slices (PRD 0116): the setup reserves the live pool plus
+`BOT_BOTTLE_FC_ENV_SLOTS` (default 4) more, one per named environment, so a
+named environment never needs root. Slice k (live is 0) is:
+
+| | live (k = 0) | slice k (1..N, N <= 63) |
+|---|---|---|
+| agent /31s | from `10.243.0.0` | from `10.243.k.0` (base + 256k) |
+| agent TAPs | `bbfc0..` | `bb{k}fc0..` |
+| nft tables | `bot_bottle_fc{,_nat,_gw}` | `bot_bottle_fc{k}{,_nat,_gw}` |
+| orchestrator link | `bborch0`, `10.243.255.0/31` | `bborch{k}`, `10.243.255.4k/31` |
+| gateway link | `bbgw0`, `10.243.255.2/31` | `bbgw{k}`, `10.243.255.(4k+2)/31` |
+
+Every slice has the live pool's size, so the reservation costs N * (size + 2)
+TAPs. `bb{k}fc*` never matches another slice's `bbfc*` or `bb{j}fc*`
+wildcard. A named environment claims the lowest free slice on first use
+(`environment.claim_slot`); `bot-bottle envs rm` frees it.
+
 The default block `10.243.0.0/16` avoids Docker, libvirt, k8s, common LANs and
 Tailscale's 100.64.0.0/10. `overlapping_routes()` catches collisions.
 """
@@ -25,6 +42,7 @@ from pathlib import Path
 from typing import IO
 
 from ...contract.hostctl import InfraSettings
+from ...environment import LIVE, NoFreeSlotError, active_name, claim_slot
 from ...lib.log import die
 
 
@@ -79,6 +97,10 @@ class NetPool:
     # The gateway VM's TAP, also NAT'd out. Agents DNAT here, never to the
     # orchestrator.
     gw_iface: str
+    # The environment slice (0 for live); moves the infra links' /31s up.
+    env_slot: int = 0
+    # How many named-environment slices the host setup reserves after live.
+    env_slot_count: int = 4
 
     def slot(self, index: int) -> Slot:
         base = int(ipaddress.IPv4Address(self.ip_base))
@@ -94,9 +116,10 @@ class NetPool:
 
     def orch_slot(self) -> Slot:
         """The orchestrator VM's link: its own TAP on the /31 at the top of the
-        block (host x.y.255.0, guest x.y.255.1), NAT'd out. `index` is -1."""
+        block (host x.y.255.0, guest x.y.255.1; 4k higher for slice k),
+        NAT'd out. `index` is -1."""
         base16 = int(ipaddress.IPv4Address(self.ip_base)) & 0xFFFF0000
-        host = base16 + 0xFF00
+        host = base16 + 0xFF00 + 4 * self.env_slot
         return Slot(
             index=-1,
             iface=self.orch_iface,
@@ -106,9 +129,10 @@ class NetPool:
 
     def gw_slot(self) -> Slot:
         """The gateway VM's link: the /31 above the orchestrator's (host
-        x.y.255.2, guest x.y.255.3), NAT'd out. `index` is -2."""
+        x.y.255.2, guest x.y.255.3; 4k higher for slice k), NAT'd out.
+        `index` is -2."""
         base16 = int(ipaddress.IPv4Address(self.ip_base)) & 0xFFFF0000
-        host = base16 + 0xFF02
+        host = base16 + 0xFF02 + 4 * self.env_slot
         return Slot(
             index=-2,
             iface=self.gw_iface,
@@ -172,22 +196,99 @@ class NetPool:
         pairs = []
         for key, value in (("BOT_BOTTLE_FC_POOL_SIZE", str(self.pool_size)),
                            ("BOT_BOTTLE_FC_IP_BASE", self.ip_base),
-                           ("BOT_BOTTLE_FC_IFACE_PREFIX", self.iface_prefix)):
+                           ("BOT_BOTTLE_FC_IFACE_PREFIX", self.iface_prefix),
+                           ("BOT_BOTTLE_FC_ENV_SLOTS", str(self.env_slot_count))):
             if value != _default(key):
                 pairs.append(f"{key}={value}")
         return " ".join(pairs)
 
 
-def from_settings(infra: InfraSettings) -> NetPool:
-    """The pool `infra` describes; unset fields take the defaults."""
+# Slices' infra links fit the top /24's 64 four-address blocks (live is 0).
+MAX_ENV_SLOTS = 63
+
+
+@dataclass(frozen=True)
+class EnvSlice:
+    """Slice `slot`'s default pool base and names (0 is live)."""
+
+    slot: int
+    ip_base: str
+    iface_prefix: str
+    nft_table: str
+    orch_iface: str
+    gw_iface: str
+
+
+def env_slots(infra: InfraSettings) -> int:
+    """How many named-environment slices the host reserves."""
+    return infra.fc_env_slots or int(_default("BOT_BOTTLE_FC_ENV_SLOTS"))
+
+
+def env_slice(slot: int, pool_size: int = 0) -> EnvSlice:
+    """Slice `slot`'s defaults (see the module doc). Raises ValueError for a
+    slot outside 0..MAX_ENV_SLOTS, or a pool too big for a slice's /24."""
+    if not 0 <= slot <= MAX_ENV_SLOTS:
+        raise ValueError(f"environment slice {slot} is outside 0..{MAX_ENV_SLOTS}")
+    size = pool_size or int(_default("BOT_BOTTLE_FC_POOL_SIZE"))
+    if slot and 2 * size > 256:
+        raise ValueError(f"a pool of {size} slots doesn't fit a slice's /24 (at most 128)")
+    if slot == 0:
+        return EnvSlice(
+            slot=0,
+            ip_base=_default("BOT_BOTTLE_FC_IP_BASE"),
+            iface_prefix=_default("BOT_BOTTLE_FC_IFACE_PREFIX"),
+            nft_table=_default("BOT_BOTTLE_FC_NFT_TABLE"),
+            orch_iface=_default("BOT_BOTTLE_FC_ORCH_IFACE"),
+            gw_iface=_default("BOT_BOTTLE_FC_GW_IFACE"),
+        )
+    base = int(ipaddress.IPv4Address(_default("BOT_BOTTLE_FC_IP_BASE")))
+    return EnvSlice(
+        slot=slot,
+        ip_base=str(ipaddress.IPv4Address(base + 256 * slot)),
+        iface_prefix=f"bb{slot}fc",
+        nft_table=f"{_default('BOT_BOTTLE_FC_NFT_TABLE')}{slot}",
+        orch_iface=f"bborch{slot}",
+        gw_iface=f"bbgw{slot}",
+    )
+
+
+def from_settings(infra: InfraSettings, env: str | None = None) -> NetPool:
+    """The pool `infra` describes for environment `env` (default: the active
+    one); unset fields take its slice's defaults. A named environment claims
+    a slice on first use, and dies saying how to reserve more when every
+    reserved one is held."""
+    name = active_name() if env is None else env
+    count = min(env_slots(infra), MAX_ENV_SLOTS)
+    slot = 0
+    if name != LIVE:
+        try:
+            slot = claim_slot(name, count)
+        except NoFreeSlotError as e:
+            die(str(e))
+    try:
+        sl = env_slice(slot, infra.fc_pool_size)
+    except ValueError as e:
+        die(f"firecracker network pool: {e}")
     return NetPool(
         pool_size=infra.fc_pool_size or int(_default("BOT_BOTTLE_FC_POOL_SIZE")),
-        ip_base=infra.fc_ip_base or _default("BOT_BOTTLE_FC_IP_BASE"),
-        iface_prefix=infra.fc_iface_prefix or _default("BOT_BOTTLE_FC_IFACE_PREFIX"),
-        nft_table=infra.fc_nft_table or _default("BOT_BOTTLE_FC_NFT_TABLE"),
-        orch_iface=infra.fc_orch_iface or _default("BOT_BOTTLE_FC_ORCH_IFACE"),
-        gw_iface=infra.fc_gw_iface or _default("BOT_BOTTLE_FC_GW_IFACE"),
+        ip_base=infra.fc_ip_base or sl.ip_base,
+        iface_prefix=infra.fc_iface_prefix or sl.iface_prefix,
+        nft_table=infra.fc_nft_table or sl.nft_table,
+        orch_iface=infra.fc_orch_iface or sl.orch_iface,
+        gw_iface=infra.fc_gw_iface or sl.gw_iface,
+        env_slot=slot,
+        env_slot_count=count,
     )
+
+
+def host_pool(infra: InfraSettings) -> NetPool:
+    """The live pool, which the host setup provisions with every slice after
+    it, whichever environment is active. A named environment's own `fc_*`
+    overrides describe its slice, not the host's, so they're dropped."""
+    if active_name() == LIVE:
+        return from_settings(infra, env=LIVE)
+    return from_settings(InfraSettings(fc_pool_size=infra.fc_pool_size,
+                                       fc_env_slots=infra.fc_env_slots), env=LIVE)
 
 
 # --- fail-closed verification ---
@@ -296,6 +397,7 @@ RemainAfterExit=yes
 Environment=BOT_BOTTLE_FC_POOL_SIZE={pool.pool_size}
 Environment=BOT_BOTTLE_FC_IP_BASE={pool.ip_base}
 Environment=BOT_BOTTLE_FC_IFACE_PREFIX={pool.iface_prefix}
+Environment=BOT_BOTTLE_FC_ENV_SLOTS={pool.env_slot_count}
 Environment=BOT_BOTTLE_FC_OWNER={owner}
 ExecStart={script_path} up
 ExecStop={script_path} down

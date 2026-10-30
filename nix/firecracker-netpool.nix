@@ -68,7 +68,13 @@ let
     BOT_BOTTLE_FC_NFT_TABLE = cfg.tableName;
     BOT_BOTTLE_FC_ORCH_IFACE = cfg.orchIface;
     BOT_BOTTLE_FC_GW_IFACE = cfg.gwIface;
+    BOT_BOTTLE_FC_ENV_SLOTS = toString cfg.envSlots;
   } // ownEnv;
+
+  # Every slice's orchestrator TAP: live's, then bborch1..bborch<envSlots>
+  # (the script's naming; netpool.env_slice).
+  orchIfaces = [ cfg.orchIface ]
+    ++ map (k: "bborch${toString k}") (lib.range 1 cfg.envSlots);
 in
 {
   options.services.bot-bottle-firecracker = {
@@ -157,6 +163,20 @@ in
       '';
     };
 
+    envSlots = lib.mkOption {
+      type = lib.types.ints.between 0 63;
+      default = lib.toInt defaults.BOT_BOTTLE_FC_ENV_SLOTS;
+      defaultText = lib.literalMD "the shared `netpool.defaults.env` value";
+      description = ''
+        Named-environment slices (BOT_BOTTLE_ENV, e.g. `dev` or `ci-<run>`)
+        reserved after the live pool, so creating an environment needs no
+        root. Slice k gets poolSize TAPs `bb<k>fc*` with /31s from
+        ipBase + 256k, nft tables `<tableName><k>*`, and infra links
+        `bborch<k>` / `bbgw<k>`. Each slice costs poolSize + 2 TAPs. Must
+        be at least BOT_BOTTLE_FC_ENV_SLOTS where the CLI runs.
+      '';
+    };
+
     writeEnvFile = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -175,6 +195,10 @@ in
         message = "services.bot-bottle-firecracker.ipBase must be /31-aligned (even final octet); got ${cfg.ipBase}.";
       }
       {
+        assertion = cfg.envSlots == 0 || cfg.poolSize <= 128;
+        message = "services.bot-bottle-firecracker: with envSlots > 0, poolSize must be at most 128 (each slice is one /24).";
+      }
+      {
         assertion = (cfg.owner != null) != (cfg.group != null);
         message = "services.bot-bottle-firecracker: set exactly one of `owner` or `group`.";
       }
@@ -186,7 +210,9 @@ in
     # The orchestrator VM reaches the host controller on the host end of its
     # own TAP (PRD 0092; contract.hostctl.GUEST_PORT). Opened on that one
     # interface only; agent VMs' input stays dropped by the isolation table.
-    networking.firewall.interfaces.${cfg.orchIface}.allowedTCPPorts = [ 8098 ];
+    # Each environment slice's orchestrator TAP gets the same port.
+    networking.firewall.interfaces = lib.genAttrs orchIfaces
+      (_: { allowedTCPPorts = [ 8098 ]; });
 
     # One oneshot brings up the whole pool (TAPs + independent nft table)
     # by running the shared bring-up script. No networking.nftables.enable
@@ -213,6 +239,7 @@ in
         BOT_BOTTLE_FC_NFT_TABLE=${cfg.tableName}
         BOT_BOTTLE_FC_ORCH_IFACE=${cfg.orchIface}
         BOT_BOTTLE_FC_GW_IFACE=${cfg.gwIface}
+        BOT_BOTTLE_FC_ENV_SLOTS=${toString cfg.envSlots}
       '';
     };
   };

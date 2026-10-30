@@ -12,12 +12,13 @@ first, since docker refuses to remove a network with endpoints.
 
 from __future__ import annotations
 
+from ...environment import docker_agent_subnets, resource_prefix
 from ...contract.hostctl import agent_subnet_pool
 from .gateway_net import NoFreeAddressError, free_agent_subnets
 from .util import run_docker
 from ...lib.log import warn
 
-AGENT_NETWORK_PREFIX = "bot-bottle-agent-"
+AGENT_NETWORK_PREFIX = resource_prefix() + "agent-"
 AGENT_NETWORK_LABEL = "bot-bottle.agent-network"
 # Creation retries this many free-looking subnets before giving up.
 _CREATE_ATTEMPTS = 16
@@ -75,10 +76,10 @@ def network_subnet(name: str) -> str:
 
 def create_agent_network(name: str, pool: str = "") -> str:
     """Create the bottle's `--internal` network on a free /29 of `pool` ("" is
-    the default pool) and return the subnet. An existing per-agent network of
+    the environment's default pool) and return the subnet. An existing per-agent network of
     that name (a crashed launch's) is reused."""
     try:
-        pool = agent_subnet_pool(pool)
+        pool = agent_subnet_pool(pool or docker_agent_subnets())
     except ValueError as e:
         raise AgentNetworkError(f"docker agent subnet pool: {e}") from e
     tried = 0

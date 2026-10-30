@@ -11,6 +11,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from ..environment import InvalidEnvironmentError, active_name, ensure_active_registered
 from ..errors import MissingEnvVarError, SecretsFileError
 from ..lib.log import Die, die, error
 from ..manifest import ManifestError, ManifestIndex
@@ -45,6 +46,11 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-retu
         argv = sys.argv[1:]
     command = argv[0] if argv else ""
     rest = argv[1:]
+    try:
+        active_name()  # a bad BOT_BOTTLE_ENV stops everything, before any path
+    except InvalidEnvironmentError as e:
+        error(str(e))
+        return 2
     if command in ("-h", "--help"):
         cmd_help()
         return 0
@@ -56,6 +62,14 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-retu
     if handler is None:
         cmd_help()
         die(f"unknown command or agent: {command}")
+    try:
+        # A named environment registers on first use; `envs` manages them
+        # and must not register the one it removes.
+        if command != "envs":
+            ensure_active_registered()
+    except InvalidEnvironmentError as e:
+        error(str(e))
+        return 2
     mgr = StoreManager(host_db_path())
     fresh = _fresh_db(host_db_path())  # before is_migrated, which creates the file
     if command in NO_MIGRATION_COMMANDS or mgr.is_migrated():

@@ -34,6 +34,7 @@ from typing import Any
 from ...backend import BottleBackend, get_bottle_backend, has_backend, known_backend_names
 from ...backend.host_resources import HostResource
 from ...control.hostctl import runner, service_unit
+from ...environment import ENV_VAR, active_name, is_live
 from ...paths import bot_bottle_root
 from ...util import read_tty_line
 from ..constants import PROG
@@ -186,6 +187,14 @@ def cmd_uninstall(argv: list[str]) -> int:  # pylint: disable=too-many-branches
     parser.add_argument("--force", action="store_true", help="even while bottles are running")
     parser.add_argument("--yes", "-y", action="store_true", help="don't ask")
     ns = parser.parse_args(argv)
+
+    if not is_live():
+        # Uninstall removes the shared caches, the package and the host setup
+        # every environment uses; one environment goes with `envs rm`.
+        sys.stderr.write(f"{PROG} uninstall: {ENV_VAR}={active_name()} is a named environment; "
+                         f"remove it with `{PROG} envs rm {active_name()}`, or unset "
+                         f"{ENV_VAR} to uninstall bot-bottle\n")
+        return 2
 
     backends = _backends()
     resources = {b.name: b.host_resources(purge=ns.purge) for b in backends}

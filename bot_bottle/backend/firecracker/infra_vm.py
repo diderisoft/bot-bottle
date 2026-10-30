@@ -207,7 +207,7 @@ def boot_vm(
 
 
 def _infra_dir() -> Path:
-    d = util.cache_dir() / "infra"
+    d = util.env_dir() / "infra"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

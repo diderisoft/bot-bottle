@@ -11,7 +11,7 @@ from . import util
 
 
 def _lock_path() -> Path:
-    return util.cache_dir() / "run.lifecycle.lock"
+    return util.env_dir() / "run.lifecycle.lock"
 
 
 @contextmanager

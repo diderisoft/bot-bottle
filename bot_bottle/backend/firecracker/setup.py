@@ -100,14 +100,15 @@ def _warn_overlaps(pool: netpool.NetPool) -> None:
 
 
 def setup(settings: Settings) -> int:
-    pool = netpool.from_settings(settings.infra)
+    pool = netpool.host_pool(settings.infra)
     sys.stderr.write("Firecracker backend — one-time host setup.\n\n")
     _print_prereqs()
     slots = pool.all_slots()
     sys.stderr.write(
         f"2) network pool: {len(slots)} slots "
-        f"({slots[0].iface}..{slots[-1].iface}), base {pool.ip_base} — "
-        f"TAP devices + nft isolation table, privileged (needs root once).\n\n"
+        f"({slots[0].iface}..{slots[-1].iface}), base {pool.ip_base}, plus "
+        f"{pool.env_slot_count} named-environment slices of the same size — "
+        f"TAP devices + nft isolation tables, privileged (needs root once).\n\n"
     )
     _warn_overlaps(pool)
     if _is_nixos():
@@ -178,7 +179,7 @@ def _setup_systemd(pool: netpool.NetPool) -> None:
 
 
 def teardown(settings: Settings) -> int:
-    pool = netpool.from_settings(settings.infra)
+    pool = netpool.host_pool(settings.infra)
     slots = pool.all_slots()
     sys.stderr.write(
         f"Undo the Firecracker network pool ({len(slots)} slots, base "

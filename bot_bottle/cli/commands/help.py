@@ -28,6 +28,7 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w("  commit    snapshot a running bottled agent's container state to an image\n")
     w("  doctor    check host prerequisites (Python, backends, tmux, config dir)\n")
     w("  down      stop the orchestrator, gateway and host controller\n")
+    w("  envs      list environments (BOT_BOTTLE_ENV); remove one (rm NAME)\n")
     w("  forge     connect a forge (Gitea) so bottles can grant its repos in a line\n")
     w("  help      show this command list\n")
     w("  install   set up this host: backend prerequisites, tmux, autostart (--undo)\n")

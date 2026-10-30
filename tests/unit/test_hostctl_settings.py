@@ -39,7 +39,7 @@ class TestSettingsJson(unittest.TestCase):
                          set(body["operation"]))
         # Fields added later are left out while at their default.
         self.assertEqual({f.name for f in dataclasses.fields(InfraSettings)}
-                         - {"docker_agent_subnets"}, set(body["infra"]))
+                         - {"docker_agent_subnets", "fc_env_slots"}, set(body["infra"]))
 
     def test_the_agent_subnet_pool_appears_only_when_set(self) -> None:
         # So adding it didn't change the default fingerprint, and an upgrade
@@ -51,11 +51,16 @@ class TestSettingsJson(unittest.TestCase):
         self.assertNotEqual(InfraSettings().fingerprint(), custom.infra.fingerprint())
 
     def test_default_fingerprint_is_the_one_from_before_the_pool_setting(self) -> None:
-        # The default's canonical JSON, as it was before `docker_agent_subnets`.
+        # The default's canonical JSON, as it was before `docker_agent_subnets`
+        # and `fc_env_slots`.
         body = dataclasses.asdict(InfraSettings())
         del body["docker_agent_subnets"]
+        del body["fc_env_slots"]
         canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
         self.assertEqual(hashlib.sha256(canonical.encode()).hexdigest(),
+                         InfraSettings().fingerprint())
+        # And the digest itself, so the live install's infra isn't restarted.
+        self.assertEqual("4955111b08908f4605de0d3788b6aeb684f6626775cf1f4a512f31d3aa496b59",
                          InfraSettings().fingerprint())
 
     def test_missing_keys_take_defaults(self) -> None:
@@ -159,6 +164,7 @@ class TestEnvLoader(unittest.TestCase):
             "BOT_BOTTLE_FC_NFT_TABLE": "bb_ci",
             "BOT_BOTTLE_FC_ORCH_IFACE": "bbciorch0",
             "BOT_BOTTLE_FC_GW_IFACE": "bbcigw0",
+            "BOT_BOTTLE_FC_ENV_SLOTS": "6",
             "BOT_BOTTLE_MACOS_CONTAINER_DNS": "9.9.9.9",
         }
         expected = Settings(
@@ -172,7 +178,7 @@ class TestEnvLoader(unittest.TestCase):
                 fc_kernel="/fc/vmlinux",
                 fc_dropbear="/fc/dropbear", fc_pool_size=4, fc_ip_base="10.9.0.0",
                 fc_iface_prefix="bbci", fc_nft_table="bb_ci", fc_orch_iface="bbciorch0",
-                fc_gw_iface="bbcigw0", macos_container_dns="9.9.9.9",
+                fc_gw_iface="bbcigw0", macos_container_dns="9.9.9.9", fc_env_slots=6,
             ),
         )
         self.assertEqual(expected, settings_from_env(env))

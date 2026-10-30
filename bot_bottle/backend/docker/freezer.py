@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ...environment import resource_prefix
 from .. import ActiveAgent
 from ..freeze import Freezer
 from .util import commit_container
@@ -13,7 +14,7 @@ class DockerFreezer(Freezer):
     backend_name = "docker"
 
     def _freeze(self, agent: ActiveAgent) -> str:
-        container = f"bot-bottle-{agent.slug}"
+        container = f"{resource_prefix()}{agent.slug}"
         image_tag = f"bot-bottle-committed-{agent.slug}:latest"
         commit_container(container, image_tag)
         return image_tag

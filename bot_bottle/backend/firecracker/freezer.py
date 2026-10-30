@@ -20,7 +20,7 @@ class FirecrackerFreezer(Freezer):
     backend_name = "firecracker"
 
     def _freeze(self, agent: ActiveAgent) -> str:
-        run_dir = util.cache_dir() / "run" / agent.slug
+        run_dir = util.env_dir() / "run" / agent.slug
         private_key = run_dir / "bottle_id_ed25519"
         guest_ip = util.guest_ip_from_config(run_dir / "config.json")
         if not private_key.is_file() or not guest_ip:

@@ -14,6 +14,7 @@ from ...backend import (
     backend_os_requirement, docker_isolation_summary, is_backend_ready, known_backend_names,
 )
 from ...contract.yaml_subset import YamlSubsetError, parse_frontmatter
+from ...environment import ENV_VAR, LIVE, active_name
 from .. import openrouter
 from ...control.hostctl.sessions import MIN_TMUX_VERSION, tmux_version
 from ...paths import bot_bottle_root
@@ -90,6 +91,13 @@ def _check_tmux() -> bool:
     return True
 
 
+def environment_line() -> str:
+    """The active environment and its state root, for doctor and status."""
+    name = active_name()
+    how = "the default" if name == LIVE else f"{ENV_VAR}={name}"
+    return f"{name} ({how}; state in {bot_bottle_root()})"
+
+
 def _check_config_dir() -> None:
     config = bot_bottle_root()
     if config.is_dir():
@@ -159,8 +167,10 @@ def cmd_doctor(argv: list[str]) -> int:
     if ns.backend:
         # pylint: disable-next=import-outside-toplevel
         from ...backend import get_bottle_backend
+        sys.stderr.write(f"environment: {environment_line()}\n")
         return get_bottle_backend(settings_from_env(), ns.backend).status()
 
+    _note("environment", environment_line())
     # Hard requirements set the exit code.
     required = [_check_python(), _check_backends(), _check_tmux()]
     _check_config_dir()

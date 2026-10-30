@@ -41,6 +41,7 @@ INFRA_ENV: dict[str, str] = {
     "fc_nft_table": "BOT_BOTTLE_FC_NFT_TABLE",
     "fc_orch_iface": "BOT_BOTTLE_FC_ORCH_IFACE",
     "fc_gw_iface": "BOT_BOTTLE_FC_GW_IFACE",
+    "fc_env_slots": "BOT_BOTTLE_FC_ENV_SLOTS",
     "macos_container_dns": "BOT_BOTTLE_MACOS_CONTAINER_DNS",
 }
 

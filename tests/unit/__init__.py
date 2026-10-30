@@ -28,6 +28,10 @@ from collections.abc import Callable
 from pathlib import Path
 from unittest import mock
 
+# Resource names are fixed at import from `BOT_BOTTLE_ENV`, and the suite
+# asserts live's; a developer's `BOT_BOTTLE_ENV=dev` must not leak in.
+os.environ.pop("BOT_BOTTLE_ENV", None)
+
 _real_home = os.environ.get("HOME")
 _tmp_home = tempfile.mkdtemp(prefix="bot-bottle-unit-home.")
 os.environ["HOME"] = _tmp_home

@@ -14,6 +14,7 @@ import os
 import time
 from pathlib import Path
 
+from ...environment import resource_prefix
 from ...lib import log
 from ... import resources
 from .util import image_exists as docker_image_exists
@@ -37,11 +38,11 @@ from ...control.lifecycle import (
 
 # The orchestrator container and the control network the gateway reaches it
 # over. Agents are never on it. Same names on docker and macOS.
-ORCHESTRATOR_NAME = "bot-bottle-orchestrator"
-ORCHESTRATOR_LABEL = "bot-bottle-orchestrator=1"
-ORCHESTRATOR_NETWORK = "bot-bottle-orchestrator"
+ORCHESTRATOR_NAME = resource_prefix() + "orchestrator"
+ORCHESTRATOR_LABEL = f"{ORCHESTRATOR_NAME}=1"
+ORCHESTRATOR_NETWORK = resource_prefix() + "orchestrator"
 # Carries only the loopback port mapping; no NAT'd egress.
-ORCHESTRATOR_PUBLISH_NETWORK = "bot-bottle-orchestrator-publish"
+ORCHESTRATOR_PUBLISH_NETWORK = resource_prefix() + "orchestrator-publish"
 _NO_MASQUERADE = "com.docker.network.bridge.enable_ip_masquerade"
 # TEST-NET-1 as Docker DNS's upstream: external names don't resolve, container
 # names do.

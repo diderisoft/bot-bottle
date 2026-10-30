@@ -17,6 +17,7 @@ import tempfile
 from pathlib import Path
 
 from ...contract.hostctl import InfraSettings
+from ...environment import LIVE, active_name
 from ...lib.log import die, info, warn
 from ...paths import host_firecracker_cache_dir
 from . import netpool
@@ -31,6 +32,18 @@ _KVM_DEVICE = "/dev/kvm"
 
 def cache_dir() -> Path:
     return host_firecracker_cache_dir()
+
+
+def env_dir(name: str | None = None) -> Path:
+    """Where an environment's VMs live (`run/`, `infra/`, the lifecycle lock):
+    the cache root for live, `envs/<name>/` under it otherwise. The kernel,
+    dropbear and root filesystems stay shared in the cache root."""
+    name = active_name() if name is None else name
+    if name == LIVE:
+        return cache_dir()
+    d = cache_dir() / "envs" / name
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def kernel_path(infra: InfraSettings) -> Path:

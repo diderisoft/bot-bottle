@@ -13,12 +13,15 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from ...environment import ENV_VAR, LIVE, active_name, resource_prefix, reverse_dns
 from ...paths import bot_bottle_root
 from .build import PACKAGE_ROOT
 from .runner import HostControlError, state_dir
 
-LAUNCHD_LABEL = "io.bot-bottle.hostctl"
-SYSTEMD_UNIT = "bot-bottle-hostctl.service"
+# Per environment: `io.bot-bottle.hostctl` and `bot-bottle-hostctl.service` for
+# live, `io.bot-bottle.<name>.hostctl` and `bb-<name>-hostctl.service` otherwise.
+LAUNCHD_LABEL = f"{reverse_dns()}.hostctl"
+SYSTEMD_UNIT = f"{resource_prefix()}hostctl.service"
 
 
 @dataclass(frozen=True)
@@ -32,8 +35,12 @@ class ServiceSpec:
         return [self.python, "-P", "-m", "bot_bottle.control.hostctl"]  # -P: #706
 
     def environment(self) -> dict[str, str]:
-        return {"PATH": self.path_env, "PYTHONPATH": str(PACKAGE_ROOT.parent),
-                "BOT_BOTTLE_ROOT": str(bot_bottle_root())}
+        env = {"PATH": self.path_env, "PYTHONPATH": str(PACKAGE_ROOT.parent),
+               "BOT_BOTTLE_ROOT": str(bot_bottle_root())}
+        name = active_name()
+        if name != LIVE:
+            env[ENV_VAR] = name
+        return env
 
 
 def manager() -> str:

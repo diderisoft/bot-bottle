@@ -1,5 +1,6 @@
-"""Host filesystem paths. `bot_bottle_root()` (default `~/.bot-bottle`,
-overridable with `BOT_BOTTLE_ROOT`) holds per-bottle state, keys, the gateway
+"""Host filesystem paths. `bot_bottle_root()` (default `~/.bot-bottle`, or
+`~/.bot-bottle-envs/<name>` in a named environment; overridable with
+`BOT_BOTTLE_ROOT`) holds per-bottle state, keys, the gateway
 CA and the host DB. Services are handed the paths they need at startup.
 """
 
@@ -11,6 +12,7 @@ import stat
 from pathlib import Path
 
 from .contract.auth import ORCHESTRATOR_TOKEN_FILENAME
+from .environment import default_root
 
 # The host DB; every SQLite store shares it, namespaced by TableMigrations
 # schema_key.
@@ -29,12 +31,13 @@ AUDIT_DIRNAME = "audit"
 
 def bot_bottle_root(home: Path | None = None) -> Path:
     """The app root, data and manifests (agents/, bottles/, contrib/) alike:
-    `$BOT_BOTTLE_ROOT` if set, else `<home>/.bot-bottle` (`home` defaults to
-    the user's)."""
+    `$BOT_BOTTLE_ROOT` if set, else `<home>/.bot-bottle` for the live
+    environment and `<home>/.bot-bottle-envs/<name>` for a named one (`home`
+    defaults to the user's)."""
     override = os.environ.get("BOT_BOTTLE_ROOT")
     if override:
         return Path(override)
-    return (home if home is not None else Path.home()) / ".bot-bottle"
+    return default_root(home=home)
 
 
 def host_secrets_path() -> Path:

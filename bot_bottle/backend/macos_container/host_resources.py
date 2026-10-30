@@ -4,11 +4,13 @@ its infra and agent containers, its networks and DB volume, and its images.
 
 from __future__ import annotations
 
+from ...environment import resource_prefix
 from ..host_resources import HostResource, is_bot_bottle_image, run_json, run_ok
 
 _CONTAINER = "container"
 # Every container, network and volume this backend creates is named so.
-_NAME_PREFIX = "bot-bottle-"
+# The active environment's prefix (`bot-bottle-` for live).
+_NAME_PREFIX = resource_prefix()
 
 
 def _name(entry: dict[str, object]) -> str:

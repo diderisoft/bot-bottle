@@ -5,10 +5,12 @@ It mounts host directories rather than named volumes, so there are none.
 
 from __future__ import annotations
 
+from ...environment import resource_prefix
 from ..host_resources import HostResource, is_bot_bottle_image, run_lines, run_ok
 
 # Compose projects, the infra containers and networks are all named so.
-_NAME_PREFIX = "bot-bottle-"
+# The active environment's prefix (`bot-bottle-` for live).
+_NAME_PREFIX = resource_prefix()
 
 
 def list_resources(*, purge: bool) -> list[HostResource]:

@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 
+from ...environment import resource_prefix
 from ...lib import log
 from ... import resources
 from ...contract.hostctl import Settings
@@ -33,10 +34,10 @@ from ...infra_image import (
 from ...published_artifacts import FORMAT_OCI
 from .gateway import CONTROL_NETWORK
 
-ORCHESTRATOR_NAME = "bot-bottle-mac-orchestrator"
-ORCHESTRATOR_LABEL = "bot-bottle-mac-orchestrator=1"
+ORCHESTRATOR_NAME = resource_prefix() + "mac-orchestrator"
+ORCHESTRATOR_LABEL = f"{ORCHESTRATOR_NAME}=1"
 # Volume holding `bot-bottle.db`, mounted only into the orchestrator.
-ORCHESTRATOR_DB_VOLUME = "bot-bottle-mac-db"
+ORCHESTRATOR_DB_VOLUME = resource_prefix() + "mac-db"
 
 # DB volume mount point; the DB is `<root>/db/<filename>`, passed as `--db`.
 _DB_ROOT_IN_CONTAINER = "/var/lib/bot-bottle"

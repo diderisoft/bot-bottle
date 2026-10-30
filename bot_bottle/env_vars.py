@@ -41,9 +41,16 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "Backend to use: `macos-container`, `firecracker` or `docker`. "
            "Same as `--backend`.",
            "the host default"),
+    EnvVar("BOT_BOTTLE_ENV", "user",
+           "The environment: `live`, or a name (lowercase letters, digits and `-`, "
+           "at most 24) such as `dev` or `ci-<run>`. A named one gets its own state "
+           "root, `bb-<name>-*` container, VM, network and volume names, docker "
+           "subnets and firecracker pool slice, so it never touches the live "
+           "install; explicit settings below still win. See `bot-bottle envs`.",
+           "`live`"),
     EnvVar("BOT_BOTTLE_ROOT", "user",
            "State root: manifests, keys, secrets, the host DB and audit journal.",
-           "`~/.bot-bottle`"),
+           "`~/.bot-bottle`; `~/.bot-bottle-envs/<name>` in a named environment"),
     EnvVar("BOT_BOTTLE_LOG_LEVEL", "user",
            "`debug`, `info`, `warn` or `error`. `debug` also turns on the "
            "orchestrator's access log.",
@@ -71,10 +78,11 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "`30`"),
     EnvVar("BOT_BOTTLE_DOCKER_GATEWAY_SUBNET", "user",
            "docker: the gateway network's subnet.",
-           "`10.242.255.0/24`"),
+           "`10.242.255.0/24`; a named environment's is `10.241.<n>.0/24`, "
+           "`<n>` from its name"),
     EnvVar("BOT_BOTTLE_DOCKER_AGENT_SUBNETS", "user",
            "docker: the range per-agent networks are carved from, as /29s.",
-           "`10.242.0.0/20`"),
+           "`10.242.0.0/20`; `10.240.0.0/16` in a named environment"),
     EnvVar("BOT_BOTTLE_MACOS_CONTAINER_DNS", "user",
            "macos-container: DNS server for the gateway, orchestrator and image "
            "builder. When set, a builder running with other DNS is restarted with it.",
@@ -92,23 +100,27 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "firecracker: TAP pool slots, so concurrent bottles. Must match the "
            "host's network pool.",
            "`8`"),
+    EnvVar("BOT_BOTTLE_FC_ENV_SLOTS", "user",
+           "firecracker: network-pool slices the host reserves for named "
+           "environments, after the live pool. Must be at most the host's.",
+           "`4`"),
     EnvVar("BOT_BOTTLE_FC_IP_BASE", "user",
            "firecracker: base IPv4 of the pool's /31s. Must match the host's "
            "network pool.",
-           "`10.243.0.0`"),
+           "`10.243.0.0`; `10.243.<k>.0` for a named environment's slice k"),
     EnvVar("BOT_BOTTLE_FC_IFACE_PREFIX", "user",
            "firecracker: agent TAP name prefix. Must match the host's network pool.",
-           "`bbfc`"),
+           "`bbfc`; `bb<k>fc` for slice k"),
     EnvVar("BOT_BOTTLE_FC_NFT_TABLE", "user",
            "firecracker: the nftables isolation table. Must match the host's "
            "network pool.",
-           "`bot_bottle_fc`"),
+           "`bot_bottle_fc`; `bot_bottle_fc<k>` for slice k"),
     EnvVar("BOT_BOTTLE_FC_ORCH_IFACE", "user",
            "firecracker: the orchestrator VM's TAP. Must match the host's network pool.",
-           "`bborch0`"),
+           "`bborch0`; `bborch<k>` for slice k"),
     EnvVar("BOT_BOTTLE_FC_GW_IFACE", "user",
            "firecracker: the gateway VM's TAP. Must match the host's network pool.",
-           "`bbgw0`"),
+           "`bbgw0`; `bbgw<k>` for slice k"),
     EnvVar("BOT_BOTTLE_FC_OWNER", "user",
            "firecracker network pool script: the user that owns the TAPs.",
            "`$SUDO_USER`, else `$USER`"),
@@ -194,6 +206,7 @@ ENV_VARS: tuple[EnvVar, ...] = (
 # Names matched by a `BOT_BOTTLE_[A-Z0-9_]+` scan that aren't variables.
 NOT_VARIABLES: dict[str, str] = {
     "BOT_BOTTLE_FC_": "prefix of the firecracker variables, in prose",
+    "BOT_BOTTLE_DOCKER_": "prefix of the docker variables, in prose",
     "BOT_BOTTLE_BIN": "a local variable in install.sh, not read from the environment",
 }
 

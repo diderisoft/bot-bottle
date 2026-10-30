@@ -160,10 +160,13 @@ class TestFirecracker(_Provisioned):
         self.assert_provisioned({HOSTCTL_URL_ENV: url, HOST_CONTROL.token_env: token},
                                 "10.243.255.0")
 
-    def test_nixos_opens_the_port_on_the_orchestrator_tap_only(self) -> None:
+    def test_nixos_opens_the_port_on_the_orchestrator_taps_only(self) -> None:
+        # Live's orchestrator TAP and each environment slice's, nothing else.
         nix = (Path(__file__).resolve().parents[2] / "nix" / "firecracker-netpool.nix").read_text()
-        self.assertIn("networking.firewall.interfaces.${cfg.orchIface}.allowedTCPPorts = "
-                      f"[ {GUEST_PORT} ];", nix)
+        self.assertIn("orchIfaces = [ cfg.orchIface ]\n"
+                      '    ++ map (k: "bborch${toString k}") (lib.range 1 cfg.envSlots);', nix)
+        self.assertIn("networking.firewall.interfaces = lib.genAttrs orchIfaces\n"
+                      f"      (_: {{ allowedTCPPorts = [ {GUEST_PORT} ]; }});", nix)
         self.assertEqual(1, nix.count("allowedTCPPorts"))
 
     def test_init_starts_the_control_plane_with_them(self) -> None:

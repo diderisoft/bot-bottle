@@ -64,7 +64,7 @@ def adopted(
     then tear it down as its holder would have (stop the VM, remove its run
     dir, deregister)."""
     from .cleanup import stop_vmms  # pylint: disable=import-outside-toplevel
-    run_dir = util.cache_dir() / "run" / bottle_id
+    run_dir = util.env_dir() / "run" / bottle_id
     try:
         yield attach(bottle_id, record)
     finally:
@@ -76,7 +76,7 @@ def adopted(
 
 def attach(bottle_id: str, record: "AdoptionRecord") -> FirecrackerBottle:
     """A bottle a previous host controller launched, to exec into over SSH."""
-    run_dir = util.cache_dir() / "run" / bottle_id
+    run_dir = util.env_dir() / "run" / bottle_id
     return FirecrackerBottle(record.container, private_key=run_dir / "bottle_id_ed25519",
                              guest_ip=firecracker_vm.guest_ip_of(run_dir))
 
@@ -142,7 +142,7 @@ def launch(
         # same lock, held until the VMM exists so a new run dir is never taken
         # for an orphan.
         with lifecycle_lock.hold():
-            run_dir = util.cache_dir() / "run" / plan.slug
+            run_dir = util.env_dir() / "run" / plan.slug
             run_dir.mkdir(parents=True, exist_ok=True)
             # Remove the run dir (~1G rootfs) on teardown; registered first so
             # it runs after `vm.terminate`.

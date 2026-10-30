@@ -6,6 +6,7 @@ import os
 import time
 from pathlib import Path
 
+from ...environment import docker_gateway_subnet, resource_prefix
 from .util import image_exists as docker_image_exists
 from .util import daemon_running, run_docker
 from .util import tag_image as docker_tag_image
@@ -23,9 +24,10 @@ from ...control.gateway import (
   DEFAULT_CA_TIMEOUT_SECONDS, CA_POLL_SECONDS, GATEWAY_CA_CERT, GatewayError
 )
 
+# Live's; a named environment derives its own (`environment.docker_gateway_subnet`).
 DEFAULT_GATEWAY_SUBNET = "10.242.255.0/24"
 # The gateway's route out; only the gateway is on it.
-GATEWAY_EGRESS_NETWORK = "bot-bottle-gateway-egress"
+GATEWAY_EGRESS_NETWORK = resource_prefix() + "gateway-egress"
 _GATEWAY_SUBNET_LABEL = "bot-bottle.gateway-subnet"
 _IP_FORWARD = "net.ipv4.ip_forward"
 
@@ -66,7 +68,7 @@ class DockerGateway(Gateway):
         self._build_context = build_context
         self._dockerfile = dockerfile
         self._subnet = (
-            subnet or settings.infra.docker_gateway_subnet or DEFAULT_GATEWAY_SUBNET
+            subnet or settings.infra.docker_gateway_subnet or docker_gateway_subnet()
         )
         self._ca_mount_source = str(
             ca_mount_source or settings.infra.docker_ca_mount or host_gateway_ca_dir()

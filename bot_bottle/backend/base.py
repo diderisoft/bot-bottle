@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Generator, Generic, Sequence, TypeVar
 
+from ..environment import resource_prefix
 from ..agent_provider import AgentProvisionPlan, get_provider
 from ..contract.hostctl import Settings
 from ..egress import EgressPlan
@@ -98,7 +99,7 @@ def run_script(argv: list[str], script: str, *, timeout: float | None = None,
 def home_volume_name(slug: str) -> str:
     """The volume a bottled agent's home lives on, kept across stop and resume
     while its state is (PRD 0110)."""
-    return f"bot-bottle-home-{slug}"
+    return f"{resource_prefix()}home-{slug}"
 
 
 @dataclass(frozen=True)

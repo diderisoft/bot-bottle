@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from ...environment import macos_agent_subnet_v6, resource_prefix
 from ...control.gateway import (
     DEFAULT_CA_TIMEOUT_SECONDS,
     GATEWAY_CA_CERT,
@@ -34,22 +35,22 @@ from ...published_artifacts import FORMAT_OCI
 # The shared host-only network for the gateway and every agent; an agent's
 # address here is its attribution key. Named apart from docker's so both
 # backends can coexist.
-GATEWAY_NETWORK = "bot-bottle-mac-gateway"
+GATEWAY_NETWORK = resource_prefix() + "mac-gateway"
 # The agent network's IPv6 subnet, pinned so the host firewall can name it.
 # The IPv4 one is whatever the installed firewall blocks
 # (`host_firewall.agent_subnet`), chosen at setup to avoid this Mac's LAN,
 # VPNs and other interfaces.
-AGENT_SUBNET_V6 = "fd62:6f74:6274:6c65::/64"
+AGENT_SUBNET_V6 = macos_agent_subnet_v6()
 # NAT network giving only the gateway a route out.
-GATEWAY_EGRESS_NETWORK = "bot-bottle-mac-egress"
+GATEWAY_EGRESS_NETWORK = resource_prefix() + "mac-egress"
 # Host-only network the gateway reaches the orchestrator over. Agents never
 # join it.
-CONTROL_NETWORK = "bot-bottle-mac-control"
+CONTROL_NETWORK = resource_prefix() + "mac-control"
 
 # The gateway container. The name predates the split from the combined infra
 # container.
-GATEWAY_NAME = "bot-bottle-mac-infra"
-GATEWAY_LABEL = "bot-bottle-mac-infra=1"
+GATEWAY_NAME = resource_prefix() + "mac-infra"
+GATEWAY_LABEL = f"{GATEWAY_NAME}=1"
 # The daemons to run (no git:// daemon).
 GATEWAY_DAEMONS = "egress,git-http,supervise"
 

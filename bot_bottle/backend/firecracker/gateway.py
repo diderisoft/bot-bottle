@@ -12,6 +12,7 @@ import tarfile
 from pathlib import Path
 from urllib.parse import urlparse
 
+from ...environment import resource_prefix
 from ...control.gateway import (
     DEFAULT_CA_TIMEOUT_SECONDS,
     GATEWAY_CA_GLOB,
@@ -26,7 +27,7 @@ from . import infra_vm, netpool, util
 from .gateway_transport import FirecrackerGatewayTransport
 
 # The gateway VM's run-dir name; one per host.
-GATEWAY_NAME = "bot-bottle-gateway"
+GATEWAY_NAME = resource_prefix() + "gateway"
 
 # No build tooling on the gateway, so less memory.
 _GW_MEM_MIB = 2048

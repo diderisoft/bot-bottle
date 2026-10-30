@@ -40,7 +40,9 @@
 #   BOT_BOTTLE_FC_IP_BASE       base IPv4 of the /31 pool
 #   BOT_BOTTLE_FC_IFACE_PREFIX  TAP name prefix
 #   BOT_BOTTLE_FC_NFT_TABLE     isolation table name
-#   BOT_BOTTLE_FC_OWNER         owning user (default $SUDO_USER or $USER)
+#   BOT_BOTTLE_FC_ENV_SLOTS     named-environment slices reserved after the
+#                               live pool (BOT_BOTTLE_ENV; 0..63)
+#   BOT_BOTTLE_FC_OWNER        owning user (default $SUDO_USER or $USER)
 #   BOT_BOTTLE_FC_GROUP         owning group; if set, TAPs are group-owned
 #                               instead of user-owned, so any group member
 #                               (e.g. an interactive user + a CI runner
@@ -67,12 +69,48 @@ ORCH_IFACE="${BOT_BOTTLE_FC_ORCH_IFACE:-$(_default BOT_BOTTLE_FC_ORCH_IFACE)}"
 GW_IFACE="${BOT_BOTTLE_FC_GW_IFACE:-$(_default BOT_BOTTLE_FC_GW_IFACE)}"
 OWNER="${BOT_BOTTLE_FC_OWNER:-${SUDO_USER:-$USER}}"
 GROUP="${BOT_BOTTLE_FC_GROUP:-}"
+ENV_SLOTS="${BOT_BOTTLE_FC_ENV_SLOTS:-$(_default BOT_BOTTLE_FC_ENV_SLOTS)}"
+# Unresolved means none: an older unit or copy without it still brings the
+# live pool up.
+ENV_SLOTS="${ENV_SLOTS:-0}"
 
 # Fail loudly rather than provisioning a half/empty range if a value
 # resolved to nothing (env unset AND the shared file unreadable).
 for _v in POOL_SIZE IP_BASE PREFIX TABLE ORCH_IFACE GW_IFACE; do
     [ -n "${!_v}" ] || { echo "error: $_v unresolved (set BOT_BOTTLE_FC_* or fix $_DEFAULTS)" >&2; exit 1; }
 done
+if [ "$ENV_SLOTS" -gt 63 ] || { [ "$ENV_SLOTS" -gt 0 ] && [ "$POOL_SIZE" -gt 128 ]; }; then
+    echo "error: at most 63 environment slices, of at most 128 slots each" >&2; exit 1
+fi
+
+# --- environment slices (BOT_BOTTLE_ENV; must match netpool.env_slice) ---
+# Slice 0 is the live pool above. Slice k (1..ENV_SLOTS) is one named
+# environment's: the same pool size from base + 256k, TAPs bb{k}fc*, nft
+# tables bot_bottle_fc{k}{,_nat,_gw}, and infra links bborch{k} / bbgw{k}
+# on the /31s 4k above live's at the top of the /16. Reserving them here
+# means creating an environment never needs root.
+LIVE_IP_BASE="$IP_BASE" ; LIVE_PREFIX="$PREFIX" ; LIVE_TABLE="$TABLE"
+LIVE_ORCH_IFACE="$ORCH_IFACE" ; LIVE_GW_IFACE="$GW_IFACE"
+SLICE=0
+_select_slice() {  # point every per-slice name and address at slice $1
+    SLICE="$1"
+    if [ "$SLICE" -eq 0 ]; then
+        IP_BASE="$LIVE_IP_BASE" ; PREFIX="$LIVE_PREFIX" ; TABLE="$LIVE_TABLE"
+        ORCH_IFACE="$LIVE_ORCH_IFACE" ; GW_IFACE="$LIVE_GW_IFACE"
+    else
+        IP_BASE="$(_int_to_ip $(( $(_ip_to_int "$LIVE_IP_BASE") + 256*SLICE )))"
+        PREFIX="bb${SLICE}fc" ; TABLE="${LIVE_TABLE}${SLICE}"
+        ORCH_IFACE="bborch${SLICE}" ; GW_IFACE="bbgw${SLICE}"
+    fi
+}
+_each_slice() {  # run "$@" once per slice, live first
+    local k
+    for k in $(seq 0 "$ENV_SLOTS"); do
+        _select_slice "$k"
+        "$@"
+    done
+    _select_slice 0
+}
 
 # Gateway ports (must match the backend). egress=9099, supervise=9100,
 # git-http=9420. Reached by the VM at its host-side TAP IP.
@@ -94,14 +132,14 @@ iface()   { echo "${PREFIX}$1"; }
 # Orchestrator VM link: a /31 at the TOP of the IP_BASE /16 (host
 # x.y.255.0, guest x.y.255.1), well clear of the agent pool near the
 # bottom of the block. Must match netpool.py:orch_slot().
-_orch_base() { echo $(( ($(_ip_to_int "$IP_BASE") & 0xFFFF0000) + 0xFF00 )); }
+_orch_base() { echo $(( ($(_ip_to_int "$IP_BASE") & 0xFFFF0000) + 0xFF00 + 4*SLICE )); }
 orch_host()  { _int_to_ip "$(_orch_base)"; }
 orch_guest() { _int_to_ip $(( $(_orch_base) + 1 )); }
 
 # Gateway (data-plane) VM link: the /31 immediately above the
 # orchestrator link (host x.y.255.2, guest x.y.255.3). Must match
 # netpool.py:gw_slot().
-_gw_base() { echo $(( ($(_ip_to_int "$IP_BASE") & 0xFFFF0000) + 0xFF02 )); }
+_gw_base() { echo $(( ($(_ip_to_int "$IP_BASE") & 0xFFFF0000) + 0xFF02 + 4*SLICE )); }
 gw_host()  { _int_to_ip "$(_gw_base)"; }
 gw_guest() { _int_to_ip $(( $(_gw_base) + 1 )); }
 
@@ -121,12 +159,22 @@ cmd_up() {
     else
         own_args=(user "$OWNER") ; own_desc="owner=$OWNER"
     fi
-    echo "firecracker net pool: $POOL_SIZE slots, base $IP_BASE, $own_desc"
 
     # VM->gateway traffic is DNAT'd to the gateway container and
     # forwarded, so forwarding must be enabled (Docker also sets this).
     sysctl -qw net.ipv4.ip_forward=1
 
+    _each_slice _up_slice
+    echo "done."
+}
+
+_up_slice() {
+    if [ "$SLICE" -eq 0 ]; then
+        echo "firecracker net pool (live): $POOL_SIZE slots, base $IP_BASE, $own_desc"
+    else
+        echo "environment slice $SLICE: $POOL_SIZE slots, base $IP_BASE, $own_desc"
+    fi
+    local i
     for i in $(seq 0 $((POOL_SIZE-1))); do
         local dev host
         dev="$(iface "$i")" ; host="$(host_ip "$i")"
@@ -161,7 +209,6 @@ cmd_up() {
     echo "infra egress installed ($ORCH_IFACE, $GW_IFACE -> NAT out; $GW_IFACE -> $ORCH_IFACE)"
     _install_gateway_route
     echo "agent->gateway route installed (${PREFIX}* :$GATEWAY_PORTS -> $(gw_guest))"
-    echo "done."
 }
 
 _install_nft() {
@@ -298,6 +345,12 @@ EOF
 
 cmd_down() {
     require_root down
+    _each_slice _down_slice
+    echo "done."
+}
+
+_down_slice() {
+    local i
     _docker_user_infra del
     nft delete table ip "${TABLE}_gw" 2>/dev/null || true
     nft delete table inet "${TABLE}_nat" 2>/dev/null || true
@@ -318,10 +371,15 @@ cmd_down() {
             echo "  removed $dev"
         fi
     done
-    echo "done."
 }
 
 cmd_status() {
+    _each_slice _status_slice
+}
+
+_status_slice() {
+    local i
+    [ "$SLICE" -eq 0 ] || echo "--- environment slice $SLICE ---"
     echo "table inet $TABLE:"
     nft list table inet "$TABLE" 2>/dev/null || echo "  (absent)"
     echo "table inet ${TABLE}_nat (infra egress: orchestrator + gateway):"

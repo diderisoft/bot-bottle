@@ -10,6 +10,7 @@ import abc
 from pathlib import Path
 from typing import Protocol
 
+from ..environment import resource_prefix
 from ..contract.hostctl import DEFAULT_GATEWAY_IMAGE
 from ..paths import host_gateway_ca_dir
 
@@ -17,11 +18,11 @@ from ..paths import host_gateway_ca_dir
 CA_POLL_SECONDS = 0.5
 DEFAULT_CA_TIMEOUT_SECONDS = 30.0
 
-GATEWAY_NAME = "bot-bottle-orch-gateway"
-GATEWAY_LABEL = "bot-bottle-orch-gateway=1"
+GATEWAY_NAME = resource_prefix() + "orch-gateway"
+GATEWAY_LABEL = f"{GATEWAY_NAME}=1"
 # The shared network for the gateway and every agent; the source IP the gateway
 # attributes by is the address here.
-GATEWAY_NETWORK = "bot-bottle-gateway"
+GATEWAY_NETWORK = resource_prefix() + "gateway"
 
 # mitmproxy's CA dir. The host CA dir is mounted here so the CA survives
 # recreation (a named volume could be pruned).

@@ -123,7 +123,7 @@ class FirecrackerBottleBackend(
         """Re-lock the TAP slot a running bottle's VM is on: the lock lived in
         the previous host controller's process."""
         from . import firecracker_vm, netpool  # pylint: disable=import-outside-toplevel
-        tap = firecracker_vm.tap_of(_util.cache_dir() / "run" / bottle_id)
+        tap = firecracker_vm.tap_of(_util.env_dir() / "run" / bottle_id)
         if not tap:
             return None
         lock = netpool.from_settings(self.settings.infra).reclaim(tap)

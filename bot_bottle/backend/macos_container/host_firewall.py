@@ -27,9 +27,14 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-ANCHOR = "com.apple/io.bot-bottle"
-RULES_PATH = Path("/etc/pf.anchors/io.bot-bottle")
-DAEMON_LABEL = "io.bot-bottle.pf"
+from ...environment import LIVE_REVERSE_DNS, reverse_dns
+
+# One anchor per environment: `io.bot-bottle` for live, `io.bot-bottle.<name>`
+# for a named one (each installed by its own `backend setup`).
+_RULES_DIR = Path("/etc/pf.anchors")
+ANCHOR = f"com.apple/{reverse_dns()}"
+RULES_PATH = _RULES_DIR / reverse_dns()
+DAEMON_LABEL = f"{reverse_dns()}.pf"
 DAEMON_PATH = Path("/Library/LaunchDaemons") / f"{DAEMON_LABEL}.plist"
 # Re-apply this often (seconds): a pf reload elsewhere can drop the anchor.
 REAPPLY_SECONDS = 60
@@ -237,10 +242,11 @@ def conflicts(subnet: str) -> list[str]:
     return found
 
 
-def installed_subnet() -> str | None:
-    """The agent subnet the installed rules block, or None when there are none."""
+def installed_subnet(path: Path | None = None) -> str | None:
+    """The agent subnet the installed rules (this environment's, or `path`)
+    block, or None when there are none."""
     try:
-        rules = RULES_PATH.read_text(encoding="utf-8")
+        rules = (path or RULES_PATH).read_text(encoding="utf-8")
     except OSError:
         return None
     for line in rules.splitlines():
@@ -257,6 +263,20 @@ def agent_subnet() -> str:
     return installed_subnet() or CANDIDATE_SUBNETS[0]
 
 
+def other_environments_subnets(rules_dir: Path | None = None) -> set[str]:
+    """Agent subnets other environments' installed anchors claim, so two
+    environments never share one (their networks may not be up to show a
+    conflict)."""
+    directory = rules_dir or _RULES_DIR
+    try:
+        paths = [p for p in directory.iterdir()
+                 if (p.name == LIVE_REVERSE_DNS or p.name.startswith(f"{LIVE_REVERSE_DNS}."))
+                 and p.name != RULES_PATH.name]
+    except OSError:
+        return set()
+    return {s for s in (installed_subnet(p) for p in paths) if s}
+
+
 def choose_subnet() -> tuple[str, list[str]]:
     """The subnet setup should install, and what (if anything) ruled out the
     one installed now. Keeps the installed subnet while nothing else uses it."""
@@ -264,8 +284,9 @@ def choose_subnet() -> tuple[str, list[str]]:
     rejected = conflicts(current) if current else []
     if current and not rejected:
         return current, []
+    others = other_environments_subnets()
     for candidate in CANDIDATE_SUBNETS:
-        if not conflicts(candidate):
+        if candidate not in others and not conflicts(candidate):
             return candidate, rejected
     raise RuntimeError("every candidate agent subnet is in use on this Mac: "
                        + ", ".join(CANDIDATE_SUBNETS))
@@ -297,6 +318,7 @@ def wait_ipv6_off(subnet: str, *, timeout: float = REAPPLY_SECONDS + 15,
 __all__ = [
     "ANCHOR", "DAEMON_LABEL", "DAEMON_PATH", "RULES_PATH",
     "CANDIDATE_SUBNETS", "agent_bridge", "agent_subnet", "choose_subnet", "conflicts",
+    "other_environments_subnets",
     "host_address", "install", "install_commands", "installed_subnet", "ipv6_off",
     "render_daemon", "render_rules", "state", "wait_ipv6_off",
     "uninstall", "uninstall_commands",

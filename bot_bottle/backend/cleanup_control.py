@@ -7,6 +7,8 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
+from ..environment import resource_prefix
+
 
 class CleanupError(RuntimeError):
     """One or more approved cleanup mutations did not complete."""
@@ -56,18 +58,19 @@ def orphan_homes(volumes: "list[str] | tuple[str, ...]") -> list[str]:
     whose state isn't kept for resume: the ones cleanup removes."""
     # pylint: disable-next=import-outside-toplevel
     from ..bottle_state import is_preserved
-    prefix = "bot-bottle-home-"
+    prefix = resource_prefix() + "home-"
     return sorted(v for v in volumes
                   if v.startswith(prefix) and not is_preserved(v[len(prefix):]))
 
 
-def kept_guests(names: "list[str] | tuple[str, ...]", prefix: str = "bot-bottle-") -> set[str]:
+def kept_guests(names: "list[str] | tuple[str, ...]", prefix: str = "") -> set[str]:
     """Among `names` (`<prefix><bottled agent>`), the guests kept for resume:
     a bottled agent kept for resume whose guest is still there was kept by
     its bottle's `preserve_container` (any other is removed at teardown), so
     cleanup leaves it, as it leaves its home and state."""
     # pylint: disable-next=import-outside-toplevel
     from ..bottle_state import is_preserved
+    prefix = prefix or resource_prefix()
     return {n for n in names if n.startswith(prefix) and is_preserved(n[len(prefix):])}
 
 

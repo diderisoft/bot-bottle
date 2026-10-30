@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 
+from ...environment import resource_prefix
 from .. import EnumerationError
 from ...contract.hostctl import Settings
 from ..cleanup_control import CleanupFailures, kept_guests, orphan_homes
@@ -11,7 +12,7 @@ from ...lib.log import info
 from . import util as container_mod
 from .bottle_cleanup_plan import MacosContainerBottleCleanupPlan
 
-_PREFIX = "bot-bottle-"
+_PREFIX = resource_prefix()
 
 
 def _list_prefixed_containers() -> list[str]:

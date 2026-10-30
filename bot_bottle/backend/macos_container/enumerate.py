@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import subprocess
 
+from ...environment import resource_prefix
 from ...bottle_state import read_metadata
 from .. import ActiveAgent, EnumerationError
 from . import util as container_mod
 from .infra import INFRA_NAME, ORCHESTRATOR_NAME
 
 # Every agent container is `bot-bottle-<slug>`.
-CONTAINER_NAME_PREFIX = "bot-bottle-"
+CONTAINER_NAME_PREFIX = resource_prefix()
 # The infra containers share the prefix but aren't bottles.
 _INFRA_NAMES = frozenset({INFRA_NAME, ORCHESTRATOR_NAME})
 

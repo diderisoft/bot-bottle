@@ -10,6 +10,7 @@ from contextlib import AbstractContextManager, contextmanager, redirect_stderr
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator, Sequence
 
+from ...environment import resource_prefix
 from ...agent_provider import AgentProvisionPlan
 from ...egress import EgressPlan
 from ...env import ResolvedEnv
@@ -125,7 +126,7 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     def kept_guest(self, slug: str) -> bool:
         # pylint: disable-next=import-outside-toplevel
         from .util import container_exists
-        return container_exists(f"bot-bottle-{slug}")
+        return container_exists(f"{resource_prefix()}{slug}")
 
     def remove_home(self, slug: str) -> None:
         # pylint: disable-next=import-outside-toplevel

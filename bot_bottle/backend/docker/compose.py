@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from ...environment import resource_prefix
 from ...lib.log import die, warn
 from ..base import EnumerationError
 from .util import daemon_running
@@ -21,7 +22,7 @@ COMPOSE_FILE_NAME = "docker-compose.yml"
 COMPOSE_LOG_NAME = "compose.log"
 
 
-COMPOSE_PROJECT_PREFIX = "bot-bottle-"
+COMPOSE_PROJECT_PREFIX = resource_prefix()
 
 
 def compose_project_name(slug: str) -> str:

@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from ..environment import resource_prefix
 from ..agent_provider import AgentProvisionPlan, build_agent_provision_plan, get_provider
 from ..egress import EgressPlan
 from ..env import ResolvedEnv, resolve_env
@@ -102,7 +103,7 @@ class BottlePreparationPlanner:
             harness=provider_config.harness,
             dockerfile=dockerfile,
             state_dir=agent_dir,
-            instance_name=f"bot-bottle-{slug}",
+            instance_name=f"{resource_prefix()}{slug}",
             prompt_file=prompt_file,
             guest_env=backend._build_guest_env(  # pylint: disable=protected-access
                 resolved_env

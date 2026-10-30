@@ -84,9 +84,10 @@ def clear_state(pid: int) -> None:
         (state_dir() / STATE_FILENAME).unlink(missing_ok=True)
 
 
-def read_state() -> HostControlState | None:
+def read_state(directory: Path | None = None) -> HostControlState | None:
+    """The published state in `directory` (default: this environment's)."""
     try:
-        raw = json.loads((state_dir() / STATE_FILENAME).read_text())
+        raw = json.loads(((directory or state_dir()) / STATE_FILENAME).read_text())
         return HostControlState(
             pid=int(raw["pid"]), port=int(raw["port"]), build_id=str(raw["build_id"])
         )
