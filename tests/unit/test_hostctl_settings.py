@@ -114,11 +114,17 @@ class TestFingerprint(unittest.TestCase):
         self.assertEqual(Settings().infra.fingerprint(), a.infra.fingerprint())
 
 
+# Fields no env var sets: `--no-cache`, or a value nothing needs to vary.
+_NO_ENV = {"no_cache", "cleanup_command_timeout_seconds", "egress_port",
+           "docker_host_address"}
+
+
 class TestEnvLoader(unittest.TestCase):
-    def test_env_names_cover_every_field(self) -> None:
-        self.assertEqual({f.name for f in dataclasses.fields(OperationSettings)},
-                         set(OPERATION_ENV))
-        self.assertEqual({f.name for f in dataclasses.fields(InfraSettings)}, set(INFRA_ENV))
+    def test_env_names_cover_every_field_but_the_flag_and_fixed_ones(self) -> None:
+        self.assertEqual({f.name for f in dataclasses.fields(OperationSettings)}
+                         - _NO_ENV, set(OPERATION_ENV))
+        self.assertEqual({f.name for f in dataclasses.fields(InfraSettings)} - _NO_ENV,
+                         set(INFRA_ENV))
         names = [*OPERATION_ENV.values(), *INFRA_ENV.values()]
         self.assertEqual(len(names), len(set(names)))
         self.assertTrue(all(n.startswith("BOT_BOTTLE_") for n in names))
@@ -129,26 +135,22 @@ class TestEnvLoader(unittest.TestCase):
         self.assertEqual(Settings(), settings_from_env(blank))
 
     def test_reads_the_process_environment_by_default(self) -> None:
-        with patch.dict("os.environ", {"BOT_BOTTLE_EGRESS_PORT": "9123"}):
-            self.assertEqual(9123, settings_from_env().infra.egress_port)
+        with patch.dict("os.environ", {"BOT_BOTTLE_FC_POOL_SIZE": "5"}):
+            self.assertEqual(5, settings_from_env().infra.fc_pool_size)
 
     def test_every_field(self) -> None:
         env = {
             "BOT_BOTTLE_BACKEND": "firecracker",
-            "BOT_BOTTLE_NO_CACHE": "1",
-            "BOT_BOTTLE_CLEANUP_COMMAND_TIMEOUT_SECONDS": "30",
             "BOT_BOTTLE_INFRA_BUILD": "LOCAL",
             "BOT_BOTTLE_BUILD_ENGINE": "Podman",
             "BOT_BOTTLE_ARTIFACT_CACHE": "/cache/artifacts",
             "BOT_BOTTLE_ORCHESTRATOR_IMAGE": "orch:test",
             "BOT_BOTTLE_GATEWAY_IMAGE": "gw:test",
-            "BOT_BOTTLE_EGRESS_PORT": "9199",
             "BOT_BOTTLE_DOCKER_GATEWAY_SUBNET": "10.1.2.0/24",
             "BOT_BOTTLE_DOCKER_AGENT_SUBNETS": "10.1.64.0/18",
             "BOT_BOTTLE_DOCKER_CA_MOUNT": "ca-volume",
             "BOT_BOTTLE_DOCKER_ROOT_MOUNT": "root-volume",
             "BOT_BOTTLE_DOCKER_CLIENT_NETWORK": "ci-net",
-            "BOT_BOTTLE_DOCKER_HOST_ADDRESS": "172.17.0.1",
             "BOT_BOTTLE_FC_KERNEL": "/fc/vmlinux",
             "BOT_BOTTLE_FC_DROPBEAR": "/fc/dropbear",
             "BOT_BOTTLE_FC_POOL_SIZE": "4",
@@ -160,45 +162,48 @@ class TestEnvLoader(unittest.TestCase):
             "BOT_BOTTLE_MACOS_CONTAINER_DNS": "9.9.9.9",
         }
         expected = Settings(
-            operation=OperationSettings(
-                backend="firecracker", no_cache=True, cleanup_command_timeout_seconds=30.0),
+            operation=OperationSettings(backend="firecracker"),
             infra=InfraSettings(
                 infra_build_local=True, build_engine="podman", artifact_cache="/cache/artifacts",
-                orchestrator_image="orch:test", gateway_image="gw:test", egress_port=9199,
+                orchestrator_image="orch:test", gateway_image="gw:test",
                 docker_gateway_subnet="10.1.2.0/24", docker_agent_subnets="10.1.64.0/18",
                 docker_ca_mount="ca-volume",
                 docker_root_mount="root-volume", docker_client_network="ci-net",
-                docker_host_address="172.17.0.1", fc_kernel="/fc/vmlinux",
+                fc_kernel="/fc/vmlinux",
                 fc_dropbear="/fc/dropbear", fc_pool_size=4, fc_ip_base="10.9.0.0",
                 fc_iface_prefix="bbci", fc_nft_table="bb_ci", fc_orch_iface="bbciorch0",
                 fc_gw_iface="bbcigw0", macos_container_dns="9.9.9.9",
             ),
         )
         self.assertEqual(expected, settings_from_env(env))
-        # Every field moved off its default, so none was silently dropped.
+        # Every env-set field moved off its default, so none was silently dropped.
         defaults = Settings()
         for section in ("operation", "infra"):
             got, default = getattr(expected, section), getattr(defaults, section)
             for f in dataclasses.fields(got):
+                if f.name in _NO_ENV:
+                    continue
                 with self.subTest(field=f.name):
                     self.assertNotEqual(getattr(default, f.name), getattr(got, f.name))
 
+    def test_removed_env_vars_are_ignored(self) -> None:
+        removed = {"BOT_BOTTLE_NO_CACHE": "1",
+                   "BOT_BOTTLE_CLEANUP_COMMAND_TIMEOUT_SECONDS": "30",
+                   "BOT_BOTTLE_EGRESS_PORT": "9199",
+                   "BOT_BOTTLE_DOCKER_HOST_ADDRESS": "172.17.0.1"}
+        self.assertEqual(Settings(), settings_from_env(removed))
+
     def test_flag_values(self) -> None:
-        self.assertFalse(settings_from_env({"BOT_BOTTLE_NO_CACHE": "true"}).operation.no_cache)
         self.assertFalse(
             settings_from_env({"BOT_BOTTLE_INFRA_BUILD": "pull"}).infra.infra_build_local)
-
-    def test_malformed_timeout_falls_back_to_the_default(self) -> None:
-        got = settings_from_env({"BOT_BOTTLE_CLEANUP_COMMAND_TIMEOUT_SECONDS": "soon"})
-        self.assertEqual(Settings().operation, got.operation)
 
     def test_malformed_integer_dies_naming_the_var(self) -> None:
         for raw in ("abc", "-1"):
             with self.subTest(raw=raw), \
                  patch.object(loader, "die", side_effect=SystemExit) as die, \
                  self.assertRaises(SystemExit):
-                settings_from_env({"BOT_BOTTLE_EGRESS_PORT": raw})
-            self.assertIn("BOT_BOTTLE_EGRESS_PORT", die.call_args.args[0])
+                settings_from_env({"BOT_BOTTLE_FC_POOL_SIZE": raw})
+            self.assertIn("BOT_BOTTLE_FC_POOL_SIZE", die.call_args.args[0])
 
     def test_agent_subnet_pool_is_normalized(self) -> None:
         got = settings_from_env({"BOT_BOTTLE_DOCKER_AGENT_SUBNETS": " 10.9.0.0/24 "})

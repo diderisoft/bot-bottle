@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import socket
 import threading
 
 import uvicorn
 
 from ..contract.auth import CONTROL_PLANE
+from ..lib.log import debug_enabled
 from .api import create_app
 from .hostctl_relay import HostControlRelay
 from ..contract.http import MAX_BODY_BYTES, ORCHESTRATOR_AUTH_HEADER
@@ -64,7 +64,7 @@ def make_server(
         app,
         host=host,
         port=port,
-        access_log=bool(os.environ.get("BOT_BOTTLE_ORCHESTRATOR_DEBUG")),
+        access_log=debug_enabled(),
         log_level="info",
         limit_concurrency=MAX_REQUESTS,
         timeout_keep_alive=KEEP_ALIVE_TIMEOUT_SECONDS,

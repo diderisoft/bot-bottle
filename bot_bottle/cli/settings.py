@@ -15,11 +15,11 @@ from ..contract.hostctl import (
 )
 from ..lib.log import die
 
-# Settings field -> env var.
+# Settings field -> env var. A field with no env var keeps its default here;
+# a flag (`--no-cache`) or the code sets it. Every name is described in
+# `bot_bottle/env_vars.py`.
 OPERATION_ENV: dict[str, str] = {
     "backend": "BOT_BOTTLE_BACKEND",
-    "no_cache": "BOT_BOTTLE_NO_CACHE",
-    "cleanup_command_timeout_seconds": "BOT_BOTTLE_CLEANUP_COMMAND_TIMEOUT_SECONDS",
 }
 
 INFRA_ENV: dict[str, str] = {
@@ -28,13 +28,11 @@ INFRA_ENV: dict[str, str] = {
     "artifact_cache": "BOT_BOTTLE_ARTIFACT_CACHE",
     "orchestrator_image": "BOT_BOTTLE_ORCHESTRATOR_IMAGE",
     "gateway_image": "BOT_BOTTLE_GATEWAY_IMAGE",
-    "egress_port": "BOT_BOTTLE_EGRESS_PORT",
     "docker_gateway_subnet": "BOT_BOTTLE_DOCKER_GATEWAY_SUBNET",
     "docker_agent_subnets": "BOT_BOTTLE_DOCKER_AGENT_SUBNETS",
     "docker_ca_mount": "BOT_BOTTLE_DOCKER_CA_MOUNT",
     "docker_root_mount": "BOT_BOTTLE_DOCKER_ROOT_MOUNT",
     "docker_client_network": "BOT_BOTTLE_DOCKER_CLIENT_NETWORK",
-    "docker_host_address": "BOT_BOTTLE_DOCKER_HOST_ADDRESS",
     "fc_kernel": "BOT_BOTTLE_FC_KERNEL",
     "fc_dropbear": "BOT_BOTTLE_FC_DROPBEAR",
     "fc_pool_size": "BOT_BOTTLE_FC_POOL_SIZE",
@@ -64,7 +62,9 @@ def _section(
 ) -> dict[str, Any]:
     values: dict[str, Any] = {}
     for f in dataclasses.fields(cls):
-        var = names[f.name]
+        var = names.get(f.name)
+        if var is None:
+            continue
         raw = env.get(var, "").strip()
         if raw:
             values[f.name] = _parse(f.name, var, raw, f.default)
@@ -91,14 +91,6 @@ def _non_negative_int(var: str, raw: str) -> int:
     return value
 
 
-def _timeout(raw: str, default: object) -> object:
-    # A malformed timeout falls back to the default.
-    try:
-        return max(float(raw), 0.0)
-    except ValueError:
-        return default
-
-
 def _agent_subnets(raw: str, _default: object) -> object:
     try:
         pool = agent_subnet_pool(raw)
@@ -112,7 +104,6 @@ def _agent_subnets(raw: str, _default: object) -> object:
 _SPECIAL: dict[str, Callable[[str, object], object]] = {
     "infra_build_local": lambda raw, _default: raw.lower() == "local",
     "build_engine": lambda raw, _default: raw.lower(),
-    "cleanup_command_timeout_seconds": _timeout,
     "docker_agent_subnets": _agent_subnets,
 }
 

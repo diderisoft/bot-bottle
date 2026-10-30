@@ -21,7 +21,8 @@ In a project with no bottle yet, a launch from a terminal first drafts one from
 the checkout and, once you accept it, writes it as `./main` for the repo to
 share: its `origin`, read-only unless you make it writable, when a bottle of
 yours declares that forge (`bot-bottle forge connect`). `--no-onboard` skips
-the draft and uses `basic`.
+the draft and uses `basic`. `--dry-run` prints the preflight and starts
+nothing.
 """
 
 from __future__ import annotations
@@ -157,7 +158,8 @@ def _onboard(cwd: Path) -> str:
 def cmd_quick(argv: list[str]) -> int:
     verbose = "-v" in argv or "--verbose" in argv
     no_onboard = "--no-onboard" in argv
-    names = [a for a in argv if a not in ("-v", "--verbose", "--no-onboard")]
+    dry_run = "--dry-run" in argv
+    names = [a for a in argv if a not in ("-v", "--verbose", "--no-onboard", "--dry-run")]
     cwd = Path.cwd()
     manifest = ManifestIndex.resolve(str(cwd))
     if names:
@@ -179,7 +181,6 @@ def cmd_quick(argv: list[str]) -> int:
     if not share:
         info(f"not sharing {cwd} with the bottle; cd into a project to work on it")
     remember(cwd, agent)
-    dry_run = os.environ.get("BOT_BOTTLE_DRY_RUN") == "1"
     project = project_bottle(cwd)
     if not project and share and not (no_onboard or dry_run) and sys.stdin.isatty():
         project = _onboard(cwd)

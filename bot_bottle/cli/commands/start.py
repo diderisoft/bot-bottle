@@ -108,7 +108,7 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
     if args.cached_images and not args.headless:
         die("--cached-images is only supported with --headless")
 
-    dry_run = args.dry_run or os.environ.get("BOT_BOTTLE_DRY_RUN") == "1"
+    dry_run = args.dry_run
     settings = settings_from_env()
     if args.no_cache:
         settings = replace(
@@ -378,7 +378,7 @@ def _launch_bottle(request: LaunchRequest, manifest: ManifestIndex, *, dry_run: 
                    verbose: bool = False) -> int:
     """Shared launch for `start` and `resume`: a local dry run, or the request
     (with secrets and confirmed host keys) sent to the host controller and
-    attached. `verbose` (or `BOT_BOTTLE_VERBOSE=1`) streams the launch log."""
+    attached. `verbose` streams the launch log."""
     try:
         request.check()
     except ValueError as e:
@@ -387,7 +387,7 @@ def _launch_bottle(request: LaunchRequest, manifest: ManifestIndex, *, dry_run: 
         return _dry_run(request, manifest)
     interactive = not request.headless
     return launch(prepare_request(request, manifest, interactive=interactive),
-                  verbose=verbose or os.environ.get("BOT_BOTTLE_VERBOSE") == "1")
+                  verbose=verbose)
 
 
 def _dry_run(request: LaunchRequest, manifest: ManifestIndex) -> int:

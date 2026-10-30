@@ -84,6 +84,11 @@ def _threshold() -> int:
     return _LEVEL_NAMES.get(raw.strip().lower(), _DEFAULT_THRESHOLD)
 
 
+def debug_enabled() -> bool:
+    """True when `BOT_BOTTLE_LOG_LEVEL` lets `debug` lines through."""
+    return _threshold() <= DEBUG
+
+
 def _format_context(context: Mapping[str, object] | None) -> str:
     """A context mapping as a ` [k=v k2=v2]` suffix, keys sorted. Empty values
     or ones with whitespace or quotes are double-quoted. "" for empty context."""

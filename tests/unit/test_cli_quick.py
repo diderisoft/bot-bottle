@@ -91,6 +91,20 @@ class Quick(unittest.TestCase):
         third.mkdir()
         self.assertEqual("zeta", self.run_quick([], ["codex", "zeta"], cwd=third).agent)
 
+    def test_dry_run_is_a_flag_and_skips_onboarding(self) -> None:
+        with patch("sys.stdin.isatty", return_value=True), \
+                patch("bot_bottle.cli.commands.quick._onboard") as onboard, \
+                patch("bot_bottle.cli.commands.quick._launch_bottle",
+                      return_value=0) as launch, \
+                patch("bot_bottle.cli.commands.quick.ManifestIndex.resolve",
+                      return_value=_manifest(["pi"])), \
+                patch("bot_bottle.cli.commands.quick.Path.cwd", return_value=self.project), \
+                patch("sys.stderr", io.StringIO()):
+            self.assertEqual(0, quick.cmd_quick(["--dry-run", "pi"]))
+        onboard.assert_not_called()
+        self.assertEqual("pi", launch.call_args.args[0].agent)
+        self.assertTrue(launch.call_args.kwargs["dry_run"])
+
     def test_the_home_directory_is_not_shared(self) -> None:
         request = self.run_quick([], ["pi"], cwd=Path.home())
         self.assertFalse(request.copy_cwd)
