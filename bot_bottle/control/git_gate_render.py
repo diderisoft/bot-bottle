@@ -9,7 +9,7 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..contract.git_trailers import TRAILER_MODES, TRAILER_OFF, TRAILER_VALUE_RE
+from ..contract.git_trailers import TRAILER_MODES, TRAILER_VALUE_RE
 from ..contract.identity import IDENTITY_HEADER
 from ..manifest import ManifestBottle, ManifestGitEntry
 from ..gateway.egress.dlp_detectors import TOKEN_PATTERNS
@@ -136,18 +136,11 @@ def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
         "  git -C \"$repo\" config receive.advertisePushOptions true",
         "  git -C \"$repo\" config http.receivepack true",
         "  git -C \"$repo\" config git-gate.readOnly \"$read_only\"",
-        # The commit-trailer check (PRD 0112): its mode and the value it wants.
+        # The commit-trailer check (PRD 0112): its mode, the value it wants
+        # and the commits it exempts.
         "  git -C \"$repo\" config git-gate.trailers \"$trailers_mode\"",
-        "  if [ -n \"$trailer\" ]; then",
-        "    git -C \"$repo\" config git-gate.trailer \"$trailer\"",
-        "  else",
-        "    git -C \"$repo\" config --unset-all git-gate.trailer || true",
-        "  fi",
-        "  if [ -n \"$baseline\" ]; then",
-        "    git -C \"$repo\" config git-gate.baseline \"$baseline\"",
-        "  else",
-        "    git -C \"$repo\" config --unset-all git-gate.baseline || true",
-        "  fi",
+        "  git -C \"$repo\" config git-gate.trailer \"$trailer\"",
+        "  git -C \"$repo\" config git-gate.baseline \"$baseline\"",
         "  install -m 755 /etc/git-gate/pre-receive \"$repo/hooks/pre-receive\"",
         "}",
     ]
@@ -160,23 +153,22 @@ _SAFE_BOTTLE_ID = re.compile(r"[A-Za-z0-9_-]+")
 
 def git_gate_render_provision(
     bottle_id: str, upstreams: tuple[GitGateUpstream, ...],
-    *, trailer_mode: str = TRAILER_OFF, trailer: str = "", baseline: str = "",
+    *, trailer_mode: str, trailer: str, baseline: str,
 ) -> str:
     """POSIX sh that inits one bottle's bare repos under `/git/<bottle_id>/`
     with credentials from `/git-gate/creds/<bottle_id>/`, and sets how
     pre-receive checks the `Bot-Bottle` trailer (`trailer_mode`) for which
     value (`trailer`), exempting the commits listed in the gateway file
-    `baseline`. Run in the gateway at registration."""
+    `baseline`. Empty values are written as they are, and git-gate refuses
+    pushes over them. Run in the gateway at registration."""
     if not _SAFE_BOTTLE_ID.fullmatch(bottle_id):
         raise ValueError(f"git-gate: unsafe bottle id {bottle_id!r}")
-    if trailer_mode not in TRAILER_MODES:
+    if trailer_mode and trailer_mode not in TRAILER_MODES:
         raise ValueError(f"git-gate: unknown trailer mode {trailer_mode!r}")
     if trailer and not TRAILER_VALUE_RE.fullmatch(trailer):
         raise ValueError(f"git-gate: unsafe trailer value {trailer!r}")
-    if baseline and baseline != f"/git-gate/creds/{bottle_id}/baseline-commits":
+    if baseline != f"/git-gate/creds/{bottle_id}/baseline-commits":
         raise ValueError(f"git-gate: unexpected baseline path {baseline!r}")
-    if trailer_mode != TRAILER_OFF and not trailer:
-        raise ValueError("git-gate: a trailer mode other than off needs a trailer value")
     repo_root = f"/git/{bottle_id}"
     creds_dir = f"/git-gate/creds/{bottle_id}"
     lines = ["#!/bin/sh", "set -eu", ""]
@@ -247,7 +239,8 @@ while IFS=' ' read -r old new ref; do
 done < "$refs_file"
 
 # Phase 0b: every new commit carries this bottle's Bot-Bottle trailer
-# (git-gate.trailers: require refuses, warn only says so, off or unset skips).
+# (git-gate.trailers: require refuses, warn only says so, off skips; a repo
+# missing its trailer settings refuses every push).
 # Rejected, never rewritten: rewriting would change the agent's hashes.
 if ! PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" \
     python3 -m bot_bottle.gateway.git_gate.trailer_check "$refs_file"; then

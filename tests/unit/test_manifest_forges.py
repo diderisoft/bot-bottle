@@ -12,6 +12,13 @@ from bot_bottle.manifest.extends import merge_bottles_runtime, resolve_bottles
 from bot_bottle.manifest.trust import grants
 from bot_bottle.manifest.util import ManifestError
 
+
+def _trailer_kwargs(bottle_id: str) -> dict[str, str]:
+    """The trailer settings every provisioned repo gets."""
+    return {"trailer_mode": "require", "trailer": "dev/demo-abc12",
+            "baseline": f"/git-gate/creds/{bottle_id}/baseline-commits"}
+
+
 FORGE: Any = {
     "credentials": {"gitea-api": {"source": "secret", "secret": "GITEA_X"}},
     "git-gate": {"forges": {"gitea.example.com": {
@@ -138,7 +145,8 @@ class TestReadOnlyAtTheGate(unittest.TestCase):
     def test_provision_marks_and_hook_refuses(self) -> None:
         bottle = _resolve({"dev": {**FORGE, "git-gate": {**FORGE["git-gate"], "repos": [
             "gitea.example.com/acme/app"]}}})
-        script = git_gate_render_provision("b1", git_gate_upstreams_for_bottle(bottle))
+        script = git_gate_render_provision("b1", git_gate_upstreams_for_bottle(bottle),
+                                           **_trailer_kwargs("b1"))
         self.assertIn("ssh://git@10.0.0.1:30009/acme/app.git true", script)
         self.assertIn('config git-gate.readOnly "$read_only"', script)
         self.assertIn("git config --bool git-gate.readOnly", git_gate_render_hook())

@@ -4,13 +4,13 @@ trailer (PRD 0112).
     python3 -m bot_bottle.gateway.git_gate.trailer_check <refs-file>
 
 Run from the bare repo by pre-receive. The repo's `git-gate.trailers` is the
-mode (`require`, `warn`, `off`; unset is `off`, for repos provisioned before
-the check existed) and `git-gate.trailer` the expected value. A commit is
-checked when neither a ref the gate already has (so it's upstream) nor the
-bottle's baseline reaches it; merge commits made in the bottle are. The
-baseline (`git-gate.baseline`, a file of SHAs) is the commits the copied
-workspace had at launch that its remotes didn't: the operator's own unpushed
-work, which pushes untouched. A repo without one exempts nothing.
+mode (`require`, `warn`, `off`), `git-gate.trailer` the expected value and
+`git-gate.baseline` a file of SHAs: the commits the copied workspace had at
+launch that its remotes didn't (the operator's own unpushed work, which
+pushes untouched; empty without one). Provisioning sets all three; a repo
+missing any of them is misconfigured, and every push to it is refused. A
+commit is checked when neither a ref the gate already has (so it's upstream)
+nor the baseline reaches it; merge commits made in the bottle are.
 A commit passes when it has a `Bot-Bottle` trailer and every one it has names
 this bottle and run. The check rejects, it never rewrites.
 
@@ -49,14 +49,12 @@ def _git(*args: str, stdin: str = "") -> str:
 _HEX = frozenset("0123456789abcdef")
 
 
-def read_baseline(path: str) -> list[str]:
-    """The baseline file's SHAs; [] when there's none or it can't be read."""
-    if not path:
-        return []
+def read_baseline(path: str) -> list[str] | None:
+    """The baseline file's SHAs; None when it can't be read."""
     try:
         text = Path(path).read_text(encoding="utf-8")
-    except OSError:
-        return []
+    except (OSError, ValueError):
+        return None
     shas = (line.strip() for line in text.splitlines())
     return [s for s in shas if len(s) in (40, 64) and set(s) <= _HEX]
 
@@ -133,17 +131,24 @@ def fix_command(expected: str, base: str) -> str:
     return f"git rebase --rebase-merges --exec '{amend}' {base}"
 
 
-def _settings(git: Git, err: Callable[[str], None]) -> tuple[str, str] | None:
-    """(mode, expected value), or None when the repo's settings are broken."""
-    mode = _config(git, "git-gate.trailers") or TRAILER_OFF
-    if mode not in TRAILER_MODES:
-        err(f"git-gate: unknown git-gate.trailers {mode!r}; refusing push")
-        return None
-    expected = _config(git, "git-gate.trailer") if mode != TRAILER_OFF else ""
-    if mode != TRAILER_OFF and not expected:
-        err("git-gate: this repo has no git-gate.trailer to check; refusing push")
-        return None
-    return mode, expected
+MISCONFIGURED = ("git-gate: this bottle predates commit trailers (its repo has no "
+                 "valid {what}); relaunch it")
+
+
+def _settings(git: Git, err: Callable[[str], None]) -> tuple[str, str, list[str]] | None:
+    """(mode, expected value, baseline), or None after saying what's
+    misconfigured."""
+    mode = _config(git, "git-gate.trailers")
+    expected = _config(git, "git-gate.trailer")
+    baseline = read_baseline(_config(git, "git-gate.baseline"))
+    for what, ok in (("git-gate.trailers", mode in TRAILER_MODES),
+                     ("git-gate.trailer", bool(expected)),
+                     ("git-gate.baseline", baseline is not None)):
+        if not ok:
+            err(MISCONFIGURED.format(what=what))
+            return None
+    assert baseline is not None
+    return mode, expected, baseline
 
 
 def check(refs: list[tuple[str, str, str]], *, git: Git = _git,
@@ -151,11 +156,11 @@ def check(refs: list[tuple[str, str, str]], *, git: Git = _git,
     settings = _settings(git, err)
     if settings is None:
         return REFUSE
-    mode, expected = settings
+    mode, expected, baseline = settings
     if mode == TRAILER_OFF:
         return ACCEPT
     try:
-        excluded = exclusions(git, read_baseline(_config(git, "git-gate.baseline")))
+        excluded = exclusions(git, baseline)
     except subprocess.CalledProcessError as e:
         err(f"git-gate: could not list the gate's refs: {(e.stderr or '').strip()}")
         return REFUSE

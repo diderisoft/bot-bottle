@@ -184,26 +184,30 @@ refuses, `warn` forwards the push and prints the same message, `off` doesn't
 check. Like other `git-gate` fields it merges through `extends`, a child's
 winning. The value and mode are kept in the bottle's git-gate state dir
 (`trailer.json`) for re-provisioning, and set on each bare repo as
-`git-gate.trailer` and `git-gate.trailers`. A bottle launched before the
-check existed has no `trailer.json` and isn't checked after a gateway
-restart, since its guest has no hooks.
+`git-gate.trailer` and `git-gate.trailers`.
 
 **The baseline.** A copied workspace can hold commits the operator made but
-never pushed. Those push untouched: when the workspace is a git repo copied in,
-launch records `git rev-list --all --not --remotes` on the host copy (the
-commits its local refs reach and its remote-tracking refs don't) in the
-git-gate state dir (`baseline-commits`, one SHA a line;
-`git_gate/service.py:workspace_baseline`). Commits a remote-tracking ref
+never pushed. Those push untouched. Every launch writes the bottle's baseline
+to the git-gate state dir (`baseline-commits`, one SHA a line): when the
+workspace is a git repo copied in, `git rev-list --all --not --remotes` on
+the host copy (the commits its local refs reach and its remote-tracking refs
+don't; `git_gate/service.py:workspace_baseline`), and empty otherwise. Commits a remote-tracking ref
 reaches are left out to keep the file small; they're upstream, which the gate
 already exempts. A resume adds the host repo's new unpushed commits to it.
 Provisioning copies it to `/git-gate/creds/<bottle_id>/baseline-commits` and
 names it in each bare repo's `git-gate.baseline`; the check excludes those
 commits and everything they reach (`git log --stdin --ignore-missing`, so a
 baseline commit the push doesn't carry is skipped). A baseline commit the
-agent rewrites (amends, rebases) is a new commit and is checked. A bottle
-without a baseline (no copied git workspace, or launched before baselines)
-exempts nothing beyond upstream. Commits the bottle brings in from elsewhere,
-such as another repo, still need the trailer, or a `warn` bottle.
+agent rewrites (amends, rebases) is a new commit and is checked. Commits the
+bottle brings in from elsewhere, such as another repo, still need the
+trailer, or a `warn` bottle.
+
+**Misconfiguration.** Provisioning always sets `git-gate.trailers`,
+`git-gate.trailer` and `git-gate.baseline` on every repo. A repo missing any
+of them, or whose baseline file isn't there, refuses every push (whatever the
+mode) with `this bottle predates commit trailers (its repo has no valid
+<key>); relaunch it`. Bottles launched before commit trailers have to be
+relaunched.
 
 ### The push record
 

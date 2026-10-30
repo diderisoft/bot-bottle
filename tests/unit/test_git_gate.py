@@ -28,8 +28,14 @@ from bot_bottle.manifest import ManifestIndex
 from tests.fixtures import fixture_minimal, fixture_with_git
 
 
+def _trailer_kwargs(bottle_id: str) -> dict[str, str]:
+    """The trailer settings every provisioned repo gets."""
+    return {"trailer_mode": "require", "trailer": "dev/demo-abc12",
+            "baseline": f"/git-gate/creds/{bottle_id}/baseline-commits"}
+
+
 def _render_provision(upstreams: tuple[GitGateUpstream, ...]) -> str:
-    return git_gate_render_provision("b1", upstreams)
+    return git_gate_render_provision("b1", upstreams, **_trailer_kwargs("b1"))
 
 
 class _StubGate(GitGate):
@@ -268,12 +274,12 @@ class TestHookRender(unittest.TestCase):
 
     def test_ordinary_branch_passes_agit_guard(self):
         # A normal refs/heads push must fall through Phase 0 and reach the
-        # gitleaks scan (which then fails for lack of a real repo — proving
-        # only that the guard did not short-circuit it).
+        # trailer check (which then refuses for lack of a provisioned repo,
+        # proving only that the guard did not short-circuit it).
         one = "1" * 40
         result = self._run_hook_stdin(f"{'0' * 40} {one} refs/heads/main\n")
         self.assertNotIn("refusing AGit review ref", result.stderr)
-        self.assertIn("gitleaks scanning", result.stderr)
+        self.assertIn("predates commit trailers", result.stderr)
 
     def test_inline_gitleaks_allow_routes_to_supervisor(self):
         hook = git_gate_render_hook()
@@ -417,7 +423,7 @@ class TestPrepare(unittest.TestCase):
 
     def test_prepare_writes_all_three_scripts(self):
         plan = _StubGate().prepare(
-            fixture_with_git().bottles["dev"], "demo", self.stage
+            fixture_with_git().bottles["dev"], "demo", self.stage, trailer="dev/demo"
         )
         self.assertEqual(
             self.stage / "git_gate_pre_receive.sh", plan.hook_script
@@ -436,14 +442,14 @@ class TestPrepare(unittest.TestCase):
 
     def test_prepare_plan_carries_upstreams_and_slug(self):
         plan = _StubGate().prepare(
-            fixture_with_git().bottles["dev"], "demo", self.stage
+            fixture_with_git().bottles["dev"], "demo", self.stage, trailer="dev/demo"
         )
         self.assertEqual("demo", plan.slug)
         self.assertEqual(2, len(plan.upstreams))
 
     def test_prepare_writes_known_hosts_file(self):
         plan = _StubGate().prepare(
-            fixture_with_git().bottles["dev"], "demo", self.stage
+            fixture_with_git().bottles["dev"], "demo", self.stage, trailer="dev/demo"
         )
         upstream = plan.upstreams[0]
         self.assertEqual(self.stage / "bot-bottle-known_hosts",
@@ -465,7 +471,7 @@ class TestPrepare(unittest.TestCase):
             "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
         })
         plan = _StubGate().prepare(
-            manifest.bottles["dev"], "demo", self.stage
+            manifest.bottles["dev"], "demo", self.stage, trailer="dev/demo"
         )
         self.assertEqual(Path(), plan.upstreams[0].known_hosts_file)
 
@@ -510,14 +516,14 @@ class TestDynamicKeyProvisioning(unittest.TestCase):
     def test_prepare_defers_gitea_key_provisioning(self):
         bottle = self._gitea_manifest().bottles["dev"]
         with patch("bot_bottle.git_gate.provision._provision_dynamic_key") as mock_provision:
-            plan = _StubGate().prepare(bottle, "demo", self.stage)
+            plan = _StubGate().prepare(bottle, "demo", self.stage, trailer="dev/demo")
 
         mock_provision.assert_not_called()
         self.assertEqual("", plan.upstreams[0].identity_file)
 
     def test_launch_time_helper_provisions_gitea_keys(self):
         bottle = self._gitea_manifest().bottles["dev"]
-        plan = _StubGate().prepare(bottle, "demo", self.stage)
+        plan = _StubGate().prepare(bottle, "demo", self.stage, trailer="dev/demo")
 
         with patch(
             "bot_bottle.git_gate.provision._provision_dynamic_key",

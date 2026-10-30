@@ -19,11 +19,11 @@ class GitGatePlan:
     access_hook_script: Path
     upstreams: tuple[GitGateUpstream, ...]
     gitleaks_config: Path = Path()
-    # The `Bot-Bottle` trailer every commit carries (`<bottle>/<run>`), and
-    # how pre-receive checks it (`require`, `warn` or `off`). Off without a
-    # value: a bottle launched before the check existed.
+    # The `Bot-Bottle` trailer every commit carries (`<bottle>/<run>`), how
+    # pre-receive checks it (`require`, `warn` or `off`), and the file of
+    # commits the copied workspace had that its remotes didn't (one SHA a
+    # line, maybe none), which are exempt. `GitGate.prepare` sets all three;
+    # git-gate refuses pushes to a repo provisioned without them.
     trailer: str = ""
-    trailer_mode: str = "off"
-    # The commits the copied workspace had that its remotes didn't, one SHA a
-    # line: exempt from the trailer check. Path() for none.
+    trailer_mode: str = ""
     baseline_file: Path = Path()

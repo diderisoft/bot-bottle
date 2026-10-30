@@ -400,8 +400,6 @@ class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plug
         from .lib.log import info, warn
 
         trailer = plan.git_gate_plan.trailer
-        if not trailer:
-            return
         operator_name, operator_email = commit_hooks.operator_identity()
         directory = commit_hooks.hooks_dir(plan.guest_home)
         dispatcher = plan.stage_dir / commit_hooks.DISPATCHER_NAME

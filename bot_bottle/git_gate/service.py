@@ -9,7 +9,7 @@ import subprocess
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
-from ..contract.git_trailers import TRAILER_KEY, TRAILER_OFF, trailer_mode
+from ..contract.git_trailers import TRAILER_KEY, TRAILER_VALUE_RE, trailer_mode
 from ..lib.log import warn
 from ..manifest import Manifest, ManifestBottle
 from ..secret_source import SecretSource
@@ -55,15 +55,13 @@ def save_trailer_settings(stage_dir: Path, trailer: str, mode: str) -> None:
 
 
 def load_trailer_settings(stage_dir: Path) -> tuple[str, str]:
-    """(trailer, mode) as `save_trailer_settings` kept them. A bottle launched
-    before the check existed has none and isn't checked: its guest has no
-    hook adding the trailer."""
+    """(trailer, mode) as `save_trailer_settings` kept them; ("", "") when
+    they can't be read, which git-gate refuses pushes over."""
     try:
-        data = json.loads((stage_dir / _TRAILER_FILE).read_text())
-        trailer, mode = str(data["trailer"]), trailer_mode(str(data["mode"]))
+        data = json.loads((stage_dir / _TRAILER_FILE).read_text(encoding="utf-8"))
+        return str(data["trailer"]), trailer_mode(str(data["mode"]))
     except (OSError, ValueError, KeyError, TypeError):
-        return "", TRAILER_OFF
-    return (trailer, mode) if trailer else ("", TRAILER_OFF)
+        return "", ""
 
 
 BASELINE_FILE = "baseline-commits"
@@ -90,41 +88,38 @@ def workspace_baseline(
 
 
 def save_baseline(stage_dir: Path, commits: Iterable[str]) -> Path:
-    """Add `commits` to the bottle's baseline (kept across resumes, which add
-    the host repo's new unpushed commits) and return its path; Path() when
-    it's empty."""
+    """Add `commits` to the bottle's baseline file (kept across resumes,
+    which add the host repo's new unpushed commits) and return its path. The
+    file is written even when empty."""
     path = stage_dir / BASELINE_FILE
     try:
-        known = path.read_text().split()
-    except OSError:
+        known = path.read_text(encoding="utf-8").split()
+    except FileNotFoundError:
         known = []
     merged = list(dict.fromkeys([*known, *commits]))
-    if not merged:
-        return Path()
-    path.write_text("".join(f"{sha}\n" for sha in merged))
+    path.write_text("".join(f"{sha}\n" for sha in merged), encoding="utf-8")
     path.chmod(0o600)
     return path
 
 
 def load_baseline(stage_dir: Path) -> Path:
-    """The baseline `save_baseline` kept, or Path() for none (a bottle
-    launched before baselines existed, or without a copied git workspace)."""
-    path = stage_dir / BASELINE_FILE
-    return path if path.is_file() and path.stat().st_size else Path()
+    """The baseline file `save_baseline` wrote."""
+    return stage_dir / BASELINE_FILE
 
 
 class GitGate:
     """The stateless git-gate host service."""
 
     def prepare(self, bottle: ManifestBottle, slug: str, stage_dir: Path,
-                trailer: str = "", baseline: Iterable[str] = ()) -> GitGatePlan:
+                *, trailer: str, baseline: Iterable[str] = ()) -> GitGatePlan:
         """Compute the upstream table from `bottle.git` and write the scripts
         under `stage_dir`. No side effects beyond the files. gitea upstreams
         get their identity file at launch. `trailer` is the `Bot-Bottle`
-        value commits must carry, checked as `bottle.git_trailers` says
-        (saved with the scripts, for a re-provision); "" checks nothing.
+        value commits must carry, checked as `bottle.git_trailers` says;
         `baseline` is the commits the workspace brought in, which needn't
-        carry it."""
+        carry it. Both are saved with the scripts, for a re-provision."""
+        if not TRAILER_VALUE_RE.fullmatch(trailer):
+            raise ValueError(f"git-gate: unsafe trailer value {trailer!r}")
         upstreams = git_gate_upstreams_for_bottle(bottle)
         hook, access_hook, gitleaks_config = stage_git_gate_scripts(stage_dir)
         upstreams_with_files: list[GitGateUpstream] = []
@@ -150,7 +145,7 @@ class GitGate:
                     writable=u.writable,
                 )
             )
-        mode = trailer_mode(bottle.git_trailers) if trailer else TRAILER_OFF
+        mode = trailer_mode(bottle.git_trailers)
         save_trailer_settings(stage_dir, trailer, mode)
         return GitGatePlan(
             slug=slug,
@@ -160,7 +155,7 @@ class GitGate:
             upstreams=tuple(upstreams_with_files),
             trailer=trailer,
             trailer_mode=mode,
-            baseline_file=save_baseline(stage_dir, baseline) if trailer else Path(),
+            baseline_file=save_baseline(stage_dir, baseline),
         )
 
     def provision_dynamic_keys(

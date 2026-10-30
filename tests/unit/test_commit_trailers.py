@@ -27,8 +27,7 @@ from bot_bottle.control.git_gate_render import (
 from bot_bottle.gateway.git_gate import audit, trailer_check
 from bot_bottle.git_gate import GitGate, commit_hooks
 from bot_bottle.git_gate.service import (
-    load_baseline, load_trailer_settings, save_baseline, save_trailer_settings,
-    workspace_baseline,
+    load_baseline, load_trailer_settings, save_baseline, workspace_baseline,
 )
 from bot_bottle.manifest import ManifestIndex
 from bot_bottle.manifest.document import bottle_document
@@ -38,6 +37,7 @@ from tests.unit.test_git_gate_audit import _Orchestrator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VALUE = "dev+gitea/demo-abc12"
+BASELINE_B1 = "/git-gate/creds/b1/baseline-commits"
 
 
 def _bottles(raw: dict[str, object]) -> ManifestIndex:
@@ -128,22 +128,22 @@ class TestLaunchWiring(unittest.TestCase):
                                         trailer=VALUE)
             self.assertEqual("require", default.trailer_mode)
 
-    def test_bottle_from_before_the_check_is_not_checked(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(("", "off"), load_trailer_settings(Path(tmp)))
-            save_trailer_settings(Path(tmp), "", "require")
-            self.assertEqual(("", "off"), load_trailer_settings(Path(tmp)))
-
     def test_provision_render_sets_repo_config(self):
-        script = git_gate_render_provision("b1", (), trailer_mode="require", trailer=VALUE)
+        script = git_gate_render_provision("b1", (), trailer_mode="require", trailer=VALUE,
+                                           baseline=BASELINE_B1)
         self.assertIn("trailers_mode=require", script)
         self.assertIn(f"trailer={VALUE}", script)
-        self.assertIn('config git-gate.trailers "$trailers_mode"', script)
+        self.assertIn(f"baseline={BASELINE_B1}", script)
+        for key, var in (("trailers", "trailers_mode"), ("trailer", "trailer"),
+                         ("baseline", "baseline")):
+            self.assertIn(f'config git-gate.{key} "${var}"', script)
 
     def test_provision_render_rejects_bad_settings(self):
-        for kwargs in ({"trailer_mode": "bogus", "trailer": VALUE},
-                       {"trailer_mode": "require", "trailer": ""},
-                       {"trailer_mode": "require", "trailer": "a/b; rm -rf /"}):
+        for kwargs in ({"trailer_mode": "bogus", "trailer": VALUE, "baseline": BASELINE_B1},
+                       {"trailer_mode": "require", "trailer": "a/b; rm -rf /",
+                        "baseline": BASELINE_B1},
+                       {"trailer_mode": "require", "trailer": VALUE, "baseline": "/etc/passwd"},
+                       {"trailer_mode": "require", "trailer": VALUE, "baseline": ""}):
             with self.subTest(**kwargs), self.assertRaises(ValueError):
                 git_gate_render_provision("b1", (), **kwargs)
 
@@ -171,11 +171,6 @@ class TestLaunchWiring(unittest.TestCase):
             self.assertIn('operatorEmail = "op@example.com"', config)
             install = bottle.exec.call_args_list[-1].args[0]
             self.assertIn("ln -sf bot-bottle-hook", install)
-
-    def test_provision_commit_hooks_skips_without_trailer(self):
-        bottle = _make_bottle()
-        _PROVIDER.provision_commit_hooks(bottle, _plan())
-        bottle.cp_in.assert_not_called()
 
 
 class TestOperatorIdentity(unittest.TestCase):
@@ -355,6 +350,10 @@ class _GateCase(_GitCase):
             f"PYTHONPATH={REPO_ROOT} {sys.executable} "
             "-m bot_bottle.gateway.git_gate.trailer_check \"$refs\"\n")
         hook.chmod(0o755)
+        self.state = self.root / "state"
+        self.state.mkdir()
+        self.baseline = save_baseline(self.state, [])
+        self.git("config", "git-gate.baseline", str(self.baseline), cwd=self.gate)
         self.set_mode("require")
         self.work = self.root / "work"
         self.git("init", "-q", "-b", "main", str(self.work), cwd=self.root)
@@ -376,7 +375,6 @@ class _GateCase(_GitCase):
     def commit(self, msg: str, *trailers: str) -> None:
         args = [a for t in trailers for a in ("--trailer", t)]
         self.git("commit", "-q", "--allow-empty", "-m", msg, *args, cwd=self.work)
-
 
 
 class TestGateTrailerCheck(_GateCase):
@@ -439,13 +437,31 @@ class TestGateTrailerCheck(_GateCase):
         proc = self.push()
         self.assertIn("warning refs/heads/main", proc.stderr)
 
-    def test_off_and_unset_accept(self):
+    def test_off_accepts(self):
         self.commit("feat: bare")
         self.set_mode("off")
         self.push()
-        self.commit("feat: bare again")
-        self.git("config", "--unset", "git-gate.trailers", cwd=self.gate)
-        self.push()
+
+    def test_a_repo_missing_any_setting_is_refused_as_predating_trailers(self):
+        self.commit("feat: ok", f"{TRAILER_KEY}: {VALUE}")
+        for key in ("git-gate.trailers", "git-gate.trailer", "git-gate.baseline"):
+            with self.subTest(key=key):
+                value = self.git("config", "--get", key, cwd=self.gate).stdout.strip()
+                self.git("config", "--unset", key, cwd=self.gate)
+                proc = self.push(check=False)
+                self.assertNotEqual(0, proc.returncode)
+                self.assertIn(f"this bottle predates commit trailers (its repo has no "
+                              f"valid {key}); relaunch it", proc.stderr)
+                self.git("config", key, value, cwd=self.gate)
+
+    def test_a_missing_baseline_file_is_refused(self):
+        self.commit("feat: ok", f"{TRAILER_KEY}: {VALUE}")
+        self.baseline.unlink()
+        proc = self.push(check=False)
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("no valid git-gate.baseline); relaunch it", proc.stderr)
+        self.set_mode("off")
+        self.assertNotEqual(0, self.push(check=False).returncode)
 
     def test_deletion_is_not_checked(self):
         self.push("HEAD:refs/heads/topic")
@@ -464,9 +480,7 @@ class TestBaseline(_GateCase):
         baseline = commit_hooks_baseline(self.work)
         self.operator_sha = self.git("rev-parse", "HEAD", cwd=self.work).stdout.strip()
         self.assertEqual([self.operator_sha], baseline)
-        (self.root / "state").mkdir()
-        path = save_baseline(self.root / "state", baseline)
-        self.git("config", "git-gate.baseline", str(path), cwd=self.gate)
+        save_baseline(self.state, baseline)
 
     def test_operator_commit_pushes_untouched_with_agent_commit(self):
         self.commit("feat: agent", f"{TRAILER_KEY}: {VALUE}")
@@ -492,8 +506,9 @@ class TestBaseline(_GateCase):
         self.assertNotEqual(0, proc.returncode)
         self.assertIn("feat: reworded  (no Bot-Bottle trailer)", proc.stderr)
 
-    def test_without_a_baseline_the_operator_commit_is_checked(self):
-        self.git("config", "--unset", "git-gate.baseline", cwd=self.gate)
+    def test_an_empty_baseline_checks_the_operator_commit(self):
+        # No copied git workspace: the baseline is empty.
+        self.baseline.write_text("", encoding="utf-8")
         self.commit("feat: agent", f"{TRAILER_KEY}: {VALUE}")
         proc = self.push(check=False)
         self.assertNotEqual(0, proc.returncode)
@@ -511,18 +526,20 @@ class TestBaselineFiles(unittest.TestCase):
     def test_save_unions_and_load(self):
         with tempfile.TemporaryDirectory() as tmp:
             stage = Path(tmp)
-            self.assertEqual(Path(), load_baseline(stage))
-            self.assertEqual(Path(), save_baseline(stage, []))
-            path = save_baseline(stage, ["a" * 40, "b" * 40])
+            path = save_baseline(stage, [])
+            self.assertEqual("", path.read_text(encoding="utf-8"))
+            self.assertEqual([], trailer_check.read_baseline(str(path)))
+            save_baseline(stage, ["a" * 40, "b" * 40])
             save_baseline(stage, ["b" * 40, "c" * 40])
-            self.assertEqual(["a" * 40, "b" * 40, "c" * 40], path.read_text(encoding="utf-8").split())
+            self.assertEqual(["a" * 40, "b" * 40, "c" * 40],
+                             path.read_text(encoding="utf-8").split())
             self.assertEqual(path, load_baseline(stage))
             self.assertEqual(["a" * 40, "b" * 40, "c" * 40],
                              trailer_check.read_baseline(str(path)))
 
-    def test_read_baseline_ignores_junk_and_missing_files(self):
-        self.assertEqual([], trailer_check.read_baseline(""))
-        self.assertEqual([], trailer_check.read_baseline("/nonexistent/baseline"))
+    def test_read_baseline_ignores_junk_and_fails_on_missing_files(self):
+        self.assertIsNone(trailer_check.read_baseline(""))
+        self.assertIsNone(trailer_check.read_baseline("/nonexistent/baseline"))
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as f:
             f.write("not-a-sha\n" + "d" * 40 + "\n--all\n")
         try:
@@ -535,25 +552,21 @@ class TestBaselineFiles(unittest.TestCase):
             return subprocess.CompletedProcess(argv, 128, "", "not a repo")
         self.assertEqual([], workspace_baseline(Path("/x"), run=run))
 
-    def test_prepare_records_baseline_only_with_a_trailer(self):
+    def test_prepare_always_writes_the_baseline(self):
+        bottle = _bottles({"dev": {}}).bottles["dev"]
         with tempfile.TemporaryDirectory() as tmp:
-            bottle = _bottles({"dev": {}}).bottles["dev"]
             plan = GitGate().prepare(bottle, "s", Path(tmp), trailer=VALUE,
                                      baseline=["e" * 40])
             self.assertEqual(Path(tmp) / "baseline-commits", plan.baseline_file)
+            self.assertEqual(plan.baseline_file, load_baseline(Path(tmp)))
         with tempfile.TemporaryDirectory() as tmp:
-            plan = GitGate().prepare(bottle, "s", Path(tmp), baseline=["e" * 40])
-            self.assertEqual(Path(), plan.baseline_file)
+            plan = GitGate().prepare(bottle, "s", Path(tmp), trailer=VALUE)
+            self.assertEqual("", plan.baseline_file.read_text(encoding="utf-8"))
 
-    def test_provision_render_sets_and_validates_baseline(self):
-        path = "/git-gate/creds/b1/baseline-commits"
-        script = git_gate_render_provision("b1", (), trailer_mode="require", trailer=VALUE,
-                                           baseline=path)
-        self.assertIn(f"baseline={path}", script)
-        self.assertIn('config git-gate.baseline "$baseline"', script)
-        with self.assertRaises(ValueError):
-            git_gate_render_provision("b1", (), trailer_mode="require", trailer=VALUE,
-                                      baseline="/etc/passwd")
+    def test_prepare_rejects_an_unsafe_trailer(self):
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(ValueError):
+            GitGate().prepare(_bottles({"dev": {}}).bottles["dev"], "s", Path(tmp),
+                              trailer="a/b; rm -rf /")
 
 
 class TestPushAuditRecord(_GitCase):
@@ -629,7 +642,7 @@ class TestTrailerCheckUnits(unittest.TestCase):
             return "bogus\n" if args[-1] == "git-gate.trailers" else ""
         errors: list[str] = []
         self.assertEqual(1, trailer_check.check([], git=git, err=errors.append))
-        self.assertIn("unknown git-gate.trailers", errors[0])
+        self.assertIn("no valid git-gate.trailers", errors[0])
 
     def test_require_without_value_refuses(self):
         def git(*args: str) -> str:

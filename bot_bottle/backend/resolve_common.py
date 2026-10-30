@@ -76,15 +76,15 @@ def prepare_agent_state_dir(slug: str, manifest: Manifest) -> tuple[Path, Path]:
     return agent_dir, prompt_file
 
 
-def prepare_git_gate(bottle: ManifestBottle, slug: str, trailer: str = "",
-                     workspace: WorkspacePlan | None = None) -> GitGatePlan:
+def prepare_git_gate(bottle: ManifestBottle, slug: str, trailer: str,
+                     workspace: WorkspacePlan) -> GitGatePlan:
     """`workspace`, when it's a copied git repo, gives the trailer check's
-    baseline: its unpushed commits, which push without the trailer."""
+    baseline: its unpushed commits, which push without the trailer. It's
+    empty otherwise."""
     git_gate_dir = git_gate_state_dir(slug)
     git_gate_dir.mkdir(parents=True, exist_ok=True)
     baseline: list[str] = []
-    if (trailer and workspace is not None and workspace.enabled
-            and workspace.copy_contents and workspace.has_host_git_dir):
+    if workspace.enabled and workspace.copy_contents and workspace.has_host_git_dir:
         baseline = workspace_baseline(workspace.host_path)
     return GitGate().prepare(bottle, slug, git_gate_dir, trailer=trailer, baseline=baseline)
 

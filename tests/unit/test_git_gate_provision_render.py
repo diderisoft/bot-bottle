@@ -10,6 +10,12 @@ from bot_bottle.control.git_gate_render import (
 )
 
 
+def _trailer_kwargs(bottle_id: str) -> dict[str, str]:
+    """The trailer settings every provisioned repo gets."""
+    return {"trailer_mode": "require", "trailer": "dev/demo-abc12",
+            "baseline": f"/git-gate/creds/{bottle_id}/baseline-commits"}
+
+
 def _ups(*names: str) -> tuple[GitGateUpstream, ...]:
     return tuple(
         GitGateUpstream(
@@ -26,28 +32,30 @@ def _ups(*names: str) -> tuple[GitGateUpstream, ...]:
 
 class TestProvisionRender(unittest.TestCase):
     def test_namespaces_repos_and_creds_by_bottle_id(self) -> None:
-        script = git_gate_render_provision("bottleab12", _ups("foo"))
+        script = git_gate_render_provision("bottleab12", _ups("foo"),
+                                           **_trailer_kwargs("bottleab12"))
         self.assertIn("repo=/git/bottleab12/${name}.git", script)
         self.assertIn("keyfile=/git-gate/creds/bottleab12/${name}-key", script)
         self.assertIn("mkdir -p /git/bottleab12", script)
 
     def test_one_init_repo_call_per_upstream(self) -> None:
-        script = git_gate_render_provision("b1", _ups("foo", "bar"))
+        script = git_gate_render_provision("b1", _ups("foo", "bar"), **_trailer_kwargs("b1"))
         calls = [l for l in script.splitlines() if l.startswith("init_repo ")]
         self.assertEqual(2, len(calls))
 
     def test_provision_does_not_start_the_daemon(self) -> None:
         # The shared gateway already serves; provisioning is init-only.
-        self.assertNotIn("git daemon", git_gate_render_provision("b1", _ups("foo")))
+        self.assertNotIn("git daemon", git_gate_render_provision(
+            "b1", _ups("foo"), **_trailer_kwargs("b1")))
 
     def test_installs_pre_receive_hook(self) -> None:
-        script = git_gate_render_provision("b1", _ups("foo"))
+        script = git_gate_render_provision("b1", _ups("foo"), **_trailer_kwargs("b1"))
         self.assertIn("install -m 755 /etc/git-gate/pre-receive", script)
 
     def test_rejects_unsafe_bottle_id(self) -> None:
         for bad in ("../etc", "a/b", "a b", "a;rm", ""):
             with self.assertRaises(ValueError):
-                git_gate_render_provision(bad, _ups("foo"))
+                git_gate_render_provision(bad, _ups("foo"), **_trailer_kwargs(bad))
 
 
 if __name__ == "__main__":
