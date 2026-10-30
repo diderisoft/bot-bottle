@@ -13,27 +13,29 @@ operator's `Co-Authored-By`) and pushes. It checks:
   3. git-gate's `forge.push_accepted` audit record lists the pushed SHAs.
 
 The stand-in upstream: on docker, an Alpine sshd container joined to the
-gateway's network; on other backends, an unprivileged `sshd` on the host,
-reached at the host's primary address (the gateway reaches the internet
-through the host, so it can reach that).
+gateway's network; on other backends (firecracker), a second bottle used as a
+plain SSH git server: the gateway VM reaches agent guests' SSH through the
+host's existing forwarding rules, so no network rule is added or relaxed for
+the test.
 
 The audit journal lives with the host controller. On docker the test stands
 one in: an HTTP server the orchestrator is pointed at
 (`Orchestrator.host_control`; the shared infra is restarted to pick it up and
 stopped at the end) that records `POST /audit/append` and says it can't list
 live bottles, so reconciliation leaves the registry alone. On other backends
-it reads the host controller's journal (`host_audit_dir()`), and test 3
-skips when no host controller recorded the push (the infra wasn't started by
+it reads the host controller's journal (`host_audit_dir()`). Test 3 fails
+when test 1's push never reached the upstream, and skips only when the pushes
+did but no host controller wrote the journal (the infra wasn't started by
 one).
 """
 
 from __future__ import annotations
 
 import dataclasses
-import getpass
 import json
 import os
 import secrets
+import shlex
 import shutil
 import socket
 import subprocess
@@ -153,66 +155,80 @@ class _DockerUpstream(_Upstream):
         _run(["docker", "rm", "--force", self.name])
 
 
-def _host_address() -> str:
-    """The host's primary address: where the default route leaves from."""
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.connect(("192.0.2.1", 9))  # no packet is sent
-        return s.getsockname()[0]
+class _BottleUpstream(_Upstream):
+    """A second bottle on the same backend, used as a plain SSH git server
+    (non-docker backends). Its guest SSH server answers on its guest address
+    with the per-bottle key, and the gateway VM reaches agent guests through
+    the host's existing forwarding rules, so the test needs no new network
+    allowance. The bottle's key becomes the test repo's deploy key; both go
+    away with the bottle."""
 
+    repo = "/srv/git/app.git"
 
-class _HostSshdUpstream(_Upstream):
-    """An unprivileged `sshd` on the host, logging in as the current user."""
+    def __init__(self, backend: Any, tmp: Path) -> None:
+        manifest = ManifestIndex.from_json_obj({
+            "bottles": {"upstream": {}},
+            "agents": {"trailer-upstream": {"skills": [], "prompt": "",
+                                            "bottle": "upstream"}},
+        })
+        spec = BottleSpec(manifest=manifest, agent_name="trailer-upstream",
+                          copy_cwd=False, user_cwd=str(tmp))
+        stage = tmp / "upstream-stage"
+        stage.mkdir()
+        plan = backend.prepare(spec, stage_dir=stage, secrets=secrets_from_env())
+        self.identity = plan.slug
+        self._cm = backend.launch(plan)
+        self.bottle = self._cm.__enter__()  # pylint: disable=unnecessary-dunder-call
+        try:
+            self._connect(tmp)
+        except BaseException:
+            self.stop()
+            raise
 
-    def __init__(self, tmp: Path, pubkey: Path) -> None:
-        sshd = shutil.which("sshd") or next(
-            (p for p in ("/usr/sbin/sshd", "/run/current-system/sw/bin/sshd")
-             if os.path.exists(p)), "")
-        if not sshd:
-            raise unittest.SkipTest("no sshd on the host for the stand-in upstream")
-        self.dir = tmp / "sshd"
-        self.dir.mkdir()
-        host_key = self.dir / "host_key"
-        _run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(host_key)])
-        self.host_key = " ".join(Path(f"{host_key}.pub").read_text(encoding="utf-8").split()[:2])
-        shutil.copy(pubkey, self.dir / "authorized_keys")
-        with socket.socket() as s:
-            s.bind(("0.0.0.0", 0))
-            port = s.getsockname()[1]
-        config = self.dir / "sshd_config"
-        config.write_text("\n".join([
-            f"Port {port}", "ListenAddress 0.0.0.0", f"HostKey {host_key}",
-            f"PidFile {self.dir / 'sshd.pid'}",
-            f"AuthorizedKeysFile {self.dir / 'authorized_keys'}",
-            "PasswordAuthentication no", "KbdInteractiveAuthentication no",
-            "UsePAM no", "StrictModes no", f"AllowUsers {getpass.getuser()}", "",
-        ]), encoding="utf-8")
-        self.proc = subprocess.Popen(  # pylint: disable=consider-using-with
-            [sshd, "-D", "-e", "-f", str(config)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.repo = self.dir / "app.git"
-        self.url = f"ssh://{getpass.getuser()}@{_host_address()}:{port}{self.repo}"
-        deadline = time.monotonic() + 30
+    def _connect(self, tmp: Path) -> None:
+        guest_ip = getattr(self.bottle, "_guest_ip", "")
+        bottle_key = getattr(self.bottle, "_private_key", None)
+        if not guest_ip or bottle_key is None:
+            raise AssertionError(
+                f"the {selected_backend()} bottle exposes no guest SSH address and key "
+                "to stand in as an upstream")
+        self.key = tmp / "upstream-key"
+        shutil.copyfile(bottle_key, self.key)
+        self.key.chmod(0o600)
+        user = "root"
+        self.url = f"ssh://{user}@{guest_ip}:22{self.repo}"
+        deadline = time.monotonic() + 60
         while True:
-            try:
-                with socket.create_connection(("127.0.0.1", port), timeout=1):
-                    break
-            except OSError:
-                if time.monotonic() > deadline or self.proc.poll() is not None:
-                    raise AssertionError("the host sshd never started") from None
-                time.sleep(0.2)
+            scan = _run(["ssh-keyscan", "-T", "10", "-t", "ed25519", guest_ip])
+            line = next((ln for ln in scan.stdout.splitlines()
+                         if ln and not ln.startswith("#")), "")
+            if line:
+                self.host_key = " ".join(line.split()[1:3])
+                break
+            if time.monotonic() > deadline:
+                raise AssertionError(f"ssh-keyscan {guest_ip} found no key: {scan.stderr}")
+            time.sleep(1)
 
     def seed(self, bare: Path) -> None:
-        shutil.copytree(bare, self.repo)
+        self.bottle.cp_in(str(bare), self.repo)
+        # The gateway logs in as root with no env of ours: own the repo as
+        # root and trust it system-wide.
+        r = self.bottle.exec(f"chown -R 0:0 /srv/git && "
+                             f"git config --system --add safe.directory {self.repo}",
+                             user="root")
+        if r.returncode != 0:
+            raise AssertionError(f"upstream seed failed: {r.stderr}")
 
     def git(self, *args: str) -> subprocess.CompletedProcess[str]:
-        return _run(["git", "-C", str(self.repo), *args])
+        script = " ".join(["git", "-C", self.repo, *(shlex.quote(a) for a in args)])
+        r = self.bottle.exec(script, user="root")
+        return subprocess.CompletedProcess([], r.returncode, r.stdout, r.stderr)
 
     def stop(self) -> None:
-        self.proc.terminate()
         try:
-            self.proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            self.proc.kill()
+            self._cm.__exit__(None, None, None)
+        finally:
+            cleanup_state(self.identity)
 
 
 # ---- the audit record --------------------------------------------------------
@@ -299,12 +315,16 @@ class TestCommitTrailersEndToEnd(unittest.TestCase):
             cls._env = mock.patch.dict(os.environ, {
                 "GIT_CONFIG_GLOBAL": str(cls._operator_config()), "GIT_CONFIG_NOSYSTEM": "1"})
             cls._env.start()
-            key = cls._tmp / "deploy-key"
-            _run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)])
-            cls._key = key
-            pubkey = Path(f"{key}.pub")
-            cls._upstream = (_DockerUpstream(pubkey) if cls._backend == "docker"
-                             else _HostSshdUpstream(cls._tmp, pubkey))
+            if cls._backend == "docker":
+                key = cls._tmp / "deploy-key"
+                _run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)])
+                cls._key = key
+                cls._upstream = _DockerUpstream(Path(f"{key}.pub"))
+            else:
+                upstream = _BottleUpstream(
+                    get_bottle_backend(cls._settings, cls._backend), cls._tmp)
+                cls._upstream = upstream
+                cls._key = upstream.key
             cls._make_workspace()
             if cls._backend == "docker":
                 cls._stand_in_host_control()
@@ -451,6 +471,7 @@ class TestCommitTrailersEndToEnd(unittest.TestCase):
         self.assertEqual(0, r.returncode, r.stdout + r.stderr)
 
         self.assertEqual(agent_sha, self.upstream_git("rev-parse", "main"))
+        type(self).agent_sha = agent_sha
         self.assertEqual(self._operator_sha, self.upstream_git("rev-parse", "main~1"),
                          "the operator's commit must reach upstream unchanged")
         operator_body = self.upstream_git("log", "-1", "--format=%B", self._operator_sha)
@@ -459,7 +480,6 @@ class TestCommitTrailersEndToEnd(unittest.TestCase):
         self.assertIn(f"Bot-Bottle: {self._trailer}", trailers)
         self.assertIn(f"Co-Authored-By: {_OPERATOR[0]} <{_OPERATOR[1]}>", trailers)
         self.assertTrue(self._trailer.endswith(f"/{self._identity}"), self._trailer)
-        type(self).agent_sha = agent_sha
 
     def test_2_stripped_trailer_is_refused_with_the_fix(self) -> None:
         # The hook adds the trailer; an amend with the hooks switched off
@@ -486,9 +506,14 @@ class TestCommitTrailersEndToEnd(unittest.TestCase):
         self.assertIn(f"Bot-Bottle: {self._trailer}", trailers)
 
     def test_3_audit_record_lists_pushed_commits(self) -> None:
+        if not self.agent_sha:
+            self.fail("test 1's push never reached the upstream, so there is no "
+                      "forge.push_accepted record to check (see test 1's failure)")
         events = self.pushed_events(until=2)
         if not events and self._hostctl is None:
-            self.skipTest("no host controller recorded the pushes; start the infra "
+            # The pushes reached upstream, so only the record is missing:
+            # nothing wrote the journal.
+            self.skipTest(f"no host controller wrote {host_audit_dir()}; start the infra "
                           "from the host controller to check the audit record")
         self.assertGreaterEqual(len(events), 2, events)
         first = events[0]
