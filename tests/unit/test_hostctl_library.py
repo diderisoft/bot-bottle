@@ -7,6 +7,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from typing import Any
 from pathlib import Path
 from unittest import mock
 
@@ -73,9 +74,9 @@ class TestResolvedManifest(unittest.TestCase):
         (root / "bottles" / "work.md").write_text("---\nenv:\n  A: \"1\"\n  B: \"1\"\n---\n")
         (root / "bottles" / "more.md").write_text("---\nenv:\n  B: \"2\"\n---\n")
 
-    def _resolve(self, msg: dict) -> dict:
+    def _resolve(self, msg: dict[str, Any]) -> dict[str, Any]:
         with mock.patch.object(Path, "home", return_value=self.home):
-            return asyncio.run(remote_actions.QUERIES["resolve"]({"request_id": "r", **msg}, {}))
+            return asyncio.run(remote_actions.resolve({"request_id": "r", **msg}, {}))
 
     def test_the_bottles_merge_in_order(self) -> None:
         reply = self._resolve({"agent": "helper", "bottles": ["work", "more"]})
