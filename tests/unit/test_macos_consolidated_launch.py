@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
@@ -14,7 +16,7 @@ from bot_bottle.backend.macos_container.consolidated_launch import (
 )
 from bot_bottle.egress import EgressPlan, EgressRoute
 from bot_bottle.git_gate import GitGatePlan
-from bot_bottle.control.client import RegisteredBottle
+from bot_bottle.control.client import OrchestratorClientError, RegisteredBottle
 
 _MOD = "bot_bottle.backend.macos_container.consolidated_launch"
 _UTIL = "bot_bottle.backend.provision_bottle"
@@ -46,6 +48,8 @@ def _endpoint() -> GatewayEndpoint:
 def _client() -> Mock:
     c = Mock()
     c.register_bottle.return_value = RegisteredBottle("b1", "tok")
+    c.list_bottles.return_value = [{"source_ip": "192.168.128.9"},
+                                   {"source_ip": "192.168.128.20"}]
     return c
 
 
@@ -104,6 +108,15 @@ class TestRegisterAgent(unittest.TestCase):
         ctx = self._run(_client())
         self.assertEqual("b1", ctx.bottle_id)
         self.assertEqual("tok", ctx.identity_token)
+
+    def test_the_probe_knocks_on_every_other_bottle(self) -> None:
+        self.assertEqual(("192.168.128.20",), self._run(_client()).peer_ips)
+
+    def test_siblings_that_cannot_be_listed_are_not_knocked_on(self) -> None:
+        client = _client()
+        client.list_bottles.side_effect = OrchestratorClientError("unreachable")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual((), self._run(client).peer_ips)
 
     def test_provisions_git_gate_for_the_registered_bottle(self) -> None:
         provision = Mock()
@@ -172,7 +185,6 @@ class TestRegisterAgentReconciles(unittest.TestCase):
         client.reconcile.assert_called_once_with()
 
     def test_a_reconcile_failure_does_not_block_the_launch(self) -> None:
-        from bot_bottle.control.client import OrchestratorClientError
         client = _client()
         client.reconcile.side_effect = OrchestratorClientError("unreachable")
         self._register(client)

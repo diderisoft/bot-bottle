@@ -130,7 +130,9 @@ CLI change doesn't rebuild them (`image_inputs.py` hashes the same paths).
 One gateway serves every bottle, so each request must be tied to a bottle.
 The key is the pair **(source IP, identity token)**:
 
-- The backend pins the agent's source IP, and the agent can't change it.
+- The backend pins the agent's source IP, and the agent can't change it. (On
+  macos-container, an agent that can get root can; see
+  [backends](backends.md#agents-cant-reach-each-other).)
 - The identity token is the password in the agent's proxy URL
   (`Proxy-Authorization: Basic`), or the `x-bot-bottle-identity` header for
   git-gate.

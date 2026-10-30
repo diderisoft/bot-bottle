@@ -100,9 +100,10 @@ home and state.
 | Agent | Apple container (a lightweight VM) | Firecracker microVM, reached over SSH | container, under gVisor `runsc` when Docker has it |
 | Infra pair | two Apple containers | two Firecracker microVMs | two containers |
 | Agent network | host-only agent network with pinned subnets | point-to-point TAP with a /31 per slot | an `--internal` /29 per agent, shared only with the gateway |
-| Way out | only the gateway is on the NAT egress network; a host pf anchor drops agent traffic to the host and off the subnet | `inet bot_bottle_fc` nft table: agent traffic to the gateway ports is DNAT'd to the gateway VM, everything else dropped | only the gateway is on an egress network |
+| Way out | only the gateway is on the NAT egress network; an nft firewall in each agent's VM allows only the gateway, and a host pf anchor drops agent traffic to the host and off the subnet | `inet bot_bottle_fc` nft table: agent traffic to the gateway ports is DNAT'd to the gateway VM, everything else dropped | only the gateway is on an egress network |
 | Control plane reachable from agent | no; the agent isn't on the control network | no; no forward rule | no; the agent isn't on the `--internal` control network |
-| Isolation probe | yes, plus a DNS check | yes | yes, plus a DNS check |
+| Agents reach each other | no, by the firewall in each agent's VM; best effort for an agent that can get root | no; no forward rule | no; no shared network |
+| Isolation probe | yes, as root and as the agent, plus a DNS check | yes | yes, plus a DNS check |
 | Agent image builds | host `container build` | in the orchestrator VM with buildah, or a published ext4 image | host `docker build` |
 | `nested_containers` | yes, rootless podman in the guest | rejected | rejected |
 | Host requirements | `container` CLI, a one-time pf anchor and LaunchDaemon | `/dev/kvm`, `firecracker`, e2fsprogs, a one-time TAP and nft setup | Docker |
@@ -147,6 +148,45 @@ An existing agent network with other subnets is refused at launch; so is a
 launch while the bridge still has IPv6 on (it waits out the daemon's minute
 first), and the isolation probe refuses one where the agent reaches the host's
 LAN address or `192.168.128.1`.
+
+### Agents can't reach each other
+
+All agents share the agent network, and frames between them are switched on
+the vmnet bridge without reaching the IP layer, so pf can't filter them, and
+macOS's bridge has no setting to hand them to pf. Each agent's own kernel does
+instead (`agent_firewall.py`). Before anything else runs in the guest,
+bot-bottle loads an nftables table, `inet bot_bottle`, as root, in the same
+exec that points `bot-bottle-gateway` at the gateway in `/etc/hosts`:
+
+- **Out:** only the gateway's address is allowed, plus replies, and everything
+  else is rejected (ICMP administratively prohibited, so a connection fails at
+  once rather than timing out).
+- **In:** only replies. Nothing connects into an agent on this backend:
+  control goes through `container exec`, and addresses are static, so no DHCP
+  traffic is needed.
+- **Root is exempt.** The agent runs as the image's user, and the launch's pf
+  check runs as root.
+
+The table is kernel state, so it's loaded on every start of the guest,
+including a kept guest restarted on resume, and reloaded when reattach moves
+the gateway. The agent runs with `--cap-add CAP_NET_ADMIN` so root can load
+it (`container exec` can't grant a capability to one process); the agent's
+user has no capabilities. The claude, codex and pi images include `nftables`.
+An image without `nft` launches with a warning and no firewall, and a ruleset
+`nft` refuses fails the launch.
+
+**An agent that can get root can remove its firewall.** It could then reach
+other agents, change its own address (so only its identity token still
+attributes its requests), and spoof addresses on the shared network, for
+example to take traffic meant for the gateway. pf still keeps it off the Mac.
+After the probe, the launch checks, as the agent's user, whether it runs as
+root, has passwordless `sudo` or `doas`, or has a binary on `PATH` with file
+capabilities, and warns that isolation from other agents is best effort for
+it. The check can't prove an agent can't get root; it catches images built to
+allow it. Isolating such agents needs enforcement outside their VM, such as a
+network per agent with a relay, which `container` makes costly today: it
+can't attach a network to a running container, and vmnet doesn't route
+between its networks.
 
 Gateway files and commands go through
 the `container` CLI's exec and cp (`gateway_transport.py`). With
@@ -317,18 +357,22 @@ The agent's compose file holds only bare env names. Values such as
 `backend/isolation_probe.py`. The launcher doesn't trust configuration to
 describe the boundary. Before the agent runs, it opens a canary TCP listener
 on the host's primary address and has the guest try to connect to it and to a
-public address. On docker it also tries to resolve a public name. Any success
-is a leak, and the launch fails. The canary listener means a "blocked" result
-is a real drop, not a connection refused.
+public address. On docker and macos-container it also tries to resolve a
+public name. Any success is a leak, and the launch fails. The canary listener
+means a "blocked" result is a real drop, not a connection refused.
 
-On docker it also knocks on up to four other running bottles (their
-registered source IPs, from the orchestrator) at TCP port 1, which nothing
-serves. There's no listener there, so a refusal counts as a leak as well as a
+On docker and macos-container it also knocks on up to four other running
+bottles (their registered source IPs, from the orchestrator) at TCP port 1,
+which nothing serves. There's no listener there, so a refusal counts as a leak as well as a
 connection; only silence or no route passes. This needs python3 or bash in
 the agent image, which can tell a refusal from a drop; with only `nc` the
 probe is inconclusive and the launch fails. The first bottle has no siblings
 to knock on, and each later launch checks itself against those already
 running.
+
+On macos-container the probe runs twice: as root, whose traffic the agent's
+firewall lets through, so it tests the host pf anchor; then as the agent's
+user, against its firewall, with the sibling knock.
 
 ## Gateway restarts
 

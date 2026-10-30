@@ -10,16 +10,13 @@ flow (PRD 0081; see test_gateway_attach).
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
 
 from bot_bottle.backend.macos_container.gateway_hosts import (
     GATEWAY_HOSTNAME,
     gateway_host_argv,
-    set_gateway_host,
 )
 from bot_bottle.backend.util import ROOT_EXEC_PATH
 
-_MOD = "bot_bottle.backend.macos_container.gateway_hosts"
 
 
 class TestGatewayHostArgv(unittest.TestCase):
@@ -60,14 +57,6 @@ class TestGatewayHostArgv(unittest.TestCase):
             gateway_host_argv("10.0.0.1; rm -rf /")
 
 
-class TestSetGatewayHost(unittest.TestCase):
-    def test_runs_as_root_so_the_agent_cannot_repoint_itself(self) -> None:
-        with patch(f"{_MOD}.container_mod.exec_container_as_root") as ex:
-            set_gateway_host("bot-bottle-demo", "192.168.128.19")
-        self.assertEqual(
-            ("bot-bottle-demo", gateway_host_argv("192.168.128.19")), ex.call_args.args)
-
-
 class TestLaunchWiring(unittest.TestCase):
     def test_launch_sets_the_host_entry_before_reading_the_source_ip(self) -> None:
         """The agent's every URL names the gateway, so the entry has to exist
@@ -77,7 +66,7 @@ class TestLaunchWiring(unittest.TestCase):
         from bot_bottle.backend.macos_container import launch
 
         src = inspect.getsource(launch)
-        set_at = src.index("set_gateway_host(plan.container_name")
+        set_at = src.index("agent_firewall.point_at_gateway(")
         exec_at = src.index("wait_container_ipv4_on_network")
         self.assertLess(set_at, exec_at)
 

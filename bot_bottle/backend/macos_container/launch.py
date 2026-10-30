@@ -8,9 +8,13 @@ reaches the agent only at `container exec` time
 command carries it.
 
 The agent runs with `--cap-drop CAP_NET_RAW`. Apple grants NET_RAW by default,
-which would let it forge a neighbour's source address; NET_ADMIN is already
-absent. Together they make the source address a reliable attribution key,
-independent of the token.
+which would let it forge a neighbour's source address. It runs with
+`--cap-add CAP_NET_ADMIN` so root can load the firewall that keeps it off
+other agents (`agent_firewall`); `container exec` can't grant a capability to
+one process. The agent isn't root, so it has neither, and its source address
+stays a reliable attribution key independent of the token. An agent that can
+get root could change its address and remove the firewall; the launch warns
+about one.
 """
 
 from __future__ import annotations
@@ -45,7 +49,8 @@ from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from . import util as container_mod
 from . import host_firewall
 from .bottle import MacosContainerBottle
-from .gateway_hosts import GATEWAY_HOSTNAME, set_gateway_host
+from . import agent_firewall
+from .gateway_hosts import GATEWAY_HOSTNAME
 from . import nested_containers as nested_containers_mod
 from .bottle_plan import MacosContainerBottlePlan
 from ...orchestrator.store.config_store import resolve_teardown_timeout
@@ -184,10 +189,17 @@ def launch(
         stack.callback(_stop_or_remove, plan.container_name, plan.slug,
                        plan.manifest.bottle.preserve_container)
 
-        # Resolve the gateway name before anything execs, then read the DHCP
-        # address (polling: `run --detach` can return first) and register by
-        # it.
-        set_gateway_host(plan.container_name, endpoint.gateway_ip)
+        # Resolve the gateway name and load the firewall before anything
+        # execs, then read the DHCP address (polling: `run --detach` can
+        # return first) and register by it.
+        try:
+            firewalled = agent_firewall.point_at_gateway(
+                plan.container_name, endpoint.gateway_ip)
+        except ValueError as e:
+            die(f"agent {plan.container_name}: {e}. Refusing to run the agent "
+                "(fail-closed). A guest kept from before bot-bottle loaded "
+                "this firewall lacks NET_ADMIN; `bot-bottle cleanup bots` "
+                "removes it.")
         source_ip = container_mod.wait_container_ipv4_on_network(
             plan.container_name, endpoint.network,
         )
@@ -244,17 +256,21 @@ def launch(
                 "so agents can reach this Mac over it. Refusing to run the agent "
                 "(fail-closed). Install or update the host firewall with "
                 "`bot-bottle install --backend=macos-container`.")
+        # The host's own address on the agent network: the agents' default
+        # route and resolver, which a host-only network still reaches.
+        host_ips = (host_firewall.host_address(agent_subnet),)
+        # As root, whose traffic the agent's firewall lets through: proves pf.
         isolation_probe.verify_isolation(
-            lambda script: bottle.exec(script).stdout,
+            lambda script: bottle.exec(script, user="root").stdout,
             what=f"agent container {plan.container_name}",
             remedy=("The host firewall keeps agents off this Mac; install or "
                     "update it with `bot-bottle install "
                     "--backend=macos-container`."),
             check_dns=True,
-            # The host's own address on the agent network: the agents' default
-            # route and resolver, which a host-only network still reaches.
-            host_ips=(host_firewall.host_address(agent_subnet),),
+            host_ips=host_ips,
         )
+        _verify_agent_firewall(bottle, plan.container_name, firewalled,
+                               host_ips=host_ips, peers=ctx.peer_ips)
         bottle.prompt_path = provision(plan, bottle)
 
         if plan.nested_containers:
@@ -437,6 +453,35 @@ def _ensure_home(plan: MacosContainerBottlePlan) -> bool:
     return False
 
 
+def _verify_agent_firewall(
+    bottle: MacosContainerBottle, name: str, firewalled: bool, *,
+    host_ips: tuple[str, ...], peers: tuple[str, ...],
+) -> None:
+    """As the agent's user, prove its firewall keeps it off the Mac, the
+    internet and other agents, then warn if it can get root and so remove
+    it. Warns instead when the image has no `nft`."""
+    if not firewalled:
+        warn(f"agent {name}: its image has no `nft`, so nothing keeps it from "
+             "reaching other agents on this Mac. Build it from a bot-bottle "
+             "image, or install the nftables package.")
+        return
+    isolation_probe.verify_isolation(
+        lambda script: bottle.exec(script).stdout,
+        what=f"agent container {name}",
+        remedy=("Its firewall allows only the gateway; relaunch it so the "
+                "firewall is loaded again."),
+        check_dns=True,
+        host_ips=host_ips,
+        peers=peers,
+    )
+    found = agent_firewall.privileges(
+        bottle.exec(agent_firewall.privilege_check_script(), private=False).stdout)
+    if found:
+        warn(f"agent {name} can get root ({'; '.join(found)}), so it can remove "
+             "its firewall: keeping it from other agents on this Mac is best "
+             "effort. See docs/reference/backends.md.")
+
+
 def _start_agent(plan: MacosContainerBottlePlan, endpoint: GatewayEndpoint) -> None:
     argv = _agent_run_argv(plan, endpoint)
     env = {**os.environ, **plan.forwarded_env}
@@ -460,9 +505,10 @@ def _agent_run_argv(
         "--detach",
         "--label", "bot-bottle.backend=macos-container",
         "--network", endpoint.network,
-        # Without NET_RAW the agent can't spoof neighbours' addresses. See the
-        # module docstring.
+        # Without NET_RAW the agent can't spoof neighbours' addresses; root
+        # needs NET_ADMIN to load its firewall. See the module docstring.
         "--cap-drop", "CAP_NET_RAW",
+        "--cap-add", "CAP_NET_ADMIN",
         # Its home, kept across stop and resume (`_ensure_home`).
         "--volume", f"{home_volume_name(plan.slug)}:{plan.guest_home}",
     ]

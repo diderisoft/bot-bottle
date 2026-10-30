@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Callable, cast
 from unittest.mock import ANY, patch
 
 from bot_bottle.contract.hostctl import Settings
@@ -412,21 +412,39 @@ class _Teardown:
         self.stack.close()
 
 
+def _quiet_probe(*_a: object, **_k: object) -> None:
+    pass
+
+
+def _firewall_result(firewall: bool | Exception) -> Callable[..., bool]:
+    """`point_at_gateway`'s stand-in: says whether the firewall loaded, or
+    raises."""
+    def point(*_a: object, **_k: object) -> bool:
+        if isinstance(firewall, Exception):
+            raise firewall
+        return firewall
+    return point
+
+
 class TestLaunchIsolationProbe(unittest.TestCase):
     """The probe runs after registration, through the bottle's exec, and a
-    leak stops the launch before provisioning (#603)."""
+    leak stops the launch before provisioning (#603). It runs as root to test
+    pf, then as the agent against its firewall (#810)."""
 
     def setUp(self) -> None:
         self._tmp = Path(tempfile.mkdtemp(prefix="macos-launch-probe-test."))
         self.addCleanup(lambda: __import__("shutil").rmtree(self._tmp, ignore_errors=True))
         # Here, not in `_launch`'s `with`: one more there passes CPython's limit
-        # of 20 statically nested blocks.
+        # of 20 statically nested blocks. A test can patch `exec` again.
         for patcher in (patch.object(launch_mod.container_mod, "force_remove_container"),
-                        patch.object(launch_mod, "_ensure_home", return_value=False)):
+                        patch.object(launch_mod, "_ensure_home", return_value=False),
+                        patch.object(MacosContainerBottle, "exec",
+                                     return_value=SimpleNamespace(stdout=""))):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def _launch(self, probe: object, provision: object, *, ipv6_off: bool = True) -> list[str]:
+    def _launch(self, probe: object, provision: object, *, ipv6_off: bool = True,
+                firewall: bool | Exception = True) -> list[str]:
         plan = _replace(
             _plan(self._tmp),
             agent_command="claude",
@@ -436,7 +454,8 @@ class TestLaunchIsolationProbe(unittest.TestCase):
         )
         order: list[str] = []
         teardown = _Teardown()
-        ctx = SimpleNamespace(bottle_id="b1", identity_token="tok")
+        ctx = SimpleNamespace(bottle_id="b1", identity_token="tok",
+                              peer_ips=("192.168.128.20",))
 
         def register(*_a: object, **_k: object) -> object:
             order.append("register")
@@ -461,7 +480,8 @@ class TestLaunchIsolationProbe(unittest.TestCase):
              patch.object(launch_mod, "_stamp_agent_urls", side_effect=_same_plan), \
              patch.object(launch_mod, "new_env_var_secret", return_value="s"), \
              patch.object(launch_mod, "_start_agent"), \
-             patch.object(launch_mod, "set_gateway_host"), \
+             patch.object(launch_mod.agent_firewall, "point_at_gateway",
+                          side_effect=_firewall_result(firewall)), \
              patch.object(launch_mod.container_mod, "wait_container_ipv4_on_network",
                           return_value="192.168.128.9"), \
              patch.object(launch_mod, "registration_tokens", return_value={}), \
@@ -479,35 +499,62 @@ class TestLaunchIsolationProbe(unittest.TestCase):
         return order
 
     def test_the_probe_runs_after_registration_and_before_provisioning(self) -> None:
-        seen: dict[str, object] = {}
+        seen: list[dict[str, object]] = []
 
-        def probe(run_guest: object, **kwargs: object) -> None:
-            seen.update(kwargs)
-            seen["run_guest"] = run_guest
+        def probe(_run_guest: object, **kwargs: object) -> None:
+            seen.append(kwargs)
 
         order = self._launch(probe, _no_provision)
 
-        self.assertEqual(["register", "probe", "provision"], order)
-        self.assertTrue(seen["check_dns"])
-        self.assertIn("bot-bottle-dev-abc", str(seen["what"]))
-        self.assertIn("install --backend=macos-container", str(seen["remedy"]))
-        self.assertNotIn("host_gap", seen)
+        self.assertEqual(["register", "probe", "probe", "provision"], order)
+        self.assertEqual(2, len(seen))
+        pf, firewall = seen[0], seen[1]
+        self.assertTrue(pf["check_dns"] and firewall["check_dns"])
+        self.assertIn("bot-bottle-dev-abc", str(pf["what"]))
+        self.assertIn("install --backend=macos-container", str(pf["remedy"]))
+        self.assertNotIn("peers", pf)
+        self.assertIn("firewall", str(firewall["remedy"]))
+        self.assertEqual(("192.168.128.20",), firewall["peers"])
 
-    def test_the_probe_runs_through_the_bottle_exec(self) -> None:
-        calls: list[str] = []
+    def test_the_probe_runs_as_root_then_as_the_agent(self) -> None:
+        calls: list[tuple[str, str]] = []
 
         def probe(run_guest: object, **_kwargs: object) -> None:
             assert callable(run_guest)
             self.assertEqual("guest-out", run_guest("echo probe"))
 
-        def fake_exec(_self: object, script: str, **_k: object) -> object:
-            calls.append(script)
+        def fake_exec(_self: object, script: str, *, user: str = "node",
+                      **_k: object) -> object:
+            calls.append((user, script))
             return SimpleNamespace(stdout="guest-out")
 
         with patch.object(MacosContainerBottle, "exec", fake_exec):
             self._launch(probe, _no_provision)
 
-        self.assertEqual(["echo probe"], calls)
+        self.assertEqual([("root", "echo probe"), ("node", "echo probe")], calls[:2])
+        self.assertEqual(("node", launch_mod.agent_firewall.privilege_check_script()),
+                         calls[2])
+
+    def test_an_image_without_nft_warns_and_skips_the_agent_probe(self) -> None:
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            order = self._launch(_quiet_probe, _no_provision, firewall=False)
+        self.assertEqual(["register", "probe", "provision"], order)
+
+    def test_a_firewall_that_will_not_load_stops_the_launch(self) -> None:
+        with self.assertRaises(Die) as cm:
+            self._launch(_quiet_probe, _no_provision,
+                         firewall=ValueError("the agent's firewall didn't load"))
+        self.assertIn("fail-closed", cm.exception.message)
+
+    def test_an_agent_that_can_get_root_is_warned_about(self) -> None:
+        out = SimpleNamespace(stdout="bb-privilege=passwordless sudo\n")
+        with patch.object(MacosContainerBottle, "exec", return_value=out), \
+                patch.object(launch_mod, "warn") as warned:
+            self._launch(_quiet_probe, _no_provision)
+        message = " ".join(str(c.args[0]) for c in warned.call_args_list)
+        self.assertIn("passwordless sudo", message)
+        self.assertIn("best effort", message)
 
     def test_ipv6_on_the_agent_bridge_stops_the_launch(self) -> None:
         def probe(*_a: object, **_k: object) -> None:
@@ -520,6 +567,7 @@ class TestLaunchIsolationProbe(unittest.TestCase):
         seen: dict[str, object] = {}
 
         def probe(_run_guest: object, **kwargs: object) -> None:
+            self.assertEqual(("192.168.128.1",), kwargs["host_ips"])
             seen.update(kwargs)
         self._launch(probe, _no_provision)
         self.assertEqual(("192.168.128.1",), seen["host_ips"])

@@ -158,7 +158,7 @@ class TestMacosLaunchSecrets(_LaunchCase):
                 mock.patch.object(mac_launch, "new_env_var_secret", return_value="k"), \
                 mock.patch.object(mac_launch, "container_mod") as container_mod, \
                 mock.patch.object(mac_launch, "_start_agent"), \
-                mock.patch.object(mac_launch, "set_gateway_host"), \
+                mock.patch.object(mac_launch.agent_firewall, "point_at_gateway"), \
                 mock.patch.object(mac_launch, "resolve_teardown_timeout", return_value=1), \
                 mock.patch.object(mac_launch, "register_agent",
                                   side_effect=_Stop) as register, \

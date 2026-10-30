@@ -14,12 +14,13 @@ RUN sed -i \
       /etc/apt/sources.list.d/debian.sources
 
 # Runtime deps: claude-code shells out to git; curl works through the egress
-# proxy.
+# proxy; on macOS, bot-bottle loads the agent's firewall with nftables.
 RUN apt-get -o Acquire::Check-Valid-Until=false update \
   && apt-get install -y --no-install-recommends \
   git \
   ca-certificates \
   curl \
+  nftables \
   openssh-client \
   ripgrep \
   iproute2 \

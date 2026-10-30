@@ -87,7 +87,7 @@ def guest_env(enabled: bool) -> dict[str, str]:
     }
 
 
-def prepare_guest_devices(container_name: str, exec_as_root: Callable[..., None]) -> None:
+def prepare_guest_devices(container_name: str, exec_as_root: Callable[..., object]) -> None:
     """Make /dev/fuse and /dev/net/tun openable by the agent user. Runs as root
     in the bottle.
     """

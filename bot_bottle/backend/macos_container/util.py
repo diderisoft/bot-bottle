@@ -396,9 +396,9 @@ def force_remove_container(name: str) -> None:
         )
 
 
-def exec_container_as_root(name: str, argv: list[str]) -> None:
+def exec_container_as_root(name: str, argv: list[str]) -> str:
     """Run `argv` in container `name` as uid 0, for host maintenance the agent mustn't be
-    able to do (e.g. rewriting `/etc/hosts`).
+    able to do (e.g. rewriting `/etc/hosts`). Returns its stdout.
     """
     result = _run_container_op([_CONTAINER, "exec", "--user", "root", name, *argv])
     if result.returncode != 0:
@@ -406,6 +406,7 @@ def exec_container_as_root(name: str, argv: list[str]) -> None:
             f"container exec (root) in {name} failed: "
             f"{(result.stderr or '').strip() or '<no stderr>'}"
         )
+    return result.stdout or ""
 
 
 def _run_container_op(cmd: list[str]) -> subprocess.CompletedProcess[str]:

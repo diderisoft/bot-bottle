@@ -393,7 +393,8 @@ class MacosAttacher(unittest.TestCase):
 
     def test_gateway_name_is_repointed_as_root_without_tmp_or_the_agents_path(self) -> None:
         from bot_bottle.backend.macos_container import gateway_attach as mga
-        with patch.object(mga.container_mod, "run_container_argv", return_value=_done()) as run:
+        with patch.object(mga.container_mod, "run_container_argv",
+                          return_value=_done(out="bb-firewall=ok\n")) as run:
             mga.MacosGatewayAttacher("net").point_at_gateway(_A, "192.168.129.7")
         argv = run.call_args.args[0]
         self.assertEqual(["container", "exec", "--user", "root", "ref-a", "/bin/sh", "-c"],

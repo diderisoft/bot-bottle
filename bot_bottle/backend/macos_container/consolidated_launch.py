@@ -49,6 +49,7 @@ class LaunchContext:
     gateway_ip: str
     network: str
     env_var_secret: str = ""  # key for the agent's env
+    peer_ips: tuple[str, ...] = ()  # other bottles' source IPs, for the probe
 
 
 def ensure_gateway(*, service: MacosInfraService) -> GatewayEndpoint:
@@ -95,7 +96,20 @@ def register_agent(
         gateway_ip=endpoint.gateway_ip,
         network=endpoint.network,
         env_var_secret=reg.env_var_secret,
+        peer_ips=_peer_ips(client, source_ip),
     )
+
+
+def _peer_ips(client: OrchestratorClient, own: str) -> tuple[str, ...]:
+    """Every other registered bottle's source IP. Best effort: the probe
+    knocks on none if they can't be listed."""
+    try:
+        records = client.list_bottles()
+    except OrchestratorClientError as e:
+        info(f"sibling agents not listed for the isolation probe: {e}")
+        return ()
+    ips = {record.get("source_ip") for record in records}
+    return tuple(sorted(ip for ip in ips if isinstance(ip, str) and ip and ip != own))
 
 
 def deprovision_consolidated(

@@ -5,7 +5,8 @@ guests still reach the host's own addresses (its LAN address, the vmnet
 gateway), and with IP forwarding on, anything that NATs the subnet would let
 them out. The anchor drops traffic from the agent subnets to the host itself
 and to anything off the subnet. Agent-to-gateway traffic stays on the subnet
-and passes.
+and passes. Traffic between agents is switched on the vmnet bridge and never
+reaches pf; each agent's own firewall stops it (`agent_firewall`).
 
 It lives under the `com.apple/*` hook already in `/etc/pf.conf`, so that file
 is never edited. A root LaunchDaemon loads it at boot and re-applies it every

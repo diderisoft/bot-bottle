@@ -13,12 +13,14 @@ RUN sed -i \
       -e "s|https://deb.debian.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
       /etc/apt/sources.list.d/debian.sources
 
+# On macOS, bot-bottle loads the agent's firewall with nftables.
 RUN apt-get -o Acquire::Check-Valid-Until=false update \
   && apt-get install -y --no-install-recommends \
   git \
   ca-certificates \
   curl \
   fd-find \
+  nftables \
   openssh-client \
   ripgrep \
   && ln -s /usr/bin/fdfind /usr/local/bin/fd \

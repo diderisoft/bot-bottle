@@ -16,7 +16,7 @@ from ..gateway_attach import GatewayAttachError, GatewayAttacher, RunningBottle
 from ..util import install_agent_ca_script
 from . import util as container_mod
 from .enumerate import CONTAINER_NAME_PREFIX, EnumerationError, enumerate_active
-from .gateway_hosts import gateway_host_argv
+from .agent_firewall import firewall_loaded, point_at_gateway_argv
 
 _STAGED_CA = "/root/bot-bottle-gateway-ca.pem"
 _EXEC_TIMEOUT_SECONDS = 60
@@ -41,10 +41,15 @@ class MacosGatewayAttacher(GatewayAttacher):
         return bottles
 
     def point_at_gateway(self, bottle: RunningBottle, address: str) -> None:
-        # DHCP moves the gateway on recreate; bottles name it via /etc/hosts.
-        self._run(["container", "exec", "--user", "root", bottle.ref,
-                   *gateway_host_argv(address)],
-                  what="pointing the bottle at the gateway")
+        # DHCP moves the gateway on recreate; bottles name it via /etc/hosts,
+        # and their firewall allows only its address.
+        out = self._run(["container", "exec", "--user", "root", bottle.ref,
+                         *point_at_gateway_argv(address)],
+                        what="pointing the bottle at the gateway")
+        try:
+            firewall_loaded(out)
+        except ValueError as e:
+            raise GatewayAttachError(str(e)) from e
 
     def install_ca(self, bottle: RunningBottle, ca_pem: str) -> None:
         # No reliable stdin for `container exec`: stage with `container cp`.
