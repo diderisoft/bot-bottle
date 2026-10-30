@@ -139,7 +139,9 @@ home and state.
 
 ## macos-container
 
-`backend/macos_container/`. Containers:
+`backend/macos_container/`. Containers (names are for the live environment;
+a named one prefixes `bb-<name>-` instead of `bot-bottle-`, see
+[install.md](install.md#environments)):
 
 - `bot-bottle-mac-orchestrator`: on the control network only. Sole opener of
   the DB volume.
@@ -151,7 +153,8 @@ Agents are on the agent network only. That network is `--internal` (vmnet
 host-only), which removes the internet route but still lets guests reach the
 host's own addresses, and with IP forwarding on, anything that NATs the subnet
 would let them out. So its subnets are pinned and a host pf anchor,
-`com.apple/io.bot-bottle` (`host_firewall.py`), drops traffic from them to the
+`com.apple/io.bot-bottle` (`host_firewall.py`; `io.bot-bottle.<name>` in a
+named environment, each with its own subnet and IPv6 /64), drops traffic from them to the
 host itself (named as the subnet's first address, since pf's `(self)` misses
 the vmnet bridge's own address) and to anything off the subnet. Agent-to-gateway
 traffic stays on the subnet. `install` installs the anchor and a root
@@ -311,6 +314,12 @@ reading `netpool.defaults.env`:
 - The `inet bot_bottle_fc` table lets a VM reach only its own gateway,
   DNAT'd from the host end of its TAP. Preflight fails closed if the table is
   missing.
+- After the live pool, the setup reserves `BOT_BOTTLE_FC_ENV_SLOTS` (default
+  4) slices for named environments: slice `k` is `bb<k>fc*` TAPs from
+  `10.243.<k>.0`, tables `bot_bottle_fc<k>*` and infra links
+  `bborch<k>`/`bbgw<k>` (`netpool.env_slice`; the math is in
+  [install.md](install.md#environments)). Each environment's VMs and run
+  directories live apart (`util.env_dir`).
 
 The infra pair (`infra_vm.py`) is two persistent VMs, each booting its own
 rootfs (`infra_rootfs.py`):
@@ -338,7 +347,9 @@ the built-in default (`_DEFAULT_PATH_FOR`).
 
 ## docker
 
-`backend/docker/`. The weakest boundary: agents share the host kernel unless
+`backend/docker/`. Names below are the live environment's; a named one uses
+`bb-<name>-` and its own subnets ([install.md](install.md#environments)). The
+weakest boundary: agents share the host kernel unless
 gVisor is registered.
 
 **gVisor.** When Docker has the `runsc` runtime registered

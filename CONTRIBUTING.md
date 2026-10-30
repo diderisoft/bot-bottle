@@ -19,6 +19,19 @@ git config core.hooksPath .githooks
 
 ## Running from main
 
+Develop in the `dev` environment, never your live install: with
+`BOT_BOTTLE_ENV=dev` a checkout gets its own state root
+(`~/.bot-bottle-envs/dev`), container and VM names, network and host
+controller, so a migration, teardown or crash can't reach `~/.bot-bottle` or
+the bottles running there
+([docs/reference/install.md](docs/reference/install.md#environments)).
+
+```sh
+export BOT_BOTTLE_ENV=dev
+./cli.py status                # says "environment: dev ..."
+./cli.py envs rm dev           # start over: tears dev down, deletes its state
+```
+
 Installs default to the latest release tag. A checkout, or an install of
 `main` (`install.sh --main`), usually has no published orchestrator and gateway
 images to match it, and bot-bottle won't build them unasked. Build them from

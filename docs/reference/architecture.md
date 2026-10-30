@@ -158,6 +158,11 @@ Roles, routes and env vars are in [runtime-contract.md](runtime-contract.md).
 
 ## State
 
+Paths are the live environment's. A named environment (`BOT_BOTTLE_ENV`) keeps
+the same layout under `~/.bot-bottle-envs/<name>/` and prefixes its
+containers, VMs, networks and volumes `bb-<name>-`; caches are shared
+([install.md](install.md#environments)).
+
 | What | Where | Owner |
 |---|---|---|
 | User agents and bottles | `~/.bot-bottle/{agents,bottles}/`, versioned in a git repo in `~/.bot-bottle/` that tracks only those two directories (`manifest/versions.py`; PRD 0103, design repo). bot-bottle commits its own writes, and hand edits as "edited by hand" before a launch reads them; it refuses a commit holding a value from the secrets file. The launch audit event records the version (`bottle_versions`), and `bot-bottle bottles history` / `revert` read and restore them; `bottles migrate` (`manifest/migrate.py`) rewrites an old-format bottle as forge grants, as a version | user |
@@ -176,7 +181,7 @@ egress tokens (PRD 0081, design repo).
 ## Other reference pages
 
 - [backends.md](backends.md): the three backends and their isolation
-- [install.md](install.md): installing, host requirements, uninstalling
+- [install.md](install.md): installing, host requirements, environments, uninstalling
 - [manifest.md](manifest.md): bottle and agent files, trust, egress routes
 - [gateway.md](gateway.md): egress proxy, DLP, supervise, firehose, CA
 - [git-gate.md](git-gate.md): the git push and fetch gate
