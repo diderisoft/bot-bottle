@@ -121,6 +121,15 @@ Use `BOT_BOTTLE_BACKEND=docker bot-bottle start <agent>` on hosts where neither 
 
 > **CI (macOS Apple Container):** the advisory `integration-macos` job in `.gitea/workflows/pre-release-test.yml` runs only on manual dispatch. It targets a self-hosted host-mode runner labelled `macos`; Apple Container cannot run inside the Linux pull-request runner. Provision an Apple Silicon host with the `container` CLI running and Python ≥ 3.11 plus `coverage` on the launchd service's explicit `PATH`. The infra container is a singleton (`bot-bottle-mac-infra`), so keep runner concurrency at 1. Install the host firewall on that host once (`sudo bot-bottle install --backend=macos-container`, or the printed `sudo` block); the runner itself never gets root, and the job's preflight and isolation probe fail without it. Its coverage is reported separately and never feeds the required pull-request gate.
 
+### Keeping a bottled agent's guest
+
+A stopped bottled agent keeps its home (its conversation and workspace) and
+resumes into a new guest. A bottle may set `preserve_container: true` to keep
+the guest itself too, for an agent whose image gives it root, so what it
+installs stays across stop and resume. `bot-bottle resume --fresh <bottled
+agent>` starts a new guest from the agent's current image instead, its home
+kept. See [backends](docs/reference/backends.md#keeping-the-guest).
+
 ### Containers inside a bottle
 
 A bottle may set `nested_containers: true`. On the macOS backend this starts a

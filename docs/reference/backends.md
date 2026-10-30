@@ -62,6 +62,37 @@ state: when its session ends without being kept for resume (any harness that
 exits non-zero, as a stop does, is kept; `bottle_state.capture_session_state`),
 and in `cleanup bots`, which removes the homes of bottled agents not kept.
 
+### Keeping the guest
+
+A bottle with `preserve_container: true` keeps the whole guest too, for an
+agent whose image gives it root (an overlay that installs `sudo`, say), so what
+it installs outside its home stays. Off by default: the default images' agent
+user has no root, so its home holds everything it can change. Teardown keeps
+the guest when the bottled agent is kept for resume (`launch_common.keeps_guest`)
+and removes it otherwise; resume starts the kept one (`reuses_guest`) and redoes
+only the per-launch wiring (registration at its new address, git-gate keys, the
+gateway CA, the agent config):
+
+- **macos-container:** the container is stopped, not removed, and `container
+  start`ed on resume. It keeps the env it was made with, its `ENV_VAR_SECRET`
+  too; the identity token was never in it (it goes with each `exec`).
+- **docker:** the container is stopped and taken off its agent network, which
+  teardown removes as usual. Resume registers on a new agent network, connects
+  the container there at its new address and starts it. Its proxy env (the
+  identity token, the gateway's address) goes with each `docker exec`, never in
+  the container's env, so a kept container has none to go stale.
+- **firecracker:** its root disk lives in the state dir (`guest.ext4`, grown to
+  16G sparse) instead of the run dir, and resume boots it again after writing
+  this host's `/bb-init` and dropbear back over the ones in it (an agent with
+  root could have changed them).
+
+A kept guest stays on the image it was made from; resume notes when the
+agent's image has moved on, and `bot-bottle resume --fresh <bottled agent>`
+starts a new guest from the current image, its home kept. One that won't start
+again (its network gone, say) is replaced the same way. `bots --stopped` shows
+`kept` in its `CONTAINER` column; `cleanup bots` leaves a kept guest, like its
+home and state.
+
 ## Comparison
 
 | | macos-container | firecracker | docker |

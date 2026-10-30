@@ -265,6 +265,7 @@ class BottleService:
             color=request.color, bottle_names=request.bottles, headless=True,
             image_policy=request.image_policy,
             host_keys=tuple(sorted(request.host_keys.items())),
+            fresh_guest=request.fresh_guest,
         )
         secrets = ChainSecrets(MappingSecrets(request.secrets),
                                FileSecrets(self._secrets_file or host_secrets_path()))

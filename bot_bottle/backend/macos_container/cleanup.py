@@ -6,7 +6,7 @@ import subprocess
 
 from .. import EnumerationError
 from ...contract.hostctl import Settings
-from ..cleanup_control import CleanupFailures, orphan_homes
+from ..cleanup_control import CleanupFailures, kept_guests, orphan_homes
 from ...lib.log import info
 from . import util as container_mod
 from .bottle_cleanup_plan import MacosContainerBottleCleanupPlan
@@ -48,8 +48,10 @@ def _list_prefixed_networks() -> list[str]:
 
 def prepare_cleanup() -> MacosContainerBottleCleanupPlan:
     container_mod.require_container()
+    containers = _list_prefixed_containers()
+    kept = kept_guests(containers)
     return MacosContainerBottleCleanupPlan(
-        containers=tuple(_list_prefixed_containers()),
+        containers=tuple(c for c in containers if c not in kept),
         networks=tuple(_list_prefixed_networks()),
         volumes=tuple(orphan_homes(container_mod.list_volumes())),
     )

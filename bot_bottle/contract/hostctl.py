@@ -254,6 +254,9 @@ class LaunchRequest:
     host_keys: dict[str, str] = field(default_factory=dict)
     # The console's id for a session it launched; empty for a terminal launch.
     agent_id: str = ""
+    # A resume of a bottle with `preserve_container`: a new guest from the
+    # agent's image as it is now (its home kept), not the kept one.
+    fresh_guest: bool = False
 
     def to_json(self) -> dict[str, object]:
         body = dataclasses.asdict(self)

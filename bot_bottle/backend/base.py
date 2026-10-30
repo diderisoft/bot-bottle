@@ -347,6 +347,12 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):  # pylint: disable=too-many-
         none."""
         return plan.agent_supervise_url
 
+    def kept_guest(self, slug: str) -> bool:
+        """Whether the bottled agent's guest is kept from its last run
+        (`preserve_container`), for resume to start again. No by default."""
+        del slug
+        return False
+
     def remove_home(self, slug: str) -> None:
         """Remove the bottled agent's home (`home_volume_name`), once its
         state isn't kept. Idempotent. Nothing by default."""

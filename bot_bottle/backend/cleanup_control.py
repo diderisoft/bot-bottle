@@ -61,4 +61,14 @@ def orphan_homes(volumes: "list[str] | tuple[str, ...]") -> list[str]:
                   if v.startswith(prefix) and not is_preserved(v[len(prefix):]))
 
 
-__all__ = ["CleanupError", "CleanupFailures", "orphan_homes"]
+def kept_guests(names: "list[str] | tuple[str, ...]", prefix: str = "bot-bottle-") -> set[str]:
+    """Among `names` (`<prefix><bottled agent>`), the guests kept for resume:
+    a bottled agent kept for resume whose guest is still there was kept by
+    its bottle's `preserve_container` (any other is removed at teardown), so
+    cleanup leaves it, as it leaves its home and state."""
+    # pylint: disable-next=import-outside-toplevel
+    from ..bottle_state import is_preserved
+    return {n for n in names if n.startswith(prefix) and is_preserved(n[len(prefix):])}
+
+
+__all__ = ["CleanupError", "CleanupFailures", "kept_guests", "orphan_homes"]

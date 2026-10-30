@@ -10,7 +10,7 @@ import subprocess
 from ...contract.hostctl import Settings
 from ...lib.log import info
 from .. import EnumerationError
-from ..cleanup_control import CleanupFailures, orphan_homes
+from ..cleanup_control import CleanupFailures, kept_guests, orphan_homes
 from . import util as docker_mod
 from ...control.gateway import GATEWAY_NAME
 from .agent_network import is_agent_network
@@ -76,9 +76,12 @@ def prepare_cleanup(settings: Settings) -> DockerBottleCleanupPlan:
         warn_on_error=False,
         raise_on_error=True,
     )
+    containers = _list_prefixed_containers()
+    # A guest kept for resume (`preserve_container`) stays, like its home.
+    kept = kept_guests([*projects, *containers], COMPOSE_PROJECT_PREFIX)
     return DockerBottleCleanupPlan(
-        projects=tuple(projects),
-        stray_containers=tuple(_list_prefixed_containers()),
+        projects=tuple(p for p in projects if p not in kept),
+        stray_containers=tuple(c for c in containers if c not in kept),
         stray_networks=tuple(_list_prefixed_networks()),
         volumes=tuple(orphan_homes(docker_mod.list_volumes())),
     )

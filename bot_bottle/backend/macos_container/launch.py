@@ -27,12 +27,14 @@ from ...contract.hostctl import Settings
 from ...bottle_state import read_committed_image
 from ...egress import Egress
 from ...image_cache import check_stale
-from ...lib.log import die, info
+from ...lib.log import die, info, warn
 from ... import resources
 from .. import BottleImages, isolation_probe, oci_agent_image
 from ..launch_common import (
     LaunchTeardown,
+    keeps_guest,
     registration_tokens,
+    reuses_guest,
     gateway_agent_urls,
     provision_git_gate_keys,
     stage_gateway_ca,
@@ -168,13 +170,19 @@ def launch(
         plan = _provision_git_gate_keys(plan)
         plan = _install_gateway_ca(plan, endpoint)
         plan = _stamp_agent_urls(plan, endpoint)
-        plan = dataclasses.replace(plan, env_var_secret=new_env_var_secret())
+        # A kept guest keeps the env it was made with, its ENV_VAR_SECRET too.
+        kept = _kept_guest(plan)
+        plan = dataclasses.replace(
+            plan, env_var_secret=(kept or {}).get(ENV_VAR_SECRET_NAME) or new_env_var_secret())
 
-        # Run the agent on its home volume. It has no token yet.
-        container_mod.force_remove_container(plan.container_name)
+        # Run the agent on its home volume, in the guest kept from its last
+        # run if it has one. It has no token yet.
         home_kept = _ensure_home(plan)
-        _start_agent(plan, endpoint)
-        stack.callback(container_mod.force_remove_container, plan.container_name)
+        if not (kept is not None and _restart_agent(plan)):
+            container_mod.force_remove_container(plan.container_name)
+            _start_agent(plan, endpoint)
+        stack.callback(_stop_or_remove, plan.container_name, plan.slug,
+                       plan.manifest.bottle.preserve_container)
 
         # Resolve the gateway name before anything execs, then read the DHCP
         # address (polling: `run --detach` can return first) and register by
@@ -272,7 +280,7 @@ def adopted(
     try:
         yield attach(bottle_id, record)
     finally:
-        container_mod.force_remove_container(record.container)
+        _stop_or_remove(record.container, bottle_id, record.preserve_container)
         if record.registry_id:
             deprovision_consolidated(record.registry_id, service=MacosInfraService(settings),
                                      timeout=resolve_teardown_timeout(host_db_path()))
@@ -357,6 +365,45 @@ def _identity_proxy_env(
         "HTTPS_PROXY": url, "HTTP_PROXY": url,
         "https_proxy": url, "http_proxy": url,
     }
+
+
+def _kept_guest(plan: MacosContainerBottlePlan) -> dict[str, str] | None:
+    """The env of the guest kept from the bottled agent's last run, when this
+    launch reuses it (`preserve_container`), else None."""
+    if not (reuses_guest(plan) and container_mod.container_exists(plan.container_name)):
+        return None
+    return container_mod.container_env(plan.container_name)
+
+
+def _restart_agent(plan: MacosContainerBottlePlan) -> bool:
+    """Start the kept guest again; False (and it's removed) if it won't, so the
+    caller makes a new one on the same home."""
+    name = plan.container_name
+    if container_mod.container_is_running(name):  # a run that ended badly
+        container_mod.stop_container(name)
+    old, new = container_mod.container_image_digest(name), container_mod.image_digest(plan.image)
+    if old and new and old != new:
+        info(f"{plan.slug} keeps its guest, on its older image; `bot-bottle resume --fresh "
+             f"{plan.slug}` moves it to {plan.image} (its home is kept, its installs aren't)")
+    why = container_mod.start_container(name)
+    if why:
+        warn(f"couldn't start {plan.slug}'s kept guest ({why}); starting a new one, "
+             "its home kept")
+        container_mod.force_remove_container(name)
+        return False
+    info(f"container start {name} (kept from its last run)")
+    return True
+
+
+def _stop_or_remove(name: str, slug: str, preserve_container: bool) -> None:
+    """Teardown: keep the guest of a bottled agent kept for resume whose bottle
+    has `preserve_container` (stopped, not paused, so it holds no memory),
+    else remove it."""
+    if keeps_guest(slug, preserve_container):
+        info(f"keeping {name} for resume")
+        container_mod.stop_container(name)
+    else:
+        container_mod.force_remove_container(name)
 
 
 def _ensure_home(plan: MacosContainerBottlePlan) -> bool:

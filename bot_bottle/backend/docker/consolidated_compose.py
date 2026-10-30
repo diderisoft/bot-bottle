@@ -20,22 +20,10 @@ def consolidated_agent_compose(
     source_ip: str,
     network: str,
 ) -> dict[str, Any]:
-    """A compose spec with just the agent, on `network` at `source_ip`,
-    proxying through `gateway_ip`."""
-    # The identity token rides as proxy credentials; the gateway checks
-    # (source_ip, token) and strips it.
-    token = getattr(plan, "identity_token", "")
-    cred = f"bottle:{token}@" if token else ""
-    proxy_url = f"http://{cred}{gateway_ip}:{plan.settings.infra.egress_port}"
-    # git-http and supervise are reached directly, not through the proxy.
-    no_proxy = f"localhost,127.0.0.1,{gateway_ip}"
+    """A compose spec with just the agent, on `network` at `source_ip`. Its
+    proxy env is the exec's (`agent_exec_env`), not the container's."""
+    del gateway_ip  # in the exec env, which a kept container's next run renews
     env: list[str] = [
-        f"HTTPS_PROXY={proxy_url}",
-        f"HTTP_PROXY={proxy_url}",
-        f"https_proxy={proxy_url}",
-        f"http_proxy={proxy_url}",
-        f"NO_PROXY={no_proxy}",
-        f"no_proxy={no_proxy}",
         f"NODE_EXTRA_CA_CERTS={AGENT_CA_PATH}",
         f"SSL_CERT_FILE={AGENT_CA_BUNDLE}",
         f"REQUESTS_CA_BUNDLE={AGENT_CA_BUNDLE}",
@@ -79,4 +67,22 @@ def consolidated_agent_compose(
     }
 
 
-__all__ = ["consolidated_agent_compose"]
+def agent_exec_env(plan: DockerBottlePlan, *, gateway_ip: str, identity_token: str,
+                   ) -> dict[str, str]:
+    """The env every `docker exec` into the agent gets: its proxy, the identity
+    token as credentials (the gateway checks (source_ip, token) and strips it),
+    and what bypasses it. Never the container's own env: the token and the
+    gateway's address are this run's, and a container kept for the next run
+    (`preserve_container`) keeps its env."""
+    cred = f"bottle:{identity_token}@" if identity_token else ""
+    proxy_url = f"http://{cred}{gateway_ip}:{plan.settings.infra.egress_port}"
+    # git-http and supervise are reached directly, not through the proxy.
+    no_proxy = f"localhost,127.0.0.1,{gateway_ip}"
+    return {
+        "HTTPS_PROXY": proxy_url, "HTTP_PROXY": proxy_url,
+        "https_proxy": proxy_url, "http_proxy": proxy_url,
+        "NO_PROXY": no_proxy, "no_proxy": no_proxy,
+    }
+
+
+__all__ = ["agent_exec_env", "consolidated_agent_compose"]

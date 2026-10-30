@@ -140,6 +140,11 @@ class FirecrackerBottleBackend(
     def attach_adopted(self, bottle_id: str, record: "AdoptionRecord") -> FirecrackerBottle:
         return _launch.attach(bottle_id, record)
 
+    def kept_guest(self, slug: str) -> bool:
+        # pylint: disable-next=import-outside-toplevel
+        from .util import guest_image_path
+        return guest_image_path(slug).exists()
+
     def remove_home(self, slug: str) -> None:
         # Its state dir's; gone with it, unless the state outlived it.
         # pylint: disable-next=import-outside-toplevel

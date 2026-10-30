@@ -47,6 +47,11 @@ def cmd_resume(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog=f"{PROG} resume", add_help=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
+        "--fresh", action="store_true",
+        help="for a bottle with preserve_container: a new guest from the agent's image as it "
+             "is now (its home kept), dropping what was installed in the kept one",
+    )
+    parser.add_argument(
         "identity", metavar="bottled-agent", nargs="?",
         help=f"the bottled agent to resume; omit to pick one (`{PROG} bots --stopped` "
              "lists them)",
@@ -84,5 +89,6 @@ def cmd_resume(argv: list[str]) -> int:
         copy_cwd=metadata.copy_cwd,
         # Picking or naming it is the yes, so a stale image only warns.
         assume_yes=True,
+        fresh_guest=args.fresh,
     )
     return _launch_bottle(request, manifest, dry_run=args.dry_run)

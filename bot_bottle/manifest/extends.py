@@ -39,8 +39,8 @@ def merge_bottles_runtime(bottles: "list[ManifestBottle]") -> "ManifestBottle":
     - git_user: per field, later wins when non-empty
     - repos: union by name, later wins
     - egress routes: concatenate
-    - supervise, nested_containers: later replaces, but only
-      when it declared the field (so an explicit `false` overrides)
+    - supervise, nested_containers, preserve_container: later replaces, but
+      only when it declared the field (so an explicit `false` overrides)
     """
     if not bottles:
         raise ValueError("merge_bottles_runtime requires at least one bottle")
@@ -82,6 +82,7 @@ def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle
         nested_containers=_overlay_declared_bool(
             base, override, "nested_containers"
         ),
+        preserve_container=_overlay_declared_bool(base, override, "preserve_container"),
         audit=_overlay_audit(base, override),
         forges=_union_forges(base, override),
         declared_fields=base.declared_fields | override.declared_fields,
@@ -277,6 +278,7 @@ def _fold_two_bottles(
         nested_containers=_overlay_declared_bool(
             earlier, later, "nested_containers"
         ),
+        preserve_container=_overlay_declared_bool(earlier, later, "preserve_container"),
         audit=_overlay_audit(earlier, later),
         declared_fields=earlier.declared_fields | later.declared_fields,
     ), merged_repos_raw
@@ -337,6 +339,7 @@ def _merge_bottles(
         egress=merged_egress,
         supervise=merged_supervise,
         nested_containers=merged_nested_containers,
+        preserve_container=_overlay_declared_bool(parent, child, "preserve_container"),
         audit=_overlay_audit(parent, child),
         declared_fields=parent.declared_fields | child.declared_fields,
     )

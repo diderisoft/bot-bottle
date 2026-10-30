@@ -65,12 +65,19 @@ class TestBottledAgents(_Case):
         _bottle("new", label="fix tests", bottles=("claude", "gitea"))
         _bottle("crashed", kept=False, age=60)
         _bottle("up", bottles=("pi",))
-        status, out, err = self.run_cmd(
-            [], live=("up",), held={"up": {"session": {"running": True}}})
+        # `new`'s guest is kept for resume (its bottle's preserve_container).
+        def kept_guest(slug: str) -> bool:
+            return slug == "new"
+
+        backend = SimpleNamespace(kept_guest=kept_guest)
+        with patch.object(bottled_agents, "get_bottle_backend", return_value=backend):
+            status, out, err = self.run_cmd(
+                [], live=("up",), held={"up": {"session": {"running": True}}})
         self.assertEqual(0, status)
         rows = [line.split("\t") for line in out.splitlines()]
         self.assertEqual(["up", "new", "crashed", "old"], [r[0] for r in rows])
-        self.assertEqual(["up", "pi", "-", "pi", "running", "open", "-", "docker"], rows[0])
+        self.assertEqual(["up", "pi", "-", "pi", "running", "open", "-", "docker", "-"], rows[0])
+        self.assertEqual(["kept", "-", "-"], [r[8] for r in rows[1:]])
         self.assertEqual(["new", "claude", "fix tests", "claude,gitea", "stopped", "-"],
                          rows[1][:6])
         self.assertEqual(["stopped", "left over", "stopped"], [r[4] for r in rows[1:]])

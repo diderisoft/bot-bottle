@@ -372,6 +372,19 @@ def remove_volume(name: str) -> None:
                            f"{result.stderr.strip() or f'exit {result.returncode}'}")
 
 
+def stop_container(name: str) -> None:
+    """Stop container `name`, keeping it. Best effort."""
+    subprocess.run([_CONTAINER, "stop", name], stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL, check=False)
+
+
+def start_container(name: str) -> str:
+    """Start the stopped container `name`: "" when it started, else why not."""
+    result = subprocess.run([_CONTAINER, "start", name], capture_output=True, text=True,
+                            check=False)
+    return "" if result.returncode == 0 else (result.stderr.strip() or f"exit {result.returncode}")
+
+
 def force_remove_container(name: str) -> None:
     if container_exists(name):
         subprocess.run(

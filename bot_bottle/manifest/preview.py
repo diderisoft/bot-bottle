@@ -65,6 +65,8 @@ def manifest_to_yaml(manifest: Manifest) -> str:
     lines.append(f"  supervise: {'true' if bottle.supervise else 'false'}")
     if bottle.nested_containers:
         lines.append("  nested_containers: true")
+    if bottle.preserve_container:
+        lines.append("  preserve_container: true")
 
     return "\n".join(lines)
 

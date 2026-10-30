@@ -17,6 +17,7 @@ Bottle frontmatter:
   egress:       { routes: [ <egress-route>, ... ] }
   supervise:    <bool>                          # default true
   nested_containers: <bool>                     # default false
+  preserve_container: <bool>                    # default false: keep the guest across stop
   audit:        { delivery: ..., firehose: ... }
 
 Agent frontmatter:

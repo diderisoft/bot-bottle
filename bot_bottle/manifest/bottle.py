@@ -72,6 +72,10 @@ class ManifestBottle:
     # Off by default for its image weight, resident service and relaxed device
     # modes.
     nested_containers: bool = False
+    # Keep the bottled agent's guest (container or VM disk) across stop and
+    # resume, not only its home: for an agent image that gives the agent root,
+    # so what it installs stays (PRD 0110). Off by default.
+    preserve_container: bool = False
     audit: ManifestAudit = field(default_factory=ManifestAudit)
     # Forges declared in the bottle's chain (`git-gate.forges`), set while
     # `extends` is resolved.
@@ -168,12 +172,19 @@ class ManifestBottle:
                 f"(was {type(nested_raw).__name__})"
             )
 
+        preserve_raw = d.get("preserve_container", False)
+        if not isinstance(preserve_raw, bool):
+            raise ManifestError(
+                f"bottle '{name}' preserve_container must be a boolean "
+                f"(was {type(preserve_raw).__name__})"
+            )
+
         audit = ManifestAudit.from_dict(name, d["audit"]) if "audit" in d else ManifestAudit()
 
         return cls(
             env=env, git=git,
             git_user=git_user, git_trailers=git_trailers, egress=egress,
             supervise=supervise_raw,
-            nested_containers=nested_raw, audit=audit,
+            nested_containers=nested_raw, preserve_container=preserve_raw, audit=audit,
             declared_fields=frozenset(d),
         )

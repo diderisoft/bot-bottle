@@ -83,6 +83,7 @@ def launch_consolidated(
     service: DockerInfraService,
     agent_network: str,
     tokens: dict[str, str] | None = None,
+    env_var_secret: str | None = None,
 ) -> LaunchContext:
     """Ensure the infra pair, create `agent_network` with the gateway on it,
     register the bottle and provision its git-gate state. Returns the attach
@@ -98,9 +99,10 @@ def launch_consolidated(
         connect_gateway(agent_network, gateway.name, gateway_ip)
         peer_ips = _peer_ips(client, source_ip)
         transport = gateway.provisioning_transport()
+        # A kept container keeps the ENV_VAR_SECRET it was made with.
         reg = provision_bottle(
             client, source_ip, egress_plan, git_gate_plan, transport,
-            tokens=tokens,
+            tokens=tokens, env_var_secret=env_var_secret,
         )
     except BaseException:
         remove_agent_network(agent_network, gateway.name)

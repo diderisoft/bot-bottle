@@ -44,6 +44,22 @@ class LaunchTeardown:
             raise failure
 
 
+def reuses_guest(plan: BottlePlan) -> bool:
+    """Whether this launch starts the guest kept from the bottled agent's last
+    run, if there is one: its bottle has `preserve_container`, and the launch
+    didn't ask for a fresh one (`resume --fresh`)."""
+    return plan.manifest.bottle.preserve_container and not plan.spec.fresh_guest
+
+
+def keeps_guest(slug: str, preserve_container: bool) -> bool:
+    """At teardown: whether to keep the guest (stop it, not remove it). Only for
+    a bottle with `preserve_container` whose bottled agent is kept for resume;
+    one that finished goes, with its home and state."""
+    # pylint: disable-next=import-outside-toplevel
+    from ..bottle_state import is_preserved
+    return preserve_container and is_preserved(slug)
+
+
 def provision_git_gate_keys(plan: BottlePlan) -> GitGatePlan:
     """Mint the bottle's gitea deploy keys, before its repos go into the
     gateway."""

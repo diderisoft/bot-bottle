@@ -122,6 +122,11 @@ class DockerBottleBackend(BottleBackend["DockerBottlePlan", "DockerBottleCleanup
     def attach_adopted(self, bottle_id: str, record: "AdoptionRecord") -> DockerBottle:
         return _launch.attach(bottle_id, record)
 
+    def kept_guest(self, slug: str) -> bool:
+        # pylint: disable-next=import-outside-toplevel
+        from .util import container_exists
+        return container_exists(f"bot-bottle-{slug}")
+
     def remove_home(self, slug: str) -> None:
         # pylint: disable-next=import-outside-toplevel
         from .util import remove_volume

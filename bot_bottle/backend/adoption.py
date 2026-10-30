@@ -54,6 +54,9 @@ class AdoptionRecord:
     workspace: AdoptedWorkspace = AdoptedWorkspace()
     deploy_keys: tuple[DeployKeyRef, ...] = ()
     credentials: AdoptedCredentials | None = None
+    # The bottle's `preserve_container`: its teardown keeps the guest when the
+    # bottled agent is kept for resume.
+    preserve_container: bool = False
 
 
 def record_for(plan: "BottlePlan", bottle: "Bottle") -> AdoptionRecord:
@@ -67,6 +70,7 @@ def record_for(plan: "BottlePlan", bottle: "Bottle") -> AdoptionRecord:
             guest_path=ws.guest_path),
         deploy_keys=deploy_key_refs(plan.manifest.bottle),
         credentials=credentials_for(plan),
+        preserve_container=getattr(plan.manifest.bottle, "preserve_container", False) is True,
     )
 
 
@@ -108,6 +112,7 @@ def read(identity: str) -> AdoptionRecord | None:
             workspace=AdoptedWorkspace(**raw.get("workspace", {})),
             deploy_keys=tuple(DeployKeyRef(**k) for k in raw.get("deploy_keys", [])),
             credentials=_credentials(raw.get("credentials")),
+            preserve_container=raw.get("preserve_container") is True,
         )
     except (OSError, ValueError, KeyError, TypeError):
         return None

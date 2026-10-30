@@ -286,6 +286,48 @@ def ensure_home_image(slug: str) -> tuple[Path, bool]:
     return path, False
 
 
+# A guest kept across stop and resume (`preserve_container`) is grown to this,
+# sparse, so an agent with root has room to install things.
+GUEST_IMAGE_SIZE = "16G"
+
+
+def guest_image_path(slug: str) -> Path:
+    """A kept guest's root disk (`preserve_container`): in the bottled agent's
+    state dir, kept and removed with its state."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...bottle_state import bottle_state_dir
+    return bottle_state_dir(slug) / "guest.ext4"
+
+
+def kept_guest_image(slug: str, agent_base: Path, infra: InfraSettings, *,
+                     fresh: bool) -> tuple[Path, bool]:
+    """The kept guest's root disk, made from `agent_base` the first time (or
+    when `fresh`), and whether it's the one kept from the last run. A kept one
+    gets this host's `/bb-init` and dropbear again: an agent with root could
+    have changed them."""
+    path = guest_image_path(slug)
+    base_note = path.with_name("guest.base")
+    if path.exists() and not fresh:
+        if base_note.exists() and base_note.read_text().strip() != str(agent_base):
+            info(f"{slug} keeps its guest, on its older image; `bot-bottle resume --fresh "
+                 f"{slug}` moves it to the current one (its home is kept, its installs aren't)")
+        inject_guest_boot_ext4(path, infra)
+        info(f"using {slug}'s guest from its last run ({path})")
+        return path, True
+    path.parent.mkdir(parents=True, exist_ok=True)
+    make_bottle_rootfs(agent_base, path)
+    grown = subprocess.run(["truncate", "-s", f">{GUEST_IMAGE_SIZE}", str(path)],
+                           capture_output=True, text=True, check=False)
+    if grown.returncode == 0:
+        grown = subprocess.run(["resize2fs", "-f", str(path)],
+                               capture_output=True, text=True, check=False)
+    if grown.returncode != 0:
+        warn(f"couldn't grow {slug}'s guest disk to {GUEST_IMAGE_SIZE}: "
+             f"{grown.stderr.strip()}; it has the usual room")
+    base_note.write_text(f"{agent_base}\n")
+    return path, False
+
+
 def make_bottle_rootfs(agent_base: Path, out_path: Path) -> None:
     """The per-bottle disk from `agent_base`: a prepared ext4 is copied
     sparsely; a rootfs dir goes through `mke2fs -d`. The base stays pristine."""

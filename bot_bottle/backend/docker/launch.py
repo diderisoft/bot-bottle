@@ -13,16 +13,19 @@ from __future__ import annotations
 import dataclasses
 import functools
 import os
+from pathlib import Path
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Callable, Generator
 
 from ...agent_provider import runtime_for
 from ...image_cache import check_stale
-from ...lib.log import die, info
+from ...lib.log import die, info, warn
 from .. import BottleImages, isolation_probe, oci_agent_image
 from ..launch_common import (
     LaunchTeardown,
+    keeps_guest,
     registration_tokens,
+    reuses_guest,
     gateway_agent_urls,
     provision_git_gate_keys,
     stage_gateway_ca,
@@ -43,7 +46,8 @@ from .compose import (
     write_compose_file,
 )
 from .agent_network import agent_network_name, remove_agent_network
-from .consolidated_compose import consolidated_agent_compose
+from .consolidated_compose import agent_exec_env, consolidated_agent_compose
+from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ...orchestrator.store.config_store import resolve_teardown_timeout
 from ...paths import host_db_path
 from .consolidated_launch import launch_consolidated, deprovision_consolidated
@@ -126,6 +130,12 @@ def launch(
         # Mint deploy keys before provisioning repos into the gateway.
         git_gate_plan = provision_git_gate_keys(plan)
 
+        # The guest kept from its last run, if this launch reuses it: it keeps
+        # the ENV_VAR_SECRET it was made with.
+        kept = (docker_mod.container_env(plan.container_name)
+                if reuses_guest(plan) and docker_mod.container_exists(plan.container_name)
+                else None)
+
         # Register, provision git-gate state, and get the attach context.
         token_values = registration_tokens(plan)
         teardown_timeout = resolve_teardown_timeout(host_db_path())
@@ -134,6 +144,7 @@ def launch(
             plan.egress_plan, git_gate_plan, service=service,
             agent_network=agent_network_name(plan.slug),
             tokens=token_values,
+            env_var_secret=(kept or {}).get(ENV_VAR_SECRET_NAME) or None,
         )
         # Last out: after compose down has removed the agent from it.
         stack.callback(remove_agent_network, ctx.network, INFRA_NAME)
@@ -167,15 +178,18 @@ def launch(
         # never the file.
         compose_env: dict[str, str] = {**os.environ, **plan.forwarded_env}
         if plan.env_var_secret:
-            from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
             compose_env[ENV_VAR_SECRET_NAME] = plan.env_var_secret
         home_kept = _ensure_home(plan)
-        info(
-            f"docker compose up -d  (project {project}, agent on {ctx.network} "
-            f"with gateway {ctx.gateway_ip}, ip {ctx.source_ip})"
-        )
-        compose_up(project, compose_file, env=compose_env)
-        stack.callback(compose_down, project, compose_file)
+        if not (kept is not None and _restart_agent(plan, ctx.network, ctx.source_ip)):
+            docker_mod.force_remove_container(plan.container_name)
+            info(
+                f"docker compose up -d  (project {project}, agent on {ctx.network} "
+                f"with gateway {ctx.gateway_ip}, ip {ctx.source_ip})"
+            )
+            compose_up(project, compose_file, env=compose_env)
+        stack.callback(_stop_or_down, project, compose_file, plan.container_name,
+                       network=ctx.network, slug=plan.slug,
+                       preserve_container=plan.manifest.bottle.preserve_container)
         stack.callback(
             compose_dump_logs, project, compose_file, compose_log_path(state_dir),
         )
@@ -191,6 +205,8 @@ def launch(
             terminal_title=terminal_title(plan.spec),
             terminal_color=plan.spec.color,
             agent_workdir=plan.workspace_plan.workdir,
+            exec_env=agent_exec_env(plan, gateway_ip=ctx.gateway_ip,
+                                    identity_token=ctx.identity_token),
         )
         bottle.home_kept = home_kept
         isolation_probe.verify_isolation(
@@ -208,6 +224,39 @@ def launch(
         yield bottle
     finally:
         teardown()
+
+
+def _restart_agent(plan: DockerBottlePlan, network: str, address: str) -> bool:
+    """Start the kept guest again on this run's agent network, at the address
+    it registered; False (and it's removed) if it won't, so the caller makes a
+    new one on the same home."""
+    name = plan.container_name
+    docker_mod.stop_container(name)  # if a run that ended badly left it up
+    old, new = docker_mod.container_image_id(name), docker_mod.image_id(plan.image)
+    if old and new and old != new:
+        info(f"{plan.slug} keeps its guest, on its older image; `bot-bottle resume --fresh "
+             f"{plan.slug}` moves it to {plan.image} (its home is kept, its installs aren't)")
+    why = docker_mod.rewire_and_start(name, network, address)
+    if why:
+        warn(f"couldn't start {plan.slug}'s kept guest ({why}); starting a new one, "
+             "its home kept")
+        docker_mod.force_remove_container(name)
+        return False
+    info(f"docker start {name} (kept from its last run) on {network} at {address}")
+    return True
+
+
+def _stop_or_down(project: str, compose_file: Path, container: str, *, network: str,
+                  slug: str, preserve_container: bool) -> None:
+    """Teardown: keep the guest of a bottled agent kept for resume whose bottle
+    has `preserve_container`, stopped and off its agent network (which goes
+    next); else `compose down`."""
+    if keeps_guest(slug, preserve_container):
+        info(f"keeping {container} for resume")
+        docker_mod.stop_container(container)
+        docker_mod.run_docker(["docker", "network", "disconnect", "-f", network, container])
+    else:
+        compose_down(project, compose_file)
 
 
 def _ensure_home(plan: DockerBottlePlan) -> bool:
@@ -235,8 +284,10 @@ def adopted(
     try:
         yield attach(bottle_id, record)
     finally:
-        compose_down(compose_project_name(bottle_id),
-                     compose_file_path(bottle_state_dir(bottle_id)))
+        _stop_or_down(compose_project_name(bottle_id),
+                      compose_file_path(bottle_state_dir(bottle_id)), record.container,
+                      network=agent_network_name(bottle_id), slug=bottle_id,
+                      preserve_container=record.preserve_container)
         remove_agent_network(agent_network_name(bottle_id), INFRA_NAME)
         if record.registry_id:
             deprovision_consolidated(record.registry_id, service=DockerInfraService(settings),

@@ -5,7 +5,9 @@ from __future__ import annotations
 import dataclasses
 import unittest
 
-from bot_bottle.backend.docker.consolidated_compose import consolidated_agent_compose
+from bot_bottle.backend.docker.consolidated_compose import (
+    agent_exec_env, consolidated_agent_compose,
+)
 from tests.unit._docker_bottle_plan import _plan
 
 _GW = "172.18.0.2"
@@ -30,11 +32,16 @@ class TestConsolidatedAgentCompose(unittest.TestCase):
         agent_net = spec["services"]["agent"]["networks"][_NET]
         self.assertEqual(_IP, agent_net["ipv4_address"])
 
-    def test_proxy_and_ca_point_at_gateway(self) -> None:
+    def test_the_proxy_is_the_execs_not_the_containers(self) -> None:
+        # The proxy URL carries this run's identity token and the gateway's
+        # address, so it goes with each `docker exec`; a container kept for
+        # the next run (`preserve_container`) keeps its own env.
         env = self._spec()["services"]["agent"]["environment"]
-        self.assertIn(f"HTTPS_PROXY=http://{_GW}:9099", env)
+        self.assertFalse([e for e in env if "PROXY" in e.upper()])
+        exec_env = agent_exec_env(_plan(), gateway_ip=_GW, identity_token="tok")
+        self.assertEqual(f"http://bottle:tok@{_GW}:9099", exec_env["HTTPS_PROXY"])
         # git-http + supervise on the gateway must bypass the egress proxy.
-        self.assertTrue(any(e.startswith("NO_PROXY=") and _GW in e for e in env))
+        self.assertIn(_GW, exec_env["NO_PROXY"])
 
     def test_no_companion_container_dependency(self) -> None:
         self.assertNotIn("depends_on", self._spec()["services"]["agent"])

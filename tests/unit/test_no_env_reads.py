@@ -52,6 +52,7 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("backend/macos_container/bottle.py", "name"):
         "process plumbing: forwards the terminal's TERM-family vars into `container exec`",
     ("backend/macos_container/bottle.py", "os.environ"): _CHILD_ENV,
+    ("backend/docker/bottle.py", "os.environ"): _CHILD_ENV,
     ("backend/macos_container/pty_forward.py", "os.environ"): _CHILD_ENV,
     ("backend/docker/gateway.py", "os.environ"): _CHILD_ENV,
     ("backend/docker/orchestrator.py", "os.environ"): _CHILD_ENV,

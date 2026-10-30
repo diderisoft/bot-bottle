@@ -6,6 +6,7 @@ import os
 
 from datetime import datetime, timezone
 import shutil
+import json
 import subprocess
 
 
@@ -119,6 +120,42 @@ def remove_volume(name: str) -> None:
     if result.returncode != 0:
         raise RuntimeError(f"docker volume rm {name}: "
                            f"{result.stderr.strip() or f'exit {result.returncode}'}")
+
+
+def container_env(name: str) -> dict[str, str]:
+    """The env container `name` was created with, or {}."""
+    result = run_docker(["docker", "inspect", "-f", "{{json .Config.Env}}", name])
+    try:
+        entries = json.loads(result.stdout) if result.returncode == 0 else []
+    except ValueError:
+        return {}
+    return dict(e.split("=", 1) for e in entries or [] if isinstance(e, str) and "=" in e)
+
+
+def container_image_id(name: str) -> str:
+    """The id of the image container `name` was created from, or ""."""
+    result = run_docker(["docker", "inspect", "-f", "{{.Image}}", name])
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def stop_container(name: str) -> None:
+    """Stop container `name`, keeping it. Best effort."""
+    run_docker(["docker", "stop", name])
+
+
+def rewire_and_start(name: str, network: str, address: str) -> str:
+    """Start the stopped container `name` on `network` at `address`, off any
+    network it was on: "" when it started, else why not."""
+    current = run_docker(["docker", "inspect", "-f",
+                          "{{range $n, $_ := .NetworkSettings.Networks}}{{$n}} {{end}}", name])
+    for old in current.stdout.split():
+        run_docker(["docker", "network", "disconnect", "-f", old, name])
+    for argv in (["docker", "network", "connect", "--ip", address, network, name],
+                 ["docker", "start", name]):
+        result = run_docker(argv)
+        if result.returncode != 0:
+            return result.stderr.strip() or f"{' '.join(argv[:3])}: exit {result.returncode}"
+    return ""
 
 
 def force_remove_container(name: str) -> None:

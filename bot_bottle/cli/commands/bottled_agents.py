@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ...backend import enumerate_active_agents
+from ...backend.selection import get_bottle_backend
 from ...bottle_state import BottleMetadata, bottle_state_dir, is_preserved, read_metadata
 from ...paths import bot_bottle_root
 from ..constants import PROG
@@ -25,18 +26,20 @@ _USAGE = f"""usage: {PROG} bottled-agents [--running | --stopped]   (or: {PROG} 
 
 List bottled agents, running ones first, then stopped ones most recently used
 first; a table in a terminal. Piped, each is a tab-separated line:
-<bottled agent>\\t<agent>\\t<label>\\t<bottles>\\t<state>\\t<terminal>\\t<last used>\\t<backend>
+<bottled agent>\\t<agent>\\t<label>\\t<bottles>\\t<state>\\t<terminal>\\t<last used>\\t<backend>\\t<container>
 (`-` for an empty field).
 
   <state>     running, stopped, or `left over` (stopped without ending
               cleanly; `{PROG} cleanup bots` removes those)
   <terminal>  for a running one, whether its terminal is open (`{PROG} attach`)
+  <container> for a stopped one, `kept` when its guest is kept for resume (its
+              bottle's `preserve_container`); its home is kept either way
 
 `{PROG} resume <bottled agent>` starts a stopped one again.
 """
 
 _HEADER = ("BOTTLED AGENT", "AGENT", "LABEL", "BOTTLES", "STATE", "TERMINAL", "LAST USED",
-           "BACKEND")
+           "BACKEND", "CONTAINER")
 
 
 def _last_used(path: Path) -> float:
@@ -97,20 +100,31 @@ def _running() -> tuple[list[tuple[str, ...]], list[str]]:
         metadata = read_metadata(b.slug)
         bottles = ",".join(metadata.bottle_names) if metadata else ""
         rows.append((b.slug, b.agent_name, _label(b.label, b.slug), bottles, "running",
-                     _terminal(held.pop(b.slug, None)), "", b.backend_name))
+                     _terminal(held.pop(b.slug, None)), "", b.backend_name, ""))
         colors.append(b.color)
     # Held by the host controller, but not seen by its backend.
     for slug, h in held.items():
         rows.append((slug, str(h.get("agent") or "?"), _label(str(h.get("label") or ""), slug),
-                     "", "running", _terminal(h), "", str(h.get("backend") or "")))
+                     "", "running", _terminal(h), "", str(h.get("backend") or ""), ""))
         colors.append("")
     return rows, colors
+
+
+def _kept_guest(metadata: BottleMetadata) -> str:
+    """`kept` when the bottled agent's guest is kept for resume."""
+    if not is_preserved(metadata.identity):
+        return ""
+    try:
+        backend = get_bottle_backend(settings_from_env(), metadata.backend or None, prompt=False)
+        return "kept" if backend.kept_guest(metadata.identity) else ""
+    except Exception:  # pylint: disable=broad-exception-caught  # a listing; leave it blank
+        return ""
 
 
 def _stopped(running: set[str]) -> list[tuple[str, ...]]:
     return [(m.identity, m.agent_name or "?", _label(m.label, m.identity),
              ",".join(m.bottle_names), "stopped" if is_preserved(m.identity) else "left over",
-             "", when(used), m.backend)
+             "", when(used), m.backend, _kept_guest(m))
             for m, used in stopped_bottles(running)]
 
 

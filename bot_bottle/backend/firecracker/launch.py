@@ -30,6 +30,7 @@ from ...lib.log import die, info
 from ..launch_common import (
     LaunchTeardown,
     registration_tokens,
+    reuses_guest,
     gateway_agent_urls,
     provision_git_gate_keys,
     stage_gateway_ca,
@@ -146,8 +147,13 @@ def launch(
             # Remove the run dir (~1G rootfs) on teardown; registered first so
             # it runs after `vm.terminate`.
             stack.callback(lambda: shutil.rmtree(run_dir, ignore_errors=True))
-            rootfs = run_dir / "rootfs.ext4"
-            util.make_bottle_rootfs(agent_base, rootfs)
+            if plan.manifest.bottle.preserve_container:
+                # Kept with its state, for the next run (`preserve_container`).
+                rootfs, _ = util.kept_guest_image(
+                    plan.slug, agent_base, plan.settings.infra, fresh=not reuses_guest(plan))
+            else:
+                rootfs = run_dir / "rootfs.ext4"
+                util.make_bottle_rootfs(agent_base, rootfs)
             # Its home, kept across stop and resume, unlike the rootfs.
             home, home_kept = util.ensure_home_image(plan.slug)
             private_key, pubkey = util.generate_keypair(run_dir)

@@ -142,6 +142,8 @@ def bottle_document(bottle: ManifestBottle) -> dict[str, object]:
         doc["egress"] = egress
     doc["supervise"] = bottle.supervise
     doc["nested_containers"] = bottle.nested_containers
+    if bottle.preserve_container:  # only when set, so other bottles' documents don't change
+        doc["preserve_container"] = True
     audit = {k: v for k, v in (("delivery", bottle.audit.delivery),
                                ("firehose", bottle.audit.firehose)) if v}
     if audit:

@@ -41,6 +41,9 @@ class BottleSpec:
     headless: bool = False
     # Repo name -> upstream host key the operator confirmed for this launch.
     host_keys: tuple[tuple[str, str], ...] = ()
+    # With the bottle's `preserve_container`: start a new guest from the image
+    # (its home kept) rather than the one kept from its last run.
+    fresh_guest: bool = False
     # "fresh" builds as normal; "cached" reuses the local image or artifact.
     image_policy: str = "fresh"
 
