@@ -68,12 +68,12 @@ Each agent runs in tmux on bot-bottle's own tmux server, never the user's
   the secrets file. A token that was only in the launching CLI's environment
   can't be found then, so that key is reported for revoking by hand. Without a
   record, `bot-bottle cleanup bots` removes the bottle.
-- `requests.py` polls every running orchestrator (one per backend with infra
-  up, say docker and firecracker) for pending supervise proposals and shows a
-  one-line summary in the session's tmux status bar, outside the agent's pane
-  where the agent can't fake or hide it. Each proposal is tagged with the
-  orchestrator holding it, and the terminal popup and the phone send its
-  answer back there. One that's down or refuses the host's token is skipped.
+- `requests.py` polls the environment's orchestrator (the one its last
+  bring-up recorded; [architecture.md](architecture.md#components)) for
+  pending supervise proposals and shows a one-line summary in the session's
+  tmux status bar, outside the agent's pane where the agent can't fake or hide
+  it. Each proposal is tagged with that orchestrator's URL, and the terminal
+  popup and the phone send its answer back there.
 - `blocks.py` hears the gateway's block events as the journal writes them
   (`HostAudit.listen`) and shows them in the same bar
   (PRD 0099, design repo). Each block shows for five
@@ -180,8 +180,13 @@ or Codex login read once at launch; the gateway injects it and the agent holds
 a placeholder. The host's own CLI keeps refreshing its login, so every five
 minutes the host controller re-reads it through the provider
 (`AgentProvider.refresh_credentials`, `control/hostctl/credential_refresh.py`)
-and pushes a value that changed to the orchestrator
-(`POST /bottles/<id>/secret`), which the gateway reads per request. Codex's
+and pushes a value that changed to the orchestrator that registered the
+bottle, the environment's recorded one (`POST /bottles/<id>/secret`), which the
+gateway reads per request. A push that orchestrator can't take (down, a
+rejected key, an unknown bottle) fails naming it. Only an environment with no
+orchestrator recorded yet (brought up before bring-ups recorded one) tries
+each listening orchestrator in turn, treating a 401/403, a 404 or no answer as
+"not this one", and fails only when none accepted, listing each URL and why. Codex's
 placeholder `auth.json` in the guest carries the real token's expiry, so it's
 rewritten when that moves.
 

@@ -9,7 +9,10 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from bot_bottle.cli.commands import lifecycle
+from bot_bottle.cli.commands import doctor, lifecycle
+from bot_bottle.backend.docker.infra import GATEWAY_NAME, ORCHESTRATOR_NAME
+from bot_bottle.control.client import OrchestratorEndpoint
+from bot_bottle.environment import active_name
 from bot_bottle.control.hostctl.runner import HostControlState
 
 _STATE = HostControlState(pid=7, port=1234, build_id="abc")
@@ -31,6 +34,9 @@ class _Mocked(unittest.TestCase):
         self.runner.held_bottles.return_value = []
         self.runner.stop.return_value = True
         self.runner.ensure_running.return_value = _STATE
+        self.report = self.enterContext(mock.patch.object(
+            doctor, "orchestrator_report", return_value=doctor.OrchestratorReport(
+                OrchestratorEndpoint("firecracker", "http://orch:8099"), True, ())))
         self.service = self.enterContext(mock.patch.object(lifecycle, "service_unit"))
         self.service.installed.return_value = False
         # Not root (CI runs as root): `install` under sudo does only the
@@ -93,6 +99,26 @@ class TestStatusJobs(_Mocked):
         self.assertIn("autostart: not installed", out)
         self.assertIn("firecracker orchestrator: running at http://orch:8099", out)
         self.assertIn("bottled agents: 1 running", out)
+
+    def test_status_reports_the_environments_orchestrator_and_warns_of_strays(self) -> None:
+        self.report.return_value = doctor.OrchestratorReport(
+            OrchestratorEndpoint("firecracker", "http://orch:8099"), True,
+            (OrchestratorEndpoint("docker", "http://127.0.0.1:8099"),))
+        with mock.patch.object(lifecycle, "enumerate_active_agents", return_value=[]):
+            code, out, _ = self.run_cmd(lifecycle.cmd_status, ["--backend", "docker"])
+        self.assertEqual(0, code)
+        self.assertIn("firecracker orchestrator: running at http://orch:8099", out)
+        self.assertIn("warning: another bot-bottle orchestrator (docker) answers at "
+                      f"http://127.0.0.1:8099; it isn't environment {active_name()}'s", out)
+        self.assertIn(f"docker rm -f {ORCHESTRATOR_NAME} {GATEWAY_NAME}", out)
+
+    def test_status_without_a_recorded_orchestrator_says_so(self) -> None:
+        self.report.return_value = doctor.OrchestratorReport(None, False, ())
+        with mock.patch.object(lifecycle, "enumerate_active_agents", return_value=[]):
+            code, out, _ = self.run_cmd(lifecycle.cmd_status, [])
+        self.assertEqual(1, code)
+        self.assertIn(f"orchestrator: no orchestrator for environment {active_name()}; "
+                      "run `bot-bottle up`", out)
 
     def test_status_exits_1_when_something_is_down(self) -> None:
         self.runner.running.return_value = None

@@ -28,13 +28,12 @@ def _live_policy(identity: str) -> str | None:
     credentials by slot name only), or None if it can't be read."""
     # pylint: disable=import-outside-toplevel
     from ...backend.adoption import read as read_adoption
-    from ...contract.hostctl import Settings
-    from ..client import OrchestratorClient, OrchestratorClientError, discover_orchestrator_url
+    from ..client import OrchestratorClient, OrchestratorClientError, env_orchestrator_url
     adopted = read_adoption(identity)
     if adopted is None:
         return None
     try:
-        records = OrchestratorClient(discover_orchestrator_url(Settings())).list_bottles()
+        records = OrchestratorClient(env_orchestrator_url()).list_bottles()
     except (OrchestratorClientError, OSError):
         return None
     policy = next((r.get("policy") for r in records
@@ -369,13 +368,12 @@ def remove_from_run(identity: str, policy: str | None, keys: list[str], *,
     # pylint: disable=import-outside-toplevel
     from ...backend.adoption import read as read_adoption
     from ...bottle_state import egress_state_dir, git_gate_state_dir
-    from ...contract.hostctl import Settings
     from ...egress.service import egress_render_routes
     from ...gateway.egress.schema import load_config
     from ...git_gate.live_grant import GrantError, revoke_live
     from ...secret_source import FileSecrets
     from ...paths import host_secrets_path
-    from ..client import OrchestratorClient, discover_orchestrator_url
+    from ..client import OrchestratorClient, env_orchestrator_url
     hosts = {k.split(":", 1)[1] for k in keys if k.startswith("egress:")}
     repos = [k.split(":", 1)[1] for k in keys if k.startswith("repo:")]
     if not hosts and not repos:
@@ -396,7 +394,7 @@ def remove_from_run(identity: str, policy: str | None, keys: list[str], *,
                   for r in live.routes if r.host not in hosts or r.host in launched]
         text = egress_render_routes(tuple(routes), log=live.log,  # type: ignore[arg-type]
                                     audit_delivery=live.audit_delivery, firehose=live.firehose)
-        OrchestratorClient(discover_orchestrator_url(Settings())).set_policy(
+        OrchestratorClient(env_orchestrator_url()).set_policy(
             adopted.registry_id, text)
         removed += sorted(hosts)
     if repos:

@@ -91,6 +91,7 @@ class TestEnsureRunning(unittest.TestCase):
                     patch(_REATTACH) as reconcile, patch(_ROOT, return_value=Path(td)):
                 orch_cls.return_value.gateway_url.return_value = "http://10.243.255.1:8099"
                 orch_cls.return_value.mint_gateway_token.return_value = "gw.jwt"
+                orch_cls.return_value.url.return_value = "http://10.243.255.1:8099"
                 FirecrackerInfraService(Settings()).ensure_running()
             stop.assert_called_once()          # dislodge the outdated pair
             orch_cls.return_value.ensure_running.assert_called_once()
@@ -118,6 +119,7 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "ensure_built"), \
                     patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls, \
                     patch(_REATTACH) as reconcile, patch(_ROOT, return_value=Path(td)):
+                orch_cls.return_value.url.return_value = "http://10.243.255.1:8099"
                 FirecrackerInfraService(Settings()).ensure_running()
             stop.assert_called_once()
             orch_cls.return_value.ensure_running.assert_called_once()
@@ -133,6 +135,7 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "ensure_built") as built, \
                     patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls, \
                     patch(_REATTACH) as reconcile, patch(_ROOT, return_value=Path(td)):
+                orch_cls.return_value.url.return_value = "http://10.243.255.1:8099"
                 FirecrackerInfraService(Settings()).ensure_running()
         stop.assert_called_once()      # clear stale VMs first
         built.assert_called_once()

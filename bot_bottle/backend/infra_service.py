@@ -13,7 +13,9 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from ..contract.hostctl import InfraSettings, Settings
+from ..control.client import OrchestratorClient, record_orchestrator, recorded_orchestrator
 from ..control.gateway import Gateway
+from ..environment import active_name
 from ..infra_image import (
     BUILD_NEEDS_DOCKER, published_infra_matches, unpublished_message,
 )
@@ -118,6 +120,11 @@ class InfraService(abc.ABC):
         locally when the last bring-up was asked to; `bot-bottle up` passes
         False, so it does exactly what its flags say.
 
+        Records this backend's orchestrator as the environment's (what every
+        later call to "the orchestrator" uses), and dies instead when another
+        backend's orchestrator is recorded and still answers: an environment
+        runs exactly one.
+
         Holds the bring-up lock. A "reattach pending" marker is written first
         and removed only on success, so an interrupted bring-up is retried by
         the next one."""
@@ -150,7 +157,9 @@ class InfraService(abc.ABC):
         die(unpublished_message(self.infra_build_note))
 
     def _ensure_running(self, *, startup_timeout: float, inherit_build: bool) -> str:
-        with self.bring_up_lock():
+        env_lock = bot_bottle_root() / "infra" / "orchestrator.lock"
+        with self.bring_up_lock(), _reentrant_flock(env_lock):
+            self._refuse_second_orchestrator()
             self.require_infra_images(inherit_build=inherit_build)
             marker = self._reattach_pending_marker()
             pending = marker.exists()
@@ -162,6 +171,8 @@ class InfraService(abc.ABC):
                 info(f"{self.name} infra settings changed; bringing it up again with them")
                 self.stop()
             url, restarted = self._bring_up(startup_timeout=startup_timeout)
+            # The environment's one orchestrator, for everything that talks to it.
+            record_orchestrator(self.name, url, root=bot_bottle_root())
             if restarted:
                 self._record_infra_settings()
             if restarted or pending:
@@ -174,6 +185,21 @@ class InfraService(abc.ABC):
                     die(str(e))
             marker.unlink(missing_ok=True)
             return url
+
+    def _refuse_second_orchestrator(self) -> None:
+        """Die if the environment's recorded orchestrator is another backend's
+        and still answers: an environment runs exactly one orchestrator. One
+        that's gone is replaced by this bring-up."""
+        current = recorded_orchestrator(bot_bottle_root())
+        if current is None or current.backend == self.name:
+            return
+        if not OrchestratorClient(current.url).health():
+            return
+        die(f"environment {active_name()} already runs the {current.backend} orchestrator "
+            f"(at {current.url}), and an environment runs one; use the {current.backend} "
+            f"backend (`--backend {current.backend}`), stop it first "
+            f"(`bot-bottle down --backend {current.backend}`), or use another "
+            "environment (`BOT_BOTTLE_ENV=<name>`)")
 
     @contextmanager
     def bring_up_lock(self) -> Generator[None]:

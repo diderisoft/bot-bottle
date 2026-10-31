@@ -24,9 +24,8 @@ from ...approvals import (
     ALLOW_ONCE, ALLOW_PROJECT, DENY, Request, answer, keep_target, route_lines,
 )
 from ...control.client import (
-    AlreadyAnswered, OrchestratorClient, OrchestratorClientError, pending_everywhere,
+    AlreadyAnswered, OrchestratorClient, OrchestratorClientError, pending_proposals,
 )
-from ..settings import settings_from_env
 
 _DECISION = {"a": ALLOW_ONCE, "k": ALLOW_PROJECT, "d": DENY}
 _DIM, _COPPER, _BOLD, _RESET = "\x1b[2m", "\x1b[38;5;173m", "\x1b[1m", "\x1b[0m"
@@ -124,9 +123,8 @@ def cmd_supervise(argv: list[str]) -> int:
     if argv and argv[0] in ("-h", "--help"):
         sys.stderr.write(__doc__ or "")
         return 0
-    settings = settings_from_env()
     try:
-        return Reviewer(lambda: pending_everywhere(settings), OrchestratorClient,
+        return Reviewer(pending_proposals, OrchestratorClient,
                         argv[0] if argv else "").run()
     except OrchestratorClientError as e:
         print(f"couldn't reach the orchestrator: {e}")

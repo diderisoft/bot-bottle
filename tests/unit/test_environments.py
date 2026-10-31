@@ -814,13 +814,13 @@ class TestDockerOrchestratorPorts(_TmpHome):
         from bot_bottle.contract.hostctl import Settings  # pylint: disable=import-outside-toplevel
         with self._env(), mock.patch.object(netpool, "from_settings",
                                             side_effect=RuntimeError("no fc")):
-            urls, _ = client._candidates(Settings())  # pylint: disable=protected-access
-            self.assertFalse(any(":8099" in u for u in urls))
+            found, _ = client._candidates(Settings())  # pylint: disable=protected-access
+            self.assertFalse(any(":8099" in c.url for c in found))
             # pylint: disable-next=import-outside-toplevel
             from bot_bottle.backend.docker import orchestrator
             orchestrator.record_orchestrator_port(18123)
-            urls, _ = client._candidates(Settings())  # pylint: disable=protected-access
-            self.assertIn("http://127.0.0.1:18123", urls)
+            found, _ = client._candidates(Settings())  # pylint: disable=protected-access
+            self.assertIn("http://127.0.0.1:18123", [c.url for c in found])
 
 
 class TestMacosV6Allocation(_TmpHome):

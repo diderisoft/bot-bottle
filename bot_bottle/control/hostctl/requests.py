@@ -85,12 +85,11 @@ class RequestNotifier:
 
 
 def orchestrator_pending() -> list[dict[str, object]]:
-    """Pending proposals from every orchestrator on this host (one per
-    backend with infra up), each tagged with the one holding it."""
+    """Pending proposals from the environment's orchestrator, each tagged
+    with its URL."""
     # pylint: disable=import-outside-toplevel  # only once a bottle is held
-    from ...contract.hostctl import Settings
-    from ..client import pending_everywhere
-    return pending_everywhere(Settings())
+    from ..client import pending_proposals
+    return pending_proposals()
 
 
 __all__ = ["RequestNotifier", "orchestrator_pending", "summaries"]

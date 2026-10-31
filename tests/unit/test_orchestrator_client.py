@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import unittest
 import urllib.error
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.contract.auth import ROLE_CLI, verify
@@ -20,9 +23,16 @@ from bot_bottle.control.client import (
     BackendProbeFailure,
     _host_auth_token,
     _probe_failure,
-    discover_orchestrator_url,
-    discover_orchestrator_urls,
-    pending_everywhere,
+    NoOrchestrator,
+    OrchestratorEndpoint,
+    env_orchestrator_url,
+    first_accepting,
+    listening_orchestrators,
+    orchestrator_record_path,
+    pending_proposals,
+    record_orchestrator,
+    recorded_orchestrator,
+    stray_orchestrators,
 )
 
 _URLOPEN = "bot_bottle.control.client.urllib.request.urlopen"
@@ -269,61 +279,179 @@ class TestSuperviseRespond(unittest.TestCase):
         self.assertIn("no such proposal", str(caught.exception))
 
 
-class TestEveryOrchestrator(unittest.TestCase):
-    """A host runs one orchestrator per backend with infra up (docker and
-    firecracker, say); requests come from all of them."""
-
-    _URLS = ["http://127.0.0.1:8099", "http://10.243.255.1:8099"]
-
-    def _discover(self, healthy: list[str]):
-        def health(client: OrchestratorClient) -> bool:
-            return client._base in healthy  # pylint: disable=protected-access
-        return (patch("bot_bottle.control.client._candidates", return_value=(self._URLS, [])),
-                patch.object(OrchestratorClient, "health", health))
-
-    def test_every_healthy_orchestrator_is_found(self) -> None:
-        a, b = self._discover(self._URLS)
-        with a, b:
-            self.assertEqual(self._URLS, discover_orchestrator_urls(MagicMock()))
-        a, b = self._discover([])
-        with a, b, self.assertRaises(OrchestratorClientError):
-            discover_orchestrator_urls(MagicMock())
-
-    def test_pending_is_gathered_and_tagged_and_a_refusing_one_skipped(self) -> None:
-        def pending(client: OrchestratorClient) -> list[dict[str, object]]:
-            if client._base == self._URLS[0]:  # pylint: disable=protected-access
-                raise OrchestratorClientError("HTTP 401 control-plane authentication required")
-            return [{"id": "p1", "bottle_slug": "b"}]
-
-        a, b = self._discover(self._URLS)
-        with a, b, patch.object(OrchestratorClient, "supervise_pending", pending):
-            got = pending_everywhere(MagicMock())
-        self.assertEqual([{"id": "p1", "bottle_slug": "b", ORCHESTRATOR_KEY: self._URLS[1]}], got)
-
-    def test_pending_raises_when_none_can_be_asked(self) -> None:
-        def refuse(_client: OrchestratorClient) -> list[dict[str, object]]:
-            raise OrchestratorClientError("HTTP 401")
-
-        a, b = self._discover(self._URLS)
-        with a, b, patch.object(OrchestratorClient, "supervise_pending", refuse), \
-                self.assertRaises(OrchestratorClientError):
-            pending_everywhere(MagicMock())
+_FC = "http://10.243.255.1:8099"
+_STRAY = "http://127.0.0.1:8099"
 
 
-class TestDiscoverFirst(unittest.TestCase):
-    def test_the_first_healthy_candidate_wins_and_none_raises(self) -> None:
-        def on_8099(client: OrchestratorClient) -> bool:
-            return client._base.endswith(":8099")  # pylint: disable=protected-access
+class _Root(unittest.TestCase):
+    """A throwaway state root for the environment's orchestrator record."""
 
-        def down(_client: OrchestratorClient) -> bool:
-            return False
+    def setUp(self) -> None:
+        tmp = self.enterContext(tempfile.TemporaryDirectory())  # pylint: disable=consider-using-with
+        self.root = Path(tmp)
+        self.enterContext(patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}))
+        os.environ.pop("BOT_BOTTLE_ENV", None)
 
-        with patch.object(OrchestratorClient, "health", on_8099):
-            self.assertTrue(discover_orchestrator_url(MagicMock()).endswith(":8099"))
-        with patch.object(OrchestratorClient, "health", down), \
+    def route(self, answers: dict[str, object]):  # type: ignore[no-untyped-def]
+        """Patch urlopen so each orchestrator URL answers as `answers` says: a
+        status code, or an exception (unreachable). Records the URLs asked."""
+        asked: list[str] = []
+
+        def urlopen(request, timeout=None):  # type: ignore[no-untyped-def]
+            del timeout
+            url = request.full_url
+            base = next(b for b in answers if url.startswith(b))
+            asked.append(base)
+            answer = answers[base]
+            if isinstance(answer, BaseException):
+                raise answer
+            assert isinstance(answer, int)
+            if answer >= 400:
+                raise _http_error(answer)
+            return _resp(answer, {})
+
+        return patch(_URLOPEN, side_effect=urlopen), asked
+
+
+class TestEnvOrchestrator(_Root):
+    def test_record_round_trips_and_garbage_is_none(self) -> None:
+        self.assertIsNone(recorded_orchestrator())
+        record_orchestrator("firecracker", _FC)
+        self.assertEqual(OrchestratorEndpoint("firecracker", _FC), recorded_orchestrator())
+        self.assertEqual(self.root / "infra" / "orchestrator.json", orchestrator_record_path())
+        orchestrator_record_path().write_text("[1, 2]", encoding="utf-8")
+        self.assertIsNone(recorded_orchestrator())
+
+    def test_none_recorded_says_so_and_never_probes_other_backends(self) -> None:
+        with patch("bot_bottle.control.client._candidates",
+                   side_effect=AssertionError("probed")), \
+                self.assertRaises(NoOrchestrator) as caught:
+            env_orchestrator_url()
+        self.assertEqual("no orchestrator for environment live; run `bot-bottle up`",
+                         str(caught.exception))
+
+    def test_the_recorded_one_is_used_and_a_down_one_named(self) -> None:
+        record_orchestrator("firecracker", _FC)
+        opened, asked = self.route({_FC: 200, _STRAY: 200})
+        with opened, patch("bot_bottle.control.client._candidates",
+                           side_effect=AssertionError("probed")):
+            self.assertEqual(_FC, env_orchestrator_url())
+        self.assertEqual([_FC], asked)
+        opened, _ = self.route({_FC: urllib.error.URLError("refused")})
+        with opened, self.assertRaises(NoOrchestrator) as caught:
+            env_orchestrator_url()
+        self.assertIn(f"environment live (firecracker at {_FC}) isn't answering",
+                      str(caught.exception))
+        self.assertIn("run `bot-bottle up`", str(caught.exception))
+
+    def test_pending_proposals_come_from_the_environments_and_are_tagged(self) -> None:
+        record_orchestrator("firecracker", _FC)
+        with patch.object(OrchestratorClient, "health", return_value=True), \
+                patch.object(OrchestratorClient, "supervise_pending",
+                             return_value=[{"id": "p1", "bottle_slug": "b"}]):
+            got = pending_proposals()
+        self.assertEqual([{"id": "p1", "bottle_slug": "b", ORCHESTRATOR_KEY: _FC}], got)
+
+    def test_the_host_controller_wrappers_use_the_environments(self) -> None:
+        # pylint: disable=import-outside-toplevel
+        from bot_bottle.control.hostctl import remote, requests
+
+        with patch("bot_bottle.control.client.pending_proposals", return_value=[{"id": "p"}]):
+            self.assertEqual([{"id": "p"}], requests.orchestrator_pending())
+        self.assertEqual("http://fc:8099", remote._orchestrator("http://fc:8099")._base)  # pylint: disable=protected-access
+        with patch("bot_bottle.control.client.env_orchestrator_url", return_value=_FC):
+            self.assertEqual(_FC, remote._orchestrator()._base)  # pylint: disable=protected-access
+
+
+class TestCredentialPush(_Root):
+    """The 2026-10-31 bug: a stray live-named docker orchestrator (another
+    key, so 401) listed first stopped every credential refresh."""
+
+    def _push(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.control.hostctl.bottles import _push_credential
+        _push_credential("b1", "EGRESS_TOKEN_0", "fresh", "key")
+
+    def test_goes_to_the_recorded_orchestrator_only(self) -> None:
+        record_orchestrator("firecracker", _FC)
+        opened, asked = self.route({_STRAY: 401, _FC: 200})
+        with opened, patch("bot_bottle.control.client._candidates",
+                           side_effect=AssertionError("probed")):
+            self._push()
+        self.assertEqual([_FC], asked)
+
+    def test_the_recorded_one_not_knowing_the_bottle_or_down_is_named(self) -> None:
+        record_orchestrator("firecracker", _FC)
+        opened, _ = self.route({_FC: 404})
+        with opened, self.assertRaises(OrchestratorClientError) as caught:
+            self._push()
+        self.assertIn(f"(firecracker at {_FC}) doesn't know bottle b1", str(caught.exception))
+        opened, _ = self.route({_FC: 401})
+        with opened, self.assertRaises(OrchestratorClientError) as caught:
+            self._push()
+        self.assertIn("rejected this host's key (HTTP 401)", str(caught.exception))
+        opened, _ = self.route({_FC: urllib.error.URLError("no route")})
+        with opened, self.assertRaises(NoOrchestrator) as caught:
+            self._push()
+        self.assertIn("is unreachable", str(caught.exception))
+
+    def test_unrecorded_falls_back_to_listening_ones_skipping_rejections(self) -> None:
+        other = "http://192.168.128.2:8099"
+        listening = [OrchestratorEndpoint("docker", _STRAY),
+                     OrchestratorEndpoint("macos-container", other),
+                     OrchestratorEndpoint("firecracker", _FC)]
+        opened, asked = self.route({_STRAY: 401, other: 404, _FC: 200})
+        with opened, patch("bot_bottle.control.client.listening_orchestrators",
+                           return_value=listening):
+            self._push()
+        self.assertEqual([_STRAY, other, _FC], asked)
+
+    def test_unrecorded_fails_only_when_none_accepted_listing_each(self) -> None:
+        other = "http://192.168.128.2:8099"
+        listening = [OrchestratorEndpoint("docker", _STRAY),
+                     OrchestratorEndpoint("macos-container", other),
+                     OrchestratorEndpoint("firecracker", _FC)]
+        opened, _ = self.route({_STRAY: 403, other: 404,
+                                _FC: urllib.error.URLError("timed out")})
+        with opened, patch("bot_bottle.control.client.listening_orchestrators",
+                           return_value=listening), \
                 self.assertRaises(OrchestratorClientError) as caught:
-            discover_orchestrator_url(MagicMock())
-        self.assertIn("no running orchestrator", str(caught.exception))
+            self._push()
+        message = str(caught.exception)
+        self.assertIn("no orchestrator accepted bottle b1", message)
+        self.assertIn(f"{_STRAY}: rejected this host's key (HTTP 403)", message)
+        self.assertIn(f"{other}: doesn't know bottle b1 (HTTP 404)", message)
+        self.assertIn(f"{_FC}: unreachable", message)
+        with patch("bot_bottle.control.client.listening_orchestrators", return_value=[]), \
+                self.assertRaises(NoOrchestrator):
+            self._push()
+
+
+class TestFirstAccepting(unittest.TestCase):
+    def test_stops_at_the_first_acceptance(self) -> None:
+        calls: list[str] = []
+
+        def call(client: OrchestratorClient) -> bool:
+            calls.append(client._base)  # pylint: disable=protected-access
+            if client._base == "http://a":  # pylint: disable=protected-access
+                raise OrchestratorClientError("HTTP 500", status=500)
+            return True
+
+        self.assertEqual("http://b", first_accepting(["http://a", "http://b", "http://c"],
+                                                     call, what="x"))
+        self.assertEqual(["http://a", "http://b"], calls)
+
+
+class TestListening(_Root):
+    def test_strays_are_the_listening_ones_that_arent_recorded(self) -> None:
+        candidates = [OrchestratorEndpoint("docker", _STRAY),
+                      OrchestratorEndpoint("firecracker", _FC)]
+        with patch("bot_bottle.control.client._candidates", return_value=(candidates, [])), \
+                patch.object(OrchestratorClient, "health", return_value=True):
+            self.assertEqual(candidates, listening_orchestrators(MagicMock()))
+            self.assertEqual(candidates, stray_orchestrators(MagicMock()))
+            record_orchestrator("firecracker", _FC)
+            self.assertEqual([candidates[0]], stray_orchestrators(MagicMock()))
 
     def test_firecracker_is_only_probed_on_linux(self) -> None:
         # pylint: disable=import-outside-toplevel
@@ -338,15 +466,4 @@ class TestDiscoverFirst(unittest.TestCase):
                 patch("bot_bottle.backend.firecracker.netpool.from_settings") as pool:
             pool.return_value.orch_slot.return_value.guest_ip = "10.9.9.1"
             candidates, _ = _candidates(settings)
-        self.assertIn("http://10.9.9.1:8099", candidates)
-
-    def test_the_host_controller_wrappers_use_every_orchestrator(self) -> None:
-        # pylint: disable=import-outside-toplevel
-        from bot_bottle.control.hostctl import remote, requests
-
-        with patch("bot_bottle.control.client.pending_everywhere", return_value=[{"id": "p"}]):
-            self.assertEqual([{"id": "p"}], requests.orchestrator_pending())
-        self.assertEqual("http://fc:8099", remote._orchestrator("http://fc:8099")._base)  # pylint: disable=protected-access
-        with patch("bot_bottle.control.client.discover_orchestrator_url",
-                   return_value="http://first:8099"):
-            self.assertEqual("http://first:8099", remote._orchestrator()._base)  # pylint: disable=protected-access
+        self.assertIn(OrchestratorEndpoint("firecracker", "http://10.9.9.1:8099"), candidates)

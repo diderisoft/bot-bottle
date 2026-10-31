@@ -117,13 +117,14 @@ def with_recorded_infra(settings: Settings, backend: str,
 
 
 def _push_credential(registry_id: str, slot: str, value: str, env_var_secret: str) -> None:
-    """Give the orchestrator holding `registry_id` a refreshed egress token."""
+    """Give the orchestrator that registered `registry_id` (the environment's)
+    a refreshed egress token. Raises `OrchestratorClientError` naming it when
+    it's missing, unreachable, rejects, or doesn't know the bottle."""
     # pylint: disable=import-outside-toplevel
-    from ..client import OrchestratorClient, discover_orchestrator_urls
-    for url in discover_orchestrator_urls(Settings()):
-        if OrchestratorClient(url).update_agent_secret(registry_id, slot, value, env_var_secret):
-            return
-    raise RuntimeError(f"no running orchestrator knows bottle {registry_id}")
+    from ..client import for_bottle
+    for_bottle(lambda client: client.update_agent_secret(registry_id, slot, value,
+                                                         env_var_secret),
+               what=f"bottle {registry_id}")
 
 
 def _chain(request: LaunchRequest, plan: "BottlePlan") -> tuple[str, ...]:

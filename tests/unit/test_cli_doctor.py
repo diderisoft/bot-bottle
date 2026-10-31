@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle.cli.commands import doctor
+from bot_bottle.control.client import OrchestratorEndpoint
 
 
 def _run(argv: list[str] | None = None) -> tuple[int, str]:
@@ -27,6 +28,10 @@ def _run(argv: list[str] | None = None) -> tuple[int, str]:
     with redirect_stdout(buf):
         code = doctor.cmd_doctor(argv or [])
     return code, buf.getvalue()
+
+
+_FC = OrchestratorEndpoint("firecracker", "http://10.243.255.1:8099")
+_STRAY = OrchestratorEndpoint("docker", "http://127.0.0.1:8099")
 
 
 def _only_docker_ready(_settings: object, name: str, *, quiet: bool = False) -> bool:
@@ -42,6 +47,10 @@ class TestDoctor(unittest.TestCase):
             patch.object(doctor, "backend_os_requirement", return_value=""))
         self.enterContext(patch(
             "bot_bottle.backend.docker.util.runsc_available", return_value=False))
+        # No orchestrator is probed over the network.
+        self.report = self.enterContext(patch.object(
+            doctor, "orchestrator_report",
+            return_value=doctor.OrchestratorReport(_FC, True, ())))
 
     def test_passes_when_python_and_backend_ready(self):
         with patch.object(doctor, "known_backend_names", return_value=("docker",)), \
@@ -139,6 +148,50 @@ class TestDoctor(unittest.TestCase):
                 patch.object(doctor, "is_backend_ready", return_value=True):
             _, out = _run()
         self.assertIn("gVisor (runsc) is registered", out)
+
+
+class TestDoctorOrchestrator(unittest.TestCase):
+    """doctor reports the environment's orchestrator and warns about other
+    bot-bottle orchestrators listening; advisory, so the exit code is untouched."""
+
+    def _orchestrator_lines(self, report: "doctor.OrchestratorReport") -> str:
+        with patch.object(doctor, "orchestrator_report", return_value=report), \
+                patch.object(doctor, "known_backend_names", return_value=("docker",)), \
+                patch.object(doctor, "backend_os_requirement", return_value=""), \
+                patch.object(doctor, "is_backend_ready", return_value=True), \
+                patch("bot_bottle.backend.docker.util.runsc_available", return_value=False):
+            code, out = _run()
+        self.assertEqual(0, code)
+        return "\n".join(line for line in out.splitlines() if " orchestrator: " in line)
+
+    def test_the_environments_orchestrator_is_ok(self):
+        out = self._orchestrator_lines(doctor.OrchestratorReport(_FC, True, ()))
+        self.assertIn(f"ok:   orchestrator: firecracker at {_FC.url}", out)
+        self.assertNotIn("warn", out)
+
+    def test_a_stray_orchestrator_is_warned_about_with_how_to_remove_it(self):
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.backend.docker.infra import GATEWAY_NAME, ORCHESTRATOR_NAME
+        out = self._orchestrator_lines(doctor.OrchestratorReport(_FC, True, (_STRAY,)))
+        self.assertIn(f"warn: orchestrator: another bot-bottle orchestrator (docker) "
+                      f"answers at {_STRAY.url}", out)
+        self.assertIn(f"docker rm -f {ORCHESTRATOR_NAME} {GATEWAY_NAME}", out)
+
+    def test_none_recorded_or_down_is_a_warning(self):
+        out = self._orchestrator_lines(doctor.OrchestratorReport(None, False, (_STRAY,)))
+        self.assertIn("warn: orchestrator: no orchestrator for environment", out)
+        self.assertIn("`bot-bottle up --backend docker` adopts it", out)
+        out = self._orchestrator_lines(doctor.OrchestratorReport(_FC, False, ()))
+        self.assertIn(f"warn: orchestrator: firecracker at {_FC.url} isn't answering", out)
+
+    def test_the_report_compares_the_listening_ones_with_the_record(self):
+        with patch.object(doctor, "recorded_orchestrator", return_value=_FC), \
+                patch.object(doctor.OrchestratorClient, "health", return_value=True), \
+                patch("bot_bottle.control.client.listening_orchestrators",
+                      return_value=[_STRAY, _FC]), \
+                patch("bot_bottle.control.client.recorded_orchestrator", return_value=_FC):
+            report = doctor.orchestrator_report()
+        self.assertEqual(doctor.OrchestratorReport(_FC, True, (_STRAY,)), report)
 
 
 if __name__ == "__main__":

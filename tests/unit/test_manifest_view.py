@@ -138,7 +138,7 @@ class TestAgentManifest(unittest.TestCase):
                                             {"bottle_id": "reg-1", "policy": POLICY}]
         with mock.patch("bot_bottle.backend.adoption.read",
                         return_value=mock.Mock(registry_id="reg-1")), \
-                mock.patch("bot_bottle.control.client.discover_orchestrator_url",
+                mock.patch("bot_bottle.control.client.env_orchestrator_url",
                            return_value="http://o"), \
                 mock.patch("bot_bottle.control.client.OrchestratorClient",
                            return_value=client):
@@ -427,7 +427,7 @@ class TestRunningBottle(TestAgentManifest):
         with mock.patch.object(manifest_view, "_live_policy", return_value=LIVE_POLICY), \
                 mock.patch("bot_bottle.backend.adoption.read",
                            return_value=mock.Mock(registry_id="reg-1", deploy_keys=())), \
-                mock.patch("bot_bottle.control.client.discover_orchestrator_url",
+                mock.patch("bot_bottle.control.client.env_orchestrator_url",
                            return_value="http://o"), \
                 mock.patch("bot_bottle.control.client.OrchestratorClient", return_value=client):
             _, manifest = manifest_view._load("s1")  # pylint: disable=protected-access

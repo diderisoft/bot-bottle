@@ -227,7 +227,12 @@ A named environment registers itself (`~/.bot-bottle-envs/<name>/env.json`)
 the first time a command runs in it. A name whose resource prefix would match
 another registered environment's (`dev` and `dev-2`: `bb-dev-` matches
 `bb-dev-2-orchestrator`) is refused. `doctor` and `status` print the active
-environment.
+environment and its orchestrator, and warn about any other bot-bottle
+orchestrator answering.
+
+An environment runs one backend's orchestrator and gateway at a time: its
+bring-up records which, and bringing up another backend's while that one
+answers is refused ([architecture.md](architecture.md#components)).
 
 ```sh
 bot-bottle envs                  # every environment, its root, and what runs

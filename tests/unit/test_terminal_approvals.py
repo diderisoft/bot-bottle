@@ -243,15 +243,15 @@ class Review(unittest.TestCase):
         firecracker.supervise_respond.assert_called_once()
         docker.supervise_respond.assert_not_called()
 
-    def test_the_command_lists_every_orchestrator_and_reports_none(self) -> None:
+    def test_the_command_lists_the_environments_orchestrator_and_reports_none(self) -> None:
         from bot_bottle.cli.commands import supervise  # pylint: disable=import-outside-toplevel
 
-        with patch.object(supervise, "pending_everywhere", return_value=[]) as listed, \
+        with patch.object(supervise, "pending_proposals", return_value=[]) as listed, \
                 patch("sys.stdout", io.StringIO()) as out:
             self.assertEqual(0, supervise.cmd_supervise(["pi"]))
         listed.assert_called_once()
         self.assertIn("nothing waiting", out.getvalue())
-        with patch.object(supervise, "pending_everywhere",
+        with patch.object(supervise, "pending_proposals",
                           side_effect=OrchestratorClientError("none running")), \
                 patch("sys.stdout", io.StringIO()) as out:
             self.assertEqual(1, supervise.cmd_supervise([]))

@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from ...agent_provider import get_provider
@@ -14,6 +15,10 @@ from ...backend import (
     backend_os_requirement, docker_isolation_summary, is_backend_ready, known_backend_names,
 )
 from ...contract.yaml_subset import YamlSubsetError, parse_frontmatter
+from ...control.client import (
+    OrchestratorClient, OrchestratorEndpoint, no_orchestrator_message, recorded_orchestrator,
+    stray_orchestrators, stray_removal_hint,
+)
 from ...environment import ENV_VAR, LIVE, active_name
 from .. import openrouter
 from ...control.hostctl.sessions import MIN_TMUX_VERSION, tmux_version
@@ -98,6 +103,49 @@ def environment_line() -> str:
     return f"{name} ({how}; state in {bot_bottle_root()})"
 
 
+@dataclass(frozen=True)
+class OrchestratorReport:
+    """The environment's orchestrator and any other listening, for doctor
+    and status."""
+
+    recorded: OrchestratorEndpoint | None
+    healthy: bool
+    strays: tuple[OrchestratorEndpoint, ...]
+
+    def headline(self) -> str:
+        if self.recorded is None:
+            return no_orchestrator_message()
+        where = f"{self.recorded.backend} at {self.recorded.url}"
+        return (f"{where} (environment {active_name()})" if self.healthy
+                else f"{where} isn't answering; run `{PROG} up`")
+
+    def warnings(self) -> list[str]:
+        name = active_name()
+        if self.recorded is None:
+            return [f"a {s.backend} orchestrator answers at {s.url}, but none is recorded "
+                    f"for environment {name}; `{PROG} up --backend {s.backend}` adopts it"
+                    for s in self.strays]
+        return [f"another bot-bottle orchestrator ({s.backend}) answers at {s.url}; "
+                f"it isn't environment {name}'s, so nothing here uses it. {stray_removal_hint(s)}"
+                for s in self.strays]
+
+
+def orchestrator_report(timeout: float = 2.0) -> OrchestratorReport:
+    """Whether the environment's recorded orchestrator answers, and which
+    other bot-bottle orchestrators are listening."""
+    recorded = recorded_orchestrator()
+    healthy = recorded is not None and OrchestratorClient(recorded.url, timeout=timeout).health()
+    strays = stray_orchestrators(settings_from_env(), timeout=timeout)
+    return OrchestratorReport(recorded, healthy, tuple(strays))
+
+
+def _check_orchestrator() -> None:
+    report = orchestrator_report()
+    (_ok if report.healthy else _warn)("orchestrator", report.headline())
+    for warning in report.warnings():
+        _warn("orchestrator", warning)
+
+
 def _check_config_dir() -> None:
     config = bot_bottle_root()
     if config.is_dir():
@@ -174,5 +222,6 @@ def cmd_doctor(argv: list[str]) -> int:
     # Hard requirements set the exit code.
     required = [_check_python(), _check_backends(), _check_tmux()]
     _check_config_dir()
+    _check_orchestrator()
     _check_providers()
     return 0 if all(required) else 1

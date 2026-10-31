@@ -593,12 +593,11 @@ def _pending_requests() -> list[dict[str, Any]]:
 
 
 def _orchestrator(url: str = "") -> Any:
-    """A client for the orchestrator holding a request (`url`), or the first
-    found when it isn't known."""
+    """A client for the orchestrator holding a request (`url`), else the
+    environment's."""
     # pylint: disable=import-outside-toplevel  # only when a request is answered
-    from ...contract.hostctl import Settings
-    from ..client import OrchestratorClient, discover_orchestrator_url
-    return OrchestratorClient(url or discover_orchestrator_url(Settings()))
+    from ..client import OrchestratorClient, env_orchestrator_url
+    return OrchestratorClient(url or env_orchestrator_url())
 
 
 # --- the connection ---

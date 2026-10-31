@@ -20,6 +20,9 @@ from bot_bottle.backend.firecracker.infra import FirecrackerInfraService
 from bot_bottle.backend.infra_service import InfraService, infra_settings_record
 from bot_bottle.backend.macos_container.infra import MacosInfraService
 from bot_bottle.contract.hostctl import InfraSettings, Settings
+from bot_bottle.control.client import (
+    OrchestratorClient, OrchestratorEndpoint, recorded_orchestrator,
+)
 from bot_bottle.infra_image import BUILD_NEEDS_DOCKER, BUILD_WITH_CONTAINER
 from bot_bottle.lib.log import Die
 from bot_bottle.published_artifacts import FORMAT_EXT4, FORMAT_OCI
@@ -54,7 +57,11 @@ class _Service(InfraService):
         return MagicMock()
 
 
-class TestBringUpDecision(unittest.TestCase):
+class _BringUp(unittest.TestCase):
+    """A throwaway state root, a matching release and no reattaching."""
+
+    root: Path
+
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -85,6 +92,8 @@ class TestBringUpDecision(unittest.TestCase):
         with redirect_stderr(io.StringIO()):
             return svc.ensure_running(**kwargs)
 
+
+class TestBringUpDecision(_BringUp):
     def test_a_matching_release_pulls(self) -> None:
         svc = _Service(Settings())
         with self._matches(True):
@@ -151,6 +160,45 @@ class TestBringUpDecision(unittest.TestCase):
                           return_value=True) as matches:
             svc.require_infra_images()
         matches.assert_called_once_with(FORMAT_EXT4)
+
+
+class TestOneOrchestratorPerEnvironment(_BringUp):
+    """A bring-up records its backend's orchestrator as the environment's, and
+    refuses while another backend's recorded one still answers."""
+
+    def _other(self) -> _Service:
+        svc = _Service(Settings())
+        svc.name = "other"
+        return svc
+
+    def test_a_bring_up_records_the_environments_orchestrator(self) -> None:
+        with self._matches(True):
+            self._ensure(_Service(Settings()))
+        self.assertEqual(OrchestratorEndpoint("fake", "http://orch"),
+                         recorded_orchestrator(self.root))
+
+    def test_a_second_backend_is_refused_while_the_first_answers(self) -> None:
+        with self._matches(True):
+            self._ensure(_Service(Settings()))
+        other = self._other()
+        with self._matches(True), patch.object(OrchestratorClient, "health", return_value=True), \
+                self.assertRaises(Die) as caught:
+            self._ensure(other)
+        self.assertIn("already runs the fake orchestrator (at http://orch)",
+                      caught.exception.message)
+        self.assertIn("`bot-bottle down --backend fake`", caught.exception.message)
+        self.assertEqual([], other.brought_up_with)
+        self.assertEqual("fake", recorded_orchestrator(self.root).backend)  # type: ignore[union-attr]
+
+    def test_a_gone_orchestrator_is_replaced_and_the_same_backend_readopted(self) -> None:
+        with self._matches(True):
+            self._ensure(_Service(Settings()))
+        with self._matches(True), patch.object(OrchestratorClient, "health", return_value=True):
+            self._ensure(_Service(Settings()))  # same backend: never refused
+        other = self._other()
+        with self._matches(True), patch.object(OrchestratorClient, "health", return_value=False):
+            self._ensure(other)
+        self.assertEqual("other", recorded_orchestrator(self.root).backend)  # type: ignore[union-attr]
 
 
 class TestFirecracker(unittest.TestCase):

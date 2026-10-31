@@ -98,11 +98,19 @@ def cmd_status(argv: list[str]) -> int:
     # pylint: disable-next=import-outside-toplevel
     from .remote import link_line
     print(link_line())
-    backend = get_bottle_backend(settings, ns.backend)
-    service = backend.infra_service()
-    healthy = service.is_healthy()
-    where = f"running at {service.url()}" if healthy else "not running"
-    print(f"{backend.name} orchestrator: {where}")
+    # The environment's orchestrator: whichever backend's its bring-up recorded.
+    # pylint: disable-next=import-outside-toplevel
+    from .doctor import orchestrator_report
+    report = orchestrator_report()
+    healthy = report.healthy
+    if report.recorded is None:
+        print(f"orchestrator: {report.headline()}")
+    else:
+        where = (f"running at {report.recorded.url}" if healthy
+                 else f"not answering at {report.recorded.url}; run `{PROG} up`")
+        print(f"{report.recorded.backend} orchestrator: {where}")
+    for warning in report.warnings():
+        print(f"warning: {warning}")
     print(_definitions_line())
     bottles = enumerate_active_agents(settings)
     print(f"bottled agents: {len(bottles)} running" + (f" (see `{PROG} bots`)" if bottles else ""))
