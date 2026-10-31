@@ -55,11 +55,20 @@ def ensure_via_daemon(settings: Settings, backend: str, *, restart: bool = False
     client = HostControlClient(runner.ensure_running(), runner.cli_token())
     action = "restart" if restart else "ensure"
     job_id = str(client.post(f"{ORCHESTRATOR_PATH}/{action}", {"settings": request.to_json()})["job"])
-    final = client.follow(job_id, log.write_line)
+    shown: list[str] = []
+
+    def write(line: str) -> None:
+        shown.append(line)
+        log.write_line(line)
+    final = client.follow(job_id, write)
     if final is None:
         log.die(f"detached; the bring-up continues as job {job_id} (see `bot-bottle jobs`)")
     if final.get("type") == "error":
-        log.die(str(final.get("message", "orchestrator bring-up failed")))
+        message = str(final.get("message", "orchestrator bring-up failed"))
+        # A `die` in the job already wrote its message as a log line.
+        if any(message.partition("\n")[0] in line for line in shown[-3:]):
+            raise log.Die(1, message)
+        log.die(message)
     value = final.get("value")
     if not isinstance(value, dict) or not isinstance(value.get("url"), str):
         log.die("host controller returned no orchestrator URL")

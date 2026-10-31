@@ -19,7 +19,8 @@ boundary. Its routes are in
   holds bottles, a launch asks first ("moves N running bottles to the new
   version"); a headless or non-terminal launch is refused instead. Other
   commands keep using the old daemon. `bot-bottle up --restart` restarts it
-  on purpose, with the same question. The daemon also refuses a launch itself
+  on purpose, with the same question; `--yes` answers it, for scripts and
+  services with no terminal (without either, they're refused). The daemon also refuses a launch itself
   once the code on disk no longer matches its `build_id`, so no path (the
   phone included) runs a launch on mixed code.
 - `listeners.py` adds one listener per backend, where that backend's

@@ -65,6 +65,13 @@ class TestUpDown(_Mocked):
         self.runner.restart.assert_called_once_with(
             confirm_restart=lifecycle.confirm_controller_restart)
 
+    def test_up_restart_yes_doesnt_ask(self) -> None:
+        # For scripts and services, with no terminal to answer the question.
+        with mock.patch.object(lifecycle, "ensure_via_daemon", return_value="http://orch"):
+            self.assertEqual(0, self.run_cmd(lifecycle.cmd_up, ["--restart", "--yes"])[0])
+        confirm = self.runner.restart.call_args.kwargs["confirm_restart"]
+        self.assertTrue(confirm(["b1"]))
+
     def test_up_restart_declined_fails(self) -> None:
         self.runner.restart.side_effect = RuntimeError("not restarting; 1 bottle(s) are running")
         with mock.patch.object(lifecycle, "ensure_via_daemon") as ensure:

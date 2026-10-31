@@ -102,10 +102,13 @@ class TestEnsureViaDaemon(_Daemon):
             del settings, restart
             log.die("orchestrator did not become healthy")
 
+        lines: list[str] = []
         with mock.patch.object(orchestrator, "ensure", side_effect=ensure), \
-             log.redirect(lambda line: None), self.assertRaises(log.Die) as cm:
+             log.redirect(lines.append), self.assertRaises(log.Die) as cm:
             orchestrator.ensure_via_daemon(Settings(), "docker")
         self.assertEqual("orchestrator did not become healthy", cm.exception.message)
+        # Once: the job's `die` showed it, so the CLI doesn't repeat it.
+        self.assertEqual(1, sum("did not become healthy" in line for line in lines))
 
     def test_detaching_points_at_the_jobs_command(self) -> None:
         with mock.patch("bot_bottle.control.hostctl.client.HostControlClient.follow",

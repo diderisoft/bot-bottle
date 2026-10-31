@@ -32,6 +32,11 @@ def _fail(message: str) -> int:
     return 1
 
 
+def _yes(held: list[str]) -> bool:
+    del held
+    return True
+
+
 def cmd_up(argv: list[str]) -> int:
     parser = _parser("up", "Start the host controller and the backend's orchestrator and gateway.")
     parser.add_argument("--restart", action="store_true",
@@ -42,6 +47,9 @@ def cmd_up(argv: list[str]) -> int:
                              "source instead of pulling a release's (for running from main; "
                              "same as BOT_BOTTLE_INFRA_BUILD=local). Later launches keep "
                              "building until an `up` without it")
+    parser.add_argument("--yes", "-y", action="store_true",
+                        help="with --restart, don't ask before moving running bottles to "
+                             "the new host controller (for scripts and services)")
     ns = parser.parse_args(argv)
     settings = settings_from_env()
     if ns.build:
@@ -50,7 +58,7 @@ def cmd_up(argv: list[str]) -> int:
     backend = get_bottle_backend(settings, ns.backend).name
     try:
         if ns.restart:
-            runner.restart(confirm_restart=confirm_controller_restart)
+            runner.restart(confirm_restart=_yes if ns.yes else confirm_controller_restart)
         url = ensure_via_daemon(settings, backend, restart=ns.restart)
     except runner.HostControlError as e:
         return _fail(str(e))
