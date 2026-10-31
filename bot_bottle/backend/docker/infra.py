@@ -28,9 +28,6 @@ from ...control.gateway import (
     GATEWAY_NETWORK,
 )
 from ..infra_service import InfraService
-from ...control.lifecycle import (
-    DEFAULT_PORT,
-)
 
 # Aliases kept for callers that import the old combined-container names.
 INFRA_NAME = GATEWAY_NAME  # agents attribute against the gateway
@@ -48,7 +45,7 @@ class DockerInfraService(InfraService):
         self,
         settings: Settings,
         *,
-        port: int = DEFAULT_PORT,
+        port: int = 0,
         network: str = GATEWAY_NETWORK,
         control_network: str = ORCHESTRATOR_NETWORK,
         orchestrator_image: str | None = None,

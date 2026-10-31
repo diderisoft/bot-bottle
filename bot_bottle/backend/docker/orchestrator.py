@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import subprocess
 import time
 from pathlib import Path
 
-from ...environment import resource_prefix
+from ...environment import docker_orchestrator_port_candidates, is_live, resource_prefix
 from ...lib import log
 from ... import resources
 from .util import image_exists as docker_image_exists
@@ -54,6 +55,39 @@ ORCHESTRATOR_SOURCE_HASH_LABEL = "bot-bottle-orchestrator-source-hash"
 # Host root mount (DB and state) in the orchestrator, the only container with
 # the DB.
 _ROOT_IN_CONTAINER = "/bot-bottle-root"
+# A named environment's allocated host ports, one file per orchestrator
+# container under its state root, so a restart (and every other process of the
+# environment) finds it, and a second pair (an isolated test's) keeps its own.
+ORCHESTRATOR_PORTS_DIRNAME = "docker-ports"
+# Ports a named environment tries before giving up.
+_PORT_ATTEMPTS = 32
+# What docker says when the host port is taken.
+_PORT_TAKEN = ("port is already allocated", "address already in use",
+               "failed programming external connectivity")
+
+
+def _port_file(name: str) -> Path:
+    return bot_bottle_root() / ORCHESTRATOR_PORTS_DIRNAME / name
+
+
+def recorded_orchestrator_port(name: str = ORCHESTRATOR_NAME) -> int:
+    """The host port recorded for orchestrator container `name`, 0 if none
+    (or garbage)."""
+    try:
+        port = int(_port_file(name).read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return 0
+    return port if 0 < port < 65536 else 0
+
+
+def record_orchestrator_port(port: int, name: str = ORCHESTRATOR_NAME) -> None:
+    if recorded_orchestrator_port(name) == port:
+        return
+    path = _port_file(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{name}.{os.getpid()}")
+    tmp.write_text(f"{port}\n", encoding="utf-8")
+    os.replace(tmp, path)
 _DB_IN_CONTAINER = f"{_ROOT_IN_CONTAINER}/db/{HOST_DB_FILENAME}"
 
 _HEALTH_POLL_SECONDS = 0.25
@@ -70,7 +104,7 @@ class DockerOrchestrator(Orchestrator):
         settings: Settings,
         name: str = ORCHESTRATOR_NAME,
         label: str = ORCHESTRATOR_LABEL,
-        port: int = DEFAULT_PORT,
+        port: int = 0,
         control_network: str = ORCHESTRATOR_NETWORK,
         publish_network: str = ORCHESTRATOR_PUBLISH_NETWORK,
         repo_root: Path | None = None,
@@ -87,7 +121,12 @@ class DockerOrchestrator(Orchestrator):
         self._settings = settings
         self.name = name
         self.label = label
-        self.port = port
+        # The host-side port: an explicit one, live's 8099, or a named
+        # environment's allocated one (recorded, else its first candidate;
+        # `_run_container` moves on from a taken port).
+        self._allocate_port = not port and not is_live()
+        self.port = (port or (recorded_orchestrator_port(name) if self._allocate_port else 0)
+                     or next(docker_orchestrator_port_candidates()))
         self.control_network = control_network
         self.publish_network = publish_network
         # Build context: the checkout root, or a copy staged from the wheel.
@@ -260,7 +299,33 @@ class DockerOrchestrator(Orchestrator):
         # Raises rather than yield an empty key that would serve open.
         _signing_key = self.control_plane_key()
         host_env = self.host_control_env()
-        proc = run_docker([
+        port = self.port
+        ports = [port]
+        if self._allocate_port:
+            ports += [p for p in docker_orchestrator_port_candidates() if p != port]
+        proc = subprocess.CompletedProcess[str]([], 1, "", "")
+        for attempt, port in enumerate(ports):
+            proc = self._docker_run(port, current_hash, _signing_key, host_env)
+            if proc.returncode == 0 or not self._allocate_port:
+                break
+            if not any(m in proc.stderr.lower() for m in _PORT_TAKEN) \
+                    or attempt + 1 >= _PORT_ATTEMPTS:
+                break
+            # Another environment holds this port: drop the half-created
+            # container and try the next.
+            run_docker(["docker", "rm", "--force", self.name])
+        if proc.returncode != 0:
+            raise OrchestratorStartError(
+                f"orchestrator container failed to start: {proc.stderr.strip()}"
+            )
+        if self._allocate_port:
+            self.port = port
+            record_orchestrator_port(port, self.name)
+        self._join_networks()
+
+    def _docker_run(self, port: int, current_hash: str, signing_key: str,
+                    host_env: dict[str, str]) -> "subprocess.CompletedProcess[str]":
+        return run_docker([
             "docker", "run", "--detach",
             "--name", self.name,
             "--label", self.label,
@@ -270,7 +335,7 @@ class DockerOrchestrator(Orchestrator):
             "--dns", _NO_EXTERNAL_DNS,
             # Host-side mapping (loopback by default) to the fixed in-container
             # port.
-            "--publish", f"{self._bind_host}:{self.port}:{DEFAULT_PORT}",
+            "--publish", f"{self._bind_host}:{port}:{DEFAULT_PORT}",
             # Runs the package baked into the freshly built image, no source
             # mount. The root mount (a host path or a named volume) holds the
             # DB.
@@ -284,11 +349,9 @@ class DockerOrchestrator(Orchestrator):
             # Args to the `python3 -m bot_bottle.orchestrator` entrypoint.
             "--host", "0.0.0.0", "--port", str(DEFAULT_PORT),
             "--db", _DB_IN_CONTAINER,
-        ], env={**os.environ, ORCHESTRATOR_TOKEN_ENV: _signing_key, **host_env})
-        if proc.returncode != 0:
-            raise OrchestratorStartError(
-                f"orchestrator container failed to start: {proc.stderr.strip()}"
-            )
+        ], env={**os.environ, ORCHESTRATOR_TOKEN_ENV: signing_key, **host_env})
+
+    def _join_networks(self) -> None:
         proc = run_docker(["docker", "network", "connect", self.control_network, self.name])
         if proc.returncode != 0:
             raise OrchestratorStartError(

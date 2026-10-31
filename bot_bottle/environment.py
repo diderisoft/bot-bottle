@@ -8,6 +8,7 @@ and volume, so `dev` and `ci-<run>` never touch the live install.
 | resource names | `bot-bottle-*` | `bb-<name>-*` |
 | docker gateway subnet | `10.242.255.0/24` | a free /24 of `10.241.0.0/16`, recorded |
 | docker agent /29s | `10.242.0.0/20` | `10.240.0.0/16`, shared by named envs |
+| docker orchestrator host port | `127.0.0.1:8099` | a free port of 18100-18899, recorded |
 | firecracker pool | the defaults | a host-wide claimed slice (`slice_claims`) |
 | launchd labels, pf anchor | `io.bot-bottle*` | `io.bot-bottle.<name>*` |
 | macOS agent IPv6 /64 | `fd62:6f74:6274:6c65::` | a free `fd62:6f74:6275:<n>::`, recorded |
@@ -60,6 +61,11 @@ LIVE_DOCKER_GATEWAY_SUBNET = "10.242.255.0/24"
 LIVE_DOCKER_AGENT_SUBNETS = "10.242.0.0/20"
 NAMED_DOCKER_GATEWAY_BLOCK = "10.241.0.0/16"
 NAMED_DOCKER_AGENT_SUBNETS = "10.240.0.0/16"
+# The docker orchestrator's host-side (loopback) port: live's fixed one, and
+# the range named environments allocate theirs from.
+LIVE_DOCKER_ORCHESTRATOR_PORT = 8099
+NAMED_DOCKER_PORT_BASE = 18100
+NAMED_DOCKER_PORT_COUNT = 800
 
 
 class InvalidEnvironmentError(ValueError):
@@ -155,6 +161,18 @@ def docker_gateway_candidates(name: str | None = None) -> Iterator[str]:
 def docker_gateway_subnet(name: str | None = None) -> str:
     """The first candidate: what an environment tries before one is recorded."""
     return next(docker_gateway_candidates(name))
+
+
+def docker_orchestrator_port_candidates(name: str | None = None) -> Iterator[int]:
+    """The docker orchestrator's host ports to try, in order: live's fixed
+    one, else every port of the named range starting at the name's hash."""
+    name = active_name() if name is None else name
+    if name == LIVE:
+        yield LIVE_DOCKER_ORCHESTRATOR_PORT
+        return
+    start = int.from_bytes(hashlib.sha256(name.encode()).digest()[:2], "big")
+    for i in range(NAMED_DOCKER_PORT_COUNT):
+        yield NAMED_DOCKER_PORT_BASE + (start + i) % NAMED_DOCKER_PORT_COUNT
 
 
 def docker_agent_subnets(name: str | None = None) -> str:
@@ -286,6 +304,7 @@ __all__ = [
     "ENV_VAR", "ENVS_DIRNAME", "LIVE", "LIVE_PREFIX", "MAX_NAME_LENGTH",
     "InvalidEnvironmentError", "Registration", "active_name", "default_root",
     "docker_agent_subnets", "docker_gateway_candidates", "docker_gateway_subnet",
+    "docker_orchestrator_port_candidates",
     "ensure_active_registered", "envs_dir", "is_live", "macos_agent_subnet_v6",
     "macos_agent_subnet_v6_candidates", "prefix_clash", "read", "register", "registered",
     "registration_file", "resource_prefix", "reverse_dns", "unregister", "validate",

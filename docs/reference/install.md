@@ -211,6 +211,7 @@ running CI never touches the live install (`bot_bottle/environment.py`).
 | Host controller | `bot-bottle-hostctl.service` / `io.bot-bottle.hostctl` | `bb-<name>-hostctl.service` / `io.bot-bottle.<name>.hostctl` |
 | docker gateway network | `10.242.255.0/24` | a free /24 of `10.241.0.0/16`, allocated and recorded |
 | docker agent /29s | `10.242.0.0/20` | `10.240.0.0/16`, shared by named environments (allocation skips any subnet in use) |
+| docker orchestrator host port | `127.0.0.1:8099` | a free port of 18100-18899, allocated (moves on when docker says the port is taken) and recorded per container under the state root |
 | firecracker pool | slice 0 (`bbfc*`, `bot_bottle_fc`, `bborch0`/`bbgw0`) | the slice it claims (below) |
 | firecracker run and infra dirs | `~/.cache/bot-bottle/firecracker/{run,infra}` | `~/.cache/bot-bottle/firecracker/envs/<name>/{run,infra}` |
 | macOS pf anchor | `com.apple/io.bot-bottle` | `com.apple/io.bot-bottle.<name>` |
@@ -280,6 +281,10 @@ recorded in its state root (`docker-gateway-subnet`), so it's stable across
 restarts, and an existing gateway network's subnet is adopted. The macOS agent
 IPv6 /64 is allocated the same way at setup, skipping the ones other
 environments' anchors block, and recorded in the installed pf rules.
+
+That docker port is the only host port bot-bottle publishes: the docker
+gateway, macOS containers and firecracker VMs are reached on their own
+networks, never through a host port, so they can't collide.
 
 The host controller's loopback port is ephemeral and published under each
 environment's own root. Its guest listener keeps port 8098 in every

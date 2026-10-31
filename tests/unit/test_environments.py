@@ -4,7 +4,7 @@ firecracker slice math (Python and the setup script agree), docker and macOS
 subnet allocation, and `envs`
 listing and removal planning with the host mocked out."""
 
-# pylint: disable=reimported,too-many-return-statements
+# pylint: disable=reimported,too-many-return-statements,too-many-lines
 from __future__ import annotations
 
 import contextlib
@@ -140,6 +140,13 @@ class TestLiveIsUnchanged(unittest.TestCase):
             with self.subTest(want=want):
                 self.assertEqual(want, got)
         self.assertEqual("10.242.255.0/24", dgw.DEFAULT_GATEWAY_SUBNET)
+
+    def test_docker_orchestrator_publishes_8099(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.contract.hostctl import Settings
+        orch = _dorch.DockerOrchestrator(settings=Settings())
+        self.assertEqual(8099, orch.port)
+        self.assertEqual("http://127.0.0.1:8099", orch.url())
 
     def test_service_unit_env_has_no_environment(self) -> None:
         from bot_bottle.control.hostctl import service_unit  # pylint: disable=import-outside-toplevel
@@ -674,6 +681,124 @@ class TestDockerGatewayAllocation(_TmpHome):
                 gw._ensure_network()  # pylint: disable=protected-access
         self.assertIn("BOT_BOTTLE_DOCKER_GATEWAY_SUBNET", str(cm.exception))
         self.assertEqual(0, len(fake.creates))  # docker listed them all as taken
+
+
+class _PortDocker:
+    """`docker run` that reports some host ports as already allocated."""
+
+    def __init__(self, taken: set[int]) -> None:
+        self.taken = taken
+        self.published: list[str] = []
+        self.removed = 0
+
+    def __call__(self, argv: list[str], **_kw: object) -> subprocess.CompletedProcess[str]:
+        if argv[:2] == ["docker", "run"]:
+            spec = argv[argv.index("--publish") + 1]
+            self.published.append(spec)
+            if int(spec.split(":")[1]) in self.taken:
+                return subprocess.CompletedProcess(
+                    argv, 125, "", "docker: Error response from daemon: failed to set up "
+                    "container networking: driver failed programming external connectivity "
+                    f"on endpoint x: Bind for {spec.rsplit(':', 1)[0]} failed: port is "
+                    "already allocated")
+        if argv[:3] == ["docker", "rm", "--force"]:
+            self.removed += 1
+        if argv[:3] == ["docker", "network", "inspect"]:
+            return subprocess.CompletedProcess(argv, 0, "false", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+
+class TestDockerOrchestratorPorts(_TmpHome):
+    def _orch(self, fake: _PortDocker, **kw: object):  # type: ignore[no-untyped-def]
+        # pylint: disable=import-outside-toplevel
+        from bot_bottle.backend.docker import orchestrator
+        from bot_bottle.contract.hostctl import Settings
+        for p in (mock.patch.object(orchestrator, "run_docker", fake),
+                  mock.patch("bot_bottle.trust_domain.host_signing_key", return_value="k")):
+            p.start()
+            self.addCleanup(p.stop)
+        return orchestrator.DockerOrchestrator(settings=Settings(), **kw)  # type: ignore[arg-type]
+
+    def _env(self) -> "contextlib.AbstractContextManager[object]":
+        return mock.patch.dict(os.environ, {"BOT_BOTTLE_ENV": "ci-6865",
+                                            "BOT_BOTTLE_ROOT": str(self.home / "root")})
+
+    def test_a_taken_port_moves_to_the_next_and_is_recorded(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.backend.docker import orchestrator
+        first, second, third = list(env.docker_orchestrator_port_candidates("ci-6865"))[:3]
+        fake = _PortDocker(taken={first, second})
+        with self._env():
+            orch = self._orch(fake)
+            self.assertEqual(first, orch.port)
+            orch._run_container("hash")  # pylint: disable=protected-access
+            self.assertEqual(third, orch.port)
+            self.assertEqual(f"http://127.0.0.1:{third}", orch.url())
+            self.assertEqual(third, orchestrator.recorded_orchestrator_port(orch.name))
+            # Every other process of the environment finds the same port.
+            self.assertEqual(third, self._orch(fake).port)
+        self.assertEqual([f"127.0.0.1:{p}:8099" for p in (first, second, third)],
+                         fake.published)
+        self.assertNotIn("127.0.0.1:8099:8099", fake.published)
+        self.assertTrue(all(18100 <= p < 18900 for p in (first, second, third)))
+
+    def test_a_second_pair_keeps_its_own_port(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.backend.docker import orchestrator
+        fake = _PortDocker(taken=set())
+        with self._env():
+            main = self._orch(fake)
+            main._run_container("h")  # pylint: disable=protected-access
+            fake.taken.add(main.port)
+            other = self._orch(fake, name="bb-ci-6865-orchestrator-itest")
+            other._run_container("h")  # pylint: disable=protected-access
+            self.assertNotEqual(main.port, other.port)
+            self.assertEqual(main.port, orchestrator.recorded_orchestrator_port(main.name))
+
+    def test_live_and_explicit_ports_never_move(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.control.lifecycle import OrchestratorStartError
+        fake = _PortDocker(taken={8099, 20001})
+        live = self._orch(fake)
+        self.assertEqual(8099, live.port)
+        with self.assertRaises(OrchestratorStartError) as cm:
+            live._run_container("h")  # pylint: disable=protected-access
+        self.assertIn("port is already allocated", str(cm.exception))
+        with self._env():
+            explicit = self._orch(fake, port=20001)
+            with self.assertRaises(OrchestratorStartError):
+                explicit._run_container("h")  # pylint: disable=protected-access
+        self.assertEqual(["127.0.0.1:8099:8099", "127.0.0.1:20001:8099"], fake.published)
+
+    def test_another_failure_is_not_retried(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.control.lifecycle import OrchestratorStartError
+
+        class Broken(_PortDocker):
+            def __call__(self, argv: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+                if argv[:2] == ["docker", "run"]:
+                    self.published.append(argv[argv.index("--publish") + 1])
+                    return subprocess.CompletedProcess(argv, 125, "", "no such image")
+                return super().__call__(argv, **kw)
+
+        fake = Broken(taken=set())
+        with self._env(), self.assertRaises(OrchestratorStartError):
+            self._orch(fake)._run_container("h")  # pylint: disable=protected-access
+        self.assertEqual(1, len(fake.published))
+
+    def test_the_client_never_probes_lives_port_from_a_named_environment(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.control import client
+        from bot_bottle.contract.hostctl import Settings  # pylint: disable=import-outside-toplevel
+        with self._env(), mock.patch.object(netpool, "from_settings",
+                                            side_effect=RuntimeError("no fc")):
+            urls, _ = client._candidates(Settings())  # pylint: disable=protected-access
+            self.assertFalse(any(":8099" in u for u in urls))
+            # pylint: disable-next=import-outside-toplevel
+            from bot_bottle.backend.docker import orchestrator
+            orchestrator.record_orchestrator_port(18123)
+            urls, _ = client._candidates(Settings())  # pylint: disable=protected-access
+            self.assertIn("http://127.0.0.1:18123", urls)
 
 
 class TestMacosV6Allocation(_TmpHome):

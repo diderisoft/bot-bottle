@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+from ..environment import is_live
 from ..lib.log import debug
 from ..contract.auth import CONTROL_PLANE, ROLE_CLI
 from ..contract.hostctl import Settings
@@ -272,12 +273,19 @@ def _candidates(settings: "Settings") -> tuple[list[str], list[BackendProbeFailu
     couldn't be probed."""
     candidates: list[str] = []
     failures: list[BackendProbeFailure] = []
-    try:  # docker: loopback publish
+    try:  # docker: loopback publish, live's fixed port or this environment's
         from .lifecycle import DEFAULT_PORT as _DOCKER_PORT
-        candidates.append(f"http://127.0.0.1:{_DOCKER_PORT}")
+        if is_live():
+            candidates.append(f"http://127.0.0.1:{_DOCKER_PORT}")
+        else:
+            # Never live's 8099: a named environment must not reach live.
+            from ..backend.docker.orchestrator import recorded_orchestrator_port
+            if port := recorded_orchestrator_port():
+                candidates.append(f"http://127.0.0.1:{port}")
     except Exception as exc:  # noqa: BLE001 — backend optional
         failures.append(_probe_failure("docker", exc))
-        candidates.append("http://127.0.0.1:8099")
+        if is_live():
+            candidates.append("http://127.0.0.1:8099")
     try:  # firecracker: orchestrator TAP; only on Linux, where probing it
         # elsewhere just waits out the timeout
         from ..backend.firecracker import netpool
