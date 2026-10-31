@@ -302,7 +302,7 @@ jobs:
   # Python >=3.11 with `coverage` importable on the launchd service PATH.
   integration-macos:
     runs-on: [self-hosted, macos]
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.skip_macos != 'true'
+    if: github.event_name == 'workflow_dispatch' && format('{0}', github.event.inputs.skip_macos) != 'true'
     concurrency:
       group: integration-macos-infra
       cancel-in-progress: false
@@ -442,11 +442,11 @@ jobs:
       && needs.coverage.result == 'success'
       && (needs.integration-macos.result == 'success'
           || (needs.integration-macos.result == 'skipped'
-              && github.event.inputs.skip_macos == 'true')) }}
+              && format('{0}', github.event.inputs.skip_macos) == 'true')) }}
     runs-on: [self-hosted, kvm]
     steps:
       - name: Note a release without macOS
-        if: github.event.inputs.skip_macos == 'true'
+        if: format('{0}', github.event.inputs.skip_macos) == 'true'
         run: echo "::warning::Released with skip_macos — this version is untested on macos-container."
       - name: Checkout the tested revision
         uses: actions/checkout@v4
