@@ -237,6 +237,28 @@ class TestNamedDerivations(unittest.TestCase):
                 str(Path(home) / ".bot-bottle-envs" / "dev"),
             ], json.loads(out))
 
+    def test_reattach_finds_only_this_environments_bottles(self) -> None:
+        # The gateway reattach (and cleanup, enumeration) find bottles by
+        # compose project prefix, fixed at import: in `dev` that's `bb-dev-`,
+        # so a live `bot-bottle-*` project is neither found nor touched.
+        code = (
+            "import json, subprocess\n"
+            "from unittest import mock\n"
+            "from bot_bottle.backend.docker import compose, gateway_attach\n"
+            "ls = json.dumps([{'Name': 'bot-bottle-live1'}, {'Name': 'bb-dev-mine'},\n"
+            "                 {'Name': 'unrelated'}])\n"
+            "done = subprocess.CompletedProcess([], 0, ls, '')\n"
+            "with mock.patch.object(compose.subprocess, 'run', return_value=done):\n"
+            "    print(json.dumps([compose.list_active_slugs(), compose.compose_project_name('s'),\n"
+            "                      gateway_attach.DockerGatewayAttacher()._gateway]))\n"
+        )
+        with tempfile.TemporaryDirectory() as home:
+            environ = {k: v for k, v in os.environ.items() if k != "BOT_BOTTLE_ROOT"}
+            environ.update({"HOME": home, "BOT_BOTTLE_ENV": "dev", "PYTHONPATH": str(REPO)})
+            out = subprocess.run([sys.executable, "-P", "-c", code], env=environ, cwd=home,
+                                 capture_output=True, text=True, check=True).stdout
+        self.assertEqual([["mine"], "bb-dev-s", "bb-dev-orch-gateway"], json.loads(out))
+
     def test_explicit_root_wins(self) -> None:
         from bot_bottle.paths import bot_bottle_root  # pylint: disable=import-outside-toplevel
         with mock.patch.dict(os.environ, {"BOT_BOTTLE_ENV": "dev", "BOT_BOTTLE_ROOT": "/x/y"}):

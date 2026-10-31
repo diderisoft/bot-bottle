@@ -24,6 +24,7 @@ import unittest
 from pathlib import Path
 
 from bot_bottle.cli.settings import settings_from_env
+from bot_bottle.backend.docker.compose import compose_project_name
 from bot_bottle.backend.docker.consolidated_launch import network_cidr, network_container_ips
 from bot_bottle.contract.hostctl import DEFAULT_EGRESS_PORT as EGRESS_PORT
 from bot_bottle.backend.docker.gateway_net import next_free_ip
@@ -68,7 +69,9 @@ class TestGatewayReattachDocker(unittest.TestCase):
     def setUp(self) -> None:
         self._root_volume = "bot-bottle-reattach-root-" + secrets.token_hex(4)
         self._slug = "reattach-" + secrets.token_hex(3)
-        self._project = f"bot-bottle-{self._slug}"
+        # Named as a real bottle's project is, in this environment (`bb-<env>-`
+        # in a named one), since that's the prefix the reattach flow finds.
+        self._project = compose_project_name(self._slug)
         self._tmp = tempfile.TemporaryDirectory()
         self.svc = DockerInfraService(settings_from_env(), root_mount_source=self._root_volume)
         self.addCleanup(self._teardown)
