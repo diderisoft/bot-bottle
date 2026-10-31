@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from ..bottle_state import globalize_slug
 from ..errors import MissingEnvVarError
-from ..lib.log import info
+from ..lib.log import info, warn
 from ..manifest import ManifestBottle, ManifestGitEntry
 from ..secret_source import SecretSource
 from ..control.git_gate_render import GitGateUpstream
@@ -184,6 +184,7 @@ def provision_git_gate_dynamic_keys(
     """
     if not plan.upstreams:
         return plan
+    _revoke_leftover_keys(bottle, stage_dir, secrets)
 
     upstreams_by_name: dict[str, GitGateUpstream] = {
         upstream.name: upstream for upstream in plan.upstreams
@@ -207,6 +208,28 @@ def provision_git_gate_dynamic_keys(
     final_plan = dataclasses.replace(plan, upstreams=tuple(updated))
     _write_upstreams_snapshot(stage_dir, final_plan.upstreams)
     return final_plan
+
+
+def _revoke_leftover_keys(
+    bottle: ManifestBottle, stage_dir: Path, secrets: SecretSource,
+) -> None:
+    """Revoke the keys a previous run under this slug left registered. A run
+    that was killed never tore down, and the forge refuses a new key with its
+    old one's title. Keys last one launch: a resume or a relaunch mints its
+    own. A key that can't be revoked is left for the operator, and minting
+    then says which collided."""
+    refs = deploy_key_refs(bottle) + live_grant_refs(stage_dir)
+    stale = [r for r in refs if (stage_dir / f"{r.name}-deploy-key-id").exists()]
+    if not stale:
+        return
+    info("revoking the deploy keys a previous run left registered")
+    try:
+        revoke_deploy_keys(tuple(stale), stage_dir, secrets)
+    except (RuntimeError, MissingEnvVarError) as e:
+        warn(f"couldn't revoke a previous run's deploy keys: {e}")
+        return
+    for ref in stale:
+        (stage_dir / f"{ref.name}-deploy-key-id").unlink(missing_ok=True)
 
 
 def _write_upstreams_snapshot(

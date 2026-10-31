@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from .environment import active_name, is_live
 from .paths import bot_bottle_root
 from .util import slugify
 
@@ -49,9 +50,12 @@ def bottle_identity(agent_name: str) -> str:
 
 
 def globalize_slug(slug: str) -> str:
-    """`slug` qualified with this hostname, for names that must be unique
-    across hosts (e.g. deploy-key titles)."""
-    return f"{socket.gethostname()}-{slug}"
+    """`slug` qualified with this hostname, and the environment's name in a
+    named one, for names that must be unique across hosts and the
+    environments on them (e.g. deploy-key titles)."""
+    env = active_name()
+    where = socket.gethostname() if is_live(env) else f"{socket.gethostname()}-{env}"
+    return f"{where}-{slug}"
 
 
 @dataclass(frozen=True)

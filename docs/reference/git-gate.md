@@ -34,7 +34,11 @@ Key providers:
 - `gitea`: a fresh ed25519 deploy key is added through the forge API at
   launch and revoked at teardown (`git_gate/provision.py`,
   `contrib/gitea/deploy_key_provisioner.py`), read-only unless the grant ends
-  in `:write`. It's declared only as a grant on a forge (below): a bottle
+  in `:write`. Keys last one launch: a resume or relaunch mints its own, and
+  first revokes any a killed previous run left registered (the forge refuses
+  a second key with the same title). The title is
+  `bot-bottle:<hostname>[-<environment>]-<label>:<repo>`, the environment
+  named outside `live`. It's declared only as a grant on a forge (below): a bottle
   file with a long-form `provider: gitea` repo fails to load
   ([ADR 0008](../decisions/0008-forge-minted-keys-are-grants.md)); see
   [Migrating from the old format](#migrating-from-the-old-format).

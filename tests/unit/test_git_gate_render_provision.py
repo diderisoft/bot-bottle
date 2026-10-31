@@ -6,6 +6,7 @@ Covers the pure `git_gate_render_gitconfig` renderer and the dynamic
 
 from __future__ import annotations
 
+import os
 import socket
 import tempfile
 import types
@@ -20,10 +21,13 @@ from bot_bottle.control.git_gate_render import (
     _gitconfig_validate_value,
     git_gate_render_gitconfig,
 )
+from bot_bottle.control.git_gate_render import GitGateUpstream
 from bot_bottle.git_gate import (
     _provision_dynamic_key,
     revoke_git_gate_provisioned_keys,
 )
+from bot_bottle.git_gate.plan import GitGatePlan
+from bot_bottle.git_gate.provision import provision_git_gate_dynamic_keys
 from bot_bottle.manifest.git import ManifestGitEntry, ManifestKeyConfig
 
 
@@ -118,6 +122,7 @@ class TestProvisionDynamicKey(unittest.TestCase):
         fake = _FakeProvisioner()
         with tempfile.TemporaryDirectory() as d, \
                 patch("bot_bottle.deploy_key_provisioner.get_provisioner", return_value=fake), \
+                patch.dict(os.environ, {"BOT_BOTTLE_ENV": ""}), \
                 patch("sys.stderr"):
             path = _provision_dynamic_key(_gitea_entry(), "myslug", Path(d), _TOKEN)
             key_file = Path(path)
@@ -128,10 +133,71 @@ class TestProvisionDynamicKey(unittest.TestCase):
         hostname = socket.gethostname()
         self.assertEqual([("o/r", f"bot-bottle:{hostname}-myslug:repo")], fake.created)
 
+    def test_a_named_environment_is_in_the_title(self) -> None:
+        # Its environments share the hostname, and a forge wants titles
+        # unique per repo.
+        fake = _FakeProvisioner()
+        with tempfile.TemporaryDirectory() as d, \
+                patch("bot_bottle.deploy_key_provisioner.get_provisioner", return_value=fake), \
+                patch.dict(os.environ, {"BOT_BOTTLE_ENV": "dev"}), \
+                patch("sys.stderr"):
+            _provision_dynamic_key(_gitea_entry(), "myslug", Path(d), _TOKEN)
+        hostname = socket.gethostname()
+        self.assertEqual([("o/r", f"bot-bottle:{hostname}-dev-myslug:repo")], fake.created)
+
     def test_missing_token_raises(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(MissingEnvVarError):
                 _provision_dynamic_key(_gitea_entry(), "s", Path(d), MappingSecrets({}))
+
+
+def _gate_plan(d: str) -> GitGatePlan:
+    return GitGatePlan(slug="myslug", hook_script=Path(d) / "hook",
+                       access_hook_script=Path(d) / "access",
+                       upstreams=(GitGateUpstream(name="repo", upstream_url="ssh://x/o/r.git",
+                                                  upstream_host="x", upstream_port="22",
+                                                  identity_file="", known_host_key=""),))
+
+
+class TestLeftoverKeys(unittest.TestCase):
+    """A run killed before teardown leaves its keys registered; the next
+    launch under the slug revokes them before minting its own."""
+
+    def test_a_previous_runs_key_is_revoked_first(self) -> None:
+        fake = _FakeProvisioner()
+        with tempfile.TemporaryDirectory() as d, \
+                patch("bot_bottle.deploy_key_provisioner.get_provisioner", return_value=fake), \
+                patch("sys.stderr"):
+            (Path(d) / "repo-deploy-key-id").write_text("old-kid")
+            provision_git_gate_dynamic_keys(_bottle(_gitea_entry()), _gate_plan(d), Path(d),
+                                            _TOKEN)
+            self.assertEqual("kid123", (Path(d) / "repo-deploy-key-id").read_text())
+        self.assertEqual([("o/r", "old-kid")], fake.deleted)
+        self.assertEqual(1, len(fake.created))
+
+    def test_a_first_launch_revokes_nothing(self) -> None:
+        fake = _FakeProvisioner()
+        with tempfile.TemporaryDirectory() as d, \
+                patch("bot_bottle.deploy_key_provisioner.get_provisioner", return_value=fake), \
+                patch("sys.stderr"):
+            provision_git_gate_dynamic_keys(_bottle(_gitea_entry()), _gate_plan(d), Path(d),
+                                            _TOKEN)
+        self.assertEqual([], fake.deleted)
+        self.assertEqual(1, len(fake.created))
+
+    def test_a_key_that_wont_revoke_is_left_and_minting_goes_on(self) -> None:
+        fake = _FakeProvisioner()
+
+        def fail(_owner_repo: str, _key_id: str) -> None:
+            raise RuntimeError("HTTP 500")
+        fake.delete = fail  # type: ignore[method-assign]
+        with tempfile.TemporaryDirectory() as d, \
+                patch("bot_bottle.deploy_key_provisioner.get_provisioner", return_value=fake), \
+                patch("sys.stderr"):
+            (Path(d) / "repo-deploy-key-id").write_text("old-kid")
+            provision_git_gate_dynamic_keys(_bottle(_gitea_entry()), _gate_plan(d), Path(d),
+                                            _TOKEN)
+        self.assertEqual(1, len(fake.created))
 
 
 # ---------------------------------------------------------------------------
