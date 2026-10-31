@@ -88,6 +88,7 @@ class Setup:
     # --- providers ---
 
     def run(self) -> int:
+        any_logged_in = False
         for name in PROVIDERS:
             provider = get_provider(name)
             detection = provider.detect_host(self.host_env)
@@ -105,7 +106,18 @@ class Setup:
             # The agent carries the provider, so pi's model refresh rewrites it.
             self.write("agents", name, provider.create_default_agent_manifest(detection),
                        replace=name == "pi" and self.refresh_model)
+            any_logged_in = True
+        if any_logged_in:
+            self._write_bottle_architect()
         return 0
+
+    def _write_bottle_architect(self) -> None:
+        """Write the bottle-architect agent starter when at least one harness is
+        logged in.  The manifest uses `forward_host_credentials` so it picks up
+        whichever harness the host's `claude` or `codex` CLI is logged in as."""
+        # pylint: disable-next=import-outside-toplevel
+        from ...suggest.architect import ARCHITECT_MANIFEST
+        self.write("agents", "bottle-architect", ARCHITECT_MANIFEST)
 
     def pi_detection(  # pylint: disable=too-many-return-statements  # one per outcome
             self, detection: HostDetection) -> HostDetection | None:

@@ -145,6 +145,14 @@ how to convert it, and `bot-bottle bottles migrate <name>` does it as a new
 version. See
 [Migrating from the old format](git-gate.md#migrating-from-the-old-format).
 
+## Suggesting a bottle
+
+`bot-bottle bottles suggest "<task>"` proposes the bottle a task needs without
+writing anything — see [bottles-suggest.md](bottles-suggest.md) for the full
+reference.  `--write NAME` saves the proposal as a new host bottle, and
+`--architect` uses the `bottle-architect` agent (your own harness, no sandbox)
+instead of the default rules path.
+
 ## Versions
 
 Every change to a bottle or agent under `~/.bot-bottle/` is a version, hand
