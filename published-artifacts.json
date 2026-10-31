@@ -2,156 +2,156 @@
   "bot-bottle-claude": {
     "artifacts": {
       "ext4_linux-amd64": {
-        "digest": "sha256:3b0806cab8633b274c416d1259508eafc9682ba77c9eace9600383e30c3f8e89",
+        "digest": "sha256:6d3ad35906ce4c3b59f1ec725c820cea18ee39304417a34d71099d5fc0bf266d",
         "platform": "linux-amd64",
         "type": "ext4",
-        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-claude-rootfs/0.1.5/rootfs.amd64.ext4.gz"
+        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-claude-rootfs/0.1.6/rootfs.amd64.ext4.gz"
       },
       "ext4_linux-arm64": {
-        "digest": "sha256:a18462b2ca64d8a52a6313d2880650f2936f02d7a7b69946624c05e9d4c46a51",
+        "digest": "sha256:b6efe98e181f1b50a72ce81889918929faacc34c32bf43bd806cd752891b00e9",
         "platform": "linux-arm64",
         "type": "ext4",
-        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-claude-rootfs/0.1.5/rootfs.arm64.ext4.gz"
+        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-claude-rootfs/0.1.6/rootfs.arm64.ext4.gz"
       },
       "oci_linux-amd64": {
-        "digest": "sha256:7ca266c5e740a2bfcc78c6753e805a6dcd6c321207e6c88ae31f527fd44a6bdc",
+        "digest": "sha256:ce800c129f64503330fffe74d086e2848cbfe595395425025d71dfaff91ee457",
         "platform": "linux-amd64",
         "type": "oci",
-        "url": "gitea.dideric.is/didericis/bot-bottle-claude:0.1.5-amd64"
+        "url": "gitea.dideric.is/didericis/bot-bottle-claude:0.1.6-amd64"
       },
       "oci_linux-arm64": {
-        "digest": "sha256:4bf3fbc5eb663ed08dff01bf3e5b7a5d8ab440b6ed938ab6530d6de289598636",
+        "digest": "sha256:3af11c5386164f015a017c7bc59c9f7ff5380461e35637ce31f52e41acf30e7e",
         "platform": "linux-arm64",
         "type": "oci",
-        "url": "gitea.dideric.is/didericis/bot-bottle-claude:0.1.5-arm64"
+        "url": "gitea.dideric.is/didericis/bot-bottle-claude:0.1.6-arm64"
       }
     },
-    "inputs_hash": "f92459c3fd25d6c9",
+    "inputs_hash": "73689bbee51aa4f6",
     "protocol": 1,
-    "version": "0.1.5"
+    "version": "0.1.6"
   },
   "bot-bottle-codex": {
     "artifacts": {
       "ext4_linux-amd64": {
-        "digest": "sha256:62ab2c48086c69e78f11702a5fcd93515eafc50f08945f63bb84059020f8c08f",
+        "digest": "sha256:df450e03f37126528940e8d2eaab475b29752a3eb8be2793ba4ad8de58135847",
         "platform": "linux-amd64",
         "type": "ext4",
-        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-codex-rootfs/0.1.5/rootfs.amd64.ext4.gz"
+        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-codex-rootfs/0.1.6/rootfs.amd64.ext4.gz"
       },
       "ext4_linux-arm64": {
-        "digest": "sha256:17569b4ef93e96cbe4855faadb08d626692a0e51ed51f0a7d78a743b92f15b6c",
+        "digest": "sha256:57a27905827ac8abce831a9316c6f88f7387f4a0afbaaf949e24ee47a6f6f1aa",
         "platform": "linux-arm64",
         "type": "ext4",
-        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-codex-rootfs/0.1.5/rootfs.arm64.ext4.gz"
+        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-codex-rootfs/0.1.6/rootfs.arm64.ext4.gz"
       },
       "oci_linux-amd64": {
-        "digest": "sha256:c4a33e0bb7cb17d12781b94a3846ca4a2a05f22c0302b245dc6c3f232a411afb",
+        "digest": "sha256:e15a17c8a8f3f56926b33ad1910754b9f9fd9f17c2e89e9f573c876266c9a596",
         "platform": "linux-amd64",
         "type": "oci",
-        "url": "gitea.dideric.is/didericis/bot-bottle-codex:0.1.5-amd64"
+        "url": "gitea.dideric.is/didericis/bot-bottle-codex:0.1.6-amd64"
       },
       "oci_linux-arm64": {
-        "digest": "sha256:c3e362957ba1dec1bd9ad3829361c93d0823df25d41820efe5add6538f489a89",
+        "digest": "sha256:b353b6efab536b078361f69d5d0fed52afda669db2ce14ac4831f230e607a557",
         "platform": "linux-arm64",
         "type": "oci",
-        "url": "gitea.dideric.is/didericis/bot-bottle-codex:0.1.5-arm64"
+        "url": "gitea.dideric.is/didericis/bot-bottle-codex:0.1.6-arm64"
       }
     },
-    "inputs_hash": "b6e4ec479f248102",
+    "inputs_hash": "b234ee8cbc155024",
     "protocol": 1,
-    "version": "0.1.5"
+    "version": "0.1.6"
   },
   "bot-bottle-gateway": {
     "artifacts": {
       "ext4_linux-amd64": {
-        "digest": "sha256:f43fd485f5d545b201c0b08df96d4a00a50124b3b2a9c127cc96df1fe22dfc83",
+        "digest": "sha256:83117cedb91fbd8828898ddb3ba4cf11dd4c0aebf530653962b2e03ff1911a26",
         "platform": "linux-amd64",
         "type": "ext4",
-        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-gateway-rootfs/0.1.5/rootfs.amd64.ext4.gz"
+        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-gateway-rootfs/0.1.6/rootfs.amd64.ext4.gz"
       },
       "ext4_linux-arm64": {
-        "digest": "sha256:9fce3eb83c4e8938cc147600f8e8c645739bfe71089c6b6788091f154d7c1e6e",
+        "digest": "sha256:0261065b074b364371818542711d1af49f564602ace70d61d2e3348b66122bd7",
         "platform": "linux-arm64",
         "type": "ext4",
-        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-gateway-rootfs/0.1.5/rootfs.arm64.ext4.gz"
+        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-gateway-rootfs/0.1.6/rootfs.arm64.ext4.gz"
       },
       "oci_linux-amd64": {
-        "digest": "sha256:9f94f4a875f91024bccb59f1de1de1e96b783f0fe7eef54f0c97d65273e08236",
+        "digest": "sha256:a15306af29ebd98528338cbde71b85402fedab1e2bd8d355c52683c3ea19126c",
         "platform": "linux-amd64",
         "type": "oci",
-        "url": "gitea.dideric.is/didericis/bot-bottle-gateway:0.1.5-amd64"
+        "url": "gitea.dideric.is/didericis/bot-bottle-gateway:0.1.6-amd64"
       },
       "oci_linux-arm64": {
-        "digest": "sha256:ef65cabe41ce8420d84e57315ec4ce562c8fb42f54cb5f3c43193efa0c316251",
+        "digest": "sha256:cd737d83cadf68bcfea9c67b9959b20198b829d6a4932a73c5a059cd7fbd96f4",
         "platform": "linux-arm64",
         "type": "oci",
-        "url": "gitea.dideric.is/didericis/bot-bottle-gateway:0.1.5-arm64"
+        "url": "gitea.dideric.is/didericis/bot-bottle-gateway:0.1.6-arm64"
       }
     },
-    "inputs_hash": "6f7aadbc806d5d25",
+    "inputs_hash": "31d56f26ddee5404",
     "protocol": 1,
-    "version": "0.1.5"
+    "version": "0.1.6"
   },
   "bot-bottle-orchestrator": {
     "artifacts": {
       "ext4_linux-amd64": {
-        "digest": "sha256:fefda9706b4152352b84b137333784c11abb313c7a4092a15e6709a1f5c26e61",
+        "digest": "sha256:b837044168ca928a39819db35834a0dad15c8c7189e6427cabdda660fcffb301",
         "platform": "linux-amd64",
         "type": "ext4",
-        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-orchestrator-rootfs/0.1.5/rootfs.amd64.ext4.gz"
+        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-orchestrator-rootfs/0.1.6/rootfs.amd64.ext4.gz"
       },
       "ext4_linux-arm64": {
-        "digest": "sha256:9f77d71d08b64804838a37ab828deaa44aca696a248b6e3caaf0d61f3a516dff",
+        "digest": "sha256:e76605390018f1fcf00a591c5520308677c8a9381f33a7e93dfbc8330275f7c7",
         "platform": "linux-arm64",
         "type": "ext4",
-        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-orchestrator-rootfs/0.1.5/rootfs.arm64.ext4.gz"
+        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-orchestrator-rootfs/0.1.6/rootfs.arm64.ext4.gz"
       },
       "oci_linux-amd64": {
-        "digest": "sha256:756feb3b795e94222cbed9031202f0046353ed31d0ecc6e8d647c00680be1fb4",
+        "digest": "sha256:092937990906bb7652101012eb5001157333e3f652a45e5d129678e98b0b3f78",
         "platform": "linux-amd64",
         "type": "oci",
-        "url": "gitea.dideric.is/didericis/bot-bottle-orchestrator:0.1.5-amd64"
+        "url": "gitea.dideric.is/didericis/bot-bottle-orchestrator:0.1.6-amd64"
       },
       "oci_linux-arm64": {
-        "digest": "sha256:7a2a7208cc57233a21958c0e5bf2ede623938e5a31b82968fd1006c2eaa8c71f",
+        "digest": "sha256:2e9a51ce0885668c88a87d74c4190a8a1b0f7b726b4798d6f35f80f49d05a1b5",
         "platform": "linux-arm64",
         "type": "oci",
-        "url": "gitea.dideric.is/didericis/bot-bottle-orchestrator:0.1.5-arm64"
+        "url": "gitea.dideric.is/didericis/bot-bottle-orchestrator:0.1.6-arm64"
       }
     },
-    "inputs_hash": "d89ec6f7765e480b",
+    "inputs_hash": "3046ba6f88027617",
     "protocol": 1,
-    "version": "0.1.5"
+    "version": "0.1.6"
   },
   "bot-bottle-pi": {
     "artifacts": {
       "ext4_linux-amd64": {
-        "digest": "sha256:23ff7419fadb557f5ba76135fc29309561d5c8ec07aa72cb843c0d5a9a59c362",
+        "digest": "sha256:7b23601106a6a512d3c64474b0f4ba1d23cc590745abb2bee97aff0cc883464e",
         "platform": "linux-amd64",
         "type": "ext4",
-        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-pi-rootfs/0.1.5/rootfs.amd64.ext4.gz"
+        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-pi-rootfs/0.1.6/rootfs.amd64.ext4.gz"
       },
       "ext4_linux-arm64": {
-        "digest": "sha256:6c691a4484ee364d888e960f9dbebe43bb7ad20e715c71fd3584ad3685c5e118",
+        "digest": "sha256:f9975340c89a02f3aa649815a788cf5facb3e79e791a064a815f605dd1912497",
         "platform": "linux-arm64",
         "type": "ext4",
-        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-pi-rootfs/0.1.5/rootfs.arm64.ext4.gz"
+        "url": "https://gitea.dideric.is/api/packages/didericis/generic/bot-bottle-pi-rootfs/0.1.6/rootfs.arm64.ext4.gz"
       },
       "oci_linux-amd64": {
-        "digest": "sha256:b428af5da7889a70eed214fa2911ec15487071382912021d4281b726e72dc523",
+        "digest": "sha256:f550b9b754d19629d286db16769eb61caad71b024c72098b73eee288a80dea48",
         "platform": "linux-amd64",
         "type": "oci",
-        "url": "gitea.dideric.is/didericis/bot-bottle-pi:0.1.5-amd64"
+        "url": "gitea.dideric.is/didericis/bot-bottle-pi:0.1.6-amd64"
       },
       "oci_linux-arm64": {
-        "digest": "sha256:fb5ff1b4aee7204f9f70079c3e83bbe07e58533b0f65fac8c92b004cd47a481b",
+        "digest": "sha256:a31e2df72af8c64aa4a024e831614b2793aae959f3d30d7d404090e7569b832e",
         "platform": "linux-arm64",
         "type": "oci",
-        "url": "gitea.dideric.is/didericis/bot-bottle-pi:0.1.5-arm64"
+        "url": "gitea.dideric.is/didericis/bot-bottle-pi:0.1.6-arm64"
       }
     },
-    "inputs_hash": "1c9587a8eb192eca",
+    "inputs_hash": "65729d8e3b9b0b13",
     "protocol": 1,
-    "version": "0.1.5"
+    "version": "0.1.6"
   }
 }
