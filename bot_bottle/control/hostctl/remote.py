@@ -10,7 +10,8 @@ The control stream (JSON lines):
 - `launch` -> runs a local agent by name as role `remote`, with optional
   `prompt`, `bottles` and `label`; replies `agent_started` (bottle,
   `activation`, `writable`) or `agent_errored`. Agent and bottle content from
-  the console is refused.
+  the console is refused. While it starts, `agent_stage` (`stage`, `title`)
+  reports each launch stage, as the CLI shows them.
 - `stop` -> tears the bottle down; `agent_stopped` follows, also for agents
   that exit on their own.
 - `resume` (`agent_id`, `bottle`) -> relaunches a stopped bottle this host ran,
@@ -63,6 +64,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import sys
 import threading
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -312,8 +314,25 @@ class ConsoleLink:
 
     async def _start(self, agent_id: str, request: LaunchRequest) -> None:
         self._starting.add(agent_id)
+        loop = asyncio.get_running_loop()
+
+        async def say(message: dict[str, Any]) -> None:
+            await self._send(message)
+
+        def sink(line: str) -> None:
+            # Each stage to the console as it starts; every line to the log.
+            marker = log.parse_stage(line)
+            if marker is not None:
+                asyncio.run_coroutine_threadsafe(say(
+                    {"type": "agent_stage", "agent_id": agent_id,
+                     "stage": marker[0], "title": marker[1]}), loop)
+            sys.stderr.write((f"bot-bottle: {marker[1]}" if marker else line) + "\n")
+
+        def launch() -> dict[str, object]:
+            with log.redirect(sink):
+                return self._bottles.launch(request, ROLE_REMOTE)
         try:
-            result = await asyncio.to_thread(self._bottles.launch, request, ROLE_REMOTE)
+            result = await asyncio.to_thread(launch)
         except (Exception, SystemExit) as e:  # pylint: disable=broad-exception-caught
             message = getattr(e, "message", "") or str(e) or type(e).__name__
             await self._errored(agent_id, f"launch failed: {message}"[:500])

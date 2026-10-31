@@ -102,6 +102,31 @@ class TestConsoleLink(unittest.TestCase):
         self.assertEqual([{"type": "agent_started", "agent_id": "a1", "bottle": "bottle-1",
                            "writable": False, "transcript": False}], sent)
 
+    def test_reports_each_launch_stage_before_it_starts(self) -> None:
+        # The stages the CLI shows reach the console as they begin, before
+        # `agent_started`; every line still goes to the host's log.
+        from bot_bottle.lib import log
+
+        class _Staged(_Bottles):
+            def launch(self, request: LaunchRequest, role: str = "cli") -> dict[str, object]:
+                log.stage("prepare", "Reading the bottle")
+                log.info("provisioning deploy key")
+                log.stage("image", "Getting images")
+                return super().launch(request, role)
+
+        link, sent = _link(_Staged())
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            asyncio.run(link.handle({"type": "launch", "agent_id": "a1",
+                                     "definition": {"name": "implementer"}}))
+        self.assertEqual([("agent_stage", "prepare", "Reading the bottle"),
+                          ("agent_stage", "image", "Getting images"), ("agent_started",)],
+                         [(m["type"], m["stage"], m["title"]) if m["type"] == "agent_stage"
+                          else (m["type"],) for m in sent])
+        self.assertEqual("a1", sent[0]["agent_id"])
+        self.assertIn("bot-bottle: Reading the bottle", err.getvalue())
+        self.assertIn("provisioning deploy key", err.getvalue())
+
     def test_refuses_console_supplied_agent_content(self) -> None:
         # Agents and the bottles they pick come from this host (ADR 0007).
         bottles = _Bottles()
