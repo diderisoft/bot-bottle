@@ -25,6 +25,14 @@ on:
           Release version. Blank picks the first unpublished one at or above
           pyproject's, and the release commit bumps pyproject to match.
         required: false
+      skip_macos:
+        description: >-
+          Release without the macOS integration job (e.g. the Mac runner is
+          offline). The release is then untested on macos-container; promote
+          says so in its log.
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   unit:
@@ -294,7 +302,7 @@ jobs:
   # Python >=3.11 with `coverage` importable on the launchd service PATH.
   integration-macos:
     runs-on: [self-hosted, macos]
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.skip_macos != 'true'
     concurrency:
       group: integration-macos-infra
       cancel-in-progress: false
@@ -424,8 +432,22 @@ jobs:
       - integration-firecracker
       - integration-macos
       - coverage
+    # Every required job must pass; macOS may instead be skipped, but only when
+    # the release was dispatched with skip_macos.
+    if: >-
+      ${{ !cancelled()
+      && needs.unit.result == 'success'
+      && needs.integration-docker.result == 'success'
+      && needs.integration-firecracker.result == 'success'
+      && needs.coverage.result == 'success'
+      && (needs.integration-macos.result == 'success'
+          || (needs.integration-macos.result == 'skipped'
+              && github.event.inputs.skip_macos == 'true')) }}
     runs-on: [self-hosted, kvm]
     steps:
+      - name: Note a release without macOS
+        if: github.event.inputs.skip_macos == 'true'
+        run: echo "::warning::Released with skip_macos — this version is untested on macos-container."
       - name: Checkout the tested revision
         uses: actions/checkout@v4
 
