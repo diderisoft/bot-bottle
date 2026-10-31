@@ -5,11 +5,8 @@ into exit codes.
 
 from __future__ import annotations
 
-import contextlib
 import os
-import sqlite3
 import sys
-from pathlib import Path
 
 from ..environment import InvalidEnvironmentError, active_name, ensure_active_registered
 from ..errors import MissingEnvVarError, SecretsFileError
@@ -25,19 +22,6 @@ def _is_agent(name: str) -> bool:
     try:
         return name in ManifestIndex.resolve(os.getcwd()).all_agent_names
     except ManifestError:
-        return False
-
-
-def _fresh_db(path: Path) -> bool:
-    """Whether the host DB is missing or holds no tables yet: a new install,
-    with nothing in it to migrate."""
-    if not path.exists():
-        return True
-    try:
-        with contextlib.closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as db:
-            return db.execute("SELECT count(*) FROM sqlite_master WHERE type = 'table'"
-                              ).fetchone()[0] == 0
-    except sqlite3.Error:
         return False
 
 
@@ -71,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-retu
         error(str(e))
         return 2
     mgr = StoreManager(host_db_path())
-    fresh = _fresh_db(host_db_path())  # before is_migrated, which creates the file
+    fresh = mgr.is_fresh()  # before is_migrated, which creates the file
     if command in NO_MIGRATION_COMMANDS or mgr.is_migrated():
         pass
     elif fresh:

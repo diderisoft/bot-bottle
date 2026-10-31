@@ -12,7 +12,7 @@ import stat
 from pathlib import Path
 
 from .contract.auth import ORCHESTRATOR_TOKEN_FILENAME
-from .environment import default_root
+from .environment import LIVE, default_root
 
 # The host DB; every SQLite store shares it, namespaced by TableMigrations
 # schema_key.
@@ -38,6 +38,22 @@ def bot_bottle_root(home: Path | None = None) -> Path:
     if override:
         return Path(override)
     return default_root(home=home)
+
+
+def project_manifest_dir(cwd: str | Path, *, home: Path | None = None,
+                         root: Path | None = None) -> Path | None:
+    """`<cwd>/.bot-bottle` when it holds a project's manifests, else None.
+    A bot-bottle root is never a project: neither the active one (`root`,
+    default `bot_bottle_root(home)`) nor the live environment's
+    `~/.bot-bottle`, which is what a named environment sees from the home
+    directory."""
+    project = Path(cwd) / ".bot-bottle"
+    if not project.is_dir():
+        return None
+    home = home if home is not None else Path.home()
+    roots = {(root if root is not None else bot_bottle_root(home)).resolve(),
+             default_root(LIVE, home).resolve()}
+    return None if project.resolve() in roots else project
 
 
 def host_secrets_path() -> Path:

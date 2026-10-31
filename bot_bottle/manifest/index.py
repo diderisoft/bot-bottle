@@ -24,7 +24,7 @@ from .loader import (
     scan_agent_names,
     scan_bottle_names,
 )
-from ..paths import bot_bottle_root
+from ..paths import bot_bottle_root, project_manifest_dir
 from .trust import check as trust_check
 from .trust import check_agent as trust_check_agent
 from .schema import validate_agent_frontmatter_keys
@@ -190,9 +190,7 @@ class ManifestIndex:
                 f"See docs/reference/manifest.md for the per-file Markdown layout."
             )
 
-        # When CWD is HOME, pass the same dir; _load_md_dirs dedupes.
-        cwd_md_arg = cwd_md if cwd_md.is_dir() and cwd_md.resolve() != home_md.resolve() else None
-        return cls.from_md_dirs(home_md, cwd_md_arg)
+        return cls.from_md_dirs(home_md, project_manifest_dir(cwd_dir, home=home_dir))
 
     @classmethod
     def from_md_dirs(

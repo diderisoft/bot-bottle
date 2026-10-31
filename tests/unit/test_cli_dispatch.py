@@ -125,7 +125,7 @@ class TestMigrationGate(unittest.TestCase):
         patcher = patch.object(StoreManager, "is_migrated", return_value=False)
         patcher.start()
         self.addCleanup(patcher.stop)
-        fresh = patch("bot_bottle.cli.__main__._fresh_db", return_value=False)
+        fresh = patch.object(StoreManager, "is_fresh", return_value=False)
         fresh.start()
         self.addCleanup(fresh.stop)
 

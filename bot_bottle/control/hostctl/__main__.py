@@ -61,6 +61,20 @@ def serve_running_orchestrators() -> None:
             debug(f"host controller: no {name} orchestrator to listen for: {e}")
 
 
+def migrate_new_host_db() -> None:
+    """Create a new install's or environment's host DB tables before anything
+    here writes to the file. Otherwise the first table this daemon makes (the
+    forwarder's cursor) leaves a DB the CLI can't tell from an old one, and it
+    asks to migrate. An existing DB is left to the CLI's migration gate."""
+    # pylint: disable=import-outside-toplevel
+    from ...orchestrator.store.store_manager import StoreManager
+    from ...paths import host_db_path
+    try:
+        StoreManager(host_db_path()).migrate_if_fresh()
+    except (OSError, sqlite3.Error) as e:
+        warn(f"host DB not created: {e}")
+
+
 def start_forwarder(audit: HostAudit) -> "AuditForwarder | None":
     """The journal forwarder, or None if it can't start."""
     # pylint: disable=import-outside-toplevel
@@ -97,6 +111,7 @@ def main() -> int:
     leave_callers_directory()
     port = int(os.environ.get(PORT_ENV, "0") or "0")
     sessions = SessionManager({})
+    migrate_new_host_db()
     # The single audit writer and the journal forwarder live as long as the
     # daemon.
     audit = HostAudit.open()

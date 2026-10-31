@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..lib.log import warn
-from ..paths import bot_bottle_root, host_secrets_path
+from ..paths import bot_bottle_root, host_secrets_path, project_manifest_dir
 
 TRACKED = ("agents", "bottles")
 GITIGNORE = (
@@ -224,9 +224,8 @@ def launch_versions(cwd: str, *, root: Path | None = None) -> dict[str, object]:
         out["host"] = record_hand_edits(root=root)
     except VersionError as e:
         out["host_error"] = str(e)
-    project = Path(cwd) / ".bot-bottle"
-    # From the home directory, `./.bot-bottle` is the host root itself.
-    if project.is_dir() and project.resolve() != root.resolve():
+    project = project_manifest_dir(cwd, root=root)
+    if project is not None:
         top = _git(project, "rev-parse", "--show-toplevel", check=False)
         if top.returncode == 0:
             repo = Path(top.stdout.strip())
