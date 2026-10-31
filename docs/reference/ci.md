@@ -84,7 +84,7 @@ the service down.
   `/dev/kvm`, the cached guest kernel and static dropbear
   (`/var/cache/bot-bottle-fc/dropbear`), and the TAP/nft pool as a persistent
   systemd unit. The job's preflight fails when any of these is missing.
-- **`macos` (Apple Container, advisory):** an Apple Silicon host-mode runner;
+- **`macos` (Apple Container, advisory; it never gates `promote`, since the runner is a laptop that may be asleep):** an Apple Silicon host-mode runner;
   Apple Container can't run inside the Linux pull-request runner. It needs the
   `container` CLI with `container system status` running, and Python ≥ 3.11
   with `coverage` importable on the launchd service's explicit `PATH`. Install
