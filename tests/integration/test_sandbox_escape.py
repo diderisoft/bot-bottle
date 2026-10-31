@@ -149,7 +149,6 @@ class TestSandboxEscape(unittest.TestCase):
                 "sandbox-tester": {
                     "skills": [],
                     "prompt": "",
-                    "bottle": "dev",
                 },
             },
         })
@@ -157,6 +156,7 @@ class TestSandboxEscape(unittest.TestCase):
         spec = BottleSpec(
             manifest=manifest,
             agent_name="sandbox-tester",
+            bottle_names=("dev",),
             copy_cwd=False,
             user_cwd=os.getcwd(),
         )

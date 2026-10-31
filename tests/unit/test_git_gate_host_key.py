@@ -510,8 +510,8 @@ def _manifest_with_git(host_key: str = "") -> Manifest:
                 },
             },
         },
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-    }).load_for_agent("demo")
+        "agents": {"demo": {"skills": [], "prompt": ""}},
+    }).load_for_agent("demo", ("dev",))
 
 
 class TestPreflightHostKeys(unittest.TestCase):
@@ -694,8 +694,8 @@ class TestPreflightHostKeys(unittest.TestCase):
                     },
                 },
             },
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-        }).load_for_agent("demo")
+            "agents": {"demo": {"skills": [], "prompt": ""}},
+        }).load_for_agent("demo", ("dev",))
 
         import io
         buf = io.StringIO()

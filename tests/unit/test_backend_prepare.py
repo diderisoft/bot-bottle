@@ -38,7 +38,6 @@ def _manifest(*, nested_containers: bool = False) -> ManifestIndex:
         },
         "agents": {
             "demo": {
-                "bottle": "dev",
                 "skills": [],
                 "prompt": "hello",
             },
@@ -51,7 +50,7 @@ def _spec(
 ) -> BottleSpec:
     return BottleSpec(
         manifest=_manifest(nested_containers=nested_containers),
-        agent_name="demo",
+        agent_name="demo", bottle_names=("dev",),
         copy_cwd=False,
         user_cwd=str(tmp),
         identity=identity,
@@ -160,7 +159,7 @@ class TestMintSlug(unittest.TestCase):
         manifest = _manifest()
         return BottleSpec(
             manifest=manifest,
-            agent_name="demo",
+            agent_name="demo", bottle_names=("dev",),
             copy_cwd=False,
             user_cwd="/tmp",
             label=label,

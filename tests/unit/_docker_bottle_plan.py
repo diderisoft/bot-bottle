@@ -56,7 +56,7 @@ def _manifest(*, supervise: bool, with_git: bool, with_egress: bool) -> Manifest
         }
     return ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle},
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        "agents": {"demo": {"skills": [], "prompt": ""}},
     })
 
 
@@ -129,13 +129,13 @@ def _plan(
     index = _manifest(supervise=supervise, with_git=with_git, with_egress=with_egress)
     spec = BottleSpec(
         manifest=index,
-        agent_name="demo",
+        agent_name="demo", bottle_names=("dev",),
         copy_cwd=False,
         user_cwd="/tmp/x",
     )
     return DockerBottlePlan(
         spec=spec,
-        manifest=index.load_for_agent("demo"),
+        manifest=index.load_for_agent("demo", ("dev",)),
         stage_dir=STAGE,
         slug=SLUG,
         forwarded_env={"CLAUDE_CODE_OAUTH_TOKEN": "x"},

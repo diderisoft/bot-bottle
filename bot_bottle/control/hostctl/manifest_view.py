@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any
+from ...manifest.schema import DEFAULT_BOTTLE
 
 
 class ManifestViewError(Exception):
@@ -149,11 +150,11 @@ def _targets(identity: str) -> list[tuple[Any, bool]]:
     from ...manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
     from ...manifest.util import ManifestError
     from ...paths import bot_bottle_root
-    meta, manifest = _load(identity)
+    meta, _ = _load(identity)
     index_dirs = _index(meta).bottle_dirs()
     out: list[tuple[Any, bool]] = []
     seen: set[Path] = set()
-    for name in meta.bottle_names or ((manifest.agent.bottle,) if manifest.agent.bottle else ()):
+    for name in meta.bottle_names or (DEFAULT_BOTTLE,):
         try:
             _, sources = load_bottle_chain(name, index_dirs)
         except ManifestError:
@@ -423,7 +424,7 @@ def save_as_bottle(identity: str, digest: str, name: str, *,
     """Write the manifest the agent runs with now as a new host bottle `name`,
     if it's still what the console showed, and record it as the agent's next
     version. Flattened, it stands alone (the whole chain, no `extends`); with
-    `extend`, it extends the agent's bottles and holds only this run's
+    `extend`, it extends the bottles it launched in and holds only this run's
     changes. Raises ManifestViewError."""
     # pylint: disable=import-outside-toplevel
     from ... import run_manifest
@@ -438,8 +439,7 @@ def save_as_bottle(identity: str, digest: str, name: str, *,
     only = set(keys) if keys is not None else None
     current = current_manifest(identity, manifest.bottle, policy, only)
     if extend:
-        parents = list(meta.bottle_names or
-                       ((manifest.agent.bottle,) if manifest.agent.bottle else ()))
+        parents = list(meta.bottle_names or (DEFAULT_BOTTLE,))
         if any(p.startswith("./") for p in parents):
             raise ManifestViewError("a host bottle can't extend a project's bottle; "
                                     "save it flattened instead")
@@ -501,7 +501,7 @@ def agent_manifest(identity: str) -> dict[str, Any]:
     meta, manifest = _load(identity)
     bottle = manifest.bottle
     policy = _live_policy(identity)
-    names = meta.bottle_names or ((manifest.agent.bottle,) if manifest.agent.bottle else ())
+    names = meta.bottle_names or (DEFAULT_BOTTLE,)
     return {
         "current": current_manifest(identity, bottle, policy),
         "bottle_targets": bottle_targets(identity, policy),

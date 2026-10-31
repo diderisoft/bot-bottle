@@ -15,7 +15,7 @@ from bot_bottle.bottle_state import BottleMetadata, egress_state_dir, git_gate_s
 from bot_bottle.contract.yaml_subset import parse_frontmatter
 from bot_bottle.control.hostctl import manifest_elements, manifest_view
 
-AGENT = "---\nbottle: work\n---\n\nHi.\n"
+AGENT = "---\n---\n\nHi.\n"
 WORK = """---
 extends: base
 env:

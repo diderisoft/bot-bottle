@@ -83,7 +83,7 @@ class Setup:
         record_or_warn(f"setup: write {kind}/{name}", root=self.manifests)
 
     def starter_exists(self, name: str) -> bool:
-        return all((self.manifests / k / f"{name}.md").exists() for k in ("agents", "bottles"))
+        return (self.manifests / "agents" / f"{name}.md").exists()
 
     # --- providers ---
 
@@ -102,7 +102,6 @@ class Setup:
                          f"`{detection.login_command}`, then `{PROG} setup`")
                 continue
             self.say(f"{name}: {detection.login_location or 'ready'}")
-            self.write("bottles", name, provider.create_default_bottle_manifest(detection))
             # The agent carries the provider, so pi's model refresh rewrites it.
             self.write("agents", name, provider.create_default_agent_manifest(detection),
                        replace=name == "pi" and self.refresh_model)

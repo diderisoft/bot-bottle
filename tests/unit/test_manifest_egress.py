@@ -36,14 +36,14 @@ def _inspect_routes(routes):  # type: ignore
 def _bottle(routes):  # type: ignore
     return ManifestIndex.from_json_obj({
         "bottles": {"dev": {"egress": {"routes": _inspect_routes(routes)}}},
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        "agents": {"demo": {"skills": [], "prompt": ""}},
     }).bottles["dev"]
 
 
 def _provider_config_agent(agent_provider):  # type: ignore
     return ManifestIndex.from_json_obj({
         "bottles": {"dev": {}},
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev",
+        "agents": {"demo": {"skills": [], "prompt": "",
                             "agent_provider": agent_provider}},
     }).agents["demo"]
 
@@ -64,7 +64,7 @@ class TestAgentOwnsProvider(unittest.TestCase):
         with self.assertRaises(ManifestError) as e:
             ManifestIndex.from_json_obj({
                 "bottles": {"dev": {"agent_provider": {"harness": "pi"}}},
-                "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+                "agents": {"demo": {"skills": [], "prompt": ""}},
             })
         self.assertIn("belongs to the agent", str(e.exception))
 
@@ -72,9 +72,9 @@ class TestAgentOwnsProvider(unittest.TestCase):
         index = ManifestIndex.from_json_obj({
             "bottles": {"dev": {"egress": {"routes": [{"host": "api.example.com"}]}}},
             "agents": {
-                "a": {"skills": [], "prompt": "", "bottle": "dev",
+                "a": {"skills": [], "prompt": "",
                       "agent_provider": {"harness": "claude", "auth_token": "TOK"}},
-                "b": {"skills": [], "prompt": "", "bottle": "dev",
+                "b": {"skills": [], "prompt": "",
                       "agent_provider": {"harness": "codex",
                                          "forward_host_credentials": True}},
             },
@@ -566,7 +566,7 @@ class TestRouteValidation(unittest.TestCase):
     def test_no_egress_block_means_empty(self):
         b = ManifestIndex.from_json_obj({
             "bottles": {"dev": {}},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
         }).bottles["dev"]
         self.assertEqual((), b.egress.routes)
 
@@ -587,14 +587,14 @@ class TestConfigShape(unittest.TestCase):
     def test_log_level_1_accepted(self):
         b = ManifestIndex.from_json_obj({
             "bottles": {"dev": {"egress": {"log": 1, "routes": []}}},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
         }).bottles["dev"]
         self.assertEqual(1, b.egress.Log)
 
     def test_log_level_2_accepted(self):
         b = ManifestIndex.from_json_obj({
             "bottles": {"dev": {"egress": {"log": 2, "routes": []}}},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
         }).bottles["dev"]
         self.assertEqual(2, b.egress.Log)
 

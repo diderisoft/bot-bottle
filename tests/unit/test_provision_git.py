@@ -68,7 +68,7 @@ class TestGitGateGitconfigRender(unittest.TestCase):
                     "key": {"provider": "static", "path": "/dev/null"},
                 },
             }}}},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
         })
         out = git_gate_render_gitconfig(m.bottles["dev"].git, "git-gate")
         self.assertIn(
@@ -110,7 +110,7 @@ class TestGitconfigRenderRejectsNewlineInUpstream(unittest.TestCase):
                     "key": {"provider": "static", "path": "/dev/null"},
                 },
             }}}},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
         })
         with self.assertRaises(ValueError):
             git_gate_render_gitconfig(m.bottles["dev"].git, "git-gate")

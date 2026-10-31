@@ -14,6 +14,7 @@ from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
 from ..lib.log import info
 from ..manifest import Manifest, ManifestIndex
+from ..manifest.schema import DEFAULT_BOTTLE
 from ..secret_source import ChainSecrets, MappingSecrets, SecretSource
 from ..supervisor.plan import SupervisePlan
 from ..workspace import WorkspacePlan, workspace_plan
@@ -147,10 +148,7 @@ class BottlePlan(ABC):
         info(f"provider        : {self.agent_provision.harness}")
         print_multi("env             ", env_names)
         print_multi("skills          ", list(agent.skills))
-        effective_bottles = (
-            list(spec.bottle_names) if spec.bottle_names
-            else ([agent.bottle] if agent.bottle else [])
-        )
+        effective_bottles = list(spec.bottle_names or (DEFAULT_BOTTLE,))
         print_multi("bottle          ", effective_bottles)
 
         identity = manifest.git_identity_summary()

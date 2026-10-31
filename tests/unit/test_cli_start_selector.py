@@ -24,13 +24,12 @@ from bot_bottle.contract.hostctl import LaunchRequest
 def _make_manifest(
     agent_names: list[str],
     bottle_names: list[str] | None = None,
-    agent_bottle: str = "",
 ):
     manifest = MagicMock()
-    manifest.agents = {name: MagicMock(bottle=agent_bottle) for name in agent_names}
+    manifest.agents = {name: MagicMock() for name in agent_names}
     manifest.all_agent_names = sorted(agent_names)
     manifest.all_bottle_names = sorted(bottle_names or [])
-    manifest.home_md = None  # eager mode so _peek_agent_bottle uses agents dict
+    manifest.home_md = None  # eager mode
     return manifest
 
 
@@ -163,22 +162,20 @@ class TestCmdStartSelector(unittest.TestCase):
         self.assertEqual((), spec.bottles)
 
     # ------------------------------------------------------------------
-    # Agent default bottle pre-populates the picker
+    # `basic` is preselected in the picker (ADR 0011)
     # ------------------------------------------------------------------
 
-    def test_agent_bottle_prepopulates_bottle_picker(self):
-        manifest = _make_manifest(
-            ["implementer"], ["claude", "dev"], agent_bottle="claude"
-        )
+    def test_basic_prepopulates_bottle_picker(self):
+        manifest = _make_manifest(["implementer"], ["basic", "claude", "dev"])
         with patch(
             "bot_bottle.cli.commands.start.ManifestIndex.resolve", return_value=manifest
         ):
             start_mod.cmd_start(["--pick", "implementer"])
         call_kwargs = self._bottle_picker_mock.call_args
-        self.assertEqual(["claude"], call_kwargs[1]["initial"])
+        self.assertEqual(["basic"], call_kwargs[1]["initial"])
 
-    def test_no_agent_bottle_empty_initial(self):
-        manifest = _make_manifest(["researcher"], ["claude", "dev"], agent_bottle="")
+    def test_no_basic_empty_initial(self):
+        manifest = _make_manifest(["researcher"], ["claude", "dev"])
         with patch(
             "bot_bottle.cli.commands.start.ManifestIndex.resolve", return_value=manifest
         ):
@@ -290,26 +287,25 @@ class TestCmdStartDefaults(unittest.TestCase):
                              return_value=[]).start()
         self.addCleanup(patch.stopall)
 
-    def start(self, agent_bottle: str) -> LaunchRequest:
-        manifest = _make_manifest(["pi"], ["pi", "dev"], agent_bottle=agent_bottle)
+    def start(self) -> LaunchRequest:
+        manifest = _make_manifest(["pi"], ["pi", "dev"])
         with patch("bot_bottle.cli.commands.start.ManifestIndex.resolve", return_value=manifest):
             self.assertEqual(0, start_mod.cmd_start(["pi"]))
         return self._launch_mock.call_args[0][0]
 
-    def test_an_agent_with_a_bottle_launches_with_no_questions(self):
-        request = self.start("pi")
-        for picker in (self._bottles, self._modal, self._policy):
-            picker.assert_not_called()
-        self.assertEqual((("pi",), "pi", "", "prefer-cached", True),
-                         (request.bottles, request.label, request.color,
-                          request.image_policy, request.assume_yes))
-
     def test_the_label_is_deduplicated_against_running_bottles(self):
         self._active.return_value = [_active_agent("pi")]
-        self.assertEqual("pi-2", self.start("pi").label)
+        self.assertEqual("pi-2", self.start().label)
 
-    def test_without_a_bottle_only_the_bottle_picker_shows(self):
-        request = self.start("")
+    def test_bottles_named_on_the_command_line_skip_the_picker(self):
+        manifest = _make_manifest(["pi"], ["pi", "dev"])
+        with patch("bot_bottle.cli.commands.start.ManifestIndex.resolve", return_value=manifest):
+            self.assertEqual(0, start_mod.cmd_start(["pi", "--bottle", "dev", "--bottle", "pi"]))
+        self._bottles.assert_not_called()
+        self.assertEqual(("dev", "pi"), self._launch_mock.call_args[0][0].bottles)
+
+    def test_only_the_bottle_picker_shows(self):
+        request = self.start()
         self._bottles.assert_called_once()
         self._modal.assert_not_called()
         self._policy.assert_not_called()

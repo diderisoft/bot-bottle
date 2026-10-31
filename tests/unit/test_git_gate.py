@@ -468,7 +468,7 @@ class TestPrepare(unittest.TestCase):
                     "key": {"provider": "static", "path": "/dev/null"},
                 },
             }}}},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
         })
         plan = _StubGate().prepare(
             manifest.bottles["dev"], "demo", self.stage, trailer="dev/demo"
@@ -498,7 +498,7 @@ class TestDynamicKeyProvisioning(unittest.TestCase):
                     }
                 }
             },
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
         })
 
     def test_resolve_identity_file_static_uses_entry_path(self):

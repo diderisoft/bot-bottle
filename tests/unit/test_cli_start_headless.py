@@ -25,13 +25,12 @@ from bot_bottle.manifest import ManifestError
 def _make_manifest(
     agent_names: list[str],
     bottle_names: list[str] | None = None,
-    agent_bottle: str = "",
 ):
     manifest = MagicMock()
-    manifest.agents = {name: MagicMock(bottle=agent_bottle) for name in agent_names}
+    manifest.agents = {name: MagicMock() for name in agent_names}
     manifest.all_agent_names = sorted(agent_names)
     manifest.all_bottle_names = sorted(bottle_names or [])
-    manifest.home_md = None  # eager mode so _peek_agent_bottle uses agents dict
+    manifest.home_md = None  # eager mode
     manifest.require_agent = MagicMock(return_value=None)
     return manifest
 
@@ -51,7 +50,7 @@ class TestCmdStartHeadless(unittest.TestCase):
 
     def setUp(self):
         self._manifest = _make_manifest(
-            ["researcher", "implementer"], ["claude", "dev"], agent_bottle="claude"
+            ["researcher", "implementer"], ["claude", "dev"]
         )
         patch(
             "bot_bottle.cli.commands.start.ManifestIndex.resolve",
@@ -120,20 +119,10 @@ class TestCmdStartHeadless(unittest.TestCase):
         )
         self.assertEqual(("dev", "claude"), self._spec().bottles)
 
-    def test_omitted_bottle_falls_back_to_agent_default(self):
+    def test_omitted_bottle_is_basic(self):
+        # Agents don't name a bottle (ADR 0011).
         start_mod.cmd_start(["--headless", "implementer", "--prompt", "Do it"])
-        self.assertEqual(("claude",), self._spec().bottles)
-
-    def test_no_bottle_and_no_default_dies(self):
-        manifest = _make_manifest(["researcher"], ["claude"], agent_bottle="")
-        with patch(
-            "bot_bottle.cli.commands.start.ManifestIndex.resolve", return_value=manifest
-        ):
-            with self.assertRaises(Die):
-                start_mod.cmd_start(
-                    ["--headless", "researcher", "--prompt", "Do it"]
-                )
-        self._launch_mock.assert_not_called()
+        self.assertEqual(("basic",), self._spec().bottles)
 
     # -- agent resolution ----------------------------------------------
 

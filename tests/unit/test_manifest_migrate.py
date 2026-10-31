@@ -142,7 +142,7 @@ class TestTheError(_Host):
                                   "api_url": "https://git.example.com"}},
                     "lib": {"url": "ssh://git@github.com/org/lib.git",
                             "key": {"provider": "static", "path": "/dev/null"}}}}}},
-                "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+                "agents": {"demo": {"skills": [], "prompt": ""}},
             })
         msg = str(ctx.exception)
         self.assertIn("(a, b)", msg)

@@ -14,7 +14,6 @@ from bot_bottle.bottle_state import BottleMetadata, git_gate_state_dir, write_me
 from bot_bottle.control.hostctl import manifest_view, remote_actions
 
 AGENT = """---
-bottle: work
 agent_provider:
   harness: pi
 ---
@@ -459,13 +458,17 @@ class TestRunningBottle(TestAgentManifest):
         self.assertEqual("app", revoke.call_args.args[0])
         self.assertEqual("reg-1", revoke.call_args.kwargs["registry_id"])
 
-    def test_keep_target_falls_back_to_the_agents_bottle(self) -> None:
+    def test_with_no_bottles_picked_keeping_needs_a_basic_of_your_own(self) -> None:
+        # None picked means `basic` (ADR 0011): the built-in can't be written,
+        # a `basic` of your own can.
         from bot_bottle.approvals import keep_target  # pylint: disable=import-outside-toplevel
         write_metadata(BottleMetadata(identity="s3", agent_name="helper", cwd="",
                                       copy_cwd=False, started_at="", bottle_names=()))
+        self.assertIsNone(keep_target("s3"))
+        (self.root / "bottles" / "basic.md").write_text("---\n---\n")
         target = keep_target("s3")
         assert target is not None
-        self.assertEqual("work", target.label())
+        self.assertEqual("basic", target.label())
 
 
 class TestManifestSaveRequest(unittest.TestCase):

@@ -35,8 +35,9 @@ def _project_agent(
     index: ManifestIndex, name: str,
 ) -> tuple[Path, ManifestAgentProvider, dict[str, Any]] | None:
     """The project agent `name`: its path, provider, and the `check_agent`
-    arguments for what it gets from the host (its own `bottle:`). None for a
-    bottle (`./<name>`)."""
+    arguments for what it gets from the host (the agent of yours it replaces;
+    the bottles a launch picks are checked at launch). None for a bottle
+    (`./<name>`)."""
     if index.cwd_md is None or name.startswith(PROJECT_PREFIX):
         return None
     path = index.cwd_md / "agents" / f"{name}.md"
@@ -47,10 +48,6 @@ def _project_agent(
     context: dict[str, Any] = {}
     if index.home_md is not None:
         context["home_agent"] = scan_agent_names(index.home_md / "agents").get(name)
-    bottle_name = str(fm.get("bottle") or "")
-    if bottle_name:
-        bottle, sources = load_bottle_chain(bottle_name, index.bottle_dirs())
-        context.update(bottle_name=bottle_name, bottle=bottle, sources=sources)
     return path, provider, context
 
 

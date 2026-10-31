@@ -30,6 +30,7 @@ from ...contract.hostctl import (
     exit_code,
 )
 from ...lib import log
+from ...manifest.schema import DEFAULT_BOTTLE
 from ...paths import host_secrets_path
 from ...util import slugify
 from ... import run_manifest
@@ -127,10 +128,9 @@ def _push_credential(registry_id: str, slot: str, value: str, env_var_secret: st
                what=f"bottle {registry_id}")
 
 
-def _chain(request: LaunchRequest, plan: "BottlePlan") -> tuple[str, ...]:
-    """The agent's bottle chain: the bottles picked at launch, else its own."""
-    own = getattr(getattr(plan.manifest, "agent", None), "bottle", "")
-    return tuple(request.bottles) or ((own,) if own else ())
+def _chain(request: LaunchRequest) -> tuple[str, ...]:
+    """The launch's bottle chain: the bottles picked, else `DEFAULT_BOTTLE`."""
+    return tuple(request.bottles) or (DEFAULT_BOTTLE,)
 
 
 def _default_manifest(cwd: str) -> "ManifestIndex":
@@ -364,7 +364,7 @@ class BottleService:
                         log.warn(f"bottle {identity}: couldn't record how to finish it "
                                  f"after a host controller restart: {e}")
                     run_manifest.record_launch(
-                        identity, plan.manifest.bottle, names=_chain(request, plan),
+                        identity, plan.manifest.bottle, names=_chain(request),
                         cwd=request.cwd, host_version=str(versions.get("host", "")))
                     if record.credentials is not None:
                         self.credentials.add(

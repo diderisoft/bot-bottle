@@ -45,7 +45,7 @@ BASELINE_B1 = "/git-gate/creds/b1/baseline-commits"
 def _bottles(raw: dict[str, object]) -> ManifestIndex:
     return ManifestIndex.from_json_obj({
         "bottles": raw,
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        "agents": {"demo": {"skills": [], "prompt": ""}},
     })
 
 
@@ -97,12 +97,13 @@ class TestManifestTrailers(unittest.TestCase):
 
 
 class TestLaunchWiring(unittest.TestCase):
-    def test_launch_trailer_uses_selected_bottles_else_agents(self):
+    def test_launch_trailer_uses_selected_bottles_else_basic(self):
         plan = _plan()
-        self.assertEqual("dev/demo-abc12",
-                         launch_trailer(plan.spec, plan.manifest, "demo-abc12"))
+        self.assertEqual("dev/demo-abc12", launch_trailer(plan.spec, "demo-abc12"))
         spec = dataclasses.replace(plan.spec, bottle_names=("dev", "gitea"))
-        self.assertEqual(VALUE, launch_trailer(spec, plan.manifest, "demo-abc12"))
+        self.assertEqual(VALUE, launch_trailer(spec, "demo-abc12"))
+        spec = dataclasses.replace(plan.spec, bottle_names=())
+        self.assertEqual("basic/demo-abc12", launch_trailer(spec, "demo-abc12"))
 
     def test_hooks_env_points_hookspath_at_the_hooks(self):
         provision = with_commit_hooks_env(_plan().agent_provision)

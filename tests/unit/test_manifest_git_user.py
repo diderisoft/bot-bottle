@@ -17,7 +17,7 @@ def _error_message(callable_, *args, **kwargs) -> str:  # type: ignore
 def _manifest(git_user):  # type: ignore
     return {
         "bottles": {"dev": {"git-gate": {"user": git_user}}},
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        "agents": {"demo": {"skills": [], "prompt": ""}},
     }
 
 
@@ -49,7 +49,7 @@ class TestGitUserParsing(unittest.TestCase):
         # provisioner skips the `git config` step entirely.
         m = ManifestIndex.from_json_obj({
             "bottles": {"dev": {}},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
         })
         u = m.bottles["dev"].git_user
         self.assertTrue(u.is_empty())
@@ -88,7 +88,7 @@ class TestGitUserParsing(unittest.TestCase):
             ManifestIndex.from_json_obj,
             {
                 "bottles": {"dev": {"git_user": {"name": "Bot"}}},
-                "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+                "agents": {"demo": {"skills": [], "prompt": ""}},
             },
         )
         self.assertIn("git_user", msg)

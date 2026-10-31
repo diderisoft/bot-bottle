@@ -79,7 +79,7 @@ def record_launch(identity: str, bottle: Any, *, names: tuple[str, ...] = (), cw
                   host_version: str = "") -> None:
     """Version 1 at launch. A resume keeps the history, adding a version only
     if the bottle files changed since. The fingerprints of `names` (the
-    agent's bottle chain, resolved from `cwd`) and `host_version` become
+    bottles it launched in, resolved from `cwd`) and `host_version` become
     `launch.json`, at every launch and resume. Never raises: the launch goes
     on."""
     # pylint: disable=import-outside-toplevel

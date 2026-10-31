@@ -9,7 +9,7 @@ from bot_bottle.manifest.git import ManifestGitEntry
 def _manifest(repos: dict) -> dict:  # type: ignore
     return {
         "bottles": {"dev": {"git-gate": {"repos": repos}}},
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        "agents": {"demo": {"skills": [], "prompt": ""}},
     }
 
 
@@ -164,7 +164,7 @@ class TestGitEntryCrossValidation(unittest.TestCase):
                     "key": {"provider": "static", "path": "/dev/null"},
                 },
             }}}},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
         })
         names = {e.Name for e in m.bottles["dev"].git}
         self.assertEqual({"foo", "bar"}, names)
@@ -183,7 +183,7 @@ class TestGitEntryCrossValidation(unittest.TestCase):
                         }],
                     },
                 },
-                "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+                "agents": {"demo": {"skills": [], "prompt": ""}},
             })
 
     def test_name_with_single_quote_dies(self):
@@ -236,7 +236,7 @@ class TestGitEntryCrossValidation(unittest.TestCase):
         try:
             ManifestIndex.from_json_obj({
                 "bottles": {"dev": {"git": {"remotes": {}}}},
-                "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+                "agents": {"demo": {"skills": [], "prompt": ""}},
             })
         except ManifestError as e:
             msg = str(e)
@@ -349,7 +349,7 @@ class TestForgeMintedKeysAreGrants(unittest.TestCase):
                         "kind": "gitea", "url": "https://gitea.example.com",
                         "ssh": "ssh://git@gitea.example.com:2222", "token": "$gitea-api"}},
                     "repos": ["gitea.example.com/org/app:write"]}}},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
         })
         e = m.bottles["dev"].git[0]
         self.assertEqual(("app", "gitea", "GITEA_TOKEN", False),
@@ -396,7 +396,7 @@ class TestEmptyGitGateField(unittest.TestCase):
     def test_no_git_gate_field_yields_empty_tuple(self):
         m = ManifestIndex.from_json_obj({
             "bottles": {"dev": {}},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
         })
         self.assertEqual((), m.bottles["dev"].git)
 
@@ -404,13 +404,13 @@ class TestEmptyGitGateField(unittest.TestCase):
         with self.assertRaises(ManifestError):
             ManifestIndex.from_json_obj({
                 "bottles": {"dev": {"git-gate": "not-a-dict"}},
-                "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+                "agents": {"demo": {"skills": [], "prompt": ""}},
             })
 
     def test_empty_repos_yields_empty_tuple(self):
         m = ManifestIndex.from_json_obj({
             "bottles": {"dev": {"git-gate": {"repos": {}}}},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
         })
         self.assertEqual((), m.bottles["dev"].git)
 

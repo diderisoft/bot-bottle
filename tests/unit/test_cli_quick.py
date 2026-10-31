@@ -33,13 +33,13 @@ class Quick(unittest.TestCase):
         self.launched: list[LaunchRequest] = []
 
         def second(_first: object, value: str) -> str:
-            return value  # an agent's bottle is its own name; a label is free
+            return value  # a label is free
 
         def launch(request: LaunchRequest, *_args: object, **_kwargs: object) -> int:
             self.launched.append(request)
             return 0
 
-        for target, effect in (("_peek_agent_bottle", second), ("_uniquify_label", second),
+        for target, effect in (("_uniquify_label", second),
                                ("settings_from_env", MagicMock), ("_launch_bottle", launch)):
             p = patch(f"bot_bottle.cli.commands.quick.{target}", side_effect=effect)
             p.start()
@@ -56,7 +56,9 @@ class Quick(unittest.TestCase):
 
     def test_the_first_ready_starter_and_the_directory_copied(self) -> None:
         request = self.run_quick([], ["codex", "pi", "zeta"])
-        self.assertEqual(("codex", ("codex", "basic"), True, str(self.project),
+        # Agents don't name a bottle (ADR 0011): only `basic`, as nothing
+        # else applies here.
+        self.assertEqual(("codex", ("basic",), True, str(self.project),
                           "prefer-cached", True),
                          (request.agent, request.bottles, request.copy_cwd,
                           request.cwd, request.image_policy, request.assume_yes))
@@ -65,17 +67,17 @@ class Quick(unittest.TestCase):
         bottles = self.project / ".bot-bottle" / "bottles"
         bottles.mkdir(parents=True)
         (bottles / "main.md").write_text("---\nextends: basic\n---\n")
-        self.assertEqual(("pi", "./main"), self.run_quick([], ["pi"]).bottles)
+        self.assertEqual(("./main",), self.run_quick([], ["pi"]).bottles)
 
     def test_a_terminal_launch_onboards_a_project_without_a_bottle(self) -> None:
         with patch("sys.stdin.isatty", return_value=True), \
                 patch("bot_bottle.cli.commands.quick._onboard", return_value="./main") as onboard:
-            self.assertEqual(("pi", "./main"), self.run_quick([], ["pi"]).bottles)
+            self.assertEqual(("./main",), self.run_quick([], ["pi"]).bottles)
             onboard.assert_called_once_with(self.project)
             onboard.return_value = ""
-            self.assertEqual(("pi", "basic"), self.run_quick([], ["pi"]).bottles)
+            self.assertEqual(("basic",), self.run_quick([], ["pi"]).bottles)
             onboard.reset_mock()
-            self.assertEqual(("pi", "basic"), self.run_quick(["--no-onboard"], ["pi"]).bottles)
+            self.assertEqual(("basic",), self.run_quick(["--no-onboard"], ["pi"]).bottles)
             onboard.assert_not_called()
 
     def test_the_last_agent_used_here_wins_then_the_default(self) -> None:

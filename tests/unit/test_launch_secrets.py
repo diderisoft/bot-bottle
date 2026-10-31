@@ -31,7 +31,7 @@ from tests.unit import use_bottle_root
 
 _INDEX = ManifestIndex.from_json_obj({
     "bottles": {"dev": {}},
-    "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+    "agents": {"demo": {"skills": [], "prompt": ""}},
 })
 _SLUG = "demo-secrets1"
 _SECRETS = MappingSecrets({"GH_PAT": "from-source", "HOST_CRED": "shadowed"})
@@ -48,9 +48,9 @@ class _Stop(Exception):
 
 def _fields(stage: Path) -> dict[str, Any]:
     return {
-        "spec": BottleSpec(manifest=_INDEX, agent_name="demo", copy_cwd=False,
-                           user_cwd=str(stage), identity=_SLUG),
-        "manifest": _INDEX.load_for_agent("demo"),
+        "spec": BottleSpec(manifest=_INDEX, agent_name="demo", bottle_names=("dev",),
+                           copy_cwd=False, user_cwd=str(stage), identity=_SLUG),
+        "manifest": _INDEX.load_for_agent("demo", ("dev",)),
         "stage_dir": stage,
         "git_gate_plan": GitGatePlan(
             slug=_SLUG, hook_script=stage / "h.sh",

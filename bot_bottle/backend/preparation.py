@@ -14,6 +14,7 @@ from ..env import ResolvedEnv, resolve_env
 from ..git_gate import GitGate, GitGatePlan
 from ..git_gate.host_key import with_host_keys
 from ..manifest import Manifest
+from ..manifest.schema import DEFAULT_BOTTLE
 from ..secret_source import SecretSource
 from ..supervisor.plan import SupervisePlan
 from ..workspace import workspace_plan
@@ -35,9 +36,9 @@ if TYPE_CHECKING:
     from .base import BottleSpec
 
 
-def _egress_owner(spec: "BottleSpec", manifest: Manifest) -> str:
+def _egress_owner(spec: "BottleSpec") -> str:
     """The agent and its bottle(s), for a launch error."""
-    bottles = ", ".join(spec.bottle_names) or manifest.agent.bottle
+    bottles = ", ".join(spec.bottle_names or (DEFAULT_BOTTLE,))
     return f"agent '{spec.agent_name}' with bottle {bottles}"
 
 
@@ -122,8 +123,8 @@ class BottlePreparationPlanner:
             resolved_env=resolved_env,
             agent_provision_plan=provision,
             egress_plan=prepare_egress(
-                bottle, slug, provision, owner=_egress_owner(spec, manifest)),
+                bottle, slug, provision, owner=_egress_owner(spec)),
             git_gate_plan=prepare_git_gate(
-                bottle, slug, launch_trailer(spec, manifest, slug), workspace),
+                bottle, slug, launch_trailer(spec, slug), workspace),
             supervise_plan=prepare_supervise(bottle, slug),
         )

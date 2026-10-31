@@ -283,7 +283,7 @@ last copy for while the host is offline. Project bottles aren't sent.
 The console's launch page asks to `resolve` an agent (by name) in an ordered
 list of bottles before it launches (`library.resolved_manifest`): the reply's
 `text` (and `data`) is what that launch would run with, the bottles merged in
-order as a launch merges them (none means the agent's own `bottle:`), as one
+order as a launch merges them (none means the built-in `basic`), as one
 bottle file's YAML; or `error` when it doesn't resolve. Names are checked as a
 launch's are.
 
@@ -307,11 +307,11 @@ policy has beyond the launch routes (`state/<bottle>/egress/routes.yaml`), and
 repos granted while it runs. It also lists what can't be kept (a route
 carrying a credential) and a digest. `manifest_save` writes it as the next
 version if the digest still matches. With `bottle` (one of the reply's
-`bottle_targets`: the agent's chain, then the host's other bottles) it also
+`bottle_targets`: the launch's chain, then the host's other bottles) it also
 writes the run's changes into that bottle. With `new_bottle` it writes a new
 host bottle of that name instead, recorded as a version too and refused if
 the name is taken. Without `extend` it's flattened: the whole chain, no
-`extends`. With `extend` it extends the agent's bottles and holds only the
+`extends`. With `extend` it extends the bottles it launched in and holds only the
 run's changes. Adding a route for a host a bottle already has merges in the
 new matches (`approvals.with_routes`), so nothing it allowed is dropped.
 `keys` limits any of these to some of the run's changes (`egress:<host>`,

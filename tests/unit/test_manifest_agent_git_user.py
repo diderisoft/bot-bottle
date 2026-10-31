@@ -36,13 +36,13 @@ def _manifest(*, bottle_user=None, agent_git=None) -> Manifest:  # type: ignore
     bottle: dict = {}  # type: ignore
     if bottle_user is not None:
         bottle = {"git-gate": {"user": bottle_user}}
-    agent: dict = {"skills": [], "prompt": "", "bottle": "dev"}  # type: ignore
+    agent: dict = {"skills": [], "prompt": ""}  # type: ignore
     if agent_git is not None:
         agent["git-gate"] = agent_git
     return ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle},
         "agents": {"impl": agent},
-    }).load_for_agent("impl")
+    }).load_for_agent("impl", ("dev",))
 
 
 def _index(*, bottle_user: dict[str, object] | None = None, agent_git: dict[str, object] | None = None) -> ManifestIndex:
@@ -50,7 +50,7 @@ def _index(*, bottle_user: dict[str, object] | None = None, agent_git: dict[str,
     bottle: dict = {}  # type: ignore
     if bottle_user is not None:
         bottle = {"git-gate": {"user": bottle_user}}
-    agent: dict = {"skills": [], "prompt": "", "bottle": "dev"}  # type: ignore
+    agent: dict = {"skills": [], "prompt": ""}  # type: ignore
     if agent_git is not None:
         agent["git-gate"] = agent_git
     return ManifestIndex.from_json_obj({
@@ -88,7 +88,7 @@ class TestAgentGitUserOverlay(unittest.TestCase):
         idx = _index(agent_git={"user": {"name": "a", "email": "a@b"}})
         # Raw bottle has no git_user; loaded manifest has merged git_user from agent
         self.assertTrue(idx.bottles["dev"].git_user.is_empty())
-        m = idx.load_for_agent("impl")
+        m = idx.load_for_agent("impl", ("dev",))
         self.assertFalse(m.bottle.git_user.is_empty())
 
     def test_bottle_only_identity_preserved_when_agent_silent(self):
@@ -99,7 +99,7 @@ class TestAgentGitUserOverlay(unittest.TestCase):
 
     def test_no_overlay_uses_bottle_instance_directly(self):
         idx = _index(bottle_user={"name": "B"})
-        m = idx.load_for_agent("impl")
+        m = idx.load_for_agent("impl", ("dev",))
         # Agent has no git_user — bottle instance should be the same object
         self.assertIs(idx.bottles["dev"], m.bottle)
 
@@ -108,7 +108,7 @@ class TestAgentGitUserOverlay(unittest.TestCase):
             bottle_user={"name": "B", "email": "b@c"},
             agent_git={"user": {"name": "B", "email": "b@c"}},
         )
-        m = idx.load_for_agent("impl")
+        m = idx.load_for_agent("impl", ("dev",))
         # Agent git_user == bottle git_user — no replace needed
         self.assertEqual(idx.bottles["dev"].git_user, m.bottle.git_user)
 
@@ -120,11 +120,11 @@ class TestAgentGitUserOverlay(unittest.TestCase):
                 "git-gate": {"user": {"name": "B"}},
             }},
             "agents": {"impl": {
-                "bottle": "dev", "skills": [], "prompt": "",
+                "skills": [], "prompt": "",
                 "git-gate": {"user": {"name": "a"}},
             }},
         })
-        b = idx.load_for_agent("impl").bottle
+        b = idx.load_for_agent("impl", ("dev",)).bottle
         self.assertEqual("a", b.git_user.name)
         self.assertEqual({"FOO": "bar"}, dict(b.env))
         self.assertTrue(b.supervise)
@@ -190,7 +190,6 @@ _BOTTLE_DEV = """
 
 _AGENT_WITH_GIT = """
     ---
-    bottle: dev
     git-gate:
       user:
         name: agent-name
@@ -201,7 +200,6 @@ _AGENT_WITH_GIT = """
 
 _AGENT_WITH_REPOS = """
     ---
-    bottle: dev
     git-gate:
       repos:
         r:
@@ -238,7 +236,7 @@ class TestAgentGitUserMdLoader(unittest.TestCase):
     def test_md_agent_git_user_overlays_bottle(self):
         self._write("bottles/dev.md", _BOTTLE_DEV)
         self._write("agents/impl.md", _AGENT_WITH_GIT)
-        m = ManifestIndex.resolve(str(self.home)).load_for_agent("impl")
+        m = ManifestIndex.resolve(str(self.home)).load_for_agent("impl", ("dev",))
         u = m.bottle.git_user
         self.assertEqual("agent-name", u.name)
         self.assertEqual("bottle@example.com", u.email)
@@ -256,7 +254,7 @@ class TestAgentGitUserMdLoader(unittest.TestCase):
         names = ManifestIndex.resolve(str(self.home))
         self.assertIn("impl", names.all_agent_names)
         with self.assertRaises(ManifestError) as ctx:
-            names.load_for_agent("impl")
+            names.load_for_agent("impl", ("dev",))
         msg = str(ctx.exception)
         self.assertIn("git-gate.repos", msg)
         self.assertIn("bottle-only", msg)

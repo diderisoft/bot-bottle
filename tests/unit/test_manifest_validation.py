@@ -287,21 +287,20 @@ class TestProviderSettings(unittest.TestCase):
 
 
 class TestAgentValidation(unittest.TestCase):
-    def test_bottle_empty_string(self) -> None:
-        with self.assertRaises(ManifestError):
-            ManifestAgent.from_dict("a", {"bottle": ""}, set())
-
-    def test_bottle_undefined(self) -> None:
-        with self.assertRaises(ManifestError):
-            ManifestAgent.from_dict("a", {"bottle": "x"}, set())
+    def test_a_bottle_is_refused_saying_to_pick_it_at_launch(self) -> None:
+        # Agents don't name a bottle (ADR 0011).
+        with self.assertRaises(ManifestError) as cm:
+            ManifestAgent.from_dict("a", {"bottle": "dev"})
+        self.assertIn("agents no longer name a bottle (`bottle: dev`)", str(cm.exception))
+        self.assertIn("`--bottle dev`; none means `basic`", str(cm.exception))
 
     def test_skills_not_list(self) -> None:
         with self.assertRaises(ManifestError):
-            ManifestAgent.from_dict("a", {"skills": "x"}, set())
+            ManifestAgent.from_dict("a", {"skills": "x"})
 
     def test_skill_item_not_string(self) -> None:
         with self.assertRaises(ManifestError):
-            ManifestAgent.from_dict("a", {"skills": [5]}, set())
+            ManifestAgent.from_dict("a", {"skills": [5]})
 
     def test_skill_name_rejects_shell_metacharacters(self) -> None:
         # Skill names become host/guest path segments interpolated into
@@ -309,26 +308,25 @@ class TestAgentValidation(unittest.TestCase):
         # rejected at load so it can never reach a `bottle.exec` string.
         for bad in ("foo; rm -rf /", "../escape", "foo bar", "Foo", "-leading"):
             with self.assertRaises(ManifestError):
-                ManifestAgent.from_dict("a", {"skills": [bad]}, set())
+                ManifestAgent.from_dict("a", {"skills": [bad]})
 
     def test_skill_name_accepts_kebab_case(self) -> None:
         agent = ManifestAgent.from_dict(
-            "a", {"skills": ["init-entry", "quality-eval", "skill0"]}, set()
-        )
+            "a", {"skills": ["init-entry", "quality-eval", "skill0"]})
         self.assertEqual(
             agent.skills, ("init-entry", "quality-eval", "skill0")
         )
 
     def test_prompt_not_string(self) -> None:
         with self.assertRaises(ManifestError):
-            ManifestAgent.from_dict("a", {"prompt": 5}, set())
+            ManifestAgent.from_dict("a", {"prompt": 5})
 
     def test_git_gate_repos_rejected_at_agent_level(self) -> None:
         with self.assertRaises(ManifestError):
-            ManifestAgent.from_dict("a", {"git-gate": {"repos": {}}}, set())
+            ManifestAgent.from_dict("a", {"git-gate": {"repos": {}}})
 
     def test_git_gate_empty_is_allowed(self) -> None:
-        agent = ManifestAgent.from_dict("a", {"git-gate": {}}, set())
+        agent = ManifestAgent.from_dict("a", {"git-gate": {}})
         self.assertTrue(agent.git_user.is_empty())
 
 
@@ -341,7 +339,7 @@ class TestEagerIndexLookups(unittest.TestCase):
     def _idx(self) -> ManifestIndex:
         return _idx({
             "bottles": {"b": {"git-gate": {"user": {"name": "Bot", "email": "b@x"}}}},
-            "agents": {"a": {"bottle": "b"}},
+            "agents": {"a": {}},
         })
 
     def test_unknown_bottle_section_is_empty(self) -> None:
@@ -365,14 +363,14 @@ class TestEagerIndexLookups(unittest.TestCase):
             idx.require_agent("nope")
 
     def test_git_identity_summary(self) -> None:
-        m = self._idx().load_for_agent("a")
+        m = self._idx().load_for_agent("a", ("b",))
         summary = m.git_identity_summary()
         assert summary is not None
         self.assertIn("name=Bot", summary)
         self.assertIn("email=b@x", summary)
 
     def test_git_identity_summary_none_when_empty(self) -> None:
-        m = _idx({"bottles": {"b": {}}, "agents": {"a": {"bottle": "b"}}}).load_for_agent("a")
+        m = _idx({"bottles": {"b": {}}, "agents": {"a": {}}}).load_for_agent("a", ("b",))
         self.assertIsNone(m.git_identity_summary())
 
 
@@ -383,9 +381,9 @@ class TestResolveEnv(unittest.TestCase):
     def _manifest(self, env_dict: dict[str, str]) -> Manifest:
         idx = ManifestIndex.from_json_obj({
             "bottles": {"dev": {"env": env_dict}},
-            "agents": {"demo": {"bottle": "dev"}},
+            "agents": {"demo": {}},
         })
-        return idx.load_for_agent("demo")
+        return idx.load_for_agent("demo", ("dev",))
 
     def test_missing_interpolated_host_var_raises(self):
         manifest = self._manifest({"API_KEY": "${HOST_API_KEY}"})

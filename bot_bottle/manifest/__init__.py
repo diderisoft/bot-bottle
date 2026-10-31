@@ -20,8 +20,7 @@ Bottle frontmatter:
   preserve_container: <bool>                    # default false: keep the guest across stop
   audit:        { delivery: ..., firehose: ... }
 
-Agent frontmatter:
-  bottle:       <bottle-name>                   # optional; else picked at launch
+Agent frontmatter (no `bottle`: bottles are picked at launch, `basic` if none):
   skills:       [ <skill-name>, ... ]
   git-gate:
     user:       { name: <str>, email: <str> }   # overlays the bottle's

@@ -7,11 +7,12 @@
   bot-bottle agents default <agent>
                          set the default agent
 
-The bottle is the agent's own, plus the project's bottle when the project
-ships one (`./main`, from `./.bot-bottle/bottles/main.md`, trusted on this host
-first) or else the built-in `basic` (package registries and public code,
-read-only). This directory is copied into the bottle (not your home
-directory or `/`; a git repo filtered by its .gitignore), and when the agent
+The bottle is the project's when the project ships one (`./main`, from
+`./.bot-bottle/bottles/main.md`, trusted on this host first), or else the
+built-in `basic` (package registries and public code, read-only). Agents don't
+name a bottle; `bot-bottle start` composes others. This directory is copied
+into the bottle (not your home directory or `/`; a git repo filtered by its
+.gitignore), and when the agent
 exits its changes are saved as a patch to apply here. The bottle never writes
 to your files: a mount would let the agent plant code the host then runs, such
 as a `.git/config` that git executes. With no starter yet, `bot-bottle setup` runs
@@ -36,11 +37,12 @@ from ...contract.hostctl import LaunchRequest
 from ...lib.log import die, info
 from ...manifest import ManifestIndex
 from ...manifest.loader import PROJECT_BOTTLE, bottle_ref
+from ...manifest.schema import DEFAULT_BOTTLE
 from ...paths import bot_bottle_root
 from ...util import read_tty_line
 from ..constants import PROG
 from ..settings import settings_from_env
-from .start import _launch_bottle, _peek_agent_bottle, _uniquify_label
+from .start import _launch_bottle, _uniquify_label
 
 STARTERS = ("claude", "codex", "pi")
 
@@ -174,9 +176,6 @@ def cmd_quick(argv: list[str]) -> int:
             agent = pick_agent(manifest, cwd)
         if agent is None:
             die(f"no agent to start; run `{PROG} setup`, or add one under ~/.bot-bottle/agents/")
-    bottle = _peek_agent_bottle(manifest, agent)
-    if not bottle:
-        die(f"agent {agent} doesn't name a bottle; run `{PROG} start --pick {agent}`")
     share = cwd not in (Path.home(), Path("/"))
     if not share:
         info(f"not sharing {cwd} with the bottle; cd into a project to work on it")
@@ -187,7 +186,7 @@ def cmd_quick(argv: list[str]) -> int:
     settings = settings_from_env()
     request = LaunchRequest(
         agent=agent,
-        bottles=(bottle, project or "basic"),
+        bottles=(project or DEFAULT_BOTTLE,),
         label=_uniquify_label(settings, agent),
         image_policy="prefer-cached",
         assume_yes=True,

@@ -127,8 +127,8 @@ class TestSecretsFromEnv(_TmpDir):
 def _manifest(env: dict[str, str]) -> Manifest:
     return ManifestIndex.from_json_obj({
         "bottles": {"dev": {"env": env}},
-        "agents": {"demo": {"bottle": "dev"}},
-    }).load_for_agent("demo")
+        "agents": {"demo": {}},
+    }).load_for_agent("demo", ("dev",))
 
 
 class TestResolveEnvThroughASource(unittest.TestCase):

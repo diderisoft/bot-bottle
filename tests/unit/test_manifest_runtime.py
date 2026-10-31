@@ -13,7 +13,7 @@ from bot_bottle.manifest import ManifestError, ManifestBottle, ManifestIndex
 def _manifest_with_runtime(value: object) -> dict[str, Any]:
     return {
         "bottles": {"dev": {"runtime": value}},
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        "agents": {"demo": {"skills": [], "prompt": ""}},
     }
 
 
@@ -21,7 +21,7 @@ class TestManifestRuntimeRemoved(unittest.TestCase):
     def test_loads_when_runtime_absent(self):
         m = ManifestIndex.from_json_obj({
             "bottles": {"dev": {}},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
         })
         self.assertIn("dev", m.bottles)
 

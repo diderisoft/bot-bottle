@@ -57,7 +57,7 @@ egress:
 ---
 ```
 
-Point an agent at it with `bottle: web` in `~/.bot-bottle/agents/<name>.md`. Every field is in [manifest.md](docs/reference/manifest.md).
+Run an agent in it with `bot-bottle start claude --bottle web`; agents don't name a bottle, and a launch without one runs in the built-in `basic`. Every field is in [manifest.md](docs/reference/manifest.md).
 
 ## Learn more
 

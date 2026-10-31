@@ -2,7 +2,6 @@
 name: researcher
 description: Investigates questions and writes well-cited research notes.
 model: opus
-bottle: dev
 # Forward the host's own Codex login instead of a stored token.
 agent_provider:
   harness: codex

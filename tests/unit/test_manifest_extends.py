@@ -25,13 +25,11 @@ def _error_message(callable_, *args, **kwargs) -> str:  # type: ignore
 
 
 def _build(**bottles) -> Manifest:  # type: ignore
-    """Build a manifest with the given bottles and one trivial agent
-    referencing the first bottle (so the manifest is valid)."""
-    first = next(iter(bottles))
+    """Build a manifest with the given bottles and one trivial agent."""
     return ManifestIndex.from_json_obj({
         "bottles": bottles,
         "agents": {
-            "demo": {"skills": [], "prompt": "", "bottle": first},
+            "demo": {"skills": [], "prompt": ""},
         },
     })
 

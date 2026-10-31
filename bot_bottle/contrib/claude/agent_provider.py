@@ -26,7 +26,7 @@ from ...agent_provider import (
 from ...contract.identity import IDENTITY_HEADER
 from ...egress import CLAUDE_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
 from ...lib.log import die, info, warn
-from ...starter import GENERAL_PROMPT, starter_agent, starter_bottle
+from ...starter import GENERAL_PROMPT, starter_agent
 from ...transcript import TranscriptEntry
 from . import transcript
 from ...util import slugify
@@ -122,16 +122,8 @@ class ClaudeAgentProvider(AgentProvider):
 
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
         del detection
-        return starter_agent("claude", GENERAL_PROMPT,
+        return starter_agent(GENERAL_PROMPT,
                              {"harness": "claude", "forward_host_credentials": True})
-
-    def create_default_bottle_manifest(self, detection: HostDetection) -> str:
-        return starter_bottle(
-            "The claude starter agent's bottle. The agent signs in with this "
-            f"host's Claude login ({detection.login_location or 'claude login'}); "
-            "the gateway injects the login token, so the agent never sees it. "
-            "Add egress routes, git-gate repos and env here.",
-        )
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
         # The base installs from a committed lock; a bump has none, so npm

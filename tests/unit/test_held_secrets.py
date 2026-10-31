@@ -42,12 +42,12 @@ def _plan(stage: Path, *, env: dict[str, str], forwarded: dict[str, str],
           canary: bool = True) -> FirecrackerBottlePlan:
     index = ManifestIndex.from_json_obj({
         "bottles": {"dev": {"env": env}},
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        "agents": {"demo": {"skills": [], "prompt": ""}},
     })
     fields: dict[str, Any] = {
-        "spec": BottleSpec(manifest=index, agent_name="demo", copy_cwd=False,
+        "spec": BottleSpec(manifest=index, agent_name="demo", bottle_names=("dev",), copy_cwd=False,
                            user_cwd=str(stage), identity=_SLUG),
-        "manifest": index.load_for_agent("demo"),
+        "manifest": index.load_for_agent("demo", ("dev",)),
         "stage_dir": stage,
         "git_gate_plan": GitGatePlan(
             slug=_SLUG, hook_script=stage / "h.sh",

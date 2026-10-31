@@ -37,7 +37,6 @@ _BOTTLE_DEV = """
 
 _AGENT_IMPL = """
     ---
-    bottle: dev
     skills:
       - init-prd
     ---
@@ -84,7 +83,7 @@ class TestBottleFileParses(_ResolveCase):
     def test_loads(self):
         _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
-        m = self.resolve().load_for_agent("implementer")
+        m = self.resolve().load_for_agent("implementer", ("dev",))
         routes = m.bottle.egress.routes
         self.assertEqual(2, len(routes))
         self.assertEqual("api.anthropic.com", routes[0].Host)
@@ -101,9 +100,8 @@ class TestAgentFileParses(_ResolveCase):
     def test_loads(self):
         _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
-        m = self.resolve().load_for_agent("implementer")
+        m = self.resolve().load_for_agent("implementer", ("dev",))
         a = m.agent
-        self.assertEqual("dev", a.bottle)
         self.assertEqual(("init-prd",), a.skills)
         # Body became the prompt; whitespace stripped.
         self.assertIn("feature implementation agent", a.prompt)
@@ -124,7 +122,6 @@ class TestCwdAgentOverridesHome(_ResolveCase):
             self.cwd_cb / "agents" / "implementer.md",
             """
             ---
-            bottle: dev
             ---
 
             CWD-OVERRIDE-PROMPT
@@ -132,9 +129,9 @@ class TestCwdAgentOverridesHome(_ResolveCase):
         )
         with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": str(self.home_cb)}):
             with self.assertRaises(trust.UntrustedBottleError) as caught:
-                self.resolve().load_for_agent("implementer")
+                self.resolve().load_for_agent("implementer", ("dev",))
             trust.trust(caught.exception)
-            m = self.resolve().load_for_agent("implementer")
+            m = self.resolve().load_for_agent("implementer", ("dev",))
         self.assertIn("CWD-OVERRIDE-PROMPT", m.agent.prompt)
         # Home bottle still present with its two egress routes
         self.assertEqual(2, len(m.bottle.egress.routes))
@@ -162,7 +159,7 @@ class TestCwdBottlesIgnored(_ResolveCase):
             ---
             """,
         )
-        m = self.resolve().load_for_agent("implementer")
+        m = self.resolve().load_for_agent("implementer", ("dev",))
         # Home value wins because cwd bottles are ignored entirely.
         self.assertEqual(
             "api.anthropic.com",
@@ -190,8 +187,7 @@ class TestExistingFromJsonObjStillWorks(unittest.TestCase):
     def test_from_json_obj(self):
         m = ManifestIndex.from_json_obj({
             "bottles": {"dev": {}},
-            "agents": {"demo": {"skills": [], "prompt": "hi",
-                                "bottle": "dev"}},
+            "agents": {"demo": {"skills": [], "prompt": "hi"}},
         })
         self.assertIn("dev", m.bottles)
         self.assertIn("demo", m.agents)
@@ -214,7 +210,6 @@ class TestAgentFileDoublesAsClaudeCodeSubagent(_ResolveCase):
             model: opus
             color: blue
             memory: project
-            bottle: dev
             skills:
               - init-prd
             ---
@@ -222,8 +217,7 @@ class TestAgentFileDoublesAsClaudeCodeSubagent(_ResolveCase):
             Agent prompt body.
             """,
         )
-        m = self.resolve().load_for_agent("implementer")
-        self.assertEqual("dev", m.agent.bottle)
+        m = self.resolve().load_for_agent("implementer", ("dev",))
         self.assertEqual(("init-prd",), m.agent.skills)
 
 
@@ -235,7 +229,7 @@ class TestManifestEntryPointParity(_ResolveCase):
         _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
 
-        md_manifest = self.resolve().load_for_agent("implementer")
+        md_manifest = self.resolve().load_for_agent("implementer", ("dev",))
         json_index = ManifestIndex.from_json_obj({
             "bottles": {
                 "dev": {
@@ -257,7 +251,6 @@ class TestManifestEntryPointParity(_ResolveCase):
             },
             "agents": {
                 "implementer": {
-                    "bottle": "dev",
                     "skills": ["init-prd"],
                     "prompt": "You are a feature implementation agent.",
                 },
@@ -279,7 +272,6 @@ class TestManifestEntryPointParity(_ResolveCase):
                 "bottles": {"dev": {}},
                 "agents": {
                     "implementer": {
-                        "bottle": "dev",
                         "skillz": ["init-prd"],
                     },
                 },
@@ -295,12 +287,11 @@ class TestManifestEntryPointParity(_ResolveCase):
                     "model": "opus",
                     "color": "blue",
                     "memory": "project",
-                    "bottle": "dev",
                 },
             },
         })
 
-        self.assertEqual("dev", index.agents["implementer"].bottle)
+        self.assertIn("implementer", index.agents)
 
 
 class TestBrokenAgentOnlyFailsAtPreflight(_ResolveCase):
@@ -314,7 +305,6 @@ class TestBrokenAgentOnlyFailsAtPreflight(_ResolveCase):
             self.home_cb / "agents" / "bad.md",
             """
             ---
-            bottle: dev
             skillz: [init-prd]
             ---
             """,
@@ -331,7 +321,6 @@ class TestBrokenAgentOnlyFailsAtPreflight(_ResolveCase):
             self.home_cb / "agents" / "bad.md",
             """
             ---
-            bottle: dev
             skillz: [init-prd]
             ---
             """,
@@ -341,8 +330,8 @@ class TestBrokenAgentOnlyFailsAtPreflight(_ResolveCase):
             m.load_for_agent("bad")
 
     def test_broken_bottle_only_fails_at_preflight(self):
-        """A broken bottle does not crash resolve; only load_for_agent for
-        an agent that references it raises. Unrelated agents still work."""
+        """A broken bottle does not crash resolve; only a launch that picks
+        it raises. Launches in other bottles still work."""
         _write(
             self.home_cb / "bottles" / "bad.md",
             """
@@ -354,24 +343,12 @@ class TestBrokenAgentOnlyFailsAtPreflight(_ResolveCase):
         )
         _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
-        _write(
-            self.home_cb / "agents" / "broken-agent.md",
-            """
-            ---
-            bottle: bad
-            ---
-            """,
-        )
         m = self.resolve()
-        # Both agents appear in the name list at resolve time.
         self.assertIn("implementer", m.all_agent_names)
-        self.assertIn("broken-agent", m.all_agent_names)
-        # Valid agent loads fine.
-        full = m.load_for_agent("implementer")
-        self.assertEqual("dev", full.agent.bottle)
-        # Broken bottle's agent raises at preflight.
+        # A launch in a good bottle loads fine; one in the broken bottle raises.
+        m.load_for_agent("implementer", ("dev",))
         with self.assertRaises(ManifestError):
-            m.load_for_agent("broken-agent")
+            m.load_for_agent("implementer", ("bad",))
 
 
 class TestStaleJsonDies(_ResolveCase):
@@ -399,31 +376,34 @@ class TestNoManifestDies(_ResolveCase):
         self.assertEqual({}, dict(m.agents))
 
 
-class TestUnknownBottleReferenceFailsAtPreflight(_ResolveCase):
-    """An agent file naming a non-existent bottle appears in all_agent_names
-    at resolve time; the error only surfaces when load_for_agent is called."""
+class TestAgentNamingABottleFailsAtPreflight(_ResolveCase):
+    """Agents don't name a bottle (ADR 0011). One that still does appears in
+    all_agent_names at resolve time; loading it says what to do instead."""
 
-    def test_stray_bottle_reference_fails_at_preflight(self):
+    def test_a_bottle_line_fails_at_preflight_with_what_to_do(self):
         _write(self.home_cb / "bottles" / "dev.md", _BOTTLE_DEV)
         _write(
             self.home_cb / "agents" / "stray.md",
             """
             ---
-            bottle: not-a-real-bottle
+            bottle: anything
             ---
             """,
         )
         _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
         m = self.resolve()
-        # Both names visible at resolve time.
         self.assertIn("stray", m.all_agent_names)
-        self.assertIn("implementer", m.all_agent_names)
-        # Valid agent loads fine.
-        full = m.load_for_agent("implementer")
-        self.assertEqual("dev", full.agent.bottle)
-        # Stray agent fails at preflight.
-        with self.assertRaises(ManifestError):
-            m.load_for_agent("stray")
+        m.load_for_agent("implementer", ("dev",))
+        with self.assertRaises(ManifestError) as cm:
+            m.load_for_agent("stray", ("dev",))
+        self.assertIn("agents no longer name a bottle", str(cm.exception))
+        self.assertIn("--bottle", str(cm.exception))
+
+    def test_no_bottles_picked_runs_in_basic(self):
+        _write(self.home_cb / "agents" / "implementer.md", _AGENT_IMPL)
+        m = self.resolve().load_for_agent("implementer")
+        hosts = {r.Host for r in m.bottle.egress.routes}
+        self.assertIn("pypi.org", hosts)  # from the built-in `basic`
 
 
 class TestFilenameValidation(_ResolveCase):

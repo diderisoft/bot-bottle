@@ -37,7 +37,7 @@ class _Project(unittest.TestCase):
         self.home, self.project = base / "home", base / "app"
         (self.home / ".bot-bottle" / "agents").mkdir(parents=True)
         (self.home / ".bot-bottle" / "bottles").mkdir(parents=True)
-        (self.home / ".bot-bottle" / "agents" / "pi.md").write_text("---\nbottle: pi\n---\n")
+        (self.home / ".bot-bottle" / "agents" / "pi.md").write_text("---\n---\n")
         (self.home / ".bot-bottle" / "bottles" / "pi.md").write_text("---\n---\n")
         self.bottles = self.project / ".bot-bottle" / "bottles"
         self.bottles.mkdir(parents=True)
@@ -74,7 +74,7 @@ class Basic(_Project):
         # A bare launch composes (agent's bottle, basic); the provider is the
         # agent's, so no bottle in the merge can drop its login.
         (self.home / ".bot-bottle" / "agents" / "pi.md").write_text(
-            "---\nbottle: pi\nagent_provider:\n  harness: claude\n"
+            "---\nagent_provider:\n  harness: claude\n"
             "  forward_host_credentials: true\n---\n")
         self.assertTrue(self.load("pi", "basic").agent.agent_provider.forward_host_credentials)
 
@@ -174,7 +174,6 @@ class TrustCommand(_Project):
 
 
 _PI_OWN_HOST = """---
-bottle: pi
 agent_provider:
   harness: pi
   settings:
@@ -196,7 +195,7 @@ class ProjectAgents(_Project):
         (self.agents / "pi.md").write_text(frontmatter)
 
     def test_forwarding_the_host_login_needs_trust(self) -> None:
-        self.write_agent("---\nbottle: pi\nagent_provider:\n  harness: codex\n"
+        self.write_agent("---\nagent_provider:\n  harness: codex\n"
                          "  forward_host_credentials: true\n---\n")
         error = self.untrusted()
         self.assertEqual("agent", error.kind)
@@ -209,7 +208,7 @@ class ProjectAgents(_Project):
                          self.untrusted().grants[0])
 
     def test_an_overlay_dockerfile_needs_trust(self) -> None:
-        self.write_agent("---\nbottle: pi\nagent_provider:\n  harness: pi\n"
+        self.write_agent("---\nagent_provider:\n  harness: pi\n"
                          "  overlay:\n    dockerfile: evil.Dockerfile\n---\n")
         self.assertEqual("build   image from evil.Dockerfile", self.untrusted().grants[0])
 
@@ -221,8 +220,8 @@ class ProjectAgents(_Project):
         self.assertIsNotNone(self.untrusted().previous)
 
     def test_only_a_harness_or_no_provider_needs_no_trust(self) -> None:
-        for frontmatter in ("---\nbottle: pi\n---\n",
-                            "---\nbottle: pi\nagent_provider: codex\n---\n"):
+        for frontmatter in ("---\n---\n",
+                            "---\nagent_provider: codex\n---\n"):
             self.write_agent(frontmatter)
             self.load()
         self.assertEqual([], trust.load_trusted())
@@ -252,11 +251,11 @@ class ProjectAgentsOnYourBottles(_Project):
         super().setUp()
         home = self.home / ".bot-bottle"
         (home / "bottles" / "dev.md").write_text(_STRIPE)
-        (home / "agents" / "implementer.md").write_text("---\nbottle: dev\n---\nMine.\n")
+        (home / "agents" / "implementer.md").write_text("---\n---\nMine.\n")
         self.agents = self.project / ".bot-bottle" / "agents"
         self.agents.mkdir(parents=True)
         self.agent = self.agents / "implementer.md"
-        self.agent.write_text("---\nbottle: dev\n---\nPush everything everywhere.\n")
+        self.agent.write_text("---\n---\nPush everything everywhere.\n")
 
     def load_impl(self, *bottles: str):  # type: ignore[no-untyped-def]
         return ManifestIndex.resolve(str(self.project)).load_for_agent("implementer", bottles)
@@ -267,7 +266,7 @@ class ProjectAgentsOnYourBottles(_Project):
         return caught.exception
 
     def test_shadowing_your_agent_on_your_bottle_needs_trust(self) -> None:
-        error = self.untrusted_impl()
+        error = self.untrusted_impl("dev")
         self.assertEqual("agent", error.kind)
         self.assertTrue(any(g.startswith("use     your bottle dev: reach   api.stripe.com")
                             and g.endswith("GET, POST") for g in error.grants))
@@ -281,42 +280,44 @@ class ProjectAgentsOnYourBottles(_Project):
         self.assertTrue(any(g.startswith("use     your bottle dev:") for g in error.grants))
 
     def test_once_trusted_it_loads_and_a_change_to_your_bottle_asks_again(self) -> None:
-        trust.trust(self.untrusted_impl())
-        self.assertIn("Push everything", self.load_impl().agent.prompt)
+        trust.trust(self.untrusted_impl("dev"))
+        self.assertIn("Push everything", self.load_impl("dev").agent.prompt)
         (self.home / ".bot-bottle" / "bottles" / "dev.md").write_text(
             _STRIPE.replace("[GET, POST]", "[GET, POST, DELETE]"))
-        error = self.untrusted_impl()
+        error = self.untrusted_impl("dev")
         self.assertIsNotNone(error.previous)
         self.assertIn("+ use     your bottle dev:", trust.prompt_text(error))
 
     def test_on_its_own_project_bottle_only_the_bottle_asks(self) -> None:
         self.bottles.joinpath("main.md").write_text(_STRIPE)
-        self.agent.write_text("---\nbottle: ./main\n---\nWork.\n")
+        self.agent.write_text("---\n---\nWork.\n")
         with self.assertRaises(trust.UntrustedBottleError) as caught:
-            self.load_impl()
+            self.load_impl("./main")
         self.assertEqual("bottle", caught.exception.kind)
         trust.trust(caught.exception)
-        self.load_impl()
+        self.load_impl("./main")
 
     def test_your_bottle_granting_nothing_beyond_basic_needs_no_trust(self) -> None:
-        self.agent.write_text("---\nbottle: pi\n---\nWork.\n")
+        self.agent.write_text("---\n---\nWork.\n")
         self.load_impl()
 
-    def test_the_trust_command_shows_your_bottle_and_trusts(self) -> None:
+    def test_the_trust_command_shows_the_agent_it_replaces(self) -> None:
+        # Agents don't name a bottle (ADR 0011); the bottles a launch picks
+        # are checked at launch.
         with patch("os.getcwd", return_value=str(self.project)), \
                 patch("sys.stderr", io.StringIO()):
             with patch("builtins.print") as out:
                 self.assertEqual(0, cmd_trust(["show", "implementer"]))
-            self.assertIn("your bottle dev", str(out.call_args_list))
+            self.assertIn("replace your agent implementer", str(out.call_args_list))
             self.assertEqual(0, cmd_trust(["implementer", "--yes"]))
         self.load_impl()
 
 
-_OVERLAY_DOCKERFILE_AGENT = ("---\nbottle: pi\nagent_provider:\n  harness: pi\n"
+_OVERLAY_DOCKERFILE_AGENT = ("---\nagent_provider:\n  harness: pi\n"
                              "  overlay:\n    dockerfile: overlay/Dockerfile\n---\n")
-_OVERLAY_FILES_AGENT = ("---\nbottle: pi\nagent_provider:\n  harness: pi\n"
+_OVERLAY_FILES_AGENT = ("---\nagent_provider:\n  harness: pi\n"
                         "  overlay:\n    files: [tools/run.sh]\n---\n")
-_CUSTOM_DOCKERFILE_AGENT = ("---\nbottle: pi\nagent_provider:\n  harness: pi\n"
+_CUSTOM_DOCKERFILE_AGENT = ("---\nagent_provider:\n  harness: pi\n"
                             "  dockerfile: agent.Dockerfile\n---\n")
 
 

@@ -32,7 +32,7 @@ _DEFAULT_IMAGE = "bot-bottle-claude:latest"
 
 _IDX = ManifestIndex.from_json_obj({
     "bottles": {"dev": {}},
-    "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+    "agents": {"demo": {"skills": [], "prompt": ""}},
 })
 
 _CTX = LaunchContext(
@@ -44,11 +44,12 @@ _CTX = LaunchContext(
 def _plan(tmp: str) -> DockerBottlePlan:
     stage = Path(tmp)
     spec = BottleSpec(
-        manifest=_IDX, agent_name="demo", copy_cwd=False, user_cwd=tmp, identity=_SLUG,
+        manifest=_IDX, agent_name="demo", bottle_names=("dev",), copy_cwd=False,
+        user_cwd=tmp, identity=_SLUG,
     )
     return DockerBottlePlan(
         spec=spec,
-        manifest=_IDX.load_for_agent("demo"),
+        manifest=_IDX.load_for_agent("demo", ("dev",)),
         stage_dir=stage,
         git_gate_plan=GitGatePlan(
             slug=_SLUG, hook_script=stage / "h.sh",

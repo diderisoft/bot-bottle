@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .manifest_view import ManifestViewError
+from ...manifest.schema import DEFAULT_BOTTLE
 
 
 def _chain(identity: str) -> list[dict[str, Any]]:
@@ -22,8 +23,8 @@ def _chain(identity: str) -> list[dict[str, Any]]:
     from ...manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
     from ...manifest.util import ManifestError
     from .manifest_view import _index, _load
-    meta, manifest = _load(identity)
-    names = meta.bottle_names or ((manifest.agent.bottle,) if manifest.agent.bottle else ())
+    meta, _ = _load(identity)
+    names = meta.bottle_names or (DEFAULT_BOTTLE,)
     out: list[dict[str, Any]] = []
     seen: set[Path] = set()
     for name in names:

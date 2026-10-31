@@ -112,7 +112,7 @@ class HostDetection:
     """What a provider found on the host, for `setup` and `doctor`.
 
     `login_location` names where the login lives, never the secret.
-    `starter_settings` is the `agent_provider.settings` a starter bottle
+    `starter_settings` is the `agent_provider.settings` a starter agent
     carries."""
 
     installed: bool = False
@@ -184,11 +184,6 @@ class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plug
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
         """Starter agent manifest (`agents/<harness>.md`)."""
         raise NotImplementedError(f"{type(self).__name__} has no starter agent")
-
-    def create_default_bottle_manifest(self, detection: HostDetection) -> str:
-        """Starter bottle manifest (`bottles/<harness>.md`) with the detected
-        login."""
-        raise NotImplementedError(f"{type(self).__name__} has no starter bottle")
 
     @abstractmethod
     def provision_plan(

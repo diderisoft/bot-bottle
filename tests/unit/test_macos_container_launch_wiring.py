@@ -35,8 +35,8 @@ _BOTTLE = "bot_bottle.backend.macos_container.bottle"
 
 _MANIFEST = ManifestIndex.from_json_obj({
     "bottles": {"dev": {}},
-    "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
-}).load_for_agent("demo")
+    "agents": {"demo": {"skills": [], "prompt": ""}},
+}).load_for_agent("demo", ("dev",))
 
 
 def _endpoint() -> GatewayEndpoint:

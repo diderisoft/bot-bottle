@@ -27,7 +27,7 @@ from .loader import (
 from ..paths import bot_bottle_root, project_manifest_dir
 from .trust import check as trust_check
 from .trust import check_agent as trust_check_agent
-from .schema import validate_agent_frontmatter_keys
+from .schema import DEFAULT_BOTTLE, validate_agent_frontmatter_keys
 from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
 
 
@@ -64,31 +64,22 @@ def _manifest_with_merged_git_user(
 
 
 def _resolve_effective_bottle_eager(
-    agent_name: str,
-    agent: "ManifestAgent",
     bottle_names: "tuple[str, ...]",
     bottles: "Mapping[str, ManifestBottle]",
 ) -> "ManifestBottle":
     """The effective bottle (eager path): `bottle_names` merged in order, else
-    the agent's bottle. Raises ManifestError when neither is set."""
-    if bottle_names:
-        resolved: list[ManifestBottle] = []
-        for bn in bottle_names:
-            if bn not in bottles:
-                available = ", ".join(sorted(bottles.keys())) or "(none)"
-                raise ManifestError(
-                    f"bottle '{bn}' not defined. Available: {available}"
-                )
-            resolved.append(bottles[bn])
-        return merge_bottles_runtime(resolved)
-
-    if not agent.bottle:
-        raise ManifestError(
-            f"agent '{agent_name}' has no 'bottle' field and no bottles were "
-            f"selected at launch. Select at least one bottle or add "
-            f"'bottle: <name>' to the agent manifest."
-        )
-    return bottles[agent.bottle]
+    `DEFAULT_BOTTLE`."""
+    if not bottle_names and DEFAULT_BOTTLE not in bottles:
+        return load_bottle_chain(DEFAULT_BOTTLE, [(BUILTIN_BOTTLES_DIR, False)])[0]
+    resolved: list[ManifestBottle] = []
+    for bn in bottle_names or (DEFAULT_BOTTLE,):
+        if bn not in bottles:
+            available = ", ".join(sorted(bottles.keys())) or "(none)"
+            raise ManifestError(
+                f"bottle '{bn}' not defined. Available: {available}"
+            )
+        resolved.append(bottles[bn])
+    return merge_bottles_runtime(resolved)
 
 
 def _load_checked(
@@ -101,27 +92,17 @@ def _load_checked(
 
 
 def _resolve_effective_bottle_lazy(
-    agent_name: str,
-    agent_bottle: str,
     bottle_names: "tuple[str, ...]",
     dirs: "Sequence[tuple[Path, bool]]",
 ) -> "tuple[ManifestBottle, tuple[BottleSource, ...]]":
     """The effective bottle (lazy path) and its files, resolved from disk:
-    `bottle_names` merged in order, else `agent_bottle`. Raises ManifestError
-    when neither is set, UntrustedBottleError for an untrusted project
-    bottle."""
-    if bottle_names:
-        loaded = [_load_checked(bn, dirs) for bn in bottle_names]
-        return (merge_bottles_runtime([b for b, _ in loaded]),
-                tuple(s for _, sources in loaded for s in sources))
-
-    if not agent_bottle:
-        raise ManifestError(
-            f"agent '{agent_name}' has no 'bottle' field and no bottles were "
-            f"selected at launch. Select at least one bottle or add "
-            f"'bottle: <name>' to the agent manifest."
-        )
-    return _load_checked(agent_bottle, dirs)
+    `bottle_names` merged in order, else `DEFAULT_BOTTLE`. Raises
+    UntrustedBottleError for an untrusted project bottle."""
+    if not bottle_names:
+        return _load_checked(DEFAULT_BOTTLE, dirs)
+    loaded = [_load_checked(bn, dirs) for bn in bottle_names]
+    return (merge_bottles_runtime([b for b, _ in loaded]),
+            tuple(s for _, sources in loaded for s in sources))
 
 
 @dataclass(frozen=True)
@@ -217,9 +198,8 @@ class ManifestIndex:
 
         bottles = resolve_bottles(raw_bottles)
 
-        bottle_names = set(bottles.keys())
         agents: dict[str, ManifestAgent] = {
-            n: ManifestAgent.from_dict(n, a, bottle_names) for n, a in raw_agents.items()
+            n: ManifestAgent.from_dict(n, a) for n, a in raw_agents.items()
         }
         return cls(bottles=bottles, agents=agents)
 
@@ -258,9 +238,9 @@ class ManifestIndex:
         bottle_names: "tuple[str, ...] | None" = None,
     ) -> "Manifest":
         """Parse the agent and its bottle into a single-agent Manifest.
-        `bottle_names` are merged in order (0 is the base); empty falls back to
-        the agent's `bottle:`. The bottle has the agent's git-gate.user
-        overlaid. Raises ManifestError for an unknown or invalid agent, or no
+        `bottle_names` are merged in order (0 is the base); empty means
+        `DEFAULT_BOTTLE`. The bottle has the agent's git-gate.user
+        overlaid. Raises ManifestError for an unknown or invalid agent or
         bottle."""
         effective_bottle_names: tuple[str, ...] = bottle_names or ()
         if self.home_md is None:
@@ -277,9 +257,7 @@ class ManifestIndex:
                 f"agent '{agent_name}' not defined. Available: {available}"
             )
         agent = self.agents[agent_name]
-        raw_bottle = _resolve_effective_bottle_eager(
-            agent_name, agent, bottle_names, self.bottles
-        )
+        raw_bottle = _resolve_effective_bottle_eager(bottle_names, self.bottles)
         return _manifest_with_merged_git_user(agent, raw_bottle)
 
     def _load_for_agent_lazy(
@@ -310,39 +288,28 @@ class ManifestIndex:
 
         validate_agent_frontmatter_keys(agent_path, fm.keys())
 
-        # The effective bottle name(s).
-        agent_bottle = fm.get("bottle") or ""
         raw_bottle, bottle_sources = _resolve_effective_bottle_lazy(
-            agent_name, str(agent_bottle), bottle_names, self.bottle_dirs()
-        )
-        effective_bottle_name = (
-            bottle_names[-1] if bottle_names else str(agent_bottle)
-        )
+            bottle_names, self.bottle_dirs())
 
         # Build and validate the ManifestAgent.
         agent_dict: dict[str, object] = {
             "skills": fm.get("skills", []),
             "prompt": body.strip(),
         }
-        if agent_bottle:
-            agent_dict["bottle"] = agent_bottle
         if "git-gate" in fm:
             agent_dict["git-gate"] = fm["git-gate"]
         if "remote" in fm:
             agent_dict["remote"] = fm["remote"]
         if "agent_provider" in fm:
             agent_dict["agent_provider"] = fm["agent_provider"]
-        # Known bottles for validation: the effective one, the agent's own
-        # (composed with the selected ones), and the selected names.
-        known = {n for n in (effective_bottle_name, str(agent_bottle), *bottle_names) if n}
-        agent = ManifestAgent.from_dict(agent_name, agent_dict, known)
+        agent = ManifestAgent.from_dict(agent_name, agent_dict)
         if agent_name in cwd_agents:
             # A project agent's provider can spend host logins and secrets,
             # and its prompt directs whatever the user's bottle allows.
             trust_check_agent(
                 agent_name, agent_path, agent.agent_provider,
                 home_agent=home_agents.get(agent_name),
-                bottle_name="+".join(bottle_names) or str(agent_bottle),
+                bottle_name="+".join(bottle_names) or DEFAULT_BOTTLE,
                 bottle=raw_bottle, sources=bottle_sources,
                 source_root=self.cwd_md.parent if self.cwd_md else None,
             )

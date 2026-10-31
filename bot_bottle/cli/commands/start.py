@@ -27,6 +27,7 @@ from ...contract.hostctl import LaunchRequest, Settings
 from ...lib.log import info, die, warn
 from ...manifest import ManifestIndex
 from ...manifest.loader import PROJECT_PREFIX
+from ...manifest.schema import DEFAULT_BOTTLE
 from ...manifest.preview import manifest_to_yaml
 from ..constants import PROG
 from ..launch_client import launch, prepare_request
@@ -78,8 +79,8 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
         default=None,
         metavar="NAME",
         help=(
-            "bottle to compose, repeatable (order = merge order). In "
-            "--headless, defaults to the agent's own bottle when omitted."
+            "bottle to compose, repeatable (order = merge order); skips the "
+            f"bottle picker. In --headless, defaults to `{DEFAULT_BOTTLE}` when omitted."
         ),
     )
     parser.add_argument(
@@ -135,42 +136,14 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
         if agent_name is None:
             return 0
 
-    # An agent that names its bottle starts straight away: its own label, no
-    # color, local images when present, no confirmation. `--pick` brings back
-    # the pickers.
-    default_bottle = _peek_agent_bottle(manifest, agent_name)
-    if default_bottle and not args.pick:
-        request = LaunchRequest(
-            agent=agent_name,
-            bottles=(default_bottle,),
-            label=_uniquify_label(settings, agent_name),
-            image_policy="prefer-cached",
-            assume_yes=True,
-            settings=settings,
-            cwd=os.getcwd(),
-            copy_cwd=args.cwd,
-        )
-        return _launch_bottle(request, manifest, dry_run=dry_run, verbose=args.verbose)
-
-    # Compose bottles at launch without editing agent manifests.
-    # A project's own bottles (`./<name>`) first, marked as this project's.
-    available_bottles = sorted(manifest.all_bottle_names,
-                               key=lambda n: (not n.startswith(PROJECT_PREFIX), n))
-    project_mark = f"  · this project ({Path(os.getcwd()).name})"
-    lineage_map = {n: n + project_mark for n in available_bottles
-                   if n.startswith(PROJECT_PREFIX)}
-    lineage_map.update(_bottle_lineage(manifest))
-    display_labels = [lineage_map.get(n, n) for n in available_bottles]
-    label_to_name = {lineage_map.get(n, n): n for n in available_bottles}
-    initial_labels = [lineage_map.get(default_bottle, default_bottle)] if default_bottle else []
-    selected_labels = tui.filter_multiselect(
-        display_labels,
-        title="Select bottles",
-        initial=initial_labels,
-    )
-    if selected_labels is None:
-        return 0
-    bottle_names = tuple(label_to_name.get(lbl, lbl) for lbl in selected_labels)
+    # Bottles are picked at launch; agents don't name one (ADR 0011).
+    if args.bottle:
+        bottle_names: tuple[str, ...] = tuple(args.bottle)
+    else:
+        picked = _pick_bottles(manifest)
+        if picked is None:
+            return 0
+        bottle_names = picked
 
     # `--pick` asks for a label, color and image mode.
     if args.pick:
@@ -193,6 +166,30 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
         copy_cwd=args.cwd,
     )
     return _launch_bottle(request, manifest, dry_run=dry_run, verbose=args.verbose)
+
+
+def _pick_bottles(manifest: ManifestIndex) -> tuple[str, ...] | None:
+    """The bottles picked to compose, or None when the picker is cancelled.
+    `DEFAULT_BOTTLE` is preselected, and picking none launches in it too. A
+    project's own bottles (`./<name>`) come first, marked as this project's."""
+    available_bottles = sorted(manifest.all_bottle_names,
+                               key=lambda n: (not n.startswith(PROJECT_PREFIX), n))
+    project_mark = f"  · this project ({Path(os.getcwd()).name})"
+    lineage_map = {n: n + project_mark for n in available_bottles
+                   if n.startswith(PROJECT_PREFIX)}
+    lineage_map.update(_bottle_lineage(manifest))
+    display_labels = [lineage_map.get(n, n) for n in available_bottles]
+    label_to_name = {lineage_map.get(n, n): n for n in available_bottles}
+    initial_labels = ([lineage_map.get(DEFAULT_BOTTLE, DEFAULT_BOTTLE)]
+                      if DEFAULT_BOTTLE in available_bottles else [])
+    selected_labels = tui.filter_multiselect(
+        display_labels,
+        title="Select bottles",
+        initial=initial_labels,
+    )
+    if selected_labels is None:
+        return None
+    return tuple(label_to_name.get(lbl, lbl) for lbl in selected_labels)
 
 
 # --- Headless launch ---
@@ -230,16 +227,7 @@ def _start_headless(
             "bot-bottle start <agent> --headless --prompt 'Do the thing'"
         )
 
-    if args.bottle:
-        bottle_names: tuple[str, ...] = tuple(args.bottle)
-    else:
-        default_bottle = _peek_agent_bottle(manifest, agent_name)
-        if not default_bottle:
-            die(
-                f"--headless: agent '{agent_name}' has no default bottle; "
-                f"pass one or more --bottle NAME"
-            )
-        bottle_names = (default_bottle,)
+    bottle_names: tuple[str, ...] = tuple(args.bottle or (DEFAULT_BOTTLE,))
 
     label = _uniquify_label(settings, args.label or agent_name)
 
@@ -275,34 +263,6 @@ def _uniquify_label(settings: Settings, label: str) -> str:
 
 
 # --- Launch helpers ---
-
-
-def _peek_agent_bottle(manifest: ManifestIndex, agent_name: str) -> str:
-    """The `bottle:` value from the agent's frontmatter without fully parsing
-    it, or "" when absent or unreadable. Pre-selects the agent's bottle."""
-    if manifest.home_md is None:
-        # Eager mode: the agent is pre-parsed.
-        if agent_name in manifest.agents:
-            return manifest.agents[agent_name].bottle
-        return ""
-
-    from ...manifest.loader import scan_agent_names
-    from ...contract.yaml_subset import YamlSubsetError, parse_frontmatter
-
-    home_agents = scan_agent_names(manifest.home_md / "agents")
-    cwd_agents: dict[str, Path] = {}
-    if manifest.cwd_md is not None:
-        cwd_agents = scan_agent_names(manifest.cwd_md / "agents")
-    merged = {**home_agents, **cwd_agents}
-    path = merged.get(agent_name)
-    if path is None:
-        return ""
-    try:
-        fm, _ = parse_frontmatter(path.read_text())
-        bottle = fm.get("bottle", "")
-        return str(bottle) if isinstance(bottle, str) else ""
-    except (OSError, YamlSubsetError):
-        return ""
 
 
 def _resolve_unique_label(settings: Settings, label: str, color: str) -> tuple[str, str]:

@@ -18,7 +18,7 @@ def fixture_minimal_dict() -> dict[str, Any]:
     return {
         "bottles": {"dev": {}},
         "agents": {
-            "demo": {"skills": [], "prompt": "", "bottle": "dev"},
+            "demo": {"skills": [], "prompt": ""},
         },
     }
 
@@ -33,7 +33,7 @@ def fixture_with_egress_dict() -> dict[str, Any]:
                 }
             }
         },
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        "agents": {"demo": {"skills": [], "prompt": ""}},
     }
 
 
@@ -58,7 +58,7 @@ def fixture_with_git_dict() -> dict[str, Any]:
                 }
             }
         },
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        "agents": {"demo": {"skills": [], "prompt": ""}},
     }
 
 

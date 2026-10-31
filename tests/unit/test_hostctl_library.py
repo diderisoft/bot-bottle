@@ -24,14 +24,14 @@ class TestHostLibrary(unittest.TestCase):
         root = self.home / ".bot-bottle"
         (root / "agents").mkdir(parents=True)
         (root / "bottles").mkdir()
-        (root / "agents" / "helper.md").write_text("---\nbottle: work\n---\nHelps.\n")
+        (root / "agents" / "helper.md").write_text("---\n---\nHelps.\n")
         (root / "bottles" / "work.md").write_text("---\nsupervise: true\n---\nWork.\n")
         (root / "bottles" / "big.md").write_text("x" * (library.MAX_BYTES + 10))
 
     def test_home_files_and_unshadowed_builtins(self) -> None:
         with mock.patch.object(Path, "home", return_value=self.home):
             got = library.host_library()
-        self.assertEqual([{"name": "helper", "content": "---\nbottle: work\n---\nHelps.\n"}],
+        self.assertEqual([{"name": "helper", "content": "---\n---\nHelps.\n"}],
                          got["agents"])
         bottles = {b["name"]: b for b in got["bottles"]}
         self.assertEqual(("---\nsupervise: true\n---\nWork.\n", False),
@@ -70,7 +70,7 @@ class TestResolvedManifest(unittest.TestCase):
         root = self.home / ".bot-bottle"
         (root / "agents").mkdir(parents=True)
         (root / "bottles").mkdir()
-        (root / "agents" / "helper.md").write_text("---\nbottle: work\n---\nHelps.\n")
+        (root / "agents" / "helper.md").write_text("---\n---\nHelps.\n")
         (root / "bottles" / "work.md").write_text("---\nenv:\n  A: \"1\"\n  B: \"1\"\n---\n")
         (root / "bottles" / "more.md").write_text("---\nenv:\n  B: \"2\"\n---\n")
 
@@ -87,9 +87,10 @@ class TestResolvedManifest(unittest.TestCase):
         reply = self._resolve({"agent": "helper", "bottles": ["more", "work"]})
         self.assertEqual({"A": "1", "B": "1"}, reply["data"]["env"])
 
-    def test_no_bottles_is_the_agents_own(self) -> None:
+    def test_no_bottles_is_basic(self) -> None:
         reply = self._resolve({"agent": "helper", "bottles": []})
-        self.assertEqual((["work"], {"A": "1", "B": "1"}), (reply["bottles"], reply["data"]["env"]))
+        self.assertEqual(["basic"], reply["bottles"])
+        self.assertNotIn("env", reply["data"])
 
     def test_what_doesnt_resolve_says_why(self) -> None:
         self.assertIn("not defined", self._resolve({"agent": "nobody"})["error"])

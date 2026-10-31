@@ -97,12 +97,12 @@ class ManifestRoot(_Root):
         self.assertEqual(self.root, bot_bottle_root())
         (self.root / "agents").mkdir(parents=True)
         (self.root / "bottles").mkdir()
-        (self.root / "agents" / "demo.md").write_text("---\nbottle: dev\n---\n\nHi.\n")
+        (self.root / "agents" / "demo.md").write_text("---\n---\n\nHi.\n")
         (self.root / "bottles" / "dev.md").write_text("---\n---\n")
         (self.base / "home").mkdir()
         index = ManifestIndex.resolve(str(self.base / "elsewhere"))
         self.assertEqual(["demo"], index.all_agent_names)
-        self.assertEqual("dev", index.load_for_agent("demo").agent.bottle)
+        self.assertEqual("Hi.", index.load_for_agent("demo", ("dev",)).agent.prompt)
 
     def test_without_the_override_it_is_home(self) -> None:
         with mock.patch.dict(os.environ, {"BOT_BOTTLE_ROOT": ""}):
@@ -129,7 +129,7 @@ class NamedEnvironmentAtHome(unittest.TestCase):
                             (bot_bottle_root(), "dev-agent")):
             (root / "agents").mkdir(parents=True)
             (root / "bottles").mkdir()
-            (root / "agents" / f"{agent}.md").write_text("---\nbottle: b\n---\n\nHi.\n")
+            (root / "agents" / f"{agent}.md").write_text("---\n---\n\nHi.\n")
             (root / "bottles" / "b.md").write_text("---\n---\n")
 
     def test_the_live_root_is_not_a_project(self) -> None:
@@ -141,6 +141,6 @@ class NamedEnvironmentAtHome(unittest.TestCase):
         project = self.home / "src" / "app"
         (project / ".bot-bottle" / "agents").mkdir(parents=True)
         (project / ".bot-bottle" / "agents" / "app-agent.md").write_text(
-            "---\nbottle: b\n---\n\nHi.\n")
+            "---\n---\n\nHi.\n")
         index = ManifestIndex.resolve(str(project))
         self.assertEqual(["app-agent", "dev-agent"], index.all_agent_names)

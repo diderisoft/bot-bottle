@@ -168,11 +168,10 @@ class _BottleUpstream(_Upstream):
     def __init__(self, backend: Any, tmp: Path) -> None:
         manifest = ManifestIndex.from_json_obj({
             "bottles": {"upstream": {}},
-            "agents": {"trailer-upstream": {"skills": [], "prompt": "",
-                                            "bottle": "upstream"}},
+            "agents": {"trailer-upstream": {"skills": [], "prompt": ""}},
         })
         spec = BottleSpec(manifest=manifest, agent_name="trailer-upstream",
-                          copy_cwd=False, user_cwd=str(tmp))
+                          bottle_names=("upstream",), copy_cwd=False, user_cwd=str(tmp))
         stage = tmp / "upstream-stage"
         stage.mkdir()
         plan = backend.prepare(spec, stage_dir=stage, secrets=secrets_from_env())
@@ -396,10 +395,10 @@ class TestCommitTrailersEndToEnd(unittest.TestCase):
                     "host_key": cls._upstream.host_key,
                 }},
             }}},
-            "agents": {"trailer-tester": {"skills": [], "prompt": "", "bottle": "dev"}},
+            "agents": {"trailer-tester": {"skills": [], "prompt": ""}},
         })
         spec = BottleSpec(manifest=manifest, agent_name="trailer-tester",
-                          copy_cwd=True, user_cwd=str(cls._workspace))
+                          bottle_names=("dev",), copy_cwd=True, user_cwd=str(cls._workspace))
         backend = get_bottle_backend(cls._settings, cls._backend)
         stage = cls._tmp / "stage"
         stage.mkdir()

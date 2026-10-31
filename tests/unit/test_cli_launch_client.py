@@ -34,14 +34,14 @@ def _index(env: dict[str, str], *, egress: bool = False, forge: bool = False) ->
             "repos": ["example.com/x/y"]}
     return ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle},
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        "agents": {"demo": {"skills": [], "prompt": ""}},
     })
 
 
 class TestSecrets(unittest.TestCase):
     def test_only_the_names_the_bottle_needs_are_sent(self) -> None:
         manifest = _index({"A": "${HOST_A}", "B": "?Your B", "C": "literal"},
-                          egress=True, forge=True).load_for_agent("demo")
+                          egress=True, forge=True).load_for_agent("demo", ("dev",))
         self.assertEqual({"HOST_A": "", "B": "?Your B", "TOK": "", "FORGE": ""},
                          launch_client.needed_secrets(manifest))
         source = MappingSecrets({"HOST_A": "a", "B": "b", "TOK": "t", "FORGE": "f",
@@ -67,13 +67,14 @@ class TestSecrets(unittest.TestCase):
         ):
             index = ManifestIndex.from_json_obj({
                 "bottles": {"dev": {"env": {}}},
-                "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev",
+                "agents": {"demo": {"skills": [], "prompt": "",
                                     "agent_provider": provider}},
             })
-            self.assertIn(name, launch_client.needed_secrets(index.load_for_agent("demo")))
+            manifest = index.load_for_agent("demo", ("dev",))
+            self.assertIn(name, launch_client.needed_secrets(manifest))
 
     def test_missing_question_entries_are_prompted_only_when_interactive(self) -> None:
-        manifest = _index({"B": "?Your B", "A": "${HOST_A}"}).load_for_agent("demo")
+        manifest = _index({"B": "?Your B", "A": "${HOST_A}"}).load_for_agent("demo", ("dev",))
         with mock.patch.object(launch_client, "prompt_secret", return_value="typed") as ask:
             self.assertEqual({"B": "typed"}, launch_client.resolve_secrets(
                 manifest, MappingSecrets({}), prompt=True))

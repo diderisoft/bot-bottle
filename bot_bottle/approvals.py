@@ -24,6 +24,7 @@ from .gateway.egress.schema import load_config
 from .gateway.egress.types import Route
 from .manifest import ManifestIndex, trust
 from .manifest.loader import PROJECT_BOTTLE, bottle_ref, load_bottle_chain
+from .manifest.schema import DEFAULT_BOTTLE
 from .manifest.versions import record_or_warn
 from .paths import bot_bottle_root
 
@@ -157,26 +158,12 @@ def keep_target(session: str) -> KeepTarget | None:
     host_bottles = bot_bottle_root() / "bottles"
     names = metadata.bottle_names if metadata else ()
     if metadata is not None and not names:
-        names = _agent_bottle(metadata.agent_name)
+        names = (DEFAULT_BOTTLE,)
     for name in names:
         if not name.startswith("./") and (host_bottles / f"{name}.md").is_file():
             return KeepTarget(host_bottles / f"{name}.md", None)
     return None
 
-
-def _agent_bottle(agent: str) -> tuple[str, ...]:
-    """The bottle a host agent names (`bottle:`), used when it was launched
-    without naming any."""
-    # pylint: disable-next=import-outside-toplevel
-    from .manifest.loader import scan_agent_names
-    path = scan_agent_names(bot_bottle_root() / "agents").get(agent)
-    if path is None:
-        return ()
-    try:
-        bottle = parse_frontmatter(path.read_text())[0].get("bottle")
-    except Exception:  # pylint: disable=broad-exception-caught  # no fallback, then
-        return ()
-    return (bottle,) if isinstance(bottle, str) and bottle else ()
 
 
 def keep(target: KeepTarget, request: "Request") -> Path:

@@ -50,7 +50,7 @@ def _inspect_routes(routes):  # type: ignore
 def _bottle(routes):  # type: ignore
     return ManifestIndex.from_json_obj({
         "bottles": {"dev": {"egress": {"routes": _inspect_routes(routes)}}},
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        "agents": {"demo": {"skills": [], "prompt": ""}},
     }).bottles["dev"]
 
 
@@ -445,7 +445,7 @@ class TestRenderRoutes(unittest.TestCase):
                 "log": 1,
                 "routes": [{"host": "x.example"}],
             }}},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
         })
         bottle = m.bottles["dev"]
         self.assertEqual(LOG_BLOCKS, bottle.egress.Log)
@@ -561,7 +561,7 @@ class TestCanaryGeneration(unittest.TestCase):
     def _bottle_obj(self):
         return ManifestIndex.from_json_obj({
             "bottles": {"dev": {"egress": {"routes": []}}},
-            "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
         }).bottles["dev"]
 
     def _make_plan(self) -> EgressPlan:

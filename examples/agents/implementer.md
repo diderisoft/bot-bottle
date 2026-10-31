@@ -2,7 +2,6 @@
 name: implementer
 description: Implements features against PRDs in this repo.
 model: opus
-bottle: dev
 agent_provider:
   harness: claude
   # auth_token names the host env var holding the Claude OAuth token. The

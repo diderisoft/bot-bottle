@@ -62,13 +62,13 @@ class TestWebSocketFraming(unittest.TestCase):
 
 class TestAgentManifestRemote(unittest.TestCase):
     def test_remote_writable(self) -> None:
-        self.assertFalse(ManifestAgent.from_dict("a", {}, set()).remote_writable)
+        self.assertFalse(ManifestAgent.from_dict("a", {}).remote_writable)
         self.assertTrue(
-            ManifestAgent.from_dict("a", {"remote": {"writable": True}}, set()).remote_writable)
+            ManifestAgent.from_dict("a", {"remote": {"writable": True}}).remote_writable)
         with self.assertRaises(ManifestError):
-            ManifestAgent.from_dict("a", {"remote": {"writable": "yes"}}, set())
+            ManifestAgent.from_dict("a", {"remote": {"writable": "yes"}})
         with self.assertRaises(ManifestError):
-            ManifestAgent.from_dict("a", {"remote": {"bogus": True}}, set())
+            ManifestAgent.from_dict("a", {"remote": {"bogus": True}})
 
 
 @unittest.skipUnless(_TMUX_OK, "needs tmux 3.1+")

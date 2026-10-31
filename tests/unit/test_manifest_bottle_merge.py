@@ -102,7 +102,7 @@ class TestMergeBottlesRuntime(unittest.TestCase):
                     "supervise": False,
                 },
             },
-            agents={"impl": {"bottle": "enabled", "skills": [], "prompt": ""}},
+            agents={"impl": {"skills": [], "prompt": ""}},
         )
         result = idx.load_for_agent(
             "impl", ("enabled", "disabled_child")
@@ -146,13 +146,13 @@ class TestMergeBottlesRuntime(unittest.TestCase):
 
 
 class TestLoadForAgentWithBottleNames(unittest.TestCase):
-    def test_bottle_names_override_agent_bottle(self):
+    def test_bottle_names_pick_the_bottle(self):
         idx = _index(
             bottles={
                 "base": {"env": {"X": "base"}},
                 "override": {"env": {"X": "override"}},
             },
-            agents={"impl": {"bottle": "base", "skills": [], "prompt": ""}},
+            agents={"impl": {"skills": [], "prompt": ""}},
         )
         m = idx.load_for_agent("impl", ("override",))
         self.assertEqual("override", m.bottle.env["X"])
@@ -163,34 +163,34 @@ class TestLoadForAgentWithBottleNames(unittest.TestCase):
                 "a": {"env": {"X": "a", "A": "only-a"}},
                 "b": {"env": {"X": "b", "B": "only-b"}},
             },
-            agents={"impl": {"bottle": "a", "skills": [], "prompt": ""}},
+            agents={"impl": {"skills": [], "prompt": ""}},
         )
         m = idx.load_for_agent("impl", ("a", "b"))
         self.assertEqual("b", m.bottle.env["X"])
         self.assertEqual("only-a", m.bottle.env["A"])
         self.assertEqual("only-b", m.bottle.env["B"])
 
-    def test_empty_bottle_names_uses_agent_bottle(self):
+    def test_no_bottle_names_runs_in_the_built_in_basic(self):
+        # Agents don't name a bottle (ADR 0011); none picked means `basic`.
         idx = _index(
             bottles={"base": {"env": {"X": "base"}}},
-            agents={"impl": {"bottle": "base", "skills": [], "prompt": ""}},
-        )
-        m = idx.load_for_agent("impl", ())
-        self.assertEqual("base", m.bottle.env["X"])
-
-    def test_no_bottle_and_no_bottle_names_raises(self):
-        idx = _index(
-            bottles={"base": {}},
             agents={"impl": {"skills": [], "prompt": ""}},
         )
-        with self.assertRaises(ManifestError) as ctx:
-            idx.load_for_agent("impl", ())
-        self.assertIn("no 'bottle' field", str(ctx.exception))
+        m = idx.load_for_agent("impl", ())
+        self.assertNotIn("X", m.bottle.env)
+        self.assertIn("pypi.org", {r.Host for r in m.bottle.egress.routes})
+
+    def test_a_basic_of_your_own_shadows_the_built_in(self):
+        idx = _index(
+            bottles={"basic": {"env": {"X": "mine"}}},
+            agents={"impl": {"skills": [], "prompt": ""}},
+        )
+        self.assertEqual("mine", idx.load_for_agent("impl").bottle.env["X"])
 
     def test_unknown_bottle_name_raises(self):
         idx = _index(
             bottles={"base": {}},
-            agents={"impl": {"bottle": "base", "skills": [], "prompt": ""}},
+            agents={"impl": {"skills": [], "prompt": ""}},
         )
         with self.assertRaises(ManifestError) as ctx:
             idx.load_for_agent("impl", ("nonexistent",))
@@ -209,7 +209,7 @@ class TestAllBottleNames(unittest.TestCase):
     def test_eager_mode_returns_bottle_names(self):
         idx = _index(
             bottles={"alpha": {}, "beta": {}, "gamma": {}},
-            agents={"impl": {"bottle": "alpha", "skills": [], "prompt": ""}},
+            agents={"impl": {"skills": [], "prompt": ""}},
         )
         self.assertEqual(["alpha", "beta", "gamma"], idx.all_bottle_names)
 
@@ -224,7 +224,7 @@ class TestAllBottleNames(unittest.TestCase):
             agents_dir.mkdir(parents=True)
             (bottles_dir / "claude.md").write_text("---\n---\n")
             (bottles_dir / "dev.md").write_text("---\n---\n")
-            (agents_dir / "impl.md").write_text("---\nbottle: claude\n---\n")
+            (agents_dir / "impl.md").write_text("---\n---\n")
             idx = ManifestIndex.resolve(str(home))
             self.assertEqual(["basic", "claude", "dev"], idx.all_bottle_names)  # basic is built in
         finally:
@@ -235,8 +235,8 @@ class TestAllBottleNames(unittest.TestCase):
             shutil.rmtree(home, ignore_errors=True)
 
 
-class TestAgentOptionalBottleMd(unittest.TestCase):
-    """Agent file without bottle: works when bottle_names are provided at launch."""
+class TestAgentWithoutBottleMd(unittest.TestCase):
+    """Agent files name no bottle: launches pick them, else `basic`."""
 
     def setUp(self) -> None:
         self.home = Path(tempfile.mkdtemp(prefix="cb-home-"))
@@ -262,13 +262,22 @@ class TestAgentOptionalBottleMd(unittest.TestCase):
         m = idx.load_for_agent("impl", ("dev",))
         self.assertEqual("dev", m.bottle.env["X"])
 
-    def test_agent_without_bottle_fails_without_bottle_names(self):
-        self._write("bottles/dev.md", "---\n---\n")
+    def test_no_bottle_names_runs_in_basic(self):
+        self._write("bottles/dev.md", "---\nenv:\n  X: dev\n---\n")
         self._write("agents/impl.md", "---\n---\nimpl agent.\n")
         idx = ManifestIndex.resolve(str(self.home))
+        m = idx.load_for_agent("impl", ())
+        self.assertNotIn("X", m.bottle.env)
+        self.assertIn("pypi.org", {r.Host for r in m.bottle.egress.routes})
+
+    def test_an_agent_naming_a_bottle_fails_saying_what_to_do(self):
+        self._write("bottles/dev.md", "---\n---\n")
+        self._write("agents/impl.md", "---\nbottle: dev\n---\nimpl agent.\n")
+        idx = ManifestIndex.resolve(str(self.home))
         with self.assertRaises(ManifestError) as ctx:
-            idx.load_for_agent("impl", ())
-        self.assertIn("no 'bottle' field", str(ctx.exception))
+            idx.load_for_agent("impl", ("dev",))
+        self.assertIn("agents no longer name a bottle", str(ctx.exception))
+        self.assertIn("`--bottle <name>`", str(ctx.exception))
 
 
 if __name__ == "__main__":

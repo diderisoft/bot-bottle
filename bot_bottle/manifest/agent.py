@@ -9,7 +9,7 @@ from typing import cast
 from ..agent_provider import BUILTIN_HARNESSES
 from .util import ManifestError, as_json_object
 from .git import ManifestGitUser
-from .schema import AGENT_MODEL_KEYS, is_valid_entity_name
+from .schema import AGENT_MODEL_KEYS, is_valid_entity_name, reject_agent_bottle
 
 
 # A harness version lands in overlay RUN lines, so it must be strict semver.
@@ -225,8 +225,6 @@ class ManifestAgentProvider:
 
 @dataclass(frozen=True)
 class ManifestAgent:
-    # Empty: bottles are picked at launch.
-    bottle: str = ""
     skills: tuple[str, ...] = ()
     prompt: str = ""
     # The agent's git identity, overlaid per field on the bottle's. Agents may
@@ -240,8 +238,10 @@ class ManifestAgent:
     agent_provider: ManifestAgentProvider = field(default_factory=ManifestAgentProvider)
 
     @classmethod
-    def from_dict(cls, name: str, raw: object, bottle_names: set[str]) -> "ManifestAgent":
+    def from_dict(cls, name: str, raw: object) -> "ManifestAgent":
         d = as_json_object(raw, f"agent '{name}'")
+        if "bottle" in d:
+            reject_agent_bottle(name, d["bottle"])
         unknown = set(d.keys()) - AGENT_MODEL_KEYS
         if unknown:
             allowed = ", ".join(sorted(AGENT_MODEL_KEYS))
@@ -249,21 +249,6 @@ class ManifestAgent:
                 f"agent '{name}' has unknown key(s) {sorted(unknown)}; "
                 f"allowed keys are {allowed}."
             )
-
-        bottle_raw = d.get("bottle")
-        bottle = ""
-        if bottle_raw is not None:
-            if not isinstance(bottle_raw, str) or not bottle_raw:
-                raise ManifestError(
-                    f"agent '{name}' bottle must be a non-empty string when declared"
-                )
-            if bottle_raw not in bottle_names:
-                available = ", ".join(sorted(bottle_names)) or "(none defined)"
-                raise ManifestError(
-                    f"agent '{name}' references bottle '{bottle_raw}', which is not defined. "
-                    f"Available: {available}"
-                )
-            bottle = bottle_raw
 
         skills: tuple[str, ...] = ()
         skills_raw = d.get("skills")
@@ -340,7 +325,7 @@ class ManifestAgent:
             if "agent_provider" in d else ManifestAgentProvider()
         )
 
-        return cls(bottle=bottle, skills=skills, prompt=prompt, git_user=git_user,
+        return cls(skills=skills, prompt=prompt, git_user=git_user,
                    remote_writable=remote_writable, agent_provider=agent_provider)
 
 

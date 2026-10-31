@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ...lib import log
+from ...manifest.schema import DEFAULT_BOTTLE
 
 # A definition is a short Markdown file; anything bigger is cut, not sent.
 MAX_BYTES = 64 * 1024
@@ -63,7 +64,7 @@ def host_library() -> dict[str, list[dict[str, Any]]]:
 
 def resolved_manifest(agent: str, bottles: "list[str] | tuple[str, ...]") -> dict[str, Any]:
     """What launching `agent` in `bottles` (merged in order, 0 the base; none
-    means the agent's own `bottle:`) would run with, before it runs: the
+    means `DEFAULT_BOTTLE`) would run with, before it runs: the
     launch page's preview. `{agent, bottles, text, data}`, `text` the merged
     bottle as one bottle file's YAML (as the Manifest tab shows it), or
     `{error}`."""
@@ -77,7 +78,7 @@ def resolved_manifest(agent: str, bottles: "list[str] | tuple[str, ...]") -> dic
     except ManifestError as e:
         return {"error": str(e)}
     doc = bottle_document(manifest.bottle)
-    names = list(bottles) or ([manifest.agent.bottle] if manifest.agent.bottle else [])
+    names = list(bottles) or [DEFAULT_BOTTLE]
     return {"agent": agent, "bottles": names, "text": run_manifest.document_text(doc),
             "data": doc}
 

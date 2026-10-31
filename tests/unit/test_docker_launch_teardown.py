@@ -30,16 +30,16 @@ from tests.unit import use_bottle_root
 
 _INDEX = ManifestIndex.from_json_obj({
     "bottles": {"dev": {}},
-    "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+    "agents": {"demo": {"skills": [], "prompt": ""}},
 })
 
 
 def _plan(tmp: str) -> DockerBottlePlan:
     stage = Path(tmp)
-    manifest = _INDEX.load_for_agent("demo")
+    manifest = _INDEX.load_for_agent("demo", ("dev",))
     spec = BottleSpec(
         manifest=_INDEX,
-        agent_name="demo",
+        agent_name="demo", bottle_names=("dev",),
         copy_cwd=False,
         user_cwd=tmp,
         identity="test-teardown-00001",

@@ -57,14 +57,13 @@ def _plan(
             "demo": {
                 "skills": list(skills or []),
                 "prompt": agent_prompt,
-                "bottle": "dev",
                 "agent_provider": {"harness": "pi"},
             },
         },
     })
-    manifest = index.load_for_agent("demo")
+    manifest = index.load_for_agent("demo", ("dev",))
     spec = BottleSpec(
-        manifest=index, agent_name="demo",
+        manifest=index, agent_name="demo", bottle_names=("dev",),
         copy_cwd=False, user_cwd="/tmp/x",
     )
     return DockerBottlePlan(

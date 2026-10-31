@@ -27,14 +27,14 @@ from bot_bottle.manifest import Manifest, ManifestIndex
 
 _INDEX = ManifestIndex.from_json_obj({
     "bottles": {"dev": {}},
-    "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+    "agents": {"demo": {"skills": [], "prompt": ""}},
 })
 
 
 def _spec(index: ManifestIndex, tmp: str) -> BottleSpec:
     return BottleSpec(
         manifest=index,
-        agent_name="demo",
+        agent_name="demo", bottle_names=("dev",),
         copy_cwd=False,
         user_cwd=tmp,
         identity="test-00001",
@@ -144,7 +144,7 @@ class TestGitGatePrintParity(unittest.TestCase):
 
     def setUp(self) -> None:
         self._tmp = tempfile.mkdtemp(prefix="plan-print-parity-")
-        manifest = _INDEX.load_for_agent("demo")
+        manifest = _INDEX.load_for_agent("demo", ("dev",))
         spec = _spec(_INDEX, self._tmp)
         self._docker_lines = _capture_print(_docker_plan(spec, manifest, self._tmp))
         self._fc_lines = _capture_print(_firecracker_plan(spec, manifest, self._tmp))
@@ -174,7 +174,7 @@ class TestEgressPrintParity(unittest.TestCase):
 
     def setUp(self) -> None:
         self._tmp = tempfile.mkdtemp(prefix="plan-print-parity-")
-        manifest = _INDEX.load_for_agent("demo")
+        manifest = _INDEX.load_for_agent("demo", ("dev",))
         spec = _spec(_INDEX, self._tmp)
         self._docker_lines = _capture_print(_docker_plan(spec, manifest, self._tmp))
         self._fc_lines = _capture_print(_firecracker_plan(spec, manifest, self._tmp))

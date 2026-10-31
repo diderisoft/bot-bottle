@@ -18,7 +18,11 @@ BOTTLE_KEYS = frozenset(
     }
 )
 AGENT_KEYS_REQUIRED: frozenset[str] = frozenset()
-AGENT_KEYS_OPTIONAL = frozenset({"bottle", "skills", "git-gate", "remote", "agent_provider"})
+AGENT_KEYS_OPTIONAL = frozenset({"skills", "git-gate", "remote", "agent_provider"})
+
+# The bottle a launch runs in when none is selected. Agents don't name a
+# bottle (ADR 0011), so an agent file travels without its host's bottles.
+DEFAULT_BOTTLE = "basic"
 
 # Claude Code subagent fields accepted and ignored, so a file can double as
 # `~/.claude/agents/*.md`.
@@ -53,7 +57,21 @@ def validate_bottle_frontmatter_keys(path: Path, keys: object) -> None:
 
 
 def validate_agent_frontmatter_keys(path: Path, keys: object) -> None:
+    if "bottle" in keys:  # type: ignore[operator]
+        reject_agent_bottle(path.stem)
     _validate_frontmatter_keys("agent", path, keys, AGENT_KEYS)
+
+
+def reject_agent_bottle(agent: str, bottle: object = None) -> None:
+    """Raise for an agent that still names a bottle, saying what to do."""
+    from .util import ManifestError  # pylint: disable=import-outside-toplevel
+    named = isinstance(bottle, str) and bool(bottle)
+    raise ManifestError(
+        f"agent '{agent}': agents no longer name a bottle"
+        f"{f' (`bottle: {bottle}`)' if named else ''}; remove that line and pick "
+        f"bottles at launch ({f'`--bottle {bottle}`' if named else '`--bottle <name>`'}; "
+        f"none means `{DEFAULT_BOTTLE}`)."
+    )
 
 
 def _validate_frontmatter_keys(

@@ -58,11 +58,11 @@ def _plan(*, git_user: dict | None = None,  # type: ignore
         bottle_json.setdefault("git-gate", {})["repos"] = git_repos
     index = ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle_json},
-        "agents": {"demo": {"skills": [], "prompt": "", "bottle": "dev"}},
+        "agents": {"demo": {"skills": [], "prompt": ""}},
     })
-    manifest = index.load_for_agent("demo")
+    manifest = index.load_for_agent("demo", ("dev",))
     spec = BottleSpec(
-        manifest=index, agent_name="demo",
+        manifest=index, agent_name="demo", bottle_names=("dev",),
         copy_cwd=copy_cwd, user_cwd=user_cwd,
     )
     return DockerBottlePlan(

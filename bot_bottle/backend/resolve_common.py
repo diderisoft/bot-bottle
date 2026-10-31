@@ -23,6 +23,7 @@ from ..contract.git_trailers import trailer_value
 from ..git_gate import GitGate, GitGatePlan
 from ..git_gate.commit_hooks import hooks_env
 from ..git_gate.service import workspace_baseline
+from ..manifest.schema import DEFAULT_BOTTLE
 from ..workspace import WorkspacePlan
 from ..lib.config_store import ConfigStore
 from ..lib.log import die
@@ -89,11 +90,10 @@ def prepare_git_gate(bottle: ManifestBottle, slug: str, trailer: str,
     return GitGate().prepare(bottle, slug, git_gate_dir, trailer=trailer, baseline=baseline)
 
 
-def launch_trailer(spec: BottleSpec, manifest: Manifest, slug: str) -> str:
+def launch_trailer(spec: BottleSpec, slug: str) -> str:
     """The `Bot-Bottle` trailer for this launch: `<bottle>/<run>`, the bottles
-    it was built from (as selected, else the agent's) and its slug."""
-    names = spec.bottle_names or ((manifest.agent.bottle,) if manifest.agent.bottle else ())
-    return trailer_value(names or ("bottle",), slug)
+    it was built from (as selected, else `DEFAULT_BOTTLE`) and its slug."""
+    return trailer_value(spec.bottle_names or (DEFAULT_BOTTLE,), slug)
 
 
 def with_commit_hooks_env(provision: AgentProvisionPlan) -> AgentProvisionPlan:

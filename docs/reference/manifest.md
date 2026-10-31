@@ -15,8 +15,12 @@ Bottles and agents are Markdown files with YAML frontmatter.
 
 A bottle holds what the agent may reach and with which credentials: its env,
 git identity, git-gate repos and egress routes. An agent holds who it is: its
-harness (`agent_provider`), its skills, its prompt, and the bottle it runs on.
-Unknown keys fail at load, naming the key and the accepted ones.
+harness (`agent_provider`), its skills and its prompt. An agent doesn't name
+a bottle: you pick bottles at launch (`--bottle`, or the console's launch
+page), and a launch with none runs in the built-in `basic`. So an agent file
+works on any host, whatever its bottles are called
+([ADR 0011](../decisions/0011-agents-dont-name-bottles.md)). Unknown keys fail
+at load, naming the key and the accepted ones.
 
 More examples are in [`examples/`](../../examples/).
 
@@ -81,7 +85,6 @@ The `git-gate` block, including forges and one-line repo grants, is in
 
 ````markdown
 ---
-bottle: app-dev
 agent_provider:          # the harness and its login; default is `claude`
   harness: claude
   forward_host_credentials: true
@@ -91,6 +94,11 @@ skills:
 
 You help maintain the acme app.
 ````
+
+Run it in the `app-dev` bottle with `bot-bottle start app-helper --bottle
+app-dev`. Bare `bot-bottle app-helper` uses the repo's `./main` bottle when it
+has one, else `basic`. An agent file that still has `bottle:` fails to load,
+saying to remove the line and pick the bottle at launch.
 
 - **`agent_provider.harness`**: `claude`, `codex` or `pi`. Each has an image
   built from `bot_bottle/contrib/<harness>/Dockerfile`; an agent can supply

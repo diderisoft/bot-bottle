@@ -25,7 +25,7 @@ from ...agent_provider import (
     AgentProvisionPlan,
     provider_startup_args,
 )
-from ...starter import GENERAL_PROMPT, starter_agent, starter_bottle
+from ...starter import GENERAL_PROMPT, starter_agent
 from ...transcript import TranscriptEntry
 from . import transcript
 from .codex_auth import (
@@ -118,17 +118,8 @@ class CodexAgentProvider(AgentProvider):
 
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
         del detection
-        return starter_agent("codex", GENERAL_PROMPT,
+        return starter_agent(GENERAL_PROMPT,
                              {"harness": "codex", "forward_host_credentials": True})
-
-    def create_default_bottle_manifest(self, detection: HostDetection) -> str:
-        return starter_bottle(
-            "The codex starter agent's bottle. The agent signs in with this "
-            "host's ChatGPT device login "
-            f"({detection.login_location or 'codex login --device-auth'}); the "
-            "gateway injects the login token, so the agent never sees it. Add "
-            "egress routes, git-gate repos and env here.",
-        )
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
         # As the Dockerfile's standalone install. A bump's checksum list comes

@@ -113,32 +113,51 @@ class ClaudeAndCodex(_Host):
     def test_installed_but_not_logged_in_warns_and_writes_nothing(self) -> None:
         self.install("claude")
         self.setup().run()
-        self.assertFalse(self.starter("bottles", "claude").exists())
+        self.assertFalse(self.starter("agents", "claude").exists())
         self.assertTrue(any("claude login" in line for line in self.lines))
 
     def test_not_installed_is_skipped_silently(self) -> None:
         self.claude_login()
         self.setup().run()
-        self.assertFalse(self.starter("bottles", "claude").exists())
+        self.assertFalse(self.starter("agents", "claude").exists())
         self.assertFalse(any("claude" in line for line in self.lines))
 
     def test_never_clobbers_without_force_and_restores_deleted_files(self) -> None:
         self.install("claude")
         self.claude_login()
+        self.install("codex")
+        self.codex_login()
         self.setup().run()
         self.starter("agents", "claude").write_text("mine")
-        self.starter("bottles", "claude").unlink()
+        self.starter("agents", "codex").unlink()
         self.setup().run()
         self.assertEqual("mine", self.starter("agents", "claude").read_text())
-        self.assertTrue(self.starter("bottles", "claude").exists())
+        self.assertTrue(self.starter("agents", "codex").exists())
         self.setup(force=True).run()
         self.assertNotEqual("mine", self.starter("agents", "claude").read_text())
+
+    def test_starters_name_no_bottle_and_get_none_written(self) -> None:
+        # Agents don't name a bottle (ADR 0011); a launch picks one, else `basic`.
+        self.install("claude")
+        self.claude_login()
+        self.setup().run()
+        self.assertNotIn("bottle:", self.starter("agents", "claude").read_text())
+        self.assertFalse(self.starter("bottles", "claude").exists())
+
+    def test_a_starter_bottle_already_on_disk_is_left_alone(self) -> None:
+        self.install("claude")
+        self.claude_login()
+        mine = self.starter("bottles", "claude")
+        mine.parent.mkdir(parents=True)
+        mine.write_text("---\nenv:\n  X: mine\n---\n")
+        self.setup(force=True).run()
+        self.assertEqual("---\nenv:\n  X: mine\n---\n", mine.read_text())
 
 
 class PiOnOpenRouter(_Host):
     def test_without_a_terminal_or_key_pi_is_skipped_with_a_hint(self) -> None:
         self.setup().run()
-        self.assertFalse(self.starter("bottles", "pi").exists())
+        self.assertFalse(self.starter("agents", "pi").exists())
         self.assertTrue(any("sign in to OpenRouter" in line for line in self.lines))
         self.assertEqual(0, self.signed_in)
 
@@ -179,7 +198,7 @@ class PiOnOpenRouter(_Host):
     def test_a_key_already_in_the_environment_skips_sign_in(self) -> None:
         self.setup(extra_env={"OPENROUTER_API_KEY": "k"}).run()
         self.assertEqual(0, self.signed_in)
-        self.assertTrue(self.starter("bottles", "pi").exists())
+        self.assertTrue(self.starter("agents", "pi").exists())
 
     def test_an_existing_starter_needs_no_key(self) -> None:
         self.setup(interactive=True).run()
@@ -194,7 +213,7 @@ class PiOnOpenRouter(_Host):
         self.setup(extra_env={"OPENROUTER_API_KEY": "k"}, refresh_model=True).run()
         self.assertIn("laguna", self.starter("agents", "pi").read_text())
         self.starter("agents", "pi").write_text(
-            "---\nbottle: pi\nagent_provider: pi\n---\nmine\n")
+            "---\nagent_provider: pi\n---\nmine\n")
         self.setup(extra_env={"OPENROUTER_API_KEY": "k"}, refresh_model=True).run()
         self.assertIn("mine", self.starter("agents", "pi").read_text())
 

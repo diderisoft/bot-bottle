@@ -26,7 +26,7 @@ from ...agent_provider import (
 )
 from ...contract.identity import IDENTITY_HEADER
 from ...egress import EgressRoute
-from ...starter import GENERAL_PROMPT, starter_agent, starter_bottle
+from ...starter import GENERAL_PROMPT, starter_agent
 from .starter import has_secret, local_starter_settings, read_local_model
 from . import transcript
 from ...lib.log import die, info
@@ -221,21 +221,8 @@ class PiAgentProvider(AgentProvider):
         )
 
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
-        return starter_agent("pi", GENERAL_PROMPT,
+        return starter_agent(GENERAL_PROMPT,
                              {"harness": "pi", "settings": _starter_settings(detection)})
-
-    def create_default_bottle_manifest(self, detection: HostDetection) -> str:
-        settings = _starter_settings(detection)
-        models = settings.get("models")
-        model = models[0] if isinstance(models, list) and models else "?"
-        return starter_bottle(
-            f"The pi starter agent's bottle. The agent runs `{model}` via "
-            f"{settings.get('provider')}; the gateway injects the "
-            f"`{settings.get('api_key_env')}` key on the model route, so the agent "
-            "never sees it. Free models are rate-limited; change `models` (and "
-            "the provider) in the agent to use another. Add egress routes, "
-            "git-gate repos and env here.",
-        )
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
         # The core packages pin each other, so they move together. Extensions

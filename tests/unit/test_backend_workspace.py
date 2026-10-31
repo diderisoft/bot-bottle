@@ -29,7 +29,6 @@ def _manifest() -> ManifestIndex:
         "bottles": {"dev": {}},
         "agents": {
             "demo": {
-                "bottle": "dev",
                 "skills": [],
                 "prompt": "",
             },
@@ -40,7 +39,7 @@ def _manifest() -> ManifestIndex:
 def _spec(tmp: Path, *, copy_cwd: bool = True, identity: str = "demo-work") -> BottleSpec:
     return BottleSpec(
         manifest=_manifest(),
-        agent_name="demo",
+        agent_name="demo", bottle_names=("dev",),
         copy_cwd=copy_cwd,
         user_cwd=str(tmp),
         identity=identity,

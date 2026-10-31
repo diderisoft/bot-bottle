@@ -162,7 +162,7 @@ def _check_providers() -> None:
     missing: list[str] = []
     for name in ("claude", "codex", "pi"):
         detection = get_provider(name).detect_host(env)
-        written = all((manifests / kind / f"{name}.md").exists() for kind in ("agents", "bottles"))
+        written = (manifests / "agents" / f"{name}.md").exists()
         if name != "pi" and not detection.installed:
             continue
         if name != "pi" and not detection.logged_in:
