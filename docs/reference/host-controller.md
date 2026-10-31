@@ -284,8 +284,10 @@ The console's launch page asks to `resolve` an agent (by name) in an ordered
 list of bottles before it launches (`library.resolved_manifest`): the reply's
 `text` (and `data`) is what that launch would run with, the bottles merged in
 order as a launch merges them (none means the built-in `basic`), as one
-bottle file's YAML; or `error` when it doesn't resolve. Names are checked as a
-launch's are.
+bottle file's YAML. Its `elements` list each env var, egress route, repo and
+forge with the file it comes from, as the Manifest tab's Pretty view does (a
+later bottle wins a clash, so it's the source). Or `error` when it doesn't
+resolve. Names are checked as a launch's are.
 
 The console's Manifest tab asks for a running agent's `manifest`
 (`manifest_view.py`).

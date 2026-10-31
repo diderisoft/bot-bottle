@@ -17,19 +17,27 @@ from ...manifest.schema import DEFAULT_BOTTLE
 
 
 def _chain(identity: str) -> list[dict[str, Any]]:
-    """The agent's bottle files, child before parents: name, path, whether it's
-    a project's, and whether it can be written (built-ins can't)."""
+    """The agent's bottle files, nearest first: name, path, whether it's a
+    project's, and whether it can be written (built-ins can't)."""
+    # pylint: disable-next=import-outside-toplevel
+    from .manifest_view import _index, _load
+    meta, _ = _load(identity)
+    return _chain_files(meta.bottle_names or (DEFAULT_BOTTLE,), _index(meta).bottle_dirs())
+
+
+def _chain_files(names: "tuple[str, ...] | list[str]",
+                 dirs: "list[tuple[Path, bool]]") -> list[dict[str, Any]]:
+    """The files of bottles `names` (merged in that order, so the last
+    wins), nearest first: the last bottle's chain child before parents, then
+    the one before it's, each file once."""
     # pylint: disable=import-outside-toplevel
     from ...manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
     from ...manifest.util import ManifestError
-    from .manifest_view import _index, _load
-    meta, _ = _load(identity)
-    names = meta.bottle_names or (DEFAULT_BOTTLE,)
     out: list[dict[str, Any]] = []
     seen: set[Path] = set()
-    for name in names:
+    for name in reversed(names):
         try:
-            _, sources = load_bottle_chain(name, _index(meta).bottle_dirs())
+            _, sources = load_bottle_chain(name, dirs)
         except ManifestError:
             continue
         for source in sources:
@@ -157,10 +165,29 @@ def elements(identity: str, policy: str | None) -> list[dict[str, Any]]:
     (`also`). `builtin`: from a built-in bottle (copied, never moved);
     `fixed`: can't be written into a bottle (the provider's own, or a route
     carrying a credential)."""
-    # pylint: disable=import-outside-toplevel
+    rows = _file_rows(_chain(identity))
+    for key, kind, name, detail, source, fixed in _run_elements(identity, policy, rows):
+        row = rows.get(key)
+        rows[key] = {"key": key, "kind": kind, "name": name, "detail": detail,
+                     "source": source, "builtin": False, "fixed": fixed,
+                     "also": ([row["source"], *row["also"]] if row else [])}
+    return _ordered(rows)
+
+
+def bottle_elements(names: "tuple[str, ...] | list[str]",
+                    dirs: "list[tuple[Path, bool]]") -> list[dict[str, Any]]:
+    """The elements a launch in bottles `names` would run with, before it
+    runs (the launch page's preview), shaped as `elements`' are."""
+    return _ordered(_file_rows(_chain_files(names, dirs)))
+
+
+def _file_rows(chain: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Each element the chain's files declare, keyed, from the nearest file;
+    the farther ones that also declare it are listed in `also`."""
+    # pylint: disable-next=import-outside-toplevel
     from ...contract.yaml_subset import parse_frontmatter
     rows: dict[str, dict[str, Any]] = {}
-    for f in _chain(identity):
+    for f in chain:
         fm = parse_frontmatter(f["path"].read_text(encoding="utf-8"))[0]
         for key, label, detail, _ in _file_elements(dict(fm)):
             if key in rows:
@@ -169,11 +196,10 @@ def elements(identity: str, policy: str | None) -> list[dict[str, Any]]:
             rows[key] = {"key": key, "kind": key.split(":", 1)[0], "name": label,
                          "detail": detail, "source": f["name"], "builtin": f["builtin"],
                          "fixed": False, "also": []}
-    for key, kind, name, detail, source, fixed in _run_elements(identity, policy, rows):
-        row = rows.get(key)
-        rows[key] = {"key": key, "kind": kind, "name": name, "detail": detail,
-                     "source": source, "builtin": False, "fixed": fixed,
-                     "also": ([row["source"], *row["also"]] if row else [])}
+    return rows
+
+
+def _ordered(rows: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     order = {"egress": 0, "repo": 1, "forge": 2, "env": 3}
     return sorted(rows.values(), key=lambda r: (order.get(r["kind"], 9), r["name"]))
 

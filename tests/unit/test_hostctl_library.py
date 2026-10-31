@@ -91,6 +91,19 @@ class TestResolvedManifest(unittest.TestCase):
         reply = self._resolve({"agent": "helper", "bottles": []})
         self.assertEqual(["basic"], reply["bottles"])
         self.assertNotIn("env", reply["data"])
+        self.assertTrue(reply["elements"])
+        self.assertTrue(all(e["source"] == "basic" and e["builtin"] for e in reply["elements"]))
+
+    def test_elements_name_the_bottle_that_wins(self) -> None:
+        # Later bottles win a clash, so the element is sourced from them.
+        def env(reply: dict[str, Any]) -> dict[str, tuple[str, list[str]]]:
+            return {e["name"]: (e["source"], e["also"]) for e in reply["elements"]
+                    if e["kind"] == "env"}
+        reply = self._resolve({"agent": "helper", "bottles": ["work", "more"]})
+        self.assertEqual({"A": ("work", []), "B": ("more", ["work"])}, env(reply))
+        self.assertEqual("2", next(e["detail"] for e in reply["elements"] if e["name"] == "B"))
+        reply = self._resolve({"agent": "helper", "bottles": ["more", "work"]})
+        self.assertEqual({"A": ("work", []), "B": ("work", ["more"])}, env(reply))
 
     def test_what_doesnt_resolve_says_why(self) -> None:
         self.assertIn("not defined", self._resolve({"agent": "nobody"})["error"])
