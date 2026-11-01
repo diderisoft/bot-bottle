@@ -176,3 +176,18 @@ class TestEnsureRunning(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPrepareImages(unittest.TestCase):
+    def test_gets_both_artifacts(self) -> None:
+        with patch.object(infra_vm, "ensure_built") as built:
+            FirecrackerInfraService(Settings()).prepare_images()
+        built.assert_called_once()
+
+    def test_a_registry_failure_fails_closed_with_its_message(self) -> None:
+        from bot_bottle.image_registry import RegistryError
+        from bot_bottle.lib.log import Die
+        with patch.object(infra_vm, "ensure_built", side_effect=RegistryError("manifest 404")), \
+             self.assertRaises(Die) as cm:
+            FirecrackerInfraService(Settings()).prepare_images()
+        self.assertIn("manifest 404", cm.exception.message)

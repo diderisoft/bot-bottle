@@ -112,5 +112,18 @@ class TestDockerInfraService(unittest.TestCase):
             )
 
 
+class TestPrepareImages(unittest.TestCase):
+    def test_builds_both_images_without_touching_running_ones(self) -> None:
+        svc = DockerInfraService(Settings(), port=8099)
+        orch, gw = MagicMock(), MagicMock()
+        with patch.object(svc, "orchestrator", return_value=orch), \
+             patch.object(svc, "gateway", return_value=gw):
+            svc.prepare_images()
+        orch.ensure_built.assert_called_once_with()
+        gw.ensure_built.assert_called_once_with()
+        orch.stop.assert_not_called()
+        gw.stop.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
