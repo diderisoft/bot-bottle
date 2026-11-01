@@ -334,6 +334,79 @@ class TestDispatch(unittest.TestCase):
         self.assertEqual(400, status)
 
 
+class TestVersionRoute(unittest.TestCase):
+    """GET /version — public, returns version/commit/protocol/images."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.orch = _orchestrator(Path(self._tmp.name) / "r.db")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_version_is_public(self) -> None:
+        with patch("bot_bottle.orchestrator.api.install_version", return_value=("1.2.3", "abc")), \
+             patch("bot_bottle.orchestrator.api.image_inputs") as mi, \
+             patch("bot_bottle.orchestrator.api.published_infra_artifact", return_value=None):
+            mi.INFRA_ROLES = {}
+            mi.inputs_hash = lambda _: "0" * 16
+            status, payload = dispatch(self.orch, "GET", "/version", b"", role=None)
+        self.assertEqual(200, status)
+
+    def test_version_shape(self) -> None:
+        with patch("bot_bottle.orchestrator.api.install_version", return_value=("0.1.6", "abc123")), \
+             patch("bot_bottle.orchestrator.api.image_inputs") as mi, \
+             patch("bot_bottle.orchestrator.api.published_infra_artifact", return_value=None):
+            mi.INFRA_ROLES = {}
+            mi.inputs_hash = lambda _: "0" * 16
+            _, payload = dispatch(self.orch, "GET", "/version", b"")
+        self.assertEqual("0.1.6", payload["version"])
+        self.assertEqual("abc123", payload["commit"])
+        self.assertEqual(1, payload["protocol"])
+        self.assertIsInstance(payload["images"], dict)
+
+    def test_local_build_shows_source_and_inputs_hash(self) -> None:
+        hash_val = "a1b2c3d4e5f60718"
+        with patch("bot_bottle.orchestrator.api.install_version", return_value=("0.1.6", "sha")), \
+             patch("bot_bottle.orchestrator.api.image_inputs") as mi, \
+             patch("bot_bottle.orchestrator.api.published_infra_artifact", return_value=None):
+            mi.INFRA_ROLES = {"bot-bottle-orchestrator": "orchestrator",
+                              "bot-bottle-gateway": "gateway"}
+            mi.inputs_hash = lambda _: hash_val
+            _, payload = dispatch(self.orch, "GET", "/version", b"")
+        for image in ("bot-bottle-orchestrator", "bot-bottle-gateway"):
+            self.assertEqual({"source": "local", "inputs_hash": hash_val},
+                             payload["images"][image])
+
+    def test_published_build_shows_digest(self) -> None:
+        from bot_bottle.published_artifacts import Artifact, FORMAT_OCI
+        hash_val = "deadbeefcafe0011"
+        digest = "sha256:" + "a" * 64
+        artifact = Artifact(image="bot-bottle-orchestrator", format=FORMAT_OCI,
+                            platform="linux/amd64", url="reg/img:pin-deadbeef",
+                            digest=digest, version="0.1.6")
+        with patch("bot_bottle.orchestrator.api.install_version", return_value=("0.1.6", "")), \
+             patch("bot_bottle.orchestrator.api.image_inputs") as mi, \
+             patch("bot_bottle.orchestrator.api.published_infra_artifact",
+                   return_value=artifact):
+            mi.INFRA_ROLES = {"bot-bottle-orchestrator": "orchestrator"}
+            mi.inputs_hash = lambda _: hash_val
+            _, payload = dispatch(self.orch, "GET", "/version", b"")
+        self.assertEqual({"source": "published", "digest": digest, "inputs_hash": hash_val},
+                         payload["images"]["bot-bottle-orchestrator"])
+
+    def test_image_error_shows_unknown(self) -> None:
+        with patch("bot_bottle.orchestrator.api.install_version", return_value=("0.1.6", "")), \
+             patch("bot_bottle.orchestrator.api.image_inputs") as mi, \
+             patch("bot_bottle.orchestrator.api.published_infra_artifact",
+                   side_effect=RuntimeError("oops")):
+            mi.INFRA_ROLES = {"bot-bottle-orchestrator": "orchestrator"}
+            mi.inputs_hash = lambda _: "x"
+            _, payload = dispatch(self.orch, "GET", "/version", b"")
+        self.assertEqual({"source": "unknown"},
+                         payload["images"]["bot-bottle-orchestrator"])
+
+
 class TestServerRoundTrip(unittest.TestCase):
     def _raw_status(self, content_length: str, *, authenticated: bool = True) -> int:
         tmp = tempfile.TemporaryDirectory()
@@ -538,6 +611,15 @@ class TestOrchestratorAuth(unittest.TestCase):
 
     def test_health_is_public_even_unauthenticated(self) -> None:
         status, _ = dispatch(self.orch, "GET", "/health", b"", role=None)
+        self.assertEqual(200, status)
+
+    def test_version_is_public_even_unauthenticated(self) -> None:
+        with patch("bot_bottle.orchestrator.api.install_version", return_value=("0.1.6", "")), \
+             patch("bot_bottle.orchestrator.api.image_inputs") as mi, \
+             patch("bot_bottle.orchestrator.api.published_infra_artifact", return_value=None):
+            mi.INFRA_ROLES = {}
+            mi.inputs_hash = lambda _: "0" * 16
+            status, _ = dispatch(self.orch, "GET", "/version", b"", role=None)
         self.assertEqual(200, status)
 
     def test_unauthenticated_denies_every_other_route(self) -> None:

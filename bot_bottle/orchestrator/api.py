@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from ..compat import PROTOCOL_VERSION
 from ..contract.audit import AUDIT_EVENTS_PATH, GATEWAY_PRODUCERS, AuditEvent
 from ..contract.firehose import FIREHOSE_PATH, Capture
 from ..contract.auth import CONTROL_PLANE, ROLE_CLI, ROLES
@@ -26,7 +27,11 @@ from ..contract.http import (
     ORCHESTRATOR_AUTH_HEADER,
     REQUEST_BODY_TIMEOUT_SECONDS,
 )
+from ..engine import install_version
+from .. import image_inputs
+from ..infra_image import published_infra_artifact
 from ..lib import log
+from ..published_artifacts import FORMAT_OCI
 from .audit_events import OrchestratorAudit
 from .audit_sender import AuditSender
 from .hostctl_relay import (
@@ -174,7 +179,7 @@ class ControlPlaneBoundary:
             return
         method = scope["method"]
         route = scope["path"].rstrip("/") or "/"
-        if not (method == "GET" and route == "/health"):
+        if not (method == "GET" and route in {"/health", "/version"}):
             role = self._role(scope)
             if role is None:
                 self.audit.token_rejected(f"{method} {route}", reason_code="invalid_token")
@@ -376,6 +381,28 @@ def create_app(
     @app.get("/gateway")
     def gateway() -> dict[str, object]:
         return orch.gateway_status()
+
+    @app.get("/version")
+    def version() -> dict[str, object]:
+        ver, commit = install_version()
+        images: dict[str, object] = {}
+        for image in image_inputs.INFRA_ROLES:
+            try:
+                artifact = published_infra_artifact(image, FORMAT_OCI)
+                inputs_hash = image_inputs.inputs_hash(image)
+            except Exception:  # noqa: BLE001
+                images[image] = {"source": "unknown"}
+                continue
+            if artifact is not None:
+                images[image] = {
+                    "source": "published",
+                    "digest": artifact.digest,
+                    "inputs_hash": inputs_hash,
+                }
+            else:
+                images[image] = {"source": "local", "inputs_hash": inputs_hash}
+        return {"version": ver, "commit": commit, "protocol": PROTOCOL_VERSION,
+                "images": images}
 
     @app.get("/bottles")
     def bottles() -> dict[str, object]:
