@@ -48,7 +48,13 @@ The control stream (JSON lines):
   `transcript_entries` (`entries`, `first`, `last`, `available`): a page of the agent's
   conversation from its host copy, masked (`transcript_serve`), for running
   and stopped agents alike. `transcript_appended` (`agent_id`, `last`) tells
-  the console new entries landed. `agent_started` and `agent_present` carry
+  the console new entries landed. `agent_working` (`agent_id`, `working`)
+  says when a running agent starts or stops working on a prompt: its harness
+  decides from its transcript (`AgentProvider.working`; Claude's and Codex's
+  turn markers), else it's working while the transcript grew in the last 20s.
+  Sent once per agent on each (re)connect and when it starts or is presented,
+  then on each change. An indicator only, never a security decision.
+  `agent_started` and `agent_present` carry
   `transcript` when the agent's harness keeps one. `transcript_search`
   (`query`, `kinds`) -> `transcript_matches`: the newest matching entries'
   `seq` with a snippet, searched on the host over the masked text.
@@ -347,6 +353,7 @@ class ConsoleLink:
         self.running[agent_id] = bottle
         self.launched.add(bottle)
         self._started_at[agent_id] = time.monotonic()
+        self.transcripts.forget(agent_id)  # its working state goes out afresh
         terminal = await self._open_terminal(agent_id, bottle)
         started: dict[str, Any] = {"type": "agent_started", "agent_id": agent_id,
                                    "bottle": bottle,
@@ -440,6 +447,9 @@ class ConsoleLink:
     async def push_transcripts(self) -> None:
         await self.transcripts.push(list(self.running))
 
+    async def push_working(self) -> None:
+        await self.transcripts.push_working(list(self.running))
+
     async def _audit_query(self, msg: dict[str, Any]) -> None:
         bottle, activation = msg.get("bottle"), msg.get("activation")
         limit = msg.get("limit")
@@ -520,6 +530,7 @@ class ConsoleLink:
             agent_id = terminal_agent_id(bottle, activation)
             self.running[agent_id] = bottle
             self.launched.add(bottle)
+            self.transcripts.forget(agent_id)
             terminal = await self._open_terminal(agent_id, bottle)
             present: dict[str, Any] = {
                 "type": "agent_present", "agent_id": agent_id, "bottle": bottle,
@@ -688,6 +699,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
             await link.discover()
             await link.push_attention()
             await link.push_transcripts()
+            await link.push_working()
 
     watcher = asyncio.create_task(watch())
     try:

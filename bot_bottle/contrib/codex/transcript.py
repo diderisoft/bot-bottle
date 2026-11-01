@@ -12,6 +12,7 @@ copies the history up to that point, so a file has no branches.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -128,3 +129,24 @@ def parse(lines: Iterable[str], *, offset: int = 0, seq: int = 0) -> list[Transc
 
 
 __all__ = ["parse", "parse_line", "transcript_glob"]
+
+
+def working(lines: Iterable[str]) -> bool | None:
+    """Whether Codex is mid-turn, from its newest raw rollout lines: the
+    `task_started` event starts a turn; `task_complete` and `turn_aborted`
+    end it. None when no line says."""
+    state: bool | None = None
+    for line in lines:
+        try:
+            raw = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(raw, dict) or raw.get("type") != "event_msg":
+            continue
+        event = (raw.get("payload") or {}).get("type") if isinstance(raw.get("payload"), dict) \
+            else None
+        if event == "task_started":
+            state = True
+        elif event in ("task_complete", "turn_aborted"):
+            state = False
+    return state

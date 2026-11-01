@@ -275,6 +275,17 @@ class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plug
         whose transcript is a tree. Default: all of them."""
         return entries
 
+    def working(self, lines: Iterable[str]) -> bool | None:
+        """Whether the agent is working on a prompt, from the newest raw
+        lines of its transcript copy (a tail; the first may be cut): True,
+        False, or None when they don't say. None is the default, for a
+        harness without turn markers: the host then counts it as working
+        while its transcript grew within `transcript_serve.WORKING_FOR`.
+
+        An indicator for the console only, never a security decision: the
+        transcript is the agent's own output."""
+        del lines
+
     def credential_refresh_spec(self, plan: "BottlePlan") -> CredentialRefreshSpec | None:
         """How to keep this bottle's forwarded host login current, or None (the
         default) when it forwards none."""

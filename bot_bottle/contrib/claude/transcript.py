@@ -15,6 +15,7 @@ its type alone.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any
@@ -147,3 +148,48 @@ def active_branch(entries_: Sequence[TranscriptEntry]) -> list[TranscriptEntry]:
 
 
 __all__ = ["active_branch", "parse", "parse_line", "project_dir_name", "transcript_glob"]
+
+
+def _prompt_text(raw: dict[str, Any]) -> str | None:
+    """The person's words in a `user` line, or None for one that isn't a
+    prompt (a tool result, injected context, a command, a compaction)."""
+    if raw.get("isMeta") or raw.get("isCompactSummary") or raw.get("isSidechain"):
+        return None
+    content = (raw.get("message") or {}).get("content") if isinstance(raw.get("message"), dict) \
+        else None
+    if isinstance(content, str):
+        return None if _COMMAND.match(content) else content
+    texts = [str(b.get("text", "")) for b in content if isinstance(b, dict)
+             and b.get("type") == "text"] if isinstance(content, list) else []
+    return "".join(texts) if texts else None
+
+
+def working(lines: Iterable[str]) -> bool | None:
+    """Whether Claude is mid-turn, from its newest raw lines: a prompt starts
+    a turn, as does a reply that calls a tool; `turn_duration` (written as a
+    turn ends), a reply that ends the turn (`end_turn`, `stop_sequence`) and
+    an interrupt ("[Request interrupted…]") end it. Tool results, bookkeeping
+    and subagents' (sidechain) lines don't change it. None when no line says."""
+    state: bool | None = None
+    for line in lines:
+        try:
+            raw = json.loads(line)
+        except ValueError:
+            continue  # a cut first line, or a partial last one
+        if not isinstance(raw, dict) or raw.get("isSidechain"):
+            continue
+        kind = raw.get("type")
+        if kind == "system" and raw.get("subtype") == "turn_duration":
+            state = False
+        elif kind == "assistant":
+            stop = (raw.get("message") or {}).get("stop_reason") \
+                if isinstance(raw.get("message"), dict) else None
+            if stop == "tool_use":
+                state = True
+            elif stop in ("end_turn", "stop_sequence"):
+                state = False
+        elif kind == "user":
+            text = _prompt_text(raw)
+            if text is not None:
+                state = not text.lstrip().startswith("[Request interrupted")
+    return state

@@ -169,6 +169,15 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
   `transcript_search` finds the newest entries containing a query
   (case-insensitive, over the masked text, so a query can't confirm a
   secret), optionally of given kinds, with a snippet around each match.
+- `agent_working` tells the console whether a running agent is working on
+  a prompt, sent when that changes (and once per agent on each connect).
+  The harness decides from the newest lines of its copy
+  (`AgentProvider.working`): Claude's turn ends at `turn_duration` or a reply
+  that ends the turn, and starts with a prompt or a tool call; Codex's runs
+  from `task_started` to `task_complete` or `turn_aborted`. A harness without
+  markers (the default) counts as working while its copy grew within the last
+  20 seconds. It's the agent's own output, so it's an indicator for the
+  console only, never a security decision.
 - A restarted daemon resumes each re-adopted session's copies from the
   saved offsets, exec'ing through `BottleBackend.attach_adopted` (which
   never tears the bottle down). Copies of sessions that ended while it was

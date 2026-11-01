@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -29,6 +30,12 @@ if TYPE_CHECKING:
     from ...transcript import TranscriptEntry
 
 PAGE = 50
+# Whether an agent is working on a prompt: its harness says from the newest
+# lines of its copy (`AgentProvider.working`, reading `WORKING_TAIL` bytes),
+# else it counts as working while the copy grew within `WORKING_FOR` seconds.
+# An indicator for the console only, never a security decision.
+WORKING_FOR = 20.0
+WORKING_TAIL = 256 * 1024
 MAX_PAGE = 200
 MAX_MATCHES = 100
 SNIPPET = 60  # characters of context either side of a match
@@ -206,6 +213,33 @@ class TranscriptReader:
             _read(p).get("agent_id") == agent_id for p in root.glob("*/*/follow.json"))
 
 
+def is_working(agent_id: str, now: float) -> bool | None:
+    """Whether the agent is working on a prompt (see `WORKING_FOR`), or None
+    without a copy to read."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...agent_provider import get_provider
+    copy = find_copy(agent_id)
+    if copy is None:
+        return None
+    try:
+        with copy.path.open("rb") as f:
+            size = f.seek(0, 2)
+            f.seek(max(0, size - WORKING_TAIL))
+            data = f.read()
+        grew = copy.path.stat().st_mtime
+    except OSError:
+        return None
+    lines = data.decode("utf-8", errors="replace").splitlines()
+    if size > WORKING_TAIL and lines:
+        lines = lines[1:]  # cut by the tail
+    try:
+        said = get_provider(copy.harness).working(lines)
+    except Exception as e:  # pylint: disable=broad-exception-caught  # fall back to growth
+        log.debug(f"transcripts: {copy.harness or '?'} can't say if {agent_id} is working: {e}")
+        said = None
+    return said if said is not None else now - grew < WORKING_FOR
+
+
 class TranscriptLink:
     """The console link's side: `transcript` and `transcript_search`
     requests, and `transcript_appended` when an agent's conversation grows."""
@@ -218,6 +252,9 @@ class TranscriptLink:
         self._send = send
         # console agent id -> the last entry the console was told of
         self._last: dict[str, int] = {}
+        # console agent id -> whether the console was told it's working; per
+        # link, so a reconnect tells it each again
+        self._working: dict[str, bool] = {}
 
     async def available(self, agent_id: str) -> bool:
         return await asyncio.to_thread(self.reader.has_transcript, agent_id)
@@ -255,5 +292,27 @@ class TranscriptLink:
                                   "last": last})
 
 
-__all__ = ["Copy", "MAX_PAGE", "PAGE", "TranscriptLink", "TranscriptReader", "find_copy",
-           "mask"]
+    async def push_working(self, agent_ids: Iterable[str], now: float | None = None) -> None:
+        """Tell the console when one of these agents starts or stops working
+        on a prompt (`agent_working`); each agent's state once per link, then
+        only its changes."""
+        at = time.time() if now is None else now
+        for agent_id in agent_ids:
+            try:
+                working = await asyncio.to_thread(is_working, agent_id, at)
+            except Exception as e:  # pylint: disable=broad-exception-caught  # retried next round
+                log.debug(f"remote: can't tell if {agent_id} is working: {e}")
+                continue
+            if working is None or self._working.get(agent_id) == working:
+                continue
+            self._working[agent_id] = working
+            await self._send({"type": "agent_working", "agent_id": agent_id, "working": working})
+
+    def forget(self, agent_id: str) -> None:
+        """Drop what the console was told of the agent (it stopped, or was
+        presented again), so its state is sent afresh."""
+        self._working.pop(agent_id, None)
+
+
+__all__ = ["Copy", "MAX_PAGE", "PAGE", "TranscriptLink", "TranscriptReader", "WORKING_FOR",
+           "find_copy", "is_working", "mask"]

@@ -396,6 +396,9 @@ class ClaudeAgentProvider(AgentProvider):
     def active_entries(self, entries: list[TranscriptEntry]) -> list[TranscriptEntry]:
         return transcript.active_branch(entries)
 
+    def working(self, lines: Iterable[str]) -> bool | None:
+        return transcript.working(lines)
+
 
 def _exec(bottle: "Bottle", script: str, error: str) -> None:
     result = bottle.exec(script, user="root")

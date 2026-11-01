@@ -412,6 +412,9 @@ class CodexAgentProvider(AgentProvider):
                          seq: int = 0) -> list[TranscriptEntry]:
         return transcript.parse(lines, offset=offset, seq=seq)
 
+    def working(self, lines: Iterable[str]) -> bool | None:
+        return transcript.working(lines)
+
 
 def _exec(bottle: "Bottle", script: str, error: str) -> None:
     result = bottle.exec(script, user="root")
