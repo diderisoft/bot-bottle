@@ -31,7 +31,7 @@ from ...transcript import TranscriptEntry
 from . import transcript
 from ...util import slugify
 from .claude_auth import (
-    claude_host_access_token, claude_login_location, read_claude_host_login,
+    claude_auth_path, claude_host_access_token, claude_login_location, read_claude_host_login,
 )
 
 
@@ -298,6 +298,9 @@ class ClaudeAgentProvider(AgentProvider):
         if CLAUDE_HOST_CREDENTIAL_TOKEN_REF not in plan.agent_provision.provisioned_env:
             return None
         return CredentialRefreshSpec("claude", (CLAUDE_HOST_CREDENTIAL_TOKEN_REF,))
+
+    def host_login_paths(self, host_env: Mapping[str, str] | None = None) -> tuple[Path, ...]:
+        return (claude_auth_path(host_env),)
 
     def refresh_credentials(self, spec: CredentialRefreshSpec, bottle: "Bottle",
                             host_env: Mapping[str, str] | None = None) -> CredentialRefresh:

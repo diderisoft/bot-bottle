@@ -30,6 +30,7 @@ from ...transcript import TranscriptEntry
 from . import transcript
 from .codex_auth import (
     auth_json_expiry,
+    codex_auth_path,
     codex_dummy_auth_json,
     codex_host_access_token,
     codex_login_location,
@@ -371,6 +372,9 @@ class CodexAgentProvider(AgentProvider):
             or f"{plan.guest_home}/.codex"
         return CredentialRefreshSpec("codex", (CODEX_HOST_CREDENTIAL_TOKEN_REF,),
                                      guest_dir=auth_dir)
+
+    def host_login_paths(self, host_env: Mapping[str, str] | None = None) -> tuple[Path, ...]:
+        return (codex_auth_path(host_env),)
 
     def refresh_credentials(self, spec: CredentialRefreshSpec, bottle: "Bottle",
                             host_env: Mapping[str, str] | None = None) -> CredentialRefresh:

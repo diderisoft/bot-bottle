@@ -10,14 +10,24 @@ which the gateway reads per request, so the bottle keeps working without a
 relaunch. A host login that's missing, expired or close to expiring is
 reported (log and audit) with what to run on the host; bot-bottle never spends
 the host's refresh token itself (#769).
+
+The host's CLI revokes the old access token the moment it rotates its login,
+so waiting for the timer leaves bottles on a revoked token (401s) for up to
+REFRESH_SECONDS. So the host controller also watches the files each provider
+names (`host_login_paths`) every WATCH_SECONDS, and refreshes the bottles
+forwarding that harness's login as soon as one changes and reads whole (a
+half-written file waits for the next look). The timer stays, for logins kept
+outside a file (the macOS Keychain) and as a backstop.
 """
 
 from __future__ import annotations
 
+import json
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ...errors import HostLoginError
@@ -28,6 +38,8 @@ if TYPE_CHECKING:
     from ...backend.adoption import AdoptedCredentials
 
 REFRESH_SECONDS = 300.0
+# How often the host login files are looked at for a rotation.
+WATCH_SECONDS = 5.0
 READ_TIMEOUT_SECONDS = 60.0  # reading the bottle's secret from inside it
 # How long before the host login expires to start warning.
 WARN_BEFORE = timedelta(hours=6)
@@ -37,6 +49,39 @@ _ENV_VAR_SECRET_FILE = "/run/bot-bottle/env-var-secret"
 
 # (registry id, egress slot, value, env_var_secret) -> pushed, or raises.
 Push = Callable[[str, str, str, str], None]
+# A host login's files -> what identifies their current contents (None: absent).
+Signature = tuple[tuple[int, int] | None, ...]
+
+
+def _signature(paths: tuple[Path, ...]) -> Signature:
+    out: list[tuple[int, int] | None] = []
+    for path in paths:
+        try:
+            st = path.stat()
+        except OSError:
+            out.append(None)
+        else:
+            out.append((st.st_mtime_ns, st.st_size))
+    return tuple(out)
+
+
+def _whole(paths: tuple[Path, ...]) -> bool:
+    """Whether every present file reads as JSON: the CLI rewrites them, and a
+    look mid-write mustn't count as a (broken) new login."""
+    for path in paths:
+        try:
+            json.loads(path.read_text())
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError):
+            return False
+    return True
+
+
+def _login_paths(harness: str) -> tuple[Path, ...]:
+    # pylint: disable-next=import-outside-toplevel
+    from ...agent_provider import get_provider
+    return get_provider(harness).host_login_paths()
 
 
 @dataclass
@@ -65,12 +110,19 @@ class CredentialRefresher:
     """The running bottles whose forwarded host login is kept current."""
 
     def __init__(self, push: Push, *, audit: object | None = None,
-                 clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> None:
+                 clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+                 login_paths: Callable[[str], tuple[Path, ...]] = _login_paths) -> None:
         self._push = push
         self._audit = audit
         self._clock = clock
+        self._login_paths = login_paths
         self._targets: dict[str, _Target] = {}
         self._lock = threading.Lock()
+        # One refresh at a time: the timer, the watch and the console's
+        # Refresh credentials share each target's `pushed`.
+        self._refreshing = threading.Lock()
+        # Each harness's login files as last seen whole, to spot a rotation.
+        self._seen: dict[str, Signature] = {}
         self._stop = threading.Event()
 
     def add(self, identity: str, credentials: "AdoptedCredentials", *, registry_id: str,
@@ -91,7 +143,46 @@ class CredentialRefresher:
         def loop() -> None:
             while not self._stop.wait(REFRESH_SECONDS):
                 self.refresh_all()
+
+        def watch() -> None:
+            while not self._stop.wait(WATCH_SECONDS):
+                try:
+                    self.watch_once()
+                except Exception as e:  # pylint: disable=broad-exception-caught  # keep watching
+                    log.warn(f"host controller: watching the host logins failed: {e}")
         threading.Thread(target=loop, daemon=True, name="hostctl-credentials").start()
+        threading.Thread(target=watch, daemon=True, name="hostctl-credentials-watch").start()
+
+    def watch_once(self) -> list[str]:
+        """One look at the host login files of the harnesses running bottles
+        forward: refresh, now, the bottles of each harness whose files
+        changed since last seen whole. The bottles refreshed."""
+        with self._lock:
+            targets = list(self._targets.values())
+        refreshed: list[str] = []
+        for harness in sorted({t.credentials.harness for t in targets}):
+            paths = self._login_paths(harness)
+            if not paths:
+                continue
+            signature = _signature(paths)
+            before = self._seen.get(harness)
+            if signature == before:
+                continue
+            if not _whole(paths):
+                continue  # mid-write: look again next time
+            self._seen[harness] = signature
+            if before is None:
+                continue  # first look: what the bottles launched with
+            for target in targets:
+                if target.credentials.harness != harness:
+                    continue
+                try:
+                    self.refresh(target)
+                except Exception as e:  # pylint: disable=broad-exception-caught  # one bottle mustn't stop the rest
+                    self._warn(target, f"couldn't refresh its {harness} login: {e}")
+                    continue
+                refreshed.append(target.identity)
+        return refreshed
 
     def stop(self) -> None:
         self._stop.set()
@@ -124,6 +215,10 @@ class CredentialRefresher:
 
     def refresh(self, target: _Target) -> dict[str, object]:
         """One refresh of `target`: what `refresh_now` reports."""
+        with self._refreshing:
+            return self._refresh(target)
+
+    def _refresh(self, target: _Target) -> dict[str, object]:
         # pylint: disable-next=import-outside-toplevel
         from ...agent_provider import CredentialRefreshSpec, get_provider
         creds = target.credentials
@@ -173,4 +268,5 @@ class CredentialRefresher:
                    harness=target.credentials.harness, **payload)
 
 
-__all__ = ["CredentialRefresher", "REFRESH_SECONDS", "WARN_BEFORE", "read_env_var_secret"]
+__all__ = ["CredentialRefresher", "REFRESH_SECONDS", "WARN_BEFORE", "WATCH_SECONDS",
+           "read_env_var_secret"]

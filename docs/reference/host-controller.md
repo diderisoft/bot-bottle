@@ -202,6 +202,16 @@ each listening orchestrator in turn, treating a 401/403, a 404 or no answer as
 placeholder `auth.json` in the guest carries the real token's expiry, so it's
 rewritten when that moves.
 
+The host's CLI revokes the old access token the moment it rotates its login,
+so the timer alone left bottles on a revoked token (`401 OAuth access token has
+been revoked`) for up to five minutes. The host controller also watches the
+files each provider names (`AgentProvider.host_login_paths`: Claude's
+`~/.claude/.credentials.json`, Codex's `auth.json`) every five seconds. When
+one changes and reads whole (a half-written file waits for the next look), the
+bottles forwarding that harness's login are refreshed at once, through the
+same path. The timer stays as the backstop, and is all a login kept outside a
+file gets (the macOS Keychain).
+
 This covers bottles the host controller launched and those it adopted after a
 restart: the adoption record keeps which egress slots carry the login (nothing
 secret), and the bottle's `ENV_VAR_SECRET` is read back from inside it. A host

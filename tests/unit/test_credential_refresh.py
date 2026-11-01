@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -156,6 +157,97 @@ class TestRefreshNow(TestRefresher):
         self.refresher._push = push  # pylint: disable=protected-access
         self.refresher.add("b1", CREDS, registry_id="r1", bottle=cast(Any, _Bottle()))
         self.assertIn("orchestrator down", str(self.refresher.refresh_now("b1")["error"]))
+
+
+class TestWatch(unittest.TestCase):
+    """A rotated host login reaches the bottles at the next look at its file,
+    not at the timer (the CLI revokes the old token as it rotates)."""
+
+    CODEX = AdoptedCredentials("codex", (CODEX_HOST_CREDENTIAL_TOKEN_REF,),
+                               slots={CODEX_HOST_CREDENTIAL_TOKEN_REF: ("EGRESS_TOKEN_0",)})
+
+    def setUp(self) -> None:
+        self.pushed: list[tuple[str, str, str, str]] = []
+        self.audit = mock.Mock()
+        self.provider = _Provider()
+        self.enterContext(mock.patch("bot_bottle.agent_provider.get_provider",
+                                     return_value=self.provider))
+        def push(registry_id: str, slot: str, value: str, key: str) -> None:
+            self.pushed.append((registry_id, slot, value, key))
+        self.refresher = CredentialRefresher(push, audit=self.audit, clock=lambda: NOW)
+        self.enterContext(mock.patch.object(credential_refresh.log, "warn"))
+        self.enterContext(mock.patch.object(credential_refresh.log, "info"))
+        tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
+        self.addCleanup(tmp.cleanup)
+        self.claude_file = Path(tmp.name) / "claude.json"
+        self.codex_file = Path(tmp.name) / "codex.json"
+        files = {"claude": (self.claude_file,), "codex": (self.codex_file,), "pi": ()}
+        self.stamp = 1_700_000_000_000_000_000
+        def login_paths(harness: str) -> tuple[Path, ...]:
+            return files[harness]
+        self.refresher = CredentialRefresher(self.refresher._push, audit=self.audit,  # pylint: disable=protected-access
+                                             clock=lambda: NOW, login_paths=login_paths)
+        self.write(self.claude_file, "tok-0")
+        self.claude_bottle, self.codex_bottle = _Bottle(), _Bottle()
+        self.refresher.add("c1", CREDS, registry_id="r1", bottle=cast(Any, self.claude_bottle),
+                           env_var_secret="key", current={REF: "tok-0"})
+
+    def write(self, path: Path, token: str, *, partial: bool = False) -> None:
+        text = json.dumps({"claudeAiOauth": {"accessToken": token}})
+        path.write_text(text[:-3] if partial else text)
+        # A distinct mtime even when written within the filesystem's resolution.
+        self.stamp += 1_000_000_000
+        os.utime(path, ns=(self.stamp, self.stamp))
+
+    def test_the_first_look_only_notes_the_files(self) -> None:
+        self.assertEqual([], self.refresher.watch_once())
+        self.assertEqual([], self.pushed)
+
+    def test_a_rotation_reaches_its_harness_bottles_at_once(self) -> None:
+        self.refresher.add("x1", self.CODEX, registry_id="r2", bottle=cast(Any, self.codex_bottle),
+                           env_var_secret="key", current={CODEX_HOST_CREDENTIAL_TOKEN_REF: "x"})
+        self.write(self.codex_file, "x")
+        self.refresher.watch_once()
+        self.provider.result = CredentialRefresh({REF: "tok-1"}, NOW + timedelta(days=5))
+        self.write(self.claude_file, "tok-1")
+        self.assertEqual(["c1"], self.refresher.watch_once())
+        self.assertEqual([("r1", "EGRESS_TOKEN_0", "tok-1", "key"),
+                          ("r1", "EGRESS_TOKEN_1", "tok-1", "key")], self.pushed)
+        self.audit.credential_event.assert_called_once()
+        self.assertEqual("credential.renewed", self.audit.credential_event.call_args.args[0])
+        # Nothing new: nothing more.
+        self.assertEqual([], self.refresher.watch_once())
+
+    def test_a_half_written_file_waits_for_the_next_look(self) -> None:
+        self.refresher.watch_once()
+        self.write(self.claude_file, "tok-1", partial=True)
+        self.assertEqual([], self.refresher.watch_once())
+        self.assertEqual([], self.pushed)
+        self.provider.result = CredentialRefresh({REF: "tok-1"}, NOW + timedelta(days=5))
+        self.write(self.claude_file, "tok-1")
+        self.assertEqual(["c1"], self.refresher.watch_once())
+        self.assertEqual(2, len(self.pushed))
+
+    def test_an_unchanged_token_isnt_pushed(self) -> None:
+        # The CLI rewrote the file (a new expiry, say) but kept the token.
+        self.refresher.watch_once()
+        self.provider.result = CredentialRefresh({REF: "tok-0"}, NOW + timedelta(days=6))
+        self.write(self.claude_file, "tok-0")
+        self.refresher.watch_once()
+        self.assertEqual([], self.pushed)
+
+    def test_a_harness_without_login_files_is_left_to_the_timer(self) -> None:
+        pi = AdoptedCredentials("pi", ("PI_REF",), slots={"PI_REF": ("EGRESS_TOKEN_0",)})
+        self.refresher.remove("c1")
+        self.refresher.add("p1", pi, registry_id="r3", bottle=cast(Any, _Bottle()))
+        self.assertEqual([], self.refresher.watch_once())
+        self.assertEqual([], self.pushed)
+
+    def test_the_providers_name_their_login_files(self) -> None:
+        env = {"HOME": "/h", "CODEX_HOME": "/c"}
+        self.assertEqual((Path("/h/.claude/.credentials.json"),),
+                         ClaudeAgentProvider().host_login_paths(env))
+        self.assertEqual((Path("/c/auth.json"),), CodexAgentProvider().host_login_paths(env))
 
 
 class TestAdoptionRecord(unittest.TestCase):

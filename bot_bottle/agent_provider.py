@@ -292,6 +292,14 @@ class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plug
         del plan
         return None
 
+    def host_login_paths(self, host_env: Mapping[str, str] | None = None) -> tuple[Path, ...]:
+        """The host files holding the login `refresh_credentials` reads, so
+        the host controller can push a rotated login as soon as the host's
+        CLI writes it, not only on its timer. None: the timer alone (a login
+        kept outside a file, like the macOS Keychain, falls back to it too)."""
+        del host_env
+        return ()
+
     def refresh_credentials(self, spec: CredentialRefreshSpec, bottle: "Bottle",
                             host_env: Mapping[str, str] | None = None) -> CredentialRefresh:
         """Re-read the host login `spec` describes and bring the bottle's own
