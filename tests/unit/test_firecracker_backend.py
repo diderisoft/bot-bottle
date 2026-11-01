@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
+import tempfile
 import unittest
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -20,6 +21,7 @@ from bot_bottle.contract.hostctl import Settings
 from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.backend.firecracker import firecracker_vm, netpool
 from bot_bottle.contract.hostctl import InfraSettings, Settings
+from bot_bottle.backend.firecracker import bottle as fc_bottle_mod
 from bot_bottle.backend.firecracker.bottle import FirecrackerBottle
 
 
@@ -309,6 +311,52 @@ class TestAdoptedSlots(unittest.TestCase):
                 again.close()
                 # No run dir: nothing to hold.
                 self.assertIsNone(backend.hold_adopted("gone"))
+
+
+class TestLongAgentArgs(unittest.TestCase):
+    """dropbear refuses an exec request over MAX_CMD_LEN (9000 bytes): a long
+    task prompt on the agent's command line made ssh exit 255 at once (#866).
+    `agent_command` stages a long argument as a guest file instead."""
+
+    PROMPT = ("Implement it.\nIt's \"quoted\", costs $5, runs `ls` and \\n escapes;\n"
+              + "x" * 13000 + "\nend")
+
+    def _staged(self, tmp: str) -> tuple[FirecrackerBottle, list[str], dict[str, str]]:
+        bottle = _bottle()
+        copied: dict[str, str] = {}
+
+        def cp_in(host_path: str, guest_path: str) -> None:
+            copied[guest_path] = Path(host_path).read_text(encoding="utf-8")
+
+        bottle.cp_in = cp_in  # type: ignore[method-assign]
+        with patch.object(fc_bottle_mod, "_GUEST_ARGS_DIR", tmp):
+            command, _ = bottle.agent_command(["-p", self.PROMPT])
+        return bottle, command, copied
+
+    def test_a_long_prompt_is_staged_and_the_command_fits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _, command, copied = self._staged(tmp)
+        self.assertEqual([self.PROMPT], list(copied.values()))
+        remote = " ".join(command[command.index("--") + 1:])
+        self.assertLess(len(remote.encode()), 9000)
+        self.assertNotIn("x" * 100, remote)
+
+    def test_the_guest_shell_reads_it_back_exactly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _, command, copied = self._staged(tmp)
+            (path, value), = copied.items()
+            Path(path).write_text(value, encoding="utf-8")
+            token = next(t for t in command if t.startswith('"$(cat '))
+            got = subprocess.run(["sh", "-c", f"printf %s {token}"],
+                                 capture_output=True, text=True, check=True).stdout
+        self.assertEqual(self.PROMPT, got)
+
+    def test_short_args_stay_inline(self) -> None:
+        bottle = _bottle()
+        bottle.cp_in = MagicMock()  # type: ignore[method-assign]
+        command, _ = bottle.agent_command(["-p", "a short task"])
+        bottle.cp_in.assert_not_called()
+        self.assertIn("'a short task'", command)
 
 
 class TestBottleAgentArgv(unittest.TestCase):

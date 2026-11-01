@@ -304,6 +304,27 @@ class TestCmdStartDefaults(unittest.TestCase):
         self._bottles.assert_not_called()
         self.assertEqual(("dev", "pi"), self._launch_mock.call_args[0][0].bottles)
 
+    def test_label_color_and_prompt_are_used(self):
+        # They were taken only with --headless (#866).
+        manifest = _make_manifest(["pi"], ["pi", "dev"])
+        with patch("bot_bottle.cli.commands.start.ManifestIndex.resolve", return_value=manifest):
+            self.assertEqual(0, start_mod.cmd_start(
+                ["pi", "--bottle", "dev", "--label", "suggest", "--color", "green",
+                 "--prompt", "build it"]))
+        request = self._launch_mock.call_args[0][0]
+        self.assertEqual(("suggest", "green", "build it", False),
+                         (request.label, request.color, request.prompt, request.headless))
+        self._modal.assert_not_called()
+
+    def test_pick_with_a_label_asks_only_for_the_image_mode(self):
+        self._policy.return_value = "fresh"
+        manifest = _make_manifest(["pi"], ["pi", "dev"])
+        with patch("bot_bottle.cli.commands.start.ManifestIndex.resolve", return_value=manifest):
+            self.assertEqual(0, start_mod.cmd_start(["pi", "--pick", "--label", "mine"]))
+        self._modal.assert_not_called()
+        self.assertEqual(("mine", "fresh"), (self._launch_mock.call_args[0][0].label,
+                                             self._launch_mock.call_args[0][0].image_policy))
+
     def test_only_the_bottle_picker_shows(self):
         request = self.start()
         self._bottles.assert_called_once()

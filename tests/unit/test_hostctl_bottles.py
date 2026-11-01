@@ -44,6 +44,15 @@ _TMUX_VERSION = sessions.tmux_version() if shutil.which("tmux") else None
 _TMUX_OK = _TMUX_VERSION is not None and _TMUX_VERSION >= sessions.MIN_TMUX_VERSION
 
 
+
+
+def _without_last_output(state: Any) -> Any:
+    """A session state with its exit's `last_output` (the failed pane's last
+    lines, whatever the fake agent printed) checked and dropped."""
+    ended = dict(state["exit"])
+    assert isinstance(ended.pop("last_output"), str)
+    return {**state, "exit": ended}
+
 class TestLaunchRequestSchema(unittest.TestCase):
     def test_round_trips(self) -> None:
         request = LaunchRequest(agent="demo", bottles=("dev", "extra"), label="L", color="red",
@@ -296,7 +305,7 @@ class TestHeldBottles(_Root):
         # The exit is recorded only after the holder tore the bottle down.
         self.assertTrue(self.backend.torn_down.is_set())
         self.assertEqual({"running": False, "exit": {"status": 4, "signal": ""}},
-                         self.service.session_state("b1"))
+                         _without_last_output(self.service.session_state("b1")))
         self.assertEqual("--start", self.backend.bottle.argv[-1])
         # claude exited non-zero, so its state is kept for `resume`.
         self.assertTrue(bottle_state.is_preserved("b1"))
@@ -452,8 +461,9 @@ class TestBottleRoutes(_Root):
         self.assertTrue(final["value"].pop("activation"))
         self.assertEqual({"bottle": "h1", "session": "h1"}, final["value"])
         self.assertEqual(sessions.ExitStatus(4), self.manager.wait_exit("h1", timeout=15))
+        code, state = self.call("GET", f"{SESSIONS_PATH}/h1")
         self.assertEqual((200, {"running": False, "exit": {"status": 4, "signal": ""}}),
-                         self.call("GET", f"{SESSIONS_PATH}/h1"))
+                         (code, _without_last_output(state)))
 
         self.backend.bottle.script = "sleep 30"
         self.backend.torn_down.clear()

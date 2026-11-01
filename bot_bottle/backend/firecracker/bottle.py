@@ -1,7 +1,10 @@
 """Bottle handle for a Firecracker microVM, over SSH to the guest's dropbear.
 
 `exec` pipes a script over stdin, `cp_in` streams a tar, and `agent_command`
-uses `ssh -t` (which forwards SIGWINCH). Commands run as `node` via `runuser` with
+uses `ssh -t` (which forwards SIGWINCH). dropbear refuses an exec request
+longer than its `MAX_CMD_LEN` (9000 bytes), so `agent_command` stages any long
+argument (a task prompt) as a file in the guest and the guest shell reads it
+back. Commands run as `node` via `runuser` with
 HOME/USER/PATH and the bottle env set per invocation, since the VM has no
 process env of its own.
 """
@@ -12,6 +15,7 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Mapping, cast
 
@@ -23,6 +27,11 @@ from . import util
 
 
 _HOME_FOR = {"node": "/home/node", "root": "/root"}
+# Arguments longer than this go to a guest file, so the agent's command stays
+# far under dropbear's MAX_CMD_LEN (9000 bytes) however long the prompt is.
+LONG_ARG_BYTES = 1024
+# Where they go: root's (the ssh user's) home, unreadable to the agent.
+_GUEST_ARGS_DIR = "/root/.bot-bottle-args"
 # The VM has no image `ENV`. A built image's is recorded with its rootfs and
 # applied per command (`image_env`); a published base (a built-in harness)
 # has none, so every built-in harness's `ENV PATH` entries must be here (a
@@ -111,15 +120,35 @@ class FirecrackerBottle(Bottle):
                   self.agent_executable, *full_argv]
         return remote
 
-    def agent_argv(self, argv: list[str], *, tty: bool = True) -> list[str]:
+    def agent_argv(self, argv: list[str], *, tty: bool = True,
+                   stage_long: bool = False) -> list[str]:
         # ssh joins the remote args into one line the guest shell re-parses, so
-        # quote each token.
-        remote = self._agent_remote_argv(argv)
-        return [*self._ssh(tty=tty), "--", *(shlex.quote(t) for t in remote)]
+        # quote each token. With `stage_long`, a long token is written to a
+        # guest file and read back by the guest shell as one argument.
+        tokens: list[str] = []
+        for i, token in enumerate(self._agent_remote_argv(argv)):
+            if stage_long and len(token.encode()) > LONG_ARG_BYTES:
+                path = self._stage_arg(f"arg{i}", token)
+                tokens.append(f'"$(cat {shlex.quote(path)})"')
+            else:
+                tokens.append(shlex.quote(token))
+        return [*self._ssh(tty=tty), "--", *tokens]
+
+    def _stage_arg(self, name: str, value: str) -> str:
+        """Write `value` to a guest file only root can read; its path."""
+        path = f"{_GUEST_ARGS_DIR}/{name}"
+        with tempfile.TemporaryDirectory(prefix="bot-bottle-arg.") as tmp:
+            host = Path(tmp) / name
+            # `$(cat …)` drops trailing newlines; nothing else changes.
+            host.write_text(value, encoding="utf-8")
+            host.chmod(0o600)
+            self.cp_in(str(host), path)
+        return path
 
     def agent_command(self, argv: list[str]) -> tuple[list[str], dict[str, str]]:
         command = agent_shell_command(
-            self.agent_argv(argv, tty=True), self.terminal_title, self.terminal_color)
+            self.agent_argv(argv, tty=True, stage_long=True),
+            self.terminal_title, self.terminal_color)
         return command, {}
 
     def exec(self, script: str, *, user: str = "node", timeout: float | None = None,

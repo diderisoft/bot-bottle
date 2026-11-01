@@ -204,6 +204,8 @@ class SessionManager:
         self._finishers = finishers
         self._specs: dict[str, tuple[list[str], dict[str, str]]] = {}
         self._exits: dict[str, ExitStatus] = {}
+        # What a failed session's pane last showed, kept once it's killed.
+        self._last_output: dict[str, str] = {}
         self._finishing: set[str] = set()
         self._cond = threading.Condition()
 
@@ -290,6 +292,14 @@ class SessionManager:
             log.warn(f"tmux session {session_id} died but has no record; leaving it")
             return
         finisher = self._finishers.get(record.kind)
+        if exit_status.status or exit_status.signal:
+            last = self._capture_tail(session_id)
+            if last:
+                log.warn(f"session {session_id} ended (exit {exit_status.status}"
+                         f"{' ' + exit_status.signal if exit_status.signal else ''}); "
+                         f"its last output:\n{last}")
+                with self._cond:
+                    self._last_output[session_id] = last
         try:
             if finisher is not None:
                 finisher(record, exit_status)
@@ -312,6 +322,20 @@ class SessionManager:
     def exit_status(self, session_id: str) -> ExitStatus | None:
         with self._cond:
             return self._exits.get(session_id)
+
+    def last_output(self, session_id: str) -> str:
+        """What a session that failed last showed (its pane's last lines), or
+        ""."""
+        with self._cond:
+            return self._last_output.get(session_id, "")
+
+    def _capture_tail(self, session_id: str, lines: int = 20) -> str:
+        """The dead pane's last non-blank lines, before it's killed."""
+        proc = subprocess.run(
+            tmux("capture-pane", "-p", "-S", f"-{lines * 3}", "-t", f"={session_id}:"),
+            capture_output=True, text=True, errors="replace", check=False)
+        shown = [ln.rstrip() for ln in proc.stdout.splitlines() if ln.strip()]
+        return "\n".join(shown[-lines:])[-2000:]
 
     def kill(self, session_id: str) -> None:
         """Kill the tmux session; the agent gets SIGHUP and the exit is

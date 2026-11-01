@@ -654,7 +654,9 @@ class BottleService:
         status = self._sessions.exit_status(session_id)
         return {
             "running": status is None and self._sessions.exists(session_id),
-            "exit": None if status is None else {"status": status.status, "signal": status.signal},
+            "exit": None if status is None else {
+                "status": status.status, "signal": status.signal,
+                "last_output": self._sessions.last_output(session_id)},
         }
 
     def list(self) -> list[dict[str, object]]:

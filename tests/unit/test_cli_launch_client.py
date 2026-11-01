@@ -167,6 +167,55 @@ class TestLaunch(unittest.TestCase):
             self.launch(_client([None], []))
 
 
+class TestHeadlessWithoutATerminal(TestLaunch):
+    """`--headless` from a service, CI or a webhook: no terminal to attach to,
+    so it reports the session and returns (#866)."""
+
+    HEADLESS = LaunchRequest(agent="demo", headless=True, prompt="do it", assume_yes=True)
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.enterContext(mock.patch.object(launch_client, "_stdin_is_tty", return_value=False))
+        self.enterContext(mock.patch.object(launch_client.time, "sleep"))
+
+    def test_a_running_agent_is_reported_and_left_running(self) -> None:
+        client = _client([self.ready], [])
+        client.get.side_effect = None
+        client.get.return_value = {"running": True, "exit": None}
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), \
+                mock.patch.object(launch_client, "HEADLESS_WATCH_SECONDS", 0.05):
+            self.assertEqual(0, self.launch(client, self.HEADLESS))
+        self.run_attach.assert_not_called()
+        self.assertEqual("b1\n", out.getvalue())
+
+    def test_an_agent_that_fails_at_once_says_why(self) -> None:
+        failed = {"running": False, "exit": {"status": 255, "signal": "",
+                                             "last_output": "dropbear: command too long"}}
+        client = _client([self.ready], [failed])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(255, self.launch(client, self.HEADLESS))
+        self.run_attach.assert_not_called()
+        self.assertIn("ended at once (exit 255)", err.getvalue())
+        self.assertIn("dropbear: command too long", err.getvalue())
+
+    def test_with_a_terminal_it_still_attaches(self) -> None:
+        client = _client([self.ready], [{"running": False, "exit": {"status": 0, "signal": ""}}])
+        with mock.patch.object(launch_client, "_stdin_is_tty", return_value=True):
+            self.assertEqual(0, self.launch(client, self.HEADLESS))
+        self.run_attach.assert_called_once()
+
+
+class TestAFailedSessionShowsItsLastOutput(TestLaunch):
+    def test_attached(self) -> None:
+        failed = {"running": False, "exit": {"status": 1, "signal": "", "last_output": "boom"}}
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(1, self.launch(_client([self.ready], [failed])))
+        self.assertIn("its last output:\nboom", err.getvalue())
+
+
 class TestControllerRestartPrompt(unittest.TestCase):
     """#679: an updated controller holding bottles is restarted only on a yes."""
 

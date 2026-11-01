@@ -13,7 +13,6 @@ the inherited PTY. `--dry-run` prepares locally and prints the preflight.
 from __future__ import annotations
 
 import argparse
-import io
 import os
 import shutil
 import sys
@@ -86,17 +85,19 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
     parser.add_argument(
         "--label",
         default=None,
-        help="bottle label / terminal title (--headless default: agent name)",
+        help="bottle label / terminal title (default: the agent's name); skips "
+             "asking for one with --pick",
     )
     parser.add_argument(
         "--color",
         default=None,
-        help="bottle color, one of the 16 ANSI color names (--headless default: none)",
+        help="bottle color, one of the 16 ANSI color names (default: none)",
     )
     parser.add_argument(
         "--prompt",
         default=None,
-        help="initial task prompt delivered to the agent (required with --headless)",
+        help="the agent's task: its first message in an interactive session, or "
+             "what a --headless one runs (required there)",
     )
     parser.add_argument(
         "name",
@@ -145,15 +146,19 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
             return 0
         bottle_names = picked
 
-    # `--pick` asks for a label, color and image mode.
-    if args.pick:
+    # `--pick` asks for a label (unless `--label` gave one), color and image
+    # mode.
+    if args.pick and not args.label:
         label, color = tui.name_color_modal(default_label=agent_name)
         label, color = _resolve_unique_label(settings, label, color)
+    else:
+        label, color = _uniquify_label(settings, args.label or agent_name), args.color or ""
+    if args.pick:
         image_policy = _select_image_policy()
         if image_policy is None:
             return 0
     else:
-        label, color, image_policy = _uniquify_label(settings, agent_name), "", "prefer-cached"
+        image_policy = "prefer-cached"
 
     request = LaunchRequest(
         agent=agent_name,
@@ -161,6 +166,8 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
         label=label,
         color=color,
         image_policy=image_policy,
+        # The agent's first message, as a console launch delivers it.
+        prompt=args.prompt or "",
         settings=settings,
         cwd=os.getcwd(),
         copy_cwd=args.cwd,
@@ -203,18 +210,10 @@ def _start_headless(
     dry_run: bool,
 ) -> int:
     """Non-interactive launch: agent, bottles, label and color from flags and
-    manifest defaults; the preflight is auto-confirmed. Still attaches on the
-    inherited PTY."""
-    try:
-        stdin_fd = sys.stdin.fileno()
-    except io.UnsupportedOperation:
-        stdin_fd = -1
-    if not os.isatty(stdin_fd):
-        die(
-            "--headless requires a PTY on stdin; run via:\n"
-            "  script -q /dev/null bot-bottle start ..."
-        )
-
+    manifest defaults; the preflight is auto-confirmed. With a terminal it
+    attaches; without one (a service, CI, a webhook) it reports the session
+    and returns, after watching long enough to report an agent that fails at
+    once."""
     agent_name = args.name
     if not agent_name:
         die("--headless requires an agent name: bot-bottle start <agent> --headless")

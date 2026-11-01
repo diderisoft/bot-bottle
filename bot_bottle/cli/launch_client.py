@@ -32,6 +32,9 @@ from .secrets_env import secrets_from_env
 
 # How long a finished session gets to report its exit.
 EXIT_REPORT_SECONDS = 5.0
+# How long a headless launch without a terminal watches for an agent that
+# fails at once, before leaving it running.
+HEADLESS_WATCH_SECONDS = 5.0
 
 
 def needed_secrets(manifest: Manifest) -> dict[str, str]:
@@ -174,6 +177,8 @@ def launch(request: LaunchRequest, *, verbose: bool = False) -> int:
             progress.fail(f"{PROG}: host controller returned no session")
             raise log.Die(1, "host controller returned no session")
         progress.done(f"{request.label or request.agent} is running")
+        if request.headless and not _stdin_is_tty():
+            return report_headless(client, value["session"])
         started = time.time()
         code = attach(client, value["session"])
         _report_work(value["session"], since=started)
@@ -219,6 +224,45 @@ def _report_work(session_id: str, *, since: float) -> None:
         f"Apply them here with:  git apply {shown}\n")
 
 
+def _stdin_is_tty() -> bool:
+    try:
+        return os.isatty(sys.stdin.fileno())
+    except (OSError, ValueError):
+        return False
+
+
+def _ended(state: dict[str, object]) -> int | None:
+    """The agent's exit code if `state` says the session ended, else None.
+    A failure's last output goes to stderr."""
+    ended = state.get("exit")
+    if not isinstance(ended, dict):
+        return None
+    code = exit_code(int(ended.get("status") or 0), str(ended.get("signal") or ""))
+    last = str(ended.get("last_output") or "")
+    if code and last:
+        sys.stderr.write(f"bot-bottle: its last output:\n{last}\n")
+    return code
+
+
+def report_headless(client: HostControlClient, session_id: str, *,
+                    watch: float = HEADLESS_WATCH_SECONDS) -> int:
+    """A headless launch with no terminal to attach: watch `watch` seconds
+    for an agent that ends at once (and say why), then report the session and
+    leave it running. The session id goes to stdout, for scripts."""
+    deadline = time.monotonic() + watch
+    while time.monotonic() < deadline:
+        code = _ended(client.get(f"{SESSIONS_PATH}/{session_id}"))
+        if code is not None:
+            info(f"{session_id} ended at once (exit {code})")
+            print(session_id)
+            return code
+        time.sleep(0.25)
+    info(f"{session_id} is running headless; watch it with `{PROG} attach {session_id}`. "
+         "When it exits, its changes are saved as a patch")
+    print(session_id)
+    return 0
+
+
 def attach(client: HostControlClient, session_id: str) -> int:
     """Attach to `session_id` until it ends or the user detaches. Returns the
     agent's exit code, or 0 after a detach."""
@@ -229,9 +273,8 @@ def attach(client: HostControlClient, session_id: str) -> int:
     deadline = time.monotonic() + EXIT_REPORT_SECONDS
     while True:
         state = client.get(f"{SESSIONS_PATH}/{session_id}")
-        ended = state.get("exit")
-        if isinstance(ended, dict):
-            code = exit_code(int(ended.get("status") or 0), str(ended.get("signal") or ""))
+        code = _ended(state)
+        if code is not None:
             info(f"session ended (exit {code})")
             return code
         if state.get("running"):
@@ -244,6 +287,6 @@ def attach(client: HostControlClient, session_id: str) -> int:
 
 
 __all__ = [
-    "attach", "confirm_host_keys", "launch", "needed_secrets", "prepare_request",
+    "attach", "report_headless", "confirm_host_keys", "launch", "needed_secrets", "prepare_request",
     "resolve_secrets", "tmux_attach",
 ]

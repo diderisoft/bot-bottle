@@ -336,7 +336,11 @@ rootfs (`infra_rootfs.py`):
   link allows.
 
 Agent VMs run dropbear. The launcher reaches them over SSH with a per-bottle
-key; commands, file copies and freezing all go over SSH.
+key; commands, file copies and freezing all go over SSH. dropbear refuses an exec
+request over its `MAX_CMD_LEN` (9000 bytes), so the agent's command stages
+any argument over 1 KiB (a long task prompt) as a file under the guest's
+`/root`, and the guest shell reads it back (`"$(cat …)"`): the command stays
+short however long the prompt is.
 
 A VM has no process environment of its own, so every command runs under
 `runuser … env` with HOME, USER and PATH set per invocation. A built agent
