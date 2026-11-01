@@ -91,12 +91,58 @@ class TestClaude(unittest.TestCase):
              ("system", False), ("system", False), ("system", False), ("user", True),
              ("system", True), ("system", True), ("system", False)],
             [(e.kind, e.meta) for e in parsed])
+        # Image block with no source → placeholder text, no url
         self.assertEqual("[image]", parsed[2].text)
+        self.assertEqual("", parsed[2].image_url)
         self.assertTrue(parsed[3].error and parsed[5].error)
         # Bookkeeping of a type not known is named, not dumped; a conversation
         # line of one is shown whole.
         self.assertEqual(["queue-operation", "last-prompt"], [parsed[8].text, parsed[9].text])
         self.assertIn('"new-kind"', parsed[10].text)
+
+    def test_image_url_in_user_message(self) -> None:
+        png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        parsed = claude.parse([
+            json.dumps({"type": "user", "uuid": "u1", "message": {"content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                             "data": png_b64}}]}}),
+            json.dumps({"type": "user", "uuid": "u2", "message": {"content": [
+                {"type": "image", "source": {"type": "url",
+                                             "url": "https://example.com/img.png"}}]}}),
+            json.dumps({"type": "user", "uuid": "u3", "message": {"content": [
+                {"type": "text", "text": "see this:"},
+                {"type": "image", "source": {"type": "url",
+                                             "url": "https://example.com/img.png"}}]}}),
+        ])
+        self.assertEqual(f"data:image/png;base64,{png_b64}", parsed[0].image_url)
+        self.assertEqual("", parsed[0].text)
+        self.assertEqual("https://example.com/img.png", parsed[1].image_url)
+        # Mixed text + image in one message: merged into one entry
+        self.assertEqual("see this:", parsed[2].text)
+        self.assertEqual("https://example.com/img.png", parsed[2].image_url)
+        self.assertEqual(3, len(parsed))  # 3 user messages → 3 entries
+
+    def test_image_url_in_assistant_message(self) -> None:
+        url = "https://example.com/result.png"
+        parsed = claude.parse([
+            json.dumps({"type": "assistant", "uuid": "a1", "message": {"content": [
+                {"type": "image", "source": {"type": "url", "url": url}}]}}),
+        ])
+        self.assertEqual(url, parsed[0].image_url)
+        self.assertEqual("", parsed[0].text)
+
+    def test_image_url_in_tool_result(self) -> None:
+        png_b64 = "abc123"
+        parsed = claude.parse([
+            json.dumps({"type": "user", "uuid": "u1", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": [
+                    {"type": "text", "text": "screenshot:"},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                                 "data": png_b64}}]}]}}),
+        ])
+        self.assertEqual("tool_result", parsed[0].kind)
+        self.assertEqual("screenshot:", parsed[0].text)
+        self.assertEqual(f"data:image/png;base64,{png_b64}", parsed[0].image_url)
 
 
 class TestCodex(unittest.TestCase):
@@ -169,6 +215,15 @@ class TestShared(unittest.TestCase):
                                 tool="bash", error=True)
         self.assertEqual({"seq": 1, "ts": "t", "kind": "tool_result", "text": "x",
                           "raw_offset": 3, "tool": "bash", "error": True}, entry.to_json())
+
+    def test_wire_form_includes_image_url_when_set(self) -> None:
+        entry = TranscriptEntry(seq=1, ts="t", kind="user", text="", raw_offset=0,
+                                image_url="data:image/png;base64,abc")
+        wire = entry.to_json()
+        self.assertEqual("data:image/png;base64,abc", wire["image_url"])
+        # Omitted when empty
+        plain = TranscriptEntry(seq=1, ts="t", kind="user", text="hi", raw_offset=0)
+        self.assertNotIn("image_url", plain.to_json())
 
     def test_walk_without_ids_keeps_everything(self) -> None:
         parsed = entries(["x\n", "y\n"], lambda raw: None)  # type: ignore[arg-type,return-value]
