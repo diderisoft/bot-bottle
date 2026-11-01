@@ -175,7 +175,7 @@ class TestWatch(unittest.TestCase):
         def push(registry_id: str, slot: str, value: str, key: str) -> None:
             self.pushed.append((registry_id, slot, value, key))
         self.refresher = CredentialRefresher(push, audit=self.audit, clock=lambda: NOW)
-        self.enterContext(mock.patch.object(credential_refresh.log, "warn"))
+        self.warn = self.enterContext(mock.patch.object(credential_refresh.log, "warn"))
         self.enterContext(mock.patch.object(credential_refresh.log, "info"))
         tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         self.addCleanup(tmp.cleanup)
@@ -371,8 +371,7 @@ class TestWatchEdges(TestWatch):
         self.provider.result = CredentialRefresh({REF: "tok-1"}, NOW + timedelta(days=5))
         with mock.patch.object(self.refresher, "refresh", side_effect=refresh):
             self.assertEqual(["c2"], self.refresher.watch_once())
-        warn = cast(mock.Mock, credential_refresh.log.warn)
-        warned = " ".join(str(c.args[0]) for c in warn.call_args_list)
+        warned = " ".join(str(c.args[0]) for c in self.warn.call_args_list)
         self.assertIn("host unreachable", warned)
 
     def test_the_watch_thread_looks_and_survives_an_error(self) -> None:
@@ -391,8 +390,7 @@ class TestWatchEdges(TestWatch):
             self.refresher.start()
             self.assertTrue(looked.wait(2))
             self.refresher.stop()
-        warn = cast(mock.Mock, credential_refresh.log.warn)
-        warned = " ".join(str(c.args[0]) for c in warn.call_args_list)
+        warned = " ".join(str(c.args[0]) for c in self.warn.call_args_list)
         self.assertIn("watching the host logins failed: boom", warned)
 
 
