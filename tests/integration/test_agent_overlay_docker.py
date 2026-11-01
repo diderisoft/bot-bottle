@@ -114,36 +114,31 @@ class TestAgentOverlayDocker(unittest.TestCase):
         self.assertEqual(IMAGE_USER, self._run(tag, "id -un"))
 
     def test_dockerfile_overlay_builds_on_the_pinned_base(self) -> None:
+        # Inline Dockerfile: no external build context, so embed content via RUN.
+        # Switches to root and never switches back: the staged copy must restore
+        # the provider's user anyway.
+        content = (
+            "FROM ${BASE}\n"
+            "USER root\n"
+            "RUN echo 'built FROM ${BASE}' > /etc/greeting "
+            "&& chmod 644 /etc/greeting && touch /etc/overlay-ran-as-root\n"
+        )
         with tempfile.TemporaryDirectory() as tmp:
-            src = Path(tmp)
-            ctx = src / "overlay"
-            ctx.mkdir()
-            (ctx / "greeting.txt").write_text("built FROM ${BASE}\n")
-            # Switches to root and never switches back: the staged copy must
-            # restore the provider's user anyway.
-            (ctx / "Dockerfile").write_text(
-                "ARG BASE\n"
-                "FROM ${BASE}\n"
-                "USER root\n"
-                "COPY greeting.txt /etc/greeting\n"
-                "RUN chmod 644 /etc/greeting && touch /etc/overlay-ran-as-root\n"
-            )
-            tag = self._build(src, ManifestImageOverlay(dockerfile="overlay/Dockerfile"))
+            tag = self._build(Path(tmp), ManifestImageOverlay(dockerfile=content))
         self.assertEqual("built FROM ${BASE}", self._run(tag, "cat /etc/greeting"))
         self.assertEqual("yes", self._run(tag, "test -f /etc/overlay-ran-as-root && echo yes"))
         self.assertEqual(IMAGE_USER, self._run(tag, "id -un"))
 
     def test_heredoc_overlay_still_ends_as_the_provider_user(self) -> None:
+        content = (
+            "FROM ${BASE}\n"
+            "USER root\n"
+            "RUN <<EOF\n"
+            "echo heredoc > /etc/heredoc\n"
+            "EOF\n"
+        )
         with tempfile.TemporaryDirectory() as tmp:
-            src = Path(tmp)
-            (src / "Dockerfile").write_text(
-                "FROM ${BASE}\n"
-                "USER root\n"
-                "RUN <<EOF\n"
-                "echo heredoc > /etc/heredoc\n"
-                "EOF\n"
-            )
-            tag = self._build(src, ManifestImageOverlay(dockerfile="Dockerfile"))
+            tag = self._build(Path(tmp), ManifestImageOverlay(dockerfile=content))
         self.assertEqual("heredoc", self._run(tag, "cat /etc/heredoc"))
         self.assertEqual(IMAGE_USER, self._run(tag, "id -un"))
 
