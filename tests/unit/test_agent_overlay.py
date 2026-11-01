@@ -218,74 +218,30 @@ class RenderDockerfileOverlay(unittest.TestCase):
 
 
 class StageDockerfileOverlay(unittest.TestCase):
-    def test_context_is_the_dockerfile_directory(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "src"
-            ctx_dir = root / "overlay"
-            (ctx_dir / "conf").mkdir(parents=True)
-            (ctx_dir / "Dockerfile").write_text("FROM ${BASE}\nCOPY conf/a.json /opt/a.json\n")
-            (ctx_dir / "conf" / "a.json").write_text("{}")
-            (root / "outside.txt").write_text("not context")
-            dest = Path(tmp) / "ctx"
-            df = ao.stage_overlay_context(
-                _BASE, ManifestImageOverlay(dockerfile="overlay/Dockerfile"),
-                harness="claude", source_root=root, dest=dest)
-            self.assertEqual(ao.STAGED_DOCKERFILE, df.name)
-            self.assertIn(f"ARG BASE={_BASE}", df.read_text())
-            self.assertTrue((dest / "conf" / "a.json").is_file())
-            self.assertFalse((dest / "outside.txt").exists())
-
-    def test_context_symlinks_are_copied_as_links(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            secret = Path(tmp) / "secret"
-            secret.write_text("key")
-            ctx_dir = Path(tmp) / "src" / "overlay"
-            ctx_dir.mkdir(parents=True)
-            (ctx_dir / "Dockerfile").write_text("FROM ${BASE}\n")
-            (ctx_dir / "creds").symlink_to(secret)
-            (ctx_dir / "dangling").symlink_to(Path(tmp) / "nope")
-            dest = Path(tmp) / "ctx"
-            ao.stage_overlay_context(
-                _BASE, ManifestImageOverlay(dockerfile="overlay/Dockerfile"),
-                harness="claude", source_root=Path(tmp) / "src", dest=dest)
-            self.assertTrue((dest / "creds").is_symlink())
-            self.assertTrue((dest / "dangling").is_symlink())
-
-    def test_missing_dockerfile_raises(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(ao.OverlayError):
-                ao.stage_overlay_context(
-                    _BASE, ManifestImageOverlay(dockerfile="nope/Dockerfile"),
-                    harness="claude", source_root=Path(tmp), dest=Path(tmp) / "ctx")
-
-    def test_inline_dockerfile_staged_without_source_root(self) -> None:
-        # Inline content needs no host file; source_root is not consulted.
+    def test_staged_and_pins_base(self) -> None:
         content = "FROM ${BASE}\nRUN echo hi\n"
         with tempfile.TemporaryDirectory() as tmp:
-            empty_root = Path(tmp) / "empty"
-            empty_root.mkdir()
             dest = Path(tmp) / "ctx"
             df = ao.stage_overlay_context(
                 _BASE, ManifestImageOverlay(dockerfile=content),
-                harness="claude", source_root=empty_root, dest=dest)
+                harness="claude", source_root=Path(tmp), dest=dest)
             self.assertTrue(df.is_file())
             text = df.read_text()
             self.assertIn(f"ARG BASE={_BASE}", text)
             self.assertIn("RUN echo hi", text)
             self.assertEqual("USER node", text.splitlines()[-1])
 
-    def test_inline_dockerfile_no_extra_context_files(self) -> None:
-        # Only the staged Dockerfile is written; no copytree of a source dir.
+    def test_no_extra_context_files_written(self) -> None:
+        # Only the staged Dockerfile lands in the context dir; no copytree.
         content = "FROM ${BASE}\nRUN true\n"
         with tempfile.TemporaryDirectory() as tmp:
             dest = Path(tmp) / "ctx"
             ao.stage_overlay_context(
                 _BASE, ManifestImageOverlay(dockerfile=content),
                 harness="claude", source_root=Path(tmp), dest=dest)
-            files = list(dest.iterdir())
-            self.assertEqual([dest / ao.STAGED_DOCKERFILE], files)
+            self.assertEqual([dest / ao.STAGED_DOCKERFILE], list(dest.iterdir()))
 
-    def test_inline_dockerfile_rejected_content_raises_at_staging(self) -> None:
+    def test_rejected_content_raises_at_staging(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ao.OverlayError):
                 ao.stage_overlay_context(
@@ -319,46 +275,27 @@ class StagedOverlayKey(unittest.TestCase):
             keys.add(self._key(root, with_file))
             self.assertEqual(5, len(keys))
 
-    def test_changes_with_inline_dockerfile_content(self) -> None:
+    def test_changes_with_dockerfile_content(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             o1 = ManifestImageOverlay(dockerfile="FROM ${BASE}\nRUN echo a\n")
             o2 = ManifestImageOverlay(dockerfile="FROM ${BASE}\nRUN echo b\n")
             self.assertNotEqual(self._key(Path(tmp), o1), self._key(Path(tmp), o2))
 
-    def test_changes_with_dockerfile_context_and_render(self) -> None:
+    def test_changes_with_dockerfile_render(self) -> None:
+        # A change to how bot-bottle renders the Dockerfile (e.g. a different
+        # image_user) changes the cache key.
+        o = ManifestImageOverlay(dockerfile="FROM ${BASE}\nRUN true\n")
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "ov").mkdir()
-            (root / "ov" / "Dockerfile").write_text("FROM ${BASE}\n")
-            (root / "ov" / "data.txt").write_text("a")
-            o = ManifestImageOverlay(dockerfile="ov/Dockerfile")
-            before = self._key(root, o)
-            (root / "ov" / "data.txt").write_text("b")
-            after_data = self._key(root, o)
-            # A change to how bot-bottle renders the Dockerfile rebuilds too.
+            before = self._key(Path(tmp), o)
             with mock.patch.object(ao, "get_provider",
                                    return_value=mock.Mock(image_user="other")):
-                after_render = self._key(root, o)
-            self.assertEqual(3, len({before, after_data, after_render}))
+                after = self._key(Path(tmp), o)
+            self.assertNotEqual(before, after)
 
-    def test_symlink_target_is_part_of_the_key(self) -> None:
+    def test_missing_file_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "ov").mkdir()
-            (root / "ov" / "Dockerfile").write_text("FROM ${BASE}\n")
-            (root / "ov" / "link").symlink_to("a")
-            o = ManifestImageOverlay(dockerfile="ov/Dockerfile")
-            before = self._key(root, o)
-            (root / "ov" / "link").unlink()
-            (root / "ov" / "link").symlink_to("b")
-            self.assertNotEqual(before, self._key(root, o))
-
-    def test_missing_input_raises(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            for o in (ManifestImageOverlay(files=("x",)),
-                      ManifestImageOverlay(dockerfile="x/Dockerfile")):
-                with self.subTest(o=o), self.assertRaises(ao.OverlayError):
-                    self._key(Path(tmp), o)
+            with self.assertRaises(ao.OverlayError):
+                self._key(Path(tmp), ManifestImageOverlay(files=("x",)))
 
 
 class InputsDigest(unittest.TestCase):
@@ -372,18 +309,17 @@ class InputsDigest(unittest.TestCase):
 
     def test_follows_the_cache_key_except_for_the_base(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "ov").mkdir()
-            (root / "ov" / "Dockerfile").write_text("FROM ${BASE}\n")
-            o = ManifestImageOverlay(dockerfile="ov/Dockerfile")
-            key1, digest1 = self._both(root, o)
-            key2, digest2 = self._both(root, o, base=_BASE[:-1] + "b")
+            o1 = ManifestImageOverlay(dockerfile="FROM ${BASE}\nRUN echo a\n")
+            o2 = ManifestImageOverlay(dockerfile="FROM ${BASE}\nRUN echo b\n")
+            key1, digest1 = self._both(Path(tmp), o1)
+            # Same content, different base: cache key changes, inputs digest is stable.
+            key1b, digest1b = self._both(Path(tmp), o1, base=_BASE[:-1] + "b")
+            self.assertNotEqual(key1, key1b)
+            self.assertEqual(digest1, digest1b)
+            # Different content: both change.
+            key2, digest2 = self._both(Path(tmp), o2)
             self.assertNotEqual(key1, key2)
-            self.assertEqual(digest1, digest2)
-            (root / "ov" / "extra").write_text("x")
-            key3, digest3 = self._both(root, o)
-            self.assertNotEqual(key1, key3)
-            self.assertNotEqual(digest1, digest3)
+            self.assertNotEqual(digest1, digest2)
 
     def test_empty_overlay_digests_empty(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

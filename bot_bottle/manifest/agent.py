@@ -26,10 +26,9 @@ class ManifestImageOverlay:
     packages, and extra files, built `FROM` the verified base. A harness bump
     replaces the tested harness, so compatibility is the author's.
 
-    `dockerfile` is the free-form alternative: a single-stage Dockerfile built
-    `FROM ${BASE}`. It may be inline content (the value contains a newline) or
-    a path relative to the launch cwd (no newline). Exclusive with the other
-    fields."""
+    `dockerfile` is the free-form alternative: inline Dockerfile content
+    (a multi-line string) for a single-stage build `FROM ${BASE}`. Exclusive
+    with the other fields."""
 
     harness_version: str = ""
     apt: tuple[str, ...] = ()
@@ -38,11 +37,6 @@ class ManifestImageOverlay:
 
     def is_empty(self) -> bool:
         return not (self.harness_version or self.apt or self.files or self.dockerfile)
-
-    @property
-    def dockerfile_is_inline(self) -> bool:
-        """True when `dockerfile` holds Dockerfile content rather than a path."""
-        return "\n" in self.dockerfile
 
     @classmethod
     def from_dict(cls, agent_name: str, raw: object) -> "ManifestImageOverlay":
@@ -87,9 +81,14 @@ class ManifestImageOverlay:
                     "apt, or files; put those steps in the Dockerfile instead"
                 )
             if "\n" not in dockerfile:
-                # Path form: validate the path is safe. Content form (has a
-                # newline) is validated at staging time by render_overlay_dockerfile_text.
-                _check_overlay_path(f"{where}.dockerfile", dockerfile)
+                raise ManifestError(
+                    f"{where}.dockerfile must be inline Dockerfile content "
+                    f"(a multi-line string); use the YAML block scalar:\n"
+                    f"  overlay:\n"
+                    f"    dockerfile: |\n"
+                    f"      FROM ${{BASE}}\n"
+                    f"      RUN ..."
+                )
         return cls(harness_version=harness, apt=apt, files=files, dockerfile=dockerfile)
 
 

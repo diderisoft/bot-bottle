@@ -144,47 +144,31 @@ class TestAgentProviderValidation(unittest.TestCase):
                 })
 
     def test_image_overlay_dockerfile_parses(self) -> None:
-        p = ManifestAgentProvider.from_dict("b", {
-            "harness": "claude",
-            "overlay": {"dockerfile": "overlay/Dockerfile"},
-        })
-        self.assertEqual(p.overlay.dockerfile, "overlay/Dockerfile")
-        self.assertFalse(p.overlay.is_empty())
-        self.assertFalse(p.overlay.dockerfile_is_inline)
-
-    def test_image_overlay_dockerfile_inline_parses(self) -> None:
         content = "FROM ${BASE}\nRUN apt-get install -y ripgrep\n"
         p = ManifestAgentProvider.from_dict("b", {
             "harness": "claude",
             "overlay": {"dockerfile": content},
         })
         self.assertEqual(p.overlay.dockerfile, content)
-        self.assertTrue(p.overlay.dockerfile_is_inline)
         self.assertFalse(p.overlay.is_empty())
 
-    def test_image_overlay_dockerfile_inline_is_exclusive(self) -> None:
+    def test_image_overlay_dockerfile_must_be_inline(self) -> None:
+        # A value without a newline looks like a path — reject it with a
+        # clear error pointing to the YAML block scalar.
+        for bad in ("overlay/Dockerfile", "/etc/Dockerfile", "../Dockerfile"):
+            with self.subTest(bad=bad), self.assertRaises(ManifestError):
+                ManifestAgentProvider.from_dict("b", {
+                    "harness": "claude",
+                    "overlay": {"dockerfile": bad},
+                })
+
+    def test_image_overlay_dockerfile_is_exclusive(self) -> None:
         content = "FROM ${BASE}\nRUN true\n"
         for extra in ({"apt": ["jq"]}, {"files": ["f"]}, {"harness_version": "2.1.180"}):
             with self.subTest(extra=extra), self.assertRaises(ManifestError):
                 ManifestAgentProvider.from_dict("b", {
                     "harness": "claude",
                     "overlay": {"dockerfile": content, **extra},
-                })
-
-    def test_image_overlay_dockerfile_is_exclusive(self) -> None:
-        for extra in ({"apt": ["jq"]}, {"files": ["f"]}, {"harness_version": "2.1.180"}):
-            with self.subTest(extra=extra), self.assertRaises(ManifestError):
-                ManifestAgentProvider.from_dict("b", {
-                    "harness": "claude",
-                    "overlay": {"dockerfile": "Dockerfile", **extra},
-                })
-
-    def test_image_overlay_dockerfile_must_stay_relative(self) -> None:
-        for bad in ("/etc/Dockerfile", "../Dockerfile", "a/../../Dockerfile"):
-            with self.subTest(bad=bad), self.assertRaises(ManifestError):
-                ManifestAgentProvider.from_dict("b", {
-                    "harness": "claude",
-                    "overlay": {"dockerfile": bad},
                 })
 
     def test_overlay_and_custom_dockerfile_rejected_together(self) -> None:
@@ -231,10 +215,9 @@ class TestAgentProviderValidation(unittest.TestCase):
             "b", {"overlay": {"apt": ["libssl3:amd64", "g++=4:14.2.0-1", "python3.12"]}})
         self.assertEqual(3, len(ok.overlay.apt))
 
-    def test_overlay_paths_reject_control_characters(self) -> None:
-        for key, value in (("files", ["a\nb"]), ("dockerfile", "ov/Docker\tfile")):
-            with self.subTest(key=key), self.assertRaises(ManifestError):
-                ManifestAgentProvider.from_dict("b", {"overlay": {key: value}})
+    def test_overlay_file_paths_reject_control_characters(self) -> None:
+        with self.assertRaises(ManifestError):
+            ManifestAgentProvider.from_dict("b", {"overlay": {"files": ["a\nb"]}})
 
     def test_builds_custom_image_follows_dockerfile(self) -> None:
         self.assertFalse(ManifestAgentProvider.from_dict("b", {}).builds_custom_image)

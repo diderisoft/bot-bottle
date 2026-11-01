@@ -1,8 +1,9 @@
 """Render, validate and stage overlay builds on a pinned agent image.
 
 An overlay is either directives (`apt`, `harness_version`, `files` under
-`OVERLAY_DEST`) or a single-stage `dockerfile` that builds `FROM ${BASE}`. Both
-build on the verified base and end as the provider's `image_user`.
+`OVERLAY_DEST`) or a single-stage inline `dockerfile` that builds `FROM
+${BASE}`. Both build on the verified base and end as the provider's
+`image_user`.
 `staged_overlay`'s `cache_key` hashes the staged context, so every backend
 agrees on when to rebuild. `inputs_digest` hashes the same staged context
 minus the base, for a project agent's trust hash.
@@ -262,18 +263,8 @@ def stage_overlay_context(
     dest.mkdir(parents=True, exist_ok=True)
     dockerfile = dest / STAGED_DOCKERFILE
     if overlay.dockerfile:
-        if overlay.dockerfile_is_inline:
-            # Inline content: no host file to read, no build context to copy.
-            staged = render_overlay_dockerfile_text(
-                base_ref, overlay.dockerfile, harness=harness)
-            dockerfile.write_text(staged)
-            return dockerfile
-        src = _source(source_root, overlay.dockerfile, "dockerfile")
         staged = render_overlay_dockerfile_text(
-            base_ref, src.read_text(), harness=harness)
-        # The Dockerfile's directory is the build context. Symlinks are copied
-        # as links, never followed.
-        shutil.copytree(src.parent, dest, symlinks=True, dirs_exist_ok=True)
+            base_ref, overlay.dockerfile, harness=harness)
         dockerfile.write_text(staged)
         return dockerfile
     dockerfile.write_text(render_overlay_dockerfile(base_ref, overlay, harness=harness))

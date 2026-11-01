@@ -105,10 +105,8 @@ saying to remove the line and pick the bottle at launch.
   its own Dockerfile (`agent_provider.dockerfile`) or layer onto the built-in
   image (`agent_provider.overlay`). The overlay fields are `apt` (Debian
   package names), `harness_version`, `files` (paths relative to the launch
-  cwd), and `dockerfile`. `overlay.dockerfile` accepts either a **path**
-  relative to the launch cwd (no newline in the value) or **inline Dockerfile
-  content** (value contains a newline). Inline is recommended for home agents
-  and simple installs — it keeps the config self-contained in the agent file:
+  cwd), and `dockerfile` (inline Dockerfile content — use the YAML block
+  scalar `|`). The agent file is the single source of truth:
 
   ```yaml
   agent_provider:
@@ -120,7 +118,8 @@ saying to remove the line and pick the bottle at launch.
 
   All overlays must be single-stage and build `FROM ${BASE}`; bot-bottle pins
   `BASE` to the verified, digest-pinned image. `overlay.dockerfile` is
-  exclusive with the other overlay fields.
+  exclusive with the other overlay fields. For a shared or complex image,
+  use `agent_provider.dockerfile` (a custom image) instead.
 - **Login.** `forward_host_credentials: true` uses the host's Claude Code or
   Codex login. A Claude agent can instead name a host variable holding a
   long-lived OAuth token (`claude setup-token`) in `auth_token`. Either way
