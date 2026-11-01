@@ -224,13 +224,9 @@ class TestForbiddenConstructs(unittest.TestCase):
                 b: *anchor
             """)
 
-    def test_multiline_block_scalar_dies(self):
-        with self.assertRaises(YamlSubsetError):
-            _y("""
-                k: |
-                  line 1
-                  line 2
-            """)
+    def test_block_scalar_literal_parses(self) -> None:
+        self.assertEqual({"k": "line 1\nline 2\n"},
+                         _y("k: |\n  line 1\n  line 2\n"))
 
     def test_tag_dies(self):
         with self.assertRaises(YamlSubsetError):
@@ -437,9 +433,39 @@ class TestEdgeAndErrorBranches(unittest.TestCase):
         with self.assertRaises(YamlSubsetError):
             parse_yaml_subset(">folded\n")
 
-    def test_block_scalar_literal_rejected(self) -> None:
+    def test_block_scalar_standalone_pipe_rejected(self) -> None:
+        # A bare `|` as a value (not `key: |`) is still rejected.
         with self.assertRaises(YamlSubsetError):
             parse_yaml_subset("|literal\n")
+
+    def test_block_scalar_strip_chomp(self) -> None:
+        self.assertEqual({"k": "line 1\nline 2"},
+                         _y("k: |-\n  line 1\n  line 2\n"))
+
+    def test_block_scalar_keep_chomp(self) -> None:
+        # |+ preserves trailing blank lines beyond the content.
+        self.assertEqual({"k": "line 1\nline 2\n\n"},
+                         _y("k: |+\n  line 1\n  line 2\n\n"))
+
+    def test_block_scalar_blank_line_in_body(self) -> None:
+        self.assertEqual({"k": "line 1\n\nline 3\n"},
+                         _y("k: |\n  line 1\n\n  line 3\n"))
+
+    def test_block_scalar_trailing_comment(self) -> None:
+        self.assertEqual({"k": "content\n"},
+                         _y("k: |  # a comment\n  content\n"))
+
+    def test_block_scalar_nested_in_mapping(self) -> None:
+        result = _y("parent:\n  child: |\n    FROM ${BASE}\n    RUN true\n")
+        self.assertEqual({"parent": {"child": "FROM ${BASE}\nRUN true\n"}}, result)
+
+    def test_block_scalar_pipe_in_body_is_content(self) -> None:
+        self.assertEqual({"k": "RUN echo | grep foo\n"},
+                         _y("k: |\n  RUN echo | grep foo\n"))
+
+    def test_block_scalar_backslash_in_body(self) -> None:
+        self.assertEqual({"k": "RUN echo \\hello\n"},
+                         _y("k: |\n  RUN echo \\hello\n"))
 
     def test_anchor_rejected(self) -> None:
         with self.assertRaises(YamlSubsetError):

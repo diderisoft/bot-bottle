@@ -103,7 +103,23 @@ saying to remove the line and pick the bottle at launch.
 - **`agent_provider.harness`**: `claude`, `codex` or `pi`. Each has an image
   built from `bot_bottle/contrib/<harness>/Dockerfile`; an agent can supply
   its own Dockerfile (`agent_provider.dockerfile`) or layer onto the built-in
-  image (`agent_provider.overlay`).
+  image (`agent_provider.overlay`). The overlay fields are `apt` (Debian
+  package names), `harness_version`, `files` (paths relative to the launch
+  cwd), and `dockerfile` (inline Dockerfile content — use the YAML block
+  scalar `|`). The agent file is the single source of truth:
+
+  ```yaml
+  agent_provider:
+    overlay:
+      dockerfile: |
+        FROM ${BASE}
+        RUN curl -fsSL https://fly.io/install.sh | FLYCTL_INSTALL=/usr/local sh
+  ```
+
+  All overlays must be single-stage and build `FROM ${BASE}`; bot-bottle pins
+  `BASE` to the verified, digest-pinned image. `overlay.dockerfile` is
+  exclusive with the other overlay fields. For a shared or complex image,
+  use `agent_provider.dockerfile` (a custom image) instead.
 - **Login.** `forward_host_credentials: true` uses the host's Claude Code or
   Codex login. A Claude agent can instead name a host variable holding a
   long-lived OAuth token (`claude setup-token`) in `auth_token`. Either way

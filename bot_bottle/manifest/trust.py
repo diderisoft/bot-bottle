@@ -80,10 +80,10 @@ def provider_grants(provider: ManifestAgentProvider) -> list[str]:
     if isinstance(base_url, str) and base_url:
         host = urlparse(base_url).hostname or base_url
         lines.append(f"reach   {host}" + (f" with ${key_env}" if key_env else ""))
-    for dockerfile in (provider.dockerfile, provider.overlay.dockerfile):
-        if dockerfile:
-            lines.append(f"build   image from {dockerfile}")
-    if provider.overlay.apt or provider.overlay.files or provider.overlay.harness_version:
+    if provider.dockerfile:
+        lines.append(f"build   image from {provider.dockerfile}")
+    if (provider.overlay.apt or provider.overlay.files or
+            provider.overlay.harness_version or provider.overlay.dockerfile):
         lines.append("build   image overlay (packages, files or harness version)")
     return lines
 

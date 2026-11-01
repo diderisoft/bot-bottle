@@ -26,9 +26,9 @@ class ManifestImageOverlay:
     packages, and extra files, built `FROM` the verified base. A harness bump
     replaces the tested harness, so compatibility is the author's.
 
-    `dockerfile` is the free-form alternative: a single-stage Dockerfile built
-    `FROM ${BASE}` with its own directory as context. Exclusive with the other
-    fields."""
+    `dockerfile` is the free-form alternative: inline Dockerfile content
+    (a multi-line string) for a single-stage build `FROM ${BASE}`. Exclusive
+    with the other fields."""
 
     harness_version: str = ""
     apt: tuple[str, ...] = ()
@@ -80,7 +80,15 @@ class ManifestImageOverlay:
                     f"{where}.dockerfile cannot be combined with harness_version, "
                     "apt, or files; put those steps in the Dockerfile instead"
                 )
-            _check_overlay_path(f"{where}.dockerfile", dockerfile)
+            if "\n" not in dockerfile:
+                raise ManifestError(
+                    f"{where}.dockerfile must be inline Dockerfile content "
+                    f"(a multi-line string); use the YAML block scalar:\n"
+                    f"  overlay:\n"
+                    f"    dockerfile: |\n"
+                    f"      FROM ${{BASE}}\n"
+                    f"      RUN ..."
+                )
         return cls(harness_version=harness, apt=apt, files=files, dockerfile=dockerfile)
 
 

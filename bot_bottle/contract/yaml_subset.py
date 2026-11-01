@@ -17,9 +17,18 @@ Accepted, block style:
 
 and inline with scalar leaves: `key: [a, b, "c d"]`, `key: {a: 1, b: 2}`.
 
-Rejected with a line number: anchors and aliases, tags, `|`/`>` block scalars,
-yes/no/on/off, ambiguous bare scalars (numbers, dates), tab indentation, and
-flow nesting deeper than one level.
+Accepted block scalars:
+
+    key: |
+      line one
+      line two
+
+`|` (literal, clip chomp) is supported; `|-` (strip) and `|+` (keep) too.
+`>` (folded) is not supported.
+
+Rejected with a line number: anchors and aliases, tags, `>`/`>-`/`>+` folded
+scalars, standalone `|` as a value, yes/no/on/off, ambiguous bare scalars
+(numbers, dates), tab indentation, and flow nesting deeper than one level.
 """
 
 from __future__ import annotations
@@ -441,19 +450,100 @@ def _looks_like_kv(s: str) -> bool:
     return False
 
 
+# --- Block scalar pre-processor ---
+
+# Matches `key: |`, `key: |-`, `key: |+` (optionally with trailing comment).
+# Requires at least one space between `:` and `|` so `key:|` is not treated
+# as a block scalar (yaml-subset would reject it as a missing `: ` anyway).
+_BLOCK_SCALAR_LINE_RE = re.compile(
+    r"^(\s*)(\S.*?):\s+(\|[-+]?)\s*(?:#.*)?$"
+)
+
+
+def _preprocess_block_scalars(text: str) -> str:
+    """Convert `key: |` literal block scalar values to JSON-encoded double-quoted
+    strings before tokenizing. The tokenizer drops blank lines, so block scalar
+    bodies — where blank lines are content — must be extracted from the raw text.
+
+    Supports `|` (clip: one trailing newline), `|-` (strip: no trailing newline),
+    and `|+` (keep: all trailing newlines preserved). `>` (folded) is not
+    supported and remains as-is; the pre-scan will reject it."""
+    lines = text.split("\n")
+    result: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.lstrip().startswith("#"):
+            result.append(line)
+            i += 1
+            continue
+        m = _BLOCK_SCALAR_LINE_RE.match(line)
+        if m:
+            key_indent = len(m.group(1))
+            chomp = m.group(3)
+            prefix = line[:m.start(3)].rstrip()  # 'indent + key:' without trailing space
+            i += 1
+            block_indent: int | None = None
+            content_parts: list[str] = []
+            trailing_blank_count = 0
+            while i < len(lines):
+                curr = lines[i]
+                if not curr.strip():
+                    if block_indent is not None:
+                        trailing_blank_count += 1
+                    i += 1
+                    continue
+                curr_indent = len(curr) - len(curr.lstrip())
+                if curr_indent <= key_indent:
+                    break
+                if block_indent is None:
+                    block_indent = curr_indent
+                content_parts.extend([""] * trailing_blank_count)
+                trailing_blank_count = 0
+                content_parts.append(
+                    curr[block_indent:] if curr_indent >= block_indent else curr.lstrip()
+                )
+                i += 1
+            # `text.split("\n")` always produces a terminal empty string from the
+            # final `\n`. When the block reaches the end of the text, that artifact
+            # inflates `trailing_blank_count` by one; compensate for it.
+            at_end = i >= len(lines)
+            real_trailing = max(0, trailing_blank_count - (1 if at_end else 0))
+            content = "\n".join(content_parts)
+            if chomp == "|":
+                content += "\n"
+            elif chomp == "|+":
+                content += "\n" * (1 + real_trailing)
+            # |-: strip — no trailing newline added
+            result.append(f"{prefix} {json.dumps(content)}")
+        else:
+            result.append(line)
+            i += 1
+    return "\n".join(result)
+
+
 # --- Public API ---
 
 
 def parse_yaml_subset(text: str) -> dict[str, object]:
     """Parse a YAML-subset document; the top level must be a mapping."""
-    # Reject unsupported features first, with raw line numbers.
+    text = _preprocess_block_scalars(text)
+    # Reject unsupported features, with raw line numbers.
     for n, raw in enumerate(text.splitlines(), start=1):
         s = raw.strip()
-        if s.startswith("|") or s.startswith(">") or s.startswith("- |") or s.startswith("- >"):
+        # `key: |` block scalars were already converted by _preprocess_block_scalars.
+        # A bare `|` here (after pre-processing) is an invalid standalone value.
+        if s.startswith(">") or s.startswith("- >"):
             raise YamlSubsetError(
-                f"yaml-subset: line {n} uses a multi-line block "
-                f"scalar (`|` / `>`) — not supported. Use a quoted "
-                f"single-line string instead."
+                f"yaml-subset: line {n} uses a folded block scalar (`>`) "
+                f"— not supported. Use `|` for a literal block scalar or a "
+                f"quoted single-line string instead."
+            )
+        if s.startswith("|") or s.startswith("- |"):
+            raise YamlSubsetError(
+                f"yaml-subset: line {n} has a bare `|` value that could not "
+                f"be pre-processed as a block scalar. Write `key: |` with the "
+                f"block content indented on the following lines."
             )
         if "&" in s or "*" in s:
             # Flag `&`/`*` only as an anchor or alias at a value position.
