@@ -150,6 +150,26 @@ class TestAgentProviderValidation(unittest.TestCase):
         })
         self.assertEqual(p.overlay.dockerfile, "overlay/Dockerfile")
         self.assertFalse(p.overlay.is_empty())
+        self.assertFalse(p.overlay.dockerfile_is_inline)
+
+    def test_image_overlay_dockerfile_inline_parses(self) -> None:
+        content = "FROM ${BASE}\nRUN apt-get install -y ripgrep\n"
+        p = ManifestAgentProvider.from_dict("b", {
+            "harness": "claude",
+            "overlay": {"dockerfile": content},
+        })
+        self.assertEqual(p.overlay.dockerfile, content)
+        self.assertTrue(p.overlay.dockerfile_is_inline)
+        self.assertFalse(p.overlay.is_empty())
+
+    def test_image_overlay_dockerfile_inline_is_exclusive(self) -> None:
+        content = "FROM ${BASE}\nRUN true\n"
+        for extra in ({"apt": ["jq"]}, {"files": ["f"]}, {"harness_version": "2.1.180"}):
+            with self.subTest(extra=extra), self.assertRaises(ManifestError):
+                ManifestAgentProvider.from_dict("b", {
+                    "harness": "claude",
+                    "overlay": {"dockerfile": content, **extra},
+                })
 
     def test_image_overlay_dockerfile_is_exclusive(self) -> None:
         for extra in ({"apt": ["jq"]}, {"files": ["f"]}, {"harness_version": "2.1.180"}):

@@ -258,6 +258,40 @@ class StageDockerfileOverlay(unittest.TestCase):
                     _BASE, ManifestImageOverlay(dockerfile="nope/Dockerfile"),
                     harness="claude", source_root=Path(tmp), dest=Path(tmp) / "ctx")
 
+    def test_inline_dockerfile_staged_without_source_root(self) -> None:
+        # Inline content needs no host file; source_root is not consulted.
+        content = "FROM ${BASE}\nRUN echo hi\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            empty_root = Path(tmp) / "empty"
+            empty_root.mkdir()
+            dest = Path(tmp) / "ctx"
+            df = ao.stage_overlay_context(
+                _BASE, ManifestImageOverlay(dockerfile=content),
+                harness="claude", source_root=empty_root, dest=dest)
+            self.assertTrue(df.is_file())
+            text = df.read_text()
+            self.assertIn(f"ARG BASE={_BASE}", text)
+            self.assertIn("RUN echo hi", text)
+            self.assertEqual("USER node", text.splitlines()[-1])
+
+    def test_inline_dockerfile_no_extra_context_files(self) -> None:
+        # Only the staged Dockerfile is written; no copytree of a source dir.
+        content = "FROM ${BASE}\nRUN true\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "ctx"
+            ao.stage_overlay_context(
+                _BASE, ManifestImageOverlay(dockerfile=content),
+                harness="claude", source_root=Path(tmp), dest=dest)
+            files = list(dest.iterdir())
+            self.assertEqual([dest / ao.STAGED_DOCKERFILE], files)
+
+    def test_inline_dockerfile_rejected_content_raises_at_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ao.OverlayError):
+                ao.stage_overlay_context(
+                    _BASE, ManifestImageOverlay(dockerfile="FROM debian:bookworm\nRUN true\n"),
+                    harness="claude", source_root=Path(tmp), dest=Path(tmp) / "ctx")
+
 
 class StagedOverlayKey(unittest.TestCase):
     def _key(self, root: Path, overlay: ManifestImageOverlay, base: str = _BASE) -> str:
@@ -284,6 +318,12 @@ class StagedOverlayKey(unittest.TestCase):
             (root / "f.txt").write_text("two")
             keys.add(self._key(root, with_file))
             self.assertEqual(5, len(keys))
+
+    def test_changes_with_inline_dockerfile_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            o1 = ManifestImageOverlay(dockerfile="FROM ${BASE}\nRUN echo a\n")
+            o2 = ManifestImageOverlay(dockerfile="FROM ${BASE}\nRUN echo b\n")
+            self.assertNotEqual(self._key(Path(tmp), o1), self._key(Path(tmp), o2))
 
     def test_changes_with_dockerfile_context_and_render(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

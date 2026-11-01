@@ -262,6 +262,12 @@ def stage_overlay_context(
     dest.mkdir(parents=True, exist_ok=True)
     dockerfile = dest / STAGED_DOCKERFILE
     if overlay.dockerfile:
+        if overlay.dockerfile_is_inline:
+            # Inline content: no host file to read, no build context to copy.
+            staged = render_overlay_dockerfile_text(
+                base_ref, overlay.dockerfile, harness=harness)
+            dockerfile.write_text(staged)
+            return dockerfile
         src = _source(source_root, overlay.dockerfile, "dockerfile")
         staged = render_overlay_dockerfile_text(
             base_ref, src.read_text(), harness=harness)
