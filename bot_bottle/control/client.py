@@ -142,6 +142,14 @@ class OrchestratorClient:
             return False
         return status == 200
 
+    def version(self) -> dict[str, object] | None:
+        """GET /version (public, no auth). None when unreachable or not found."""
+        try:
+            status, payload = self._request("GET", "/version")
+        except OrchestratorClientError:
+            return None
+        return payload if status == 200 else None
+
     def register_bottle(
         self,
         source_ip: str,

@@ -12,11 +12,14 @@ from collections.abc import Callable
 from functools import cache
 
 from . import image_inputs, image_registry
+from .compat import PROTOCOL_VERSION
 from .engine import install_version
 from .image_registry import RegistryError
 from .lib import log
 from .lib.log import info
-from .published_artifacts import Artifact, current_platform, load_artifacts_manifest_optional
+from .published_artifacts import (
+    Artifact, FORMAT_OCI, current_platform, load_artifacts_manifest_optional,
+)
 
 # How the backends that build with Docker (docker, firecracker) and with
 # Apple's `container` (macos-container) describe a local build.
@@ -132,6 +135,34 @@ def _repo(ref: str) -> str:
     return name if name and "/" not in tag else ref
 
 
+def version_env_vars() -> dict[str, str]:
+    """Env vars to inject into an orchestrator container at startup so it can
+    report its own version from `GET /version` without needing the full
+    host-side package."""
+    ver, commit = install_version()
+    env: dict[str, str] = {
+        "BOT_BOTTLE_VERSION": ver,
+        "BOT_BOTTLE_COMMIT": commit,
+        "BOT_BOTTLE_PROTOCOL": str(PROTOCOL_VERSION),
+    }
+    for image in image_inputs.INFRA_ROLES:
+        role = image.removeprefix("bot-bottle-").upper()  # GATEWAY or ORCHESTRATOR
+        prefix = f"BOT_BOTTLE_IMAGE_{role}"
+        try:
+            artifact = published_infra_artifact(image, FORMAT_OCI)
+            inputs_hash = _local_inputs_hash(image)
+        except Exception:  # noqa: BLE001
+            continue
+        if artifact is not None:
+            env[f"{prefix}_SOURCE"] = "published"
+            env[f"{prefix}_DIGEST"] = artifact.digest
+            env[f"{prefix}_INPUTS_HASH"] = inputs_hash
+        else:
+            env[f"{prefix}_SOURCE"] = "local"
+            env[f"{prefix}_INPUTS_HASH"] = inputs_hash
+    return env
+
+
 __all__ = [
     "BUILD_NEEDS_DOCKER",
     "BUILD_WITH_CONTAINER",
@@ -142,4 +173,5 @@ __all__ = [
     "pull_pinned_image",
     "require_infra_images",
     "unpublished_message",
+    "version_env_vars",
 ]

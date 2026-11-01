@@ -602,9 +602,22 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
             super().log_message(format, *args)
 
     def do_GET(self) -> None:
-        # /health for liveness; everything else 405.
         if self.path == "/health":
             self._write_text(200, "ok\n")
+            return
+        if self.path == "/version":
+            import os  # pylint: disable=import-outside-toplevel
+            body = json.dumps({
+                "version": os.environ.get("BOT_BOTTLE_VERSION", "unknown"),
+                "commit": os.environ.get("BOT_BOTTLE_COMMIT", ""),
+                "protocol": int(os.environ.get("BOT_BOTTLE_PROTOCOL", "0") or "0"),
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(body)
             return
         self._write_text(405, "use POST for MCP requests\n")
 

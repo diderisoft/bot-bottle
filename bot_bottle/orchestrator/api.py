@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import math
+import os
 import re
 import sys
 from collections.abc import AsyncGenerator
@@ -16,7 +17,6 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from ..compat import PROTOCOL_VERSION
 from ..contract.audit import AUDIT_EVENTS_PATH, GATEWAY_PRODUCERS, AuditEvent
 from ..contract.firehose import FIREHOSE_PATH, Capture
 from ..contract.auth import CONTROL_PLANE, ROLE_CLI, ROLES
@@ -27,11 +27,7 @@ from ..contract.http import (
     ORCHESTRATOR_AUTH_HEADER,
     REQUEST_BODY_TIMEOUT_SECONDS,
 )
-from ..engine import install_version
-from .. import image_inputs
-from ..infra_image import published_infra_artifact
 from ..lib import log
-from ..published_artifacts import FORMAT_OCI
 from .audit_events import OrchestratorAudit
 from .audit_sender import AuditSender
 from .hostctl_relay import (
@@ -384,25 +380,37 @@ def create_app(
 
     @app.get("/version")
     def version() -> dict[str, object]:
-        ver, commit = install_version()
-        images: dict[str, object] = {}
-        for image in image_inputs.INFRA_ROLES:
+        # Version info is injected as env vars by the host at container startup
+        # (via `infra_image.version_env_vars()`), since the container image only
+        # includes a subset of the host-side package.
+        def _s(key: str) -> str:
+            return os.environ.get(key, "")
+
+        def _i(key: str) -> int:
             try:
-                artifact = published_infra_artifact(image, FORMAT_OCI)
-                inputs_hash = image_inputs.inputs_hash(image)
-            except Exception:  # noqa: BLE001
-                images[image] = {"source": "unknown"}
+                return int(os.environ.get(key, ""))
+            except ValueError:
+                return 0
+
+        images: dict[str, object] = {}
+        for image in ("bot-bottle-gateway", "bot-bottle-orchestrator"):
+            role = image.removeprefix("bot-bottle-").upper()
+            prefix = f"BOT_BOTTLE_IMAGE_{role}"
+            source = _s(f"{prefix}_SOURCE")
+            if not source:
                 continue
-            if artifact is not None:
-                images[image] = {
-                    "source": "published",
-                    "digest": artifact.digest,
-                    "inputs_hash": inputs_hash,
-                }
-            else:
-                images[image] = {"source": "local", "inputs_hash": inputs_hash}
-        return {"version": ver, "commit": commit, "protocol": PROTOCOL_VERSION,
-                "images": images}
+            entry: dict[str, object] = {"source": source}
+            if digest := _s(f"{prefix}_DIGEST"):
+                entry["digest"] = digest
+            if ih := _s(f"{prefix}_INPUTS_HASH"):
+                entry["inputs_hash"] = ih
+            images[image] = entry
+        return {
+            "version": _s("BOT_BOTTLE_VERSION") or "unknown",
+            "commit": _s("BOT_BOTTLE_COMMIT"),
+            "protocol": _i("BOT_BOTTLE_PROTOCOL"),
+            "images": images,
+        }
 
     @app.get("/bottles")
     def bottles() -> dict[str, object]:
