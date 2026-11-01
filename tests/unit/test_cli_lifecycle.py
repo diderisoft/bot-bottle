@@ -58,7 +58,11 @@ class TestUpDown(_Mocked):
             self.assertEqual(0, code)
             self.assertFalse(ensure.call_args.kwargs["restart"])
             self.runner.restart.assert_not_called()
+            # --restart restarts the host controller; a current infra pair
+            # is adopted, not rebooted (#879).
             self.run_cmd(lifecycle.cmd_up, ["--restart"])
+            self.assertFalse(ensure.call_args.kwargs["restart"])
+            self.run_cmd(lifecycle.cmd_up, ["--restart-infra"])
             self.assertTrue(ensure.call_args.kwargs["restart"])
         self.assertIn("firecracker orchestrator: running at http://orch", out)
         # #679: --restart restarts the host controller too, asking first.

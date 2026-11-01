@@ -108,6 +108,11 @@ class MacosInfraService(InfraService):
             repo_root=self._repo_root,
         )
 
+    def prepare_images(self) -> None:
+        """Build both images (cache-aware) without touching running ones."""
+        self.orchestrator().ensure_built()
+        self.gateway().ensure_built()
+
     def _bring_up(self, *, startup_timeout: float) -> tuple[str, bool]:
         """Ensure both containers are up and return the control-plane URL. A
         healthy, current orchestrator is left alone. Raises

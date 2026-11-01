@@ -58,14 +58,11 @@ class FirecrackerInfraService(InfraService):
             if infra_vm.adoptable(key, url, want):
                 info(f"adopting running infra VMs (orchestrator at {url})")
                 return url, False
+            # Images first, while any running pair still serves: a build or
+            # download mustn't be downtime for running bottles.
+            self.prepare_images()
             # Clear stale, hung or outdated VMs holding either link.
             infra_vm.stop()
-            # A 404, digest mismatch or unreachable registry fails closed with
-            # a clean message.
-            try:
-                infra_vm.ensure_built(self.settings)
-            except (RegistryError, ArtifactsManifestError) as e:
-                die(str(e))
             # Orchestrator first: the gateway reaches it at startup. The
             # orchestrator mints the gateway's token.
             orchestrator.ensure_running(startup_timeout=startup_timeout)
@@ -75,6 +72,14 @@ class FirecrackerInfraService(InfraService):
             infra_vm.record_booted_version(want)
             # Both just booted, so neither holds per-bottle state.
             return url, True
+
+    def prepare_images(self) -> None:
+        """Download or build both rootfs artifacts. A 404, digest mismatch or
+        unreachable registry fails closed with a clean message."""
+        try:
+            infra_vm.ensure_built(self.settings)
+        except (RegistryError, ArtifactsManifestError) as e:
+            die(str(e))
 
     def stop(self) -> None:
         """Stop both VMs (idempotent) and drop the version marker."""

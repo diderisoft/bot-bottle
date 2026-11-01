@@ -40,8 +40,13 @@ def _yes(held: list[str]) -> bool:
 def cmd_up(argv: list[str]) -> int:
     parser = _parser("up", "Start the host controller and the backend's orchestrator and gateway.")
     parser.add_argument("--restart", action="store_true",
-                        help="restart the host controller (running bottles keep running), "
-                             "then the orchestrator and gateway")
+                        help="restart the host controller (running bottles keep running); "
+                             "the orchestrator and gateway are rebooted only if their images "
+                             "or settings changed")
+    parser.add_argument("--restart-infra", action="store_true",
+                        help="also reboot the orchestrator and gateway even if they're "
+                             "current (running bottles are reattached; their network drops "
+                             "for the seconds it takes)")
     parser.add_argument("--build", action="store_true",
                         help="build the orchestrator and gateway images from this install's "
                              "source instead of pulling a release's (for running from main; "
@@ -63,7 +68,9 @@ def cmd_up(argv: list[str]) -> int:
     try:
         if ns.restart:
             runner.restart(confirm_restart=_yes if ns.yes else confirm_controller_restart)
-        url = ensure_via_daemon(settings, backend, restart=ns.restart,
+        # A current pair is adopted: rebooting it would only cut running
+        # bottles off for nothing. New images or settings reboot it anyway.
+        url = ensure_via_daemon(settings, backend, restart=ns.restart_infra,
                                 allow_reattach_failures=ns.allow_reattach_failures)
     except runner.HostControlError as e:
         return _fail(str(e))

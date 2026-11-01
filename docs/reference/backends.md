@@ -429,6 +429,21 @@ user, against its firewall, with the sibling knock.
 
 ## Gateway restarts
 
+A restart is rare on purpose. `bot-bottle up` (with or without `--restart`,
+which restarts the host controller) adopts a running orchestrator and gateway
+when they're healthy and booted the current images and settings; only new
+images (their inputs hash) or changed settings reboot them, and
+`bot-bottle up --restart-infra` forces it. A reboot builds or downloads the
+new images first, while the old pair still serves, then cuts over: running
+bottles lose the network for the ten or so seconds the pair takes to boot and
+reattach them. A harness's own retries (Claude Code retries a failed request
+up to ten times) usually cover that.
+
+The CA agents trust doesn't change across reboots: the host keeps it (the
+gateway's first boot mints it) and pushes it into each new gateway, so a
+running agent's process, which read its trust store once at start, keeps
+trusting the gateway.
+
 The gateway keeps no per-bottle state on disk except the CA. When the infra
 pair comes up cold while bottles are running, `reattach_running_bottles`
 restores each one: the gateway address, the CA, git-gate repos and

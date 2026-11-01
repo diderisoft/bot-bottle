@@ -10,6 +10,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from collections.abc import Callable
 from unittest.mock import patch
 
 from bot_bottle.contract.hostctl import Settings
@@ -86,14 +87,25 @@ class TestEnsureRunning(unittest.TestCase):
                     patch.object(infra_vm, "_health_ok", return_value=True), \
                     patch.object(infra_vm, "_pidfile_alive", return_value=True), \
                     patch.object(infra_vm, "stop") as stop, \
-                    patch.object(infra_vm, "ensure_built"), \
+                    patch.object(infra_vm, "ensure_built") as built, \
                     patch(_ORCH_CLS) as orch_cls, patch(_GW_CLS) as gw_cls, \
                     patch(_REATTACH) as reconcile, patch(_ROOT, return_value=Path(td)):
                 orch_cls.return_value.gateway_url.return_value = "http://10.243.255.1:8099"
                 orch_cls.return_value.mint_gateway_token.return_value = "gw.jwt"
                 orch_cls.return_value.url.return_value = "http://10.243.255.1:8099"
+                calls: list[str] = []
+
+                def record(what: str) -> Callable[..., None]:
+                    def call(*_args: object, **_kwargs: object) -> None:
+                        calls.append(what)
+                    return call
+                built.side_effect = record("built")
+                stop.side_effect = record("stop")
                 FirecrackerInfraService(Settings()).ensure_running()
             stop.assert_called_once()          # dislodge the outdated pair
+            # The new images are ready before the old pair stops, so a build
+            # or download isn't downtime for running bottles (#879).
+            self.assertEqual(["built", "stop"], calls)
             orch_cls.return_value.ensure_running.assert_called_once()
             # The gateway service is bound to the orchestrator's gateway URL,
             # carrying the orchestrator-minted `gateway` token.

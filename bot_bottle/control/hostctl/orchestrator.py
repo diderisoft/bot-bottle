@@ -32,6 +32,9 @@ def ensure(settings: Settings, *, restart: bool = False,
         # Before stopping anything: a restart that can't come back up is worse
         # than none.
         service.require_infra_images(inherit_build=False)
+        # Images first, while the pair still serves: a build mustn't be
+        # downtime for the running bottles.
+        service.prepare_images()
         log.info(f"stopping the {name} orchestrator and gateway")
         service.stop()
     policy = AttachPolicy.REPORT if allow_reattach_failures else AttachPolicy.STRICT

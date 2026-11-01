@@ -147,8 +147,14 @@ class TestDaemonSide(unittest.TestCase):
             # An adopted orchestrator still gets its listener.
             backend.infra_service.return_value.orchestrator.return_value \
                 .serve_host_control.assert_called_once_with()
+            service = backend.infra_service.return_value
+            calls: list[str] = []
+            service.prepare_images.side_effect = lambda: calls.append("prepare")
+            service.stop.side_effect = lambda: calls.append("stop")
             orchestrator.ensure(Settings(), restart=True)
-            backend.infra_service.return_value.stop.assert_called_once()
+            service.stop.assert_called_once()
+            # Images first, while the pair still serves (#879).
+            self.assertEqual(["prepare", "stop"], calls)
             self.assertEqual({"backend": "docker", "running": False, "url": ""},
                              orchestrator.status(Settings()))
         self.assertFalse(get.call_args.kwargs["prompt"])

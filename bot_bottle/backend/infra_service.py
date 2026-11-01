@@ -220,6 +220,12 @@ class InfraService(abc.ABC):
         """Bring the pair up; return the control-plane URL and whether either
         plane was (re)started rather than adopted."""
 
+    def prepare_images(self) -> None:
+        """Make this bring-up's images ready without touching the running
+        pair, so a restart that has to build doesn't do it while the gateway
+        is down. Backends that build inside `_bring_up` before replacing
+        anything need nothing here."""
+
     @abc.abstractmethod
     def stop(self) -> None:
         """Remove both the orchestrator and the gateway. Idempotent."""
