@@ -14,7 +14,7 @@ Allowed option values (preference order, stopping at first that fits):
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from typing import Any
 
 OPTION_REUSE = "reuse"
@@ -149,7 +149,7 @@ class Proposal:
     # --- parsing --------------------------------------------------------
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Proposal":
+    def from_dict(cls, d: object) -> "Proposal":
         """Parse and validate a proposal from a dict.  Raises ValueError on
         invalid input."""
         if not isinstance(d, dict):

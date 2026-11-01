@@ -18,7 +18,6 @@ from ..manifest.util import ManifestError
 from ..onboarding import find_forge, read_origin
 from ..paths import bot_bottle_root
 from .proposal import (
-    OPTION_NEW,
     OPTION_REUSE,
     OPTION_STACK_ADDITIONS,
     Proposal,
@@ -37,8 +36,9 @@ def rules_suggest(
 
     `cwd` is the project directory (defaults to the current directory).
     `host_root` is `~/.bot-bottle` (defaults to `bot_bottle_root()`).
-    `task` is recorded in `notes` for traceability but doesn't affect the rules.
+    `task` doesn't affect the rules; it's taken so every path has one signature.
     """
+    del task
     if cwd is None:
         import os
         cwd = Path(os.getcwd())

@@ -1,6 +1,6 @@
 """Tests for architect output parsing and repair (PRD 0117, chunk 2).
 
-The fake harness is injected by replacing `_try_claude` / `_try_codex` in the
+The fake harness is injected by replacing `_try_claude` in the
 architect module, so no real CLI is needed.
 """
 
@@ -42,7 +42,7 @@ class TestExtractJson(unittest.TestCase):
 
 class TestParseAndRepair(unittest.TestCase):
 
-    def _valid_dict(self) -> dict:
+    def _valid_dict(self) -> dict[str, object]:
         return {
             "option": OPTION_REUSE,
             "bottles": ["basic"],
@@ -117,8 +117,7 @@ class TestArchitectFallback(unittest.TestCase):
         self.addCleanup(env.stop)
 
     def test_no_harness_falls_back_to_rules(self) -> None:
-        with mock.patch("bot_bottle.suggest.architect._try_claude", return_value=None), \
-             mock.patch("bot_bottle.suggest.architect._try_codex", return_value=None):
+        with mock.patch("bot_bottle.suggest.architect._try_claude", return_value=None):
             p = architect_suggest("do a thing", self.cwd, host_root=self.root)
         self.assertEqual(p.option, OPTION_REUSE)
         self.assertEqual(p.bottles, ["basic"])
@@ -136,16 +135,14 @@ class TestArchitectFallback(unittest.TestCase):
             "notes": [],
         }
         with mock.patch("bot_bottle.suggest.architect._try_claude",
-                        return_value=json.dumps(d)), \
-             mock.patch("bot_bottle.suggest.architect._try_codex", return_value=None):
+                        return_value=json.dumps(d)):
             p = architect_suggest("do a thing", self.cwd, host_root=self.root)
         self.assertEqual(p.option, OPTION_STACK_ADDITIONS)
         self.assertEqual(p.additions.egress[0].host, "api.example.com")
 
     def test_architect_unparseable_falls_back(self) -> None:
         with mock.patch("bot_bottle.suggest.architect._try_claude",
-                        return_value="I cannot help with that."), \
-             mock.patch("bot_bottle.suggest.architect._try_codex", return_value=None):
+                        return_value="I cannot help with that."):
             p = architect_suggest("do a thing", self.cwd, host_root=self.root)
         # Falls back to rules (basic) and adds a note.
         self.assertEqual(p.option, OPTION_REUSE)
@@ -167,3 +164,35 @@ class TestArchitectManifest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClaudeInvocation(unittest.TestCase):
+    """The harness runs with no tools, no MCP and no settings, from an empty
+    directory: it can only answer."""
+
+    def test_no_tools_from_an_empty_directory(self) -> None:
+        from bot_bottle.suggest import architect
+        seen: dict[str, object] = {}
+
+        def run(argv, **kw):  # type: ignore[no-untyped-def]
+            seen["argv"], seen["cwd"] = argv, kw.get("cwd")
+            seen["listing"] = os.listdir(kw["cwd"])
+            return mock.Mock(returncode=0, stdout='{"option": "reuse"}')
+
+        with mock.patch.object(architect.shutil, "which", return_value="/bin/claude"), \
+             mock.patch.object(architect.subprocess, "run", side_effect=run):
+            self.assertEqual('{"option": "reuse"}', architect._try_claude("task", "sys"))
+        argv = seen["argv"]
+        assert isinstance(argv, list)
+        self.assertEqual(["/bin/claude", *architect.CLAUDE_ARGS, "--system-prompt", "sys"], argv)
+        self.assertIn("--tools", argv)
+        self.assertEqual("", argv[argv.index("--tools") + 1])
+        self.assertEqual([], seen["listing"])
+        self.assertFalse(hasattr(architect, "_try_codex"))
+
+    def test_a_failed_harness_says_the_rules_answered(self) -> None:
+        from bot_bottle.suggest import architect
+        with mock.patch.object(architect, "_try_claude", return_value=None):
+            with tempfile.TemporaryDirectory() as d:
+                proposal = architect.architect_suggest("deploy it", Path(d), host_root=Path(d))
+        self.assertTrue(any("bottle-architect didn't run" in n for n in proposal.notes))

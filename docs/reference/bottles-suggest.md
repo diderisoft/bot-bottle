@@ -64,11 +64,19 @@ A proposal is a JSON object with these fields:
 - **Secret values are never included.** `additions.credentials` carries only a
   secret *name* from the host secrets file; the value is injected at launch by
   the gateway.
+- **No secrets in env.** An env var's value is visible to the agent, so an env
+  name that looks like a secret (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, …)
+  is dropped with a note to add it as a credential instead.
 - **Grants only on connected forges.** A repo on a forge no bottle declares
   becomes a note instead of a grant.
 - **Validation.** The proposal is turned into a bottle document and loaded with
   the real manifest loader.  Any element that fails is dropped and noted rather
   than failing the whole proposal.
+- **Stacks are stacked as a launch stacks them.** For options 1–3 the additions
+  are a bottle with no `extends`, merged after `bottles` in order, exactly as
+  `--bottle a --bottle b` merges them. (`extends: [a, b]` resolves differently:
+  it fails on a host both route.) `--write NAME` saves just the additions and
+  prints the `--bottle` flags to launch the stack with.
 
 ## Paths
 
@@ -102,9 +110,13 @@ The rules path never calls a model.  It stops at the first that fits:
 The agent outputs a JSON object matching the proposal schema.  Invalid JSON or
 a schema error falls back to the rules path automatically.
 
-The agent uses `forward_host_credentials: true`, so it uses whichever harness
-(`claude` or `codex`) is logged in on the host.  If neither is logged in, it
-falls back to the rules path.  Edit
+It runs the host's own `claude` login as `claude --print --tools ""
+--strict-mcp-config --setting-sources ""` from an empty working directory:
+no tools, no MCP servers and no settings files (so no hooks), so the model can
+only answer. If `claude` isn't installed and logged in, or fails, it falls
+back to the rules path and the proposal says so. Codex isn't used yet: its
+non-interactive mode is an agent with a shell, which mustn't run on the host
+outside a bottle.  Edit
 `~/.bot-bottle/agents/bottle-architect.md` to change the model, prompt, or
 provider.
 

@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ...contract.yaml_subset import YamlSubsetError, parse_frontmatter
 from ...manifest import ManifestError, ManifestIndex
@@ -33,7 +34,10 @@ from ...manifest.trust import UntrustedBottleError, check
 from ..constants import PROG
 from ..table import print_table
 from ...suggest.render import render_proposal
-from ...suggest.validate import proposal_to_frontmatter, validate_proposal
+from ...suggest.validate import validate_proposal
+
+if TYPE_CHECKING:
+    from ...suggest.proposal import Proposal
 
 _HEADER = ("BOTTLE", "SOURCE", "EXTENDS", "TRUSTED", "PROBLEM")
 
@@ -139,13 +143,13 @@ def _write_suggested_bottle(
     cwd: Path,
 ) -> int:
     """Write the proposal as a new host bottle named `name`."""
+    del dirs, cwd  # validated already; it's written to the host's bottles
     # pylint: disable=import-outside-toplevel
     from ...contract.yaml_subset import serialize_yaml_subset
-    from ...manifest.loader import BUILTIN_BOTTLES_DIR
     from ...manifest.schema import is_valid_entity_name
     from ...manifest.versions import record_or_warn
     from ...paths import bot_bottle_root
-    from ...suggest.validate import proposal_to_frontmatter
+    from ...suggest.validate import is_stacked, proposal_to_frontmatter
 
     if not is_valid_entity_name(name):
         sys.stderr.write(
@@ -176,13 +180,12 @@ def _write_suggested_bottle(
     path.write_text(text)
     record_or_warn(f"suggest: write bottles/{name}", root=root)
     print(f"wrote {path}", file=sys.stderr)
+    if is_stacked(proposal) and proposal.bottles:
+        # It holds only the additions: launch it stacked on the rest.
+        flags = " ".join(f"--bottle {b}" for b in [*proposal.bottles, name])
+        print(f"launch with: {PROG} start <agent> {flags}", file=sys.stderr)
     return 0
 
-
-# Type alias used only in _write_suggested_bottle's type hints.
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from ...suggest.proposal import Proposal
 
 
 __all__ = ["cmd_bottles"]

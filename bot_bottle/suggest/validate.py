@@ -11,11 +11,13 @@ written to disk here.
 
 from __future__ import annotations
 
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
 
 from ..contract.yaml_subset import serialize_yaml_subset
+from ..manifest.extends import merge_bottles_runtime
 from ..manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
 from ..manifest.util import ManifestError
 from .proposal import (
@@ -46,19 +48,14 @@ def _egress_routes(additions: ProposalAdditions) -> list[dict[str, Any]]:
     return routes
 
 
-def proposal_to_frontmatter(
-    proposal: Proposal,
-    forges: list[str] | None = None,
-) -> dict[str, Any]:
+def proposal_to_frontmatter(proposal: Proposal) -> dict[str, Any]:
     """A bottle frontmatter dict for the proposal's additions.
 
-    For reuse/stack options this is an additions-only dict (to be layered on
-    top of the stacked bottles via `extends`).  For new-extending / new it
-    includes the `extends` from `new_bottle`.
-
-    `forges` is a list of bottle names that declare connected forges; a repo
-    grant on one becomes a one-line grant, which requires that bottle in the
-    extends chain.
+    For reuse/stack options this is an additions-only dict with no `extends`:
+    it's stacked after `proposal.bottles` exactly as a launch stacks bottles
+    (`stack_names`). An `extends` list would resolve differently, failing on a
+    host two stacked bottles both route. For new-extending / new it includes
+    the `extends` from `new_bottle`.
     """
     fm: dict[str, Any] = {}
 
@@ -66,11 +63,6 @@ def proposal_to_frontmatter(
     if proposal.option in (OPTION_NEW_EXTENDING, OPTION_NEW) and proposal.new_bottle:
         extends = proposal.new_bottle.extends or (base_bottles[0] if base_bottles else "basic")
         fm["extends"] = extends
-    elif base_bottles:
-        if len(base_bottles) == 1:
-            fm["extends"] = base_bottles[0]
-        else:
-            fm["extends"] = base_bottles
 
     add = proposal.additions
     env: dict[str, str] = {}
@@ -125,6 +117,15 @@ def validate_proposal(
         else:
             good_repos.append(r)
 
+    good_env = []
+    for v in add.env:
+        if _SECRET_NAME.search(v.name):
+            notes.append(f"dropped env {v.name!r}: a secret mustn't be an env var, which the "
+                         f"agent can read; add it to the host secrets and propose it as a "
+                         f"credential on the route that needs it")
+        else:
+            good_env.append(v)
+
     good_creds: list[ProposalCredential] = []
     valid_hosts = {e.host for e in good_egress}
     for c in add.credentials:
@@ -142,13 +143,34 @@ def validate_proposal(
         additions=proposal.additions.__class__(
             egress=good_egress,
             repos=good_repos,
-            env=list(add.env),
+            env=good_env,
             credentials=good_creds,
         ),
         similar=proposal.similar,
         notes=notes,
     )
     return cleaned, notes
+
+
+# An env var's value is visible to the agent, so a secret never goes in one:
+# the gateway injects it as a credential instead.
+_SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSW|API_?KEY|PRIVATE_?KEY|CREDENTIAL|AUTH",
+                          re.IGNORECASE)
+
+
+def is_stacked(proposal: Proposal) -> bool:
+    """Whether the proposal stacks existing bottles (options 1-3) rather than
+    making a new one."""
+    return proposal.option not in (OPTION_NEW_EXTENDING, OPTION_NEW)
+
+
+def stack_names(proposal: Proposal, additions: str) -> list[str]:
+    """The bottles a launch with the proposal stacks, in merge order: its
+    bottles, then `additions` (the bottle holding its additions), or for a
+    new bottle just that one."""
+    if is_stacked(proposal):
+        return [*proposal.bottles, additions]
+    return [additions]
 
 
 def _try_load_with_egress(
@@ -179,7 +201,6 @@ def _try_load_with_repos(
     extra_repos: list[Any],
     dirs: list[tuple[Path, bool]],
 ) -> str:
-    from .proposal import ProposalAdditions  # avoid circular at module level
     tmp_proposal = Proposal(
         option=proposal.option,
         bottles=proposal.bottles,
@@ -213,13 +234,17 @@ def _try_load_proposal(
         (bottles_dir / "_suggest.md").write_text(text)
         tmp_dirs: list[tuple[Path, bool]] = [(bottles_dir, False)] + list(dirs)
         try:
-            load_bottle_chain("_suggest", tmp_dirs)
+            # Stacked as a launch stacks them (`merge_bottles_runtime`).
+            merge_bottles_runtime([load_bottle_chain(n, tmp_dirs)[0]
+                                   for n in stack_names(proposal, "_suggest")])
             return ""
         except ManifestError as e:
             return str(e).split("\n", 1)[0]
 
 
 __all__ = [
+    "is_stacked",
     "proposal_to_frontmatter",
+    "stack_names",
     "validate_proposal",
 ]

@@ -15,17 +15,14 @@ from bot_bottle.suggest.proposal import (
     ProposalCredential,
     ProposalEgress,
     ProposalEnv,
-    ProposalNewBottle,
-    ProposalRepo,
-    ProposalSimilar,
 )
 from bot_bottle.suggest.validate import proposal_to_frontmatter, validate_proposal
 
 
 class TestProposalParsing(unittest.TestCase):
 
-    def _minimal(self, **overrides: object) -> dict:
-        base = {
+    def _minimal(self, **overrides: object) -> dict[str, object]:
+        base: dict[str, object] = {
             "option": OPTION_REUSE,
             "bottles": ["basic"],
             "new_bottle": None,
@@ -142,15 +139,48 @@ class TestProposalToFrontmatter(unittest.TestCase):
             additions=ProposalAdditions(), similar=[], notes=[],
         )
         fm = proposal_to_frontmatter(p)
-        self.assertEqual(fm.get("extends"), "basic")
+        # Additions stack after the bottles as a launch stacks them.
+        self.assertNotIn("extends", fm)
 
-    def test_stack_extends_list(self) -> None:
+    def test_a_secret_is_never_an_env_var(self) -> None:
+        # The architect proposed FLY_API_TOKEN as env for a Fly deploy: the
+        # agent would see it. It must be a gateway-injected credential.
+        p = Proposal(
+            option=OPTION_STACK_ADDITIONS, bottles=["basic"], new_bottle=None,
+            additions=ProposalAdditions(env=[ProposalEnv(name="FLY_API_TOKEN"),
+                                             ProposalEnv(name="FLY_APP")]),
+            similar=[], notes=[],
+        )
+        validated, notes = validate_proposal(p)
+        self.assertEqual(["FLY_APP"], [v.name for v in validated.additions.env])
+        self.assertTrue(any("FLY_API_TOKEN" in n and "credential" in n for n in notes))
+
+    def test_a_stack_isnt_an_extends_list(self) -> None:
+        # `extends: [a, b]` fails on a host both route; a launch's stack doesn't.
         p = Proposal(
             option="stack", bottles=["gitea", "basic"], new_bottle=None,
             additions=ProposalAdditions(), similar=[], notes=[],
         )
-        fm = proposal_to_frontmatter(p)
-        self.assertEqual(fm["extends"], ["gitea", "basic"])
+        self.assertNotIn("extends", proposal_to_frontmatter(p))
+
+    def test_additions_validate_on_a_stack_sharing_a_host(self) -> None:
+        import tempfile
+        from bot_bottle.manifest.loader import BUILTIN_BOTTLES_DIR
+        with tempfile.TemporaryDirectory() as d:
+            bottles = Path(d)
+            # Both route pypi.org, like bot-bottle-dev and basic on delphi.
+            (bottles / "dev.md").write_text(
+                "---\negress:\n  routes:\n    - host: pypi.org\n---\n")
+            p = Proposal(
+                option=OPTION_STACK_ADDITIONS, bottles=["dev", "basic"], new_bottle=None,
+                additions=ProposalAdditions(
+                    egress=[ProposalEgress(host="api.fly.io", methods=["GET", "POST"])]),
+                similar=[], notes=[],
+            )
+            validated, notes = validate_proposal(
+                p, [(bottles, False), (BUILTIN_BOTTLES_DIR, False)])
+        self.assertEqual(["api.fly.io"], [e.host for e in validated.additions.egress])
+        self.assertFalse([n for n in notes if "dropped" in n])
 
     def test_additions_egress(self) -> None:
         p = Proposal(
@@ -218,7 +248,7 @@ class TestValidateProposal(unittest.TestCase):
 
     def test_valid_basic_reuse(self) -> None:
         p = self._basic_proposal()
-        validated, notes = validate_proposal(p)
+        validated, _ = validate_proposal(p)
         self.assertEqual(validated.option, OPTION_REUSE)
 
     def test_valid_egress_route(self) -> None:
@@ -229,7 +259,7 @@ class TestValidateProposal(unittest.TestCase):
             ),
             similar=[], notes=[],
         )
-        validated, notes = validate_proposal(p)
+        validated, _ = validate_proposal(p)
         self.assertEqual(len(validated.additions.egress), 1)
 
     def test_invalid_egress_dropped_with_note(self) -> None:
@@ -240,7 +270,7 @@ class TestValidateProposal(unittest.TestCase):
             ),
             similar=[], notes=[],
         )
-        validated, notes = validate_proposal(p)
+        validated, _ = validate_proposal(p)
         # Empty host route should be rejected or at least not retained
         self.assertTrue(
             len(validated.additions.egress) == 0

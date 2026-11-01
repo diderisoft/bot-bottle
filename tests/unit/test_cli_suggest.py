@@ -87,8 +87,7 @@ class TestBottlesSuggestCli(unittest.TestCase):
         self.assertIn("note:", out)
 
     def test_suggest_with_architect_flag_falls_back(self) -> None:
-        with mock.patch("bot_bottle.suggest.architect._try_claude", return_value=None), \
-             mock.patch("bot_bottle.suggest.architect._try_codex", return_value=None):
+        with mock.patch("bot_bottle.suggest.architect._try_claude", return_value=None):
             code, out = self._run(["do something", "--architect"])
         self.assertEqual(code, 0)
         self.assertIn("option:", out)

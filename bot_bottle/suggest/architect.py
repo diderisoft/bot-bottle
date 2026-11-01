@@ -6,8 +6,12 @@ run directly on the host with its own login.  The output is a JSON object
 matching the Proposal schema.  Invalid JSON or a schema error falls back to
 the rules path.
 
-Harness precedence: claude first, then codex.  When neither is logged in the
-rules path is used.
+Only claude for now: `claude --print --tools ""` runs the model with no
+tools, no MCP servers and no settings files (so no hooks), from an empty
+working directory, so it can read nothing and do nothing but answer. Codex
+waits: its non-interactive mode (`codex exec`) is an agent with a shell,
+which mustn't run on the host. When claude isn't there or fails, the rules
+path is used, and the proposal says so.
 
 Input to the model: the task, the host's bottle library (names, about text,
 extends, elements), project metadata (origin URL, the project bottle's name,
@@ -21,6 +25,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -71,8 +76,9 @@ Rules:
 
 def _host_library(host_root: Path, dirs: list[tuple[Path, bool]]) -> list[dict[str, Any]]:
     """Each bottle the host knows: name, about text (body first line), extends."""
-    from ..control.hostctl.manifest_elements import _chain_files, bottle_elements
-    from ..manifest.loader import scan_bottle_names, BUILTIN_BOTTLES_DIR
+    del host_root  # `dirs` already names where the host's bottles are
+    from ..control.hostctl.manifest_elements import bottle_elements
+    from ..manifest.loader import scan_bottle_names
     from ..contract.yaml_subset import parse_frontmatter, YamlSubsetError
 
     result = []
@@ -192,43 +198,23 @@ def _build_prompt(
     return "\n".join(sections)
 
 
+# Print mode with no built-in tools, no MCP servers and no settings files.
+CLAUDE_ARGS = ("--print", "--tools", "", "--strict-mcp-config", "--setting-sources", "")
+
+
 def _try_claude(prompt: str, system_prompt: str) -> str | None:
-    """Run `claude --print` with a piped prompt; return stdout or None."""
+    """Run `claude` with no tools, from an empty directory, the prompt on
+    stdin; its stdout, or None if it isn't installed or fails."""
     claude = shutil.which("claude")
     if not claude:
         return None
     try:
-        result = subprocess.run(
-            [claude, "--print", "--no-markdown",
-             "--system-prompt", system_prompt,
-             "--no-tools"],
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    return None
-
-
-def _try_codex(prompt: str, system_prompt: str) -> str | None:
-    """Run `codex` in non-interactive mode; return stdout or None."""
-    codex = shutil.which("codex")
-    if not codex:
-        return None
-    full_prompt = f"{system_prompt}\n\n{prompt}"
-    try:
-        result = subprocess.run(
-            [codex, "--quiet", full_prompt],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
+        with tempfile.TemporaryDirectory(prefix="bottle-architect.") as empty:
+            result = subprocess.run(
+                [claude, *CLAUDE_ARGS, "--system-prompt", system_prompt],
+                input=prompt, capture_output=True, text=True, timeout=120,
+                check=False, cwd=empty,
+            )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
     except (OSError, subprocess.TimeoutExpired):
@@ -338,9 +324,10 @@ def architect_suggest(
 
     raw: str | None = _try_claude(prompt, system_prompt)
     if raw is None:
-        raw = _try_codex(prompt, system_prompt)
-    if raw is None:
-        return rules_suggest(task, cwd, host_root=host_root)
+        proposal = rules_suggest(task, cwd, host_root=host_root)
+        proposal.notes.append("bottle-architect didn't run (claude isn't installed and "
+                              "logged in, or it failed); this is the rules path")
+        return proposal
 
     proposal = _parse_and_repair(raw)
     if proposal is None:
