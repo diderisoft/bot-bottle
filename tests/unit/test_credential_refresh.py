@@ -371,7 +371,8 @@ class TestWatchEdges(TestWatch):
         self.provider.result = CredentialRefresh({REF: "tok-1"}, NOW + timedelta(days=5))
         with mock.patch.object(self.refresher, "refresh", side_effect=refresh):
             self.assertEqual(["c2"], self.refresher.watch_once())
-        warned = " ".join(str(c.args[0]) for c in credential_refresh.log.warn.call_args_list)
+        warn = cast(mock.Mock, credential_refresh.log.warn)
+        warned = " ".join(str(c.args[0]) for c in warn.call_args_list)
         self.assertIn("host unreachable", warned)
 
     def test_the_watch_thread_looks_and_survives_an_error(self) -> None:
@@ -390,7 +391,8 @@ class TestWatchEdges(TestWatch):
             self.refresher.start()
             self.assertTrue(looked.wait(2))
             self.refresher.stop()
-        warned = " ".join(str(c.args[0]) for c in credential_refresh.log.warn.call_args_list)
+        warn = cast(mock.Mock, credential_refresh.log.warn)
+        warned = " ".join(str(c.args[0]) for c in warn.call_args_list)
         self.assertIn("watching the host logins failed: boom", warned)
 
 
