@@ -51,7 +51,8 @@ def cmd_up(argv: list[str]) -> int:
                         help="build the orchestrator and gateway images from this install's "
                              "source instead of pulling a release's (for running from main; "
                              "same as BOT_BOTTLE_INFRA_BUILD=local). Later launches keep "
-                             "building until an `up` without it")
+                             "building until an `up` without it; one that finds a current "
+                             "local build running, with no release to pull, keeps it")
     parser.add_argument("--allow-reattach-failures", action="store_true",
                         help="if a running bottle can't be reattached to the restarted "
                              "gateway, name it and bring the rest up instead of failing "

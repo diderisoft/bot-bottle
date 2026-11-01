@@ -31,7 +31,7 @@ def ensure(settings: Settings, *, restart: bool = False,
     if restart:
         # Before stopping anything: a restart that can't come back up is worse
         # than none.
-        service.require_infra_images(inherit_build=False)
+        service.require_infra_images(inherit_build=False, adopting=False)
         # Images first, while the pair still serves: a build mustn't be
         # downtime for the running bottles.
         service.prepare_images()

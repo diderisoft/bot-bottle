@@ -61,7 +61,12 @@ from the install's `direct_url.json`. Re-running the installer installs the
 latest release tag (`infra_image.RELEASE_INSTALL_HINT`). A bring-up a launch triggers keeps the
 last recorded bring-up's opt-in, so `bot-bottle up --build` followed by
 `bot-bottle <agent>` keeps building; `bot-bottle up` does only what its flags
-say, so an `up` without `--build` goes back to pulling, or stops.
+say, so an `up` without `--build` goes back to pulling, or stops. The
+exception is a pair that's running, healthy and current, built locally by the
+last `up --build`, on an install no release matches: an `up` (`--restart`
+included) keeps it and its `--build` opt-in, and says so, since there's nothing
+to pull and nothing needs building. A cold start or `up --restart-infra` still
+needs a matching release or `--build`.
 
 ## The agent's home
 

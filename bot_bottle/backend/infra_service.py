@@ -143,14 +143,30 @@ class InfraService(abc.ABC):
             if launch_stages:
                 log.stage("start", "Starting the bottle")
 
-    def require_infra_images(self, *, inherit_build: bool = True) -> None:
+    def require_infra_images(self, *, inherit_build: bool = True,
+                             adopting: bool = True) -> None:
         """Die unless the infra images can be pulled (a published release
         matches this install's code) or building them locally was asked for.
         With `inherit_build`, a request that didn't ask takes the opt-in from
         the last recorded bring-up, so `bot-bottle up --build` then
-        `bot-bottle <agent>` keeps working (and keeps its fingerprint)."""
+        `bot-bottle <agent>` keeps working (and keeps its fingerprint).
+
+        With `adopting` (any bring-up that doesn't stop the pair first), a
+        running, healthy pair that differs from this request only in that
+        opt-in is kept as it is, opt-in included: nothing needs building or
+        booting, and dropping the opt-in would make the next bring-up need
+        images there are none of. A cold start, or a forced restart
+        (`adopting=False`), still needs the images or `--build`."""
         infra = self.settings.infra
         if infra.infra_build_local or published_infra_matches(self.infra_format):
+            return
+        if adopting and self._current_local_build_running():
+            info(f"the {self.name} infra pair is running and current: keeping it, and the "
+                 "last `bot-bottle up --build` with it (no published infra images match this "
+                 "install, so it stays built locally; `bot-bottle up --restart-infra --build` "
+                 "rebuilds it)")
+            self.settings = dataclasses.replace(
+                self.settings, infra=dataclasses.replace(infra, infra_build_local=True))
             return
         if inherit_build:
             recorded = recorded_infra_settings(self.name)
@@ -161,6 +177,18 @@ class InfraService(abc.ABC):
                     self.settings, infra=dataclasses.replace(infra, infra_build_local=True))
                 return
         die(unpublished_message(self.infra_build_note))
+
+    def _current_local_build_running(self) -> bool:
+        """Whether the running pair was last brought up with `--build`, is
+        healthy, and its recorded settings are this request's but for that
+        opt-in."""
+        recorded = recorded_infra_settings(self.name)
+        if recorded is None or not recorded.infra_build_local:
+            return False
+        local = dataclasses.replace(self.settings.infra, infra_build_local=True)
+        if self.recorded_infra_fingerprint() != local.fingerprint():
+            return False
+        return self.is_healthy()
 
     def _ensure_running(self, *, startup_timeout: float, inherit_build: bool,
                         attach_policy: AttachPolicy) -> str:

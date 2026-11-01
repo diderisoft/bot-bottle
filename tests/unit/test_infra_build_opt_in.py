@@ -135,11 +135,47 @@ class TestBringUpDecision(_BringUp):
         self.assertEqual(svc.recorded_infra_fingerprint(), svc.settings.infra.fingerprint())
 
     def test_up_does_only_what_its_flags_say(self) -> None:
+        # Cold: nothing running to keep, so an `up` without `--build` needs a
+        # release to pull.
         self._record(_LOCAL.infra)
         svc = _Service(Settings())
-        with self._matches(False), self.assertRaises(Die):
+        with self._matches(False), patch.object(svc, "is_healthy", return_value=False), \
+                self.assertRaises(Die):
             self._ensure(svc, inherit_build=False)
         self.assertEqual([], svc.brought_up_with)
+
+    def test_up_keeps_a_running_current_local_build(self) -> None:
+        # `up --build`, then `up --restart`: the pair is running and current,
+        # nothing needs pulling or building, so it's kept, opt-in and all,
+        # on the same fingerprint (so it isn't stopped).
+        self._record(_LOCAL.infra)
+        svc = _Service(Settings())
+        err = io.StringIO()
+        with self._matches(False), patch.object(svc, "is_healthy", return_value=True), \
+                redirect_stderr(err):
+            self.assertEqual("http://orch", svc.ensure_running(inherit_build=False))
+        self.assertFalse(svc.stopped)
+        self.assertTrue(svc.settings.infra.infra_build_local)
+        self.assertEqual(svc.recorded_infra_fingerprint(), svc.settings.infra.fingerprint())
+        self.assertIn("running and current: keeping it", err.getvalue())
+
+    def test_a_local_build_on_other_settings_still_needs_images(self) -> None:
+        # Not just the opt-in differs: the pair would be restarted, so this is
+        # a boot that needs a release or `--build`.
+        self._record(InfraSettings(infra_build_local=True, egress_port=1))
+        svc = _Service(Settings())
+        with self._matches(False), patch.object(svc, "is_healthy", return_value=True), \
+                self.assertRaises(Die):
+            self._ensure(svc, inherit_build=False)
+        self.assertEqual([], svc.brought_up_with)
+        self.assertFalse(svc.stopped)
+
+    def test_a_forced_restart_still_needs_images(self) -> None:
+        self._record(_LOCAL.infra)
+        svc = _Service(Settings())
+        with self._matches(False), patch.object(svc, "is_healthy", return_value=True), \
+                self.assertRaises(Die):
+            svc.require_infra_images(inherit_build=False, adopting=False)
 
     def test_a_matching_release_ignores_an_old_opt_in(self) -> None:
         self._record(_LOCAL.infra)
@@ -259,7 +295,7 @@ class TestUpBuildFlag(unittest.TestCase):
         with patch("bot_bottle.backend.get_bottle_backend", return_value=backend), \
                 self.assertRaises(Die):
             orchestrator.ensure(Settings(), restart=True)
-        service.require_infra_images.assert_called_once_with(inherit_build=False)
+        service.require_infra_images.assert_called_once_with(inherit_build=False, adopting=False)
         service.stop.assert_not_called()
         service.require_infra_images.side_effect = None
         service.ensure_running.return_value = "http://o"

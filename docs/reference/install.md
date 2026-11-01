@@ -50,7 +50,8 @@ bot-bottle up --build    # or set BOT_BOTTLE_INFRA_BUILD=local
 
 That needs Docker on docker and firecracker hosts, and Apple's `container` on
 macOS. Launches after it keep building locally until an `up` without
-`--build`.
+`--build` (which keeps a running, current local build rather than stopping, as
+long as no release matches the install).
 
 ## Requirements
 
