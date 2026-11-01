@@ -135,6 +135,8 @@ class TestAgentProviderRuntime(unittest.TestCase):
         self.assertEqual("BOT_BOTTLE_CLAUDE_OAUTH_TOKEN", route.token_ref)
         self.assertEqual("egress-placeholder", plan.env_vars["CLAUDE_CODE_OAUTH_TOKEN"])
         self.assertEqual("1", plan.env_vars["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"])
+        # No self-update into the kept home (#854).
+        self.assertEqual("1", plan.env_vars["DISABLE_AUTOUPDATER"])
         self.assertEqual("1", plan.env_vars["DISABLE_ERROR_REPORTING"])
         self.assertEqual(frozenset({"CLAUDE_CODE_OAUTH_TOKEN"}), plan.hidden_env_names)
         self.assertIn("/home/node", claude_config["projects"])

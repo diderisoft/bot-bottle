@@ -287,7 +287,7 @@ class TestCodexProvision(unittest.TestCase):
 
         verify_argv = provision.verify[0].argv
         self.assertTrue(any(
-            item.startswith("PATH=/home/node/.local/bin:")
+            item.startswith("PATH=/usr/local/sbin:/usr/local/bin:")
             for item in verify_argv
         ))
         self.assertIn(

@@ -91,6 +91,15 @@ state: when its session ends without being kept for resume (any harness that
 exits non-zero, as a stop does, is kept; `bottle_state.capture_session_state`),
 and in `cleanup bots`, which removes the homes of bottled agents not kept.
 
+The home outlives the image it was filled from, so nothing in it may shadow
+the image's harness: on firecracker the agent's `PATH` lists the image's
+directories before the home's, and claude runs with `DISABLE_AUTOUPDATER=1`
+(its self-update writes `~/.local/bin/claude`). An agent that exits non-zero
+within 30 seconds of a console launch or resume is reported as `agent_errored`
+with its exit status and last output (127: its command wasn't found); a later
+non-zero exit is `agent_stopped` with the same in `message`, so it can still
+be resumed.
+
 ### Keeping the guest
 
 A bottle with `preserve_container: true` keeps the whole guest too, for an

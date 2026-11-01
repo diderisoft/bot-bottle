@@ -172,9 +172,27 @@ class TestConsoleLink(unittest.TestCase):
         link, sent = _link(bottles)
         asyncio.run(link.handle({"type": "launch", "agent_id": "a1",
                                  "definition": {"name": "implementer"}}))
-        bottles.running.clear()  # the agent exited on its own
+        bottles.running.clear()  # the agent exited on its own, a while later
+        link._started_at["a1"] -= remote.EARLY_EXIT_SECONDS + 1  # pylint: disable=protected-access
         asyncio.run(link.reap())
-        self.assertEqual({"type": "agent_stopped", "agent_id": "a1", "exit_code": 3}, sent[-1])
+        self.assertEqual({"type": "agent_stopped", "agent_id": "a1", "exit_code": 3,
+                          "message": "the agent exited with status 3"}, sent[-1])
+        self.assertEqual({}, link.running)
+
+    def test_an_agent_that_couldnt_start_says_why(self) -> None:
+        # #854: a resume whose harness wasn't found exited 127 at once, and
+        # the console only saw it stop.
+        bottles = _Bottles()
+        bottles.session_state = lambda _b: {  # type: ignore[method-assign]
+            "running": False, "exit": {"status": 127, "signal": "",
+                                       "last_output": "env: 'claude': No such file or directory"}}
+        link, sent = _link(bottles)
+        asyncio.run(link.handle({"type": "launch", "agent_id": "a1",
+                                 "definition": {"name": "implementer"}}))
+        asyncio.run(link.reap())
+        self.assertEqual("agent_errored", sent[-1]["type"])
+        self.assertIn("status 127 (its command wasn't found)", sent[-1]["message"])
+        self.assertIn("env: 'claude': No such file or directory", sent[-1]["message"])
         self.assertEqual({}, link.running)
 
 

@@ -48,10 +48,11 @@ if TYPE_CHECKING:
 
 _SUPERVISE_MCP_NAME = "supervise"
 _CODEX_CLI = "/home/node/.codex/packages/standalone/current/bin/codex"
+# The image's directories first, as on the agent's PATH (#854).
 _CODEX_CLI_PATH = (
+    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:"
     "/home/node/.local/bin:"
-    "/home/node/.codex/packages/standalone/current/bin:"
-    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    "/home/node/.codex/packages/standalone/current/bin"
 )
 
 

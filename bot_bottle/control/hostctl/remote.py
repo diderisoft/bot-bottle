@@ -66,6 +66,7 @@ import hashlib
 import json
 import sys
 import threading
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -222,6 +223,9 @@ class ConsoleLink:
         # but not to be presented again.
         self._stopping: set[str] = set()
         self._starting: set[str] = set()  # console agent ids mid-launch
+        # When each console launch or resume started its agent, to tell one
+        # that couldn't start from one that ran and ended.
+        self._started_at: dict[str, float] = {}
         self.turns = AgentTurns()  # launches, resumes and stops, per agent
         self.transcripts = TranscriptLink(self._send)
 
@@ -342,6 +346,7 @@ class ConsoleLink:
         bottle = str(result.get("bottle", ""))
         self.running[agent_id] = bottle
         self.launched.add(bottle)
+        self._started_at[agent_id] = time.monotonic()
         terminal = await self._open_terminal(agent_id, bottle)
         started: dict[str, Any] = {"type": "agent_started", "agent_id": agent_id,
                                    "bottle": bottle,
@@ -456,6 +461,7 @@ class ConsoleLink:
     async def _stop(self, agent_id: str) -> None:
         bottle = self.running.pop(agent_id, "")
         self.present.pop(agent_id, None)
+        self._started_at.pop(agent_id, None)
         self._close_terminal(agent_id)
         if not bottle:
             return
@@ -603,7 +609,31 @@ class ConsoleLink:
             self._close_terminal(agent_id)
             exit_info = state.get("exit")
             code = int(exit_info.get("status", 0) or 0) if isinstance(exit_info, dict) else 0  # type: ignore[arg-type]
-            await self._send({"type": "agent_stopped", "agent_id": agent_id, "exit_code": code})
+            started = self._started_at.pop(agent_id, None)
+            last = str(exit_info.get("last_output") or "") if isinstance(exit_info, dict) else ""
+            if code and started is not None and time.monotonic() - started < EARLY_EXIT_SECONDS:
+                # It couldn't start (a harness that isn't there exits 127):
+                # say why, as a launch that failed.
+                await self._errored(agent_id, _exit_reason(code, last, at_once=True))
+                continue
+            stopped: dict[str, Any] = {"type": "agent_stopped", "agent_id": agent_id,
+                                       "exit_code": code}
+            if code:
+                stopped["message"] = _exit_reason(code, last, at_once=False)
+            await self._send(stopped)
+
+
+# An agent that exits non-zero this soon after it started couldn't start.
+EARLY_EXIT_SECONDS = 30.0
+
+
+def _exit_reason(code: int, last_output: str, *, at_once: bool) -> str:
+    """Why an agent ended, for the console: its exit status (127: its command
+    wasn't found) and the last lines it printed."""
+    what = "the agent exited at once" if at_once else "the agent exited"
+    hint = " (its command wasn't found)" if code == 127 else ""
+    tail = "\n".join(last_output.strip().splitlines()[-5:])
+    return (f"{what} with status {code}{hint}" + (f": {tail}" if tail else ""))[:500]
 
 
 def _pending_requests() -> list[dict[str, Any]]:

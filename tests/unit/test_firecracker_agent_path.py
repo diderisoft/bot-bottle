@@ -34,6 +34,14 @@ class AgentPath(unittest.TestCase):
                 with self.subTest(harness=dockerfile.parent.name, directory=directory):
                     self.assertIn(directory, on_path)
 
+    def test_the_image_comes_before_the_kept_home(self) -> None:
+        # A home is kept across resume while the rootfs is fresh: nothing in
+        # it may shadow the image's harness (a dangling self-update exits 127).
+        dirs = bottle._DEFAULT_PATH_FOR["node"].split(":")  # pylint: disable=protected-access
+        first_home = min(i for i, d in enumerate(dirs) if d.startswith("/home/"))
+        self.assertLess(dirs.index("/usr/local/bin"), first_home)
+        self.assertLess(dirs.index("/usr/bin"), first_home)
+
     def test_pi_is_found_where_its_image_installs_it(self) -> None:
         assignments = bottle._env_assignments_for("node", {})  # pylint: disable=protected-access
         path = next(a for a in assignments if a.startswith("PATH="))

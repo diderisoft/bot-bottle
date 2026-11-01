@@ -36,13 +36,15 @@ _GUEST_ARGS_DIR = "/root/.bot-bottle-args"
 # applied per command (`image_env`); a published base (a built-in harness)
 # has none, so every built-in harness's `ENV PATH` entries must be here (a
 # test checks the contrib Dockerfiles), or its command exits 127 on
-# firecracker alone.
+# firecracker alone. The image's own directories come before the home's: a
+# home is kept across stop and resume while the rootfs is fresh, so nothing
+# left there (a harness's self-update, say) may shadow the image's (#854).
 _DEFAULT_PATH_FOR = {
     "node": (
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:"
         "/home/node/.local/bin:"
         "/home/node/.codex/packages/standalone/current/bin:"
-        "/home/node/.pi/agent/node_modules/.bin:"
-        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        "/home/node/.pi/agent/node_modules/.bin"
     ),
     "root": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 }

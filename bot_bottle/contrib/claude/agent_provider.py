@@ -160,6 +160,9 @@ class ClaudeAgentProvider(AgentProvider):
         env_vars: dict[str, str] = {
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
             "DISABLE_ERROR_REPORTING": "1",
+            # The image pins the CLI. Its self-update writes into the kept
+            # home (~/.local/bin/claude), where it outlives a resume (#854).
+            "DISABLE_AUTOUPDATER": "1",
         }
         dirs = (
             AgentProvisionDir(f"{guest_home}/.claude"),
