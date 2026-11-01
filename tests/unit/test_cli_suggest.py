@@ -60,24 +60,24 @@ class TestBottlesSuggestCli(unittest.TestCase):
         self.assertNotEqual(code, 0)
 
     def test_suggest_write_saves_bottle(self) -> None:
-        code, out = self._run(["do something", "--write", "my-bottle"])
+        code, _ = self._run(["do something", "--write", "my-bottle"])
         self.assertEqual(code, 0)
         bottle_path = self.root / "bottles" / "my-bottle.md"
         self.assertTrue(bottle_path.exists(), f"{bottle_path} was not written")
 
     def test_suggest_write_invalid_name_fails(self) -> None:
-        code, out = self._run(["task", "--write", "Bad Name"])
+        code, _ = self._run(["task", "--write", "Bad Name"])
         self.assertNotEqual(code, 0)
 
     def test_suggest_write_existing_name_fails(self) -> None:
         (self.root / "bottles" / "existing.md").write_text("---\n---\n\nExisting.\n")
-        code, out = self._run(["task", "--write", "existing"])
+        code, _ = self._run(["task", "--write", "existing"])
         self.assertNotEqual(code, 0)
 
     def test_suggest_cwd_flag(self) -> None:
         other = self.home / "other"
         other.mkdir()
-        code, out = self._run(["do something", "--cwd", str(other)])
+        code, _ = self._run(["do something", "--cwd", str(other)])
         self.assertEqual(code, 0)
 
     def test_suggest_rules_notes_included(self) -> None:
