@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
-import platform
+import asyncio
+import io
+import os
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 
 from bot_bottle.control.hostctl import host_stats
+from bot_bottle.lib.config_store import ConfigStore, HostCaps
 
 
 class TestDiskStats(unittest.TestCase):
@@ -69,7 +75,7 @@ class TestMemoryStatsMacOS(unittest.TestCase):
 
     def test_total_comes_from_sysctl(self) -> None:
         with mock.patch("subprocess.run", side_effect=self._run):
-            used, total = host_stats._memory_stats_macos()
+            _, total = host_stats._memory_stats_macos()
         self.assertEqual(17179869184, total)
 
     def test_available_is_free_plus_inactive_pages(self) -> None:
@@ -81,88 +87,159 @@ class TestMemoryStatsMacOS(unittest.TestCase):
 
 
 class TestCollect(unittest.TestCase):
-    def test_returns_storage_and_memory_keys(self) -> None:
+    def test_returns_storage_and_memory_with_used_total_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            result = host_stats.collect(Path(tmp))
-        self.assertIn("storage", result)
-        self.assertIn("memory", result)
+            result = host_stats.collect([Path(tmp)])
         for section in ("storage", "memory"):
-            for key in ("used", "total", "cap"):
-                self.assertIn(key, result[section])  # type: ignore[index]
+            self.assertEqual({"used", "total", "cap"}, set(result[section]))  # type: ignore[arg-type]
 
-    def test_cap_is_zero_when_not_configured(self) -> None:
+    def test_cap_is_zero_when_not_set(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            result = host_stats.collect(Path(tmp))
+            result = host_stats.collect([Path(tmp)])
         self.assertEqual(0, result["storage"]["cap"])  # type: ignore[index]
         self.assertEqual(0, result["memory"]["cap"])  # type: ignore[index]
 
-    def test_cap_converts_gb_to_bytes(self) -> None:
+    def test_cap_converts_gib_to_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            result = host_stats.collect(Path(tmp), max_disk_gb=10, max_memory_gb=4)
+            result = host_stats.collect([Path(tmp)], limits=HostCaps(disk_gb=10, memory_gb=4))
         self.assertEqual(10 * 1024 ** 3, result["storage"]["cap"])  # type: ignore[index]
         self.assertEqual(4 * 1024 ** 3, result["memory"]["cap"])  # type: ignore[index]
 
     def test_disk_stats_are_positive(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            result = host_stats.collect(Path(tmp))
+            result = host_stats.collect([Path(tmp)])
         self.assertGreater(result["storage"]["total"], 0)  # type: ignore[index]
         self.assertGreaterEqual(result["storage"]["used"], 0)  # type: ignore[index]
 
 
+class TestStorage(unittest.TestCase):
+    """Storage covers the filesystems holding the root and the caches, each
+    filesystem once."""
+
+    def test_one_filesystem_is_counted_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = Path(tmp) / "a", Path(tmp) / "b"
+            a.mkdir()
+            b.mkdir()
+            self.assertEqual(host_stats._disk_stats(a), host_stats._storage([a, b]))
+
+    def test_two_filesystems_add_up(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = Path(tmp) / "a", Path(tmp) / "b"
+            a.mkdir()
+            b.mkdir()
+            devices = {a: 1, b: 2}
+            real_stat = os.stat
+            def stat(path: object, *args: object, **kw: object) -> object:
+                p = Path(str(path))
+                if p in devices:
+                    return SimpleNamespace(st_dev=devices[p])
+                return real_stat(path, *args, **kw)  # type: ignore[arg-type]
+            with mock.patch.object(host_stats.os, "stat", side_effect=stat), \
+                 mock.patch.object(host_stats, "_disk_stats", return_value=(3, 10)):
+                self.assertEqual((6, 20), host_stats._storage([a, b]))
+
+    def test_a_path_not_made_yet_counts_its_filesystem(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            later = Path(tmp) / "cache" / "firecracker"
+            self.assertEqual(host_stats._disk_stats(Path(tmp)), host_stats._storage([later]))
+
+    def test_no_existing_path_is_zero(self) -> None:
+        with mock.patch.object(host_stats, "_existing", return_value=None):
+            self.assertEqual((0, 0), host_stats._storage([Path("/nowhere")]))
+
+    def test_stats_paths_are_the_root_and_the_caches_and_make_nothing(self) -> None:
+        env = {k: v for k, v in os.environ.items() if k != "BOT_BOTTLE_FC_CACHE"}
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.dict(os.environ, {**env, "HOME": tmp}, clear=True), \
+             mock.patch("bot_bottle.paths.bot_bottle_root", return_value=Path(tmp) / "root"):
+            paths = host_stats.stats_paths()
+            self.assertEqual(Path(tmp) / "root", paths[0])
+            self.assertIn(Path(tmp) / ".cache" / "bot-bottle" / "firecracker", paths)
+            self.assertFalse((Path(tmp) / ".cache").exists())
+
+
+class TestCaps(unittest.TestCase):
+    """The caps come from `bot-bottle host caps` (the host DB)."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
+        self.addCleanup(tmp.cleanup)
+        self.db = Path(tmp.name) / "db" / "bot-bottle.db"
+        self.enterContext(mock.patch("bot_bottle.paths.host_db_path", return_value=self.db))
+
+    def test_none_set_is_zero(self) -> None:
+        self.assertEqual(HostCaps(), host_stats.caps())
+
+    def test_stored_caps(self) -> None:
+        store = ConfigStore(self.db)
+        store.migrate()
+        store.set_host_caps(HostCaps(disk_gb=50, memory_gb=16))
+        self.assertEqual(HostCaps(50, 16), host_stats.caps())
+        self.assertEqual(50 * 1024 ** 3,
+                         host_stats.snapshot()["storage"]["cap"])  # type: ignore[index]
+
+class TestHostCapsCommand(TestCaps):
+    def run_cmd(self, argv: list[str]) -> tuple[int, str, str]:
+        from bot_bottle.cli.commands import host
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = host.cmd_host(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_shows_none_then_sets_and_clears(self) -> None:
+        self.assertEqual((0, "storage: none\nmemory: none\n", ""), self.run_cmd(["caps"]))
+        code, out, _ = self.run_cmd(["caps", "--disk", "50", "--memory", "16"])
+        self.assertEqual((0, "storage: 50 GiB\nmemory: 16 GiB\n"), (code, out))
+        code, out, _ = self.run_cmd(["caps", "--memory", "0"])  # one at a time; 0 clears
+        self.assertEqual("storage: 50 GiB\nmemory: none\n", out)
+
+    def test_refuses_a_negative_cap(self) -> None:
+        code, _, err = self.run_cmd(["caps", "--disk", "-1"])
+        self.assertEqual(2, code)
+        self.assertIn("0 or more", err)
+
+
 class TestConsoleLink(unittest.TestCase):
-    """push_host_stats sends the right message shape."""
+    """The link sends `host_stats` (storage and memory, used/total/cap) on
+    connect and once a minute while connected."""
 
-    def test_push_host_stats_sends_host_stats_message(self) -> None:
-        import asyncio
+    def _link(self) -> tuple[Any, list[dict[str, Any]]]:
         from bot_bottle.control.hostctl import remote
 
-        sent: list[dict] = []
+        sent: list[dict[str, Any]] = []
 
-        async def send(msg: dict) -> None:
+        async def send(msg: dict[str, Any]) -> None:
             sent.append(msg)
 
         class _Bottles:
-            def list(self) -> list:
+            def list(self) -> list[Any]:
                 return []
 
-        link = remote.ConsoleLink(_Bottles(), send)  # type: ignore[arg-type]
+        return remote.ConsoleLink(_Bottles(), send), sent  # type: ignore[arg-type]
 
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch("bot_bottle.control.hostctl.remote.bot_bottle_root",
-                            return_value=Path(tmp)):
-                asyncio.run(link.push_host_stats())
+    def test_push_host_stats_sends_the_snapshot(self) -> None:
+        link, sent = self._link()
+        stats = {"storage": {"used": 1, "total": 2, "cap": 0},
+                 "memory": {"used": 3, "total": 4, "cap": 5}}
+        with mock.patch.object(host_stats, "snapshot", return_value=stats):
+            asyncio.run(link.push_host_stats())
+        self.assertEqual([{"type": "host_stats", **stats}], sent)
 
-        self.assertEqual(1, len(sent))
-        msg = sent[0]
-        self.assertEqual("host_stats", msg["type"])
-        self.assertIn("storage", msg)
-        self.assertIn("memory", msg)
-        for section in ("storage", "memory"):
-            for key in ("used", "total", "cap"):
-                self.assertIn(key, msg[section])
+    def test_a_failed_snapshot_sends_nothing(self) -> None:
+        link, sent = self._link()
+        with mock.patch.object(host_stats, "snapshot", side_effect=OSError("boom")):
+            asyncio.run(link.push_host_stats())
+        self.assertEqual([], sent)
 
-    def test_push_host_stats_uses_infra_caps(self) -> None:
-        import asyncio
-        from bot_bottle.contract.hostctl import InfraSettings
+    def test_only_due_once_a_minute(self) -> None:
         from bot_bottle.control.hostctl import remote
-
-        sent: list[dict] = []
-
-        async def send(msg: dict) -> None:
-            sent.append(msg)
-
-        class _Bottles:
-            def list(self) -> list:
-                return []
-
-        infra = InfraSettings(host_max_disk_gb=20, host_max_memory_gb=8)
-        link = remote.ConsoleLink(_Bottles(), send, infra=infra)  # type: ignore[arg-type]
-
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch("bot_bottle.control.hostctl.remote.bot_bottle_root",
-                            return_value=Path(tmp)):
-                asyncio.run(link.push_host_stats())
-
-        msg = sent[0]
-        self.assertEqual(20 * 1024 ** 3, msg["storage"]["cap"])
-        self.assertEqual(8 * 1024 ** 3, msg["memory"]["cap"])
+        link, sent = self._link()
+        stats = {"storage": {}, "memory": {}}
+        clock = SimpleNamespace(monotonic=mock.Mock(side_effect=[100.0, 100.0, 130.0, 161.0, 161.0]))
+        with mock.patch.object(host_stats, "snapshot", return_value=stats), \
+             mock.patch.object(remote, "time", clock):
+            asyncio.run(link.push_host_stats_if_due())   # first: due (sent at 100)
+            asyncio.run(link.push_host_stats_if_due())   # 30 s later: not due
+            asyncio.run(link.push_host_stats_if_due())   # 61 s later: due
+        self.assertEqual(2, len(sent))

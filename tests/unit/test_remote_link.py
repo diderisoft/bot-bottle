@@ -963,7 +963,7 @@ class TestSupervisor(_RootCase):
         self.stopped = threading.Event()
 
         async def fake_run(config: pairing.RemoteConfig, bottles: Any,
-                           stop: threading.Event, **_kwargs: Any) -> None:
+                           stop: threading.Event) -> None:
             del bottles
             self.started.append(config)
             await asyncio.to_thread(stop.wait)
@@ -991,7 +991,7 @@ class TestSupervisor(_RootCase):
             lambda: "disabled" in str(pairing.read_status().get("error"))))
 
     def test_a_link_that_cannot_run_reports_why(self) -> None:
-        async def failing(*_args: Any, **_kwargs: Any) -> None:
+        async def failing(*_args: Any) -> None:
             raise pairing.RemoteError("install `bot-bottle[remote]`")
 
         pairing.save_config(pairing.RemoteConfig(True, "cid", "tk"))

@@ -118,12 +118,18 @@ def host_artifact_cache_dir(override: str = "") -> Path:
     return Path.home() / ".cache" / "bot-bottle" / "artifacts"
 
 
-def host_firecracker_cache_dir() -> Path:
-    """The firecracker cache root (kernel, rootfs, run dirs), created on
-    demand. `BOT_BOTTLE_FC_CACHE` relocates it."""
-    d = Path(os.environ.get(
+def host_firecracker_cache_path() -> Path:
+    """Where the firecracker cache root is, without creating it.
+    `BOT_BOTTLE_FC_CACHE` relocates it."""
+    return Path(os.environ.get(
         "BOT_BOTTLE_FC_CACHE", str(Path.home() / ".cache" / "bot-bottle" / "firecracker"),
     ))
+
+
+def host_firecracker_cache_dir() -> Path:
+    """The firecracker cache root (kernel, rootfs, run dirs), created on
+    demand."""
+    d = host_firecracker_cache_path()
     d.mkdir(parents=True, exist_ok=True)
     return d
 

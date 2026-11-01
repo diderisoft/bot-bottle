@@ -180,6 +180,17 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
   markers (the default) counts as working while its copy grew within the last
   20 seconds. It's the agent's own output, so it's an indicator for the
   console only, never a security decision.
+- `host_stats` reports this host's storage and memory on each connect and
+  every 60 seconds (`host_stats.py`):
+  `{"storage": {"used", "total", "cap"}, "memory": {"used", "total", "cap"}}`
+  in bytes. Storage covers the filesystems holding the state root and the
+  caches (images, VM disks), each counted once. Memory is what the kernel
+  reports in use (`MemTotal - MemAvailable` on Linux; free and inactive pages
+  on macOS). `cap` is an advisory cap, 0 when none is set: `bot-bottle host
+  caps --disk GB --memory GB` stores it in the host DB, and the daemon reads
+  it at each report, so a change shows within a minute with no restart.
+  Nothing refuses a launch over a cap; the console shows how close the host
+  is.
 - A restarted daemon resumes each re-adopted session's copies from the
   saved offsets, exec'ing through `BottleBackend.attach_adopted` (which
   never tears the bottle down). Copies of sessions that ended while it was

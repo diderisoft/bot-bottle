@@ -148,9 +148,6 @@ class InfraSettings:
     fc_env_slots: int = 0
     # The host-wide slice claims directory; "" is the default.
     fc_slices_dir: str = ""
-    # Advisory storage and memory caps reported to the console; 0 = not configured.
-    host_max_disk_gb: int = 0
-    host_max_memory_gb: int = 0
 
     def fingerprint(self) -> str:
         """sha256 of the canonical JSON."""
@@ -183,10 +180,7 @@ class Settings:
 # Fields left out of the JSON (and so the fingerprint) while at their default:
 # ones added after the fingerprint was in use, so an upgrade that doesn't set
 # them neither restarts the infra nor sends a key an older reader rejects.
-_OMIT_AT_DEFAULT = frozenset({
-    "docker_agent_subnets", "fc_env_slots", "fc_slices_dir",
-    "host_max_disk_gb", "host_max_memory_gb",
-})
+_OMIT_AT_DEFAULT = frozenset({"docker_agent_subnets", "fc_env_slots", "fc_slices_dir"})
 
 
 def _section_json(section: OperationSettings | InfraSettings) -> dict[str, object]:

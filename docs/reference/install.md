@@ -344,8 +344,6 @@ Generated from `bot_bottle/env_vars.py`: edit that, then run
 | `BOT_BOTTLE_VENV` | user | Installer and `uninstall`: where the venv install lives when there's no `uv` or `pipx`. | `~/.bot-bottle/venv` |
 | `BOT_BOTTLE_INSTALL_SPEC` | user | Installer: the pip spec to install instead of the default `git+` URL at the latest release tag, such as a wheel path or index name. | — |
 | `BOT_BOTTLE_INSTALL_REF` | user | Installer: the git ref to install instead of the latest release tag, such as `v0.1.4`, or `main` (same as `--main`; then run `bot-bottle up --build`). | the latest `vX.Y.Z` tag |
-| `BOT_BOTTLE_HOST_MAX_DISK_GB` | user | Advisory disk-usage cap reported to the console, in whole GiB. 0 (the default) means not configured. | `0` |
-| `BOT_BOTTLE_HOST_MAX_MEMORY_GB` | user | Advisory memory-usage cap reported to the console, in whole GiB. 0 (the default) means not configured. | `0` |
 | `BOT_BOTTLE_ORCHESTRATOR_IMAGE` | dev | The orchestrator image to run. | `bot-bottle-orchestrator:latest` |
 | `BOT_BOTTLE_GATEWAY_IMAGE` | dev | The gateway image to run. | `bot-bottle-gateway:latest` |
 | `BOT_BOTTLE_HOSTCTL_PORT` | dev | The host controller's loopback port. | ephemeral |

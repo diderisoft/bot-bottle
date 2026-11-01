@@ -31,6 +31,7 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w("  envs      list environments (BOT_BOTTLE_ENV); remove one (rm NAME)\n")
     w("  forge     connect a forge (Gitea) so bottles can grant its repos in a line\n")
     w("  help      show this command list\n")
+    w("  host      this host's settings: the storage and memory caps the console shows (caps)\n")
     w("  install   set up this host: backend prerequisites, tmux, autostart (--undo)\n")
     w("  pair      link this host to a console and your phone (on|off, --password)\n")
     w("  resume    start a stopped bottled agent again (continues its saved state)\n")

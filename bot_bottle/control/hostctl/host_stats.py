@@ -5,7 +5,12 @@ from __future__ import annotations
 import os
 import platform
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
+
+from ...lib.config_store import ConfigStore, HostCaps
+
+GIB = 1024 ** 3
 
 
 def _disk_stats(root: Path) -> tuple[int, int]:
@@ -75,32 +80,66 @@ def _memory_stats() -> tuple[int, int]:
     return _memory_stats_linux()
 
 
-def collect(
-    root: Path,
-    *,
-    max_disk_gb: int = 0,
-    max_memory_gb: int = 0,
-) -> dict[str, object]:
-    """Snapshot of this host's storage and memory.
+def _existing(path: Path) -> Path | None:
+    """`path`, or its nearest existing parent: a cache dir that isn't made
+    yet still says which filesystem it will fill."""
+    for candidate in (path, *path.parents):
+        if candidate.exists():
+            return candidate
+    return None
 
-    *root* is the path whose filesystem is measured for disk usage (typically
-    the bot-bottle state root). *max_disk_gb* and *max_memory_gb* are advisory
-    caps in whole GiB; 0 means not configured.
-    """
-    disk_used, disk_total = _disk_stats(root)
+
+def _storage(paths: Sequence[Path]) -> tuple[int, int]:
+    """(used, total) bytes over the filesystems holding `paths`, each
+    filesystem counted once (the state root and the caches are often one)."""
+    used = total = 0
+    seen: set[int] = set()
+    for path in paths:
+        where = _existing(path)
+        if where is None:
+            continue
+        try:
+            device = os.stat(where).st_dev
+        except OSError:
+            continue
+        if device in seen:
+            continue
+        seen.add(device)
+        u, t = _disk_stats(where)
+        used, total = used + u, total + t
+    return used, total
+
+
+def collect(paths: Sequence[Path], *, limits: HostCaps = HostCaps()) -> dict[str, object]:
+    """Snapshot of this host's storage (over the filesystems holding `paths`)
+    and memory, each with its advisory cap in bytes (0 = none set)."""
+    disk_used, disk_total = _storage(paths)
     mem_used, mem_total = _memory_stats()
     return {
-        "storage": {
-            "used": disk_used,
-            "total": disk_total,
-            "cap": max_disk_gb * 1024 ** 3,
-        },
-        "memory": {
-            "used": mem_used,
-            "total": mem_total,
-            "cap": max_memory_gb * 1024 ** 3,
-        },
+        "storage": {"used": disk_used, "total": disk_total, "cap": limits.disk_gb * GIB},
+        "memory": {"used": mem_used, "total": mem_total, "cap": limits.memory_gb * GIB},
     }
 
 
-__all__ = ["collect"]
+def caps() -> HostCaps:
+    """The caps set with `bot-bottle host caps` (the host DB)."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...paths import host_db_path
+    return ConfigStore(host_db_path()).host_caps()
+
+
+def stats_paths() -> tuple[Path, ...]:
+    """Where bot-bottle's disk use lives: the state root (bottles' state,
+    transcripts, the host DB) and the caches (images, VM disks)."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...paths import bot_bottle_root, host_artifact_cache_dir, host_firecracker_cache_path
+    return (bot_bottle_root(), host_artifact_cache_dir(), host_firecracker_cache_path())
+
+
+def snapshot() -> dict[str, object]:
+    """What the console link sends as `host_stats`, read fresh each time so a
+    cap set while the host controller runs shows at the next push."""
+    return collect(stats_paths(), limits=caps())
+
+
+__all__ = ["caps", "collect", "snapshot", "stats_paths"]

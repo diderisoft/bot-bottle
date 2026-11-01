@@ -205,14 +205,6 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "Secret name the gateway injects a forwarded Claude login under."),
     EnvVar("BOT_BOTTLE_CODEX_HOST_ACCESS_TOKEN", "internal",
            "Secret name the gateway injects a forwarded Codex login under."),
-    EnvVar("BOT_BOTTLE_HOST_MAX_DISK_GB", "user",
-           "Advisory disk-usage cap reported to the console, in whole GiB. "
-           "0 (the default) means not configured.",
-           "`0`"),
-    EnvVar("BOT_BOTTLE_HOST_MAX_MEMORY_GB", "user",
-           "Advisory memory-usage cap reported to the console, in whole GiB. "
-           "0 (the default) means not configured.",
-           "`0`"),
 )
 
 # Names matched by a `BOT_BOTTLE_[A-Z0-9_]+` scan that aren't variables.

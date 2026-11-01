@@ -18,9 +18,8 @@ The control stream (JSON lines):
   under its own identity and state, as `bot-bottle resume` does
   (`remote_requests`); `agent_started` or `agent_errored` as for `launch`.
 - `hello` opens the stream. On every (re)connect the host reports agents
-  that exited, reopens running ones' relays, sends `agents_running`, and
-  sends `host_stats` (`storage`/`memory` with `used`, `total`, `cap` bytes;
-  cap 0 = not configured). Also sent every `STATS_SECONDS` while connected.
+  that exited, reopens running ones' relays, and sends `agents_running` and
+  `host_stats` (storage and memory, `host_stats.py`; again every minute).
 - `agent_present` (from the host): a running session the console didn't
   launch (`bot-bottle`, `start`), with a host-made `agent_id`, its `bottle`,
   `activation`, `label`, `definition`, `writable` and `origin`. Sent on every
@@ -80,8 +79,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from ...contract.hostctl import ORIGIN_CONSOLE, InfraSettings, LaunchRequest
-from ...paths import bot_bottle_root
+from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
 from . import host_stats
 from ...lib import log
 from ...util import same_instant
@@ -209,7 +207,6 @@ class ConsoleLink:
                  terminals: TerminalFactory | None = None,
                  audit: Callable[[str, str | None, int], list[dict[str, Any]]] | None = None,
                  state: "LinkState | None" = None,
-                 infra: InfraSettings | None = None,
                  ) -> None:
         self._bottles = bottles
         self._send = send
@@ -240,7 +237,6 @@ class ConsoleLink:
         self._started_at: dict[str, float] = {}
         self.turns = AgentTurns()  # launches, resumes and stops, per agent
         self.transcripts = TranscriptLink(self._send)
-        self._infra = infra
         self._last_stats: float = 0.0
 
     # Wait on the bottle: minutes for a launch, for good if a teardown wedges.
@@ -453,18 +449,18 @@ class ConsoleLink:
         await self._send(reply)
 
     async def push_host_stats(self) -> None:
+        """This host's storage and memory, with its caps (`host_stats.snapshot`)."""
         try:
-            stats = await asyncio.to_thread(
-                host_stats.collect,
-                bot_bottle_root(),
-                max_disk_gb=self._infra.host_max_disk_gb if self._infra else 0,
-                max_memory_gb=self._infra.host_max_memory_gb if self._infra else 0,
-            )
-        except Exception as e:  # pylint: disable=broad-exception-caught
+            stats = await asyncio.to_thread(host_stats.snapshot)
+        except Exception as e:  # pylint: disable=broad-exception-caught  # stats are best effort
             log.debug(f"remote: host stats collection failed: {e}")
             return
         self._last_stats = time.monotonic()
         await self._send({"type": "host_stats", **stats})
+
+    async def push_host_stats_if_due(self) -> None:
+        if time.monotonic() - self._last_stats >= STATS_SECONDS:
+            await self.push_host_stats()
 
     async def push_transcripts(self) -> None:
         await self.transcripts.push(list(self.running))
@@ -701,8 +697,7 @@ async def _read_lines(recv: "iroh.RecvStream") -> AsyncIterator[bytes]:
 
 async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
                            agents: Callable[[], list[str]] | None = None,
-                           state: LinkState | None = None,
-                           infra: InfraSettings | None = None) -> None:
+                           state: LinkState | None = None) -> None:
     """Serve one console connection until it closes. The link resumes at the
     first message (`hello`)."""
     control = await conn.accept_bi()
@@ -713,8 +708,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
 
     sessions = getattr(bottles, "sessions", None)
     link = ConsoleLink(bottles, send, agents, state=state,
-                       terminals=session_terminals(conn, sessions) if sessions else None,
-                       infra=infra)
+                       terminals=session_terminals(conn, sessions) if sessions else None)
     await link.resume()
 
     async def watch() -> None:
@@ -725,8 +719,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
             await link.push_attention()
             await link.push_transcripts()
             await link.push_working()
-            if time.monotonic() - link._last_stats >= STATS_SECONDS:
-                await link.push_host_stats()
+            await link.push_host_stats_if_due()
 
     watcher = asyncio.create_task(watch())
     try:
@@ -760,8 +753,7 @@ async def _unless_stopped(coro: Awaitable[Any], stopped: "asyncio.Future[Any]") 
     raise _Stopped
 
 
-async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event,
-              infra: InfraSettings | None = None) -> None:
+async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> None:
     """Dial the pinned console and serve it, reconnecting until `stop`. A
     `stop` while connected ends the connection at once, so the host
     controller shuts down without waiting on the console."""
@@ -786,8 +778,7 @@ async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event,
                 attempt = 0
                 write_status(connected=True, console_node_id=remote)
                 log.info("remote: connected to the console")
-                await _unless_stopped(
-                    serve_connection(conn, bottles, state=state, infra=infra), stopped)
+                await _unless_stopped(serve_connection(conn, bottles, state=state), stopped)
                 write_status(connected=False, error="console closed the connection")
             except _Stopped:
                 if conn is not None:
@@ -807,9 +798,8 @@ class Supervisor:
     """Runs the link while `remote.json` enables it, rereading every
     `POLL_SECONDS`."""
 
-    def __init__(self, bottles: Bottles, infra: InfraSettings | None = None) -> None:
+    def __init__(self, bottles: Bottles) -> None:
         self._bottles = bottles
-        self._infra = infra
         self._closed = threading.Event()
         self._link: tuple[threading.Thread, threading.Event, RemoteConfig] | None = None
 
@@ -835,7 +825,7 @@ class Supervisor:
 
         def target() -> None:
             try:
-                asyncio.run(run(config, self._bottles, stop, infra=self._infra))
+                asyncio.run(run(config, self._bottles, stop))
             except RemoteError as e:
                 write_status(connected=False, error=str(e))
                 log.warn(f"remote: {e}")

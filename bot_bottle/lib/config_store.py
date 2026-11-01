@@ -18,6 +18,15 @@ DEFAULT_TRANSCRIPT_RETENTION_DAYS = 30
 
 
 @dataclass(frozen=True)
+class HostCaps:
+    """Advisory caps on this host's storage and memory, in whole GiB, shown
+    against its usage in the console. 0 = not set."""
+
+    disk_gb: int = 0
+    memory_gb: int = 0
+
+
+@dataclass(frozen=True)
 class AuditForward:
     """An HTTPS endpoint the journal is forwarded to. `secret` names a
     secrets-file entry sent as a bearer token."""
@@ -114,6 +123,15 @@ class ConfigStore(DbStore):
             ALTER TABLE bot_bottle_config
             ADD COLUMN transcript_retention_days INTEGER NOT NULL
                 DEFAULT {DEFAULT_TRANSCRIPT_RETENTION_DAYS}
+            """,
+            # v11: advisory host caps shown to the console (GiB; 0 = none)
+            """
+            ALTER TABLE bot_bottle_config
+            ADD COLUMN host_max_disk_gb INTEGER NOT NULL DEFAULT 0
+            """,
+            """
+            ALTER TABLE bot_bottle_config
+            ADD COLUMN host_max_memory_gb INTEGER NOT NULL DEFAULT 0
             """,
         ])
         super().__init__(db_path, migrations)
@@ -257,6 +275,39 @@ class ConfigStore(DbStore):
         self._chmod()
         return self.db_path
 
+    def host_caps(self) -> HostCaps:
+        """The advisory storage and memory caps this host reports to the
+        console (`bot-bottle host caps`); 0 = none set."""
+        if not self.db_path.is_file():
+            return HostCaps()
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT host_max_disk_gb, host_max_memory_gb FROM bot_bottle_config "
+                    "WHERE id = 1",
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return HostCaps()  # not migrated yet
+        if row is None:
+            return HostCaps()
+        return HostCaps(disk_gb=int(row["host_max_disk_gb"]),
+                        memory_gb=int(row["host_max_memory_gb"]))
+
+    def set_host_caps(self, caps: HostCaps) -> Path:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO bot_bottle_config (id, host_max_disk_gb, host_max_memory_gb)
+                VALUES (1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    host_max_disk_gb = excluded.host_max_disk_gb,
+                    host_max_memory_gb = excluded.host_max_memory_gb
+                """,
+                (caps.disk_gb, caps.memory_gb),
+            )
+        self._chmod()
+        return self.db_path
+
     def set_audit_delivery(self, delivery: str) -> Path:
         with self._connect() as conn:
             conn.execute(
@@ -287,6 +338,7 @@ class ConfigStore(DbStore):
 
 __all__ = [
     "AuditForward",
+    "HostCaps",
     "FirehoseSettings",
     "FirehoseSink",
     "DEFAULT_AUDIT_DELIVERY",
