@@ -6,13 +6,17 @@ egress tokens are empty, and after a CA rotation the bottles distrust the
 gateway. `reattach_running_bottles` restores all four. Backends supply the
 primitives as a `GatewayAttacher`.
 
-Every bottle is attempted and failures collected; then they abort the
-bring-up, naming each bottle.
+Every bottle is attempted and failures collected. By default they abort the
+bring-up, naming each bottle; `AttachPolicy.REPORT` (`bot-bottle up
+--allow-reattach-failures`) reports them and continues, so one bottle that
+can't be reached doesn't keep the gateway and the console down (PRD 0081,
+design repo).
 """
 
 from __future__ import annotations
 
 import abc
+import enum
 from dataclasses import dataclass
 
 from ..bottle_state import git_gate_state_dir
@@ -20,13 +24,31 @@ from ..control.gateway import Gateway, GatewayError
 from ..git_gate.plan import GitGatePlan
 from ..git_gate.provision import load_upstreams_snapshot
 from ..git_gate.service import load_baseline, load_trailer_settings, stage_git_gate_scripts
-from ..lib.log import info
+from ..lib.log import info, warn
 from ..control.client import OrchestratorClient, OrchestratorClientError
 from .provision_gateway import GatewayTransport, provision_git_gate
 
 
 class GatewayAttachError(RuntimeError):
     """One or more running bottles could not be reattached to the gateway."""
+
+
+class AttachPolicy(enum.Enum):
+    """What a reattach does once every bottle was attempted and some failed."""
+
+    STRICT = "strict"  # fail the bring-up (the default)
+    REPORT = "report"  # name the failures and carry on
+
+
+# How to get past bottles that won't reattach.
+RECOVERY = (
+    "Those bottles can't reach the gateway until they're stopped and resumed. "
+    "To bring it up anyway, reattaching the rest: "
+    "`bot-bottle up --allow-reattach-failures`. Then stop each one (Stop in the "
+    "console, or quit its agent in `bot-bottle attach <bottle>`) and resume it "
+    "(`bot-bottle resume <bottle>`), or remove one that's gone with "
+    "`bot-bottle cleanup bots`."
+)
 
 
 @dataclass(frozen=True)
@@ -68,9 +90,11 @@ def reattach_running_bottles(
     *,
     orchestrator_url: str,
     gateway: Gateway,
+    policy: AttachPolicy = AttachPolicy.STRICT,
 ) -> None:
     """Restore every running bottle's gateway address, CA, git-gate state and
-    egress tokens."""
+    egress tokens. Failures raise `GatewayAttachError`, or with
+    `AttachPolicy.REPORT` are warned about and the bring-up goes on."""
     bottles = attacher.running_bottles()
     if not bottles:
         return
@@ -118,9 +142,11 @@ def reattach_running_bottles(
         message = (
             f"could not reattach {len(failures)} running bottle(s) to the gateway:\n  "
             + "\n  ".join(failures)
-            + "\nStop or remove those bottles, then retry."
+            + "\n" + RECOVERY
         )
-        raise GatewayAttachError(message)
+        if policy is AttachPolicy.STRICT:
+            raise GatewayAttachError(message)
+        warn(message)
 
 
 def reprovision_git_gate(transport: GatewayTransport, bottle_id: str, slug: str) -> None:
@@ -146,6 +172,7 @@ def reprovision_git_gate(transport: GatewayTransport, bottle_id: str, slug: str)
 
 
 __all__ = [
+    "AttachPolicy",
     "GatewayAttachError",
     "GatewayAttacher",
     "RunningBottle",

@@ -25,6 +25,7 @@ from ..control.lifecycle import DEFAULT_STARTUP_TIMEOUT_SECONDS, Orchestrator
 from ..paths import bot_bottle_root
 from ..published_artifacts import FORMAT_OCI
 from .gateway_attach import (
+    AttachPolicy,
     GatewayAttachError,
     GatewayAttacher,
     reattach_running_bottles,
@@ -109,6 +110,7 @@ class InfraService(abc.ABC):
         startup_timeout: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
         launch_stages: bool = False,
         inherit_build: bool = True,
+        attach_policy: AttachPolicy = AttachPolicy.STRICT,
     ) -> str:
         """Bring the pair up (adopting a healthy one) and reattach running
         bottles if either plane restarted. Returns the host control-plane URL;
@@ -126,13 +128,17 @@ class InfraService(abc.ABC):
         runs exactly one.
 
         Holds the bring-up lock. A "reattach pending" marker is written first
-        and removed only on success, so an interrupted bring-up is retried by
-        the next one."""
+        and removed only on success, so an interrupted or failed reattach is
+        retried by the next bring-up (a bottle stopped meanwhile drops out of
+        it). With `attach_policy=AttachPolicy.REPORT` (`bot-bottle up
+        --allow-reattach-failures`), bottles that won't reattach are named and
+        the bring-up succeeds, clearing the marker."""
         if launch_stages:
             log.stage("services", "Starting bot-bottle services")
         try:
             return self._ensure_running(startup_timeout=startup_timeout,
-                                        inherit_build=inherit_build)
+                                        inherit_build=inherit_build,
+                                        attach_policy=attach_policy)
         finally:
             if launch_stages:
                 log.stage("start", "Starting the bottle")
@@ -156,7 +162,8 @@ class InfraService(abc.ABC):
                 return
         die(unpublished_message(self.infra_build_note))
 
-    def _ensure_running(self, *, startup_timeout: float, inherit_build: bool) -> str:
+    def _ensure_running(self, *, startup_timeout: float, inherit_build: bool,
+                        attach_policy: AttachPolicy) -> str:
         env_lock = bot_bottle_root() / "infra" / "orchestrator.lock"
         with self.bring_up_lock(), _reentrant_flock(env_lock):
             self._refuse_second_orchestrator()
@@ -179,7 +186,7 @@ class InfraService(abc.ABC):
                 try:
                     reattach_running_bottles(
                         self.gateway_attacher(), orchestrator_url=url,
-                        gateway=self.gateway(),
+                        gateway=self.gateway(), policy=attach_policy,
                     )
                 except GatewayAttachError as e:
                     die(str(e))

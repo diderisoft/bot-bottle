@@ -17,10 +17,16 @@ def _service(settings: Settings):  # type: ignore[no-untyped-def]
     return backend.name, backend.infra_service()
 
 
-def ensure(settings: Settings, *, restart: bool = False) -> dict[str, object]:
+def ensure(settings: Settings, *, restart: bool = False,
+           allow_reattach_failures: bool = False) -> dict[str, object]:
     """Bring the backend's infra pair up (daemon side) for `bot-bottle up`;
     `restart` stops it first. Builds locally only when `settings` asks
-    (`--build`), never on an earlier bring-up's say-so."""
+    (`--build`), never on an earlier bring-up's say-so.
+    `allow_reattach_failures` names bottles that won't reattach instead of
+    failing (`--allow-reattach-failures`)."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...backend.gateway_attach import AttachPolicy
+
     name, service = _service(settings)
     if restart:
         # Before stopping anything: a restart that can't come back up is worse
@@ -28,10 +34,25 @@ def ensure(settings: Settings, *, restart: bool = False) -> dict[str, object]:
         service.require_infra_images(inherit_build=False)
         log.info(f"stopping the {name} orchestrator and gateway")
         service.stop()
-    url = service.ensure_running(inherit_build=False)
-    # An adopted one still needs a listener.
-    service.orchestrator().serve_host_control()
+    policy = AttachPolicy.REPORT if allow_reattach_failures else AttachPolicy.STRICT
+    try:
+        url = service.ensure_running(inherit_build=False, attach_policy=policy)
+    finally:
+        # An adopted one still needs a listener, and so does one whose
+        # bring-up then failed (a bottle that won't reattach): host control,
+        # and the console with it, stay up to deal with it.
+        _serve_host_control(service)
     return {"backend": name, "url": url}
+
+
+def _serve_host_control(service) -> None:  # type: ignore[no-untyped-def]
+    """Listen for the orchestrator's host-control calls if it's running."""
+    try:
+        orchestrator = service.orchestrator()
+        if orchestrator.is_running():
+            orchestrator.serve_host_control()
+    except Exception as e:  # pylint: disable=broad-exception-caught  # never mask the bring-up's
+        log.warn(f"host control not served: {e}")
 
 
 def status(settings: Settings) -> dict[str, object]:
@@ -41,7 +62,8 @@ def status(settings: Settings) -> dict[str, object]:
     return {"backend": name, "running": healthy, "url": service.url() if healthy else ""}
 
 
-def ensure_via_daemon(settings: Settings, backend: str, *, restart: bool = False) -> str:
+def ensure_via_daemon(settings: Settings, backend: str, *, restart: bool = False,
+                      allow_reattach_failures: bool = False) -> str:
     """Have the host controller bring `backend`'s orchestrator up, print its
     output, and return the control-plane URL. Dies on failure or detach (the
     job keeps running)."""
@@ -54,7 +76,10 @@ def ensure_via_daemon(settings: Settings, backend: str, *, restart: bool = False
     )
     client = HostControlClient(runner.ensure_running(), runner.cli_token())
     action = "restart" if restart else "ensure"
-    job_id = str(client.post(f"{ORCHESTRATOR_PATH}/{action}", {"settings": request.to_json()})["job"])
+    body: dict[str, object] = {"settings": request.to_json()}
+    if allow_reattach_failures:
+        body["allow_reattach_failures"] = True
+    job_id = str(client.post(f"{ORCHESTRATOR_PATH}/{action}", body)["job"])
     shown: list[str] = []
 
     def write(line: str) -> None:

@@ -47,6 +47,10 @@ def cmd_up(argv: list[str]) -> int:
                              "source instead of pulling a release's (for running from main; "
                              "same as BOT_BOTTLE_INFRA_BUILD=local). Later launches keep "
                              "building until an `up` without it")
+    parser.add_argument("--allow-reattach-failures", action="store_true",
+                        help="if a running bottle can't be reattached to the restarted "
+                             "gateway, name it and bring the rest up instead of failing "
+                             "(then stop and resume it)")
     parser.add_argument("--yes", "-y", action="store_true",
                         help="with --restart, don't ask before moving running bottles to "
                              "the new host controller (for scripts and services)")
@@ -59,7 +63,8 @@ def cmd_up(argv: list[str]) -> int:
     try:
         if ns.restart:
             runner.restart(confirm_restart=_yes if ns.yes else confirm_controller_restart)
-        url = ensure_via_daemon(settings, backend, restart=ns.restart)
+        url = ensure_via_daemon(settings, backend, restart=ns.restart,
+                                allow_reattach_failures=ns.allow_reattach_failures)
     except runner.HostControlError as e:
         return _fail(str(e))
     print(f"{backend} orchestrator: running at {url}")

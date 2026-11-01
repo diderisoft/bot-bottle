@@ -269,16 +269,19 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(403, {"error": f"{path} is for the cli role"})
             return
         try:
-            settings = Settings.from_json(self._json_body().get("settings"))
+            body = self._json_body()
+            settings = Settings.from_json(body.get("settings"))
         except ValueError as e:
             self._send(400, {"error": str(e)})
             return
+        allow = body.get("allow_reattach_failures") is True
         if action == "status":
             self._send(200, orchestrator.status(settings))
             return
         job = server.jobs.start(
             f"orchestrator.{action}", role,
-            lambda: orchestrator.ensure(settings, restart=action == "restart"),
+            lambda: orchestrator.ensure(settings, restart=action == "restart",
+                                        allow_reattach_failures=allow),
         )
         self._send(202, {"job": job.id})
 

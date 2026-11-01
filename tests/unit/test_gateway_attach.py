@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend import gateway_attach as ga
 from bot_bottle.backend.gateway_attach import (
-    GatewayAttachError, GatewayAttacher, RunningBottle,
+    AttachPolicy, GatewayAttachError, GatewayAttacher, RunningBottle,
 )
 from bot_bottle.backend.util import ROOT_EXEC_PATH
 from bot_bottle.control.gateway import GatewayError
@@ -90,6 +90,20 @@ class ReattachRunningBottles(unittest.TestCase):
         self.assertIn("a: ssh: connection refused", str(raised.exception))
         self.assertEqual([("b", "PEM")], attacher.installed)  # b still reattached
         self.client.reprovision_gateway.assert_called_once_with("id-b", "s-b")
+
+    def test_a_failure_says_how_to_recover(self) -> None:
+        with self.assertRaises(GatewayAttachError) as raised:
+            self._run(_Attacher([_A, _B], fail_ca={"a"}))
+        self.assertIn("bot-bottle up --allow-reattach-failures", str(raised.exception))
+        self.assertIn("bot-bottle resume <bottle>", str(raised.exception))
+
+    def test_report_names_the_failures_and_carries_on(self) -> None:
+        attacher = _Attacher([_A, _B], fail_ca={"a"})
+        with patch.object(ga, "warn") as warn:
+            ga.reattach_running_bottles(attacher, orchestrator_url="http://orch",
+                                        gateway=self.gateway, policy=AttachPolicy.REPORT)
+        self.assertIn("a: ssh: connection refused", warn.call_args.args[0])
+        self.assertEqual([("b", "PEM")], attacher.installed)  # the rest still reattach
 
     def test_token_restore_failure_is_reported_against_its_bottle(self) -> None:
         self.client.reprovision_gateway.side_effect = OrchestratorClientError("HTTP 400")
@@ -200,6 +214,17 @@ class InfraServiceTrigger(unittest.TestCase):
         self._ensure(False)  # adopted, but the marker says it never finished
         self.assertEqual(2, self.reattach.call_count)
         self.assertFalse(self.marker.exists())
+
+    def test_the_override_reports_and_clears_the_marker(self) -> None:
+        # REPORT is passed through; a reattach that reported its failures
+        # counts as done, so the next bring-up doesn't repeat it.
+        self._ensure(True, attach_policy=AttachPolicy.REPORT)
+        self.assertIs(AttachPolicy.REPORT, self.reattach.call_args.kwargs["policy"])
+        self.assertFalse(self.marker.exists())
+
+    def test_strict_is_the_default(self) -> None:
+        self._ensure(True)
+        self.assertIs(AttachPolicy.STRICT, self.reattach.call_args.kwargs["policy"])
 
     def _changed_settings(self, *, healthy: bool) -> MagicMock:
         """Record a fingerprint other than the service's, then ensure."""

@@ -60,7 +60,17 @@ class TestRoutes(_Daemon):
             list(job.follow(timeout=5))
         self.assertEqual(settings, ensure.call_args.args[0])
         self.assertFalse(ensure.call_args.kwargs["restart"])
+        self.assertFalse(ensure.call_args.kwargs["allow_reattach_failures"])
         self.assertEqual({"url": "http://o"}, job.events[-1]["value"])
+
+    def test_the_reattach_override_reaches_the_bring_up(self) -> None:
+        with mock.patch.object(orchestrator, "ensure", return_value={}) as ensure:
+            _, body = self.post("/orchestrator/ensure", {
+                "settings": Settings().to_json(), "allow_reattach_failures": True})
+            job = self.server.jobs.get(str(body["job"]), ROLE_CLI)
+            assert job is not None
+            list(job.follow(timeout=5))
+        self.assertTrue(ensure.call_args.kwargs["allow_reattach_failures"])
 
     def test_restart_and_status(self) -> None:
         with mock.patch.object(orchestrator, "ensure", return_value={}) as ensure:
@@ -86,8 +96,9 @@ class TestEnsureViaDaemon(_Daemon):
             self.addCleanup(p.stop)
 
     def test_streams_output_and_returns_the_url_for_the_named_backend(self) -> None:
-        def ensure(settings: Settings, *, restart: bool = False) -> dict[str, object]:
-            del restart
+        def ensure(settings: Settings, *, restart: bool = False,
+                   allow_reattach_failures: bool = False) -> dict[str, object]:
+            del restart, allow_reattach_failures
             log.info(f"bringing up {settings.operation.backend}")
             return {"backend": settings.operation.backend, "url": "http://orch:8099"}
 
@@ -98,8 +109,9 @@ class TestEnsureViaDaemon(_Daemon):
         self.assertEqual(["bot-bottle: bringing up firecracker"], lines)
 
     def test_a_failed_bring_up_dies_with_its_message(self) -> None:
-        def ensure(settings: Settings, *, restart: bool = False) -> dict[str, object]:
-            del settings, restart
+        def ensure(settings: Settings, *, restart: bool = False,
+                   allow_reattach_failures: bool = False) -> dict[str, object]:
+            del settings, restart, allow_reattach_failures
             log.die("orchestrator did not become healthy")
 
         lines: list[str] = []
@@ -140,6 +152,39 @@ class TestDaemonSide(unittest.TestCase):
             self.assertEqual({"backend": "docker", "running": False, "url": ""},
                              orchestrator.status(Settings()))
         self.assertFalse(get.call_args.kwargs["prompt"])
+
+    def test_host_control_is_served_when_a_reattach_fails(self) -> None:
+        # The orchestrator came up; a bottle wouldn't reattach. The console
+        # must stay reachable to stop it, so host control is still served.
+        from bot_bottle.backend.gateway_attach import AttachPolicy
+        backend = self._backend()
+        service = backend.infra_service.return_value
+        service.ensure_running.side_effect = SystemExit(1)
+        service.orchestrator.return_value.is_running.return_value = True
+        with mock.patch("bot_bottle.backend.get_bottle_backend", return_value=backend), \
+             self.assertRaises(SystemExit):
+            orchestrator.ensure(Settings())
+        service.orchestrator.return_value.serve_host_control.assert_called_once_with()
+        self.assertIs(AttachPolicy.STRICT,
+                      service.ensure_running.call_args.kwargs["attach_policy"])
+
+    def test_the_override_asks_for_report(self) -> None:
+        from bot_bottle.backend.gateway_attach import AttachPolicy
+        backend = self._backend()
+        with mock.patch("bot_bottle.backend.get_bottle_backend", return_value=backend):
+            orchestrator.ensure(Settings(), allow_reattach_failures=True)
+        self.assertIs(AttachPolicy.REPORT, backend.infra_service.return_value
+                      .ensure_running.call_args.kwargs["attach_policy"])
+
+    def test_nothing_is_served_when_the_orchestrator_isnt_up(self) -> None:
+        backend = self._backend()
+        service = backend.infra_service.return_value
+        service.ensure_running.side_effect = SystemExit(1)
+        service.orchestrator.return_value.is_running.return_value = False
+        with mock.patch("bot_bottle.backend.get_bottle_backend", return_value=backend), \
+             self.assertRaises(SystemExit):
+            orchestrator.ensure(Settings())
+        service.orchestrator.return_value.serve_host_control.assert_not_called()
 
 
 if __name__ == "__main__":

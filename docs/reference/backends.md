@@ -425,5 +425,24 @@ pair comes up cold while bottles are running, `reattach_running_bottles`
 restores each one: the gateway address, the CA, git-gate repos and
 credentials, and egress tokens. Tokens are decrypted by the orchestrator using
 the `ENV_VAR_SECRET` read back from the agent. Each backend supplies a
-`GatewayAttacher` for the steps that differ. Any bottle that fails
-to reattach aborts the bring-up, naming the bottle.
+`GatewayAttacher` for the steps that differ.
+
+Every bottle is attempted, then any that failed to reattach abort the
+bring-up, all named together: a bottle whose egress quietly starts failing TLS
+is worse than a loud failure (PRD 0081, design repo). Two things keep that
+from wedging the host:
+
+- **Host control still starts.** The orchestrator is up even when the reattach
+  fails, so `bot-bottle up` still serves its host-control listener, and the
+  console stays reachable to stop the bottle.
+- **The override.** `bot-bottle up --allow-reattach-failures` names the bottles
+  that won't reattach and brings the rest up. Without it, a "reattach pending"
+  marker stays and the next bring-up retries the reattach.
+
+To clear a bottle that won't reattach:
+1. `bot-bottle up --allow-reattach-failures`.
+2. Stop the bottle: Stop in the console, or quit its agent in `bot-bottle
+   attach <bottle>`.
+3. Resume it (`bot-bottle resume <bottle>`), which provisions it against the
+   current gateway. If it's gone (its VM or container died), `bot-bottle
+   cleanup bots` removes what's left.

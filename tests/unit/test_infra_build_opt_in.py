@@ -14,6 +14,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from bot_bottle.backend.gateway_attach import AttachPolicy
 from bot_bottle.backend import infra_service as infra_service_mod
 from bot_bottle.backend.firecracker import infra_rootfs, infra_vm
 from bot_bottle.backend.firecracker.infra import FirecrackerInfraService
@@ -88,9 +89,9 @@ class _BringUp(unittest.TestCase):
         path.write_text(json.dumps({"fingerprint": infra.fingerprint(),
                                     "infra": Settings(infra=infra).to_json()["infra"]}))
 
-    def _ensure(self, svc: _Service, **kwargs: bool) -> str:
+    def _ensure(self, svc: _Service, *, inherit_build: bool = True) -> str:
         with redirect_stderr(io.StringIO()):
-            return svc.ensure_running(**kwargs)
+            return svc.ensure_running(inherit_build=inherit_build)
 
 
 class TestBringUpDecision(_BringUp):
@@ -264,7 +265,8 @@ class TestUpBuildFlag(unittest.TestCase):
         service.ensure_running.return_value = "http://o"
         with patch("bot_bottle.backend.get_bottle_backend", return_value=backend):
             orchestrator.ensure(Settings())
-        service.ensure_running.assert_called_once_with(inherit_build=False)
+        service.ensure_running.assert_called_once_with(
+            inherit_build=False, attach_policy=AttachPolicy.STRICT)
 
 
 if __name__ == "__main__":

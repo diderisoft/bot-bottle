@@ -65,6 +65,13 @@ class TestUpDown(_Mocked):
         self.runner.restart.assert_called_once_with(
             confirm_restart=lifecycle.confirm_controller_restart)
 
+    def test_up_passes_the_reattach_override(self) -> None:
+        with mock.patch.object(lifecycle, "ensure_via_daemon", return_value="http://orch") as ensure:
+            self.run_cmd(lifecycle.cmd_up, [])
+            self.assertFalse(ensure.call_args.kwargs["allow_reattach_failures"])
+            self.run_cmd(lifecycle.cmd_up, ["--allow-reattach-failures"])
+            self.assertTrue(ensure.call_args.kwargs["allow_reattach_failures"])
+
     def test_up_restart_yes_doesnt_ask(self) -> None:
         # For scripts and services, with no terminal to answer the question.
         with mock.patch.object(lifecycle, "ensure_via_daemon", return_value="http://orch"):
