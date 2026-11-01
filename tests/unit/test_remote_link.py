@@ -424,7 +424,7 @@ class TestConsoleSession(unittest.TestCase):
         again, _bottles, sent = self._link(state=state, bottles=bottles)
         asyncio.run(again.resume())
         self.assertFalse(self.terms["a1"].closed)  # the relay is open again
-        self.assertEqual({"type": "agents_running", "agent_ids": ["a1"]}, sent[-1])
+        self.assertIn({"type": "agents_running", "agent_ids": ["a1"]}, sent)
         # Stop still reaches the agent launched on the old connection.
         asyncio.run(again.handle({"type": "stop", "agent_id": "a1"}))
         self.assertEqual("agent_stopped", sent[-1]["type"])
@@ -507,9 +507,11 @@ class TestConsoleSession(unittest.TestCase):
         bottles.running.clear()  # the agent exited meanwhile
         again, _bottles, sent = self._link(state=state, bottles=bottles)
         asyncio.run(again.resume())
+        non_stats = [m for m in sent if m["type"] != "host_stats"]
         self.assertEqual([("agent_stopped", "a1"), ("agents_running", None)],
-                         [(m["type"], m.get("agent_id")) for m in sent])
-        self.assertEqual([], sent[-1]["agent_ids"])
+                         [(m["type"], m.get("agent_id")) for m in non_stats])
+        agents_running = next(m for m in sent if m["type"] == "agents_running")
+        self.assertEqual([], agents_running["agent_ids"])
 
     def test_hello_is_quiet(self) -> None:
         link, _bottles, sent = self._link()
@@ -961,7 +963,7 @@ class TestSupervisor(_RootCase):
         self.stopped = threading.Event()
 
         async def fake_run(config: pairing.RemoteConfig, bottles: Any,
-                           stop: threading.Event) -> None:
+                           stop: threading.Event, **_kwargs: Any) -> None:
             del bottles
             self.started.append(config)
             await asyncio.to_thread(stop.wait)
@@ -989,7 +991,7 @@ class TestSupervisor(_RootCase):
             lambda: "disabled" in str(pairing.read_status().get("error"))))
 
     def test_a_link_that_cannot_run_reports_why(self) -> None:
-        async def failing(*_args: Any) -> None:
+        async def failing(*_args: Any, **_kwargs: Any) -> None:
             raise pairing.RemoteError("install `bot-bottle[remote]`")
 
         pairing.save_config(pairing.RemoteConfig(True, "cid", "tk"))

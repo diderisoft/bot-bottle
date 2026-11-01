@@ -39,7 +39,8 @@ class TestSettingsJson(unittest.TestCase):
                          set(body["operation"]))
         # Fields added later are left out while at their default.
         self.assertEqual({f.name for f in dataclasses.fields(InfraSettings)}
-                         - {"docker_agent_subnets", "fc_env_slots", "fc_slices_dir"},
+                         - {"docker_agent_subnets", "fc_env_slots", "fc_slices_dir",
+                            "host_max_disk_gb", "host_max_memory_gb"},
                          set(body["infra"]))
 
     def test_the_agent_subnet_pool_appears_only_when_set(self) -> None:
@@ -58,6 +59,8 @@ class TestSettingsJson(unittest.TestCase):
         del body["docker_agent_subnets"]
         del body["fc_env_slots"]
         del body["fc_slices_dir"]
+        del body["host_max_disk_gb"]
+        del body["host_max_memory_gb"]
         canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
         self.assertEqual(hashlib.sha256(canonical.encode()).hexdigest(),
                          InfraSettings().fingerprint())
@@ -169,6 +172,8 @@ class TestEnvLoader(unittest.TestCase):
             "BOT_BOTTLE_FC_ENV_SLOTS": "6",
             "BOT_BOTTLE_FC_SLICES_DIR": "/run/claims",
             "BOT_BOTTLE_MACOS_CONTAINER_DNS": "9.9.9.9",
+            "BOT_BOTTLE_HOST_MAX_DISK_GB": "100",
+            "BOT_BOTTLE_HOST_MAX_MEMORY_GB": "16",
         }
         expected = Settings(
             operation=OperationSettings(backend="firecracker"),
@@ -183,6 +188,7 @@ class TestEnvLoader(unittest.TestCase):
                 fc_iface_prefix="bbci", fc_nft_table="bb_ci", fc_orch_iface="bbciorch0",
                 fc_gw_iface="bbcigw0", macos_container_dns="9.9.9.9", fc_env_slots=6,
                 fc_slices_dir="/run/claims",
+                host_max_disk_gb=100, host_max_memory_gb=16,
             ),
         )
         self.assertEqual(expected, settings_from_env(env))

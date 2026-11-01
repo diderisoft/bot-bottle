@@ -72,7 +72,7 @@ class TestTerminalSessions(unittest.TestCase):
         self.assertEqual({"c-1": "from-console"}, link.running)
         self.assertIn("c-1", self.terms)
         self.assertEqual([], self.presented())  # the console has it already
-        self.assertEqual({"type": "agents_running", "agent_ids": ["c-1"]}, self.sent[-1])
+        self.assertIn({"type": "agents_running", "agent_ids": ["c-1"]}, self.sent)
 
     def test_a_launch_in_flight_is_not_taken_up(self) -> None:
         self.bottles.start_elsewhere("mid", origin="console")
@@ -91,7 +91,7 @@ class TestTerminalSessions(unittest.TestCase):
         asyncio.run(self.link().resume())
         agent_id = remote.terminal_agent_id("app", "act-t")
         self.assertEqual([agent_id], [m["agent_id"] for m in self.presented()])
-        self.assertEqual({"type": "agents_running", "agent_ids": [agent_id]}, self.sent[-1])
+        self.assertIn({"type": "agents_running", "agent_ids": [agent_id]}, self.sent)
 
     def test_its_requests_are_raised_and_it_can_be_stopped(self) -> None:
         self.bottles.start_elsewhere("app")

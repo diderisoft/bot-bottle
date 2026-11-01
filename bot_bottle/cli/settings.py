@@ -44,6 +44,8 @@ INFRA_ENV: dict[str, str] = {
     "fc_env_slots": "BOT_BOTTLE_FC_ENV_SLOTS",
     "fc_slices_dir": "BOT_BOTTLE_FC_SLICES_DIR",
     "macos_container_dns": "BOT_BOTTLE_MACOS_CONTAINER_DNS",
+    "host_max_disk_gb": "BOT_BOTTLE_HOST_MAX_DISK_GB",
+    "host_max_memory_gb": "BOT_BOTTLE_HOST_MAX_MEMORY_GB",
 }
 
 
