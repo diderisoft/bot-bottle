@@ -345,3 +345,63 @@ class TestServiceAndJournal(unittest.TestCase):
                 self.assertEqual([], query_host_journal("b1", None, 10))
             finally:
                 restore()
+
+
+class TestWatchEdges(TestWatch):
+    """What the watch does around the edges: a missing file, a bottle whose
+    refresh fails, the provider's own paths, and the thread itself."""
+
+    def test_a_missing_file_is_noted_not_an_error(self) -> None:
+        self.claude_file.unlink()
+        self.assertEqual([], self.refresher.watch_once())  # noted as absent
+        self.provider.result = CredentialRefresh({REF: "tok-1"}, NOW + timedelta(days=5))
+        self.write(self.claude_file, "tok-1")  # it appears: a new login
+        self.assertEqual(["c1"], self.refresher.watch_once())
+
+    def test_one_bottles_failure_doesnt_stop_the_rest(self) -> None:
+        self.refresher.add("c2", CREDS, registry_id="r2", bottle=cast(Any, _Bottle()),
+                           env_var_secret="key", current={REF: "tok-0"})
+        self.refresher.watch_once()
+        self.write(self.claude_file, "tok-1")
+        real = self.refresher.refresh
+        def refresh(target: Any) -> Any:
+            if target.identity == "c1":
+                raise RuntimeError("host unreachable")
+            return real(target)
+        self.provider.result = CredentialRefresh({REF: "tok-1"}, NOW + timedelta(days=5))
+        with mock.patch.object(self.refresher, "refresh", side_effect=refresh):
+            self.assertEqual(["c2"], self.refresher.watch_once())
+        warned = " ".join(str(c.args[0]) for c in credential_refresh.log.warn.call_args_list)
+        self.assertIn("host unreachable", warned)
+
+    def test_the_watch_thread_looks_and_survives_an_error(self) -> None:
+        import threading
+        looked = threading.Event()
+        calls: list[int] = []
+        def watch_once() -> list[str]:
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("boom")
+            looked.set()
+            return []
+        with mock.patch.object(credential_refresh, "WATCH_SECONDS", 0.01), \
+             mock.patch.object(credential_refresh, "REFRESH_SECONDS", 3600), \
+             mock.patch.object(self.refresher, "watch_once", side_effect=watch_once):
+            self.refresher.start()
+            self.assertTrue(looked.wait(2))
+            self.refresher.stop()
+        warned = " ".join(str(c.args[0]) for c in credential_refresh.log.warn.call_args_list)
+        self.assertIn("watching the host logins failed: boom", warned)
+
+
+class TestLoginPaths(unittest.TestCase):
+    def test_a_provider_names_none_by_default(self) -> None:
+        from bot_bottle.agent_provider import AgentProvider
+        self.assertEqual((), AgentProvider.host_login_paths(cast(Any, object()), {}))
+
+    def test_the_watch_asks_the_harness_provider(self) -> None:
+        provider = mock.Mock()
+        provider.host_login_paths.return_value = (Path("/x/login.json"),)
+        with mock.patch("bot_bottle.agent_provider.get_provider", return_value=provider):
+            self.assertEqual((Path("/x/login.json"),),
+                             credential_refresh._login_paths("claude"))  # pylint: disable=protected-access
