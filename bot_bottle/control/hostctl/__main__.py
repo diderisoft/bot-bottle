@@ -20,7 +20,7 @@ from ...lib.log import debug, info, warn
 from ...trust_domain import HostControlProvisioning, HostLink, signing_key
 from .build import current_build_id
 from .runner import HostControlState, clear_state, leave_callers_directory, write_state
-from . import localsock
+from . import budget, localsock
 from .audit_events import HostAudit
 from .audit_forward import AuditForwarder
 from .bottles import BottleService
@@ -135,6 +135,8 @@ def main() -> int:
         bottles.adopt()
     # Keeps running bottles' forwarded host logins current.
     bottles.credentials.start()
+    # Measures bot-bottle's storage for the budget, off any launch's path.
+    budget.METER.start()
     # Deletes ended sessions' transcript copies past the host's retention.
     retention = RetentionSweeper(audit)
     retention.start()

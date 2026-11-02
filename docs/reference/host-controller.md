@@ -46,7 +46,8 @@ Jobs are held in memory and dropped `RETENTION_SECONDS` after they finish.
 `bottles.py` runs a launch job. It prepares the plan without prompting (the
 CLI has already asked everything), then hands it to a holder thread that
 stays inside `backend.launch(plan)` for the bottle's life and tears it down
-when the agent exits.
+when the agent exits. A launch the host's budget can't fit is refused
+before it boots ([Bottles' budget](#bottles-budget)).
 
 ## Sessions
 
@@ -181,20 +182,67 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
   20 seconds. It's the agent's own output, so it's an indicator for the
   console only, never a security decision.
 - `host_stats` reports this host's storage and memory on each connect and
-  every 60 seconds (`host_stats.py`):
-  `{"storage": {"used", "total", "cap"}, "memory": {"used", "total", "cap"}}`
-  in bytes. Storage covers the filesystems holding the state root and the
-  caches (images, VM disks), each counted once. Memory is what the kernel
-  reports in use (`MemTotal - MemAvailable` on Linux; free and inactive pages
-  on macOS). `cap` is an advisory cap, 0 when none is set: `bot-bottle host
-  caps --disk GB --memory GB` stores it in the host DB, and the daemon reads
-  it at each report, so a change shows within a minute with no restart.
-  Nothing refuses a launch over a cap; the console shows how close the host
-  is.
+  every 60 seconds (`host_stats.py`), host-wide and against the bottles'
+  budget (see [Bottles' budget](#bottles-budget)), all in bytes:
+
+  ```
+  {"storage": {"used", "total", "cap"},
+   "memory": {"used", "total", "cap"},
+   "budget": {
+     "memory": {"allocated", "budget", "bottle_size",
+                "bottles": [{"id", "label", "memory"}]},
+     "storage": {"used", "budget",
+                 "categories": {"vm_disks", "images", "workspaces", "transcripts"}}}}
+  ```
+
+  The host-wide `storage` covers the filesystems holding the state root and
+  the caches, each counted once; `memory` is what the kernel reports in use
+  (`MemTotal - MemAvailable` on Linux; free and inactive pages on macOS).
+  `cap` repeats the budget for consoles that predate the `budget` block. A
+  budget of 0 means none is set. `budget.storage` is left out until the
+  first storage walk after the daemon starts.
 - A restarted daemon resumes each re-adopted session's copies from the
   saved offsets, exec'ing through `BottleBackend.attach_adopted` (which
   never tears the bottle down). Copies of sessions that ended while it was
   down close with what they have.
+
+## Bottles' budget
+
+`bot-bottle host budget --memory GB --disk GB` sets what bottles may use on
+this host (0 clears one; no flags shows them). It's stored in the host DB and
+read at each launch and each `host_stats` report, so a change applies at once.
+`bot-bottle host caps` is its deprecated old name.
+
+- **Memory is allocation.** Every bottle is given the same memory
+  (`backend/bottle_size.py`, 2 GiB): a firecracker VM's memory, a macOS
+  container's `--memory`, a Docker agent's `mem_limit`. Allocated is that
+  times the bottles running: held, adopted after a restart, launching, or
+  with a running session. A VM usually uses less than it's given, so
+  allocation can sit well above the host-wide figure.
+- **Storage is bot-bottle's own directories:** the state root and the
+  artifact and firecracker caches, in allocated blocks (a sparse VM disk
+  counts what it holds). A background thread (`budget.StorageMeter`) walks
+  them every five minutes; launches read the last result and never walk.
+  Categories: `vm_disks` (firecracker run dirs, the infra VMs' disks, kept
+  `home.ext4` disks), `transcripts` (transcripts, audit, logs), `images`
+  (the rest of the caches, and the build root), `workspaces` (the rest of the
+  state root). Docker's and Apple `container`'s own stores (images, volumes)
+  aren't counted, and the caches are shared by every environment on the host.
+
+`BottleService._launch` admits a launch against the budget after preparing
+it and before booting, one admission at a time (so two launches can't both
+take the last room); an admitted bottle counts as launching until its holder
+takes it. It refuses, failing the launch job (the console sees
+`agent_errored` with the message):
+
+- when the bottle's memory doesn't fit: "<label> needs 2 GB of memory; 0 GB
+  left in the 8 GB budget. Stop a bottle (`bot-bottle bots`) or raise the
+  budget (`bot-bottle host budget --memory …`)."
+- when bot-bottle's storage is over its budget, naming
+  `bot-bottle cleanup images` to free cached images.
+
+At 90% of the storage budget or more, a launch goes ahead with a warning. No
+budget set, no check.
 
 ## Forwarded host logins
 

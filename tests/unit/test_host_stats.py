@@ -13,8 +13,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from bot_bottle.control.hostctl import host_stats
-from bot_bottle.lib.config_store import ConfigStore, HostCaps
+from bot_bottle.control.hostctl import budget, host_stats
+from bot_bottle.lib.config_store import ConfigStore, HostBudget
 
 
 class TestDiskStats(unittest.TestCase):
@@ -101,7 +101,7 @@ class TestCollect(unittest.TestCase):
 
     def test_cap_converts_gib_to_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            result = host_stats.collect([Path(tmp)], limits=HostCaps(disk_gb=10, memory_gb=4))
+            result = host_stats.collect([Path(tmp)], limits=HostBudget(disk_gb=10, memory_gb=4))
         self.assertEqual(10 * 1024 ** 3, result["storage"]["cap"])  # type: ignore[index]
         self.assertEqual(4 * 1024 ** 3, result["memory"]["cap"])  # type: ignore[index]
 
@@ -159,8 +159,8 @@ class TestStorage(unittest.TestCase):
             self.assertFalse((Path(tmp) / ".cache").exists())
 
 
-class TestCaps(unittest.TestCase):
-    """The caps come from `bot-bottle host caps` (the host DB)."""
+class TestBudgetSetting(unittest.TestCase):
+    """The budget comes from `bot-bottle host budget` (the host DB)."""
 
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
@@ -169,17 +169,19 @@ class TestCaps(unittest.TestCase):
         self.enterContext(mock.patch("bot_bottle.paths.host_db_path", return_value=self.db))
 
     def test_none_set_is_zero(self) -> None:
-        self.assertEqual(HostCaps(), host_stats.caps())
+        self.assertEqual(HostBudget(), budget.host_budget())
 
-    def test_stored_caps(self) -> None:
+    def test_stored_budget(self) -> None:
         store = ConfigStore(self.db)
         store.migrate()
-        store.set_host_caps(HostCaps(disk_gb=50, memory_gb=16))
-        self.assertEqual(HostCaps(50, 16), host_stats.caps())
-        self.assertEqual(50 * 1024 ** 3,
-                         host_stats.snapshot()["storage"]["cap"])  # type: ignore[index]
+        store.set_host_budget(HostBudget(disk_gb=50, memory_gb=16))
+        self.assertEqual(HostBudget(50, 16), budget.host_budget())
+        stats: Any = host_stats.snapshot()
+        self.assertEqual(50 * 1024 ** 3, stats["storage"]["cap"])
+        self.assertEqual(16 * 1024 ** 3, stats["budget"]["memory"]["budget"])
 
-class TestHostCapsCommand(TestCaps):
+
+class TestHostBudgetCommand(TestBudgetSetting):
     def run_cmd(self, argv: list[str]) -> tuple[int, str, str]:
         from bot_bottle.cli.commands import host
         out, err = io.StringIO(), io.StringIO()
@@ -188,16 +190,24 @@ class TestHostCapsCommand(TestCaps):
         return code, out.getvalue(), err.getvalue()
 
     def test_shows_none_then_sets_and_clears(self) -> None:
-        self.assertEqual((0, "storage: none\nmemory: none\n", ""), self.run_cmd(["caps"]))
-        code, out, _ = self.run_cmd(["caps", "--disk", "50", "--memory", "16"])
-        self.assertEqual((0, "storage: 50 GiB\nmemory: 16 GiB\n"), (code, out))
-        code, out, _ = self.run_cmd(["caps", "--memory", "0"])  # one at a time; 0 clears
-        self.assertEqual("storage: 50 GiB\nmemory: none\n", out)
+        each = "(each bottle is given 2 GB)"
+        self.assertEqual((0, f"memory: none {each}\nstorage: none\n", ""),
+                         self.run_cmd(["budget"]))
+        code, out, _ = self.run_cmd(["budget", "--disk", "50", "--memory", "16"])
+        self.assertEqual((0, f"memory: 16 GB {each}\nstorage: 50 GB\n"), (code, out))
+        code, out, _ = self.run_cmd(["budget", "--memory", "0"])  # one at a time; 0 clears
+        self.assertEqual(f"memory: none {each}\nstorage: 50 GB\n", out)
 
-    def test_refuses_a_negative_cap(self) -> None:
-        code, _, err = self.run_cmd(["caps", "--disk", "-1"])
+    def test_refuses_a_negative_budget(self) -> None:
+        code, _, err = self.run_cmd(["budget", "--disk", "-1"])
         self.assertEqual(2, code)
         self.assertIn("0 or more", err)
+
+    def test_caps_still_works_and_points_at_budget(self) -> None:
+        code, out, err = self.run_cmd(["caps", "--memory", "8"])
+        self.assertEqual(0, code)
+        self.assertIn("memory: 8 GB", out)
+        self.assertIn("host budget", err)
 
 
 class TestConsoleLink(unittest.TestCase):
@@ -222,9 +232,11 @@ class TestConsoleLink(unittest.TestCase):
         link, sent = self._link()
         stats = {"storage": {"used": 1, "total": 2, "cap": 0},
                  "memory": {"used": 3, "total": 4, "cap": 5}}
-        with mock.patch.object(host_stats, "snapshot", return_value=stats):
+        with mock.patch.object(host_stats, "snapshot", return_value=stats) as snapshot:
             asyncio.run(link.push_host_stats())
         self.assertEqual([{"type": "host_stats", **stats}], sent)
+        # With the bottle service, for the budget's running bottles.
+        snapshot.assert_called_once_with(link._bottles)
 
     def test_a_failed_snapshot_sends_nothing(self) -> None:
         link, sent = self._link()

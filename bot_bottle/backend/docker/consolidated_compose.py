@@ -9,6 +9,7 @@ from typing import Any
 from ...environment import resource_prefix
 from ...egress import Egress
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
+from ..bottle_size import BOTTLE_MEMORY_MIB
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
 from .bottle_plan import DockerBottlePlan
 
@@ -49,6 +50,7 @@ def consolidated_agent_compose(
         # Without NET_RAW, root can't forge addresses to impersonate another
         # bottle.
         "cap_drop": ["NET_RAW"],
+        "mem_limit": f"{BOTTLE_MEMORY_MIB}m",
         # Its home, kept across stop and resume. Docker fills an empty named
         # volume from the image's home on first use.
         "volumes": [f"{home_volume_name(plan.slug)}:{plan.guest_home}"],

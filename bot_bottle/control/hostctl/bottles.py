@@ -35,6 +35,9 @@ from ...paths import host_secrets_path
 from ...util import slugify
 from ... import run_manifest
 from ...backend import adoption
+from ...backend.bottle_size import BOTTLE_MEMORY_BYTES
+from ...lib.config_store import HostBudget
+from . import budget
 from .audit_events import HostAudit, digest_manifest, digest_request
 from .credential_refresh import CredentialRefresher
 from .sessions import ExitStatus, SessionManager, SessionRecord
@@ -200,6 +203,8 @@ class BottleService:
         recorded_infra: Callable[[str], InfraSettings | None] = _recorded_infra,
         audit: HostAudit | None = None,
         code_changed: Callable[[], bool] = _code_changed,
+        host_budget: Callable[[], HostBudget] = budget.host_budget,
+        storage: Callable[[], dict[str, int] | None] = budget.METER.current,
     ) -> None:
         self.audit = audit if audit is not None else HostAudit()
         self._code_changed = code_changed
@@ -209,6 +214,11 @@ class BottleService:
         self._recorded_infra = recorded_infra
         self._secrets_file = secrets_file
         self._held: dict[str, _Held] = {}
+        self._host_budget = host_budget
+        self._storage = storage
+        # Admitted against the budget but not held yet: id -> label.
+        self._launching: dict[str, str] = {}
+        self._admitting = threading.Lock()
         # What adopted bottles hold until they end (e.g. a Firecracker slot).
         self._adopted: dict[str, Callable[[], None]] = {}
         # Each running session's transcript follower (PRD 0095).
@@ -288,6 +298,7 @@ class BottleService:
             self._confirm(backend, plan, request)
             if self._running(identity):
                 log.die(f"bottle {identity} is already running")
+            self._admit(identity, request.label or identity)
             ready: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
             threading.Thread(
                 target=contextvars.Context().run,
@@ -303,9 +314,44 @@ class BottleService:
                 raise value
             return value
         finally:
+            with self._lock:
+                self._launching.pop(identity, None)
             if not handed_off:
                 settle_state(identity)
                 shutil.rmtree(stage_dir, ignore_errors=True)
+
+    def _admit(self, identity: str, label: str) -> None:
+        """Refuse a launch the host budget can't fit, else count it as
+        running until its holder takes it. One admission at a time, so two
+        launches can't both take the last room."""
+        with self._admitting:
+            limits, storage = self._host_budget(), self._storage()
+            refused = budget.refusal(label, self.allocation(), limits, storage)
+            if refused is not None:
+                log.die(refused)
+            warning = budget.storage_warning(limits, storage)
+            if warning is not None:
+                log.warn(warning)
+            with self._lock:
+                self._launching[identity] = label
+
+    def allocation(self) -> list[dict[str, object]]:
+        """The bottles memory is allocated to: held, adopted, launching, or
+        with a running session; each given `BOTTLE_MEMORY_BYTES`."""
+        with self._lock:
+            taken = set(self._held) | set(self._adopted)
+            launching = dict(self._launching)
+        out: list[dict[str, object]] = []
+        for r in self._sessions.records():
+            if r.kind != SESSION_KIND:
+                continue
+            if r.id in taken or r.id in launching or self.session_state(r.id)["running"]:
+                out.append({"id": r.id, "label": r.meta.get("label", "") or r.id,
+                            "memory": BOTTLE_MEMORY_BYTES})
+                launching.pop(r.id, None)
+        out.extend({"id": i, "label": label, "memory": BOTTLE_MEMORY_BYTES}
+                   for i, label in launching.items())
+        return out
 
     @staticmethod
     def _confirm(backend: "BottleBackend[Any, Any]", plan: "BottlePlan",
