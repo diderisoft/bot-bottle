@@ -24,7 +24,9 @@ dependencies = []
 [project.optional-dependencies]
 # Remote access over iroh (ADR 0007), imported only by the host controller's
 # console link. No Intel-macOS wheel exists upstream.
-remote = ["iroh>=1.2", "cryptography>=41"]
+# cryptography 50's cp315 wheel is tagged abi3 but ships only the free-threaded
+# (abi3t) extension, so it can't load on a regular Python 3.15; 49 loads.
+remote = ["iroh>=1.2", "cryptography>=41", 'cryptography<50; python_version >= "3.15"']
 
 [project.urls]
 Homepage = "https://gitea.dideric.is/didericis/bot-bottle"
