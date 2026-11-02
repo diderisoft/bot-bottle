@@ -31,16 +31,40 @@ def transcript_glob(guest_home: str, cwd: str) -> str:
     return f"{guest_home.rstrip('/')}/.claude/projects/{project_dir_name(cwd)}/*.jsonl"
 
 
-def _text(content: Any) -> str:
+def _image_url(block: dict[str, Any]) -> str:
+    """A data URI or HTTPS URL from an image content block's source."""
+    source = block.get("source")
+    if not isinstance(source, dict):
+        return ""
+    if source.get("type") == "url":
+        url = str(source.get("url", ""))
+        return url if url.startswith(("https://", "http://")) else ""
+    if source.get("type") == "base64":
+        mt = str(source.get("media_type", "image/png"))
+        data = str(source.get("data", ""))
+        return f"data:{mt};base64,{data}" if data else ""
+    return ""
+
+
+def _content(content: Any) -> tuple[str, str]:
+    """(text, first image_url) from a content array; text-only for strings.
+    Images whose source can't be resolved contribute a [image] placeholder."""
     if isinstance(content, str):
-        return content
-    out = []
+        return content, ""
+    texts: list[str] = []
+    url = ""
     for block in content if isinstance(content, list) else []:
-        if isinstance(block, dict) and block.get("type") == "text":
-            out.append(str(block.get("text", "")))
-        elif isinstance(block, dict) and block.get("type") == "image":
-            out.append("[image]")
-    return "".join(out)
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            texts.append(str(block.get("text", "")))
+        elif block.get("type") == "image":
+            u = _image_url(block)
+            if u and not url:
+                url = u
+            else:
+                texts.append("[image]")
+    return "".join(texts), url
 
 
 # A slash command and its output, as Claude records them in a user line.
@@ -52,18 +76,26 @@ def _user(raw: dict[str, Any], content: Any, names: dict[str, str]) -> list[Part
     if isinstance(content, str):
         meta = bool(raw.get("isMeta")) or bool(_COMMAND.match(content))
         return [Part("system", content, meta=True)] if meta else [Part("user", content)]
-    out = []
+    out, inline = [], []
     for block in content if isinstance(content, list) else []:
         if not isinstance(block, dict):
             continue
         if block.get("type") == "tool_result":
-            out.append(Part("tool_result", _text(block.get("content")),
+            if inline:
+                text, url = _content(inline)
+                out.append(Part("system", text, meta=True) if raw.get("isMeta")
+                           else Part("user", text, image_url=url))
+                inline = []
+            text, url = _content(block.get("content"))
+            out.append(Part("tool_result", text,
                             tool=names.get(str(block.get("tool_use_id")), ""),
-                            error=bool(block.get("is_error"))))
+                            error=bool(block.get("is_error")), image_url=url))
         elif block.get("type") in ("text", "image"):
-            text = _text([block])
-            out.append(Part("system", text, meta=True) if raw.get("isMeta")
-                       else Part("user", text))
+            inline.append(block)
+    if inline:
+        text, url = _content(inline)
+        out.append(Part("system", text, meta=True) if raw.get("isMeta")
+                   else Part("user", text, image_url=url))
     return out
 
 
@@ -84,6 +116,9 @@ def _assistant(raw: dict[str, Any], content: Any, names: dict[str, str]) -> list
             names[str(block.get("id"))] = str(block.get("name", ""))
             out.append(Part("tool_call", dumps(block.get("input", {})),
                             tool=str(block.get("name", ""))))
+        elif kind == "image":
+            url = _image_url(block)
+            out.append(Part("assistant", "" if url else "[image]", image_url=url, error=error))
         else:
             out.append(system(dumps(block)))
     return out

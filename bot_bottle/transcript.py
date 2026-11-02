@@ -37,12 +37,13 @@ class TranscriptEntry:
     parent: str = ""
     thinking: bool = False
     meta: bool = False
+    image_url: str = ""
 
     def to_json(self) -> dict[str, Any]:
         """The wire form: defaults left out."""
         out: dict[str, Any] = {"seq": self.seq, "ts": self.ts, "kind": self.kind,
                                "text": self.text, "raw_offset": self.raw_offset}
-        for name in ("tool", "error", "thinking", "meta"):
+        for name in ("tool", "error", "thinking", "meta", "image_url"):
             if getattr(self, name):
                 out[name] = getattr(self, name)
         return out
@@ -58,6 +59,7 @@ class Part:
     error: bool = False
     thinking: bool = False
     meta: bool = False
+    image_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -95,7 +97,8 @@ def entries(lines: Iterable[str], parse_line: Callable[[dict[str, Any]], Line], 
             out.append(TranscriptEntry(
                 seq=seq + len(out), ts=line.ts, kind=part.kind, text=part.text,
                 raw_offset=offset, tool=part.tool, error=part.error, id=line.id,
-                parent=line.parent, thinking=part.thinking, meta=part.meta))
+                parent=line.parent, thinking=part.thinking, meta=part.meta,
+                image_url=part.image_url))
         offset += len(raw_line.encode("utf-8"))
     return out
 

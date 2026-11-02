@@ -27,6 +27,21 @@ def transcript_glob(guest_home: str, cwd: str) -> str:
     return f"{guest_home.rstrip('/')}/.pi/agent/sessions/{session_dir_name(cwd)}/*.jsonl"
 
 
+def _image_url(block: dict[str, Any]) -> str:
+    """A data URI or HTTPS URL from a pi image content block."""
+    source = block.get("source")
+    if not isinstance(source, dict):
+        return ""
+    if source.get("type") == "url":
+        url = str(source.get("url", ""))
+        return url if url.startswith(("https://", "http://")) else ""
+    if source.get("type") == "base64":
+        mt = str(source.get("media_type", "image/png"))
+        data = str(source.get("data", ""))
+        return f"data:{mt};base64,{data}" if data else ""
+    return ""
+
+
 def _text(content: Any) -> str:
     """A message's text: a string, or its text blocks (images as a marker)."""
     if isinstance(content, str):
@@ -42,6 +57,26 @@ def _text(content: Any) -> str:
     return "".join(parts)
 
 
+def _content(content: Any) -> tuple[str, str]:
+    """(text, first image_url) from a content array."""
+    if isinstance(content, str):
+        return content, ""
+    texts: list[str] = []
+    url = ""
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            texts.append(str(block.get("text", "")))
+        elif block.get("type") == "image":
+            u = _image_url(block)
+            if u and not url:
+                url = u
+            else:
+                texts.append("[image]")
+    return "".join(texts), url
+
+
 def _arguments(value: Any) -> str:
     return value if isinstance(value, str) else dumps(value)
 
@@ -52,9 +87,10 @@ def _assistant(message: dict[str, Any]) -> list[Part]:
     out = [Part("assistant", str(b.get("thinking", "")), thinking=True)
            for b in blocks if b.get("type") == "thinking" and b.get("thinking")]
     failed = message.get("stopReason") == "error"
-    text = _text(content) or (str(message.get("errorMessage") or "") if failed else "")
-    if text or failed:
-        out.append(Part("assistant", text, error=failed))
+    text, url = _content(content)
+    text = text or (str(message.get("errorMessage") or "") if failed else "")
+    if text or url or failed:
+        out.append(Part("assistant", text, error=failed, image_url=url))
     out.extend(Part("tool_call", _arguments(b.get("arguments", {})), tool=str(b.get("name", "")))
                for b in blocks if b.get("type") == "toolCall")
     return out
@@ -67,11 +103,21 @@ def _bash(message: dict[str, Any]) -> list[Part]:
                  tool="bash", error=failed)]
 
 
+def _user_msg(m: dict[str, Any]) -> list[Part]:
+    text, url = _content(m.get("content"))
+    return [Part("user", text, image_url=url)]
+
+
+def _tool_result(m: dict[str, Any]) -> list[Part]:
+    text, url = _content(m.get("content"))
+    return [Part("tool_result", text, tool=str(m.get("toolName", "")),
+                 error=bool(m.get("isError")), image_url=url)]
+
+
 _BY_ROLE: dict[str, Callable[[dict[str, Any]], list[Part]]] = {
-    "user": lambda m: [Part("user", _text(m.get("content")))],
+    "user": _user_msg,
     "assistant": _assistant,
-    "toolResult": lambda m: [Part("tool_result", _text(m.get("content")),
-                                  tool=str(m.get("toolName", "")), error=bool(m.get("isError")))],
+    "toolResult": _tool_result,
     "bashExecution": _bash,
     "branchSummary": lambda m: [system(str(m.get("summary", "")))],
     "compactionSummary": lambda m: [system(str(m.get("summary", "")))],

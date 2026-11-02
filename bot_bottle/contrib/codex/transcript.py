@@ -27,6 +27,15 @@ def transcript_glob(codex_home: str) -> str:
     return f"{codex_home.rstrip('/')}/sessions/*/*/*/rollout-*.jsonl"
 
 
+def _image_url(block: dict[str, Any]) -> str:
+    """A URL or data URI from a Codex image block."""
+    for key in ("image_url", "url"):
+        val = block.get(key)
+        if isinstance(val, str) and val.startswith(("https://", "http://", "data:image/")):
+            return val
+    return ""
+
+
 def _text(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -41,12 +50,32 @@ def _text(content: Any) -> str:
     return "".join(out)
 
 
+def _content(content: Any) -> tuple[str, str]:
+    """(text, first image_url) from a content array."""
+    if isinstance(content, str):
+        return content, ""
+    texts: list[str] = []
+    url = ""
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict):
+            continue
+        if "text" in block:
+            texts.append(str(block["text"]))
+        elif str(block.get("type", "")).endswith("image"):
+            u = _image_url(block)
+            if u and not url:
+                url = u
+            else:
+                texts.append("[image]")
+    return "".join(texts), url
+
+
 def _message(p: dict[str, Any]) -> list[Part]:
-    role, text = p.get("role"), _text(p.get("content"))
+    role, text, url = p.get("role"), *_content(p.get("content"))
     if role == "assistant":
-        return [Part("assistant", text)]
+        return [Part("assistant", text, image_url=url)]
     if role == "user" and not text.lstrip().startswith(_INJECTED):
-        return [Part("user", text)]
+        return [Part("user", text, image_url=url)]
     return [system(text, meta=True)]
 
 
@@ -96,7 +125,8 @@ def _tool_names(parts: list[Part], p: dict[str, Any], names: dict[str, str]) -> 
     if p.get("type", "").endswith("_call") and call:
         names[call] = str(p.get("name", "")) or parts[0].tool
     elif p.get("type", "").endswith("_call_output") and call in names:
-        return [Part(x.kind, x.text, names[call], x.error, x.thinking, x.meta) for x in parts]
+        return [Part(x.kind, x.text, names[call], x.error, x.thinking, x.meta, x.image_url)
+                for x in parts]
     return parts
 
 
