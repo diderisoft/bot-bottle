@@ -348,7 +348,7 @@ class TestVersionRoute(unittest.TestCase):
         env = {"BOT_BOTTLE_VERSION": "1.2.3", "BOT_BOTTLE_COMMIT": "abc",
                "BOT_BOTTLE_PROTOCOL": "1"}
         with patch.dict("os.environ", env):
-            status, payload = dispatch(self.orch, "GET", "/version", b"", role=None)
+            status, _ = dispatch(self.orch, "GET", "/version", b"", role=None)
         self.assertEqual(200, status)
 
     def test_version_shape(self) -> None:
@@ -373,9 +373,10 @@ class TestVersionRoute(unittest.TestCase):
         }
         with patch.dict("os.environ", env):
             _, payload = dispatch(self.orch, "GET", "/version", b"")
+        images = payload["images"]
+        assert isinstance(images, dict)
         for image in ("bot-bottle-orchestrator", "bot-bottle-gateway"):
-            self.assertEqual({"source": "local", "inputs_hash": hash_val},
-                             payload["images"][image])
+            self.assertEqual({"source": "local", "inputs_hash": hash_val}, images[image])
 
     def test_published_build_shows_digest(self) -> None:
         digest = "sha256:" + "a" * 64
@@ -389,9 +390,11 @@ class TestVersionRoute(unittest.TestCase):
         }
         with patch.dict("os.environ", env):
             _, payload = dispatch(self.orch, "GET", "/version", b"")
+        images = payload["images"]
+        assert isinstance(images, dict)
         self.assertEqual(
             {"source": "published", "digest": digest, "inputs_hash": hash_val},
-            payload["images"]["bot-bottle-orchestrator"],
+            images["bot-bottle-orchestrator"],
         )
 
     def test_no_env_vars_returns_unknown(self) -> None:
