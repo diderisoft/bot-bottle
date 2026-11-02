@@ -213,9 +213,9 @@ class TestReader(_Root):
 
     def test_multiple_sessions_are_combined_with_monotonic_seqs(self) -> None:
         # Simulate a /clear: two separate session files for the same agent.
-        first = self.copy("s1", "a1", "sess1",
-                          guest="/home/node/.pi/agent/sessions/--w--/sess1.jsonl",
-                          opened=1.0)
+        self.copy("s1", "a1", "sess1",
+                  guest="/home/node/.pi/agent/sessions/--w--/sess1.jsonl",
+                  opened=1.0)
         second = self.copy("s1", "a1", "sess2",
                            guest="/home/node/.pi/agent/sessions/--w--/sess2.jsonl",
                            opened=2.0)
