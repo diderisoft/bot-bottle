@@ -7,6 +7,7 @@ when the launcher exits.
 from __future__ import annotations
 
 from collections.abc import Sequence
+import json
 import os
 import select
 import signal
@@ -139,6 +140,18 @@ def pid_for_slug(slug: str) -> int | None:
         if args is not None and _run_dir_of(args, run_root) == run_dir:
             return pid
     return None
+
+
+def vcpus_for_slug(slug: str) -> int:
+    """How many vCPUs the VM for `slug` was booted with (its run dir's
+    `config.json`), or 1 when that can't be read."""
+    try:
+        config = json.loads((_run_root() / slug / "config.json").read_text())
+        count = config["machine-config"]["vcpu_count"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return 1
+    # pylint: disable-next=unidiomatic-typecheck  # bool is an int
+    return count if type(count) is int and count > 0 else 1
 
 
 def _orphan_run_dirs(run_root: Path, live: set[str]) -> list[str]:

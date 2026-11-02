@@ -359,6 +359,19 @@ class BottleService:
                    for i, label in launching.items())
         return out
 
+    def live_metrics(self, identity: str) -> dict[str, object] | None:
+        """A bottle's CPU % and memory in use for the console's live gauge
+        (`live_metrics`), on its own CPU baseline; None if it can't be read."""
+        record = self._sessions.record(identity)
+        if record is None:
+            return None
+        metrics = bottle_metrics.collect(identity, str(record.meta.get("backend") or ""),
+                                         sample="live")
+        if metrics is None:
+            return None
+        return {"id": identity, "cpu_pct": metrics.cpu_pct, "mem_used": metrics.mem_used,
+                "memory": BOTTLE_MEMORY_BYTES}
+
     @staticmethod
     def _confirm(backend: "BottleBackend[Any, Any]", plan: "BottlePlan",
                  request: LaunchRequest) -> None:

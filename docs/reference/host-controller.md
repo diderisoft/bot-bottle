@@ -204,7 +204,7 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
    "memory": {"used", "total", "cap"},
    "budget": {
      "memory": {"allocated", "budget", "bottle_size",
-                "bottles": [{"id", "label", "memory"}]},
+                "bottles": [{"id", "label", "memory", "cpu_pct", "mem_used"}]},
      "storage": {"used", "budget",
                  "categories": {"vm_disks", "images", "workspaces", "transcripts"}}},
    "about": {"os", "backend", "version", "commit"}}
@@ -221,6 +221,22 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
   or a Linux's `NAME` from `/etc/os-release`), the backend its last
   bring-up recorded (`""` before one) and this install's version and short
   commit (as `bot-bottle version` prints them).
+
+  Each running bottle's `cpu_pct` and `mem_used` (bytes) are left out when
+  they can't be read (`bottle_metrics.py`). CPU % is a share of the
+  bottle's CPUs, 0-100: a Firecracker VM's vCPUs from its `config.json`
+  (one busy vCPU of two is 50%), and a container's `stats` figure capped at
+  100, since bottles set no container CPU limit to scale it by.
+- `metrics_watch` (`bottles`: bottle ids) replaces the link's watched set,
+  for the console's live gauge on the bottles someone is looking at; an
+  empty list stops it. While it's non-empty the link samples the watched
+  bottles it has running in one pass every 3 seconds, on every backend, and
+  sends `bottle_metrics` (`at`, `bottles`: `id`, `cpu_pct`, `mem_used`,
+  `memory`) (`live_metrics.py`). The interval leaves room for a container's
+  `stats` call (1-2 s each); a pass still running when the next is due skips
+  it. The set is the connection's, capped at 32: a reconnecting console
+  sends it again. The live samples keep their own CPU baseline, so the
+  minute `host_stats` figure still covers its whole minute.
 - A restarted daemon resumes each re-adopted session's copies from the
   saved offsets, exec'ing through `BottleBackend.attach_adopted` (which
   never tears the bottle down). Copies of sessions that ended while it was

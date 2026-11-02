@@ -12,39 +12,33 @@ The control stream (JSON lines):
   `activation`, `writable`) or `agent_errored`. Agent and bottle content from
   the console is refused. While it starts, `agent_stage` (`stage`, `title`)
   reports each launch stage, as the CLI shows them.
-- `stop` -> tears the bottle down; `agent_stopped` follows, also for agents
-  that exit on their own.
+- `stop` -> tears the bottle down; `agent_stopped` follows (also when one exits itself).
 - `resume` (`agent_id`, `bottle`) -> relaunches a stopped bottle this host ran,
   under its own identity and state, as `bot-bottle resume` does
   (`remote_requests`); `agent_started` or `agent_errored` as for `launch`. A
   repeat for a bottle already running as that agent answers `agent_started`.
-- `hello` opens the stream. On every (re)connect the host reports agents
-  that exited, reopens running ones' relays, and sends `agents_running` and
-  `host_stats` (storage and memory, `host_stats.py`; again every minute).
+- `hello` opens the stream. On every (re)connect the host reports agents that exited,
+  reopens relays, and sends `agents_running` and `host_stats` (`host_stats.py`; each minute).
 - `agent_present` (from the host): a running session the console didn't
   launch (`bot-bottle`, `start`), with a host-made `agent_id`, its `bottle`,
   `activation`, `label`, `definition`, `writable` and `origin`. Sent on every
   (re)connect and when one starts; from then on it's one of the link's agents.
-- `attention` (from the host): a pending supervise request for one of the
-  link's agents, with `since`, `message` and `options`; `activity` once
-  nothing waits. A forge or repo request no card could meet is refused
-  instead, the agent told why (`remote_actions.vet`).
-- `approval` -> `allow`, `allow_project` or `deny`, echoing `since` so a
-  stale click can't answer a newer request.
+- `attention` (from the host): a pending supervise request for one of the link's
+  agents (`since`, `message`, `options`); `activity` once nothing waits. A forge or
+  repo request no card could meet is refused, the agent told why (`remote_actions.vet`).
+- `approval` -> `allow`, `allow_project` or `deny`, echoing `since` (no stale answers).
 - Terminals relay on uni streams (`console_terminal`); `input`, `resize` and
   `history` (`lines` -> `text`, `size`, `limit`) act on them. A relay opens at
   the size last asked for its agent.
 - `audit_query` -> `audit_events` for the link's agents' bottles.
-- `refresh_credentials` -> `credentials_refreshed` (`refreshed`, `expires_at`,
-  or `error`): re-reads the agent's forwarded host login (`credential_refresh`).
-- `manifest` (`agent_id`) -> `manifest`: its agent and bottle files and what they
-  resolve to (`manifest_view`).
+- `refresh_credentials` -> `credentials_refreshed` (`credential_refresh`); `manifest`
+  (`agent_id`) -> `manifest`: its agent and bottle files, resolved (`manifest_view`).
 - `forge_connect` (`url`, `token`, `bottle`, `name`, `ssh`) -> `forge_connected`: connects a
   forge into a host bottle; `github_authorize_start` -> `github_authorize` (the device code)
   and `github_status` -> `github_status` (`github_connect`, `remote_actions.HOST_REQUESTS`).
 - `workspace_file` (`agent_id`, `path`) -> an image file read in its bottle (`workspace_files`).
-- `snapshot` -> `snapshot_taken` (`snapshot`, or `error`): the agent's
-  workspace patch and conversation position, kept on the host (`snapshots`).
+- `metrics_watch` (`bottles`) -> `bottle_metrics` every 3 s for those running (`live_metrics`).
+- `snapshot` -> `snapshot_taken`: workspace patch and conversation position (`snapshots`).
 - `transcript` (`agent_id`, `before` or `around`, `limit`) ->
   `transcript_entries` (`entries`, `first`, `last`, `available`): a page of the agent's
   conversation from its host copy, masked (`transcript_serve`), running or
@@ -55,8 +49,8 @@ The control stream (JSON lines):
   `agent_started`/`agent_present` carry `transcript` when the harness keeps
   one. `transcript_search` (`query`, `kinds`) -> `transcript_matches`.
 
-The pairing on disk (`remote.json`, `console.json`, the iroh key) is `pairing.py`.
-`iroh` (`bot-bottle[remote]`) is imported only when the link runs or a node id is asked.
+The pairing on disk (`remote.json`, `console.json`, the iroh key) is `pairing.py`; `iroh`
+(`bot-bottle[remote]`) is imported only when the link runs or a node id is asked.
 """
 
 from __future__ import annotations
@@ -75,6 +69,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
 from . import host_stats
+from .live_metrics import MetricsWatch
 from ...lib import log
 from ...util import same_instant
 from .audit_index import query_host_journal
@@ -227,6 +222,8 @@ class ConsoleLink:
         self._started_at: dict[str, float] = {}
         self.turns = AgentTurns()  # launches, resumes and stops, per agent
         self.transcripts = TranscriptLink(self._send)
+        self.metrics = MetricsWatch(self._send, lambda: set(self.running.values()),
+                                    getattr(bottles, "live_metrics", None))
         self._last_stats: float = 0.0
 
     # Wait on the bottle: minutes for a launch, for good if a teardown wedges.
@@ -262,6 +259,8 @@ class ConsoleLink:
                                 msg.get("lines"))
         elif kind == "audit_query":
             await self._audit_query(msg)
+        elif kind == "metrics_watch":
+            self.metrics.watch(msg.get("bottles"))
         elif kind in TranscriptLink.REQUESTS:
             await self.transcripts.handle(msg)
         elif kind in remote_actions.QUERIES:  # about one running agent
@@ -721,7 +720,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
             await link.push_working()
             await link.push_host_stats_if_due()
 
-    watcher = asyncio.create_task(watch())
+    watcher, sampler = asyncio.create_task(watch()), asyncio.create_task(link.metrics.run())
     try:
         async for line in _read_lines(control.recv()):
             try:
@@ -733,6 +732,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
                 await link.take(msg)
     finally:
         watcher.cancel()
+        sampler.cancel()
         link.close()
 
 
