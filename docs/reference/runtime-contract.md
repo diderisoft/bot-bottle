@@ -124,6 +124,9 @@ Generated from `bot_bottle/env_vars.py` by `scripts/gen_env_docs.py`.
 | `BOT_BOTTLE_SOURCE_HASH` | macos-container: the source hash the running orchestrator was built from, to spot a stale one. | — |
 | `BOT_BOTTLE_CLAUDE_HOST_ACCESS_TOKEN` | Secret name the gateway injects a forwarded Claude login under. | — |
 | `BOT_BOTTLE_CODEX_HOST_ACCESS_TOKEN` | Secret name the gateway injects a forwarded Codex login under. | — |
+| `BOT_BOTTLE_VERSION` | The host bot-bottle version string, injected into infra containers at startup so `/version` can report it. | — |
+| `BOT_BOTTLE_COMMIT` | The host bot-bottle git commit hash, injected into infra containers at startup so `/version` can report it. | — |
+| `BOT_BOTTLE_PROTOCOL` | The host bot-bottle protocol version (integer), injected into infra containers at startup so `/version` can report it. | — |
 <!-- env-vars:internal:end -->
 
 ## Changelog
