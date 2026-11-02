@@ -599,24 +599,22 @@ class TestResponseTimeoutEnv(unittest.TestCase):
 
 class TestHandleGetEnvironment(unittest.TestCase):
     def test_returns_injected_version_vars(self) -> None:
-        import unittest.mock
         with unittest.mock.patch.dict("os.environ", {
             "BOT_BOTTLE_VERSION": "1.2.3",
             "BOT_BOTTLE_COMMIT": "abc123",
             "BOT_BOTTLE_PROTOCOL": "7",
         }):
             result = handle_get_environment({})
-        text = result["content"][0]["text"]
+        text = result["content"][0]["text"]  # type: ignore[index]
         self.assertIn("version: 1.2.3", text)
         self.assertIn("commit: abc123", text)
         self.assertIn("protocol: 7", text)
         self.assertFalse(result["isError"])
 
     def test_falls_back_gracefully_when_vars_absent(self) -> None:
-        import unittest.mock
         with unittest.mock.patch.dict("os.environ", {}, clear=True):
             result = handle_get_environment({})
-        self.assertEqual("version unknown", result["content"][0]["text"])
+        self.assertEqual("version unknown", result["content"][0]["text"])  # type: ignore[index]
         self.assertFalse(result["isError"])
 
     def test_tool_appears_in_tools_list(self) -> None:
