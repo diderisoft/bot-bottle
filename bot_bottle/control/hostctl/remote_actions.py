@@ -57,7 +57,7 @@ async def forge_connect(msg: Mapping[str, Any]) -> dict[str, Any]:
     from ...forge_connect import ConnectError, connect
     from ...paths import bot_bottle_root
     reply: dict[str, Any] = {"type": "forge_connected", "request_id": msg.get("request_id")}
-    bottle = _text(msg, "bottle", "gitea") or "gitea"
+    bottle = _text(msg, "bottle")  # "": the bottle named after the forge's kind
     if bottle.startswith("./"):
         reply["error"] = "the console connects forges into host bottles, not a project's"
         return reply
@@ -80,13 +80,14 @@ async def forge_connect(msg: Mapping[str, Any]) -> dict[str, Any]:
     return reply
 
 
-def _connected_hosts() -> set[str]:
-    """The hostnames of the forges this host's own bottles declare."""
+def _connected_forges() -> dict[str, str]:
+    """The hostnames of the forges this host's own bottles declare, and their
+    kinds."""
     # pylint: disable=import-outside-toplevel
     from urllib.parse import urlparse
     from ...contract.yaml_subset import YamlSubsetError, parse_frontmatter
     from ...paths import bot_bottle_root
-    hosts: set[str] = set()
+    hosts: dict[str, str] = {}
     for path in sorted((bot_bottle_root() / "bottles").glob("*.md")):
         try:
             fm, _ = parse_frontmatter(path.read_text())
@@ -95,25 +96,39 @@ def _connected_hosts() -> set[str]:
         git = fm.get("git-gate")
         forges = git.get("forges") if isinstance(git, dict) else None
         for entry in forges.values() if isinstance(forges, dict) else ():
-            if isinstance(entry, dict):
-                hosts.add(urlparse(str(entry.get("url", ""))).hostname or "")
-    return hosts - {""}
+            if isinstance(entry, dict) and (host := urlparse(str(entry.get("url", ""))).hostname):
+                hosts[host] = str(entry.get("kind") or "gitea")
+    return hosts
 
 
-def forge_attention(request: Any) -> tuple[list[str], list[str]]:
+def _connected_hosts() -> set[str]:
+    """The hostnames of the forges this host's own bottles declare."""
+    return set(_connected_forges())
+
+
+def forge_attention(request: Any, kind: str = "") -> tuple[list[str], list[str]]:
     """What the phone shows for a `forge-connect` request, and its option. The
     URL is the agent's, so the card says when this host has never connected
-    it: a token pasted for the wrong host is sent to that host."""
+    it: a token pasted for the wrong host is sent to that host. `kind` is the
+    forge's (`forge_kinds.detect`); without one there's nothing to connect."""
     # pylint: disable=import-outside-toplevel
     from urllib.parse import urlparse
-    from ...contrib.gitea.forge_api import TOKEN_SCOPES, token_page
+    from ...contract.forges import unsupported_forge
+    from ...forge_kinds import forge_api, label
     url = request.proposed.strip()
     lines = [f"forge: {url}"]
     if request.justification.strip():
         lines.append(f"why: {request.justification.strip()}")
-    if (urlparse(url).hostname or "") not in _connected_hosts():
+    host = urlparse(url).hostname or ""
+    if not kind:
+        return [*lines, unsupported_forge(host or url)], []
+    if host not in _connected_hosts():
         lines.append("new to this host")
-    lines += [f"token page: {token_page(url)}", f"scopes: {', '.join(TOKEN_SCOPES)}"]
+    api = forge_api(kind)
+    lines += [f"kind: {label(kind)}", f"token page: {api.token_page(url)}",
+              f"token help: {api.TOKEN_HELP}"]
+    if kind == "gitea":  # what consoles before `token help` show
+        lines.append(f"scopes: {', '.join(api.TOKEN_SCOPES)}")
     return lines, ["forge_connect"]
 
 
@@ -136,8 +151,8 @@ async def forge_connect_answer(msg: Mapping[str, Any], asking: Mapping[str, Any]
             or not same_instant(_text(msg, "since"), request.arrived)):
         reply["error"] = "That request is no longer waiting."
         return reply
+    # Into the bottle named after the forge's kind: the card doesn't pick one.
     result = await forge_connect({"url": request.proposed, "token": _text(msg, "token"),
-                                  "bottle": _text(msg, "bottle", "gitea"),
                                   "ssh": _text(msg, "ssh")})
     if result.get("error"):
         reply["error"] = result["error"]
@@ -181,15 +196,71 @@ def repo_attention(request: Any) -> tuple[list[str], list[str]]:
     return lines, options
 
 
-def card(request: Any) -> tuple[list[str], list[str]] | None:
-    """The phone card for a request that takes more than allow/deny, or None."""
+def card(request: Any, kind: str = "") -> tuple[list[str], list[str]] | None:
+    """The phone card for a request that takes more than allow/deny, or None.
+    `kind` is a `forge-connect`'s forge's (`vet`)."""
     # pylint: disable-next=import-outside-toplevel
     from ...contract.supervise import TOOL_ADD_REPO, TOOL_FORGE_CONNECT
     if request.tool == TOOL_FORGE_CONNECT:
-        return forge_attention(request)
+        return forge_attention(request, kind)
     if request.tool == TOOL_ADD_REPO:
         return repo_attention(request)
     return None
+
+
+def vet(request: Any) -> tuple[str, str]:
+    """Whether an agent's `forge-connect` or `add-repo` can be met from a card:
+    (why not, told to the agent; "" when it can) and a `forge-connect`'s forge
+    kind. A forge bot-bottle can't connect, or a repo on a forge this host
+    hasn't connected, can't. Asks an unknown forge what it is, briefly."""
+    # pylint: disable=import-outside-toplevel
+    from urllib.parse import urlparse
+    from ...contract.forges import unsupported_forge
+    from ...contract.supervise import TOOL_ADD_REPO, TOOL_FORGE_CONNECT
+    from ...forge_kinds import detect
+    from .repo_grants import find_forge
+    if request.tool == TOOL_FORGE_CONNECT:
+        url = request.proposed.strip()
+        host = urlparse(url).hostname or ""
+        kind = _connected_forges().get(host) or detect(url)
+        return ("" if kind else unsupported_forge(host or url)), kind
+    if request.tool == TOOL_ADD_REPO:
+        forge = request.proposed.strip().split("/", 1)[0]
+        if find_forge(request.session, forge) is not None:
+            return "", ""
+        url = f"https://{forge.rsplit('@', 1)[-1]}"
+        if not detect(url):
+            return unsupported_forge(urlparse(url).hostname or forge), ""
+        return (f"{forge} isn't connected to this host; ask for it with forge-connect "
+                f"({url}) first, then add-repo again"), ""
+    return "", ""
+
+
+async def special_card(request: Any, orchestrator: Any) -> tuple[list[str], list[str]] | None:
+    """`card`, after `vet`: a request no card could meet is refused for the
+    operator, the agent told why, and the card is ([], []). None when the
+    request takes only allow/deny. A refusal that fails shows the card, which
+    the operator can deny."""
+    # pylint: disable=import-outside-toplevel
+    from ...contract.supervise import TOOL_ADD_REPO, TOOL_FORGE_CONNECT
+    from ..client import AlreadyAnswered
+    from .nudge import nudge_if_waited
+    if request.tool not in (TOOL_FORGE_CONNECT, TOOL_ADD_REPO):
+        return None
+    refusal, kind = await asyncio.to_thread(vet, request)
+    if refusal:
+        try:
+            await asyncio.to_thread(orchestrator(request.orchestrator).supervise_respond,
+                                    request.id, bottle_slug=request.bottle, decision="reject",
+                                    notes=refusal)
+            await asyncio.to_thread(nudge_if_waited, request, "denied", refusal)
+            log.info(f"remote: {request.session}: refused {request.tool}: {refusal}")
+            return [], []
+        except AlreadyAnswered:
+            return [], []
+        except Exception as e:  # pylint: disable=broad-exception-caught  # the card instead
+            log.warn(f"remote: refusing {request.tool} failed: {type(e).__name__}: {e}")
+    return await asyncio.to_thread(card, request, kind)
 
 
 async def add_repo_answer(msg: Mapping[str, Any], asking: Mapping[str, Any],

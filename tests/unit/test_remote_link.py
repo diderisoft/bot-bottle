@@ -288,8 +288,9 @@ class TestApprovals(unittest.TestCase):
         pending = [{**_pending(), "tool": "forge-connect",
                     "proposed_file": "https://gitea.example.com"}]
         link, sent, _ = self.link(pending)
-        with mock.patch("bot_bottle.control.hostctl.remote_actions._connected_hosts",
-                        return_value=set()):
+        with mock.patch("bot_bottle.control.hostctl.remote_actions._connected_forges",
+                        return_value={}), \
+                mock.patch("bot_bottle.forge_kinds.detect", return_value="gitea"):
             asyncio.run(link.push_attention())
         raised = [m for m in sent if m["type"] == "attention"][-1]
         self.assertEqual(["forge_connect"], raised["options"])
@@ -298,6 +299,16 @@ class TestApprovals(unittest.TestCase):
                                  "agent_id": "a1", "since": "2000-01-01T00:00:00", "token": "t"}))
         self.assertEqual("forge_connect_answered", sent[-1]["type"])
         self.assertIn("no longer waiting", sent[-1]["error"])
+
+    def test_a_forge_no_card_could_connect_is_refused_unseen(self) -> None:
+        pending = [{**_pending(), "tool": "forge-connect", "proposed_file": "https://gitlab.com"}]
+        link, sent, client = self.link(pending)
+        with mock.patch("bot_bottle.control.hostctl.remote_actions._connected_forges",
+                        return_value={}), \
+                mock.patch("bot_bottle.control.hostctl.nudge.nudge_if_waited"):
+            asyncio.run(link.push_attention())
+        self.assertEqual([], [m for m in sent if m["type"] == "attention"])
+        self.assertEqual("reject", client.supervise_respond.call_args.kwargs["decision"])
 
     def test_approval_answers_the_raised_request(self) -> None:
         pending = [_pending()]

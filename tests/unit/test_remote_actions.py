@@ -60,7 +60,8 @@ class TestForgeConnect(unittest.TestCase):
     def test_bad_field_types_fall_back(self) -> None:
         with mock.patch("bot_bottle.forge_connect.connect", return_value=DONE) as connect:
             self.handle(url="h", token="t", bottle=5)
-        self.assertEqual("gitea", connect.call_args.kwargs["bottle"])
+        # The bottle named after the forge's kind.
+        self.assertEqual("", connect.call_args.kwargs["bottle"])
 
 
 ARRIVED = "2026-10-26T10:00:00+00:00"
@@ -75,7 +76,7 @@ def _ask(tool: str = "forge-connect") -> Request:
 class TestForgeAttention(unittest.TestCase):
     def test_marks_a_forge_new_to_this_host(self) -> None:
         with mock.patch.object(remote_actions, "_connected_hosts", return_value=set()):
-            lines, options = remote_actions.forge_attention(_ask())
+            lines, options = remote_actions.forge_attention(_ask(), "gitea")
         self.assertEqual(["forge_connect"], options)
         text = "\n".join(lines)
         for part in ("forge: https://gitea.example.com", "why: need the repo", "new to this host",
@@ -83,7 +84,7 @@ class TestForgeAttention(unittest.TestCase):
             self.assertIn(part, text)
         with mock.patch.object(remote_actions, "_connected_hosts",
                                return_value={"gitea.example.com"}):
-            lines, _ = remote_actions.forge_attention(_ask())
+            lines, _ = remote_actions.forge_attention(_ask(), "gitea")
         self.assertNotIn("new to this host", "\n".join(lines))
 
     def test_connected_hosts_reads_host_bottles(self) -> None:

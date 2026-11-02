@@ -1,9 +1,10 @@
 """`bot-bottle forge connect` (PRD 0103): check a forge token, pin the forge's
 SSH host key, and write the forge into a bottle that others extend.
 
-The token goes to the host secrets file; the bottle gets a `credentials:`
-entry naming it, a `git-gate.forges` entry, and read-only routes for the
-forge's packages and release downloads. A host bottle's write is a version.
+The forge is Gitea or GitHub (`forge_kinds`). The token goes to the host
+secrets file; the bottle gets a `credentials:` entry naming it, a
+`git-gate.forges` entry, and, for Gitea, read-only routes for the forge's
+packages and release downloads. A host bottle's write is a version.
 """
 
 from __future__ import annotations
@@ -76,8 +77,8 @@ def existing_forges(path: Path) -> dict[str, object]:
 
 def write_forge(path: Path, entry: ForgeEntry) -> None:
     """Add (or replace) `entry` in the bottle at `path`, creating it if needed:
-    its credential, its forge, and a route for its packages unless the bottle
-    already routes its host."""
+    its credential, its forge, and (Gitea) a route for its packages unless the
+    bottle already routes its host."""
     if path.is_file():
         fm, body = parse_frontmatter(path.read_text())
     else:
@@ -100,13 +101,16 @@ def write_forge(path: Path, entry: ForgeEntry) -> None:
     git["forges"] = forges
     fm["git-gate"] = git
 
-    egress = _section(fm, "egress")
-    routes = egress.get("routes")
-    routes = list(routes) if isinstance(routes, list) else []
-    if not any(isinstance(r, dict) and r.get("host") == entry.host for r in routes):
-        routes.append({"host": entry.host, "inspect": {"matches": [dict(_PACKAGE_ROUTE)]}})
-    egress["routes"] = routes
-    fm["egress"] = egress
+    if entry.kind == "gitea":
+        # GitHub's packages and release assets live on other hosts; a bottle
+        # that needs them routes those itself.
+        egress = _section(fm, "egress")
+        routes = egress.get("routes")
+        routes = list(routes) if isinstance(routes, list) else []
+        if not any(isinstance(r, dict) and r.get("host") == entry.host for r in routes):
+            routes.append({"host": entry.host, "inspect": {"matches": [dict(_PACKAGE_ROUTE)]}})
+        egress["routes"] = routes
+        fm["egress"] = egress
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"---\n{serialize_yaml_subset(fm)}---\n\n{body.strip()}\n")
@@ -166,16 +170,18 @@ def normalize_url(url: str) -> str:
     return (url if "://" in url else f"https://{url}").rstrip("/")
 
 
-def connect(url: str, token: str, *, bottle: str = "gitea", name: str = "", ssh: str = "",
-            cwd: Path, host_bottles: Path) -> Connected:
+def connect(url: str, token: str, *, bottle: str = "", name: str = "", ssh: str = "",
+            cwd: Path, host_bottles: Path, kind: str = "") -> Connected:
     """`bot-bottle forge connect`, for the CLI and the console alike: check the
-    forge answers as Gitea and the token works, pin the forge's SSH host key on
-    first use, keep the token in the host secrets file, and write the forge
-    into `bottle` as a new version. Raises ConnectError saying what's wrong.
-    The token is never logged or returned."""
+    forge is a kind bot-bottle connects (Gitea, GitHub) and the token works,
+    pin the forge's SSH host key on first use, keep the token in the host
+    secrets file, and write the forge into `bottle` (default: named after its
+    kind) as a new version. `kind` skips recognizing the forge again. Raises
+    ConnectError saying what's wrong. The token is never logged or returned."""
     # pylint: disable=import-outside-toplevel
     from .approvals import trust_project_bottle
-    from .contrib.gitea import forge_api
+    from .contract.forges import unsupported_forge
+    from .forge_kinds import ForgeApiError, detect, forge_api
     from .git_gate.host_key import fetch_host_key
     from .manifest.versions import record_or_warn
     from .paths import host_secrets_path
@@ -188,18 +194,18 @@ def connect(url: str, token: str, *, bottle: str = "gitea", name: str = "", ssh:
         raise ConnectError("the SSH address is ssh://user@host[:port]")
     if not token.strip():
         raise ConnectError("no token given")
-    if not forge_api.is_gitea(url):
-        raise ConnectError(f"{url} doesn't answer as Gitea; only Gitea forges can be "
-                           f"connected so far")
+    kind = kind or detect(url)
+    if not kind:
+        raise ConnectError(unsupported_forge(urlparse(url).hostname or url))
+    api = forge_api(kind)
     try:
-        path, project = bottle_path(bottle, host_bottles=host_bottles, cwd=cwd)
+        path, project = bottle_path(bottle or kind, host_bottles=host_bottles, cwd=cwd)
     except ManifestError as e:
         raise ConnectError(str(e)) from e
     try:
-        check = forge_api.check_token(url, token.strip())
-    except forge_api.ForgeApiError as e:
-        raise ConnectError(f"the token didn't work: {e}; it needs the scopes "
-                           f"{' and '.join(forge_api.TOKEN_SCOPES)}") from e
+        check = api.check_token(url, token.strip())
+    except ForgeApiError as e:
+        raise ConnectError(f"the token didn't work: {e}; it needs {api.TOKEN_HELP}") from e
     warnings: list[str] = []
     if not check.admin_repos:
         warnings.append(f"{check.account} can't add a deploy key anywhere yet; give it "
@@ -213,7 +219,7 @@ def connect(url: str, token: str, *, bottle: str = "gitea", name: str = "", ssh:
         raise ConnectError(f"{e}; give an SSH address this host can reach, "
                            f"e.g. ssh://git@<ip>:<port>") from e
     key = name or default_key(url, check.account, existing_forges(path))
-    entry = ForgeEntry(key=key, kind="gitea", url=url, ssh=ssh, account=check.account,
+    entry = ForgeEntry(key=key, kind=kind, url=url, ssh=ssh, account=check.account,
                        host_key=host_key)
     write_secret(host_secrets_path(), entry.secret_name, token.strip())
     try:
@@ -224,7 +230,7 @@ def connect(url: str, token: str, *, bottle: str = "gitea", name: str = "", ssh:
         trust_project_bottle(cwd, path.stem)
     else:
         record_or_warn(f"forge connect: {key} in {path.stem}")
-    return Connected(key=key, bottle=bottle, path=path, account=check.account,
+    return Connected(key=key, bottle=bottle or kind, path=path, account=check.account,
                      admin_repos=check.admin_repos, repos=check.repos, ssh=ssh,
                      host_key=host_key, secret_name=entry.secret_name,
                      warnings=tuple(warnings))

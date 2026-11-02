@@ -1,5 +1,5 @@
-"""git-gate deploy keys for `gitea` upstreams: minted through the forge API at
-launch and revoked at teardown. The forge client is imported lazily."""
+"""git-gate deploy keys for forge (`gitea`, `github`) upstreams: minted
+through the forge's API at launch and revoked at teardown. The forge client is imported lazily."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..bottle_state import globalize_slug
+from ..contract.forges import FORGE_KINDS
 from ..errors import MissingEnvVarError
 from ..lib.log import info, warn
 from ..manifest import ManifestBottle, ManifestGitEntry
@@ -66,7 +67,7 @@ def _provision_dynamic_key(
 
 @dataclasses.dataclass(frozen=True)
 class DeployKeyRef:
-    """What revoking a repo's gitea deploy key needs, minus the token: safe to
+    """What revoking a repo's forge deploy key needs, minus the token: safe to
     write to disk."""
 
     name: str
@@ -76,6 +77,8 @@ class DeployKeyRef:
     upstream_path: str
     # A live grant's `<forge>/<owner>/<repo>[:write]`, so it can be kept.
     grant: str = ""
+    # The forge kind that minted it; records from before GitHub are Gitea's.
+    provider: str = "gitea"
 
 
 def deploy_key_refs(bottle: ManifestBottle) -> tuple[DeployKeyRef, ...]:
@@ -83,8 +86,8 @@ def deploy_key_refs(bottle: ManifestBottle) -> tuple[DeployKeyRef, ...]:
     return tuple(
         DeployKeyRef(name=e.Name, forge_token_env=e.Key.forge_token_env,
                      api_url=e.Key.api_url, upstream_host=e.UpstreamHost,
-                     upstream_path=e.UpstreamPath)
-        for e in bottle.git if e.Key.provider == "gitea"
+                     upstream_path=e.UpstreamPath, provider=e.Key.provider)
+        for e in bottle.git if e.Key.provider in FORGE_KINDS
     )
 
 
@@ -154,7 +157,7 @@ def revoke_key(ref: DeployKeyRef, key_id: str, secrets: SecretSource) -> None:
             f" cannot revoke deploy key {key_id}",
         )
     api_url = ref.api_url or f"https://{ref.upstream_host}"
-    provisioner = get_provisioner("gitea", token, api_url)
+    provisioner = get_provisioner(ref.provider, token, api_url)
     owner_repo = ref.upstream_path
     if owner_repo.endswith(".git"):
         owner_repo = owner_repo[:-4]
@@ -167,8 +170,8 @@ def _resolve_identity_file(
     entry: ManifestGitEntry, slug: str, stage_dir: Path, secrets: SecretSource,
 ) -> str:
     """The entry's SSH identity file, provisioning a deploy key first for
-    gitea."""
-    if entry.Key.provider == "gitea":
+    a forge kind."""
+    if entry.Key.provider in FORGE_KINDS:
         return _provision_dynamic_key(entry, slug, stage_dir, secrets)
     return entry.IdentityFile
 
@@ -179,7 +182,7 @@ def provision_git_gate_dynamic_keys(
     stage_dir: Path,
     secrets: SecretSource,
 ) -> "GitGatePlan":
-    """Provision the gitea keys and return the updated plan. Runs at launch,
+    """Provision the forge keys and return the updated plan. Runs at launch,
     after confirmation, so dry runs and aborted launches create no keys.
     """
     if not plan.upstreams:
@@ -194,7 +197,7 @@ def provision_git_gate_dynamic_keys(
         upstream = upstreams_by_name.get(entry.Name)
         if upstream is None:
             continue
-        if entry.Key.provider == "gitea":
+        if entry.Key.provider in FORGE_KINDS:
             identity_file = _provision_dynamic_key(entry, plan.slug, stage_dir, secrets)
             upstream = dataclasses.replace(upstream, identity_file=identity_file)
         updated.append(upstream)

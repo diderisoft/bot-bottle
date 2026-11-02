@@ -32,10 +32,10 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from ..contract.forges import FORGE_KINDS
 from .legacy_git_gate import OldGitGateFormatError, old_repos
 from .util import ManifestError, as_json_object
 
-FORGE_KINDS = ("gitea",)
 CREDENTIAL_SOURCES = ("secret",)
 _CREDENTIAL_KEYS = {"source", "secret", "kind"}
 _FORGE_KEYS = {"kind", "url", "ssh", "token", "account", "host_key"}

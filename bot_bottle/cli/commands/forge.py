@@ -3,7 +3,7 @@
   bot-bottle forge connect <url> [<bottle>] [<name>]
 
 Checks a token for the forge, pins its SSH host key, and writes the forge into
-<bottle> (default: one named after the forge kind, e.g. `gitea`; `./<name>`
+<bottle> (default: one named after the forge kind, `gitea` or `github`; `./<name>`
 for a project bottle), creating it if needed. <name> is the forge's key in
 that bottle: its host by default, or <account>@<host> for another account on
 it. Bottles that extend <bottle> then grant repos as
@@ -17,7 +17,7 @@ Flags:
   --token-stdin   read the token from stdin instead of asking
   --no-browser    print the token page instead of opening it
 
-Only Gitea so far.
+Gitea and GitHub (github.com, or a GitHub Enterprise Server's URL).
 """
 
 from __future__ import annotations
@@ -27,21 +27,24 @@ import os
 import sys
 import webbrowser
 from pathlib import Path
+from urllib.parse import urlparse
 
-from ...contrib.gitea import forge_api
+from ...contract.forges import unsupported_forge
 from ...forge_connect import ConnectError, connect as connect_forge, normalize_url
+from ...forge_kinds import detect, forge_api
 from ...lib.log import die, info, warn
 from ...paths import bot_bottle_root, host_secrets_path
 from ..constants import PROG
 
 
-def _read_token(url: str, *, from_stdin: bool, browser: bool) -> str:
+def _read_token(url: str, kind: str, *, from_stdin: bool, browser: bool) -> str:
     if from_stdin:
         return sys.stdin.readline().strip()
-    page = forge_api.token_page(url)
+    api = forge_api(kind)
+    page = api.token_page(url)
     info(f"make a token at {page}")
-    info(f"  with scopes {' and '.join(forge_api.TOKEN_SCOPES)}; a dedicated bot account "
-         f"keeps your own account's reach out of the bottle")
+    info(f"  {api.TOKEN_HELP}; a dedicated bot account keeps your own account's reach "
+         f"out of the bottle")
     if browser:
         webbrowser.open(page)
     return getpass.getpass("paste the token (it isn't shown): ").strip()
@@ -61,13 +64,16 @@ def connect(argv: list[str]) -> int:
         die(f"usage: {PROG} forge connect <url> [<bottle>] [<name>] [--ssh URL] "
             f"[--token-stdin] [--no-browser]")
     url = normalize_url(args[0])
-    bottle = args[1] if len(args) > 1 else "gitea"
-    token = _read_token(url, from_stdin="--token-stdin" in flags,
+    kind = detect(url)
+    if not kind:
+        die(unsupported_forge(urlparse(url).hostname or url))
+    bottle = args[1] if len(args) > 1 else kind
+    token = _read_token(url, kind, from_stdin="--token-stdin" in flags,
                         browser="--no-browser" not in flags)
     try:
         done = connect_forge(url, token, bottle=bottle, name=args[2] if len(args) > 2 else "",
                              ssh=ssh_override, cwd=Path(os.getcwd()),
-                             host_bottles=bot_bottle_root() / "bottles")
+                             host_bottles=bot_bottle_root() / "bottles", kind=kind)
     except ConnectError as e:
         die(str(e))
     info(f"the token is {done.account}'s, admin on {done.admin_repos} of the "

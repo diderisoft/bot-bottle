@@ -113,7 +113,7 @@ class GitGate:
     def prepare(self, bottle: ManifestBottle, slug: str, stage_dir: Path,
                 *, trailer: str, baseline: Iterable[str] = ()) -> GitGatePlan:
         """Compute the upstream table from `bottle.git` and write the scripts
-        under `stage_dir`. No side effects beyond the files. gitea upstreams
+        under `stage_dir`. No side effects beyond the files. Forge upstreams
         get their identity file at launch. `trailer` is the `Bot-Bottle`
         value commits must carry, checked as `bottle.git_trailers` says;
         `baseline` is the commits the workspace brought in, which needn't
@@ -162,7 +162,7 @@ class GitGate:
         self, bottle: ManifestBottle, plan: GitGatePlan, stage_dir: Path,
         secrets: SecretSource,
     ) -> GitGatePlan:
-        """Mint the gitea deploy keys (forge tokens from `secrets`) and return
+        """Mint the forge deploy keys (forge tokens from `secrets`) and return
         the plan with their identity files."""
         return _provision.provision_git_gate_dynamic_keys(bottle, plan, stage_dir, secrets)
 

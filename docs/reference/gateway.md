@@ -136,16 +136,24 @@ bottle it launched with, as a version naming the request
 carrying a credential can only be allowed once.
 
 `forge-connect(url, justification)` asks the operator to connect a git forge
-(an https URL). It's answered from the console, whose card shows the URL (marked when
-no host bottle declares that forge yet), the forge's token page and the scopes
-needed. The operator pastes a token there; the host connects the URL from the
+(an https URL), Gitea or GitHub. A public host known to run another kind
+(`contract/forges.py`: gitlab.com, bitbucket.org, …) is refused before it's
+queued; any other is recognized by the host controller
+([git-gate](git-gate.md#forges-and-one-line-grants)), which refuses one that
+isn't Gitea or GitHub at once, the agent told so, before the operator sees a
+card. It's answered from the console, whose card shows the URL (marked when
+no host bottle declares that forge yet), the forge's kind, its token page and
+the token it needs. The operator pastes a token there; the host connects the URL from the
 agent's proposal, never one from the console, exactly as `bot-bottle forge
 connect` does, then approves the proposal with a note naming the account. A
 failed connect leaves it waiting. The token never reaches the agent
 (PRD 0105, design repo).
 
 `add-repo(repo, justification)` asks for a repo as a grant,
-`<forge>/<owner>/<repo>[:write]`. The console's card shows it with the access
+`<forge>/<owner>/<repo>[:write]`. A repo on a forge this host hasn't
+connected is refused at once, as above: a forge of another kind says so, and
+a Gitea or GitHub one tells the agent to `forge-connect` it first
+(`remote_actions.vet`). The console's card shows it with the access
 asked for. The operator can grant read-only instead of write, and can keep the
 grant in the bottle (the same target as a kept egress route; it also extends
 the forge's bottle when the chain doesn't). Granting adds the repo to the

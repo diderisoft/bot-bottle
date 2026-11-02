@@ -24,12 +24,11 @@ The control stream (JSON lines):
 - `agent_present` (from the host): a running session the console didn't
   launch (`bot-bottle`, `start`), with a host-made `agent_id`, its `bottle`,
   `activation`, `label`, `definition`, `writable` and `origin`. Sent on every
-  (re)connect and when one starts. From then on it's one of the link's
-  agents like any other: attention, approvals, the terminal relay, history,
-  the audit query and `stop` all work on it.
+  (re)connect and when one starts; from then on it's one of the link's agents.
 - `attention` (from the host): a pending supervise request for one of the
   link's agents, with `since`, `message` and `options`; `activity` once
-  nothing waits.
+  nothing waits. A forge or repo request no card could meet is refused
+  instead, the agent told why (`remote_actions.vet`).
 - `approval` -> `allow`, `allow_project` or `deny`, echoing `since` so a
   stale click can't answer a newer request.
 - Terminals relay on uni streams (`console_terminal`); `input`, `resize` and
@@ -566,9 +565,8 @@ class ConsoleLink:
             await self._send(present)
 
     async def push_attention(self) -> None:
-        """For each of the link's agents, raise its oldest pending request
-        as `attention`, or `activity` once nothing waits. Only changes are
-        sent."""
+        """Raise each of the link's agents' oldest pending request as
+        `attention`, or `activity` once nothing waits; only changes."""
         # pylint: disable=import-outside-toplevel  # the link's only approvals use
         from ...approvals import Request, keep_target, route_lines
         try:
@@ -594,8 +592,10 @@ class ConsoleLink:
             if target is not None:
                 lines.append(f"keep: in {target.label()}, from the next launch")
             options = ["allow_project"] if target is not None else []
-            if (special := remote_actions.card(request)) is not None:
-                lines, options = special
+            special = await remote_actions.special_card(request, self._orchestrator)
+            if special == ([], []):
+                continue  # refused for the operator, the agent told why
+            lines, options = special or (lines, options)
             await self._send({"type": "attention", "agent_id": agent_id, "reason": "approval",
                               "since": request.arrived, "message": "\n".join(lines),
                               "options": options})

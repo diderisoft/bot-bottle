@@ -148,8 +148,9 @@ trust hash covers is in [architecture.md](architecture.md#state).
 
 ## Forges
 
-`bot-bottle forge connect <url>` lets bottles push to a Gitea forge: it checks
-a token, pins the forge's host key and writes a `gitea` bottle. A bottle that
+`bot-bottle forge connect <url>` lets bottles push to a Gitea or GitHub forge:
+it checks a token, pins the forge's host key and writes a `gitea` or `github`
+bottle. A bottle that
 extends it grants repos in a line,
 `git-gate: {repos: [gitea.example.com/acme/app:write]}`, each read-only unless
 `:write`, with its own deploy key per run. Details in

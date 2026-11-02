@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from bot_bottle.contract.agent_notes import GIT_BOUNDARY
+from bot_bottle.contract.forges import known_unsupported, unsupported_forge
 from bot_bottle.contract.identity import IDENTITY_HEADER
 from bot_bottle.gateway.bounded_http import (
     BodyReadError,
@@ -231,8 +232,10 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
     {
         "name": _sv.TOOL_FORGE_CONNECT,
         "description": (
-            "Ask the operator to connect a git forge (Gitea) to this host, so "
-            "bottles can be granted its repos. Pass the forge's web URL. The "
+            "Ask the operator to connect a git forge (Gitea or GitHub; no "
+            "other kind) to this host, so bottles can be granted its repos. "
+            "Pass the forge's web URL. A forge of another kind is refused at "
+            "once, saying so. The "
             "operator makes a token on the forge and pastes it on their phone; "
             "you never see it. On approval the notes say which account it "
             "connected as. Connecting a forge doesn't give this bottle a repo: "
@@ -242,7 +245,8 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "type": "object",
             "properties": {
                 "url": {"type": "string",
-                        "description": "The forge's web URL, e.g. https://gitea.example.com."},
+                        "description": ("The forge's web URL, e.g. https://gitea.example.com "
+                                        "or https://github.com.")},
                 "justification": {"type": "string",
                                   "description": "Why this forge is needed."},
             },
@@ -264,7 +268,8 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "type": "object",
             "properties": {
                 "repo": {"type": "string",
-                         "description": "The grant, e.g. gitea.example.com/acme/app:write."},
+                         "description": ("The grant, e.g. gitea.example.com/acme/app:write "
+                                         "or github.com/acme/app.")},
                 "justification": {"type": "string",
                                   "description": "Why this repo is needed."},
             },
@@ -338,12 +343,23 @@ def validate_proposed_file(tool: str, content: str) -> None:
                 or any(c.isspace() for c in content.strip())):
             raise _RpcClientError(ERR_INVALID_PARAMS,
                                   f"{tool}: 'url' must be the forge's https URL")
+        _refuse_unsupported_forge(tool, parsed.hostname)
     elif tool == _sv.TOOL_ADD_REPO:
         if not _GRANT_RE.match(content.strip()):
             raise _RpcClientError(ERR_INVALID_PARAMS,
                                   f"{tool}: 'repo' is <forge>/<owner>/<repo>[:write]")
+        forge = content.strip().split("/", 1)[0].rsplit("@", 1)[-1]
+        _refuse_unsupported_forge(tool, forge.split(":", 1)[0])
     else:
         raise _RpcClientError(ERR_INVALID_PARAMS, f"unknown tool {tool!r}")
+
+
+def _refuse_unsupported_forge(tool: str, host: str) -> None:
+    """A public forge of a kind bot-bottle can't connect, refused before it's
+    queued. Any other host is asked by the host controller, which refuses it
+    the same way when it isn't Gitea or GitHub."""
+    if known_unsupported(host):
+        raise _RpcClientError(ERR_INVALID_PARAMS, f"{tool}: {unsupported_forge(host)}")
 
 
 # --- MCP handlers ---
@@ -360,8 +376,9 @@ SERVER_INSTRUCTIONS = (
     "Ask the operator for access this bottle doesn't have. Network: "
     "`list-egress-routes`, then `egress-allow` with the full routes file. "
     "Each request queues a proposal; if it comes back pending, poll it with "
-    "`check-proposal` rather than asking again. A git forge this host hasn't "
-    "connected: `forge-connect`; a repo on one: `add-repo`. " + GIT_BOUNDARY
+    "`check-proposal` rather than asking again. A git forge (Gitea or GitHub) "
+    "this host hasn't connected: `forge-connect`; a repo on one: `add-repo`. "
+    + GIT_BOUNDARY
 )
 
 

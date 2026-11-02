@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
+from ..contract.forges import FORGE_KINDS
 from ..paths import bot_bottle_root
 from .agent import ManifestAgentProvider
 from .bottle import ManifestBottle
@@ -56,7 +57,7 @@ def grants(bottle: ManifestBottle) -> list[str]:
         lines.append(f"reach   {route.Host:<30} {what}")
     for repo in bottle.git:
         line = f"{'fetch' if repo.Key.read_only else 'push':<7} {repo.Upstream}"
-        if repo.Key.provider == "gitea":
+        if repo.Key.provider in FORGE_KINDS:
             # The forge token goes to the API that mints the key.
             api = repo.Key.api_url or f"https://{repo.UpstreamHost}"
             line += f" (key minted at {api} with ${repo.Key.forge_token_env})"

@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from typing import TYPE_CHECKING, Any
 
+from ..contract.forges import FORGE_KINDS
 from ..contract.identity import GIT_HTTP_PORT, IDENTITY_HEADER
 from ..control.git_gate_render import (
     GitGateUpstream, git_gate_known_hosts_line, git_gate_upstreams_for_bottle,
@@ -64,7 +65,8 @@ def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
         raise GrantError(f"the bottle already has a different repo named {entry.Name!r}")
     ref = DeployKeyRef(
         name=entry.Name, forge_token_env=entry.Key.forge_token_env, api_url=entry.Key.api_url,
-        upstream_host=entry.UpstreamHost, upstream_path=entry.UpstreamPath, grant=grant)
+        upstream_host=entry.UpstreamHost, upstream_path=entry.UpstreamPath, grant=grant,
+        provider=entry.Key.provider)
     if current is not None and current.writable == writable:
         # Already granted with this access: nothing to mint; just record the
         # grant, so it can be kept.
@@ -73,8 +75,8 @@ def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
             return current
         raise GrantError(f"the bottle already has {entry.Name} "
                          f"({'write' if writable else 'read-only'})")
-    if entry.Key.provider != "gitea":
-        raise GrantError("only forge (gitea) grants can be added to a running bottle")
+    if entry.Key.provider not in FORGE_KINDS:
+        raise GrantError("only forge grants can be added to a running bottle")
     if not entry.KnownHostKey:
         raise GrantError(f"the forge at {entry.UpstreamHost} has no SSH host key pinned; "
                          f"connect it again with an SSH address this host can reach")

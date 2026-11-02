@@ -204,7 +204,7 @@ class TestCommand(_Tmp):
                 self.run_cmd("gitea.example.com")
             with mock.patch.object(forge_api, "is_gitea", return_value=False), \
                     self.assertRaises(Die):
-                self.run_cmd("github.com")
+                self.run_cmd("gitlab.com")
 
 
 if __name__ == "__main__":

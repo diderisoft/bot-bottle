@@ -172,6 +172,19 @@ class TestValidation(unittest.TestCase):
             with self.assertRaises(_RpcError):
                 validate_proposed_file(_sv.TOOL_ADD_REPO, bad)
 
+    def test_a_forge_of_another_kind_is_refused_at_once(self):
+        validate_proposed_file(_sv.TOOL_FORGE_CONNECT, "https://github.com")
+        validate_proposed_file(_sv.TOOL_ADD_REPO, "github.com/acme/app:write")
+        for tool, value in ((_sv.TOOL_FORGE_CONNECT, "https://gitlab.com"),
+                            (_sv.TOOL_FORGE_CONNECT, "https://www.bitbucket.org/x"),
+                            (_sv.TOOL_ADD_REPO, "gitlab.com/acme/app"),
+                            (_sv.TOOL_ADD_REPO, "me@bitbucket.org:443/acme/app:write")):
+            with self.assertRaises(_RpcError) as cm:
+                validate_proposed_file(tool, value)
+            self.assertEqual(ERR_INVALID_PARAMS, cm.exception.code)
+            self.assertIn("isn't a forge bot-bottle can connect; supported: Gitea, GitHub",
+                          cm.exception.message)
+
     def test_capability_block_rejected_as_unknown_tool(self):
         with self.assertRaises(_RpcError) as cm:
             validate_proposed_file("capability-block", "FROM python:3.13\n")

@@ -5,13 +5,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ..contract.forges import FORGE_KINDS
 from ..contract.git_trailers import TRAILER_MODES
 from .util import ManifestError, as_json_object
 
 # Shell-safe repo names (they appear in generated scripts, also quoted).
 _GIT_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
-_KEY_PROVIDERS = {"static", "gitea"}
+_KEY_PROVIDERS = {"static", *FORGE_KINDS}
 
 
 def _opt_str(value: object, label: str) -> str:
@@ -69,10 +70,11 @@ def validate_unique_git_names(bottle_name: str, git: tuple[ManifestGitEntry, ...
 
 @dataclass(frozen=True)
 class ManifestKeyConfig:
-    """A repo's SSH key: `provider` `static` (`path`, a host key file) or
-    `gitea` (a deploy key via the API; `forge_token_env` names the token's host
-    var, read at provision time; `api_url` defaults from the upstream host;
-    `read_only` mints a key that can't push)."""
+    """A repo's SSH key: `provider` `static` (`path`, a host key file) or a
+    forge kind, `gitea` or `github` (a deploy key via the forge's API;
+    `forge_token_env` names the token's host var, read at provision time;
+    `api_url` defaults from the upstream host; `read_only` mints a key that
+    can't push)."""
 
     provider: str
     path: str = ""
@@ -88,7 +90,7 @@ class ManifestGitEntry:
     the scans. The URL is parsed once into the `Upstream*` fields.
 
     From `git-gate.repos.<Name>`. `IdentityFile` comes from `key.path` for
-    `static`, or at provision time for `gitea`."""
+    `static`, or at provision time for a forge kind."""
 
     Name: str
     Upstream: str
@@ -175,19 +177,19 @@ def _parse_key_config(
             f"allowed: {', '.join(sorted(_KEY_PROVIDERS))}"
         )
 
-    if provider == "gitea":
+    if provider in FORGE_KINDS:
         for k in d:
             if k not in {"provider", "forge_token_env", "api_url", "read_only"}:
                 raise ManifestError(
                     f"bottle '{bottle_name}' {label}.key has unknown key {k!r} "
-                    f"for provider 'gitea'; allowed: provider, forge_token_env, "
+                    f"for provider {provider!r}; allowed: provider, forge_token_env, "
                     f"api_url, read_only"
                 )
         forge_token_env = d.get("forge_token_env")
         if not isinstance(forge_token_env, str) or not forge_token_env:
             raise ManifestError(
                 f"bottle '{bottle_name}' {label}.key missing required "
-                f"string field 'forge_token_env' for provider 'gitea'"
+                f"string field 'forge_token_env' for provider {provider!r}"
             )
         api_url_raw = d.get("api_url", "")
         if not isinstance(api_url_raw, str):

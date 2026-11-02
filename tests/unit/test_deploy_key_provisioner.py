@@ -19,8 +19,8 @@ class TestGetProvisioner(unittest.TestCase):
 
     def test_unknown_provider_raises_manifest_error(self):
         with self.assertRaises(ManifestError) as ctx:
-            get_provisioner("github", token="tok", api_url="https://github.com")
-        self.assertIn("github", str(ctx.exception))
+            get_provisioner("gitlab", token="tok", api_url="https://gitlab.com")
+        self.assertIn("gitlab", str(ctx.exception))
         self.assertIn("provisioned_key provider", str(ctx.exception))
 
 

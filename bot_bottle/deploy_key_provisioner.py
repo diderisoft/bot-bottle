@@ -37,8 +37,13 @@ def get_provisioner(
             GiteaDeployKeyProvisioner,
         )
         return GiteaDeployKeyProvisioner(token=token, api_url=api_url)
+    if provider == "github":
+        from bot_bottle.contrib.github.deploy_key_provisioner import (
+            GitHubDeployKeyProvisioner,
+        )
+        return GitHubDeployKeyProvisioner(token=token, api_url=api_url)
     from .manifest.util import ManifestError
     raise ManifestError(
         f"unknown provisioned_key provider: {provider!r}; "
-        f"available: gitea"
+        f"available: gitea, github"
     )

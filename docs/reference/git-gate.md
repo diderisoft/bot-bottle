@@ -75,17 +75,35 @@ git-gate:
 ```
 
 `bot-bottle forge connect <url> [<bottle>] [<name>]` writes the forge bottle
-(`cli/commands/forge.py`, `forge_connect.py`). It checks the forge answers as
-Gitea, takes a token (pasted without echo, or `--token-stdin`) and asks the
-forge whose it is and which of its repos it's admin on, warning when none
-(deploy keys need admin). It pins the SSH host key it finds for the forge's
+(`cli/commands/forge.py`, `forge_connect.py`). It recognizes the forge's kind
+(`forge_kinds.py`): `github` for github.com without asking; otherwise Gitea's
+`/api/v1/version` or a GitHub Enterprise Server's `/api/v3/meta`, five seconds
+each. Any other forge is refused, naming the kinds it takes. It takes a token
+(pasted without echo, or `--token-stdin`) and asks the forge whose it is and
+which of its repos it's admin on, warning when none (deploy keys need admin). It pins the SSH host key it finds for the forge's
 repos without asking, and fails when it finds none: the forge's SSH address
 (`--ssh`, or the card's SSH field) must be reachable from the host, which a
 public name may not be. It stores the token in the host secrets file as
-`<NAME>_TOKEN`, and writes the credential, the forge entry and a read-only
-`GET` route for the forge's packages and release downloads into `<bottle>`
-(default `gitea`; `./<name>` writes a project bottle and trusts it), as a
-new version. `<name>` is the forge key: the host by default, or
+`<NAME>_TOKEN`, and writes the credential and the forge entry into `<bottle>`
+(default: named after the kind, `gitea` or `github`; `./<name>` writes a
+project bottle and trusts it), as a new version. A Gitea forge also gets a
+read-only `GET` route for its packages and release downloads; GitHub serves
+those from other hosts, which a bottle that needs them routes itself.
+
+The token each kind needs (the CLI and the console's card both say it):
+
+| kind | token page | permissions |
+|---|---|---|
+| `gitea` | `<url>/user/settings/applications` | scopes `write:repository` and `read:user`, from an account that's admin on the repos |
+| `github` | `<url>/settings/personal-access-tokens/new` | a fine-grained token for the repos with Administration: read & write (deploy keys), Contents: read (read & write to push) and Metadata: read; a classic token with `repo` also works |
+
+Per launch both kinds do the same: mint an ed25519 deploy key on each granted
+repo (`POST /repos/{owner}/{repo}/keys`, read-only unless `:write`; Gitea's
+API under `/api/v1`, GitHub's at `api.github.com` or a server's `/api/v3`),
+revoke the keys a previous run left registered first, and revoke each at
+teardown (`contrib/<kind>/deploy_key_provisioner.py`). A repo's key and its
+revocation record name the kind (`provider`); records from before GitHub are
+Gitea's. `<name>` is the forge key: the host by default, or
 `<account>@<host>` when the bottle already has the host for another account.
 Keys that aren't bare identifiers are written quoted
 (`"codex@gitea.example.com":`).

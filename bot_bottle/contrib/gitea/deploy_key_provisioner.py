@@ -32,22 +32,7 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
         """Generate an ed25519 keypair, register the public half as a deploy
         key (writable unless `read_only`; git-gate pushes with it), and return
         `(key_id, private_key_bytes)`."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            key_path = Path(tmpdir) / "key"
-            subprocess.run(
-                [
-                    "ssh-keygen", "-t", "ed25519",
-                    "-f", str(key_path),
-                    "-N", "",
-                ],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=_KEYGEN_TIMEOUT_SECS,
-            )
-            private_key = key_path.read_bytes()
-            public_key = key_path.with_suffix(".pub").read_text().strip()
-
+        private_key, public_key = generate_keypair()
         owner, repo = _split_owner_repo(owner_repo)
         url = f"{self._api_url}/api/v1/repos/{owner}/{repo}/keys"
         payload = json.dumps({
@@ -113,6 +98,21 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
             ) from exc
 
 
+def generate_keypair() -> tuple[bytes, str]:
+    """A fresh ed25519 keypair from `ssh-keygen`: (private key, public key line).
+    Every forge kind's provisioner mints its keys with it."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        key_path = Path(tmpdir) / "key"
+        subprocess.run(
+            ["ssh-keygen", "-t", "ed25519", "-f", str(key_path), "-N", ""],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=_KEYGEN_TIMEOUT_SECS,
+        )
+        return key_path.read_bytes(), key_path.with_suffix(".pub").read_text().strip()
+
+
 def _split_owner_repo(owner_repo: str) -> tuple[str, str]:
     """`'owner/repo'` -> `('owner', 'repo')`."""
     parts = owner_repo.split("/", 1)
@@ -128,3 +128,8 @@ def _read_error_body(exc: urllib.error.HTTPError) -> str:
         return exc.read().decode("utf-8", errors="replace")
     except Exception:  # noqa: broad-exception-caught — safely fallback to empty error message
         return ""
+
+
+# Shared with the other forge kinds' provisioners.
+split_owner_repo = _split_owner_repo
+read_error_body = _read_error_body
