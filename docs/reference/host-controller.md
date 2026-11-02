@@ -119,6 +119,12 @@ manifest sets `remote.writable`. The starter agents `bot-bottle setup` writes
 set it, so a paired phone can talk to them; an agent written by hand is
 view-only unless it says so.
 
+The console's relay is one tmux client per agent, sized by the console's
+`resize` (the most recent viewer's terminal). The link keeps the last size
+asked for each running agent and opens every new relay at it: a relay
+reopened after a broken stream would otherwise start at tmux's default, and
+a terminal of a different size draws its output garbled.
+
 ## Transcripts
 
 The daemon copies each session's harness transcript to the host as it's

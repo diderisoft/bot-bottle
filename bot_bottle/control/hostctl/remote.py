@@ -33,7 +33,8 @@ The control stream (JSON lines):
 - `approval` -> `allow`, `allow_project` or `deny`, echoing `since` so a
   stale click can't answer a newer request.
 - Terminals relay on uni streams (`console_terminal`); `input`, `resize` and
-  `history` (`lines` -> `text`, `size`, `limit`) act on them.
+  `history` (`lines` -> `text`, `size`, `limit`) act on them. A relay opens at
+  the size last asked for its agent.
 - `audit_query` -> `audit_events` for the link's agents' bottles.
 - `refresh_credentials` -> `credentials_refreshed` (`refreshed`, `expires_at`,
   or `error`): re-reads the agent's forwarded host login (`credential_refresh`).
@@ -210,18 +211,17 @@ class ConsoleLink:
         state = state if state is not None else LinkState()
         # console agent id -> bottle id
         self.running = state.running
-        # Every bottle shown (launched or present); only their journals may be
-        # read.
+        # Every bottle shown (launched or present); only their journals are read.
         self.launched = state.launched
         # console agent id -> its `agent_present`, for sessions found running
         self.present = state.present
-        # console agent id -> terminal relay
-        self.terminals: dict[str, Terminal] = {}
+        self.terminals: dict[str, Terminal] = {}  # console agent id -> its relay
+        # The size each agent's viewer last asked for; a relay opened later takes it.
+        self._sizes: dict[str, tuple[int, int]] = {}
         self._typed: dict[str, float] = {}  # when each was last typed into
         # console agent id -> the request raised for it
         self._asking: dict[str, Any] = {}
-        # Bottles being torn down: still listed as running until they're gone,
-        # but not to be presented again.
+        # Being torn down: listed as running until gone, never presented again.
         self._stopping: set[str] = set()
         self._starting: set[str] = set()  # console agent ids mid-launch
         # When each console launch or resume started its agent, to tell one
@@ -377,6 +377,8 @@ class ConsoleLink:
             return None
         if terminal is not None:
             self.terminals[agent_id] = terminal
+            if size := self._sizes.get(agent_id):
+                terminal.resize(*size)
         return terminal
 
     async def _live_terminal(self, agent_id: str) -> "Terminal | None":
@@ -389,6 +391,7 @@ class ConsoleLink:
         return terminal
 
     def _close_terminal(self, agent_id: str) -> None:
+        self._sizes.pop(agent_id, None)
         terminal = self.terminals.pop(agent_id, None)
         if terminal is not None:
             terminal.close()
@@ -410,10 +413,10 @@ class ConsoleLink:
         self._typed[agent_id] = typed or 0.0
 
     def _resize(self, agent_id: str, cols: object, rows: object) -> None:
-        terminal = self.terminals.get(agent_id)
-        size = valid_size(cols, rows)
-        if terminal is not None and size is not None:
-            terminal.resize(*size)
+        if (size := valid_size(cols, rows)) is not None and agent_id in self.running:
+            self._sizes[agent_id] = size
+            if (terminal := self.terminals.get(agent_id)) is not None:
+                terminal.resize(*size)
 
     async def _history(self, agent_id: str, request_id: object, lines: object) -> None:
         terminal = self.terminals.get(agent_id)
@@ -475,8 +478,7 @@ class ConsoleLink:
             limit = MAX_AUDIT_EVENTS
         limit = min(limit, MAX_AUDIT_EVENTS)
         events: list[dict[str, Any]] = []
-        # Only these bottles' journals; anything else gets nothing, not an
-        # error.
+        # Only these bottles' journals; anything else gets nothing, not an error.
         if isinstance(bottle, str) and bottle in self.launched:
             activation = activation if isinstance(activation, str) and activation else None
             try:
@@ -615,8 +617,7 @@ class ConsoleLink:
                                               via="the phone")
             log.info(f"remote: {request.session}: {message}")
         except AlreadyAnswered as e:
-            # Answered in the terminal first; it stands. The push below clears
-            # the phone's prompt.
+            # Answered in the terminal first; it stands. The push clears the phone's.
             log.info(f"remote: {request.session}: already answered ({e.decided_as}); "
                      "the phone's answer wasn't applied")
         except Exception as e:  # pylint: disable=broad-exception-caught  # logged; still pending
@@ -642,8 +643,7 @@ class ConsoleLink:
             started = self._started_at.pop(agent_id, None)
             last = str(exit_info.get("last_output") or "") if isinstance(exit_info, dict) else ""
             if code and started is not None and time.monotonic() - started < EARLY_EXIT_SECONDS:
-                # It couldn't start (a harness that isn't there exits 127):
-                # say why, as a launch that failed.
+                # It couldn't start (a missing harness exits 127): a launch that failed.
                 await self._errored(agent_id, _exit_reason(code, last, at_once=True))
                 continue
             stopped: dict[str, Any] = {"type": "agent_stopped", "agent_id": agent_id,

@@ -653,6 +653,45 @@ class TestConsoleSession(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("tmux"), "needs tmux")
+class TestRelaySize(unittest.TestCase):
+    """The size the console asks for outlives the relay it was sent to."""
+
+    terms: dict[str, _Terminal]
+    _link = TestConsoleSession._link  # pylint: disable=protected-access
+    _launch = TestConsoleSession._launch  # pylint: disable=protected-access
+
+    def _running(self) -> remote.ConsoleLink:
+        link, _bottles, _sent = self._link()
+        self._launch(link)
+        return link
+
+    def test_a_reopened_relay_starts_at_the_viewers_size(self) -> None:
+        # A relay reopened (a broken stream, a host controller restart) is a
+        # new tmux client at its default size; drawn for that, a viewer's
+        # wider or narrower terminal garbles every redraw.
+        link = self._running()
+        asyncio.run(link.handle({"type": "resize", "agent_id": "a1", "cols": 130, "rows": 41}))
+        self.terms["a1"].closed = True
+        asyncio.run(link.handle({"type": "input", "agent_id": "a1", "data": "x"}))
+        self.assertFalse(self.terms["a1"].closed)  # a new relay
+        self.assertEqual([(130, 41)], self.terms["a1"].sizes)
+
+    def test_a_size_sent_while_the_relay_opens_is_kept(self) -> None:
+        link = self._running()
+        opening = link.terminals.pop("a1")  # not registered yet
+        asyncio.run(link.handle({"type": "resize", "agent_id": "a1", "cols": 90, "rows": 30}))
+        self.assertEqual([], opening.sizes)  # type: ignore[attr-defined]
+        asyncio.run(link.handle({"type": "input", "agent_id": "a1", "data": "x"}))
+        self.assertEqual([(90, 30)], self.terms["a1"].sizes)
+
+    def test_sizes_are_kept_only_for_running_agents(self) -> None:
+        link = self._running()
+        asyncio.run(link.handle({"type": "resize", "agent_id": "nobody", "cols": 90, "rows": 30}))
+        asyncio.run(link.handle({"type": "resize", "agent_id": "a1", "cols": 90, "rows": 30}))
+        asyncio.run(link.handle({"type": "stop", "agent_id": "a1"}))
+        self.assertEqual({}, link._sizes)  # pylint: disable=protected-access
+
+
 class TestRepeatedResume(unittest.TestCase):
     """Stop, then Resume clicked twice: the second finds the agent back up."""
 
