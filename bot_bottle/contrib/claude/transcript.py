@@ -7,9 +7,11 @@ Conversation lines (`user`, `assistant`, `system`, `attachment`) link into a
 tree by `uuid`/`parentUuid`; an assistant reply is one line per content
 block. A tool's result is a `user` line whose parent is its `tool_use` line,
 so parallel calls fork the tree for a moment. Rewinding (Esc Esc) appends the
-new branch to the same file. Bookkeeping lines (`file-history-snapshot`,
-`mode`, `permission-mode`, `ai-title`, `last-prompt`, `api-request`, and more
-with each release) carry no `uuid`; one of a type not named here is meta, by
+new branch to the same file. Compacting writes a `system` `compact_boundary`
+line with no `parentUuid` and the line it follows as `logicalParentUuid`.
+Bookkeeping lines (`file-history-snapshot`, `mode`, `permission-mode`,
+`ai-title`, `last-prompt`, `api-request`, and more with each release) carry
+no `uuid`; one of a type not named here is meta, by
 its type alone.
 """
 
@@ -167,8 +169,12 @@ def parse_line(raw: dict[str, Any], names: dict[str, str] | None = None) -> Line
         parts = _OTHER.get(kind, _unknown)(raw)
     if raw.get("isSidechain"):
         parts = [Part(p.kind, p.text, p.tool, p.error, p.thinking, meta=True) for p in parts]
+    # A compaction's boundary line starts a new chain (`parentUuid` null) but
+    # names where it came from in `logicalParentUuid`: following that keeps
+    # the history before it on the active branch.
+    parent = raw.get("parentUuid") or raw.get("logicalParentUuid") or ""
     return Line(parts, ts=str(raw.get("timestamp", "")), id=str(raw.get("uuid") or ""),
-                parent=str(raw.get("parentUuid") or ""))
+                parent=str(parent))
 
 
 def parse(lines: Iterable[str], *, offset: int = 0, seq: int = 0) -> list[TranscriptEntry]:

@@ -17,7 +17,7 @@ from unittest import mock
 
 from bot_bottle.control.hostctl import remote, transcript_serve
 from bot_bottle.control.hostctl.transcript_serve import (
-    TranscriptReader, find_conversation, find_copies, find_copy)
+    SESSION_SEQ_STRIDE, TranscriptReader, find_conversation, find_copies, find_copy)
 from bot_bottle.control.hostctl.transcripts import transcripts_root
 from . import use_bottle_root
 
@@ -222,11 +222,12 @@ class TestReader(_Root):
         reader = TranscriptReader()
         entries = reader.entries("c-1") or []
         seqs = [e.seq for e in entries]
-        # Every entry from both sessions should appear and seqs must be
-        # strictly increasing (no gaps from per-file numbering).
+        # Every entry from both sessions appears, in order, each seq once; the
+        # second session's start a stride on, so neither's numbers move.
         self.assertGreater(len(seqs), 0)
-        self.assertEqual(sorted(set(seqs)), list(range(seqs[0], seqs[-1] + 1)),
-                         "seqs should be a contiguous range with no duplicates")
+        self.assertEqual(sorted(set(seqs)), seqs, "seqs increase, each used once")
+        self.assertTrue(any(s >= SESSION_SEQ_STRIDE for s in seqs))
+        self.assertTrue(any(s < SESSION_SEQ_STRIDE for s in seqs))
         # Reader.last() reports the combined last, so push() fires after /clear.
         first_last = TranscriptReader().last("c-1")
         assert first_last is not None
@@ -237,6 +238,23 @@ class TestReader(_Root):
         second_last = TranscriptReader().last("c-1")
         assert second_last is not None
         self.assertGreater(second_last, first_last)
+
+    def test_a_seq_names_the_same_entry_as_the_file_grows(self) -> None:
+        # The console pages back with `before=<seq>` and reconciles new pages
+        # by seq, so a seq must keep naming its entry while the file grows
+        # (it used to be a position on the active branch, and moved).
+        path = self.copy("s1", "a1", "f", data=b"")
+        lines = _PI.read_bytes().splitlines(keepends=True)
+        reader = TranscriptReader()
+        seen: dict[int, tuple[str, str, str]] = {}
+        for n in range(1, len(lines) + 1):
+            path.write_bytes(b"".join(lines[:n]))
+            for e in reader.entries("c-1") or []:
+                key = (e.kind, e.ts, e.text)
+                self.assertEqual(key, seen.setdefault(e.seq, key), f"seq {e.seq} at line {n}")
+        page = reader.page("c-1", limit=2)
+        older = reader.page("c-1", before=page["entries"][0]["seq"], limit=2)
+        self.assertTrue(all(e["seq"] < page["entries"][0]["seq"] for e in older["entries"]))
 
     def test_an_unknown_harness_or_a_vanished_copy(self) -> None:
         path = self.copy("s1", "a1", "f", harness="nope")

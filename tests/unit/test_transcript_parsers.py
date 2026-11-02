@@ -57,6 +57,23 @@ class TestClaude(unittest.TestCase):
                          "attachment"} <= meta)
         self.assertTrue(any(e.thinking for e in self.entries))
 
+    def test_compacting_keeps_the_history_before_it(self) -> None:
+        # Compacting writes a boundary line with no parentUuid; it names the
+        # line it follows in logicalParentUuid, and the walk goes through it.
+        lines = [json.dumps(r) + "\n" for r in (
+            {"type": "user", "uuid": "u1", "parentUuid": None, "timestamp": "t1",
+             "message": {"role": "user", "content": "first task"}},
+            {"type": "assistant", "uuid": "a1", "parentUuid": "u1", "timestamp": "t2",
+             "message": {"role": "assistant", "content": [{"type": "text", "text": "done"}]}},
+            {"type": "system", "subtype": "compact_boundary", "uuid": "b1", "parentUuid": None,
+             "logicalParentUuid": "a1", "timestamp": "t3", "content": "Conversation compacted"},
+            {"type": "user", "uuid": "u2", "parentUuid": "b1", "timestamp": "t4",
+             "message": {"role": "user", "content": "next task"}},
+        )]
+        active = self.provider.active_entries(self.provider.parse_transcript(lines))
+        texts = [e.text for e in active if e.kind in ("user", "assistant")]
+        self.assertEqual(["first task", "done", "next task"], texts)
+
     def test_the_active_branch_is_the_rewound_one(self) -> None:
         branch = _shown(self.provider.active_entries(self.entries))
         users = [e.text for e in branch if e.kind == "user"]

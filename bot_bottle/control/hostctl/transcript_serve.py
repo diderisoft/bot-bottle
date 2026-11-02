@@ -40,6 +40,8 @@ PAGE = 50
 WORKING_FOR = 20.0
 WORKING_TAIL = 256 * 1024
 MAX_PAGE = 200
+# Seqs per session file: the Nth session's entries start at N times this.
+SESSION_SEQ_STRIDE = 10_000_000
 MAX_MATCHES = 100
 SNIPPET = 60  # characters of context either side of a match
 
@@ -226,16 +228,19 @@ class TranscriptReader:
         """The agent's active, masked entries across all sessions; None without any copy.
 
         Multiple sessions arise after `/clear`: each session file's active
-        branch is concatenated in the order the sessions opened, with seq
-        numbers renumbered to be globally monotonic, so the full conversation
-        (pre-clear and post-clear) appears as one continuous history.
+        branch is concatenated in the order the sessions opened, so the full
+        conversation (pre-clear and post-clear) appears as one continuous
+        history. An entry's seq is its place in its file plus
+        `SESSION_SEQ_STRIDE` per earlier session: increasing, never reused,
+        and the same entry's for as long as it's on the branch (seqs have
+        gaps; nothing reading them needs them contiguous).
         """
         convs = _sessions(agent_id)
         if not convs:
             return None
         combined: list["TranscriptEntry"] = []
         any_read = False
-        for conv in convs:
+        for index, conv in enumerate(convs):
             data = conv.read()
             if data is None:
                 continue
@@ -251,13 +256,13 @@ class TranscriptReader:
                 per_conv = self._parse(conv.copy, data)
                 with self._lock:
                     self._cache[conv.copy.path] = (signature, per_conv)
-            # Renumber seqs from where the previous session ended so that all
-            # sessions form one contiguous, gap-free range.  Active-branch
-            # entries are a sparse subset of the per-file flat list, so the
-            # original per-file seqs are not contiguous across sessions.
-            seq_start = len(combined)
-            for i, e in enumerate(per_conv):
-                combined.append(replace(e, seq=seq_start + i))
+            # Each entry keeps its place in its file (stable as the file
+            # grows, and across a branch change), offset per session so the
+            # sessions stay in order. Numbering them densely instead meant a
+            # seq named a different entry whenever the active branch changed,
+            # and the console, scrolled back, lost what it showed.
+            base = index * SESSION_SEQ_STRIDE
+            combined.extend(replace(e, seq=base + e.seq) for e in per_conv)
         return combined if any_read else None
 
     @staticmethod
