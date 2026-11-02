@@ -2,15 +2,16 @@
 
 A copy is found by the console agent id recorded beside it, so the console
 can read a session's conversation before and after a host controller
-restart, and after the session ends, until retention deletes it. The agent's
-conversation is the transcript file it opened last (a /clear starts a new
-one), put together from its copies across the bottle's runs: a resumed run
-copies only what the agent added to a file the earlier run copied. Entries
-are parsed when read, on the harness's active branch, and
-masked before they leave the host: token patterns, and every value in the
-host's secrets file in its common encodings (`redact_tokens`, the egress
-scanner's rules). Search runs over the masked text, so a query can't confirm
-a secret.
+restart, and after the session ends, until retention deletes it. Within a
+run, all session files are shown in the order they opened so that a `/clear`
+(which makes the harness create a new JSONL) shows the complete conversation —
+the pre-clear history followed by the post-clear continuation. Each session
+file's copies are put together across the bottle's runs: a resumed run copies
+only what the agent added to a file the earlier run copied. Entries are
+parsed when read, on the harness's active branch, and masked before they
+leave the host: token patterns, and every value in the host's secrets file in
+its common encodings (`redact_tokens`, the egress scanner's rules). Search
+runs over the masked text, so a query can't confirm a secret.
 """
 
 from __future__ import annotations
@@ -128,30 +129,73 @@ def _pieces(root: Path) -> list[_Piece]:
     return out
 
 
+def _sessions(agent_id: str) -> list[Conversation]:
+    """All sessions for the agent's newest run, oldest-first, each with its
+    cross-run pieces stitched together.
+
+    Multiple sessions arise when the harness creates new session files (e.g.
+    after `/clear`).  Each guest path is deduplicated to its latest rewrite
+    first, so `.rewrite-N` copies don't appear alongside the same guest path.
+    Each session's pieces are stitched across bottle runs (a resumed run
+    copies only what the agent added to a file the earlier run copied).
+    """
+    root = transcripts_root()
+    if not agent_id or not root.is_dir():
+        return []
+    pieces = _pieces(root)
+    mine = [p for p in pieces if p.agent_id == agent_id]
+    if not mine:
+        return []
+    # Find the newest run (by the most-recently opened piece in it).
+    newest_run = max(mine, key=lambda p: p.opened).run
+    sessions = {p.run.parent for p in mine}
+    # All pieces belonging to the newest run.
+    run_mine = [p for p in mine if p.run == newest_run]
+    # Per guest path, keep only the latest-opened piece (deduplicates rewrites).
+    by_guest: dict[str, _Piece] = {}
+    for p in run_mine:
+        if p.guest not in by_guest or p.opened > by_guest[p.guest].opened:
+            by_guest[p.guest] = p
+    # Build a Conversation per guest path, sorted by when that guest path first opened.
+    follow = _read(newest_run / "follow.json")
+    result = []
+    for guest_piece in sorted(by_guest.values(), key=lambda p: p.opened):
+        chain = sorted(
+            (p for p in pieces if p.guest == guest_piece.guest and p.run.parent in sessions),
+            key=lambda p: p.opened,
+        )
+        result.append(Conversation(
+            tuple(chain),
+            Copy(chain[-1].path, _harness(follow, guest_piece.guest),
+                 newest_run.parent.name, newest_run.name),
+        ))
+    return result
+
+
+def find_copies(agent_id: str) -> list[Copy]:
+    """All copies for the agent's newest run, oldest-first.
+
+    Multiple copies arise when the harness creates new session files (e.g.
+    after `/clear`).  Each guest path is deduplicated to its latest rewrite
+    first, so `.rewrite-N` copies don't appear alongside the same guest path.
+    The result is ordered by `opened` time so the caller can concatenate
+    sessions in chronological order.
+    """
+    return [s.copy for s in _sessions(agent_id)]
+
+
 def find_conversation(agent_id: str) -> Conversation | None:
     """The console agent's conversation: the guest file it opened last, with
     every copy of that file its bottle's runs made (a resumed run's starts
     where the earlier one's ended), or None."""
-    root = transcripts_root()
-    if not agent_id or not root.is_dir():
-        return None
-    pieces = _pieces(root)
-    mine = [p for p in pieces if p.agent_id == agent_id]
-    if not mine:
-        return None
-    newest = max(mine, key=lambda p: p.opened)
-    sessions = {p.run.parent for p in mine}
-    chain = sorted((p for p in pieces if p.guest == newest.guest and p.run.parent in sessions),
-                   key=lambda p: p.opened)
-    follow = _read(newest.run / "follow.json")
-    return Conversation(tuple(chain), Copy(chain[-1].path, _harness(follow, newest.guest),
-                                           newest.run.parent.name, newest.run.name))
+    sessions = _sessions(agent_id)
+    return sessions[-1] if sessions else None
 
 
 def find_copy(agent_id: str) -> Copy | None:
-    """The copy the console agent's conversation is being written to, or None."""
-    found = find_conversation(agent_id)
-    return None if found is None else found.copy
+    """The most recently opened copy for the agent's newest run, or None."""
+    copies = find_copies(agent_id)
+    return copies[-1] if copies else None
 
 
 def _secret_values() -> dict[str, str]:
@@ -175,26 +219,46 @@ class TranscriptReader:
     """Parsed, masked entries per copy, reparsed only when the copy grows."""
 
     def __init__(self) -> None:
-        self._cache: dict[str, tuple[Any, list["TranscriptEntry"]]] = {}
+        self._cache: dict[Path, tuple[Any, list["TranscriptEntry"]]] = {}
         self._lock = threading.Lock()
 
     def entries(self, agent_id: str) -> list["TranscriptEntry"] | None:
-        """The agent's active, masked entries; None without a copy."""
-        found = find_conversation(agent_id)
-        if found is None:
+        """The agent's active, masked entries across all sessions; None without any copy.
+
+        Multiple sessions arise after `/clear`: each session file's active
+        branch is concatenated in the order the sessions opened, with seq
+        numbers renumbered to be globally monotonic, so the full conversation
+        (pre-clear and post-clear) appears as one continuous history.
+        """
+        convs = _sessions(agent_id)
+        if not convs:
             return None
-        data = found.read()
-        if data is None:
-            return None
-        signature = (tuple(p.path for p in found.pieces), len(data))
-        with self._lock:
-            cached = self._cache.get(agent_id)
-            if cached is not None and cached[0] == signature:
-                return cached[1]
-        parsed = self._parse(found.copy, data)
-        with self._lock:
-            self._cache[agent_id] = (signature, parsed)
-        return parsed
+        combined: list["TranscriptEntry"] = []
+        any_read = False
+        for conv in convs:
+            data = conv.read()
+            if data is None:
+                continue
+            any_read = True
+            signature = (tuple(p.path for p in conv.pieces), len(data))
+            with self._lock:
+                cached = self._cache.get(conv.copy.path)
+                if cached is not None and cached[0] == signature:
+                    per_conv = cached[1]
+                else:
+                    per_conv = None
+            if per_conv is None:
+                per_conv = self._parse(conv.copy, data)
+                with self._lock:
+                    self._cache[conv.copy.path] = (signature, per_conv)
+            # Renumber seqs from where the previous session ended so that all
+            # sessions form one contiguous, gap-free range.  Active-branch
+            # entries are a sparse subset of the per-file flat list, so the
+            # original per-file seqs are not contiguous across sessions.
+            seq_start = len(combined)
+            for i, e in enumerate(per_conv):
+                combined.append(replace(e, seq=seq_start + i))
+        return combined if any_read else None
 
     @staticmethod
     def _parse(copy: Copy, data: bytes) -> list["TranscriptEntry"]:
@@ -375,4 +439,4 @@ class TranscriptLink:
 
 
 __all__ = ["Conversation", "Copy", "MAX_PAGE", "PAGE", "TranscriptLink", "TranscriptReader", "WORKING_FOR",
-           "find_conversation", "find_copy", "is_working", "mask"]
+           "find_conversation", "find_copies", "find_copy", "is_working", "mask"]

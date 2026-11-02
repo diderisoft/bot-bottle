@@ -17,7 +17,7 @@ from unittest import mock
 
 from bot_bottle.control.hostctl import remote, transcript_serve
 from bot_bottle.control.hostctl.transcript_serve import (
-    TranscriptReader, find_conversation, find_copy)
+    TranscriptReader, find_conversation, find_copies, find_copy)
 from bot_bottle.control.hostctl.transcripts import transcripts_root
 from . import use_bottle_root
 
@@ -62,6 +62,14 @@ class TestFindCopy(_Root):
                          (found.path, found.harness, found.session, found.activation))
         self.assertIsNone(find_copy("c-3"))
         self.assertIsNone(find_copy(""))
+
+    def test_find_copies_returns_all_sessions_oldest_first(self) -> None:
+        first = self.copy("s1", "new", "b", opened=5.0)
+        last = self.copy("s1", "new", "c", opened=6.0)
+        # Copies from a different (older) run are excluded.
+        self.copy("s1", "old", "a", opened=1.0)
+        copies = find_copies("c-1")
+        self.assertEqual([first, last], [c.path for c in copies])
 
     def test_a_rewritten_file_shows_its_latest_copy(self) -> None:
         self.copy("s1", "a1", "f", opened=1.0)
@@ -196,9 +204,39 @@ class TestReader(_Root):
         lines = _PI.read_bytes().splitlines(keepends=True)
         path.write_bytes(lines[0] + lines[1][:10])
         self.assertEqual(1, len(reader.entries("c-1") or []))
-        self.assertIs(reader.entries("c-1"), reader.entries("c-1"))  # cached
+        # Per-copy entries are cached; the combined list is rebuilt each call
+        # but parsed entries are reused without re-reading the file.
+        self.assertEqual(len(reader.entries("c-1") or []),
+                         len(reader.entries("c-1") or []))
         path.write_bytes(lines[0] + lines[1])
         self.assertEqual(2, len(reader.entries("c-1") or []))
+
+    def test_multiple_sessions_are_combined_with_monotonic_seqs(self) -> None:
+        # Simulate a /clear: two separate session files for the same agent.
+        self.copy("s1", "a1", "sess1",
+                  guest="/home/node/.pi/agent/sessions/--w--/sess1.jsonl",
+                  opened=1.0)
+        second = self.copy("s1", "a1", "sess2",
+                           guest="/home/node/.pi/agent/sessions/--w--/sess2.jsonl",
+                           opened=2.0)
+        reader = TranscriptReader()
+        entries = reader.entries("c-1") or []
+        seqs = [e.seq for e in entries]
+        # Every entry from both sessions should appear and seqs must be
+        # strictly increasing (no gaps from per-file numbering).
+        self.assertGreater(len(seqs), 0)
+        self.assertEqual(sorted(set(seqs)), list(range(seqs[0], seqs[-1] + 1)),
+                         "seqs should be a contiguous range with no duplicates")
+        # Reader.last() reports the combined last, so push() fires after /clear.
+        first_last = TranscriptReader().last("c-1")
+        assert first_last is not None
+        # Simulate a new entry arriving in the second session file.
+        # parentId must chain from the file's last entry so walk_branch keeps it.
+        line = b'{"type":"message","id":"zz","parentId":"478c40e1","message":{"role":"user","content":"hi"}}\n'
+        second.write_bytes(second.read_bytes() + line)
+        second_last = TranscriptReader().last("c-1")
+        assert second_last is not None
+        self.assertGreater(second_last, first_last)
 
     def test_an_unknown_harness_or_a_vanished_copy(self) -> None:
         path = self.copy("s1", "a1", "f", harness="nope")
