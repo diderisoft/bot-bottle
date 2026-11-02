@@ -74,6 +74,10 @@ class _Headers:
         k = self._find(key)
         return self._d.pop(k) if k is not None else default
 
+    def get_all(self, key: str) -> list[str]:
+        k = self._find(key)
+        return [] if k is None else [self._d[k]]
+
 
 class _Response:
     def __init__(
@@ -565,6 +569,33 @@ class TestAuthInjection(unittest.TestCase):
         self.assertIsNone(flow.response)
         self.assertEqual("k", flow.request.headers.get("x-api-key"))
         self.assertEqual("/v2/?token=t", flow.request.path)
+
+    def test_cookies_only_go_back_to_the_host_that_set_them(self) -> None:
+        # #807: a cookie the agent was handed (attacker's session) never goes
+        # out; one the host set for this bottle does.
+        config = Config(routes=(Route(host="app.example.com"), Route(host="other.example.com")))
+        addon = _addon(config, slug="b")
+        first = _Flow(_Request(host="app.example.com", headers={"Cookie": "sid=attacker"}))
+        _run_request(addon, first)
+        self.assertIsNone(first.response)
+        self.assertIsNone(first.request.headers.get("cookie"))
+        first.response = _Response(200, {"Set-Cookie": "sid=real; Path=/; HttpOnly"})
+        addon.response(first)  # type: ignore[arg-type]
+
+        again = _Flow(_Request(host="app.example.com", headers={"Cookie": "sid=real; x=injected"}))
+        _run_request(addon, again)
+        self.assertEqual("sid=real", again.request.headers.get("cookie"))
+
+        elsewhere = _Flow(_Request(host="other.example.com", headers={"Cookie": "sid=real"}))
+        _run_request(addon, elsewhere)
+        self.assertIsNone(elsewhere.request.headers.get("cookie"))
+
+    def test_preserve_auth_keeps_agent_cookies(self) -> None:
+        route = Route(host="registry-1.docker.io", preserve_auth=True)
+        addon = _addon(Config(routes=(route,)), slug="b")
+        flow = _Flow(_Request(host="registry-1.docker.io", headers={"Cookie": "sid=mine"}))
+        _run_request(addon, flow)
+        self.assertEqual("sid=mine", flow.request.headers.get("cookie"))
 
     def test_default_route_strips_agent_auth(self) -> None:
         route = Route(host="registry-1.docker.io")

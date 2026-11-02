@@ -50,9 +50,10 @@ Basic`, so a client that waits to be challenged (git's default
    when the route sets `git.fetch`. Pushes go through git-gate.
 6. **Route policy** (`request_pipeline.evaluate_route_policy`). A host not on
    the allowlist, or a request matching no `matches` entry, gets a 403. The
-   agent's [credentials](#agent-credentials) are stripped unless the route
-   sets `preserve_auth`, and then the route's `auth` is injected from the
-   bottle's egress tokens.
+   agent's [credentials](#agent-credentials) and any
+   [cookies the host didn't set](#cookies) are stripped unless the route sets
+   `preserve_auth`. Then the route's `auth` is injected from the bottle's
+   egress tokens.
 7. **First contact.** The first request from a bottle to a host is written to
    the audit journal. With `audit.delivery: required`, the request waits for
    that record and is refused if it can't be written.
@@ -112,6 +113,24 @@ The Claude provider uses a named header for an Anthropic API key. With
 `api.anthropic.com` route injects the key raw into `x-api-key`. The agent
 gets `ANTHROPIC_API_KEY=egress-placeholder`, hidden from the launch
 summary, and its `~/.claude.json` pre-approves that placeholder.
+
+### Cookies
+
+A request's `Cookie` keeps only the cookies that host set for this bottle.
+The gateway sees every response on an inspected route, and it remembers each
+`Set-Cookie` name and value per (bottle, host) (`gateway/egress/cookie_jar.py`).
+On a route without `preserve_auth`, a cookie pair the agent sends goes
+upstream only if that host set the same name and value earlier. Any other
+pair is dropped, and if none are left the header is removed. A cookie the
+agent was handed, such as an attacker's session, never goes out. Cookies the
+host set itself keep working.
+
+The jar matches the exact host. A cookie set with a `Domain` attribute isn't
+sent to the domain's other hosts. A `Max-Age` of zero or less, or a past
+`Expires`, deletes the cookie. The jar ignores `Path` and `Secure`, which are
+left to the client. It keeps up to 256 cookies per (bottle, host) and drops
+the oldest beyond that. It's in memory, so after a gateway restart a host has
+to set its cookies again.
 
 ### Outbound DLP
 

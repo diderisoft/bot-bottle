@@ -23,6 +23,7 @@ from bot_bottle.gateway.egress.addon_settings import (
     _inbound_scan_limit_from_env,
     _token_allow_timeout_from_env,
 )
+from bot_bottle.gateway.egress.cookie_jar import CookieJar
 from bot_bottle.gateway.egress.dlp_detectors import redact_tokens
 from bot_bottle.gateway.egress.dlp_config import (
     DEFAULT_OUTBOUND_ON_MATCH,
@@ -151,6 +152,9 @@ class EgressAddon:
         # the value go to another. In memory; only touched from the asyncio
         # loop.
         self._safe_tokens: dict[tuple[str, str], set[str]] = {}
+        # What each host set for each bottle via Set-Cookie: the only cookies
+        # a request may carry. In memory; only touched from the asyncio loop.
+        self._cookies = CookieJar()
         # Per-connection identity token from CONNECT, since bumped HTTPS
         # requests don't repeat it. Cleared on disconnect.
         self._conn_tokens: dict[str, str] = {}
@@ -469,7 +473,7 @@ class EgressAddon:
         if not self._allow_git_request(flow, config, request_path, query):
             return
 
-        self._apply_route_policy(flow, config, route, request_path, env)
+        self._apply_route_policy(flow, config, route, request_path, env, slug=slug)
         if flow.response is None:
             await self._allowed_and_recorded(flow, lambda: self._first_contact(flow))
 
@@ -501,13 +505,14 @@ class EgressAddon:
 
     def _apply_route_policy(
         self, flow: http.HTTPFlow, config: Config, route: Route | None,
-        request_path: str, env: "typing.Mapping[str, str]",
+        request_path: str, env: "typing.Mapping[str, str]", *, slug: str,
     ) -> None:
         """Strip agent credentials, evaluate the route, inject gateway auth."""
         # Agent credentials (every CREDENTIAL_HEADERS header, the header the
-        # route injects into, and every CREDENTIAL_QUERY_PARAMS parameter) are
-        # stripped after the DLP scan and before injection, unless the route
-        # sets `preserve_auth`.
+        # route injects into, and every CREDENTIAL_QUERY_PARAMS parameter) and
+        # cookies the host didn't set for this bottle are stripped after the
+        # DLP scan and before injection, unless the route sets
+        # `preserve_auth`.
         result = evaluate_route_policy(
             config,
             route,
@@ -524,6 +529,7 @@ class EgressAddon:
             stripped_path = strip_credential_query(flow.request.path)
             if stripped_path != flow.request.path:
                 flow.request.path = stripped_path
+            self._filter_cookies(flow, slug)
 
         if result.block_reason:
             self._block(flow, result.block_reason, ctx=self._req_ctx(flow),
@@ -535,6 +541,24 @@ class EgressAddon:
 
         if result.log_request:
             self._log_request(flow, env)
+
+    def _cookie_jar(self) -> CookieJar:
+        """This addon's jar, created on first use (tests build addons with
+        __new__)."""
+        jar = self.__dict__.get("_cookies")
+        if jar is None:
+            jar = self.__dict__["_cookies"] = CookieJar()
+        return jar
+
+    def _filter_cookies(self, flow: http.HTTPFlow, slug: str) -> None:
+        """Keep only the cookies this host set for this bottle."""
+        sent = flow.request.headers.get_all("cookie")
+        if not sent:
+            return
+        kept = self._cookie_jar().filter(slug, flow.request.host, sent)
+        flow.request.headers.pop("cookie", None)
+        if kept:
+            flow.request.headers["cookie"] = kept
 
     def _block_dlp(self, flow: http.HTTPFlow, result: ScanResult) -> None:
         ctx = self._req_ctx(flow)
@@ -719,12 +743,14 @@ class EgressAddon:
         """Inbound DLP on response headers and body, against the flow's stashed
         policy."""
         self._firehose_end(flow)  # once per flow; a block already ended it
-        config, _slug, env = self._flow_ctx(flow)
+        config, slug, env = self._flow_ctx(flow)
         route = match_route(config.routes, flow.request.host)
         if route is None or not route.inspect:
             return
         if flow.response is None:
             return
+        self._cookie_jar().record(
+            slug, flow.request.host, flow.response.headers.get_all("set-cookie"))
         if config.log >= LOG_FULL:
             self._log_response(flow, env)
         resp_headers = {k.lower(): v for k, v in flow.response.headers.items()}
