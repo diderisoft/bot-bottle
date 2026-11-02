@@ -259,3 +259,39 @@ class TestConsoleLink(unittest.TestCase):
             asyncio.run(link.push_host_stats_if_due())   # 30 s later: not due
             asyncio.run(link.push_host_stats_if_due())   # 61 s later: due
         self.assertEqual(2, len(sent))
+
+
+class TestAbout(unittest.TestCase):
+    def test_mac_is_macos(self) -> None:
+        with mock.patch.object(host_stats.platform, "system", return_value="Darwin"):
+            self.assertEqual("macOS", host_stats._os_name())
+
+    def test_linux_names_its_distribution(self) -> None:
+        release = 'PRETTY_NAME="NixOS 25.11"\nNAME=NixOS\nID=nixos\n'
+        with mock.patch.object(host_stats.platform, "system", return_value="Linux"), \
+             mock.patch("builtins.open", mock.mock_open(read_data=release)):
+            self.assertEqual("NixOS", host_stats._os_name())
+
+    def test_linux_without_os_release_is_linux(self) -> None:
+        with mock.patch.object(host_stats.platform, "system", return_value="Linux"), \
+             mock.patch("builtins.open", side_effect=OSError("missing")):
+            self.assertEqual("Linux", host_stats._os_name())
+
+    def test_about_names_the_backend_and_version(self) -> None:
+        endpoint = SimpleNamespace(backend="firecracker", url="http://10.0.0.1:8099")
+        with mock.patch("bot_bottle.control.client.recorded_orchestrator", return_value=endpoint), \
+             mock.patch("bot_bottle.engine.install_version", return_value=("0.19.0", "e1b7248")), \
+             mock.patch.object(host_stats, "_os_name", return_value="NixOS"):
+            self.assertEqual({"os": "NixOS", "backend": "firecracker", "version": "0.19.0",
+                              "commit": "e1b7248"}, host_stats.about())
+
+    def test_no_bring_up_yet_is_no_backend(self) -> None:
+        with mock.patch("bot_bottle.control.client.recorded_orchestrator", return_value=None):
+            self.assertEqual("", host_stats.about()["backend"])
+
+    def test_snapshot_carries_about(self) -> None:
+        with mock.patch.object(host_stats, "about", return_value={"os": "macOS"}), \
+             mock.patch.object(host_stats, "collect", return_value={}), \
+             mock.patch.object(host_stats.budget, "host_budget"), \
+             mock.patch.object(host_stats.budget, "block", return_value={}):
+            self.assertEqual({"os": "macOS"}, host_stats.snapshot()["about"])

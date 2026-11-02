@@ -206,7 +206,8 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
      "memory": {"allocated", "budget", "bottle_size",
                 "bottles": [{"id", "label", "memory"}]},
      "storage": {"used", "budget",
-                 "categories": {"vm_disks", "images", "workspaces", "transcripts"}}}}
+                 "categories": {"vm_disks", "images", "workspaces", "transcripts"}}},
+   "about": {"os", "backend", "version", "commit"}}
   ```
 
   The host-wide `storage` covers the filesystems holding the state root and
@@ -215,6 +216,11 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
   `cap` repeats the budget for consoles that predate the `budget` block. A
   budget of 0 means none is set. `budget.storage` is left out until the
   first storage walk after the daemon starts.
+
+  `about` is what the host's console page says about it: its OS (`macOS`,
+  or a Linux's `NAME` from `/etc/os-release`), the backend its last
+  bring-up recorded (`""` before one) and this install's version and short
+  commit (as `bot-bottle version` prints them).
 - A restarted daemon resumes each re-adopted session's copies from the
   saved offsets, exec'ing through `BottleBackend.attach_adopted` (which
   never tears the bottle down). Copies of sessions that ended while it was

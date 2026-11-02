@@ -134,14 +134,45 @@ def stats_paths() -> tuple[Path, ...]:
     return tuple(path for _, path in budget.storage_roots())
 
 
+def _os_name() -> str:
+    """The host's OS as people call it: macOS, or a Linux's distribution name
+    (`NAME` in /etc/os-release, e.g. NixOS), else `platform.system()`."""
+    system = platform.system()
+    if system == "Darwin":
+        return "macOS"
+    if system == "Linux":
+        try:
+            with open("/etc/os-release", encoding="utf-8") as fh:
+                for line in fh:
+                    key, _, value = line.strip().partition("=")
+                    if key == "NAME" and value.strip('"'):
+                        return value.strip('"')
+        except OSError:
+            pass
+    return system
+
+
+def about() -> dict[str, str]:
+    """What the host's page says about it: its OS, the backend its last
+    bring-up recorded ("" before one) and this install's version."""
+    # pylint: disable=import-outside-toplevel
+    from ...engine import install_version
+    from ..client import recorded_orchestrator
+    endpoint = recorded_orchestrator()
+    version, commit = install_version()
+    return {"os": _os_name(), "backend": endpoint.backend if endpoint else "",
+            "version": version, "commit": commit}
+
+
 def snapshot(bottles: "BottleService | None" = None) -> dict[str, object]:
-    """What the console link sends as `host_stats`: the host-wide numbers and
-    the bottles' `budget`, read fresh each time so a budget set while the
-    host controller runs shows at the next push."""
+    """What the console link sends as `host_stats`: the host-wide numbers,
+    the bottles' `budget` and `about` the host, read fresh each time so a
+    budget set while the host controller runs shows at the next push."""
     limits = budget.host_budget()
     running = bottles.allocation() if bottles is not None else []
     return {**collect(stats_paths(), limits=limits),
-            "budget": budget.block(running, limits, budget.METER.current())}
+            "budget": budget.block(running, limits, budget.METER.current()),
+            "about": about()}
 
 
-__all__ = ["collect", "snapshot", "stats_paths"]
+__all__ = ["about", "collect", "snapshot", "stats_paths"]
