@@ -2,15 +2,18 @@
 
 A follower per session polls the bottle once a second through `exec` (and
 once more after the agent exits), reads new bytes by offset from each
-transcript file that appeared since the session started, and appends them
-exactly as read to
+transcript file that appeared since the session started (on a resumed home,
+also from each file already there, from the size it had: the agent continues
+its conversation in it, and the earlier run's copy holds the rest), and
+appends them exactly as read to
 
   ~/.bot-bottle/transcripts/<session>/<activation>/<file>.jsonl   (0600)
 
-with `<file>.meta.json` beside it (the guest path, the offset read so far and
-the console agent id). `follow.json` in the same directory holds what a
-restarted host controller needs to resume: the guest glob, the files that
-were there before the session (never copied) and the agent id.
+with `<file>.meta.json` beside it (the guest path, the offset read so far,
+the offset it started from and the console agent id). `follow.json` in the
+same directory holds what a restarted host controller needs to resume: the
+guest glob, the files that were there before a fresh session (never copied),
+or the sizes of those a resumed one continues, and the agent id.
 
 The copy is the agent's account, not evidence: `transcript.captured` records
 its running SHA-256 (agent-claimed) every five minutes while it grows and when
@@ -108,11 +111,20 @@ class _Copy:
     size: int = 0
     checkpointed_size: int = -1
     checkpointed_at: float = 0.0
-    opened: float = 0.0  # wall clock; the run's first file is the one shown
+    opened: float = 0.0  # wall clock; the newest file opened is the one shown
+    start: int = 0  # the guest offset this copy starts at (a continued file)
 
     @property
     def meta_path(self) -> Path:
         return self.path.with_name(self.path.name.removesuffix(".jsonl") + ".meta.json")
+
+
+def _edited(check: bytes, tail: bytes) -> bool:
+    """Whether the guest's bytes before the offset differ from those copied.
+    A continued file's copy can hold fewer than `check` (only what was added
+    since its start): compare what both have."""
+    n = min(len(check), len(tail))
+    return check[-n:] != tail[-n:]
 
 
 @dataclass(frozen=True)
@@ -177,9 +189,12 @@ class TranscriptFollower:
 
     def __init__(self, *, session: str, activation: str, glob: str, agent_id: str,
                  skip: list[str], audit: "HostAudit", harness: str = "",
+                 start: dict[str, int] | None = None,
                  clock: Callable[[], float] = time.monotonic) -> None:
         self.session, self.activation = session, activation
         self.glob, self.agent_id, self.skip = glob, agent_id, skip
+        # guest path -> the size it had when a resumed session started
+        self.resumed_at = dict(start or {})
         self.harness = harness
         self.dir = copy_dir(session, activation)
         self._audit = audit
@@ -195,15 +210,23 @@ class TranscriptFollower:
 
     @classmethod
     def begin(cls, bottle: "Bottle", *, session: str, activation: str, glob: str,
-              agent_id: str, audit: "HostAudit", harness: str = "") -> "TranscriptFollower":
-        """A follower for a session about to start: files already there are
-        another session's and never copied."""
-        r = bottle.exec(f'for f in {shell_glob(glob)}; do '
-                        '[ -f "$f" ] && printf "%s\\n" "$f"; done; :',
+              agent_id: str, audit: "HostAudit", harness: str = "",
+              continuing: bool = False) -> "TranscriptFollower":
+        """A follower for a session about to start. Files already there are
+        another session's and never copied, unless it's `continuing` (its
+        home kept, its harness picking up its last conversation): then each
+        is followed from the size it has now."""
+        r = bottle.exec(f'for f in {shell_glob(glob)}; do [ -f "$f" ] && '
+                        'printf "%s %s\\n" "$(wc -c < "$f" | tr -d " ")" "$f"; done; :',
                         timeout=POLL_TIMEOUT_SECONDS, private=False)
-        skip = r.stdout.splitlines() if r.returncode == 0 else []
+        there: dict[str, int] = {}
+        for line in r.stdout.splitlines() if r.returncode == 0 else []:
+            size, _, path = line.partition(" ")
+            if path and size.isdigit():
+                there[path] = int(size)
         follower = cls(session=session, activation=activation, glob=glob, agent_id=agent_id,
-                       skip=skip, audit=audit, harness=harness)
+                       skip=[] if continuing else list(there), audit=audit, harness=harness,
+                       start=there if continuing else None)
         _make_dir(follower.dir)
         follower._save_follow()
         return follower
@@ -219,7 +242,8 @@ class TranscriptFollower:
         follower = cls(session=session, activation=activation, glob=str(follow.get("glob", "")),
                        agent_id=str(follow.get("agent_id", "")),
                        skip=[str(p) for p in follow.get("skip", [])], audit=audit,
-                       harness=str(follow.get("harness", "")))
+                       harness=str(follow.get("harness", "")),
+                       start={str(p): int(n) for p, n in (follow.get("start") or {}).items()})
         for meta_path in sorted(follower.dir.glob("*.meta.json")):
             meta = _read_json(meta_path)
             if meta is None or meta.get("closed"):
@@ -231,7 +255,7 @@ class TranscriptFollower:
 
     def _load(self, path: Path, meta: dict[str, Any]) -> _Copy:
         copy = _Copy(path, str(meta.get("guest_path", "")), offset=int(meta.get("offset", 0)),
-                     opened=float(meta.get("opened", 0.0)))
+                     opened=float(meta.get("opened", 0.0)), start=int(meta.get("start", 0)))
         try:
             data = path.read_bytes()
         except OSError:
@@ -292,7 +316,8 @@ class TranscriptFollower:
         if bottle is None:
             return False
         with self._lock:
-            known = {p: c.offset for p, c in self._copies.items()}
+            # A continued file not copied yet is read from where it was.
+            known = {**self.resumed_at, **{p: c.offset for p, c in self._copies.items()}}
             try:
                 # Bounded: a poll that never returned held the lock, and
                 # `close` (so the bottle's teardown) waited on it for good.
@@ -319,10 +344,17 @@ class TranscriptFollower:
         """Copy `listing`'s new bytes; whether the file changed."""
         copy = self._copies.get(listing.guest_path)
         if copy is None:
-            copy = self._new_copy(listing.guest_path)
+            start = self.resumed_at.get(listing.guest_path, 0)
+            if start and listing.size == start:
+                return False  # a file the agent hasn't added to: no copy yet
+            # Shorter than when the session started: not the same file; read
+            # it from its start (the next poll, from offset 0).
+            copy = self._new_copy(listing.guest_path,
+                                  start=start if listing.size >= start else 0)
+            if copy.start != start:
+                return True
         elif listing.size < copy.offset or (
-                listing.check is not None and copy.tail
-                and listing.check != copy.tail[-len(listing.check):]):
+                listing.check is not None and copy.tail and _edited(listing.check, copy.tail)):
             # Edited after we read it: keep what we have, copy it afresh. The
             # new bytes are from the old offset, so read again from the start.
             self._rewritten(copy, listing)
@@ -335,9 +367,10 @@ class TranscriptFollower:
         stem = Path(guest_path).name.removesuffix(".jsonl") or "transcript"
         return self.dir / f"{stem}{suffix}.jsonl"
 
-    def _new_copy(self, guest_path: str, suffix: str = "") -> _Copy:
+    def _new_copy(self, guest_path: str, suffix: str = "", start: int = 0) -> _Copy:
         _make_dir(self.dir)
-        copy = _Copy(self._copy_path(guest_path, suffix), guest_path, opened=time.time())
+        copy = _Copy(self._copy_path(guest_path, suffix), guest_path, offset=start,
+                     opened=time.time(), start=start)
         os.close(os.open(copy.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600))
         copy.checkpointed_size, copy.checkpointed_at = 0, self._clock()
         self._copies[guest_path] = copy
@@ -382,6 +415,8 @@ class TranscriptFollower:
     def _save_meta(self, copy: _Copy, *, closed: bool = False) -> None:
         meta: dict[str, Any] = {"guest_path": copy.guest_path, "offset": copy.offset,
                                 "agent_id": self.agent_id, "opened": copy.opened}
+        if copy.start:
+            meta["start"] = copy.start
         if closed:
             meta["closed"] = True
         _write_json(copy.meta_path, meta)
@@ -389,6 +424,8 @@ class TranscriptFollower:
     def _save_follow(self, *, closed: bool = False) -> None:
         follow: dict[str, Any] = {"glob": self.glob, "skip": self.skip,
                                   "agent_id": self.agent_id, "harness": self.harness}
+        if self.resumed_at:
+            follow["start"] = self.resumed_at
         if closed:
             follow["closed"] = True
         _write_json(self.dir / _FOLLOW, follow)

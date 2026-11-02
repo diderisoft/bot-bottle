@@ -16,7 +16,8 @@ from typing import Any
 from unittest import mock
 
 from bot_bottle.control.hostctl import remote, transcript_serve
-from bot_bottle.control.hostctl.transcript_serve import TranscriptReader, find_copy
+from bot_bottle.control.hostctl.transcript_serve import (
+    TranscriptReader, find_conversation, find_copy)
 from bot_bottle.control.hostctl.transcripts import transcripts_root
 from . import use_bottle_root
 
@@ -31,14 +32,17 @@ class _Root(unittest.TestCase):
 
     def copy(self, session: str, activation: str, name: str, *, agent_id: str = "c-1",
              data: bytes | None = None, harness: str | None = "pi", opened: float = 1.0,
-             guest: str = "") -> Path:
+             guest: str = "", start: int = 0) -> Path:
         run = transcripts_root() / session / activation
         run.mkdir(parents=True, exist_ok=True)
         path = run / f"{name}.jsonl"
         path.write_bytes(_PI.read_bytes() if data is None else data)
         guest = guest or f"/home/node/.pi/agent/sessions/--w--/{name.split('.')[0]}.jsonl"
-        (run / f"{name}.meta.json").write_text(json.dumps(
-            {"guest_path": guest, "offset": 0, "agent_id": agent_id, "opened": opened}))
+        meta: dict[str, Any] = {"guest_path": guest, "offset": 0, "agent_id": agent_id,
+                                "opened": opened}
+        if start:
+            meta["start"] = start
+        (run / f"{name}.meta.json").write_text(json.dumps(meta))
         follow: dict[str, Any] = {"agent_id": agent_id, "glob": "", "skip": []}
         if harness is not None:
             follow["harness"] = harness
@@ -47,15 +51,16 @@ class _Root(unittest.TestCase):
 
 
 class TestFindCopy(_Root):
-    def test_the_newest_run_and_its_first_file(self) -> None:
+    def test_the_file_opened_last(self) -> None:
         self.copy("s1", "old", "a", opened=1.0)
-        first = self.copy("s1", "new", "b", opened=5.0)
-        self.copy("s1", "new", "c", opened=6.0)  # a later /fork
+        self.copy("s1", "new", "b", opened=5.0)
+        last = self.copy("s1", "new", "c", opened=6.0)  # a later /clear or /fork
+        self.copy("s2", "x", "d", opened=9.0, agent_id="c-2")
         found = find_copy("c-1")
         assert found is not None
-        self.assertEqual((first, "pi", "s1", "new"),
+        self.assertEqual((last, "pi", "s1", "new"),
                          (found.path, found.harness, found.session, found.activation))
-        self.assertIsNone(find_copy("c-2"))
+        self.assertIsNone(find_copy("c-3"))
         self.assertIsNone(find_copy(""))
 
     def test_a_rewritten_file_shows_its_latest_copy(self) -> None:
@@ -75,6 +80,69 @@ class TestFindCopy(_Root):
 
     def test_no_root(self) -> None:
         self.assertIsNone(find_copy("c-1"))
+
+
+class TestAcrossRuns(_Root):
+    """A resumed bottle copies only what its agent adds to a file an earlier
+    run copied; the conversation is the file's copies put together."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.lines = _PI.read_bytes().splitlines(keepends=True)
+        self.guest = "/home/node/.pi/agent/sessions/--w--/f.jsonl"
+
+    def whole(self, upto: int | None = None) -> list[str]:
+        reader = TranscriptReader()
+        path = self.copy("ref", "r", "f", agent_id="ref", data=b"".join(self.lines[:upto]))
+        out = [e.text for e in reader.entries("ref") or []]
+        shutil.rmtree(path.parent.parent)
+        return out
+
+    def test_a_resumed_runs_copy_continues_the_earlier_one(self) -> None:
+        head = b"".join(self.lines[:4])
+        self.copy("s1", "a1", "f", data=head, opened=1.0, agent_id="t-old", guest=self.guest)
+        self.copy("s1", "a1", "g", data=self.lines[0], opened=2.0, agent_id="t-old",
+                  guest="/home/node/.pi/agent/sessions/--w--/g.jsonl")
+        newest = self.copy("s1", "a2", "f", data=b"".join(self.lines[4:]), opened=3.0,
+                           start=len(head), guest=self.guest)
+        conversation = find_conversation("c-1")
+        assert conversation is not None
+        self.assertEqual(newest, conversation.copy.path)
+        self.assertEqual(b"".join(self.lines), conversation.read())
+        self.assertEqual(self.whole(), [e.text for e in TranscriptReader().entries("c-1") or []])
+        # Another bottle's copy of a file with the same name isn't this one's.
+        self.copy("s9", "z", "f", data=b"junk\n", opened=0.5, guest=self.guest, agent_id="x")
+        self.assertEqual(b"".join(self.lines), conversation.read())
+
+    def test_overlap_gap_rewrite_and_unreadable_pieces(self) -> None:
+        head, rest = b"".join(self.lines[:4]), b"".join(self.lines[4:])
+        self.copy("s1", "a1", "f", data=head + self.lines[4], opened=1.0, guest=self.guest)
+        self.copy("s1", "a2", "f", data=rest, opened=2.0, start=len(head), guest=self.guest)
+        found = find_conversation("c-1")
+        assert found is not None
+        # The earlier copy read past where the next started: theirs wins.
+        self.assertEqual(head + rest, found.read())
+
+        self.copy("s1", "a1", "f", data=head[:-3], opened=1.0, guest=self.guest)
+        found = find_conversation("c-1")
+        assert found is not None
+        # A copy cut short: its cut line is dropped, not glued to the next.
+        self.assertEqual(b"".join(self.lines[:3]) + rest, found.read())
+
+        rewrite = self.copy("s1", "a2", "f.rewrite-1", data=self.lines[0], opened=4.0,
+                            guest=self.guest)
+        found = find_conversation("c-1")
+        assert found is not None
+        self.assertEqual((self.lines[0], rewrite), (found.read(), found.copy.path))
+        with mock.patch.object(Path, "read_bytes", side_effect=OSError("gone")):
+            self.assertIsNone(found.read())
+
+    def test_a_continued_copy_after_an_unreadable_one(self) -> None:
+        tail = b"".join(self.lines[4:])
+        self.copy("s1", "a2", "f", data=tail, opened=2.0, start=99, guest=self.guest)
+        found = find_conversation("c-1")
+        assert found is not None
+        self.assertEqual(tail, found.read())
 
 
 class TestReader(_Root):

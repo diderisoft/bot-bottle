@@ -67,9 +67,10 @@ class _Root(unittest.TestCase):
         self.audit = mock.MagicMock(spec=HostAudit)
         self.bottle = LocalBottle()
 
-    def begin(self) -> TranscriptFollower:
+    def begin(self, *, continuing: bool = False) -> TranscriptFollower:
         return TranscriptFollower.begin(cast(Any, self.bottle), session="s1", activation="a1",
-                                        glob=self.glob, agent_id="t-abc", audit=self.audit)
+                                        glob=self.glob, agent_id="t-abc", audit=self.audit,
+                                        continuing=continuing)
 
     def copy_dir(self) -> Path:
         return transcripts.copy_dir("s1", "a1")
@@ -242,6 +243,68 @@ class TestFollower(_Root):
         self.assertEqual([str(self.guest / "old.jsonl")],
                          json.loads((self.copy_dir() / "follow.json").read_text())["skip"])
 
+    def test_a_resumed_session_copies_what_it_adds_to_its_files(self) -> None:
+        # `--continue` appends to the conversation file the last run wrote.
+        old = self.guest / "s.jsonl"
+        old.write_bytes(b'{"a":1}\n')
+        follower = self.begin(continuing=True)
+        follow = json.loads((self.copy_dir() / "follow.json").read_text())
+        self.assertEqual(([], {str(old): 8}), (follow["skip"], follow["start"]))
+        self.assertFalse(follower.poll(cast(Any, self.bottle)))
+        self.assertEqual([], list(self.copy_dir().glob("*.jsonl")))
+        with old.open("ab") as f:
+            f.write(b'{"b":2}\n')
+        self.assertTrue(follower.poll(cast(Any, self.bottle)))
+        copy = self.copy_dir() / "s.jsonl"
+        self.assertEqual(b'{"b":2}\n', copy.read_bytes())
+        meta = json.loads((self.copy_dir() / "s.meta.json").read_text())
+        self.assertEqual((16, 8), (meta["offset"], meta["start"]))
+        # Its copy holds less than the edit check reads: not an edit.
+        with old.open("ab") as f:
+            f.write(b'{"bb":22}\n')
+        follower.poll(cast(Any, self.bottle))
+        self.assertEqual(b'{"b":2}\n{"bb":22}\n', copy.read_bytes())
+        self.audit.transcript_rewritten.assert_not_called()
+        # A file the resumed session starts (a /clear) is copied whole.
+        (self.guest / "t.jsonl").write_bytes(b'{"c":3}\n')
+        follower.poll(cast(Any, self.bottle))
+        self.assertEqual(b'{"c":3}\n', (self.copy_dir() / "t.jsonl").read_bytes())
+        self.assertNotIn("start", json.loads((self.copy_dir() / "t.meta.json").read_text()))
+
+    def test_a_restarted_controller_continues_from_the_recorded_sizes(self) -> None:
+        old = self.guest / "s.jsonl"
+        old.write_bytes(b'{"a":1}\n')
+        self.begin(continuing=True).detach()
+        with old.open("ab") as f:
+            f.write(b'{"b":2}\n')
+        follower = TranscriptFollower.resume(session="s1", activation="a1", audit=self.audit)
+        assert follower is not None
+        follower.poll(cast(Any, self.bottle))
+        self.assertEqual(b'{"b":2}\n', (self.copy_dir() / "s.jsonl").read_bytes())
+        with old.open("ab") as f:
+            f.write(b'{"c":3}\n')
+        again = TranscriptFollower.resume(session="s1", activation="a1", audit=self.audit)
+        assert again is not None
+        again.poll(cast(Any, self.bottle))
+        self.assertEqual(b'{"b":2}\n{"c":3}\n', (self.copy_dir() / "s.jsonl").read_bytes())
+
+    def test_a_continued_file_that_shrank_is_copied_from_its_start(self) -> None:
+        old = self.guest / "s.jsonl"
+        old.write_bytes(b'{"a":1}\n{"b":2}\n')
+        follower = self.begin(continuing=True)
+        old.write_bytes(b'{"x":0}\n')
+        self.assertTrue(follower.poll(cast(Any, self.bottle)))
+        follower.poll(cast(Any, self.bottle))
+        self.assertEqual(b'{"x":0}\n', (self.copy_dir() / "s.jsonl").read_bytes())
+        self.assertNotIn("start", json.loads((self.copy_dir() / "s.meta.json").read_text()))
+
+    def test_an_unreadable_listing_continues_nothing(self) -> None:
+        self.bottle.fail = False
+        with mock.patch.object(self.bottle, "exec",
+                               return_value=ExecResult(1, "", "no shell")):
+            follower = self.begin(continuing=True)
+        self.assertEqual(({}, []), (follower.resumed_at, follower.skip))
+
     def test_close_reads_once_more_and_checkpoints_the_digest(self) -> None:
         follower = self.begin()
         follower.start(cast(Any, self.bottle))
@@ -347,13 +410,13 @@ class TestBottleService(_Root):
                                      recorded_infra=lambda _b: None, audit=self.audit)
         self.pi_plan = mock.Mock(harness="pi", guest_home="/home/node")
 
-    def follow(self, plan: Any, agent_id: str = "") -> None:
+    def follow(self, plan: Any, agent_id: str = "", continuing: bool = False) -> None:
         from bot_bottle.contract.hostctl import LaunchRequest
         with mock.patch("bot_bottle.contrib.pi.transcript.transcript_glob",
                         return_value=self.glob):
             self.service._follow(  # pyright: ignore[reportPrivateUsage]
                 plan, cast(Any, self.bottle), LaunchRequest(agent="pi", agent_id=agent_id),
-                identity="s1", activation="a1")
+                identity="s1", activation="a1", continuing=continuing)
 
     def followers(self) -> dict[str, TranscriptFollower]:
         return self.service._followers  # pyright: ignore[reportPrivateUsage]
@@ -367,6 +430,13 @@ class TestBottleService(_Root):
         self.service._unfollow("s1", cast(Any, self.bottle))  # pyright: ignore[reportPrivateUsage]
         self.assertEqual({}, self.followers())
         self.assertEqual([(2, True)], [(c["size"], c["final"]) for c in self.captured()])
+
+    def test_a_kept_home_continues_its_files(self) -> None:
+        (self.guest / "s.jsonl").write_text("a\n")
+        self.follow(self.pi_plan, continuing=True)
+        follow = json.loads((self.copy_dir() / "follow.json").read_text())
+        self.assertEqual({str(self.guest / "s.jsonl"): 2}, follow["start"])
+        self.service._unfollow("s1", cast(Any, self.bottle))  # pyright: ignore[reportPrivateUsage]
 
     def test_a_console_launch_records_its_agent_id(self) -> None:
         self.follow(self.pi_plan, agent_id="c-42")

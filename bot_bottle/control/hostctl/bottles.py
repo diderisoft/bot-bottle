@@ -395,13 +395,14 @@ class BottleService:
                     # The registry id names this run in the journal.
                     activation = bottle.registry_id or str(uuid.uuid4())
                     # Onto its kept home, the agent picks up its last conversation.
+                    continuing = getattr(bottle, "home_kept", False) is True
                     command, env = bottle.agent_command(agent_args(
                         harness, plan.agent_provision.startup_args, request.prompt,
-                        headless=request.headless,
-                        resume=getattr(bottle, "home_kept", False) is True))
+                        headless=request.headless, resume=continuing))
                     with self._lock:
                         self._held[identity] = held
-                    self._follow(plan, bottle, request, identity=identity, activation=activation)
+                    self._follow(plan, bottle, request, identity=identity, activation=activation,
+                                 continuing=continuing)
                     # Lets a restarted controller finish this bottle.
                     record = adoption.record_for(plan, bottle)
                     try:
@@ -486,8 +487,9 @@ class BottleService:
     # --- transcripts ---
 
     def _follow(self, plan: "BottlePlan", bottle: "Bottle", request: LaunchRequest, *,
-                identity: str, activation: str) -> None:
-        """Start copying the session's transcript, if its harness keeps one."""
+                identity: str, activation: str, continuing: bool = False) -> None:
+        """Start copying the session's transcript, if its harness keeps one;
+        `continuing` its last conversation, from where that left off."""
         # pylint: disable=import-outside-toplevel
         from ...agent_provider import get_provider
         from .remote import terminal_agent_id
@@ -499,7 +501,7 @@ class BottleService:
             follower = TranscriptFollower.begin(
                 bottle, session=identity, activation=activation, glob=glob,
                 agent_id=request.agent_id or terminal_agent_id(identity, activation),
-                audit=self.audit, harness=harness)
+                audit=self.audit, harness=harness, continuing=continuing)
         except Exception as e:  # pylint: disable=broad-exception-caught  # the agent runs regardless
             # Not a launch warning: the agent runs as usual, without a copy.
             log.info(f"bottle {identity}: not copying its transcript: {e}")

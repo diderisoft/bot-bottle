@@ -130,7 +130,11 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
 (pi, Claude) has active.
 
 - At launch a follower notes the files already matching the glob (another
-  session's, never copied) and writes `follow.json`. Then, once a second and
+  session's, never copied) and writes `follow.json`. A resume (the bottle's
+  home kept, its harness continuing its last conversation, as Claude's
+  `--continue` appends to the file it was writing) notes each file's size
+  instead, in `follow.json` as `start`: what the agent adds to a file is
+  copied from there, the earlier run's copy holding the rest. Then, once a second and
   once more after the agent exits, one `exec` into the bottle reads each new
   file's new bytes by offset (up to 4 MiB a poll) and the 64 bytes before
   the offset. A quiet transcript is polled less often, doubling up to every 5
@@ -145,7 +149,8 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
 - The bytes are appended exactly as read to
   `~/.bot-bottle/transcripts/<session>/<activation>/<file>.jsonl` (0600, in
   0700 directories), with
-  `<file>.meta.json` beside it: the guest path, the offset read and the
+  `<file>.meta.json` beside it: the guest path, the offset read, the guest
+  offset the copy starts at (`start`, for a resumed run's copy) and the
   console agent id (the console's for a console launch, otherwise
   `terminal_agent_id`). The copy isn't parsed or masked; entries are parsed
   when read (`AgentProvider.parse_transcript`).
@@ -163,8 +168,11 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
   transcript-retention [DAYS]`, default 30), at start and daily after, with
   a `transcript.deleted` event listing each copy's size and SHA-256.
 - The console reads a conversation over the link (`transcript_serve.py`):
-  `transcript` returns a page of the agent's entries from the copy its
-  console agent id names, on the harness's active branch, and
+  `transcript` returns a page of the agent's entries, on the harness's
+  active branch, from the transcript file its console agent id last opened
+  (a `/clear` starts a new one), put together from that file's copies
+  across the bottle's runs in the order they were made: a resumed run's
+  copy continues at its `start`, a rewrite starts the file over. And
   `transcript_appended` tells it when more landed. Entries are parsed when
   read and masked before they leave the host, with the egress scanner's
   `redact_tokens`: token patterns, and every value in the host's secrets

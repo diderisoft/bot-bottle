@@ -2,9 +2,11 @@
 
 A copy is found by the console agent id recorded beside it, so the console
 can read a session's conversation before and after a host controller
-restart, and after the session ends, until retention deletes it. A run shows
-the transcript file it started with (its first copy, or that file's latest
-rewrite). Entries are parsed when read, on the harness's active branch, and
+restart, and after the session ends, until retention deletes it. The agent's
+conversation is the transcript file it opened last (a /clear starts a new
+one), put together from its copies across the bottle's runs: a resumed run
+copies only what the agent added to a file the earlier run copied. Entries
+are parsed when read, on the harness's active branch, and
 masked before they leave the host: token patterns, and every value in the
 host's secrets file in its common encodings (`redact_tokens`, the egress
 scanner's rules). Search runs over the masked text, so a query can't confirm
@@ -53,6 +55,51 @@ class Copy:
     activation: str
 
 
+@dataclass(frozen=True)
+class _Piece:
+    """One host copy: part of a guest file, from guest offset `start`."""
+
+    path: Path
+    guest: str
+    start: int
+    opened: float
+    agent_id: str
+
+    @property
+    def run(self) -> Path:
+        return self.path.parent
+
+
+@dataclass(frozen=True)
+class Conversation:
+    """The guest file an agent's conversation is in, as its copies in the
+    order they were made; `copy` is the newest."""
+
+    pieces: tuple[_Piece, ...]
+    copy: Copy
+
+    def read(self) -> bytes | None:
+        """The guest file's bytes as copied, whole lines only; None when no
+        piece can be read."""
+        data: bytes | None = None
+        for piece in self.pieces:
+            try:
+                more = piece.path.read_bytes()
+            except OSError:
+                continue
+            if data is None or piece.start <= 0:
+                data = more  # the whole file: its first copy, or a rewrite
+                continue
+            if len(data) > piece.start:
+                data = data[:piece.start]
+            elif len(data) < piece.start:
+                # A gap (a copy that never finished): drop its cut line.
+                data = data[:data.rfind(b"\n") + 1]
+            data += more
+        # Only whole lines: the last may still be arriving.
+        return None if data is None else data[:data.rfind(b"\n") + 1]
+
+
 def _read(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text())
@@ -67,29 +114,44 @@ def _harness(follow: dict[str, Any], guest_path: str) -> str:
     return next((h for marker, h in _HARNESS_BY_PATH if marker in guest_path), "")
 
 
-def find_copy(agent_id: str) -> Copy | None:
-    """The copy the console agent's newest run shows, or None."""
+def _pieces(root: Path) -> list[_Piece]:
+    out = []
+    for meta_path in root.glob("*/*/*.meta.json"):
+        meta = _read(meta_path)
+        copy = meta_path.with_name(meta_path.name.removesuffix(".meta.json") + ".jsonl")
+        try:
+            opened = float(meta.get("opened") or 0.0) or copy.stat().st_mtime
+        except OSError:
+            opened = 0.0
+        out.append(_Piece(copy, str(meta.get("guest_path", "")), int(meta.get("start") or 0),
+                          opened, str(meta.get("agent_id", ""))))
+    return out
+
+
+def find_conversation(agent_id: str) -> Conversation | None:
+    """The console agent's conversation: the guest file it opened last, with
+    every copy of that file its bottle's runs made (a resumed run's starts
+    where the earlier one's ended), or None."""
     root = transcripts_root()
     if not agent_id or not root.is_dir():
         return None
-    runs: dict[Path, list[tuple[float, str, Path]]] = {}
-    for meta_path in root.glob("*/*/*.meta.json"):
-        meta = _read(meta_path)
-        if meta.get("agent_id") != agent_id:
-            continue
-        copy = meta_path.with_name(meta_path.name.removesuffix(".meta.json") + ".jsonl")
-        opened = float(meta.get("opened") or 0.0) or copy.stat().st_mtime \
-            if copy.exists() else 0.0
-        runs.setdefault(meta_path.parent, []).append((opened, str(meta.get("guest_path")), copy))
-    if not runs:
+    pieces = _pieces(root)
+    mine = [p for p in pieces if p.agent_id == agent_id]
+    if not mine:
         return None
-    # The newest run, by when its first copy opened.
-    run = max(runs, key=lambda r: min(o for o, _g, _c in runs[r]))
-    copies = sorted(runs[run])
-    first_guest = copies[0][1]
-    latest = max((c for c in copies if c[1] == first_guest), key=lambda c: c[0])[2]
-    follow = _read(run / "follow.json")
-    return Copy(latest, _harness(follow, first_guest), run.parent.name, run.name)
+    newest = max(mine, key=lambda p: p.opened)
+    sessions = {p.run.parent for p in mine}
+    chain = sorted((p for p in pieces if p.guest == newest.guest and p.run.parent in sessions),
+                   key=lambda p: p.opened)
+    follow = _read(newest.run / "follow.json")
+    return Conversation(tuple(chain), Copy(chain[-1].path, _harness(follow, newest.guest),
+                                           newest.run.parent.name, newest.run.name))
+
+
+def find_copy(agent_id: str) -> Copy | None:
+    """The copy the console agent's conversation is being written to, or None."""
+    found = find_conversation(agent_id)
+    return None if found is None else found.copy
 
 
 def _secret_values() -> dict[str, str]:
@@ -113,27 +175,25 @@ class TranscriptReader:
     """Parsed, masked entries per copy, reparsed only when the copy grows."""
 
     def __init__(self) -> None:
-        self._cache: dict[Path, tuple[int, list["TranscriptEntry"]]] = {}
+        self._cache: dict[str, tuple[Any, list["TranscriptEntry"]]] = {}
         self._lock = threading.Lock()
 
     def entries(self, agent_id: str) -> list["TranscriptEntry"] | None:
         """The agent's active, masked entries; None without a copy."""
-        copy = find_copy(agent_id)
-        if copy is None:
+        found = find_conversation(agent_id)
+        if found is None:
             return None
-        try:
-            data = copy.path.read_bytes()
-        except OSError:
+        data = found.read()
+        if data is None:
             return None
-        # Only whole lines: the last may still be arriving.
-        data = data[:data.rfind(b"\n") + 1]
+        signature = (tuple(p.path for p in found.pieces), len(data))
         with self._lock:
-            cached = self._cache.get(copy.path)
-            if cached is not None and cached[0] == len(data):
+            cached = self._cache.get(agent_id)
+            if cached is not None and cached[0] == signature:
                 return cached[1]
-        parsed = self._parse(copy, data)
+        parsed = self._parse(found.copy, data)
         with self._lock:
-            self._cache[copy.path] = (len(data), parsed)
+            self._cache[agent_id] = (signature, parsed)
         return parsed
 
     @staticmethod
@@ -314,5 +374,5 @@ class TranscriptLink:
         self._working.pop(agent_id, None)
 
 
-__all__ = ["Copy", "MAX_PAGE", "PAGE", "TranscriptLink", "TranscriptReader", "WORKING_FOR",
-           "find_copy", "is_working", "mask"]
+__all__ = ["Conversation", "Copy", "MAX_PAGE", "PAGE", "TranscriptLink", "TranscriptReader", "WORKING_FOR",
+           "find_conversation", "find_copy", "is_working", "mask"]
