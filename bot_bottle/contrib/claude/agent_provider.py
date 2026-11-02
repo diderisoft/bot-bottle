@@ -1,6 +1,6 @@
 """Claude agent provider: the claude.json trust marker, the api.anthropic.com
-route, the OAuth-token placeholder, and supervise registration via `claude mcp
-add`."""
+route, the OAuth-token or API-key placeholder, and supervise registration via
+`claude mcp add`."""
 
 from __future__ import annotations
 
@@ -40,6 +40,8 @@ if TYPE_CHECKING:
 
 
 _SUPERVISE_MCP_NAME = "supervise"
+# What the agent holds instead of a real credential; the gateway replaces it.
+_EGRESS_PLACEHOLDER = "egress-placeholder"
 # Stands in for the identity token in the manual-recovery hint, which goes to
 # the host launch log. The operator takes the value from the bottle's
 # HTTPS_PROXY.
@@ -156,6 +158,11 @@ class ClaudeAgentProvider(AgentProvider):
         startup_args = provider_startup_args(provider_settings)
         guest_home = self.guest_home
         trusted_path = trusted_project_path or guest_home
+        # `settings.api_key_env` names the host secret holding an Anthropic
+        # API key. The manifest refuses it alongside the OAuth options.
+        api_key_env = str((provider_settings or {}).get("api_key_env", "") or "")
+        if auth_token or forward_host_credentials:
+            api_key_env = ""
 
         env_vars: dict[str, str] = {
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
@@ -177,6 +184,13 @@ class ClaudeAgentProvider(AgentProvider):
             "bypassPermissionsModeAccepted": True,
             "projects": claude_projects,
         }
+        if api_key_env:
+            # Claude Code asks once whether to use an ANTHROPIC_API_KEY it
+            # finds, keyed by the key's last 20 characters; pre-approve the
+            # placeholder.
+            payload["customApiKeyResponses"] = {
+                "approved": [_EGRESS_PLACEHOLDER[-20:]], "rejected": [],
+            }
         claude_config.write_text(json.dumps(payload, indent=2) + "\n")
         claude_config.chmod(0o600)
         files = [
@@ -226,14 +240,24 @@ class ClaudeAgentProvider(AgentProvider):
             CLAUDE_HOST_CREDENTIAL_TOKEN_REF if forward_host_credentials
             else auth_token
         )
-        egress_routes = (EgressRoute(
-            host="api.anthropic.com",
-            auth_scheme="Bearer" if (auth_token or forward_host_credentials) else "",
-            token_ref=cred_token_ref,
-        ),)
         hidden_env_names: frozenset[str] = frozenset()
+        if api_key_env:
+            # An API key goes in `x-api-key`, raw, as Claude Code sends it.
+            egress_routes = (EgressRoute(
+                host="api.anthropic.com",
+                auth_header="x-api-key",
+                token_ref=api_key_env,
+            ),)
+            env_vars["ANTHROPIC_API_KEY"] = _EGRESS_PLACEHOLDER
+            hidden_env_names = frozenset({"ANTHROPIC_API_KEY"})
+        else:
+            egress_routes = (EgressRoute(
+                host="api.anthropic.com",
+                auth_scheme="Bearer" if (auth_token or forward_host_credentials) else "",
+                token_ref=cred_token_ref,
+            ),)
         if auth_token or forward_host_credentials:
-            env_vars["CLAUDE_CODE_OAUTH_TOKEN"] = "egress-placeholder"
+            env_vars["CLAUDE_CODE_OAUTH_TOKEN"] = _EGRESS_PLACEHOLDER
             hidden_env_names = frozenset({"CLAUDE_CODE_OAUTH_TOKEN"})
 
         has_prompt = prompt_file.exists() and bool(prompt_file.read_text())

@@ -104,6 +104,7 @@ def egress_manifest_routes(
             host=r.Host,
             matches=tuple(core_matches),
             auth_scheme=r.AuthScheme,
+            auth_header=r.AuthHeader,
             token_ref=r.TokenRef,
             roles=r.Role,
             git_fetch=r.GitFetch,
@@ -153,7 +154,7 @@ def _assign_token_slots(
     slot_for_ref: dict[str, str] = {}
     out: list[EgressRoute] = []
     for r in routes:
-        if r.auth_scheme and r.token_ref:
+        if (r.auth_scheme or r.auth_header) and r.token_ref:
             slot = slot_for_ref.get(r.token_ref)
             if slot is None:
                 slot = f"EGRESS_TOKEN_{len(slot_for_ref)}"
@@ -169,7 +170,7 @@ def egress_token_env_map(
 ) -> dict[str, str]:
     out: dict[str, str] = {}
     for r in routes:
-        if not (r.auth_scheme and r.token_ref and r.token_env):
+        if not (r.injects_auth and r.token_ref):
             continue
         existing = out.get(r.token_env)
         if existing is not None and existing != r.token_ref:
@@ -199,8 +200,11 @@ def _route_to_yaml_fields(r: Route) -> dict[str, object]:
         fields["inspect"] = False
         return fields
     inspect: dict[str, object] = {}
-    if r.auth_scheme and r.token_env:
-        inspect["auth_scheme"] = r.auth_scheme
+    if r.injects_auth:
+        if r.auth_scheme:
+            inspect["auth_scheme"] = r.auth_scheme
+        if r.auth_header:
+            inspect["auth_header"] = r.auth_header
         inspect["token_env"] = r.token_env
     if r.matches:
         matches_data: list[dict[str, object]] = []
@@ -313,6 +317,9 @@ def egress_render_routes(
         lines.append("    inspect:")
         if "auth_scheme" in inspect:
             lines.append(f'      auth_scheme: "{_yaml_str_escape(str(inspect["auth_scheme"]))}"')
+        if "auth_header" in inspect:
+            lines.append(f'      auth_header: "{_yaml_str_escape(str(inspect["auth_header"]))}"')
+        if "token_env" in inspect:
             lines.append(f'      token_env: "{_yaml_str_escape(str(inspect["token_env"]))}"')
         if "matches" in inspect:
             lines.append("      matches:")

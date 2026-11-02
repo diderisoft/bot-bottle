@@ -9,6 +9,14 @@ from typing import cast
 from .util import ManifestError, as_json_object
 
 EGRESS_AUTH_SCHEMES = ("Bearer", "token")
+# `auth.header`: an HTTP header name, not one of these (framing, routing and
+# the gateway's cookie handling). Mirrors `gateway/egress/types.py`.
+_HEADER_NAME = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
+RESERVED_AUTH_HEADERS = frozenset({
+    "host", "cookie", "proxy-authorization", "content-length",
+    "transfer-encoding", "connection", "te", "trailer", "upgrade",
+    "keep-alive",
+})
 
 PATH_MATCH_TYPES = ("exact", "prefix", "regex")
 HEADER_MATCH_TYPES = ("exact", "regex")
@@ -65,6 +73,9 @@ class ManifestEgressRoute:
     Host: str
     Matches: tuple[ManifestMatchEntry, ...] = ()
     AuthScheme: str = ""
+    # The header the token goes in; "" is `Authorization`. With no scheme the
+    # raw token is sent.
+    AuthHeader: str = ""
     TokenRef: str = ""
     Role: tuple[str, ...] = ()
     GitFetch: bool = False
@@ -109,6 +120,7 @@ class ManifestEgressRoute:
 
         # --- auth ---
         auth_scheme = ""
+        auth_header = ""
         token_ref = ""
         if "auth" in inspect_d:
             auth_raw = inspect_d.get("auth")
@@ -117,15 +129,33 @@ class ManifestEgressRoute:
                 raise ManifestError(
                     f"{label} auth is empty ({{}}); omit the 'auth' key "
                     f"entirely if this route is unauthenticated. Otherwise "
-                    f"both 'scheme' and 'token_ref' are required."
+                    f"'token_ref' and 'scheme' or 'header' are required."
                 )
-            auth_scheme_raw = auth_d.get("scheme")
-            if not isinstance(auth_scheme_raw, str) or not auth_scheme_raw:
+            auth_header_raw = auth_d.get("header", "")
+            if not isinstance(auth_header_raw, str):
+                raise ManifestError(
+                    f"{label} auth.header must be a string "
+                    f"(was {type(auth_header_raw).__name__})"
+                )
+            if auth_header_raw and not _HEADER_NAME.match(auth_header_raw):
+                raise ManifestError(
+                    f"{label} auth.header {auth_header_raw!r} is not a valid "
+                    f"HTTP header name"
+                )
+            if auth_header_raw.lower() in RESERVED_AUTH_HEADERS:
+                raise ManifestError(
+                    f"{label} auth.header {auth_header_raw!r} is reserved"
+                )
+            # With a named header and no scheme, the raw token is sent.
+            auth_scheme_raw = auth_d.get("scheme", "" if auth_header_raw else None)
+            if not isinstance(auth_scheme_raw, str) or not (
+                auth_scheme_raw or auth_header_raw
+            ):
                 raise ManifestError(
                     f"{label} auth.scheme is required when 'auth' is set "
-                    f"(non-empty string)"
+                    f"without 'header' (non-empty string)"
                 )
-            if auth_scheme_raw not in EGRESS_AUTH_SCHEMES:
+            if auth_scheme_raw and auth_scheme_raw not in EGRESS_AUTH_SCHEMES:
                 raise ManifestError(
                     f"{label} auth.scheme {auth_scheme_raw!r} is not one of "
                     f"{', '.join(EGRESS_AUTH_SCHEMES)}"
@@ -137,12 +167,13 @@ class ManifestEgressRoute:
                     f"(name of the host env var holding the token value)"
                 )
             for k in auth_d:
-                if k not in ("scheme", "token_ref"):
+                if k not in ("scheme", "header", "token_ref"):
                     raise ManifestError(
                         f"{label} auth has unknown key {k!r}; "
-                        f"only 'scheme' and 'token_ref' are accepted"
+                        f"only 'scheme', 'header' and 'token_ref' are accepted"
                     )
             auth_scheme = auth_scheme_raw
+            auth_header = auth_header_raw.lower()
             token_ref = token_ref_raw
 
         # --- role (reserved) ---
@@ -233,6 +264,7 @@ class ManifestEgressRoute:
             Host=host,
             Matches=matches,
             AuthScheme=auth_scheme,
+            AuthHeader=auth_header,
             TokenRef=token_ref,
             Role=roles,
             GitFetch=git_fetch,

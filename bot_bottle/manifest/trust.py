@@ -78,6 +78,8 @@ def provider_grants(provider: ManifestAgentProvider) -> list[str]:
         lines.append(f"use     your {provider.harness} login")
     base_url = provider.settings.get("base_url")
     key_env = provider.settings.get("api_key_env")
+    if key_env and not base_url:
+        lines.append(f"use     ${key_env} as your {provider.harness} API key")
     if isinstance(base_url, str) and base_url:
         host = urlparse(base_url).hostname or base_url
         lines.append(f"reach   {host}" + (f" with ${key_env}" if key_env else ""))

@@ -8,8 +8,30 @@ from bot_bottle.gateway.egress.request_pipeline import (
     GIT_PUSH_BLOCK_REASON,
     evaluate_route_policy,
     git_block_reason,
+    strip_credential_query,
 )
-from bot_bottle.gateway.egress.types import Config, LOG_FULL, Route
+from bot_bottle.gateway.egress.types import (
+    Config, HeaderMatch, LOG_FULL, MatchEntry, Route,
+)
+
+
+class TestStripCredentialQuery(unittest.TestCase):
+    def test_no_query_is_unchanged(self) -> None:
+        self.assertEqual("/a/b", strip_credential_query("/a/b"))
+
+    def test_clean_query_is_kept_byte_for_byte(self) -> None:
+        path = "/s?q=a%20b&tokenizer=x&key_id=1&&flag"
+        self.assertEqual(path, strip_credential_query(path))
+
+    def test_credential_params_are_dropped(self) -> None:
+        self.assertEqual(
+            "/s?q=1&page=2",
+            strip_credential_query(
+                "/s?access_token=a&q=1&KEY=b&page=2&api%5Fkey=c&apikey&private_token=d"),
+        )
+
+    def test_only_credentials_drops_the_question_mark(self) -> None:
+        self.assertEqual("/s", strip_credential_query("/s?token=x"))
 
 
 class TestGitPolicy(unittest.TestCase):
@@ -71,6 +93,24 @@ class TestRoutePolicy(unittest.TestCase):
         )
         self.assertFalse(result.strip_authorization)
         self.assertTrue(result.log_request)
+
+    def test_named_header_injects_the_raw_token(self) -> None:
+        route = Route(host="api.example.com", auth_header="x-custom-key", token_env="T")
+        result = evaluate_route_policy(
+            Config(routes=(route,)), route, host="api.example.com",
+            request_path="/", method="GET", headers={}, env={"T": "raw-key"})
+        self.assertEqual("raw-key", result.inject_authorization)
+        self.assertEqual("x-custom-key", result.inject_header)
+        self.assertIn("x-custom-key", result.strip_headers)
+        self.assertIn("authorization", result.strip_headers)
+
+    def test_matching_sees_headers_without_agent_credentials(self) -> None:
+        route = Route(host="api.example.com", matches=(MatchEntry(
+            headers=(HeaderMatch(name="x-api-key", value="k"),)),))
+        result = evaluate_route_policy(
+            Config(routes=(route,)), route, host="api.example.com",
+            request_path="/", method="GET", headers={"X-Api-Key": "k"}, env={})
+        self.assertEqual("route", result.block_code)
 
     def test_missing_route_fails_closed(self) -> None:
         result = evaluate_route_policy(

@@ -9,7 +9,10 @@ partial `auth` is an error, auth omission means unauthenticated."""
 
 import unittest
 
+from bot_bottle.egress import egress_render_routes, egress_routes_for_bottle, egress_token_env_map
+from bot_bottle.gateway.egress.schema import load_config, route_to_yaml_dict
 from bot_bottle.manifest import ManifestError, ManifestIndex
+from bot_bottle.manifest.document import route_document
 
 
 def _inspect_routes(routes):  # type: ignore
@@ -159,6 +162,39 @@ class TestAgentProviderHostCredentials(unittest.TestCase):
                 "harness": "claude",
                 "auth_token": 42,
             })
+
+    def test_api_key_env_allowed_for_claude(self):
+        b = _provider_config_agent({
+            "harness": "claude",
+            "settings": {"api_key_env": "ANTHROPIC_API_KEY"},
+        })
+        self.assertEqual("ANTHROPIC_API_KEY", b.agent_provider.settings["api_key_env"])
+
+    def test_api_key_env_is_shown_as_a_grant(self):
+        from bot_bottle.manifest.trust import provider_grants
+        b = _provider_config_agent({
+            "harness": "claude",
+            "settings": {"api_key_env": "ANTHROPIC_API_KEY"},
+        })
+        self.assertIn("use     $ANTHROPIC_API_KEY as your claude API key",
+                      provider_grants(b.agent_provider))
+
+    def test_api_key_env_must_be_a_name(self):
+        for value in ("", 3):
+            with self.subTest(value=value), self.assertRaises(ManifestError):
+                _provider_config_agent({"harness": "claude",
+                                        "settings": {"api_key_env": value}})
+
+    def test_api_key_env_rejected_with_oauth_options(self):
+        for extra in ({"auth_token": "T"}, {"forward_host_credentials": True}):
+            with self.subTest(extra=extra), self.assertRaises(ManifestError):
+                _provider_config_agent({"harness": "claude",
+                                        "settings": {"api_key_env": "K"}, **extra})
+
+    def test_api_key_env_rejected_for_codex(self):
+        with self.assertRaises(ManifestError):
+            _provider_config_agent({"harness": "codex",
+                                    "settings": {"api_key_env": "K"}})
 
     def test_auth_token_rejected_for_codex(self):
         with self.assertRaises(ManifestError):
@@ -496,6 +532,59 @@ class TestAuth(unittest.TestCase):
                 "host": "x.example",
                 "auth": {"scheme": "Bearer", "token_ref": "T", "extra": "no"},
             }])
+
+    def test_header_without_scheme_sends_the_raw_token(self):
+        b = _bottle([{
+            "host": "api.anthropic.com",
+            "auth": {"header": "X-Api-Key", "token_ref": "ANTHROPIC_API_KEY"},
+        }])
+        r = b.egress.routes[0]
+        self.assertEqual("", r.AuthScheme)
+        self.assertEqual("x-api-key", r.AuthHeader)
+        self.assertEqual("ANTHROPIC_API_KEY", r.TokenRef)
+
+    def test_header_with_scheme(self):
+        b = _bottle([{
+            "host": "x.example",
+            "auth": {"header": "x-auth", "scheme": "Bearer", "token_ref": "T"},
+        }])
+        self.assertEqual(("Bearer", "x-auth"),
+                         (b.egress.routes[0].AuthScheme, b.egress.routes[0].AuthHeader))
+
+    def test_header_needs_token_ref(self):
+        with self.assertRaises(ManifestError):
+            _bottle([{"host": "x.example", "auth": {"header": "x-api-key"}}])
+
+    def test_invalid_or_reserved_header_rejected(self):
+        for header in ("x api key", "Host", "cookie", "proxy-authorization", 7):
+            with self.subTest(header=header), self.assertRaises(ManifestError):
+                _bottle([{"host": "x.example",
+                          "auth": {"header": header, "token_ref": "T"}}])
+
+    def test_header_route_renders_and_parses_on_the_gateway(self):
+        b = _bottle([{
+            "host": "api.anthropic.com",
+            "auth": {"header": "x-api-key", "token_ref": "ANTHROPIC_API_KEY"},
+        }])
+        routes = egress_routes_for_bottle(b)
+        self.assertEqual({"EGRESS_TOKEN_0": "ANTHROPIC_API_KEY"}, egress_token_env_map(routes))
+        config = load_config(egress_render_routes(routes))
+        route = config.routes[0]
+        self.assertEqual(("", "x-api-key", "EGRESS_TOKEN_0"),
+                         (route.auth_scheme, route.auth_header, route.token_env))
+        self.assertEqual({"host": "api.anthropic.com",
+                          "inspect": {"auth_header": "x-api-key",
+                                      "token_env": "EGRESS_TOKEN_0"}},
+                         route_to_yaml_dict(route))
+
+    def test_header_route_round_trips_through_the_bottle_document(self):
+        b = _bottle([{
+            "host": "api.anthropic.com",
+            "auth": {"header": "x-api-key", "token_ref": "K"},
+        }])
+        self.assertEqual({"host": "api.anthropic.com",
+                          "inspect": {"auth": {"header": "x-api-key", "token_ref": "K"}}},
+                         route_document(b.egress.routes[0]))
 
 
 class TestRole(unittest.TestCase):

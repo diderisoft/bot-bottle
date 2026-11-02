@@ -44,6 +44,7 @@ from bot_bottle.gateway.egress.matching import (
 from bot_bottle.gateway.egress.request_pipeline import (
     evaluate_route_policy,
     git_block_reason,
+    strip_credential_query,
 )
 from bot_bottle.gateway.egress.schema import route_to_yaml_dict
 from bot_bottle.gateway.egress.types import (
@@ -502,9 +503,11 @@ class EgressAddon:
         self, flow: http.HTTPFlow, config: Config, route: Route | None,
         request_path: str, env: "typing.Mapping[str, str]",
     ) -> None:
-        """Strip agent auth, evaluate the route, inject gateway auth."""
-        # Agent auth is stripped after the DLP scan, unless the route sets
-        # `preserve_auth`.
+        """Strip agent credentials, evaluate the route, inject gateway auth."""
+        # Agent credentials (every CREDENTIAL_HEADERS header, the header the
+        # route injects into, and every CREDENTIAL_QUERY_PARAMS parameter) are
+        # stripped after the DLP scan and before injection, unless the route
+        # sets `preserve_auth`.
         result = evaluate_route_policy(
             config,
             route,
@@ -515,7 +518,12 @@ class EgressAddon:
             env=env,
         )
         if result.strip_authorization:
-            flow.request.headers.pop("authorization", None)
+            for name in [n for n in flow.request.headers.keys()
+                         if n.lower() in result.strip_headers]:
+                flow.request.headers.pop(name, None)
+            stripped_path = strip_credential_query(flow.request.path)
+            if stripped_path != flow.request.path:
+                flow.request.path = stripped_path
 
         if result.block_reason:
             self._block(flow, result.block_reason, ctx=self._req_ctx(flow),
@@ -523,7 +531,7 @@ class EgressAddon:
             return
 
         if result.inject_authorization is not None:
-            flow.request.headers["authorization"] = result.inject_authorization
+            flow.request.headers[result.inject_header] = result.inject_authorization
 
         if result.log_request:
             self._log_request(flow, env)

@@ -165,7 +165,8 @@ class BottlePlan(ABC):
         if self.egress_plan.routes:
             egress_lines = []
             for r in self.egress_plan.routes:
-                auth = f" [auth:{r.auth_scheme}]" if r.auth_scheme else ""
+                auth = (f" [auth:{r.auth_scheme or r.auth_header}]"
+                        if r.auth_scheme or r.auth_header else "")
                 egress_lines.append(f"{r.host}{auth}")
             print_multi("  egress        ", egress_lines)
         print(file=sys.stderr)

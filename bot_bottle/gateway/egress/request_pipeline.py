@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Mapping, Sequence
+from urllib.parse import unquote_plus
 
 from .matching import (
     decide,
@@ -23,6 +24,50 @@ GIT_PUSH_BLOCK_REASON = (
     "the bottle doesn't have needs the operator to add it."
 )
 
+# Request positions an agent can carry a credential in. They're stripped on
+# every route without `preserve_auth`, so the route's injected auth (always
+# `Authorization`) is the only identity that goes upstream. This is a
+# denylist and can't be complete. `Proxy-Authorization` and the identity
+# header belong to the gateway and are stripped earlier. `Cookie` isn't here.
+CREDENTIAL_HEADERS = frozenset({
+    "authorization",
+    "x-api-key",
+    "api-key",
+    "x-goog-api-key",
+    "private-token",
+    "x-auth-token",
+    "x-access-token",
+    "x-gitea-token",
+    "x-vault-token",
+    "x-amz-security-token",
+    "ocp-apim-subscription-key",
+})
+CREDENTIAL_QUERY_PARAMS = frozenset({
+    "access_token",
+    "token",
+    "key",
+    "api_key",
+    "apikey",
+    "private_token",
+})
+
+
+def strip_credential_query(path: str) -> str:
+    """`path` without its credential query parameters. Names are compared
+    decoded and case-insensitively; every other byte is kept."""
+    base, sep, query = path.partition("?")
+    if not sep:
+        return path
+    pairs = query.split("&")
+    kept = [
+        pair for pair in pairs
+        if unquote_plus(pair.partition("=")[0]).strip().lower()
+        not in CREDENTIAL_QUERY_PARAMS
+    ]
+    if len(kept) == len(pairs):
+        return path
+    return f"{base}?{'&'.join(kept)}" if kept else base
+
 
 @dataclass(frozen=True)
 class RoutePolicyResult:
@@ -31,8 +76,20 @@ class RoutePolicyResult:
     block_reason: str = ""
     block_code: str = ""
     strip_authorization: bool = False
+    # The headers stripped when `strip_authorization` (lowercased).
+    strip_headers: frozenset[str] = frozenset()
     inject_authorization: str | None = None
+    # The header `inject_authorization` goes in (lowercased).
+    inject_header: str = "authorization"
     log_request: bool = False
+
+
+def credential_headers(route: Route | None) -> frozenset[str]:
+    """The agent headers stripped on `route`: `CREDENTIAL_HEADERS`, plus the
+    header the route injects its auth into."""
+    if route is not None and route.injects_auth:
+        return CREDENTIAL_HEADERS | {route.injected_header}
+    return CREDENTIAL_HEADERS
 
 
 def git_block_reason(
@@ -60,12 +117,16 @@ def evaluate_route_policy(
     headers: Mapping[str, str],
     env: Mapping[str, str],
 ) -> RoutePolicyResult:
-    """Auth stripping, matching, injection and logging decisions."""
+    """Auth stripping, matching, injection and logging decisions.
+    `strip_authorization` means every `strip_headers` header and
+    `CREDENTIAL_QUERY_PARAMS` parameter goes; `matches` sees the headers
+    without them, as they go upstream."""
     strip_authorization = route is None or not route.preserve_auth
+    strip_headers = credential_headers(route) if strip_authorization else frozenset()
     effective_headers = {
         name.lower(): value
         for name, value in headers.items()
-        if not (strip_authorization and name.lower() == "authorization")
+        if name.lower() not in strip_headers
     }
     decision = decide(
         config.routes,
@@ -80,14 +141,20 @@ def evaluate_route_policy(
         block_reason=decision.reason if decision.action == "block" else "",
         block_code=decision.code if decision.action == "block" else "",
         strip_authorization=strip_authorization,
+        strip_headers=strip_headers,
         inject_authorization=decision.inject_authorization,
+        inject_header=decision.inject_header,
         log_request=config.log >= LOG_FULL,
     )
 
 
 __all__ = [
+    "CREDENTIAL_HEADERS",
+    "CREDENTIAL_QUERY_PARAMS",
     "GIT_PUSH_BLOCK_REASON",
     "RoutePolicyResult",
+    "credential_headers",
     "evaluate_route_policy",
     "git_block_reason",
+    "strip_credential_query",
 ]
