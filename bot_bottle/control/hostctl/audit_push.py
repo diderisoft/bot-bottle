@@ -39,7 +39,8 @@ if TYPE_CHECKING:
 BATCH = 50
 _NS = uuid.UUID("6f0b6e8c-6c1f-4a8e-9b1a-2f6a6b0c7e51")
 _RECORD_TYPES = {"user": "user_message", "assistant": "assistant_message",
-                 "tool_call": "tool_call", "tool_result": "tool_result", "system": "system_event"}
+                 "tool_call": "tool_call", "tool_result": "tool_result_meta",
+                 "system": "system_event"}
 _SAFE = re.compile(r"[^A-Za-z0-9._-]")
 
 

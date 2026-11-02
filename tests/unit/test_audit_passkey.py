@@ -26,6 +26,7 @@ from bot_bottle.control.hostctl import audit_trust
 from bot_bottle.control.hostctl.audit_link import AuditLink
 from bot_bottle.control.hostctl.audit_push import (
     BATCH, AuditPusher, decrypt, encrypt, host_runs, load_key, load_state, record_id,
+    record_type,
 )
 from bot_bottle.control.hostctl.audit_unlock import (
     READS_PER_MINUTE, TOKEN_IDLE_SECONDS, TOKEN_MAX_SECONDS, AuditUnlock, UnlockError,
@@ -295,6 +296,14 @@ class TestPusher(_Tmp):
         self.assertEqual(BATCH + 6, len(self.sent))
         self.assertEqual(BATCH + 6, len({m["id"] for m in self.sent}))
         self.assertEqual("user_message", self.sent[-1]["record_type"])
+
+    def test_record_types_are_the_consoles(self) -> None:
+        allowed = {"user_message", "assistant_message", "tool_call", "tool_result_meta",
+                   "clear_event", "agent_error", "attention_event", "system_event"}
+        for kind in ("user", "assistant", "tool_call", "tool_result", "system", "other"):
+            with self.subTest(kind=kind):
+                self.assertIn(record_type(_Entry(0, kind=kind)), allowed)  # type: ignore
+        self.assertEqual("agent_error", record_type(_Entry(0, error=True)))  # type: ignore
 
     def test_the_chain_carries_on_across_runs(self) -> None:
         p = self.pusher()
