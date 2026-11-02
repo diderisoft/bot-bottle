@@ -334,6 +334,80 @@ class TestDispatch(unittest.TestCase):
         self.assertEqual(400, status)
 
 
+class TestVersionRoute(unittest.TestCase):
+    """GET /version — public, returns version/commit/protocol/images from env vars."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.orch = _orchestrator(Path(self._tmp.name) / "r.db")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_version_is_public(self) -> None:
+        env = {"BOT_BOTTLE_VERSION": "1.2.3", "BOT_BOTTLE_COMMIT": "abc",
+               "BOT_BOTTLE_PROTOCOL": "1"}
+        with patch.dict("os.environ", env):
+            status, _ = dispatch(self.orch, "GET", "/version", b"", role=None)
+        self.assertEqual(200, status)
+
+    def test_version_shape(self) -> None:
+        env = {"BOT_BOTTLE_VERSION": "0.1.6", "BOT_BOTTLE_COMMIT": "abc123",
+               "BOT_BOTTLE_PROTOCOL": "1"}
+        with patch.dict("os.environ", env):
+            _, payload = dispatch(self.orch, "GET", "/version", b"")
+        self.assertEqual("0.1.6", payload["version"])
+        self.assertEqual("abc123", payload["commit"])
+        self.assertEqual(1, payload["protocol"])
+        self.assertIsInstance(payload["images"], dict)
+
+    def test_local_build_shows_source_and_inputs_hash(self) -> None:
+        hash_val = "a1b2c3d4e5f60718"
+        env = {
+            "BOT_BOTTLE_VERSION": "0.1.6", "BOT_BOTTLE_COMMIT": "sha",
+            "BOT_BOTTLE_PROTOCOL": "1",
+            "BOT_BOTTLE_IMAGE_ORCHESTRATOR_SOURCE": "local",
+            "BOT_BOTTLE_IMAGE_ORCHESTRATOR_INPUTS_HASH": hash_val,
+            "BOT_BOTTLE_IMAGE_GATEWAY_SOURCE": "local",
+            "BOT_BOTTLE_IMAGE_GATEWAY_INPUTS_HASH": hash_val,
+        }
+        with patch.dict("os.environ", env):
+            _, payload = dispatch(self.orch, "GET", "/version", b"")
+        images = payload["images"]
+        assert isinstance(images, dict)
+        for image in ("bot-bottle-orchestrator", "bot-bottle-gateway"):
+            self.assertEqual({"source": "local", "inputs_hash": hash_val}, images[image])
+
+    def test_published_build_shows_digest(self) -> None:
+        digest = "sha256:" + "a" * 64
+        hash_val = "deadbeefcafe0011"
+        env = {
+            "BOT_BOTTLE_VERSION": "0.1.6", "BOT_BOTTLE_COMMIT": "",
+            "BOT_BOTTLE_PROTOCOL": "1",
+            "BOT_BOTTLE_IMAGE_ORCHESTRATOR_SOURCE": "published",
+            "BOT_BOTTLE_IMAGE_ORCHESTRATOR_DIGEST": digest,
+            "BOT_BOTTLE_IMAGE_ORCHESTRATOR_INPUTS_HASH": hash_val,
+        }
+        with patch.dict("os.environ", env):
+            _, payload = dispatch(self.orch, "GET", "/version", b"")
+        images = payload["images"]
+        assert isinstance(images, dict)
+        self.assertEqual(
+            {"source": "published", "digest": digest, "inputs_hash": hash_val},
+            images["bot-bottle-orchestrator"],
+        )
+
+    def test_no_env_vars_returns_unknown(self) -> None:
+        # Strip all BOT_BOTTLE_* vars to simulate an orchestrator started without them.
+        clean = {k: v for k, v in __import__("os").environ.items()
+                 if not k.startswith("BOT_BOTTLE_")}
+        with patch.dict("os.environ", clean, clear=True):
+            _, payload = dispatch(self.orch, "GET", "/version", b"")
+        self.assertEqual("unknown", payload["version"])
+        self.assertEqual(0, payload["protocol"])
+        self.assertEqual({}, payload["images"])
+
+
 class TestServerRoundTrip(unittest.TestCase):
     def _raw_status(self, content_length: str, *, authenticated: bool = True) -> int:
         tmp = tempfile.TemporaryDirectory()
@@ -538,6 +612,11 @@ class TestOrchestratorAuth(unittest.TestCase):
 
     def test_health_is_public_even_unauthenticated(self) -> None:
         status, _ = dispatch(self.orch, "GET", "/health", b"", role=None)
+        self.assertEqual(200, status)
+
+    def test_version_is_public_even_unauthenticated(self) -> None:
+        with patch.dict("os.environ", {"BOT_BOTTLE_VERSION": "0.1.6"}):
+            status, _ = dispatch(self.orch, "GET", "/version", b"", role=None)
         self.assertEqual(200, status)
 
     def test_unauthenticated_denies_every_other_route(self) -> None:

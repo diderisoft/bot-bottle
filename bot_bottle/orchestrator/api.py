@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import math
+import os
 import re
 import sys
 from collections.abc import AsyncGenerator
@@ -174,7 +175,7 @@ class ControlPlaneBoundary:
             return
         method = scope["method"]
         route = scope["path"].rstrip("/") or "/"
-        if not (method == "GET" and route == "/health"):
+        if not (method == "GET" and route in {"/health", "/version"}):
             role = self._role(scope)
             if role is None:
                 self.audit.token_rejected(f"{method} {route}", reason_code="invalid_token")
@@ -376,6 +377,40 @@ def create_app(
     @app.get("/gateway")
     def gateway() -> dict[str, object]:
         return orch.gateway_status()
+
+    @app.get("/version")
+    def version() -> dict[str, object]:
+        # Version info is injected as env vars by the host at container startup
+        # (via `infra_image.version_env_vars()`), since the container image only
+        # includes a subset of the host-side package.
+        def _s(key: str) -> str:
+            return os.environ.get(key, "")
+
+        def _i(key: str) -> int:
+            try:
+                return int(os.environ.get(key, ""))
+            except ValueError:
+                return 0
+
+        images: dict[str, object] = {}
+        for image in ("bot-bottle-gateway", "bot-bottle-orchestrator"):
+            role = image.removeprefix("bot-bottle-").upper()
+            prefix = f"BOT_BOTTLE_IMAGE_{role}"
+            source = _s(f"{prefix}_SOURCE")
+            if not source:
+                continue
+            entry: dict[str, object] = {"source": source}
+            if digest := _s(f"{prefix}_DIGEST"):
+                entry["digest"] = digest
+            if ih := _s(f"{prefix}_INPUTS_HASH"):
+                entry["inputs_hash"] = ih
+            images[image] = entry
+        return {
+            "version": _s("BOT_BOTTLE_VERSION") or "unknown",
+            "commit": _s("BOT_BOTTLE_COMMIT"),
+            "protocol": _i("BOT_BOTTLE_PROTOCOL"),
+            "images": images,
+        }
 
     @app.get("/bottles")
     def bottles() -> dict[str, object]:

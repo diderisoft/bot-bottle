@@ -22,7 +22,7 @@ from .util import image_exists as docker_image_exists
 from .util import run_docker
 from .util import tag_image as docker_tag_image
 from ...image_registry import RegistryError
-from ...infra_image import pinned_infra_artifact, pull_pinned_image
+from ...infra_image import pinned_infra_artifact, pull_pinned_image, version_env_vars
 from ...published_artifacts import FORMAT_OCI
 from ...contract.hostctl import Settings
 from ...contract.identity import ORCHESTRATOR_TOKEN_ENV
@@ -325,6 +325,7 @@ class DockerOrchestrator(Orchestrator):
 
     def _docker_run(self, port: int, current_hash: str, signing_key: str,
                     host_env: dict[str, str]) -> "subprocess.CompletedProcess[str]":
+        ver_env = version_env_vars()
         return run_docker([
             "docker", "run", "--detach",
             "--name", self.name,
@@ -345,6 +346,8 @@ class DockerOrchestrator(Orchestrator):
             # The host controller's URL and an `orchestrator` token, when it is
             # the one bringing this up.
             *[arg for name in sorted(host_env) for arg in ("--env", name)],
+            # Version info for GET /version (computed host-side, passed into image).
+            *[f"--env={k}={v}" for k, v in sorted(ver_env.items())],
             self.image_ref,
             # Args to the `python3 -m bot_bottle.orchestrator` entrypoint.
             "--host", "0.0.0.0", "--port", str(DEFAULT_PORT),

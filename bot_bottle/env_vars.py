@@ -205,6 +205,15 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "Secret name the gateway injects a forwarded Claude login under."),
     EnvVar("BOT_BOTTLE_CODEX_HOST_ACCESS_TOKEN", "internal",
            "Secret name the gateway injects a forwarded Codex login under."),
+    EnvVar("BOT_BOTTLE_VERSION", "internal",
+           "The host bot-bottle version string, injected into infra containers at "
+           "startup so `/version` can report it."),
+    EnvVar("BOT_BOTTLE_COMMIT", "internal",
+           "The host bot-bottle git commit hash, injected into infra containers at "
+           "startup so `/version` can report it."),
+    EnvVar("BOT_BOTTLE_PROTOCOL", "internal",
+           "The host bot-bottle protocol version (integer), injected into infra "
+           "containers at startup so `/version` can report it."),
 )
 
 # Names matched by a `BOT_BOTTLE_[A-Z0-9_]+` scan that aren't variables.
@@ -212,6 +221,7 @@ NOT_VARIABLES: dict[str, str] = {
     "BOT_BOTTLE_FC_": "prefix of the firecracker variables, in prose",
     "BOT_BOTTLE_DOCKER_": "prefix of the docker variables, in prose",
     "BOT_BOTTLE_BIN": "a local variable in install.sh, not read from the environment",
+    "BOT_BOTTLE_IMAGE_": "prefix of the per-image version env vars; names are constructed dynamically",
 }
 
 BY_NAME: dict[str, EnvVar] = {v.name: v for v in ENV_VARS}

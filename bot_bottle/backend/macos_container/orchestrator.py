@@ -29,7 +29,7 @@ from . import util as container_mod
 from ...image_registry import RegistryError
 from ...infra_image import (
     BUILD_WITH_CONTAINER, local_build_tag, note_local_build, pinned_infra_artifact,
-    pull_pinned_image,
+    pull_pinned_image, version_env_vars,
 )
 from ...published_artifacts import FORMAT_OCI
 from .gateway import CONTROL_NETWORK
@@ -156,6 +156,7 @@ class MacosOrchestrator(Orchestrator):
         # Raises rather than yield an empty key that would serve open.
         _signing_key = self.control_plane_key()
         host_env = self.host_control_env()
+        ver_env = version_env_vars()
         argv = [
             "container", "run", "--detach",
             "--name", self.name,
@@ -178,6 +179,8 @@ class MacosOrchestrator(Orchestrator):
             # The host controller's URL and token, when it is the one starting
             # this.
             *[arg for name in sorted(host_env) for arg in ("--env", name)],
+            # Version info for GET /version (computed host-side, passed into image).
+            *[f"--env={k}={v}" for k, v in sorted(ver_env.items())],
             self.image_ref,
             # Args to the `-m bot_bottle.orchestrator` entrypoint.
             "--host", "0.0.0.0", "--port", str(self.port),

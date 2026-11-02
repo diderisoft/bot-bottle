@@ -38,6 +38,7 @@ _HANDLERS: dict[str, str] = {
     "trust": "trust:cmd_trust",
     "uninstall": "uninstall:cmd_uninstall",
     "up": "lifecycle:cmd_up",
+    "version": "version:cmd_version",
 }
 
 
@@ -63,6 +64,7 @@ QUICK = _lazy("quick:cmd_quick")
 NO_MIGRATION_COMMANDS = frozenset({
     "attach", "audit", "bootstrap", "bottles", "doctor", "down", "envs", "forge", "help", "host",
     "install", "jobs", "pair", "setup", "status", "supervise", "trust", "uninstall", "up",
+    "version",
 })
 
 __all__ = ["COMMANDS", "NO_MIGRATION_COMMANDS", "QUICK"]
