@@ -647,6 +647,47 @@ class TestDecide(unittest.TestCase):
                     request_headers={"content-type": "text/html"})
         self.assertEqual("block", d.action)
 
+    def test_no_auth_no_matches_allows_reads(self):
+        route = Route(host="api.example.com")
+        for method in ("GET", "HEAD"):
+            with self.subTest(method=method):
+                d = decide((route,), "api.example.com", "/data", {},
+                            request_method=method)
+                self.assertEqual("forward", d.action)
+
+    def test_no_auth_no_matches_blocks_writes(self):
+        route = Route(host="api.example.com")
+        for method in ("POST", "PUT", "DELETE", "PATCH"):
+            with self.subTest(method=method):
+                d = decide((route,), "api.example.com", "/data", {},
+                            request_method=method)
+                self.assertEqual("block", d.action)
+                self.assertEqual("route", d.code)
+                self.assertIn("matches", d.reason)
+
+    def test_no_auth_with_matches_allows_explicit_writes(self):
+        route = Route(host="api.example.com", matches=(MatchEntry(methods=("POST",)),))
+        d = decide((route,), "api.example.com", "/data", {}, request_method="POST")
+        self.assertEqual("forward", d.action)
+
+    def test_preserve_auth_allows_writes_without_matches(self):
+        route = Route(host="registry.example.com", preserve_auth=True)
+        d = decide((route,), "registry.example.com", "/v2/push", {},
+                    request_method="POST")
+        self.assertEqual("forward", d.action)
+
+    def test_passthrough_route_allows_writes_without_matches(self):
+        route = Route(host="registry.example.com", inspect=False)
+        d = decide((route,), "registry.example.com", "/v2/push", {},
+                    request_method="POST")
+        self.assertEqual("forward", d.action)
+
+    def test_auth_route_allows_writes_without_matches(self):
+        route = Route(host="api.example.com", auth_scheme="Bearer", token_env="T")
+        d = decide((route,), "api.example.com", "/data", {"T": "tok"},
+                    request_method="POST")
+        self.assertEqual("forward", d.action)
+
 
 # --- Decision dataclass --------------------------------------------------
 

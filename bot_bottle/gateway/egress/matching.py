@@ -94,6 +94,17 @@ def decide(
         return Decision("block", (
             f"egress: request {request_method} {request_path!r} does not match any "
             f"entry in matches for {route.host!r}"), code=blocks.ROUTE)
+    # Inspected routes without gateway-injected auth default to read-only
+    # (GET/HEAD) when no matches are declared. To allow writes, add a matches
+    # entry. inspect: false (passthrough) routes are excluded: the operator
+    # explicitly opted out of gateway interception for those hosts.
+    if route.inspect and not route.injects_auth and not route.preserve_auth and not route.matches:
+        method_upper = request_method.upper()
+        if method_upper not in ("GET", "HEAD"):
+            return Decision("block", (
+                f"egress: {method_upper} {request_path!r} on {route.host!r}: routes "
+                "without gateway auth default to read-only (GET/HEAD); add a matches "
+                "entry to allow writes explicitly."), code=blocks.ROUTE)
     if route.injects_auth:
         token = environ.get(route.token_env, "")
         if not token:

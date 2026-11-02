@@ -391,7 +391,10 @@ class _CtxResolver(_SuperviseRpcFake):
     ) -> tuple[str | None, str | None, dict[str, str]]:
         del identity_token
         bottle_id = self._map.get(source_ip)
-        policy = "routes:\n  - host: api.example.com\n" if bottle_id else None
+        policy = (
+            "routes:\n  - host: api.example.com\n"
+            "    matches:\n      - methods:\n          - GET\n          - POST\n"
+        ) if bottle_id else None
         return policy, bottle_id, (self._tokens if bottle_id else {})
 
 
@@ -664,7 +667,8 @@ class TestOutboundDlpPolicy(unittest.TestCase):
         self.assertIn("DLP", flow.response.get_text())
 
     def test_redact_policy_scrubs_and_forwards(self) -> None:
-        route = Route(host="api.example.com", outbound_on_match="redact")
+        route = Route(host="api.example.com", outbound_on_match="redact",
+                      matches=(MatchEntry(methods=("GET", "POST")),))
         addon = _addon(Config(routes=(route,)))
         flow = _Flow(_Request(host="api.example.com", method="POST", body=f"key={_OPENAI_KEY}"))
         _run_request(addon, flow)
@@ -727,7 +731,8 @@ class TestCanary(unittest.TestCase):
 
 class TestSuperviseBranch(unittest.TestCase):
     def _supervised_addon(self, status: str | None) -> EgressAddon:
-        addon = _addon(Config(routes=(Route(host="api.example.com"),)), slug="test-bottle")
+        route = Route(host="api.example.com", matches=(MatchEntry(methods=("GET", "POST")),))
+        addon = _addon(Config(routes=(route,)), slug="test-bottle")
         addon._token_allow_timeout = 0.05
         cast(Any, addon._resolver).supervise_status = status
         return addon
@@ -784,7 +789,8 @@ class TestSuperviseBranch(unittest.TestCase):
                 rpc_idents.append(threading.get_ident())
                 return super().poll_supervise(*a, **k)
 
-        config = Config(routes=(Route(host="api.example.com"),))
+        config = Config(routes=(Route(host="api.example.com",
+                                     matches=(MatchEntry(methods=("GET", "POST")),)),))
         addon = _addon(config, slug="test-bottle")
         resolver = _ThreadRecordingResolver(config, bottle_id="test-bottle")
         resolver.supervise_status = "approved"
@@ -980,7 +986,8 @@ class TestWebSocketInbound(unittest.TestCase):
 
 class TestRedactSurfaces(unittest.TestCase):
     def test_redacts_token_in_header_and_path(self) -> None:
-        route = Route(host="api.example.com", outbound_on_match="redact")
+        route = Route(host="api.example.com", outbound_on_match="redact",
+                      matches=(MatchEntry(methods=("GET", "POST")),))
         addon = _addon(Config(routes=(route,)))
         flow = _Flow(_Request(
             host="api.example.com",
@@ -1094,7 +1101,9 @@ class TestSuperviseMultiTenant(unittest.TestCase):
     def test_approval_is_scoped_to_the_host_it_was_given_for(self) -> None:
         # #807: an approval covers (bottle, host). The same value sent to
         # another allowlisted host is flagged and supervised again.
-        config = Config(routes=(Route(host="api.example.com"), Route(host="other.example.com")))
+        _post = (MatchEntry(methods=("POST",)),)
+        config = Config(routes=(Route(host="api.example.com", matches=_post),
+                                Route(host="other.example.com", matches=_post)))
         addon = _addon(config, slug="bottle-a")
         resolver = cast(Any, addon._resolver)
         resolver.supervise_status = "approved"
@@ -1591,7 +1600,8 @@ class TestAuditTrail(_AuditCase):
         self.assertEqual("secret", event.payload["reason_code"])
 
     def test_a_redacted_request_is_an_allowed_anomaly_then_a_first_contact(self) -> None:
-        addon, sink = self.addon(Route(host="api.example.com", outbound_on_match="redact"))
+        addon, sink = self.addon(Route(host="api.example.com", outbound_on_match="redact",
+                                      matches=(MatchEntry(methods=("GET", "POST")),)))
         self.request(addon, host="api.example.com", method="POST", body=f"key={_OPENAI_KEY}")
         self.assertEqual([("egress.anomaly", "allowed"), ("egress.decision", "allowed")],
                          [(e.type, e.outcome) for e in sink.events])
