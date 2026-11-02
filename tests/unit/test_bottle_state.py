@@ -1,6 +1,7 @@
 """Unit: per-bottle state helpers (PRD 0016 Phase 1) + identity +
 launch metadata."""
 
+import shutil
 import tempfile
 import unittest
 import uuid
@@ -307,6 +308,65 @@ class TestCommittedImage(_FakeHomeMixin, unittest.TestCase):
         path.write_text("   \n")
         self.assertIsNone(bottle_state.read_committed_image("dev"))
 
+
+
+
+class TestWhoStartedIt(unittest.TestCase):
+    """`origin` and `agent_id` let a CLI resume bring a console bottle back as
+    the same console agent."""
+
+    def setUp(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        self.addCleanup(use_bottle_root(root))
+
+    def _write(self, origin: str = "", agent_id: str = "") -> None:
+        bottle_state.write_metadata(bottle_state.BottleMetadata(
+            identity="b1", agent_name="demo", cwd="", copy_cwd=False, started_at="",
+            origin=origin, agent_id=agent_id))
+
+    def test_older_metadata_has_neither(self) -> None:
+        self._write()
+        meta = bottle_state.read_metadata("b1")
+        assert meta is not None
+        self.assertEqual(("", ""), (meta.origin, meta.agent_id))
+        self.assertEqual("", bottle_state.console_agent_id("b1"))
+
+    def test_only_a_console_bottle_names_a_console_agent(self) -> None:
+        self._write(origin="console", agent_id="c-1")
+        self.assertEqual("c-1", bottle_state.console_agent_id("b1"))
+        self._write(origin="terminal", agent_id="c-1")
+        self.assertEqual("", bottle_state.console_agent_id("b1"))
+        self.assertEqual("", bottle_state.console_agent_id("missing"))
+
+    def test_record_origin_updates_the_metadata(self) -> None:
+        self._write()
+        bottle_state.record_origin("b1", "console", "c-2")
+        meta = bottle_state.read_metadata("b1")
+        assert meta is not None
+        self.assertEqual(("console", "c-2"), (meta.origin, meta.agent_id))
+        self.assertEqual("demo", meta.agent_name)
+        bottle_state.record_origin("missing", "console", "c-2")  # no metadata: no-op
+        self.assertIsNone(bottle_state.read_metadata("missing"))
+
+
+    def test_a_resume_rewrite_keeps_who_started_it(self) -> None:
+        from types import SimpleNamespace
+        from bot_bottle.backend.resolve_common import write_launch_metadata
+
+        self._write(origin="console", agent_id="c-4")
+        spec = SimpleNamespace(identity="b1", agent_name="demo", user_cwd="", copy_cwd=False,
+                               label="b1", color="", bottle_names=("basic",))
+        write_launch_metadata("b1", spec, compose_project="", backend="fake")  # type: ignore[arg-type]
+        meta = bottle_state.read_metadata("b1")
+        assert meta is not None
+        self.assertEqual(("console", "c-4", "fake"), (meta.origin, meta.agent_id, meta.backend))
+        # A fresh launch (no identity yet) starts with neither.
+        fresh = SimpleNamespace(**{**vars(spec), "identity": ""})
+        write_launch_metadata("b2", fresh, compose_project="", backend="fake")  # type: ignore[arg-type]
+        meta = bottle_state.read_metadata("b2")
+        assert meta is not None
+        self.assertEqual(("", ""), (meta.origin, meta.agent_id))
 
 if __name__ == "__main__":
     unittest.main()

@@ -74,6 +74,20 @@ class TestTerminalSessions(unittest.TestCase):
         self.assertEqual([], self.presented())  # the console has it already
         self.assertIn({"type": "agents_running", "agent_ids": ["c-1"]}, self.sent)
 
+    def test_a_console_bottle_taken_up_is_announced_as_started(self) -> None:
+        # `bot-bottle resume` from the CLI brings a console bottle back under
+        # its console id: the console flips its stopped entry to running. (A
+        # restart announces it too; the console skips a run it already has.)
+        self.bottles.start_elsewhere("from-console", origin="console")
+        self.bottles.listed[-1]["agent_id"] = "c-3"
+        link = self.link()
+        asyncio.run(link.discover())
+        asyncio.run(link.discover())  # once: it's the link's now
+        started = [m for m in self.sent if m["type"] == "agent_started"]
+        self.assertEqual(1, len(started))
+        self.assertEqual({"agent_id": "c-3", "bottle": "from-console", "writable": True},
+                         {k: started[0][k] for k in ("agent_id", "bottle", "writable")})
+
     def test_a_launch_in_flight_is_not_taken_up(self) -> None:
         self.bottles.start_elsewhere("mid", origin="console")
         self.bottles.listed[-1]["agent_id"] = "c-2"

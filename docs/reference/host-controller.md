@@ -418,6 +418,15 @@ the bottle. A resume of a bottle already running as that same agent (Resume
 clicked twice after a Stop) answers `agent_started` again rather than an error;
 a bottle running as another agent is refused.
 
+A bottle remembers who started it: its `metadata.json` records `origin` and,
+for the console, the console's `agent_id` (written once the agent runs, kept
+when a resume rewrites the file). So `bot-bottle resume <bottle>` on the CLI
+brings a console bottle back as **the same console agent**: the host takes the
+id from the bottle's own metadata (a request can't name one) and records the
+session as `console`; the link announces it with `agent_started`, and the
+conversation keeps its id. A terminal bottle, or one recorded before this,
+resumes as a terminal session, as before.
+
 The console sees **every session on the host**, not only the ones it
 launched. Each session record carries its `origin` (`console` or
 `terminal`). The link presents each running `terminal` session with

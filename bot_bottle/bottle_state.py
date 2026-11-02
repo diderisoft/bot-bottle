@@ -68,6 +68,12 @@ class BottleMetadata:
     color: str = ""
     # Empty in older state dirs; resume falls back to the agent's `bottle:`.
     bottle_names: tuple[str, ...] = ()
+    # Who started it ("console" or "terminal") and, for the console, its id
+    # for the agent, so a resume from anywhere comes back as the same agent.
+    # Written by the host controller once the agent runs; empty in older
+    # state dirs.
+    origin: str = ""
+    agent_id: str = ""
 
 
 def metadata_path(identity: str) -> Path:
@@ -108,7 +114,27 @@ def read_metadata(identity: str) -> BottleMetadata | None:
         label=str(raw_typed.get("label", "")),
         color=str(raw_typed.get("color", "")),
         bottle_names=bottle_names,
+        origin=str(raw_typed.get("origin", "")),
+        agent_id=str(raw_typed.get("agent_id", "")),
     )
+
+
+def record_origin(identity: str, origin: str, agent_id: str = "") -> None:
+    """Note who started `identity` (`BottleMetadata.origin`, `agent_id`).
+    No-op without metadata."""
+    current = read_metadata(identity)
+    if current is None or (current.origin, current.agent_id) == (origin, agent_id):
+        return
+    write_metadata(dataclasses.replace(current, origin=origin, agent_id=agent_id))
+
+
+def console_agent_id(identity: str) -> str:
+    """The console's id for the agent `identity` last ran as, when the console
+    started it; empty otherwise (a terminal bottle, or older state)."""
+    current = read_metadata(identity)
+    if current is None or current.origin != "console":
+        return ""
+    return current.agent_id
 
 
 def bottle_state_dir(identity: str) -> Path:

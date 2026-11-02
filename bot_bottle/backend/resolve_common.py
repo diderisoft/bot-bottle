@@ -15,6 +15,7 @@ from ..bottle_state import (
     bottle_identity,
     egress_state_dir,
     git_gate_state_dir,
+    read_metadata,
     supervise_state_dir,
     write_metadata,
 )
@@ -46,7 +47,8 @@ def write_launch_metadata(
     slug: str, spec: BottleSpec, *, compose_project: str, backend: str,
 ) -> None:
     """Write launch metadata for `resume`. Rewritten on resume with a fresh
-    `started_at`."""
+    `started_at`, keeping who started it (the host controller records that)."""
+    previous = read_metadata(slug) if spec.identity else None
     write_metadata(BottleMetadata(
         identity=slug,
         agent_name=spec.agent_name,
@@ -58,6 +60,8 @@ def write_launch_metadata(
         label=spec.label,
         color=spec.color,
         bottle_names=spec.bottle_names,
+        origin=previous.origin if previous else "",
+        agent_id=previous.agent_id if previous else "",
     ))
 
 

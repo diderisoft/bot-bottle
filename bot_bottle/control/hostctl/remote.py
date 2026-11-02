@@ -13,12 +13,11 @@ The control stream (JSON lines):
   the console is refused. While it starts, `agent_stage` (`stage`, `title`)
   reports each launch stage, as the CLI shows them.
 - `stop` -> tears the bottle down; `agent_stopped` follows (also when one exits itself).
-- `resume` (`agent_id`, `bottle`) -> relaunches a stopped bottle this host ran,
-  under its own identity and state, as `bot-bottle resume` does
-  (`remote_requests`); `agent_started` or `agent_errored` as for `launch`. A
-  repeat for a bottle already running as that agent answers `agent_started`.
-- `hello` opens the stream. On every (re)connect the host reports agents that exited,
-  reopens relays, and sends `agents_running` and `host_stats` (`host_stats.py`; each minute).
+- `resume` (`agent_id`, `bottle`) -> relaunches a stopped bottle this host ran, as
+  `bot-bottle resume` does (`remote_requests`); `agent_started` or `agent_errored`.
+  A repeat, or a CLI resume of a console bottle, also answers `agent_started`.
+- `hello` opens the stream. Each (re)connect reports agents that exited, reopens relays,
+  sends `agents_running` and `host_stats` (`host_stats.py`; each minute).
 - `agent_present` (from the host): a running session the console didn't
   launch (`bot-bottle`, `start`), with a host-made `agent_id`, its `bottle`,
   `activation`, `label`, `definition`, `writable` and `origin`. Sent on every
@@ -31,8 +30,7 @@ The control stream (JSON lines):
   `history` (`lines` -> `text`, `size`, `limit`) act on them. A relay opens at
   the size last asked for its agent.
 - `audit_query` -> `audit_events` for the link's agents' bottles.
-- `refresh_credentials` -> `credentials_refreshed` (`credential_refresh`); `manifest`
-  (`agent_id`) -> `manifest`: its agent and bottle files, resolved (`manifest_view`).
+- `refresh_credentials` -> `credentials_refreshed`; `manifest` (`agent_id`) -> `manifest`.
 - `forge_connect` (`url`, `token`, `bottle`, `name`, `ssh`) -> `forge_connected`: connects a
   forge into a host bottle; `github_authorize_start` -> `github_authorize` (the device code)
   and `github_status` -> `github_status` (`github_connect`, `remote_actions.HOST_REQUESTS`).
@@ -542,7 +540,9 @@ class ConsoleLink:
                 if agent_id and agent_id not in self._starting:
                     self.running[agent_id] = bottle
                     self.launched.add(bottle)
-                    await self._open_terminal(agent_id, bottle)
+                    # CLI resume or restart: the console skips a run it has.
+                    await self._announce(agent_id, bottle, str(entry.get("activation", "")),
+                                         await self._open_terminal(agent_id, bottle))
                 continue
             activation = str(entry.get("activation", ""))
             agent_id = terminal_agent_id(bottle, activation)

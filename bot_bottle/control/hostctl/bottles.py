@@ -32,7 +32,7 @@ from ...contract.hostctl import (
 from ...lib import log
 from ...manifest.schema import DEFAULT_BOTTLE
 from ...paths import host_secrets_path
-from ... import run_manifest
+from ... import bottle_state, run_manifest
 from ...backend import adoption
 from ...backend.bottle_size import BOTTLE_MEMORY_BYTES
 from ...lib.config_store import HostBudget
@@ -267,6 +267,15 @@ class BottleService:
                     "to launch (`bot-bottle up --restart`). Running bottles keep running")
         if request.identity and self._running(request.identity):
             log.die(f"bottle {request.identity} is already running")
+        from_console = role == ROLE_REMOTE
+        if not from_console and request.identity and not request.agent_id:
+            # A resume of a bottle the console started comes back as that
+            # console agent, from wherever it's asked for. The id is the one
+            # this bottle's own state recorded, never the request's.
+            carried = bottle_state.console_agent_id(request.identity)
+            if carried:
+                request = dataclasses.replace(request, agent_id=carried)
+                from_console = True
         backend = self._backend_for(request.settings)
         if role != ROLE_CLI:
             request = dataclasses.replace(request, settings=with_recorded_infra(
@@ -306,7 +315,7 @@ class BottleService:
                 args=(self._hold, backend, plan, request),
                 kwargs={"identity": identity, "stage_dir": stage_dir, "versions": versions,
                         "job_sink": log.current_sink(), "ready": ready,
-                        "from_console": role == ROLE_REMOTE},
+                        "from_console": from_console},
                 daemon=True, name=f"hostctl-bottle-{identity}",
             ).start()
             handed_off = True
@@ -448,6 +457,12 @@ class BottleService:
                               **({"agent_id": request.agent_id} if request.agent_id else {})},
                         writable_allowed=plan.manifest.agent.remote_writable,
                     ), command, env, warnings)
+                    try:
+                        bottle_state.record_origin(
+                            identity, ORIGIN_CONSOLE if from_console else ORIGIN_TERMINAL,
+                            request.agent_id if from_console else "")
+                    except OSError as e:
+                        log.warn(f"bottle {identity}: couldn't record who started it: {e}")
                     log.info(f"agent running in session {identity}")
                     self.audit.bottled_agent_start(
                         bottle=identity, activation=activation, manifest_digest=policy,

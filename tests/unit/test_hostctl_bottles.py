@@ -321,6 +321,48 @@ class TestHeldBottles(_Root):
                          [(b["origin"], b["agent_id"]) for b in self.service.list()])
         self.service.teardown("c1")
 
+    def _stopped(self, identity: str, origin: str = "", agent_id: str = "") -> None:
+        bottle_state.write_metadata(bottle_state.BottleMetadata(
+            identity=identity, agent_name="demo", cwd="", copy_cwd=False, started_at="",
+            origin=origin, agent_id=agent_id))
+
+    def _resume(self, identity: str, role: str = ROLE_CLI) -> list[tuple[object, object]]:
+        self.backend.bottle.script = "echo up; sleep 30"
+        self.service.launch(LaunchRequest(agent="demo", label=identity, identity=identity,
+                                          assume_yes=True), role)
+        try:
+            return [(b["origin"], b["agent_id"]) for b in self.service.list()]
+        finally:
+            self.service.teardown(identity)
+
+    def test_a_cli_resume_of_a_console_bottle_comes_back_as_its_console_agent(self) -> None:
+        self._stopped("r1", origin="console", agent_id="console-id")
+        self.assertEqual([("console", "console-id")], self._resume("r1"))
+        meta = bottle_state.read_metadata("r1")
+        assert meta is not None
+        self.assertEqual(("console", "console-id"), (meta.origin, meta.agent_id))
+
+    def test_a_cli_resume_of_a_terminal_or_older_bottle_stays_a_terminal_one(self) -> None:
+        for identity, origin in (("t1", "terminal"), ("o1", "")):
+            with self.subTest(identity=identity):
+                self._stopped(identity, origin)
+                self.assertEqual([("terminal", "")], self._resume(identity))
+                meta = bottle_state.read_metadata(identity)
+                assert meta is not None
+                self.assertEqual(("terminal", ""), (meta.origin, meta.agent_id))
+
+    def test_a_console_launch_records_who_started_it(self) -> None:
+        from bot_bottle.control.hostctl.remote import ROLE_REMOTE
+
+        self._stopped("c2")
+        self.backend.bottle.script = "echo up; sleep 30"
+        self.service.launch(LaunchRequest(agent="demo", label="c2", identity="c2",
+                                          assume_yes=True, agent_id="cid"), ROLE_REMOTE)
+        self.service.teardown("c2")
+        meta = bottle_state.read_metadata("c2")
+        assert meta is not None
+        self.assertEqual(("console", "cid"), (meta.origin, meta.agent_id))
+
     def test_a_launch_warning_reaches_the_sessions_status_bar(self) -> None:
         self.backend.bottle.script = "echo up; sleep 30"
         self.backend.launch_warning = ("isolation gap: agent can reach the host at 10.0.0.1; "
