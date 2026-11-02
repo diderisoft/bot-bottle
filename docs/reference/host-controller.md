@@ -382,6 +382,27 @@ guest checks the prefix again before writing. Files over 5 MiB are refused.
 After the upload the console inserts the path into the message box so the
 agent can be told about it.
 
+Larger files go in chunks (`uploads.py`), so no single link message holds the
+whole file:
+
+- `upload_begin` (`agent_id`, `path`, `size`) → `upload_begun` with
+  `upload_id`, `max_bytes` (the host's ceiling, 1 GiB) and `chunk_bytes`
+  (4 MiB). It creates `<path>.partial-<id>` in the bottle.
+- `upload_chunk` (`upload_id`, `seq`, `data` base64) → `upload_chunk_ack` with
+  `received`. Chunks come in order (`seq` from 0), each at most `chunk_bytes`,
+  never past the declared `size`; each is appended to the partial.
+- `upload_end` (`upload_id`, `sha256`) → `upload_done` with the final `path`
+  and `size`. The size and SHA-256 are checked here, over what was written,
+  and in the guest when it has `sha256sum`; then the partial is moved into
+  place without overwriting: a taken name becomes `name-1.ext`, `name-2.ext`…
+- `upload_abort` (`upload_id`) → `upload_aborted`; the partial is removed.
+
+An upload belongs to the agent that began it. At most 8 are in flight on a
+host, and one with no chunk for 2 minutes is dropped with its partial. Any
+step's refusal is its reply with `error`. The console waits for each reply
+before the next chunk, and its own limit (the user's setting) is below the
+host's.
+
 ## Renaming a bottled agent
 
 A bottled agent's label is what people call it; its identity is what the

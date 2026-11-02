@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ...lib import log
+from . import uploads
 
 
 async def refresh_credentials(msg: Mapping[str, Any], running: Mapping[str, str],
@@ -722,7 +723,7 @@ QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest,
            "library": library, "resolve": resolve,
            "list_secrets": list_secrets, "set_secret": set_secret,
            "workspace_file": workspace_file, "put_workspace_file": put_workspace_file,
-           "rename": rename}
+           "rename": rename, **uploads.QUERIES}
 
 # Console answers to a card that carry more than allow/deny, by message type.
 ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer}

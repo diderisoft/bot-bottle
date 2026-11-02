@@ -739,6 +739,8 @@ class BottleService:
             return f"the {name} backend can't reach bottle {identity}"
         return bottle, record, adopted
 
+    attached = _attached  # for the console's chunked uploads (`uploads`)
+
     def held_ids(self) -> list[str]:
         """Sessions of the bottles this daemon holds."""
         with self._lock:
