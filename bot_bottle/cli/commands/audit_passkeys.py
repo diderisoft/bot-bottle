@@ -8,8 +8,12 @@ them once you confirm their fingerprints match the ones the console shows
 
 from __future__ import annotations
 
+import json
 import sys
+import urllib.error
+import urllib.request
 from collections.abc import Callable
+from typing import Any
 
 from ...control.hostctl import audit_trust, pairing
 from ...paths import audit_key_path
@@ -65,6 +69,27 @@ def after_pairing(console_url: str, access_token: str) -> None:
                          "unlock reading them from the console.\n")
 
 
+def fresh_access_token(console: dict[str, Any], *, timeout: float = 10.0) -> str:
+    """The host's console access token, refreshed first (it's short-lived:
+    a stale one gets a 401). The new one is saved as `bot-bottle pair on`
+    saves it; if the refresh fails, the stored token is tried as it is."""
+    refresh = console.get("refresh_token")
+    if refresh:
+        req = urllib.request.Request(
+            f"{str(console['url']).rstrip('/')}/api/v1/hosts/token/refresh",
+            data=json.dumps({"refresh_token": refresh}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                token = json.load(resp).get("access_token")
+        except (urllib.error.URLError, OSError, ValueError, AttributeError):
+            token = None
+        if isinstance(token, str) and token:
+            console["access_token"] = token
+            pairing.save_console(console)
+    return str(console["access_token"])
+
+
 def run(trust: bool) -> int:
     if trust:
         try:
@@ -75,7 +100,7 @@ def run(trust: bool) -> int:
         if not sys.stdin.isatty():
             sys.stderr.write("bot-bottle: trusting passkeys needs you at a terminal to confirm\n")
             return 1
-        return trust_from_console(str(console["url"]), str(console["access_token"]))
+        return trust_from_console(str(console["url"]), fresh_access_token(console))
     try:
         current = audit_trust.load()
     except audit_trust.TrustError as e:
