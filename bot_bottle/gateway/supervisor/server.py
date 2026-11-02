@@ -44,6 +44,7 @@ from bot_bottle.gateway.supervisor.mcp_dispatch import (
     resolved_routes_payload,
 )
 from bot_bottle.contract import supervise as _sv
+from bot_bottle.gateway.supervisor.env_handler import handle_get_environment
 
 
 # --- JSON-RPC / MCP plumbing ---
@@ -304,16 +305,9 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
     },
     {
         "name": _sv.TOOL_GET_ENVIRONMENT,
-        "description": (
-            "Return read-only information about the bot-bottle environment "
-            "this bottle is running in: orchestrator version, git commit, "
-            "and protocol version."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-            "additionalProperties": False,
-        },
+        "description": "Return read-only information about the running bot-bottle "
+                       "environment: orchestrator version, git commit, and protocol.",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
 ]
 
@@ -568,14 +562,6 @@ def handle_check_proposal(
     }
 
 
-def handle_get_environment(_params: dict[str, object]) -> dict[str, object]:
-    info = {"version": os.environ.get("BOT_BOTTLE_VERSION", ""),
-            "commit": os.environ.get("BOT_BOTTLE_COMMIT", ""),
-            "protocol": os.environ.get("BOT_BOTTLE_PROTOCOL", "")}
-    text = "\n".join(f"{k}: {v}" for k, v in info.items() if v) or "version unknown"
-    return {"content": [{"type": "text", "text": text}], "isError": False}
-
-
 def format_response_text(response: "_sv.Response") -> str:
     """A Response as the tool's text content."""
     lines = [f"status: {response.status}"]
@@ -644,7 +630,6 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
             self._write_text(200, "ok\n")
             return
         if self.path == "/version":
-            import os  # pylint: disable=import-outside-toplevel
             body = json.dumps({
                 "version": os.environ.get("BOT_BOTTLE_VERSION", "unknown"),
                 "commit": os.environ.get("BOT_BOTTLE_COMMIT", ""),
