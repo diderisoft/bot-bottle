@@ -378,6 +378,45 @@ async def bottle_write(msg: Mapping[str, Any], running: Mapping[str, str],
     return reply
 
 
+async def list_secrets(msg: Mapping[str, Any], _running: Mapping[str, str],
+                       _bottles: Any = None) -> dict[str, Any]:
+    """The names in the host secrets file, for the console's Credentials tab.
+    Values are never returned."""
+    # pylint: disable=import-outside-toplevel
+    from ...paths import host_secrets_path
+    from ...secret_source import FileSecrets
+    reply: dict[str, Any] = {"type": "secrets_listed", "request_id": msg.get("request_id")}
+    try:
+        reply["names"] = [name for name, _ in FileSecrets(host_secrets_path()).items()]
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        log.warn(f"remote: listing secrets failed: {type(e).__name__}: {e}")
+        reply["error"] = "listing secrets failed; see the host controller's log"
+    return reply
+
+
+async def set_secret(msg: Mapping[str, Any], _running: Mapping[str, str],
+                     _bottles: Any = None) -> dict[str, Any]:
+    """Set a value in the host secrets file from the console. The value is
+    never echoed in the reply, a log line, or an error."""
+    # pylint: disable=import-outside-toplevel
+    from ...errors import SecretsFileError
+    from ...paths import host_secrets_path
+    from ...secret_source import write_secret
+    name = _text(msg, "name")
+    reply: dict[str, Any] = {"type": "secret_set", "request_id": msg.get("request_id"),
+                             "name": name}
+    value = _text(msg, "value")
+    try:
+        write_secret(host_secrets_path(), name, value)
+        log.info(f"remote: set secret {name!r} from the console")
+    except SecretsFileError as e:
+        reply["error"] = str(e)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        log.warn(f"remote: setting secret {name!r} failed: {type(e).__name__}: {e}")
+        reply["error"] = "setting the secret failed; see the host controller's log"
+    return reply
+
+
 async def library(msg: Mapping[str, Any], _running: Mapping[str, str],
                   _bottles: Any = None) -> dict[str, Any]:
     """The host's agents and bottles, with their text, for the console's
@@ -422,12 +461,13 @@ async def resolve(msg: Mapping[str, Any], _running: Mapping[str, str],
 QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest,
            "bottle_chain": bottle_chain, "bottle_write": bottle_write,
            "manifest_save": manifest_save, "manifest_transfer": manifest_transfer,
-           "library": library, "resolve": resolve}
+           "library": library, "resolve": resolve,
+           "list_secrets": list_secrets, "set_secret": set_secret}
 
 # Console answers to a card that carry more than allow/deny, by message type.
 ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer}
 
 __all__ = ["ANSWERS", "QUERIES", "add_repo_answer", "bottle_chain", "bottle_write", "card",
-           "forge_attention", "forge_connect",
-           "forge_connect_answer", "library", "manifest", "manifest_save", "manifest_transfer",
-           "refresh_credentials", "repo_attention", "resolve"]
+           "forge_attention", "forge_connect", "forge_connect_answer", "library", "list_secrets",
+           "manifest", "manifest_save", "manifest_transfer", "refresh_credentials",
+           "repo_attention", "resolve", "set_secret"]
