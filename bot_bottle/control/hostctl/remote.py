@@ -117,7 +117,6 @@ class Bottles(Protocol):
     def teardown(self, bottle_id: str, role: str = ...) -> dict[str, object]: ...
     def session_state(self, session_id: str) -> dict[str, object]: ...
     def list(self) -> list[dict[str, object]]: ...
-    def allocation(self) -> list[dict[str, object]]: ...
 
 
 def terminal_agent_id(bottle: str, activation: str) -> str:
@@ -452,7 +451,7 @@ class ConsoleLink:
     async def push_host_stats(self) -> None:
         """This host's storage and memory, with its caps (`host_stats.snapshot`)."""
         try:
-            stats = await asyncio.to_thread(host_stats.snapshot, self._bottles)
+            stats = await asyncio.to_thread(host_stats.snapshot, self._bottles)  # type: ignore[arg-type]
         except Exception as e:  # pylint: disable=broad-exception-caught  # stats are best effort
             log.debug(f"remote: host stats collection failed: {e}")
             return
