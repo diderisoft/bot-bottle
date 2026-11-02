@@ -67,19 +67,6 @@ def _content(content: Any) -> tuple[str, str]:
     return "".join(texts), url
 
 
-def _text(content: Any) -> str:
-    """Text from a content array, with [image] markers for image blocks."""
-    if isinstance(content, str):
-        return content
-    out = []
-    for block in content if isinstance(content, list) else []:
-        if isinstance(block, dict) and block.get("type") == "text":
-            out.append(str(block.get("text", "")))
-        elif isinstance(block, dict) and block.get("type") == "image":
-            out.append("[image]")
-    return "".join(out)
-
-
 # A slash command and its output, as Claude records them in a user line.
 _COMMAND = re.compile(r"^<(command-name|command-message|local-command-stdout|"
                       r"local-command-caveat|bash-input|bash-stdout)>")
