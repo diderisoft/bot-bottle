@@ -310,6 +310,23 @@ workspace's patch since launch (the patch teardown saves), and keeps it as
 changed, size and SHA-256. Each is audited as `snapshot.taken`. A workspace
 that isn't a git copy can't be snapshotted. Restoring is not built yet.
 
+## GitHub through the bot-bottle app
+
+The console connects github.com through the bot-bottle GitHub App's device
+flow (ADR 0012, `github_connect.py`): `github_authorize_start` (`bottle`) ->
+`github_authorize` (`user_code`, `verification_uri`, `expires_in`, or `error`)
+starts it; the host then polls GitHub itself and writes the forge when the
+operator enters the code. `github_status` -> `github_status` follows it: the
+app's `app` slug and `install_url`, `client_id_set`, the flow's `flow`
+(`state` `idle`, `waiting` with the code, `connected` with `login`, or `error`)
+and `connected` (each GitHub forge's `login` and the app's `installations`,
+or `error`). The token never reaches the console. An agent's `forge-connect`
+for github.com gets a card with the install link and the `github_authorize`
+option, never a token field; once GitHub is connected, the request is refused
+with a note to use `add-repo`. An `add-repo` card for a repo the token can't
+reach carries `install:`; one whose authorization is gone carries
+`reauthorize:` and `github_authorize` beside the grant options.
+
 ## Workspace images
 
 Agents often make a picture as a file and mention its path. The console's

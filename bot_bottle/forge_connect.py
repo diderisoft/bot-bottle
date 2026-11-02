@@ -35,6 +35,8 @@ class ForgeEntry:
     ssh: str
     account: str
     host_key: str
+    # GitHub through the bot-bottle GitHub App's user token: its slug.
+    app: str = ""
 
     @property
     def host(self) -> str:
@@ -97,6 +99,8 @@ def write_forge(path: Path, entry: ForgeEntry) -> None:
                                 "token": f"${entry.label}", "account": entry.account}
     if entry.host_key:
         forge["host_key"] = entry.host_key
+    if entry.app:
+        forge["app"] = entry.app
     forges[entry.key] = forge
     git["forges"] = forges
     fm["git-gate"] = git

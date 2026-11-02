@@ -127,21 +127,34 @@ def write_secret(path: Path, name: str, value: str) -> None:
         raise SecretsFileError(f"secret name {name!r} is not NAME-shaped")
     if not value or "\n" in value or "\r" in value:
         raise SecretsFileError(f"secret {name}: the value must be one non-empty line")
+    _rewrite(path, name, f"{name}={value}")
+
+
+def remove_secret(path: Path, name: str) -> None:
+    """Drop `name` from the secrets file at `path`; absent is fine."""
+    if path.exists():
+        _rewrite(path, name, None)
+
+
+def _rewrite(path: Path, name: str, line_for: str | None) -> None:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
         lines = []
     kept = [line for line in lines if line.strip().partition("=")[0] != name]
+    if line_for is not None:
+        kept.append(line_for)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".secrets-")
     try:
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write("".join(f"{line}\n" for line in [*kept, f"{name}={value}"]))
+            f.write("".join(f"{line}\n" for line in kept))
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
 
 
-__all__ = ["ChainSecrets", "FileSecrets", "MappingSecrets", "SecretSource", "write_secret"]
+__all__ = ["ChainSecrets", "FileSecrets", "MappingSecrets", "SecretSource", "remove_secret",
+           "write_secret"]

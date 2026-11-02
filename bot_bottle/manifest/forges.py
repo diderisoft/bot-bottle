@@ -38,7 +38,7 @@ from .util import ManifestError, as_json_object
 
 CREDENTIAL_SOURCES = ("secret",)
 _CREDENTIAL_KEYS = {"source", "secret", "kind"}
-_FORGE_KEYS = {"kind", "url", "ssh", "token", "account", "host_key"}
+_FORGE_KEYS = {"kind", "url", "ssh", "token", "account", "host_key", "app"}
 # A forge's key: its host, or `<account>@<host>` for another account on it.
 _FORGE_NAME_RE = re.compile(r"^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+(?::[0-9]+)?$")
 _REPO_PART_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -57,6 +57,9 @@ class ManifestForge:
     token_secret: str
     account: str = ""
     host_key: str = ""
+    # A GitHub forge reached through the bot-bottle GitHub App's user token
+    # (ADR 0012): the app's slug, for its install link.
+    app: str = ""
 
 
 def _str(d: dict[str, object], key: str, label: str, *, required: bool = False) -> str:
@@ -122,8 +125,10 @@ def forges_raw(bottle_name: str, raw: dict[str, object]) -> dict[str, object]:
         token = _str(d, "token", where, required=True)
         if not token.startswith("$"):
             raise ManifestError(f"{where}.token must name a credential, as $label")
-        for key in ("ssh", "account", "host_key"):
+        for key in ("ssh", "account", "host_key", "app"):
             _str(d, key, where)
+        if d.get("app") and kind != "github":
+            raise ManifestError(f"{where}: app is for kind github (the bot-bottle GitHub App)")
     return forges
 
 
@@ -155,7 +160,7 @@ def resolve_forge(name: str, raw: object, credentials: dict[str, object],
         name=name, kind=str(d.get("kind") or "gitea"), url=url,
         ssh=str(d.get("ssh") or f"ssh://git@{host}").rstrip("/"),
         token_secret=str(cred["secret"]), account=str(d.get("account", "")),
-        host_key=str(d.get("host_key", "")),
+        host_key=str(d.get("host_key", "")), app=str(d.get("app", "")),
     )
 
 

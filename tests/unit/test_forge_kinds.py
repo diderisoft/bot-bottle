@@ -264,7 +264,7 @@ class TestCommand(unittest.TestCase):
                            return_value="ssh-ed25519 AAAA"), \
                 mock.patch("bot_bottle.manifest.versions.record_or_warn"), \
                 contextlib.redirect_stderr(err):
-            self.assertEqual(0, cmd_forge(["connect", "github.com", "--no-browser"]))
+            self.assertEqual(0, cmd_forge(["connect", "github.com", "--token", "--no-browser"]))
         self.assertIn("settings/personal-access-tokens/new", err.getvalue())
         self.assertIn("Administration: read & write", err.getvalue())
         self.assertTrue((self.tmp / "root" / "bottles" / "github.md").is_file())
@@ -352,15 +352,23 @@ class TestSpecialCard(unittest.TestCase):
         self.assertEqual([], options)  # nothing to connect: only deny
         self.assertIn("gitlab.com isn't a forge bot-bottle can connect", lines[-1])
 
-    def test_a_github_card(self) -> None:
+    def test_a_github_card_connects_through_the_app(self) -> None:
         lines, options = self.card(_ask("forge-connect", "https://github.com"))  # type: ignore[misc]
-        self.assertEqual(["forge_connect"], options)
+        self.assertEqual(["github_authorize"], options)
         text = "\n".join(lines)
-        for part in ("kind: GitHub", "token page: https://github.com/settings/personal-access-",
-                     "token help: a fine-grained token", "new to this host"):
+        for part in ("kind: GitHub", "app: ", "install: https://github.com/apps/",
+                     "new to this host"):
             self.assertIn(part, text)
-        self.assertNotIn("scopes:", text)
+        for part in ("token page:", "token help:", "scopes:"):
+            self.assertNotIn(part, text)
         self.client.supervise_respond.assert_not_called()
+
+    def test_a_github_enterprise_card_still_takes_a_token(self) -> None:
+        with mock.patch("bot_bottle.forge_kinds.detect", return_value="github"):
+            lines, options = self.card(  # type: ignore[misc]
+                _ask("forge-connect", "https://ghe.example.com"))
+        self.assertEqual(["forge_connect"], options)
+        self.assertIn("token help: a fine-grained token", "\n".join(lines))
 
     def test_other_requests_have_none(self) -> None:
         self.assertIsNone(self.card(_ask("egress-allow", "routes")))

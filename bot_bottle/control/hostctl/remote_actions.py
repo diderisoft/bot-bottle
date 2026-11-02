@@ -80,6 +80,42 @@ async def forge_connect(msg: Mapping[str, Any]) -> dict[str, Any]:
     return reply
 
 
+async def github_authorize_start(msg: Mapping[str, Any]) -> dict[str, Any]:
+    """Start GitHub's device flow for the console (ADR 0012): the code the
+    operator enters on GitHub. The host waits for them and connects;
+    `github_status` follows it. The token never reaches the console."""
+    # pylint: disable=import-outside-toplevel
+    from ...forge_connect import ConnectError
+    from ...github_connect import start_background
+    from ...paths import bot_bottle_root
+    reply: dict[str, Any] = {"type": "github_authorize", "request_id": msg.get("request_id")}
+    try:
+        reply.update(await asyncio.to_thread(
+            start_background, bottle=_text(msg, "bottle"), cwd=Path.home(),
+            host_bottles=bot_bottle_root() / "bottles"))
+    except ConnectError as e:
+        reply["error"] = str(e)
+    except Exception as e:  # pylint: disable=broad-exception-caught  # reported to the console
+        log.warn(f"remote: starting GitHub's device flow failed: {type(e).__name__}")
+        reply["error"] = "starting the authorization failed; see the host controller's log"
+    return reply
+
+
+async def github_status(msg: Mapping[str, Any]) -> dict[str, Any]:
+    """The app this host's GitHub access goes through, a flow in progress, and
+    who's connected with which installations."""
+    # pylint: disable=import-outside-toplevel
+    from ...github_connect import status
+    from ...paths import bot_bottle_root
+    reply: dict[str, Any] = {"type": "github_status", "request_id": msg.get("request_id")}
+    try:
+        reply.update(await asyncio.to_thread(status, bot_bottle_root() / "bottles"))
+    except Exception as e:  # pylint: disable=broad-exception-caught  # reported to the console
+        log.warn(f"remote: reading GitHub's status failed: {type(e).__name__}")
+        reply["error"] = "reading GitHub's status failed; see the host controller's log"
+    return reply
+
+
 def _connected_forges() -> dict[str, str]:
     """The hostnames of the forges this host's own bottles declare, and their
     kinds."""
@@ -113,7 +149,7 @@ def forge_attention(request: Any, kind: str = "") -> tuple[list[str], list[str]]
     forge's (`forge_kinds.detect`); without one there's nothing to connect."""
     # pylint: disable=import-outside-toplevel
     from urllib.parse import urlparse
-    from ...contract.forges import unsupported_forge
+    from ...contract.forges import GITHUB_HOSTS, unsupported_forge
     from ...forge_kinds import forge_api, label
     url = request.proposed.strip()
     lines = [f"forge: {url}"]
@@ -124,6 +160,12 @@ def forge_attention(request: Any, kind: str = "") -> tuple[list[str], list[str]]
         return [*lines, unsupported_forge(host or url)], []
     if host not in _connected_hosts():
         lines.append("new to this host")
+    if kind == "github" and host in GITHUB_HOSTS:
+        # The bot-bottle GitHub App's device flow (ADR 0012), not a pasted token.
+        from ...contrib.github.user_token import app_config
+        app = app_config()
+        return [*lines, f"kind: {label(kind)}", f"app: {app.slug}",
+                f"install: {app.install_url}"], ["github_authorize"]
     api = forge_api(kind)
     lines += [f"kind: {label(kind)}", f"token page: {api.token_page(url)}",
               f"token help: {api.TOKEN_HELP}"]
@@ -188,12 +230,48 @@ def repo_attention(request: Any) -> tuple[list[str], list[str]]:
     if found is None:
         lines.append("forge not connected on this host: connect it, then the agent can ask again")
         return lines, []
+    reach, reauthorize = _app_reach_lines(found.forge, repo)
+    lines += reach
     target = keep_target(request.session)
-    options = ["add_repo", *(["add_repo_write"] if writable else [])]
+    options = [*(["github_authorize"] if reauthorize else []), "add_repo",
+               *(["add_repo_write"] if writable else [])]
     if target is not None:
         lines.append(f"keep: in {target.label()}")
         options.append("add_repo_keep")
     return lines, options
+
+
+def _app_reach_lines(forge: Any, repo: str) -> tuple[list[str], bool]:
+    """For a repo on a GitHub forge reached through the bot-bottle app: the
+    install link when the operator's token can't reach the repo yet, and
+    whether the authorization itself is gone (the card then reconnects
+    GitHub). ([], False) otherwise, or when GitHub can't be asked (granting
+    then says why)."""
+    # pylint: disable=import-outside-toplevel
+    from ...contrib.github.user_token import (
+        ReauthorizeError, current_token, install_url, reachable,
+    )
+    from ...forge_kinds import ForgeApiError
+    from ...paths import host_secrets_path
+    from ...secret_source import FileSecrets
+    if getattr(forge, "kind", "") != "github" or not getattr(forge, "app", ""):
+        return [], False
+    owner_repo = repo.split("/", 1)[1] if "/" in repo else repo
+    try:
+        token = current_token(forge.token_secret, FileSecrets(host_secrets_path()))
+        if token is None:
+            raise ReauthorizeError("no token")
+        if reachable(token, owner_repo):
+            return [], False
+    except ReauthorizeError:
+        return [f"app: {forge.app}", "reauthorize: GitHub's authorization for this host is "
+                "gone; connect GitHub again, then grant"], True
+    except ForgeApiError:
+        return [], False
+    owner = owner_repo.split("/", 1)[0]
+    return [f"install: {install_url(forge.app)}",
+            f"not installed: {forge.app} can't reach {owner_repo} yet; install it on {owner} "
+            f"(or add the repo to its installation), then grant"], False
 
 
 def card(request: Any, kind: str = "") -> tuple[list[str], list[str]] | None:
@@ -215,14 +293,18 @@ def vet(request: Any) -> tuple[str, str]:
     hasn't connected, can't. Asks an unknown forge what it is, briefly."""
     # pylint: disable=import-outside-toplevel
     from urllib.parse import urlparse
-    from ...contract.forges import unsupported_forge
+    from ...contract.forges import GITHUB_HOSTS, unsupported_forge
     from ...contract.supervise import TOOL_ADD_REPO, TOOL_FORGE_CONNECT
     from ...forge_kinds import detect
     from .repo_grants import find_forge
     if request.tool == TOOL_FORGE_CONNECT:
         url = request.proposed.strip()
         host = urlparse(url).hostname or ""
-        kind = _connected_forges().get(host) or detect(url)
+        connected = _connected_forges().get(host, "")
+        if connected and host in GITHUB_HOSTS:
+            return (f"{host} is already connected to this host; ask for its repos with "
+                    f"add-repo"), connected
+        kind = connected or detect(url)
         return ("" if kind else unsupported_forge(host or url)), kind
     if request.tool == TOOL_ADD_REPO:
         forge = request.proposed.strip().split("/", 1)[0]
@@ -555,8 +637,12 @@ QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest,
 
 # Console answers to a card that carry more than allow/deny, by message type.
 ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer}
+# Requests about this host rather than one agent.
+HOST_REQUESTS = {"forge_connect": forge_connect, "github_authorize_start": github_authorize_start,
+                 "github_status": github_status}
 
-__all__ = ["ANSWERS", "QUERIES", "add_repo_answer", "bottle_chain", "bottle_write", "card",
-           "forge_attention", "forge_connect", "forge_connect_answer", "library", "list_secrets",
+__all__ = ["ANSWERS", "HOST_REQUESTS", "QUERIES", "add_repo_answer", "bottle_chain", "bottle_write", "card",
+           "forge_attention", "forge_connect", "forge_connect_answer", "github_authorize_start",
+           "github_status", "library", "list_secrets",
            "manifest", "manifest_save", "manifest_transfer", "refresh_credentials",
            "repo_attention", "resolve", "set_secret", "workspace_file"]

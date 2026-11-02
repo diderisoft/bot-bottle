@@ -39,9 +39,9 @@ The control stream (JSON lines):
   or `error`): re-reads the agent's forwarded host login (`credential_refresh`).
 - `manifest` (`agent_id`) -> `manifest`: its agent and bottle files and what they
   resolve to (`manifest_view`).
-- `forge_connect` (`url`, `token`, `bottle`, `name`, `ssh`) -> `forge_connected`
-  (`key`, `account`, `admin_repos`, `repos`, `host_key`, `warnings`, or `error`):
-  connects a forge into a host bottle (`remote_actions`); the token stays on the host.
+- `forge_connect` (`url`, `token`, `bottle`, `name`, `ssh`) -> `forge_connected`: connects a
+  forge into a host bottle; `github_authorize_start` -> `github_authorize` (the device code)
+  and `github_status` -> `github_status` (`github_connect`, `remote_actions.HOST_REQUESTS`).
 - `workspace_file` (`agent_id`, `path`) -> an image file read in its bottle (`workspace_files`).
 - `snapshot` -> `snapshot_taken` (`snapshot`, or `error`): the agent's
   workspace patch and conversation position, kept on the host (`snapshots`).
@@ -267,8 +267,8 @@ class ConsoleLink:
             await self.transcripts.handle(msg)
         elif kind in remote_actions.QUERIES:  # about one running agent
             await self._send(await remote_actions.QUERIES[kind](msg, self.running, self._bottles))
-        elif kind == "forge_connect":
-            await self._send(await remote_actions.forge_connect(msg))
+        elif kind in remote_actions.HOST_REQUESTS:  # about this host, not one agent
+            await self._send(await remote_actions.HOST_REQUESTS[kind](msg))
         elif kind in remote_actions.ANSWERS:  # a card that takes more than allow/deny
             await self._send(await remote_actions.ANSWERS[kind](
                 msg, self._asking, self._orchestrator, self._bottles))

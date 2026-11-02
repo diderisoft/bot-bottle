@@ -19,6 +19,16 @@ from ..control.git_gate_render import GitGateUpstream
 if TYPE_CHECKING:
     from .plan import GitGatePlan
 
+def _forge_token(provider: str, name: str, secrets: SecretSource) -> str | None:
+    """The forge token in secret `name`; a GitHub user access token is renewed
+    first when it's about to expire (`contrib/github/user_token.py`)."""
+    if provider == "github":
+        # pylint: disable-next=import-outside-toplevel
+        from ..contrib.github.user_token import current_token
+        return current_token(name, secrets)
+    return secrets.get(name)
+
+
 def _provision_dynamic_key(
     entry: ManifestGitEntry,
     slug: str,
@@ -32,7 +42,7 @@ def _provision_dynamic_key(
     path."""
     from ..deploy_key_provisioner import get_provisioner
     pk = entry.Key
-    token = secrets.get(pk.forge_token_env)
+    token = _forge_token(pk.provider, pk.forge_token_env, secrets)
     if token is None:
         raise MissingEnvVarError(
             pk.forge_token_env,
@@ -148,7 +158,7 @@ def revoke_deploy_keys(
 def revoke_key(ref: DeployKeyRef, key_id: str, secrets: SecretSource) -> None:
     """Revoke the deploy key `key_id` of `ref`'s repo."""
     from ..deploy_key_provisioner import get_provisioner
-    token = secrets.get(ref.forge_token_env)
+    token = _forge_token(ref.provider, ref.forge_token_env, secrets)
     if token is None:
         raise MissingEnvVarError(
             ref.forge_token_env,

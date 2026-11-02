@@ -108,6 +108,35 @@ Gitea's. `<name>` is the forge key: the host by default, or
 Keys that aren't bare identifiers are written quoted
 (`"codex@gitea.example.com":`).
 
+#### github.com through the bot-bottle GitHub App
+
+github.com connects through the shared `bot-bottle` GitHub App's user access
+tokens (ADR 0012); a pasted personal token (`--token`) is the fallback. The
+operator installs the app (`https://github.com/apps/<slug>/installations/new`)
+on the accounts and orgs whose repos bottles will grant, then authorizes the
+host with GitHub's device flow: `bot-bottle forge connect github` prints a
+code to enter at `https://github.com/login/device`, or the console's host page
+(Forges) shows it. The token acts as the operator ("<user> via bot-bottle"),
+only on repos the app is installed on and the operator can reach, and only
+with the app's permissions: Administration: read & write (adding and removing
+deploy keys) and Metadata: read. Pushes go over the run's deploy key, not the
+token.
+
+The app is named by its slug and public client id: `bot-bottle` by default,
+set with `--app`/`--client-id` and kept in `<root>/github-app.json`, so each
+named environment can use its own app (dev uses `bot-bottle-dev`). No private key or client secret of the app is ever on a host or
+the console: the device flow and refreshing its tokens take the client id
+alone (`contrib/github/user_token.py`).
+
+The token goes to the host secrets file as the forge's `<NAME>_TOKEN`; the
+forge is written into the `github` bottle as kind `github` with `app: <slug>`.
+An expiring token (eight hours, the app's default) also keeps `_REFRESH`,
+`_EXPIRES` and `_CLIENT_ID` companions; before the token is used to mint or
+revoke a key it's renewed, under a lock, when under ten minutes remain, and
+the rotated refresh token (six months) replaces the old one. When it can't be
+renewed, the error says to connect GitHub again. An agent's `add-repo` card
+for a repo the token can't reach carries the app's install link.
+
 While `extends` is resolved, each grant becomes a long-form entry (what
 everything after loading sees): a `gitea` key minted per launch with the forge's token, the forge's host key,
 and `read_only` unless the grant ends in `:write`. A mapping

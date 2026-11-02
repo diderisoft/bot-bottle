@@ -18,6 +18,19 @@ Flags:
   --no-browser    print the token page instead of opening it
 
 Gitea and GitHub (github.com, or a GitHub Enterprise Server's URL).
+
+github.com connects through the bot-bottle GitHub App (ADR 0012): install the
+app on the accounts and orgs whose repos bottles will grant, then authorize
+this host with the code it prints (GitHub's device flow). Bottles act as you,
+"you via bot-bottle", only on repos the app is installed on. No token is
+pasted; the token GitHub issues is kept in ~/.bot-bottle/secrets and renewed
+as it expires.
+
+  bot-bottle forge connect github [<bottle>] [--app SLUG] [--client-id ID]
+
+--app and --client-id name the app (default: bot-bottle; a dev host uses its
+own) and are remembered in ~/.bot-bottle/github-app.json. --token connects
+github.com with a pasted personal token instead, the fallback.
 """
 
 from __future__ import annotations
@@ -50,7 +63,61 @@ def _read_token(url: str, kind: str, *, from_stdin: bool, browser: bool) -> str:
     return getpass.getpass("paste the token (it isn't shown): ").strip()
 
 
+def _take(argv: list[str], flag: str) -> tuple[str, list[str]]:
+    if flag not in argv:
+        return "", argv
+    i = argv.index(flag)
+    if i + 1 >= len(argv) or argv[i + 1].startswith("--"):
+        die(f"{flag} takes a value")
+    return argv[i + 1], argv[:i] + argv[i + 2:]
+
+
+def connect_github(argv: list[str], app_slug: str, client_id: str) -> int:
+    """github.com through the bot-bottle GitHub App's device flow."""
+    # pylint: disable=import-outside-toplevel
+    from ...contrib.github.user_token import AppConfig, app_config, save_app_config
+    from ...github_connect import authorize
+    flags = {a for a in argv if a.startswith("--")}
+    args = [a for a in argv if not a.startswith("--")]
+    if len(args) > 2 or flags - {"--no-browser"}:
+        die(f"usage: {PROG} forge connect github [<bottle>] [--app SLUG] [--client-id ID] "
+            f"[--no-browser]")
+    config = app_config()
+    if app_slug or client_id:
+        config = AppConfig(slug=app_slug or config.slug, client_id=client_id or config.client_id)
+        info(f"remembered the GitHub App ({config.slug}) in {save_app_config(config)}")
+    info(f"install {config.slug} on the accounts and orgs whose repos bottles will grant: "
+         f"{config.install_url}")
+
+    def show(device: object) -> None:
+        uri = getattr(device, "verification_uri", "")
+        info(f"authorize this host: enter {getattr(device, 'user_code', '')} at {uri}")
+        if "--no-browser" not in flags:
+            webbrowser.open(uri)
+
+    try:
+        done = authorize(config, on_code=show, bottle=args[1] if len(args) > 1 else "",
+                         cwd=Path(os.getcwd()), host_bottles=bot_bottle_root() / "bottles")
+    except ConnectError as e:
+        die(str(e))
+    info(f"connected GitHub as {done.login} via {done.app} ({done.key} in {done.path}; the "
+         f"token in {host_secrets_path()} as {done.secret_name}"
+         f"{', renewed as it expires' if done.expiring else ''})")
+    info(f"grant its repos from a bottle that extends {done.bottle}:")
+    info(f"  git-gate:\n    repos: [{done.key}/<owner>/<repo>:write]")
+    return 0
+
+
 def connect(argv: list[str]) -> int:
+    app_slug, argv = _take(argv, "--app")
+    client_id, argv = _take(argv, "--client-id")
+    args = [a for a in argv if not a.startswith("--")]
+    if args and args[0] in ("github", "github.com", "https://github.com") and not (
+            {"--token", "--token-stdin"} & set(argv)):
+        return connect_github(argv, app_slug, client_id)
+    argv = [a for a in argv if a != "--token"]
+    if args and args[0] == "github":
+        argv = ["https://github.com" if a == "github" else a for a in argv]
     ssh_override = ""
     if "--ssh" in argv:
         i = argv.index("--ssh")
@@ -62,7 +129,7 @@ def connect(argv: list[str]) -> int:
     args = [a for a in argv if not a.startswith("--")]
     if not args or len(args) > 3 or flags - {"--token-stdin", "--no-browser"}:
         die(f"usage: {PROG} forge connect <url> [<bottle>] [<name>] [--ssh URL] "
-            f"[--token-stdin] [--no-browser]")
+            f"[--token] [--token-stdin] [--no-browser]")
     url = normalize_url(args[0])
     kind = detect(url)
     if not kind:
