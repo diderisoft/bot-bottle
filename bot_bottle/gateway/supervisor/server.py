@@ -569,14 +569,11 @@ def handle_check_proposal(
 
 
 def handle_get_environment(_params: dict[str, object]) -> dict[str, object]:
-    """Return orchestrator version info from injected env vars."""
-    info = {
-        "version": os.environ.get("BOT_BOTTLE_VERSION", ""),
-        "commit": os.environ.get("BOT_BOTTLE_COMMIT", ""),
-        "protocol": os.environ.get("BOT_BOTTLE_PROTOCOL", ""),
-    }
-    text = "\n".join(f"{k}: {v}" for k, v in info.items() if v)
-    return {"content": [{"type": "text", "text": text or "version unknown"}], "isError": False}
+    info = {"version": os.environ.get("BOT_BOTTLE_VERSION", ""),
+            "commit": os.environ.get("BOT_BOTTLE_COMMIT", ""),
+            "protocol": os.environ.get("BOT_BOTTLE_PROTOCOL", "")}
+    text = "\n".join(f"{k}: {v}" for k, v in info.items() if v) or "version unknown"
+    return {"content": [{"type": "text", "text": text}], "isError": False}
 
 
 def format_response_text(response: "_sv.Response") -> str:
