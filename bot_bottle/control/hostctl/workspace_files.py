@@ -18,9 +18,10 @@ import base64
 import binascii
 import posixpath
 import shlex
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from ...backend.base import Bottle
 
 # The largest file sent to the console (the console caps it the same).
@@ -182,6 +183,35 @@ def write_file(bottle: "Bottle", path: str, data: bytes,
     raise WorkspaceFileError("couldn't write the file in the bottle")
 
 
+def serve_read(attach: "Callable[[str], Any]", identity: str, path: str) -> dict[str, object]:
+    """`BottleService.read_workspace_image`: the image at `path` in the bottle
+    `attach(identity)` reaches (`content_type`, `data`, `size`), or `error`.
+    A bad path is refused before reaching the bottle."""
+    try:
+        content_type(path)
+        attached = attach(identity)
+        if isinstance(attached, str):
+            return {"error": attached}
+        return read_image(attached[0], path)
+    except WorkspaceFileError as e:
+        return {"error": str(e)}
+
+
+def serve_write(attach: "Callable[[str], Any]", identity: str, path: str,
+                data: bytes) -> dict[str, object]:
+    """`BottleService.write_workspace_file`: write `data` to `path` in the bottle
+    `attach(identity)` reaches (`path`, `size`), or `error`. A bad path is
+    refused before reaching the bottle."""
+    try:
+        _safe_upload_path(path)
+        attached = attach(identity)
+        if isinstance(attached, str):
+            return {"error": attached}
+        return write_file(attached[0], path, data)
+    except WorkspaceFileError as e:
+        return {"error": str(e)}
+
+
 __all__ = ["CONTENT_TYPES", "MAX_BYTES", "ROOTS", "UPLOAD_ROOT", "WRITE_MAX_BYTES",
-           "WorkspaceFileError", "content_type", "read_image", "read_script",
-           "write_file", "write_script"]
+           "WorkspaceFileError", "content_type", "read_image", "read_script", "serve_read",
+           "serve_write", "write_file", "write_script"]

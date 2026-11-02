@@ -715,33 +715,15 @@ class BottleService:
         return relabel.rename(self._sessions, identity, label)
 
     def read_workspace_image(self, identity: str, path: str) -> dict[str, object]:
-        """An image file from a running bottle (`workspace_files.read_image`):
-        `content_type`, `data` and `size`, or `error`."""
-        # pylint: disable-next=import-outside-toplevel
-        from .workspace_files import WorkspaceFileError, content_type, read_image
-        try:
-            content_type(path)  # refuse a bad path before reaching the bottle
-            attached = self._attached(identity)
-            if isinstance(attached, str):
-                return {"error": attached}
-            return read_image(attached[0], path)
-        except WorkspaceFileError as e:
-            return {"error": str(e)}
+        """An image file from a running bottle (`workspace_files.serve_read`)."""
+        from .workspace_files import serve_read  # pylint: disable=import-outside-toplevel
+        return serve_read(self._attached, identity, path)
 
     def write_workspace_file(self, identity: str, path: str,
                              data: bytes) -> dict[str, object]:
-        """Write `data` to `path` in a running bottle (`workspace_files.write_file`):
-        `path` and `size`, or `error`."""
-        # pylint: disable-next=import-outside-toplevel
-        from .workspace_files import WorkspaceFileError, _safe_upload_path, write_file
-        try:
-            _safe_upload_path(path)  # refuse a bad path before reaching the bottle
-            attached = self._attached(identity)
-            if isinstance(attached, str):
-                return {"error": attached}
-            return write_file(attached[0], path, data)
-        except WorkspaceFileError as e:
-            return {"error": str(e)}
+        """Write to a running bottle's workspace (`workspace_files.serve_write`)."""
+        from .workspace_files import serve_write  # pylint: disable=import-outside-toplevel
+        return serve_write(self._attached, identity, path, data)
 
     def _attached(self, identity: str) -> "tuple[Bottle, Any, Any] | str":
         """A running bottle reached through its backend, with its session

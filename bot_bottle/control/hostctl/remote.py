@@ -30,9 +30,8 @@ The control stream (JSON lines):
 - `forge_connect` -> `forge_connected`, `github_authorize_start` -> `github_authorize` and
   `github_status` (`github_connect`, `remote_actions.HOST_REQUESTS`).
 - Audit records out (`audit_record`) and passkey-unlocked reads (`audit_link`, ADR 0013).
-- `workspace_file` (`agent_id`, `path`) -> an image file read in its bottle (`workspace_files`).
-- `put_workspace_file` (`agent_id`, `path`, `data` base64) -> write a file to the agent's
-  `/home/node/uploads/` directory (`workspace_files.write_file`); reply `workspace_file_put`.
+- `workspace_file` reads an image in the agent's bottle; `put_workspace_file` (`data` base64)
+  writes under `/home/node/uploads/`, reply `workspace_file_put` (`workspace_files`).
 - `metrics_watch` (`bottles`) -> `bottle_metrics` every 3 s for those running (`live_metrics`).
 - `snapshot` -> `snapshot_taken`: workspace patch and conversation position (`snapshots`).
 - `transcript` (`agent_id`, `before` or `around`, `limit`) ->
@@ -85,8 +84,7 @@ POLL_SECONDS = 3.0
 BACKOFF_SECONDS = (1.0, 2.0, 5.0, 10.0, 30.0)
 WATCH_SECONDS = 2.0
 STATS_SECONDS = 60.0
-_REFUSED = 1  # application close codes
-_HOST_STOPPING = 2
+_REFUSED, _HOST_STOPPING = 1, 2  # application close codes
 MAX_AUDIT_EVENTS = 500
 
 
