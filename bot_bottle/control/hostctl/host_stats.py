@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ... import forge_alerts
 from ...lib.config_store import HostBudget
 from . import budget
 
@@ -166,13 +167,14 @@ def about() -> dict[str, str]:
 
 def snapshot(bottles: "BottleService | None" = None) -> dict[str, object]:
     """What the console link sends as `host_stats`: the host-wide numbers,
-    the bottles' `budget` and `about` the host, read fresh each time so a
-    budget set while the host controller runs shows at the next push."""
+    the bottles' `budget`, `about` the host and its `forge_alerts` (forge
+    tokens that stopped working), read fresh each time so a budget set while
+    the host controller runs shows at the next push."""
     limits = budget.host_budget()
     running = bottles.allocation() if bottles is not None else []
     return {**collect(stats_paths(), limits=limits),
             "budget": budget.block(running, limits, budget.METER.current()),
-            "about": about()}
+            "about": about(), "forge_alerts": forge_alerts.current()}
 
 
 __all__ = ["about", "collect", "snapshot", "stats_paths"]

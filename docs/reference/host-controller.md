@@ -213,7 +213,8 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
                 "bottles": [{"id", "label", "memory", "cpu_pct", "mem_used"}]},
      "storage": {"used", "budget",
                  "categories": {"vm_disks", "images", "workspaces", "transcripts"}}},
-   "about": {"os", "backend", "version", "commit"}}
+   "about": {"os", "backend", "version", "commit"},
+   "forge_alerts": [{"key", "kind", "forge", "message", "since"}]}
   ```
 
   The host-wide `storage` covers the filesystems holding the state root and
@@ -222,6 +223,17 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
   `cap` repeats the budget for consoles that predate the `budget` block. A
   budget of 0 means none is set. `budget.storage` is left out until the
   first storage walk after the daemon starts.
+
+  `forge_alerts` are forge tokens that stopped working for good, one per
+  credential (`key` is the host secret's name), oldest first
+  (`bot_bottle/forge_alerts.py`). `kind` is `github_reauthorize` (the GitHub
+  authorization can't be renewed: its refresh token expired or was revoked;
+  raised by the git-gate token renewer) or `gitea_token_refused` (the forge
+  answered 401/403 when a launch, grant or teardown used the token). Each is
+  raised once per failure state and cleared when the credential works again
+  or is replaced (`forge connect`); network trouble is only a warning. They
+  live in the host controller's memory: after a restart the next renewal or
+  launch raises them again.
 
   `about` is what the host's console page says about it: its OS (`macOS`,
   or a Linux's `NAME` from `/etc/os-release`), the backend its last

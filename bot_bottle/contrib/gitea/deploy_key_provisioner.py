@@ -13,7 +13,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from ...deploy_key_provisioner import DeployKeyCollisionError, DeployKeyProvisioner
+from ...deploy_key_provisioner import (
+    DeployKeyCollisionError, DeployKeyProvisioner, ForgeTokenRefusedError,
+)
 
 # Bounds ssh-keygen and Gitea calls so a hung Gitea can't stall a launch.
 _API_TIMEOUT_SECS = 30
@@ -54,6 +56,8 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
                 body = json.loads(resp.read())
         except urllib.error.HTTPError as exc:
             _body = _read_error_body(exc)
+            if exc.code in (401, 403):
+                raise ForgeTokenRefusedError(self._refused(exc.code)) from exc
             if exc.code == 422:
                 raise DeployKeyCollisionError(
                     f"deploy key collision for {owner_repo!r} "
@@ -69,6 +73,12 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
             ) from exc
 
         return str(body["id"]), private_key
+
+    def _refused(self, code: int) -> str:
+        return (f"{self._api_url} refused this host's Gitea token (HTTP {code}): it was "
+                f"revoked, expired or lost its scopes. Connect the forge again with "
+                f"`bot-bottle forge connect {self._api_url}`, or from the host's Forges "
+                f"page in the console")
 
     def delete(self, owner_repo: str, key_id: str) -> None:
         """Delete the deploy key; 404 is success. Other errors raise
@@ -86,6 +96,8 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 return
+            if exc.code in (401, 403):
+                raise ForgeTokenRefusedError(self._refused(exc.code)) from exc
             _body = _read_error_body(exc)
             raise RuntimeError(
                 f"failed to delete deploy key {key_id} for {owner_repo}: "

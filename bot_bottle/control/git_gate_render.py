@@ -521,7 +521,15 @@ fi
 upstream_hint() {
   [ "$transport" = https ] || return 0
   if grep -qiE "Invalid username or (password|token)|Authentication failed|returned error: 401" "$1"; then
-    echo "git-gate: GitHub refused the token; re-authorize GitHub on the host (bot-bottle forge connect github --reauthorize)" >&2
+    expires=$(cat "${token_file}.expires" 2>/dev/null || :)
+    case "$expires" in ''|*[!0-9]*) expires= ;; esac
+    if [ -n "$expires" ] && [ "$(date +%s)" -ge "$expires" ]; then
+      echo "git-gate: git-gate's GitHub token expired and wasn't renewed: the host controller renews it every few minutes, so if it has been down, start it again (bot-bottle up)" >&2
+    elif [ -n "$expires" ]; then
+      echo "git-gate: GitHub refused a token that hasn't expired, so the authorization was revoked; re-authorize GitHub on the host (bot-bottle forge connect github --reauthorize)" >&2
+    else
+      echo "git-gate: GitHub refused the token: if the host controller has been down it may have expired (start it again: bot-bottle up), otherwise re-authorize GitHub on the host (bot-bottle forge connect github --reauthorize)" >&2
+    fi
   elif grep -qiE "Permission to .* denied|Write access to repository not granted|returned error: 403" "$1"; then
     echo "git-gate: GitHub refused the push; the bot-bottle app needs Contents: read & write and must be installed on the repo's owner" >&2
   elif grep -qiE "Repository not found|returned error: 404" "$1"; then

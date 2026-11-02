@@ -5,7 +5,9 @@ few minutes this renews each running bottle's token through
 `user_token.current_token` (which renews it within ten minutes of expiry) and,
 when it changed, pushes the new one into the gateway's tmpfs
 (`provision_gateway.push_tokens`). The host owns renewal; the gateway only
-ever holds the current token, in memory.
+ever holds the current token, in memory. An authorization that can't be
+renewed (ReauthorizeError) raises a console alert (`forge_alerts`) instead of
+a warning every pass; network trouble stays a warning and is retried.
 """
 
 from __future__ import annotations
@@ -15,9 +17,11 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
+from ... import forge_alerts
 from ...backend import adoption
-from ...backend.provision_gateway import github_token, push_tokens
+from ...backend.provision_gateway import github_token, github_token_expires, push_tokens
 from ...bottle_state import git_gate_state_dir
+from ...contrib.github.user_token import ReauthorizeError
 from ...git_gate.provision import load_upstreams_snapshot
 from ...lib import log
 
@@ -35,9 +39,11 @@ class GitTokenRenewer:
 
     def __init__(self, bottles: Any, *,
                  token_for: Callable[[str], str | None] = github_token,
-                 transport_for: Callable[[str], Any] | None = None) -> None:
+                 transport_for: Callable[[str], Any] | None = None,
+                 expires_for: Callable[[str], int | None] = github_token_expires) -> None:
         self._bottles = bottles
         self._token_for = token_for
+        self._expires_for = expires_for
         self._transport_for = transport_for or self._gateway_transport
         # (bottle, secret) -> digest of the token last pushed.
         self._pushed: dict[tuple[str, str], str] = {}
@@ -77,9 +83,18 @@ class GitTokenRenewer:
             return False
         tokens: dict[str, str] = {}
         for secret in {u.token_secret for u in upstreams}:
-            token = self._token_for(secret)
+            try:
+                token = self._token_for(secret)
+            except ReauthorizeError as e:
+                # For good: the console shows it once; warned only when new.
+                if forge_alerts.raise_alert(secret, kind=forge_alerts.GITHUB_REAUTHORIZE,
+                                            forge="github.com", message=str(e)):
+                    log.warn(f"bottle {identity}: git-gate's GitHub token can't be "
+                             f"renewed: {e}")
+                continue
             if token:
                 tokens[secret] = token
+                forge_alerts.clear(secret)
         changed = {s for s, t in tokens.items()
                    if self._pushed.get((identity, s)) != _digest(t)}
         if not changed:
@@ -89,7 +104,7 @@ class GitTokenRenewer:
         if adopted is None or not adopted.registry_id or transport is None:
             return False
         push_tokens(transport, adopted.registry_id, upstreams,
-                    token_for=tokens.get)
+                    token_for=tokens.get, expires_for=self._expires_for)
         for secret in changed:
             self._pushed[(identity, secret)] = _digest(tokens[secret])
         return True

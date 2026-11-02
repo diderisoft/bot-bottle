@@ -55,13 +55,28 @@ def github_token(secret: str) -> str | None:
     return current_token(secret, FileSecrets(host_secrets_path()))
 
 
+def github_token_expires(secret: str) -> int | None:
+    """When the token in host secret `secret` expires (epoch seconds), or None
+    for one that doesn't (or isn't known)."""
+    # pylint: disable=import-outside-toplevel
+    from ..contrib.github.user_token import EXPIRES_SUFFIX
+    from ..paths import host_secrets_path
+    from ..secret_source import FileSecrets
+    raw = FileSecrets(host_secrets_path()).get(secret + EXPIRES_SUFFIX) or ""
+    return int(raw) if raw.isdigit() and int(raw) > 0 else None
+
+
 def push_tokens(transport: GatewayTransport, bottle_id: str,
                 upstreams: tuple[GitGateUpstream, ...],
-                token_for: Callable[[str], str | None] = github_token) -> None:
+                token_for: Callable[[str], str | None] = github_token,
+                expires_for: Callable[[str], int | None] = github_token_expires) -> None:
     """Put the token each HTTPS upstream needs into the gateway's tmpfs, as
-    `<token_dir>/<secret>-token` (0600). Run at provision and again before a
-    token expires. The token goes through a 0600 temp file the transport
-    copies, never a command line; it's never logged."""
+    `<token_dir>/<secret>-token` (0600), and when it expires beside it as
+    `<secret>-token.expires` (epoch seconds), so the hooks can tell an
+    expired token (the host controller hasn't renewed it) from a revoked one.
+    Run at provision and again before a token expires. The token goes through
+    a 0600 temp file the transport copies, never a command line; it's never
+    logged."""
     _require_safe(bottle_id)
     secrets = sorted({u.token_secret for u in upstreams
                       if u.transport == "https" and u.token_secret})
@@ -89,6 +104,9 @@ def push_tokens(transport: GatewayTransport, bottle_id: str,
         finally:
             os.unlink(path)
         transport.exec(["chmod", "600", dest])
+        expires = expires_for(secret)
+        transport.exec(["sh", "-c", f"printf %s {int(expires)} > {dest}.expires" if expires
+                        else f"rm -f {dest}.expires"])
 
 
 def provision_git_gate(
@@ -154,7 +172,8 @@ def deprovision_git_gate(transport: GatewayTransport, bottle_id: str) -> None:
 
 
 __all__ = [
-    "TOKEN_ROOT", "deprovision_git_gate", "github_token", "provision_git_gate", "push_tokens",
+    "TOKEN_ROOT", "deprovision_git_gate", "github_token", "github_token_expires",
+    "provision_git_gate", "push_tokens",
     "token_dir",
     "GatewayProvisionError", "GatewayTransport",
 ]

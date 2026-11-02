@@ -169,6 +169,13 @@ How git-gate reaches a GitHub repo (ADR 0014), set per forge with
   environment variables in a subshell: never in argv, a repo's config or a
   bottle. A 401, 403 or 404 from GitHub says what to do: authorize again,
   give the app Contents: read & write, or install it on the repo's owner.
+  Beside the token the host writes its expiry (`<SECRET>-token.expires`,
+  epoch seconds), so a 401 tells an expired token (the host controller
+  hasn't renewed it, so start it again with `bot-bottle up`) from one GitHub
+  refused before its expiry (the authorization was revoked: reconnect
+  GitHub). An authorization the renewer can't renew raises a console alert
+  (`forge_alerts`, see host-controller.md's `host_stats`) instead of a
+  warning every pass; so does a Gitea token the forge refuses.
 - `deploy-key`: a key per repo per launch, as for Gitea. The app then needs
   Administration: read & write. Use it where GitHub itself should hold each
   run to one repo. To use both on one host, declare the host twice: a second

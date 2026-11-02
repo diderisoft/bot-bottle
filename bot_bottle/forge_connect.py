@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
+from . import forge_alerts
 from .contract.yaml_subset import parse_frontmatter, serialize_yaml_subset
 from .manifest.util import ManifestError
 
@@ -227,6 +228,7 @@ def connect(url: str, token: str, *, bottle: str = "", name: str = "", ssh: str 
     entry = ForgeEntry(key=key, kind=kind, url=url, ssh=ssh, account=check.account,
                        host_key=host_key)
     write_secret(host_secrets_path(), entry.secret_name, token.strip())
+    forge_alerts.clear(entry.secret_name)  # a refused token, replaced
     try:
         write_forge(path, entry)
     except ManifestError as e:

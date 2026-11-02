@@ -3,8 +3,10 @@ through the forge's API at launch and revoked at teardown. The forge client is i
 
 from __future__ import annotations
 
+import contextlib
 import json
 import dataclasses
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -61,8 +63,9 @@ def _provision_dynamic_key(
     title = f"bot-bottle:{globalize_slug(slug)}:{entry.Name}{title_suffix}"
 
     info(f"provisioning deploy key for git-gate.repos[{entry.Name!r}]")
-    key_id, private_key_bytes = provisioner.create(owner_repo, title,
-                                                   read_only=pk.read_only)
+    with _token_alert(pk.provider, pk.forge_token_env, entry.UpstreamHost):
+        key_id, private_key_bytes = provisioner.create(owner_repo, title,
+                                                       read_only=pk.read_only)
 
     key_file = stage_dir / f"{entry.Name}-key"
     key_file.write_bytes(private_key_bytes)
@@ -162,6 +165,25 @@ def revoke_deploy_keys(
         revoke_key(ref, id_file.read_text().strip(), secrets)
 
 
+@contextlib.contextmanager
+def _token_alert(provider: str, secret: str, forge: str) -> Iterator[None]:
+    """A Gitea token the forge refuses raises a console alert (`forge_alerts`)
+    until a call with it works again; GitHub deploy keys use the user's token,
+    whose alerts come from its renewal (`github_git_tokens`)."""
+    # pylint: disable=import-outside-toplevel
+    from .. import forge_alerts
+    from ..deploy_key_provisioner import ForgeTokenRefusedError
+    try:
+        yield
+    except ForgeTokenRefusedError as e:
+        if provider == "gitea":
+            forge_alerts.raise_alert(secret, kind=forge_alerts.GITEA_TOKEN_REFUSED,
+                                     forge=forge, message=str(e))
+        raise
+    if provider == "gitea":
+        forge_alerts.clear(secret)
+
+
 def revoke_key(ref: DeployKeyRef, key_id: str, secrets: SecretSource) -> None:
     """Revoke the deploy key `key_id` of `ref`'s repo."""
     from ..deploy_key_provisioner import get_provisioner
@@ -179,7 +201,8 @@ def revoke_key(ref: DeployKeyRef, key_id: str, secrets: SecretSource) -> None:
     if owner_repo.endswith(".git"):
         owner_repo = owner_repo[:-4]
     info(f"revoking deploy key {key_id} for git-gate.repos[{ref.name!r}]")
-    provisioner.delete(owner_repo, key_id)
+    with _token_alert(ref.provider, ref.forge_token_env, ref.upstream_host):
+        provisioner.delete(owner_repo, key_id)
     info(f"revoked deploy key {key_id} for git-gate.repos[{ref.name!r}]")
 
 

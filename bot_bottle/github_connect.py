@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import forge_alerts
 from .forge_connect import (
     ConnectError, ForgeEntry, bottle_path, default_key, existing_forges, write_forge,
 )
@@ -66,6 +67,7 @@ def finish(tokens: Any, config: Any, *, bottle: str = "", cwd: Path,
     entry = ForgeEntry(key=key, kind="github", url=GITHUB_URL, ssh=GITHUB_SSH, account=login,
                        host_key=host_key, app=config.slug)
     store(host_secrets_path(), entry.secret_name, tokens, config.client_id)
+    forge_alerts.clear(entry.secret_name)
     try:
         write_forge(path, entry)
     except ManifestError as e:

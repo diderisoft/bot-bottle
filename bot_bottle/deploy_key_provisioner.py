@@ -15,6 +15,11 @@ class DeployKeysDisabledError(RuntimeError):
     policy). The message says what to change; it's shown to the user."""
 
 
+class ForgeTokenRefusedError(RuntimeError):
+    """The forge refused the token itself (401/403): it was revoked, expired
+    or lost its scopes, so retrying won't help. The message says how to fix it."""
+
+
 class DeployKeyProvisioner(ABC):
     """One deploy key's lifecycle on a forge."""
 

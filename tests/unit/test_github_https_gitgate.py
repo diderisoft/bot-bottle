@@ -137,7 +137,8 @@ class TestProvisionRender(unittest.TestCase):
 class TestPushTokens(unittest.TestCase):
     def test_into_tmpfs_by_file_never_argv(self) -> None:
         t = _Transport()
-        provision_gateway.push_tokens(t, "b1", (HTTPS,), token_for=lambda s: TOKEN)
+        provision_gateway.push_tokens(t, "b1", (HTTPS,), token_for=lambda s: TOKEN,
+                                      expires_for=lambda s: None)
         dest = "/dev/shm/git-gate/b1/GITHUB_COM_TOKEN-token"
         self.assertEqual(TOKEN, t.copied[dest])
         self.assertEqual("0o600", t.copied[dest + ":mode"])
@@ -149,19 +150,22 @@ class TestPushTokens(unittest.TestCase):
     def test_refuses_without_tmpfs(self) -> None:
         with self.assertRaises(GatewayProvisionError) as ctx:
             provision_gateway.push_tokens(_Transport(fail_tmpfs=True), "b1", (HTTPS,),
-                                          token_for=lambda s: TOKEN)
+                                          token_for=lambda s: TOKEN,
+                                      expires_for=lambda s: None)
         self.assertIn("tmpfs", str(ctx.exception))
 
     def test_no_token_says_how_to_connect(self) -> None:
         with self.assertRaises(GatewayProvisionError) as ctx:
-            provision_gateway.push_tokens(_Transport(), "b1", (HTTPS,), token_for=lambda s: None)
+            provision_gateway.push_tokens(_Transport(), "b1", (HTTPS,), token_for=lambda s: None,
+                                          expires_for=lambda s: None)
         self.assertIn("forge connect github", str(ctx.exception))
 
     def test_ssh_only_bottles_push_nothing(self) -> None:
         t = _Transport()
         ssh = GitGateUpstream(name="r", upstream_url="ssh://git@h/o/r.git", upstream_host="h",
                               upstream_port="22", identity_file="/k", known_host_key="k")
-        provision_gateway.push_tokens(t, "b1", (ssh,), token_for=lambda s: TOKEN)
+        provision_gateway.push_tokens(t, "b1", (ssh,), token_for=lambda s: TOKEN,
+                                      expires_for=lambda s: None)
         self.assertEqual(([], {}), (t.execs, t.copied))
 
     def test_teardown_removes_the_token(self) -> None:
@@ -267,7 +271,8 @@ class TestRenewer(unittest.TestCase):
             return_value=SimpleNamespace(registry_id="r1")))
         it = iter(tokens)
         return GitTokenRenewer(bottles, token_for=lambda s: next(it),
-                               transport_for=lambda i: transport), stage
+                               transport_for=lambda i: transport,
+                               expires_for=lambda s: None), stage
 
     def test_pushes_only_a_changed_token(self) -> None:
         t = _Transport()
