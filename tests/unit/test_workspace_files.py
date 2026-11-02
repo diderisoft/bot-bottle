@@ -1,4 +1,4 @@
-"""Unit: image files read out of a running bottle for the console (`workspace_file`)."""
+"""Unit: workspace file read/write for the console (`workspace_file`, `put_workspace_file`)."""
 
 from __future__ import annotations
 
@@ -20,7 +20,8 @@ from bot_bottle.control.hostctl import remote
 from bot_bottle.control.hostctl.bottles import BottleService
 from bot_bottle.control.hostctl.sessions import SessionRecord
 from bot_bottle.control.hostctl.workspace_files import (
-    WorkspaceFileError, content_type, read_image, read_script)
+    WorkspaceFileError, content_type, read_image, read_script,
+    write_file, write_script, _safe_upload_path)
 from . import use_bottle_root
 
 _PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
@@ -190,6 +191,126 @@ class TestService(unittest.TestCase):
             "s1", "/home/node/a.png")["error"]))
 
 
+class TestSafeUploadPath(unittest.TestCase):
+    def test_valid_paths(self) -> None:
+        for path in ["/home/node/uploads/img.png", "/home/node/uploads/sub/file.txt",
+                     "/home/node/uploads/a-b_c.json"]:
+            with self.subTest(path=path):
+                _safe_upload_path(path)  # should not raise
+
+    def test_refuses_bad_paths(self) -> None:
+        for path, why in [
+            ("", "file path"), ("/home/node/uploads/a\n.png", "file path"),
+            ("/home/node/uploads/a\0.png", "file path"),
+            ("home/node/uploads/a.png", "absolute"),
+            ("/home/node/uploads/../etc/passwd", "normalized"),
+            ("/home/node/a.png", "uploads must go under"),
+            ("/tmp/a.png", "uploads must go under"),
+            ("/home/nodeevil/uploads/a.png", "uploads must go under"),
+        ]:
+            with self.subTest(path=path[:50]), self.assertRaisesRegex(WorkspaceFileError, why):
+                _safe_upload_path(path)
+
+
+class TestWriteFile(unittest.TestCase):
+    def setUp(self) -> None:
+        self.dir = Path(self.enterContext(tempfile.TemporaryDirectory(prefix="bbww."))).resolve()
+        self.upload_root = str(self.dir / "uploads")
+        self.bottle = LocalBottle()
+
+    def write(self, name: str, data: bytes) -> dict[str, object]:
+        path = f"{self.upload_root}/{name}"
+        return write_file(self.bottle, path, data, self.upload_root)
+
+    def test_writes_a_file(self) -> None:
+        data = b"hello world"
+        result = self.write("hello.txt", data)
+        self.assertEqual({"path": f"{self.upload_root}/hello.txt", "size": 11}, result)
+        self.assertEqual(data, Path(f"{self.upload_root}/hello.txt").read_bytes())
+
+    def test_creates_subdirectory(self) -> None:
+        data = b"\x89PNG"
+        result = self.write("sub/dir/icon.png", data)
+        self.assertEqual(data, Path(f"{self.upload_root}/sub/dir/icon.png").read_bytes())
+        self.assertEqual(4, result["size"])
+
+    def test_a_png_and_arbitrary_bytes(self) -> None:
+        data = _PNG
+        result = self.write("img.png", data)
+        self.assertEqual(data, Path(f"{self.upload_root}/img.png").read_bytes())
+        self.assertEqual(len(_PNG), result["size"])
+
+    def test_too_big_is_refused_before_reaching_the_bottle(self) -> None:
+        big = b"x" * (5 * 1024 * 1024 + 1)
+        with self.assertRaisesRegex(WorkspaceFileError, "over 5 MiB"):
+            write_file(self.bottle, f"{self.upload_root}/big.bin", big, self.upload_root)
+        self.assertEqual([], self.bottle.scripts)
+
+    def test_outside_root_is_refused_before_reaching_the_bottle(self) -> None:
+        with self.assertRaisesRegex(WorkspaceFileError, "uploads must go under"):
+            write_file(self.bottle, "/home/node/evil.sh", b"bad", self.upload_root)
+        self.assertEqual([], self.bottle.scripts)
+
+    def test_injection_in_path_is_quoted(self) -> None:
+        name = "it's $(touch pwned).txt"
+        # shlex.quote prevents execution; the file is written with the literal name
+        write_file(self.bottle, f"{self.upload_root}/{name}", b"x", self.upload_root)
+        self.assertFalse((Path.cwd() / "pwned").exists())
+
+    def test_exec_failure_raises(self) -> None:
+        bottle = mock.Mock(exec=mock.Mock(return_value=ExecResult(1, "", "failed")))
+        with self.assertRaisesRegex(WorkspaceFileError, "couldn't write"):
+            write_file(bottle, f"{self.upload_root}/x.txt", b"x", self.upload_root)
+
+    def test_guest_outside_reply_raises(self) -> None:
+        bottle = mock.Mock(exec=mock.Mock(return_value=ExecResult(0, "E outside\n", "")))
+        with self.assertRaisesRegex(WorkspaceFileError, "outside"):
+            write_file(bottle, f"{self.upload_root}/x.txt", b"x", self.upload_root)
+
+    def test_the_script_checks_the_path_prefix(self) -> None:
+        script = write_script(f"{self.upload_root}/a.txt", "AAAA", self.upload_root)
+        self.assertIn("case", script)
+        self.assertIn("outside", script)
+
+
+class TestWriteService(unittest.TestCase):
+    def setUp(self) -> None:
+        root = Path(self.enterContext(tempfile.TemporaryDirectory(prefix="bbwwsvc.")))
+        self.addCleanup(use_bottle_root(root))
+        self.enterContext(contextlib.redirect_stderr(io.StringIO()))
+        self.sessions = mock.MagicMock()
+        self.sessions.record.return_value = SessionRecord(
+            id="s1", kind="bottle", meta={"backend": "fake", "activation": "a1"})
+        self.sessions.exists.return_value = True
+        self.backend = mock.MagicMock()
+        self.service = BottleService(self.sessions, backend_for=lambda _s: self.backend,
+                                     recorded_infra=lambda _b: None, audit=mock.MagicMock())
+        adoption.write("s1", adoption.AdoptionRecord(
+            container="c", registry_id="", workspace=adoption.AdoptedWorkspace(
+                enabled=True, has_host_git_dir=True, guest_path="/home/node/workspace")))
+
+    def test_writes_in_the_bottle(self) -> None:
+        bottle = mock.Mock(exec=mock.Mock(return_value=ExecResult(0, "OK\n", "")))
+        self.backend.attach_adopted.return_value = bottle
+        got = self.service.write_workspace_file("s1", "/home/node/uploads/f.txt", b"hi")
+        self.assertEqual({"path": "/home/node/uploads/f.txt", "size": 2}, got)
+
+    def test_bad_path_never_reaches_bottle(self) -> None:
+        got = self.service.write_workspace_file("s1", "/home/node/secret.txt", b"x")
+        self.assertIn("error", got)
+        self.backend.attach_adopted.assert_not_called()
+
+    def test_bottle_unavailable(self) -> None:
+        self.backend.attach_adopted.return_value = None
+        got = self.service.write_workspace_file("s1", "/home/node/uploads/f.txt", b"x")
+        self.assertIn("error", got)
+
+    def test_not_running(self) -> None:
+        self.sessions.exists.return_value = False
+        got = self.service.write_workspace_file("s1", "/home/node/uploads/f.txt", b"x")
+        self.assertIn("error", got)
+
+
 class TestOnTheLink(unittest.TestCase):
     def setUp(self) -> None:
         self.sent: list[dict[str, Any]] = []
@@ -200,11 +321,18 @@ class TestOnTheLink(unittest.TestCase):
         self.bottles = mock.Mock()
         self.bottles.read_workspace_image.return_value = {
             "content_type": "image/png", "data": "AAAA", "size": 3}
+        self.bottles.write_workspace_file.return_value = {
+            "path": "/home/node/uploads/f.txt", "size": 2}
         self.link = remote.ConsoleLink(self.bottles, send, agents=lambda: [])
         self.link.running["ag1"] = "s1"
 
     def ask(self, **msg: Any) -> dict[str, Any]:
         asyncio.run(self.link.handle({"type": "workspace_file", "request_id": "q1", **msg}))
+        return self.sent[-1]
+
+    def put(self, **msg: Any) -> dict[str, Any]:
+        asyncio.run(self.link.handle(
+            {"type": "put_workspace_file", "request_id": "q2", **msg}))
         return self.sent[-1]
 
     def test_a_running_agent(self) -> None:
@@ -227,6 +355,37 @@ class TestOnTheLink(unittest.TestCase):
         del self.bottles.read_workspace_image
         self.assertEqual("this host controller can't read workspace files",
                          self.ask(agent_id="ag1", path="/home/node/a.png")["error"])
+
+    def test_put_a_running_agent(self) -> None:
+        import base64 as _b64
+        data_b64 = _b64.b64encode(b"hi").decode()
+        reply = self.put(agent_id="ag1", path="/home/node/uploads/f.txt", data=data_b64)
+        self.assertEqual({"type": "workspace_file_put", "request_id": "q2", "agent_id": "ag1",
+                          "path": "/home/node/uploads/f.txt", "size": 2}, reply)
+        self.bottles.write_workspace_file.assert_called_once_with(
+            "s1", "/home/node/uploads/f.txt", b"hi")
+
+    def test_put_unknown_agent(self) -> None:
+        import base64 as _b64
+        reply = self.put(agent_id="other", path="/home/node/uploads/f.txt",
+                         data=_b64.b64encode(b"x").decode())
+        self.assertEqual("that agent isn't running on this host", reply["error"])
+        self.bottles.write_workspace_file.assert_not_called()
+
+    def test_put_missing_data(self) -> None:
+        reply = self.put(agent_id="ag1", path="/home/node/uploads/f.txt")
+        self.assertEqual("the file data is missing", reply["error"])
+
+    def test_put_invalid_base64(self) -> None:
+        reply = self.put(agent_id="ag1", path="/home/node/uploads/f.txt", data="!!!notb64")
+        self.assertEqual("the file data is not valid base64", reply["error"])
+
+    def test_put_older_bottle_service(self) -> None:
+        import base64 as _b64
+        del self.bottles.write_workspace_file
+        reply = self.put(agent_id="ag1", path="/home/node/uploads/f.txt",
+                         data=_b64.b64encode(b"x").decode())
+        self.assertEqual("this host controller can't write workspace files", reply["error"])
 
 
 if __name__ == "__main__":

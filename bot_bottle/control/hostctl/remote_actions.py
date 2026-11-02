@@ -45,6 +45,36 @@ async def workspace_file(msg: Mapping[str, Any], running: Mapping[str, str],
             "agent_id": agent_id, "path": path if isinstance(path, str) else "", **result}
 
 
+async def put_workspace_file(msg: Mapping[str, Any], running: Mapping[str, str],
+                             bottles: Any) -> dict[str, Any]:
+    """Write a file to a running agent's workspace from the console
+    (`workspace_files.write_file`). `data` is the file's bytes as base64."""
+    import base64
+    import binascii
+    agent_id = str(msg.get("agent_id", ""))
+    path = msg.get("path")
+    data_b64 = msg.get("data")
+    bottle = running.get(agent_id)
+    write = getattr(bottles, "write_workspace_file", None)  # BottleService's
+    if not bottle:
+        result: dict[str, object] = {"error": "that agent isn't running on this host"}
+    elif not isinstance(path, str):
+        result = {"error": "that isn't a file path"}
+    elif not isinstance(data_b64, str):
+        result = {"error": "the file data is missing"}
+    elif write is None:
+        result = {"error": "this host controller can't write workspace files"}
+    else:
+        try:
+            raw = base64.b64decode(data_b64, validate=True)
+        except (binascii.Error, ValueError):
+            raw = None
+        result = ({"error": "the file data is not valid base64"} if raw is None
+                  else await asyncio.to_thread(write, bottle, path, raw))
+    return {"type": "workspace_file_put", "request_id": msg.get("request_id"),
+            "agent_id": agent_id, "path": path if isinstance(path, str) else "", **result}
+
+
 async def rename(msg: Mapping[str, Any], running: Mapping[str, str],
                  bottles: Any) -> dict[str, Any]:
     """A new label for one of this host's bottled agents (`BottleService.rename`):
@@ -691,7 +721,8 @@ QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest,
            "manifest_save": manifest_save, "manifest_transfer": manifest_transfer,
            "library": library, "resolve": resolve,
            "list_secrets": list_secrets, "set_secret": set_secret,
-           "workspace_file": workspace_file, "rename": rename}
+           "workspace_file": workspace_file, "put_workspace_file": put_workspace_file,
+           "rename": rename}
 
 # Console answers to a card that carry more than allow/deny, by message type.
 ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer}

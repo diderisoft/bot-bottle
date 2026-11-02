@@ -31,6 +31,8 @@ The control stream (JSON lines):
   `github_status` (`github_connect`, `remote_actions.HOST_REQUESTS`).
 - Audit records out (`audit_record`) and passkey-unlocked reads (`audit_link`, ADR 0013).
 - `workspace_file` (`agent_id`, `path`) -> an image file read in its bottle (`workspace_files`).
+- `put_workspace_file` (`agent_id`, `path`, `data` base64) -> write a file to the agent's
+  `/home/node/uploads/` directory (`workspace_files.write_file`); reply `workspace_file_put`.
 - `metrics_watch` (`bottles`) -> `bottle_metrics` every 3 s for those running (`live_metrics`).
 - `snapshot` -> `snapshot_taken`: workspace patch and conversation position (`snapshots`).
 - `transcript` (`agent_id`, `before` or `around`, `limit`) ->

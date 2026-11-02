@@ -728,6 +728,21 @@ class BottleService:
         except WorkspaceFileError as e:
             return {"error": str(e)}
 
+    def write_workspace_file(self, identity: str, path: str,
+                             data: bytes) -> dict[str, object]:
+        """Write `data` to `path` in a running bottle (`workspace_files.write_file`):
+        `path` and `size`, or `error`."""
+        # pylint: disable-next=import-outside-toplevel
+        from .workspace_files import WorkspaceFileError, _safe_upload_path, write_file
+        try:
+            _safe_upload_path(path)  # refuse a bad path before reaching the bottle
+            attached = self._attached(identity)
+            if isinstance(attached, str):
+                return {"error": attached}
+            return write_file(attached[0], path, data)
+        except WorkspaceFileError as e:
+            return {"error": str(e)}
+
     def _attached(self, identity: str) -> "tuple[Bottle, Any, Any] | str":
         """A running bottle reached through its backend, with its session
         record and adoption, or why it can't be."""

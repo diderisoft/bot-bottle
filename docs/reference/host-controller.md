@@ -370,6 +370,18 @@ never from the guest. Files over 10 MiB are refused. The console serves the
 bytes with `nosniff` and a sandboxing CSP and shows them only through
 `<img>`, so an SVG's script never runs.
 
+## Uploading files to a running agent
+
+The console's `+` button lets the operator upload a file into a running
+agent's workspace. It asks the link for `put_workspace_file` (`agent_id`,
+`path`, `data` base64); the reply `workspace_file_put` carries `path` and
+`size`, or `error` (`workspace_files.py`). The host writes the file inside
+the running bottle through `Bottle.exec`, never to a host path. Only
+absolute, normalized paths under `/home/node/uploads` are accepted. The
+guest checks the prefix again before writing. Files over 5 MiB are refused.
+After the upload the console inserts the path into the message box so the
+agent can be told about it.
+
 ## Renaming a bottled agent
 
 A bottled agent's label is what people call it; its identity is what the

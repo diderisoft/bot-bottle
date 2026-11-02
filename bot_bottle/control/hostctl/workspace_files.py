@@ -1,11 +1,16 @@
-"""Image files from a running bottle's workspace, for the console to show: an
-agent makes a picture as a file and mentions its path (`workspace_file`).
+"""Workspace file operations for the console: reading image files an agent made,
+and writing files the operator uploads from the console.
 
-The file is read inside the bottle through `Bottle.exec`, never from a host
-path. Only absolute, normalized paths under `/home/node` or `/tmp` with an
-image extension are read; the guest resolves symlinks and the resolved path
-is checked again, there and here. The content type comes from the extension,
-never from the guest, and a file over `MAX_BYTES` is refused."""
+**Read** (`workspace_file`): the agent makes a picture and mentions its path.
+Only absolute, normalized paths under `/home/node` or `/tmp` with an image
+extension are read; the guest resolves symlinks and the resolved path is
+checked again, there and here. The content type comes from the extension,
+never from the guest, and a file over `MAX_BYTES` is refused.
+
+**Write** (`put_workspace_file`): the operator uploads a file from the console.
+Only absolute, normalized paths under the upload root (`/home/node/uploads`)
+are written; the guest checks the prefix too. Files over `WRITE_MAX_BYTES` are
+refused. The file is written via `Bottle.exec`, never from a host path."""
 
 from __future__ import annotations
 
@@ -26,6 +31,12 @@ CONTENT_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg
                  ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml"}
 # A read of up to MAX_BYTES gives up after this long.
 READ_TIMEOUT_SECONDS = 30.0
+
+# Uploads from the console land here; all files are accepted (any extension).
+UPLOAD_ROOT = "/home/node/uploads"
+# The largest file the console may upload (5 MiB).
+WRITE_MAX_BYTES = 5 * 1024 * 1024
+WRITE_TIMEOUT_SECONDS = 30.0
 
 
 class WorkspaceFileError(Exception):
@@ -113,5 +124,64 @@ def read_image(bottle: "Bottle", path: str, roots: tuple[str, ...] = ROOTS,
             "size": len(data)}
 
 
-__all__ = ["CONTENT_TYPES", "MAX_BYTES", "ROOTS", "WorkspaceFileError", "content_type",
-           "read_image", "read_script"]
+def _safe_upload_path(path: str, upload_root: str = UPLOAD_ROOT) -> None:
+    """Validate `path` as a write destination, or raise WorkspaceFileError."""
+    root = upload_root.rstrip("/")
+    if not path or len(path) > MAX_PATH_CHARS or any(c in path for c in "\0\n\r"):
+        raise WorkspaceFileError("that isn't a file path")
+    if not path.startswith("/") or posixpath.normpath(path) != path:
+        raise WorkspaceFileError("the path must be absolute and normalized")
+    if not path.startswith(root + "/"):
+        raise WorkspaceFileError(f"uploads must go under {root}")
+    if posixpath.basename(path) in (".", ".."):
+        raise WorkspaceFileError("the filename is invalid")
+
+
+def write_script(path: str, data_b64: str, upload_root: str = UPLOAD_ROOT) -> str:
+    """The `exec` script to write base64-encoded data to `path` inside the
+    bottle. Outputs 'OK' on success or 'E <reason>' on failure."""
+    root = upload_root.rstrip("/")
+    # data_b64 uses only A-Za-z0-9+/= — safe inside single quotes.
+    return "\n".join([
+        f"p={shlex.quote(path)}",
+        'case "$p" in',
+        f"  {shlex.quote(root)}/*) ;;",
+        '  *) echo "E outside"; exit 0;;',
+        "esac",
+        'dir=$(dirname "$p")',
+        'mkdir -p "$dir" 2>/dev/null || { echo "E mkdir"; exit 0; }',
+        f"printf '%s' {shlex.quote(data_b64)} | base64 -d > \"$p\" && echo 'OK' || echo 'E write'",
+    ])
+
+
+def write_file(bottle: "Bottle", path: str, data: bytes,
+               upload_root: str = UPLOAD_ROOT) -> dict[str, object]:
+    """Write `data` to `path` in `bottle`'s workspace: `{'path', 'size'}`.
+    WorkspaceFileError when it can't be written."""
+    _safe_upload_path(path, upload_root)
+    if len(data) > WRITE_MAX_BYTES:
+        raise WorkspaceFileError(
+            f"the file is over {WRITE_MAX_BYTES // (1024 * 1024)} MiB")
+    data_b64 = base64.b64encode(data).decode("ascii")
+    r = bottle.exec(write_script(path, data_b64, upload_root),
+                    timeout=WRITE_TIMEOUT_SECONDS)
+    if r.returncode != 0:
+        raise WorkspaceFileError("couldn't write the file in the bottle")
+    _WRITE_ERRORS = {
+        "outside": f"that path is outside {upload_root}",
+        "mkdir": "couldn't create the upload directory in the bottle",
+        "write": "couldn't write the file in the bottle",
+    }
+    for line in r.stdout.splitlines():
+        if line == "OK":
+            return {"path": path, "size": len(data)}
+        if line.startswith("E "):
+            reason = line[2:]
+            raise WorkspaceFileError(
+                _WRITE_ERRORS.get(reason, "couldn't write the file in the bottle"))
+    raise WorkspaceFileError("couldn't write the file in the bottle")
+
+
+__all__ = ["CONTENT_TYPES", "MAX_BYTES", "ROOTS", "UPLOAD_ROOT", "WRITE_MAX_BYTES",
+           "WorkspaceFileError", "content_type", "read_image", "read_script",
+           "write_file", "write_script"]
