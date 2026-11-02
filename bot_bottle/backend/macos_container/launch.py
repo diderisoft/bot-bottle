@@ -32,6 +32,7 @@ from ...bottle_state import read_committed_image
 from ...egress import Egress
 from ...image_cache import check_stale
 from ...lib.log import die, info, warn
+from ..bottle_size import BOTTLE_MEMORY_MIB
 from ... import resources
 from .. import BottleImages, isolation_probe, oci_agent_image
 from ..launch_common import (
@@ -505,6 +506,7 @@ def _agent_run_argv(
         "--detach",
         "--label", "bot-bottle.backend=macos-container",
         "--network", endpoint.network,
+        "--memory", f"{BOTTLE_MEMORY_MIB}M",
         # Without NET_RAW the agent can't spoof neighbours' addresses; root
         # needs NET_ADMIN to load its firewall. See the module docstring.
         "--cap-drop", "CAP_NET_RAW",

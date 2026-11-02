@@ -27,6 +27,7 @@ from ...egress import Egress
 from ...image_cache import check_stale_path
 from ...contract.hostctl import Settings
 from ...lib.log import die, info
+from ..bottle_size import BOTTLE_MEMORY_MIB
 from ..launch_common import (
     LaunchTeardown,
     registration_tokens,
@@ -171,6 +172,7 @@ def launch(
                 # the next controller adopts it.
                 detached=True,
                 data_drives=(home,),
+                mem_mib=BOTTLE_MEMORY_MIB,
             )
         stack.callback(vm.terminate)
         firecracker_vm.wait_for_ssh(vm, private_key)

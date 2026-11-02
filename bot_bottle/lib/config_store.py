@@ -18,9 +18,10 @@ DEFAULT_TRANSCRIPT_RETENTION_DAYS = 30
 
 
 @dataclass(frozen=True)
-class HostCaps:
-    """Advisory caps on this host's storage and memory, in whole GiB, shown
-    against its usage in the console. 0 = not set."""
+class HostBudget:
+    """What bottles may use on this host, in whole GiB (`bot-bottle host
+    budget`): memory allocated to running bottles, and storage in bot-bottle's
+    own directories. A launch that wouldn't fit is refused. 0 = not set."""
 
     disk_gb: int = 0
     memory_gb: int = 0
@@ -124,7 +125,7 @@ class ConfigStore(DbStore):
             ADD COLUMN transcript_retention_days INTEGER NOT NULL
                 DEFAULT {DEFAULT_TRANSCRIPT_RETENTION_DAYS}
             """,
-            # v11: advisory host caps shown to the console (GiB; 0 = none)
+            # v11: the host budget, `bot-bottle host budget` (GiB; 0 = none)
             """
             ALTER TABLE bot_bottle_config
             ADD COLUMN host_max_disk_gb INTEGER NOT NULL DEFAULT 0
@@ -275,11 +276,11 @@ class ConfigStore(DbStore):
         self._chmod()
         return self.db_path
 
-    def host_caps(self) -> HostCaps:
-        """The advisory storage and memory caps this host reports to the
-        console (`bot-bottle host caps`); 0 = none set."""
+    def host_budget(self) -> HostBudget:
+        """The bottles' memory and storage budget (`bot-bottle host budget`);
+        0 = none set."""
         if not self.db_path.is_file():
-            return HostCaps()
+            return HostBudget()
         try:
             with self._connect() as conn:
                 row = conn.execute(
@@ -287,13 +288,13 @@ class ConfigStore(DbStore):
                     "WHERE id = 1",
                 ).fetchone()
         except sqlite3.OperationalError:
-            return HostCaps()  # not migrated yet
+            return HostBudget()  # not migrated yet
         if row is None:
-            return HostCaps()
-        return HostCaps(disk_gb=int(row["host_max_disk_gb"]),
-                        memory_gb=int(row["host_max_memory_gb"]))
+            return HostBudget()
+        return HostBudget(disk_gb=int(row["host_max_disk_gb"]),
+                          memory_gb=int(row["host_max_memory_gb"]))
 
-    def set_host_caps(self, caps: HostCaps) -> Path:
+    def set_host_budget(self, caps: HostBudget) -> Path:
         with self._connect() as conn:
             conn.execute(
                 """
@@ -338,7 +339,7 @@ class ConfigStore(DbStore):
 
 __all__ = [
     "AuditForward",
-    "HostCaps",
+    "HostBudget",
     "FirehoseSettings",
     "FirehoseSink",
     "DEFAULT_AUDIT_DELIVERY",

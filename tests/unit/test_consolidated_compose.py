@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import unittest
 
+from bot_bottle.backend.bottle_size import BOTTLE_MEMORY_MIB
 from bot_bottle.backend.docker.consolidated_compose import (
     agent_exec_env, consolidated_agent_compose,
 )
@@ -25,6 +26,9 @@ class TestConsolidatedAgentCompose(unittest.TestCase):
     def test_only_agent_service_no_companion_container(self) -> None:
         # The whole point of consolidation: no per-bottle gateway.
         self.assertEqual(["agent"], list(self._spec()["services"]))
+
+    def test_gives_the_bottle_its_memory(self) -> None:
+        self.assertEqual(f"{BOTTLE_MEMORY_MIB}m", self._spec()["services"]["agent"]["mem_limit"])
 
     def test_agent_pinned_on_external_gateway_network(self) -> None:
         spec = self._spec()

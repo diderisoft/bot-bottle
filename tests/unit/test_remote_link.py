@@ -64,6 +64,9 @@ class _Bottles:
         return [{**entry, "session": self.session_state(str(entry["id"]))}
                 for entry in self.listed]
 
+    def allocation(self) -> list[dict[str, object]]:
+        return []
+
     def start_elsewhere(self, bottle: str, *, origin: str = "terminal",
                         activation: str = "act-t") -> None:
         """A session the link didn't launch, as `bot-bottle` starts one."""

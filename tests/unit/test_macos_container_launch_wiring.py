@@ -21,6 +21,7 @@ from bot_bottle.backend import BottleImages
 from bot_bottle.backend.macos_container import launch as launch_mod
 from bot_bottle.backend.macos_container.bottle import MacosContainerBottle
 from bot_bottle.backend.macos_container.bottle_plan import MacosContainerBottlePlan
+from bot_bottle.backend.bottle_size import BOTTLE_MEMORY_MIB
 from bot_bottle.backend.macos_container.consolidated_launch import GatewayEndpoint
 from bot_bottle.backend.macos_container.gateway_hosts import GATEWAY_HOSTNAME
 from bot_bottle.backend.macos_container.launch import (
@@ -262,6 +263,9 @@ class TestAgentRunArgv(unittest.TestCase):
             _plan(Path(self._tmp.name), env_var_secret="key-material"), _endpoint(),
         )
         self.assertIn("ENV_VAR_SECRET=key-material", argv)
+
+    def test_gives_the_bottle_its_memory(self) -> None:
+        self.assertEqual(f"{BOTTLE_MEMORY_MIB}M", self.argv[self.argv.index("--memory") + 1])
 
     def test_never_pins_an_ip(self) -> None:
         """Apple Container 1.0.0 has no --ip: the address is DHCP-assigned and

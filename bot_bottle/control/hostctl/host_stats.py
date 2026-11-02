@@ -1,4 +1,5 @@
-"""Host-level storage and memory statistics, sent to the console link."""
+"""Host-level storage and memory statistics, and the bottles' budget
+(`budget.py`), sent to the console link as `host_stats`."""
 
 from __future__ import annotations
 
@@ -7,8 +8,13 @@ import platform
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ...lib.config_store import ConfigStore, HostCaps
+from ...lib.config_store import HostBudget
+from . import budget
+
+if TYPE_CHECKING:
+    from .bottles import BottleService
 
 GIB = 1024 ** 3
 
@@ -110,9 +116,10 @@ def _storage(paths: Sequence[Path]) -> tuple[int, int]:
     return used, total
 
 
-def collect(paths: Sequence[Path], *, limits: HostCaps = HostCaps()) -> dict[str, object]:
+def collect(paths: Sequence[Path], *, limits: HostBudget = HostBudget()) -> dict[str, object]:
     """Snapshot of this host's storage (over the filesystems holding `paths`)
-    and memory, each with its advisory cap in bytes (0 = none set)."""
+    and memory, host-wide, each with the budget in bytes as `cap` (0 = none
+    set; kept for consoles that predate the `budget` block)."""
     disk_used, disk_total = _storage(paths)
     mem_used, mem_total = _memory_stats()
     return {
@@ -121,25 +128,20 @@ def collect(paths: Sequence[Path], *, limits: HostCaps = HostCaps()) -> dict[str
     }
 
 
-def caps() -> HostCaps:
-    """The caps set with `bot-bottle host caps` (the host DB)."""
-    # pylint: disable-next=import-outside-toplevel
-    from ...paths import host_db_path
-    return ConfigStore(host_db_path()).host_caps()
-
-
 def stats_paths() -> tuple[Path, ...]:
     """Where bot-bottle's disk use lives: the state root (bottles' state,
     transcripts, the host DB) and the caches (images, VM disks)."""
-    # pylint: disable-next=import-outside-toplevel
-    from ...paths import bot_bottle_root, host_artifact_cache_dir, host_firecracker_cache_path
-    return (bot_bottle_root(), host_artifact_cache_dir(), host_firecracker_cache_path())
+    return tuple(path for _, path in budget.storage_roots())
 
 
-def snapshot() -> dict[str, object]:
-    """What the console link sends as `host_stats`, read fresh each time so a
-    cap set while the host controller runs shows at the next push."""
-    return collect(stats_paths(), limits=caps())
+def snapshot(bottles: "BottleService | None" = None) -> dict[str, object]:
+    """What the console link sends as `host_stats`: the host-wide numbers and
+    the bottles' `budget`, read fresh each time so a budget set while the
+    host controller runs shows at the next push."""
+    limits = budget.host_budget()
+    running = bottles.allocation() if bottles is not None else []
+    return {**collect(stats_paths(), limits=limits),
+            "budget": budget.block(running, limits, budget.METER.current())}
 
 
-__all__ = ["caps", "collect", "snapshot", "stats_paths"]
+__all__ = ["collect", "snapshot", "stats_paths"]
