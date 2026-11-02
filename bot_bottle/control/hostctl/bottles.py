@@ -37,7 +37,7 @@ from ... import run_manifest
 from ...backend import adoption
 from ...backend.bottle_size import BOTTLE_MEMORY_BYTES
 from ...lib.config_store import HostBudget
-from . import budget
+from . import bottle_metrics, budget
 from .audit_events import HostAudit, digest_manifest, digest_request
 from .credential_refresh import CredentialRefresher
 from .sessions import ExitStatus, SessionManager, SessionRecord
@@ -349,8 +349,13 @@ class BottleService:
             if r.kind != SESSION_KIND:
                 continue
             if r.id in taken or r.id in launching or self.session_state(r.id)["running"]:
-                out.append({"id": r.id, "label": r.meta.get("label", "") or r.id,
-                            "memory": BOTTLE_MEMORY_BYTES})
+                entry: dict[str, object] = {"id": r.id, "label": r.meta.get("label", "") or r.id,
+                                            "memory": BOTTLE_MEMORY_BYTES}
+                metrics = bottle_metrics.collect(r.id, str(r.meta.get("backend") or ""))
+                if metrics is not None:
+                    entry["cpu_pct"] = metrics.cpu_pct
+                    entry["mem_used"] = metrics.mem_used
+                out.append(entry)
                 launching.pop(r.id, None)
         out.extend({"id": i, "label": label, "memory": BOTTLE_MEMORY_BYTES}
                    for i, label in launching.items())

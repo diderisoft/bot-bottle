@@ -208,8 +208,13 @@ def block(bottles: Sequence[Mapping[str, object]], budget: HostBudget,
     out: dict[str, object] = {"memory": {
         "allocated": allocated(bottles), "budget": budget.memory_gb * GIB,
         "bottle_size": BOTTLE_MEMORY_BYTES,
-        "bottles": [{"id": b.get("id", ""), "label": b.get("label", ""),
-                     "memory": b.get("memory", 0)} for b in bottles],
+        "bottles": [
+            {**{"id": b.get("id", ""), "label": b.get("label", ""),
+                "memory": b.get("memory", 0)},
+             **({} if b.get("cpu_pct") is None else {"cpu_pct": b["cpu_pct"]}),
+             **({} if b.get("mem_used") is None else {"mem_used": b["mem_used"]})}
+            for b in bottles
+        ],
     }}
     if storage is not None:
         out["storage"] = {"used": sum(storage.values()), "budget": budget.disk_gb * GIB,
