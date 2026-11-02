@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import bot_bottle.cli.commands.start as start_mod
 import bot_bottle.cli.tui as tui_mod
 from bot_bottle.manifest.preview import manifest_to_yaml
-from bot_bottle.backend import ActiveAgent
+
 from bot_bottle.contract.hostctl import LaunchRequest
 
 
@@ -212,18 +212,8 @@ class TestCmdStartSelector(unittest.TestCase):
         self._launch_mock.assert_not_called()
 
 
-def _active_agent(slug: str) -> ActiveAgent:
-    return ActiveAgent(
-        backend_name="docker",
-        slug=slug,
-        agent_name="demo",
-        started_at="2026-01-01T00:00:00+00:00",
-        services=(),
-    )
-
-
 class TestCmdStartLabelCollision(unittest.TestCase):
-    """cmd_start re-prompts when the label's slug is already running."""
+    """--pick shows the name/color modal; label collisions are allowed (UUID identity)."""
 
     def setUp(self):
         self._manifest = _make_manifest(["researcher"], ["claude"])
@@ -231,46 +221,23 @@ class TestCmdStartLabelCollision(unittest.TestCase):
         self._launch_mock = patch(
             "bot_bottle.cli.commands.start._launch_bottle", return_value=0,
         ).start()
-        # Stub the bottle picker to always return a selection.
         patch.object(tui_mod, "filter_multiselect", return_value=["claude"]).start()
         patch("bot_bottle.cli.commands.start._select_image_policy", return_value="fresh").start()
         self.addCleanup(patch.stopall)
 
-    def test_no_collision_proceeds_without_reprompt(self):
-        with (
-            patch.object(tui_mod, "name_color_modal", return_value=("researcher", "")) as modal,
-            patch("bot_bottle.cli.commands.start.enumerate_active_agents", return_value=[]),
-        ):
+    def test_pick_shows_modal_and_launches(self):
+        with patch.object(tui_mod, "name_color_modal", return_value=("researcher", "")) as modal:
             rc = start_mod.cmd_start(["--pick", "researcher"])
         self.assertEqual(0, rc)
         modal.assert_called_once()
         self._launch_mock.assert_called_once()
 
-    def test_collision_reprompts_with_disclaimer(self):
-        collision_agent = _active_agent("researcher")
-        call_count = 0
-
-        def _modal(default_label: str, *, disclaimer: str = "", **_kw: object) -> tuple[str, str]:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return "researcher", ""
-            return "researcher-2", ""
-
-        with (
-            patch.object(tui_mod, "name_color_modal", side_effect=_modal) as modal,
-            patch(
-                "bot_bottle.cli.commands.start.enumerate_active_agents",
-                side_effect=[[collision_agent], []],
-            ),
-        ):
+    def test_same_label_launch_is_allowed(self):
+        # Identity is UUID-based; a duplicate label starts a second bottle, not an error.
+        with patch.object(tui_mod, "name_color_modal", return_value=("researcher", "")):
             rc = start_mod.cmd_start(["--pick", "researcher"])
-
         self.assertEqual(0, rc)
-        self.assertEqual(2, modal.call_count)
-        second_call_kwargs = modal.call_args_list[1][1]
-        self.assertIn("researcher", second_call_kwargs.get("disclaimer", ""))
-        self.assertIn("already in use", second_call_kwargs.get("disclaimer", ""))
+        self.assertEqual("researcher", self._launch_mock.call_args[0][0].label)
 
 
 class TestCmdStartDefaults(unittest.TestCase):
@@ -283,8 +250,6 @@ class TestCmdStartDefaults(unittest.TestCase):
         self._bottles = patch.object(tui_mod, "filter_multiselect", return_value=["dev"]).start()
         self._modal = patch.object(tui_mod, "name_color_modal").start()
         self._policy = patch("bot_bottle.cli.commands.start._select_image_policy").start()
-        self._active = patch("bot_bottle.cli.commands.start.enumerate_active_agents",
-                             return_value=[]).start()
         self.addCleanup(patch.stopall)
 
     def start(self) -> LaunchRequest:
@@ -292,10 +257,6 @@ class TestCmdStartDefaults(unittest.TestCase):
         with patch("bot_bottle.cli.commands.start.ManifestIndex.resolve", return_value=manifest):
             self.assertEqual(0, start_mod.cmd_start(["pi"]))
         return self._launch_mock.call_args[0][0]
-
-    def test_the_label_is_deduplicated_against_running_bottles(self):
-        self._active.return_value = [_active_agent("pi")]
-        self.assertEqual("pi-2", self.start().label)
 
     def test_bottles_named_on_the_command_line_skip_the_picker(self):
         manifest = _make_manifest(["pi"], ["pi", "dev"])
