@@ -323,6 +323,61 @@ async def manifest_transfer(msg: Mapping[str, Any], running: Mapping[str, str],
     return reply
 
 
+async def bottle_chain(msg: Mapping[str, Any], running: Mapping[str, str],
+                       _bottles: Any = None) -> dict[str, Any]:
+    """A running agent's bottle files as data, for the console's editable
+    Bottle tab (`bottle_chain.chain`)."""
+    # pylint: disable=import-outside-toplevel
+    from .bottle_chain import chain
+    from .manifest_view import ManifestViewError, _live_policy
+    agent_id = str(msg.get("agent_id", ""))
+    reply: dict[str, Any] = {"type": "bottle_chain", "request_id": msg.get("request_id"),
+                             "agent_id": agent_id}
+    bottle = running.get(agent_id)
+    if not bottle:
+        reply["error"] = "that agent isn't running on this host"
+        return reply
+    try:
+        policy = await asyncio.to_thread(_live_policy, bottle)
+        reply.update(await asyncio.to_thread(chain, bottle, policy))
+    except ManifestViewError as e:
+        reply["error"] = str(e)
+    except Exception as e:  # pylint: disable=broad-exception-caught  # reported, not raised
+        log.warn(f"remote: reading {bottle}'s bottles failed: {type(e).__name__}: {e}")
+        reply["error"] = "reading the bottles failed; see the host controller's log"
+    return reply
+
+
+async def bottle_write(msg: Mapping[str, Any], running: Mapping[str, str],
+                       _bottles: Any = None) -> dict[str, Any]:
+    """Write one host bottle of a running agent's chain from the console, as
+    data or raw text, if it's still what was shown (`bottle_chain.write`).
+    `stale` says it changed meanwhile."""
+    # pylint: disable-next=import-outside-toplevel
+    from .bottle_chain import StaleBottleError, write
+    from .manifest_view import ManifestViewError
+    agent_id = str(msg.get("agent_id", ""))
+    reply: dict[str, Any] = {"type": "bottle_written", "request_id": msg.get("request_id"),
+                             "agent_id": agent_id}
+    bottle = running.get(agent_id)
+    if not bottle:
+        reply["error"] = "that agent isn't running on this host"
+        return reply
+    try:
+        reply.update(await asyncio.to_thread(
+            write, bottle, _text(msg, "bottle"), _text(msg, "digest"),
+            frontmatter=msg.get("frontmatter"), body=msg.get("body"),
+            content=msg.get("content")))
+    except StaleBottleError as e:
+        reply.update({"error": str(e), "stale": True})
+    except ManifestViewError as e:
+        reply["error"] = str(e)
+    except Exception as e:  # pylint: disable=broad-exception-caught  # reported, not raised
+        log.warn(f"remote: writing {bottle}'s bottle failed: {type(e).__name__}: {e}")
+        reply["error"] = "writing the bottle failed; see the host controller's log"
+    return reply
+
+
 async def library(msg: Mapping[str, Any], _running: Mapping[str, str],
                   _bottles: Any = None) -> dict[str, Any]:
     """The host's agents and bottles, with their text, for the console's
@@ -365,12 +420,14 @@ async def resolve(msg: Mapping[str, Any], _running: Mapping[str, str],
 
 # Console requests (most about one running agent), by message type.
 QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest,
+           "bottle_chain": bottle_chain, "bottle_write": bottle_write,
            "manifest_save": manifest_save, "manifest_transfer": manifest_transfer,
            "library": library, "resolve": resolve}
 
 # Console answers to a card that carry more than allow/deny, by message type.
 ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer}
 
-__all__ = ["ANSWERS", "QUERIES", "add_repo_answer", "card", "forge_attention", "forge_connect",
+__all__ = ["ANSWERS", "QUERIES", "add_repo_answer", "bottle_chain", "bottle_write", "card",
+           "forge_attention", "forge_connect",
            "forge_connect_answer", "library", "manifest", "manifest_save", "manifest_transfer",
            "refresh_credentials", "repo_attention", "resolve"]

@@ -368,3 +368,17 @@ copied. With `delete` it takes picked elements out of the file they come from
 (the running agent keeps them until its next launch), and this run's out of
 the running bottle. A built-in bottle's and the provider's stay. Each file
 changed is saved as a new version.
+
+The console's editable Bottle tab reads the agent's chain with `bottle_chain`
+(`bottle_chain.py`): every bottle file the agent's bottle is built from, in
+merge order (each pick's parents before it; a later one wins), each with its
+`kind` (`host`, `builtin` or `project`), `writable` (host bottles only),
+`digest`, `content`, and parsed `frontmatter` and `body`; plus this run's
+additions (`run`) and the writable `targets`. `bottle_write` (`bottle`,
+`digest`, and `frontmatter` with `body`, or raw `content`) writes one host
+bottle of that chain: never a built-in or project bottle, nor a name outside
+the chain. The host serializes data itself, refuses text that doesn't parse
+or holds a secrets-file value, puts the file back if the agent's manifest no
+longer loads, and records a version. A digest that no longer matches replies
+`stale`. Changes apply from the next launch; the running bottle is
+unaffected.
