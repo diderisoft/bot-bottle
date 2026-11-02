@@ -200,7 +200,7 @@ applies a route is in [gateway.md](gateway.md#egress-proxy).
 | `inspect` | no | `false` passes the TLS tunnel through untouched: no DLP, auth injection or path matching. Otherwise a mapping of the fields below. |
 | `inspect.auth.scheme` | when `auth` present | `Bearer` or `token`. Injected by the proxy; the agent never sees the value. |
 | `inspect.auth.token_ref` | when `auth` present | Env-var name holding the secret on the host. |
-| `inspect.matches` | no | Array of `{paths, methods, headers}` filters. A request must match at least one entry (if any are given) to be forwarded. |
+| `inspect.matches` | no | Array of `{paths, methods, headers}` filters. A request must match at least one entry (if any are given) to be forwarded. An inspected route with no `matches` and no gateway-injected auth (`token_env`/`preserve_auth`) is read-only: only `GET` and `HEAD` pass, so list the methods (e.g. `methods: [GET, POST]`) to allow writes. |
 | `inspect.matches[].paths` | no | Array of `{type, value}`. `type` is `prefix` (default), `exact`, or `regex`. |
 | `inspect.matches[].methods` | no | Array of HTTP method strings, e.g. `[GET, POST]`. |
 | `inspect.matches[].headers` | no | Array of `{name, value, type}`. `type` is `exact` (default) or `regex`. |

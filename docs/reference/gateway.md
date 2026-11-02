@@ -49,7 +49,10 @@ Basic`, so a client that waits to be challenged (git's default
 5. **Git boundary.** Smart-HTTP push to a forge is always blocked; fetch only
    when the route sets `git.fetch`. Pushes go through git-gate.
 6. **Route policy** (`request_pipeline.evaluate_route_policy`). A host not on
-   the allowlist, or a request matching no `matches` entry, gets a 403. The
+   the allowlist, or a request matching no `matches` entry, gets a 403. An
+   inspected route that declares no `matches` and has no gateway auth
+   (`auth`/`preserve_auth`) is read-only: anything but `GET`/`HEAD` gets a 403
+   until the route lists the methods it may use. The
    agent's [credentials](#agent-credentials) and any
    [cookies the host didn't set](#cookies) are stripped unless the route sets
    `preserve_auth`. Then the route's `auth` is injected from the bottle's
