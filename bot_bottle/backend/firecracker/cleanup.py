@@ -128,6 +128,19 @@ def live_run_dirs() -> tuple[Path, ...]:
     return tuple(Path(path) for path in sorted(live))
 
 
+def pid_for_slug(slug: str) -> int | None:
+    """PID of the running Firecracker VM process for `slug`, or None."""
+    run_root = _run_root()
+    run_dir = run_root / slug
+    if not run_dir.is_dir():
+        return None
+    for pid in _firecracker_pids():
+        args = _process_args(pid)
+        if args is not None and _run_dir_of(args, run_root) == run_dir:
+            return pid
+    return None
+
+
 def _orphan_run_dirs(run_root: Path, live: set[str]) -> list[str]:
     """Run dirs with no live VM."""
     if not run_root.is_dir():
