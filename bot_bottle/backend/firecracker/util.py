@@ -523,10 +523,12 @@ mkdir -p /etc/dropbear /run
 # agent rootfs and the infra VM's persistent registry volume.
 mount -t tmpfs -o mode=0755 tmpfs /run 2>/dev/null || true
 # -R: generate host keys on demand. -E: log auth failures to stderr,
-# captured in the host-side console.log for debugging.
-/bb-dropbear -R -E -p 22 &
+# captured in the host-side console.log for debugging. -F: stay in the
+# foreground, so dropbear remains this shell's job; without it dropbear
+# daemonizes, the shell has no job left, and the reap loop below spins a vCPU.
+/bb-dropbear -F -R -E -p 22 &
 
-# Reap zombies as PID 1. dropbear is always a child, so `wait` blocks
-# rather than busy-looping.
-while : ; do wait ; done
+# Reap zombies as PID 1: `wait` blocks while dropbear runs (and reaps
+# orphans meanwhile). The sleep keeps the loop from spinning if it ever exits.
+while : ; do wait ; sleep 1 ; done
 """
