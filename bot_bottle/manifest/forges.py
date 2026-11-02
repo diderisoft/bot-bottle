@@ -38,7 +38,7 @@ from .util import ManifestError, as_json_object
 
 CREDENTIAL_SOURCES = ("secret",)
 _CREDENTIAL_KEYS = {"source", "secret", "kind"}
-_FORGE_KEYS = {"kind", "url", "ssh", "token", "account", "host_key", "app"}
+_FORGE_KEYS = {"kind", "url", "ssh", "token", "account", "host_key", "app", "transport"}
 # A forge's key: its host, or `<account>@<host>` for another account on it.
 _FORGE_NAME_RE = re.compile(r"^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+(?::[0-9]+)?$")
 _REPO_PART_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -60,6 +60,17 @@ class ManifestForge:
     # A GitHub forge reached through the bot-bottle GitHub App's user token
     # (ADR 0012): the app's slug, for its install link.
     app: str = ""
+    # GitHub only: "deploy-key" opts its repos into a key minted per launch
+    # instead of HTTPS with the token (ADR 0014). Empty is the default.
+    transport: str = ""
+
+    def key(self, writable: bool) -> dict[str, object]:
+        """The long-form `key` block a grant on this forge expands to."""
+        key: dict[str, object] = {"provider": self.kind, "forge_token_env": self.token_secret,
+                                  "api_url": self.url, "read_only": not writable}
+        if self.transport:
+            key["transport"] = self.transport
+        return key
 
 
 def _str(d: dict[str, object], key: str, label: str, *, required: bool = False) -> str:
@@ -161,7 +172,17 @@ def resolve_forge(name: str, raw: object, credentials: dict[str, object],
         ssh=str(d.get("ssh") or f"ssh://git@{host}").rstrip("/"),
         token_secret=str(cred["secret"]), account=str(d.get("account", "")),
         host_key=str(d.get("host_key", "")), app=str(d.get("app", "")),
+        transport=_transport(d, where),
     )
+
+
+def _transport(d: dict[str, object], where: str) -> str:
+    transport = str(d.get("transport") or "")
+    allowed = ("https", "deploy-key") if d.get("kind") == "github" else ("deploy-key",)
+    if transport and transport not in allowed:
+        raise ManifestError(f"{where}.transport must be {' or '.join(allowed)} "
+                            f"(was {transport!r})")
+    return transport
 
 
 def parse_grant(grant: str, where: str) -> tuple[str, str, str, bool]:
@@ -241,10 +262,7 @@ def expand_grants(bottle_name: str, raw: dict[str, object], forges: dict[str, ob
                 f"extend one that does (`bot-bottle forge connect` writes one)")
         forge = resolve_forge(forge_name, forges[forge_name], credentials, bottle_name)
         long_form: dict[str, object] = {
-            "url": f"{forge.ssh}/{owner}/{repo}.git",
-            "key": {"provider": forge.kind, "forge_token_env": forge.token_secret,
-                    "api_url": forge.url, "read_only": not writable},
-        }
+            "url": f"{forge.ssh}/{owner}/{repo}.git", "key": forge.key(writable)}
         if forge.host_key:
             long_form["host_key"] = forge.host_key
         expanded[name] = long_form

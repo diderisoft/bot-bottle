@@ -95,9 +95,11 @@ The token each kind needs (the CLI and the console's card both say it):
 | kind | token page | permissions |
 |---|---|---|
 | `gitea` | `<url>/user/settings/applications` | scopes `write:repository` and `read:user`, from an account that's admin on the repos |
-| `github` | `<url>/settings/personal-access-tokens/new` | a fine-grained token for the repos with Administration: read & write (deploy keys), Contents: read (read & write to push) and Metadata: read; a classic token with `repo` also works |
+| `github` | `<url>/settings/personal-access-tokens/new` | a fine-grained token for the repos with Contents: read (read & write to push) and Metadata: read; Administration: read & write too only for a forge with `transport: deploy-key`; a classic token with `repo` also works |
 
-Per launch both kinds do the same: mint an ed25519 deploy key on each granted
+A GitHub forge reaches its repos over HTTPS with its token by default
+([Transports](#github-transports)). With `transport: deploy-key`, and for
+Gitea always, each launch does the same: mint an ed25519 deploy key on each granted
 repo (`POST /repos/{owner}/{repo}/keys`, read-only unless `:write`; Gitea's
 API under `/api/v1`, GitHub's at `api.github.com` or a server's `/api/v3`),
 revoke the keys a previous run left registered first, and revoke each at
@@ -118,9 +120,10 @@ host with GitHub's device flow: `bot-bottle forge connect github` prints a
 code to enter at `https://github.com/login/device`, or the console's host page
 (Forges) shows it. The token acts as the operator ("<user> via bot-bottle"),
 only on repos the app is installed on and the operator can reach, and only
-with the app's permissions: Administration: read & write (adding and removing
-deploy keys) and Metadata: read. Pushes go over the run's deploy key, not the
-token.
+with the app's permissions: Contents: read & write and Metadata: read, plus
+Administration: read & write only if a forge opts into deploy keys. git-gate
+fetches and pushes with the token over HTTPS
+([Transports](#github-transports)).
 
 The app is named by its slug and public client id: `bot-bottle` by default,
 set with `--app`/`--client-id` and kept in `<root>/github-app.json`, so each
@@ -147,6 +150,37 @@ prints the install link. The console's host page shows the same two steps,
 and while an `add-repo` card for an unreachable repo is shown the host asks
 GitHub again every ten seconds, for fifteen minutes, raising the card again
 with the grant options once the repo is reachable.
+
+#### GitHub transports
+
+How git-gate reaches a GitHub repo (ADR 0014), set per forge with
+`transport:` in `git-gate.forges.<name>`:
+
+- `https` (the default): git-gate fetches and pushes
+  `https://github.com/<owner>/<repo>.git` with the forge's token. Nothing is
+  minted. The host copies the current token into the gateway's tmpfs, as
+  `/dev/shm/git-gate/<bottle_id>/<SECRET>-token` (0600; tmpfs is mounted on
+  `/dev/shm` if it isn't one, and provisioning refuses to go on without it),
+  through a 0600 temp file, never a command line; teardown removes it. Every
+  four minutes the host controller renews it within ten minutes of expiry and
+  copies the new one in when it changed (`control/hostctl/github_git_tokens.py`,
+  `backend/provision_gateway.push_tokens`). The hooks read it per git call and
+  pass it to git as an `Authorization` header through `GIT_CONFIG_*`
+  environment variables in a subshell: never in argv, a repo's config or a
+  bottle. A 401, 403 or 404 from GitHub says what to do: authorize again,
+  give the app Contents: read & write, or install it on the repo's owner.
+- `deploy-key`: a key per repo per launch, as for Gitea. The app then needs
+  Administration: read & write. Use it where GitHub itself should hold each
+  run to one repo. To use both on one host, declare the host twice: a second
+  forge named `<account>@github.com` with `transport: deploy-key`.
+
+The trade-off: a user token can't be narrowed per repo, so it reaches every
+repo the app is installed on. git-gate is what holds each bottle to its granted
+repos (one namespace per bottle, and `git-gate.readOnly` for a grant without
+`:write`), and the gateway holds the token only while the bottle runs. Install
+the app on selected repos to keep its reach small. Deploy keys keep GitHub-side
+per-repo scope but need the far broader Administration permission, which the
+host's token then carries too, and an org can turn them off.
 
 While `extends` is resolved, each grant becomes a long-form entry (what
 everything after loading sees): a `gitea` key minted per launch with the forge's token, the forge's host key,
@@ -369,8 +403,9 @@ restart, they are provisioned again (see
 
 The access hook runs before every `upload-pack`. It runs
 `git fetch origin --prune` against the upstream using the repo's key and
-pinned known_hosts. If the upstream is unreachable, the fetch fails instead
-of serving stale data.
+pinned known_hosts, or over HTTPS with the token for a GitHub repo
+([Transports](#github-transports)). If the upstream is unreachable, the fetch
+fails instead of serving stale data.
 
 ### Push
 
@@ -393,7 +428,7 @@ The pre-receive hook (`git_gate_render_hook`) reads every ref first, then:
    egress tokens and its canary. It matches by value, so it catches secrets
    gitleaks has no rule for.
 6. Forwards each accepted ref to `origin` over SSH, checking the pinned host
-   key.
+   key, or over HTTPS with the token for a GitHub repo.
 
 The hook scans every ref before forwarding any, so a hit on one ref can't
 leave earlier refs half-pushed. Each decision is an audit event from the

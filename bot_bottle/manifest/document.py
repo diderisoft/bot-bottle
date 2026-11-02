@@ -74,6 +74,8 @@ def repo_document(entry: ManifestGitEntry) -> dict[str, object]:
             key["api_url"] = entry.Key.api_url
         if entry.Key.read_only:
             key["read_only"] = True
+        if entry.Key.transport:
+            key["transport"] = entry.Key.transport
     out: dict[str, object] = {"url": entry.Upstream, "key": key}
     if entry.KnownHostKey:
         out["host_key"] = entry.KnownHostKey
@@ -88,8 +90,9 @@ def grant_for(entry: ManifestGitEntry, forges: tuple[ManifestForge, ...] | list[
         prefix = f"{forge.ssh}/"
         if not (entry.Upstream.startswith(prefix) and entry.Upstream.endswith(".git")):
             continue
-        if (entry.Key.provider, entry.Key.forge_token_env, entry.Key.api_url) != (
-                forge.kind, forge.token_secret, forge.url):
+        if (entry.Key.provider, entry.Key.forge_token_env, entry.Key.api_url,
+                entry.Key.transport) != (forge.kind, forge.token_secret, forge.url,
+                                         forge.transport):
             continue
         if (entry.KnownHostKey or "") != forge.host_key:
             continue

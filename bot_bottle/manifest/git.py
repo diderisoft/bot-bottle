@@ -81,6 +81,21 @@ class ManifestKeyConfig:
     forge_token_env: str = ""
     api_url: str = ""
     read_only: bool = False
+    # How git-gate reaches a GitHub repo: "https" (the default: the user's
+    # GitHub token over HTTPS, ADR 0014) or "deploy-key" (a key minted per
+    # launch). Other forges always use deploy keys.
+    transport: str = ""
+
+
+GIT_TRANSPORTS = ("https", "deploy-key")
+
+
+def git_transport(key: ManifestKeyConfig) -> str:
+    """How git-gate reaches the repo: "https" (with the forge token) for a
+    GitHub repo unless it opted into a deploy key, else "ssh"."""
+    if key.provider == "github" and key.transport != "deploy-key":
+        return "https"
+    return "ssh"
 
 
 @dataclass(frozen=True)
@@ -179,11 +194,11 @@ def _parse_key_config(
 
     if provider in FORGE_KINDS:
         for k in d:
-            if k not in {"provider", "forge_token_env", "api_url", "read_only"}:
+            if k not in {"provider", "forge_token_env", "api_url", "read_only", "transport"}:
                 raise ManifestError(
                     f"bottle '{bottle_name}' {label}.key has unknown key {k!r} "
                     f"for provider {provider!r}; allowed: provider, forge_token_env, "
-                    f"api_url, read_only"
+                    f"api_url, read_only, transport"
                 )
         forge_token_env = d.get("forge_token_env")
         if not isinstance(forge_token_env, str) or not forge_token_env:
@@ -201,11 +216,19 @@ def _parse_key_config(
             raise ManifestError(
                 f"bottle '{bottle_name}' {label}.key 'read_only' must be true or false"
             )
+        transport = d.get("transport", "")
+        if transport not in ("", *GIT_TRANSPORTS) or (
+                transport == "https" and provider != "github"):
+            raise ManifestError(
+                f"bottle '{bottle_name}' {label}.key 'transport' must be "
+                f"{' or '.join(GIT_TRANSPORTS) if provider == 'github' else 'deploy-key'}"
+                f" for provider {provider!r}")
         return ManifestKeyConfig(
             provider=provider,
             forge_token_env=forge_token_env,
             api_url=api_url_raw,
             read_only=read_only,
+            transport=str(transport),
         )
 
     # provider == "static"

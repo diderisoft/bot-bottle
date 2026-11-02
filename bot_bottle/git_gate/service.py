@@ -4,6 +4,8 @@ provision and revoke deploy keys, and check upstream host keys.
 
 from __future__ import annotations
 
+import dataclasses
+
 import json
 import subprocess
 from collections.abc import Callable, Iterable
@@ -134,17 +136,7 @@ class GitGate:
                 )
                 known_hosts_file.chmod(0o600)
             upstreams_with_files.append(
-                GitGateUpstream(
-                    name=u.name,
-                    upstream_url=u.upstream_url,
-                    upstream_host=u.upstream_host,
-                    upstream_port=u.upstream_port,
-                    identity_file=u.identity_file,
-                    known_host_key=u.known_host_key,
-                    known_hosts_file=known_hosts_file,
-                    writable=u.writable,
-                )
-            )
+                dataclasses.replace(u, known_hosts_file=known_hosts_file))
         mode = trailer_mode(bottle.git_trailers)
         save_trailer_settings(stage_dir, trailer, mode)
         return GitGatePlan(

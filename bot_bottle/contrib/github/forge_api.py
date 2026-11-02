@@ -15,9 +15,10 @@ from ...forge_kinds import ForgeApiError, TokenCheck, ssh_base
 _TIMEOUT_SECS = 15
 # Pages of 100 repos read to count where the token is admin.
 _MAX_REPO_PAGES = 10
-TOKEN_HELP = ("a fine-grained token for the repos bottles will grant, with Administration: "
-              "read & write (it adds each launch's deploy key), Contents: read (read & write "
-              "to push) and Metadata: read; a classic token with the repo scope also works")
+TOKEN_HELP = ("a fine-grained token for the repos bottles will grant, with Contents: read "
+              "(read & write to push) and Metadata: read, plus Administration: read & write "
+              "only for a forge with `transport: deploy-key`; a classic token with the repo "
+              "scope also works")
 
 
 def _github_com(url: str) -> bool:

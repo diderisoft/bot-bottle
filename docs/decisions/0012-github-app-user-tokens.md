@@ -1,6 +1,6 @@
 # ADR 0012: github.com through the shared bot-bottle GitHub App's user tokens
 
-- **Status:** Accepted
+- **Status:** Accepted (its deploy-key transport for git-gate is replaced by ADR 0014: HTTPS with the user's token, and no Administration permission)
 - **Date:** 2026-11-02
 - **Deciders:** didericis
 

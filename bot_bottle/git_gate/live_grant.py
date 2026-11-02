@@ -40,11 +40,8 @@ def grant_entry(grant: str, forge: ManifestForge) -> ManifestGitEntry:
     """`<forge>/<owner>/<repo>[:write]` on `forge` as a repo entry, the way a
     grant in a bottle file expands (`manifest.forges.expand_grants`)."""
     _, owner, repo, writable = parse_grant(grant, "the grant")
-    raw: dict[str, object] = {
-        "url": f"{forge.ssh}/{owner}/{repo}.git",
-        "key": {"provider": forge.kind, "forge_token_env": forge.token_secret,
-                "api_url": forge.url, "read_only": not writable},
-    }
+    raw: dict[str, object] = {"url": f"{forge.ssh}/{owner}/{repo}.git",
+                              "key": forge.key(writable)}
     if forge.host_key:
         raw["host_key"] = forge.host_key
     return ManifestGitEntry.from_repos_entry("(live grant)", repo, raw)
@@ -61,7 +58,9 @@ def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
     upstreams = load_upstreams_snapshot(stage_dir)
     current = next((u for u in upstreams if u.name == entry.Name), None)
     writable = not entry.Key.read_only
-    if current is not None and current.upstream_url != entry.Upstream:
+    (upstream,) = git_gate_upstreams_for_bottle(ManifestBottle(git=(entry,)))
+    if current is not None and current.upstream_url not in (entry.Upstream,
+                                                            upstream.upstream_url):
         raise GrantError(f"the bottle already has a different repo named {entry.Name!r}")
     ref = DeployKeyRef(
         name=entry.Name, forge_token_env=entry.Key.forge_token_env, api_url=entry.Key.api_url,
@@ -77,11 +76,16 @@ def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
                          f"({'write' if writable else 'read-only'})")
     if entry.Key.provider not in FORGE_KINDS:
         raise GrantError("only forge grants can be added to a running bottle")
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    if upstream.transport == "https":
+        # Over HTTPS with the user's token (ADR 0014): no key to mint or revoke.
+        record_live_grant(stage_dir, ref)
+        _write_upstreams_snapshot(
+            stage_dir, (*(u for u in upstreams if u.name != entry.Name), upstream))
+        return upstream
     if not entry.KnownHostKey:
         raise GrantError(f"the forge at {entry.UpstreamHost} has no SSH host key pinned; "
                          f"connect it again with an SSH address this host can reach")
-    stage_dir.mkdir(parents=True, exist_ok=True)
-    (upstream,) = git_gate_upstreams_for_bottle(ManifestBottle(git=(entry,)))
     if upstream.known_host_key:
         known_hosts = stage_dir / f"{entry.Name}-known_hosts"
         known_hosts.write_text(git_gate_known_hosts_line(

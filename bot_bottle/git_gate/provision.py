@@ -13,6 +13,7 @@ from ..contract.forges import FORGE_KINDS
 from ..errors import MissingEnvVarError
 from ..lib.log import info, warn
 from ..manifest import ManifestBottle, ManifestGitEntry
+from ..manifest.git import ManifestKeyConfig, git_transport
 from ..secret_source import SecretSource
 from ..control.git_gate_render import GitGateUpstream
 
@@ -91,13 +92,19 @@ class DeployKeyRef:
     provider: str = "gitea"
 
 
+def mints_key(key: ManifestKeyConfig) -> bool:
+    """Whether a repo's key is a deploy key minted per launch: a forge kind
+    reached over SSH (a GitHub repo over HTTPS uses the user's token)."""
+    return key.provider in FORGE_KINDS and git_transport(key) == "ssh"
+
+
 def deploy_key_refs(bottle: ManifestBottle) -> tuple[DeployKeyRef, ...]:
     """The bottle's repos whose deploy keys are minted per launch."""
     return tuple(
         DeployKeyRef(name=e.Name, forge_token_env=e.Key.forge_token_env,
                      api_url=e.Key.api_url, upstream_host=e.UpstreamHost,
                      upstream_path=e.UpstreamPath, provider=e.Key.provider)
-        for e in bottle.git if e.Key.provider in FORGE_KINDS
+        for e in bottle.git if mints_key(e.Key)
     )
 
 
@@ -181,7 +188,7 @@ def _resolve_identity_file(
 ) -> str:
     """The entry's SSH identity file, provisioning a deploy key first for
     a forge kind."""
-    if entry.Key.provider in FORGE_KINDS:
+    if mints_key(entry.Key):
         return _provision_dynamic_key(entry, slug, stage_dir, secrets)
     return entry.IdentityFile
 
@@ -207,7 +214,7 @@ def provision_git_gate_dynamic_keys(
         upstream = upstreams_by_name.get(entry.Name)
         if upstream is None:
             continue
-        if entry.Key.provider in FORGE_KINDS:
+        if mints_key(entry.Key):
             identity_file = _provision_dynamic_key(entry, plan.slug, stage_dir, secrets)
             upstream = dataclasses.replace(upstream, identity_file=identity_file)
         updated.append(upstream)
@@ -259,6 +266,8 @@ def _write_upstreams_snapshot(
             "identity_file": u.identity_file,
             "known_host_key": u.known_host_key,
             "writable": u.writable,
+            "transport": u.transport,
+            "token_secret": u.token_secret,
         }
         for u in upstreams
     ]
@@ -285,6 +294,8 @@ def load_upstreams_snapshot(stage_dir: Path) -> tuple[GitGateUpstream, ...]:
             known_host_key=u.get("known_host_key", ""),
             known_hosts_file=known_hosts if known_hosts.is_file() else Path(),
             writable=u.get("writable", True),
+            transport=u.get("transport", "ssh"),
+            token_secret=u.get("token_secret", ""),
         ))
     return tuple(upstreams)
 
@@ -295,6 +306,7 @@ __all__ = [
     "forget_live_grant",
     "live_grant_refs",
     "load_upstreams_snapshot",
+    "mints_key",
     "record_live_grant",
     "revoke_deploy_keys",
     "revoke_key",

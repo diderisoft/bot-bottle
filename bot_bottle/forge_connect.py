@@ -211,7 +211,8 @@ def connect(url: str, token: str, *, bottle: str = "", name: str = "", ssh: str 
     except ForgeApiError as e:
         raise ConnectError(f"the token didn't work: {e}; it needs {api.TOKEN_HELP}") from e
     warnings: list[str] = []
-    if not check.admin_repos:
+    # GitHub reaches its repos over HTTPS with the token (ADR 0014): no keys.
+    if not check.admin_repos and kind != "github":
         warnings.append(f"{check.account} can't add a deploy key anywhere yet; give it "
                         f"admin on the repos bottles will grant")
     host = urlparse(url).hostname or ""

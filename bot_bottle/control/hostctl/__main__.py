@@ -21,6 +21,7 @@ from ...trust_domain import HostControlProvisioning, HostLink, signing_key
 from .build import current_build_id
 from .runner import HostControlState, clear_state, leave_callers_directory, write_state
 from . import budget, localsock
+from .github_git_tokens import GitTokenRenewer
 from .audit_events import HostAudit
 from .audit_forward import AuditForwarder
 from .bottles import BottleService
@@ -135,6 +136,8 @@ def main() -> int:
         bottles.adopt()
     # Keeps running bottles' forwarded host logins current.
     bottles.credentials.start()
+    # And the GitHub token git-gate pushes their HTTPS repos with (ADR 0014).
+    GitTokenRenewer(bottles).start()
     # Measures bot-bottle's storage for the budget, off any launch's path.
     budget.METER.start()
     # Deletes ended sessions' transcript copies past the host's retention.

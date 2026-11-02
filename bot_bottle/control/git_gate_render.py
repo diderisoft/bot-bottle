@@ -32,22 +32,32 @@ class GitGateUpstream:
     known_hosts_file: Path = Path()
     # False for a read-only grant: the gate refuses pushes to it.
     writable: bool = True
+    # "https" (a GitHub repo over HTTPS with the user's token, ADR 0014) or
+    # "ssh" (a deploy key or static key). For https, `token_secret` names the
+    # host secret the token comes from; the gate gets it in memory only.
+    transport: str = "ssh"
+    token_secret: str = ""
+
+
+def _upstream(e: ManifestGitEntry) -> GitGateUpstream:
+    # pylint: disable-next=import-outside-toplevel
+    from ..manifest.git import git_transport
+    if git_transport(e.Key) == "https":
+        return GitGateUpstream(
+            name=e.Name, upstream_url=f"https://{e.UpstreamHost}/{e.UpstreamPath}",
+            upstream_host=e.UpstreamHost, upstream_port="443", identity_file="",
+            known_host_key="", writable=not e.Key.read_only, transport="https",
+            token_secret=e.Key.forge_token_env)
+    return GitGateUpstream(
+        name=e.Name, upstream_url=e.Upstream, upstream_host=e.UpstreamHost,
+        upstream_port=e.UpstreamPort, identity_file=e.IdentityFile,
+        known_host_key=e.KnownHostKey, writable=not e.Key.read_only)
+
 
 def git_gate_upstreams_for_bottle(bottle: ManifestBottle) -> tuple[GitGateUpstream, ...]:
     """Each `bottle.git` entry as a GitGateUpstream (names were checked at
     load)."""
-    return tuple(
-        GitGateUpstream(
-            name=e.Name,
-            upstream_url=e.Upstream,
-            upstream_host=e.UpstreamHost,
-            upstream_port=e.UpstreamPort,
-            identity_file=e.IdentityFile,
-            known_host_key=e.KnownHostKey,
-            writable=not e.Key.read_only,
-        )
-        for e in bottle.git
-    )
+    return tuple(_upstream(e) for e in bottle.git)
 
 
 def _gitconfig_validate_value(field: str, value: str) -> None:
@@ -114,6 +124,8 @@ def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
         "  name=$1",
         "  upstream_url=$2",
         "  read_only=$3",
+        "  transport=${4:-ssh}",
+        "  token_file=${5:-}",
         f"  keyfile={creds_dir}/${{name}}-key",
         f"  hostsfile={creds_dir}/${{name}}-known_hosts",
         "",
@@ -130,6 +142,10 @@ def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
         # while an explicit `git push origin <ref>:<ref>` still pushes one ref.
         "    git -C \"$repo\" remote add --mirror=fetch origin \"$upstream_url\"",
         "  fi",
+        # A re-provision may change the transport (ssh to https or back).
+        "  git -C \"$repo\" remote set-url origin \"$upstream_url\"",
+        "  git -C \"$repo\" config git-gate.transport \"$transport\"",
+        "  git -C \"$repo\" config git-gate.tokenFile \"$token_file\"",
         "  git -C \"$repo\" config git-gate.identityFile \"$keyfile\"",
         "  git -C \"$repo\" config git-gate.knownHosts \"$hostsfile\"",
         "  git -C \"$repo\" config receive.denyCurrentBranch ignore",
@@ -178,8 +194,13 @@ def git_gate_render_provision(
               f"baseline={shlex.quote(baseline)}",
               f"mkdir -p {shlex.quote(repo_root)}"]
     for u in upstreams:
+        token = (f"/dev/shm/git-gate/{bottle_id}/{u.token_secret}-token"
+                 if u.transport == "https" else "")
+        if token and not _SAFE_BOTTLE_ID.fullmatch(u.token_secret):
+            raise ValueError(f"git-gate: unsafe token secret name {u.token_secret!r}")
         lines.append(f"init_repo {shlex.quote(u.name)} {shlex.quote(u.upstream_url)} "
-                     f"{'false' if u.writable else 'true'}")
+                     f"{'false' if u.writable else 'true'} "
+                     f"{'https' if u.transport == 'https' else 'ssh'} {shlex.quote(token)}")
     return "\n".join(lines) + "\n"
 
 
@@ -466,15 +487,47 @@ fi
 
 # Phase 2: forward each ref to the upstream (`origin`, configured
 # in the entrypoint via `git remote add --mirror=fetch`).
-keyfile=$(git config --get git-gate.identityFile)
-hostsfile=$(git config --get git-gate.knownHosts)
-if [ ! -f "$hostsfile" ]; then
-  echo "git-gate: no KnownHostKey configured for this upstream; refusing to push" >&2
-  echo "git-gate: add KnownHostKey to the bottle.git entry and restart the bottle" >&2
-  audit_push forge.push_rejected failure "*" --detail "no KnownHostKey for the upstream"
-  exit 1
+transport=$(git config --get git-gate.transport || echo ssh)
+if [ "$transport" = https ]; then
+  # A GitHub repo over HTTPS with the user's token (ADR 0014), read from the
+  # gateway's tmpfs per push; the header is only ever in this subshell's env.
+  token_file=$(git config --get git-gate.tokenFile || :)
+  if [ -z "$token_file" ] || [ ! -s "$token_file" ]; then
+    echo "git-gate: no GitHub token for this repo in the gateway; refusing to push" >&2
+    echo "git-gate: reconnect GitHub on the host (bot-bottle forge connect github)" >&2
+    audit_push forge.push_rejected failure "*" --detail "no GitHub token for the upstream"
+    exit 1
+  fi
+  auth=$(printf 'x-access-token:%s' "$(cat "$token_file")" | base64 | tr -d '\n')
+  upstream_git() (
+    export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=2 \
+      GIT_CONFIG_KEY_0=http.extraHeader GIT_CONFIG_VALUE_0="Authorization: Basic $auth" \
+      GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1=
+    exec git "$@"
+  )
+else
+  keyfile=$(git config --get git-gate.identityFile)
+  hostsfile=$(git config --get git-gate.knownHosts)
+  if [ ! -f "$hostsfile" ]; then
+    echo "git-gate: no KnownHostKey configured for this upstream; refusing to push" >&2
+    echo "git-gate: add KnownHostKey to the bottle.git entry and restart the bottle" >&2
+    audit_push forge.push_rejected failure "*" --detail "no KnownHostKey for the upstream"
+    exit 1
+  fi
+  ssh_cmd="ssh -i $keyfile -o UserKnownHostsFile=$hostsfile -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10"
+  upstream_git() { GIT_SSH_COMMAND="$ssh_cmd" git "$@"; }
 fi
-ssh_cmd="ssh -i $keyfile -o UserKnownHostsFile=$hostsfile -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10"
+# What to tell the agent when GitHub refuses (HTTPS only).
+upstream_hint() {
+  [ "$transport" = https ] || return 0
+  if grep -qiE "Invalid username or (password|token)|Authentication failed|returned error: 401" "$1"; then
+    echo "git-gate: GitHub refused the token; re-authorize GitHub on the host (bot-bottle forge connect github --reauthorize)" >&2
+  elif grep -qiE "Permission to .* denied|Write access to repository not granted|returned error: 403" "$1"; then
+    echo "git-gate: GitHub refused the push; the bot-bottle app needs Contents: read & write and must be installed on the repo's owner" >&2
+  elif grep -qiE "Repository not found|returned error: 404" "$1"; then
+    echo "git-gate: GitHub can't see the repo with this token; install the bot-bottle app on its owner" >&2
+  fi
+}
 
 push_option_count=${GIT_PUSH_OPTION_COUNT:-0}
 case "$push_option_count" in
@@ -519,11 +572,17 @@ while IFS=' ' read -r old new ref; do
   # ("update_ref failed ... inside quarantine environment"). The next fetch
   # brings the ref in.
   upstream_url=$(git config --get remote.origin.url)
-  if ! GIT_SSH_COMMAND="$ssh_cmd" git push "$@" "$upstream_url" "$refspec" 1>&2; then
+  push_err=$(mktemp)
+  if ! upstream_git push "$@" "$upstream_url" "$refspec" 1>&2 2>"$push_err"; then
+    cat "$push_err" >&2
+    upstream_hint "$push_err"
+    rm -f "$push_err"
     echo "git-gate: upstream push failed for $ref" >&2
     audit_push forge.push_rejected failure "$ref" --detail "upstream push failed"
     exit 1
   fi
+  cat "$push_err" >&2
+  rm -f "$push_err"
   if [ "$audit_delivery" != required ]; then
     # shellcheck disable=SC2086
     audit_push forge.push_accepted success "$ref" $accepted
@@ -608,16 +667,34 @@ case "$service" in
   *) exit 0 ;;
 esac
 
-keyfile=$(git -C "$repo_dir" config --get git-gate.identityFile 2>/dev/null || true)
-hostsfile=$(git -C "$repo_dir" config --get git-gate.knownHosts 2>/dev/null || true)
-if [ -z "$keyfile" ] || [ ! -f "$hostsfile" ]; then
-  echo "git-gate: missing credentials for $repo_dir; refusing fetch" >&2
-  exit 1
+transport=$(git -C "$repo_dir" config --get git-gate.transport 2>/dev/null || echo ssh)
+if [ "$transport" = https ]; then
+  token_file=$(git -C "$repo_dir" config --get git-gate.tokenFile 2>/dev/null || true)
+  if [ -z "$token_file" ] || [ ! -s "$token_file" ]; then
+    echo "git-gate: no GitHub token for $repo_dir in the gateway; refusing fetch" >&2
+    echo "git-gate: reconnect GitHub on the host (bot-bottle forge connect github)" >&2
+    exit 1
+  fi
+  auth=$(printf 'x-access-token:%s' "$(cat "$token_file")" | base64 | tr -d '\n')
+  upstream_git() (
+    export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=2 \
+      GIT_CONFIG_KEY_0=http.extraHeader GIT_CONFIG_VALUE_0="Authorization: Basic $auth" \
+      GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1=
+    exec git "$@"
+  )
+else
+  keyfile=$(git -C "$repo_dir" config --get git-gate.identityFile 2>/dev/null || true)
+  hostsfile=$(git -C "$repo_dir" config --get git-gate.knownHosts 2>/dev/null || true)
+  if [ -z "$keyfile" ] || [ ! -f "$hostsfile" ]; then
+    echo "git-gate: missing credentials for $repo_dir; refusing fetch" >&2
+    exit 1
+  fi
+  ssh_cmd="ssh -i $keyfile -o UserKnownHostsFile=$hostsfile -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10"
+  upstream_git() { GIT_SSH_COMMAND="$ssh_cmd" git "$@"; }
 fi
-ssh_cmd="ssh -i $keyfile -o UserKnownHostsFile=$hostsfile -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10"
 
 echo "git-gate: refreshing $repo_dir from upstream" >&2
-if ! GIT_SSH_COMMAND="$ssh_cmd" git -C "$repo_dir" fetch origin --prune >&2; then
+if ! upstream_git -C "$repo_dir" fetch origin --prune >&2; then
   if [ "$service" = "receive-pack" ]; then
     # Best effort for a push: pre-receive still scans it (over more history)
     # and its forward fails if upstream is really down.
@@ -636,7 +713,7 @@ fi
 # skip the branch. If upstream's default branch changes after the
 # gate has cached it, restart the bottle to resync.
 if ! git -C "$repo_dir" rev-parse --verify HEAD >/dev/null 2>&1; then
-  upstream_head=$(GIT_SSH_COMMAND="$ssh_cmd" git -C "$repo_dir" \
+  upstream_head=$(upstream_git -C "$repo_dir" \
     ls-remote --symref origin HEAD 2>/dev/null \
     | awk '/^ref:/ {print $2; exit}')
   if [ -n "$upstream_head" ]; then

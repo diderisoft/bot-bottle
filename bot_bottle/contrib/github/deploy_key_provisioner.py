@@ -49,7 +49,8 @@ class GitHubDeployKeyProvisioner(DeployKeyProvisioner):
                 raise DeployKeysDisabledError(
                     f"GitHub has deploy keys turned off for {owner_repo}: allow them in the "
                     f"repo's or its organization's settings (an org policy overrides the "
-                    f"repo's), then grant it again") from exc
+                    f"repo's), or reach it over HTTPS with your GitHub token instead (drop "
+                    f"`transport: deploy-key` from the forge), then grant it again") from exc
             if exc.code == 422:
                 raise DeployKeyCollisionError(
                     f"deploy key collision for {owner_repo!r} (title={title!r}): "

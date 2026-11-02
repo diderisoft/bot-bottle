@@ -23,6 +23,7 @@ from bot_bottle.contract import forges as contract_forges
 from bot_bottle.contrib.github import forge_api as github
 from bot_bottle.contrib.github.deploy_key_provisioner import GitHubDeployKeyProvisioner
 from bot_bottle.control.client import AlreadyAnswered
+from bot_bottle.control.git_gate_render import git_gate_upstreams_for_bottle
 from bot_bottle.control.hostctl import remote_actions, repo_grants
 from bot_bottle.deploy_key_provisioner import DeployKeyCollisionError, get_provisioner
 from bot_bottle.forge_connect import ConnectError, ForgeEntry, connect, write_forge
@@ -208,8 +209,28 @@ class TestGitHubForge(unittest.TestCase):
         self.assertEqual(("github", "GITHUB_COM_TOKEN", "https://github.com", False),
                          (entry.Key.provider, entry.Key.forge_token_env, entry.Key.api_url,
                           entry.Key.read_only))
+        # HTTPS with the user's token by default (ADR 0014): no deploy key.
+        self.assertEqual((), deploy_key_refs(bottle))
+        (upstream,) = git_gate_upstreams_for_bottle(bottle)
+        self.assertEqual(("https", "https://github.com/diderisoft/bot-bottle-design.git",
+                          "GITHUB_COM_TOKEN"),
+                         (upstream.transport, upstream.upstream_url, upstream.token_secret))
+
+    def test_a_forge_can_opt_into_deploy_keys(self) -> None:
+        write_forge(self.tmp / "github.md", GITHUB)
+        text = (self.tmp / "github.md").read_text()
+        (self.tmp / "github.md").write_text(
+            text.replace("kind: github", "kind: github\n      transport: deploy-key", 1))
+        (self.tmp / "dev.md").write_text(
+            "---\nextends: [github, basic]\n"
+            "git-gate:\n  repos: [github.com/diderisoft/bot-bottle-design:write]\n---\n")
+        bottle, _ = load_bottle_chain("dev", [(self.tmp, False), (BUILTIN_BOTTLES_DIR, False)])
+        self.assertEqual("deploy-key", bottle.git[0].Key.transport)
         (ref,) = deploy_key_refs(bottle)
         self.assertEqual("github", ref.provider)
+        (upstream,) = git_gate_upstreams_for_bottle(bottle)
+        self.assertEqual(("ssh", "ssh://git@github.com/diderisoft/bot-bottle-design.git"),
+                         (upstream.transport, upstream.upstream_url))
 
     def test_revoke_uses_the_refs_kind(self) -> None:
         ref = DeployKeyRef(name="app", forge_token_env="T", api_url="", upstream_host="github.com",
