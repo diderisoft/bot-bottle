@@ -50,7 +50,6 @@ ALLOWED_BACKEND_IMPORTS: dict[tuple[str, str], str] = {
     ("start.py", "get_bottle_backend"): "--dry-run prepares locally, without the daemon",
     ("start.py", "BottlePlan"): "the dry-run preflight renderer's parameter type",
     ("start.py", "launch_isolation_note"): "the dry-run preflight's docker boundary note",
-    ("start.py", "enumerate_active_agents"): "label uniqueness against running bottles",
     ("active.py", "enumerate_active_agents"): "bottles the host controller doesn't hold",
 }
 # Bottle operations no client module may perform itself.
