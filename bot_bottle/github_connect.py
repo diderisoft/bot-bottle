@@ -174,8 +174,7 @@ def status(host_bottles: Path, config: Any = None) -> dict[str, object]:
     secrets = FileSecrets(host_secrets_path())
     connected: list[dict[str, object]] = []
     for bottle, name, entry in _forges(host_bottles):
-        secret_name = ForgeEntry(key=name, kind="github", url=GITHUB_URL, ssh=GITHUB_SSH,
-                                 account="", host_key="").secret_name
+        secret_name = _secret_name(name)
         info: dict[str, object] = {"forge": name, "bottle": bottle,
                                    "login": str(entry.get("account", "")),
                                    "app": str(entry.get("app", "")), "installations": []}
@@ -188,9 +187,75 @@ def status(host_bottles: Path, config: Any = None) -> dict[str, object]:
         except ForgeApiError as e:
             info["error"] = str(e)
         connected.append(info)
+    authorized = [c for c in connected if "error" not in c]
     return {"app": config.slug, "install_url": config.install_url,
-            "client_id_set": bool(config.client_id), "flow": flow, "connected": connected}
+            "client_id_set": bool(config.client_id), "flow": flow, "connected": connected,
+            "needs_install": bool(authorized) and not any(c["installations"] for c in authorized)}
 
 
-__all__ = ["DEFAULT_BOTTLE", "GitHubConnected", "authorize", "finish", "start_background",
-           "status"]
+def _secret_name(forge: str) -> str:
+    return ForgeEntry(key=forge, kind="github", url=GITHUB_URL, ssh=GITHUB_SSH, account="",
+                      host_key="").secret_name
+
+
+def connected_token(host_bottles: Path, secret_name: str = "") -> tuple[str, str] | None:
+    """(login, token) of the host's GitHub connection through the app, the
+    one in `secret_name` when given; None when there's none or its token no
+    longer works (renewed first when it's about to expire)."""
+    # pylint: disable=import-outside-toplevel
+    from .contrib.github.user_token import current_token
+    from .forge_kinds import ForgeApiError
+    from .paths import host_secrets_path
+    from .secret_source import FileSecrets
+    secrets = FileSecrets(host_secrets_path())
+    for _, name, entry in _forges(host_bottles):
+        if secret_name and _secret_name(name) != secret_name:
+            continue
+        try:
+            token = current_token(_secret_name(name), secrets)
+        except ForgeApiError:
+            continue
+        if token:
+            return str(entry.get("account", "")), token
+    return None
+
+
+def wait_for_installation(token: str, *, owner: str = "", timeout: float = 600.0,
+                          interval: float = 5.0, sleep: Any = time.sleep,
+                          clock: Any = time.monotonic) -> list[dict[str, str]] | None:
+    """Ask GitHub every `interval` seconds, for up to `timeout`, until the
+    app is installed on `owner` (any account or org when none is named): the
+    installations then, or None if it never was."""
+    # pylint: disable-next=import-outside-toplevel
+    from .contrib.github.user_token import installations
+    deadline = clock() + timeout
+    while True:
+        found = installations(token)
+        if installed(found, owner):
+            return found
+        if clock() >= deadline:
+            return None
+        sleep(interval)
+
+
+def installed(found: list[dict[str, str]], owner: str = "") -> bool:
+    """Whether `found` (installations) covers `owner`, or any account."""
+    if not owner:
+        return bool(found)
+    return owner.lower() in {i.get("account", "").lower() for i in found}
+
+
+def describe(token: str, inst: dict[str, str]) -> str:
+    """An installation as "<account> (all repos)" or "(N selected repos)"."""
+    # pylint: disable-next=import-outside-toplevel
+    from .contrib.github.user_token import selected_count
+    if inst.get("repository_selection") == "all":
+        return f"{inst.get('account', '')} (all repos)"
+    count = selected_count(token, inst.get("id", "")) if inst.get("id") else None
+    plural = "" if count == 1 else "s"
+    noun = "selected repos" if count is None else f"{count} selected repo{plural}"
+    return f"{inst.get('account', '')} ({noun})"
+
+
+__all__ = ["DEFAULT_BOTTLE", "GitHubConnected", "authorize", "connected_token", "describe",
+           "finish", "installed", "start_background", "status", "wait_for_installation"]

@@ -284,10 +284,23 @@ def installations(token: str) -> list[dict[str, str]]:
     for inst in items if isinstance(items, list) else ():
         account = inst.get("account") if isinstance(inst, dict) else None
         if isinstance(inst, dict):
-            out.append({"account": str(account.get("login", "")) if isinstance(account, dict)
+            out.append({"id": str(inst.get("id", "")),
+                        "account": str(account.get("login", "")) if isinstance(account, dict)
                         else "",
                         "repository_selection": str(inst.get("repository_selection", ""))})
     return out
+
+
+def selected_count(token: str, installation_id: str) -> int | None:
+    """How many repos an installation with selected repos covers, or None
+    when GitHub can't say."""
+    try:
+        body = _get(f"{API}/user/installations/{installation_id}/repositories?per_page=1",
+                    token)
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    count = body.get("total_count") if isinstance(body, dict) else None
+    return count if isinstance(count, int) else None
 
 
 def reachable(token: str, owner_repo: str) -> bool:
@@ -308,4 +321,5 @@ def reachable(token: str, owner_repo: str) -> bool:
 
 __all__ = ["AppConfig", "DEFAULT_SLUG", "DeviceCode", "REAUTHORIZE", "ReauthorizeError",
            "TokenSet", "app_config", "current_token", "install_url", "installations", "login",
-           "reachable", "refresh", "save_app_config", "start_device", "store", "wait_for_token"]
+           "reachable", "refresh", "save_app_config", "selected_count", "start_device", "store",
+           "wait_for_token"]

@@ -27,9 +27,13 @@ pasted; the token GitHub issues is kept in ~/.bot-bottle/secrets and renewed
 as it expires.
 
   bot-bottle forge connect github [<bottle>] [--app SLUG] [--client-id ID]
+                                  [--owner ACCOUNT] [--reauthorize] [--no-wait]
 
 --app and --client-id name the app (default: bot-bottle; a dev host uses its
-own) and are remembered in ~/.bot-bottle/github-app.json. --token connects
+own) and are remembered in ~/.bot-bottle/github-app.json. A host already
+connected isn't authorized again unless --reauthorize. Then, unless the app
+is installed (on --owner, when named), it opens the install page and waits
+for the installation (--no-wait just prints where). --token connects
 github.com with a pasted personal token instead, the fallback.
 """
 
@@ -72,49 +76,97 @@ def _take(argv: list[str], flag: str) -> tuple[str, list[str]]:
     return argv[i + 1], argv[:i] + argv[i + 2:]
 
 
-def connect_github(argv: list[str], app_slug: str, client_id: str) -> int:
-    """github.com through the bot-bottle GitHub App's device flow."""
+def connect_github(argv: list[str], app_slug: str, client_id: str, owner: str = "") -> int:
+    """github.com through the bot-bottle GitHub App: authorize this host with
+    the device flow (unless it already is), then make sure the app is
+    installed, waiting for it."""
     # pylint: disable=import-outside-toplevel
     from ...contrib.github.user_token import AppConfig, app_config, save_app_config
-    from ...github_connect import authorize
+    from ...github_connect import authorize, connected_token
     flags = {a for a in argv if a.startswith("--")}
     args = [a for a in argv if not a.startswith("--")]
-    if len(args) > 2 or flags - {"--no-browser"}:
+    if len(args) > 2 or flags - {"--no-browser", "--no-wait", "--reauthorize"}:
         die(f"usage: {PROG} forge connect github [<bottle>] [--app SLUG] [--client-id ID] "
-            f"[--no-browser]")
+            f"[--owner ACCOUNT] [--reauthorize] [--no-wait] [--no-browser]")
     config = app_config()
     if app_slug or client_id:
         config = AppConfig(slug=app_slug or config.slug, client_id=client_id or config.client_id)
         info(f"remembered the GitHub App ({config.slug}) in {save_app_config(config)}")
-    info(f"install {config.slug} on the accounts and orgs whose repos bottles will grant: "
-         f"{config.install_url}")
+    host_bottles = bot_bottle_root() / "bottles"
+    browser = "--no-browser" not in flags
+    existing = None if "--reauthorize" in flags else connected_token(host_bottles)
+    if existing is not None:
+        login, token = existing
+        info(f"GitHub is connected as {login} via {config.slug} (--reauthorize to do it again)")
+    else:
+        def show(device: object) -> None:
+            uri = getattr(device, "verification_uri", "")
+            info(f"authorize this host: enter {getattr(device, 'user_code', '')} at {uri}")
+            if browser:
+                webbrowser.open(uri)
 
-    def show(device: object) -> None:
-        uri = getattr(device, "verification_uri", "")
-        info(f"authorize this host: enter {getattr(device, 'user_code', '')} at {uri}")
-        if "--no-browser" not in flags:
-            webbrowser.open(uri)
-
-    try:
-        done = authorize(config, on_code=show, bottle=args[1] if len(args) > 1 else "",
-                         cwd=Path(os.getcwd()), host_bottles=bot_bottle_root() / "bottles")
-    except ConnectError as e:
-        die(str(e))
-    info(f"connected GitHub as {done.login} via {done.app} ({done.key} in {done.path}; the "
-         f"token in {host_secrets_path()} as {done.secret_name}"
-         f"{', renewed as it expires' if done.expiring else ''})")
-    info(f"grant its repos from a bottle that extends {done.bottle}:")
-    info(f"  git-gate:\n    repos: [{done.key}/<owner>/<repo>:write]")
+        try:
+            done = authorize(config, on_code=show, bottle=args[1] if len(args) > 1 else "",
+                             cwd=Path(os.getcwd()), host_bottles=host_bottles)
+        except ConnectError as e:
+            die(str(e))
+        info(f"connected GitHub as {done.login} via {done.app} ({done.key} in {done.path}; the "
+             f"token in {host_secrets_path()} as {done.secret_name}"
+             f"{', renewed as it expires' if done.expiring else ''})")
+        info(f"grant its repos from a bottle that extends {done.bottle}:")
+        info(f"  git-gate:\n    repos: [{done.key}/<owner>/<repo>:write]")
+        got = connected_token(host_bottles, done.secret_name)
+        if got is None:
+            die("GitHub was connected, but its token can't be read back; connect it again")
+        token = got[1]
+    _install_step(config, token, owner=owner, wait="--no-wait" not in flags, browser=browser)
     return 0
+
+
+def _install_step(config: object, token: str, *, owner: str, wait: bool,
+                  browser: bool) -> None:
+    """The app's installations, or where to install it and (unless `wait` is
+    off) waiting until it is: on `owner` when named, else anywhere."""
+    # pylint: disable=import-outside-toplevel
+    from ...contrib.github.user_token import installations
+    from ...forge_kinds import ForgeApiError
+    from ...github_connect import describe, installed, wait_for_installation
+    slug, url = getattr(config, "slug", ""), getattr(config, "install_url", "")
+    try:
+        found = installations(token)
+        if installed(found, owner):
+            for inst in found:
+                info(f"{slug} is installed on {describe(token, inst)}")
+            info(f"to add another account or org: {url}")
+            return
+        info(f"install {slug} on {owner or 'the accounts and orgs whose repos bottles will grant'}"
+             f": {url}")
+        if not wait:
+            return
+        if browser:
+            webbrowser.open(url)
+        info("waiting for the installation (Ctrl-C to stop waiting)")
+        found = wait_for_installation(token, owner=owner)
+    except ForgeApiError as e:
+        die(str(e))
+    except KeyboardInterrupt:
+        info(f"stopped waiting; bottles reach a repo once {slug} is installed on its owner")
+        return
+    if found is None:
+        warn(f"{slug} isn't installed yet; install it at {url}")
+        return
+    for inst in found:
+        info(f"installed on {describe(token, inst)}")
 
 
 def connect(argv: list[str]) -> int:
     app_slug, argv = _take(argv, "--app")
     client_id, argv = _take(argv, "--client-id")
+    owner, argv = _take(argv, "--owner")
     args = [a for a in argv if not a.startswith("--")]
     if args and args[0] in ("github", "github.com", "https://github.com") and not (
             {"--token", "--token-stdin"} & set(argv)):
-        return connect_github(argv, app_slug, client_id)
+        return connect_github(argv, app_slug, client_id, owner)
     argv = [a for a in argv if a != "--token"]
     if args and args[0] == "github":
         argv = ["https://github.com" if a == "github" else a for a in argv]

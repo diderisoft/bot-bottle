@@ -232,8 +232,8 @@ class TestReach(_Base):
             ("GET", "/repos/acme/boom"): [(500, {})],
         })
         self.assertEqual("didericis", user_token.login("t"))
-        self.assertEqual([{"account": "didericis", "repository_selection": "all"},
-                          {"account": "", "repository_selection": ""}],
+        self.assertEqual([{"id": "", "account": "didericis", "repository_selection": "all"},
+                          {"id": "", "account": "", "repository_selection": ""}],
                          user_token.installations("t"))
         self.assertTrue(user_token.reachable("t", "acme/app"))
         self.assertFalse(user_token.reachable("t", "acme/hidden"))
@@ -241,6 +241,13 @@ class TestReach(_Base):
             user_token.reachable("t", "acme/gone")
         with self.assertRaises(ForgeApiError):
             user_token.reachable("t", "acme/boom")
+
+    def test_selected_count(self) -> None:
+        self.http({("GET", "/user/installations/7/repositories?per_page=1"):
+                   [(200, {"total_count": 4}), (200, {"total_count": "x"}), (500, {})]})
+        self.assertEqual(4, user_token.selected_count("t", "7"))
+        self.assertIsNone(user_token.selected_count("t", "7"))
+        self.assertIsNone(user_token.selected_count("t", "7"))
 
     def test_errors(self) -> None:
         self.http({("GET", "/user"): [(200, {})],
@@ -390,6 +397,62 @@ class TestConnect(unittest.TestCase):
                                                 config=CONFIG)
                 self.assertIn("error", self.wait_state("error"))
 
+    def app_forge(self) -> None:
+        write_forge(self.bottles / "github.md", ForgeEntry(
+            key="github.com", kind="github", url="https://github.com",
+            ssh="ssh://git@github.com", account="me", host_key="", app="bot-bottle-dev"))
+
+    def test_status_says_when_the_app_needs_installing(self) -> None:
+        self.app_forge()
+        write_secret(self.secrets, "GITHUB_COM_TOKEN", "t")
+        with mock.patch("bot_bottle.contrib.github.user_token.installations", return_value=[]):
+            self.assertTrue(github_connect.status(self.bottles, CONFIG)["needs_install"])
+        with mock.patch("bot_bottle.contrib.github.user_token.installations",
+                        return_value=[{"account": "me"}]):
+            self.assertFalse(github_connect.status(self.bottles, CONFIG)["needs_install"])
+        remove_secret(self.secrets, "GITHUB_COM_TOKEN")  # not authorized: nothing to install yet
+        self.assertFalse(github_connect.status(self.bottles, CONFIG)["needs_install"])
+
+    def test_connected_token(self) -> None:
+        self.assertIsNone(github_connect.connected_token(self.bottles))
+        self.app_forge()
+        self.assertIsNone(github_connect.connected_token(self.bottles))  # no token yet
+        write_secret(self.secrets, "GITHUB_COM_TOKEN", "t")
+        self.assertEqual(("me", "t"), github_connect.connected_token(self.bottles))
+        self.assertEqual(("me", "t"),
+                         github_connect.connected_token(self.bottles, "GITHUB_COM_TOKEN"))
+        self.assertIsNone(github_connect.connected_token(self.bottles, "OTHER_TOKEN"))
+        with mock.patch("bot_bottle.contrib.github.user_token.current_token",
+                        side_effect=ReauthorizeError("gone")):
+            self.assertIsNone(github_connect.connected_token(self.bottles))
+
+    def test_wait_for_installation(self) -> None:
+        clock = iter([0.0, 5.0, 10.0, 700.0])
+        naps: list[float] = []
+        mine = {"id": "1", "account": "Me", "repository_selection": "all"}
+        with mock.patch("bot_bottle.contrib.github.user_token.installations",
+                        side_effect=[[], [mine]]):
+            self.assertEqual([mine], github_connect.wait_for_installation(
+                "t", sleep=naps.append, clock=lambda: next(clock)))
+        self.assertEqual([5.0], naps)
+        clock = iter([0.0, 5.0, 700.0])
+        with mock.patch("bot_bottle.contrib.github.user_token.installations",
+                        return_value=[mine]):
+            self.assertIsNone(github_connect.wait_for_installation(
+                "t", owner="diderisoft", sleep=naps.append, clock=lambda: next(clock)))
+        self.assertTrue(github_connect.installed([mine], "me"))
+        self.assertFalse(github_connect.installed([]))
+
+    def test_describe(self) -> None:
+        with mock.patch("bot_bottle.contrib.github.user_token.selected_count",
+                        side_effect=[1, None]):
+            self.assertEqual("o (1 selected repo)", github_connect.describe(
+                "t", {"id": "2", "account": "o", "repository_selection": "selected"}))
+            self.assertEqual("o (selected repos)", github_connect.describe(
+                "t", {"id": "2", "account": "o", "repository_selection": "selected"}))
+        self.assertEqual("o (selected repos)", github_connect.describe(
+            "t", {"account": "o", "repository_selection": "selected"}))
+
     def test_status_problems(self) -> None:
         write_forge(self.bottles / "github.md", ForgeEntry(
             key="github.com", kind="github", url="https://github.com",
@@ -492,6 +555,7 @@ class TestCards(unittest.TestCase):
             SimpleNamespace(kind="github", app=""), "github.com/a/b"))
 
     def test_add_repo_card(self) -> None:
+        self.addCleanup(remote_actions._unreached.clear)
         found = SimpleNamespace(forge=APP_FORGE, bottle="")
         with mock.patch.object(repo_grants, "find_forge", return_value=found), \
                 mock.patch("bot_bottle.approvals.keep_target", return_value=None), \
@@ -501,6 +565,42 @@ class TestCards(unittest.TestCase):
                                                                 "github.com/a/b:write"))
         self.assertIn("reauthorize: x", lines)
         self.assertEqual(["github_authorize", "add_repo", "add_repo_write"], options)
+
+    def test_an_unreachable_card_is_asked_again_until_it_changes(self) -> None:
+        ask = _ask("add-repo", "github.com/a/b")
+        found = SimpleNamespace(forge=APP_FORGE, bottle="")
+        install = ["install: https://github.com/apps/bot-bottle-dev/installations/new"]
+        remote_actions._unreached.clear()
+        self.addCleanup(remote_actions._unreached.clear)
+
+        def changed(at: float) -> bool:
+            return asyncio.run(remote_actions.card_changed(ask, now=at))
+
+        with mock.patch.object(repo_grants, "find_forge", return_value=found), \
+                mock.patch("bot_bottle.approvals.keep_target", return_value=None), \
+                mock.patch.object(remote_actions, "_app_reach_lines",
+                                  side_effect=[(install, False), (install, False),
+                                               ([], False)]) as reach, \
+                mock.patch.object(remote_actions.time, "monotonic", return_value=100.0):
+            remote_actions.repo_attention(ask)
+            self.assertFalse(changed(105.0))  # not due yet: GitHub isn't asked
+            self.assertEqual(1, reach.call_count)
+            self.assertFalse(changed(111.0))  # asked: still not installed
+            self.assertTrue(changed(122.0))   # installed: raise the card again
+            self.assertFalse(changed(140.0))  # no longer watched
+        self.assertEqual(3, reach.call_count)
+        # Watched only so long, and not for a reachable repo or a forge gone.
+        remote_actions._unreached["p1"] = [install, 0.0, 0.0]
+        self.assertFalse(changed(remote_actions.RECHECK_FOR_SECONDS + 1))
+        self.assertNotIn("p1", remote_actions._unreached)
+        remote_actions._unreached["p1"] = [install, 0.0, 0.0]
+        with mock.patch.object(repo_grants, "find_forge", return_value=None):
+            self.assertFalse(changed(20.0))
+        with mock.patch.object(repo_grants, "find_forge", return_value=found), \
+                mock.patch("bot_bottle.approvals.keep_target", return_value=None), \
+                mock.patch.object(remote_actions, "_app_reach_lines", return_value=([], False)):
+            remote_actions.repo_attention(ask)
+        self.assertNotIn("p1", remote_actions._unreached)
 
 
 class TestCli(unittest.TestCase):
@@ -514,16 +614,81 @@ class TestCli(unittest.TestCase):
     def test_github_is_the_device_flow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch("bot_bottle.paths.bot_bottle_root", return_value=Path(tmp)), \
-                mock.patch("bot_bottle.github_connect.authorize", return_value=self.done) as auth:
+                mock.patch("bot_bottle.github_connect.authorize",
+                           return_value=self.done) as auth, \
+                mock.patch("bot_bottle.github_connect.connected_token",
+                           side_effect=[None, ("me", "t")]), \
+                mock.patch.object(forge_cmd, "_install_step") as step:
             self.assertEqual(0, forge_cmd.cmd_forge(
                 ["connect", "github", "--app", "bot-bottle-dev", "--client-id", "Iv1.x"]))
             self.assertEqual(AppConfig("bot-bottle-dev", "Iv1.x"),
                              user_token.app_config(Path(tmp)))
+        self.assertEqual("t", step.call_args.args[1])
         config = auth.call_args.args[0]
         self.assertEqual("Iv1.x", config.client_id)
         auth.call_args.kwargs["on_code"](DeviceCode("dc", "U", "https://github.com/login/device",
                                                     900, 5))
         self.web.assert_called_once_with("https://github.com/login/device")
+
+    def test_already_connected_skips_the_device_flow(self) -> None:
+        with mock.patch("bot_bottle.github_connect.connected_token", return_value=("me", "t")), \
+                mock.patch("bot_bottle.github_connect.authorize") as auth, \
+                mock.patch.object(forge_cmd, "_install_step") as step:
+            self.assertEqual(0, forge_cmd.cmd_forge(
+                ["connect", "github", "--owner", "diderisoft", "--no-wait"]))
+        auth.assert_not_called()
+        self.assertEqual({"owner": "diderisoft", "wait": False, "browser": True},
+                         step.call_args.kwargs)
+        with mock.patch("bot_bottle.github_connect.connected_token",
+                        side_effect=[None]), \
+                mock.patch("bot_bottle.github_connect.authorize", return_value=self.done):
+            with self.assertRaises(SystemExit):  # connected, but no token to read back
+                forge_cmd.cmd_forge(["connect", "github", "--reauthorize"])
+
+    def step(self, owner: str = "", wait: bool = True, browser: bool = True) -> None:
+        forge_cmd._install_step(CONFIG, "t", owner=owner, wait=wait, browser=browser)
+
+    def test_install_step(self) -> None:
+        mine = {"id": "1", "account": "me", "repository_selection": "all"}
+        org = {"id": "2", "account": "diderisoft", "repository_selection": "selected"}
+        out = io.StringIO()
+        with contextlib.redirect_stderr(out), \
+                mock.patch("bot_bottle.contrib.github.user_token.installations",
+                           return_value=[mine, org]), \
+                mock.patch("bot_bottle.contrib.github.user_token.selected_count",
+                           return_value=3):
+            self.step()
+        self.assertIn("installed on me (all repos)", out.getvalue())
+        self.assertIn("diderisoft (3 selected repos)", out.getvalue())
+        self.assertIn("to add another account or org", out.getvalue())
+        self.web.assert_not_called()
+        # Not on the owner asked for: print where, and with --no-wait stop there.
+        out = io.StringIO()
+        with contextlib.redirect_stderr(out), \
+                mock.patch("bot_bottle.contrib.github.user_token.installations",
+                           return_value=[mine]), \
+                mock.patch("bot_bottle.github_connect.wait_for_installation") as wait:
+            self.step(owner="diderisoft", wait=False)
+        wait.assert_not_called()
+        self.assertIn("install bot-bottle-dev on diderisoft", out.getvalue())
+        # Waiting: opens the page, then reports what appeared, or that nothing did.
+        out = io.StringIO()
+        with contextlib.redirect_stderr(out), \
+                mock.patch("bot_bottle.contrib.github.user_token.installations",
+                           return_value=[]), \
+                mock.patch("bot_bottle.github_connect.wait_for_installation",
+                           side_effect=[[mine], None, KeyboardInterrupt()]):
+            self.step()
+            self.step(browser=False)
+            self.step(browser=False)
+        self.web.assert_called_once_with(CONFIG.install_url)
+        self.assertIn("installed on me (all repos)", out.getvalue())
+        self.assertIn("isn't installed yet", out.getvalue())
+        self.assertIn("stopped waiting", out.getvalue())
+        with mock.patch("bot_bottle.contrib.github.user_token.installations",
+                        side_effect=ReauthorizeError("re-authorize")):
+            with self.assertRaises(SystemExit):
+                self.step()
 
     def test_errors_and_the_token_fallback(self) -> None:
         with mock.patch("bot_bottle.github_connect.authorize",

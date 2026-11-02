@@ -5,6 +5,7 @@ refreshing a running agent's forwarded host login, and connecting a forge
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -232,6 +233,11 @@ def repo_attention(request: Any) -> tuple[list[str], list[str]]:
         return lines, []
     reach, reauthorize = _app_reach_lines(found.forge, repo)
     lines += reach
+    if reach:
+        now = time.monotonic()
+        _unreached.setdefault(request.id, [reach, now, now])[0] = reach
+    else:
+        _unreached.pop(request.id, None)
     target = keep_target(request.session)
     options = [*(["github_authorize"] if reauthorize else []), "add_repo",
                *(["add_repo_write"] if writable else [])]
@@ -239,6 +245,39 @@ def repo_attention(request: Any) -> tuple[list[str], list[str]]:
         lines.append(f"keep: in {target.label()}")
         options.append("add_repo_keep")
     return lines, options
+
+
+# An add-repo card GitHub couldn't serve yet (the app not installed there, or
+# the authorization gone) is asked about again this often while it's shown,
+# for this long, so it turns grantable once that's fixed: request id ->
+# [the reach lines shown, first shown, last asked].
+RECHECK_SECONDS = 10.0
+RECHECK_FOR_SECONDS = 15 * 60.0
+_unreached: dict[str, list[Any]] = {}
+
+
+async def card_changed(request: Any, now: float | None = None) -> bool:
+    """Whether a shown `add-repo` card that GitHub couldn't serve should be
+    raised again because that changed. Asks at most every RECHECK_SECONDS,
+    for RECHECK_FOR_SECONDS after the card was first shown."""
+    # pylint: disable-next=import-outside-toplevel
+    from .repo_grants import find_forge
+    t = time.monotonic() if now is None else now
+    for stale in [k for k, v in _unreached.items() if t - v[1] > RECHECK_FOR_SECONDS]:
+        _unreached.pop(stale, None)
+    seen = _unreached.get(request.id)
+    if seen is None or t - seen[2] < RECHECK_SECONDS:
+        return False
+    seen[2] = t
+    repo = request.proposed.strip().removesuffix(":write")
+    found = await asyncio.to_thread(find_forge, request.session, repo.split("/", 1)[0])
+    if found is None:
+        return False
+    reach, _ = await asyncio.to_thread(_app_reach_lines, found.forge, repo)
+    if reach == seen[0]:
+        return False
+    _unreached.pop(request.id, None)
+    return True
 
 
 def _app_reach_lines(forge: Any, repo: str) -> tuple[list[str], bool]:
@@ -642,7 +681,7 @@ HOST_REQUESTS = {"forge_connect": forge_connect, "github_authorize_start": githu
                  "github_status": github_status}
 
 __all__ = ["ANSWERS", "HOST_REQUESTS", "QUERIES", "add_repo_answer", "bottle_chain",
-           "bottle_write", "card", "forge_attention", "forge_connect", "forge_connect_answer",
-           "github_authorize_start", "github_status", "library", "list_secrets", "manifest",
-           "manifest_save", "manifest_transfer", "refresh_credentials", "repo_attention",
-           "resolve", "set_secret", "workspace_file"]
+           "bottle_write", "card", "card_changed", "forge_attention", "forge_connect",
+           "forge_connect_answer", "github_authorize_start", "github_status", "library",
+           "list_secrets", "manifest", "manifest_save", "manifest_transfer",
+           "refresh_credentials", "repo_attention", "resolve", "set_secret", "workspace_file"]

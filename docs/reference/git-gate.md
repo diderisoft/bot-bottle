@@ -137,6 +137,17 @@ the rotated refresh token (six months) replaces the old one. When it can't be
 renewed, the error says to connect GitHub again. An agent's `add-repo` card
 for a repo the token can't reach carries the app's install link.
 
+Installing is part of connecting. After authorizing (or straight away on a
+host already connected; `--reauthorize` authorizes again), `forge connect
+github` lists the app's installations the token reaches. With none, or none
+on `--owner <account>`, it opens the install page and asks GitHub every five
+seconds, for up to ten minutes, until the installation appears, then says
+where it's installed ("all repos" or how many selected). `--no-wait` only
+prints the install link. The console's host page shows the same two steps,
+and while an `add-repo` card for an unreachable repo is shown the host asks
+GitHub again every ten seconds, for fifteen minutes, raising the card again
+with the grant options once the repo is reachable.
+
 While `extends` is resolved, each grant becomes a long-form entry (what
 everything after loading sees): a `gitea` key minted per launch with the forge's token, the forge's host key,
 and `read_only` unless the grant ends in `:write`. A mapping

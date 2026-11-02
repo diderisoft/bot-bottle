@@ -90,10 +90,9 @@ if TYPE_CHECKING:
 
 ALPN = b"bb-console/1"
 ROLE_REMOTE = "remote"
-# How often remote.json is reread, and the reconnect backoff.
+# How often remote.json is reread, the reconnect backoff, and how often agents are checked.
 POLL_SECONDS = 3.0
 BACKOFF_SECONDS = (1.0, 2.0, 5.0, 10.0, 30.0)
-# How often launched agents are checked.
 WATCH_SECONDS = 2.0
 STATS_SECONDS = 60.0
 _REFUSED = 1  # application close codes
@@ -582,7 +581,8 @@ class ConsoleLink:
                     self._asking.pop(agent_id, None)
                     await self._send({"type": "activity", "agent_id": agent_id})
                 continue
-            if shown is not None and shown.id == request.id:
+            if shown is not None and shown.id == request.id and not (
+                    await remote_actions.card_changed(request)):
                 continue
             self._asking[agent_id] = request
             lines = [request.summary(), *route_lines(request)]
