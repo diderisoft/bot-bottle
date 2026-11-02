@@ -1,9 +1,9 @@
 """Unit: per-bottle state helpers (PRD 0016 Phase 1) + identity +
 launch metadata."""
 
-import re
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 from tests.unit import use_bottle_root
@@ -56,42 +56,33 @@ class TestPerBottleDockerfile(_FakeHomeMixin, unittest.TestCase):
         self.assertTrue(str(path).endswith("/.bot-bottle/state/dev/Dockerfile"))
 
 class TestBottleIdentity(unittest.TestCase):
-    """bottle_identity(agent_name) — PRD 0016 follow-up.
+    """bottle_identity() — mints a UUID v4 as the stable bottle key.
 
-    Every call mints a fresh identity with a random 5-char suffix
-    so multiple instances of the same agent can run in parallel
-    without container name collisions. The slug-prefix is for
-    readability; the suffix is for uniqueness. To continue an
-    existing bottle, use the recorded identity via
-    `cli.py resume <identity>`, not this function."""
+    The label (human name) is stored separately in metadata; the identity
+    is a UUID so concurrent starts never collide and rename is a no-op."""
 
-    def test_format_is_slug_dash_5_alnum(self):
+    def test_format_is_uuid_v4(self):
         identity = bottle_state.bottle_identity("dev")
-        self.assertTrue(identity.startswith("dev-"))
-        suffix = identity[len("dev-"):]
-        self.assertEqual(5, len(suffix))
-        self.assertTrue(
-            re.fullmatch(r"[a-z0-9]+", suffix),
-            f"suffix {suffix!r} must be lowercase base36",
-        )
+        parsed = uuid.UUID(identity)
+        self.assertEqual(4, parsed.version)
 
     def test_two_calls_yield_different_identities(self):
-        # 5-char base36 gives ~60M combinations; collision in two
-        # calls is astronomically unlikely. If this ever flakes it's
-        # almost certainly a regression, not a bad-luck collision.
         a = bottle_state.bottle_identity("dev")
         b = bottle_state.bottle_identity("dev")
         self.assertNotEqual(a, b)
 
-    def test_different_agents_get_different_prefixes(self):
+    def test_agent_name_does_not_affect_identity_format(self):
+        # agent_name is accepted for backward compatibility but ignored.
         a = bottle_state.bottle_identity("dev")
-        b = bottle_state.bottle_identity("api")
-        self.assertTrue(a.startswith("dev-"))
-        self.assertTrue(b.startswith("api-"))
+        b = bottle_state.bottle_identity("My Totally Different Agent")
+        self.assertRegex(a, r"^[0-9a-f-]{36}$")
+        self.assertRegex(b, r"^[0-9a-f-]{36}$")
 
-    def test_agent_name_slugified(self):
-        identity = bottle_state.bottle_identity("My Agent")
-        self.assertTrue(identity.startswith("my-agent-"))
+    def test_identity_accepted_by_launch_identity_check(self):
+        import re
+        _IDENTITY = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+        identity = bottle_state.bottle_identity()
+        self.assertTrue(_IDENTITY.match(identity), f"{identity!r} must match _IDENTITY regex")
 
 
 class TestPreserveMarker(_FakeHomeMixin, unittest.TestCase):

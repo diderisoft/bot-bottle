@@ -32,7 +32,6 @@ from ...contract.hostctl import (
 from ...lib import log
 from ...manifest.schema import DEFAULT_BOTTLE
 from ...paths import host_secrets_path
-from ...util import slugify
 from ... import run_manifest
 from ...backend import adoption
 from ...backend.bottle_size import BOTTLE_MEMORY_BYTES
@@ -266,9 +265,8 @@ class BottleService:
         if self._code_changed():
             log.die("bot-bottle was updated since the host controller started; restart it "
                     "to launch (`bot-bottle up --restart`). Running bottles keep running")
-        wanted = request.identity or (slugify(request.label) if request.label else "")
-        if wanted and self._running(wanted):
-            log.die(f"bottle {wanted} is already running")
+        if request.identity and self._running(request.identity):
+            log.die(f"bottle {request.identity} is already running")
         backend = self._backend_for(request.settings)
         if role != ROLE_CLI:
             request = dataclasses.replace(request, settings=with_recorded_infra(

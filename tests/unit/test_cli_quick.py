@@ -32,15 +32,11 @@ class Quick(unittest.TestCase):
         self.addCleanup(env.stop)
         self.launched: list[LaunchRequest] = []
 
-        def second(_first: object, value: str) -> str:
-            return value  # a label is free
-
         def launch(request: LaunchRequest, *_args: object, **_kwargs: object) -> int:
             self.launched.append(request)
             return 0
 
-        for target, effect in (("_uniquify_label", second),
-                               ("settings_from_env", MagicMock), ("_launch_bottle", launch)):
+        for target, effect in (("settings_from_env", MagicMock), ("_launch_bottle", launch)):
             p = patch(f"bot_bottle.cli.commands.quick.{target}", side_effect=effect)
             p.start()
             self.addCleanup(p.stop)

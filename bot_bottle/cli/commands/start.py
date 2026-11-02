@@ -20,7 +20,7 @@ import tempfile
 from dataclasses import replace
 from pathlib import Path
 
-from ...backend import BottlePlan, enumerate_active_agents, launch_isolation_note
+from ...backend import BottlePlan, launch_isolation_note
 from ...bottle_state import settle_state
 from ...contract.hostctl import LaunchRequest, Settings
 from ...lib.log import info, die, warn
@@ -32,7 +32,6 @@ from ..constants import PROG
 from ..launch_client import launch, prepare_request
 from ..secrets_env import secrets_from_env
 from ..settings import settings_from_env
-from ...util import slugify
 from .. import tui
 
 
@@ -150,9 +149,8 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
     # mode.
     if args.pick and not args.label:
         label, color = tui.name_color_modal(default_label=agent_name)
-        label, color = _resolve_unique_label(settings, label, color)
     else:
-        label, color = _uniquify_label(settings, args.label or agent_name), args.color or ""
+        label, color = args.label or agent_name, args.color or ""
     if args.pick:
         image_policy = _select_image_policy()
         if image_policy is None:
@@ -228,7 +226,7 @@ def _start_headless(
 
     bottle_names: tuple[str, ...] = tuple(args.bottle or (DEFAULT_BOTTLE,))
 
-    label = _uniquify_label(settings, args.label or agent_name)
+    label = args.label or agent_name
 
     request = LaunchRequest(
         agent=agent_name,
@@ -247,34 +245,7 @@ def _start_headless(
     return _launch_bottle(request, manifest, dry_run=dry_run, verbose=True)
 
 
-def _uniquify_label(settings: Settings, label: str) -> str:
-    """Headless `_resolve_unique_label`: append -2, -3, ... until the slug is
-    free, logging the choice."""
-    active_slugs = {a.slug for a in enumerate_active_agents(settings)}
-    if slugify(label) not in active_slugs:
-        return label
-    n = 2
-    while slugify(f"{label}-{n}") in active_slugs:
-        n += 1
-    chosen = f"{label}-{n}"
-    info(f"label '{label}' already in use; using '{chosen}'")
-    return chosen
-
-
 # --- Launch helpers ---
-
-
-def _resolve_unique_label(settings: Settings, label: str, color: str) -> tuple[str, str]:
-    """Re-prompt until the label's slug isn't used by a running bottle."""
-    while True:
-        slug_candidate = slugify(label)
-        active_slugs = {a.slug for a in enumerate_active_agents(settings)}
-        if slug_candidate not in active_slugs:
-            return label, color
-        label, color = tui.name_color_modal(
-            default_label=label,
-            disclaimer=f'"{label}" is already in use',
-        )
 
 
 def _select_image_policy() -> str | None:

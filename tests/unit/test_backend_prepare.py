@@ -166,19 +166,22 @@ class TestMintSlug(unittest.TestCase):
             identity=identity,
         )
 
-    def test_no_label_uses_agent_name_with_random_suffix(self) -> None:
+    def test_no_identity_mints_a_uuid(self) -> None:
+        import uuid
         slug = mint_slug(self._spec(label=""))
-        self.assertTrue(slug.startswith("demo-"), slug)
-        # random suffix present — slug is longer than just "demo"
-        self.assertGreater(len(slug), len("demo-"))
+        parsed = uuid.UUID(slug)
+        self.assertEqual(4, parsed.version)
 
-    def test_label_becomes_exact_slug(self) -> None:
+    def test_label_no_longer_becomes_slug(self) -> None:
+        import uuid
         slug = mint_slug(self._spec(label="my-run"))
-        self.assertEqual("my-run", slug)
+        # label is now a display field; identity is always a UUID
+        uuid.UUID(slug)  # must parse without error
 
-    def test_label_with_spaces_slugified_no_suffix(self) -> None:
-        slug = mint_slug(self._spec(label="My Feature Run"))
-        self.assertEqual("my-feature-run", slug)
+    def test_two_fresh_launches_get_different_identities(self) -> None:
+        a = mint_slug(self._spec(label="same-label"))
+        b = mint_slug(self._spec(label="same-label"))
+        self.assertNotEqual(a, b)
 
     def test_identity_takes_precedence_over_label(self) -> None:
         slug = mint_slug(self._spec(label="my-run", identity="fixed-id"))

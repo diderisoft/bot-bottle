@@ -17,7 +17,6 @@ from unittest.mock import MagicMock, patch
 import bot_bottle.cli.commands.start as start_mod
 import bot_bottle.cli.tui as tui_mod
 from bot_bottle.contract.hostctl import Settings
-from bot_bottle.backend import ActiveAgent
 from bot_bottle.lib.log import Die
 from bot_bottle.manifest import ManifestError
 
@@ -35,16 +34,6 @@ def _make_manifest(
     return manifest
 
 
-def _active_agent(slug: str) -> ActiveAgent:
-    return ActiveAgent(
-        backend_name="docker",
-        slug=slug,
-        agent_name="demo",
-        started_at="2026-01-01T00:00:00+00:00",
-        services=(),
-    )
-
-
 class TestCmdStartHeadless(unittest.TestCase):
     """Drive `cmd_start --headless` with launch + TUI stubbed out."""
 
@@ -58,10 +47,6 @@ class TestCmdStartHeadless(unittest.TestCase):
         ).start()
         self._launch_mock = patch(
             "bot_bottle.cli.commands.start._launch_bottle", return_value=0
-        ).start()
-        # No bottles running by default → no label collision.
-        patch(
-            "bot_bottle.cli.commands.start.enumerate_active_agents", return_value=[]
         ).start()
         # If any TUI picker fires in headless mode, that's a bug.
         self._agent_picker = patch.object(tui_mod, "filter_select").start()
@@ -159,15 +144,12 @@ class TestCmdStartHeadless(unittest.TestCase):
         self.assertEqual("nightly", spec.label)
         self.assertEqual("green", spec.color)
 
-    def test_label_collision_uniquifies(self):
-        with patch(
-            "bot_bottle.cli.commands.start.enumerate_active_agents",
-            return_value=[_active_agent("researcher")],
-        ):
-            start_mod.cmd_start(
-                ["--headless", "researcher", "--bottle", "claude", "--prompt", "Do it"]
-            )
-        self.assertEqual("researcher-2", self._spec().label)
+    def test_label_collision_is_allowed(self):
+        # Identity is now UUID-based; same-label launches are fine.
+        start_mod.cmd_start(
+            ["--headless", "researcher", "--bottle", "claude", "--prompt", "Do it"]
+        )
+        self.assertEqual("researcher", self._spec().label)
 
 
     def test_cached_images_sets_cached_policy(self):

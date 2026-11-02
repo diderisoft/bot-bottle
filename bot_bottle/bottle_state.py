@@ -10,16 +10,14 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import secrets
 import socket
-import string
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 from .environment import active_name, is_live
 from .paths import bot_bottle_root
-from .util import slugify
 
 
 # Directory layout: ~/.bot-bottle/state/<identity>/...
@@ -36,17 +34,11 @@ _METADATA_NAME = "metadata.json"
 # Empty marker: preserve the state dir at session end for `resume`.
 _PRESERVE_MARKER = ".preserve"
 
-# 5 base36 chars, ~60M combinations.
-_RANDOM_SUFFIX_LEN = 5
-_SUFFIX_ALPHABET = string.ascii_lowercase + string.digits
 
-
-def bottle_identity(agent_name: str) -> str:
-    """Mint a fresh, random per-launch identity: `slugify(agent_name)` plus a
-    5-char suffix so concurrent starts don't collide."""
-    slug = slugify(agent_name)
-    suffix = "".join(secrets.choice(_SUFFIX_ALPHABET) for _ in range(_RANDOM_SUFFIX_LEN))
-    return f"{slug}-{suffix}"
+def bottle_identity(_agent_name: str = "") -> str:
+    """Mint a fresh UUID for a new bottle launch. The UUID is the stable
+    identity key; the human label is stored separately in metadata."""
+    return str(uuid.uuid4())
 
 
 def globalize_slug(slug: str) -> str:

@@ -42,7 +42,7 @@ from ...paths import bot_bottle_root
 from ...util import read_tty_line
 from ..constants import PROG
 from ..settings import settings_from_env
-from .start import _launch_bottle, _uniquify_label
+from .start import _launch_bottle
 
 STARTERS = ("claude", "codex", "pi")
 
@@ -187,7 +187,7 @@ def cmd_quick(argv: list[str]) -> int:
     request = LaunchRequest(
         agent=agent,
         bottles=(project or DEFAULT_BOTTLE,),
-        label=_uniquify_label(settings, agent),
+        label=agent,
         image_policy="prefer-cached",
         assume_yes=True,
         settings=settings,

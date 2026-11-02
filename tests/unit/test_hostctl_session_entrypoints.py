@@ -101,7 +101,7 @@ class TestAttachCommand(unittest.TestCase):
                  mock.patch.object(attach_cmd.SessionManager, "exists", return_value=False):
                 self.assertEqual(1, attach_cmd.cmd_attach(["s1"]))
         self.assertIn("tmux is not installed", err.getvalue())
-        self.assertIn("no running session 's1'", err.getvalue())
+        self.assertIn("no running session matching 's1'", err.getvalue())
 
     def test_execs_a_writable_tmux_attach(self) -> None:
         with mock.patch.object(attach_cmd.shutil, "which", return_value="/usr/bin/tmux"), \

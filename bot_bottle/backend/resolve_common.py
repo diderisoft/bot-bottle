@@ -31,18 +31,15 @@ from ..manifest import Manifest, ManifestBottle
 from ..orchestrator.store.store_manager import StoreManager
 from ..paths import host_db_path
 from ..supervisor.plan import SupervisePlan
-from ..util import slugify
 from . import BottleSpec
 
 
 def mint_slug(spec: BottleSpec) -> str:
-    """The bottle identity: the recorded one on resume, else the label as-is
-    (so equal labels collide by design), else a freshly minted one."""
+    """The bottle identity: the recorded UUID on resume, else a fresh UUID.
+    Label is a mutable display name stored in metadata, never the identity."""
     if spec.identity:
         return spec.identity
-    if spec.label:
-        return slugify(spec.label)
-    return bottle_identity(spec.agent_name)
+    return bottle_identity()
 
 
 def write_launch_metadata(
