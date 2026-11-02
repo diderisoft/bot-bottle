@@ -121,7 +121,11 @@ class TestStorage(unittest.TestCase):
             a, b = Path(tmp) / "a", Path(tmp) / "b"
             a.mkdir()
             b.mkdir()
-            self.assertEqual(host_stats._disk_stats(a), host_stats._storage([a, b]))
+            # Free space on a live filesystem moves between two reads; count
+            # how often the one filesystem is asked, not its numbers.
+            with mock.patch.object(host_stats, "_disk_stats", return_value=(3, 10)) as disk:
+                self.assertEqual((3, 10), host_stats._storage([a, b]))
+            disk.assert_called_once()
 
     def test_two_filesystems_add_up(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
