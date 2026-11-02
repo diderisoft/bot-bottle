@@ -90,9 +90,11 @@ class TestDeltaCpuPct(unittest.TestCase):
         times = iter([1000.0, 1001.0])
         stats = iter([stat1, stat2])
 
-        with mock.patch("pathlib.Path.read_text", side_effect=lambda *a, **kw: next(stats)), \  # type: ignore[misc]
-             mock.patch("time.monotonic", side_effect=lambda: next(times)), \
-             mock.patch("os.sysconf", return_value=100):
+        with (
+            mock.patch("pathlib.Path.read_text", side_effect=lambda *a, **kw: next(stats)),  # type: ignore[misc]
+            mock.patch("time.monotonic", side_effect=lambda: next(times)),
+            mock.patch("os.sysconf", return_value=100),
+        ):
             _delta_cpu_pct("slug-b", 1)   # first call
             pct = _delta_cpu_pct("slug-b", 1)  # second call: 100 jiffies / 100 Hz / 1s = 100%
         self.assertAlmostEqual(100.0, pct, places=1)
@@ -104,9 +106,11 @@ class TestDeltaCpuPct(unittest.TestCase):
         times = iter([1000.0, 1000.001])  # tiny elapsed
         stats = iter([stat_zero, stat_huge])
 
-        with mock.patch("pathlib.Path.read_text", side_effect=lambda *a, **kw: next(stats)), \  # type: ignore[misc]
-             mock.patch("time.monotonic", side_effect=lambda: next(times)), \
-             mock.patch("os.sysconf", return_value=100):
+        with (
+            mock.patch("pathlib.Path.read_text", side_effect=lambda *a, **kw: next(stats)),  # type: ignore[misc]
+            mock.patch("time.monotonic", side_effect=lambda: next(times)),
+            mock.patch("os.sysconf", return_value=100),
+        ):
             _delta_cpu_pct("slug-c", 1)
             pct = _delta_cpu_pct("slug-c", 1)
         self.assertLessEqual(pct, 100.0)

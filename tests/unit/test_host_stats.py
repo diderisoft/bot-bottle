@@ -142,7 +142,11 @@ class TestStorage(unittest.TestCase):
     def test_a_path_not_made_yet_counts_its_filesystem(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             later = Path(tmp) / "cache" / "firecracker"
-            self.assertEqual(host_stats._disk_stats(Path(tmp)), host_stats._storage([later]))
+            # Free space on a live filesystem moves between two reads; check
+            # which filesystem is asked, not its numbers.
+            with mock.patch.object(host_stats, "_disk_stats", return_value=(3, 10)) as disk:
+                self.assertEqual((3, 10), host_stats._storage([later]))
+            disk.assert_called_once_with(Path(tmp))
 
     def test_no_existing_path_is_zero(self) -> None:
         with mock.patch.object(host_stats, "_existing", return_value=None):
