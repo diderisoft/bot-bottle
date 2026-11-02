@@ -641,8 +641,8 @@ ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_
 HOST_REQUESTS = {"forge_connect": forge_connect, "github_authorize_start": github_authorize_start,
                  "github_status": github_status}
 
-__all__ = ["ANSWERS", "HOST_REQUESTS", "QUERIES", "add_repo_answer", "bottle_chain", "bottle_write", "card",
-           "forge_attention", "forge_connect", "forge_connect_answer", "github_authorize_start",
-           "github_status", "library", "list_secrets",
-           "manifest", "manifest_save", "manifest_transfer", "refresh_credentials",
-           "repo_attention", "resolve", "set_secret", "workspace_file"]
+__all__ = ["ANSWERS", "HOST_REQUESTS", "QUERIES", "add_repo_answer", "bottle_chain",
+           "bottle_write", "card", "forge_attention", "forge_connect", "forge_connect_answer",
+           "github_authorize_start", "github_status", "library", "list_secrets", "manifest",
+           "manifest_save", "manifest_transfer", "refresh_credentials", "repo_attention",
+           "resolve", "set_secret", "workspace_file"]

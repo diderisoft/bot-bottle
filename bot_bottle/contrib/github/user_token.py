@@ -19,7 +19,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -206,7 +206,7 @@ def store(path: Path, name: str, tokens: TokenSet, client_id: str) -> None:
 
 
 @contextlib.contextmanager
-def _locked(path: Path) -> Iterator[None]:
+def _locked(path: Path) -> Generator[None]:
     """One refresh at a time: the refresh token rotates, so a second use of
     the old one would fail."""
     path.parent.mkdir(parents=True, exist_ok=True)

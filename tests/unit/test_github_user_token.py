@@ -1,6 +1,8 @@
 """github.com through the bot-bottle GitHub App's user access tokens (ADR
 0012): the device flow, renewal, reachability, connecting, the host's link
 requests and cards, and the CLI."""
+# pylint: disable=protected-access,attribute-defined-outside-init,unbalanced-tuple-unpacking
+# pylint: disable=consider-using-with
 
 from __future__ import annotations
 
@@ -49,8 +51,9 @@ class _Http:
         path = "/" + url.split("/", 1)[1]
         method = req.get_method()
         body: object = None
-        if req.data:
-            body = dict(urllib.parse.parse_qsl(req.data.decode()))
+        data = req.data
+        if isinstance(data, bytes):
+            body = dict(urllib.parse.parse_qsl(data.decode()))
         self.calls.append((method, path, dict(req.header_items()), body))
         queue = self.answers.get((method, path)) or [(404, {"message": "Not Found"})]
         status, answer = queue.pop(0) if len(queue) > 1 else queue[0]
@@ -459,17 +462,20 @@ class TestCards(unittest.TestCase):
         self.assertEqual(["github_authorize"], options)
         self.assertIn("install: https://github.com/apps/bot-bottle-dev/installations/new", lines)
         self.assertFalse(any(line.startswith("token") for line in lines))
-        with mock.patch.object(remote_actions, "_connected_forges",
-                               return_value={"github.com": "github"}):
+        connected = mock.Mock(return_value={"github.com": "github"})
+        with mock.patch.object(remote_actions, "_connected_forges", connected):
             refusal, _ = remote_actions.vet(_ask("forge-connect", "https://github.com"))
         self.assertIn("already connected to this host", refusal)
 
     def reach(self, *, token: str | None = "t", reachable: object = True) -> Any:
+        fake = mock.Mock()
+        if isinstance(reachable, Exception):
+            fake.side_effect = reachable
+        else:
+            fake.return_value = reachable
         with mock.patch("bot_bottle.contrib.github.user_token.current_token",
                         return_value=token), \
-                mock.patch("bot_bottle.contrib.github.user_token.reachable",
-                           **({"side_effect": reachable} if isinstance(reachable, Exception)
-                              else {"return_value": reachable})):
+                mock.patch("bot_bottle.contrib.github.user_token.reachable", fake):
             return remote_actions._app_reach_lines(APP_FORGE, "github.com/acme/app")
 
     def test_reach_lines(self) -> None:
