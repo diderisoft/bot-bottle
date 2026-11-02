@@ -1,0 +1,199 @@
+# Build and publish dev OCI images to ghcr.io on every merge to main.
+# Each merge produces digest-pinned images so 'main' installs pull instead of
+# building. Runs on native amd64 and arm64 GitHub-hosted runners in parallel;
+# a merge job stitches the per-arch tags into multi-arch manifests.
+#
+# Ext4 rootfs builds are disabled here (--no-ext4): those are Firecracker-only
+# and handled by the self-hosted Gitea workflow for releases. The static
+# dropbear step is included and wired up so removing --no-ext4 enables full
+# publishing with no further changes.
+#
+# GitHub-hosted runners only. No KVM or macOS runners.
+#
+# Required: the ghcr.io packages for this repo must be set to public visibility
+# after their first push (GitHub Settings → Packages → Change visibility).
+
+name: publish-dev-images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bot_bottle/**'
+      - 'Dockerfile*'
+      - 'image-build-args.json'
+      - 'requirements.gateway.*'
+      - 'pyproject.toml'
+      - '.github/workflows/publish-dev-images.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+# One publish at a time; cancel stale builds so the latest commit wins.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+            platform: linux/amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            platform: linux/arm64
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        run: |
+          docker buildx create --use --driver docker-container --name ci-builder
+          docker buildx inspect --bootstrap
+
+      - name: Log in to GitHub Container Registry
+        run: |
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Install e2fsprogs
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq e2fsprogs
+          mke2fs -V
+
+      # Build a static dropbear SSH server for the target architecture.
+      # Alpine ships a musl-linked dropbear that works in Debian-based guest
+      # rootfs images without shared-library dependencies. Set
+      # BOT_BOTTLE_FC_DROPBEAR so publish_images.py picks it up when ext4
+      # builds are enabled (remove --no-ext4 below to activate).
+      - name: Build static dropbear
+        run: |
+          mkdir -p "$RUNNER_TEMP/dropbear"
+          docker run --rm --platform "${{ matrix.platform }}" \
+            -v "$RUNNER_TEMP/dropbear:/out" \
+            alpine:3 sh -c \
+              'apk add --no-cache dropbear && cp /usr/sbin/dropbear /out/dropbear'
+          echo "BOT_BOTTLE_FC_DROPBEAR=$RUNNER_TEMP/dropbear/dropbear" \
+            >> "$GITHUB_ENV"
+          file "$RUNNER_TEMP/dropbear/dropbear"
+
+      - name: Install bot-bottle (for publish_images.py)
+        run: python3 -m pip install -e .
+
+      - name: Resolve dev version
+        id: version
+        run: |
+          base=$(python3 -c "
+          import re, pathlib
+          text = pathlib.Path('pyproject.toml').read_text()
+          m = re.search(r'version\s*=\s*[\"\']([\d.]+)', text)
+          print(m.group(1))
+          ")
+          echo "version=${base}-dev.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push OCI images
+        env:
+          BOT_BOTTLE_INFRA_ARTIFACT_BASE: ghcr.io
+          BOT_BOTTLE_INFRA_ARTIFACT_OWNER: diderisoft
+          BOT_BOTTLE_IMAGE_SOURCE_URL: https://github.com/diderisoft/bot-bottle
+        run: |
+          arch="${{ matrix.arch }}"
+          cache_ref="ghcr.io/diderisoft/bot-bottle-build-cache:${arch}"
+          python3 -m bot_bottle.publish_images \
+            --platform "${{ matrix.platform }}" \
+            --version "${{ steps.version.outputs.version }}" \
+            --no-ext4 \
+            --use-buildx \
+            --extra-build-arg --cache-from \
+            --extra-build-arg "type=registry,ref=${cache_ref}" \
+            --extra-build-arg --cache-to \
+            --extra-build-arg "type=registry,ref=${cache_ref},mode=max" \
+            --work-dir published
+
+      - name: Upload per-arch manifest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: manifest-${{ matrix.arch }}
+          path: published/published-artifacts.json
+          retention-days: 7
+
+      - name: Log out
+        if: always()
+        run: docker logout ghcr.io || true
+
+  merge-manifests:
+    name: merge manifests
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Log in to GitHub Container Registry
+        run: |
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Download per-arch manifests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: manifest-*
+          path: manifests
+
+      - name: Resolve dev version
+        id: version
+        run: |
+          # Read version from the amd64 manifest (both arches publish the same).
+          python3 - <<'PY'
+          import json, os, pathlib, glob
+          files = glob.glob("manifests/manifest-amd64/published-artifacts.json")
+          data = json.loads(pathlib.Path(files[0]).read_text())
+          first = next(iter(data.values()))
+          version = first["version"]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"version={version}\n")
+          PY
+
+      - name: Create multi-arch manifests
+        env:
+          SHA: ${{ github.sha }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          REG=ghcr.io/diderisoft
+          images=(orchestrator gateway claude codex pi)
+          for image in "${images[@]}"; do
+            img="${REG}/bot-bottle-${image}"
+            ver_amd64="${img}:${VERSION}-amd64"
+            ver_arm64="${img}:${VERSION}-arm64"
+            # SHA-pinned multi-arch tag and a floating :dev tag.
+            docker buildx imagetools create \
+              --tag "${img}:${VERSION}" \
+              "$ver_amd64" "$ver_arm64"
+            docker buildx imagetools create \
+              --tag "${img}:dev" \
+              "$ver_amd64" "$ver_arm64"
+          done
+
+      - name: Upload combined manifest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: published-artifacts-dev
+          path: manifests/manifest-amd64/published-artifacts.json
+          retention-days: 30
+
+      - name: Log out
+        if: always()
+        run: docker logout ghcr.io || true

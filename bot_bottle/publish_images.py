@@ -459,6 +459,9 @@ def build_image(
     repo_root: Path,
     out_dir: Path,
     runtime: str = "docker",
+    use_buildx: bool = False,
+    extra_build_args: list[str] | None = None,
+    no_ext4: bool = False,
 ) -> list[BuiltArtifact]:
     """Build, push and package one image on one platform. Both formats come
     from one build and carry its `inputs_hash`."""
@@ -471,11 +474,16 @@ def build_image(
     build_args: list[str] = []
     for name, value in sorted(resources.image_build_args(dockerfile).items()):
         build_args += ["--build-arg", f"{name}={value}"]
+    # --use-buildx: 'docker buildx build --load' enables registry cache via
+    # --cache-from/--cache-to passed as extra_build_args. --load makes the
+    # image available in the local daemon for push_oci and ext4 export.
+    build_subcmd = ["buildx", "build", "--load"] if use_buildx else ["build"]
     _run(
-        [runtime, "build", "-f", str(dockerfile),
+        [runtime, *build_subcmd, "-f", str(dockerfile),
          "--platform", plat, *build_args,
          "--label", f"org.opencontainers.image.source={source_url()}",
          "--label", f"org.opencontainers.image.version={version}",
+         *(extra_build_args or []),
          "-t", local_tag(image, plat), str(repo_root)],
         what=f"building {image} for {plat}",
     )
@@ -486,8 +494,9 @@ def build_image(
         locator=oci_tag(version, plat), namespace=oci_ref(image),
         inputs_hash=inputs,
     )]
-    produced.append(build_ext4(image, plat, out_dir / image, inputs,
-                               repo_root=repo_root, runtime=runtime))
+    if not no_ext4:
+        produced.append(build_ext4(image, plat, out_dir / image, inputs,
+                                   repo_root=repo_root, runtime=runtime))
     return produced
 
 
@@ -609,6 +618,22 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
              "capped at 8)",
     )
     parser.add_argument("--runtime", default="docker", help="container runtime")
+    parser.add_argument(
+        "--use-buildx", action="store_true",
+        help="use 'docker buildx build --load' instead of 'docker build', "
+             "enabling --cache-from/--cache-to via --extra-build-arg",
+    )
+    parser.add_argument(
+        "--extra-build-arg", action="append", default=[], metavar="ARG",
+        dest="extra_build_args",
+        help="extra argument appended to the docker build command (repeatable); "
+             "use for --cache-from / --cache-to with --use-buildx",
+    )
+    parser.add_argument(
+        "--no-ext4", action="store_true",
+        help="build and push OCI images only; skip the ext4 rootfs step. "
+             "Does not require BOT_BOTTLE_INFRA_ARTIFACT_TOKEN.",
+    )
     return parser.parse_args(argv)
 
 
@@ -627,6 +652,9 @@ def build_all(
     work_dir: Path,
     runtime: str = "docker",
     jobs: int | None = None,
+    use_buildx: bool = False,
+    extra_build_args: list[str] | None = None,
+    no_ext4: bool = False,
 ) -> list[BuiltImage]:
     """Build every (image, platform) pair, up to `jobs` at a time. Failures are
     collected and raised together."""
@@ -640,7 +668,9 @@ def build_all(
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         futures = {
             pool.submit(build_image, name, version, plat, repo_root=repo_root,
-                        out_dir=work_dir, runtime=runtime): (name, plat)
+                        out_dir=work_dir, runtime=runtime,
+                        use_buildx=use_buildx, extra_build_args=extra_build_args,
+                        no_ext4=no_ext4): (name, plat)
             for name, plat in tasks
         }
         for future in as_completed(futures):
@@ -671,8 +701,10 @@ def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
 
     # Check the token first: an OCI push can't be undone.
+    # --no-ext4 builds skip the generic-package upload, so no token is needed;
+    # OCI auth is handled by 'docker login' before this script runs.
     _, _, token = _config()
-    if not token:
+    if not token and not args.no_ext4:
         print(
             f"{TOKEN_ENV} is not set; a token with write:package on the target "
             f"owner is required to publish",
@@ -720,7 +752,10 @@ def main(argv: list[str] | None = None) -> int:
         delete_published(images, platforms, version, token)
 
     built = build_all(images, platforms, version, repo_root=repo_root,
-                      work_dir=work_dir, runtime=args.runtime, jobs=args.jobs)
+                      work_dir=work_dir, runtime=args.runtime, jobs=args.jobs,
+                      use_buildx=args.use_buildx,
+                      extra_build_args=args.extra_build_args,
+                      no_ext4=args.no_ext4)
 
     for entry in built:
         for artifact in entry.artifacts:
