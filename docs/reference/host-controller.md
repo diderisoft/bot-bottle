@@ -355,7 +355,9 @@ optional prompt, bottle names and label), stop one, and view or type into
 sessions. Agent and bottle definitions always come from this host, never from
 the console. A launch, resume or stop runs beside the link, after that agent's
 previous one, so the console's other requests are answered while it waits on
-the bottle.
+the bottle. A resume of a bottle already running as that same agent (Resume
+clicked twice after a Stop) answers `agent_started` again rather than an error;
+a bottle running as another agent is refused.
 
 The console sees **every session on the host**, not only the ones it
 launched. Each session record carries its `origin` (`console` or

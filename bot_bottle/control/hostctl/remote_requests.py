@@ -43,7 +43,7 @@ def resume_request(agent_id: str, bottle: object, *, agents: Iterable[str],
     if not isinstance(bottle, str) or not _IDENTITY.match(bottle):
         return "resume needs the bottle it ran as"
     if running(bottle):
-        return f"{bottle} is still running"
+        return f"{bottle} is already running as another bottled agent"
     metadata = read_metadata(bottle)
     if metadata is None:
         return f"this host has no saved state for {bottle}; start it fresh instead"

@@ -16,7 +16,8 @@ The control stream (JSON lines):
   that exit on their own.
 - `resume` (`agent_id`, `bottle`) -> relaunches a stopped bottle this host ran,
   under its own identity and state, as `bot-bottle resume` does
-  (`remote_requests`); `agent_started` or `agent_errored` as for `launch`.
+  (`remote_requests`); `agent_started` or `agent_errored` as for `launch`. A
+  repeat for a bottle already running as that agent answers `agent_started`.
 - `hello` opens the stream. On every (re)connect the host reports agents
   that exited, reopens running ones' relays, and sends `agents_running` and
   `host_stats` (storage and memory, `host_stats.py`; again every minute).
@@ -35,34 +36,27 @@ The control stream (JSON lines):
   `history` (`lines` -> `text`, `size`, `limit`) act on them.
 - `audit_query` -> `audit_events` for the link's agents' bottles.
 - `refresh_credentials` -> `credentials_refreshed` (`refreshed`, `expires_at`,
-  or `error`): re-reads the agent's forwarded host login now
-  (`credential_refresh`).
+  or `error`): re-reads the agent's forwarded host login (`credential_refresh`).
 - `manifest` (`agent_id`) -> `manifest`: its agent and bottle files and what they
   resolve to (`manifest_view`).
 - `forge_connect` (`url`, `token`, `bottle`, `name`, `ssh`) -> `forge_connected`
-  (`key`, `account`, `admin_repos`, `repos`, `host_key`, `warnings`, or
-  `error`): connects a forge into a host bottle (`remote_actions`). The token
-  goes only to the forge and the secrets file.
+  (`key`, `account`, `admin_repos`, `repos`, `host_key`, `warnings`, or `error`):
+  connects a forge into a host bottle (`remote_actions`); the token stays on the host.
 - `workspace_file` (`agent_id`, `path`) -> an image file read in its bottle (`workspace_files`).
 - `snapshot` -> `snapshot_taken` (`snapshot`, or `error`): the agent's
   workspace patch and conversation position, kept on the host (`snapshots`).
 - `transcript` (`agent_id`, `before` or `around`, `limit`) ->
   `transcript_entries` (`entries`, `first`, `last`, `available`): a page of the agent's
-  conversation from its host copy, masked (`transcript_serve`), for running
-  and stopped agents alike. `transcript_appended` (`agent_id`, `last`) tells
-  the console new entries landed. `agent_working` (`agent_id`, `working`)
-  says when a running agent starts or stops working on a prompt: its harness
-  decides from its transcript (`AgentProvider.working`; Claude's and Codex's
-  turn markers), else it's working while the transcript grew in the last 20s.
-  Sent once per agent on each (re)connect and when it starts or is presented,
-  then on each change. An indicator only, never a security decision.
-  `agent_started` and `agent_present` carry `transcript` when the agent's
-  harness keeps one. `transcript_search` (`query`, `kinds`) ->
-  `transcript_matches`: the newest matching entries' `seq` with a snippet.
+  conversation from its host copy, masked (`transcript_serve`), running or
+  stopped. `transcript_appended` (`agent_id`, `last`): new entries landed.
+  `agent_working` (`agent_id`, `working`): a running agent started or stopped
+  a prompt, as its harness decides (`AgentProvider.working`); sent on each
+  (re)connect, start or presentation, then on each change. An indicator only.
+  `agent_started`/`agent_present` carry `transcript` when the harness keeps
+  one. `transcript_search` (`query`, `kinds`) -> `transcript_matches`.
 
-The pairing on disk (`remote.json`, `console.json`, the iroh key) is
-`pairing.py`. `iroh` (`bot-bottle[remote]`) is imported only when the link
-runs or the node id is asked for.
+The pairing on disk (`remote.json`, `console.json`, the iroh key) is `pairing.py`.
+`iroh` (`bot-bottle[remote]`) is imported only when the link runs or a node id is asked.
 """
 
 from __future__ import annotations
@@ -120,9 +114,8 @@ class Bottles(Protocol):
 
 
 def terminal_agent_id(bottle: str, activation: str) -> str:
-    """The console agent id of a session the console didn't launch: derived
-    from its bottle and run, so a reconnect or a host controller restart
-    names it the same without storing anything."""
+    """The console id of a session the console didn't launch: from its bottle
+    and run, so a reconnect or restart names it the same, storing nothing."""
     digest = hashlib.sha256(f"{bottle}\0{activation}".encode()).hexdigest()[:32]
     return f"t-{digest}"
 
@@ -157,9 +150,8 @@ TerminalFactory = Callable[[str, str], Awaitable["Terminal | None"]]
 
 
 class AgentTurns:
-    """Runs each agent's slow requests (launch, resume, stop) one after
-    another, beside the caller: a teardown that wedged held every request
-    behind it, for any agent."""
+    """Runs each agent's slow requests (launch, resume, stop) in turn, beside
+    the caller, so a wedged teardown holds up only its own agent."""
 
     def __init__(self) -> None:
         # agent id -> its latest request, still running
@@ -317,6 +309,10 @@ class ConsoleLink:
         continuing (the console's Resume)."""
         if not agent_id:
             return
+        if isinstance(bottle, str) and bottle and self.running.get(agent_id) == bottle:  # repeated
+            await self._announce(agent_id, bottle, str(self.present.get(agent_id, {}).get(
+                "activation", "")), await self._live_terminal(agent_id))
+            return
         request = resume_request(
             agent_id, bottle, agents=self._agents(),
             running=lambda b: b in self.running.values() or bool(
@@ -358,13 +354,17 @@ class ConsoleLink:
         self.launched.add(bottle)
         self._started_at[agent_id] = time.monotonic()
         self.transcripts.forget(agent_id)  # its working state goes out afresh
-        terminal = await self._open_terminal(agent_id, bottle)
+        await self._announce(agent_id, bottle, str(result.get("activation") or ""),
+                             await self._open_terminal(agent_id, bottle))
+
+    async def _announce(self, agent_id: str, bottle: str, activation: str,
+                        terminal: "Terminal | None") -> None:
         started: dict[str, Any] = {"type": "agent_started", "agent_id": agent_id,
                                    "bottle": bottle,
                                    "writable": bool(terminal and terminal.writable),
                                    "transcript": await self.transcripts.available(agent_id)}
-        if result.get("activation"):
-            started["activation"] = str(result["activation"])
+        if activation:
+            started["activation"] = activation
         await self._send(started)
 
     async def _open_terminal(self, agent_id: str, bottle: str) -> "Terminal | None":

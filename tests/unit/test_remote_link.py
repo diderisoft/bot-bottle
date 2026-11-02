@@ -461,7 +461,7 @@ class TestConsoleSession(unittest.TestCase):
         bottles.running.add("busy")
         for bottle, why in (("../x", "the bottle it ran as"), ("nothing-saved", "no saved state"),
                             ("gone-agent", "no longer has the agent"),
-                            ("busy", "still running")):
+                            ("busy", "already running as another bottled agent")):
             with self.subTest(bottle=bottle):
                 asyncio.run(link.handle({"type": "resume", "agent_id": "a9", "bottle": bottle}))
                 self.assertEqual("agent_errored", sent[-1]["type"])
@@ -653,6 +653,32 @@ class TestConsoleSession(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("tmux"), "needs tmux")
+class TestRepeatedResume(unittest.TestCase):
+    """Stop, then Resume clicked twice: the second finds the agent back up."""
+
+    terms: dict[str, _Terminal]
+    _link = TestConsoleSession._link  # pylint: disable=protected-access
+    _launch = TestConsoleSession._launch  # pylint: disable=protected-access
+
+    def test_a_repeated_resume_of_a_running_agent_answers_started(self) -> None:
+        link, bottles, sent = self._link()
+        self._launch(link)
+        launches = len(bottles.launched)
+        self.terms["a1"].closed = True
+        asyncio.run(link.handle({"type": "resume", "agent_id": "a1", "bottle": "bottle-1"}))
+        self.assertEqual(launches, len(bottles.launched))
+        self.assertEqual({"type": "agent_started", "agent_id": "a1", "bottle": "bottle-1",
+                          "writable": True, "transcript": False}, sent[-1])
+        self.assertFalse(self.terms["a1"].closed)  # its relay is open again
+        # A presented session's resume repeats its activation.
+        link.present["a1"] = {"activation": "act-1"}
+        asyncio.run(link.handle({"type": "resume", "agent_id": "a1", "bottle": "bottle-1"}))
+        self.assertEqual("act-1", sent[-1]["activation"])
+        # The same bottle asked for by another agent is still refused.
+        asyncio.run(link.handle({"type": "resume", "agent_id": "a2", "bottle": "bottle-1"}))
+        self.assertEqual("agent_errored", sent[-1]["type"])
+
+
 class TestHistoryRequests(unittest.TestCase):
     """`history` without tmux: the relay's bounds, and an unreadable reply."""
 
