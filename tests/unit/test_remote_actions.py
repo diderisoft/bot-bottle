@@ -150,5 +150,76 @@ class TestForgeConnectAnswer(unittest.TestCase):
         self.assertNotIn("error", reply)
 
 
+class TestSecretActions(unittest.TestCase):
+    def setUp(self) -> None:
+        self.sent: list[dict[str, Any]] = []
+
+        async def send(message: dict[str, Any]) -> None:
+            self.sent.append(message)
+
+        self.link = remote.ConsoleLink(mock.Mock(), send, agents=lambda: [])
+
+    def handle(self, type_: str, **msg: Any) -> dict[str, Any]:
+        asyncio.run(self.link.handle({"type": type_, "request_id": "q1", **msg}))
+        return self.sent[-1]
+
+    def test_list_returns_names(self) -> None:
+        fs = mock.MagicMock()
+        fs.items.return_value = [("ANTHROPIC_API_KEY", "sk-ant-..."), ("OPENAI_API_KEY", "sk-op")]
+        with mock.patch("bot_bottle.secret_source.FileSecrets", return_value=fs), \
+             mock.patch("bot_bottle.paths.host_secrets_path"):
+            reply = self.handle("list_secrets")
+        self.assertEqual(("secrets_listed", "q1", ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]),
+                         (reply["type"], reply["request_id"], reply["names"]))
+        self.assertNotIn("error", reply)
+
+    def test_list_empty_file(self) -> None:
+        fs = mock.MagicMock()
+        fs.items.return_value = []
+        with mock.patch("bot_bottle.secret_source.FileSecrets", return_value=fs), \
+             mock.patch("bot_bottle.paths.host_secrets_path"):
+            reply = self.handle("list_secrets")
+        self.assertEqual([], reply["names"])
+        self.assertNotIn("error", reply)
+
+    def test_list_error_returns_safe_message(self) -> None:
+        with mock.patch("bot_bottle.secret_source.FileSecrets", side_effect=OSError("denied")), \
+             mock.patch("bot_bottle.paths.host_secrets_path"):
+            reply = self.handle("list_secrets")
+        self.assertNotIn("names", reply)
+        self.assertIn("see the host controller's log", reply["error"])
+
+    def test_set_writes_and_replies_with_name(self) -> None:
+        with mock.patch("bot_bottle.secret_source.write_secret") as ws, \
+             mock.patch("bot_bottle.paths.host_secrets_path", return_value=Path("/fake")):
+            reply = self.handle("set_secret", name="ANTHROPIC_API_KEY", value="sk-ant-s3cret")
+        self.assertEqual(("secret_set", "q1", "ANTHROPIC_API_KEY"),
+                         (reply["type"], reply["request_id"], reply["name"]))
+        self.assertNotIn("error", reply)
+        ws.assert_called_once_with(Path("/fake"), "ANTHROPIC_API_KEY", "sk-ant-s3cret")
+
+    def test_set_value_never_in_reply(self) -> None:
+        with mock.patch("bot_bottle.secret_source.write_secret"), \
+             mock.patch("bot_bottle.paths.host_secrets_path"):
+            reply = self.handle("set_secret", name="ANTHROPIC_API_KEY", value="sk-ant-s3cret-val")
+        self.assertNotIn("sk-ant-s3cret-val", repr(reply))
+
+    def test_set_secrets_file_error_returned(self) -> None:
+        from bot_bottle.errors import SecretsFileError
+        with mock.patch("bot_bottle.secret_source.write_secret",
+                        side_effect=SecretsFileError("bad name")), \
+             mock.patch("bot_bottle.paths.host_secrets_path"):
+            reply = self.handle("set_secret", name="123bad", value="s3cret")
+        self.assertEqual("bad name", reply["error"])
+        self.assertNotIn("s3cret", repr(reply))
+
+    def test_set_unexpected_error_uses_safe_message(self) -> None:
+        with mock.patch("bot_bottle.secret_source.write_secret", side_effect=OSError("disk")), \
+             mock.patch("bot_bottle.paths.host_secrets_path"):
+            reply = self.handle("set_secret", name="FOO", value="bar-val")
+        self.assertIn("see the host controller's log", reply["error"])
+        self.assertNotIn("bar-val", repr(reply))
+
+
 if __name__ == "__main__":
     unittest.main()
