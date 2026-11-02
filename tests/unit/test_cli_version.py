@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 import unittest
 from contextlib import redirect_stdout
-from dataclasses import dataclass, field
 from unittest import mock
 
 from bot_bottle.cli.commands import version as version_cmd
