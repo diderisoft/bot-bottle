@@ -15,6 +15,7 @@ import time
 import types
 import typing
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from tests.unit import use_bottle_root
