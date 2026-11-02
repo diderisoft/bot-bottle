@@ -10,7 +10,9 @@ import json
 import urllib.error
 import urllib.request
 
-from ...deploy_key_provisioner import DeployKeyCollisionError, DeployKeyProvisioner
+from ...deploy_key_provisioner import (
+    DeployKeyCollisionError, DeployKeyProvisioner, DeployKeysDisabledError,
+)
 from ..gitea.deploy_key_provisioner import generate_keypair, read_error_body, split_owner_repo
 from .forge_api import api_base, headers
 
@@ -43,6 +45,11 @@ class GitHubDeployKeyProvisioner(DeployKeyProvisioner):
                 body = json.loads(resp.read())
         except urllib.error.HTTPError as exc:
             detail = read_error_body(exc)
+            if exc.code == 422 and "deploy keys are disabled" in detail.lower():
+                raise DeployKeysDisabledError(
+                    f"GitHub has deploy keys turned off for {owner_repo}: allow them in the "
+                    f"repo's or its organization's settings (an org policy overrides the "
+                    f"repo's), then grant it again") from exc
             if exc.code == 422:
                 raise DeployKeyCollisionError(
                     f"deploy key collision for {owner_repo!r} (title={title!r}): "

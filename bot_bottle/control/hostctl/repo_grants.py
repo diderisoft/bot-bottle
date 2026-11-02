@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...deploy_key_provisioner import DeployKeysDisabledError
 from ...lib import log
 
 if TYPE_CHECKING:
@@ -89,7 +90,7 @@ def grant_repo(backend: Any, identity: str, grant: str, *,
         reprovision_git_gate(backend.infra_service().gateway().provisioning_transport(),
                              adopted.registry_id, identity)
         point_agent_at_gate(guest, entry)
-    except (GrantError, ManifestError) as e:
+    except (GrantError, ManifestError, DeployKeysDisabledError) as e:
         return {"error": str(e)}
     except Exception as e:  # pylint: disable=broad-exception-caught  # reported, not raised
         log.warn(f"bottle {identity}: granting {grant} failed: {type(e).__name__}: {e}")

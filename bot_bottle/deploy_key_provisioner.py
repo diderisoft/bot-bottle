@@ -10,6 +10,11 @@ class DeployKeyCollisionError(RuntimeError):
     """A deploy key with this title or public key already exists on the repo."""
 
 
+class DeployKeysDisabledError(RuntimeError):
+    """The forge won't take deploy keys for the repo (on GitHub, an org or repo
+    policy). The message says what to change; it's shown to the user."""
+
+
 class DeployKeyProvisioner(ABC):
     """One deploy key's lifecycle on a forge."""
 
