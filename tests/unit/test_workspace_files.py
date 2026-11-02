@@ -220,7 +220,7 @@ class TestWriteFile(unittest.TestCase):
 
     def write(self, name: str, data: bytes) -> dict[str, object]:
         path = f"{self.upload_root}/{name}"
-        return write_file(self.bottle, path, data, self.upload_root)
+        return write_file(self.bottle, path, data, self.upload_root)  # type: ignore[arg-type]
 
     def test_writes_a_file(self) -> None:
         data = b"hello world"
@@ -243,18 +243,18 @@ class TestWriteFile(unittest.TestCase):
     def test_too_big_is_refused_before_reaching_the_bottle(self) -> None:
         big = b"x" * (5 * 1024 * 1024 + 1)
         with self.assertRaisesRegex(WorkspaceFileError, "over 5 MiB"):
-            write_file(self.bottle, f"{self.upload_root}/big.bin", big, self.upload_root)
+            write_file(self.bottle, f"{self.upload_root}/big.bin", big, self.upload_root)  # type: ignore[arg-type]
         self.assertEqual([], self.bottle.scripts)
 
     def test_outside_root_is_refused_before_reaching_the_bottle(self) -> None:
         with self.assertRaisesRegex(WorkspaceFileError, "uploads must go under"):
-            write_file(self.bottle, "/home/node/evil.sh", b"bad", self.upload_root)
+            write_file(self.bottle, "/home/node/evil.sh", b"bad", self.upload_root)  # type: ignore[arg-type]
         self.assertEqual([], self.bottle.scripts)
 
     def test_injection_in_path_is_quoted(self) -> None:
         name = "it's $(touch pwned).txt"
         # shlex.quote prevents execution; the file is written with the literal name
-        write_file(self.bottle, f"{self.upload_root}/{name}", b"x", self.upload_root)
+        write_file(self.bottle, f"{self.upload_root}/{name}", b"x", self.upload_root)  # type: ignore[arg-type]
         self.assertFalse((Path.cwd() / "pwned").exists())
 
     def test_exec_failure_raises(self) -> None:
