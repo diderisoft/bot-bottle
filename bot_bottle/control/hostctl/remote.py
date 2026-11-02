@@ -43,11 +43,6 @@ The control stream (JSON lines):
   (`key`, `account`, `admin_repos`, `repos`, `host_key`, `warnings`, or
   `error`): connects a forge into a host bottle (`remote_actions`). The token
   goes only to the forge and the secrets file.
-- `list_secrets` -> `secrets_listed` (`names`, or `error`): the names in the
-  host secrets file (`~/.bot-bottle/secrets`). Values are never returned.
-- `set_secret` (`name`, `value`) -> `secret_set` (`name`, or `error`): write
-  a named secret to the host secrets file. The value goes only to the host;
-  it is never echoed in the reply or logged.
 - `snapshot` -> `snapshot_taken` (`snapshot`, or `error`): the agent's
   workspace patch and conversation position, kept on the host (`snapshots`).
 - `transcript` (`agent_id`, `before` or `around`, `limit`) ->
