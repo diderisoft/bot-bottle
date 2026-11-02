@@ -407,6 +407,25 @@ goes ahead. Where a bottle sets `audit.delivery: required`, egress and
 git-gate refuse the action they couldn't record (see
 [gateway.md](gateway.md)).
 
+### Audit records on the console
+
+A console agent's conversation is also kept on the console as audit
+records, readable only through this host and only once you unlock with a
+passkey ([ADR 0013](../decisions/0013-audit-records-passkey-decrypt.md)).
+
+| Module | Does |
+|---|---|
+| `audit_push.py` | each entry of a running console agent's conversation (the masked host copy), encrypted with AES-256-GCM under `<root>/audit.key` (created 0600 when first needed; never sent), bound to its run and position, and hash-chained to the agent's previous record across runs. Sent as `audit_record` at most 50 a tick, every 5 s. How far each agent got is in `<root>/audit-push/<agent>.json`, so a restart, resume or re-adopted bottle never sends an entry twice. Terminal-started agents aren't sent. |
+| `audit_unlock.py` | `audit_unlock_challenge` (`session`) issues a single-use challenge (two minutes) for one console session; `audit_unlock` (`session`, `assertion`) checks the passkey's WebAuthn signature on this host (`webauthn.py`: ES256 and EdDSA, the console's origin and rp id, the challenge, the signature counter) and issues a token for that session: 12 hours, or an hour unused. |
+| `audit_link.py` | `decrypt_audit_records` (`session`, `token`, `run_id`, `records`: `id`, `seq`, `ciphertext`; up to 200) -> `audit_decrypted`: only with a valid token, only for runs this host sent, at most 2000 records a minute, each read journalled as `audit.records_read`. |
+| `audit_trust.py` | the passkeys trusted to unlock, in `<root>/audit-passkeys.json` (0600) with the origin and rp id they sign for. |
+
+`bot-bottle pair` fetches the account's passkeys from the console
+(`GET /api/v1/hosts/passkeys`) and trusts them only once you confirm their
+fingerprints match the console's (Settings, Passkeys);
+`bot-bottle audit passkeys [--trust]` lists or re-fetches them. The console
+can't change them. Back up `audit.key`: without it the records can't be read.
+
 ## Firehose
 
 `firehose.py` and `firehose_sinks.py` fan the gateway's per-request records

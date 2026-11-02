@@ -13,27 +13,23 @@ The control stream (JSON lines):
   the console is refused. While it starts, `agent_stage` (`stage`, `title`)
   reports each launch stage, as the CLI shows them.
 - `stop` -> tears the bottle down; `agent_stopped` follows (also when one exits itself).
-- `resume` (`agent_id`, `bottle`) -> relaunches a stopped bottle this host ran, as
-  `bot-bottle resume` does (`remote_requests`); `agent_started` or `agent_errored`.
-  A repeat, or a CLI resume of a console bottle, also answers `agent_started`.
-- `hello` opens the stream. Each (re)connect reports agents that exited, reopens relays,
-  sends `agents_running` and `host_stats` (`host_stats.py`; each minute).
-- `agent_present` (from the host): a running session the console didn't
-  launch (`bot-bottle`, `start`), with a host-made `agent_id`, its `bottle`,
-  `activation`, `label`, `definition`, `writable` and `origin`. Sent on every
-  (re)connect and when one starts; from then on it's one of the link's agents.
-- `attention` (from the host): a pending supervise request for one of the link's
-  agents (`since`, `message`, `options`); `activity` once nothing waits. A forge or
-  repo request no card could meet is refused, the agent told why (`remote_actions.vet`).
+- `resume` (`agent_id`, `bottle`) -> relaunches a stopped bottle this host ran (`remote_requests`):
+  `agent_started` (also for a repeat or a CLI resume of a console bottle) or `agent_errored`.
+- `hello` opens the stream; each (re)connect reports exits, reopens relays, sends
+  `agents_running` and `host_stats` (each minute).
+- `agent_present` (from the host): a running session the console didn't launch, with a
+  host-made `agent_id`, `bottle`, `activation`, `label`, `definition`, `writable` and
+  `origin`, on every (re)connect and start; from then on it's one of the link's agents.
+- `attention` (from the host): a pending supervise request (`since`, `message`, `options`),
+  `activity` once none waits; one no card could meet is refused (`remote_actions.vet`).
 - `approval` -> `allow`, `allow_project` or `deny`, echoing `since` (no stale answers).
-- Terminals relay on uni streams (`console_terminal`); `input`, `resize` and
-  `history` (`lines` -> `text`, `size`, `limit`) act on them. A relay opens at
-  the size last asked for its agent.
+- Terminals relay on uni streams (`console_terminal`), opening at the size last asked;
+  `input`, `resize` and `history` (`lines` -> `text`, `size`, `limit`) act on them.
 - `audit_query` -> `audit_events` for the link's agents' bottles.
 - `refresh_credentials` -> `credentials_refreshed`; `manifest` (`agent_id`) -> `manifest`.
-- `forge_connect` (`url`, `token`, `bottle`, `name`, `ssh`) -> `forge_connected`: connects a
-  forge into a host bottle; `github_authorize_start` -> `github_authorize` (the device code)
-  and `github_status` -> `github_status` (`github_connect`, `remote_actions.HOST_REQUESTS`).
+- `forge_connect` -> `forge_connected`, `github_authorize_start` -> `github_authorize` and
+  `github_status` (`github_connect`, `remote_actions.HOST_REQUESTS`).
+- Audit records out (`audit_record`) and passkey-unlocked reads (`audit_link`, ADR 0013).
 - `workspace_file` (`agent_id`, `path`) -> an image file read in its bottle (`workspace_files`).
 - `metrics_watch` (`bottles`) -> `bottle_metrics` every 3 s for those running (`live_metrics`).
 - `snapshot` -> `snapshot_taken`: workspace patch and conversation position (`snapshots`).
@@ -41,14 +37,12 @@ The control stream (JSON lines):
   `transcript_entries` (`entries`, `first`, `last`, `available`): a page of the agent's
   conversation from its host copy, masked (`transcript_serve`), running or
   stopped. `transcript_appended` (`agent_id`, `last`): new entries landed.
-  `agent_working` (`agent_id`, `working`): a running agent started or stopped
-  a prompt, as its harness decides (`AgentProvider.working`); sent on each
-  (re)connect, start or presentation, then on each change. An indicator only.
+  `agent_working` (`agent_id`, `working`): a prompt started or stopped, as its harness
+  decides (`AgentProvider.working`), on each (re)connect, start and change.
   `agent_started`/`agent_present` carry `transcript` when the harness keeps
   one. `transcript_search` (`query`, `kinds`) -> `transcript_matches`.
 
-The pairing on disk (`remote.json`, `console.json`, the iroh key) is `pairing.py`; `iroh`
-(`bot-bottle[remote]`) is imported only when the link runs or a node id is asked.
+Pairing on disk is `pairing.py`; `iroh` (`bot-bottle[remote]`) is imported only when needed.
 """
 
 from __future__ import annotations
@@ -71,6 +65,7 @@ from .live_metrics import MetricsWatch
 from ...lib import log
 from ...util import same_instant
 from .audit_index import query_host_journal
+from .audit_link import AuditLink
 from .console_terminal import HISTORY_LINES, session_terminals, type_into, valid_size
 from . import remote_actions
 from .pairing import (RemoteConfig, RemoteError, import_iroh, load_config, secret_key,
@@ -222,6 +217,8 @@ class ConsoleLink:
         self.transcripts = TranscriptLink(self._send)
         self.metrics = MetricsWatch(self._send, lambda: set(self.running.values()),
                                     getattr(bottles, "live_metrics", None))
+        self.audit_link = AuditLink(self._send, lambda: {  # console agents' records only
+            a: b for a, b in self.running.items() if a not in self.present}, bottles)
         self._last_stats: float = 0.0
 
     # Wait on the bottle: minutes for a launch, for good if a teardown wedges.
@@ -255,6 +252,8 @@ class ConsoleLink:
         elif kind == "history":
             await self._history(str(msg.get("agent_id", "")), msg.get("request_id"),
                                 msg.get("lines"))
+        elif kind in AuditLink.REQUESTS:
+            await self.audit_link.handle(msg)
         elif kind == "audit_query":
             await self._audit_query(msg)
         elif kind == "metrics_watch":
@@ -718,6 +717,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
             await link.push_attention()
             await link.push_transcripts()
             await link.push_working()
+            await link.audit_link.push()
             await link.push_host_stats_if_due()
 
     watcher, sampler = asyncio.create_task(watch()), asyncio.create_task(link.metrics.run())

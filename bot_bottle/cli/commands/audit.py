@@ -25,6 +25,7 @@ from ...lib.config_store import AuditForward, ConfigStore, FirehoseSink
 from ...manifest.bottle import AUDIT_DELIVERIES
 from ...paths import host_audit_dir, host_db_path
 from ..constants import PROG
+from . import audit_passkeys
 
 
 def _verify(_ns: argparse.Namespace) -> int:
@@ -252,6 +253,10 @@ def _firehose(ns: argparse.Namespace) -> int:
     return 0
 
 
+def _passkeys(ns: argparse.Namespace) -> int:
+    return audit_passkeys.run(bool(ns.trust))
+
+
 def cmd_audit(args: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog=f"{PROG} audit",
@@ -293,6 +298,11 @@ def cmd_audit(args: list[str]) -> int:
         "import", help="add a segment from another host or a backup, kept as its own chain")
     imp.add_argument("segment", help="a journal segment file (.jsonl)")
     imp.set_defaults(run=_import)
+    passkeys = sub.add_parser(
+        "passkeys", help="the passkeys that may unlock reading audit records from the console")
+    passkeys.add_argument("--trust", action="store_true",
+                          help="fetch them from the console and trust them once confirmed")
+    passkeys.set_defaults(run=_passkeys)
     delivery = sub.add_parser(
         "delivery",
         help="show or set the default audit.delivery for bottles that don't set it")

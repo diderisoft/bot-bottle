@@ -24,7 +24,7 @@ dependencies = []
 [project.optional-dependencies]
 # Remote access over iroh (ADR 0007), imported only by the host controller's
 # console link. No Intel-macOS wheel exists upstream.
-remote = ["iroh>=1.2"]
+remote = ["iroh>=1.2", "cryptography>=41"]
 
 [project.urls]
 Homepage = "https://gitea.dideric.is/didericis/bot-bottle"

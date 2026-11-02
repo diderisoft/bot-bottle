@@ -28,6 +28,13 @@ SECRETS_FILENAME = "secrets"
 # The audit journal's segments. Not under `db/`, which is mounted into infra.
 AUDIT_DIRNAME = "audit"
 
+# Audit records sent to the console (ADR 0013): the AES-256-GCM key they're
+# encrypted with (hex, 0600; never leaves the host), the passkeys allowed to
+# unlock reading them, and how far each agent's records have been sent.
+AUDIT_KEY_FILENAME = "audit.key"
+AUDIT_PASSKEYS_FILENAME = "audit-passkeys.json"
+AUDIT_PUSH_DIRNAME = "audit-push"
+
 
 def bot_bottle_root(home: Path | None = None) -> Path:
     """The app root, data and manifests (agents/, bottles/, contrib/) alike:
@@ -105,6 +112,48 @@ def host_signing_key(filename: str) -> str:
     return token
 
 
+def audit_key_path() -> Path:
+    return bot_bottle_root() / AUDIT_KEY_FILENAME
+
+
+def audit_key_bytes() -> bytes:
+    """The host's 32-byte audit record key, created 0600 on first use (stored
+    hex). A file that isn't one is an error, never silently replaced: records
+    already sent are only readable with it."""
+    path = audit_key_path()
+    try:
+        text = path.read_text().strip()
+    except FileNotFoundError:
+        text = ""
+    if not text:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        key = os.urandom(32)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            text = path.read_text().strip()
+        else:
+            with os.fdopen(fd, "w") as f:
+                f.write(key.hex())
+            os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+            return key
+    try:
+        key = bytes.fromhex(text)
+    except ValueError as e:
+        raise ValueError(f"{path} isn't an audit key") from e
+    if len(key) != 32:
+        raise ValueError(f"{path} isn't an audit key")
+    return key
+
+
+def audit_passkeys_path() -> Path:
+    return bot_bottle_root() / AUDIT_PASSKEYS_FILENAME
+
+
+def audit_push_dir() -> Path:
+    return bot_bottle_root() / AUDIT_PUSH_DIRNAME
+
+
 def host_orchestrator_token() -> str:
     """The `control-plane` domain's signing key."""
     return host_signing_key(ORCHESTRATOR_TOKEN_FILENAME)
@@ -136,6 +185,13 @@ def host_firecracker_cache_dir() -> Path:
 
 __all__ = [
     "AUDIT_DIRNAME",
+    "AUDIT_KEY_FILENAME",
+    "AUDIT_PASSKEYS_FILENAME",
+    "AUDIT_PUSH_DIRNAME",
+    "audit_key_bytes",
+    "audit_key_path",
+    "audit_passkeys_path",
+    "audit_push_dir",
     "HOST_DB_FILENAME",
     "host_audit_dir",
     "host_artifact_cache_dir",

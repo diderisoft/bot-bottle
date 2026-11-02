@@ -28,7 +28,7 @@ from typing import Any
 
 from ...control.hostctl import pairing
 from ...lib import qrcodegen
-from . import login
+from . import audit_passkeys, login
 from .remote import cmd_remote
 
 _QUIET_ZONE = 2  # modules of white border
@@ -99,4 +99,10 @@ def cmd_pair(argv: list[str]) -> int:  # pylint: disable=too-many-return-stateme
                                    confirm=True, prog="bot-bottle pair", node_id=node_id)
     if status != 0:
         return status
+    try:
+        console = pairing.load_console()
+    except pairing.RemoteError as e:
+        sys.stderr.write(f"bot-bottle pair: {e}\n")
+    else:
+        audit_passkeys.after_pairing(str(console["url"]), str(console["access_token"]))
     return cmd_remote(["enable"])

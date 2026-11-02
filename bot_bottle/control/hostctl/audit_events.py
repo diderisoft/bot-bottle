@@ -203,6 +203,16 @@ class HostAudit:
             correlation_id=activation, payload={"harness": harness, **payload},
         ))
 
+    def audit_records_read(self, *, run_id: str, count: int, credential_id: str) -> None:
+        """`audit.records_read`: audit records decrypted for the console, with
+        the passkey that unlocked it (ADR 0013)."""
+        self.record(AuditEvent(
+            type="audit.records_read", actor=f"passkey:{credential_id}",
+            action="audit.records_read", outcome="success", sensitivity="security",
+            ts_event=self._now(), resource=run_id, activation=run_id, correlation_id=run_id,
+            payload={"run_id": run_id, "records": count},
+        ))
+
     # --- hostctl.* ---
 
     def brokered(self, kind: str, op: str, *, role: str, success: bool,
