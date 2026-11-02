@@ -6,7 +6,7 @@ from __future__ import annotations
 import contextlib
 import json
 import dataclasses
-from collections.abc import Iterator
+from collections.abc import Generator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -166,7 +166,7 @@ def revoke_deploy_keys(
 
 
 @contextlib.contextmanager
-def _token_alert(provider: str, secret: str, forge: str) -> Iterator[None]:
+def _token_alert(provider: str, secret: str, forge: str) -> Generator[None]:
     """A Gitea token the forge refuses raises a console alert (`forge_alerts`)
     until a call with it works again; GitHub deploy keys use the user's token,
     whose alerts come from its renewal (`github_git_tokens`)."""
