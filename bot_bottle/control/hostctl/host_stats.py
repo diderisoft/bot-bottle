@@ -8,13 +8,14 @@ import platform
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Protocol
 
 from ...lib.config_store import HostBudget
 from . import budget
 
-if TYPE_CHECKING:
-    from .bottles import BottleService
+
+class _HasAllocation(Protocol):
+    def allocation(self) -> list[dict[str, object]]: ...
 
 GIB = 1024 ** 3
 
@@ -134,7 +135,7 @@ def stats_paths() -> tuple[Path, ...]:
     return tuple(path for _, path in budget.storage_roots())
 
 
-def snapshot(bottles: "BottleService | None" = None) -> dict[str, object]:
+def snapshot(bottles: "_HasAllocation | None" = None) -> dict[str, object]:
     """What the console link sends as `host_stats`: the host-wide numbers and
     the bottles' `budget`, read fresh each time so a budget set while the
     host controller runs shows at the next push."""
