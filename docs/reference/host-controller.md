@@ -175,10 +175,16 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
   a `transcript.deleted` event listing each copy's size and SHA-256.
 - The console reads a conversation over the link (`transcript_serve.py`):
   `transcript` returns a page of the agent's entries, on the harness's
-  active branch, from the transcript file its console agent id last opened
-  (a `/clear` starts a new one), put together from that file's copies
-  across the bottle's runs in the order they were made: a resumed run's
-  copy continues at its `start`, a rewrite starts the file over. And
+  active branch. Each session file (a `/clear` starts a new one) is put
+  together from its copies across the bottle's runs in the order they were
+  made: a resumed run's copy continues at its `start`, a rewrite starts the
+  file over. An entry's `seq` is its place in its file plus a stride per
+  earlier session, so it never moves or names another entry. A page is from
+  the current session (since the last `/clear`), with `first` and `last`
+  bounding it; a cursor (`before`, `around`) into an earlier session, such
+  as a search hit from before a `/clear`, `all: true`, or a current session
+  with nothing in it yet reads the whole history instead. `scope` says which
+  (`current` or `all`); seqs are the same in both. And
   `transcript_appended` tells it when more landed. Entries are parsed when
   read and masked before they leave the host, with the egress scanner's
   `redact_tokens`: token patterns, and every value in the host's secrets

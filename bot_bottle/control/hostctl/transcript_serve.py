@@ -224,7 +224,8 @@ class TranscriptReader:
         self._cache: dict[Path, tuple[Any, list["TranscriptEntry"]]] = {}
         self._lock = threading.Lock()
 
-    def entries(self, agent_id: str) -> list["TranscriptEntry"] | None:
+    def entries(self, agent_id: str, *, current_only: bool = False,
+                ) -> list["TranscriptEntry"] | None:
         """The agent's active, masked entries across all sessions; None without any copy.
 
         Multiple sessions arise after `/clear`: each session file's active
@@ -234,6 +235,10 @@ class TranscriptReader:
         `SESSION_SEQ_STRIDE` per earlier session: increasing, never reused,
         and the same entry's for as long as it's on the branch (seqs have
         gaps; nothing reading them needs them contiguous).
+
+        `current_only` keeps just the newest session (the conversation since
+        the last `/clear`). Its entries keep the seqs they have in the full
+        history: filtering never renumbers.
         """
         convs = _sessions(agent_id)
         if not convs:
@@ -241,6 +246,8 @@ class TranscriptReader:
         combined: list["TranscriptEntry"] = []
         any_read = False
         for index, conv in enumerate(convs):
+            if current_only and index != len(convs) - 1:
+                continue
             data = conv.read()
             if data is None:
                 continue
@@ -280,11 +287,24 @@ class TranscriptReader:
         return [replace(e, text=mask(e.text, secrets)) for e in active]
 
     def page(self, agent_id: str, *, before: int | None = None, around: int | None = None,
-             limit: int = PAGE) -> dict[str, Any]:
+             limit: int = PAGE, full: bool = False) -> dict[str, Any]:
         """A page of entries: the newest `limit` before seq `before` (or the
         newest overall), or `limit` centred on seq `around`; `first` and
-        `last` bound the whole conversation."""
-        all_entries = self.entries(agent_id) or []
+        `last` bound the conversation the page is from.
+
+        That's the current session (since the last `/clear`) unless `full`,
+        or a cursor (`before`, `around`) that points into an earlier session
+        — a search hit from before a `/clear`, and paging back from it, read
+        the full history — or the current session has nothing yet. `scope`
+        says which (`current` or `all`); seqs are the same in both."""
+        current = self.entries(agent_id, current_only=True) or []
+        cursor = around if around is not None else before
+        # Nothing in the current session yet (just after `/clear`, or its
+        # copy unreadable): the full history rather than a blank view.
+        earlier = not current or (cursor is not None and cursor < current[0].seq)
+        whole = full or earlier
+        all_entries = (self.entries(agent_id) or []) if whole else current
+        scope = "all" if whole else "current"
         limit = max(1, min(limit, MAX_PAGE))
         if around is not None:
             at = next((i for i, e in enumerate(all_entries) if e.seq >= around),
@@ -298,6 +318,7 @@ class TranscriptReader:
             "entries": [e.to_json() for e in chosen],
             "first": all_entries[0].seq if all_entries else None,
             "last": all_entries[-1].seq if all_entries else None,
+            "scope": scope,
             # Whether there's a conversation to show at all, copied yet or not.
             "available": bool(all_entries) or self.has_transcript(agent_id),
         }
@@ -404,7 +425,8 @@ class TranscriptLink:
             return value if type(value) is int else None  # pylint: disable=unidiomatic-typecheck
 
         page = await asyncio.to_thread(self.reader.page, agent_id, before=number("before"),
-                                       around=number("around"), limit=number("limit") or PAGE)
+                                       around=number("around"), limit=number("limit") or PAGE,
+                                       full=msg.get("all") is True)
         await self._send({"type": "transcript_entries", **reply, **page})
 
     async def push(self, agent_ids: Iterable[str]) -> None:
