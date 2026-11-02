@@ -1,7 +1,6 @@
 """Unit: per-bottle state helpers (PRD 0016 Phase 1) + identity +
 launch metadata."""
 
-import re
 import tempfile
 import unittest
 import uuid
