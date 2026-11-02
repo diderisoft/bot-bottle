@@ -364,6 +364,21 @@ never from the guest. Files over 10 MiB are refused. The console serves the
 bytes with `nosniff` and a sandboxing CSP and shows them only through
 `<img>`, so an SVG's script never runs.
 
+## Renaming a bottled agent
+
+A bottled agent's label is what people call it; its identity is what the
+host keys everything by (state dir, VM, transcripts, deploy keys, commit
+trailers), and a rename never touches the identity. The console asks the
+link for `rename` (`agent_id`, `bottle`, `label`): a running agent's bottle
+is the one the link runs it in, and a stopped one's is the `bottle` the
+console names. The reply `renamed` carries the cleaned `label`, or `error`
+(`relabel.py`). A label is trimmed, 1 to 128 characters, with no control
+characters. The host writes it to the bottle's `metadata.json` and its
+session record, so `bot-bottle bots`, the console's listings and a later
+resume all use it. `bot-bottle rename <bottled agent> <label>` does the same
+from the CLI; a console paired with the host keeps its own name until it's
+renamed there.
+
 ## Audit
 
 The host controller is the host's only audit writer

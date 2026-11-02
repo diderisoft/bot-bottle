@@ -30,6 +30,7 @@ _HANDLERS: dict[str, str] = {
     "install": "lifecycle:cmd_install",
     "jobs": "lifecycle:cmd_jobs",  # unlisted; `status --jobs`
     "pair": "pair:cmd_pair",
+    "rename": "rename:cmd_rename",
     "resume": "resume:cmd_resume",
     "setup": "setup:cmd_setup",
     "start": "start:cmd_start",

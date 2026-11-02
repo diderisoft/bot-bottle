@@ -128,6 +128,36 @@ def record_origin(identity: str, origin: str, agent_id: str = "") -> None:
     write_metadata(dataclasses.replace(current, origin=origin, agent_id=agent_id))
 
 
+# A bottled agent's label: what people call it. Its identity never changes
+# with it (state dirs, VMs, transcripts and deploy keys are keyed by that).
+MAX_LABEL_CHARS = 128
+
+
+def clean_label(label: object) -> str:
+    """`label` trimmed, or ValueError saying what's wrong with it."""
+    if not isinstance(label, str):
+        raise ValueError("a label is text")
+    label = label.strip()
+    if not label:
+        raise ValueError("a label can't be empty")
+    if len(label) > MAX_LABEL_CHARS:
+        raise ValueError(f"a label is at most {MAX_LABEL_CHARS} characters")
+    if any(ord(c) < 32 or ord(c) == 127 for c in label):
+        raise ValueError("a label can't hold control characters")
+    return label
+
+
+def rename_label(identity: str, label: str) -> bool:
+    """Give `identity` the label `label` (already clean). False without
+    metadata: nothing records it."""
+    current = read_metadata(identity)
+    if current is None:
+        return False
+    if current.label != label:
+        write_metadata(dataclasses.replace(current, label=label))
+    return True
+
+
 def console_agent_id(identity: str) -> str:
     """The console's id for the agent `identity` last ran as, when the console
     started it; empty otherwise (a terminal bottle, or older state)."""
@@ -269,6 +299,9 @@ def settle_state(identity: str) -> None:
 
 __all__ = [
     "BottleMetadata",
+    "MAX_LABEL_CHARS",
+    "clean_label",
+    "rename_label",
     "capture_session_state",
     "settle_state",
     "agent_state_dir",

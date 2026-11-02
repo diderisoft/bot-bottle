@@ -36,7 +36,7 @@ from ... import bottle_state, run_manifest
 from ...backend import adoption
 from ...backend.bottle_size import BOTTLE_MEMORY_BYTES
 from ...lib.config_store import HostBudget
-from . import bottle_metrics, budget
+from . import bottle_metrics, budget, relabel
 from .audit_events import HostAudit, digest_manifest, digest_request
 from .credential_refresh import CredentialRefresher
 from .sessions import ExitStatus, SessionManager, SessionRecord
@@ -709,6 +709,10 @@ class BottleService:
         taken = take(bottle, adopted.workspace, session=identity, activation=activation, seq=seq)
         self.audit.snapshot_taken(bottle=identity, activation=activation, snapshot=taken)
         return taken
+
+    def rename(self, identity: str, label: str) -> dict[str, object]:
+        """A new label for the bottle `identity` (`relabel.rename`)."""
+        return relabel.rename(self._sessions, identity, label)
 
     def read_workspace_image(self, identity: str, path: str) -> dict[str, object]:
         """An image file from a running bottle (`workspace_files.read_image`):

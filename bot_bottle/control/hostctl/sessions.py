@@ -233,6 +233,17 @@ class SessionManager:
         except (OSError, ValueError, TypeError):
             return None
 
+    def relabel(self, session_id: str, label: str) -> bool:
+        """Set the session record's label; False when there's no record."""
+        with self._cond:
+            record = self.record(session_id)
+            if record is None:
+                return False
+            if record.meta.get("label") != label:
+                record.meta["label"] = label
+                self._write_record(record)
+            return True
+
     def _write_record(self, record: SessionRecord) -> None:
         path = self._record_path(record.id)
         path.parent.mkdir(parents=True, exist_ok=True)

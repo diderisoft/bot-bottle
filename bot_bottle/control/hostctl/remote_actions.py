@@ -45,6 +45,25 @@ async def workspace_file(msg: Mapping[str, Any], running: Mapping[str, str],
             "agent_id": agent_id, "path": path if isinstance(path, str) else "", **result}
 
 
+async def rename(msg: Mapping[str, Any], running: Mapping[str, str],
+                 bottles: Any) -> dict[str, Any]:
+    """A new label for one of this host's bottled agents (`BottleService.rename`):
+    running, it's the bottle the link runs it in; stopped, the bottle the
+    console names, which must be one this host keeps."""
+    # pylint: disable-next=import-outside-toplevel
+    from .remote_requests import _IDENTITY
+    agent_id = str(msg.get("agent_id", ""))
+    bottle = running.get(agent_id) or msg.get("bottle")
+    do = getattr(bottles, "rename", None)  # BottleService's
+    result: dict[str, object] = (
+        {"error": "name the bottle to rename"}
+        if not isinstance(bottle, str) or not _IDENTITY.match(bottle)
+        else {"error": "this host controller can't rename bottles"} if do is None
+        else await asyncio.to_thread(do, bottle, msg.get("label")))
+    return {"type": "renamed", "request_id": msg.get("request_id"), "agent_id": agent_id,
+            **result}
+
+
 def _text(msg: Mapping[str, Any], key: str, default: str = "") -> str:
     value = msg.get(key, default)
     return value if isinstance(value, str) else default
@@ -672,7 +691,7 @@ QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest,
            "manifest_save": manifest_save, "manifest_transfer": manifest_transfer,
            "library": library, "resolve": resolve,
            "list_secrets": list_secrets, "set_secret": set_secret,
-           "workspace_file": workspace_file}
+           "workspace_file": workspace_file, "rename": rename}
 
 # Console answers to a card that carry more than allow/deny, by message type.
 ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer}
@@ -684,4 +703,5 @@ __all__ = ["ANSWERS", "HOST_REQUESTS", "QUERIES", "add_repo_answer", "bottle_cha
            "bottle_write", "card", "card_changed", "forge_attention", "forge_connect",
            "forge_connect_answer", "github_authorize_start", "github_status", "library",
            "list_secrets", "manifest", "manifest_save", "manifest_transfer",
-           "refresh_credentials", "repo_attention", "resolve", "set_secret", "workspace_file"]
+           "refresh_credentials", "rename", "repo_attention", "resolve", "set_secret",
+           "workspace_file"]
