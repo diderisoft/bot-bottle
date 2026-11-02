@@ -36,6 +36,7 @@ class Handlers:
     tools_list: Handler
     list_routes: Handler
     check_proposal: Handler
+    get_environment: Handler
     propose: Handler
 
 
@@ -55,6 +56,8 @@ def dispatch(request: Request, handlers: Handlers) -> object:
         return handlers.list_routes(request.params)
     if tool == _sv.TOOL_CHECK_PROPOSAL:
         return handlers.check_proposal(request.params)
+    if tool == _sv.TOOL_GET_ENVIRONMENT:
+        return handlers.get_environment(request.params)
     return handlers.propose(request.params)
 
 

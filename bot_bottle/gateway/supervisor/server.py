@@ -1,7 +1,7 @@
 """The supervise MCP server (HTTP + JSON-RPC), shared by every bottle.
 
 Tools: `egress-allow`, `egress-block`, `list-egress-routes`, `forge-connect`,
-`add-repo`, `check-proposal`.
+`add-repo`, `check-proposal`, `get-environment`.
 A proposal is validated, queued with the orchestrator (`POST
 /supervise/propose`, attributed by (source_ip, identity_token)), then polled
 for up to `SUPERVISE_RESPONSE_TIMEOUT_SECONDS` (30). A decision in time is
@@ -302,6 +302,19 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "additionalProperties": False,
         },
     },
+    {
+        "name": _sv.TOOL_GET_ENVIRONMENT,
+        "description": (
+            "Return read-only information about the bot-bottle environment "
+            "this bottle is running in: orchestrator version, git commit, "
+            "and protocol version."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
 ]
 
 
@@ -555,6 +568,17 @@ def handle_check_proposal(
     }
 
 
+def handle_get_environment(_params: dict[str, object]) -> dict[str, object]:
+    """Return orchestrator version info from injected env vars."""
+    info = {
+        "version": os.environ.get("BOT_BOTTLE_VERSION", ""),
+        "commit": os.environ.get("BOT_BOTTLE_COMMIT", ""),
+        "protocol": os.environ.get("BOT_BOTTLE_PROTOCOL", ""),
+    }
+    text = "\n".join(f"{k}: {v}" for k, v in info.items() if v)
+    return {"content": [{"type": "text", "text": text or "version unknown"}], "isError": False}
+
+
 def format_response_text(response: "_sv.Response") -> str:
     """A Response as the tool's text content."""
     lines = [f"status: {response.status}"]
@@ -723,6 +747,7 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
             tools_list=handle_tools_list,
             list_routes=list_routes,
             check_proposal=check,
+            get_environment=handle_get_environment,
             propose=propose,
         ))
 

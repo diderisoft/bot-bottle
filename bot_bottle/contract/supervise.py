@@ -23,6 +23,9 @@ TOOL_ADD_REPO = "add-repo"
 # Read-only agent tool that polls a proposal's decision. It never becomes a
 # `Proposal.tool`, so it isn't in `TOOLS`.
 TOOL_CHECK_PROPOSAL = "check-proposal"
+# Read-only tool: returns orchestrator version/commit/protocol. Never a
+# `Proposal.tool`.
+TOOL_GET_ENVIRONMENT = "get-environment"
 TOOLS: tuple[str, ...] = (
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,
@@ -187,6 +190,7 @@ __all__ = [
     "TOOL_EGRESS_ALLOW",
     "TOOL_EGRESS_BLOCK",
     "TOOL_CHECK_PROPOSAL",
+    "TOOL_GET_ENVIRONMENT",
     "TOOL_EGRESS_TOKEN_ALLOW",
     "TOOL_GITLEAKS_ALLOW",
     "TOOL_LIST_EGRESS_ROUTES",

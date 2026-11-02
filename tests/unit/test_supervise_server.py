@@ -44,6 +44,7 @@ from bot_bottle.gateway.supervisor.server import (
     format_pending_response_text,
     format_response_text,
     handle_check_proposal,
+    handle_get_environment,
     handle_initialize,
     handle_tools_call,
     handle_tools_list,
@@ -362,6 +363,7 @@ class TestHandleToolsList(unittest.TestCase):
                 _sv.TOOL_CHECK_PROPOSAL,
                 _sv.TOOL_FORGE_CONNECT,
                 _sv.TOOL_ADD_REPO,
+                _sv.TOOL_GET_ENVIRONMENT,
             ]),
             sorted(names),
         )
@@ -593,6 +595,33 @@ class TestResponseTimeoutEnv(unittest.TestCase):
 
 
 # --- Response text formatting ---------------------------------------------
+
+
+class TestHandleGetEnvironment(unittest.TestCase):
+    def test_returns_injected_version_vars(self) -> None:
+        import unittest.mock
+        with unittest.mock.patch.dict("os.environ", {
+            "BOT_BOTTLE_VERSION": "1.2.3",
+            "BOT_BOTTLE_COMMIT": "abc123",
+            "BOT_BOTTLE_PROTOCOL": "7",
+        }):
+            result = handle_get_environment({})
+        text = result["content"][0]["text"]
+        self.assertIn("version: 1.2.3", text)
+        self.assertIn("commit: abc123", text)
+        self.assertIn("protocol: 7", text)
+        self.assertFalse(result["isError"])
+
+    def test_falls_back_gracefully_when_vars_absent(self) -> None:
+        import unittest.mock
+        with unittest.mock.patch.dict("os.environ", {}, clear=True):
+            result = handle_get_environment({})
+        self.assertEqual("version unknown", result["content"][0]["text"])
+        self.assertFalse(result["isError"])
+
+    def test_tool_appears_in_tools_list(self) -> None:
+        names = [t["name"] for t in TOOL_DEFINITIONS]
+        self.assertIn(_sv.TOOL_GET_ENVIRONMENT, names)
 
 
 class TestFormatResponseText(unittest.TestCase):

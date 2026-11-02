@@ -35,6 +35,7 @@ class TestDispatch(unittest.TestCase):
             tools_list=handler("tools_list"),
             list_routes=handler("list_routes"),
             check_proposal=handler("check_proposal"),
+            get_environment=handler("get_environment"),
             propose=handler("propose"),
         )
 
@@ -64,6 +65,13 @@ class TestDispatch(unittest.TestCase):
             "check_proposal",
             dispatch(
                 self.request("tools/call", name=_sv.TOOL_CHECK_PROPOSAL),
+                self.handlers,
+            ),
+        )
+        self.assertEqual(
+            "get_environment",
+            dispatch(
+                self.request("tools/call", name=_sv.TOOL_GET_ENVIRONMENT),
                 self.handlers,
             ),
         )
