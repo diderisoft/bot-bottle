@@ -148,6 +148,47 @@ class TestFinishAdopted(_Root):
         settle.assert_called_once_with("b1")
 
 
+    def _exit_audit(self) -> dict[str, Any]:
+        audit = cast(mock.MagicMock, self.service.audit)
+        return audit.bottled_agent_exit.call_args.kwargs
+
+    def _stop(self, code: int) -> None:
+        """A requested teardown of the re-adopted bottle, its agent exiting
+        with `code` when the session is killed."""
+        sessions_ = cast(mock.MagicMock, self.service._sessions)  # pyright: ignore[reportPrivateUsage]
+        sessions_.record.return_value = self.record
+
+        def killed(_bottle_id: str) -> None:
+            self.service._finish(  # pyright: ignore[reportPrivateUsage]
+                self.record, sessions.ExitStatus(code))
+        sessions_.kill.side_effect = killed
+        sessions_.wait_exit.return_value = sessions.ExitStatus(code)
+        self.service.teardown("b1")
+
+    def test_a_requested_stop_is_audited_as_a_stop(self) -> None:
+        self._stop(255)
+        self.assertEqual(255, self._exit_audit()["exit_code"])
+        self.assertTrue(self._exit_audit()["stop_requested"])
+
+    def test_an_unrequested_exit_is_still_a_crash(self) -> None:
+        self.service._finish(self.record, sessions.ExitStatus(255))  # pyright: ignore[reportPrivateUsage]
+        self.assertFalse(self._exit_audit()["stop_requested"])
+
+    def test_the_request_is_spent_by_the_exit_it_stopped(self) -> None:
+        self._stop(255)
+        self.service._finish(self.record, sessions.ExitStatus(255))  # pyright: ignore[reportPrivateUsage]
+        self.assertFalse(self._exit_audit()["stop_requested"])
+
+    def test_a_failed_teardown_forgets_the_request(self) -> None:
+        sessions_ = cast(mock.MagicMock, self.service._sessions)  # pyright: ignore[reportPrivateUsage]
+        sessions_.record.return_value = self.record
+        sessions_.kill.side_effect = RuntimeError("no session")
+        with self.assertRaises(RuntimeError):
+            self.service.teardown("b1")
+        self.service._finish(self.record, sessions.ExitStatus(255))  # pyright: ignore[reportPrivateUsage]
+        self.assertFalse(self._exit_audit()["stop_requested"])
+
+
 class TestBackendTeardowns(_Root):
     """Each backend undoes what its launch set up, in its launch's order."""
 

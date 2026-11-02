@@ -221,6 +221,9 @@ class BottleService:
         self._admitting = threading.Lock()
         # What adopted bottles hold until they end (e.g. a Firecracker slot).
         self._adopted: dict[str, Callable[[], None]] = {}
+        # Bottles without a holder (re-adopted) whose stop was asked for, so
+        # their exit is audited as a requested stop, not a crash.
+        self._stop_requested: set[str] = set()
         # Each running session's transcript follower (PRD 0095).
         self._followers: dict[str, TranscriptFollower] = {}
         # Keeps forwarded host logins current; started by the daemon.
@@ -594,11 +597,14 @@ class BottleService:
             held.exited.set()
             held.done.wait()
             return
+        with self._lock:
+            requested = record.id in self._stop_requested
+            self._stop_requested.discard(record.id)
         code = exit_code(exit_status.status, exit_status.signal)
         self.audit.bottled_agent_exit(
             bottle=record.id, activation=str(record.meta.get("activation", "")),
             manifest_digest=str(record.meta.get("manifest_digest", "")),
-            exit_code=code, stop_requested=False)
+            exit_code=code, stop_requested=requested)
         capture_session_state(record.id, code)
         try:
             self._finish_adopted(record, code)
@@ -768,6 +774,8 @@ class BottleService:
         try:
             result = self._teardown(bottle_id)
         except BaseException as e:
+            with self._lock:
+                self._stop_requested.discard(bottle_id)
             self.audit.brokered("broker_teardown", "bottle.teardown", role=role, success=False,
                                 request_digest=digest, bottle=bottle_id, detail=str(e)[:200])
             raise
@@ -782,6 +790,9 @@ class BottleService:
             log.die(f"no bottle {bottle_id}")
         if held is not None:
             held.stop_requested = True
+        else:
+            with self._lock:
+                self._stop_requested.add(bottle_id)
         log.info(f"stopping the agent in {bottle_id}")
         self._sessions.kill(bottle_id)
         forced = ExitStatus(0, "SIGHUP")
