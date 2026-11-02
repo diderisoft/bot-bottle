@@ -37,12 +37,13 @@ The control stream (JSON lines):
 - `refresh_credentials` -> `credentials_refreshed` (`refreshed`, `expires_at`,
   or `error`): re-reads the agent's forwarded host login now
   (`credential_refresh`).
-- `manifest` (`agent_id`) -> `manifest`: its agent and bottle files and what
-  they resolve to (`manifest_view`).
+- `manifest` (`agent_id`) -> `manifest`: its agent and bottle files and what they
+  resolve to (`manifest_view`).
 - `forge_connect` (`url`, `token`, `bottle`, `name`, `ssh`) -> `forge_connected`
   (`key`, `account`, `admin_repos`, `repos`, `host_key`, `warnings`, or
   `error`): connects a forge into a host bottle (`remote_actions`). The token
   goes only to the forge and the secrets file.
+- `workspace_file` (`agent_id`, `path`) -> an image file read in its bottle (`workspace_files`).
 - `snapshot` -> `snapshot_taken` (`snapshot`, or `error`): the agent's
   workspace patch and conversation position, kept on the host (`snapshots`).
 - `transcript` (`agent_id`, `before` or `around`, `limit`) ->
@@ -55,10 +56,9 @@ The control stream (JSON lines):
   turn markers), else it's working while the transcript grew in the last 20s.
   Sent once per agent on each (re)connect and when it starts or is presented,
   then on each change. An indicator only, never a security decision.
-  `agent_started` and `agent_present` carry
-  `transcript` when the agent's harness keeps one. `transcript_search`
-  (`query`, `kinds`) -> `transcript_matches`: the newest matching entries'
-  `seq` with a snippet, searched on the host over the masked text.
+  `agent_started` and `agent_present` carry `transcript` when the agent's
+  harness keeps one. `transcript_search` (`query`, `kinds`) ->
+  `transcript_matches`: the newest matching entries' `seq` with a snippet.
 
 The pairing on disk (`remote.json`, `console.json`, the iroh key) is
 `pairing.py`. `iroh` (`bot-bottle[remote]`) is imported only when the link

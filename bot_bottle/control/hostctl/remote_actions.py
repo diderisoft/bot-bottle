@@ -27,6 +27,23 @@ async def refresh_credentials(msg: Mapping[str, Any], running: Mapping[str, str]
             "agent_id": agent_id, **result}
 
 
+async def workspace_file(msg: Mapping[str, Any], running: Mapping[str, str],
+                         bottles: Any) -> dict[str, Any]:
+    """An image file from a running agent's bottle, for the console to show
+    (`workspace_files`)."""
+    agent_id = str(msg.get("agent_id", ""))
+    path = msg.get("path")
+    bottle = running.get(agent_id)
+    read = getattr(bottles, "read_workspace_image", None)  # BottleService's
+    result: dict[str, object] = (
+        {"error": "that agent isn't running on this host"} if not bottle
+        else {"error": "that isn't a file path"} if not isinstance(path, str)
+        else {"error": "this host controller can't read workspace files"} if read is None
+        else await asyncio.to_thread(read, bottle, path))
+    return {"type": "workspace_file", "request_id": msg.get("request_id"),
+            "agent_id": agent_id, "path": path if isinstance(path, str) else "", **result}
+
+
 def _text(msg: Mapping[str, Any], key: str, default: str = "") -> str:
     value = msg.get(key, default)
     return value if isinstance(value, str) else default
@@ -462,7 +479,8 @@ QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest,
            "bottle_chain": bottle_chain, "bottle_write": bottle_write,
            "manifest_save": manifest_save, "manifest_transfer": manifest_transfer,
            "library": library, "resolve": resolve,
-           "list_secrets": list_secrets, "set_secret": set_secret}
+           "list_secrets": list_secrets, "set_secret": set_secret,
+           "workspace_file": workspace_file}
 
 # Console answers to a card that carry more than allow/deny, by message type.
 ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer}
@@ -470,4 +488,4 @@ ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_
 __all__ = ["ANSWERS", "QUERIES", "add_repo_answer", "bottle_chain", "bottle_write", "card",
            "forge_attention", "forge_connect", "forge_connect_answer", "library", "list_secrets",
            "manifest", "manifest_save", "manifest_transfer", "refresh_credentials",
-           "repo_attention", "resolve", "set_secret"]
+           "repo_attention", "resolve", "set_secret", "workspace_file"]

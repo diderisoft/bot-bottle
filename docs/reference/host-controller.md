@@ -290,6 +290,21 @@ workspace's patch since launch (the patch teardown saves), and keeps it as
 changed, size and SHA-256. Each is audited as `snapshot.taken`. A workspace
 that isn't a git copy can't be snapshotted. Restoring is not built yet.
 
+## Workspace images
+
+Agents often make a picture as a file and mention its path. The console's
+"View" button asks the link for `workspace_file` (`agent_id`, `path`); the
+reply `workspace_file` carries `content_type`, `data` (base64) and `size`,
+or `error` (`workspace_files.py`). The host attaches to the running bottle
+as for a snapshot and reads the file there through `Bottle.exec`, never from
+a host path. It reads only absolute, normalized paths under `/home/node` or
+`/tmp` with a png, jpg, gif, webp or svg extension. The guest resolves
+symlinks (`readlink -f`), and the resolved path must pass the same checks,
+there and again on the host. The content type comes from the extension,
+never from the guest. Files over 10 MiB are refused. The console serves the
+bytes with `nosniff` and a sandboxing CSP and shows them only through
+`<img>`, so an SVG's script never runs.
+
 ## Audit
 
 The host controller is the host's only audit writer
