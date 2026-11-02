@@ -90,7 +90,7 @@ class TestDeltaCpuPct(unittest.TestCase):
         times = iter([1000.0, 1001.0])
         stats = iter([stat1, stat2])
 
-        with mock.patch("pathlib.Path.read_text", side_effect=lambda *a, **kw: next(stats)), \
+        with mock.patch("pathlib.Path.read_text", side_effect=lambda *a, **kw: next(stats)), \  # type: ignore[misc]
              mock.patch("time.monotonic", side_effect=lambda: next(times)), \
              mock.patch("os.sysconf", return_value=100):
             _delta_cpu_pct("slug-b", 1)   # first call
@@ -104,7 +104,7 @@ class TestDeltaCpuPct(unittest.TestCase):
         times = iter([1000.0, 1000.001])  # tiny elapsed
         stats = iter([stat_zero, stat_huge])
 
-        with mock.patch("pathlib.Path.read_text", side_effect=lambda *a, **kw: next(stats)), \
+        with mock.patch("pathlib.Path.read_text", side_effect=lambda *a, **kw: next(stats)), \  # type: ignore[misc]
              mock.patch("time.monotonic", side_effect=lambda: next(times)), \
              mock.patch("os.sysconf", return_value=100):
             _delta_cpu_pct("slug-c", 1)
@@ -190,7 +190,7 @@ class TestRunStats(unittest.TestCase):
 
 class TestParseStats(unittest.TestCase):
     def test_docker_format(self) -> None:
-        data = {"CPUPerc": "12.5%", "MemUsage": "256MiB / 1GiB"}
+        data: dict[str, object] = {"CPUPerc": "12.5%", "MemUsage": "256MiB / 1GiB"}
         m = _parse_stats(data)
         self.assertAlmostEqual(12.5, m.cpu_pct)
         self.assertEqual(256 * (1 << 20), m.mem_used)
@@ -282,7 +282,7 @@ class TestMetricsDockerAndMacOS(unittest.TestCase):
 class TestCollect(unittest.TestCase):
     def test_dispatches_to_docker(self) -> None:
         fake = BottleMetrics(cpu_pct=3.0, mem_used=1024)
-        with mock.patch.dict(bottle_metrics._COLLECTORS, {"docker": lambda _s: fake}):
+        with mock.patch.dict(bottle_metrics._COLLECTORS, {"docker": lambda _s: fake}):  # type: ignore[misc]
             result = collect("s", "docker")
         self.assertEqual(fake, result)
 
@@ -291,7 +291,7 @@ class TestCollect(unittest.TestCase):
 
     def test_dispatches_to_firecracker(self) -> None:
         fake = BottleMetrics(cpu_pct=10.0, mem_used=2048)
-        with mock.patch.dict(bottle_metrics._COLLECTORS, {"firecracker": lambda _s: fake}):
+        with mock.patch.dict(bottle_metrics._COLLECTORS, {"firecracker": lambda _s: fake}):  # type: ignore[misc]
             result = collect("s", "firecracker")
         self.assertEqual(fake, result)
 
