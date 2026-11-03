@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce the repository's issue/PR metadata policy in Gitea Actions."""
+"""Enforce the repository's issue/PR metadata policy in GitHub and Gitea Actions."""
 
 from __future__ import annotations
 
