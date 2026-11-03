@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from bot_bottle import image_registry
 from bot_bottle.backend.firecracker import image_builder
 from bot_bottle.contract.hostctl import Settings
 
@@ -257,7 +258,8 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         staged = StagedOverlay(
             context=Path("/ctx"), dockerfile=Path("/ctx/.bb-overlay.Dockerfile"),
             cache_key="abc123")
-        env = {image_builder._ARTIFACT_TOKEN_ENV: token}  # "" = no token
+        env = {image_registry.TOKEN_ENV: token,  # "" = no token
+               image_registry.TOKEN_HOST_ENV: "reg.example"}
         (self.cache / "out").mkdir(exist_ok=True)
         with patch.dict("os.environ", env), \
              patch.object(image_builder.subprocess, "run", side_effect=run), \
@@ -325,7 +327,8 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
              patch.object(image_builder, "_buildah_build") as build, \
              patch.object(image_builder, "_smoke_test"), \
              patch.object(image_builder, "_stream_rootfs") as stream, \
-             patch.dict("os.environ", {image_builder._ARTIFACT_TOKEN_ENV: "TOK"}):
+             patch.dict("os.environ", {image_registry.TOKEN_ENV: "TOK",
+                                       image_registry.TOKEN_HOST_ENV: "reg"}):
             image_builder._infra_build(
                 dockerfile=self.dockerfile, ctx_root=self.cache, ctx_rels=["f"],
                 tag="bot-bottle-agent-overlay-x", build_args={},

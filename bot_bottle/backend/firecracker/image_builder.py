@@ -30,7 +30,7 @@ from typing import Generator
 from ... import agent_overlay, image_registry, resources
 from .. import container_engine
 from ...contract.hostctl import InfraSettings, Settings
-from ...image_registry import TOKEN_ENV as _ARTIFACT_TOKEN_ENV
+from ...image_registry import token_for as _artifact_token_for
 from ...image_registry import RegistryError
 from ...lib.log import die, info
 from ...manifest import ManifestImageOverlay
@@ -436,7 +436,7 @@ def _infra_build(
     key, ip = service.orchestrator().ssh_target()
     ctx = f"/tmp/{tag}"
     smoke_ctr, export_ctr = f"{tag}-smoke", f"{tag}-export"
-    token = os.environ.get(_ARTIFACT_TOKEN_ENV, "").strip() if registry else ""
+    token = _artifact_token_for(registry) if registry else ""
     logout = f"buildah logout {shlex.quote(registry)} >/dev/null 2>&1; " if token else ""
 
     def _cleanup() -> None:
@@ -487,7 +487,7 @@ def _build_overlay_on_host(
     """Build the staged overlay with a host engine, smoke-test it and unpack
     its rootfs into `out`. A token pulls the private base first
     (`_pull_with_token`)."""
-    token = os.environ.get(_ARTIFACT_TOKEN_ENV, "").strip()
+    token = _artifact_token_for(base_ref.split("/", 1)[0])
     try:
         if token:
             _pull_with_token(engine, base_ref, token)

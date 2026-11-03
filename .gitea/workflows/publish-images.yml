@@ -1,5 +1,5 @@
-# Build and publish the fixed images to the Gitea OCI registry, by hand, to
-# rehearse a publish. Releases go through pre-release-test.yml, which tests the
+# Build and publish the fixed images to the Gitea registry, by hand, to
+# rehearse a publish (rootfs as Gitea generic packages, as dev candidates are). Releases go through pre-release-test.yml, which tests the
 # images, promotes them to a release version and pins them on main; nothing
 # here is pinned. Development builds locally (`bot-bottle up --build`).
 #
@@ -64,7 +64,9 @@ jobs:
       - name: Build, push, and publish every image
         env:
           BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
+          BOT_BOTTLE_INFRA_ARTIFACT_BASE: https://gitea.dideric.is
           BOT_BOTTLE_INFRA_ARTIFACT_OWNER: ${{ github.event.inputs.owner || 'didericis' }}
+          BOT_BOTTLE_INFRA_EXT4_STORE: generic
           # Via env, never interpolated into the script text: a `${{ }}` expansion
           # spliced into the command would let a dispatcher's `images` value run as
           # shell. Word-splitting $IMAGES into the arg list is the intended parse.

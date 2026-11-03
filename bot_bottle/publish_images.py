@@ -2,13 +2,14 @@
 build tool).
 
 Per image and platform: build, push the OCI image and record its digest, export
-a gzipped ext4 and PUT it as a generic package. Then write
+a gzipped ext4 and publish it as an OCI artifact beside it (or a Gitea generic
+package, `BOT_BOTTLE_INFRA_EXT4_STORE=generic`). Then write
 `published-artifacts.json`. Formats are checked to share one `inputs_hash`.
 
   python3 -m bot_bottle.publish_images [--platform linux/amd64 ...]
 
-Auth: a `write:package` token in `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN`; the
-container runtime needs its own registry login.
+Auth: a `write:package` token in `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN` (its user in
+`BOT_BOTTLE_INFRA_ARTIFACT_USER`); `docker push` needs the runtime's own login.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -30,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .compat import PROTOCOL_VERSION
-from . import image_inputs, resources
+from . import image_inputs, oci_registry, resources
 from .published_artifacts import (
     ARTIFACTS_MANIFEST_NAME,
     Artifact,
@@ -44,10 +46,15 @@ _HTTP_TIMEOUT_SECONDS = 60.0
 # The registry hashes a large rootfs before answering.
 _UPLOAD_TIMEOUT_SECONDS = 900.0
 
-_DEFAULT_BASE = "https://gitea.dideric.is"
-_DEFAULT_OWNER = "didericis"
+_DEFAULT_BASE = "https://ghcr.io"
+_DEFAULT_OWNER = "diderisoft"
+_DEFAULT_SOURCE = "https://github.com/diderisoft/bot-bottle"
 
 TOKEN_ENV = "BOT_BOTTLE_INFRA_ARTIFACT_TOKEN"
+USER_ENV = "BOT_BOTTLE_INFRA_ARTIFACT_USER"
+EXT4_STORE_ENV = "BOT_BOTTLE_INFRA_EXT4_STORE"
+STORE_OCI = "oci"
+STORE_GENERIC = "generic"
 
 
 class PublishError(RuntimeError):
@@ -83,6 +90,24 @@ def _config() -> tuple[str, str, str]:
     return base, owner, token
 
 
+def ext4_store() -> str:
+    """Where the ext4 rootfs goes: `oci` (an artifact beside the images) or
+    `generic` (a Gitea generic package)."""
+    store = os.environ.get(EXT4_STORE_ENV, "").strip() or STORE_OCI
+    if store not in (STORE_OCI, STORE_GENERIC):
+        raise PublishError(f"{EXT4_STORE_ENV} must be oci or generic, got {store!r}")
+    return store
+
+
+def _registry() -> oci_registry.Registry:
+    """The publish registry, with the publish token."""
+    base, _, token = _config()
+    scheme, _, host = base.rpartition("://")
+    return oci_registry.Registry(
+        host, user=os.environ.get(USER_ENV, "").strip() or "bot-bottle",
+        token=token, scheme=scheme or "https")
+
+
 def repo_version(repo_root: Path | None = None) -> str:
     """The release version every image is published under, from
     `pyproject.toml`."""
@@ -109,11 +134,9 @@ def current_build_platform() -> str:
 
 def source_url() -> str:
     """The repository the images are built from, set as
-    `org.opencontainers.image.source` so Gitea links containers to the repo.
-    Independent of the artifact owner a rehearsal may override."""
-    return os.environ.get(
-        "BOT_BOTTLE_IMAGE_SOURCE_URL", f"{_DEFAULT_BASE}/didericis/bot-bottle",
-    )
+    `org.opencontainers.image.source` so the registry links packages to the
+    repo. Independent of the artifact owner a rehearsal may override."""
+    return os.environ.get("BOT_BOTTLE_IMAGE_SOURCE_URL", _DEFAULT_SOURCE)
 
 
 def oci_ref(image: str) -> str:
@@ -208,11 +231,33 @@ def put_generic(url: str, body: Path, token: str) -> None:
 
 
 def ext4_url(image: str, version: str, plat: str) -> str:
+    """Where the rootfs is published, as the manifest records it: an OCI
+    artifact reference, or a generic-package download URL."""
+    if ext4_store() == STORE_OCI:
+        return f"{oci_ref(ext4_package(image))}:{oci_tag(version, plat)}"
     base, owner, _ = _config()
     return (
         f"{base}/api/packages/{owner}/generic/"
         f"{ext4_package(image)}/{version}/{ext4_filename(plat)}"
     )
+
+
+def publish_ext4(image: str, version: str, plat: str, gz: Path, token: str) -> str:
+    """Publish one gzipped rootfs and return its digest."""
+    if ext4_store() == STORE_GENERIC:
+        put_generic(ext4_url(image, version, plat), gz, token)
+        return f"sha256:{_sha256(gz)}"
+    repo = oci_ref(ext4_package(image)).split("/", 1)[1]
+    tag = oci_tag(version, plat)
+    try:
+        digest = oci_registry.push_rootfs(_registry(), repo, tag, gz, annotations={
+            "org.opencontainers.image.source": source_url(),
+            "org.opencontainers.image.version": version,
+        })
+    except oci_registry.OciRegistryError as e:
+        raise PublishError(f"publishing the {image} rootfs ({plat}) failed: {e}") from e
+    print(f"  pushed {oci_ref(ext4_package(image))}:{tag}")
+    return digest
 
 
 def _head(url: str, token: str, *, basic: bool = False) -> int:
@@ -239,6 +284,8 @@ def already_published(
 ) -> list[str]:
     """URLs of artifacts already published at `version`. Checked before
     building so a collision fails fast."""
+    if ext4_store() == STORE_OCI:
+        return _already_published_oci(images, platforms, version)
     base, owner, _ = _config()
     found: list[str] = []
     for image in images:
@@ -252,6 +299,21 @@ def already_published(
             )
             if _head(manifest, token, basic=True) == 200:
                 found.append(f"{oci_ref(image)}:{oci_tag(version, plat)}")
+    return found
+
+
+def _already_published_oci(images: list[str], platforms: list[str], version: str) -> list[str]:
+    registry = _registry()
+    found: list[str] = []
+    for name in [*images, *(ext4_package(i) for i in images)]:
+        repo = oci_ref(name).split("/", 1)[1]
+        for plat in platforms:
+            tag = oci_tag(version, plat)
+            try:
+                if registry.manifest_exists(repo, tag):
+                    found.append(f"{oci_ref(name)}:{tag}")
+            except oci_registry.OciRegistryError as e:
+                raise PublishError(f"checking {oci_ref(name)}:{tag} failed: {e}") from e
     return found
 
 
@@ -278,7 +340,10 @@ def delete_published(
     images: list[str], platforms: list[str], version: str, token: str,
 ) -> None:
     """Remove everything at `version` so it can be republished (`--force`).
-    Generic packages reject a PUT over an existing file."""
+    Generic packages reject a PUT over an existing file; OCI tags are just
+    overwritten, so the OCI store needs nothing removed."""
+    if ext4_store() == STORE_OCI:
+        return
     base, owner, _ = _config()
     for image in images:
         url = f"{base}/api/packages/{owner}/generic/{ext4_package(image)}/{version}"
@@ -303,7 +368,10 @@ def link_to_repo(images: list[str], token: str) -> None:
     """Link every published package to the repository, so it shows on the
     repo's Packages tab. Both types are linked explicitly, since Gitea reads
     `org.opencontainers.image.source` only when it creates a package. Best
-    effort: a failure leaves the artifacts published."""
+    effort: a failure leaves the artifacts published. Gitea only: GHCR links
+    packages from their `org.opencontainers.image.source`."""
+    if ext4_store() == STORE_OCI:
+        return
     base, owner, _ = _config()
     repo = source_url().rstrip("/").rsplit("/", 1)[-1]
     packages = [("container", image) for image in images]
@@ -506,9 +574,9 @@ def promote(
     """Copy every artifact in a tested manifest to `to_version`, never
     rebuilding.
 
-    OCI images are re-tagged from their digest, which must come back unchanged.
-    Generic packages have no copy API, so their bytes are downloaded (verified)
-    and re-uploaded."""
+    OCI images are copied byte for byte through the registry API into the
+    publish registry, so their digests can't change, even from another
+    registry. Rootfs bytes are downloaded (verified) and published afresh."""
     from .published_artifacts import parse_artifacts_manifest
 
     entries = parse_artifacts_manifest(json.loads(manifest.read_text()))
@@ -533,7 +601,7 @@ def promote(
                          else ext4_filename(artifact.platform)),
                 # OCI ref from the tested manifest; ext4's namespace is unused
                 # by the writer.
-                namespace=(artifact.url.rsplit(":", 1)[0] if is_oci
+                namespace=(oci_ref(artifact.image) if is_oci
                            else ext4_package(artifact.image)),
                 inputs_hash=entry.inputs_hash,
             ))
@@ -544,22 +612,24 @@ def promote(
 def _promote_oci(
     artifact: "Artifact", to_version: str, *, runtime: str = "docker",
 ) -> str:
-    """Re-tag a published image at the new version (pulled by digest) and
-    return its digest."""
-    # From the tested manifest, so promote copies exactly what passed.
-    ref = artifact.url.rsplit(":", 1)[0]
-    source = f"{ref}@{artifact.digest}"
-    target = f"{ref}:{oci_tag(to_version, artifact.platform)}"
-    print(f"  promoting {artifact.image} {artifact.platform} -> {target}")
-    _run([runtime, "pull", "--platform", artifact.platform, source],
-         what=f"pulling {source}")
-    _run([runtime, "tag", source, target], what=f"tagging {target}")
-    _run([runtime, "push", target], what=f"pushing {target}")
-    out = _run([runtime, "inspect", "--format={{index .RepoDigests 0}}", target],
-               what=f"reading digest for {target}").strip()
-    if "@" not in out:
-        raise PublishError(f"could not read a digest for {target}: {out!r}")
-    return out.rsplit("@", 1)[1]
+    """Copy a published image, by its pinned digest, to the new version's tag
+    in the publish registry and return the digest. `runtime` is unused: the
+    copy goes through the registry API."""
+    del runtime
+    from . import image_registry
+
+    target = oci_ref(artifact.image)
+    tag = oci_tag(to_version, artifact.platform)
+    print(f"  promoting {artifact.image} {artifact.platform} -> {target}:{tag}")
+    with tempfile.TemporaryDirectory(prefix="bb-promote-") as scratch:
+        try:
+            source = oci_registry.parse_ref(artifact.url)
+            src = oci_registry.Registry(source.host, token=image_registry.token_for(source.host))
+            return oci_registry.copy_manifest(
+                src, source.repo, artifact.digest, dst=_registry(),
+                dst_repo=target.split("/", 1)[1], tag=tag, scratch=Path(scratch))
+        except oci_registry.OciRegistryError as e:
+            raise PublishError(f"promoting {artifact.url}@{artifact.digest} failed: {e}") from e
 
 
 def _promote_ext4(artifact: "Artifact", to_version: str, token: str) -> str:
@@ -571,10 +641,8 @@ def _promote_ext4(artifact: "Artifact", to_version: str, token: str) -> str:
 
     cache_root = host_artifact_cache_dir(settings_from_env().infra.artifact_cache)
     gz = image_registry.ensure_ext4(artifact, cache_root=cache_root)
-    url = ext4_url(artifact.image, to_version, artifact.platform)
     print(f"  promoting {artifact.image} {artifact.platform} rootfs -> {to_version}")
-    put_generic(url, gz, token)
-    return f"sha256:{_sha256(gz)}"
+    return publish_ext4(artifact.image, to_version, artifact.platform, gz, token)
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -761,10 +829,12 @@ def main(argv: list[str] | None = None) -> int:
         for artifact in entry.artifacts:
             if artifact.fmt != FORMAT_EXT4:
                 continue  # OCI was pushed by the build step
-            put_generic(
-                ext4_url(entry.name, entry.version, artifact.platform),
-                work_dir / entry.name / artifact.locator, token,
-            )
+            digest = publish_ext4(entry.name, entry.version, artifact.platform,
+                                  work_dir / entry.name / artifact.locator, token)
+            if digest != artifact.digest:
+                raise PublishError(
+                    f"{entry.name} rootfs ({artifact.platform}): published "
+                    f"{digest}, built {artifact.digest}")
 
     link_to_repo(images, token)
 

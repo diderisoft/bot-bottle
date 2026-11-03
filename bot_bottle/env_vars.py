@@ -69,8 +69,14 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "Where verified artifact downloads (infra rootfs, image layers) are cached.",
            "`~/.cache/bot-bottle/artifacts`"),
     EnvVar("BOT_BOTTLE_INFRA_ARTIFACT_TOKEN", "user",
-           "Token for pulling from, or with `write:package` publishing to, the "
-           "private image registry. " + GITHUB_CUTOVER),
+           "Token for pulling from a private image registry (sent only to "
+           "`BOT_BOTTLE_INFRA_ARTIFACT_TOKEN_HOST`), or with `write:packages` "
+           "publishing to the release registry. Published images are public, so "
+           "pulling them needs none."),
+    EnvVar("BOT_BOTTLE_INFRA_ARTIFACT_TOKEN_HOST", "user",
+           "The one registry host `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN` is sent to when "
+           "pulling. Unset, it is sent nowhere.",
+           "unset"),
     EnvVar("BOT_BOTTLE_ORCHESTRATOR_TEARDOWN_TIMEOUT_SECONDS", "user",
            "How long a bottle's teardown waits on the orchestrator. Read by the "
            "process that runs the launch (the host controller), so set it in "
@@ -167,14 +173,22 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "joins. " + GITHUB_CUTOVER),
     # --- release ---
     EnvVar("BOT_BOTTLE_INFRA_ARTIFACT_BASE", "release",
-           "The registry the infra images are published to. " + GITHUB_CUTOVER,
-           "`https://gitea.dideric.is`"),
+           "The registry the images and rootfs artifacts are published to.",
+           "`https://ghcr.io`"),
     EnvVar("BOT_BOTTLE_INFRA_ARTIFACT_OWNER", "release",
-           "The registry owner the infra images are published under. " + GITHUB_CUTOVER,
-           "`didericis`"),
+           "The registry owner the images are published under.",
+           "`diderisoft`"),
+    EnvVar("BOT_BOTTLE_INFRA_ARTIFACT_USER", "release",
+           "The user the publish token belongs to (GHCR: the GitHub account).",
+           "`bot-bottle`"),
+    EnvVar("BOT_BOTTLE_INFRA_EXT4_STORE", "release",
+           "Where the Firecracker rootfs is published: `oci` (an OCI artifact in "
+           "the image registry) or `generic` (a Gitea generic package).",
+           "`oci`"),
     EnvVar("BOT_BOTTLE_IMAGE_SOURCE_URL", "release",
-           "The image's `org.opencontainers.image.source` label. " + GITHUB_CUTOVER,
-           "`https://gitea.dideric.is/didericis/bot-bottle`"),
+           "The image's `org.opencontainers.image.source` label, which links the "
+           "packages to the repository.",
+           "`https://github.com/diderisoft/bot-bottle`"),
     # --- internal ---
     EnvVar("BOT_BOTTLE_ORCHESTRATOR_URL", "internal",
            "The orchestrator's control-plane URL, for the gateway's daemons."),

@@ -42,6 +42,16 @@ verified by digest from the pins in `published-artifacts.json`. A pin is used
 only when its `inputs_hash` matches this install's sources
 (`infra_image.py`).
 
+Releases publish to GHCR (`ghcr.io/diderisoft/<image>`), publicly, so pulling
+needs no login. GHCR stores only OCI content, so each ext4 rootfs is an OCI
+artifact beside its image (`ghcr.io/diderisoft/<image>-rootfs:<version>-<arch>`:
+one gzip layer of type `application/vnd.bot-bottle.rootfs.ext4+gzip`, the empty
+config). The pin holds that reference and the layer's sha256, and the host
+fetches the layer by digest through the registry API (`oci_registry.py`) and
+checks it. Older pins that hold an HTTPS download (a Gitea generic package)
+still work. `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN` is only for a private registry,
+and goes only to `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN_HOST`.
+
 Building them from source is opt-in, never a fallback: `bot-bottle up
 --build`, or `BOT_BOTTLE_INFRA_BUILD=local` for every command. docker and
 firecracker build with Docker; macos-container with Apple's `container`.

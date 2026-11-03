@@ -36,7 +36,8 @@ The installer's settings (`BOT_BOTTLE_PYTHON`, `BOT_BOTTLE_VENV`,
 ### Releases and infra images
 
 The normal path is a release: its orchestrator and gateway images are
-published, and bot-bottle pulls and verifies them. Each release is tagged
+published publicly on GHCR, and bot-bottle pulls and verifies them, with no
+registry login ([backends.md](backends.md#infra-images)). Each release is tagged
 `vX.Y.Z` on the commit that pins its images, and both commands above install a
 tag. `main` matches the last release only until a change to the orchestrator or
 gateway lands after it. An install with no published images to match stops on
@@ -322,7 +323,8 @@ Generated from `bot_bottle/env_vars.py`: edit that, then run
 | `BOT_BOTTLE_INFRA_BUILD` | user | `local` builds the orchestrator and gateway images from source instead of pulling a release's, for every command; `bot-bottle up --build` is the flag form. Building is never automatic: an install with no published images that match (e.g. from `main`) stops without it. | pull |
 | `BOT_BOTTLE_BUILD_ENGINE` | user | Image build engine: `docker`, `podman` or `vm`. | the first usable one |
 | `BOT_BOTTLE_ARTIFACT_CACHE` | user | Where verified artifact downloads (infra rootfs, image layers) are cached. | `~/.cache/bot-bottle/artifacts` |
-| `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN` | user | Token for pulling from, or with `write:package` publishing to, the private image registry. Removed at the GitHub cutover. | — |
+| `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN` | user | Token for pulling from a private image registry (sent only to `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN_HOST`), or with `write:packages` publishing to the release registry. Published images are public, so pulling them needs none. | — |
+| `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN_HOST` | user | The one registry host `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN` is sent to when pulling. Unset, it is sent nowhere. | unset |
 | `BOT_BOTTLE_ORCHESTRATOR_TEARDOWN_TIMEOUT_SECONDS` | user | How long a bottle's teardown waits on the orchestrator. Read by the process that runs the launch (the host controller), so set it in that process's environment. | `30` |
 | `BOT_BOTTLE_DOCKER_GATEWAY_SUBNET` | user | docker: the gateway network's subnet. | `10.242.255.0/24`; a named environment allocates a free /24 of `10.241.0.0/16` and records it |
 | `BOT_BOTTLE_DOCKER_AGENT_SUBNETS` | user | docker: the range per-agent networks are carved from, as /29s. | `10.242.0.0/20`; `10.240.0.0/16` in a named environment |
@@ -350,9 +352,11 @@ Generated from `bot_bottle/env_vars.py`: edit that, then run
 | `BOT_BOTTLE_DOCKER_CA_MOUNT` | dev | docker in CI: a named volume for the gateway CA, for a runner that shares the host's Docker socket. Removed at the GitHub cutover. | — |
 | `BOT_BOTTLE_DOCKER_ROOT_MOUNT` | dev | docker in CI: a named volume for the state root the orchestrator mounts. Removed at the GitHub cutover. | — |
 | `BOT_BOTTLE_DOCKER_CLIENT_NETWORK` | dev | docker in CI: the job container's network, which the orchestrator joins. Removed at the GitHub cutover. | — |
-| `BOT_BOTTLE_INFRA_ARTIFACT_BASE` | release | The registry the infra images are published to. Removed at the GitHub cutover. | `https://gitea.dideric.is` |
-| `BOT_BOTTLE_INFRA_ARTIFACT_OWNER` | release | The registry owner the infra images are published under. Removed at the GitHub cutover. | `didericis` |
-| `BOT_BOTTLE_IMAGE_SOURCE_URL` | release | The image's `org.opencontainers.image.source` label. Removed at the GitHub cutover. | `https://gitea.dideric.is/didericis/bot-bottle` |
+| `BOT_BOTTLE_INFRA_ARTIFACT_BASE` | release | The registry the images and rootfs artifacts are published to. | `https://ghcr.io` |
+| `BOT_BOTTLE_INFRA_ARTIFACT_OWNER` | release | The registry owner the images are published under. | `diderisoft` |
+| `BOT_BOTTLE_INFRA_ARTIFACT_USER` | release | The user the publish token belongs to (GHCR: the GitHub account). | `bot-bottle` |
+| `BOT_BOTTLE_INFRA_EXT4_STORE` | release | Where the Firecracker rootfs is published: `oci` (an OCI artifact in the image registry) or `generic` (a Gitea generic package). | `oci` |
+| `BOT_BOTTLE_IMAGE_SOURCE_URL` | release | The image's `org.opencontainers.image.source` label, which links the packages to the repository. | `https://github.com/diderisoft/bot-bottle` |
 <!-- env-vars:settings:end -->
 
 ## Uninstall

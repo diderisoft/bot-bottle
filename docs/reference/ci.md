@@ -109,8 +109,10 @@ allocate their gateway /24s, moving on from any another run holds.
   since every run shares `ci-macos`. Its coverage never feeds the required
   pull-request gate.
 
-When every job passes, it releases: it promotes the tested images to a release
-version and commits their pins (`published-artifacts.json`) to `main`, with
+The candidate it tests is published to Gitea (`0.0.0-dev-<run>`, rootfs as
+Gitea generic packages). When every job passes, it releases: it promotes the
+tested images to a release version on GHCR, copying them byte for byte through
+the registry API (the rootfs as OCI artifacts), and commits their pins (`published-artifacts.json`) to `main`, with
 `pyproject.toml` bumped to that version in the same commit, and tags that
 commit `vX.Y.Z` (annotated; a rerun leaves an existing tag alone). `install.sh`
 installs the newest such tag. The release commit goes only directly on the
@@ -123,7 +125,23 @@ shipping. `inputs_hash` ignores `pyproject.toml`'s `[project] version`, which
 is the one thing the release commit changes after the images are built. Leave the `version`
 input blank to take the first unpublished version at or above `pyproject.toml`'s.
 [`publish-images.yml`](../../.gitea/workflows/publish-images.yml) only rehearses a
-publish: it defaults to a `0.0.0-dev-<run>` version and pins nothing.
+publish, to Gitea: it defaults to a `0.0.0-dev-<run>` version and pins nothing.
+[`.github/workflows/publish-dev-images.yml`](../../.github/workflows/publish-dev-images.yml)
+pushes OCI-only dev images to GHCR from GitHub's runners on merges to `main`;
+nothing pins them.
+
+Publishing to GHCR needs, once:
+
+1. A classic personal access token with `write:packages` (fine-grained tokens
+   can't push to GHCR) for an account that can create packages in the
+   `diderisoft` org.
+2. That token as the Gitea Actions secret `GHCR_TOKEN`, and the account name
+   as the variable `GHCR_USER`.
+3. After the first release, each package (`bot-bottle-*` and
+   `bot-bottle-*-rootfs`) set to Public under the org's Packages settings. The
+   org must allow public packages. The packages link to the repository through
+   `org.opencontainers.image.source`; while the repository is private, turn off
+   "Inherit access from source repository" first, or they stay private.
 
 ## Scheduled canary
 

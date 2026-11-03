@@ -19,6 +19,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import oci_registry
 from .published_artifacts import Artifact, FORMAT_EXT4, FORMAT_OCI
 
 REGISTRY_HTTP_TIMEOUT_SECONDS = 30.0
@@ -35,8 +36,22 @@ _ACCEPT = ", ".join((
     "application/vnd.docker.distribution.manifest.list.v2+json",
 ))
 
-# One package-scoped token, shared with the generic-package artifacts.
+# One package-scoped token, shared with the generic-package artifacts. It goes
+# only to the host named in TOKEN_HOST_ENV (unset: nowhere), so a token for a
+# private registry never reaches a public one the pins also name.
 TOKEN_ENV = "BOT_BOTTLE_INFRA_ARTIFACT_TOKEN"
+TOKEN_HOST_ENV = "BOT_BOTTLE_INFRA_ARTIFACT_TOKEN_HOST"
+
+
+def token_for(host: str) -> str:
+    """The artifact token, if `host` is the one it is scoped to."""
+    token = os.environ.get(TOKEN_ENV, "").strip()
+    scoped = os.environ.get(TOKEN_HOST_ENV, "").strip().lower()
+    return token if token and scoped and host.lower() == scoped else ""
+
+
+def _host_of(url: str) -> str:
+    return urllib.parse.urlsplit(url).netloc
 
 
 class RegistryError(RuntimeError):
@@ -82,13 +97,13 @@ def _repository(ref: str) -> str:
 def _request(url: str) -> urllib.request.Request:
     req = urllib.request.Request(url)
     req.add_header("Accept", _ACCEPT)
-    token = os.environ.get(TOKEN_ENV, "").strip()
+    token = token_for(_host_of(url))
     if token:
         # The OCI /v2/ API wants HTTP Basic (any username, the token as
         # password), not Gitea's REST `token <PAT>` scheme. `_download` keeps
         # the `token` scheme.
         creds = base64.b64encode(f"bot-bottle:{token}".encode()).decode()
-        req.add_header("Authorization", f"Basic {creds}")
+        req.add_unredirected_header("Authorization", f"Basic {creds}")
     return req
 
 
@@ -252,7 +267,8 @@ def _looks_unauthorized(detail: str) -> bool:
 
 
 def ext4_url(artifact: Artifact) -> str:
-    """The generic-package URL for an ext4 artifact, baked into the manifest."""
+    """Where an ext4 artifact lives, as the manifest has it: an HTTPS download
+    (a generic package) or an OCI artifact reference (`host/owner/name:tag`)."""
     if artifact.format != FORMAT_EXT4:
         raise RegistryError(
             f"ext4_url is for {FORMAT_EXT4} artifacts, got {artifact.format!r}"
@@ -280,13 +296,17 @@ def ensure_ext4(artifact: Artifact, *, cache_root: Path) -> Path:
     # Keyed on digest, since a version can be republished with different bytes.
     root = cache_root / artifact.image / artifact.digest.replace(":", "-")
     root.mkdir(parents=True, exist_ok=True)
-    gz = root / _url_filename(artifact.url)
+    url = ext4_url(artifact)
+    from_oci = "://" not in url
+    gz = root / ("rootfs.ext4.gz" if from_oci else _url_filename(url))
     verified = root / ".verified"
     if gz.is_file() and verified.is_file():
         return gz
 
-    url = ext4_url(artifact)
-    _download(url, gz)
+    if from_oci:
+        _download_oci_blob(url, artifact.digest, gz)
+    else:
+        _download(url, gz)
 
     expected = artifact.digest.split(":", 1)[1]
     actual = _sha256_file(gz)
@@ -302,13 +322,24 @@ def ensure_ext4(artifact: Artifact, *, cache_root: Path) -> Path:
     return gz
 
 
+def _download_oci_blob(ref: str, digest: str, dest: Path) -> None:
+    """Fetch the rootfs layer of an OCI artifact by its pinned digest. The tag
+    in `ref` only names it: the digest is what gets fetched and checked."""
+    try:
+        parsed = oci_registry.parse_ref(ref)
+        registry = oci_registry.Registry(parsed.host, token=token_for(parsed.host))
+        registry.download_blob(parsed.repo, digest, dest)
+    except oci_registry.OciRegistryError as e:
+        raise RegistryError(f"fetching the rootfs {ref}@{digest} failed: {e}") from e
+
+
 def _download(url: str, dest: Path) -> None:
     """Stream `url` to `dest` atomically via a `.part` sibling."""
     tmp = dest.with_suffix(dest.suffix + ".part")
     req = urllib.request.Request(url)
-    token = os.environ.get(TOKEN_ENV, "").strip()
+    token = token_for(_host_of(url))
     if token:
-        req.add_header("Authorization", f"token {token}")
+        req.add_unredirected_header("Authorization", f"token {token}")
     try:
         with urllib.request.urlopen(
             req, timeout=ARTIFACT_HTTP_TIMEOUT_SECONDS,
@@ -339,5 +370,6 @@ __all__ = [
     "pull",
     "resolve",
     "resolve_tag_digest",
+    "token_for",
     "verify_tag",
 ]

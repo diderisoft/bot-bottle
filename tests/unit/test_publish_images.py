@@ -32,6 +32,9 @@ def setUpModule() -> None:  # pylint: disable=invalid-name
 
 _A = "sha256:" + "a" * 64
 _HASH = "9f2c1e4b7a83d10c"
+# The Gitea generic-package store, which these tests describe; the OCI store is
+# covered in test_publish_oci.
+_GENERIC = mock.patch.dict("os.environ", {"BOT_BOTTLE_INFRA_EXT4_STORE": "generic"})
 
 
 class Addressing(unittest.TestCase):
@@ -59,6 +62,7 @@ class Addressing(unittest.TestCase):
         self.assertNotEqual(arm, amd)
         self.assertIn("arm64", arm)
 
+    @_GENERIC
     def test_ext4_url_is_versioned_and_per_arch(self) -> None:
         url = pi.ext4_url("bot-bottle-gateway", "0.14.2", "linux/amd64")
         self.assertIn("/0.14.2/", url)
@@ -466,6 +470,7 @@ class BuildAll(unittest.TestCase):
         self.assertLessEqual(pi.default_jobs(), 8)
 
 
+@_GENERIC
 class Preflight(unittest.TestCase):
     """Collisions are found before building, not at upload time.
 
@@ -523,6 +528,7 @@ class Preflight(unittest.TestCase):
         delete.assert_called_once()
 
 
+@_GENERIC
 class RepoLinking(unittest.TestCase):
     """Generic packages have no `org.opencontainers.image.source` equivalent,
     so they need an explicit call or they stay owner-scoped and invisible on
@@ -559,6 +565,7 @@ class RepoLinking(unittest.TestCase):
             pi.link_to_repo(["a"], "tok")  # must not raise
 
 
+@_GENERIC
 class Promotion(unittest.TestCase):
     """Promotion copies; it never rebuilds. A rebuild at the release version
     ships bytes nobody tested, which is what the dev version exists to prevent."""
@@ -570,7 +577,7 @@ class Promotion(unittest.TestCase):
             "artifacts": {
                 "oci_linux-arm64": {
                     "type": "oci", "platform": "linux-arm64",
-                    "url": "reg/o/bot-bottle-gateway:0.0.0-dev-arm64", "digest": _A},
+                    "url": "reg.example/o/bot-bottle-gateway:0.0.0-dev-arm64", "digest": _A},
                 "ext4_linux-arm64": {
                     "type": "ext4", "platform": "linux-arm64",
                     "url": ("https://gitea.dideric.is/api/packages/didericis/generic/"
@@ -589,7 +596,7 @@ class Promotion(unittest.TestCase):
             # Make the ext4 digest match what the bytes actually hash to.
             manifest.write_text(manifest.read_text().replace("sha256:" + "b" * 64, digest))
 
-            with mock.patch.object(pi, "_run", side_effect=["", "", "", f"r@{_A}\n"]), \
+            with mock.patch.object(pi.oci_registry, "copy_manifest", return_value=_A), \
                  mock.patch.object(pi, "build_image") as build, \
                  mock.patch("bot_bottle.image_registry.ensure_ext4", return_value=gz), \
                  mock.patch.object(pi, "put_generic"):
@@ -601,17 +608,15 @@ class Promotion(unittest.TestCase):
         # The tested bytes' protocol ships with them; promotion never re-stamps it.
         self.assertEqual(promoted[0].protocol, 1)
 
-    def test_oci_is_pulled_by_digest_not_tag(self) -> None:
-        """What gets re-tagged has to be exactly what was tested."""
-        with tempfile.TemporaryDirectory():
-            with mock.patch.object(pi, "_run", side_effect=["", "", "", f"r@{_A}\n"]) as run:
-                pi._promote_oci(
-                    mock.Mock(url="reg/o/img:0.0.0-dev-arm64", digest=_A,
-                              platform="linux/arm64", image="img"),
-                    "1.0.0")
-            pulled = [c.args[0] for c in run.call_args_list if c.args[0][1] == "pull"]
-        self.assertTrue(pulled)
-        self.assertIn(f"reg/o/img@{_A}", pulled[0])
+    def test_oci_is_copied_by_digest_not_tag(self) -> None:
+        """What gets tagged has to be exactly what was tested."""
+        with mock.patch.object(pi.oci_registry, "copy_manifest", return_value=_A) as copy:
+            pi._promote_oci(
+                mock.Mock(url="reg.example/o/img:0.0.0-dev-arm64", digest=_A,
+                          platform="linux/arm64", image="img"),
+                "1.0.0")
+        self.assertEqual(_A, copy.call_args.args[2])       # source reference
+        self.assertEqual("1.0.0-arm64", copy.call_args.kwargs["tag"])  # new tag
 
     def test_a_changed_digest_aborts(self) -> None:
         """If the promoted artifact does not hash to what passed, promotion has
@@ -620,7 +625,7 @@ class Promotion(unittest.TestCase):
             root = Path(tmp)
             gz = root / "r.gz"
             gz.write_bytes(b"different")
-            with mock.patch.object(pi, "_run", side_effect=["", "", "", f"r@{_A}\n"]), \
+            with mock.patch.object(pi.oci_registry, "copy_manifest", return_value=_A), \
                  mock.patch("bot_bottle.image_registry.ensure_ext4", return_value=gz), \
                  mock.patch.object(pi, "put_generic"):
                 with self.assertRaises(pi.PublishError) as ctx:

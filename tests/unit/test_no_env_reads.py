@@ -35,8 +35,8 @@ _CREDENTIAL_PATHS = "process plumbing: HOME / CODEX_HOME locate the user's crede
 ALLOWED: dict[tuple[str, str], str] = {
     # Registry auth tokens.
     ("image_registry.py", "TOKEN_ENV"): _REGISTRY_TOKEN,
-    ("backend/firecracker/image_builder.py", "_ARTIFACT_TOKEN_ENV"):
-        f"{_REGISTRY_TOKEN} (overlay base pulls)",
+    ("image_registry.py", "TOKEN_HOST_ENV"):
+        f"{_REGISTRY_TOKEN}: the one host the token may go to",
     # Bottle launch: the base env for `docker compose` / `container run`.
     ("backend/docker/launch.py", "os.environ"): _FORWARDED_BASE,
     ("backend/macos_container/launch.py", "os.environ"): _FORWARDED_BASE,

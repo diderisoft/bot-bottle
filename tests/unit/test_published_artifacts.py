@@ -428,10 +428,21 @@ class RegistryPlumbing(unittest.TestCase):
             with self.assertRaises(ir.RegistryError):
                 ir.pull(ir.resolve(self.artifact, verify=False))
 
-    def test_auth_header_is_sent_when_a_token_is_set(self) -> None:
-        with mock.patch.dict("os.environ", {ir.TOKEN_ENV: "secret-value"}):
+    def test_auth_header_is_sent_to_the_token_host(self) -> None:
+        env = {ir.TOKEN_ENV: "secret-value", ir.TOKEN_HOST_ENV: "example.test"}
+        with mock.patch.dict("os.environ", env):
             req = ir._request("https://example.test/v2/x/manifests/t")
         self.assertTrue(req.has_header("Authorization"))
+
+    def test_token_never_goes_to_another_host(self) -> None:
+        env = {ir.TOKEN_ENV: "secret-value", ir.TOKEN_HOST_ENV: "gitea.example"}
+        with mock.patch.dict("os.environ", env):
+            req = ir._request("https://ghcr.io/v2/x/manifests/t")
+        self.assertFalse(req.has_header("Authorization"))
+
+    def test_token_with_no_host_goes_nowhere(self) -> None:
+        with mock.patch.dict("os.environ", {ir.TOKEN_ENV: "secret-value", ir.TOKEN_HOST_ENV: ""}):
+            self.assertEqual("", ir.token_for("example.test"))
 
     def test_non_404_http_error_is_distinguished_from_missing(self) -> None:
         err = urllib.error.HTTPError("u", 500, "boom", None, None)  # type: ignore[arg-type]

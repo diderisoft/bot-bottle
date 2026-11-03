@@ -49,6 +49,9 @@ jobs:
       - name: Prune
         env:
           BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
+          # Gitea's packages API: the dev candidates and pre-GHCR releases live
+          # there. Releases on GHCR are not pruned by this job.
+          BOT_BOTTLE_INFRA_ARTIFACT_BASE: https://gitea.dideric.is
           BOT_BOTTLE_INFRA_ARTIFACT_OWNER: ${{ github.event.inputs.owner || 'didericis' }}
         run: |
           apply=""

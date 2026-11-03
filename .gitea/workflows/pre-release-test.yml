@@ -201,9 +201,13 @@ jobs:
             exit 1
           }
 
+      # The candidate goes to Gitea; only what passes is promoted to GHCR.
       - name: Publish the dev version under test
         env:
           BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
+          BOT_BOTTLE_INFRA_ARTIFACT_BASE: https://gitea.dideric.is
+          BOT_BOTTLE_INFRA_ARTIFACT_OWNER: didericis
+          BOT_BOTTLE_INFRA_EXT4_STORE: generic
           BOT_BOTTLE_FC_DROPBEAR: /var/cache/bot-bottle-fc/dropbear
         run: |
           printf '%s' "$BOT_BOTTLE_INFRA_ARTIFACT_TOKEN" \
@@ -228,6 +232,7 @@ jobs:
         env:
           BOT_BOTTLE_BACKEND: firecracker
           BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
+          BOT_BOTTLE_INFRA_ARTIFACT_TOKEN_HOST: gitea.dideric.is
           COVERAGE_FILE: ${{ github.workspace }}/.coverage.firecracker
         run: python3 -m coverage run -m unittest discover -t . -s tests/integration -v
 
@@ -464,15 +469,17 @@ jobs:
 
       # Promotion copies; it never rebuilds. The artifacts the integration
       # suite resolved, downloaded and verified are the ones that ship, and
-      # every promoted digest is checked against the tested one.
+      # every promoted digest is checked against the tested one. It copies them
+      # from Gitea to the public registry (GHCR) through the registry API, so
+      # no container runtime login is needed. GHCR_TOKEN: a classic PAT with
+      # write:packages for GHCR_USER (see docs/reference/install.md).
       - name: Promote the tested dev version to the release version
         env:
-          BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
+          BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          BOT_BOTTLE_INFRA_ARTIFACT_USER: ${{ vars.GHCR_USER || 'didericis' }}
           # Via env, never interpolated into the script text.
           VERSION: ${{ github.event.inputs.version }}
         run: |
-          printf '%s' "$BOT_BOTTLE_INFRA_ARTIFACT_TOKEN" \
-            | docker login gitea.dideric.is -u didericis --password-stdin
           set -- --promote tested/published-artifacts.json \
             --work-dir "${{ github.workspace }}/released"
           if [ -n "$VERSION" ]; then set -- "$@" --version "$VERSION"; fi
