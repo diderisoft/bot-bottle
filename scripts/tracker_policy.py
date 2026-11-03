@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce the repository's issue/PR metadata policy in Gitea Actions."""
+"""Enforce the repository's issue/PR metadata policy in GitHub and Gitea Actions."""
 
 from __future__ import annotations
 
@@ -94,11 +94,13 @@ def ensure_issue_label(event: dict[str, Any], api: GiteaApi) -> bool:
     issue = event["issue"]
     if issue.get("pull_request") is not None or issue.get("labels"):
         return False
-    labels = api.request("GET", "/labels?limit=100")
+    labels = api.request("GET", "/labels?per_page=100&limit=100")
     triage = next((label for label in labels if label["name"] == TRIAGE_LABEL), None)
     if triage is None:
         raise RuntimeError(f"repository label {TRIAGE_LABEL!r} does not exist")
-    api.request("POST", f"/issues/{issue['number']}/labels", {"labels": [triage["id"]]})
+    # GitHub's labels endpoint takes names; Gitea's takes integer IDs.
+    label_ref: str | int = triage["name"] if os.environ.get("GITHUB_ACTIONS") else triage["id"]
+    api.request("POST", f"/issues/{issue['number']}/labels", {"labels": [label_ref]})
     return True
 
 

@@ -1,0 +1,27 @@
+# GitHub-hosted port of .gitea/workflows/tracker-policy-issues.yml.
+# Applies Status/Needs Triage to unlabeled issues on open/unlabel events.
+
+name: tracker-policy-issues
+
+on:
+  issues:
+    types: [opened, unlabeled]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  label-issue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Ensure the issue has a label
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/tracker_policy.py label-issue
