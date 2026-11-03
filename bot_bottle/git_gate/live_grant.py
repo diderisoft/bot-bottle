@@ -21,7 +21,7 @@ from ..control.git_gate_render import (
     GitGateUpstream, git_gate_known_hosts_line, git_gate_upstreams_for_bottle,
 )
 from ..manifest import ManifestBottle
-from ..manifest.forges import ManifestForge, parse_grant
+from ..manifest.forges import ManifestForge, parse_grant, split_grant_alias
 from ..manifest.git import ManifestGitEntry
 from ..secret_source import SecretSource
 from .provision import (
@@ -38,13 +38,16 @@ class GrantError(Exception):
 
 def grant_entry(grant: str, forge: ManifestForge) -> ManifestGitEntry:
     """`<forge>/<owner>/<repo>[:write]` on `forge` as a repo entry, the way a
-    grant in a bottle file expands (`manifest.forges.expand_grants`)."""
-    _, owner, repo, writable = parse_grant(grant, "the grant")
+    grant in a bottle file expands (`manifest.forges.expand_grants`).
+    Supports `<alias>=<grant>` to mount the repo under a different local name,
+    letting two repos with the same upstream repo name coexist."""
+    alias, bare_grant = split_grant_alias(grant)
+    _, owner, repo, writable = parse_grant(bare_grant, "the grant")
     raw: dict[str, object] = {"url": f"{forge.ssh}/{owner}/{repo}.git",
                               "key": forge.key(writable)}
     if forge.host_key:
         raw["host_key"] = forge.host_key
-    return ManifestGitEntry.from_repos_entry("(live grant)", repo, raw)
+    return ManifestGitEntry.from_repos_entry("(live grant)", alias or repo, raw)
 
 
 def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,

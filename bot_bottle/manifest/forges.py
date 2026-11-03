@@ -185,6 +185,16 @@ def _transport(d: dict[str, object], where: str) -> str:
     return transport
 
 
+def split_grant_alias(grant: str) -> tuple[str | None, str]:
+    """If `grant` starts with `<alias>=`, return `(alias, bare_grant)`; else
+    `(None, grant)`. The alias becomes the repo's local name in git-gate,
+    letting two repos with the same upstream name coexist in one bottle."""
+    eq = grant.find("=")
+    if eq > 0 and _REPO_PART_RE.match(grant[:eq]) and "/" in grant[eq + 1:]:
+        return grant[:eq], grant[eq + 1:]
+    return None, grant
+
+
 def parse_grant(grant: str, where: str) -> tuple[str, str, str, bool]:
     """`<forge>/<owner>/<repo>[:write]` as (forge, owner, repo, writable)."""
     body, writable = grant, False
@@ -282,5 +292,6 @@ def strip_chain_keys(raw: dict[str, object]) -> dict[str, object]:
 __all__ = [
     "FORGE_KINDS", "ManifestForge", "credentials_raw", "expand_grants", "forges_raw",
     "merge_named", "normalize_repos", "parse_grant", "refuse_minted_long_form", "resolve_forge",
+    "split_grant_alias",
     "strip_chain_keys",
 ]

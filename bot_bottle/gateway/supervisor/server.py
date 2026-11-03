@@ -263,14 +263,19 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "Pass the grant `<forge>/<owner>/<repo>`, adding `:write` to push; "
             "the operator may grant read-only instead. On approval the repo is "
             "added to this running bottle: use its normal URL (the notes give "
-            "it) and git routes it through git-gate."
+            "it) and git routes it through git-gate. "
+            "To avoid a name conflict with an existing repo that has the same "
+            "short name, prefix the grant with a local alias: "
+            "`<alias>=<forge>/<owner>/<repo>[:write]`."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "repo": {"type": "string",
                          "description": ("The grant, e.g. gitea.example.com/acme/app:write "
-                                         "or github.com/acme/app.")},
+                                         "or github.com/acme/app. Prefix with alias= to "
+                                         "resolve name conflicts: "
+                                         "gh-app=github.com/acme/app:write.")},
                 "justification": {"type": "string",
                                   "description": "Why this repo is needed."},
             },
@@ -319,8 +324,12 @@ PROPOSED_FILE_FIELD: dict[str, str] = {
     _sv.TOOL_FORGE_CONNECT: "url",
     _sv.TOOL_ADD_REPO: "repo",
 }
-# `<forge>/<owner>/<repo>[:write]`, as `manifest.forges.parse_grant` reads it.
-_GRANT_RE = re.compile(r"^[A-Za-z0-9._@:-]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(:write)?$")
+# `[<alias>=]<forge>/<owner>/<repo>[:write]`, as `manifest.forges.parse_grant` reads it.
+# The optional `<alias>=` prefix lets the agent mount the repo under a different
+# local name to resolve conflicts when two repos share the same short name.
+_GRANT_RE = re.compile(
+    r"^(?:[A-Za-z0-9._-]+=)?[A-Za-z0-9._@:-]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(:write)?$"
+)
 
 
 # --- Validation ---
@@ -353,9 +362,13 @@ def validate_proposed_file(tool: str, content: str) -> None:
         _refuse_unsupported_forge(tool, parsed.hostname)
     elif tool == _sv.TOOL_ADD_REPO:
         if not _GRANT_RE.match(content.strip()):
-            raise _RpcClientError(ERR_INVALID_PARAMS,
-                                  f"{tool}: 'repo' is <forge>/<owner>/<repo>[:write]")
-        forge = content.strip().split("/", 1)[0].rsplit("@", 1)[-1]
+            raise _RpcClientError(
+                ERR_INVALID_PARAMS,
+                f"{tool}: 'repo' is [alias=]<forge>/<owner>/<repo>[:write]",
+            )
+        # Strip optional alias= prefix before extracting the forge host.
+        bare = content.strip().split("=", 1)[-1] if "=" in content.strip().split("/")[0] else content.strip()
+        forge = bare.split("/", 1)[0].rsplit("@", 1)[-1]
         _refuse_unsupported_forge(tool, forge.split(":", 1)[0])
     else:
         raise _RpcClientError(ERR_INVALID_PARAMS, f"unknown tool {tool!r}")
