@@ -192,21 +192,40 @@ def keep_grant(target: KeepTarget, grant: str, *, extends: str = "") -> Path:
 def with_grant(frontmatter: dict[str, object], grant: str, *,
                extends: str = "") -> dict[str, object]:
     """`frontmatter` with the repo grant added (replacing one for the same repo
-    name) and `extends` added to its parents if it isn't one."""
+    name) and `extends` added to its parents if it isn't one.
+    Supports `<alias>=<grant>` form; the alias becomes the key in the bottle
+    file and the repos section is upgraded to a mapping when needed."""
     # pylint: disable-next=import-outside-toplevel
-    from .manifest.forges import parse_grant
+    from .manifest.forges import parse_grant, split_grant_alias
     fm = dict(frontmatter)
     git = fm.get("git-gate")
     git = dict(git) if isinstance(git, dict) else {}
-    repo = parse_grant(grant, "the grant")[2]
+    alias, bare_grant = split_grant_alias(grant)
+    repo = alias or parse_grant(bare_grant, "the grant")[2]
+    stored = bare_grant  # value kept in the bottle file is always the bare grant
     repos = git.get("repos")
-    if isinstance(repos, dict):
-        git["repos"] = {**repos, repo: grant}
+    if alias:
+        # Upgrade list repos to a dict when an alias needs a named key.
+        if isinstance(repos, dict):
+            git["repos"] = {**{k: v for k, v in repos.items() if k != repo}, repo: stored}
+        else:
+            mapped: dict[str, object] = {}
+            for item in (repos if isinstance(repos, list) else []):
+                if isinstance(item, str):
+                    try:
+                        n = parse_grant(item, "a kept grant")[2]
+                        if n != repo:
+                            mapped[n] = item
+                    except Exception:  # pylint: disable=broad-exception-caught
+                        pass
+            git["repos"] = {**mapped, repo: stored}
+    elif isinstance(repos, dict):
+        git["repos"] = {**repos, repo: stored}
     else:
         kept = [g for g in repos if not (isinstance(g, str)
                                          and parse_grant(g, "a grant")[2] == repo)] \
             if isinstance(repos, list) else []
-        git["repos"] = [*kept, grant]
+        git["repos"] = [*kept, stored]
     fm["git-gate"] = git
     if extends:
         raw = fm.get("extends")
