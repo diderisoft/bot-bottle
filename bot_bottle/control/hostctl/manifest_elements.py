@@ -52,6 +52,8 @@ def _chain_files(names: "tuple[str, ...] | list[str]",
 
 
 def _route_detail(route: dict[str, Any]) -> str:
+    if route.get("blocked") is True:
+        return "blocked"
     inspect = route.get("inspect")
     if inspect is False:
         return "not inspected"

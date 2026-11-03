@@ -294,6 +294,12 @@ class TestMergingRoutes(unittest.TestCase):
         out = with_routes(fm, self.route('routes:\n  - host: "h"\n'))
         self.assertNotIn("matches", out["egress"]["routes"][0]["inspect"])  # type: ignore[index]
 
+    def test_allowing_a_blocked_host_unblocks_it(self) -> None:
+        from bot_bottle.approvals import with_routes  # pylint: disable=import-outside-toplevel
+        fm: dict[str, object] = {"egress": {"routes": [{"host": "h", "blocked": True}]}}
+        out = with_routes(fm, self.route('routes:\n  - host: "h"\n'))
+        self.assertNotIn("blocked", out["egress"]["routes"][0])  # type: ignore[index]
+
 
 if __name__ == "__main__":
     unittest.main()

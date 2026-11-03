@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 
 from .bottle import ManifestAudit, ManifestBottle
-from .egress import ManifestEgressConfig, validate_egress_routes
+from .egress import ManifestEgressConfig, overlay_egress, validate_egress_routes
 from .forges import (
     ManifestForge, credentials_raw, expand_grants, forges_raw, merge_named, resolve_forge, strip_chain_keys,
 )
@@ -39,7 +39,7 @@ def merge_bottles_runtime(bottles: "list[ManifestBottle]") -> "ManifestBottle":
     - env: dict merge, later wins
     - git_user: per field, later wins when non-empty
     - repos: union by name, later wins
-    - egress routes: concatenate
+    - egress routes: per host, later wins; a later block drops the host
     - supervise, nested_containers, preserve_container: later replaces, but
       only when it declared the field (so an explicit `false` overrides)
     """
@@ -70,8 +70,7 @@ def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle
         for n in merged_repos_names
     )
 
-    merged_routes = base.egress.routes + override.egress.routes
-    merged_egress = ManifestEgressConfig(routes=merged_routes, Log=override.egress.Log)
+    merged_egress = overlay_egress(base.egress, override.egress, override.egress.Log)
 
     return ManifestBottle(
         env=merged_env,
@@ -269,11 +268,8 @@ def _fold_two_bottles(
     else:
         merged_git = ()
 
-    # Routes concatenate; scalars are last-wins.
-    merged_egress = ManifestEgressConfig(
-        routes=earlier.egress.routes + later.egress.routes,
-        Log=later.egress.Log,
-    )
+    # Routes: per host, later wins; scalars are last-wins.
+    merged_egress = overlay_egress(earlier.egress, later.egress, later.egress.Log)
 
     return ManifestBottle(
         env=merged_env,
@@ -323,8 +319,8 @@ def _merge_bottles(
     else:
         merged_git = parent.git
 
-    # Routes: omitted inherits, else parent and child concatenate. Other egress
-    # fields overlay when present.
+    # Routes: omitted inherits, else the child's replace the parent's per host
+    # and its blocks drop them. Other egress fields overlay when present.
     merged_egress = (
         _merge_egress(parent.egress, child.egress, child_raw)
         if "egress" in child_raw
@@ -397,6 +393,5 @@ def _merge_egress(
     child_raw: dict[str, object],
 ) -> ManifestEgressConfig:
     child_egress_raw = as_json_object(child_raw.get("egress"), "child egress")
-    routes = parent.routes + child.routes
     log = child.Log if "log" in child_egress_raw else parent.Log
-    return ManifestEgressConfig(routes=routes, Log=log)
+    return overlay_egress(parent, child, log)

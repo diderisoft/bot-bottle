@@ -316,17 +316,26 @@ class TestExtendsEgressMerge(unittest.TestCase):
         )
         self.assertEqual(1, child.Log)
 
-    def test_duplicate_host_across_parent_and_child_dies(self):
-        msg = _error_message(
-            _build,
+    def test_child_route_replaces_parent_route_for_same_host(self):
+        # Later wins per host, case-insensitively (ADR 0015).
+        m = _build(
             base={"egress": {"routes": [{"host": "a.example.com"}]}},
             child={
                 "extends": "base",
-                "egress": {"routes": [{"host": "A.EXAMPLE.COM"}]},
+                "egress": {"routes": [{"host": "A.EXAMPLE.COM", "inspect": False}]},
             },
         )
+        routes = m.bottles["child"].egress.routes
+        self.assertEqual(["A.EXAMPLE.COM"], [r.Host for r in routes])
+        self.assertFalse(routes[0].Inspect)
+
+    def test_duplicate_host_within_one_bottle_dies(self):
+        msg = _error_message(
+            _build,
+            dev={"egress": {"routes": [{"host": "a.example.com"},
+                                       {"host": "A.EXAMPLE.COM"}]}},
+        )
         self.assertIn("duplicate host", msg)
-        self.assertIn("A.EXAMPLE.COM", msg)
 
 
 class TestExtendsGitUserOverlay(unittest.TestCase):

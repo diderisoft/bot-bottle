@@ -142,8 +142,9 @@ def bottle_document(bottle: ManifestBottle) -> dict[str, object]:
     if git:
         doc["git-gate"] = git
     egress: dict[str, object] = {}
-    if bottle.egress.routes:
-        egress["routes"] = [route_document(r) for r in bottle.egress.routes]
+    if bottle.egress.routes or bottle.egress.Blocked:
+        egress["routes"] = [route_document(r) for r in bottle.egress.routes] + [
+            {"host": h, "blocked": True} for h in bottle.egress.Blocked]
     if bottle.egress.Log:
         egress["log"] = bottle.egress.Log
     if egress:

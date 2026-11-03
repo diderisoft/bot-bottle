@@ -53,8 +53,7 @@ def proposal_to_frontmatter(proposal: Proposal) -> dict[str, Any]:
 
     For reuse/stack options this is an additions-only dict with no `extends`:
     it's stacked after `proposal.bottles` exactly as a launch stacks bottles
-    (`stack_names`). An `extends` list would resolve differently, failing on a
-    host two stacked bottles both route. For new-extending / new it includes
+    (`stack_names`). For new-extending / new it includes
     the `extends` from `new_bottle`.
     """
     fm: dict[str, Any] = {}

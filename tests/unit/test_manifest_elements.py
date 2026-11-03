@@ -213,5 +213,14 @@ class TestTransferRequest(unittest.TestCase):
                           asyncio.run(remote_actions.manifest_transfer(ask, {"a1": "s1"}))["error"])
 
 
+
+class TestRouteDetail(unittest.TestCase):
+    def test_a_block_reads_as_blocked(self) -> None:
+        # pylint: disable-next=protected-access
+        rows = manifest_elements._file_elements(
+            {"egress": {"routes": [{"host": "a.example.com", "blocked": True}]}})
+        self.assertEqual([("egress:a.example.com", "a.example.com", "blocked",
+                           {"host": "a.example.com", "blocked": True})], rows)
+
 if __name__ == "__main__":
     unittest.main()

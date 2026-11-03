@@ -447,16 +447,58 @@ def _parse_inspect_block(
 LOG_LEVELS = frozenset({0, 1, 2})
 
 
+def _blocked_host(label: str, d: dict[str, object]) -> str:
+    """The host a `{host: x, blocked: true}` entry blocks."""
+    if d.get("blocked") is not True:
+        raise ManifestError(f"{label} blocked must be true; omit it to route the host")
+    extra = sorted(k for k in d if k not in ("host", "blocked"))
+    if extra:
+        raise ManifestError(f"{label} is blocked, so it takes only 'host' (got {extra[0]!r})")
+    host = d.get("host")
+    if not isinstance(host, str) or not host:
+        raise ManifestError(f"{label} missing required string field 'host'")
+    return host
+
+
+def overlay_egress(earlier: "ManifestEgressConfig", later: "ManifestEgressConfig",
+                   log: int) -> "ManifestEgressConfig":
+    """`later` over `earlier`, per host (case-insensitive): a later route
+    replaces the earlier one in its place, a later block drops it, and new
+    hosts follow in `later`'s order. A block stays in the result so a bottle
+    stacked after this one still sees it, unless `later` routes that host."""
+    replace = {r.Host.lower(): r for r in later.routes}
+    blocked = {h.lower() for h in later.Blocked}
+    used: set[str] = set()
+    routes: list[ManifestEgressRoute] = []
+    for r in earlier.routes:
+        key = r.Host.lower()
+        if key in blocked:
+            continue
+        if key in replace:
+            used.add(key)
+            routes.append(replace[key])
+        else:
+            routes.append(r)
+    routes += [r for r in later.routes if r.Host.lower() not in used]
+    kept = tuple(h for h in earlier.Blocked
+                 if h.lower() not in replace and h.lower() not in blocked)
+    return ManifestEgressConfig(routes=tuple(routes), Log=log, Blocked=kept + later.Blocked)
+
+
 @dataclass(frozen=True)
 class ManifestEgressConfig:
     routes: tuple[ManifestEgressRoute, ...] = ()
     Log: int = 0
+    # Hosts a `{host, blocked: true}` entry takes away from inherited routes.
+    # Never routes: they only remove a parent's route in the merge.
+    Blocked: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, bottle_name: str, raw: object) -> "ManifestEgressConfig":
         d = as_json_object(raw, f"bottle '{bottle_name}' egress")
         routes_raw = d.get("routes")
         routes: tuple[ManifestEgressRoute, ...] = ()
+        blocked: list[str] = []
         if routes_raw is not None:
             if not isinstance(routes_raw, list):
                 raise ManifestError(
@@ -464,11 +506,17 @@ class ManifestEgressConfig:
                     f"(was {type(routes_raw).__name__})"
                 )
             routes_list = cast(list[object], routes_raw)
-            routes = tuple(
-                ManifestEgressRoute.from_dict(bottle_name, i, entry)
-                for i, entry in enumerate(routes_list)
-            )
-            validate_egress_routes(bottle_name, routes)
+            parsed: list[ManifestEgressRoute] = []
+            for i, entry in enumerate(routes_list):
+                if isinstance(entry, dict) and "blocked" in entry:
+                    label = f"bottle '{bottle_name}' egress.routes[{i}]"
+                    blocked.append(_blocked_host(label, cast(dict[str, object], entry)))
+                else:
+                    parsed.append(ManifestEgressRoute.from_dict(bottle_name, i, entry))
+            routes = tuple(parsed)
+            # A host routed and blocked in one bottle is a duplicate too.
+            validate_egress_routes(bottle_name, routes + tuple(
+                ManifestEgressRoute(Host=h) for h in blocked))
         log_raw = d.get("log", 0)
         if isinstance(log_raw, bool) or not isinstance(log_raw, int) \
                 or log_raw not in LOG_LEVELS:
@@ -481,4 +529,4 @@ class ManifestEgressConfig:
                     f"bottle '{bottle_name}' egress has unknown key {k!r}; "
                     f"accepted keys are 'routes', 'log'"
                 )
-        return cls(routes=routes, Log=log_raw)
+        return cls(routes=routes, Log=log_raw, Blocked=tuple(blocked))

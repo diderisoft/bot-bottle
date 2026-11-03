@@ -74,6 +74,20 @@ registries. The agent picks its own harness, so one bottle serves Claude,
 Codex and pi agents alike. What `extends` resolves to is the sealed bottle
 ([glossary](glossary.md#sealed-bottle)).
 
+How the fields combine, later bottle winning (a child over its parents, a
+later parent over an earlier one, a later `--bottle` over an earlier one):
+
+- `env`: per variable.
+- `git-gate.repos`: per repo name, field by field; `repos: {}` clears them.
+- `egress.routes`: per host, case-insensitive. A later route for a host
+  replaces the earlier one in its place; new hosts follow in order. To take
+  an inherited host away, list it as `- {host: api.example.com, blocked: true}`:
+  egress is default-deny, so a blocked host is unreachable. `blocked` takes
+  only `host`, and must be `true`. Blocking a host nothing routes is allowed
+  and does nothing, and a later bottle that routes the host unblocks it. One
+  bottle can't name a host twice, routed or blocked. See
+  [ADR 0015](../decisions/0015-egress-later-wins-per-host.md).
+
 The `git-gate` block, including forges and one-line repo grants, is in
 [git-gate.md](git-gate.md#manifest). `preserve_container` is in
 [backends.md](backends.md#keeping-the-guest), and `nested_containers` in
@@ -195,7 +209,8 @@ applies a route is in [gateway.md](gateway.md#egress-proxy).
 
 | Field | Required | Description |
 |---|---|---|
-| `host` | yes | Hostname to allowlist. One entry per host. |
+| `host` | yes | Hostname to allowlist. One entry per host in a bottle; a later bottle's entry for the host replaces an inherited one ([composing](#bottles)). |
+| `blocked` | no | `true` takes an inherited `host` away; the entry then has only `host` and `blocked`. |
 | `role` | no | Reserved for future use. The key is recognised but any value is currently rejected at load. Provider auth routes (e.g. Claude's `api.anthropic.com`) are injected automatically from the agent's `agent_provider`, not via `role`; a bottle route for such a host fails the launch. |
 | `inspect` | no | `false` passes the TLS tunnel through untouched: no DLP, auth injection or path matching. Otherwise a mapping of the fields below. |
 | `inspect.auth.scheme` | when `auth` present | `Bearer` or `token`. Injected by the proxy; the agent never sees the value. |
