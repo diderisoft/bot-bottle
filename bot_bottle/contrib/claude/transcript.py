@@ -141,11 +141,23 @@ def _unknown(raw: dict[str, Any]) -> list[Part]:
     return [system(str(raw.get("type")), meta=True)]
 
 
+def _attachment(raw: dict[str, Any]) -> list[Part]:
+    """An `attachment` line: context Claude adds to the turn, meta, except a
+    `queued_command` prompt (what the person typed while Claude was busy,
+    taken up when its turn allowed), which is their turn like any other."""
+    att = raw.get("attachment") if isinstance(raw.get("attachment"), dict) else {}
+    assert isinstance(att, dict)
+    prompt = att.get("prompt")
+    if (att.get("type") == "queued_command" and att.get("commandMode", "prompt") == "prompt"
+            and isinstance(prompt, str) and prompt.strip()):
+        return [Part("user", prompt)]
+    return [system(f"attachment: {att.get('type', '')}", meta=True)]
+
+
 _OTHER: dict[str, Callable[[dict[str, Any]], list[Part]]] = {
     "system": _system_line,
     "summary": lambda r: [system(str(r.get("summary", "")))],
-    "attachment": lambda r: [system(f"attachment: {(r.get('attachment') or {}).get('type', '')}",
-                                    meta=True)],
+    "attachment": _attachment,
     "ai-title": lambda r: [system(f"title: {r.get('aiTitle', '')}", meta=True)],
     "file-history-snapshot": lambda r: [system("file history snapshot", meta=True)],
     "mode": lambda r: [system(f"mode: {r.get('mode', '')}", meta=True)],
@@ -233,4 +245,6 @@ def working(lines: Iterable[str]) -> bool | None:
             text = _prompt_text(raw)
             if text is not None:
                 state = not text.lstrip().startswith("[Request interrupted")
+        elif kind == "attachment" and _attachment(raw)[0].kind == "user":
+            state = True  # a queued prompt taken up: Claude is on it
     return state
