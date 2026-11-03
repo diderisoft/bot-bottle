@@ -551,6 +551,30 @@ async def manifest_save(msg: Mapping[str, Any], running: Mapping[str, str],
     return reply
 
 
+async def egress_allow(msg: Mapping[str, Any], running: Mapping[str, str],
+                       _bottles: Any = None) -> dict[str, Any]:
+    """The operator's one-tap allow of a host a running agent was blocked from
+    (`manifest_view.allow_in_run`), and with `keep`, into its bottle too."""
+    # pylint: disable-next=import-outside-toplevel
+    from .manifest_view import ManifestViewError, allow_in_run
+    agent_id = str(msg.get("agent_id", ""))
+    reply: dict[str, Any] = {"type": "operator_egress_allowed", "request_id": msg.get("request_id"),
+                             "agent_id": agent_id}
+    bottle = running.get(agent_id)
+    if not bottle:
+        reply["error"] = "that agent isn't running on this host"
+        return reply
+    try:
+        reply.update(await asyncio.to_thread(allow_in_run, bottle, _text(msg, "host"),
+                                             keep=msg.get("keep") is True))
+    except ManifestViewError as e:
+        reply["error"] = str(e)
+    except Exception as e:  # pylint: disable=broad-exception-caught  # reported, not raised
+        log.warn(f"remote: allowing egress for {bottle} failed: {type(e).__name__}: {e}")
+        reply["error"] = "allowing the host failed; see the host controller's log"
+    return reply
+
+
 async def manifest_transfer(msg: Mapping[str, Any], running: Mapping[str, str],
                             bottles: Any = None) -> dict[str, Any]:
     """Copy or move picked elements of a running agent's manifest into another
@@ -724,7 +748,7 @@ QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest,
            "library": library, "resolve": resolve,
            "list_secrets": list_secrets, "set_secret": set_secret,
            "workspace_file": workspace_file, "put_workspace_file": put_workspace_file,
-           "rename": rename, **uploads.QUERIES}
+           "rename": rename, "operator_egress_allow": egress_allow, **uploads.QUERIES}
 
 # Console answers to a card that carry more than allow/deny, by message type.
 ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer}
@@ -733,6 +757,7 @@ HOST_REQUESTS = {"forge_connect": forge_connect, "github_authorize_start": githu
                  "github_status": github_status, **SUGGEST_REQUESTS}
 
 __all__ = ["ANSWERS", "HOST_REQUESTS", "QUERIES", "add_repo_answer", "bottle_chain",
+           "egress_allow",
            "bottle_write", "card", "card_changed", "forge_attention", "forge_connect",
            "forge_connect_answer", "github_authorize_start", "github_status", "library",
            "list_secrets", "manifest", "manifest_save", "manifest_transfer",

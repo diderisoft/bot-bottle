@@ -416,7 +416,51 @@ def remove_from_run(identity: str, policy: str | None, keys: list[str], *,
     return {"removed": removed}
 
 
-_BOTTLE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_HOST = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+                   r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
+
+
+def allow_in_run(identity: str, host: str, *, keep: bool = False) -> dict[str, Any]:
+    """Let the running bottle reach `host`, which it was blocked from: the
+    operator's own allow from the console, with no request from the agent. The
+    route is the default one (read-only unless it injects a credential); with
+    `keep`, it goes into the bottle file the agent's approvals are kept in too.
+    Raises ManifestViewError."""
+    # pylint: disable=import-outside-toplevel
+    from ...approvals import _add_routes, keep_target
+    from ...backend.adoption import read as read_adoption
+    from ...egress.service import egress_render_routes
+    from ...gateway.egress.schema import load_config
+    from ...gateway.egress.types import Route
+    from ..client import OrchestratorClient, env_orchestrator_url
+    host = host.strip().lower()
+    if not _HOST.match(host):
+        raise ManifestViewError(f"{host!r} isn't a host name")
+    adopted = read_adoption(identity)
+    policy = _live_policy(identity)
+    if adopted is None or policy is None:
+        raise ManifestViewError("can't reach the running bottle")
+    live = load_config(policy)
+    if live.deny_reason:
+        raise ManifestViewError("this bottle's routes can't be changed from here")
+    if any(r.host.lower() == host for r in live.routes):
+        raise ManifestViewError(f"{host} already has a route; change it in the Bottle tab")
+    text = egress_render_routes((*live.routes, Route(host=host)),  # type: ignore[arg-type]
+                                log=live.log, audit_delivery=live.audit_delivery,
+                                firehose=live.firehose)
+    OrchestratorClient(env_orchestrator_url()).set_policy(adopted.registry_id, text)
+    reply: dict[str, Any] = {"allowed": host}
+    if keep:
+        target = keep_target(identity)
+        if target is None:
+            raise ManifestViewError(f"allowed {host} for this run, but there's no bottle "
+                                    "to keep it in")
+        _add_routes(target.path, [Route(host=host)])
+        reply["kept"] = target.label()
+    return reply
+
+
+_BOTTLE_NAME =re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 def save_as_bottle(identity: str, digest: str, name: str, *,
@@ -513,7 +557,8 @@ def agent_manifest(identity: str) -> dict[str, Any]:
     }
 
 
-__all__ = ["ManifestViewError", "agent_manifest", "bottle_targets", "bottle_versions",
+__all__ = ["ManifestViewError", "agent_manifest", "allow_in_run", "bottle_targets",
+           "bottle_versions",
            "bottle_with_changes",
            "current_manifest", "remove_changes", "remove_from_run", "running_bottle",
            "save_as_bottle", "save_manifest"]
