@@ -12,6 +12,7 @@ from typing import Any
 
 from ...lib import log
 from . import uploads
+from .suggest_link import REQUESTS as SUGGEST_REQUESTS
 
 
 async def refresh_credentials(msg: Mapping[str, Any], running: Mapping[str, str],
@@ -729,7 +730,7 @@ QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest,
 ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer}
 # Requests about this host rather than one agent.
 HOST_REQUESTS = {"forge_connect": forge_connect, "github_authorize_start": github_authorize_start,
-                 "github_status": github_status}
+                 "github_status": github_status, **SUGGEST_REQUESTS}
 
 __all__ = ["ANSWERS", "HOST_REQUESTS", "QUERIES", "add_repo_answer", "bottle_chain",
            "bottle_write", "card", "card_changed", "forge_attention", "forge_connect",

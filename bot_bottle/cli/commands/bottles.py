@@ -145,47 +145,20 @@ def _write_suggested_bottle(
     """Write the proposal as a new host bottle named `name`."""
     del dirs, cwd  # validated already; it's written to the host's bottles
     # pylint: disable=import-outside-toplevel
-    from ...contract.yaml_subset import serialize_yaml_subset
-    from ...manifest.schema import is_valid_entity_name
-    from ...manifest.versions import record_or_warn
-    from ...paths import bot_bottle_root
-    from ...suggest.validate import is_stacked, proposal_to_frontmatter
+    from ...suggest.validate import is_stacked
+    from ...suggest.write import SuggestWriteError, write_bottle
 
-    if not is_valid_entity_name(name):
-        sys.stderr.write(
-            f"{PROG} bottles suggest --write: {name!r} is not a valid bottle name "
-            f"(lowercase letters, digits, hyphens; must start with a letter)\n"
-        )
+    try:
+        path = write_bottle(name, proposal)
+    except SuggestWriteError as e:
+        sys.stderr.write(f"{PROG} bottles suggest --write: {e}\n")
         return 2
-
-    root = bot_bottle_root()
-    path = root / "bottles" / f"{name}.md"
-    if path.exists():
-        sys.stderr.write(f"{PROG} bottles suggest --write: {path} already exists\n")
-        return 2
-
-    fm = proposal_to_frontmatter(proposal)
-    about_lines: list[str] = []
-    if proposal.new_bottle and proposal.new_bottle.about:
-        about_lines = [proposal.new_bottle.about]
-    else:
-        about_lines = [f"Bottle for: {', '.join(proposal.bottles) or 'basic'}"]
-    if proposal.notes:
-        about_lines.append("")
-        about_lines.extend(f"Note: {n}" for n in proposal.notes)
-
-    body = "\n".join(about_lines) + "\n"
-    text = f"---\n{serialize_yaml_subset(fm)}---\n\n{body}"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
-    record_or_warn(f"suggest: write bottles/{name}", root=root)
     print(f"wrote {path}", file=sys.stderr)
     if is_stacked(proposal) and proposal.bottles:
         # It holds only the additions: launch it stacked on the rest.
         flags = " ".join(f"--bottle {b}" for b in [*proposal.bottles, name])
         print(f"launch with: {PROG} start <agent> {flags}", file=sys.stderr)
     return 0
-
 
 
 __all__ = ["cmd_bottles"]
