@@ -98,8 +98,10 @@ def ensure_issue_label(event: dict[str, Any], api: GiteaApi) -> bool:
     triage = next((label for label in labels if label["name"] == TRIAGE_LABEL), None)
     if triage is None:
         raise RuntimeError(f"repository label {TRIAGE_LABEL!r} does not exist")
-    # GitHub's labels endpoint takes names; Gitea's takes integer IDs.
-    label_ref: str | int = triage["name"] if os.environ.get("GITHUB_ACTIONS") else triage["id"]
+    # GitHub's labels endpoint takes names; Gitea's takes integer IDs. Gitea's
+    # runner sets GITHUB_ACTIONS too (for compatibility), so check for Gitea first.
+    on_github = bool(os.environ.get("GITHUB_ACTIONS")) and not os.environ.get("GITEA_ACTIONS")
+    label_ref: str | int = triage["name"] if on_github else triage["id"]
     api.request("POST", f"/issues/{issue['number']}/labels", {"labels": [label_ref]})
     return True
 
