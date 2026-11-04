@@ -113,11 +113,11 @@ class Setup:
 
     def _write_bottle_architect(self) -> None:
         """Write the bottle-architect agent starter when at least one harness is
-        logged in.  The manifest uses `forward_host_credentials` so it picks up
-        whichever harness the host's `claude` or `codex` CLI is logged in as."""
+        logged in. The suggester reads this file for its prompt, harness and
+        model; it runs claude with no tools."""
         # pylint: disable-next=import-outside-toplevel
-        from ...suggest.architect import ARCHITECT_MANIFEST
-        self.write("agents", "bottle-architect", ARCHITECT_MANIFEST)
+        from ...suggest.starter import ARCHITECT_AGENT, ARCHITECT_STARTER
+        self.write("agents", ARCHITECT_AGENT, ARCHITECT_STARTER)
 
     def pi_detection(  # pylint: disable=too-many-return-statements  # one per outcome
             self, detection: HostDetection) -> HostDetection | None:

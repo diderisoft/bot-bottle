@@ -60,7 +60,7 @@ class TestSuggestJobs(unittest.TestCase):
         self.assertTrue(s["writes"])
 
     def test_a_failed_suggestion_says_so_without_details(self) -> None:
-        def boom(task: str, cwd: Path) -> Proposal:
+        def boom(task: str, cwd: Path | None) -> Proposal:
             raise RuntimeError("secret detail")
         st = _wait(suggest_link.start("t", suggest=boom))
         self.assertEqual("error", st["state"])
@@ -72,7 +72,7 @@ class TestSuggestJobs(unittest.TestCase):
                 suggest_link.start(bad, suggest=lambda t, c: _proposal())
         hold = __import__("threading").Event()
 
-        def slow(task: str, cwd: Path) -> Proposal:
+        def slow(task: str, cwd: Path | None) -> Proposal:
             del task, cwd
             hold.wait(5)
             return _proposal()
@@ -176,6 +176,51 @@ class TestLinkRequests(unittest.TestCase):
                              (acc["type"], acc["bottles"]))
         refused = asyncio.run(suggest_link.bottle_suggest({"request_id": "r4", "task": ""}))
         self.assertIn("error", refused)
+
+    def _started_with(self, msg: dict[str, Any]) -> tuple[dict[str, Any], list[object]]:
+        seen: list[object] = []
+
+        def fake(task: str, cwd: Path | None) -> Proposal:
+            del task
+            seen.append(cwd)
+            return _proposal()
+
+        with mock.patch.object(suggest_link, "_suggest", side_effect=fake):
+            reply = asyncio.run(suggest_link.bottle_suggest({"request_id": "r", **msg}))
+            if "job" in reply:
+                _wait(str(reply["job"]))
+        return reply, seen
+
+    def test_the_project_directory_is_passed_through(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            project = Path(home) / "project"
+            project.mkdir()
+            with mock.patch.object(suggest_link.Path, "home", return_value=Path(home)):
+                reply, seen = self._started_with({"task": "t", "cwd": str(project)})
+        self.assertEqual("running", reply["state"])
+        self.assertEqual([project.resolve()], seen)
+
+    def test_without_one_the_suggester_gets_none_not_home(self) -> None:
+        _, seen = self._started_with({"task": "t"})
+        self.assertEqual([None], seen)
+
+    def test_a_bad_project_directory_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            outside = tempfile.mkdtemp()
+            self.addCleanup(Path(outside).rmdir)
+            with mock.patch.object(suggest_link.Path, "home", return_value=Path(home)):
+                for cwd, why in (("relative/dir", "absolute"), (home, "under your home"),
+                                 (outside, "under your home"),
+                                 (str(Path(home) / "gone"), "isn't a directory"), (7, "absolute")):
+                    with self.subTest(cwd=cwd):
+                        reply, seen = self._started_with({"task": "t", "cwd": cwd})
+                        self.assertIn(why, reply.get("error", ""))
+                        self.assertEqual([], seen)
+
+    def test_the_summary_says_which_path_answered(self) -> None:
+        p = _proposal()
+        p.source = "rules"
+        self.assertEqual("rules", suggest_link.summary(p)["source"])
 
 
 if __name__ == "__main__":

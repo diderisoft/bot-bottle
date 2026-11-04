@@ -184,9 +184,9 @@ version. See
 
 `bot-bottle bottles suggest "<task>"` proposes the bottle a task needs without
 writing anything — see [bottles-suggest.md](bottles-suggest.md) for the full
-reference.  `--write NAME` saves the proposal as a new host bottle, and
-`--architect` uses the `bottle-architect` agent (your own harness, no sandbox)
-instead of the default rules path.
+reference. It asks the `bottle-architect` agent (your own harness, run with no
+tools), falling back to the rules path; `--rules` uses the rules path only, and
+`--write NAME` saves the proposal as a new host bottle.
 
 ## Versions
 

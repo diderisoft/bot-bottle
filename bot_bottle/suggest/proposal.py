@@ -105,7 +105,9 @@ class Proposal:
     options new-extending and new — the caller writes the file.  `additions`
     are elements beyond what the stacked bottles already provide.  `similar`
     are existing bottles that nearly fit and might be used instead.  `notes`
-    are free text for caveats the typed fields can't express.
+    are free text for caveats the typed fields can't express. `source` is
+    the path that produced it, `architect` or `rules` (set by
+    `suggest.flow`, never by the model).
     """
 
     option: str
@@ -114,6 +116,7 @@ class Proposal:
     additions: ProposalAdditions
     similar: list[ProposalSimilar]
     notes: list[str]
+    source: str = ""
 
     # --- serialisation --------------------------------------------------
 
@@ -141,6 +144,8 @@ class Proposal:
                         for s in self.similar],
             "notes": list(self.notes),
         }
+        if self.source:
+            out["source"] = self.source
         return out
 
     def to_json(self, *, indent: int = 2) -> str:

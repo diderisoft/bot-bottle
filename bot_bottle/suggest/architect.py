@@ -1,77 +1,103 @@
-"""bottle-architect: run the user's own harness in print mode with no tools
-to produce a typed proposal JSON (PRD 0117, chunk 2).
+"""bottle-architect: the `bottle-architect` agent, run on the host with no
+tools, produces a typed proposal (PRD 0117).
 
-Print mode (no interactive session, no sandbox) means the harness CLI is
-run directly on the host with its own login.  The output is a JSON object
-matching the Proposal schema.  Invalid JSON or a schema error falls back to
-the rules path.
+The agent is the file `setup` writes, `~/.bot-bottle/agents/bottle-architect.md`:
+its body is the system prompt, `agent_provider.harness` picks the harness and
+`model:` the model. Only the host's agent is read; a project can't replace it.
 
-Only claude for now: `claude --print --tools ""` runs the model with no
-tools, no MCP servers and no settings files (so no hooks), from an empty
-working directory, so it can read nothing and do nothing but answer. Codex
-waits: its non-interactive mode (`codex exec`) is an agent with a shell,
-which mustn't run on the host. When claude isn't there or fails, the rules
-path is used, and the proposal says so.
+It runs as a print-mode call with no tools, no MCP servers and no settings
+files (so no hooks), from an empty working directory and with a timeout, so
+it can read nothing and do nothing but answer; the answer is parsed and then
+validated against the host's bottles. A harness that can't run that way is
+refused rather than run with tools. Only claude can, for now: `codex exec` is
+an agent with a shell and other tools that can't all be turned off, and pi
+has no verified tool-less mode.
 
 Input to the model: the task, the host's bottle library (names, about text,
 extends, elements), project metadata (origin URL, the project bottle's name,
 and lockfile/manifest *file names* — never their contents), connected forges,
-and secret names.  The model never sees secret values or file contents.
+and secret names. The model never sees secret values or file contents.
+
+Any reason the architect can't answer raises `ArchitectError`; the caller
+(`suggest.flow`) falls back to the rules path and says why.
 """
 
 from __future__ import annotations
 
 import json
-import os
+import re
 import shutil
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ..paths import bot_bottle_root
 from .proposal import Proposal
-from .rules import rules_suggest
-from .validate import validate_proposal
+from .starter import ARCHITECT_AGENT
 
-# The agent manifest template written by `setup`.  Kept here so `setup` can
-# import and write it without importing the whole suggest package at startup.
-ARCHITECT_MANIFEST = """\
----
-# bottle-architect: suggest a bottle for a task (PRD 0117).
-# Written by bot-bottle setup.  Edit the prompt to tune the output.
-agent_provider:
-  harness: claude
-  forward_host_credentials: true
----
+TIMEOUT_SECONDS = 120
 
-You are bottle-architect, a tool that proposes a bot-bottle bottle for a task.
-Your output must be a single JSON object matching this schema exactly — no
-prose before or after it:
+# A model name goes on the harness's command line; keep it to a plain id.
+_MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@-]{0,99}")
 
-{
-  "option": "<reuse|stack|stack+additions|new-extending|new>",
-  "bottles": ["<existing-bottle-name>", ...],
-  "new_bottle": null | {"name": "...", "extends": "...", "about": "..."},
-  "additions": {
-    "egress":      [{"host": "...", "methods": ["GET","POST",...], "why": "..."}],
-    "repos":       [{"grant": "<forge>/<owner>/<repo>:write", "why": "..."}],
-    "env":         [{"name": "ENV_VAR_NAME", "why": "..."}],
-    "credentials": [{"name": "SECRET_NAME", "route": "api.example.com", "why": "..."}]
-  },
-  "similar": [{"bottle": "...", "covers": 0.9}],
-  "notes": ["..."]
+# Why each harness that can't run with no tools is refused.
+_REFUSED = {
+    "codex": ("`codex exec` is an agent with a shell and other tools (apply_patch, "
+              "web search, browser and computer use) that can't all be turned off, "
+              "so it would run with tools on the host"),
+    "pi": "pi has no verified way to run with no tools on the host",
 }
 
-Rules:
-- Prefer reuse > stack > stack+additions > new-extending > new.
-- Bias toward too little access; leave out anything uncertain.
-- Never propose inspect:false, never include secret values.
-- Grants only on connected forges listed in the input.
-- Credentials name a secret from the secret names list and the egress route
-  they are injected on (the route must also be in additions.egress).
-- env names only; the value comes from the secrets file at launch.
-"""
+
+class ArchitectError(Exception):
+    """Why bottle-architect didn't answer; the rules path is used instead."""
+
+
+@dataclass(frozen=True)
+class Architect:
+    """The `bottle-architect` agent as the suggester runs it."""
+
+    path: Path
+    prompt: str
+    harness: str
+    model: str = ""
+
+
+def load_architect(host_root: Path) -> Architect:
+    """The host's `bottle-architect` agent. ArchitectError when it's missing,
+    doesn't load, or names a harness that can't run with no tools."""
+    # pylint: disable=import-outside-toplevel
+    from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
+    from ..manifest.agent import ManifestAgent
+    from ..manifest.schema import validate_agent_frontmatter_keys
+    from ..manifest.util import ManifestError
+
+    path = host_root / "agents" / f"{ARCHITECT_AGENT}.md"
+    try:
+        fm, body = parse_frontmatter(path.read_text(encoding="utf-8"))
+        validate_agent_frontmatter_keys(path, fm.keys())
+        raw: dict[str, object] = {"prompt": body.strip()}
+        if "agent_provider" in fm:
+            raw["agent_provider"] = fm["agent_provider"]
+        agent = ManifestAgent.from_dict(ARCHITECT_AGENT, raw)
+    except FileNotFoundError as e:
+        raise ArchitectError(f"there's no {ARCHITECT_AGENT} agent at {path}; "
+                             "`bot-bottle setup` writes it") from e
+    except (OSError, YamlSubsetError, ManifestError) as e:
+        raise ArchitectError(f"{path} doesn't load: {e}") from e
+    if not agent.prompt:
+        raise ArchitectError(f"{path} has no prompt")
+    model = fm.get("model", "")
+    if not isinstance(model, str) or (model and not _MODEL_RE.fullmatch(model)):
+        raise ArchitectError(f"{path}: model must be a plain model name")
+    harness = agent.agent_provider.harness
+    if harness not in _RUNNERS:
+        why = _REFUSED.get(harness, "only a harness that runs with no tools can be used")
+        raise ArchitectError(f"harness {harness!r} can't run as {ARCHITECT_AGENT}: "
+                             f"{why}. Set `agent_provider: claude` in {path}")
+    return Architect(path=path, prompt=agent.prompt, harness=harness, model=model)
 
 
 def _host_library(host_root: Path, dirs: list[tuple[Path, bool]]) -> list[dict[str, Any]]:
@@ -198,28 +224,38 @@ def _build_prompt(
     return "\n".join(sections)
 
 
-# Print mode with no built-in tools, no MCP servers and no settings files.
-CLAUDE_ARGS = ("--print", "--tools", "", "--strict-mcp-config", "--setting-sources", "")
+# Print mode with no built-in tools, no MCP servers, no settings files and
+# no saved session.
+CLAUDE_ARGS = ("--print", "--tools", "", "--strict-mcp-config", "--setting-sources", "",
+               "--no-session-persistence")
 
 
-def _try_claude(prompt: str, system_prompt: str) -> str | None:
+def _run_claude(architect: Architect, prompt: str) -> str:
     """Run `claude` with no tools, from an empty directory, the prompt on
-    stdin; its stdout, or None if it isn't installed or fails."""
+    stdin, and return its stdout. ArchitectError if it isn't installed,
+    fails or times out."""
     claude = shutil.which("claude")
     if not claude:
-        return None
+        raise ArchitectError("claude isn't installed on this host")
+    argv = [claude, *CLAUDE_ARGS, "--system-prompt", architect.prompt]
+    if architect.model:
+        argv += ["--model", architect.model]
     try:
         with tempfile.TemporaryDirectory(prefix="bottle-architect.") as empty:
-            result = subprocess.run(
-                [claude, *CLAUDE_ARGS, "--system-prompt", system_prompt],
-                input=prompt, capture_output=True, text=True, timeout=120,
-                check=False, cwd=empty,
-            )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    return None
+            result = subprocess.run(argv, input=prompt, capture_output=True, text=True,
+                                    timeout=TIMEOUT_SECONDS, check=False, cwd=empty)
+    except subprocess.TimeoutExpired as e:
+        raise ArchitectError(f"claude didn't answer within {TIMEOUT_SECONDS}s") from e
+    except OSError as e:
+        raise ArchitectError(f"claude didn't run: {e}") from e
+    if result.returncode != 0 or not result.stdout.strip():
+        raise ArchitectError(f"claude failed (exit {result.returncode}); "
+                             "is it logged in on this host?")
+    return result.stdout.strip()
+
+
+# The harnesses that can run with no tools, and how.
+_RUNNERS = {"claude": _run_claude}
 
 
 def _extract_json(text: str) -> str | None:
@@ -271,45 +307,41 @@ def _parse_and_repair(raw: str) -> Proposal | None:
 
 def architect_suggest(
     task: str,
-    cwd: Path | None = None,
+    cwd: Path | None,
     *,
     host_root: Path | None = None,
 ) -> Proposal:
-    """Run `bottle-architect` in print mode; fall back to rules if no harness is
-    logged in or the output can't be parsed and validated.
-
-    `cwd` defaults to the current directory.  `host_root` defaults to
-    `bot_bottle_root()`.
-    """
-    if cwd is None:
-        cwd = Path(os.getcwd())
+    """The host's `bottle-architect` agent's proposal for `task`, not yet
+    validated. `cwd` is the project directory, or None when there's none to
+    look at. ArchitectError when the architect can't answer."""
     if host_root is None:
         host_root = bot_bottle_root()
+    architect = load_architect(host_root)
 
     host_bottles = host_root / "bottles"
-    from ..manifest.loader import BUILTIN_BOTTLES_DIR
-    dirs: list[tuple[Path, bool]] = [
-        (host_bottles, False),
-        (cwd / ".bot-bottle" / "bottles", True),
-        (BUILTIN_BOTTLES_DIR, False),
-    ]
+    # pylint: disable-next=import-outside-toplevel
+    from ..manifest.loader import BUILTIN_BOTTLES_DIR, PROJECT_BOTTLE, bottle_ref
+    dirs: list[tuple[Path, bool]] = [(host_bottles, False)]
+    if cwd is not None:
+        dirs.append((cwd / ".bot-bottle" / "bottles", True))
+    dirs.append((BUILTIN_BOTTLES_DIR, False))
 
-    from ..manifest.loader import PROJECT_BOTTLE, bottle_ref
-    project_meta: dict[str, Any] = {
-        "origin": None,
-        "project_bottle": None,
-        "lockfiles": _lockfile_names(cwd),
-    }
-    try:
-        from ..onboarding import read_origin
-        origin = read_origin(cwd)
-        if origin:
-            project_meta["origin"] = f"https://{origin.host}/{origin.owner}/{origin.repo}"
-            project_meta["project_bottle"] = bottle_ref(PROJECT_BOTTLE, True)
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass
+    project_meta: dict[str, Any] = {"origin": None, "project_bottle": None, "lockfiles": []}
+    if cwd is None:
+        project_meta["note"] = "no project directory was given"
+    else:
+        project_meta["lockfiles"] = _lockfile_names(cwd)
+        try:
+            # pylint: disable-next=import-outside-toplevel
+            from ..onboarding import read_origin
+            origin = read_origin(cwd)
+            if origin:
+                project_meta["origin"] = f"https://{origin.host}/{origin.owner}/{origin.repo}"
+                project_meta["project_bottle"] = bottle_ref(PROJECT_BOTTLE, True)
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
 
-    library = []
+    library: list[dict[str, Any]] = []
     forges: list[dict[str, str]] = []
     secret_names: list[str] = []
     try:
@@ -320,23 +352,12 @@ def architect_suggest(
         pass
 
     prompt = _build_prompt(task, library, project_meta, forges, secret_names)
-    system_prompt = ARCHITECT_MANIFEST.split("---\n", 2)[-1].strip()
-
-    raw: str | None = _try_claude(prompt, system_prompt)
-    if raw is None:
-        proposal = rules_suggest(task, cwd, host_root=host_root)
-        proposal.notes.append("bottle-architect didn't run (claude isn't installed and "
-                              "logged in, or it failed); this is the rules path")
-        return proposal
-
+    raw = _RUNNERS[architect.harness](architect, prompt)
     proposal = _parse_and_repair(raw)
     if proposal is None:
-        proposal = rules_suggest(task, cwd, host_root=host_root)
-        proposal.notes.append("architect output could not be parsed; fell back to rules")
-        return proposal
-
-    validated, _notes = validate_proposal(proposal, dirs)
-    return validated
+        raise ArchitectError("its answer wasn't a proposal")
+    return proposal
 
 
-__all__ = ["ARCHITECT_MANIFEST", "architect_suggest"]
+__all__ = ["CLAUDE_ARGS", "TIMEOUT_SECONDS", "Architect", "ArchitectError",
+           "architect_suggest", "load_architect"]

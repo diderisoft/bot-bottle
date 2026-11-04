@@ -86,11 +86,29 @@ class TestBottlesSuggestCli(unittest.TestCase):
         # The rules path always adds a note.
         self.assertIn("note:", out)
 
-    def test_suggest_with_architect_flag_falls_back(self) -> None:
-        with mock.patch("bot_bottle.suggest.architect._try_claude", return_value=None):
-            code, out = self._run(["do something", "--architect"])
+    def test_the_default_is_the_architect(self) -> None:
+        from bot_bottle.suggest import flow  # pylint: disable=import-outside-toplevel
+        with mock.patch.object(flow, "architect_suggest",
+                               side_effect=flow.ArchitectError("no agent")) as arch:
+            code, out = self._run(["do something", "--json"])
         self.assertEqual(code, 0)
-        self.assertIn("option:", out)
+        arch.assert_called_once()
+        d = json.loads(out)
+        self.assertEqual("rules", d["source"])
+        self.assertTrue(any("bottle-architect didn't answer (no agent)" in n for n in d["notes"]))
+
+    def test_rules_flag_skips_the_architect(self) -> None:
+        from bot_bottle.suggest import flow  # pylint: disable=import-outside-toplevel
+        with mock.patch.object(flow, "architect_suggest") as arch:
+            code, out = self._run(["do something", "--rules"])
+        self.assertEqual(code, 0)
+        arch.assert_not_called()
+        self.assertIn("from:    rules", out)
+
+    def test_the_old_architect_flag_is_gone(self) -> None:
+        with mock.patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit) as cm:
+            bottles.cmd_bottles(["suggest", "do something", "--architect"])
+        self.assertEqual(2, cm.exception.code)
 
 
 if __name__ == "__main__":

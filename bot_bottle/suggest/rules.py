@@ -34,27 +34,25 @@ def rules_suggest(
 ) -> Proposal:
     """Apply the three-rule path and return a Proposal.
 
-    `cwd` is the project directory (defaults to the current directory).
-    `host_root` is `~/.bot-bottle` (defaults to `bot_bottle_root()`).
-    `task` doesn't affect the rules; it's taken so every path has one signature.
+    `cwd` is the project directory, or None when there's none to look at
+    (rules 1 and 2 then don't apply). `host_root` is `~/.bot-bottle`
+    (defaults to `bot_bottle_root()`). `task` doesn't affect the rules; it's
+    taken so every path has one signature.
     """
     del task
-    if cwd is None:
-        import os
-        cwd = Path(os.getcwd())
     if host_root is None:
         host_root = bot_bottle_root()
 
     host_bottles = host_root / "bottles"
-    cwd_bottles = cwd / ".bot-bottle" / "bottles"
-
-    dirs: list[tuple[Path, bool]] = [(host_bottles, False), (cwd_bottles, True)]
     from ..manifest.loader import BUILTIN_BOTTLES_DIR
+    dirs: list[tuple[Path, bool]] = [(host_bottles, False)]
+    if cwd is not None:
+        dirs.append((cwd / ".bot-bottle" / "bottles", True))
     dirs.append((BUILTIN_BOTTLES_DIR, False))
 
     # Rule 1: project bottle ./main if trusted.
     project_bottle = bottle_ref(PROJECT_BOTTLE, True)
-    if _is_trusted_project_bottle(project_bottle, dirs):
+    if cwd is not None and _is_trusted_project_bottle(project_bottle, dirs):
         return Proposal(
             option=OPTION_REUSE,
             bottles=[project_bottle],
@@ -65,7 +63,7 @@ def rules_suggest(
         )
 
     # Rule 2: write grant on origin when its forge is connected.
-    origin = read_origin(cwd)
+    origin = read_origin(cwd) if cwd is not None else None
     if origin is not None:
         forge = find_forge(origin, host_bottles)
         if forge is not None:
@@ -90,7 +88,7 @@ def rules_suggest(
         new_bottle=None,
         additions=ProposalAdditions(),
         similar=[],
-        notes=["rules path: no project bottle or connected forge found; using basic"],
+        notes=["rules path: no trusted project bottle or connected forge; using basic"],
     )
 
 

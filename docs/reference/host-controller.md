@@ -368,17 +368,22 @@ that isn't a git copy can't be snapshotted. Restoring is not built yet.
 ## Bottle suggestions for the console
 
 The console's launch page asks the host to propose a bottle for a task (PRD
-0117, design repo; `suggest_link.py`). `bottle_suggest` (`task`) ->
-`bottle_suggestion` (`job`, `state` `running`, or `error`) starts the same
-suggester as `bot-bottle bottles suggest --architect`: `bottle-architect`
-under the host's login, falling back to the rules path, validated against the
-host's bottles. It runs off the link, so the reply comes at once; at most four
-run at a time, and one still running after two minutes is reported failed.
+0117, design repo; `suggest_link.py`). `bottle_suggest` (`task`, optional
+`cwd`) -> `bottle_suggestion` (`job`, `state` `running`, or `error`) starts
+the same flow as `bot-bottle bottles suggest`: `bottle-architect` under the
+host's login, falling back to the rules path, validated against the host's
+bottles ([bottles-suggest.md](bottles-suggest.md)). `cwd` is a project
+directory on this host (an existing directory under the user's home, not the
+home itself); with it the proposal sees the project's bottle, origin and
+lockfiles, and without it the proposal says it had no project to look at. It
+runs off the link, so the reply comes at once; at most four run at a time, and
+one still running after 150 seconds is reported failed.
 `bottle_suggest_status` (`job`) -> `bottle_suggestion` follows it: `state`
 `running`, `done` with `proposal` (its `option`, the `bottles` it stacks, a
 `new_bottle` name, extends and about, whether it `writes` a bottle, and the
 `egress` hosts, `repos`, `env` names and `credentials` names and routes it
-adds — never a secret's value — plus `similar` and `notes`), or `error`.
+adds — never a secret's value — plus `similar`, `notes` and `source`,
+`architect` or `rules`), or `error`.
 `bottle_suggestion_accept` (`job`, optional `name`) ->
 `bottle_suggestion_accepted` (`bottles`, `written`, or `error`) writes the
 bottle the host proposed, if it makes one, into the host's bottles as a new

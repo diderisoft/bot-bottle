@@ -13,17 +13,21 @@ bot-bottle bottles suggest "<task>" [options]
 Options:
   --cwd DIR        project directory to read (default: current directory)
   --write NAME     save the proposal as a new host bottle named NAME
-  --architect      use bottle-architect instead of the rules path (see below)
+  --rules          use the rules path only: no model, the same answer every time
   --json           print raw proposal JSON to stdout
 ```
+
+The CLI and the console's launch page run the same flow (`suggest.flow`):
+`bottle-architect` first, the rules path when it can't answer.
 
 ### Example
 
 ```
-$ bot-bottle bottles suggest "deploy bot-bottle-console to Fly staging"
+$ bot-bottle bottles suggest --rules "deploy bot-bottle-console to Fly staging"
 option:  reuse
+from:    rules
 bottles: basic
-note:    rules path: no project bottle or connected forge found; using basic
+note:    rules path: no trusted project bottle or connected forge; using basic
 
 elements preview:
   egress   *.docker.io               any request  [basic]
@@ -34,11 +38,12 @@ elements preview:
 With a connected Gitea forge and a project `origin`:
 
 ```
-$ bot-bottle bottles suggest "push a release"
+$ bot-bottle bottles suggest --rules "push a release"
 option:  stack+additions
-bottles: gitea.dideric.is, basic
-  + repo   gitea.dideric.is/didericis/bot-bottle:write  # write access to the project's own repo
-note:    rules path: origin didericis/bot-bottle on gitea.dideric.is
+from:    rules
+bottles: gitea.example.com, basic
+  + repo   gitea.example.com/acme/app:write  # write access to the project's own repo
+note:    rules path: origin acme/app on gitea.example.com
 ```
 
 ## The proposal
@@ -55,7 +60,8 @@ A proposal is a JSON object with these fields:
 | `additions.env` | array | env var names: `{name, why}` — values come from the secrets file |
 | `additions.credentials` | array | injected secrets: `{name, route, why}` — a secret name and the egress host it goes on |
 | `similar` | array | existing bottles close to the proposal: `{bottle, covers}` |
-| `notes` | array | free-text caveats |
+| `notes` | array | free-text caveats, including why the rules answered when the architect couldn't |
+| `source` | string | which path produced it: `architect` or `rules` (set by the flow, never by the model) |
 
 ### Constraints
 
@@ -74,65 +80,96 @@ A proposal is a JSON object with these fields:
   than failing the whole proposal.
 - **Stacks are stacked as a launch stacks them.** For options 1–3 the additions
   are a bottle with no `extends`, merged after `bottles` in order, exactly as
-  `--bottle a --bottle b` merges them. (`extends: [a, b]` resolves differently:
-  it fails on a host both route.) `--write NAME` saves just the additions and
-  prints the `--bottle` flags to launch the stack with.
+  `--bottle a --bottle b` merges them. `--write NAME` saves just the
+  additions and prints the `--bottle` flags to launch the stack with.
 
 ## Paths
 
-### Rules (default)
+`bottle-architect` answers first. When it can't, the rules path answers and
+the proposal's notes say why: there's no agent file, its harness can't run
+with no tools, `claude` isn't installed or logged in, it failed or timed out,
+or its answer wasn't a proposal. `--rules` skips the architect. Either way the
+proposal is validated against the bottles the project sees, and `source` says
+which path produced it.
 
-The rules path never calls a model.  It stops at the first that fits:
+Without a project directory (the console when it doesn't send one), the
+project's bottle, origin and lockfiles aren't considered, and the proposal
+says so. The host's home is never used as the project.
 
-1. **The project bottle (`./main`) if trusted.** When the current directory has
-   a trusted `.bot-bottle/bottles/main.md`, the proposal is `option: reuse` with
-   `./main`.
+### `bottle-architect` (default)
+
+`bottle-architect` is the agent `setup` writes to
+`~/.bot-bottle/agents/bottle-architect.md`, and the suggester reads that file:
+
+- its body is the system prompt;
+- `agent_provider.harness` picks the harness;
+- `model:` (optional) picks the model.
+
+Edit the file to change any of them. Only the host's agent is read, never a
+project's.
+
+It runs on the host, under your own login, as a print-mode call that can only
+answer: no tools, no MCP servers, no settings files (so no hooks), no saved
+session, from an empty working directory, with a 120-second timeout. For
+claude that's `claude --print --tools "" --strict-mcp-config
+--setting-sources "" --no-session-persistence --system-prompt <prompt>
+[--model <model>]`, with the input on stdin.
+
+The input is:
+
+- the task;
+- the host's bottle library (names, about text, `extends`, compact elements);
+- project metadata: origin URL, the project bottle's name, and
+  lockfile/manifest *file names* (never their contents);
+- connected forges (names and URLs);
+- secret *names* from the host secrets file.
+
+The answer is parsed as a proposal and validated like any other.
+
+**Harnesses.** Only a harness that can run with no tools is used; any other is
+refused, with a note saying why, rather than run with a shell on the host.
+
+- `claude` is supported.
+- `codex` is refused: `codex exec` is an agent with a shell and other tools
+  (apply_patch, web search, browser and computer use) that can't all be turned
+  off.
+- `pi` is refused: it has no verified tool-less mode.
+
+### Rules (`--rules`, and the fallback)
+
+The rules path never calls a model, and ignores the task. It stops at the
+first that fits:
+
+1. **The project bottle (`./main`) if trusted.** When the project directory
+   has a trusted `.bot-bottle/bottles/main.md`, the proposal is
+   `option: reuse` with `./main`.
 2. **Origin + connected forge.** When `git remote get-url origin` returns a URL
    whose host matches a forge any host bottle declares, the proposal is
-   `option: stack+additions` with the forge bottle, `basic`, and a `:write` grant
-   on the origin repo.
-3. **`basic`.** No project bottle, no connected forge: `option: reuse` with
-   `basic`.
-
-### `bottle-architect` (`--architect`)
-
-`bottle-architect` is an agent manifest `setup` writes to
-`~/.bot-bottle/agents/bottle-architect.md`.  When `--architect` is passed,
-`suggest` runs it in print mode on the host (no sandbox, no tools) with:
-
-- The task
-- The host's bottle library (names, about text, `extends`, compact elements)
-- Project metadata: origin URL, the project bottle's name, and
-  lockfile/manifest *file names* (never their contents)
-- Connected forges (names and URLs)
-- Secret *names* from the host secrets file
-
-The agent outputs a JSON object matching the proposal schema.  Invalid JSON or
-a schema error falls back to the rules path automatically.
-
-It runs the host's own `claude` login as `claude --print --tools ""
---strict-mcp-config --setting-sources ""` from an empty working directory:
-no tools, no MCP servers and no settings files (so no hooks), so the model can
-only answer. If `claude` isn't installed and logged in, or fails, it falls
-back to the rules path and the proposal says so. Codex isn't used yet: its
-non-interactive mode is an agent with a shell, which mustn't run on the host
-outside a bottle.  Edit
-`~/.bot-bottle/agents/bottle-architect.md` to change the model, prompt, or
-provider.
+   `option: stack+additions` with the forge bottle, `basic`, and a `:write`
+   grant on the origin repo.
+3. **`basic`.** No trusted project bottle and no connected forge (or no
+   project directory): `option: reuse` with `basic`.
 
 ## `--write NAME`
 
 `--write NAME` saves the validated proposal as a new host bottle at
-`~/.bot-bottle/bottles/<NAME>.md`.  The bottle is a regular manifest file
-that can be inspected, edited and extended like any other.
+`~/.bot-bottle/bottles/<NAME>.md`, as a new version in the bottles history. It
+refuses a name that isn't a bottle name or a bottle that already exists. The
+console's "Use this bottle" writes the same way.
 
-The bottle's `extends:` follows from the proposal:
+What it writes depends on the option:
 
-- `reuse` with one bottle → `extends: <bottle>`
-- `stack` with two or more → `extends: [<bottle1>, <bottle2>]`
-- `stack+additions` → same extends, plus egress/repos/env from additions
-- `new-extending` → `extends: <new_bottle.extends>`, plus additions
-- `new` → no extends (or `extends: basic`), plus additions
+- **`reuse`, `stack` and `stack+additions`:** only the additions (egress
+  routes, repo grants, env names), with **no `extends`**. The new bottle is
+  stacked after the proposal's bottles, and the CLI prints the flags to launch
+  it, e.g. `--bottle basic --bottle <NAME>`. A `reuse` or `stack` with no
+  additions needs no new bottle: launch with the bottles it names.
+- **`new-extending` and `new`:** the additions plus `extends:` from
+  `new_bottle.extends`, else the first proposed bottle, else `basic`. Launch it
+  on its own: `--bottle <NAME>`.
+
+An env name is written with a `?NAME` placeholder, prompted for at launch. The
+body is the new bottle's about text and the proposal's notes.
 
 ## Free/paid split
 

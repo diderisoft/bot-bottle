@@ -9,8 +9,9 @@
     bot-bottle bottles suggest "<task>"          propose a bottle for a task
       [--cwd DIR]                                  project directory (default: cwd)
       [--write NAME]                               save the new bottle as NAME
-      [--architect]                                use bottle-architect (default:
-                                                   rules path)
+      [--rules]                                    use the rules path only (no
+                                                   model; default: bottle-architect,
+                                                   falling back to the rules)
       [--json]                                     print raw proposal JSON
 
 A bottle comes from your host (`~/.bot-bottle/bottles/`), this project
@@ -34,7 +35,6 @@ from ...manifest.trust import UntrustedBottleError, check
 from ..constants import PROG
 from ..table import print_table
 from ...suggest.render import render_proposal
-from ...suggest.validate import validate_proposal
 
 if TYPE_CHECKING:
     from ...suggest.proposal import Proposal
@@ -106,27 +106,18 @@ def _cmd_suggest(argv: list[str]) -> int:
                         help="project directory (default: current directory)")
     parser.add_argument("--write", metavar="NAME", default=None,
                         help="save a new bottle under this name")
-    parser.add_argument("--architect", action="store_true",
-                        help="use bottle-architect instead of the rules path")
+    parser.add_argument("--rules", action="store_true",
+                        help="use the rules path only: no model, the same answer every time")
     parser.add_argument("--json", action="store_true",
                         help="print raw proposal JSON to stdout")
     args = parser.parse_args(argv)
 
     cwd = Path(args.cwd) if args.cwd else Path(os.getcwd())
-
-    index = ManifestIndex.resolve(str(cwd), missing_ok=True)
-    dirs = index.bottle_dirs() if index.home_md else [(BUILTIN_BOTTLES_DIR, False)]
-
-    if args.architect:
-        # pylint: disable-next=import-outside-toplevel
-        from ...suggest.architect import architect_suggest
-        proposal = architect_suggest(args.task, cwd)
-    else:
-        # pylint: disable-next=import-outside-toplevel
-        from ...suggest.rules import rules_suggest
-        proposal = rules_suggest(args.task, cwd)
-
-    validated, _notes = validate_proposal(proposal, dirs)
+    # pylint: disable-next=import-outside-toplevel
+    from ...suggest.flow import bottle_dirs, suggest
+    from ...paths import bot_bottle_root  # pylint: disable=import-outside-toplevel
+    dirs = bottle_dirs(cwd, bot_bottle_root())
+    validated = suggest(args.task, cwd, rules=args.rules)
 
     print(render_proposal(validated, dirs, json_output=args.json))
 

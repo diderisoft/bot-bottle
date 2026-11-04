@@ -1,9 +1,11 @@
 """A bottle suggestion for the console's launch page (PRD 0117), over the link.
 
-`bottle_suggest` {task} starts a job and answers at once: the suggester (the
-rules path, then `bottle-architect` under the host's login, as
-`bot-bottle bottles suggest --architect` runs it) can take a minute, and the
-link mustn't wait on it. `bottle_suggest_status` {job} follows it to the
+`bottle_suggest` {task, cwd?} starts a job and answers at once: the suggester
+(`suggest.flow`, the same flow `bot-bottle bottles suggest` runs:
+`bottle-architect` under the host's login, the rules path when it can't
+answer) can take a minute, and the link mustn't wait on it. `cwd` is the
+project directory on this host, when the console has one; without it the
+proposal says there was no project to look at. `bottle_suggest_status` {job} follows it to the
 proposal, which the host keeps. `bottle_suggestion_accept` {job, name?}
 writes the bottle it proposes, if it's new, into the host's bottles and
 answers the bottles to launch with. The console never sends a manifest: what
@@ -26,8 +28,9 @@ from ...suggest.proposal import Proposal
 
 MAX_TASK_CHARS = 4000
 MAX_JOBS = 4
-# A job still running after this is reported as failed.
-RUN_SECONDS = 120.0
+# A job still running after this is reported as failed: past the
+# architect's own timeout, so its rules fallback still gets to answer.
+RUN_SECONDS = 150.0
 # A finished job is kept this long for its status and acceptance.
 KEEP_SECONDS = 600.0
 
@@ -46,18 +49,27 @@ _jobs: dict[str, _Job] = {}
 _lock = threading.Lock()
 
 
-def _suggest(task: str, cwd: Path) -> Proposal:
-    """`bottles suggest --architect`: the architect (which falls back to the
-    rules path), then validated against this host's bottles."""
-    # pylint: disable=import-outside-toplevel
-    from ...manifest import ManifestIndex
-    from ...manifest.loader import BUILTIN_BOTTLES_DIR
-    from ...suggest.architect import architect_suggest
-    from ...suggest.validate import validate_proposal
-    index = ManifestIndex.resolve(str(cwd), missing_ok=True)
-    dirs = index.bottle_dirs() if index.home_md else [(BUILTIN_BOTTLES_DIR, False)]
-    proposal = architect_suggest(task, cwd)
-    return validate_proposal(proposal, dirs)[0]
+def _suggest(task: str, cwd: Path | None) -> Proposal:
+    """The shared suggestion flow, as `bot-bottle bottles suggest` runs it."""
+    from ...suggest.flow import suggest  # pylint: disable=import-outside-toplevel
+    return suggest(task, cwd)
+
+
+def project_dir(raw: object, *, home: Path | None = None) -> Path | None:
+    """The project directory a request names, or None when it names none.
+    ValueError unless it's an existing directory under the user's home (and
+    not the home itself, whose `.bot-bottle` is the host's, not a project's)."""
+    if raw is None or raw == "":
+        return None
+    if not isinstance(raw, str) or not raw.startswith("/"):
+        raise ValueError("cwd must be an absolute path on this host")
+    home = (home or Path.home()).resolve()
+    path = Path(raw).resolve()
+    if path == home or home not in path.parents:
+        raise ValueError("cwd must be a project directory under your home on this host")
+    if not path.is_dir():
+        raise ValueError(f"cwd {raw!r} isn't a directory on this host")
+    return path
 
 
 def _expire(now: float) -> None:
@@ -67,7 +79,7 @@ def _expire(now: float) -> None:
 
 
 def start(task: str, *, cwd: Path | None = None,
-          suggest: Callable[[str, Path], Proposal] = _suggest,
+          suggest: Callable[[str, Path | None], Proposal] | None = None,
           clock: Callable[[], float] = time.monotonic) -> str:
     """Start a suggestion for `task` and return its job id. ValueError if the
     task isn't usable or too many are running."""
@@ -81,10 +93,11 @@ def start(task: str, *, cwd: Path | None = None,
             raise ValueError("too many suggestions are running on this host; try again soon")
         job_id = secrets.token_hex(8)
         job = _jobs[job_id] = _Job(task=task, started=now)
+    run_suggest = suggest or _suggest
 
     def run() -> None:
         try:
-            proposal = suggest(task, cwd or Path.home())
+            proposal = run_suggest(task, cwd)
         except Exception as e:  # pylint: disable=broad-exception-caught  # reported to the console
             log.warn(f"remote: suggesting a bottle failed: {type(e).__name__}: {e}")
             with _lock:
@@ -117,6 +130,7 @@ def summary(proposal: Proposal) -> dict[str, Any]:
         "credentials": [{"name": c.name, "route": c.route} for c in add.credentials],
         "similar": [s.bottle for s in proposal.similar],
         "notes": list(proposal.notes),
+        "source": proposal.source,
     }
 
 
@@ -178,7 +192,8 @@ def _text(msg: Mapping[str, Any], key: str) -> str:
 async def bottle_suggest(msg: Mapping[str, Any]) -> dict[str, Any]:
     reply: dict[str, Any] = {"type": "bottle_suggestion", "request_id": msg.get("request_id")}
     try:
-        job_id = await asyncio.to_thread(start, _text(msg, "task"))
+        cwd = project_dir(msg.get("cwd"))
+        job_id = await asyncio.to_thread(start, _text(msg, "task"), cwd=cwd)
     except ValueError as e:
         reply["error"] = str(e)
         return reply
@@ -204,4 +219,5 @@ REQUESTS = {"bottle_suggest": bottle_suggest, "bottle_suggest_status": bottle_su
             "bottle_suggestion_accept": bottle_suggestion_accept}
 
 __all__ = ["MAX_JOBS", "MAX_TASK_CHARS", "REQUESTS", "accept", "bottle_suggest",
-           "bottle_suggest_status", "bottle_suggestion_accept", "start", "status", "summary"]
+           "bottle_suggest_status", "bottle_suggestion_accept", "project_dir", "start",
+           "status", "summary"]

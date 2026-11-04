@@ -31,6 +31,8 @@ def render_proposal(
         return proposal.to_json()
     lines: list[str] = []
     lines.append(f"option:  {proposal.option}")
+    if proposal.source:
+        lines.append(f"from:    {proposal.source}")
     if proposal.bottles:
         lines.append(f"bottles: {', '.join(proposal.bottles)}")
     if proposal.new_bottle:

@@ -1,7 +1,8 @@
-"""Tests for architect output parsing and repair (PRD 0117, chunk 2).
+"""Tests for bottle-architect (PRD 0117): loading the host's agent, refusing
+harnesses that can't run with no tools, the tool-less claude call, and
+parsing its answer.
 
-The fake harness is injected by replacing `_try_claude` in the
-architect module, so no real CLI is needed.
+The harness call is faked by replacing `subprocess.run`, so no real CLI runs.
 """
 
 from __future__ import annotations
@@ -13,13 +14,23 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from bot_bottle.suggest import architect
 from bot_bottle.suggest.architect import (
-    ARCHITECT_MANIFEST,
+    ArchitectError,
     _extract_json,
     _parse_and_repair,
     architect_suggest,
+    load_architect,
 )
 from bot_bottle.suggest.proposal import OPTION_REUSE, OPTION_STACK_ADDITIONS
+from bot_bottle.suggest.starter import ARCHITECT_STARTER
+
+
+def write_agent(root: Path, frontmatter: str, prompt: str = "You are the architect.") -> Path:
+    path = root / "agents" / "bottle-architect.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"---\n{frontmatter}---\n\n{prompt}\n", encoding="utf-8")
+    return path
 
 
 class TestExtractJson(unittest.TestCase):
@@ -102,97 +113,145 @@ class TestParseAndRepair(unittest.TestCase):
         self.assertEqual(p.additions.egress[0].host, "api.fly.io")
 
 
-class TestArchitectFallback(unittest.TestCase):
+class TestLoadArchitect(unittest.TestCase):
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         self.addCleanup(tmp.cleanup)
-        self.home = Path(tmp.name)
-        self.root = self.home / ".bot-bottle"
-        (self.root / "bottles").mkdir(parents=True)
-        self.cwd = self.home / "project"
-        self.cwd.mkdir()
-        env = mock.patch.dict(os.environ, {"HOME": str(self.home),
-                                           "BOT_BOTTLE_ROOT": str(self.root)})
-        env.start()
-        self.addCleanup(env.stop)
+        self.root = Path(tmp.name)
 
-    def test_no_harness_falls_back_to_rules(self) -> None:
-        with mock.patch("bot_bottle.suggest.architect._try_claude", return_value=None):
-            p = architect_suggest("do a thing", self.cwd, host_root=self.root)
-        self.assertEqual(p.option, OPTION_REUSE)
-        self.assertEqual(p.bottles, ["basic"])
+    def test_reads_the_prompt_harness_and_model_from_the_agent_file(self) -> None:
+        path = write_agent(self.root, "model: claude-sonnet-5\nagent_provider: claude\n",
+                           "Propose tiny bottles.")
+        got = load_architect(self.root)
+        self.assertEqual((path, "Propose tiny bottles.", "claude", "claude-sonnet-5"),
+                         (got.path, got.prompt, got.harness, got.model))
 
-    def test_architect_valid_output_used(self) -> None:
-        d = {
-            "option": OPTION_STACK_ADDITIONS,
-            "bottles": ["basic"],
-            "new_bottle": None,
-            "additions": {
-                "egress": [{"host": "api.example.com", "methods": ["GET"], "why": ""}],
-                "repos": [], "env": [], "credentials": [],
-            },
-            "similar": [],
-            "notes": [],
-        }
-        with mock.patch("bot_bottle.suggest.architect._try_claude",
-                        return_value=json.dumps(d)):
-            p = architect_suggest("do a thing", self.cwd, host_root=self.root)
-        self.assertEqual(p.option, OPTION_STACK_ADDITIONS)
-        self.assertEqual(p.additions.egress[0].host, "api.example.com")
+    def test_the_setup_starter_loads(self) -> None:
+        path = self.root / "agents" / "bottle-architect.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(ARCHITECT_STARTER, encoding="utf-8")
+        got = load_architect(self.root)
+        self.assertEqual(("claude", ""), (got.harness, got.model))
+        self.assertIn('"option"', got.prompt)
 
-    def test_architect_unparseable_falls_back(self) -> None:
-        with mock.patch("bot_bottle.suggest.architect._try_claude",
-                        return_value="I cannot help with that."):
-            p = architect_suggest("do a thing", self.cwd, host_root=self.root)
-        # Falls back to rules (basic) and adds a note.
-        self.assertEqual(p.option, OPTION_REUSE)
-        self.assertTrue(any("fell back" in n.lower() for n in p.notes))
+    def test_a_harness_that_cannot_run_tool_less_is_refused(self) -> None:
+        for harness, why in (("codex", "shell"), ("pi", "no verified way"),
+                             ("my-harness", "no tools")):
+            with self.subTest(harness=harness):
+                write_agent(self.root, f"agent_provider:\n  harness: {harness}\n")
+                with self.assertRaises(ArchitectError) as cm:
+                    load_architect(self.root)
+                self.assertIn(f"harness {harness!r} can't run", str(cm.exception))
+                self.assertIn(why, str(cm.exception))
 
-
-class TestArchitectManifest(unittest.TestCase):
-    def test_manifest_has_required_fields(self) -> None:
-        self.assertIn("forward_host_credentials", ARCHITECT_MANIFEST)
-        self.assertIn("harness: claude", ARCHITECT_MANIFEST)
-        self.assertIn('"option"', ARCHITECT_MANIFEST)
-
-    def test_manifest_parses_as_frontmatter(self) -> None:
-        from bot_bottle.contract.yaml_subset import parse_frontmatter
-        fm, body = parse_frontmatter(ARCHITECT_MANIFEST)
-        self.assertIn("agent_provider", fm)
-        self.assertTrue(body.strip())
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_missing_unloadable_promptless_or_odd_model_is_an_error(self) -> None:
+        with self.assertRaisesRegex(ArchitectError, "bot-bottle setup"):
+            load_architect(self.root)
+        cases = (("agent_provider:\n  harness: claude\n  bogus: 1\n", "x", "doesn't load"),
+                 ("agent_provider: claude\n", "", "no prompt"),
+                 ("model: --dangerous\n", "x", "plain model name"))
+        for frontmatter, prompt, why in cases:
+            with self.subTest(why=why):
+                write_agent(self.root, frontmatter, prompt)
+                with self.assertRaisesRegex(ArchitectError, why):
+                    load_architect(self.root)
 
 
 class ClaudeInvocation(unittest.TestCase):
-    """The harness runs with no tools, no MCP and no settings, from an empty
-    directory: it can only answer."""
+    """The harness runs with no tools, no MCP, no settings and no saved
+    session, from an empty directory: it can only answer."""
 
-    def test_no_tools_from_an_empty_directory(self) -> None:
-        from bot_bottle.suggest import architect
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name) / ".bot-bottle"
+        (self.root / "bottles").mkdir(parents=True)
+
+    def _run(self, frontmatter: str, *, result: object) -> dict[str, object]:
+        write_agent(self.root, frontmatter, "The agent file's prompt.")
         seen: dict[str, object] = {}
 
         def run(argv, **kw):  # type: ignore[no-untyped-def]
-            seen["argv"], seen["cwd"] = argv, kw.get("cwd")
+            seen["argv"], seen["timeout"], seen["input"] = argv, kw.get("timeout"), kw.get("input")
             seen["listing"] = os.listdir(kw["cwd"])
+            if isinstance(result, BaseException):
+                raise result
+            return result
+
+        with mock.patch.object(architect.shutil, "which", return_value="/bin/claude"), \
+             mock.patch.object(architect.subprocess, "run", side_effect=run):
+            try:
+                seen["proposal"] = architect_suggest("task", None, host_root=self.root)
+            except ArchitectError as e:
+                seen["error"] = str(e)
+        return seen
+
+    def test_no_tools_from_an_empty_directory_with_the_agents_prompt_and_model(self) -> None:
+        seen = self._run("model: claude-sonnet-5\n",
+                         result=mock.Mock(returncode=0, stdout='{"option": "reuse"}'))
+        argv = seen["argv"]
+        assert isinstance(argv, list)
+        self.assertEqual(["/bin/claude", *architect.CLAUDE_ARGS, "--system-prompt",
+                          "The agent file's prompt.", "--model", "claude-sonnet-5"], argv)
+        self.assertEqual("", argv[argv.index("--tools") + 1])
+        self.assertEqual("", argv[argv.index("--setting-sources") + 1])
+        self.assertIn("--strict-mcp-config", argv)
+        self.assertEqual([], seen["listing"])
+        self.assertEqual(architect.TIMEOUT_SECONDS, seen["timeout"])
+        self.assertIsNotNone(seen.get("proposal"))
+
+    def test_no_model_line_means_no_model_flag(self) -> None:
+        seen = self._run("agent_provider: claude\n",
+                         result=mock.Mock(returncode=0, stdout='{"option": "reuse"}'))
+        argv = seen["argv"]
+        assert isinstance(argv, list)
+        self.assertNotIn("--model", argv)
+
+    def test_failures_are_errors_with_a_reason(self) -> None:
+        import subprocess  # pylint: disable=import-outside-toplevel
+        cases = ((mock.Mock(returncode=1, stdout=""), "logged in"),
+                 (subprocess.TimeoutExpired("claude", 120), "didn't answer within"),
+                 (mock.Mock(returncode=0, stdout="I can't help."), "wasn't a proposal"))
+        for result, why in cases:
+            with self.subTest(why=why):
+                self.assertIn(why, str(self._run("agent_provider: claude\n", result=result)
+                                       .get("error")))
+
+    def test_with_a_project_the_model_sees_its_file_names_not_contents(self) -> None:
+        write_agent(self.root, "agent_provider: claude\n")
+        project = self.root.parent / "project"
+        project.mkdir()
+        (project / "package.json").write_text('{"secret": "do-not-send"}', encoding="utf-8")
+        seen: dict[str, str] = {}
+
+        def run(argv, **kw):  # type: ignore[no-untyped-def]
+            del argv
+            seen["input"] = kw["input"]
             return mock.Mock(returncode=0, stdout='{"option": "reuse"}')
 
         with mock.patch.object(architect.shutil, "which", return_value="/bin/claude"), \
              mock.patch.object(architect.subprocess, "run", side_effect=run):
-            self.assertEqual('{"option": "reuse"}', architect._try_claude("task", "sys"))
-        argv = seen["argv"]
-        assert isinstance(argv, list)
-        self.assertEqual(["/bin/claude", *architect.CLAUDE_ARGS, "--system-prompt", "sys"], argv)
-        self.assertIn("--tools", argv)
-        self.assertEqual("", argv[argv.index("--tools") + 1])
-        self.assertEqual([], seen["listing"])
-        self.assertFalse(hasattr(architect, "_try_codex"))
+            architect_suggest("task", project, host_root=self.root)
+        self.assertIn('"package.json"', seen["input"])
+        self.assertNotIn("do-not-send", seen["input"])
+        self.assertNotIn("no project directory", seen["input"])
 
-    def test_a_failed_harness_says_the_rules_answered(self) -> None:
-        from bot_bottle.suggest import architect
-        with mock.patch.object(architect, "_try_claude", return_value=None):
-            with tempfile.TemporaryDirectory() as d:
-                proposal = architect.architect_suggest("deploy it", Path(d), host_root=Path(d))
-        self.assertTrue(any("bottle-architect didn't run" in n for n in proposal.notes))
+    def test_claude_that_wont_start_is_an_error(self) -> None:
+        self.assertIn("didn't run", str(self._run("agent_provider: claude\n",
+                                                  result=OSError("exec format error"))
+                                        .get("error")))
+
+    def test_claude_not_installed(self) -> None:
+        write_agent(self.root, "agent_provider: claude\n")
+        with mock.patch.object(architect.shutil, "which", return_value=None), \
+             self.assertRaisesRegex(ArchitectError, "isn't installed"):
+            architect_suggest("task", None, host_root=self.root)
+
+    def test_without_a_project_the_model_is_told_so(self) -> None:
+        seen = self._run("agent_provider: claude\n",
+                         result=mock.Mock(returncode=0, stdout='{"option": "reuse"}'))
+        self.assertIn("no project directory was given", str(seen["input"]))
+
+
+if __name__ == "__main__":
+    unittest.main()
