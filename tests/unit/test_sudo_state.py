@@ -50,18 +50,19 @@ class TestRootOwnedState(unittest.TestCase):
         (self.root / "db").mkdir()
 
     def _owned_by_root(self, *names: str):  # type: ignore[no-untyped-def]
+        """Report `names` as root's and every other path as uid 1000's, whoever
+        really owns them (CI runs the tests as root)."""
         real = Path.lstat
 
         def lstat(path: Path):  # type: ignore[no-untyped-def]
             st = real(path)
-            if path.name in names:
-                return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink, 0,
-                                       st.st_gid, st.st_size, 0, 0, 0))
-            return st
+            uid = 0 if path.name in names else 1000
+            return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink, uid,
+                                   st.st_gid, st.st_size, 0, 0, 0))
         return mock.patch.object(Path, "lstat", lstat)
 
     def test_nothing_root_owned(self) -> None:
-        with mock.patch.object(env.os, "geteuid", return_value=1000):
+        with mock.patch.object(env.os, "geteuid", return_value=1000), self._owned_by_root():
             self.assertEqual([], env.root_owned_state(self.home))
 
     def test_finds_root_owned_root_and_entries(self) -> None:
@@ -83,7 +84,7 @@ class TestRootOwnedState(unittest.TestCase):
 
     def test_a_missing_root_is_fine(self) -> None:
         with mock.patch.dict(os.environ, {"BOT_BOTTLE_ENV": "nope"}), \
-                mock.patch.object(env.os, "geteuid", return_value=1000):
+                mock.patch.object(env.os, "geteuid", return_value=1000), self._owned_by_root():
             self.assertEqual([], env.root_owned_state(self.home))
 
     def test_fix_names_every_path_once(self) -> None:
