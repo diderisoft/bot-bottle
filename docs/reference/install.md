@@ -119,6 +119,13 @@ install the host firewall: a pf anchor and a LaunchDaemon that reloads it at
 boot ([backends.md](backends.md#macos-container)). Without it, launches are
 refused.
 
+Run as root through `sudo`, bot-bottle writes only those system pieces. It
+doesn't register the environment or create its database, so no root-owned
+state lands in your home; your next ordinary run does that. If an older version
+left some (unprivileged commands then fail on permissions), every command but
+`doctor` stops and names the fix, which `doctor` reports too:
+`sudo chown -R "$(id -un):$(id -gn)" <the paths it lists>`.
+
 #### Linux: Firecracker
 
 A KVM-capable Linux host defaults to the Firecracker backend. It needs:

@@ -283,6 +283,49 @@ def register(name: str, root: Path, home: Path | None = None) -> Registration:
         return reg
 
 
+def sudo_invoker() -> tuple[int, int] | None:
+    """The real user's `(uid, gid)` when this runs as root through sudo, else
+    None. Under sudo only the root-owned system pieces are written: per-user
+    state left behind as root would lock that user out of it."""
+    if os.geteuid() != 0:
+        return None
+    try:
+        uid, gid = int(os.environ["SUDO_UID"]), int(os.environ["SUDO_GID"])
+    except (KeyError, ValueError):
+        return None
+    return None if uid == 0 else (uid, gid)
+
+
+def root_owned_state(home: Path | None = None) -> list[Path]:
+    """Per-user state a run as root left behind (e.g. an earlier
+    `sudo bot-bottle install`), which this user can no longer write. Checks
+    the registry lock and the active state root with its top-level entries."""
+    if os.geteuid() == 0:
+        return []
+    # pylint: disable-next=import-outside-toplevel
+    from .paths import bot_bottle_root
+    root = bot_bottle_root(home)
+    candidates = [envs_dir(home) / _LOCK_FILENAME, root]
+    try:
+        candidates += sorted(root.iterdir())
+    except OSError:
+        pass
+    found: list[Path] = []
+    for path in candidates:
+        try:
+            if path.lstat().st_uid == 0:
+                found.append(path)
+        except OSError:
+            continue
+    return found
+
+
+def root_owned_fix(paths: list[Path]) -> str:
+    """The command that gives `paths` back to the current user."""
+    targets = " ".join(sorted({str(p) for p in paths}))
+    return f'sudo chown -R "$(id -un):$(id -gn)" {targets}'
+
+
 def ensure_active_registered() -> str:
     """Register the active environment if it's a named one; its name."""
     # pylint: disable-next=import-outside-toplevel
@@ -307,5 +350,6 @@ __all__ = [
     "docker_orchestrator_port_candidates",
     "ensure_active_registered", "envs_dir", "is_live", "macos_agent_subnet_v6",
     "macos_agent_subnet_v6_candidates", "prefix_clash", "read", "register", "registered",
-    "registration_file", "resource_prefix", "reverse_dns", "unregister", "validate",
+    "registration_file", "resource_prefix", "reverse_dns", "root_owned_fix", "root_owned_state",
+    "sudo_invoker", "unregister", "validate",
 ]

@@ -8,7 +8,10 @@ from __future__ import annotations
 import os
 import sys
 
-from ..environment import InvalidEnvironmentError, active_name, ensure_active_registered
+from ..environment import (
+    InvalidEnvironmentError, active_name, ensure_active_registered, root_owned_fix,
+    root_owned_state, sudo_invoker,
+)
 from ..errors import MissingEnvVarError, SecretsFileError
 from ..lib.log import Die, die, error
 from ..manifest import ManifestError, ManifestIndex
@@ -46,17 +49,26 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-retu
     if handler is None:
         cmd_help()
         die(f"unknown command or agent: {command}")
+    # Under sudo only the backend's root-owned pieces are written: registering
+    # or migrating here would leave per-user state the user can't write.
+    as_sudo = sudo_invoker() is not None
+    stale = [] if command in ("doctor", "help") else root_owned_state()  # doctor reports it
+    if stale:
+        error(f"{len(stale)} path(s) of this environment's state are owned by root, left by an "
+              f"earlier run as root (e.g. `sudo bot-bottle install`); give them back with: "
+              f"{root_owned_fix(stale)}")
+        return 1
     try:
         # A named environment registers on first use; `envs` manages them
         # and must not register the one it removes.
-        if command != "envs":
+        if command != "envs" and not as_sudo:
             ensure_active_registered()
     except InvalidEnvironmentError as e:
         error(str(e))
         return 2
     mgr = StoreManager(host_db_path())
     fresh = mgr.is_fresh()  # before is_migrated, which creates the file
-    if command in NO_MIGRATION_COMMANDS or mgr.is_migrated():
+    if as_sudo or command in NO_MIGRATION_COMMANDS or mgr.is_migrated():
         pass
     elif fresh:
         mgr.migrate()  # a new install: nothing to migrate from, so don't ask

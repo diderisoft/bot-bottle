@@ -19,7 +19,7 @@ from ...control.client import (
     OrchestratorClient, OrchestratorEndpoint, no_orchestrator_message, recorded_orchestrator,
     stray_orchestrators, stray_removal_hint,
 )
-from ...environment import ENV_VAR, LIVE, active_name
+from ...environment import ENV_VAR, LIVE, active_name, root_owned_fix, root_owned_state
 from .. import openrouter
 from ...control.hostctl import runner
 from ...control.hostctl.build import RESTART_NEEDED
@@ -161,7 +161,11 @@ def _check_host_controller() -> None:
 
 def _check_config_dir() -> None:
     config = bot_bottle_root()
-    if config.is_dir():
+    stale = root_owned_state()
+    if stale:
+        _warn("config", f"{len(stale)} path(s) owned by root (left by a run as root); "
+                        f"run: {root_owned_fix(stale)}")
+    elif config.is_dir():
         _ok("config", str(config))
     else:
         _warn("config", f"{config} does not exist yet (created on first use)")
