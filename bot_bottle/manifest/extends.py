@@ -33,6 +33,11 @@ def _overlay_declared_bool(
     return value
 
 
+def _later_set(earlier: bool | None, later: bool | None) -> bool | None:
+    """An unset-able boolean: the later bottle's when it set one."""
+    return earlier if later is None else later
+
+
 def merge_bottles_runtime(bottles: "list[ManifestBottle]") -> "ManifestBottle":
     """Merge pre-resolved bottles in order, index 0 the base:
 
@@ -77,6 +82,8 @@ def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle
         git=merged_git,
         git_user=merged_git_user,
         git_trailers=override.git_trailers or base.git_trailers,
+        git_protect_default_branch=_later_set(base.git_protect_default_branch,
+                                              override.git_protect_default_branch),
         egress=merged_egress,
         supervise=_overlay_declared_bool(base, override, "supervise"),
         nested_containers=_overlay_declared_bool(
@@ -276,6 +283,8 @@ def _fold_two_bottles(
         git=merged_git,
         git_user=merged_git_user,
         git_trailers=later.git_trailers or earlier.git_trailers,
+        git_protect_default_branch=_later_set(earlier.git_protect_default_branch,
+                                              later.git_protect_default_branch),
         egress=merged_egress,
         supervise=_overlay_declared_bool(earlier, later, "supervise"),
         nested_containers=_overlay_declared_bool(
@@ -339,6 +348,8 @@ def _merge_bottles(
         git=merged_git,
         git_user=merged_git_user,
         git_trailers=child.git_trailers or parent.git_trailers,
+        git_protect_default_branch=_later_set(parent.git_protect_default_branch,
+                                              child.git_protect_default_branch),
         egress=merged_egress,
         supervise=merged_supervise,
         nested_containers=merged_nested_containers,

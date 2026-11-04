@@ -304,16 +304,31 @@ def parse_git_gate_trailers(bottle_name: str, raw: object) -> str:
     return value
 
 
+def parse_git_gate_protect_default_branch(bottle_name: str, raw: object) -> bool | None:
+    """`git-gate.protect_default_branch`: refuse deleting or rewriting each
+    repo's default branch upstream (#808). None when unset, which is off."""
+    d = as_json_object(raw, f"bottle '{bottle_name}' git-gate")
+    if "protect_default_branch" not in d:
+        return None
+    value = d["protect_default_branch"]
+    if not isinstance(value, bool):
+        raise ManifestError(
+            f"bottle '{bottle_name}' git-gate.protect_default_branch must be "
+            f"true or false (was {value!r})"
+        )
+    return value
+
+
 def parse_git_gate_config(
     bottle_name: str,
     raw: object,
 ) -> tuple[tuple[ManifestGitEntry, ...], ManifestGitUser]:
     d = as_json_object(raw, f"bottle '{bottle_name}' git-gate")
     for k in d:
-        if k not in {"user", "repos", "trailers"}:
+        if k not in {"user", "repos", "trailers", "protect_default_branch"}:
             raise ManifestError(
                 f"bottle '{bottle_name}' git-gate has unknown key {k!r}; "
-                f"allowed: user, repos, trailers"
+                f"allowed: user, repos, trailers, protect_default_branch"
             )
 
     git_user = (

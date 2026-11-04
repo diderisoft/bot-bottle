@@ -122,7 +122,7 @@ class TestProvisionRender(unittest.TestCase):
     def test_https_repo_names_its_tmpfs_token(self) -> None:
         line = next(l for l in self._render(HTTPS).splitlines() if l.startswith("init_repo "))
         self.assertEqual("init_repo design https://github.com/o/design.git false https "
-                         "/dev/shm/git-gate/b1/GITHUB_COM_TOKEN-token", line)
+                         "/dev/shm/git-gate/b1/GITHUB_COM_TOKEN-token false", line)
         self.assertNotIn(TOKEN, self._render(HTTPS))
 
     def test_unsafe_secret_names_are_refused(self) -> None:

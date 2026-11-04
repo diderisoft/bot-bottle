@@ -16,6 +16,7 @@ git-gate:
     name: implementer-bot
     email: bot@example.com
   trailers: require           # optional: require (default) | warn | off
+  protect_default_branch: true  # optional: refuse deleting or rewriting it (default off)
   repos:                      # local name: the gate's bare repo
     bot-bottle: gitea.example.com/org/bot-bottle:write   # a grant on a forge (below)
     lib:
@@ -42,6 +43,14 @@ Key providers:
   file with a long-form `provider: gitea` repo fails to load
   ([ADR 0008](../decisions/0008-forge-minted-keys-are-grants.md)); see
   [Migrating from the old format](#migrating-from-the-old-format).
+
+`protect_default_branch: true` makes git-gate refuse a push that deletes, or
+rewrites (non-fast-forward), each repo's default branch upstream. See step 6
+of [Push](#push). It's for forges without branch protection. It applies to
+every repo in the bottle, including ones added later with `add-repo`. It's off
+by default, because agents rebase their own branches and some work on the
+default branch of a scratch repo. A later bottle's value wins, so a child can
+turn off a parent's.
 
 Without a `host_key`, an interactive launch fetches one with `ssh-keyscan`,
 asks the operator to confirm it, and can save it to the bottle file
@@ -434,7 +443,13 @@ The pre-receive hook (`git_gate_render_hook`) reads every ref first, then:
    added line the push introduces. Those secrets are its `?` env values, its
    egress tokens and its canary. It matches by value, so it catches secrets
    gitleaks has no rule for.
-6. Forwards each accepted ref to `origin` over SSH, checking the pinned host
+6. With `protect_default_branch` (`git-gate.protectDefault` on the gate
+   repo, `control/git_gate_protect.py`), refuses deleting or force-pushing
+   the upstream's default branch. The default branch is the upstream's
+   `HEAD`, asked of the upstream (`ls-remote --symref`) only when a push
+   deletes or rewrites a branch. If the upstream doesn't say, the push is
+   refused. Other branches can still be rewritten and deleted.
+7. Forwards each accepted ref to `origin` over SSH, checking the pinned host
    key, or over HTTPS with the token for a GitHub repo.
 
 The hook scans every ref before forwarding any, so a hit on one ref can't

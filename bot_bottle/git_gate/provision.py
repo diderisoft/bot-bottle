@@ -291,6 +291,7 @@ def _write_upstreams_snapshot(
             "writable": u.writable,
             "transport": u.transport,
             "token_secret": u.token_secret,
+            "protect_default_branch": u.protect_default_branch,
         }
         for u in upstreams
     ]
@@ -319,6 +320,7 @@ def load_upstreams_snapshot(stage_dir: Path) -> tuple[GitGateUpstream, ...]:
             writable=u.get("writable", True),
             transport=u.get("transport", "ssh"),
             token_secret=u.get("token_secret", ""),
+            protect_default_branch=bool(u.get("protect_default_branch", False)),
         ))
     return tuple(upstreams)
 

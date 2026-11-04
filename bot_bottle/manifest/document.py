@@ -129,6 +129,8 @@ def bottle_document(bottle: ManifestBottle) -> dict[str, object]:
         git["user"] = user
     if bottle.git_trailers:
         git["trailers"] = bottle.git_trailers
+    if bottle.git_protect_default_branch is not None:
+        git["protect_default_branch"] = bottle.git_protect_default_branch
     if bottle.forges:
         forges: dict[str, object] = {}
         for forge in bottle.forges:

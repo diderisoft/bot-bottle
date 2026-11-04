@@ -61,7 +61,10 @@ def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
     upstreams = load_upstreams_snapshot(stage_dir)
     current = next((u for u in upstreams if u.name == entry.Name), None)
     writable = not entry.Key.read_only
-    (upstream,) = git_gate_upstreams_for_bottle(ManifestBottle(git=(entry,)))
+    # The bottle's protect_default_branch, as its other repos have it.
+    protect = any(u.protect_default_branch for u in upstreams)
+    (upstream,) = git_gate_upstreams_for_bottle(
+        ManifestBottle(git=(entry,), git_protect_default_branch=protect))
     if current is not None and current.upstream_url not in (entry.Upstream,
                                                             upstream.upstream_url):
         raise GrantError(f"the bottle already has a different repo named {entry.Name!r}")

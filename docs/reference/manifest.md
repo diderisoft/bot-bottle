@@ -79,6 +79,8 @@ later parent over an earlier one, a later `--bottle` over an earlier one):
 
 - `env`: per variable.
 - `git-gate.repos`: per repo name, field by field; `repos: {}` clears them.
+- `git-gate.trailers` and `git-gate.protect_default_branch`: the later bottle's,
+  when it sets one.
 - `egress.routes`: per host, case-insensitive. A later route for a host
   replaces the earlier one in its place; new hosts follow in order. To take
   an inherited host away, list it as `- {host: api.example.com, blocked: true}`:

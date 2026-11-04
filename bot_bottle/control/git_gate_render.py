@@ -4,6 +4,7 @@ access-hook and gitleaks files the gateway runs."""
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import shlex
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from pathlib import Path
 from ..contract.git_trailers import TRAILER_MODES, TRAILER_VALUE_RE
 from ..contract.identity import IDENTITY_HEADER
 from ..manifest import ManifestBottle, ManifestGitEntry
+from .git_gate_protect import PROTECT_DEFAULT_BRANCH_PHASE
 from ..gateway.egress.dlp_detectors import TOKEN_PATTERNS
 
 
@@ -37,6 +39,9 @@ class GitGateUpstream:
     # host secret the token comes from; the gate gets it in memory only.
     transport: str = "ssh"
     token_secret: str = ""
+    # The bottle's `git-gate.protect_default_branch`: refuse deleting or
+    # rewriting the upstream's default branch.
+    protect_default_branch: bool = False
 
 
 def _upstream(e: ManifestGitEntry) -> GitGateUpstream:
@@ -56,8 +61,10 @@ def _upstream(e: ManifestGitEntry) -> GitGateUpstream:
 
 def git_gate_upstreams_for_bottle(bottle: ManifestBottle) -> tuple[GitGateUpstream, ...]:
     """Each `bottle.git` entry as a GitGateUpstream (names were checked at
-    load)."""
-    return tuple(_upstream(e) for e in bottle.git)
+    load), protected as the bottle says."""
+    protect = bool(bottle.git_protect_default_branch)
+    return tuple(dataclasses.replace(_upstream(e), protect_default_branch=protect)
+                 for e in bottle.git)
 
 
 def _gitconfig_validate_value(field: str, value: str) -> None:
@@ -126,6 +133,7 @@ def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
         "  read_only=$3",
         "  transport=${4:-ssh}",
         "  token_file=${5:-}",
+        "  protect_default=${6:-false}",
         f"  keyfile={creds_dir}/${{name}}-key",
         f"  hostsfile={creds_dir}/${{name}}-known_hosts",
         "",
@@ -152,6 +160,7 @@ def _git_gate_init_repo_fn(repo_root: str, creds_dir: str) -> list[str]:
         "  git -C \"$repo\" config receive.advertisePushOptions true",
         "  git -C \"$repo\" config http.receivepack true",
         "  git -C \"$repo\" config git-gate.readOnly \"$read_only\"",
+        "  git -C \"$repo\" config git-gate.protectDefault \"$protect_default\"",
         # The commit-trailer check (PRD 0112): its mode, the value it wants
         # and the commits it exempts.
         "  git -C \"$repo\" config git-gate.trailers \"$trailers_mode\"",
@@ -200,7 +209,8 @@ def git_gate_render_provision(
             raise ValueError(f"git-gate: unsafe token secret name {u.token_secret!r}")
         lines.append(f"init_repo {shlex.quote(u.name)} {shlex.quote(u.upstream_url)} "
                      f"{'false' if u.writable else 'true'} "
-                     f"{'https' if u.transport == 'https' else 'ssh'} {shlex.quote(token)}")
+                     f"{'https' if u.transport == 'https' else 'ssh'} {shlex.quote(token)} "
+                     f"{'true' if u.protect_default_branch else 'false'}")
     return "\n".join(lines) + "\n"
 
 
@@ -209,8 +219,13 @@ def git_gate_render_hook() -> str:
     the bottle's `Bot-Bottle` trailer, gitleaks-scan every incoming
     ref, refuse ones carrying a secret the bottle holds, then forward each ref
     to `origin` with the repo's credential. Every ref is scanned before any is
-    forwarded. stdin is saved to a temp file, since it can be read only once."""
-    return r"""#!/bin/sh
+    forwarded. stdin is saved to a temp file, since it can be read only once.
+    A repo protecting its default branch refuses deleting or rewriting it
+    before anything is forwarded."""
+    return _PRE_RECEIVE.replace("@PROTECT_DEFAULT_BRANCH@\n", PROTECT_DEFAULT_BRANCH_PHASE)
+
+
+_PRE_RECEIVE = r"""#!/bin/sh
 # git-gate pre-receive. Stdin: <old> <new> <ref> per line.
 set -u
 
@@ -537,6 +552,7 @@ upstream_hint() {
   fi
 }
 
+@PROTECT_DEFAULT_BRANCH@
 push_option_count=${GIT_PUSH_OPTION_COUNT:-0}
 case "$push_option_count" in
   ''|*[!0-9]*)
