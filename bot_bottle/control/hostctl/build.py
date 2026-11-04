@@ -28,4 +28,15 @@ def current_build_id() -> str:
     return build_id()
 
 
-__all__ = ["PACKAGE_ROOT", "build_id", "current_build_id"]
+# Said wherever a host controller that predates an upgrade is reported.
+RESTART_NEEDED = ("restart needed (installed version changed): run "
+                  "`bot-bottle up --restart`; running bottles keep running")
+
+
+def code_changed() -> bool:
+    """Whether the code on disk differs from what this process started from,
+    i.e. bot-bottle was upgraded under a running host controller."""
+    return build_id() != current_build_id()
+
+
+__all__ = ["PACKAGE_ROOT", "RESTART_NEEDED", "build_id", "code_changed", "current_build_id"]

@@ -25,6 +25,11 @@ boundary. Its routes are in
   see [backends](backends.md#gateway-restarts)). The daemon also refuses a launch itself
   once the code on disk no longer matches its `build_id`, so no path (the
   phone included) runs a launch on mixed code.
+- An upgrade under a running daemon is reported before a launch fails:
+  `bot-bottle status` and `bot-bottle doctor` (which the installer runs) print
+  "restart needed (installed version changed)" with the `up --restart` fix,
+  and the console link's `host_stats.about` carries `restart_needed`. Nothing
+  restarts the daemon on its own.
 - `listeners.py` adds one listener per backend, where that backend's
   orchestrator guest reaches the host: the docker publish bridge, the macOS
   control network's vmnet gateway, or the firecracker orchestrator TAP. Each
@@ -213,7 +218,7 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
                 "bottles": [{"id", "label", "memory", "cpu_pct", "mem_used"}]},
      "storage": {"used", "budget",
                  "categories": {"vm_disks", "images", "workspaces", "transcripts"}}},
-   "about": {"os", "backend", "version", "commit"},
+   "about": {"os", "backend", "version", "commit", "restart_needed"},
    "forge_alerts": [{"key", "kind", "forge", "message", "since"}]}
   ```
 
@@ -222,7 +227,9 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
   (`MemTotal - MemAvailable` on Linux; free and inactive pages on macOS).
   `cap` repeats the budget for consoles that predate the `budget` block. A
   budget of 0 means none is set. `budget.storage` is left out until the
-  first storage walk after the daemon starts.
+  first storage walk after the daemon starts. `about.restart_needed` is true
+  once bot-bottle was upgraded under the running daemon: it refuses launches
+  until `bot-bottle up --restart`.
 
   `forge_alerts` are forge tokens that stopped working for good, one per
   credential (`key` is the host secret's name), oldest first

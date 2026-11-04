@@ -153,16 +153,19 @@ def _os_name() -> str:
     return system
 
 
-def about() -> dict[str, str]:
+def about() -> dict[str, str | bool]:
     """What the host's page says about it: its OS, the backend its last
-    bring-up recorded ("" before one) and this install's version."""
+    bring-up recorded ("" before one), this install's version, and whether
+    the host controller needs a restart to launch (bot-bottle was upgraded
+    under it)."""
     # pylint: disable=import-outside-toplevel
     from ...engine import install_version
     from ..client import recorded_orchestrator
+    from .build import code_changed
     endpoint = recorded_orchestrator()
     version, commit = install_version()
     return {"os": _os_name(), "backend": endpoint.backend if endpoint else "",
-            "version": version, "commit": commit}
+            "version": version, "commit": commit, "restart_needed": code_changed()}
 
 
 def snapshot(bottles: "BottleService | None" = None) -> dict[str, object]:

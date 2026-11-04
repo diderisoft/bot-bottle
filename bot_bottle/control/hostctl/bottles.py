@@ -37,6 +37,7 @@ from ...backend import adoption
 from ...backend.bottle_size import BOTTLE_MEMORY_BYTES
 from ...lib.config_store import HostBudget
 from . import bottle_metrics, budget, relabel
+from .build import RESTART_NEEDED
 from .audit_events import HostAudit, digest_manifest, digest_request
 from .credential_refresh import CredentialRefresher
 from .sessions import ExitStatus, SessionManager, SessionRecord
@@ -155,8 +156,8 @@ def _log_preflight(plan: "BottlePlan", backend_name: str) -> None:
 def _code_changed() -> bool:
     """Whether the code on disk differs from what this process started from:
     a launch would mix the two through lazy imports."""
-    from .build import build_id, current_build_id  # pylint: disable=import-outside-toplevel
-    return build_id() != current_build_id()
+    from .build import code_changed  # pylint: disable=import-outside-toplevel
+    return code_changed()
 
 
 def _save_work(bottle: Any, workspace: Any, identity: str) -> None:
@@ -263,8 +264,7 @@ class BottleService:
         from .remote import ROLE_REMOTE
 
         if self._code_changed():
-            log.die("bot-bottle was updated since the host controller started; restart it "
-                    "to launch (`bot-bottle up --restart`). Running bottles keep running")
+            log.die(f"bot-bottle was updated since the host controller started: {RESTART_NEEDED}")
         if request.identity and self._running(request.identity):
             log.die(f"bottle {request.identity} is already running")
         from_console = role == ROLE_REMOTE

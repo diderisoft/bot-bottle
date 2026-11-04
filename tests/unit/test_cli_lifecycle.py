@@ -34,6 +34,7 @@ class _Mocked(unittest.TestCase):
         self.runner.held_bottles.return_value = []
         self.runner.stop.return_value = True
         self.runner.ensure_running.return_value = _STATE
+        self.runner.restart_needed.return_value = False
         self.report = self.enterContext(mock.patch.object(
             doctor, "orchestrator_report", return_value=doctor.OrchestratorReport(
                 OrchestratorEndpoint("firecracker", "http://orch:8099"), True, ())))
@@ -117,6 +118,17 @@ class TestStatusJobs(_Mocked):
         self.assertIn("autostart: not installed", out)
         self.assertIn("firecracker orchestrator: running at http://orch:8099", out)
         self.assertIn("bottled agents: 1 running", out)
+
+    def test_status_says_when_the_host_controller_predates_an_upgrade(self) -> None:
+        with mock.patch.object(lifecycle, "enumerate_active_agents", return_value=[]):
+            out = self.run_cmd(lifecycle.cmd_status, [])[1]
+        self.assertNotIn("restart needed", out)
+        self.runner.restart_needed.return_value = True
+        with mock.patch.object(lifecycle, "enumerate_active_agents", return_value=[]):
+            out = self.run_cmd(lifecycle.cmd_status, [])[1]
+        self.assertIn("host controller: restart needed (installed version changed): run "
+                      "`bot-bottle up --restart`; running bottles keep running", out)
+        self.runner.restart_needed.assert_called_with(_STATE)
 
     def test_status_reports_the_environments_orchestrator_and_warns_of_strays(self) -> None:
         self.report.return_value = doctor.OrchestratorReport(

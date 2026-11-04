@@ -105,6 +105,12 @@ def probe(state: HostControlState, timeout: float = 2.0) -> bool:
     return body.get("service") == SERVICE_NAME and body.get("pid") == state.pid
 
 
+def restart_needed(state: HostControlState) -> bool:
+    """Whether the running host controller started from other code than is
+    installed now. It refuses launches until it's restarted."""
+    return state.build_id != current_build_id()
+
+
 def running() -> HostControlState | None:
     """The live host controller's state, or None."""
     state = read_state()

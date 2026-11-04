@@ -21,6 +21,8 @@ from ...control.client import (
 )
 from ...environment import ENV_VAR, LIVE, active_name
 from .. import openrouter
+from ...control.hostctl import runner
+from ...control.hostctl.build import RESTART_NEEDED
 from ...control.hostctl.sessions import MIN_TMUX_VERSION, tmux_version
 from ...paths import bot_bottle_root
 from ..constants import PROG
@@ -146,6 +148,17 @@ def _check_orchestrator() -> None:
         _warn("orchestrator", warning)
 
 
+def _check_host_controller() -> None:
+    """Advisory: a host controller started before an upgrade refuses launches."""
+    state = runner.running()
+    if state is None:
+        _note("host controller", f"not running (`{PROG} up` starts it)")
+    elif runner.restart_needed(state):
+        _warn("host controller", RESTART_NEEDED)
+    else:
+        _ok("host controller", f"running at {state.url} (build {state.build_id})")
+
+
 def _check_config_dir() -> None:
     config = bot_bottle_root()
     if config.is_dir():
@@ -223,5 +236,6 @@ def cmd_doctor(argv: list[str]) -> int:
     required = [_check_python(), _check_backends(), _check_tmux()]
     _check_config_dir()
     _check_orchestrator()
+    _check_host_controller()
     _check_providers()
     return 0 if all(required) else 1

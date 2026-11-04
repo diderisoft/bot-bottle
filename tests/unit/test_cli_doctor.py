@@ -21,6 +21,7 @@ from unittest.mock import patch
 
 from bot_bottle.cli.commands import doctor
 from bot_bottle.control.client import OrchestratorEndpoint
+from bot_bottle.control.hostctl.runner import HostControlState
 
 
 def _run(argv: list[str] | None = None) -> tuple[int, str]:
@@ -51,6 +52,8 @@ class TestDoctor(unittest.TestCase):
         self.report = self.enterContext(patch.object(
             doctor, "orchestrator_report",
             return_value=doctor.OrchestratorReport(_FC, True, ())))
+        # Nor the host controller.
+        self.enterContext(patch.object(doctor.runner, "running", return_value=None))
 
     def test_passes_when_python_and_backend_ready(self):
         with patch.object(doctor, "known_backend_names", return_value=("docker",)), \
@@ -159,6 +162,7 @@ class TestDoctorOrchestrator(unittest.TestCase):
                 patch.object(doctor, "known_backend_names", return_value=("docker",)), \
                 patch.object(doctor, "backend_os_requirement", return_value=""), \
                 patch.object(doctor, "is_backend_ready", return_value=True), \
+                patch.object(doctor.runner, "running", return_value=None), \
                 patch("bot_bottle.backend.docker.util.runsc_available", return_value=False):
             code, out = _run()
         self.assertEqual(0, code)
@@ -192,6 +196,39 @@ class TestDoctorOrchestrator(unittest.TestCase):
                 patch("bot_bottle.control.client.recorded_orchestrator", return_value=_FC):
             report = doctor.orchestrator_report()
         self.assertEqual(doctor.OrchestratorReport(_FC, True, (_STRAY,)), report)
+
+
+class TestDoctorHostController(unittest.TestCase):
+    """doctor says when the running host controller predates an upgrade (it
+    refuses launches until restarted); advisory, so the exit code is untouched."""
+
+    _STATE = HostControlState(pid=7, port=1234, build_id="abc")
+
+    def _host_controller_line(self, state: "HostControlState | None", stale: bool) -> str:
+        with patch.object(doctor, "orchestrator_report",
+                          return_value=doctor.OrchestratorReport(_FC, True, ())), \
+                patch.object(doctor, "known_backend_names", return_value=("docker",)), \
+                patch.object(doctor, "backend_os_requirement", return_value=""), \
+                patch.object(doctor, "is_backend_ready", return_value=True), \
+                patch.object(doctor.runner, "running", return_value=state), \
+                patch.object(doctor.runner, "restart_needed", return_value=stale), \
+                patch("bot_bottle.backend.docker.util.runsc_available", return_value=False):
+            code, out = _run()
+        self.assertEqual(0, code)
+        return "\n".join(line for line in out.splitlines() if "host controller" in line)
+
+    def test_a_current_host_controller_is_ok(self):
+        self.assertEqual("ok:   host controller: running at http://127.0.0.1:1234 (build abc)",
+                         self._host_controller_line(self._STATE, stale=False))
+
+    def test_one_started_before_an_upgrade_is_a_warning_with_the_fix(self):
+        line = self._host_controller_line(self._STATE, stale=True)
+        self.assertIn("warn: host controller: restart needed (installed version changed)", line)
+        self.assertIn("`bot-bottle up --restart`", line)
+
+    def test_none_running_is_a_note(self):
+        self.assertEqual("note: host controller: not running (`bot-bottle up` starts it)",
+                         self._host_controller_line(None, stale=False))
 
 
 if __name__ == "__main__":

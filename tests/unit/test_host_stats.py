@@ -285,9 +285,15 @@ class TestAbout(unittest.TestCase):
         endpoint = SimpleNamespace(backend="firecracker", url="http://10.0.0.1:8099")
         with mock.patch("bot_bottle.control.client.recorded_orchestrator", return_value=endpoint), \
              mock.patch("bot_bottle.engine.install_version", return_value=("0.19.0", "e1b7248")), \
-             mock.patch.object(host_stats, "_os_name", return_value="NixOS"):
+             mock.patch.object(host_stats, "_os_name", return_value="NixOS"), \
+             mock.patch("bot_bottle.control.hostctl.build.code_changed", return_value=False):
             self.assertEqual({"os": "NixOS", "backend": "firecracker", "version": "0.19.0",
-                              "commit": "e1b7248"}, host_stats.about())
+                              "commit": "e1b7248", "restart_needed": False}, host_stats.about())
+
+    def test_about_says_when_an_upgrade_needs_a_restart(self) -> None:
+        with mock.patch("bot_bottle.control.client.recorded_orchestrator", return_value=None), \
+             mock.patch("bot_bottle.control.hostctl.build.code_changed", return_value=True):
+            self.assertTrue(host_stats.about()["restart_needed"])
 
     def test_no_bring_up_yet_is_no_backend(self) -> None:
         with mock.patch("bot_bottle.control.client.recorded_orchestrator", return_value=None):

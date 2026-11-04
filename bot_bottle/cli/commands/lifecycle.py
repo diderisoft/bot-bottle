@@ -12,6 +12,7 @@ import sys
 
 from ...backend import enumerate_active_agents, get_bottle_backend
 from ...control.hostctl import runner, service_unit
+from ...control.hostctl.build import RESTART_NEEDED
 from ...control.hostctl.client import HostControlClient
 from ...control.hostctl.orchestrator import ensure_via_daemon
 from ...control.hostctl.sessions import MIN_TMUX_VERSION, tmux_version
@@ -115,6 +116,8 @@ def cmd_status(argv: list[str]) -> int:
     print(f"environment: {environment_line()}")
     print("host controller: " + (f"running at {state.url} (pid {state.pid}, build {state.build_id})"
                                  if state else "not running"))
+    if state and runner.restart_needed(state):
+        print(f"host controller: {RESTART_NEEDED}")
     print("autostart: " + ("installed" if service_unit.installed() else "not installed"))
     # pylint: disable-next=import-outside-toplevel
     from .remote import link_line
