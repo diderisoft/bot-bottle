@@ -1,10 +1,11 @@
 """The bottles' budget (`bot-bottle host budget`): what bot-bottle may use on
 this host, measured, reported to the console and enforced at launch.
 
-Memory is allocation: every running bottle is given `BOTTLE_MEMORY_BYTES`,
-so what's allocated is that times the bottles running (held, adopted or
-launching), whatever they happen to use. A launch that wouldn't fit is
-refused before it boots.
+Memory is allocation: every running bottle is given its size
+(`BOTTLE_MEMORY_BYTES` unless its `resources:` say otherwise), so what's
+allocated is the sum over the bottles running (held, adopted or launching),
+whatever they happen to use. A launch that wouldn't fit is refused before it
+boots.
 
 Storage is bot-bottle's own directories (the state root and the caches),
 walked in the background every few minutes by `StorageMeter`, never on a
@@ -170,14 +171,16 @@ def allocated(bottles: Iterable[Mapping[str, object]]) -> int:
 
 
 def refusal(label: str, bottles: Sequence[Mapping[str, object]], budget: HostBudget,
-            storage: Mapping[str, int] | None) -> str | None:
-    """Why a bottle named `label` can't launch now, or None when it fits.
-    `bottles` are the running ones (`BottleService.allocation`); `storage`
-    is the last walk (None skips the storage check)."""
+            storage: Mapping[str, int] | None,
+            needs: int = BOTTLE_MEMORY_BYTES) -> str | None:
+    """Why a bottle named `label`, given `needs` bytes of memory, can't launch
+    now, or None when it fits. `bottles` are the running ones
+    (`BottleService.allocation`); `storage` is the last walk (None skips the
+    storage check)."""
     if budget.memory_gb:
         limit, used = budget.memory_gb * GIB, allocated(bottles)
-        if used + BOTTLE_MEMORY_BYTES > limit:
-            return (f"{label} needs {gb(BOTTLE_MEMORY_BYTES)} GB of memory; "
+        if used + needs > limit:
+            return (f"{label} needs {gb(needs)} GB of memory; "
                     f"{gb(max(limit - used, 0))} GB left in the {gb(limit)} GB budget. "
                     "Stop a bottle (`bot-bottle bots`) or raise the budget "
                     "(`bot-bottle host budget --memory …`).")

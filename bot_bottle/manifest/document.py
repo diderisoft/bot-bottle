@@ -159,6 +159,8 @@ def bottle_document(bottle: ManifestBottle) -> dict[str, object]:
                                ("firehose", bottle.audit.firehose)) if v}
     if audit:
         doc["audit"] = audit
+    if resources := bottle.resources.document():  # only when set, like preserve_container
+        doc["resources"] = resources
     return doc
 
 

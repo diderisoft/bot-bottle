@@ -15,6 +15,7 @@ BOTTLE_KEYS = frozenset(
     {
         "env", "extends", "agent_provider", "git-gate", "egress",
         "supervise", "nested_containers", "preserve_container", "audit", "credentials",
+        "resources",
     }
 )
 AGENT_KEYS_REQUIRED: frozenset[str] = frozenset()

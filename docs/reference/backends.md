@@ -146,6 +146,31 @@ again (its network gone, say) is replaced the same way. `bots --stopped` shows
 `kept` in its `CONTAINER` column; `cleanup bots` leaves a kept guest, like its
 home and state.
 
+## Memory and vCPUs
+
+A bottle's agent gets 2 GiB of memory on every backend
+(`backend/bottle_size.py`), and on firecracker 2 vCPUs. A bottle's
+`resources:` block changes either:
+
+```yaml
+resources:
+  memory: 4G     # MiB as a number (4096), or "<n>M", "<n>MiB", "<n>G", "<n>GiB"
+  cpus: 4        # whole vCPUs
+```
+
+Memory runs from 512 MiB to 64 GiB, and `cpus` from 1 to 32. Through
+`extends` and stacked `--bottle`s, each key is replaced by the later bottle
+that sets it. How each backend applies them:
+
+- **firecracker:** the VM's `mem_size_mib` and `vcpu_count`. Unset `cpus` is 2.
+- **macos-container:** `container run --memory <n>M`, and `--cpus <n>` only
+  when the bottle sets `cpus` (otherwise Apple's default).
+- **docker:** the agent service's `mem_limit`, and `cpus` only when the bottle
+  sets it (otherwise unlimited).
+
+The host budget counts each running bottle at the memory it was given
+([host-controller.md](host-controller.md#bottles-budget)).
+
 ## Comparison
 
 | | macos-container | firecracker | docker |

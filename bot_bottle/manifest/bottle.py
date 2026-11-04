@@ -10,6 +10,7 @@ from typing import Mapping
 from .util import ManifestError, as_json_object
 from .egress import ManifestEgressConfig
 from .forges import ManifestForge
+from .resources import ManifestResources
 from .git import (
     ManifestGitEntry, ManifestGitUser, parse_git_gate_config,
     parse_git_gate_protect_default_branch, parse_git_gate_trailers,
@@ -81,6 +82,8 @@ class ManifestBottle:
     # so what it installs stays (PRD 0110). Off by default.
     preserve_container: bool = False
     audit: ManifestAudit = field(default_factory=ManifestAudit)
+    # `resources:` memory and vCPUs; unset keys take the backend's usual size.
+    resources: ManifestResources = field(default_factory=ManifestResources)
     # Forges declared in the bottle's chain (`git-gate.forges`), set while
     # `extends` is resolved.
     forges: tuple[ManifestForge, ...] = ()
@@ -186,6 +189,8 @@ class ManifestBottle:
             )
 
         audit = ManifestAudit.from_dict(name, d["audit"]) if "audit" in d else ManifestAudit()
+        resources = (ManifestResources.from_dict(name, d["resources"]) if "resources" in d
+                     else ManifestResources())
 
         return cls(
             env=env, git=git,
@@ -193,5 +198,5 @@ class ManifestBottle:
             git_protect_default_branch=protect_default, egress=egress,
             supervise=supervise_raw,
             nested_containers=nested_raw, preserve_container=preserve_raw, audit=audit,
-            declared_fields=frozenset(d),
+            resources=resources, declared_fields=frozenset(d),
         )

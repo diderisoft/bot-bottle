@@ -47,6 +47,7 @@ def merge_bottles_runtime(bottles: "list[ManifestBottle]") -> "ManifestBottle":
     - egress routes: per host, later wins; a later block drops the host
     - supervise, nested_containers, preserve_container: later replaces, but
       only when it declared the field (so an explicit `false` overrides)
+    - resources: per key, later wins when it declared the key
     """
     if not bottles:
         raise ValueError("merge_bottles_runtime requires at least one bottle")
@@ -91,6 +92,7 @@ def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle
         ),
         preserve_container=_overlay_declared_bool(base, override, "preserve_container"),
         audit=_overlay_audit(base, override),
+        resources=base.resources.overlay(override.resources),
         forges=_union_forges(base, override),
         declared_fields=base.declared_fields | override.declared_fields,
     )
@@ -292,6 +294,7 @@ def _fold_two_bottles(
         ),
         preserve_container=_overlay_declared_bool(earlier, later, "preserve_container"),
         audit=_overlay_audit(earlier, later),
+        resources=earlier.resources.overlay(later.resources),
         declared_fields=earlier.declared_fields | later.declared_fields,
     ), merged_repos_raw
 
@@ -355,6 +358,7 @@ def _merge_bottles(
         nested_containers=merged_nested_containers,
         preserve_container=_overlay_declared_bool(parent, child, "preserve_container"),
         audit=_overlay_audit(parent, child),
+        resources=parent.resources.overlay(child.resources),
         declared_fields=parent.declared_fields | child.declared_fields,
     )
 

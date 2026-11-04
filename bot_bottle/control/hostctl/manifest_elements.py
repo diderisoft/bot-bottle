@@ -3,7 +3,7 @@ route, repo and forge, with the bottle file it comes from (or "this run"),
 and copying or moving picked ones into another bottle.
 
 An element is keyed `<kind>:<name>` (`env:LANG`, `egress:api.example.com`,
-`repo:app`, `forge:gitea.example.com`). Where several files in the chain
+`repo:app`, `forge:gitea.example.com`, `resources:memory`). Where several files in the chain
 declare one, the nearest (the child) is its source and the rest are listed.
 """
 
@@ -101,6 +101,9 @@ def _file_elements(fm: dict[str, Any]) -> list[tuple[str, str, str, Any]]:
     for name, forge in (forges.items() if isinstance(forges, dict) else ()):
         detail = str(forge.get("url", "")) if isinstance(forge, dict) else ""
         out.append((f"forge:{name}", str(name), detail, forge))
+    resources = fm.get("resources")
+    for name, value in (resources.items() if isinstance(resources, dict) else ()):
+        out.append((f"resources:{name}", str(name), str(value), value))
     return out
 
 
@@ -202,7 +205,7 @@ def _file_rows(chain: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
 
 def _ordered(rows: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    order = {"egress": 0, "repo": 1, "forge": 2, "env": 3}
+    order = {"egress": 0, "repo": 1, "forge": 2, "env": 3, "resources": 4}
     return sorted(rows.values(), key=lambda r: (order.get(r["kind"], 9), r["name"]))
 
 
@@ -213,8 +216,8 @@ def _set(fm: dict[str, Any], key: str, value: Any, source_fm: dict[str, Any]) ->
     from ...approvals import _merge_route
     from ...manifest.forges import parse_grant
     kind, name = key.split(":", 1)
-    if kind == "env":
-        fm["env"] = {**(fm.get("env") or {}), name: value}
+    if kind in ("env", "resources"):
+        fm[kind] = {**(fm.get(kind) or {}), name: value}
     elif kind == "egress":
         egress = dict(fm.get("egress") or {})
         routes = [r for r in egress.get("routes") or [] if isinstance(r, dict)]
@@ -254,8 +257,8 @@ def _drop(fm: dict[str, Any], key: str) -> None:
     # pylint: disable-next=import-outside-toplevel
     from ...manifest.forges import parse_grant
     kind, name = key.split(":", 1)
-    if kind == "env" and isinstance(fm.get("env"), dict):
-        fm["env"] = {k: v for k, v in fm["env"].items() if k != name}
+    if kind in ("env", "resources") and isinstance(fm.get(kind), dict):
+        fm[kind] = {k: v for k, v in fm[kind].items() if k != name}
     elif kind == "egress" and isinstance(fm.get("egress"), dict):
         egress = dict(fm["egress"])
         egress["routes"] = [r for r in egress.get("routes") or []

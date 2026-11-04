@@ -198,7 +198,7 @@ class TestHostBudgetCommand(TestBudgetSetting):
         return code, out.getvalue(), err.getvalue()
 
     def test_shows_none_then_sets_and_clears(self) -> None:
-        each = "(each bottle is given 2 GB)"
+        each = "(each bottle is given 2 GB unless its resources: say otherwise)"
         self.assertEqual((0, f"memory: none {each}\nstorage: none\n", ""),
                          self.run_cmd(["budget"]))
         code, out, _ = self.run_cmd(["budget", "--disk", "50", "--memory", "16"])

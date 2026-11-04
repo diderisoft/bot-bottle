@@ -137,8 +137,10 @@ class TestFirecrackerLaunchSecrets(_LaunchCase):
         self.assertTrue(boot.call_args.kwargs["detached"])
         # Its home, kept across stop and resume, is the VM's second drive.
         self.assertEqual((self.stage / "home.ext4",), boot.call_args.kwargs["data_drives"])
-        # The same memory every backend gives a bottle (the host budget's unit).
+        # Unless the bottle's `resources:` say otherwise, the same memory every
+        # backend gives a bottle, and firecracker's usual two vCPUs.
         self.assertEqual(2048, boot.call_args.kwargs["mem_mib"])
+        self.assertEqual(2, boot.call_args.kwargs["vcpus"])
 
     def test_guest_env_takes_forwarded_values_from_the_plan(self) -> None:
         plan = FirecrackerBottlePlan(**_fields(self.stage))

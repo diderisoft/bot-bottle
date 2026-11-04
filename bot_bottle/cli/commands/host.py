@@ -41,7 +41,7 @@ def _budget(ns: argparse.Namespace) -> int:
             memory_gb=stored.memory_gb if ns.memory is None else ns.memory))
     shown = host_budget()
     sys.stdout.write(f"memory: {_gb(shown.memory_gb)} "
-                     f"(each bottle is given {BOTTLE_MEMORY_MIB // 1024} GB)\n"
+                     f"(each bottle is given {BOTTLE_MEMORY_MIB // 1024} GB unless its resources: say otherwise)\n"
                      f"storage: {_gb(shown.disk_gb)}\n")
     return 0
 

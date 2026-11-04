@@ -19,6 +19,7 @@ Bottle frontmatter:
   nested_containers: <bool>                     # default false
   preserve_container: <bool>                    # default false: keep the guest across stop
   audit:        { delivery: ..., firehose: ... }
+  resources:    { memory: <MiB | "4G">, cpus: <int> }  # default: the backend's size
 
 Agent frontmatter (no `bottle`: bottles are picked at launch, `basic` if none):
   skills:       [ <skill-name>, ... ]

@@ -34,7 +34,7 @@ from ...manifest.schema import DEFAULT_BOTTLE
 from ...paths import host_secrets_path
 from ... import bottle_state, run_manifest
 from ...backend import adoption
-from ...backend.bottle_size import BOTTLE_MEMORY_BYTES
+from ...backend.bottle_size import memory_bytes, recorded_memory
 from ...lib.config_store import HostBudget
 from . import bottle_metrics, budget, relabel
 from .build import RESTART_NEEDED
@@ -217,7 +217,7 @@ class BottleService:
         self._host_budget = host_budget
         self._storage = storage
         # Admitted against the budget but not held yet: id -> label.
-        self._launching: dict[str, str] = {}
+        self._launching: dict[str, tuple[str, int]] = {}  # label, memory
         self._admitting = threading.Lock()
         # What adopted bottles hold until they end (e.g. a Firecracker slot).
         self._adopted: dict[str, Callable[[], None]] = {}
@@ -308,7 +308,7 @@ class BottleService:
             self._confirm(backend, plan, request)
             if self._running(identity):
                 log.die(f"bottle {identity} is already running")
-            self._admit(identity, request.label or identity)
+            self._admit(identity, request.label or identity, memory_bytes(plan.manifest.bottle))
             ready: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
             threading.Thread(
                 target=contextvars.Context().run,
@@ -330,24 +330,24 @@ class BottleService:
                 settle_state(identity)
                 shutil.rmtree(stage_dir, ignore_errors=True)
 
-    def _admit(self, identity: str, label: str) -> None:
+    def _admit(self, identity: str, label: str, memory: int) -> None:
         """Refuse a launch the host budget can't fit, else count it as
         running until its holder takes it. One admission at a time, so two
         launches can't both take the last room."""
         with self._admitting:
             limits, storage = self._host_budget(), self._storage()
-            refused = budget.refusal(label, self.allocation(), limits, storage)
+            refused = budget.refusal(label, self.allocation(), limits, storage, memory)
             if refused is not None:
                 log.die(refused)
             warning = budget.storage_warning(limits, storage)
             if warning is not None:
                 log.warn(warning)
             with self._lock:
-                self._launching[identity] = label
+                self._launching[identity] = (label, memory)
 
     def allocation(self) -> list[dict[str, object]]:
         """The bottles memory is allocated to: held, adopted, launching, or
-        with a running session; each given `BOTTLE_MEMORY_BYTES`."""
+        with a running session; each at the memory it was given."""
         with self._lock:
             taken = set(self._held) | set(self._adopted)
             launching = dict(self._launching)
@@ -357,15 +357,15 @@ class BottleService:
                 continue
             if r.id in taken or r.id in launching or self.session_state(r.id)["running"]:
                 entry: dict[str, object] = {"id": r.id, "label": r.meta.get("label", "") or r.id,
-                                            "memory": BOTTLE_MEMORY_BYTES}
+                                            "memory": recorded_memory(r.meta)}
                 metrics = bottle_metrics.collect(r.id, str(r.meta.get("backend") or ""))
                 if metrics is not None:
                     entry["cpu_pct"] = metrics.cpu_pct
                     entry["mem_used"] = metrics.mem_used
                 out.append(entry)
                 launching.pop(r.id, None)
-        out.extend({"id": i, "label": label, "memory": BOTTLE_MEMORY_BYTES}
-                   for i, label in launching.items())
+        out.extend({"id": i, "label": label, "memory": memory}
+                   for i, (label, memory) in launching.items())
         return out
 
     def live_metrics(self, identity: str) -> dict[str, object] | None:
@@ -379,7 +379,7 @@ class BottleService:
         if metrics is None:
             return None
         return {"id": identity, "cpu_pct": metrics.cpu_pct, "mem_used": metrics.mem_used,
-                "memory": BOTTLE_MEMORY_BYTES}
+                "memory": recorded_memory(record.meta)}
 
     @staticmethod
     def _confirm(backend: "BottleBackend[Any, Any]", plan: "BottlePlan",
@@ -451,6 +451,7 @@ class BottleService:
                         meta={"backend": backend.name, "agent": request.agent,
                               "label": request.label, "provider": harness,
                               "activation": activation, "manifest_digest": policy,
+                              "memory": memory_bytes(plan.manifest.bottle),
                               "origin": ORIGIN_CONSOLE if from_console else ORIGIN_TERMINAL,
                               # The console's id for an agent it launched, so a
                               # restarted host controller can pick it up again.

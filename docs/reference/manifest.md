@@ -78,6 +78,7 @@ How the fields combine, later bottle winning (a child over its parents, a
 later parent over an earlier one, a later `--bottle` over an earlier one):
 
 - `env`: per variable.
+- `resources`: per key (`memory`, `cpus`).
 - `git-gate.repos`: per repo name, field by field; `repos: {}` clears them.
 - `git-gate.trailers` and `git-gate.protect_default_branch`: the later bottle's,
   when it sets one.
@@ -92,8 +93,9 @@ later parent over an earlier one, a later `--bottle` over an earlier one):
 
 The `git-gate` block, including forges and one-line repo grants, is in
 [git-gate.md](git-gate.md#manifest). `preserve_container` is in
-[backends.md](backends.md#keeping-the-guest), and `nested_containers` in
-[backends.md](backends.md#containers-inside-a-bottle).
+[backends.md](backends.md#keeping-the-guest), `nested_containers` in
+[backends.md](backends.md#containers-inside-a-bottle), and `resources`
+(memory and vCPUs) in [backends.md](backends.md#memory-and-vcpus).
 
 ## Agents
 

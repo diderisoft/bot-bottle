@@ -274,11 +274,13 @@ this host (0 clears one; no flags shows them). It's stored in the host DB and
 read at each launch and each `host_stats` report, so a change applies at once.
 `bot-bottle host caps` is its deprecated old name.
 
-- **Memory is allocation.** Every bottle is given the same memory
-  (`backend/bottle_size.py`, 2 GiB): a firecracker VM's memory, a macOS
-  container's `--memory`, a Docker agent's `mem_limit`. Allocated is that
-  times the bottles running: held, adopted after a restart, launching, or
-  with a running session. A VM usually uses less than it's given, so
+- **Memory is allocation.** A bottle is given 2 GiB (`backend/bottle_size.py`)
+  unless its `resources:` say otherwise ([backends.md](backends.md#memory-and-vcpus)):
+  a firecracker VM's memory, a macOS container's `--memory`, a Docker agent's
+  `mem_limit`. The session record keeps what each was given (`memory`), and
+  allocated is the sum over the bottles running: held, adopted after a restart,
+  launching, or with a running session. A bottle recorded before `resources:`
+  counts at 2 GiB. A VM usually uses less than it's given, so
   allocation can sit well above the host-wide figure.
 - **Storage is bot-bottle's own directories:** the state root and the
   artifact and firecracker caches, in allocated blocks (a sparse VM disk

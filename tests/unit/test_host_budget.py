@@ -204,7 +204,8 @@ class TestAllocation(unittest.TestCase):
         service = BottleService(manager)
         service._held["held"] = cast(Any, object())
         service._adopted["adopted"] = lambda: None
-        service._launching.update({"new": "New one", "held": "Held"})
+        service._launching.update({"new": ("New one", BOTTLE_MEMORY_BYTES),
+                                   "held": ("Held", BOTTLE_MEMORY_BYTES)})
         got = service.allocation()
         self.assertEqual(["held", "adopted", "live", "new"], [b["id"] for b in got])
         self.assertEqual(["Held", "adopted", "live", "New one"], [b["label"] for b in got])

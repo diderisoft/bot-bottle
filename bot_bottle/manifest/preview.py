@@ -70,6 +70,9 @@ def manifest_to_yaml(manifest: Manifest) -> str:
         lines.append("  nested_containers: true")
     if bottle.preserve_container:
         lines.append("  preserve_container: true")
+    if resources := bottle.resources.document():
+        lines.append("  resources:")
+        lines.extend(f"    {k}: {v}" for k, v in resources.items())
 
     return "\n".join(lines)
 
