@@ -44,13 +44,17 @@ FROM ${PYTHON_BASE_IMAGE}
 
 # Freeze apt's package universe as well as the base filesystem. Without a
 # snapshot, the same Dockerfile resolves different package versions over time.
+# snapshot.debian.org throttles under a release's parallel builds; retry
+# patiently rather than fail the build.
 ARG DEBIAN_SNAPSHOT=20260724T000000Z
 RUN sed -i \
       -e "s|http://deb.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
       -e "s|https://deb.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
       -e "s|http://deb.debian.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
       -e "s|https://deb.debian.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
-      /etc/apt/sources.list.d/debian.sources
+      /etc/apt/sources.list.d/debian.sources \
+ && printf '%s\n' 'Acquire::Retries "10";' 'Acquire::http::Timeout "120";' \
+      'Acquire::http::Pipeline-Depth "0";' > /etc/apt/apt.conf.d/80-snapshot-retries
 
 # Runtime system deps:
 #   git supplies `git http-backend` and the `git` the hooks invoke.
