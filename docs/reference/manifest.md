@@ -60,7 +60,7 @@ egress:
                 value: /v1/
             methods: [GET, POST]
         outbound_detectors: [token_patterns, known_secrets]
-        inbound_detectors: false   # disable response scanning for this host
+        inbound_detectors: [naive_injection_detection]   # opt in to response scanning
 ---
 
 The `app-dev` bottle: push to `app` over SSH, a token over HTTPS for the
@@ -220,7 +220,7 @@ applies a route is in [gateway.md](gateway.md#egress-proxy).
 | `inspect.matches[].methods` | no | Array of HTTP method strings, e.g. `[GET, POST]`. |
 | `inspect.matches[].headers` | no | Array of `{name, value, type}`. `type` is `exact` (default) or `regex`. |
 | `inspect.outbound_detectors` | no | `false` disables outbound scanning; a list restricts it to named detectors (`token_patterns`, `known_secrets`). Omit for all. |
-| `inspect.inbound_detectors` | no | `false` disables inbound scanning; a list restricts it to named detectors (`naive_injection_detection`). Omit for all. |
+| `inspect.inbound_detectors` | no | Off unless listed: name the detectors to run on responses (`naive_injection_detection`). Omit or `false` for none. |
 | `inspect.outbound_on_match` | no | What to do when an outbound token is detected: `supervise` (default for manifest routes; hold for operator approval), `redact` (scrub the value and forward), or `block` (hard 403). Agent-provider routes (e.g. `api.anthropic.com`) default to `redact`. |
 | `inspect.preserve_auth` | no | `true` forwards the client's own `Authorization` header instead of stripping it (registries whose token dance fetches per-scope tokens). |
 | `inspect.git.fetch` | no | `true` permits smart HTTP clone/fetch (`git-upload-pack`) for this host. Push (`git-receive-pack`) remains blocked; pushes go through [git-gate](git-gate.md). |

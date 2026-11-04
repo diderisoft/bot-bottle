@@ -39,6 +39,13 @@ def _enabled(configured: tuple[str, ...] | None, name: str) -> bool:
     return configured is None or name in configured
 
 
+def _opted_in(configured: tuple[str, ...] | None, name: str) -> bool:
+    """An inbound detector runs only when the route names it. Regex phrase
+    matching is trivially bypassed, and the allowlist and outbound DLP already
+    stop what a successful injection would try to do."""
+    return configured is not None and name in configured
+
+
 def _scan_canary(text: str, environ: typing.Mapping[str, str]) -> ScanResult | None:
     """A hit on the bottle's canary. Checked on every inspected route, never
     safelisted."""
@@ -110,6 +117,6 @@ def scan_inbound(route: Route, body: str | bytes) -> ScanResult | None:
     except ImportError:  # pragma: no cover - gateway's flat module path
         from .dlp_detectors import scan_naive_injection
     text = body if isinstance(body, str) else body.decode("utf-8", errors="replace")
-    if _enabled(route.inbound_detectors, "naive_injection_detection"):
+    if _opted_in(route.inbound_detectors, "naive_injection_detection"):
         return scan_naive_injection(text)
     return None

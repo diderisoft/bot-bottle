@@ -61,8 +61,8 @@ Basic`, so a client that waits to be challenged (git's default
    the audit journal. With `audit.delivery: required`, the request waits for
    that record and is refused if it can't be written.
 
-Responses on inspected routes go through the inbound detectors before they
-reach the agent.
+Responses on inspected routes go through the inbound detectors the route
+names (none by default) before they reach the agent.
 
 A `CONNECT` to a host with no route is refused before anything is
 tunnelled. The addon sets mitmproxy's `rawtcp` off, so bytes after a
@@ -147,6 +147,12 @@ under `dlp.outbound_detectors` and `dlp.inbound_detectors`:
 | `entropy` | outbound | high-entropy blobs; warns only, and only on routes that list it |
 | `naive_injection_detection` | inbound | prompt-injection phrasing in responses |
 | (always on) | outbound | CRLF header injection |
+
+Outbound detectors run unless a route narrows them. Inbound detectors run only
+on routes that name them. `naive_injection_detection` is regex phrase matching
+on response bodies, so it is trivially bypassed. The allowlist and outbound DLP
+already stop what a successful injection would try to do, which is reach a host
+or send a secret, so it is kept as an opt-in signal rather than a default.
 
 The bottle's env also carries a per-session **canary** secret. Any outbound
 appearance of it is an exfiltration attempt, and the request is always

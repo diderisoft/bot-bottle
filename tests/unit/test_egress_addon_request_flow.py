@@ -394,6 +394,7 @@ class _CtxResolver(_SuperviseRpcFake):
         policy = (
             "routes:\n  - host: api.example.com\n"
             "    matches:\n      - methods:\n          - GET\n          - POST\n"
+            "    dlp:\n      inbound_detectors:\n        - naive_injection_detection\n"
         ) if bottle_id else None
         return policy, bottle_id, (self._tokens if bottle_id else {})
 
@@ -907,9 +908,24 @@ _INJECTION_WARN = "here is my system prompt for you"
 # ---------------------------------------------------------------------------
 
 
+# Inbound scanning is opt-in: these routes name the detector.
+_OPTED_IN = Route(host="api.example.com", inbound_detectors=("naive_injection_detection",))
+
+
 class TestInboundResponseDlp(unittest.TestCase):
-    def test_injection_block_writes_403(self) -> None:
+    def test_injection_forwards_when_not_opted_in(self) -> None:
         config = Config(routes=(Route(host="api.example.com"),))
+        addon = _addon(config)
+        flow = _stash(_Flow(
+            _Request(host="api.example.com"),
+            _Response(200, content=_INJECTION_BLOCK),
+        ), config)
+        addon.response(flow)  # type: ignore[arg-type]
+        assert flow.response is not None
+        self.assertEqual(200, flow.response.status_code)
+
+    def test_injection_block_writes_403(self) -> None:
+        config = Config(routes=(_OPTED_IN,))
         addon = _addon(config)
         flow = _stash(_Flow(
             _Request(host="api.example.com"),
@@ -920,7 +936,7 @@ class TestInboundResponseDlp(unittest.TestCase):
         self.assertEqual(403, flow.response.status_code)
 
     def test_injection_warn_logs_but_forwards(self) -> None:
-        config = Config(routes=(Route(host="api.example.com"),), log=LOG_BLOCKS)
+        config = Config(routes=(_OPTED_IN,), log=LOG_BLOCKS)
         addon = _addon(config)
         flow = _stash(_Flow(
             _Request(host="api.example.com"),
@@ -955,7 +971,7 @@ class TestInboundResponseDlp(unittest.TestCase):
 
 class TestWebSocketInbound(unittest.TestCase):
     def test_inbound_injection_kills_connection(self) -> None:
-        config = Config(routes=(Route(host="api.example.com"),))
+        config = Config(routes=(_OPTED_IN,))
         addon = _addon(config)
         flow = _stash(_Flow(_Request(host="api.example.com")), config)
         flow.websocket = _WebSocketData([_Message(_INJECTION_BLOCK.encode(), from_client=False)])
@@ -963,7 +979,7 @@ class TestWebSocketInbound(unittest.TestCase):
         self.assertTrue(flow.killed)
 
     def test_inbound_warn_does_not_kill(self) -> None:
-        config = Config(routes=(Route(host="api.example.com"),))
+        config = Config(routes=(_OPTED_IN,))
         addon = _addon(config)
         flow = _stash(_Flow(_Request(host="api.example.com")), config)
         flow.websocket = _WebSocketData([_Message(_INJECTION_WARN.encode(), from_client=False)])
