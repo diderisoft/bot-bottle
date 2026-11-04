@@ -78,8 +78,7 @@ class BuiltImage:
     name: str
     version: str
     artifacts: list[BuiltArtifact] = field(default_factory=list)
-    # The protocol these bytes speak: the source's at build time, or the tested
-    # manifest's when promoting.
+    # The bytes' protocol: the source's at build time, the tested manifest's on promote.
     protocol: int = PROTOCOL_VERSION
 
 
@@ -456,8 +455,7 @@ def rootfs_source_tag(
     ):
         build_args += ["--build-arg", f"{name}={value}"]
 
-    # The derived Dockerfile's base, passed as a digest-pinned local ref (the
-    # ARG has no default).
+    # The derived Dockerfile's base, as a digest-pinned local ref (the ARG has no default).
     base_arg = image_inputs.ROOTFS_BASE_ARG.get(image)
     if base_arg:
         from .backend.docker import util as docker_util
@@ -599,8 +597,7 @@ def promote(
                 fmt=artifact.format, platform=artifact.platform, digest=digest,
                 locator=(oci_tag(to_version, artifact.platform) if is_oci
                          else ext4_filename(artifact.platform)),
-                # OCI ref from the tested manifest; ext4's namespace is unused
-                # by the writer.
+                # OCI ref from the tested manifest; ext4's namespace is unused.
                 namespace=(oci_ref(artifact.image) if is_oci
                            else ext4_package(artifact.image)),
                 inputs_hash=entry.inputs_hash,
@@ -682,8 +679,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--jobs", type=int, default=None,
-        help="builds to run concurrently (default: a quarter of the cores, "
-             "capped at 8)",
+        help="builds to run concurrently (default: a quarter of the cores, at "
+             "most 8, and one per 6 GiB of available memory)",
     )
     parser.add_argument("--runtime", default="docker", help="container runtime")
     parser.add_argument(
@@ -705,10 +702,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def default_jobs() -> int:
-    """Default build concurrency: a quarter of the cores. Each build mostly
-    uses one core."""
-    return max(1, min(8, (os.cpu_count() or 4) // 4))
+def default_jobs(meminfo: str = "/proc/meminfo") -> int:
+    """Builds to run at once: a quarter of the cores (at most 8), and one per 6 GiB
+    of available memory (an arm64 build under QEMU is large) where that's known."""
+    jobs = max(1, min(8, (os.cpu_count() or 4) // 4))
+    try:
+        with open(meminfo, encoding="ascii") as f:
+            kib = next(int(line.split()[1]) for line in f if line.startswith("MemAvailable:"))
+    except (OSError, StopIteration, ValueError, IndexError):
+        return jobs
+    return min(jobs, max(1, kib // (6 * 1024 * 1024)))
 
 
 def build_all(
@@ -745,9 +748,8 @@ def build_all(
             name, plat = futures[future]
             try:
                 produced[name].extend(future.result())
-            # pylint: disable=broad-exception-caught
             # Broad so one failure can't swallow the others' results.
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
                 failures.append(f"{name} ({plat}): {exc}")
 
     if failures:

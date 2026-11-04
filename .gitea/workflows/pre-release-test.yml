@@ -216,7 +216,8 @@ jobs:
             --version "0.0.0-dev-${{ github.run_number }}" --force \
             --platform linux/amd64 \
             --platform linux/arm64 \
-            --work-dir "${{ github.workspace }}/candidate"
+            --work-dir "${{ github.workspace }}/candidate" \
+            --jobs 2
 
       # Point the resolver at the dev manifest just published, not the committed
       # one. load_artifacts_manifest() reads the repo-root file, so without this
