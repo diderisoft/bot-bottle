@@ -331,7 +331,13 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):  # pylint: disable=too-many-
         # One filtered tarball, copied and unpacked in the guest.
         with tempfile.TemporaryDirectory(prefix="bot-bottle-ws.") as tmp:
             tarball = Path(tmp) / "workspace.tar"
-            size = pack_workspace(workspace.host_path, tarball, is_git=is_git)
+            left_out: list[str] = []
+            size = pack_workspace(workspace.host_path, tarball, is_git=is_git,
+                                  dropped=left_out)
+            if left_out:
+                warn(f"left {len(left_out)} credential setting(s) out of the bottle's "
+                     f"repo config ({', '.join(left_out)}); git in the bottle uses "
+                     "git-gate's credentials")
             info(f"copying {workspace.host_path} ({size >> 20} MB"
                  f"{', filtered by .gitignore' if is_git else ''}) -> "
                  f"{bottle.name}:{workspace.guest_path}")

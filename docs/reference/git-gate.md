@@ -275,6 +275,13 @@ hand.
 The agent's env also points `core.hooksPath` at the commit hooks (see
 [Commit trailers](#commit-trailers)).
 
+A copied workspace's own repo config carries no credentials: its remote URLs
+lose their user info, and `http.*` and `credential.*` stay on the host
+([backends.md](backends.md#the-workspaces-repo-config)). Upstream
+credentials live only in the gate. A remote URL that had a token in it then
+matches the gate's `insteadOf` rewrite, so it goes through the gate like any
+other.
+
 The agent's `NO_PROXY` covers the gateway, so git traffic to it skips the
 egress proxy. Smart-HTTP push to a forge through the egress proxy is blocked,
 so the gate is the only way to push.

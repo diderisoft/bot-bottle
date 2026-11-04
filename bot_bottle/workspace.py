@@ -8,6 +8,7 @@ included) into a patch.
 
 from __future__ import annotations
 
+import io
 import os
 import shlex
 import subprocess
@@ -15,6 +16,8 @@ import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+
+from .git_config_filter import filtered_config, is_repo_config
 
 
 WORKSPACE_DIRNAME = "workspace"
@@ -152,9 +155,12 @@ def workspace_files(root: Path, *, is_git: bool) -> list[str]:
     return files
 
 
-def pack_workspace(root: Path, dest: Path, *, is_git: bool) -> int:
+def pack_workspace(root: Path, dest: Path, *, is_git: bool,
+                   dropped: list[str] | None = None) -> int:
     """Write the filtered workspace to tar `dest`; returns bytes packed. Files
-    that vanish meanwhile are skipped."""
+    that vanish meanwhile are skipped. A repo config goes in cut to local
+    settings (`git_config_filter`); the credential settings it left out are
+    appended to `dropped`, by name."""
     total = 0
     with tarfile.open(dest, "w") as tar:
         for rel in workspace_files(root, is_git=is_git):
@@ -162,6 +168,15 @@ def pack_workspace(root: Path, dest: Path, *, is_git: bool) -> int:
             try:
                 info = tar.gettarinfo(str(path), arcname=rel)
             except OSError:
+                continue
+            if is_git and info.isreg() and is_repo_config(rel):
+                data, left_out = filtered_config(path)
+                if dropped is not None:
+                    dropped.extend(f"{rel}: {name}" if rel != ".git/config" else name
+                                   for name in left_out)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+                total += info.size
                 continue
             if info.isreg():
                 try:

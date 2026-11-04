@@ -131,6 +131,26 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
         self.assertNotIn("secret.env", packed)
         self.assertIn("bot-bottle-base", bottle.exec.call_args_list[-1].args[0])
 
+    def test_credentials_left_out_of_the_repo_config_are_warned_about(self) -> None:
+        subprocess.run(["git", "init", "-q", str(self.tmp)], check=True)
+        subprocess.run(["git", "-C", str(self.tmp), "config", "remote.origin.url",
+                        "https://ghp_tok3n@github.com/acme/app.git"], check=True)
+        backend = DockerBottleBackend(Settings())
+        with (
+            patch("bot_bottle.backend.docker.resolve_plan.docker_mod.require_docker"),
+            patch(
+                "bot_bottle.backend.docker.resolve_plan.docker_mod.runsc_available",
+                return_value=False,
+            ),
+        ):
+            plan = backend.prepare(_spec(self.tmp), self.tmp / "stage", MappingSecrets({}))
+        with patch("bot_bottle.backend.base.warn") as warn:
+            backend.provision_workspace(plan, _bottle())
+        [message] = [c.args[0] for c in warn.call_args_list if "credential" in c.args[0]]
+        self.assertIn("remote.origin.url user info", message)
+        self.assertIn("git-gate", message)
+        self.assertNotIn("ghp_tok3n", message)
+
     def test_default_backend_method_noops_without_copy_cwd(self) -> None:
         backend = DockerBottleBackend(Settings())
         with (

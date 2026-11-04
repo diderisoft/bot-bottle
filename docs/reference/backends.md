@@ -115,6 +115,28 @@ with its exit status and last output (127: its command wasn't found); a later
 non-zero exit is `agent_stopped` with the same in `message`, so it can still
 be resumed.
 
+### The workspace's repo config
+
+A copied git workspace brings its `.git`, but not the host's repo config as is
+(`git_config_filter.py`). `.git/config` (and a submodule's under
+`.git/modules/`, or a worktree's `config.worktree`) is rewritten from an
+allowlist of settings git needs locally:
+- `core.*`, except settings naming host paths or commands (`hooksPath`,
+  `sshCommand`, `askPass`, `editor`, `pager`, `fsmonitor`, `worktree`, …)
+- `extensions.*`, `user.name`/`email`, `alias.*`, `pull.*`, `lfs.*`, and a few
+  plain `push`/`fetch`/`init`/`merge`/`diff` settings
+- `branch.<b>.*` tracking, `remote.<r>.url`/`pushurl`/`fetch`/…, `submodule.<s>.*`
+- plain `url.<base>.insteadOf` rewrites
+
+Remote, push and submodule URLs lose their user info: an `https` token, or an
+`ssh` password (a bare `git@` stays). Everything else stays on the host:
+`http.*` (an `extraHeader`), `credential.*`, `include`/`includeIf`, a rewrite
+whose base carries a credential, diff and merge drivers, and any value that
+still carries an auth header. git in the bottle doesn't need any of it, because it
+reaches upstreams through git-gate with git-gate's credentials. When
+a credential setting is left out, the launch says so, naming it but never
+its value. The host's own config isn't changed (ADR 0016).
+
 ### A project's workspace disk (firecracker)
 
 A new bottled agent starts with a fresh home, so on every backend what the
