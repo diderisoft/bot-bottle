@@ -95,35 +95,57 @@ class TestRecording(unittest.TestCase):
 
 
 class TestCommands(unittest.TestCase):
+    """Built from a tree whose on-disk owners and modes are known, so the
+    result doesn't depend on who runs the tests (CI runs as root, where tar
+    keeps owners itself and nothing needs fixing)."""
+
     def setUp(self) -> None:
-        self.root = Path(self.enterContext(tempfile.TemporaryDirectory(prefix="bb-owners-")))
-        self.tree = self.root
-        ro.unpack(io.BytesIO(_IMAGE), self.tree)
+        self.tree = Path(self.enterContext(tempfile.TemporaryDirectory(prefix="bb-owners-")))
+        (self.tree / "usr/bin").mkdir(parents=True)
+        (self.tree / "usr/bin/su").write_text("#!/bin/sh\n")
+        os.chmod(self.tree / "usr/bin/su", 0o755)  # as unpacked: setuid lost
+        os.symlink("usr/bin", self.tree / "bin")
+        self.other = os.getuid() + 7  # an owner the files on disk don't have
+        self.owners: ro.Owners = {
+            "": (self.other, self.other, 0o755),
+            "usr": (self.other, self.other, 0o755),
+            "usr/bin": (self.other, self.other, 0o755),
+            "usr/bin/su": (self.other, self.other, 0o4755),
+            "bin": (self.other, self.other, 0o777),
+        }
 
     def test_each_path_gets_its_recorded_owner_and_lost_mode_bits(self) -> None:
-        commands, skipped = ro.ownership_commands(self.tree, ro.read_owners(self.tree) or {})
+        commands, skipped = ro.ownership_commands(self.tree, self.owners)
         self.assertEqual(0, skipped)
-        me = os.getuid()
-        if me != 0:
-            self.assertIn('sif "/usr/bin/su" uid 0', commands)
-            self.assertIn('sif "/" uid 0', commands)
-        if me != 1000:
-            self.assertIn('sif "/home/node" uid 1000', commands)
-        # Unpacked without root, su lost its setuid bit; the image has it.
+        for path in ("/", "/usr/bin/su", "/bin"):
+            self.assertIn(f'sif "{path}" uid {self.other}', commands)
+            self.assertIn(f'sif "{path}" gid {self.other}', commands)
         self.assertIn('sif "/usr/bin/su" mode 0104755', commands)
+        # A symlink's mode isn't set; one that already matches isn't either.
         self.assertFalse(any(c.startswith('sif "/bin" mode') for c in commands))
-        self.assertFalse(any(ro.OWNERS_FILE in c for c in commands))
+        self.assertFalse(any(c.startswith('sif "/usr" mode') for c in commands))
+
+    def test_matching_owners_need_no_commands(self) -> None:
+        me = (os.getuid(), os.getgid())
+        same = {path: (*me, mode) for path, (_, _, mode) in self.owners.items()}
+        os.chmod(self.tree / "usr/bin/su", 0o4755)
+        commands, _ = ro.ownership_commands(self.tree, same)
+        self.assertEqual([], [c for c in commands if '"/usr/bin/su"' in c])
 
     def test_a_file_the_tar_did_not_hold_becomes_roots(self) -> None:
         (self.tree / "bb-init").write_text("#!/bin/sh\n")
-        commands, _ = ro.ownership_commands(self.tree, ro.read_owners(self.tree) or {})
-        if os.getuid() != 0:
-            self.assertIn('sif "/bb-init" uid 0', commands)
+        commands, _ = ro.ownership_commands(self.tree, self.owners)
+        self.assertEqual(os.getuid() != 0, 'sif "/bb-init" uid 0' in commands)
         self.assertFalse(any(c.startswith('sif "/bb-init" mode') for c in commands))
+
+    def test_the_record_itself_is_left_out(self) -> None:
+        ro.write_owners(self.tree, self.owners)
+        commands, _ = ro.ownership_commands(self.tree, self.owners)
+        self.assertFalse(any(ro.OWNERS_FILE in c for c in commands))
 
     def test_names_debugfs_cannot_take_are_skipped_and_counted(self) -> None:
         (self.tree / 'odd"name').write_text("x")
-        commands, skipped = ro.ownership_commands(self.tree, ro.read_owners(self.tree) or {})
+        commands, skipped = ro.ownership_commands(self.tree, self.owners)
         self.assertEqual(1, skipped)
         self.assertFalse(any("odd" in c for c in commands))
 
