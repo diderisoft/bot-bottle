@@ -18,6 +18,7 @@ from bot_bottle.contract.identity import IDENTITY_HEADER
 from bot_bottle.gateway.audit_client import GatewayAudit
 from bot_bottle.gateway.egress.audit_hooks import AUDIT_REFUSED, EgressAudit
 from bot_bottle.gateway.egress.firehose import EgressFirehose, FirehoseClient
+from bot_bottle.gateway.egress.full_log import FullLog
 from bot_bottle.gateway.egress.addon_settings import (
     DEFAULT_INBOUND_SCAN_LIMIT_BYTES,
     _inbound_scan_limit_from_env,
@@ -276,47 +277,23 @@ class EgressAddon:
             {"Content-Type": "text/plain; charset=utf-8"},
         )
 
+    def _full_log(self) -> FullLog:
+        """Where `log: 2` bodies go: a capped, rotated 0600 file, never stderr
+        (the gateway VM's serial console). Created on first use."""
+        log = self.__dict__.get("_full_log_sink")
+        if log is None:
+            log = self.__dict__["_full_log_sink"] = FullLog.from_env(os.environ)
+        return log
+
     def _log_request(
         self, flow: http.HTTPFlow, env: "typing.Mapping[str, str]",
     ) -> None:
-        # The flow's env, so the calling bottle's secrets are redacted.
-        headers = {
-            k: redact_tokens(v, env=env)
-            for k, v in flow.request.headers.items()
-            if k.lower() != "authorization"
-        }
-        body = redact_tokens(flow.request.get_text(strict=False) or "", env=env)
-        sys.stderr.write(
-            json.dumps({
-                "event": "egress_request",
-                "host": redact_tokens(flow.request.host, env=env),
-                "method": flow.request.method,
-                "path": redact_tokens(flow.request.path, env=env),
-                "headers": headers,
-                "body": body,
-            })
-            + "\n"
-        )
+        self._full_log().request(flow, env)
 
     def _log_response(
         self, flow: http.HTTPFlow, env: "typing.Mapping[str, str]",
     ) -> None:
-        # Same per-flow env as _log_request.
-        headers = {
-            k: redact_tokens(v, env=env)
-            for k, v in flow.response.headers.items()
-        }
-        body = redact_tokens(flow.response.get_text(strict=False) or "", env=env)
-        sys.stderr.write(
-            json.dumps({
-                "event": "egress_response",
-                "host": flow.request.host,
-                "status": flow.response.status_code,
-                "headers": headers,
-                "body": body,
-            })
-            + "\n"
-        )
+        self._full_log().response(flow, env)
 
     def _resolve_flow(
         self, flow: http.HTTPFlow,

@@ -4,6 +4,7 @@ resolution (PRD 0017, PRD 0053)."""
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from bot_bottle.egress import (
     CODEX_HOST_CREDENTIAL_TOKEN_REF,
@@ -618,6 +619,28 @@ class TestCanaryGeneration(unittest.TestCase):
         )
         self.assertEqual("", plan.canary)
         self.assertEqual("", plan.canary_env)
+
+
+class TestFullLogWarning(unittest.TestCase):
+    """A bottle at `log: 2` is warned at launch where the bodies go (#934)."""
+
+    def _prepare(self, log: int) -> str:
+        bottle = ManifestIndex.from_json_obj({
+            "bottles": {"dev": {"egress": {"routes": [], "log": log}}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
+        }).bottles["dev"]
+        with tempfile.TemporaryDirectory() as td, \
+                patch("bot_bottle.egress.service.warn") as warn:
+            Egress().prepare(bottle, "slug", Path(td))
+        return " ".join(str(c.args[0]) for c in warn.call_args_list)
+
+    def test_log_full_warns_with_the_log_location(self):
+        message = self._prepare(2)
+        self.assertIn("/var/log/bot-bottle-egress/full.jsonl", message)
+        self.assertIn("64 MiB", message)
+
+    def test_lower_levels_are_quiet(self):
+        self.assertEqual(self._prepare(1), "")
 
 
 class TestEgressEnvEntries(unittest.TestCase):

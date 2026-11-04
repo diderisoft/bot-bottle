@@ -169,6 +169,19 @@ blocked.
 Canary hits, CRLF injection and allowlist misses are always a 403, whatever
 the policy.
 
+### Logging
+
+At `egress.log` 1 the proxy writes a summary line per blocked or flagged
+request to its log ([manifest.md](manifest.md#egress-log)). At 2 it also
+records each inspected request and response in full, but never to its log:
+on Firecracker that's the VM's serial console, which a few busy bottles'
+bodies can saturate. `gateway/egress/full_log.py` writes them instead to
+`/var/log/bot-bottle-egress/full.jsonl` (`EGRESS_FULL_LOG_DIR` overrides),
+created 0600, each body cut at 64 KiB, rotated at 16 MiB with three older
+files kept. On the host, each microVM's console log is written through
+`backend/firecracker/console_cap.py`: `console.log` is 0600 and rotates to
+`console.log.1` at 8 MiB.
+
 ### Route schema
 
 `gateway/egress/schema.py` parses the policy blob the orchestrator stores.

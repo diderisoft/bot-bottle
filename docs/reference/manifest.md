@@ -227,6 +227,17 @@ applies a route is in [gateway.md](gateway.md#egress-proxy).
 | `inspect.preserve_auth` | no | `true` forwards the client's own `Authorization` header instead of stripping it (registries whose token dance fetches per-scope tokens). |
 | `inspect.git.fetch` | no | `true` permits smart HTTP clone/fetch (`git-upload-pack`) for this host. Push (`git-receive-pack`) remains blocked; pushes go through [git-gate](git-gate.md). |
 
+### Egress log
+
+`egress.log` sets how much the proxy writes about the bottle's traffic. It's
+separate from the audit journal and the [firehose](gateway.md#request-firehose).
+
+| Value | What's logged |
+|---|---|
+| `0` (default) | Nothing beyond the audit journal. |
+| `1` | One summary line per blocked or flagged request, in the gateway's log. |
+| `2` | Also every inspected request and response, headers and body (secrets redacted, each body cut at 64 KiB), to an owner-only file in the gateway: `/var/log/bot-bottle-egress/full.jsonl`, rotated at 16 MiB with three older files kept. A launch at `log: 2` warns about this. It holds whole conversations, so use it only for debugging. |
+
 ### When outbound DLP matches
 
 The route's `inspect.outbound_on_match` decides what happens when an outbound

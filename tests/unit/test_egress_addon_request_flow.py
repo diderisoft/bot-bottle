@@ -22,6 +22,7 @@ import base64
 import json
 import os
 import sys
+import tempfile
 import threading
 import types
 import unittest
@@ -204,6 +205,7 @@ _ensure_shims()
 
 import bot_bottle.gateway.egress.addon as _ea_mod  # noqa: E402  (after shims)
 from bot_bottle.gateway.egress.addon import EgressAddon  # noqa: E402  (after shims)
+from bot_bottle.gateway.egress.full_log import FullLog  # noqa: E402
 from bot_bottle.gateway.egress.addon_settings import (  # noqa: E402
     DEFAULT_INBOUND_SCAN_LIMIT_BYTES,
     DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS,
@@ -351,6 +353,17 @@ def _addon(
     a._conn_tokens = {}
     a._token_allow_timeout = 300.0
     return a
+
+
+def _full_log(addon: EgressAddon, d: str) -> str:
+    """Point `addon`'s `log: 2` sink at `d`; returns the file it writes."""
+    addon.__dict__["_full_log_sink"] = FullLog(d)
+    return os.path.join(d, "full.jsonl")
+
+
+def _read(path: str) -> str:
+    with open(path, encoding="utf-8") as f:
+        return f.read()
 
 
 def _stash(
@@ -958,10 +971,12 @@ class TestInboundResponseDlp(unittest.TestCase):
             _Response(200, content='{"ok": true}'),
         ), config)
         buf = StringIO()
-        with patch("sys.stderr", buf):
+        with tempfile.TemporaryDirectory() as d, patch("sys.stderr", buf):
+            path = _full_log(addon, d)
             addon.response(flow)  # type: ignore[arg-type]
-        logged = [json.loads(x) for x in buf.getvalue().splitlines() if x.strip()]
+            logged = [json.loads(x) for x in _read(path).splitlines() if x.strip()]
         self.assertTrue(any(e.get("event") == "egress_response" for e in logged))
+        self.assertNotIn("egress_response", buf.getvalue())  # never the serial console
 
 
 # ---------------------------------------------------------------------------
@@ -1081,10 +1096,12 @@ class TestLogFullRequest(unittest.TestCase):
         addon = _addon(Config(routes=(Route(host="api.example.com"),), log=LOG_FULL))
         flow = _Flow(_Request(host="api.example.com"))
         buf = StringIO()
-        with patch("sys.stderr", buf):
+        with tempfile.TemporaryDirectory() as d, patch("sys.stderr", buf):
+            path = _full_log(addon, d)
             _run_request(addon, flow)
-        logged = [json.loads(x) for x in buf.getvalue().splitlines() if x.strip()]
+            logged = [json.loads(x) for x in _read(path).splitlines() if x.strip()]
         self.assertTrue(any(e.get("event") == "egress_request" for e in logged))
+        self.assertNotIn("egress_request", buf.getvalue())
 
 
 class TestSuperviseMultiTenant(unittest.TestCase):
@@ -1282,10 +1299,10 @@ class TestMultiTenantInboundDlp(unittest.TestCase):
         flow = _with_client_ip(_Flow(_Request(host="api.example.com")), "10.0.0.1")
         _run_request(addon, flow)
         flow.response = _Response(200, content=f"echo {secret} back")
-        buf = StringIO()
-        with patch("sys.stderr", buf):
+        with tempfile.TemporaryDirectory() as d:
+            path = _full_log(addon, d)
             addon.response(flow)  # type: ignore[arg-type]
-        logged = buf.getvalue()
+            logged = _read(path)
         self.assertIn("egress_response", logged)  # LOG_FULL logged the response
         self.assertNotIn(secret, logged)  # redacted via the resolved env overlay
 

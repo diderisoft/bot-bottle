@@ -14,11 +14,13 @@ from ..gateway.egress.dlp_config import ON_MATCH_REDACT
 from ..gateway.egress.types import (
     HeaderMatch as CoreHeaderMatch,
     MatchEntry as CoreMatchEntry,
+    LOG_FULL,
     PathMatch as CorePathMatch,
     Route,
 )
+from ..gateway.egress import full_log
 from ..errors import MissingEnvVarError
-from ..lib.log import die
+from ..lib.log import die, warn
 from ..secret_source import SecretSource
 from .plan import EgressPlan, EgressRoute
 
@@ -385,6 +387,13 @@ class Egress:
     ) -> EgressPlan:
         routes = egress_routes_for_bottle(bottle, provider_routes, owner)
         log = bottle.egress.Log
+        if log >= LOG_FULL:
+            cap = full_log.MAX_BYTES * (full_log.BACKUPS + 1) // (1024 * 1024)
+            warn(f"bottle {slug}: egress log: 2 records full request and response bodies "
+                 f"(each cut at {full_log.BODY_LIMIT_BYTES // 1024} KiB) in the gateway, in "
+                 f"{full_log.DEFAULT_DIR}/{full_log.FILE_NAME} (owner-only, rotated, {cap} MiB "
+                 "at most). It is verbose and holds whole conversations; use log: 1 "
+                 "unless you are debugging.")
         audit_delivery = bottle.audit.delivery or default_audit_delivery
         firehose = bottle.audit.firehose or "full"
         routes_path = stage_dir / EGRESS_ROUTES_FILENAME

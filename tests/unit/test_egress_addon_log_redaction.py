@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import types
 import unittest
 from io import StringIO
@@ -37,6 +38,7 @@ def _ensure_shims() -> None:
 _ensure_shims()
 
 from bot_bottle.gateway.egress.addon import EgressAddon  # noqa: E402  (import after shims)
+from bot_bottle.gateway.egress.full_log import FullLog  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -103,18 +105,25 @@ class _Flow:
         self.response = response or _Response()
 
 
+def _written(addon: EgressAddon, log: Any) -> dict[str, Any]:
+    """The one entry `log` (the addon's full-log call) wrote, which must not
+    reach stderr."""
+    with tempfile.TemporaryDirectory() as d:
+        addon.__dict__["_full_log_sink"] = FullLog(d)
+        buf = StringIO()
+        with patch("sys.stderr", buf):
+            log()
+        assert buf.getvalue() == "", buf.getvalue()
+        with open(os.path.join(d, "full.jsonl"), encoding="utf-8") as f:
+            return json.loads(f.read())
+
+
 def _log_request(addon: EgressAddon, flow: _Flow) -> dict[str, Any]:
-    buf = StringIO()
-    with patch("sys.stderr", buf):
-        addon._log_request(flow, os.environ)  # type: ignore[arg-type]
-    return json.loads(buf.getvalue())
+    return _written(addon, lambda: addon._log_request(flow, os.environ))  # type: ignore[arg-type]
 
 
 def _log_response(addon: EgressAddon, flow: _Flow) -> dict[str, Any]:
-    buf = StringIO()
-    with patch("sys.stderr", buf):
-        addon._log_response(flow, os.environ)  # type: ignore[arg-type]
-    return json.loads(buf.getvalue())
+    return _written(addon, lambda: addon._log_response(flow, os.environ))  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

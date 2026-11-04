@@ -12,6 +12,7 @@ import base64
 import json
 import signal
 import subprocess
+import sys
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -148,12 +149,22 @@ def boot(
     ))
 
     info(f"booting microVM {name} on {tap} (guest {guest_ip})")
-    log_fh = console_log.open("wb")
-    process = subprocess.Popen(
-        ["firecracker", "--no-api", "--config-file", str(config_path)],
-        stdout=log_fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+    # The console goes through console_cap: an owner-only log, capped, so a
+    # chatty guest can't fill the disk or expose its output to other users.
+    cap = subprocess.Popen(  # pylint: disable=consider-using-with  # outlives this call
+        [sys.executable, "-m", "bot_bottle.backend.firecracker.console_cap", str(console_log)],
+        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=detached,
     )
+    assert cap.stdin is not None
+    try:
+        process = subprocess.Popen(  # pylint: disable=consider-using-with  # the VMM
+            ["firecracker", "--no-api", "--config-file", str(config_path)],
+            stdout=cap.stdin, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+            start_new_session=detached,
+        )
+    finally:
+        cap.stdin.close()  # the VMM holds the pipe; console_cap ends when it exits
     return VmHandle(process=process, guest_ip=guest_ip, console_log=console_log)
 
 
