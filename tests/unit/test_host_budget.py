@@ -15,6 +15,7 @@ from typing import Any, cast
 from unittest import mock
 
 from bot_bottle.backend.bottle_size import BOTTLE_MEMORY_BYTES
+from bot_bottle.backend.runtime_store import StoreUsage
 from bot_bottle.contract.hostctl import LaunchRequest
 from bot_bottle.control.hostctl import budget, host_stats, sessions
 from bot_bottle.control.hostctl.bottles import SESSION_KIND, BottleService
@@ -108,6 +109,18 @@ class TestStorageMeter(unittest.TestCase):
         self.assertTrue(walked.wait(5))
         meter.stop()
 
+    def test_adds_what_the_runtimes_hold_and_names_the_unmeasured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _write(Path(tmp) / "x", 4096)
+            meter = budget.StorageMeter(
+                lambda: ((budget.CACHE, Path(tmp)),),
+                runtime=lambda: StoreUsage(images=GIB, vm_disks=2 * GIB,
+                                           unknown=("container: not running",)))
+            got = meter.measure()
+        self.assertEqual(GIB + 4096, got[budget.IMAGES])
+        self.assertEqual(2 * GIB, got[budget.VM_DISKS])
+        self.assertEqual(("container: not running",), meter.unmeasured())
+
     def test_a_failed_walk_keeps_the_thread(self) -> None:
         calls: list[int] = []
         done = threading.Event()
@@ -174,6 +187,13 @@ class TestBlock(unittest.TestCase):
 
     def test_storage_is_left_out_until_walked(self) -> None:
         self.assertNotIn("storage", budget.block([], HostBudget(), None))
+
+    def test_names_the_runtimes_it_could_not_count(self) -> None:
+        storage = budget.block([], HostBudget(), {"images": 1}, ("docker: no answer in 60s",))
+        self.assertEqual(["docker: no answer in 60s"],
+                         cast(dict[str, Any], storage["storage"])["unmeasured"])
+        measured = budget.block([], HostBudget(), {"images": 1})["storage"]
+        self.assertNotIn("unmeasured", cast(dict[str, Any], measured))
 
     def test_snapshot_carries_the_running_bottles(self) -> None:
         bottles = mock.Mock(allocation=mock.Mock(return_value=_running(1)))

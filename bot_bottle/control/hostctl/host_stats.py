@@ -176,7 +176,8 @@ def snapshot(bottles: "BottleService | None" = None) -> dict[str, object]:
     limits = budget.host_budget()
     running = bottles.allocation() if bottles is not None else []
     return {**collect(stats_paths(), limits=limits),
-            "budget": budget.block(running, limits, budget.METER.current()),
+            "budget": budget.block(running, limits, budget.METER.current(),
+                                   budget.METER.unmeasured()),
             "about": about(), "forge_alerts": forge_alerts.current()}
 
 

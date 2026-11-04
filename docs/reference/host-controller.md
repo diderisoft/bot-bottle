@@ -217,7 +217,8 @@ entry type the parsers share (`contrib/<harness>/transcript.py`), with
      "memory": {"allocated", "budget", "bottle_size",
                 "bottles": [{"id", "label", "memory", "cpu_pct", "mem_used"}]},
      "storage": {"used", "budget",
-                 "categories": {"vm_disks", "images", "workspaces", "transcripts"}}},
+                 "categories": {"vm_disks", "images", "workspaces", "transcripts"},
+                 "unmeasured": ["<runtime>: <why>"]}},
    "about": {"os", "backend", "version", "commit", "restart_needed"},
    "forge_alerts": [{"key", "kind", "forge", "message", "since"}]}
   ```
@@ -282,15 +283,26 @@ read at each launch and each `host_stats` report, so a change applies at once.
   launching, or with a running session. A bottle recorded before `resources:`
   counts at 2 GiB. A VM usually uses less than it's given, so
   allocation can sit well above the host-wide figure.
-- **Storage is bot-bottle's own directories:** the state root and the
+- **Storage is bot-bottle's own directories, plus what the container
+  runtimes hold for it.** The directories are the state root and the
   artifact and firecracker caches, in allocated blocks (a sparse VM disk
-  counts what it holds). A background thread (`budget.StorageMeter`) walks
-  them every five minutes; launches read the last result and never walk.
+  counts what it holds). Every runtime on the PATH is asked too
+  (`backend/runtime_store.py`): Docker through `docker system df -v`, Apple
+  `container` through `container image list` and its store under
+  `~/Library/Application Support/com.apple.container` (`containers/`,
+  `volumes/`). A background thread (`budget.StorageMeter`) measures every
+  five minutes; launches read the last result and never measure.
   Categories: `vm_disks` (firecracker run dirs, the infra VMs' disks, kept
-  `home.ext4` disks), `transcripts` (transcripts, audit, logs), `images`
-  (the rest of the caches, and the build root), `workspaces` (the rest of the
-  state root). Docker's and Apple `container`'s own stores (images, volumes)
-  aren't counted, and the caches are shared by every environment on the host.
+  `home.ext4` disks, and this environment's Docker or `container` containers'
+  writable layers and volumes, by its resource prefix), `transcripts`
+  (transcripts, audit, logs), `images` (the rest of the caches, the build
+  root, and the runtimes' `bot-bottle-*` images), `workspaces` (the rest of
+  the state root). A runtime image's unique bytes count, and the layers it
+  shares count once (the largest share), so runtime images are an estimate.
+  Docker's build cache isn't attributable and isn't counted. The caches and
+  runtime images are shared by every environment on the host. A runtime that
+  can't be asked is listed in `budget.storage.unmeasured` (`"docker: <why>"`)
+  rather than counted as zero.
 
 `BottleService._launch` admits a launch against the budget after preparing
 it and before booting, one admission at a time (so two launches can't both

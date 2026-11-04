@@ -7,11 +7,11 @@ allocated is the sum over the bottles running (held, adopted or launching),
 whatever they happen to use. A launch that wouldn't fit is refused before it
 boots.
 
-Storage is bot-bottle's own directories (the state root and the caches),
-walked in the background every few minutes by `StorageMeter`, never on a
-launch's path. At 90% of the budget a launch warns; over it, a launch is
-refused. Disk that Docker or Apple's `container` keep in their own stores
-isn't counted.
+Storage is bot-bottle's own directories (the state root and the caches)
+plus what Docker and Apple's `container` hold for it in their own stores
+(`backend/runtime_store.py`), measured in the background every few minutes
+by `StorageMeter`, never on a launch's path. At 90% of the budget a launch
+warns; over it, a launch is refused.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 
 from ...backend.bottle_size import BOTTLE_MEMORY_BYTES
+from ...backend.runtime_store import StoreUsage, runtime_usage
 from ...lib import log
 from ...lib.config_store import ConfigStore, HostBudget
 
@@ -122,21 +123,36 @@ def storage_roots() -> tuple[tuple[str, Path], ...]:
 
 
 class StorageMeter:
-    """Walks bot-bottle's directories every `interval` seconds in its own
-    thread and keeps the last result; `current()` never walks."""
+    """Walks bot-bottle's directories, and asks `runtime` (when given) what
+    the container runtimes hold, every `interval` seconds in its own thread,
+    keeping the last result; `current()` never measures."""
 
     def __init__(self, roots: Callable[[], Sequence[tuple[str, Path]]] = storage_roots,
-                 interval: float = STORAGE_SECONDS) -> None:
+                 interval: float = STORAGE_SECONDS,
+                 runtime: Callable[[], StoreUsage] | None = None) -> None:
         self._roots = roots
         self._interval = interval
+        self._runtime = runtime
         self._last: dict[str, int] | None = None
+        self._unknown: tuple[str, ...] = ()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def measure(self) -> dict[str, int]:
-        """Walk now and keep the result."""
-        self._last = walk(self._roots())
-        return self._last
+        """Measure now and keep the result."""
+        totals = walk(self._roots())
+        unknown: tuple[str, ...] = ()
+        if self._runtime is not None:
+            usage = self._runtime()
+            totals[IMAGES] += usage.images
+            totals[VM_DISKS] += usage.vm_disks
+            unknown = usage.unknown
+        self._last, self._unknown = totals, unknown
+        return totals
+
+    def unmeasured(self) -> tuple[str, ...]:
+        """The runtimes the last measure couldn't ask, and why."""
+        return self._unknown
 
     def current(self) -> dict[str, int] | None:
         """The last walk's bytes by category; None before the first."""
@@ -160,7 +176,7 @@ class StorageMeter:
             self._stop.wait(self._interval)
 
 
-METER = StorageMeter()
+METER = StorageMeter(runtime=runtime_usage)
 
 
 # --- the budget ---
@@ -205,9 +221,11 @@ def storage_warning(budget: HostBudget, storage: Mapping[str, int] | None) -> st
 
 
 def block(bottles: Sequence[Mapping[str, object]], budget: HostBudget,
-          storage: Mapping[str, int] | None) -> dict[str, object]:
+          storage: Mapping[str, int] | None,
+          unmeasured: Sequence[str] = ()) -> dict[str, object]:
     """The `budget` block of `host_stats`, in bytes (a budget of 0 = none).
-    `storage` is left out until the first walk."""
+    `storage` is left out until the first walk; `unmeasured` names the
+    runtimes it couldn't count."""
     out: dict[str, object] = {"memory": {
         "allocated": allocated(bottles), "budget": budget.memory_gb * GIB,
         "bottle_size": BOTTLE_MEMORY_BYTES,
@@ -220,8 +238,12 @@ def block(bottles: Sequence[Mapping[str, object]], budget: HostBudget,
         ],
     }}
     if storage is not None:
-        out["storage"] = {"used": sum(storage.values()), "budget": budget.disk_gb * GIB,
-                          "categories": {c: storage.get(c, 0) for c in CATEGORIES}}
+        measured: dict[str, object] = {
+            "used": sum(storage.values()), "budget": budget.disk_gb * GIB,
+            "categories": {c: storage.get(c, 0) for c in CATEGORIES}}
+        if unmeasured:
+            measured["unmeasured"] = list(unmeasured)
+        out["storage"] = measured
     return out
 
 
