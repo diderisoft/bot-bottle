@@ -20,7 +20,7 @@ from ...contract.hostctl import InfraSettings
 from ...environment import LIVE, active_name
 from ...lib.log import die, info, warn
 from ...paths import host_firecracker_cache_dir
-from . import netpool
+from . import netpool, rootfs_owners
 
 
 # The VM is reached as root over SSH; commands `runuser` down to node.
@@ -152,7 +152,7 @@ def build_base_rootfs_dir(
     digest = docker_image_id(image_ref)
     base = cache_dir() / "rootfs" / f"{digest}{variant}"
     ready = base / ".bb-ready"
-    if ready.is_file():
+    if ready.is_file() and rootfs_owners.has_owners(base):
         # A hit refreshes the marker, so its age is time since last use.
         with contextlib.suppress(OSError):
             ready.touch()
@@ -171,7 +171,7 @@ def build_base_rootfs_dir(
 
 def export_image_rootfs(engine: str, image_ref: str, dest: Path) -> None:
     """Unpack `image_ref` into `dest` with docker or podman (create, export,
-    rm)."""
+    rm), recording its owners for `build_rootfs_ext4`."""
     cid = subprocess.run(
         [engine, "create", image_ref, "sleep", "infinity"],
         capture_output=True, text=True, check=False,
@@ -181,9 +181,11 @@ def export_image_rootfs(engine: str, image_ref: str, dest: Path) -> None:
     container = cid.stdout.strip().splitlines()[-1]
     try:
         export = subprocess.Popen([engine, "export", container], stdout=subprocess.PIPE)
-        untar = subprocess.run(["tar", "-x", "-C", str(dest)], stdin=export.stdout, check=False)
+        assert export.stdout is not None
+        untar = rootfs_owners.unpack(export.stdout, dest)
+        export.stdout.close()
         export.wait()
-        if export.returncode != 0 or untar.returncode != 0:
+        if export.returncode != 0 or untar != 0:
             die(f"exporting rootfs for {image_ref!r} with {engine} failed")
     finally:
         subprocess.run(
@@ -202,7 +204,7 @@ def build_committed_rootfs_dir(tar_path: Path, infra: InfraSettings) -> Path:
     ).hexdigest()[:16]
     base = cache_dir() / "rootfs" / f"committed-{fingerprint}"
     ready = base / ".bb-ready"
-    if ready.is_file():
+    if ready.is_file() and rootfs_owners.has_owners(base):
         return base
 
     if base.exists():
@@ -217,6 +219,7 @@ def build_committed_rootfs_dir(tar_path: Path, infra: InfraSettings) -> Path:
     if result.returncode != 0:
         die(f"extracting committed rootfs {tar_path} failed: "
             f"{result.stderr.strip() or '<no stderr>'}")
+    rootfs_owners.record_from_file(tar_path, base)
 
     # Recreate the excluded mount points empty for the init and dropbear.
     for mount_point in ("proc", "sys", "dev", "run"):
@@ -257,7 +260,8 @@ def _write_staged_file(path: Path, data: bytes) -> None:
 
 def build_rootfs_ext4(base_dir: Path, out_path: Path, *, slack_mib: int = 1024) -> None:
     """A fresh writable ext4 for one bottle from the cached base dir, via
-    `mke2fs -d` (no mount). The base stays untouched."""
+    `mke2fs -d` (no mount), with the image's owners and modes restored. The
+    base stays untouched."""
     used_mib = _dir_size_mib(base_dir)
     size_mib = used_mib + slack_mib
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -268,6 +272,7 @@ def build_rootfs_ext4(base_dir: Path, out_path: Path, *, slack_mib: int = 1024) 
     )
     if result.returncode != 0:
         die(f"mke2fs for {out_path} failed: {result.stderr.strip()}")
+    rootfs_owners.apply(base_dir, out_path)
 
 
 # A bottled agent's home (`/dev/vdb`, PRD 0110): sparse, so it takes only what
@@ -478,9 +483,9 @@ mount -o remount,rw / 2>/dev/null
 # scratch dirs there — git worktrees, build temp, `git init /tmp/...`, etc.
 mkdir -p /tmp && chmod 1777 /tmp
 
-# Rootfs export also maps the image's original owners to the unprivileged
-# host build uid. That uid is not guaranteed to be node's uid in the guest;
-# restore the home-directory boundary before any SSH provisioning runs.
+# The rootfs keeps the image's owners (#347). An older tree unpacked without
+# them maps every path to the host build uid, which isn't node's uid in the
+# guest; restore the home-directory boundary before any SSH provisioning runs.
 chown node:node /home/node 2>/dev/null || true
 chmod 755 /home/node 2>/dev/null || true
 
@@ -511,11 +516,9 @@ if [ -n "$KEY" ]; then
     chown -R node:node /home/node/.ssh 2>/dev/null || true
 fi
 
-# The rootless rootfs build (`docker export | tar` as a non-root user)
-# can't preserve uid 0, so every path lands owned by the build uid,
-# which maps to `node` (uid 1000) in-guest — including /root. dropbear
-# (like OpenSSH) refuses root's authorized_keys unless the home dir is
-# owned by root, so restore root's ownership of its own home.
+# dropbear (like OpenSSH) refuses root's authorized_keys unless the home
+# dir is owned by root. The rootfs keeps the image's owners (#347), so this
+# only matters for a disk built before that; it is cheap, so it stays.
 chown -R 0:0 /root 2>/dev/null || true
 
 mkdir -p /etc/dropbear /run

@@ -19,6 +19,7 @@ from unittest.mock import patch
 
 from bot_bottle import image_registry
 from bot_bottle.backend.firecracker import image_builder
+from bot_bottle.backend.firecracker.rootfs_owners import OWNERS_FILE
 from bot_bottle.contract.hostctl import Settings
 
 _S = Settings()
@@ -47,6 +48,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         base = self.cache / "rootfs" / f"agent-{digest}"
         base.mkdir(parents=True)
         (base / ".bb-ready").write_text("ok\n")
+        (base / OWNERS_FILE).write_text("")
         with patch.object(image_builder.util, "cache_dir", return_value=self.cache), \
              patch.object(image_builder, "_infra_build") as build:
             out = image_builder.build_agent_rootfs_dir(self.dockerfile, _S, image_tag="t:latest")
@@ -60,6 +62,9 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
         with patch.object(image_builder.util, "cache_dir", return_value=self.cache):
             self.assertIsNone(image_builder.cached_agent_rootfs_dir(self.dockerfile, _S.infra))
             (base / ".bb-ready").write_text("ok\n")
+            # Unpacked before owners were recorded (#347): rebuilt, not reused.
+            self.assertIsNone(image_builder.cached_agent_rootfs_dir(self.dockerfile, _S.infra))
+            (base / OWNERS_FILE).write_text("")
             self.assertEqual(base, image_builder.cached_agent_rootfs_dir(self.dockerfile, _S.infra))
 
     def test_cache_miss_builds_injects_and_marks_ready(self):
@@ -181,6 +186,7 @@ class TestBuildAgentRootfsDir(unittest.TestCase):
                 base = self.cache / "rootfs" / image_builder._overlay_rootfs_name(staged, _S.infra)
             base.mkdir(parents=True)
             (base / ".bb-ready").write_text("ok\n")
+            (base / OWNERS_FILE).write_text("")
             self.assertEqual(base, image_builder.cached_agent_overlay_rootfs_dir(
                 pin, overlay, _S.infra, harness="claude", source_root=self.cache))
             with patch.object(image_builder, "_infra_build") as build, \

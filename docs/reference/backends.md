@@ -391,6 +391,14 @@ any argument over 1 KiB (a long task prompt) as a file under the guest's
 `/root`, and the guest shell reads it back (`"$(cat …)"`): the command stays
 short however long the prompt is.
 
+A guest rootfs keeps the image's owners and modes, setuid bits included, so the
+agent user can't rewrite its own VM's system files or CA bundle. The tree is
+unpacked rootless, which maps every path to the host user, so its tar headers
+are recorded as it's unpacked (`<tree>/.bb-owners`), and after `mke2fs -d` one
+`debugfs -w` pass gives each inode the owner and mode the image had; files the
+image didn't hold, like the injected init and dropbear, are root's
+(`rootfs_owners.py`). A cached tree from before the record is rebuilt.
+
 A VM has no process environment of its own, so every command runs under
 `runuser … env` with HOME, USER and PATH set per invocation. A built agent
 image (a custom Dockerfile or an overlay) records its `ENV` with its rootfs

@@ -38,7 +38,7 @@ from ...paths import host_artifact_cache_dir
 from ...published_artifacts import FORMAT_EXT4, Artifact
 from . import util
 from .infra import FirecrackerInfraService
-from . import infra_vm
+from . import infra_vm, rootfs_owners
 from .infra_vm import GUEST_BUILD_STORE
 from .orchestrator import build_store_volume_path
 
@@ -201,7 +201,7 @@ def _ready_dir(name: str) -> Path | None:
     use (`bot-bottle cleanup images`); None if it isn't built."""
     base = _rootfs_dir(name)
     ready = base / ".bb-ready"
-    if not ready.is_file():
+    if not ready.is_file() or not rootfs_owners.has_owners(base):
         return None
     with contextlib.suppress(OSError):
         ready.touch()
@@ -656,8 +656,9 @@ def _smoke_test(private_key: Path, guest_ip: str, tag: str, ctr: str,
 
 
 def _stream_rootfs(private_key: Path, guest_ip: str, tag: str, ctr: str, base: Path) -> None:
-    """`buildah mount` the image and pipe its rootfs into `base` on the host
-    (extracted as the host user; the guest init restores /root ownership)."""
+    """`buildah mount` the image and pipe its rootfs into `base` on the host,
+    extracted as the host user with the image's owners recorded for
+    `build_rootfs_ext4`."""
     export = (
         f"set -e; buildah from {_STORE_FLAG} --name {ctr} {tag} >/dev/null; "
         f"mnt=$(buildah mount {_STORE_FLAG} {ctr}); "
@@ -669,14 +670,11 @@ def _stream_rootfs(private_key: Path, guest_ip: str, tag: str, ctr: str, base: P
     )
     assert ssh_proc.stdout is not None
     # --no-overwrite-dir: keep `base` writable despite the mount root's 0555.
-    untar = subprocess.run(
-        ["tar", "-x", "--no-overwrite-dir", "-C", str(base)],
-        stdin=ssh_proc.stdout, check=False,
-    )
+    untar = rootfs_owners.unpack(ssh_proc.stdout, base, ["--no-overwrite-dir"])
     ssh_proc.stdout.close()
     ssh_err = (ssh_proc.stderr.read().decode(errors="replace")
                if ssh_proc.stderr else "")
     rc = ssh_proc.wait()
-    if rc != 0 or untar.returncode != 0:
+    if rc != 0 or untar != 0:
         die(f"exporting the built rootfs from the infra VM failed: "
             f"{ssh_err.strip() or '<no stderr>'}")

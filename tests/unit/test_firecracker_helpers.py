@@ -16,6 +16,7 @@ from typing import Any
 from unittest.mock import patch
 
 from bot_bottle.backend.firecracker import firecracker_vm, freezer, netpool, util
+from bot_bottle.backend.firecracker.rootfs_owners import OWNERS_FILE
 from bot_bottle.contract.hostctl import InfraSettings
 
 _INFRA = InfraSettings()
@@ -174,6 +175,7 @@ class TestBuildBaseRootfsDirHit(unittest.TestCase):
             base.mkdir(parents=True)
             ready = base / ".bb-ready"
             ready.write_text("ok\n")
+            (base / OWNERS_FILE).write_text("")
             os.utime(ready, (1_000_000, 1_000_000))
             with patch.object(util, "cache_dir", return_value=cache), \
                  patch.object(util, "docker_image_id", return_value="abc123"), \
@@ -189,6 +191,7 @@ class TestBuildBaseRootfsDirHit(unittest.TestCase):
             base = cache / "rootfs" / "abc123"
             base.mkdir(parents=True)
             (base / ".bb-ready").write_text("ok\n")
+            (base / OWNERS_FILE).write_text("")
             with patch.object(util, "cache_dir", return_value=cache), \
                  patch.object(util, "docker_image_id", return_value="abc123"), \
                  patch.object(util, "export_image_rootfs") as export, \

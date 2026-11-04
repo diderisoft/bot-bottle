@@ -18,6 +18,7 @@ from unittest import mock
 from bot_bottle.backend import oci_cache_entries as oci
 from bot_bottle.backend.cache_entries import CacheEntry, human, to_remove
 from bot_bottle.backend.firecracker import cache_entries as fc
+from bot_bottle.backend.firecracker.rootfs_owners import OWNERS_FILE
 from bot_bottle.backend.firecracker import image_builder
 from bot_bottle.cli.commands import cleanup_images as prune
 
@@ -116,6 +117,7 @@ class FirecrackerCache(unittest.TestCase):
         (path / "file").write_bytes(b"x" * 4096)
         marker = path / ".bb-ready"
         marker.write_text("ok\n")
+        (path / OWNERS_FILE).write_text("")
         os.utime(marker, (used, used))
         return path
 
