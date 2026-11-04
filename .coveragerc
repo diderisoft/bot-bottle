@@ -1,0 +1,28 @@
+[run]
+branch = True
+source = .
+# Store paths relative to the project root so .coverage.* files produced on
+# different runners (ubuntu-latest vs self-hosted KVM) can be combined by the
+# coverage job without a [paths] remapping section.
+relative_files = True
+
+[report]
+# Coverage policy: see docs/decisions/0004-coverage-policy.md.
+#
+# `omit` is reserved for genuinely interactive entry-point shells whose
+# bodies are `read_tty_line()` / curses prompt loops — there is no
+# behaviour to assert that a test wouldn't have to fake wholesale, so a
+# test here would inflate the number without buying confidence. This is
+# NOT a place to hide subprocess/backend orchestration: that code is
+# security-relevant and is measured via the integration suite instead
+# (run scripts/coverage.sh for the combined unit+integration number).
+omit =
+    bot_bottle/cli/tui.py
+    bot_bottle/cli/init.py
+    tests/*
+    # Build-time only: setuptools invokes it out-of-process to build the
+    # wheel/sdist (it's never imported by the running app), so in-process
+    # coverage can't reach it. Its one job — bundling the root resources into
+    # bot_bottle/_resources/ — is exercised end-to-end by test_wheel_install,
+    # which builds and installs a real wheel and checks the result.
+    setup.py
