@@ -29,6 +29,7 @@ from .bottle_plan import FirecrackerBottlePlan
 
 if TYPE_CHECKING:
     from ..cache_entries import CacheEntry
+    from ...workspace import DiskInfo
     from ..adoption import AdoptionRecord
     from .infra import FirecrackerInfraService
 
@@ -66,6 +67,14 @@ class FirecrackerBottleBackend(
     def prune_build_store(self, *, dry_run: bool) -> tuple[int, str] | None:
         from . import cache_entries as _cache
         return _cache.prune_build_store(dry_run=dry_run)
+
+    def workspace_disks(self) -> "list[DiskInfo]":
+        from . import workspace_disk
+        return workspace_disk.listing()
+
+    def remove_workspace_disk(self, path: Path) -> bool:
+        from . import workspace_disk
+        return workspace_disk.remove(path)
 
     def teardown(self) -> int:
         from . import setup as _setup

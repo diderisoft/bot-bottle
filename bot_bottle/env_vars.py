@@ -96,6 +96,11 @@ ENV_VARS: tuple[EnvVar, ...] = (
     EnvVar("BOT_BOTTLE_FC_CACHE", "user",
            "firecracker: cache root for the kernel, root filesystems and run dirs.",
            "`~/.cache/bot-bottle/firecracker`"),
+    EnvVar("BOT_BOTTLE_FC_WORKSPACE_DISK", "user",
+           "firecracker: keep the project's workspace on a per-project disk between "
+           "runs, so what the project ignores (`node_modules`, build dirs) survives. "
+           "`1` for the default size, or a size like `32G`. See backends.md.",
+           "off"),
     EnvVar("BOT_BOTTLE_FC_KERNEL", "user",
            "firecracker: the guest kernel.",
            "`vmlinux` in the firecracker cache"),

@@ -103,7 +103,7 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
         self.assertNotIn("node_modules/dep.js", packed)
         [unpack] = bottle.exec.call_args_list
         self.assertEqual(call(
-            "rm -rf /home/node/workspace && mkdir -p /home/node/workspace && "
+            "mkdir -p /home/node/workspace && find /home/node/workspace -mindepth 1 -delete && "
             "tar -xf /tmp/bot-bottle-workspace.tar -C /home/node/workspace && "
             "rm -f /tmp/bot-bottle-workspace.tar && "
             "chown -R node:node /home/node/workspace && chmod 755 /home/node/workspace",
@@ -146,6 +146,43 @@ class TestRuntimeWorkspaceProvisioning(_FakeStateMixin, unittest.TestCase):
         bottle = _bottle()
         backend.provision_workspace(plan, bottle)
 
+        bottle.exec.assert_not_called()
+        bottle.cp_in.assert_not_called()
+
+    def _fc_plan(self):  # type: ignore[no-untyped-def]
+        backend = FirecrackerBottleBackend(Settings())
+        with patch("bot_bottle.backend.firecracker.resolve_plan.util.require_firecracker"):
+            plan = backend.prepare(_spec(self.tmp, identity="demo-fc-ws"), self.tmp / "stage",
+                                   MappingSecrets({}))
+        return backend, plan
+
+    def test_a_kept_workspace_disk_keeps_what_the_project_ignores(self) -> None:
+        (self.tmp / "src.txt").write_text("hello\n")
+        backend, plan = self._fc_plan()
+        bottle = _bottle()
+        bottle.workspace_mode = "resync"
+        backend.provision_workspace(plan, bottle)
+        clear, unpack = bottle.exec.call_args_list
+        self.assertEqual("node", clear.kwargs["user"])
+        self.assertIn("-prune", clear.args[0])
+        # Not emptied first: the ignored files stay.
+        self.assertNotIn("-delete", unpack.args[0])
+        self.assertIn("tar -xf", unpack.args[0])
+
+    def test_a_disk_that_cant_be_sorted_starts_over(self) -> None:
+        backend, plan = self._fc_plan()
+        bottle = _bottle()
+        bottle.workspace_mode = "resync"
+        bottle.exec.side_effect = [ExecResult(returncode=1, stdout="", stderr="bad"),
+                                   ExecResult(returncode=0, stdout="", stderr="")]
+        backend.provision_workspace(plan, bottle)
+        self.assertIn("-mindepth 1 -delete", bottle.exec.call_args_list[-1].args[0])
+
+    def test_a_kept_disk_from_the_same_bottle_is_left_alone(self) -> None:
+        backend, plan = self._fc_plan()
+        bottle = _bottle()
+        bottle.workspace_mode = "keep"
+        backend.provision_workspace(plan, bottle)
         bottle.exec.assert_not_called()
         bottle.cp_in.assert_not_called()
 

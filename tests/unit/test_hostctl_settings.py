@@ -35,9 +35,10 @@ class TestSettingsJson(unittest.TestCase):
     def test_to_json_lists_every_field_by_kind(self) -> None:
         body = Settings().to_json()
         self.assertEqual({"operation", "infra"}, set(body))
-        self.assertEqual({f.name for f in dataclasses.fields(OperationSettings)},
-                         set(body["operation"]))
         # Fields added later are left out while at their default.
+        self.assertEqual({f.name for f in dataclasses.fields(OperationSettings)}
+                         - {"fc_workspace_disk"},
+                         set(body["operation"]))
         self.assertEqual({f.name for f in dataclasses.fields(InfraSettings)}
                          - {"docker_agent_subnets", "fc_env_slots", "fc_slices_dir"},
                          set(body["infra"]))
@@ -169,9 +170,10 @@ class TestEnvLoader(unittest.TestCase):
             "BOT_BOTTLE_FC_ENV_SLOTS": "6",
             "BOT_BOTTLE_FC_SLICES_DIR": "/run/claims",
             "BOT_BOTTLE_MACOS_CONTAINER_DNS": "9.9.9.9",
+            "BOT_BOTTLE_FC_WORKSPACE_DISK": "32G",
         }
         expected = Settings(
-            operation=OperationSettings(backend="firecracker"),
+            operation=OperationSettings(backend="firecracker", fc_workspace_disk="32G"),
             infra=InfraSettings(
                 infra_build_local=True, build_engine="podman", artifact_cache="/cache/artifacts",
                 orchestrator_image="orch:test", gateway_image="gw:test",

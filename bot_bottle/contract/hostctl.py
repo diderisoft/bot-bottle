@@ -113,6 +113,8 @@ class OperationSettings:
     backend: str = ""
     no_cache: bool = False
     cleanup_command_timeout_seconds: float = DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS
+    # Firecracker: "" for no per-project workspace disk, else `1` or a size.
+    fc_workspace_disk: str = ""
 
 
 @dataclass(frozen=True)
@@ -180,7 +182,8 @@ class Settings:
 # Fields left out of the JSON (and so the fingerprint) while at their default:
 # ones added after the fingerprint was in use, so an upgrade that doesn't set
 # them neither restarts the infra nor sends a key an older reader rejects.
-_OMIT_AT_DEFAULT = frozenset({"docker_agent_subnets", "fc_env_slots", "fc_slices_dir"})
+_OMIT_AT_DEFAULT = frozenset({"docker_agent_subnets", "fc_env_slots", "fc_slices_dir",
+                              "fc_workspace_disk"})
 
 
 def _section_json(section: OperationSettings | InfraSettings) -> dict[str, object]:

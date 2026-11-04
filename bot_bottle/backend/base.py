@@ -29,7 +29,8 @@ from ..util import expand_tilde
 from ..manifest import Manifest
 from ..secret_source import SecretSource
 from ..supervisor.plan import SupervisePlan
-from ..workspace import LARGE_WORKSPACE_BYTES, pack_workspace, record_base_script
+from ..workspace import (LARGE_WORKSPACE_BYTES, DiskInfo, pack_workspace,
+                         record_base_script, resync_clear_script)
 from ..env import ResolvedEnv
 from .plan import BottlePlan, BottleSpec
 from .util import host_skill_dir
@@ -133,6 +134,10 @@ class Bottle(ABC):
     # agent: its conversation and workspace are there, so the workspace isn't
     # copied again and the agent continues its last conversation.
     home_kept: bool = False
+    # How `provision_workspace` fills the workspace: `copy`, `resync` (keep
+    # what the project ignores, then copy) or `keep`; "" decides from
+    # `home_kept`. Set by a backend with a persistent workspace disk.
+    workspace_mode: str = ""
 
     @abstractmethod
     def agent_argv(
@@ -306,12 +311,16 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):  # pylint: disable=too-many-
 
     def provision_workspace(self, plan: PlanT, bottle: "Bottle") -> None:
         """Copy the operator workspace into the running bottle, unless its home
-        was kept: the agent's copy, with its changes, is already there (and the
-        copy starts with `rm -rf`)."""
+        was kept: the agent's copy, with its changes, is already there. The
+        copy empties the workspace first; on a kept workspace disk (`resync`)
+        it keeps what the project ignores."""
         workspace = plan.workspace_plan
         if not (workspace.enabled and workspace.copy_contents):
             return
-        if getattr(bottle, "home_kept", False) is True:
+        fill = getattr(bottle, "workspace_mode", "")
+        if fill not in ("copy", "resync", "keep"):
+            fill = "keep" if getattr(bottle, "home_kept", False) is True else "copy"
+        if fill == "keep":
             info(f"keeping the workspace from {bottle.name}'s last run")
             return
 
@@ -331,8 +340,19 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):  # pylint: disable=too-many-
                      "copying it all into the bottle")
             guest_tar = "/tmp/bot-bottle-workspace.tar"
             bottle.cp_in(str(tarball), guest_tar)
+        if fill == "resync":
+            info(f"keeping what {workspace.host_path} ignores from the workspace disk")
+            # As the workspace's owner: the agent's files, so nothing in them
+            # runs with more than it has.
+            cleared = bottle.exec(resync_clear_script(workspace.guest_path, is_git=is_git),
+                                  user=workspace.owner.split(":", 1)[0])
+            if cleared.returncode != 0:
+                warn(f"couldn't sort the workspace disk's files ({cleared.stderr.strip()}); "
+                     "starting it over")
+                fill = "copy"
+        empty = f"find {guest_path} -mindepth 1 -delete && " if fill == "copy" else ""
         unpacked = bottle.exec(
-            f"rm -rf {guest_path} && mkdir -p {guest_path} && "
+            f"mkdir -p {guest_path} && {empty}"
             f"tar -xf {guest_tar} -C {guest_path} && rm -f {guest_tar} && "
             f"chown -R {owner} {guest_path} && chmod {mode} {guest_path}",
             user="root",
@@ -424,6 +444,17 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):  # pylint: disable=too-many-
         """The cached images this backend keeps on the host (PRD 0088), for
         `bot-bottle cleanup images`. None by default."""
         return []
+
+    def workspace_disks(self) -> "list[DiskInfo]":
+        """The per-project workspace disks this backend keeps, for `bot-bottle
+        cleanup workspaces`. None by default."""
+        return []
+
+    def remove_workspace_disk(self, path: Path) -> bool:
+        """Delete one of `workspace_disks()` unless a bottle has it attached.
+        True if it went."""
+        del path
+        return False
 
     def prune_build_store(self, *, dry_run: bool) -> tuple[int, str] | None:
         """Empty this backend's image build store, if it has one (`prune

@@ -504,6 +504,14 @@ if [ -b /dev/vdb ]; then
     chmod 755 /home/node 2>/dev/null || true
 fi
 
+# A project's workspace disk (/dev/vdc, BOT_BOTTLE_FC_WORKSPACE_DISK), kept
+# across runs: mounted at the workspace path the cmdline names.
+WS=$(sed -n 's/.*bb_workspace=\([^ ]*\).*/\1/p' /proc/cmdline)
+if [ -n "$WS" ] && [ -b /dev/vdc ]; then
+    mkdir -p "$WS" && mount /dev/vdc "$WS" && rm -rf "$WS/lost+found"
+    chown node:node "$WS" 2>/dev/null || true
+fi
+
 # Install the per-bottle SSH pubkey from the kernel cmdline.
 KEY=$(sed -n 's/.*bb_pubkey=\([^ ]*\).*/\1/p' /proc/cmdline | base64 -d 2>/dev/null)
 if [ -n "$KEY" ]; then

@@ -39,7 +39,9 @@ CATEGORIES = (VM_DISKS, IMAGES, WORKSPACES, TRANSCRIPTS)
 # What a storage root holds: bottles' state, or re-creatable caches.
 STATE, CACHE = "state", "cache"
 _STATE_DIRS = {"transcripts": TRANSCRIPTS, "audit": TRANSCRIPTS, "logs": TRANSCRIPTS,
-               "build-root": IMAGES, "venv": IMAGES}
+               "build-root": IMAGES, "venv": IMAGES,
+               # Firecracker's per-project workspace disks (BOT_BOTTLE_FC_WORKSPACE_DISK).
+               "workspace-disks": WORKSPACES}
 # The infra VMs' own disks, under the firecracker cache's `infra/`.
 _INFRA_VMS = {"gateway", "orchestrator"}
 

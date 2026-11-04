@@ -98,8 +98,8 @@ resume keep it while the guest itself starts fresh from the image:
   image's home on its first boot and mounts it over the home.
 
 `Bottle.home_kept` says whether the home held an earlier run. If so, the
-workspace isn't copied again (the copy starts with `rm -rf`, and the agent's
-copy has its changes), and the host controller starts the harness with its
+workspace isn't copied again (the copy empties the workspace first, and the
+agent's copy has its changes), and the host controller starts the harness with its
 continue arguments (`AgentProvider.continue_args`: `claude --continue`, `pi
 --continue`, `codex resume --last`). A home goes with its bottled agent's
 state: when its session ends without being kept for resume (any harness that
@@ -114,6 +114,40 @@ within 30 seconds of a console launch or resume is reported as `agent_errored`
 with its exit status and last output (127: its command wasn't found); a later
 non-zero exit is `agent_stopped` with the same in `message`, so it can still
 be resumed.
+
+### A project's workspace disk (firecracker)
+
+A new bottled agent starts with a fresh home, so on every backend what the
+agent installed or built in the workspace (`node_modules`, a `.venv`, a build
+dir) is gone the next time the project is launched. On firecracker,
+`BOT_BOTTLE_FC_WORKSPACE_DISK=1` (or a size, `32G`; default 16G, sparse)
+keeps the workspace on a disk of its own instead
+(`backend/firecracker/workspace_disk.py`):
+
+- **One disk per project, agent and bottle stack, per user:**
+  `<state root>/workspace-disks/<hash>.ext4`, keyed on the project's real path,
+  the agent and the bottle names in launch order. A different bottle stack gets
+  its own disk, so nothing an agent left there runs in a bottle with other
+  permissions.
+- **Attached, never mounted on the host:** it's the VM's third drive
+  (`/dev/vdc`), which the guest init mounts at the workspace path from
+  `bb_workspace=` on the kernel command line. The exit patch comes back as
+  always, so the host repo stays the source of truth.
+- **One VM at a time:** a launch holds the disk's lock, and its owner is
+  recorded; while that owner's run dir exists (a host controller restart
+  doesn't free it), another launch of the project warns and copies into its
+  home as usual.
+- **What the next run sees:** the project as it is on the host now, plus what
+  the project ignores from the last run. In a git repo the files git lists and
+  `.git` are removed and copied in again (the last run's changes came back as
+  its patch); elsewhere everything outside the copy's skipped dirs is.
+  Resuming the bottled agent that used the disk last keeps it untouched, like
+  its home.
+- **Size:** a larger setting grows the disk at the next launch; it never
+  shrinks.
+- **Cleanup:** the disks count as workspaces in the storage budget. `bot-bottle
+  cleanup workspaces` lists them and removes those whose project is gone
+  (`--all`: every one not attached).
 
 ### Keeping the guest
 

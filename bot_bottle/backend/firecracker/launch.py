@@ -26,7 +26,7 @@ from ...bottle_state import committed_rootfs_path, read_committed_image
 from ...egress import Egress
 from ...image_cache import check_stale_path
 from ...contract.hostctl import Settings
-from ...lib.log import die, info
+from ...lib.log import die, info, warn
 from ..bottle_size import FIRECRACKER_DEFAULT_CPUS, cpus, memory_mib
 from ..launch_common import (
     LaunchTeardown,
@@ -38,7 +38,8 @@ from ..launch_common import (
     terminal_title,
 )
 from ..util import AGENT_CA_BUNDLE, AGENT_CA_PATH
-from . import firecracker_vm, image_builder, isolation_probe, lifecycle_lock, netpool, util
+from . import (firecracker_vm, image_builder, isolation_probe, lifecycle_lock, netpool, util,
+               workspace_disk)
 from .bottle import FirecrackerBottle
 from .bottle_plan import FirecrackerBottlePlan
 from ...orchestrator.store.config_store import resolve_teardown_timeout
@@ -157,6 +158,9 @@ def launch(
                 util.make_bottle_rootfs(agent_base, rootfs)
             # Its home, kept across stop and resume, unlike the rootfs.
             home, home_kept = util.ensure_home_image(plan.slug)
+            ws_disk, ws_mode = _workspace_disk(plan, home_kept)
+            if ws_disk is not None:
+                stack.callback(ws_disk.release)
             private_key, pubkey = util.generate_keypair(run_dir)
 
             vm = firecracker_vm.boot(
@@ -171,7 +175,9 @@ def launch(
                 # Its own session, so it outlives a host controller restart;
                 # the next controller adopts it.
                 detached=True,
-                data_drives=(home,),
+                data_drives=(home,) + ((ws_disk.path,) if ws_disk else ()),
+                extra_boot_args=(workspace_disk.boot_arg(plan.workspace_plan.guest_path)
+                                 if ws_disk else ""),
                 mem_mib=memory_mib(plan.manifest.bottle),
                 vcpus=cpus(plan.manifest.bottle) or FIRECRACKER_DEFAULT_CPUS,
             )
@@ -197,6 +203,7 @@ def launch(
             agent_workdir=plan.workspace_plan.workdir,
         )
         bottle.home_kept = home_kept
+        bottle.workspace_mode = ws_mode
         _smoke_test_published_base(
             bottle, agent_base, runtime_for(plan.harness).smoke_test)
         bottle.prompt_path = provision(plan, bottle)
@@ -206,6 +213,36 @@ def launch(
         yield bottle
     finally:
         teardown()
+
+
+def _workspace_disk(
+    plan: FirecrackerBottlePlan, home_kept: bool,
+) -> tuple["workspace_disk.WorkspaceDisk | None", str]:
+    """The project's workspace disk when `BOT_BOTTLE_FC_WORKSPACE_DISK` asks
+    for one (and how to fill the workspace); None copies into the home as
+    usual."""
+    from ...bottle_state import bottle_state_dir  # pylint: disable=import-outside-toplevel
+    workspace = plan.workspace_plan
+    marker = bottle_state_dir(plan.slug) / workspace_disk.STATE_MARKER
+    used_last = marker.exists()
+    size = workspace_disk.requested_size(plan.settings.operation.fc_workspace_disk)
+    disk = None
+    if size and workspace.enabled and workspace.copy_contents:
+        if workspace_disk.guest_path_ok(workspace.guest_path):
+            disk = workspace_disk.acquire(
+                workspace.host_path, plan.spec.agent_name, tuple(plan.spec.bottle_names),
+                slug=plan.slug, size=size)
+        else:
+            warn(f"the workspace path {workspace.guest_path!r} can't take a workspace "
+                 "disk; copying it in instead")
+    mode = workspace_disk.workspace_mode(disk, slug=plan.slug, home_kept=home_kept,
+                                         used_disk_last=used_last)
+    if disk is not None:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(f"{disk.path}\n")
+    else:
+        marker.unlink(missing_ok=True)
+    return disk, mode
 
 
 def _smoke_test_published_base(

@@ -20,6 +20,7 @@ from ..lib.log import die
 # `bot_bottle/env_vars.py`.
 OPERATION_ENV: dict[str, str] = {
     "backend": "BOT_BOTTLE_BACKEND",
+    "fc_workspace_disk": "BOT_BOTTLE_FC_WORKSPACE_DISK",
 }
 
 INFRA_ENV: dict[str, str] = {

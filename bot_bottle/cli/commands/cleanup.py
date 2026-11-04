@@ -2,6 +2,7 @@
 
   bot-bottle cleanup bots [--backend NAME]
   bot-bottle cleanup images [--dry-run] [--older-than DAYS] [--build-store]
+  bot-bottle cleanup workspaces [--dry-run] [--all]
 
 `bots` stops and removes leftover bottled agents: the host controller tears
 down the bottled agents it holds, then each installed backend (or just NAME)
@@ -10,6 +11,9 @@ is reported and skipped, and its state dirs are left alone. Dirs with
 `.preserve` are never touched.
 
 `images` frees disk: see `bot-bottle cleanup images --help`.
+
+`workspaces` removes Firecracker's per-project workspace disks whose project
+is gone (`--all`: every one not in use).
 """
 
 from __future__ import annotations
@@ -39,6 +43,10 @@ def cmd_cleanup(argv: list[str]) -> int:
         # pylint: disable-next=import-outside-toplevel
         from .cleanup_images import cmd_cleanup_images
         return cmd_cleanup_images(argv[1:])
+    if argv[0] == "workspaces":
+        # pylint: disable-next=import-outside-toplevel
+        from .cleanup_workspaces import cmd_cleanup_workspaces
+        return cmd_cleanup_workspaces(argv[1:])
     if argv[0] != "bots":
         sys.stderr.write(f"{PROG} cleanup: unknown target {argv[0]!r}\n\n{__doc__}")
         return 2

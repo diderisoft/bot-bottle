@@ -9,6 +9,7 @@ included) into a patch.
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import tarfile
 from dataclasses import dataclass
@@ -44,6 +45,19 @@ class WorkspacePlan:
     mode: str = DEFAULT_WORKSPACE_MODE
     copy_contents: bool = True
     has_host_git_dir: bool = False
+
+
+@dataclass(frozen=True)
+class DiskInfo:
+    """A backend's kept per-project workspace disk, for `cleanup workspaces`."""
+
+    path: Path
+    project: str
+    # Allocated, so a sparse disk counts what it holds.
+    bytes: int
+    in_use: bool
+    # Its project directory is gone.
+    orphaned: bool
 
 
 def workspace_plan(spec: WorkspaceSpec, *, guest_home: str) -> WorkspacePlan:
@@ -164,6 +178,25 @@ def pack_workspace(root: Path, dest: Path, *, is_git: bool) -> int:
 def record_base_script(guest_path: str) -> str:
     """Guest shell: record the commit the workspace was copied at."""
     return f"cd {guest_path} && git rev-parse HEAD > {BASE_FILE} 2>/dev/null || true"
+
+
+def resync_clear_script(guest_path: str, *, is_git: bool) -> str:
+    """Guest shell, before a copy onto a kept workspace disk: remove every
+    file the copy would bring (in a repo, what git lists, plus `.git`;
+    elsewhere, everything outside `SKIP_DIRS`), keeping what the project
+    ignores. Fails, for a fresh start, when git can't list the files."""
+    path = shlex.quote(guest_path)
+    if is_git:
+        return (
+            f"cd {path} && files=$(mktemp) && "
+            f"GIT_DIR=.git GIT_WORK_TREE=. "
+            f"git -c core.fsmonitor=false ls-files -z --cached --others --exclude-standard "
+            f"> \"$files\" && xargs -0 -r rm -f -- < \"$files\"; rc=$?; rm -f \"$files\"; "
+            f"[ $rc -eq 0 ] && rm -rf .git"
+        )
+    prune = " -o ".join(f"-name {shlex.quote(d)}" for d in sorted(SKIP_DIRS))
+    return (f"cd {path} && find . -mindepth 1 -type d \\( {prune} \\) -prune "
+            f"-o ! -type d -exec rm -f -- {{}} +")
 
 
 def export_patch_script(guest_path: str) -> str:
