@@ -446,6 +446,24 @@ class TestSliceClaims(_TmpHome):
             self.assertTrue(release_environment_slice(settings, "dev"))
             self.assertIsNone(environment_slice(settings, "dev"))
 
+    def test_an_explicit_pool_keeps_its_infra_links_whatever_slice_is_claimed(self) -> None:
+        """The CI runner's pool names its own infra TAPs (one slice). A run
+        that claims host-wide slice 2 must still boot on that pool's /31s."""
+        from bot_bottle.cli.settings import settings_from_env  # pylint: disable=import-outside-toplevel
+        ci = {"BOT_BOTTLE_FC_SLICES_DIR": str(self.dir), "BOT_BOTTLE_FC_IP_BASE": "10.244.0.0",
+              "BOT_BOTTLE_FC_ORCH_IFACE": "bborchci0", "BOT_BOTTLE_FC_GW_IFACE": "bbgwci0",
+              "BOT_BOTTLE_FC_IFACE_PREFIX": "bbci"}
+        with mock.patch.dict(os.environ, {"HOME": str(self.home)}):
+            netpool.from_settings(settings_from_env(
+                {"BOT_BOTTLE_FC_SLICES_DIR": str(self.dir)}).infra, env="dev")
+            pool = netpool.from_settings(settings_from_env(ci).infra, env="ci-1")
+        self.assertEqual(0, pool.env_slot)
+        self.assertEqual(("bborchci0", "10.244.255.0", "10.244.255.1"),
+                         (pool.orch_slot().iface, pool.orch_slot().host_ip,
+                          pool.orch_slot().guest_ip))
+        self.assertEqual(("bbgwci0", "10.244.255.2", "10.244.255.3"),
+                         (pool.gw_slot().iface, pool.gw_slot().host_ip, pool.gw_slot().guest_ip))
+
     def test_slice_in_use_reads_tap_carrier(self) -> None:
         with mock.patch.object(netpool, "_carrier", side_effect="bbgw2".__eq__):
             self.assertTrue(netpool.slice_in_use(2))

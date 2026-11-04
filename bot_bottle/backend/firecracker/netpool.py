@@ -273,6 +273,10 @@ def from_settings(infra: InfraSettings, env: str | None = None) -> NetPool:
         sl = env_slice(slot, infra.fc_pool_size)
     except ValueError as e:
         die(f"firecracker network pool: {e}")
+    # A pool configured explicitly (the CI runner's) is its own single slice:
+    # its infra TAPs are named outright, so its links stay at the pool's base
+    # whatever host-wide slice this environment claimed.
+    explicit = bool(infra.fc_ip_base or infra.fc_orch_iface or infra.fc_gw_iface)
     return NetPool(
         pool_size=infra.fc_pool_size or int(_default("BOT_BOTTLE_FC_POOL_SIZE")),
         ip_base=infra.fc_ip_base or sl.ip_base,
@@ -280,7 +284,7 @@ def from_settings(infra: InfraSettings, env: str | None = None) -> NetPool:
         nft_table=infra.fc_nft_table or sl.nft_table,
         orch_iface=infra.fc_orch_iface or sl.orch_iface,
         gw_iface=infra.fc_gw_iface or sl.gw_iface,
-        env_slot=slot,
+        env_slot=0 if explicit else slot,
         env_slot_count=count,
     )
 
