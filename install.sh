@@ -66,6 +66,41 @@ die() {
     exit 1
 }
 
+# The package tool's own output (pip, uv, pipx) goes to a log, not the
+# terminal: one line per step, a spinner on a terminal, and the log's tail
+# when a step fails.
+INSTALL_LOG="${HOME}/.bot-bottle/logs/install-$(date +%Y%m%d-%H%M%S).log"
+
+run_logged() {
+    label="$1"
+    shift
+    mkdir -p "$(dirname "${INSTALL_LOG}")"
+    if [ -t 2 ]; then
+        "$@" >>"${INSTALL_LOG}" 2>&1 &
+        pid=$!
+        i=0
+        while kill -0 "${pid}" 2>/dev/null; do
+            case $((i % 4)) in 0) c='|' ;; 1) c='/' ;; 2) c='-' ;; *) c='\' ;; esac
+            printf '\rbot-bottle install: %s %s' "${label}" "${c}" >&2
+            i=$((i + 1))
+            sleep 0.2
+        done
+        if wait "${pid}"; then
+            printf '\rbot-bottle install: %s ✓\n' "${label}" >&2
+            return 0
+        fi
+        printf '\rbot-bottle install: %s ✗\n' "${label}" >&2
+    else
+        say "${label}"
+        if "$@" >>"${INSTALL_LOG}" 2>&1; then
+            return 0
+        fi
+    fi
+    say "${label} failed; the end of ${INSTALL_LOG}:"
+    tail -n 20 "${INSTALL_LOG}" | sed 's/^/    /' >&2
+    return 1
+}
+
 # --- uninstall -----------------------------------------------------------------
 
 if [ "${1:-}" = "--uninstall" ]; then
@@ -161,6 +196,10 @@ if [ -z "${BOT_BOTTLE_INSTALL_SPEC:-}" ]; then
     else
         say "installing bot-bottle ${INSTALL_REF}"
     fi
+fi
+
+if [ -n "${BOT_BOTTLE_ENV:-}" ]; then
+    say "environment ${BOT_BOTTLE_ENV} (BOT_BOTTLE_ENV): its agents and state are what this sets up"
 fi
 
 # --- prerequisites: find an interpreter new enough ----------------------------
@@ -367,16 +406,18 @@ if [ -n "${UV}" ]; then
         export UV_TOOL_DIR="${UV_HOME}/tools" UV_PYTHON_INSTALL_DIR="${UV_HOME}/python"
         export UV_TOOL_BIN_DIR="${BIN_DIR}"
     fi
-    say "installing with uv on Python ${UV_PYTHON}"
-    "${UV}" tool install --python "${UV_PYTHON}" --force "${PACKAGE_SPEC}"
+    run_logged "installing with uv on Python ${UV_PYTHON}" \
+        "${UV}" tool install --python "${UV_PYTHON}" --force "${PACKAGE_SPEC}" \
+        || die "uv couldn't install bot-bottle (log: ${INSTALL_LOG})"
     uv_bin="$("${UV}" tool dir --bin 2>/dev/null || true)"
     [ -n "${uv_bin}" ] && BIN_DIR="${uv_bin}"
 elif command -v uv >/dev/null 2>&1; then
     # uv first: fastest, and someone with uv manages their Python tools with
     # it. --python pins the tool's venv to the interpreter we vetted, as for
     # pipx below.
-    say "installing with uv (python: ${PYTHON})"
-    uv tool install --python "${PYTHON}" --force "${PACKAGE_SPEC}"
+    run_logged "installing with uv (python: ${PYTHON})" \
+        uv tool install --python "${PYTHON}" --force "${PACKAGE_SPEC}" \
+        || die "uv couldn't install bot-bottle (log: ${INSTALL_LOG})"
     # Ask uv where it puts entry points rather than assuming ~/.local/bin.
     uv_bin="$(uv tool dir --bin 2>/dev/null || true)"
     [ -n "${uv_bin}" ] && BIN_DIR="${uv_bin}"
@@ -384,8 +425,9 @@ elif command -v pipx >/dev/null 2>&1; then
     # --python pins the venv to the interpreter we vetted. Without it pipx uses
     # whichever Python it was itself installed with, which is not necessarily
     # the one that passed the version check above.
-    say "installing with pipx (python: ${PYTHON})"
-    pipx install --python "${PYTHON}" --force "${PACKAGE_SPEC}"
+    run_logged "installing with pipx (python: ${PYTHON})" \
+        pipx install --python "${PYTHON}" --force "${PACKAGE_SPEC}" \
+        || die "pipx couldn't install bot-bottle (log: ${INSTALL_LOG})"
     # Ask pipx where it puts entry points rather than assuming ~/.local/bin.
     pipx_bin="$(pipx environment --value PIPX_BIN_DIR 2>/dev/null || true)"
     [ -n "${pipx_bin}" ] && BIN_DIR="${pipx_bin}"
@@ -399,7 +441,9 @@ else
     "${PYTHON}" -m venv --clear "${VENV}" || die \
         "could not create a virtualenv at ${VENV} using ${PYTHON}. On Debian/Ubuntu "\
 "the venv module ships separately: 'sudo apt install python3-venv'."
-    "${VENV}/bin/python" -m pip install --upgrade "${PACKAGE_SPEC}"
+    run_logged "installing bot-bottle and its dependencies" \
+        "${VENV}/bin/python" -m pip install --upgrade "${PACKAGE_SPEC}" \
+        || die "pip couldn't install bot-bottle (log: ${INSTALL_LOG})"
     # Expose the entry point outside the venv, the way pipx would.
     mkdir -p "${BIN_DIR}"
     ln -sf "${VENV}/bin/bot-bottle" "${BIN_DIR}/bot-bottle"
@@ -433,7 +477,7 @@ fi
 
 # Under `curl | sh` stdin is this script, so setup's prompts (OpenRouter
 # sign-in, pairing) read from the terminal instead, when there is one.
-say "running '${BOT_BOTTLE_BIN} setup'"
+say "setting up starter agents ('${BOT_BOTTLE_BIN} setup')"
 if [ -t 1 ] && (: </dev/tty) 2>/dev/null; then
     "${BOT_BOTTLE_BIN}" setup </dev/tty || say "setup didn't finish; re-run '${BOT_BOTTLE_BIN} setup'"
 else
@@ -442,20 +486,13 @@ fi
 
 # --- verify ------------------------------------------------------------------
 
-say "running '${BOT_BOTTLE_BIN} doctor'"
+say "checking this host ('${BOT_BOTTLE_BIN} doctor')"
 # The installer never uses sudo, so the backend's host setup (the macOS pf
 # firewall, firecracker's network pool) and autostart are left to
-# `bot-bottle install`, which prints any privileged steps.
-next_step() {
-    say "next: run '${BOT_BOTTLE_BIN} install' to set up your backend and autostart"
-    say "(it prints any sudo steps it needs; '${BOT_BOTTLE_BIN} bootstrap' does install,"
-    say "setup and doctor together if you set this host up another way)."
-}
+# `bot-bottle install`, which prints any privileged steps. doctor ends with
+# the one next step for this host (`next: ...`), whatever it found.
 if "${BOT_BOTTLE_BIN}" doctor; then
-    say "done. Run '${BOT_BOTTLE_BIN} --help' to get started."
-    next_step
+    say "installed."
 else
-    say "install completed, but 'doctor' reported unmet prerequisites (see above)."
-    next_step
-    say "then re-run '${BOT_BOTTLE_BIN} doctor'."
+    say "installed, but doctor found something to fix (above)."
 fi

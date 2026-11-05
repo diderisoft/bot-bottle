@@ -94,10 +94,11 @@ class TestInstallScript(unittest.TestCase):  # pylint: disable=too-many-public-m
     def test_runs_doctor_after_install(self):
         self.assertIn("doctor", self.text)
 
-    def test_ends_pointing_at_install_for_the_privileged_rest(self):
-        # It never uses sudo, so the backend's host setup is the next step.
-        self.assertIn("next: run '${BOT_BOTTLE_BIN} install'", self.text)
-        self.assertIn("bootstrap", self.text)
+    def test_the_next_step_is_doctors_not_a_fixed_line(self):
+        # doctor ends with the next step for this host (`next: ...`); the
+        # installer no longer prints its own, often wrong, one.
+        self.assertNotIn("next: run '${BOT_BOTTLE_BIN} install'", self.text)
+        self.assertNotIn("--help' to get started", self.text)
 
     def test_runs_setup_before_doctor_reading_the_terminal(self):
         """Under `curl | sh`, stdin is the script: setup's prompts read
@@ -271,6 +272,45 @@ class TestInstallRef(unittest.TestCase):
                 self.assertIn("couldn't find the latest bot-bottle release", proc.stderr)
                 self.assertIn("--main", proc.stderr)
                 self.assertFalse((self.root / "uv.log").exists())
+
+    def test_the_package_tools_output_goes_to_a_log(self) -> None:
+        self._page(1, _tags("v0.2.0"))
+        self._stub("uv", f'echo "$@" >> "{self.root}/uv.log"\n'
+                         f'[ "$1 $2" = "tool dir" ] && echo "{self.bin}" && exit 0\n'
+                         'echo "Collecting noisy-dependency"; echo "Downloading wheel" >&2\nexit 0')
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertNotIn("Collecting noisy-dependency", proc.stdout + proc.stderr)
+        self.assertIn("installing with uv", proc.stderr)
+        logs = list((self.root / "home" / ".bot-bottle" / "logs").glob("install-*.log"))
+        self.assertEqual(1, len(logs))
+        self.assertIn("Collecting noisy-dependency", logs[0].read_text())
+        self.assertIn("Downloading wheel", logs[0].read_text())
+
+    def test_a_failed_install_shows_the_logs_tail_and_where_it_is(self) -> None:
+        self._page(1, _tags("v0.2.0"))
+        self._stub("uv", f'[ "$1 $2" = "tool dir" ] && echo "{self.bin}" && exit 0\n'
+                         'echo "ERROR: no matching distribution for iroh"\nexit 1')
+        proc = self._run()
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("failed; the end of", proc.stderr)
+        self.assertIn("    ERROR: no matching distribution for iroh", proc.stderr)
+        self.assertIn(".bot-bottle/logs/install-", proc.stderr)
+
+    def test_it_says_which_environment_it_sets_up(self) -> None:
+        self._page(1, _tags("v0.2.0"))
+        proc = self._run(BOT_BOTTLE_ENV="dev")
+        self.assertIn("environment dev (BOT_BOTTLE_ENV)", proc.stderr)
+        self.assertNotIn("(BOT_BOTTLE_ENV)", self._run().stderr)
+
+    def test_it_ends_with_doctors_next_step(self) -> None:
+        self._page(1, _tags("v0.2.0"))
+        self._stub("bot-bottle", '[ "$1" = doctor ] && echo "next: run \\`bot-bottle\\`"\n'
+                                 'exit 0')
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("next: run `bot-bottle`", proc.stdout)
+        self.assertIn("installed.", proc.stderr)
 
     def test_unknown_arguments_are_refused(self) -> None:
         proc = self._run("--mian")
