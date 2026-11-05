@@ -16,7 +16,11 @@ bot-bottle with its `remote` extra for phone pairing (none on Intel Macs,
 which iroh has no build for) using `uv` or `pipx` if you have either, or a
 private venv at `~/.bot-bottle/venv`, creates `~/.bot-bottle`, and runs
 `bot-bottle setup` and `bot-bottle doctor`. It is idempotent and never uses
-`sudo`.
+`sudo`. It shows one line per step (a spinner on a terminal) and keeps the
+package tool's own output in `~/.bot-bottle/logs/install-<time>.log`, printing
+its end if a step fails. With `BOT_BOTTLE_ENV` set it says which environment it
+sets up. It ends with doctor's `next:` line, the one thing to do next on this
+host.
 
 Python-native users can skip it, pinning the latest tag (`v0.1.4` here; use
 the newest one listed under the repository's tags):
@@ -105,6 +109,16 @@ there is nothing to bootstrap first.
 The installer deliberately does *not* install a backend; `bot-bottle doctor`
 reports what's missing afterwards. Which backend a host gets is in
 [backends.md](backends.md#selection).
+
+`doctor` checks that backend in full, the one a launch here would use
+(`BOT_BOTTLE_BACKEND`, else the one detected), and shows its diagnostics when
+it isn't ready; it decides doctor's exit code. Any other backend gets one
+`note:` line, ready or not, and is never offered for install
+(`doctor --verbose` shows every backend's diagnostics; `doctor --backend=X`
+checks X alone). `doctor` ends with `next:`, the most pressing of: restart the
+host controller (`up --restart`), set up the backend (`install --backend=…`),
+write starters (`setup`), start the services (`up`), else run `bot-bottle`.
+`doctor --next` prints only that.
 
 | Backend | Needs |
 |---|---|

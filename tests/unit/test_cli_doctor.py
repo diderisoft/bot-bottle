@@ -24,9 +24,11 @@ from bot_bottle.control.client import OrchestratorEndpoint
 from bot_bottle.control.hostctl.runner import HostControlState
 
 
-def _run(argv: list[str] | None = None) -> tuple[int, str]:
+def _run(argv: list[str] | None = None, selected: str = "") -> tuple[int, str]:
+    """doctor's output. `selected` is the backend a launch would use; "" (none
+    selectable) keeps the any-ready-backend rule."""
     buf = io.StringIO()
-    with redirect_stdout(buf):
+    with redirect_stdout(buf), patch.object(doctor, "selected_backend", return_value=selected):
         code = doctor.cmd_doctor(argv or [])
     return code, buf.getvalue()
 
@@ -151,6 +153,104 @@ class TestDoctor(unittest.TestCase):
                 patch.object(doctor, "is_backend_ready", return_value=True):
             _, out = _run()
         self.assertIn("gVisor (runsc) is registered", out)
+
+
+def _delos_ready(_settings: object, name: str, *, quiet: bool = False) -> bool:
+    """macos-container ready; docker installed with its daemon down, printing
+    what its status() prints."""
+    del quiet
+    if name == "docker":
+        print("docker on PATH: yes")
+        print("docker daemon: UNREACHABLE")
+        print("Run: bot-bottle install --backend=docker")
+        return False
+    return True
+
+
+class TestDoctorSelectedBackend(unittest.TestCase):
+    """doctor checks the backend a launch here would use in full; the others
+    get one line and are never offered for install (2026-11-05, on delos)."""
+
+    def setUp(self) -> None:
+        self.enterContext(patch.object(doctor, "backend_os_requirement", return_value=""))
+        self.enterContext(patch.object(doctor, "known_backend_names",
+                                       return_value=("docker", "macos-container")))
+        self.enterContext(patch.object(
+            doctor, "orchestrator_report",
+            return_value=doctor.OrchestratorReport(_FC, True, ())))
+        self.running = self.enterContext(patch.object(doctor.runner, "running",
+                                                      return_value=None))
+        self.stale = self.enterContext(patch.object(doctor.runner, "restart_needed",
+                                                    return_value=False))
+        self.agents = self.enterContext(patch.object(doctor, "_has_agents", return_value=True))
+        self.ready = self.enterContext(patch.object(doctor, "is_backend_ready",
+                                                    side_effect=_delos_ready))
+
+    def test_a_backend_not_in_use_is_one_line_and_never_offered(self):
+        code, out = _run(selected="macos-container")
+        self.assertEqual(0, code)
+        self.assertIn("ok:   backend: macos-container: ready", out)
+        self.assertIn("note: backend: docker: not ready (not used here; "
+                      "BOT_BOTTLE_BACKEND=docker to use it)", out)
+        self.assertNotIn("UNREACHABLE", out)
+        self.assertNotIn("install --backend=docker", out)
+
+    def test_verbose_shows_every_backends_diagnostics_indented(self):
+        _, out = _run(["--verbose"], selected="macos-container")
+        self.assertIn("      docker daemon: UNREACHABLE", out)
+
+    def test_the_selected_backend_not_ready_fails_with_its_diagnostics(self):
+        code, out = _run(selected="docker")
+        self.assertEqual(1, code)
+        self.assertIn("warn: backend: docker: not ready", out)
+        self.assertIn("      docker daemon: UNREACHABLE", out)
+        self.assertIn("fail: backend: docker isn't ready", out)
+        self.assertIn("next: `bot-bottle install --backend=docker`", out)
+
+    def test_next_prefers_a_restart_then_the_backend_then_setup_then_up(self):
+        state = HostControlState(pid=7, port=1234, build_id="abc")
+        self.running.return_value = state
+        self.stale.return_value = True
+        self.assertIn("next: `bot-bottle up --restart`", _run(selected="docker")[1])
+        self.stale.return_value = False
+        self.assertIn("next: `bot-bottle install --backend=docker`",
+                      _run(selected="docker")[1])
+        self.agents.return_value = False
+        self.assertIn("next: `bot-bottle setup`", _run(selected="macos-container")[1])
+        self.agents.return_value = True
+        self.running.return_value = None
+        self.assertIn("next: `bot-bottle up`, then run `bot-bottle`",
+                      _run(selected="macos-container")[1])
+        self.running.return_value = state
+        self.assertIn("next: run `bot-bottle`", _run(selected="macos-container")[1])
+
+    def test_next_alone_prints_only_the_step(self):
+        self.running.return_value = HostControlState(pid=7, port=1234, build_id="abc")
+        self.stale.return_value = True
+        code, out = _run(["--next"], selected="macos-container")
+        self.assertEqual(0, code)
+        self.assertEqual("`bot-bottle up --restart` (the host controller runs older code; "
+                         "running bottles keep running)\n", out)
+
+    def test_with_no_backend_at_all_next_says_to_set_one_up(self):
+        self.ready.side_effect = None
+        self.ready.return_value = False
+        code, out = _run(selected="")
+        self.assertEqual(1, code)
+        self.assertIn("next: set up a backend", out)
+
+
+class TestHasAgents(unittest.TestCase):
+    def test_the_architect_alone_is_no_agent(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(doctor, "bot_bottle_root", return_value=Path(tmp)):
+            self.assertFalse(doctor._has_agents())  # pylint: disable=protected-access
+            agents = Path(tmp) / "agents"
+            agents.mkdir()
+            (agents / "bottle-architect.md").write_text("x")
+            self.assertFalse(doctor._has_agents())  # pylint: disable=protected-access
+            (agents / "claude.md").write_text("x")
+            self.assertTrue(doctor._has_agents())  # pylint: disable=protected-access
 
 
 class TestDoctorOrchestrator(unittest.TestCase):

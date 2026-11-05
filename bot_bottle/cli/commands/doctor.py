@@ -5,6 +5,8 @@ ready backend, or tmux; the config directory is advisory.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import os
 import sys
 from dataclasses import dataclass
@@ -57,31 +59,79 @@ def _check_python() -> bool:
     return False
 
 
-def _check_backends() -> bool:
-    """At least one backend must pass its full `status()` checks, not just have
-    a binary on PATH. Each not-ready backend prints what's missing; one that
-    can't run on this OS is skipped in a line."""
+def selected_backend(settings) -> str:  # type: ignore[no-untyped-def]
+    """The backend a launch here would use (BOT_BOTTLE_BACKEND, else what's
+    detected); "" when none can be picked."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...backend.selection import auto_backend_name
+    with contextlib.suppress(Exception):
+        return auto_backend_name(settings)
+    return ""
+
+
+def _probe(settings, name: str) -> tuple[bool, list[str]]:  # type: ignore[no-untyped-def]
+    """Whether `name` is ready, and the diagnostics its status() printed."""
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+        ready = is_backend_ready(settings, name, quiet=False)
+    return ready, [line for line in out.getvalue().splitlines() if line.strip()]
+
+
+def _diagnostics(lines: list[str]) -> None:
+    for line in lines:
+        print(f"      {line}")
+
+
+@dataclass
+class BackendFindings:
+    """What doctor found about backends, for the exit code and `next:`."""
+
+    selected: str = ""
+    selected_ready: bool = False
+    any_ready: bool = False
+
+
+def _check_backends(verbose: bool = False) -> BackendFindings:
+    """The backend a launch would use is checked in full: its diagnostics show
+    when it isn't ready (always with `verbose`). Others get a line, never the
+    advice to install them. With no backend selectable, any ready one does."""
     settings = settings_from_env()
-    ready = []
+    found = BackendFindings(selected=selected_backend(settings))
+    ready: list[str] = []
     for name in known_backend_names():
         needs = backend_os_requirement(name)
         if needs:
             _note("backend", f"{name}: skipped ({needs} only)")
-        elif is_backend_ready(settings, name, quiet=False):
-            _ok("backend", f"{name}: ready")
+            continue
+        ok, lines = _probe(settings, name)
+        if ok:
             ready.append(name)
-        else:
-            _warn("backend", f"{name}: not ready (see diagnostics above)")
-    if "docker" in ready and (settings.operation.backend == "docker" or ready == ["docker"]):
+        if not found.selected or name == found.selected:
+            if ok:
+                _ok("backend", f"{name}: ready")
+            else:
+                _warn("backend", f"{name}: not ready")
+            if verbose or not ok:
+                _diagnostics(lines)
+            continue
+        state = "ready" if ok else "not ready"
+        _note("backend", f"{name}: {state} (not used here; BOT_BOTTLE_BACKEND={name} "
+                         f"to use it)")
+        if verbose:
+            _diagnostics(lines)
+    found.any_ready = bool(ready)
+    found.selected_ready = found.selected in ready
+    if "docker" in ready and (found.selected == "docker" or ready == ["docker"]):
         _note("backend", docker_isolation_summary())
-    if ready:
-        return True
-    _fail(
-        "backend",
-        "no backend is ready to run a bottle; start Docker, or finish "
-        "Apple Container (macOS) / Firecracker (Linux) setup",
-    )
-    return False
+    if (found.selected_ready if found.selected else found.any_ready):
+        return found
+    if found.selected:
+        _fail("backend", f"{found.selected} isn't ready to run a bottle (what's missing is "
+                         f"above); `{PROG} install --backend={found.selected}` sets it up")
+    else:
+        _fail("backend", "no backend is ready to run a bottle; start Docker, or finish "
+                         "Apple Container (macOS) / Firecracker (Linux) setup")
+    return found
 
 
 def _check_tmux() -> bool:
@@ -220,6 +270,32 @@ def _check_pi_model(agent: Path) -> None:
                     f"run `{PROG} setup --refresh-model`")
 
 
+def _has_agents() -> bool:
+    """Whether this host has an agent to start (the architect doesn't count)."""
+    agents = bot_bottle_root() / "agents"
+    return any(p.stem != "bottle-architect" for p in agents.glob("*.md")) \
+        if agents.is_dir() else False
+
+
+def next_step(found: BackendFindings) -> str:
+    """The one thing to do next on this host, most pressing first."""
+    state = runner.running()
+    if state is not None and runner.restart_needed(state):
+        return (f"`{PROG} up --restart` (the host controller runs older code; "
+                f"running bottles keep running)")
+    if found.selected and not found.selected_ready:
+        return (f"`{PROG} install --backend={found.selected}` "
+                f"(it prints any sudo steps it needs)")
+    if not found.selected and not found.any_ready:
+        return ("set up a backend: Docker, or Apple Container (macOS) / Firecracker "
+                f"(Linux), then `{PROG} install`")
+    if not _has_agents():
+        return f"`{PROG} setup`"
+    if state is None:
+        return f"`{PROG} up`, then run `{PROG}`"
+    return f"run `{PROG}`"
+
+
 def cmd_doctor(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog=f"{PROG} doctor",
@@ -228,7 +304,16 @@ def cmd_doctor(argv: list[str]) -> int:
     parser.add_argument("--backend", choices=known_backend_names(), default=None,
                         help="check only this backend's readiness, exiting non-zero "
                              "unless it's ready (what CI gates on)")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="show every backend's diagnostics, not only the one in use")
+    parser.add_argument("--next", action="store_true",
+                        help="print only the next step for this host, one line")
     ns = parser.parse_args(argv)
+    if ns.next:
+        with contextlib.redirect_stdout(io.StringIO()):
+            found = _check_backends()
+        print(next_step(found))
+        return 0
     if ns.backend:
         # pylint: disable-next=import-outside-toplevel
         from ...backend import get_bottle_backend
@@ -237,9 +322,13 @@ def cmd_doctor(argv: list[str]) -> int:
 
     _note("environment", environment_line())
     # Hard requirements set the exit code.
-    required = [_check_python(), _check_backends(), _check_tmux()]
+    python = _check_python()
+    found = _check_backends(ns.verbose)
+    backend = found.selected_ready if found.selected else found.any_ready
+    required = [python, backend, _check_tmux()]
     _check_config_dir()
     _check_orchestrator()
     _check_host_controller()
     _check_providers()
+    print(f"next: {next_step(found)}")
     return 0 if all(required) else 1
