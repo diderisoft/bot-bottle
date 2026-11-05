@@ -219,6 +219,24 @@ class TestArchitectBottle(unittest.TestCase):
                     warm.run(_architect(), "t")
                 self.assertIn("timed-out call", warn.call_args.args[0])
 
+    def test_a_bottle_removed_under_it_is_replaced_and_the_call_retried(self) -> None:
+        backend = FakeBackend()
+        backend.exec_result = SimpleNamespace(returncode=1)  # `true` fails: it's gone
+        warm = self._bottle(backend)
+        self.subprocess_run.side_effect = [mock.Mock(returncode=1, stdout=""),
+                                           mock.Mock(returncode=0, stdout='{"option": "x"}')]
+        self.assertEqual('{"option": "x"}', warm.run(_architect(), "t"))
+        self.assertEqual(2, backend.launches)
+
+    def test_a_bottle_gone_twice_is_an_architect_error(self) -> None:
+        backend = FakeBackend()
+        backend.exec_result = SimpleNamespace(returncode=1)
+        warm = self._bottle(backend)
+        self.subprocess_run.return_value = mock.Mock(returncode=1, stdout="")
+        with self.assertRaisesRegex(ArchitectError, "its bottle had stopped"):
+            warm.run(_architect(), "t")
+        self.assertEqual(2, backend.launches)
+
     def test_a_changed_harness_restarts_the_bottle(self) -> None:
         backend = FakeBackend("claude")
         warm = self._bottle(backend)

@@ -45,8 +45,11 @@ ARCHITECT_BOTTLE = "bottle-architect"
 
 # Booting includes getting images, so a first boot can take a while.
 BOOT_SECONDS = 600.0
-# How long stopping a timed-out call's process in the bottle may take.
+# How long stopping a timed-out call's process in the bottle may take, and
+# how long a gone bottle's teardown is waited on before booting another.
 STOP_SECONDS = 15.0
+# How long checking that the bottle still runs may take, after a failed call.
+ALIVE_SECONDS = 10.0
 # Stops every process whose command line carries the call's mark, and their
 # descendants (the agent's tools): TERM, then KILL. The bottle has no ps or
 # pkill. It goes on stdin (`private`), so this shell's own command line
@@ -77,6 +80,7 @@ exit 0
 def model_args(model: str) -> list[str]:
     """The harness args that pick `model` (claude, codex and pi take `--model`)."""
     return ["--model", model] if model else []
+
 
 
 def _default_backend(settings: Settings) -> "BottleBackend[Any, Any]":
@@ -221,7 +225,22 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
     def run(self, architect: Architect, prompt: str, settings: Settings | None = None) -> str:
         """The architect's answer to `prompt`: a fresh headless call in the
         warm bottle, booting it first if it's down. ArchitectError when it
-        can't boot, fails or times out."""
+        can't boot, fails or times out. A bottle found gone (removed under
+        the host controller, say by `bots cleanup`) is replaced, once."""
+        try:
+            return self._run_once(architect, prompt, settings)
+        except _BottleGone:
+            log.info("bottle-architect: its bottle was gone; booting a new one")
+            with self._cond:
+                deadline = self._clock() + STOP_SECONDS
+                while self._state != "down" and self._clock() < deadline:
+                    self._cond.wait(timeout=min(deadline - self._clock(), 1.0))
+            try:
+                return self._run_once(architect, prompt, settings)
+            except _BottleGone as e:
+                raise ArchitectError(str(e)) from e
+
+    def _run_once(self, architect: Architect, prompt: str, settings: Settings | None) -> str:
         # pylint: disable-next=import-outside-toplevel
         from .bottles import agent_args
         with self._cond:
@@ -265,6 +284,11 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
                                      f"{TIMEOUT_SECONDS}s") from e
             except OSError as e:
                 raise ArchitectError(f"{architect.harness} didn't run: {e}") from e
+            if result.returncode != 0 and not _alive(bottle):
+                with self._cond:
+                    self._stopping = True  # the holder tears it down; the next call boots
+                    self._cond.notify_all()
+                raise _BottleGone(f"its bottle had stopped (exit {result.returncode})")
             if result.returncode != 0 or not result.stdout.strip():
                 raise ArchitectError(f"{architect.harness} failed in its bottle "
                                      f"(exit {result.returncode}); is it logged in on this host?")
@@ -274,6 +298,18 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
                 self._busy -= 1
                 self._last_used = self._clock()
                 self._cond.notify_all()
+
+
+class _BottleGone(ArchitectError):
+    """The warm bottle isn't there any more."""
+
+
+def _alive(bottle: Any) -> bool:
+    """Whether `bottle` still runs commands."""
+    try:
+        return bottle.exec("true", timeout=ALIVE_SECONDS, private=False).returncode == 0
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
 
 
 def _stop_marked(bottle: Any, mark: str) -> None:
