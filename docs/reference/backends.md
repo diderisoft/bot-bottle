@@ -301,8 +301,8 @@ exec that points `bot-bottle-gateway` at the gateway in `/etc/hosts`:
 - **In:** only replies. Nothing connects into an agent on this backend:
   control goes through `container exec`, and addresses are static, so no DHCP
   traffic is needed.
-- **Root is exempt.** The agent runs as the image's user, and the launch's pf
-  check runs as root.
+- **Root's outgoing traffic is exempt.** The agent runs as the image's user,
+  and the launch's pf check runs as root. Incoming traffic has no exemption.
 
 The table is kernel state, so it's loaded on every start of the guest,
 including a kept guest restarted on resume, and reloaded when reattach moves
@@ -312,10 +312,13 @@ user has no capabilities. The claude, codex and pi images include `nftables`.
 An image without `nft` launches with a warning and no firewall, and a ruleset
 `nft` refuses fails the launch.
 
-**An agent that can get root can remove its firewall.** It could then reach
-other agents, change its own address (so only its identity token still
-attributes its requests), and spoof addresses on the shared network, for
-example to take traffic meant for the gateway. pf still keeps it off the Mac.
+**An agent that can get root can remove its firewall.** Its connections to
+other agents then leave its VM, but a sibling whose firewall is loaded still
+drops them, since it accepts only replies; it reaches only agents that have no
+firewall or have removed theirs. It could also change its own address (so only
+its identity token still attributes its requests), and spoof addresses on the
+shared network, for example to take traffic meant for the gateway. pf still
+keeps it off the Mac.
 After the probe, the launch checks, as the agent's user, whether it runs as
 root, has passwordless `sudo` or `doas`, or has a binary on `PATH` with file
 capabilities, and warns that isolation from other agents is best effort for
