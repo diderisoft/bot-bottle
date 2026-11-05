@@ -25,9 +25,9 @@ git-gate:
 
 class TestOrigin(unittest.TestCase):
     def test_parse(self) -> None:
-        self.assertEqual(Origin("10.0.0.1", "30009", "acme", "app"),
+        self.assertEqual(Origin("10.0.0.1", "30009", "acme", "app", ssh=True),
                          parse_origin("ssh://git@10.0.0.1:30009/acme/app.git"))
-        self.assertEqual(Origin("gitea.example.com", "", "acme", "app"),
+        self.assertEqual(Origin("gitea.example.com", "", "acme", "app", ssh=True),
                          parse_origin("git@gitea.example.com:acme/app.git"))
         self.assertEqual(Origin("github.com", "", "acme", "app"),
                          parse_origin("https://github.com/acme/app"))
@@ -55,6 +55,17 @@ class TestFindForge(_Dirs):
         (self.host / "broken.md").write_text("---\n: x\n---\n")
         self.assertIsNone(find_forge(Origin("github.com", "", "a", "b"), self.host))
         self.assertIsNone(find_forge(Origin("x", "", "a", "b"), self.host / "nope"))
+
+    def test_an_ssh_origin_on_the_web_host_matches_whatever_its_port(self) -> None:
+        """`ssh://git@gitea.example.com:30009/…` when the forge's SSH address
+        is an IP: its port is the SSH one, not the web URL's, so it matches the
+        web host. An https origin still has to agree on the port."""
+        match = ForgeMatch("gitea", "gitea.example.com")
+        origin = parse_origin("ssh://git@gitea.example.com:30009/acme/app.git")
+        https = parse_origin("https://gitea.example.com:8443/acme/app.git")
+        assert origin is not None and https is not None
+        self.assertEqual(match, find_forge(origin, self.host))
+        self.assertIsNone(find_forge(https, self.host))
 
 
 class TestOnboard(_Dirs):

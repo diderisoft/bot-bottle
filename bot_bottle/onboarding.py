@@ -29,6 +29,7 @@ class Origin:
     port: str          # "" when the URL gives none
     owner: str
     repo: str
+    ssh: bool = False  # an SSH remote: `port` is the SSH port, not the web one
 
 
 @dataclass(frozen=True)
@@ -72,15 +73,17 @@ def parse_origin(url: str) -> Origin | None:
     if "://" in url:
         parsed = urlparse(url)
         host, port, path = parsed.hostname or "", str(parsed.port or ""), parsed.path
+        ssh = parsed.scheme == "ssh"
     else:
         m = _SCP_RE.match(url)
         if not m:
             return None
-        host, port, path = m.group(1), "", m.group(2)
+        host, port, path, ssh = m.group(1), "", m.group(2), True
     parts = [p for p in path.strip("/").split("/") if p]
     if not host or len(parts) != 2:
         return None
-    return Origin(host=host, port=port, owner=parts[0], repo=parts[1].removesuffix(".git"))
+    return Origin(host=host, port=port, owner=parts[0], repo=parts[1].removesuffix(".git"),
+                  ssh=ssh)
 
 
 def read_origin(cwd: Path) -> Origin | None:
@@ -109,8 +112,12 @@ def find_forge(origin: Origin, host_bottles: Path) -> ForgeMatch | None:
             ssh = str(entry.get("ssh", ""))
             ssh_host, ssh_port = ssh_host_port(ssh) if ssh else ("", "")
             web = urlparse(str(entry.get("url", "")))
+            # An SSH origin's port is the forge's SSH port: compare it with the
+            # SSH address only. Its host may still be the web one (a forge whose
+            # SSH address is an IP), so the web host matches it on any port.
+            web_port_ok = origin.ssh or origin.port in ("", str(web.port or ""))
             if (origin.host == ssh_host and origin.port in ("", ssh_port)) or (
-                    origin.host == web.hostname and origin.port in ("", str(web.port or ""))):
+                    origin.host == web.hostname and web_port_ok):
                 return ForgeMatch(bottle=path.stem, key=key)
     return None
 

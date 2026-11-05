@@ -263,3 +263,18 @@ class TestStartPicksTheView(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOriginLabel(unittest.TestCase):
+    def test_an_ssh_remote_with_a_port_reads_as_host_owner_repo(self) -> None:
+        """Not `gitea.dideric.is/30009/didericis/bot-bottle`: the port isn't
+        part of the repo's name."""
+        import subprocess  # pylint: disable=import-outside-toplevel
+
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run(["git", "init", "-q", tmp], check=True)
+            subprocess.run(["git", "-C", tmp, "remote", "add", "origin",
+                            "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git"], check=True)
+            self.assertEqual("gitea.dideric.is/didericis/bot-bottle",
+                             guided_view.origin_of(Path(tmp)))
+            self.assertEqual("", guided_view.origin_of(Path(tmp) / "nope"))

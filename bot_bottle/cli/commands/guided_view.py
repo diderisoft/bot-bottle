@@ -71,15 +71,12 @@ def home_relative(path: Path) -> str:
 
 def origin_of(cwd: Path) -> str:
     """The checkout's `origin` as host/owner/repo, or ""."""
+    from ...onboarding import read_origin  # pylint: disable=import-outside-toplevel
     try:
-        url = subprocess.run(["git", "-C", str(cwd), "remote", "get-url", "origin"],
-                             capture_output=True, text=True, timeout=2, check=False).stdout.strip()
+        origin = read_origin(cwd)
     except (OSError, subprocess.SubprocessError):
         return ""
-    for prefix in ("https://", "http://", "ssh://", "git@"):
-        url = url.removeprefix(prefix)
-    url = url.split("@", 1)[-1].replace(":", "/", 1) if url and "://" not in url else url
-    return url.removesuffix(".git")
+    return f"{origin.host}/{origin.owner}/{origin.repo}" if origin else ""
 
 
 def project_value(cwd: Path) -> str:
