@@ -451,8 +451,15 @@ fi
 
 # --- locate the entry point --------------------------------------------------
 
-if command -v bot-bottle >/dev/null 2>&1; then
+# Always run the entry point just installed: another bot-bottle earlier on
+# PATH (an older install) would otherwise run setup and doctor instead.
+on_path="$(command -v bot-bottle 2>/dev/null || true)"
+if [ -x "${BIN_DIR}/bot-bottle" ] && [ "${on_path}" = "${BIN_DIR}/bot-bottle" ]; then
     BOT_BOTTLE_BIN="bot-bottle"
+elif [ -x "${BIN_DIR}/bot-bottle" ] && [ -n "${on_path}" ]; then
+    BOT_BOTTLE_BIN="${BIN_DIR}/bot-bottle"
+    say "note: 'bot-bottle' on your PATH is ${on_path}, not this install"
+    say "      (${BOT_BOTTLE_BIN}); put ${BIN_DIR} first, or remove the other one"
 elif [ -x "${BIN_DIR}/bot-bottle" ]; then
     BOT_BOTTLE_BIN="${BIN_DIR}/bot-bottle"
     # Name the file the user's own login shell actually reads. ~/.profile is
@@ -464,6 +471,9 @@ elif [ -x "${BIN_DIR}/bot-bottle" ]; then
     esac
     say "note: add ${BIN_DIR} to your PATH to run 'bot-bottle' directly:"
     say "    echo 'export PATH=\"${BIN_DIR}:\$PATH\"' >> ${profile}"
+elif [ -n "${on_path}" ]; then
+    # Installed somewhere other than BIN_DIR (a custom spec): the one on PATH.
+    BOT_BOTTLE_BIN="bot-bottle"
 else
     die "bot-bottle was installed but no entry point turned up in ${BIN_DIR}"
 fi

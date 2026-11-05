@@ -297,6 +297,29 @@ class TestInstallRef(unittest.TestCase):
         self.assertIn("    ERROR: no matching distribution for iroh", proc.stderr)
         self.assertIn(".bot-bottle/logs/install-", proc.stderr)
 
+    def test_an_older_bot_bottle_earlier_on_path_isnt_the_one_that_runs(self) -> None:
+        """setup and doctor run the entry point just installed, and it says
+        another one shadows it on PATH."""
+        self._page(1, _tags("v0.2.0"))
+        shadow, tools = self.root / "shadow", self.root / "tools"
+        shadow.mkdir()
+        tools.mkdir()
+        for where, who in ((shadow, "old"), (tools, "new")):
+            stub = where / "bot-bottle"
+            stub.write_text(f'#!/bin/sh\necho "{who} $1" >> "{self.root}/ran.log"\nexit 0\n')
+            stub.chmod(0o755)
+        self._stub("uv", f'echo "$@" >> "{self.root}/uv.log"\n'
+                         f'[ "$1 $2" = "tool dir" ] && echo "{tools}"\nexit 0')
+        (self.bin / "bot-bottle").unlink()
+        path = f"{shadow}:{self.bin}:{tools}:{os.environ.get('PATH', '/usr/bin:/bin')}"
+        proc = self._run(PATH=path)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        ran = (self.root / "ran.log").read_text().split()
+        self.assertNotIn("old", ran)
+        self.assertIn("new", ran)
+        self.assertIn(f"'bot-bottle' on your PATH is {shadow}/bot-bottle, not this install",
+                      proc.stderr)
+
     def test_it_says_which_environment_it_sets_up(self) -> None:
         self._page(1, _tags("v0.2.0"))
         proc = self._run(BOT_BOTTLE_ENV="dev")
