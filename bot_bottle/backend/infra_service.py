@@ -8,6 +8,7 @@ import abc
 import dataclasses
 import fcntl
 import json
+import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -31,28 +32,33 @@ from .gateway_attach import (
     reattach_running_bottles,
 )
 
-# How many times this process holds each lock path.
-_HELD: dict[Path, int] = {}
+# How many times each thread holds each lock path. Per thread: the host
+# controller brings infra up from more than one (the architect's bottle and a
+# launch), and a process-wide count let a second thread in without the lock.
+_HELD: dict[tuple[Path, int], int] = {}
 
 
 @contextmanager
 def _reentrant_flock(path: Path) -> Generator[None]:
-    """Exclusive flock on `path`, re-entrant within this process."""
-    if _HELD.get(path):
-        _HELD[path] += 1
+    """Exclusive flock on `path`, re-entrant within a thread. Another thread
+    of this process waits like another process: its own open of the file
+    can't take the lock while this one holds it."""
+    key = (path, threading.get_ident())
+    if _HELD.get(key):
+        _HELD[key] += 1
         try:
             yield
         finally:
-            _HELD[path] -= 1
+            _HELD[key] -= 1
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
-        _HELD[path] = 1
+        _HELD[key] = 1
         try:
             yield
         finally:
-            del _HELD[path]
+            del _HELD[key]
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 

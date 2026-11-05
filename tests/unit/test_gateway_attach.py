@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from typing import Any
@@ -265,15 +266,48 @@ class InfraServiceTrigger(unittest.TestCase):
         from bot_bottle.backend import infra_service
         lock = Path(self.marker.parent) / "docker.lock"
 
+        key = (lock, threading.get_ident())
+
         def nested(**_: Any) -> tuple[str, bool]:
-            self.assertEqual(1, infra_service._HELD.get(lock))
+            self.assertEqual(1, infra_service._HELD.get(key))
             with self.svc.bring_up_lock():  # e.g. an image build bringing infra up
-                self.assertEqual(2, infra_service._HELD.get(lock))
+                self.assertEqual(2, infra_service._HELD.get(key))
             return "http://orch", False
 
         with patch.object(self.svc, "_bring_up", side_effect=nested):
             self.svc.ensure_running()
-        self.assertNotIn(lock, infra_service._HELD)
+        self.assertNotIn(key, infra_service._HELD)
+
+    def test_another_thread_waits_for_the_lock_instead_of_sharing_it(self) -> None:
+        # The host controller brings infra up from the architect's bottle and
+        # from a launch at once; the second used to walk in without the lock.
+        from bot_bottle.backend import infra_service
+        lock = Path(self.marker.parent) / "threads.lock"
+        held, release, order = threading.Event(), threading.Event(), []
+
+        def first() -> None:
+            with infra_service._reentrant_flock(lock):
+                order.append("first in")
+                held.set()
+                release.wait(5)
+                order.append("first out")
+
+        def second() -> None:
+            held.wait(5)
+            with infra_service._reentrant_flock(lock):
+                order.append("second in")
+
+        threads = [threading.Thread(target=first), threading.Thread(target=second)]
+        for t in threads:
+            t.start()
+        held.wait(5)
+        threading.Event().wait(0.2)  # time for `second` to wrongly walk in
+        self.assertEqual(["first in"], order)
+        release.set()
+        for t in threads:
+            t.join(5)
+        self.assertEqual(["first in", "first out", "second in"], order)
+        self.assertEqual({}, {k: v for k, v in infra_service._HELD.items() if k[0] == lock})
 
 
 def _done(rc: int = 0, out: str = "", err: str = "") -> "subprocess.CompletedProcess[str]":
