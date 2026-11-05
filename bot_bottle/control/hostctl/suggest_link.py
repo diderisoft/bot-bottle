@@ -134,6 +134,7 @@ def summary(proposal: Proposal) -> dict[str, Any]:
         "similar": [s.bottle for s in proposal.similar],
         "notes": list(proposal.notes),
         "source": proposal.source,
+        "blocked": proposal.blocked,
     }
 
 

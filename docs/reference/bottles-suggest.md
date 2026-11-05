@@ -34,10 +34,13 @@ On a terminal, `bot-bottle start` without `--bottle` is guided:
 3. **Suggest**, for the current project, with a spinner. The architect's
    warm bottle started booting when `start` did, so by now only the model
    call is left. The proposal is shown as `bottles suggest` shows it.
-4. **Confirm:** run it, save it as a named bottle first, edit it, or
-   cancel. Edit opens the proposal as YAML in `$VISUAL`/`$EDITOR`; after you
-   save, it's validated, and it reopens with the errors inline until it
-   validates (emptying the file cancels the edit).
+4. **Confirm**, one keypress on a line under the proposal, so the proposal
+   stays on screen: `Enter` runs it, `s` saves it as a named bottle first,
+   `e` edits it, `q` cancels. Edit opens the proposal as YAML in
+   `$VISUAL`/`$EDITOR`; after you save, it's validated, and it reopens with
+   the errors inline until it validates (emptying the file cancels the
+   edit). A proposal that can't run on this host (below) offers only edit
+   and cancel.
 5. **Launch** in that bottle with the task as the agent's first prompt.
 
 **Nothing is saved unless you ask** (ADR 0017). A suggestion that adds
@@ -126,10 +129,31 @@ A proposal is a JSON object with these fields:
   every path and it injects no credential; a repo grant when the base has the
   same repo with enough access; an env var when the base sets it. A
   `stack+additions` proposal left with no additions becomes `stack` or `reuse`.
+- **A repo grant brings its forge.** A grant resolves against the forges its
+  own bottle's chain declares. When the proposal's bottles don't declare the
+  grant's forge, the library bottle that does is stacked for it: the most
+  basic one, the one other declarers extend (`gitea`, as `forge connect`
+  writes it, not a bottle built on it), with a note ("stacked gitea: it
+  declares the forge gitea.example.com for the repo grant"). With no
+  declarer the grant is dropped; with several unrelated ones it's dropped
+  and the note names them.
+- **Only bottles whose secrets are here.** Each injected egress credential and
+  each granted repo's forge token names a secret the launch resolves from the
+  host env or the secrets file. A proposed bottle whose secret isn't set is
+  dropped, with a note naming the secret, never its value (the stack falls
+  back to `basic` when nothing left starts from it). When the proposal can't
+  do without it (a new bottle extending that bottle, or a grant whose forge
+  token is missing), it's marked **can't run**, with the reason, and neither
+  the guided `start` nor `--auto` runs it. The architect's library lists each
+  bottle's `forges` and `missing_secrets`, so it can avoid both problems
+  itself.
 - **Stacks are stacked as a launch stacks them.** For options 1–3 the additions
-  are a bottle with no `extends`, merged after `bottles` in order, exactly as
-  `--bottle a --bottle b` merges them. `--write NAME` saves just the
-  additions and prints the `--bottle` flags to launch the stack with.
+  are a bottle merged after `bottles` in order, exactly as
+  `--bottle a --bottle b` merges them. It has no `extends`, except that with
+  repo grants it extends those same bottles so the grants see their forge
+  (they're stacked in front of it too, so the merge is unchanged).
+  `--write NAME` saves the additions and prints the `--bottle` flags to
+  launch the stack with.
 
 ## Paths
 
@@ -189,7 +213,9 @@ be built).
 The input is:
 
 - the task;
-- the host's bottle library (names, about text, `extends`, compact elements);
+- the host's bottle library (names, about text, `extends`, compact elements,
+  the `forges` each declares, and the `missing_secrets` it needs that this
+  host lacks);
 - project metadata: origin URL, the project bottle's name, and
   lockfile/manifest *file names* (never their contents);
 - connected forges (names and URLs);
@@ -227,7 +253,8 @@ console's "Use this bottle" writes the same way.
 What it writes depends on the option:
 
 - **`reuse`, `stack` and `stack+additions`:** only the additions (egress
-  routes, repo grants, env names), with **no `extends`**. The new bottle is
+  routes, repo grants, env names), with **no `extends`** unless it has repo
+  grants, in which case it extends the proposal's bottles. The new bottle is
   stacked after the proposal's bottles, and the CLI prints the flags to launch
   it, e.g. `--bottle basic --bottle <NAME>`. A `reuse` or `stack` with no
   additions needs no new bottle: launch with the bottles it names.

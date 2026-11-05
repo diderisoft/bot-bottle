@@ -64,6 +64,8 @@ def render_proposal(
     if proposal.notes:
         for note in proposal.notes:
             lines.append(f"note:    {note}")
+    if proposal.blocked:
+        lines.append(f"can't run: {proposal.blocked}")
     if dirs is not None:
         lines.append("")
         lines.append("elements preview:")

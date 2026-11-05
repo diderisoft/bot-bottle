@@ -20,7 +20,9 @@ from ..contract.yaml_subset import serialize_yaml_subset
 from ..manifest.extends import merge_bottles_runtime
 from ..manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
 from ..manifest.util import ManifestError
+from ..secret_source import SecretSource
 from .covered import drop_covered
+from .runnable import make_runnable
 from .proposal import (
     OPTION_NEW,
     OPTION_NEW_EXTENDING,
@@ -52,10 +54,13 @@ def _egress_routes(additions: ProposalAdditions) -> list[dict[str, Any]]:
 def proposal_to_frontmatter(proposal: Proposal) -> dict[str, Any]:
     """A bottle frontmatter dict for the proposal's additions.
 
-    For reuse/stack options this is an additions-only dict with no `extends`:
-    it's stacked after `proposal.bottles` exactly as a launch stacks bottles
-    (`stack_names`). For new-extending / new it includes
-    the `extends` from `new_bottle`.
+    For reuse/stack options this is an additions-only dict, stacked after
+    `proposal.bottles` exactly as a launch stacks bottles (`stack_names`).
+    With repo grants it also extends those bottles: a grant resolves against
+    the forges its own bottle's chain declares, so it must see the stacked
+    forge bottle (the same bottles stack in front of it, so nothing else
+    changes). For new-extending / new it includes the `extends` from
+    `new_bottle`.
     """
     fm: dict[str, Any] = {}
 
@@ -63,6 +68,8 @@ def proposal_to_frontmatter(proposal: Proposal) -> dict[str, Any]:
     if proposal.option in (OPTION_NEW_EXTENDING, OPTION_NEW) and proposal.new_bottle:
         extends = proposal.new_bottle.extends or (base_bottles[0] if base_bottles else "basic")
         fm["extends"] = extends
+    elif proposal.additions.repos and base_bottles:
+        fm["extends"] = base_bottles[0] if len(base_bottles) == 1 else base_bottles
 
     add = proposal.additions
     env: dict[str, str] = {}
@@ -85,12 +92,16 @@ def proposal_to_frontmatter(proposal: Proposal) -> dict[str, Any]:
 def validate_proposal(
     proposal: Proposal,
     dirs: list[tuple[Path, bool]] | None = None,
+    secrets: SecretSource | None = None,
 ) -> tuple[Proposal, list[str]]:
     """Validate the proposal by trying to load it with the manifest loader.
 
-    Invalid additions are dropped individually (first egress routes, then repo
-    grants, then env vars) and returned as notes.  The validated Proposal and
-    accumulated notes are returned.
+    First it's made runnable here (`runnable`): the bottle declaring a repo
+    grant's forge is stacked, bottles whose secrets aren't in `secrets` (the
+    host's, by default) are dropped, and `blocked` says when it still can't
+    run. Then invalid additions are dropped individually (first egress
+    routes, then repo grants, then env vars) and returned as notes.  The
+    validated Proposal and accumulated notes are returned.
 
     `dirs` is the bottle search path as `(directory, is_project)` pairs (same
     as `ManifestIndex.bottle_dirs()`).  When None, only built-in bottles are
@@ -98,6 +109,7 @@ def validate_proposal(
     """
     if dirs is None:
         dirs = [(BUILTIN_BOTTLES_DIR, False)]
+    proposal = make_runnable(proposal, dirs, secrets)
     notes = list(proposal.notes)
     add = proposal.additions
 
@@ -148,6 +160,7 @@ def validate_proposal(
         ),
         similar=proposal.similar,
         notes=notes,
+        blocked=proposal.blocked,
     )
     cleaned = drop_covered(cleaned, dirs)
     return cleaned, cleaned.notes

@@ -221,6 +221,8 @@ class TestLinkRequests(unittest.TestCase):
         p = _proposal()
         p.source = "rules"
         self.assertEqual("rules", suggest_link.summary(p)["source"])
+        p.blocked = "it needs X"
+        self.assertEqual("it needs X", suggest_link.summary(p)["blocked"])
 
 
 if __name__ == "__main__":

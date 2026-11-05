@@ -41,7 +41,9 @@ Rules:
 - Prefer reuse > stack > stack+additions > new-extending > new.
 - Bias toward too little access; leave out anything uncertain.
 - Never propose inspect:false, never include secret values.
-- Grants only on connected forges listed in the input.
+- Grants only on connected forges listed in the input, with a bottle in
+  `bottles` whose `forges` declares that forge.
+- Never propose a bottle with `missing_secrets`: its launch fails.
 - Credentials name a secret from the secret names list and the egress route
   they are injected on (the route must also be in additions.egress).
 - env names only; the value comes from the secrets file at launch.

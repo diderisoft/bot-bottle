@@ -11,9 +11,11 @@ booting first, so it boots while you choose and type.
 2. **Task.** Empty runs the agent in `basic`, as a plain start.
 3. **Suggest** (`suggest_client`, the shared flow) with a spinner, shown as
    `bottles suggest` shows it.
-4. **Confirm:** run it, save it as a named bottle first, edit it (the
-   proposal in `$EDITOR`, reopened with the errors inline until it
-   validates), or cancel.
+4. **Confirm**, on one line under the proposal so it stays on screen: run
+   it, save it as a named bottle first, edit it (the proposal in `$EDITOR`,
+   reopened with the errors inline until it validates), or cancel. A
+   proposal that can't run here (`Proposal.blocked`) can only be edited or
+   cancelled, and `--auto` refuses it.
 5. **Launch** in it, with the task as the agent's first prompt.
 
 An unsaved suggestion runs as this run's own bottle (`run_bottle`, ADR
@@ -45,6 +47,9 @@ if TYPE_CHECKING:
 
 HARNESSES = ("claude", "codex", "pi")
 RUN, SAVE, EDIT, CANCEL = "Run it", "Save it as a bottle, then run it", "Edit it", "Cancel"
+CONFIRM_PROMPT = "Use this bottle?  [Enter] run  [s] save as…  [e] edit  [q] cancel "
+BLOCKED_PROMPT = "It can't run here.  [e] edit  [q] cancel "
+_KEYS = {"\n": RUN, "\r": RUN, "r": RUN, "s": SAVE, "e": EDIT, "q": CANCEL, "\x1b": CANCEL}
 _SPIN = "|/-\\"
 
 
@@ -184,6 +189,21 @@ def bottles_for(proposal: "Proposal", *, saved_as: str = "") -> tuple[tuple[str,
     return tuple(stack_names(proposal, RUN_BOTTLE)), bottle_text(proposal)
 
 
+def ask_choice(*, blocked: bool = False) -> str:
+    """Step 4's choice, one keypress on a line under the proposal (no full
+    screen picker, so the proposal stays readable). A blocked proposal
+    offers only edit and cancel."""
+    # pylint: disable-next=import-outside-toplevel
+    from .supervise import read_key
+    sys.stdout.write(BLOCKED_PROMPT if blocked else CONFIRM_PROMPT)
+    sys.stdout.flush()
+    while True:
+        choice = _KEYS.get(read_key())
+        if choice is not None and not (blocked and choice in (RUN, SAVE)):
+            sys.stdout.write("\n")
+            return choice
+
+
 def confirm(proposal: "Proposal", dirs: list[tuple[Path, bool]]
             ) -> tuple["Proposal", str] | None:
     """Step 4: (the proposal to run, the name it was saved as or ""), or None
@@ -192,7 +212,7 @@ def confirm(proposal: "Proposal", dirs: list[tuple[Path, bool]]
     from ...suggest.render import render_proposal
     from ...suggest.write import SuggestWriteError, write_bottle
     while True:
-        choice = tui.filter_select([RUN, SAVE, EDIT, CANCEL], title="Use this bottle?")
+        choice = ask_choice(blocked=bool(proposal.blocked))
         if choice == RUN:
             return proposal, ""
         if choice == SAVE:
@@ -239,6 +259,10 @@ def guided_start(args: argparse.Namespace, manifest: "ManifestIndex", settings: 
     proposal = suggest_with_spinner(task, cwd, settings)
     dirs = bottle_dirs(cwd, bot_bottle_root())
     saved_as = ""
+    if auto and proposal.blocked:
+        sys.stderr.write(f"bot-bottle: --auto: the suggested bottle can't run here: "
+                         f"{proposal.blocked}\n")
+        return 1
     if auto:
         print(auto_line(proposal), file=sys.stderr)
     else:

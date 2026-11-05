@@ -47,6 +47,7 @@ def suggest(task: str, cwd: Path | None, *, settings: Settings,
     raw = value.get("proposal") if isinstance(value, dict) else None
     proposal = Proposal.from_dict(raw)
     proposal.source = str(raw.get("source", "")) if isinstance(raw, dict) else ""
+    proposal.blocked = str(raw.get("blocked", "")) if isinstance(raw, dict) else ""
     return proposal
 
 

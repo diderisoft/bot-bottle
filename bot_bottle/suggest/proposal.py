@@ -107,7 +107,8 @@ class Proposal:
     are existing bottles that nearly fit and might be used instead.  `notes`
     are free text for caveats the typed fields can't express. `source` is
     the path that produced it, `architect` or `rules` (set by
-    `suggest.flow`, never by the model).
+    `suggest.flow`, never by the model). `blocked`, when set, says why it
+    can't run on this host (a secret it needs isn't set; `runnable`).
     """
 
     option: str
@@ -117,6 +118,7 @@ class Proposal:
     similar: list[ProposalSimilar]
     notes: list[str]
     source: str = ""
+    blocked: str = ""
 
     # --- serialisation --------------------------------------------------
 
@@ -146,6 +148,8 @@ class Proposal:
         }
         if self.source:
             out["source"] = self.source
+        if self.blocked:
+            out["blocked"] = self.blocked
         return out
 
     def to_json(self, *, indent: int = 2) -> str:

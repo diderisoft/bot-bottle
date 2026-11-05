@@ -22,6 +22,7 @@ from ..paths import bot_bottle_root
 from .architect import ArchitectError, Runner, architect_suggest
 from .proposal import Proposal
 from .rules import rules_suggest
+from .runnable import host_secrets
 from .validate import validate_proposal
 
 SOURCE_ARCHITECT = "architect"
@@ -70,7 +71,8 @@ def suggest(
             proposal, source = rules_suggest(task, cwd, host_root=host_root), SOURCE_RULES
             notes.append(f"bottle-architect didn't answer ({e}); this is the rules path")
     proposal.notes[:0] = notes
-    validated = validate_proposal(proposal, bottle_dirs(cwd, host_root))[0]
+    validated = validate_proposal(proposal, bottle_dirs(cwd, host_root),
+                                  host_secrets(path=host_root / "secrets"))[0]
     validated.source = source
     return validated
 

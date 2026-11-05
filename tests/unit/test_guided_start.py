@@ -82,9 +82,13 @@ class _Guided(unittest.TestCase):
             self.launched.append((request, index))
             return 0
         stdin, stdout = _Term(tty), _Term(tty)
+        confirms = (guided.RUN, guided.SAVE, guided.EDIT, guided.CANCEL)
+        harness = [p for p in picks or [] if p not in confirms]
+        choices = [p for p in picks or [] if p in confirms]
         with mock.patch.object(start, "_launch_bottle", side_effect=launch), \
              mock.patch("sys.stdin", stdin), mock.patch("sys.stdout", stdout), \
-             mock.patch.object(guided.tui, "filter_select", side_effect=list(picks or [])), \
+             mock.patch.object(guided.tui, "filter_select", side_effect=harness), \
+             mock.patch.object(guided, "ask_choice", side_effect=choices), \
              mock.patch.object(guided, "read_tty_line", side_effect=list(lines or [])), \
              mock.patch.dict(os.environ, env or {}), \
              mock.patch("sys.stderr", io.StringIO()) as err:
@@ -241,3 +245,54 @@ class TestPickAgent(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBlocked(_Guided):
+    """A proposal that can't run here (`Proposal.blocked`) is never run."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        start_prefs.remember_agent("claude")
+        self.suggestion.blocked = "claude-dev needs TOKEN_X, which isn't set on this host"
+
+    def test_auto_refuses_it(self) -> None:
+        self.assertEqual(1, self.run_start(["--auto"], lines=["do x"]))
+        self.assertIn("--auto: the suggested bottle can't run here: claude-dev needs TOKEN_X",
+                      self.err)
+        self.assertEqual([], self.launched)
+
+    def test_the_confirm_step_only_offers_edit_and_cancel(self) -> None:
+        with mock.patch.object(guided, "ask_choice", return_value=guided.CANCEL) as ask:
+            guided.confirm(self.suggestion, [])
+        ask.assert_called_once_with(blocked=True)
+
+
+class TestAskChoice(unittest.TestCase):
+    """Step 4 is one keypress on a line under the proposal, so it stays on
+    screen (no full-screen picker)."""
+
+    def ask(self, keys: str, *, blocked: bool = False) -> tuple[str, str]:
+        out = io.StringIO()
+        with mock.patch("bot_bottle.cli.commands.supervise.read_key", side_effect=list(keys)), \
+             mock.patch("sys.stdout", out):
+            choice = guided.ask_choice(blocked=blocked)
+        return choice, out.getvalue()
+
+    def test_enter_runs_and_the_prompt_lists_the_keys(self) -> None:
+        choice, shown = self.ask("\n")
+        self.assertEqual(guided.RUN, choice)
+        self.assertIn("[Enter] run  [s] save as…  [e] edit  [q] cancel", shown)
+        self.assertNotIn("\x1b[?1049h", shown)  # never the alternate screen
+
+    def test_each_key(self) -> None:
+        for key, want in (("s", guided.SAVE), ("e", guided.EDIT), ("q", guided.CANCEL),
+                          ("\x1b", guided.CANCEL), ("r", guided.RUN)):
+            self.assertEqual(want, self.ask(key)[0])
+
+    def test_other_keys_are_ignored(self) -> None:
+        self.assertEqual(guided.EDIT, self.ask("xze")[0])
+
+    def test_blocked_ignores_run_and_save(self) -> None:
+        choice, shown = self.ask("\nse", blocked=True)
+        self.assertEqual(guided.EDIT, choice)
+        self.assertIn("It can't run here.", shown)

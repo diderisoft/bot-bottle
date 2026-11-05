@@ -97,7 +97,8 @@ class TestBottlesSuggestCli(unittest.TestCase):
         fake = mock.Mock()
         fake.post.return_value = {"job": "j1"}
         fake.follow.return_value = {"type": "result", "value": {"proposal": {
-            "option": "reuse", "bottles": ["basic"], "notes": ["n"], "source": "architect"}}}
+            "option": "reuse", "bottles": ["basic"], "notes": ["n"], "source": "architect",
+            "blocked": "basic needs X"}}}
         self.client.stop()
         with mock.patch.object(suggest_client, "_client", return_value=fake):
             code, out = self._run(["do something", "--json"])
@@ -106,6 +107,7 @@ class TestBottlesSuggestCli(unittest.TestCase):
         self.assertEqual(("/suggest", "do something", str(self.cwd), False),
                          (path, body["task"], body["cwd"], body["rules"]))
         self.assertEqual("architect", json.loads(out)["source"])
+        self.assertEqual("basic needs X", json.loads(out)["blocked"])
         self.client.start()
 
     def test_without_a_host_controller_the_rules_answer_and_say_why(self) -> None:

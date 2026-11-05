@@ -97,9 +97,11 @@ def load_architect(host_root: Path) -> Architect:
 
 
 def _host_library(host_root: Path, dirs: list[tuple[Path, bool]]) -> list[dict[str, Any]]:
-    """Each bottle the host knows: name, about text (body first line), extends."""
-    del host_root  # `dirs` already names where the host's bottles are
+    """Each bottle the host knows: name, about text (body first line), extends,
+    the forges it declares and the secrets it needs that this host lacks."""
     from ..control.hostctl.manifest_elements import bottle_elements
+    from .runnable import host_secrets, library_facts
+    secrets = host_secrets(path=host_root / "secrets")
     from ..manifest.loader import scan_bottle_names
     from ..contract.yaml_subset import parse_frontmatter, YamlSubsetError
 
@@ -135,11 +137,14 @@ def _host_library(host_root: Path, dirs: list[tuple[Path, bool]]) -> list[dict[s
                 elem_summary = [f"{r['kind']}:{r['name']}" for r in elems[:10]]
             except Exception:  # pylint: disable=broad-exception-caught
                 elem_summary = []
+            forges, missing = library_facts(full_name, dirs, secrets)
             result.append({
                 "name": full_name,
                 "about": about,
                 "extends": extends,
                 "elements": elem_summary,
+                "forges": forges,
+                "missing_secrets": missing,
             })
     return result
 
@@ -203,7 +208,10 @@ def _build_prompt(
     sections = [
         f"Task: {task}",
         "",
-        "Host bottle library:",
+        "Host bottle library (`forges`: the forges a bottle declares; a repo grant on a "
+        "forge needs a bottle in the stack that declares it, so stack that bottle. "
+        "`missing_secrets`: secrets the bottle needs that this host doesn't have; "
+        "a launch with it fails, so don't propose it):",
         json.dumps(library, indent=2),
         "",
         "Project metadata:",
