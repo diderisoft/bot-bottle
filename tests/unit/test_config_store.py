@@ -131,3 +131,39 @@ class TestConfigStore(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestConnectionsClose(unittest.TestCase):
+    """Each read and write closes its connection. `with conn:` only commits,
+    so a store that used it left one open per call until garbage collection,
+    and a busy host controller ran out of file descriptors (EMFILE)."""
+
+    @staticmethod
+    def _open_on(path: Path) -> int:
+        import os  # pylint: disable=import-outside-toplevel
+        fd_dir = "/proc/self/fd" if os.path.isdir("/proc/self/fd") else "/dev/fd"
+        count = 0
+        for name in os.listdir(fd_dir):
+            try:
+                if os.readlink(os.path.join(fd_dir, name)) == str(path):
+                    count += 1
+            except OSError:
+                continue
+        return count
+
+    def test_repeated_calls_leave_no_connection_open(self) -> None:
+        import gc  # pylint: disable=import-outside-toplevel
+        with tempfile.TemporaryDirectory() as tmp:
+            path = (Path(tmp) / "bot-bottle.db").resolve()
+            store = ConfigStore(path)
+            store.migrate()
+            gc.collect()
+            gc.disable()
+            try:
+                for _ in range(50):
+                    store.host_budget()
+                    store.firehose()
+                    store.set_host_budget(store.host_budget())
+                self.assertEqual(0, self._open_on(path))
+            finally:
+                gc.enable()

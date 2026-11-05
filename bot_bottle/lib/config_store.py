@@ -140,7 +140,7 @@ class ConfigStore(DbStore):
     def cached_image_stale_warning_days(self) -> int:
         if not self.db_path.is_file():
             return DEFAULT_CACHED_IMAGE_STALE_WARNING_DAYS
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 """
                 SELECT cached_image_stale_warning_days
@@ -160,7 +160,7 @@ class ConfigStore(DbStore):
         if not self.db_path.is_file():
             return DEFAULT_AUDIT_DELIVERY
         try:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 row = conn.execute(
                     "SELECT audit_delivery FROM bot_bottle_config WHERE id = 1",
                 ).fetchone()
@@ -173,7 +173,7 @@ class ConfigStore(DbStore):
         if not self.db_path.is_file():
             return None
         try:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 row = conn.execute(
                     "SELECT audit_forward_url, audit_forward_secret, audit_forward_format "
                     "FROM bot_bottle_config WHERE id = 1",
@@ -189,7 +189,7 @@ class ConfigStore(DbStore):
     def set_audit_forward(self, forward: AuditForward | None) -> Path:
         """Forward the journal as `forward` says; None stops forwarding."""
         forward = forward or AuditForward(url="", secret="", format="native")
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO bot_bottle_config
@@ -210,7 +210,7 @@ class ConfigStore(DbStore):
         if not self.db_path.is_file():
             return FirehoseSettings()
         try:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 row = conn.execute(
                     "SELECT firehose_sinks, firehose_request_bodies, firehose_response_bodies, "
                     "firehose_max_body_bytes FROM bot_bottle_config WHERE id = 1",
@@ -230,7 +230,7 @@ class ConfigStore(DbStore):
                                 max_body_bytes=int(row["firehose_max_body_bytes"]))
 
     def set_firehose(self, settings: FirehoseSettings) -> Path:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO bot_bottle_config (id, firehose_sinks, firehose_request_bodies,
@@ -253,7 +253,7 @@ class ConfigStore(DbStore):
         if not self.db_path.is_file():
             return DEFAULT_TRANSCRIPT_RETENTION_DAYS
         try:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 row = conn.execute(
                     "SELECT transcript_retention_days FROM bot_bottle_config WHERE id = 1",
                 ).fetchone()
@@ -263,7 +263,7 @@ class ConfigStore(DbStore):
             else DEFAULT_TRANSCRIPT_RETENTION_DAYS
 
     def set_transcript_retention_days(self, days: int) -> Path:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO bot_bottle_config (id, transcript_retention_days)
@@ -282,7 +282,7 @@ class ConfigStore(DbStore):
         if not self.db_path.is_file():
             return HostBudget()
         try:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 row = conn.execute(
                     "SELECT host_max_disk_gb, host_max_memory_gb FROM bot_bottle_config "
                     "WHERE id = 1",
@@ -295,7 +295,7 @@ class ConfigStore(DbStore):
                           memory_gb=int(row["host_max_memory_gb"]))
 
     def set_host_budget(self, caps: HostBudget) -> Path:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO bot_bottle_config (id, host_max_disk_gb, host_max_memory_gb)
@@ -310,7 +310,7 @@ class ConfigStore(DbStore):
         return self.db_path
 
     def set_audit_delivery(self, delivery: str) -> Path:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO bot_bottle_config (id, audit_delivery)
@@ -323,7 +323,7 @@ class ConfigStore(DbStore):
         return self.db_path
 
     def set_cached_image_stale_warning_days(self, days: int) -> Path:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO bot_bottle_config (id, cached_image_stale_warning_days)
