@@ -92,6 +92,17 @@ class TestLaunchRequestSchema(unittest.TestCase):
             with self.subTest(body=body), self.assertRaises(ValueError):
                 LaunchRequest.from_json(body, ROLE_CLI)
 
+    def test_a_project_bottle_is_a_bottle_name_but_not_an_agent_name(self) -> None:
+        request = LaunchRequest.from_json({"agent": "demo", "bottles": ["./main", "basic"]},
+                                          ROLE_CLI)
+        self.assertEqual(("./main", "basic"), request.bottles)
+        for body in ({"agent": "./demo"}, {"agent": "demo", "bottles": ["../main"]},
+                     {"agent": "demo", "bottles": ["./a/b"]},
+                     {"agent": "demo", "bottles": [".//x"]},
+                     {"agent": "demo", "bottles": ["./"]}):
+            with self.subTest(body=body), self.assertRaises(ValueError):
+                LaunchRequest.from_json(body, ROLE_CLI)
+
     def test_exit_code(self) -> None:
         self.assertEqual(4, exit_code(4))
         self.assertEqual(129, exit_code(0, "SIGHUP"))

@@ -236,6 +236,8 @@ BOTTLE_COLORS = ("red", "green", "yellow", "blue", "magenta")
 # builds or pulls. "cached" fails when one is missing.
 IMAGE_POLICIES = ("fresh", "cached", "prefer-cached")
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+# A bottle may be a project's, `./<name>` (`manifest.loader.PROJECT_PREFIX`).
+_BOTTLE = re.compile(r"^(\./)?[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _IDENTITY = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _MAP_FIELDS = ("secrets", "host_keys")
 
@@ -315,9 +317,11 @@ class LaunchRequest:
 
     def check(self) -> None:
         """ValueError unless every field is allowed."""
-        for name in (self.agent, *self.bottles):
-            if not _NAME.match(name):
-                raise ValueError(f"launch: invalid agent or bottle name {name!r}")
+        if not _NAME.match(self.agent):
+            raise ValueError(f"launch: invalid agent name {self.agent!r}")
+        for name in self.bottles:
+            if not _BOTTLE.match(name):
+                raise ValueError(f"launch: invalid bottle name {name!r}")
         if self.identity and not _IDENTITY.match(self.identity):
             raise ValueError(f"launch.identity: invalid identity {self.identity!r}")
         if self.color and self.color not in BOTTLE_COLORS:
