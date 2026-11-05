@@ -208,6 +208,36 @@ class TestSuggesting(_View):
         self.assertIn("warming the architect…", self.frames())
 
 
+    def test_the_label_turns_to_asking_once_the_bottle_is_up(self) -> None:
+        states = iter(["booting", "ready"])
+
+        def warm(_settings: Settings) -> str:
+            return next(states, "ready")
+
+        self.warm.side_effect = warm
+        gate = threading.Event()
+
+        def slow(*_: Any, **__: Any) -> Proposal:
+            gate.wait(5)
+            return self.suggestion
+
+        self.suggest.side_effect = slow
+        original = guided_view.StartView.draw
+
+        def draw(flow: guided_view.StartView, footer: str = "") -> None:
+            original(flow, footer)
+            if "asking the architect" in screen.strip(self.out.getvalue()):
+                gate.set()
+
+        with mock.patch.object(guided_view.StartView, "draw", draw), \
+             mock.patch.object(guided_view, "WARM_POLL_SECONDS", 0.01):
+            self.run_view(["enter"], name="claude", prompt="t")
+        text = self.frames()
+        self.assertIn("warming the architect…", text)
+        self.assertIn("asking the architect…", text)
+        self.assertLess(text.index("warming the architect"), text.rindex("asking the architect"))
+
+
 class TestLongTask(_View):
     def test_a_long_task_wraps_and_keeps_the_bottle_still(self) -> None:
         self.view = Screen(self.out, color=True)

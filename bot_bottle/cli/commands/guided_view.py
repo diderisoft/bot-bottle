@@ -54,6 +54,7 @@ ARCHITECT = "bottle-architect"
 HARNESS_NAMES = {"claude": "Claude Code", "codex": "Codex", "pi": "pi"}
 REVIEW_KEYS = "enter run · s save as… · e edit · d details · q cancel"
 BLOCKED_KEYS = "e edit · d details · q cancel"
+WARM_POLL_SECONDS = 2.0  # how often the Bottle step re-asks whether the architect is up
 # The launch callback: (request, index, view=, lead=) -> exit code.
 Launch = Callable[..., int]
 
@@ -299,8 +300,16 @@ class StartView:  # pylint: disable=too-many-instance-attributes
             except BaseException as e:  # pylint: disable=broad-exception-caught
                 failure.append(e)
 
+        def follow_warm() -> None:
+            # The label tracks the bottle: "warming" only while it boots.
+            while worker.is_alive() and self.warm_state == "booting":
+                worker.join(WARM_POLL_SECONDS)
+                if worker.is_alive():
+                    self._warm()
+
         worker = threading.Thread(target=ask, daemon=True)
         worker.start()
+        threading.Thread(target=follow_warm, daemon=True).start()
         step = Step("Bottle", "", RUNNING, started=time.monotonic())
         self.steps.append(step)
         while worker.is_alive():
