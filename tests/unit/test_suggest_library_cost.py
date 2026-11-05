@@ -6,6 +6,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from bot_bottle.suggest import architect, starter
 from tests.unit.test_suggest_runnable import _FORGE
@@ -39,6 +40,19 @@ class TestLibraryCost(unittest.TestCase):
         self.assertTrue(all("didericis/" in r for r in library["app-dev"]["repos"]))
         self.assertGreater(library["app-dev"]["element_count"], library["gitea"]["element_count"])
         self.assertEqual(["gitea.dideric.is"], library["app-dev"]["forges"])
+
+    def test_a_bottle_whose_elements_cant_be_read_still_lists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bottles = root / "bottles"
+            bottles.mkdir()
+            (bottles / "app-dev.md").write_text(_BIG)
+            with mock.patch("bot_bottle.control.hostctl.manifest_elements.bottle_elements",
+                            side_effect=RuntimeError("unreadable")):
+                library = {e["name"]: e for e in architect._host_library(root, [(bottles, False)])}  # pylint: disable=protected-access
+        self.assertEqual(([], 0, []), (library["app-dev"]["elements"],
+                                       library["app-dev"]["element_count"],
+                                       library["app-dev"]["repos"]))
 
     def test_the_starter_says_to_use_the_smallest_forge_bottle(self) -> None:
         self.assertIn("smallest bottle that\n  declares it", starter.ARCHITECT_STARTER)
