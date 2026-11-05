@@ -21,6 +21,7 @@ from ..lib.log import die
 OPERATION_ENV: dict[str, str] = {
     "backend": "BOT_BOTTLE_BACKEND",
     "fc_workspace_disk": "BOT_BOTTLE_FC_WORKSPACE_DISK",
+    "architect_idle_seconds": "BOT_BOTTLE_ARCHITECT_IDLE",
 }
 
 INFRA_ENV: dict[str, str] = {

@@ -167,13 +167,18 @@ class TestArchitectBottle(unittest.TestCase):
             warm.run(_architect("codex"), "t")
         self.assertTrue(backend.down.wait(5))
 
-    def test_idle_seconds_and_model_args(self) -> None:
-        with mock.patch.dict(architect_bottle.os.environ, {architect_bottle.IDLE_ENV: "30"}):
-            self.assertEqual(30.0, architect_bottle.idle_seconds())
-        with mock.patch.dict(architect_bottle.os.environ, {architect_bottle.IDLE_ENV: "x"}):
-            self.assertEqual(architect_bottle.DEFAULT_IDLE_SECONDS, architect_bottle.idle_seconds())
-        with mock.patch.dict(architect_bottle.os.environ, {architect_bottle.IDLE_ENV: ""}):
-            self.assertEqual(architect_bottle.DEFAULT_IDLE_SECONDS, architect_bottle.idle_seconds())
+    def test_the_idle_time_comes_from_the_settings(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.cli.settings import settings_from_env
+        settings = settings_from_env({"BOT_BOTTLE_ARCHITECT_IDLE": "30"})
+        self.assertEqual(30, settings.operation.architect_idle_seconds)
+        self.assertNotIn("architect_idle_seconds",
+                         architect_bottle.Settings().to_json()["operation"])  # type: ignore[operator]
+        warm = ArchitectBottle(host_root=self.root,
+                               backend_for=lambda _s: FakeBackend())  # type: ignore[arg-type,return-value]
+        self.addCleanup(warm.stop)
+        warm.warm(settings)
+        self.assertEqual(30.0, warm.status()["idle_seconds"])
         self.assertEqual([], architect_bottle.model_args(""))
 
     def test_the_installed_bottle_is_the_suggesters_runner(self) -> None:

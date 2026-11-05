@@ -96,6 +96,10 @@ ENV_VARS: tuple[EnvVar, ...] = (
     EnvVar("BOT_BOTTLE_FC_CACHE", "user",
            "firecracker: cache root for the kernel, root filesystems and run dirs.",
            "`~/.cache/bot-bottle/firecracker`"),
+    EnvVar("BOT_BOTTLE_ARCHITECT_IDLE", "user",
+           "Seconds the bottle architect's warm bottle stays up after its last "
+           "suggestion; `0` stops it after each one.",
+           "`600`"),
     EnvVar("BOT_BOTTLE_FC_WORKSPACE_DISK", "user",
            "firecracker: keep the project's workspace on a per-project disk between "
            "runs, so what the project ignores (`node_modules`, build dirs) survives. "

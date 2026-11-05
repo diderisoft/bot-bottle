@@ -5,7 +5,8 @@ bottles/`): its model API and nothing else. Booting a bottle takes far
 longer than the model call, so the host controller keeps one running:
 `warm()` boots it in the background (`bot-bottle start` asks as soon as it
 starts, so the boot overlaps the harness picker and the task prompt), and it
-stays up for `idle_seconds` after its last suggestion, so back-to-back starts
+stays up for `Settings.operation.architect_idle_seconds`
+(`BOT_BOTTLE_ARCHITECT_IDLE`, default 600) after its last suggestion, so back-to-back starts
 and console suggestions reuse it.
 
 Each suggestion (`run`) is a fresh headless harness call inside the VM, so
@@ -18,7 +19,6 @@ stdout, parsed and validated by `suggest`. Any failure raises
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import tempfile
@@ -42,20 +42,8 @@ if TYPE_CHECKING:
 ARCHITECT_BOTTLES_DIR = Path(__file__).resolve().parents[2] / "suggest" / "bottles"
 ARCHITECT_BOTTLE = "bottle-architect"
 
-IDLE_ENV = "BOT_BOTTLE_ARCHITECT_IDLE"
-DEFAULT_IDLE_SECONDS = 600.0
 # Booting includes getting images, so a first boot can take a while.
 BOOT_SECONDS = 600.0
-
-
-def idle_seconds() -> float:
-    """How long the warm bottle outlives its last suggestion
-    (`BOT_BOTTLE_ARCHITECT_IDLE`, seconds; 0 stops it after each one)."""
-    raw = os.environ.get(IDLE_ENV, "")
-    try:
-        return max(0.0, float(raw)) if raw else DEFAULT_IDLE_SECONDS
-    except ValueError:
-        return DEFAULT_IDLE_SECONDS
 
 
 def model_args(model: str) -> list[str]:
@@ -75,11 +63,14 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
                  backend_for: Callable[[Settings], "BottleBackend[Any, Any]"] = _default_backend,
                  secrets_file: Path | None = None, audit: "HostAudit | None" = None,
                  idle: float | None = None, clock: Callable[[], float] = time.monotonic) -> None:
+        # `idle` fixes the idle time (tests); else each warm or suggestion's
+        # settings set it.
         self._host_root = host_root
         self._backend_for = backend_for
         self._secrets_file = secrets_file
         self._audit = audit
-        self._idle = idle_seconds() if idle is None else idle
+        self._fixed_idle = idle
+        self._idle = float(Settings().operation.architect_idle_seconds) if idle is None else idle
         self._clock = clock
         self._cond = threading.Condition()
         self._state = "down"  # down | booting | ready
@@ -114,6 +105,8 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
             thread.join(timeout=BOOT_SECONDS)
 
     def _start_locked(self, settings: Settings) -> None:
+        if self._fixed_idle is None:
+            self._idle = float(settings.operation.architect_idle_seconds)
         if self._state != "down":
             return
         self._state, self._error, self._stopping = "booting", "", False
@@ -269,5 +262,5 @@ def runner(settings: Settings | None = None) -> "Callable[[Architect, str], str]
     return lambda a, prompt: architect.run(a, prompt, settings)
 
 
-__all__ = ["ARCHITECT_BOTTLE", "ARCHITECT_BOTTLES_DIR", "ArchitectBottle", "DEFAULT_IDLE_SECONDS",
-           "IDLE_ENV", "current", "idle_seconds", "install", "model_args", "runner"]
+__all__ = ["ARCHITECT_BOTTLE", "ARCHITECT_BOTTLES_DIR", "ArchitectBottle", "current", "install",
+           "model_args", "runner"]
