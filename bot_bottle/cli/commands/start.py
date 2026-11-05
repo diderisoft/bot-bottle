@@ -25,6 +25,7 @@ import sys
 import tempfile
 from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ...backend import BottlePlan, launch_isolation_note
 from ...bottle_state import settle_state
@@ -40,6 +41,9 @@ from ..launch_client import launch, prepare_request
 from ..secrets_env import secrets_from_env
 from ..settings import settings_from_env
 from .. import tui
+
+if TYPE_CHECKING:
+    from ..screen import Screen, Step
 
 
 def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statements
@@ -344,7 +348,8 @@ def _bottle_lineage(manifest: ManifestIndex) -> dict[str, str]:
 
 
 def _launch_bottle(request: LaunchRequest, manifest: ManifestIndex, *, dry_run: bool,
-                   verbose: bool = False) -> int:
+                   verbose: bool = False, view: "Screen | None" = None,
+                   lead: "list[Step] | None" = None) -> int:
     """Shared launch for `start` and `resume`: a local dry run, or the request
     (with secrets and confirmed host keys) sent to the host controller and
     attached. `verbose` streams the launch log."""
@@ -355,8 +360,10 @@ def _launch_bottle(request: LaunchRequest, manifest: ManifestIndex, *, dry_run: 
     if dry_run:
         return _dry_run(request, manifest)
     interactive = not request.headless
-    return launch(prepare_request(request, manifest, interactive=interactive),
-                  verbose=verbose)
+    prepared = prepare_request(request, manifest, interactive=interactive)
+    if view is not None:  # a guided start's screen: its stages draw there
+        return launch(prepared, verbose=verbose, view=view, lead=lead)
+    return launch(prepared, verbose=verbose)
 
 
 def _dry_run(request: LaunchRequest, manifest: ManifestIndex) -> int:

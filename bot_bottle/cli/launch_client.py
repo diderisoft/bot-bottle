@@ -11,6 +11,7 @@ import sys
 import time
 from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..contract.hostctl import (
     BOTTLES_PATH, CONFIRM_ERROR, SESSIONS_PATH, LaunchRequest, exit_code,
@@ -28,6 +29,9 @@ from ..util import read_tty_line
 from ..workspace import patch_summary, work_patch_path
 from .constants import PROG
 from .progress import LaunchProgress, launch_log_path
+
+if TYPE_CHECKING:
+    from .screen import Screen, Step
 from .secrets_env import secrets_from_env
 
 # How long a finished session gets to report its exit.
@@ -141,11 +145,14 @@ def _never(held: list[str]) -> bool:
     return False
 
 
-def launch(request: LaunchRequest, *, verbose: bool = False) -> int:
+def launch(request: LaunchRequest, *, verbose: bool = False, view: "Screen | None" = None,
+           lead: "list[Step] | None" = None) -> int:
     """Launch through the host controller and attach. Returns the agent's exit
     code, or 0 on detach or decline. One line per stage; the full log goes to a
-    file (`verbose` streams it)."""
-    progress = LaunchProgress(launch_log_path(request.label or request.agent), verbose=verbose)
+    file (`verbose` streams it). `view` and `lead`: draw the stages on a guided
+    start's screen, under its steps."""
+    progress = LaunchProgress(launch_log_path(request.label or request.agent), verbose=verbose,
+                              view=view, lead=lead)
     try:
         confirm = _never if request.headless else confirm_controller_restart
         client = HostControlClient(runner.ensure_running(confirm_restart=confirm),

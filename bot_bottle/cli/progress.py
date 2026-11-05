@@ -1,7 +1,9 @@
 """Launch progress: one line per stage instead of the job's whole log.
 
-On a terminal it draws on the alternate screen: stages with a spinner, then a ✓
-and time, beside the bottle. Frames are diffed and wrapped in synchronized
+On a terminal it draws on the alternate screen (`screen.py`): stages with a
+spinner, then a ✓ and time, beside the bottle. Given the `Screen` a guided
+start drew its steps on (`view`), it draws there, under those steps (`lead`),
+without clearing the screen. Frames are diffed and wrapped in synchronized
 output; a resize redraws. When done, failed or asking something, it leaves the
 alternate screen and prints a summary: stages, times, warnings, the log path
 and, on failure, the log's tail.
@@ -27,6 +29,8 @@ from typing import TextIO
 from ..paths import bot_bottle_root
 from ..util import slugify
 from . import logo
+from .screen import RESET as _RESET
+from .screen import Screen, Step, Style, compose, logo_rows, step_lines, strip
 
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 KEEP_LAUNCH_LOGS = 50
@@ -35,12 +39,13 @@ _TAIL_LINES = 12
 _SHOWN = ("bot-bottle: warning:", "bot-bottle: error:")
 # Most lines the launch screen gives to warnings and errors.
 _NOTE_LINES = 8
-_RESET = "\x1b[0m"
 # Layout, centered: a fixed-width stage column, a gap, then the bottle.
 _MARGIN = 2
 _GAP = 4
 _MIN_STAGE_WIDTH = 30
 _STAGE_WIDTH = 40
+# A guided start's steps are wider than stages.
+_VIEW_WIDTH = 72
 # Cursor blink period, in 0.1 s spinner ticks.
 _BLINK_TICKS = 5
 # Alternate screen and hidden cursor, and back. DEC 2026 synchronized output
@@ -82,52 +87,6 @@ def prune_launch_logs(logs: Path, *, keep: int) -> None:
 # --- color and the bottle ---
 
 
-def _rgb(hex6: str) -> tuple[int, int, int]:
-    return int(hex6[0:2], 16), int(hex6[2:4], 16), int(hex6[4:6], 16)
-
-
-def _xterm256(r: int, g: int, b: int) -> int:
-    """The nearest xterm 6x6x6 cube color."""
-    def level(v: int) -> int:
-        return 0 if v < 48 else 1 if v < 115 else (v - 35) // 40
-    return 16 + 36 * level(r) + 6 * level(g) + level(b)
-
-
-def _sgr(hex6: str, *, background: bool, truecolor: bool) -> str:
-    r, g, b = _rgb(hex6)
-    if truecolor:
-        return f"\x1b[{48 if background else 38};2;{r};{g};{b}m"
-    return f"\x1b[{48 if background else 38};5;{_xterm256(r, g, b)}m"
-
-
-def logo_rows(*, truecolor: bool, cursor: bool = True) -> list[str]:
-    """The bottle as terminal rows (half blocks). `cursor=False` omits the
-    prompt's `_`, for the blink."""
-    art: list[str] = list(logo.ART)
-    if not cursor:
-        row, first, last = logo.CURSOR
-        line = art[row]
-        art[row] = line[:first] + logo.CURSOR_OFF * (last - first + 1) + line[last + 1:]
-    if len(art) % 2:
-        art.append("." * len(art[0]))
-    rows: list[str] = []
-    for top, bottom in zip(art[0::2], art[1::2]):
-        cells: list[str] = []
-        for t, b in zip(top, bottom):
-            tc, bc = logo.PALETTE.get(t), logo.PALETTE.get(b)
-            if tc and bc:
-                cells.append(f"{_sgr(tc, background=False, truecolor=truecolor)}"
-                             f"{_sgr(bc, background=True, truecolor=truecolor)}▀{_RESET}")
-            elif tc:
-                cells.append(f"{_sgr(tc, background=False, truecolor=truecolor)}▀{_RESET}")
-            elif bc:
-                cells.append(f"{_sgr(bc, background=False, truecolor=truecolor)}▄{_RESET}")
-            else:
-                cells.append(" ")
-        rows.append("".join(cells))
-    return rows
-
-
 def _size() -> tuple[int, int]:
     size = shutil.get_terminal_size((80, 24))
     return size.columns, size.lines
@@ -149,20 +108,30 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
     """Draws stages and keeps the log. Thread-safe; the spinner runs on its own
     thread."""
 
-    def __init__(self, log_path: Path, *, verbose: bool = False,
+    def __init__(self, log_path: Path, *, verbose: bool = False,  # pylint: disable=too-many-arguments
                  out: TextIO | None = None, tty: bool | None = None,
-                 screen: bool | None = None, color: bool | None = None) -> None:
+                 screen: bool | None = None, color: bool | None = None,
+                 view: Screen | None = None, lead: list[Step] | None = None) -> None:
         self.log_path = log_path
         self.verbose = verbose
-        self.out = out or sys.stderr
-        self.tty = self.out.isatty() if tty is None else tty
-        self.color = (self.tty and not os.environ.get("NO_COLOR")) if color is None else color
+        # A guided start's screen: draw there, under its steps.
+        self.view = None if verbose else view
+        self.lead = list(lead or [])
+        self.out = self.view.out if self.view else (out or sys.stderr)
+        self.tty = True if self.view else (self.out.isatty() if tty is None else tty)
+        if self.view:
+            self.color = self.view.color
+        else:
+            self.color = (self.tty and not os.environ.get("NO_COLOR")) if color is None else color
         # Full-screen drawing, else plain lines.
         self.screen = (self.tty and not verbose) if screen is None else screen
         truecolor = os.environ.get("COLORTERM", "") in ("truecolor", "24bit")
         drawn = self.screen and self.color
-        self._logo = logo_rows(truecolor=truecolor) if drawn else []
-        self._logo_blink = logo_rows(truecolor=truecolor, cursor=False) if drawn else []
+        if self.view:
+            self._logo, self._logo_blink = self.view.art, self.view.art_blink
+        else:
+            self._logo = logo_rows(truecolor=truecolor) if drawn else []
+            self._logo_blink = logo_rows(truecolor=truecolor, cursor=False) if drawn else []
         log_path.parent.mkdir(parents=True, exist_ok=True)
         self._log = log_path.open("a", encoding="utf-8")
         self._tail: collections.deque[str] = collections.deque(maxlen=_TAIL_LINES)
@@ -179,7 +148,7 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
         self._spinner: threading.Thread | None = None
         self._resized = threading.Event()
         self._old_winch: object = None
-        if self.screen and hasattr(signal, "SIGWINCH") \
+        if self.screen and not self.view and hasattr(signal, "SIGWINCH") \
                 and threading.current_thread() is threading.main_thread():
             self._old_winch = signal.signal(signal.SIGWINCH, self._on_resize)
         if self.screen:
@@ -333,11 +302,19 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
 
     def _enter_screen(self) -> None:
         if not self._on_screen:
-            self.out.write(_ENTER)
+            if self.view:
+                self.view.enter()  # already on: the guided steps stay
+            else:
+                self.out.write(_ENTER)
+                self._previous = None
             self._on_screen = True
-            self._previous = None
 
     def _leave_screen(self) -> None:
+        if self.view:
+            if self._on_screen:
+                self.view.leave()
+                self._on_screen = False
+            return
         if self._on_screen:
             self.out.write(_LEAVE)
             self.out.flush()
@@ -357,32 +334,23 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
         self._resized.set()  # the handler only sets a flag; drawing takes the lock
 
     def _layout(self) -> list[str]:
-        """The whole screen for the current size: stages and bottle, centered."""
+        """The whole screen for the current size: stages and bottle, centered
+        (under a guided start's steps, from the top, in its view)."""
         columns, rows = _size()
         art = self._logo_blink if (self._frame // _BLINK_TICKS) % 2 else self._logo
         art_width = len(logo.ART[0])
-        if art and (columns < _MARGIN + _MIN_STAGE_WIDTH + _GAP + art_width + _MARGIN
-                    or rows < len(art) + 2):
-            art = []  # no room for the bottle
-        room = columns - 2 * _MARGIN - (_GAP + art_width if art else 0)
-        stage_width = max(min(_STAGE_WIDTH, room), 1)
-        left = [self._stage_text(s, stage_width) for s in self._stages]
+        fits = columns >= _MARGIN + _MIN_STAGE_WIDTH + _GAP + art_width + _MARGIN
+        room = columns - 2 * _MARGIN - (_GAP + art_width if art and fits else 0)
+        width = max(min(_VIEW_WIDTH if self.view else _STAGE_WIDTH, room), 1)
+        left = step_lines(self.lead, width=width, style=Style(self.color)) if self.lead else []
+        left += [self._stage_text(s, width) for s in self._stages]
         if self._notes:
             left.append("")
-            left.extend(self._note_lines(stage_width))
-        height = min(max(len(left), len(art)), max(rows - 2, 1))
-        block_width = stage_width + (_GAP + art_width if art else 0)
-        pad = " " * max((columns - block_width) // 2, _MARGIN)
-        # Stages level with the bottle's body.
-        top = max((len(art) - len(left)) // 2, 0) if art else 0
-        lines = [""] * max((rows - height) // 2, 1)
-        for i in range(height):
-            text = left[i - top] if 0 <= i - top < len(left) else ""
-            line = pad + text
-            if art and i < len(art):
-                line += " " * (stage_width - len(_strip(text)) + _GAP) + art[i]
-            lines.append(line)
-        return lines
+            left.extend(self._note_lines(width))
+        if self.view:
+            return compose(left, art, columns=columns, rows=rows, left_width=width,
+                           header=self.view.header(), align="top")
+        return compose(left, art, columns=columns, rows=rows, left_width=width)
 
     def _note_lines(self, width: int) -> list[str]:
         """The newest warnings and errors, wrapped to `width` (not cut off),
@@ -406,6 +374,10 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
                 self.out.flush()
             return
         self._enter_screen()
+        if self.view:
+            self.view.resized()
+            self.view.write_frame(self._layout())
+            return
         if self._resized.is_set():
             self._resized.clear()
             self.out.write("\x1b[2J")
@@ -431,21 +403,7 @@ class LaunchProgress:  # pylint: disable=too-many-instance-attributes
                     self._draw()  # spinner, and the cursor every _BLINK_TICKS
 
 
-def _strip(text: str) -> str:
-    """`text` without escape sequences, for measuring width."""
-    out, i = [], 0
-    while i < len(text):
-        if text[i] == "\x1b":
-            j = i + 1
-            if j < len(text) and text[j] == "[":
-                j += 1
-                while j < len(text) and not text[j].isalpha():
-                    j += 1
-            i = j + 1
-            continue
-        out.append(text[i])
-        i += 1
-    return "".join(out)
+_strip = strip
 
 
 __all__ = ["LaunchProgress", "launch_log_path", "logo_rows"]
