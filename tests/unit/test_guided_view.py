@@ -240,6 +240,38 @@ class TestSuggesting(_View):
         self.assertLess(text.index("warming the architect"), text.rindex("asking the architect"))
 
 
+class TestWarmNotes(_View):
+    def _warm_saying(self, *lines: tuple[str, str]) -> guided_view.StartView:
+        def warm(_settings: Settings) -> str:
+            for level, text in lines:
+                getattr(log, level)(text)
+            return "booting"
+
+        self.warm.side_effect = warm
+        manifest = ManifestIndex.resolve(str(self.project))
+        flow = guided_view.StartView(self.view, _args(), manifest, Settings(),
+                                     launch=lambda *_a, **_k: 0, keys=lambda _t=None: None,
+                                     cwd=self.project)
+        flow.view.enter()
+        flow.draw("footer")
+        flow._warm()  # pylint: disable=protected-access
+        return flow
+
+    def test_progress_shows_while_it_runs_and_goes_when_it_is_done(self) -> None:
+        flow = self._warm_saying(("info", "host controller runs different code; restarting it"))
+        self.assertIn("restarting it", self.frames())  # drawn without a keypress
+        self.assertEqual([], flow.notes)
+        frame = screen.strip("\n".join(self.view._previous or []))  # pylint: disable=protected-access
+        self.assertNotIn("restarting it", frame)  # redrawn without it,
+        self.assertIn("footer", frame)  # under the same footer
+        self.assertEqual("booting", flow.warm_state)
+
+    def test_a_warning_stays(self) -> None:
+        flow = self._warm_saying(("info", "restarting it"),
+                                 ("warn", "host controller holds 1 bottle(s)"))
+        self.assertEqual(["warning: host controller holds 1 bottle(s)"], flow.notes)
+
+
 class TestAFailedLaunch(_View):
     def _fail_launch(self, *, view_up: bool) -> tuple[str, BaseException]:
         def launch(request: LaunchRequest, index: Any, **kw: Any) -> int:

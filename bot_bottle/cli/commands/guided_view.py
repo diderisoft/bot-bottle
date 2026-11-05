@@ -105,6 +105,7 @@ class StartView:  # pylint: disable=too-many-instance-attributes
         self.warm_state = ""
         # What bot-bottle says while the view is up, drawn under the steps.
         self.notes: list[str] = []
+        self._footer = ""  # the last frame's, for a redraw from another thread
         # Lines written to the terminal while the view was down.
         self._spoken: list[str] = []
 
@@ -120,6 +121,7 @@ class StartView:  # pylint: disable=too-many-instance-attributes
         return self.width() - 4
 
     def draw(self, footer: str = "") -> None:
+        self._footer = footer
         lines = screen.step_lines(self.steps, width=self.width(), style=self.style,
                                   frame=self.view.frame)
         if self.notes:
@@ -200,8 +202,28 @@ class StartView:  # pylint: disable=too-many-instance-attributes
             _to_stderr(line)
 
     def _warm(self) -> None:
-        with log.redirect(self.note):
+        """Ask the host to warm the architect. What that says on the way
+        ("restarting the host controller") shows only while it runs; a
+        warning or error stays."""
+        progress: list[str] = []
+
+        def say(line: str) -> None:
+            self.note(line)
+            if not _lasting(line):
+                progress.append(line.removeprefix("bot-bottle: "))
+            self._redraw()
+
+        with log.redirect(say):
             self.warm_state = suggest_client.warm(self.settings) or ""
+        if progress:
+            self.notes[:] = [n for n in self.notes if n not in progress]
+            self._redraw()
+
+    def _redraw(self) -> None:
+        """Draw the current frame again, from a background thread, while the
+        view is up."""
+        if self.view.on:
+            self.draw(self._footer)
 
     # --- agent ---
 
@@ -443,6 +465,11 @@ def review_lines(proposal: "Proposal", dirs: list[tuple[Path, bool]], *, details
     if proposal.blocked:
         lines += [style.red(w) for w in screen.wrap(f"can't run: {proposal.blocked}", width)]
     return lines
+
+
+def _lasting(line: str) -> bool:
+    """A warning or an error, which a note keeps; anything else is progress."""
+    return any(f"{level}:" in line for level in ("warning", "error"))
 
 
 def _to_stderr(line: str) -> None:
