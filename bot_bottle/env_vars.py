@@ -100,9 +100,14 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "`1` makes a guided `bot-bottle start` run the suggested bottle without "
            "asking (`--auto`); `--no-auto` asks for one run. See bottles-suggest.md.",
            "off"),
+    EnvVar("BOT_BOTTLE_ARCHITECT_ALWAYS_ON", "user",
+           "The bottle architect's bottle boots with the host controller and stays "
+           "up; `0` boots it on demand and lets it idle out "
+           "(`BOT_BOTTLE_ARCHITECT_IDLE`). See bottles-suggest.md.",
+           "on"),
     EnvVar("BOT_BOTTLE_ARCHITECT_IDLE", "user",
-           "Seconds the bottle architect's warm bottle stays up after its last "
-           "suggestion; `0` stops it after each one.",
+           "When the architect isn't always on: seconds its bottle stays up after "
+           "its last suggestion; `0` stops it after each one.",
            "`600`"),
     EnvVar("BOT_BOTTLE_FC_WORKSPACE_DISK", "user",
            "firecracker: keep the project's workspace on a per-project disk between "

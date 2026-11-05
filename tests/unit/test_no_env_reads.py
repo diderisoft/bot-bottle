@@ -60,6 +60,7 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("backend/macos_container/orchestrator.py", "os.environ"): _CHILD_ENV,
     ("control/hostctl/runner.py", "os.environ"): _CHILD_ENV,
     ("control/hostctl/launch.py", "os.environ"): _CHILD_ENV,
+    ("control/hostctl/architect_bottle.py", "os.environ"): _CHILD_ENV,
     ("control/hostctl/__main__.py", "PORT_ENV"):
         "process plumbing: the daemon's bind port, set by whoever starts it",
 }
