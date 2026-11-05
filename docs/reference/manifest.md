@@ -157,8 +157,8 @@ again. Trust records live in `~/.bot-bottle/trusted-bottles.json`; what the
 trust hash covers is in [architecture.md](architecture.md#state).
 
 - **Repo bottles** are always named `./<name>`, so a repo bottle never shares
-  a name with one of yours. Bare `bot-bottle` uses `./main` when the repo has
-  one. The trust prompt lists every host and secret the bottle touches,
+  a name with one of yours. `bot-bottle <agent>` uses `./main` when the repo
+  has one. The trust prompt lists every host and secret the bottle touches,
   including what it inherits through `extends`, so a cloned repo can't send a
   credential to another host without you seeing it first.
 - **Repo agents** need trust when their `agent_provider` grants something

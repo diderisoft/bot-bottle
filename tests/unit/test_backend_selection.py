@@ -473,3 +473,32 @@ class TestLaunchIsolationNote(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _only(name: str):  # type: ignore[no-untyped-def]
+    def has(_settings: Settings, wanted: str) -> bool:
+        return wanted == name
+    return has
+
+
+class TestAutoBackendName(unittest.TestCase):
+    """What a launch would pick, for status displays: never prompts or dies."""
+
+    def test_settings_name_it(self) -> None:
+        settings = Settings(operation=OperationSettings(backend="docker"))
+        self.assertEqual("docker", _sel.auto_backend_name(settings))
+
+    def test_macos_container_then_firecracker_then_docker(self) -> None:
+        settings = Settings()
+        fc = "bot_bottle.backend.firecracker.FirecrackerBottleBackend.is_host_capable"
+        with patch.object(_sel, "has_backend", side_effect=_only("macos-container")):
+            self.assertEqual("macos-container", _sel.auto_backend_name(settings))
+        with patch.object(_sel, "has_backend", return_value=False), \
+             patch(fc, return_value=True):
+            self.assertEqual("firecracker", _sel.auto_backend_name(settings))
+        with patch.object(_sel, "has_backend", side_effect=_only("docker")), \
+             patch(fc, return_value=False):
+            self.assertEqual("docker", _sel.auto_backend_name(settings))
+        with patch.object(_sel, "has_backend", return_value=False), \
+             patch(fc, return_value=False):
+            self.assertEqual("", _sel.auto_backend_name(settings))

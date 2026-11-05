@@ -17,7 +17,7 @@ from ..lib.log import Die, die, error
 from ..manifest import ManifestError, ManifestIndex
 from ..orchestrator.store.store_manager import StoreManager
 from ..paths import host_db_path
-from .commands import COMMANDS, NO_MIGRATION_COMMANDS, QUICK
+from .commands import COMMANDS, HOME, NO_MIGRATION_COMMANDS, QUICK
 from .commands.help import cmd_help
 
 
@@ -42,9 +42,12 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-retu
         cmd_help()
         return 0
     handler = COMMANDS.get(command)
-    if handler is None and (not command or command.startswith("-") or _is_agent(command)):
-        # Bare `bot-bottle`, `bot-bottle <agent>` or `bot-bottle -v` starts an
-        # agent on this directory.
+    if not argv:
+        # Bare `bot-bottle`: home (a menu on a terminal, else `status`).
+        command, handler, rest = "home", HOME, []
+    elif handler is None and (command.startswith("-") or _is_agent(command)):
+        # `bot-bottle <agent>` or `bot-bottle -v` starts an agent on this
+        # directory.
         command, handler, rest = "quick", QUICK, argv
     if handler is None:
         cmd_help()

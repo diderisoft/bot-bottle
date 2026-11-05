@@ -152,10 +152,10 @@ class StartView:  # pylint: disable=too-many-instance-attributes
             with log.redirect(self.note):
                 return self._run()
         except Cancelled:
-            self.view.close()
+            self.view.leave()
             return 0
         except KeyboardInterrupt:
-            self.view.close()
+            self.view.leave()
             return 130
 
     def _run(self) -> int:
@@ -427,8 +427,13 @@ def _terminal_key(timeout: float | None = None) -> str | None:
 
 def run_start(args: argparse.Namespace, manifest: "ManifestIndex", settings: Settings, *,
               launch: Launch, view: Screen | None = None) -> int:
-    """The guided start on `view` (a new one by default)."""
-    return StartView(view or Screen(), args, manifest, settings, launch=launch).run()
+    """The guided start on `view` (a new one by default, closed after)."""
+    own = view or Screen()
+    try:
+        return StartView(own, args, manifest, settings, launch=launch).run()
+    finally:
+        if view is None:
+            own.close()
 
 
 __all__ = ["StartView", "bottle_summary", "review_lines", "run_start"]

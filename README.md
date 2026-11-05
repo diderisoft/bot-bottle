@@ -32,7 +32,7 @@ The installer runs `bot-bottle setup`, which writes a starter agent for each log
 bot-bottle start
 ```
 
-It asks which harness (once; it remembers), asks for the task, and proposes a bottle sized to it: the hosts, repos and env it needs and no more, which you can run, edit, or save. `bot-bottle start --auto "fix the flaky test"` runs the proposal without asking. Details in [bottles-suggest.md](docs/reference/bottles-suggest.md).
+It asks which harness (once; it remembers), asks for the task, and proposes a bottle sized to it: the hosts, repos and env it needs and no more, which you can run, edit, or save. A bare `bot-bottle` opens a home menu: start an agent, attach to a running one, answer approvals, check the host, or set up agents. `bot-bottle start --auto "fix the flaky test"` runs the proposal without asking. Details in [bottles-suggest.md](docs/reference/bottles-suggest.md).
 
 You also need a backend, which the installer leaves to you (`bot-bottle doctor` says what's missing):
 

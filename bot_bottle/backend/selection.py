@@ -62,6 +62,20 @@ def _print_vm_install_instructions() -> None:
         info("Configure the host:  bot-bottle install")
 
 
+def auto_backend_name(settings: Settings) -> str:
+    """The backend a launch would pick, without prompting or dying:
+    `settings`' own, else macos-container if installed, else firecracker on a
+    KVM-capable host, else docker if installed; "" when there's none."""
+    if settings.operation.backend:
+        return settings.operation.backend
+    if has_backend(settings, "macos-container"):
+        return "macos-container"
+    from .firecracker import FirecrackerBottleBackend
+    if FirecrackerBottleBackend.is_host_capable():
+        return "firecracker"
+    return "docker" if has_backend(settings, "docker") else ""
+
+
 def _auto_select_backend(settings: Settings, prompt: bool = True) -> str:
     """macos-container if installed, else firecracker on a KVM-capable host
     (even before the binary is installed, so its preflight explains), else

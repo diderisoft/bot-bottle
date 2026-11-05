@@ -23,25 +23,34 @@ can't answer.
 
 ## The guided `bot-bottle start`
 
-On a terminal, `bot-bottle start` without `--bottle` is guided:
+On a terminal, `bot-bottle start` without `--bottle` is guided. It draws on
+the launch screen: a step list beside the bottle, each finished step
+collapsing to one line with a ✓, and the launch's stages drawn under the
+steps on the same screen (`cli/screen.py`, `commands/guided_view.py`):
 
-1. **Harness.** The agent you last ran (remembered in
+1. **Agent.** The agent you last ran (remembered in
    `~/.bot-bottle/start.json`), else a pick among the logged-in harnesses
    that have an agent (`setup`'s detection). `bot-bottle start codex` runs
-   that one and makes it the default.
+   that one and makes it the default. With no agent set up, Enter runs
+   `setup` and comes back.
 2. **Task.** What the agent should do. Empty runs the agent in `basic`, as a
    plain start, with no suggestion.
-3. **Suggest**, for the current project, with a spinner. The architect's
-   warm bottle started booting when `start` did, so by now only the model
-   call is left. The proposal is shown as `bottles suggest` shows it.
-4. **Confirm**, one keypress on a line under the proposal, so the proposal
-   stays on screen: `Enter` runs it, `s` saves it as a named bottle first,
-   `e` edits it, `q` cancels. Edit opens the proposal as YAML in
+3. **Suggest**, for the current project, with a spinner ("warming the
+   architect…" while its bottle still boots). The architect's warm bottle
+   started booting when `start` did, so usually only the model call is left.
+4. **Review.** The proposal compactly: what it adds, with why; one line of
+   counts per bottle it stacks; how many notes it has. `Enter` runs it, `s`
+   saves it as a named bottle first, `e` edits it, `d` shows its notes and
+   every element, `q` cancels. Edit opens the proposal as YAML in
    `$VISUAL`/`$EDITOR`; after you save, it's validated, and it reopens with
    the errors inline until it validates (emptying the file cancels the
    edit). A proposal that can't run on this host (below) offers only edit
    and cancel.
 5. **Launch** in that bottle with the task as the agent's first prompt.
+
+`--auto`, `--verbose` and `--dry-run` keep plain output, and nothing draws
+without a terminal. Ctrl-C quits without launching. Bare `bot-bottle`, on a
+terminal, is a home menu that starts this same flow (`commands/home.py`).
 
 **Nothing is saved unless you ask** (ADR 0017). A suggestion that adds
 anything runs as the run's own bottle, `suggested`: kept with the run (a

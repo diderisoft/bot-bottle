@@ -24,18 +24,25 @@ class TestMainDispatch(unittest.TestCase):
         self._mock_check = patcher.start()
         self.addCleanup(patcher.stop)
 
-    def test_no_args_starts_an_agent_here(self) -> None:
-        seen: list[list[str]] = []
+    def test_no_args_opens_home_and_a_flag_starts_an_agent_here(self) -> None:
+        homes: list[list[str]] = []
+        quicks: list[list[str]] = []
 
-        def quick(rest: list[str]) -> int:
-            seen.append(rest)
+        def home(rest: list[str]) -> int:
+            homes.append(rest)
             return 0
 
-        with patch("bot_bottle.cli.__main__.QUICK", quick), \
+        def quick(rest: list[str]) -> int:
+            quicks.append(rest)
+            return 0
+
+        with patch("bot_bottle.cli.__main__.HOME", home), \
+                patch("bot_bottle.cli.__main__.QUICK", quick), \
                 patch("bot_bottle.cli.__main__.StoreManager"):
             self.assertEqual(0, main([]))
             self.assertEqual(0, main(["-v"]))
-        self.assertEqual([[], ["-v"]], seen)
+        self.assertEqual([[]], homes)
+        self.assertEqual([["-v"]], quicks)
 
     def test_an_agent_name_starts_that_agent(self) -> None:
         seen: list[list[str]] = []
