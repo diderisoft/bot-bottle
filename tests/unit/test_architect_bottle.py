@@ -8,6 +8,7 @@ whose `agent_argv` records what it was asked; `subprocess.run` is faked too.
 from __future__ import annotations
 
 import contextlib
+import os
 import subprocess
 import tempfile
 import threading
@@ -56,6 +57,10 @@ class FakeBackend:
                 backend.argv.append(argv)
                 return ["ssh", "vm", "--", *argv]
 
+            @staticmethod
+            def agent_env() -> dict[str, str]:
+                return {"HTTPS_PROXY": "http://gateway:3128"}
+
         try:
             yield Bottle()
         finally:
@@ -101,6 +106,14 @@ class TestArchitectBottle(unittest.TestCase):
         self.assertIn("task two", second)
         self.assertEqual(architect_bottle.TIMEOUT_SECONDS,
                          self.subprocess_run.call_args.kwargs["timeout"])
+
+    def test_the_call_carries_the_agent_env_behind_its_bare_names(self) -> None:
+        # The proxy rides in the env, not argv; without it the architect has
+        # no route to its model API and times out.
+        self._bottle(FakeBackend()).run(_architect(), "t")
+        env = self.subprocess_run.call_args.kwargs["env"]
+        self.assertEqual("http://gateway:3128", env["HTTPS_PROXY"])
+        self.assertEqual(os.environ.get("PATH"), env.get("PATH"))
 
     def test_it_runs_in_its_own_bottle_with_an_empty_workspace(self) -> None:
         backend = FakeBackend()

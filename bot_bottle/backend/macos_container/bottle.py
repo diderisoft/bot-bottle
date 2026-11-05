@@ -109,7 +109,10 @@ class MacosContainerBottle(Bottle):
         # exec`.
         command = agent_shell_command(
             self.agent_argv(argv, tty=True), self.terminal_title, self.terminal_color)
-        return command, dict(self._exec_env)
+        return command, self.agent_env()
+
+    def agent_env(self) -> dict[str, str]:
+        return dict(self._exec_env)
 
     def exec(self, script: str, *, user: str = "node", timeout: float | None = None,
              private: bool = True) -> ExecResult:

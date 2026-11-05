@@ -19,6 +19,7 @@ stdout, parsed and validated by `suggest`. Any failure raises
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -222,8 +223,11 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
                 (*plan.agent_provision.startup_args, *model_args(architect.model)),
                 prompt, headless=True), tty=False)
             try:
+                # The proxy behind argv's bare `--env` names comes from here;
+                # without it the agent has no route to its model API.
                 result = subprocess.run(argv, capture_output=True, text=True, check=False,
-                                        timeout=TIMEOUT_SECONDS, stdin=subprocess.DEVNULL)
+                                        timeout=TIMEOUT_SECONDS, stdin=subprocess.DEVNULL,
+                                        env={**os.environ, **bottle.agent_env()})
             except subprocess.TimeoutExpired as e:
                 raise ArchitectError(f"{architect.harness} didn't answer within "
                                      f"{TIMEOUT_SECONDS}s") from e

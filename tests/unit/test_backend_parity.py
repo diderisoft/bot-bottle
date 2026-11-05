@@ -247,5 +247,33 @@ class TestAgentCommandParity(unittest.TestCase):
         self.assertEqual(["sh", "-lc"], command[:2])
 
 
+
+class TestAgentEnvParity(unittest.TestCase):
+    """`agent_argv` passes the token-bearing env as bare names; `agent_env`
+    holds their values, which its caller must run it with."""
+
+    def test_agent_env_holds_every_bare_name_agent_argv_passes(self) -> None:
+        from bot_bottle.backend.docker.bottle import DockerBottle
+        from bot_bottle.backend.macos_container.bottle import MacosContainerBottle
+        env = {"HTTPS_PROXY": "http://tok@gw", "HTTP_PROXY": "http://tok@gw"}
+        bottles = [
+            ("docker", DockerBottle(container="b", teardown=lambda: None,
+                                    prompt_path_in_container=None, agent_command="claude",
+                                    exec_env=env), "-e"),
+            ("macos", MacosContainerBottle("b", lambda: None, None, exec_env=env), "--env"),
+        ]
+        for label, bottle, flag in bottles:
+            with self.subTest(label):
+                argv = bottle.agent_argv(["-p", "hi"], tty=False)
+                named = {argv[i + 1] for i, a in enumerate(argv) if a == flag}
+                self.assertEqual(set(env), named)
+                self.assertEqual(env, bottle.agent_env())
+                self.assertNotIn("http://tok@gw", " ".join(argv))  # never on argv
+                self.assertEqual(env, bottle.agent_command([])[1])
+
+    def test_firecracker_sets_its_env_in_the_guest(self) -> None:
+        bottle = _firecracker_bottle({"HTTPS_PROXY": "http://tok@gw"})
+        self.assertEqual({}, bottle.agent_env())  # type: ignore[attr-defined]
+
 if __name__ == "__main__":
     unittest.main()

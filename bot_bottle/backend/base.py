@@ -147,6 +147,13 @@ class Bottle(ABC):
         prompt args when a prompt was provisioned."""
         ...
 
+    def agent_env(self) -> dict[str, str]:
+        """The env a caller of `agent_argv` must run it with: the values
+        behind the bare `--env` names it passes (the token-bearing proxy among
+        them), kept off the command line. Empty when the backend sets them in
+        the guest."""
+        return {}
+
     @abstractmethod
     def agent_command(self, argv: list[str]) -> tuple[list[str], dict[str, str]]:
         """The host command and added env that run the agent interactively;
