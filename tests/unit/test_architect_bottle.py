@@ -237,6 +237,19 @@ class TestArchitectBottle(unittest.TestCase):
             warm.run(_architect(), "t")
         self.assertEqual(2, backend.launches)
 
+    def test_a_claude_call_is_one_shot_without_tools(self) -> None:
+        backend = FakeBackend()
+        self._bottle(backend).run(_architect(model="m1"), "t")
+        argv = backend.argv[0]
+        at = argv.index("--tools")
+        self.assertEqual("", argv[at + 1])  # no tools at all
+        for flag in ("--strict-mcp-config", "--no-session-persistence"):
+            self.assertIn(flag, argv)
+        self.assertEqual("low", argv[argv.index("--effort") + 1])
+        self.assertIn("--system-prompt", argv)
+        self.assertLess(at, argv.index("-p"))  # before the prompt
+        self.assertEqual([], architect_bottle.one_shot_args("codex"))
+
     def test_a_changed_harness_restarts_the_bottle(self) -> None:
         backend = FakeBackend("claude")
         warm = self._bottle(backend)

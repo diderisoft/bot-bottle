@@ -82,6 +82,22 @@ def model_args(model: str) -> list[str]:
     return ["--model", model] if model else []
 
 
+# A call is one structured answer from what the prompt holds, so the harness
+# gets nothing to wander with. For claude: no tools and no MCP servers (a call
+# that went exploring its empty home took 28s, not 5s), a one-line system
+# prompt in place of Claude Code's own (the architect's is still appended),
+# low effort and no saved session. Measured on three tasks: the same
+# proposals, in 2.6-4.4s against 4.4-6.1s.
+_ONE_SHOT_ARGS: dict[str, tuple[str, ...]] = {
+    "claude": ("--tools", "", "--strict-mcp-config", "--no-session-persistence",
+               "--system-prompt", "You are the bottle architect.", "--effort", "low"),
+}
+
+
+def one_shot_args(harness: str) -> list[str]:
+    """The args that make `harness` answer in one turn, without tools."""
+    return list(_ONE_SHOT_ARGS.get(harness, ()))
+
 
 def _default_backend(settings: Settings) -> "BottleBackend[Any, Any]":
     from ...backend import get_bottle_backend  # pylint: disable=import-outside-toplevel
@@ -268,7 +284,8 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
             mark = f"bot-bottle-architect-call-{uuid.uuid4().hex}"
             argv = bottle.agent_argv(agent_args(
                 architect.harness,
-                (*plan.agent_provision.startup_args, *model_args(architect.model)),
+                (*plan.agent_provision.startup_args, *one_shot_args(architect.harness),
+                 *model_args(architect.model)),
                 f"{prompt}\n\n<!-- {mark} -->", headless=True), tty=False)
             try:
                 # The proxy behind argv's bare `--env` names comes from here;
