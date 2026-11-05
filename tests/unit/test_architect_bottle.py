@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
+import shutil
 import subprocess
 import tempfile
 import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 
 from bot_bottle.control.hostctl import architect_bottle
@@ -32,6 +35,8 @@ class FakeBackend:
         self.down = threading.Event()
         self.specs: list[object] = []
         self.argv: list[list[str]] = []
+        self.execs: list[tuple[str, dict[str, Any]]] = []
+        self.exec_result: object = SimpleNamespace(returncode=0, stdout="", stderr="")
 
     def prepare(self, spec: object, *, stage_dir: Path, secrets: object) -> object:
         del stage_dir, secrets
@@ -60,6 +65,13 @@ class FakeBackend:
             @staticmethod
             def agent_env() -> dict[str, str]:
                 return {"HTTPS_PROXY": "http://gateway:3128"}
+
+            @staticmethod
+            def exec(script: str, **kw: Any) -> object:
+                backend.execs.append((script, kw))
+                if isinstance(backend.exec_result, BaseException):
+                    raise backend.exec_result
+                return backend.exec_result
 
         try:
             yield Bottle()
@@ -101,9 +113,9 @@ class TestArchitectBottle(unittest.TestCase):
         self.assertIn("--fast", first)
         at = first.index("--model")
         self.assertEqual(["--model", "m1"], first[at:at + 2])
-        self.assertIn("task one", first)
+        self.assertTrue(first[-1].startswith("task one\n\n<!-- bot-bottle-architect-call-"))
         self.assertNotIn("--model", second)
-        self.assertIn("task two", second)
+        self.assertTrue(second[-1].startswith("task two\n"))
         self.assertEqual(architect_bottle.TIMEOUT_SECONDS,
                          self.subprocess_run.call_args.kwargs["timeout"])
 
@@ -172,6 +184,41 @@ class TestArchitectBottle(unittest.TestCase):
                 with self.assertRaisesRegex(ArchitectError, why):
                     warm.run(_architect(), "t")
 
+    def test_a_timed_out_call_is_stopped_in_the_bottle_too(self) -> None:
+        backend = FakeBackend()
+        warm = self._bottle(backend)
+        self.subprocess_run.side_effect = subprocess.TimeoutExpired("claude", 1)
+        with self.assertRaisesRegex(ArchitectError, "didn't answer within"):
+            warm.run(_architect(), "t")
+        mark = re.search(r"bot-bottle-architect-call-[0-9a-f]{32}", " ".join(backend.argv[0]))
+        assert mark is not None  # the call carries its mark
+        script, kw = backend.execs[0]
+        self.assertIn(f"m={mark.group(0)}\n", script)
+        self.assertEqual("root", kw["user"])
+        self.assertEqual(architect_bottle.STOP_SECONDS, kw["timeout"])
+
+    def test_each_call_has_its_own_mark_and_an_answer_stops_nothing(self) -> None:
+        backend = FakeBackend()
+        warm = self._bottle(backend)
+        warm.run(_architect(), "t")
+        warm.run(_architect(), "t")
+        marks = {m for argv in backend.argv
+                 for m in re.findall(r"bot-bottle-architect-call-[0-9a-f]{32}", " ".join(argv))}
+        self.assertEqual(2, len(marks))
+        self.assertEqual([], backend.execs)
+
+    def test_a_failed_stop_still_reports_the_timeout(self) -> None:
+        for result in (RuntimeError("no exec"), SimpleNamespace(returncode=1)):
+            with self.subTest(result=result):
+                backend = FakeBackend()
+                backend.exec_result = result
+                warm = self._bottle(backend)
+                self.subprocess_run.side_effect = subprocess.TimeoutExpired("claude", 1)
+                with mock.patch.object(architect_bottle.log, "warn") as warn, \
+                     self.assertRaisesRegex(ArchitectError, "didn't answer within"):
+                    warm.run(_architect(), "t")
+                self.assertIn("timed-out call", warn.call_args.args[0])
+
     def test_a_changed_harness_restarts_the_bottle(self) -> None:
         backend = FakeBackend("claude")
         warm = self._bottle(backend)
@@ -206,6 +253,45 @@ class TestArchitectBottle(unittest.TestCase):
         assert run is not None
         self.assertEqual('{"option": "reuse"}', run(_architect(), "t"))
 
+
+
+@unittest.skipUnless(os.path.isdir("/proc/self") and shutil.which("sh"), "needs Linux /proc")
+class TestStopScript(unittest.TestCase):
+    """The stop script against real processes: the marked one and its child
+    stop; an unmarked one keeps running."""
+
+    def _spawn(self, tag: str) -> subprocess.Popen[bytes]:
+        # A shell (carrying `tag`) with a child, like the agent and its tools.
+        proc = subprocess.Popen(["sh", "-c", "sleep 60 & wait", tag])  # pylint: disable=consider-using-with
+        self.addCleanup(proc.kill)
+        return proc
+
+    @staticmethod
+    def _children(pid: int) -> list[int]:
+        found = []
+        for entry in Path("/proc").iterdir():
+            try:
+                stat = (entry / "stat").read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if entry.name.isdigit() and stat.rsplit(") ", 1)[-1].split()[1] == str(pid):
+                found.append(int(entry.name))
+        return found
+
+    def test_it_stops_the_marked_tree_and_nothing_else(self) -> None:
+        mark = "bot-bottle-architect-call-" + "a" * 32
+        marked, other = self._spawn(mark), self._spawn("unrelated")
+        for _ in range(100):
+            if self._children(marked.pid) and self._children(other.pid):
+                break
+            threading.Event().wait(0.02)
+        child = self._children(marked.pid)[0]
+        script = architect_bottle._STOP_MARKED.format(mark=mark)  # pylint: disable=protected-access
+        subprocess.run(["sh", "-s"], input=script.encode(), check=True, timeout=30)
+        self.assertIsNotNone(marked.wait(5))
+        self.assertFalse(Path(f"/proc/{child}").exists() and
+                         "sleep" in Path(f"/proc/{child}/cmdline").read_text(encoding="utf-8", errors="replace"))
+        self.assertIsNone(other.poll())
 
 if __name__ == "__main__":
     unittest.main()

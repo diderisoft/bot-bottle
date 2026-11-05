@@ -45,6 +45,33 @@ ARCHITECT_BOTTLE = "bottle-architect"
 
 # Booting includes getting images, so a first boot can take a while.
 BOOT_SECONDS = 600.0
+# How long stopping a timed-out call's process in the bottle may take.
+STOP_SECONDS = 15.0
+# Stops every process whose command line carries the call's mark, and their
+# descendants (the agent's tools): TERM, then KILL. The bottle has no ps or
+# pkill. It goes on stdin (`private`), so this shell's own command line
+# doesn't carry the mark.
+_STOP_MARKED = """m={mark}
+pids=""
+for d in /proc/[0-9]*; do
+  grep -qaF -- "$m" "$d/cmdline" 2>/dev/null && pids="$pids ${{d#/proc/}}"
+done
+[ -n "$pids" ] || exit 0
+added=1
+while [ -n "$added" ]; do
+  added=""
+  for d in /proc/[0-9]*; do
+    p=${{d#/proc/}}
+    case " $pids " in *" $p "*) continue ;; esac
+    pp=$(sed 's/.*) //' "$d/stat" 2>/dev/null | cut -d' ' -f2)
+    case " $pids " in *" $pp "*) pids="$pids $p"; added=1 ;; esac
+  done
+done
+kill -TERM $pids 2>/dev/null
+sleep 2
+kill -KILL $pids 2>/dev/null
+exit 0
+"""
 
 
 def model_args(model: str) -> list[str]:
@@ -218,10 +245,12 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
                 raise ArchitectError(f"its bottle runs {plan.agent_provision.harness}, but "
                                      f"{architect.path} now names {architect.harness}; "
                                      "the next suggestion boots one that does")
+            # A mark only this call's process carries, to stop it if it times out.
+            mark = f"bot-bottle-architect-call-{uuid.uuid4().hex}"
             argv = bottle.agent_argv(agent_args(
                 architect.harness,
                 (*plan.agent_provision.startup_args, *model_args(architect.model)),
-                prompt, headless=True), tty=False)
+                f"{prompt}\n\n<!-- {mark} -->", headless=True), tty=False)
             try:
                 # The proxy behind argv's bare `--env` names comes from here;
                 # without it the agent has no route to its model API.
@@ -229,6 +258,9 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
                                         timeout=TIMEOUT_SECONDS, stdin=subprocess.DEVNULL,
                                         env={**os.environ, **bottle.agent_env()})
             except subprocess.TimeoutExpired as e:
+                # Killing `container exec`/`ssh` here leaves the agent running
+                # in the bottle; stop it there too.
+                _stop_marked(bottle, mark)
                 raise ArchitectError(f"{architect.harness} didn't answer within "
                                      f"{TIMEOUT_SECONDS}s") from e
             except OSError as e:
@@ -242,6 +274,17 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
                 self._busy -= 1
                 self._last_used = self._clock()
                 self._cond.notify_all()
+
+
+def _stop_marked(bottle: Any, mark: str) -> None:
+    """Stop the timed-out call's process in `bottle`; a failure only logs."""
+    try:
+        result = bottle.exec(_STOP_MARKED.format(mark=mark), user="root", timeout=STOP_SECONDS)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        log.warn(f"bottle-architect: couldn't stop the timed-out call: {e}")
+        return
+    if result.returncode != 0:
+        log.warn(f"bottle-architect: stopping the timed-out call exited {result.returncode}")
 
 
 _current: ArchitectBottle | None = None
