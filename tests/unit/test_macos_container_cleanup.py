@@ -9,9 +9,13 @@ from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend import EnumerationError
 from bot_bottle.backend.cleanup_control import CleanupError
 from bot_bottle.backend.macos_container import cleanup, enumerate as enum_mod
+from bot_bottle.backend.macos_container.infra import INFRA_CONTAINERS, INFRA_NETWORKS
+from bot_bottle.environment import resource_prefix
 from bot_bottle.backend.macos_container.bottle_cleanup_plan import (
     MacosContainerBottleCleanupPlan,
 )
+
+_PREFIX = resource_prefix()
 
 
 class TestMacosContainerCleanup(unittest.TestCase):
@@ -27,6 +31,17 @@ class TestMacosContainerCleanup(unittest.TestCase):
                 ["bot-bottle-a", "bot-bottle-b"],
                 cleanup._list_prefixed_containers(),
             )
+
+    def test_leaves_the_infra(self):
+        """The gateway, orchestrator and their networks share the prefix but
+        aren't bottles: cleaning up bots leaves them running."""
+        for names, lister in ((INFRA_CONTAINERS, cleanup._list_prefixed_containers),
+                              (INFRA_NETWORKS, cleanup._list_prefixed_networks)):
+            out = "\n".join([*sorted(names), _PREFIX + "a"]) + "\n"
+            completed = cleanup.subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=out, stderr="")
+            with patch.object(cleanup.subprocess, "run", return_value=completed):
+                self.assertEqual([_PREFIX + "a"], lister())
 
     def test_cleanup_deletes_containers_and_networks(self):
         plan = MacosContainerBottleCleanupPlan(

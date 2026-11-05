@@ -20,7 +20,9 @@ from .orchestrator import (
     ORCHESTRATOR_LABEL,
     ORCHESTRATOR_NAME,
     ORCHESTRATOR_NETWORK,
+    ORCHESTRATOR_PUBLISH_NETWORK,
 )
+from .gateway import GATEWAY_EGRESS_NETWORK
 from ... import resources
 from ...contract.hostctl import Settings
 from ...control.gateway import (
@@ -31,6 +33,13 @@ from ..infra_service import InfraService
 
 # Aliases kept for callers that import the old combined-container names.
 INFRA_NAME = GATEWAY_NAME  # agents attribute against the gateway
+# What the infra owns: they share the bottles' prefix, so `cleanup bots`
+# leaves exactly these.
+INFRA_CONTAINERS = frozenset({GATEWAY_NAME, ORCHESTRATOR_NAME})
+INFRA_NETWORKS = frozenset({
+    GATEWAY_NETWORK, GATEWAY_EGRESS_NETWORK,
+    ORCHESTRATOR_NETWORK, ORCHESTRATOR_PUBLISH_NETWORK,
+})
 
 
 class DockerInfraService(InfraService):

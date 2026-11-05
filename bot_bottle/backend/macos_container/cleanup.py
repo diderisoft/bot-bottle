@@ -11,6 +11,7 @@ from ..cleanup_control import CleanupFailures, kept_guests, orphan_homes
 from ...lib.log import info
 from . import util as container_mod
 from .bottle_cleanup_plan import MacosContainerBottleCleanupPlan
+from .infra import INFRA_CONTAINERS, INFRA_NETWORKS
 
 _PREFIX = resource_prefix()
 
@@ -27,7 +28,7 @@ def _list_prefixed_containers() -> list[str]:
         raise EnumerationError(f"container list failed: {detail}")
     return sorted(
         name for name in (line.strip() for line in result.stdout.splitlines())
-        if name.startswith(_PREFIX)
+        if name.startswith(_PREFIX) and name not in INFRA_CONTAINERS
     )
 
 
@@ -43,7 +44,7 @@ def _list_prefixed_networks() -> list[str]:
         raise EnumerationError(f"container network list failed: {detail}")
     return sorted(
         name for name in (line.strip() for line in result.stdout.splitlines())
-        if name.startswith(_PREFIX)
+        if name.startswith(_PREFIX) and name not in INFRA_NETWORKS
     )
 
 

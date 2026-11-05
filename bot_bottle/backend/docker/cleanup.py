@@ -15,6 +15,7 @@ from . import util as docker_mod
 from ...control.gateway import GATEWAY_NAME
 from .agent_network import is_agent_network
 from .bottle_cleanup_plan import DockerBottleCleanupPlan
+from .infra import INFRA_CONTAINERS, INFRA_NETWORKS
 from .compose import COMPOSE_PROJECT_PREFIX, list_compose_projects
 
 
@@ -36,8 +37,8 @@ def _list_prefixed_containers() -> list[str]:
         if not line:
             continue
         name, _, project = line.partition("\t")
-        # No compose label: not reaped by `compose down`.
-        if not project:
+        # No compose label: not reaped by `compose down`. The infra stays.
+        if not project and name not in INFRA_CONTAINERS:
             out.append(name)
     return sorted(set(out))
 
@@ -62,7 +63,7 @@ def _list_prefixed_networks() -> list[str]:
         if not line:
             continue
         name, _, project = line.partition("\t")
-        if not project:
+        if not project and name not in INFRA_NETWORKS:
             out.append(name)
     return sorted(set(out))
 

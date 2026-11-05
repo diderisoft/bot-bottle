@@ -202,6 +202,11 @@ again (its network gone, say) is replaced the same way. `bots --stopped` shows
 `kept` in its `CONTAINER` column; `cleanup bots` leaves a kept guest, like its
 home and state.
 
+`cleanup bots` also leaves the infra: the gateway, the orchestrator and their
+networks share the bottles' resource prefix but are listed by name
+(`INFRA_CONTAINERS`, `INFRA_NETWORKS` in each backend's `infra.py`) and
+skipped.
+
 ## Memory and vCPUs
 
 A bottle's agent gets 2 GiB of memory on every backend

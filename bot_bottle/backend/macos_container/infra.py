@@ -47,6 +47,10 @@ if TYPE_CHECKING:
 
 # Alias of the gateway container, for callers that import it.
 INFRA_NAME = GATEWAY_NAME
+# What the infra owns: they share the bottles' prefix, so `cleanup bots`
+# leaves exactly these.
+INFRA_CONTAINERS = frozenset({GATEWAY_NAME, ORCHESTRATOR_NAME})
+INFRA_NETWORKS = frozenset({GATEWAY_NETWORK, GATEWAY_EGRESS_NETWORK, CONTROL_NETWORK})
 
 
 class MacosInfraService(InfraService):
