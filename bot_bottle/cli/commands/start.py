@@ -366,9 +366,13 @@ def _launch_bottle(request: LaunchRequest, manifest: ManifestIndex, *, dry_run: 
     if dry_run:
         return _dry_run(request, manifest)
     interactive = not request.headless
-    prepared = prepare_request(request, manifest, interactive=interactive)
     if view is not None:  # a guided start's screen: its stages draw there
+        # Trust, host-key and secret prompts read the terminal line by line:
+        # on the normal screen, not over the view's frames.
+        with view.suspend():
+            prepared = prepare_request(request, manifest, interactive=interactive)
         return launch(prepared, verbose=verbose, view=view, lead=lead)
+    prepared = prepare_request(request, manifest, interactive=interactive)
     return launch(prepared, verbose=verbose)
 
 

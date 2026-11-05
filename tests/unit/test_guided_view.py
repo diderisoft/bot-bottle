@@ -5,6 +5,7 @@ handed the view and the finished steps."""
 from __future__ import annotations
 
 import argparse
+import contextlib
 import io
 import os
 import tempfile
@@ -18,6 +19,7 @@ from bot_bottle.cli import screen, start_prefs, suggest_client
 from bot_bottle.cli.commands import guided, guided_view, start
 from bot_bottle.cli.screen import DONE, Screen
 from bot_bottle.contract.hostctl import RUN_BOTTLE, LaunchRequest, Settings
+from bot_bottle.lib import log
 from bot_bottle.manifest import ManifestIndex
 from bot_bottle.suggest.proposal import (
     OPTION_STACK_ADDITIONS, Proposal, ProposalAdditions, ProposalEgress,
@@ -236,6 +238,55 @@ class TestSuggesting(_View):
         self.assertIn("warming the architect…", text)
         self.assertIn("asking the architect…", text)
         self.assertLess(text.index("warming the architect"), text.rindex("asking the architect"))
+
+
+class TestAFailedLaunch(_View):
+    def _fail_launch(self, *, view_up: bool) -> tuple[str, BaseException]:
+        def launch(request: LaunchRequest, index: Any, **kw: Any) -> int:
+            del request, index
+            if not view_up:
+                kw["view"].leave()  # the agent had the terminal
+            log.die("launch: no such bottle")
+
+        manifest = ManifestIndex.resolve(str(self.project))
+        flow = guided_view.StartView(self.view, _args(name="claude"), manifest, Settings(),
+                                     launch=launch, keys=lambda _timeout=None: "enter",
+                                     cwd=self.project)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(log.Die) as caught:
+            flow.run()
+        self.assertFalse(self.view.on)
+        return err.getvalue(), caught.exception
+
+    def test_its_error_stays_off_the_frames_and_reaches_the_terminal_once(self) -> None:
+        err, _ = self._fail_launch(view_up=True)
+        self.assertEqual(1, err.count("launch: no such bottle"))
+        self.assertNotIn("no such bottle", self.out.getvalue())  # not written over the view
+
+    def test_said_after_the_view_is_down_it_is_not_repeated(self) -> None:
+        err, _ = self._fail_launch(view_up=False)
+        self.assertEqual(1, err.count("launch: no such bottle"))
+
+
+class TestLaunchPrompts(unittest.TestCase):
+    def test_trust_and_secret_prompts_run_on_the_normal_screen(self) -> None:
+        view = Screen(_Tty(), color=False)
+        view.enter()
+        seen: list[bool] = []
+
+        def prepare(request: LaunchRequest, *_: Any, **__: Any) -> LaunchRequest:
+            seen.append(view.on)  # what the prompts would be written over
+            return request
+
+        with mock.patch.object(start, "prepare_request", side_effect=prepare), \
+             mock.patch.object(start, "launch", return_value=0) as launch:
+            code = start._launch_bottle(  # pylint: disable=protected-access
+                LaunchRequest(agent="claude", bottles=("./main",)), mock.Mock(),
+                dry_run=False, view=view, lead=[])
+        self.assertEqual(0, code)
+        self.assertEqual([False], seen)
+        self.assertTrue(view.on)  # back for the launch's stages
+        self.assertIs(view, launch.call_args.kwargs["view"])
 
 
 class TestLongTask(_View):

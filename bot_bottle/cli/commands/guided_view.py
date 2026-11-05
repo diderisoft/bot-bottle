@@ -105,6 +105,8 @@ class StartView:  # pylint: disable=too-many-instance-attributes
         self.warm_state = ""
         # What bot-bottle says while the view is up, drawn under the steps.
         self.notes: list[str] = []
+        # Lines written to the terminal while the view was down.
+        self._spoken: list[str] = []
 
     # --- drawing ---
 
@@ -156,6 +158,13 @@ class StartView:  # pylint: disable=too-many-instance-attributes
         except Cancelled:
             self.view.leave()
             return 0
+        except log.Die as e:
+            # Its message went to the view's notes, which go with it; say it
+            # to whoever started this, unless it already reached the terminal.
+            self.view.leave()
+            if e.message and not any(e.message in line for line in self._spoken):
+                log.error(e.message)
+            raise
         except KeyboardInterrupt:
             self.view.leave()
             return 130
@@ -178,8 +187,17 @@ class StartView:  # pylint: disable=too-many-instance-attributes
 
     def _launch(self, request: LaunchRequest, index: "ManifestIndex") -> int:
         """The launch, its stages under these steps; its output as before."""
-        with log.redirect(_to_stderr):
+        with log.redirect(self._say):
             return self.launch(request, index, view=self.view, lead=self.steps)
+
+    def _say(self, line: str) -> None:
+        """A launch's line: a note while the view is up (a raw write would
+        scroll it and garble the frames), the terminal once it's handed back."""
+        if self.view.on:
+            self.note(line)
+        else:
+            self._spoken.append(line)
+            _to_stderr(line)
 
     def _warm(self) -> None:
         with log.redirect(self.note):

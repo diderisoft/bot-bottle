@@ -426,12 +426,15 @@ class Home:  # pylint: disable=too-many-instance-attributes
 
         args = argparse.Namespace(name=None, prompt=None, label=None, color=None, cwd=False)
         manifest = ManifestIndex.resolve(str(self.cwd), missing_ok=True)
-        with log.redirect(_to_stderr):
+        # A failed start's error comes back here as a note on this menu.
+        with log.redirect(self.note):
             try:
                 return StartView(self.view, args, manifest, settings_from_env(),
                                  launch=go, keys=self.keys, cwd=self.cwd).run()
             except SystemExit as e:
                 return e.code if isinstance(e.code, int) else 1
+            finally:
+                self.view.invalidate()
 
 
 def _to_stderr(line: str) -> None:

@@ -12,6 +12,7 @@ from bot_bottle.cli import screen
 from bot_bottle.cli.commands import home
 from bot_bottle.cli.commands.home import Bot, Home, Snapshot
 from bot_bottle.cli.screen import Screen
+from bot_bottle.lib import log
 
 
 class _Tty(io.StringIO):
@@ -77,6 +78,27 @@ class TestStrip(_Home):
         self.ran.clear()
         self.run_home(["enter"], _ready(services=False))
         self.assertEqual([("up", [])], self.ran)
+
+
+class TestAFailedStart(_Home):
+    def test_its_error_is_a_note_here_and_the_menu_redraws_in_full(self) -> None:
+        class FailingStart:
+            def __init__(self, *_: Any, **__: Any) -> None:
+                pass
+
+            def run(self) -> int:
+                log.die("launch: invalid bottle name 'x'")
+
+        def run(_name: str, _argv: list[str]) -> int:
+            return 0
+
+        h = Home(self.view, keys=lambda _t=None: "q", snapshot=_ready, run=run,
+                 start=lambda: 0)
+        with mock.patch("bot_bottle.cli.commands.guided_view.StartView", FailingStart), \
+             mock.patch("bot_bottle.manifest.ManifestIndex.resolve"):
+            self.assertEqual(1, h._start())  # pylint: disable=protected-access
+        self.assertIn("error: launch: invalid bottle name 'x'", h.notes)
+        self.assertTrue(self.view.resized())
 
 
 class TestEntries(_Home):

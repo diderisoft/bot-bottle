@@ -455,6 +455,11 @@ class Screen:  # pylint: disable=too-many-instance-attributes
             self.out.flush()
         self._previous = frame
 
+    def invalidate(self) -> None:
+        """Clear and redraw in full next time: something wrote to the
+        terminal outside the frames, so the diff can't be trusted."""
+        self._resized.set()
+
     def resized(self) -> bool:
         """Consume a pending resize (for callers drawing their own frames)."""
         if self._resized.is_set():
