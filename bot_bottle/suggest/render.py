@@ -134,7 +134,8 @@ def _compact_preview(proposal: Proposal, rows: list[dict[str, object]]) -> list[
     for row in rows:
         source = str(row.get("source") or "")
         if source == "_suggest":
-            lines.append(f"  {row['kind']!s:8s} {row['name']!s:30s} {row.get('detail', '')}  [{own}]")
+            lines.append(f"  {row['kind']!s:8s} {row['name']!s:30s} "
+                         f"{row.get('detail', '')}  [{own}]")
         else:
             kinds = counts.setdefault(source, {})
             kinds[str(row["kind"])] = kinds.get(str(row["kind"]), 0) + 1
