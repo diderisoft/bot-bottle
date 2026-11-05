@@ -134,15 +134,19 @@ def _host_library(host_root: Path, dirs: list[tuple[Path, bool]]) -> list[dict[s
             )
             try:
                 elems = bottle_elements([full_name], dirs)
-                elem_summary = [f"{r['kind']}:{r['name']}" for r in elems[:10]]
             except Exception:  # pylint: disable=broad-exception-caught
-                elem_summary = []
+                elems = []
+            elem_summary = [f"{r['kind']}:{r['name']}" for r in elems[:10]]
+            # What stacking it costs: every repo it grants, and its size.
+            repos = [str(r.get("detail") or r["name"]) for r in elems if r["kind"] == "repo"]
             forges, missing = library_facts(full_name, dirs, secrets)
             result.append({
                 "name": full_name,
                 "about": about,
                 "extends": extends,
                 "elements": elem_summary,
+                "element_count": len(elems),
+                "repos": repos,
                 "forges": forges,
                 "missing_secrets": missing,
             })

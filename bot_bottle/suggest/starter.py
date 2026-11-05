@@ -42,7 +42,12 @@ Rules:
 - Bias toward too little access; leave out anything uncertain.
 - Never propose inspect:false, never include secret values.
 - Grants only on connected forges listed in the input, with a bottle in
-  `bottles` whose `forges` declares that forge.
+  `bottles` whose `forges` declares that forge. Use the smallest bottle that
+  declares it (fewest `element_count`, usually the one named after the forge,
+  e.g. `gitea`), never a bigger bottle that extends it: everything a stacked
+  bottle grants (its `repos`, its egress) comes with it.
+- Stack a bottle for what the task needs from it, not to reach one thing it
+  happens to contain.
 - Never propose a bottle with `missing_secrets`: its launch fails.
 - Credentials name a secret from the secret names list and the egress route
   they are injected on (the route must also be in additions.egress).
