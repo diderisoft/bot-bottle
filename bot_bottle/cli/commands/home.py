@@ -218,11 +218,13 @@ class Home:  # pylint: disable=too-many-instance-attributes
             parts = ["host ready", self.snap.backend] + ([self.snap.console]
                                                          if self.snap.console else [])
             return [title, f"{self.style.green('✓')} {' · '.join(parts)}"]
-        lines = [title, f"{self.style.red('✗')} {' · '.join(missing)}"]
+        width = self.width()
+        status = screen.wrap(" · ".join(missing), width - 2)
+        lines = [title, f"{self.style.red('✗')} {status[0]}"] + [f"  {w}" for w in status[1:]]
         if self.snap.backend and not self.snap.backend_ready:
-            lines.append(self.style.dim(
-                f"  set it up with `{PROG} install --backend={self.snap.backend}` "
-                "(it prints the sudo lines to run)"))
+            hint = (f"set it up with `{PROG} install --backend={self.snap.backend}` "
+                    "(it prints the sudo lines to run)")
+            lines += [self.style.dim(f"  {w}") for w in screen.wrap(hint, width - 2)]
         return lines
 
     def items(self) -> list[tuple[str, str, str]]:
@@ -398,7 +400,8 @@ class Home:  # pylint: disable=too-many-instance-attributes
     def ask(self, body: list[str], prompt: str) -> str:
         text = ""
         while True:
-            self.draw(body + ["", f"{prompt} {self.style.accent('›')} {text}▌"],
+            self.draw(body + [""] + screen.input_lines(f"{prompt} {self.style.accent('›')} ",
+                                                       text, self.width()),
                       "enter save · esc back")
             key = self.keys(None)
             if key == "enter":

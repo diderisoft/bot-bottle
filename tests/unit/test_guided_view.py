@@ -208,6 +208,30 @@ class TestSuggesting(_View):
         self.assertIn("warming the architect…", self.frames())
 
 
+class TestLongTask(_View):
+    def test_a_long_task_wraps_and_keeps_the_bottle_still(self) -> None:
+        self.view = Screen(self.out, color=True)
+        frames: list[list[str]] = []
+        original = Screen.write_frame
+
+        def record(view: Screen, frame: list[str]) -> None:
+            frames.append(frame)
+            original(view, frame)
+
+        task = "triage the open issues on bot-bottle-dev and label each one " * 4
+        with mock.patch.object(Screen, "write_frame", record):
+            self.run_view([*task, "enter", "enter"], name="claude")
+        self.assertEqual(task.strip(), self.launched[0][0].prompt)
+        art = [screen.strip(row) for row in self.view.art]
+        starts = set()
+        for frame in frames:
+            for line in map(screen.strip, frame):
+                self.assertLessEqual(screen.cells(line), 120)  # nothing wraps on the terminal
+                if any(row.strip() and line.endswith(row) for row in art):
+                    starts.add(screen.cells(line) - screen.ART_WIDTH)
+        self.assertEqual(1, len(starts))  # the bottle never slid
+
+
 class TestSetupAndQuit(_View):
     def test_no_agents_offers_setup_inline(self) -> None:
         for path in (self.root / "agents").iterdir():

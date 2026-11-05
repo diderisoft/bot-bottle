@@ -11,8 +11,8 @@ from unittest import mock
 
 from bot_bottle.cli import progress, screen
 from bot_bottle.cli.screen import (
-    CURRENT, DONE, PENDING, RUNNING, Screen, Step, Style, compose, decode_key, edit_line,
-    menu_lines, step_lines, strip,
+    CURRENT, CURSOR, DONE, PENDING, RUNNING, Screen, Step, Style, cells, clip, compose,
+    decode_key, edit_line, fit, input_lines, menu_lines, step_lines, strip,
 )
 
 PLAIN = Style(color=False)
@@ -50,6 +50,54 @@ class TestCompose(unittest.TestCase):
     def test_without_art_there_is_no_bottle(self) -> None:
         frame = compose(["a"], [], columns=120, rows=20, left_width=40)
         self.assertEqual(["a"], [line.strip() for line in frame if line.strip()])
+
+
+class TestWidth(unittest.TestCase):
+    def test_wide_characters_take_two_columns(self) -> None:
+        self.assertEqual(4, cells("修正"))
+        self.assertEqual(1, cells("e\u0301"))  # a combining accent takes none
+        self.assertEqual("修…", fit("修正する", 4))
+
+    def test_clip_keeps_escapes_whole_and_resets(self) -> None:
+        styled = Style(color=True).green("abcdef")
+        cut = clip(styled, 3)
+        self.assertEqual("abc", strip(cut))
+        self.assertTrue(cut.startswith("\x1b[32m") and cut.endswith(screen.RESET))
+        self.assertEqual(styled, clip(styled, 6))
+
+
+class TestInputLines(unittest.TestCase):
+    def test_a_long_line_wraps_under_itself_within_the_width(self) -> None:
+        rows = input_lines("> ", "fix the flaky test in tests/test_api.py please", 20)
+        self.assertGreater(len(rows), 1)
+        self.assertTrue(all(cells(strip(r)) <= 20 for r in rows))
+        self.assertTrue(all(r.startswith("  ") for r in rows[1:]))
+        self.assertEqual("fix the flaky test in tests/test_api.py please" + CURSOR,
+                         "".join(r[2:] for r in rows))
+
+    def test_a_typed_space_moves_the_cursor(self) -> None:
+        self.assertEqual(["> fix " + CURSOR], input_lines("> ", "fix ", 20))
+
+    def test_a_word_longer_than_a_row_breaks(self) -> None:
+        rows = input_lines("> ", "x" * 50, 12)
+        self.assertTrue(all(cells(r) <= 12 for r in rows))
+        self.assertEqual("x" * 50 + CURSOR, "".join(r[2:] for r in rows))
+
+    def test_past_max_rows_the_cursor_stays_in_view(self) -> None:
+        rows = input_lines("> ", "word " * 40, 12, max_rows=3)
+        self.assertEqual(3, len(rows))
+        self.assertIn("…", rows[0])
+        self.assertTrue(rows[-1].endswith(CURSOR))
+
+
+class TestComposeClips(unittest.TestCase):
+    def test_a_long_line_neither_moves_the_bottle_nor_overflows(self) -> None:
+        art = ["#" * screen.ART_WIDTH] * 3
+        frame = compose(["short", "y" * 200, Style(color=True).red("z" * 200)], art,
+                        columns=120, rows=30, left_width=40)
+        rows = [strip(line) for line in frame if "#" in line]
+        self.assertEqual(1, len({line.index("#") for line in rows}))
+        self.assertTrue(all(cells(strip(line)) <= 120 for line in frame))
 
 
 class TestSteps(unittest.TestCase):

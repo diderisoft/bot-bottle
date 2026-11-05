@@ -112,6 +112,10 @@ class StartView:  # pylint: disable=too-many-instance-attributes
         art = screen.GAP + screen.ART_WIDTH if self.view.art else 0
         return max(min(72, columns - 2 * screen.MARGIN - art), 30)
 
+    def body_width(self) -> int:
+        """Room for the current step's body, under its 4-column indent."""
+        return self.width() - 4
+
     def draw(self, footer: str = "") -> None:
         lines = screen.step_lines(self.steps, width=self.width(), style=self.style,
                                   frame=self.view.frame)
@@ -269,7 +273,7 @@ class StartView:  # pylint: disable=too-many-instance-attributes
         step = self.current("Task")
         hint = f"enter suggest a bottle · empty: just open {agent} in {DEFAULT_BOTTLE} · esc quit"
         while True:
-            step.body = [f"{self.style.accent('›')} {text}▌"]
+            step.body = screen.input_lines(f"{self.style.accent('›')} ", text, self.body_width())
             self.draw(hint)
             key = self.key()
             if key == "enter":
@@ -354,7 +358,8 @@ class StartView:  # pylint: disable=too-many-instance-attributes
         """One line typed under `step`'s body; "" on esc."""
         text, body = "", list(step.body)
         while True:
-            step.body = body + ["", f"{prompt} {self.style.accent('›')} {text}▌"]
+            step.body = body + [""] + screen.input_lines(
+                f"{prompt} {self.style.accent('›')} ", text, self.body_width())
             self.draw("enter save · esc back")
             key = self.key()
             if key == "enter":

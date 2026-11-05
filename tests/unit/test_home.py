@@ -66,9 +66,10 @@ class TestStrip(_Home):
     def test_what_is_missing_and_the_backend_command(self) -> None:
         self.run_home([], _ready(agents=[], services=False, backend_ready=False))
         text = self.frames()
+        flat = " ".join(text.split())  # the strip wraps to its column
         self.assertIn("✗ no agents set up · services not running · backend firecracker not ready",
-                      text)
-        self.assertIn("install --backend=firecracker", text)
+                      flat)
+        self.assertIn("install --backend=firecracker", flat)
 
     def test_the_cursor_starts_on_the_fix(self) -> None:
         self.run_home(["enter"], _ready(agents=[]))

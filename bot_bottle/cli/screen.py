@@ -21,6 +21,7 @@ from __future__ import annotations
 import atexit
 import contextlib
 import os
+import re
 import select
 import shutil
 import signal
@@ -29,6 +30,7 @@ import termios
 import threading
 import time
 import tty
+import unicodedata
 from collections.abc import Generator
 from dataclasses import dataclass, field
 from typing import TextIO
@@ -36,6 +38,7 @@ from typing import TextIO
 from . import logo
 
 RESET = "\x1b[0m"
+CURSOR = "▌"
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 # Alternate screen and hidden cursor, and back. DEC 2026 synchronized output
 # shows whole frames.
@@ -105,19 +108,19 @@ def logo_rows(*, truecolor: bool, cursor: bool = True) -> list[str]:
         art.append("." * len(art[0]))
     rows: list[str] = []
     for top, bottom in zip(art[0::2], art[1::2]):
-        cells: list[str] = []
+        pixels: list[str] = []
         for t, b in zip(top, bottom):
             tc, bc = logo.PALETTE.get(t), logo.PALETTE.get(b)
             if tc and bc:
-                cells.append(f"{_sgr(tc, background=False, truecolor=truecolor)}"
+                pixels.append(f"{_sgr(tc, background=False, truecolor=truecolor)}"
                              f"{_sgr(bc, background=True, truecolor=truecolor)}▀{RESET}")
             elif tc:
-                cells.append(f"{_sgr(tc, background=False, truecolor=truecolor)}▀{RESET}")
+                pixels.append(f"{_sgr(tc, background=False, truecolor=truecolor)}▀{RESET}")
             elif bc:
-                cells.append(f"{_sgr(bc, background=False, truecolor=truecolor)}▄{RESET}")
+                pixels.append(f"{_sgr(bc, background=False, truecolor=truecolor)}▄{RESET}")
             else:
-                cells.append(" ")
-        rows.append("".join(cells))
+                pixels.append(" ")
+        rows.append("".join(pixels))
     return rows
 
 
@@ -143,11 +146,95 @@ def strip(text: str) -> str:
     return "".join(out)
 
 
+def _char_cells(ch: str) -> int:
+    """Columns one character takes: 2 for wide (CJK, emoji), 0 for combining
+    marks and controls, else 1."""
+    if unicodedata.combining(ch) or not ch.isprintable():
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def cells(text: str) -> int:
+    """Columns plain `text` takes on a terminal."""
+    return sum(_char_cells(ch) for ch in text)
+
+
+def _cut(text: str, width: int) -> str:
+    """Plain `text`'s longest prefix within `width` columns."""
+    out, used = [], 0
+    for ch in text:
+        used += _char_cells(ch)
+        if used > width:
+            break
+        out.append(ch)
+    return "".join(out)
+
+
 def fit(text: str, width: int) -> str:
-    """Plain `text` cut to `width` with an ellipsis."""
+    """Plain `text` cut to `width` columns with an ellipsis."""
     if width <= 0:
         return ""
-    return text if len(text) <= width else text[:max(width - 1, 0)] + "…"
+    return text if cells(text) <= width else _cut(text, width - 1) + "…"
+
+
+def clip(text: str, width: int) -> str:
+    """Styled `text` cut to `width` columns, its escapes kept whole, and reset
+    when cut, so a long line neither wraps on the terminal nor leaks a color."""
+    if cells(strip(text)) <= width:
+        return text
+    out, used, i, styled = [], 0, 0, False
+    while i < len(text):
+        if text[i] == "\x1b":
+            j = i + 1
+            if j < len(text) and text[j] == "[":
+                j += 1
+                while j < len(text) and not text[j].isalpha():
+                    j += 1
+            out.append(text[i:j + 1])
+            styled = True
+            i = j + 1
+            continue
+        used += _char_cells(text[i])
+        if used > width:
+            break
+        out.append(text[i])
+        i += 1
+    return "".join(out) + (RESET if styled else "")
+
+
+def input_lines(lead: str, text: str, width: int, *, max_rows: int = 6) -> list[str]:
+    """A line being typed after the styled `lead`, with a cursor, wrapped
+    within `width` columns under itself; past `max_rows` the last rows, so
+    the cursor stays in view."""
+    indent = cells(strip(lead))
+    room = max(width - indent, 1)
+    rows: list[str] = []
+    line, used = "", 0
+    for word in _words(text + CURSOR):
+        size_ = cells(word)
+        if used + size_ > room and line:
+            rows.append(line)
+            line, used = "", 0
+            word = word.lstrip(" ") if word.strip() else word
+            size_ = cells(word)
+        while size_ > room:  # a word longer than a row breaks
+            head = _cut(word, room) or word[0]
+            rows.append(head)
+            word = word[len(head):]
+            size_ = cells(word)
+        line += word
+        used += size_
+    rows.append(line)
+    if len(rows) > max_rows:
+        rows = rows[-max_rows:]
+        rows[0] = "…" + rows[0][1:]
+    pad = " " * indent
+    return [clip((lead if n == 0 else pad) + row, width) for n, row in enumerate(rows)]
+
+
+def _words(text: str) -> list[str]:
+    """`text` split after each run of spaces, so typed spaces stay."""
+    return re.findall(r"[^ ]+ *| +", text)
 
 
 def wrap(text: str, width: int) -> list[str]:
@@ -263,9 +350,10 @@ def compose(left: list[str], art: list[str], *, columns: int, rows: int,  # pyli
     lines = [""] * max((usable_rows - height) // 2, 1)
     for i in range(height):
         text = left[i - top] if 0 <= i - top < len(left) else ""
+        text = clip(text, width)
         line = pad + text
         if art and i < len(art):
-            line += " " * max(width - len(strip(text)) + GAP, GAP) + art[i]
+            line += " " * (width - cells(strip(text)) + GAP) + art[i]
         lines.append(line)
     if footer:
         lines += [""] * max(rows - 1 - len(lines), 0)
@@ -447,7 +535,7 @@ def edit_line(text: str, key: str) -> str:
 
 
 __all__ = [
-    "CURRENT", "DONE", "FAILED", "PENDING", "RUNNING", "Screen", "Step", "Style", "compose",
-    "decode_key", "edit_line", "fit", "keys_mode", "logo_rows", "menu_lines", "read_key",
-    "step_lines", "strip", "usable", "wants_color", "wrap",
+    "CURRENT", "CURSOR", "DONE", "FAILED", "PENDING", "RUNNING", "Screen", "Step", "Style",
+    "cells", "clip", "compose", "decode_key", "edit_line", "fit", "input_lines", "keys_mode",
+    "logo_rows", "menu_lines", "read_key", "step_lines", "strip", "usable", "wants_color", "wrap",
 ]
