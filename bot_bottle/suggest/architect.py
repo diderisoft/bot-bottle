@@ -1,17 +1,17 @@
-"""bottle-architect: the `bottle-architect` agent, run on the host with no
-tools, produces a typed proposal (PRD 0117).
+"""bottle-architect: the `bottle-architect` agent, run in its own bottle,
+produces a typed proposal (PRD 0117).
 
 The agent is the file `setup` writes, `~/.bot-bottle/agents/bottle-architect.md`:
 its body is the system prompt, `agent_provider.harness` picks the harness and
 `model:` the model. Only the host's agent is read; a project can't replace it.
 
-It runs as a print-mode call with no tools, no MCP servers and no settings
-files (so no hooks), from an empty working directory and with a timeout, so
-it can read nothing and do nothing but answer; the answer is parsed and then
-validated against the host's bottles. A harness that can't run that way is
-refused rather than run with tools. Only claude can, for now: `codex exec` is
-an agent with a shell and other tools that can't all be turned off, and pi
-has no verified tool-less mode.
+It runs in the `bottle-architect` bottle (`suggest/bottles/`): its model API
+and nothing else, no repos, no secrets, an empty workspace. That bottle, not
+a tool-less mode, is what contains it, so any harness can be the architect.
+The host controller keeps it warm (`control/hostctl/architect_bottle.py`);
+each suggestion is a fresh headless call, so tasks never share a
+conversation. Its answer is parsed here and then validated against the
+host's bottles.
 
 Input to the model: the task, the host's bottle library (names, about text,
 extends, elements), project metadata (origin URL, the project bottle's name,
@@ -26,9 +26,7 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
-import subprocess
-import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -42,13 +40,9 @@ TIMEOUT_SECONDS = 120
 # A model name goes on the harness's command line; keep it to a plain id.
 _MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@-]{0,99}")
 
-# Why each harness that can't run with no tools is refused.
-_REFUSED = {
-    "codex": ("`codex exec` is an agent with a shell and other tools (apply_patch, "
-              "web search, browser and computer use) that can't all be turned off, "
-              "so it would run with tools on the host"),
-    "pi": "pi has no verified way to run with no tools on the host",
-}
+# Runs the architect on a prompt and returns its answer's text; the host
+# controller's warm bottle is the one runner (`ArchitectBottle.run`).
+Runner = Callable[["Architect", str], str]
 
 
 class ArchitectError(Exception):
@@ -66,8 +60,8 @@ class Architect:
 
 
 def load_architect(host_root: Path) -> Architect:
-    """The host's `bottle-architect` agent. ArchitectError when it's missing,
-    doesn't load, or names a harness that can't run with no tools."""
+    """The host's `bottle-architect` agent. ArchitectError when it's missing
+    or doesn't load (an unknown harness doesn't load)."""
     # pylint: disable=import-outside-toplevel
     from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
     from ..manifest.agent import ManifestAgent
@@ -93,10 +87,12 @@ def load_architect(host_root: Path) -> Architect:
     if not isinstance(model, str) or (model and not _MODEL_RE.fullmatch(model)):
         raise ArchitectError(f"{path}: model must be a plain model name")
     harness = agent.agent_provider.harness
-    if harness not in _RUNNERS:
-        why = _REFUSED.get(harness, "only a harness that runs with no tools can be used")
-        raise ArchitectError(f"harness {harness!r} can't run as {ARCHITECT_AGENT}: "
-                             f"{why}. Set `agent_provider: claude` in {path}")
+    try:
+        # pylint: disable-next=import-outside-toplevel
+        from ..agent_provider import get_provider
+        get_provider(harness)  # a built-in harness or a user plugin
+    except ValueError as e:
+        raise ArchitectError(f"{path} doesn't load: {e}") from e
     return Architect(path=path, prompt=agent.prompt, harness=harness, model=model)
 
 
@@ -224,40 +220,6 @@ def _build_prompt(
     return "\n".join(sections)
 
 
-# Print mode with no built-in tools, no MCP servers, no settings files and
-# no saved session.
-CLAUDE_ARGS = ("--print", "--tools", "", "--strict-mcp-config", "--setting-sources", "",
-               "--no-session-persistence")
-
-
-def _run_claude(architect: Architect, prompt: str) -> str:
-    """Run `claude` with no tools, from an empty directory, the prompt on
-    stdin, and return its stdout. ArchitectError if it isn't installed,
-    fails or times out."""
-    claude = shutil.which("claude")
-    if not claude:
-        raise ArchitectError("claude isn't installed on this host")
-    argv = [claude, *CLAUDE_ARGS, "--system-prompt", architect.prompt]
-    if architect.model:
-        argv += ["--model", architect.model]
-    try:
-        with tempfile.TemporaryDirectory(prefix="bottle-architect.") as empty:
-            result = subprocess.run(argv, input=prompt, capture_output=True, text=True,
-                                    timeout=TIMEOUT_SECONDS, check=False, cwd=empty)
-    except subprocess.TimeoutExpired as e:
-        raise ArchitectError(f"claude didn't answer within {TIMEOUT_SECONDS}s") from e
-    except OSError as e:
-        raise ArchitectError(f"claude didn't run: {e}") from e
-    if result.returncode != 0 or not result.stdout.strip():
-        raise ArchitectError(f"claude failed (exit {result.returncode}); "
-                             "is it logged in on this host?")
-    return result.stdout.strip()
-
-
-# The harnesses that can run with no tools, and how.
-_RUNNERS = {"claude": _run_claude}
-
-
 def _extract_json(text: str) -> str | None:
     """Extract the first JSON object from `text` (the model may prefix prose)."""
     start = text.find("{")
@@ -309,11 +271,13 @@ def architect_suggest(
     task: str,
     cwd: Path | None,
     *,
+    run: Runner,
     host_root: Path | None = None,
 ) -> Proposal:
     """The host's `bottle-architect` agent's proposal for `task`, not yet
     validated. `cwd` is the project directory, or None when there's none to
-    look at. ArchitectError when the architect can't answer."""
+    look at; `run` asks the architect (its warm bottle). ArchitectError when
+    the architect can't answer."""
     if host_root is None:
         host_root = bot_bottle_root()
     architect = load_architect(host_root)
@@ -352,12 +316,12 @@ def architect_suggest(
         pass
 
     prompt = _build_prompt(task, library, project_meta, forges, secret_names)
-    raw = _RUNNERS[architect.harness](architect, prompt)
+    raw = run(architect, prompt)
     proposal = _parse_and_repair(raw)
     if proposal is None:
         raise ArchitectError("its answer wasn't a proposal")
     return proposal
 
 
-__all__ = ["CLAUDE_ARGS", "TIMEOUT_SECONDS", "Architect", "ArchitectError",
+__all__ = ["TIMEOUT_SECONDS", "Architect", "ArchitectError", "Runner",
            "architect_suggest", "load_architect"]

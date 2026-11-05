@@ -2,7 +2,7 @@
 
 `bottle_suggest` {task, cwd?} starts a job and answers at once: the suggester
 (`suggest.flow`, the same flow `bot-bottle bottles suggest` runs:
-`bottle-architect` under the host's login, the rules path when it can't
+`bottle-architect` in its warm bottle, the rules path when it can't
 answer) can take a minute, and the link mustn't wait on it. `cwd` is the
 project directory on this host, when the console has one; without it the
 proposal says there was no project to look at. `bottle_suggest_status` {job} follows it to the
@@ -50,9 +50,12 @@ _lock = threading.Lock()
 
 
 def _suggest(task: str, cwd: Path | None) -> Proposal:
-    """The shared suggestion flow, as `bot-bottle bottles suggest` runs it."""
-    from ...suggest.flow import suggest  # pylint: disable=import-outside-toplevel
-    return suggest(task, cwd)
+    """The shared suggestion flow, as `bot-bottle bottles suggest` runs it,
+    asking this host controller's warm architect."""
+    # pylint: disable=import-outside-toplevel
+    from ...suggest.flow import suggest
+    from .architect_bottle import runner
+    return suggest(task, cwd, run=runner())
 
 
 def project_dir(raw: object, *, home: Path | None = None) -> Path | None:

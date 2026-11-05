@@ -95,11 +95,17 @@ A proposal is a JSON object with these fields:
 ## Paths
 
 `bottle-architect` answers first. When it can't, the rules path answers and
-the proposal's notes say why: there's no agent file, its harness can't run
-with no tools, `claude` isn't installed or logged in, it failed or timed out,
-or its answer wasn't a proposal. `--rules` skips the architect. Either way the
+the proposal's notes say why: there's no agent file, the host controller isn't
+reachable, its bottle didn't boot, the harness isn't logged in on this host,
+it failed or timed out, or its answer wasn't a proposal. `--rules` skips the
+architect, and runs locally without the host controller. Either way the
 proposal is validated against the bottles the project sees, and `source` says
 which path produced it.
+
+The suggestion runs in the host controller, for every caller: `bot-bottle
+bottles suggest` and `bot-bottle start` send the task there (`POST /suggest`),
+and the console's launch page asks over the link. So all three get the same
+flow and share the architect's warm bottle.
 
 Without a project directory (the console when it doesn't send one), the
 project's bottle, origin and lockfiles aren't considered, and the proposal
@@ -117,12 +123,29 @@ says so. The host's home is never used as the project.
 Edit the file to change any of them. Only the host's agent is read, never a
 project's.
 
-It runs on the host, under your own login, as a print-mode call that can only
-answer: no tools, no MCP servers, no settings files (so no hooks), no saved
-session, from an empty working directory, with a 120-second timeout. For
-claude that's `claude --print --tools "" --strict-mcp-config
---setting-sources "" --no-session-persistence --system-prompt <prompt>
-[--model <model>]`, with the input on stdin.
+It runs in its own bottle, `bottle-architect` (built in, never listed in
+the library): its model API and nothing else, with the key the gateway
+injects, no repos, no secrets, no supervise tools and an empty workspace.
+That bottle is what contains it, so any harness can be the architect: the
+call inside it is the harness's ordinary headless mode (`claude -p`, codex,
+pi), with the agent file's body as its prompt file and `--model <model>` when
+the file sets one, under a 120-second timeout.
+
+**Warm.** Booting a bottle takes far longer than the model call, so the host
+controller keeps the architect's bottle running. `bot-bottle start` asks it to
+boot as soon as it starts (`POST /architect/warm`), so the boot overlaps
+choosing the harness and typing the task; the first suggestion otherwise
+boots it. It stays up for `BOT_BOTTLE_ARCHITECT_IDLE` seconds (default 600;
+`0` stops it after each suggestion) after its last one, so back-to-back
+starts and console suggestions reuse it. Each suggestion is a fresh headless
+call in it, never one long conversation, so tasks don't bleed into each
+other. The prompt's static part (the agent's prompt) comes first, which
+claude's and codex's automatic prompt caching reuse across calls.
+
+Measured on a Firecracker host (claude, its default model): about 10–13 s
+for the old host-side call; in the warm bottle, 7–8 s per suggestion; a cold
+boot first adds about 26 s with cached images (80 s when the images have to
+be built).
 
 The input is:
 
@@ -135,14 +158,10 @@ The input is:
 
 The answer is parsed as a proposal and validated like any other.
 
-**Harnesses.** Only a harness that can run with no tools is used; any other is
-refused, with a note saying why, rather than run with a shell on the host.
-
-- `claude` is supported.
-- `codex` is refused: `codex exec` is an agent with a shell and other tools
-  (apply_patch, web search, browser and computer use) that can't all be turned
-  off.
-- `pi` is refused: it has no verified tool-less mode.
+**Harnesses.** Any harness bot-bottle runs (claude, codex, pi, or a user
+plugin) can be the architect; an unknown one is a note and the rules answer.
+If the agent file switches harness while the bottle is warm, that suggestion
+falls back to the rules and the next one boots a bottle with the new harness.
 
 ### Rules (`--rules`, and the fallback)
 

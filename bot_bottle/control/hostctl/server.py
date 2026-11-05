@@ -17,11 +17,11 @@ from ...contract.firehose import FIREHOSE_PATH, FIREHOSE_STREAM_PATH
 from ...contract.hostctl import (
     AUDIT_APPEND_PATH, AUDIT_PRODUCERS, AUTH_HEADER, AUTH_SCHEME, BOTTLES_PATH, HOST_CONTROL,
     JOBS_PATH, LIVE_BOTTLES_PATH, ORCHESTRATOR_PATH, ROLE_ORCHESTRATOR, SESSIONS_PATH,
-    STATUS_PATH, LaunchRequest, Settings, status_body,
+    STATUS_PATH, ARCHITECT_WARM_PATH, SUGGEST_PATH, LaunchRequest, Settings, status_body,
 )
 from ...lib import websocket as ws
 from ...lib.log import debug
-from . import orchestrator
+from . import orchestrator, suggest_routes
 from .attach import Viewer
 from .audit_events import AuditUnavailable, digest_request
 from .audit_journal import AuditRedactionError
@@ -184,6 +184,40 @@ class _Handler(BaseHTTPRequestHandler):
                                 lambda: server.bottles.launch(request, role))
         self._send(202, {"job": job.id})
 
+    def _suggest(self, server: HostControlServer) -> None:
+        """A bottle suggestion for the CLI, run here so the architect's warm
+        bottle serves it (PRD 0117)."""
+        role = self._allowed((ROLE_CLI,))
+        if role is None:
+            return
+        try:
+            body = self._json_body()
+            task, rules = body.get("task"), body.get("rules", False)
+            if not isinstance(task, str) or not task.strip():
+                raise ValueError("task must be a non-empty string")
+            if not isinstance(rules, bool):
+                raise ValueError("rules must be true or false")
+            settings = Settings.from_json(body.get("settings"))
+            cwd = suggest_routes.cwd_of(body.get("cwd"))
+        except ValueError as e:
+            self._send(400, {"error": str(e)})
+            return
+        job = server.jobs.start("bottle.suggest", role,
+                                lambda: suggest_routes.suggest(task, cwd, rules, settings))
+        self._send(202, {"job": job.id})
+
+    def _architect_warm(self, server: HostControlServer) -> None:
+        """Boot the architect's bottle in the background, if it's down."""
+        del server
+        if self._allowed((ROLE_CLI,)) is None:
+            return
+        try:
+            settings = Settings.from_json(self._json_body().get("settings"))
+        except ValueError as e:
+            self._send(400, {"error": str(e)})
+            return
+        self._send(202, suggest_routes.warm(settings))
+
     def _audit_append(self, server: HostControlServer) -> None:
         """Write one event the orchestrator relays, its own or the gateway's."""
         if self._allowed((ROLE_ORCHESTRATOR,)) is None:
@@ -250,7 +284,8 @@ class _Handler(BaseHTTPRequestHandler):
         server = cast(HostControlServer, self.server)
         path = urlsplit(self.path).path
         route = {BOTTLES_PATH: self._launch, AUDIT_APPEND_PATH: self._audit_append,
-                 FIREHOSE_PATH: self._firehose_publish}.get(path)
+                 FIREHOSE_PATH: self._firehose_publish, SUGGEST_PATH: self._suggest,
+                 ARCHITECT_WARM_PATH: self._architect_warm}.get(path)
         if route is not None:
             route(server)
             return

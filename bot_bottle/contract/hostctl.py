@@ -51,6 +51,10 @@ LIVE_BOTTLES_PATH = "/bottles/live"
 # POST one audit event, `{"producer": ..., "event": {...}}`. Only the
 # orchestrator calls it, relaying the gateway's events too.
 AUDIT_APPEND_PATH = "/audit/append"
+# POST {task, cwd?, rules?, settings}: a job whose result is a bottle proposal
+# (PRD 0117). POST {settings} to the second boots the architect's warm bottle.
+SUGGEST_PATH = "/suggest"
+ARCHITECT_WARM_PATH = "/architect/warm"
 AUDIT_PRODUCERS = frozenset({"orchestrator", "egress", "git-gate", "supervise"})
 
 # A job `error` with this `code` needs a yes/no: resend with `assume_yes`.
@@ -357,6 +361,7 @@ def bearer(token: str) -> dict[str, str]:
 
 __all__ = [
     "AUDIT_APPEND_PATH", "AUDIT_PRODUCERS",
+    "ARCHITECT_WARM_PATH",
     "AUTH_HEADER", "AUTH_SCHEME", "BOTTLES_PATH", "BOTTLE_COLORS", "CONFIRM_ERROR",
     "DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS", "DEFAULT_DOCKER_AGENT_SUBNETS",
     "DOCKER_AGENT_SUBNET_PREFIX", "IMAGE_POLICIES", "LAUNCH_CLI_ONLY",
@@ -364,6 +369,7 @@ __all__ = [
     "DEFAULT_EGRESS_PORT", "DEFAULT_GATEWAY_IMAGE", "DEFAULT_ORCHESTRATOR_IMAGE", "GUEST_PORT",
     "HOSTCTL_URL_ENV",
     "HOST_CONTROL", "InfraSettings", "JOBS_PATH", "LIVE_BOTTLES_PATH", "ORCHESTRATOR_PATH", "OperationSettings", "PORT_ENV",
+    "SUGGEST_PATH",
     "ORIGIN_CONSOLE", "ORIGIN_TERMINAL",
     "ROLE_ORCHESTRATOR", "SERVICE_NAME", "SESSIONS_PATH", "STATUS_PATH", "Settings", "bearer", "status_body",
 ]

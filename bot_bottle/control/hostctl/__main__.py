@@ -17,12 +17,14 @@ from ...contract.auth import ROLE_GATEWAY
 from ...contract.hostctl import GUEST_PORT, HOST_CONTROL, PORT_ENV, ROLE_ORCHESTRATOR
 from ...control.lifecycle import Orchestrator
 from ...lib.log import debug, info, warn
+from ...paths import bot_bottle_root
 from ...trust_domain import HostControlProvisioning, HostLink, signing_key
 from .build import current_build_id
 from .runner import HostControlState, clear_state, leave_callers_directory, write_state
 from . import budget, localsock
 from .github_git_tokens import GitTokenRenewer
 from .audit_events import HostAudit
+from .architect_bottle import ArchitectBottle, install as install_architect
 from .audit_forward import AuditForwarder
 from .bottles import BottleService
 from .firehose import FirehoseHub
@@ -140,6 +142,9 @@ def main() -> int:
     GitTokenRenewer(bottles).start()
     # Measures bot-bottle's storage for the budget, off any launch's path.
     budget.METER.start()
+    # The bottle architect's warm bottle, booted on the first suggestion.
+    architect = ArchitectBottle(host_root=bot_bottle_root(), audit=audit)
+    install_architect(architect)
     # Deletes ended sessions' transcript copies past the host's retention.
     retention = RetentionSweeper(audit)
     retention.start()
@@ -182,6 +187,7 @@ def main() -> int:
         requests.stop()
         blocks.stop()
         retention.stop()
+        architect.stop()
         if forwarder is not None:
             forwarder.close()
         firehose.close()

@@ -365,13 +365,28 @@ workspace's patch since launch (the patch teardown saves), and keeps it as
 changed, size and SHA-256. Each is audited as `snapshot.taken`. A workspace
 that isn't a git copy can't be snapshotted. Restoring is not built yet.
 
-## Bottle suggestions for the console
+## Bottle suggestions
+
+Every bottle suggestion runs here, in the host controller, which keeps the
+bottle architect's own bottle warm (`architect_bottle.py`;
+[bottles-suggest.md](bottles-suggest.md#bottle-architect-default)). The CLI
+asks over HTTP, `cli` role only: `POST /suggest` (`task`, optional `cwd`,
+`rules`, `settings`) starts a `bottle.suggest` job whose `result` is
+`{"proposal": ...}`, and `POST /architect/warm` (`settings`) boots the warm
+bottle in the background and answers its `state` (`booting`, `ready`,
+`down`, or `unavailable`). `bot-bottle start` sends the second as soon as it
+starts. The bottle stays up `BOT_BOTTLE_ARCHITECT_IDLE` seconds (default
+600) after its last suggestion, and the host controller tears it down when it
+stops. Its start and stop are audited like any bottle's, with agent
+`bottle-architect`.
+
+### For the console
 
 The console's launch page asks the host to propose a bottle for a task (PRD
 0117, design repo; `suggest_link.py`). `bottle_suggest` (`task`, optional
 `cwd`) -> `bottle_suggestion` (`job`, `state` `running`, or `error`) starts
-the same flow as `bot-bottle bottles suggest`: `bottle-architect` under the
-host's login, falling back to the rules path, validated against the host's
+the same flow as `bot-bottle bottles suggest`: `bottle-architect` in its
+warm bottle, falling back to the rules path, validated against the host's
 bottles ([bottles-suggest.md](bottles-suggest.md)). `cwd` is a project
 directory on this host (an existing directory under the user's home, not the
 home itself); with it the proposal sees the project's bottle, origin and

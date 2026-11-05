@@ -139,6 +139,9 @@ class ManifestIndex:
     # Manifest root, set by from_md_dirs.
     home_md: Path | None = field(default=None)
     cwd_md: Path | None = field(default=None)
+    # Bottles only this launch sees, searched first: the architect's own
+    # bottle, or a run's unsaved one. Never part of the library.
+    extra_bottle_dirs: tuple[Path, ...] = field(default=())
 
     @classmethod
     def resolve(cls, cwd: str, *, missing_ok: bool = False) -> "ManifestIndex":
@@ -215,7 +218,8 @@ class ManifestIndex:
         """Bottle directories in precedence order, as `(directory,
         is_project)`."""
         assert self.home_md is not None
-        dirs = [(self.home_md / "bottles", False)]
+        dirs = [(d, False) for d in self.extra_bottle_dirs]
+        dirs.append((self.home_md / "bottles", False))
         if self.cwd_md is not None:
             dirs.append((self.cwd_md / "bottles", True))
         dirs.append((BUILTIN_BOTTLES_DIR, False))

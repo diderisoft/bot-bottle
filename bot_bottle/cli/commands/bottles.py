@@ -113,11 +113,13 @@ def _cmd_suggest(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     cwd = Path(args.cwd) if args.cwd else Path(os.getcwd())
-    # pylint: disable-next=import-outside-toplevel
-    from ...suggest.flow import bottle_dirs, suggest
-    from ...paths import bot_bottle_root  # pylint: disable=import-outside-toplevel
+    # pylint: disable=import-outside-toplevel
+    from ...paths import bot_bottle_root
+    from ...suggest.flow import bottle_dirs
+    from ..settings import settings_from_env
+    from ..suggest_client import suggest
     dirs = bottle_dirs(cwd, bot_bottle_root())
-    validated = suggest(args.task, cwd, rules=args.rules)
+    validated = suggest(args.task, cwd, settings=settings_from_env(), rules=args.rules)
 
     print(render_proposal(validated, dirs, json_output=args.json))
 

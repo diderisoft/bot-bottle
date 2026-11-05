@@ -88,7 +88,7 @@ class Setup:
     # --- providers ---
 
     def run(self) -> int:
-        any_logged_in = False
+        ready: list[str] = []  # each harness's starter agent, in order
         for name in PROVIDERS:
             provider = get_provider(name)
             detection = provider.detect_host(self.host_env)
@@ -104,20 +104,20 @@ class Setup:
                 continue
             self.say(f"{name}: {detection.login_location or 'ready'}")
             # The agent carries the provider, so pi's model refresh rewrites it.
-            self.write("agents", name, provider.create_default_agent_manifest(detection),
-                       replace=name == "pi" and self.refresh_model)
-            any_logged_in = True
-        if any_logged_in:
-            self._write_bottle_architect()
+            agent = provider.create_default_agent_manifest(detection)
+            self.write("agents", name, agent, replace=name == "pi" and self.refresh_model)
+            ready.append(agent)
+        if ready:
+            self._write_bottle_architect(ready[0])
         return 0
 
-    def _write_bottle_architect(self) -> None:
-        """Write the bottle-architect agent starter when at least one harness is
-        logged in. The suggester reads this file for its prompt, harness and
-        model; it runs claude with no tools."""
+    def _write_bottle_architect(self, agent: str) -> None:
+        """Write the bottle-architect agent starter on the harness of `agent`,
+        the first one set up here. The suggester reads this file for its
+        prompt, harness and model, and runs it in its own bottle."""
         # pylint: disable-next=import-outside-toplevel
-        from ...suggest.starter import ARCHITECT_AGENT, ARCHITECT_STARTER
-        self.write("agents", ARCHITECT_AGENT, ARCHITECT_STARTER)
+        from ...suggest.starter import ARCHITECT_AGENT, starter_for
+        self.write("agents", ARCHITECT_AGENT, starter_for(agent))
 
     def pi_detection(  # pylint: disable=too-many-return-statements  # one per outcome
             self, detection: HostDetection) -> HostDetection | None:

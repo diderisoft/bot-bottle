@@ -7,6 +7,11 @@ proposal), the rules path does, and the proposal says why. Either way the
 proposal is validated against the bottles the project sees and carries
 `source` (`architect` or `rules`). `rules=True` skips the architect: the
 offline, deterministic path.
+
+The architect runs in its own bottle, which the host controller keeps warm
+(`control/hostctl/architect_bottle.py`): `run` is how to ask it. The CLI
+asks the host controller for the whole suggestion (`POST /suggest`), so the
+flow runs there for every caller.
 """
 
 from __future__ import annotations
@@ -14,13 +19,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..paths import bot_bottle_root
-from .architect import ArchitectError, architect_suggest
+from .architect import ArchitectError, Runner, architect_suggest
 from .proposal import Proposal
 from .rules import rules_suggest
 from .validate import validate_proposal
 
 SOURCE_ARCHITECT = "architect"
 SOURCE_RULES = "rules"
+
+NO_RUNNER = "only the host controller runs it, in its bottle"
 
 NO_PROJECT_NOTE = ("no project directory was given, so the project's bottle, origin "
                    "and lockfiles weren't considered")
@@ -43,17 +50,22 @@ def suggest(
     cwd: Path | None,
     *,
     rules: bool = False,
+    run: Runner | None = None,
     host_root: Path | None = None,
 ) -> Proposal:
     """A validated proposal for `task`. `cwd` is the project directory, or
-    None when there's none to look at."""
+    None when there's none to look at. `run` asks the architect; without
+    one, the rules path answers and says why."""
     host_root = host_root or bot_bottle_root()
     notes = [] if cwd is not None else [NO_PROJECT_NOTE]
     if rules:
         proposal, source = rules_suggest(task, cwd, host_root=host_root), SOURCE_RULES
     else:
         try:
-            proposal, source = architect_suggest(task, cwd, host_root=host_root), SOURCE_ARCHITECT
+            if run is None:
+                raise ArchitectError(NO_RUNNER)
+            proposal = architect_suggest(task, cwd, run=run, host_root=host_root)
+            source = SOURCE_ARCHITECT
         except ArchitectError as e:
             proposal, source = rules_suggest(task, cwd, host_root=host_root), SOURCE_RULES
             notes.append(f"bottle-architect didn't answer ({e}); this is the rules path")
@@ -63,4 +75,5 @@ def suggest(
     return validated
 
 
-__all__ = ["NO_PROJECT_NOTE", "SOURCE_ARCHITECT", "SOURCE_RULES", "bottle_dirs", "suggest"]
+__all__ = ["NO_PROJECT_NOTE", "NO_RUNNER", "SOURCE_ARCHITECT", "SOURCE_RULES", "bottle_dirs",
+           "suggest"]

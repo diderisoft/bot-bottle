@@ -10,7 +10,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from bot_bottle.cli import suggest_client
 from bot_bottle.cli.commands import bottles
+from bot_bottle.control.hostctl.runner import HostControlError
 
 
 class TestBottlesSuggestCli(unittest.TestCase):
@@ -30,6 +32,11 @@ class TestBottlesSuggestCli(unittest.TestCase):
                          return_value=str(self.cwd))
         cwd.start()
         self.addCleanup(cwd.stop)
+        # No host controller unless a test gives one.
+        self.client = mock.patch.object(suggest_client, "_client",
+                                        side_effect=HostControlError("not running"))
+        self.client.start()
+        self.addCleanup(self.client.stop)
 
     def _run(self, argv: list[str]) -> tuple[int, str]:
         out = io.StringIO()
@@ -86,16 +93,38 @@ class TestBottlesSuggestCli(unittest.TestCase):
         # The rules path always adds a note.
         self.assertIn("note:", out)
 
-    def test_the_default_is_the_architect(self) -> None:
-        from bot_bottle.suggest import flow  # pylint: disable=import-outside-toplevel
-        with mock.patch.object(flow, "architect_suggest",
-                               side_effect=flow.ArchitectError("no agent")) as arch:
+    def test_the_default_asks_the_host_controller(self) -> None:
+        fake = mock.Mock()
+        fake.post.return_value = {"job": "j1"}
+        fake.follow.return_value = {"type": "result", "value": {"proposal": {
+            "option": "reuse", "bottles": ["basic"], "notes": ["n"], "source": "architect"}}}
+        self.client.stop()
+        with mock.patch.object(suggest_client, "_client", return_value=fake):
             code, out = self._run(["do something", "--json"])
         self.assertEqual(code, 0)
-        arch.assert_called_once()
+        path, body = fake.post.call_args.args
+        self.assertEqual(("/suggest", "do something", str(self.cwd), False),
+                         (path, body["task"], body["cwd"], body["rules"]))
+        self.assertEqual("architect", json.loads(out)["source"])
+        self.client.start()
+
+    def test_without_a_host_controller_the_rules_answer_and_say_why(self) -> None:
+        code, out = self._run(["do something", "--json"])
+        self.assertEqual(code, 0)
         d = json.loads(out)
         self.assertEqual("rules", d["source"])
-        self.assertTrue(any("bottle-architect didn't answer (no agent)" in n for n in d["notes"]))
+        self.assertTrue(any("host controller isn't reachable: not running" in n
+                            for n in d["notes"]), d["notes"])
+
+    def test_a_failed_suggestion_job_falls_back_too(self) -> None:
+        fake = mock.Mock()
+        fake.post.return_value = {"job": "j1"}
+        fake.follow.return_value = {"type": "error", "message": "boom"}
+        self.client.stop()
+        with mock.patch.object(suggest_client, "_client", return_value=fake):
+            _, out = self._run(["do something", "--json"])
+        self.client.start()
+        self.assertTrue(any("isn't reachable: boom" in n for n in json.loads(out)["notes"]))
 
     def test_rules_flag_skips_the_architect(self) -> None:
         from bot_bottle.suggest import flow  # pylint: disable=import-outside-toplevel
@@ -103,6 +132,7 @@ class TestBottlesSuggestCli(unittest.TestCase):
             code, out = self._run(["do something", "--rules"])
         self.assertEqual(code, 0)
         arch.assert_not_called()
+        self.client.target._client.assert_not_called()  # type: ignore[attr-defined]
         self.assertIn("from:    rules", out)
 
     def test_the_old_architect_flag_is_gone(self) -> None:

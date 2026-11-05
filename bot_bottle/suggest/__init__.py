@@ -2,7 +2,7 @@
 
 `suggest(task, cwd)` is the one flow the CLI and the console use
 (`suggest.flow`):
-- `bottle-architect`, the host's agent of that name, run with no tools;
+- `bottle-architect`, the host's agent of that name, run in its own bottle;
 - the rules path when it can't answer, or with `rules=True`: the project
   bottle if trusted, a write grant on `origin` when its forge is connected,
   else `basic`.
@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .proposal import (
     OPTION_NEW,
@@ -30,12 +31,15 @@ from .proposal import (
     ProposalSimilar,
 )
 
+if TYPE_CHECKING:
+    from .architect import Runner
+
 
 def suggest(task: str, cwd: Path | None, *, rules: bool = False,
-            host_root: Path | None = None) -> Proposal:
+            run: "Runner | None" = None, host_root: Path | None = None) -> Proposal:
     """`suggest.flow.suggest`, imported when called so the package stays light."""
     from .flow import suggest as _suggest  # pylint: disable=import-outside-toplevel
-    return _suggest(task, cwd, rules=rules, host_root=host_root)
+    return _suggest(task, cwd, rules=rules, run=run, host_root=host_root)
 
 
 __all__ = [

@@ -21,6 +21,10 @@ from bot_bottle.suggest.proposal import (
 )
 
 
+def _never(*_: object) -> str:  # the runner; architect_suggest is faked
+    raise AssertionError("not called")
+
+
 def _architect_answer(*_: object, **__: object) -> Proposal:
     return Proposal(option=OPTION_STACK_ADDITIONS, bottles=["basic"], new_bottle=None,
                     additions=ProposalAdditions(egress=[ProposalEgress(host="api.example.com")]),
@@ -43,7 +47,7 @@ class TestSuggestFlow(unittest.TestCase):
 
     def test_the_architect_answers_first(self) -> None:
         with mock.patch.object(flow, "architect_suggest", side_effect=_architect_answer):
-            p = flow.suggest("call the example api", self.cwd, host_root=self.root)
+            p = flow.suggest("call the example api", self.cwd, run=_never, host_root=self.root)
         self.assertEqual((flow.SOURCE_ARCHITECT, "api.example.com"),
                          (p.source, p.additions.egress[0].host))
         self.assertEqual("architect", p.to_dict()["source"])
@@ -51,11 +55,18 @@ class TestSuggestFlow(unittest.TestCase):
     def test_the_rules_answer_when_the_architect_cant_and_say_why(self) -> None:
         with mock.patch.object(flow, "architect_suggest",
                                side_effect=ArchitectError("claude isn't installed on this host")):
-            p = flow.suggest("do a thing", self.cwd, host_root=self.root)
+            p = flow.suggest("do a thing", self.cwd, run=_never, host_root=self.root)
         self.assertEqual((flow.SOURCE_RULES, OPTION_REUSE, ["basic"]),
                          (p.source, p.option, p.bottles))
         self.assertTrue(any("bottle-architect didn't answer (claude isn't installed" in n
                             for n in p.notes), p.notes)
+
+    def test_without_a_runner_the_rules_answer_and_say_why(self) -> None:
+        with mock.patch.object(flow, "architect_suggest") as arch:
+            p = flow.suggest("do a thing", self.cwd, host_root=self.root)
+        arch.assert_not_called()
+        self.assertEqual(flow.SOURCE_RULES, p.source)
+        self.assertTrue(any(flow.NO_RUNNER in n for n in p.notes), p.notes)
 
     def test_rules_skips_the_architect(self) -> None:
         with mock.patch.object(flow, "architect_suggest") as arch:
@@ -66,14 +77,15 @@ class TestSuggestFlow(unittest.TestCase):
 
     def test_without_a_project_the_proposal_says_so(self) -> None:
         with mock.patch.object(flow, "architect_suggest", side_effect=_architect_answer) as arch:
-            p = flow.suggest("do a thing", None, host_root=self.root)
+            p = flow.suggest("do a thing", None, run=_never, host_root=self.root)
         self.assertIsNone(arch.call_args.args[1])
+        self.assertIs(_never, arch.call_args.kwargs["run"])
         self.assertEqual(flow.NO_PROJECT_NOTE, p.notes[0])
         self.assertEqual([(self.root / "bottles", False)], flow.bottle_dirs(None, self.root)[:1])
 
     def test_the_package_entry_point_is_the_flow(self) -> None:
         with mock.patch.object(flow, "architect_suggest", side_effect=_architect_answer):
-            p = suggest_pkg.suggest("t", self.cwd, host_root=self.root)
+            p = suggest_pkg.suggest("t", self.cwd, run=_never, host_root=self.root)
         self.assertEqual(flow.SOURCE_ARCHITECT, p.source)
 
 
