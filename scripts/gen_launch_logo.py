@@ -43,9 +43,9 @@ def pixels(svg: str, width: int) -> list[list[str | None]]:
 
 
 # At 28 px the anti-aliased ">_" blurs into a smudge, so it's redrawn as
-# crisp pixel art: (row, first column, last column) runs in the prompt copper,
+# crisp pixel art: (row, first column, last column) runs in the prompt green (the brand's #1aaf7a),
 # over the glass's dark interior.
-PROMPT_COPPER = "e08850"
+PROMPT_GREEN = "10b070"
 GLASS = "101010"
 PROMPT_AREA = (15, 22, 7, 21)  # rows [15, 22), columns [7, 21) are cleared
 PROMPT = (
@@ -63,13 +63,20 @@ def redraw_prompt(rows: list[list[str | None]]) -> None:
             rows[y][x] = GLASS
     for y, first, last in PROMPT:
         for x in range(first, last + 1):
-            rows[y][x] = PROMPT_COPPER
+            rows[y][x] = PROMPT_GREEN
 
 
 def main(svg: str, width: int = 28) -> None:
     rows = pixels(svg, width)
     if width == 28:
         redraw_prompt(rows)
+    # Blank rows above the cork go too (an even number, so the half blocks
+    # pair the same pixel rows), after the prompt that's placed counting them.
+    lead = 0
+    while lead + 2 <= len(rows) and all(p is None for row in rows[lead:lead + 2] for p in row):
+        lead += 2
+    rows = rows[lead:]
+    cursor_at = (CURSOR[0] - lead, CURSOR[1], CURSOR[2])
     colors = sorted({p for row in rows for p in row if p})
     if len(colors) > len(CHARS):
         sys.exit(f"{len(colors)} colors; quantize harder")
@@ -78,7 +85,7 @@ def main(svg: str, width: int = 28) -> None:
     palette = "\n".join(f'    "{c}": "{h}",' for h, c in key.items())
     body = "\n".join(f'    "{line}",' for line in art)
     cursor = (f"\n# The prompt's blinking cursor: (row, first column, last column), and\n"
-              f"# the pixel it shows when off.\nCURSOR: tuple[int, int, int] = {CURSOR}\n"
+              f"# the pixel it shows when off.\nCURSOR: tuple[int, int, int] = {cursor_at}\n"
               f'CURSOR_OFF = "{key[GLASS]}"\n') if width == 28 else ""
     OUT.write_text(f'''"""The bot-bottle glass bottle as terminal art, for the launch panel.
 
