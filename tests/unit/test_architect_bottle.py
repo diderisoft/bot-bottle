@@ -272,6 +272,56 @@ class TestArchitectBottle(unittest.TestCase):
         self.assertEqual(30.0, warm.status()["idle_seconds"])
         self.assertEqual([], architect_bottle.model_args(""))
 
+    def _always_on(self, backend: FakeBackend, now: list[float]) -> ArchitectBottle:
+        warm = ArchitectBottle(host_root=self.root, backend_for=lambda _s: backend,  # type: ignore[arg-type,return-value]
+                               secrets_file=self.root / "secrets", clock=lambda: now[0])
+        self.addCleanup(warm.stop)
+        return warm
+
+    def _ready(self, warm: ArchitectBottle) -> None:
+        for _ in range(250):
+            if warm.status()["state"] == "ready":
+                return
+            threading.Event().wait(0.02)
+        self.fail("it never came up")
+
+    def test_always_on_is_the_default_and_boots_at_start(self) -> None:
+        backend, now = FakeBackend(), [0.0]
+        warm = self._always_on(backend, now)
+        self.assertTrue(warm.status()["always_on"])
+        warm.boot_if_always_on()
+        self._ready(warm)
+        self.assertEqual(1, backend.launches)
+
+    def test_always_on_outlives_any_idle_time_until_stopped(self) -> None:
+        backend, now = FakeBackend(), [0.0]
+        warm = self._always_on(backend, now)
+        warm.run(_architect(), "t")
+        now[0] += 10 * architect_bottle.Settings().operation.architect_idle_seconds
+        warm.warm()  # wakes the holder, which rechecks
+        self.assertFalse(backend.down.wait(0.3))
+        warm.stop()
+        self.assertTrue(backend.down.wait(5))
+
+    def test_turned_off_it_idles_out_and_does_not_boot_at_start(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.cli.settings import settings_from_env
+        off = settings_from_env({"BOT_BOTTLE_ARCHITECT_ALWAYS_ON": "0",
+                                 "BOT_BOTTLE_ARCHITECT_IDLE": "30"})
+        self.assertFalse(off.operation.architect_always_on)
+        self.assertTrue(settings_from_env({}).operation.architect_always_on)
+        backend, now = FakeBackend(), [0.0]
+        warm = self._always_on(backend, now)
+        warm.run(_architect(), "t", off)
+        self.assertFalse(warm.status()["always_on"])
+        now[0] += 31
+        warm.warm(off)  # wakes the holder
+        self.assertTrue(backend.down.wait(5))
+        idle = ArchitectBottle(host_root=self.root, backend_for=lambda _s: FakeBackend(),  # type: ignore[arg-type,return-value]
+                               idle=60.0)
+        idle.boot_if_always_on()
+        self.assertEqual("down", idle.status()["state"])
+
     def test_the_installed_bottle_is_the_suggesters_runner(self) -> None:
         architect_bottle.install(None)
         self.assertIsNone(architect_bottle.runner())

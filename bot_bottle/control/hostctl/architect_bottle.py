@@ -48,6 +48,9 @@ BOOT_SECONDS = 600.0
 # How long stopping a timed-out call's process in the bottle may take, and
 # how long a gone bottle's teardown is waited on before booting another.
 STOP_SECONDS = 15.0
+# How often an always-on bottle's holder rechecks whether it should still be
+# up, absent a stop (a setting may turn always-on off).
+ALWAYS_ON_RECHECK_SECONDS = 60.0
 # How long checking that the bottle still runs may take, after a failed call.
 ALIVE_SECONDS = 10.0
 # Stops every process whose command line carries the call's mark, and their
@@ -119,6 +122,8 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
         self._audit = audit
         self._fixed_idle = idle
         self._idle = float(Settings().operation.architect_idle_seconds) if idle is None else idle
+        # A fixed idle (tests, a caller's own) means it idles out.
+        self._always_on = idle is None and Settings().operation.architect_always_on
         self._clock = clock
         self._cond = threading.Condition()
         self._state = "down"  # down | booting | ready
@@ -136,12 +141,15 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
 
     def status(self) -> dict[str, object]:
         with self._cond:
-            return {"state": self._state, "error": self._error, "idle_seconds": self._idle}
+            return {"state": self._state, "error": self._error, "idle_seconds": self._idle,
+                    "always_on": self._always_on}
 
     def warm(self, settings: Settings | None = None) -> None:
-        """Boot the bottle in the background unless it's up or coming up."""
+        """Boot the bottle in the background unless it's up or coming up. Its
+        settings take effect now: the holder rechecks whether to stay up."""
         with self._cond:
             self._start_locked(settings or Settings())
+            self._cond.notify_all()
 
     def stop(self) -> None:
         """Tear the bottle down (after any suggestion in flight)."""
@@ -155,6 +163,7 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
     def _start_locked(self, settings: Settings) -> None:
         if self._fixed_idle is None:
             self._idle = float(settings.operation.architect_idle_seconds)
+            self._always_on = settings.operation.architect_always_on
         if self._state != "down":
             return
         self._state, self._error, self._stopping = "booting", "", False
@@ -231,10 +240,21 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
     def _done_locked(self) -> bool:
         if self._busy:
             return False
-        return self._stopping or self._clock() - self._last_used >= self._idle
+        if self._stopping:
+            return True
+        return not self._always_on and self._clock() - self._last_used >= self._idle
 
     def _wait_locked(self) -> float:
+        if self._always_on:
+            return ALWAYS_ON_RECHECK_SECONDS  # woken early by a stop or a setting change
         return max(0.05, self._idle - (self._clock() - self._last_used))
+
+    def boot_if_always_on(self) -> None:
+        """At the host controller's start: boot the bottle now when it's
+        always on, so the first suggestion finds it up."""
+        with self._cond:
+            if self._always_on:
+                self._start_locked(Settings())
 
     # --- a suggestion ---
 

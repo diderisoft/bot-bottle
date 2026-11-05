@@ -37,7 +37,8 @@ class TestSettingsJson(unittest.TestCase):
         self.assertEqual({"operation", "infra"}, set(body))
         # Fields added later are left out while at their default.
         self.assertEqual({f.name for f in dataclasses.fields(OperationSettings)}
-                         - {"fc_workspace_disk", "architect_idle_seconds"},
+                         - {"fc_workspace_disk", "architect_idle_seconds",
+                            "architect_always_on"},
                          set(body["operation"]))
         self.assertEqual({f.name for f in dataclasses.fields(InfraSettings)}
                          - {"docker_agent_subnets", "fc_env_slots", "fc_slices_dir"},
@@ -172,10 +173,11 @@ class TestEnvLoader(unittest.TestCase):
             "BOT_BOTTLE_MACOS_CONTAINER_DNS": "9.9.9.9",
             "BOT_BOTTLE_FC_WORKSPACE_DISK": "32G",
             "BOT_BOTTLE_ARCHITECT_IDLE": "45",
+            "BOT_BOTTLE_ARCHITECT_ALWAYS_ON": "0",
         }
         expected = Settings(
             operation=OperationSettings(backend="firecracker", fc_workspace_disk="32G",
-                                        architect_idle_seconds=45),
+                                        architect_idle_seconds=45, architect_always_on=False),
             infra=InfraSettings(
                 infra_build_local=True, build_engine="podman", artifact_cache="/cache/artifacts",
                 orchestrator_image="orch:test", gateway_image="gw:test",

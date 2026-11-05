@@ -201,23 +201,38 @@ injects, no repos, no secrets, no supervise tools and an empty workspace.
 That bottle is what contains it, so any harness can be the architect: the
 call inside it is the harness's ordinary headless mode (`claude -p`, codex,
 pi), with the agent file's body as its prompt file and `--model <model>` when
-the file sets one, under a 120-second timeout.
+the file sets one, under a 120-second timeout. A timed-out call is stopped in
+the bottle too, not just on the host. For claude the call is one-shot: no
+tools and no MCP servers (a call that explored its empty home with them took
+28 s instead of 5 s), a one-line system prompt in place of Claude Code's own
+(the agent file's body is still appended), `--effort low` and no saved
+session.
 
-**Warm.** Booting a bottle takes far longer than the model call, so the host
-controller keeps the architect's bottle running. `bot-bottle start` asks it to
-boot as soon as it starts (`POST /architect/warm`), so the boot overlaps
-choosing the harness and typing the task; the first suggestion otherwise
-boots it. It stays up for `BOT_BOTTLE_ARCHITECT_IDLE` seconds (default 600;
-`0` stops it after each suggestion) after its last one, so back-to-back
-starts and console suggestions reuse it. Each suggestion is a fresh headless
-call in it, never one long conversation, so tasks don't bleed into each
-other. The prompt's static part (the agent's prompt) comes first, which
-claude's and codex's automatic prompt caching reuse across calls.
+**Always on.** Booting a bottle takes far longer than the model call, so
+the host controller boots the architect's bottle when it starts and keeps it
+running (`BOT_BOTTLE_ARCHITECT_ALWAYS_ON`, on by default). It's deliberately
+tiny for that: 512 MiB (the bottle floor; claude peaks at about 320 MiB per
+call) and one CPU, which answered as fast as 1 GiB did. A bottle removed from
+under the host controller (by `bot-bottle bots cleanup`, say) is replaced on
+the next suggestion, which then waits for the boot.
 
-Measured on a Firecracker host (claude, its default model): about 10–13 s
-for the old host-side call; in the warm bottle, 7–8 s per suggestion; a cold
-boot first adds about 26 s with cached images (80 s when the images have to
-be built).
+With `BOT_BOTTLE_ARCHITECT_ALWAYS_ON=0` it boots on demand instead:
+`bot-bottle start` asks for it as soon as it starts (`POST /architect/warm`),
+so the boot overlaps choosing the harness and typing the task, and the first
+suggestion otherwise boots it. It then stays up for
+`BOT_BOTTLE_ARCHITECT_IDLE` seconds (default 600; `0` stops it after each
+suggestion) after its last one. The settings come with each request, so the
+CLI's setting takes effect on its next call.
+
+Each suggestion is a fresh headless call in it, never one long conversation,
+so tasks don't bleed into each other. The prompt's static part (the agent's
+prompt) comes first, which claude's and codex's automatic prompt caching
+reuse across calls.
+
+Measured on macOS (macos-container, claude, its default model): 3–5 s per
+suggestion end to end in the warm bottle; a cold boot first adds about 25 s
+with cached images. On a Firecracker host before the one-shot call: 7–8 s
+warm, 26 s more cold (80 s when the images have to be built).
 
 The input is:
 

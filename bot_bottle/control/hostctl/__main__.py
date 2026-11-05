@@ -142,9 +142,11 @@ def main() -> int:
     GitTokenRenewer(bottles).start()
     # Measures bot-bottle's storage for the budget, off any launch's path.
     budget.METER.start()
-    # The bottle architect's warm bottle, booted on the first suggestion.
+    # The bottle architect's bottle: booted now and kept up (always on, the
+    # default), else on the first suggestion.
     architect = ArchitectBottle(host_root=bot_bottle_root(), audit=audit)
     install_architect(architect)
+    architect.boot_if_always_on()
     # Deletes ended sessions' transcript copies past the host's retention.
     retention = RetentionSweeper(audit)
     retention.start()

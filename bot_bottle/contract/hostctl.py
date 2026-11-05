@@ -119,7 +119,12 @@ class OperationSettings:
     cleanup_command_timeout_seconds: float = DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS
     # Firecracker: "" for no per-project workspace disk, else `1` or a size.
     fc_workspace_disk: str = ""
-    # Seconds the bottle architect's warm bottle outlives its last suggestion.
+    # The bottle architect's bottle boots with the host controller and stays
+    # up. Off, it boots on the first suggestion and outlives its last one by
+    # `architect_idle_seconds`.
+    architect_always_on: bool = True
+    # Seconds the bottle architect's warm bottle outlives its last suggestion
+    # when it isn't always on.
     architect_idle_seconds: int = 600
 
 
@@ -189,7 +194,8 @@ class Settings:
 # ones added after the fingerprint was in use, so an upgrade that doesn't set
 # them neither restarts the infra nor sends a key an older reader rejects.
 _OMIT_AT_DEFAULT = frozenset({"docker_agent_subnets", "fc_env_slots", "fc_slices_dir",
-                              "fc_workspace_disk", "architect_idle_seconds"})
+                              "fc_workspace_disk", "architect_idle_seconds",
+                              "architect_always_on"})
 
 
 def _section_json(section: OperationSettings | InfraSettings) -> dict[str, object]:

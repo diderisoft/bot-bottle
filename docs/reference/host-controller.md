@@ -374,10 +374,13 @@ asks over HTTP, `cli` role only: `POST /suggest` (`task`, optional `cwd`,
 `rules`, `settings`) starts a `bottle.suggest` job whose `result` is
 `{"proposal": ...}`, and `POST /architect/warm` (`settings`) boots the warm
 bottle in the background and answers its `state` (`booting`, `ready`,
-`down`, or `unavailable`). `bot-bottle start` sends the second as soon as it
-starts. The bottle stays up `BOT_BOTTLE_ARCHITECT_IDLE` seconds (default
-600) after its last suggestion, and the host controller tears it down when it
-stops. Its start and stop are audited like any bottle's, with agent
+`down`, or `unavailable`). The host controller boots the bottle when it
+starts and keeps it up (`BOT_BOTTLE_ARCHITECT_ALWAYS_ON`, the default; 512
+MiB, one CPU). Without it, `bot-bottle start` sends the warm request as soon
+as it starts and the bottle stays up `BOT_BOTTLE_ARCHITECT_IDLE` seconds
+(default 600) after its last suggestion. Either way the host controller
+tears it down when it stops, and replaces one removed from under it on the
+next suggestion. Its start and stop are audited like any bottle's, with agent
 `bottle-architect`.
 
 ### For the console

@@ -22,6 +22,7 @@ OPERATION_ENV: dict[str, str] = {
     "backend": "BOT_BOTTLE_BACKEND",
     "fc_workspace_disk": "BOT_BOTTLE_FC_WORKSPACE_DISK",
     "architect_idle_seconds": "BOT_BOTTLE_ARCHITECT_IDLE",
+    "architect_always_on": "BOT_BOTTLE_ARCHITECT_ALWAYS_ON",
 }
 
 INFRA_ENV: dict[str, str] = {
