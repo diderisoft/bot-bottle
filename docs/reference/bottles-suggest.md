@@ -78,6 +78,15 @@ A proposal is a JSON object with these fields:
 - **Validation.** The proposal is turned into a bottle document and loaded with
   the real manifest loader.  Any element that fails is dropped and noted rather
   than failing the whole proposal.
+- **Nothing the bottles already cover.** An addition the proposal's own bottles
+  already allow is dropped, with a note naming the bottle ("dropped 1 addition
+  already covered by basic: egress registry.npmjs.org"). This matters beyond
+  tidiness: a later bottle's route replaces an earlier one for the same host,
+  so a `GET` addition would narrow `basic`'s `GET`/`HEAD` route. An egress
+  addition is covered when the base route allows every method it asks for on
+  every path and it injects no credential; a repo grant when the base has the
+  same repo with enough access; an env var when the base sets it. A
+  `stack+additions` proposal left with no additions becomes `stack` or `reuse`.
 - **Stacks are stacked as a launch stacks them.** For options 1–3 the additions
   are a bottle with no `extends`, merged after `bottles` in order, exactly as
   `--bottle a --bottle b` merges them. `--write NAME` saves just the

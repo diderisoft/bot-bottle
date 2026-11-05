@@ -20,6 +20,7 @@ from ..contract.yaml_subset import serialize_yaml_subset
 from ..manifest.extends import merge_bottles_runtime
 from ..manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
 from ..manifest.util import ManifestError
+from .covered import drop_covered
 from .proposal import (
     OPTION_NEW,
     OPTION_NEW_EXTENDING,
@@ -148,7 +149,8 @@ def validate_proposal(
         similar=proposal.similar,
         notes=notes,
     )
-    return cleaned, notes
+    cleaned = drop_covered(cleaned, dirs)
+    return cleaned, cleaned.notes
 
 
 # An env var's value is visible to the agent, so a secret never goes in one:
