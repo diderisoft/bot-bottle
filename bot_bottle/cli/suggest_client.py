@@ -59,12 +59,15 @@ def _local_fallback(task: str, cwd: Path | None, why: str) -> Proposal:
     return proposal
 
 
-def warm(settings: Settings) -> None:
-    """Boot the architect's bottle in the background; never fails a caller."""
+def warm(settings: Settings) -> str:
+    """Boot the architect's bottle in the background; never fails a caller.
+    Its state (`ready`, `booting`, …), or "" when the host didn't say."""
     try:
-        _client().post(ARCHITECT_WARM_PATH, {"settings": settings.to_json()})
+        reply = _client().post(ARCHITECT_WARM_PATH, {"settings": settings.to_json()})
     except (HostControlError, OSError):
-        pass
+        return ""
+    state = reply.get("state")
+    return state if isinstance(state, str) else ""
 
 
 __all__ = ["NO_HOST_NOTE", "suggest", "warm"]

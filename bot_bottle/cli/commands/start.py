@@ -40,7 +40,7 @@ from .guided import guided_start, wants_guided
 from ..launch_client import launch, prepare_request
 from ..secrets_env import secrets_from_env
 from ..settings import settings_from_env
-from .. import tui
+from .. import screen, tui
 
 if TYPE_CHECKING:
     from ..screen import Screen, Step
@@ -143,13 +143,19 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
         args.auto = os.environ.get("BOT_BOTTLE_START_AUTO", "") == "1"
     if not args.bottle and (wants_guided(args) or args.auto):
 
-        def go(request: LaunchRequest, index: ManifestIndex) -> int:
+        def go(request: LaunchRequest, index: ManifestIndex, *, view: "Screen | None" = None,
+               lead: "list[Step] | None" = None) -> int:
             if not sys.stdin.isatty():
                 request = replace(request, headless=True, assume_yes=True)
-            return _launch_bottle(request, index, dry_run=dry_run, verbose=args.verbose)
+            return _launch_bottle(request, index, dry_run=dry_run, verbose=args.verbose,
+                                  view=view, lead=lead)
         if not sys.stdin.isatty() and not (args.prompt or args.task):
             die("without a terminal, --auto needs the task: "
                 f"{PROG} start [<agent>] --auto \"<task>\"")
+        if not (args.auto or args.verbose or dry_run) and screen.usable():
+            # pylint: disable-next=import-outside-toplevel
+            from .guided_view import run_start
+            return run_start(args, manifest, settings, launch=go)
         return guided_start(args, manifest, settings, launch=go, auto=args.auto)
 
     agent_name: str | None = args.name

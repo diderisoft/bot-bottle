@@ -412,7 +412,7 @@ def keys_mode(fd: int | None = None) -> Generator[None]:
     f = sys.stdin.fileno() if fd is None else fd
     saved = termios.tcgetattr(f)
     try:
-        tty.setcbreak(f)
+        tty.setcbreak(f, termios.TCSANOW)  # not TCSAFLUSH: keep typed-ahead keys
         yield
     finally:
         termios.tcsetattr(f, termios.TCSADRAIN, saved)
