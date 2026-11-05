@@ -270,6 +270,9 @@ class LaunchRequest:
     # A resume of a bottle with `preserve_container`: a new guest from the
     # agent's image as it is now (its home kept), not the kept one.
     fresh_guest: bool = False
+    # A bottle for this run only, never saved to the library (ADR 0017): its
+    # text, named `RUN_BOTTLE` in `bottles`.
+    run_bottle: str = ""
 
     def to_json(self) -> dict[str, object]:
         body = dataclasses.asdict(self)
@@ -323,13 +326,20 @@ class LaunchRequest:
             raise ValueError(f"launch.image_policy: one of {', '.join(IMAGE_POLICIES)}")
         if self.cwd and not self.cwd.startswith("/"):
             raise ValueError("launch.cwd: expected an absolute path")
+        if self.run_bottle and (RUN_BOTTLE not in self.bottles
+                                or len(self.run_bottle.encode()) > RUN_BOTTLE_MAX_BYTES):
+            raise ValueError(f"launch.run_bottle: at most {RUN_BOTTLE_MAX_BYTES} bytes, "
+                             f"named {RUN_BOTTLE!r} in bottles")
         if self.copy_cwd and not self.cwd:
             raise ValueError("launch.copy_cwd needs cwd")
         if self.headless and not self.prompt:
             raise ValueError("launch: headless needs a prompt")
 
 
-LAUNCH_CLI_ONLY = ("cwd", "copy_cwd", "secrets", "host_keys")
+LAUNCH_CLI_ONLY = ("cwd", "copy_cwd", "secrets", "host_keys", "run_bottle")
+# A run's unsaved bottle's name in `LaunchRequest.bottles`, and its size cap.
+RUN_BOTTLE = "suggested"
+RUN_BOTTLE_MAX_BYTES = 64 * 1024
 _DEFAULT_LAUNCH = LaunchRequest(agent="")
 
 
@@ -373,5 +383,6 @@ __all__ = [
     "HOST_CONTROL", "InfraSettings", "JOBS_PATH", "LIVE_BOTTLES_PATH", "ORCHESTRATOR_PATH", "OperationSettings", "PORT_ENV",
     "SUGGEST_PATH",
     "ORIGIN_CONSOLE", "ORIGIN_TERMINAL",
-    "ROLE_ORCHESTRATOR", "SERVICE_NAME", "SESSIONS_PATH", "STATUS_PATH", "Settings", "bearer", "status_body",
+    "ROLE_ORCHESTRATOR", "RUN_BOTTLE", "RUN_BOTTLE_MAX_BYTES",
+    "SERVICE_NAME", "SESSIONS_PATH", "STATUS_PATH", "Settings", "bearer", "status_body",
 ]

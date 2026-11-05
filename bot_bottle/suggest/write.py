@@ -17,11 +17,9 @@ def write_bottle(name: str, proposal: Proposal, *, root: Path | None = None) -> 
     bottles history) and return its path. SuggestWriteError if the name isn't
     a bottle name or the bottle exists."""
     # pylint: disable=import-outside-toplevel
-    from ..contract.yaml_subset import serialize_yaml_subset
     from ..manifest.schema import is_valid_entity_name
     from ..manifest.versions import record_or_warn
     from ..paths import bot_bottle_root
-    from .validate import proposal_to_frontmatter
 
     if not is_valid_entity_name(name):
         raise SuggestWriteError(
@@ -32,6 +30,18 @@ def write_bottle(name: str, proposal: Proposal, *, root: Path | None = None) -> 
     if path.exists():
         raise SuggestWriteError(f"the bottle {name!r} already exists; pick another name")
 
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(bottle_text(proposal))
+    record_or_warn(f"suggest: write bottles/{name}", root=root)
+    return path
+
+
+def bottle_text(proposal: Proposal) -> str:
+    """The bottle file `proposal` makes: for a reuse or stack, its additions
+    only (stacked after its bottles); for a new bottle, with its `extends`."""
+    # pylint: disable=import-outside-toplevel
+    from ..contract.yaml_subset import serialize_yaml_subset
+    from .validate import proposal_to_frontmatter
     fm = proposal_to_frontmatter(proposal)
     if proposal.new_bottle and proposal.new_bottle.about:
         about_lines = [proposal.new_bottle.about]
@@ -41,10 +51,7 @@ def write_bottle(name: str, proposal: Proposal, *, root: Path | None = None) -> 
         about_lines.append("")
         about_lines.extend(f"Note: {n}" for n in proposal.notes)
     body = "\n".join(about_lines) + "\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\n{serialize_yaml_subset(fm)}---\n\n{body}")
-    record_or_warn(f"suggest: write bottles/{name}", root=root)
-    return path
+    return f"---\n{serialize_yaml_subset(fm)}---\n\n{body}"
 
 
-__all__ = ["SuggestWriteError", "write_bottle"]
+__all__ = ["SuggestWriteError", "bottle_text", "write_bottle"]

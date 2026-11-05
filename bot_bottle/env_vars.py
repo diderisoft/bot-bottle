@@ -96,6 +96,10 @@ ENV_VARS: tuple[EnvVar, ...] = (
     EnvVar("BOT_BOTTLE_FC_CACHE", "user",
            "firecracker: cache root for the kernel, root filesystems and run dirs.",
            "`~/.cache/bot-bottle/firecracker`"),
+    EnvVar("BOT_BOTTLE_START_AUTO", "user",
+           "`1` makes a guided `bot-bottle start` run the suggested bottle without "
+           "asking (`--auto`); `--no-auto` asks for one run. See bottles-suggest.md.",
+           "off"),
     EnvVar("BOT_BOTTLE_ARCHITECT_IDLE", "user",
            "Seconds the bottle architect's warm bottle stays up after its last "
            "suggestion; `0` stops it after each one.",

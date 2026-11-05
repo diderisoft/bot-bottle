@@ -337,6 +337,7 @@ Generated from `bot_bottle/env_vars.py`: edit that, then run
 | `BOT_BOTTLE_DOCKER_AGENT_SUBNETS` | user | docker: the range per-agent networks are carved from, as /29s. | `10.242.0.0/20`; `10.240.0.0/16` in a named environment |
 | `BOT_BOTTLE_MACOS_CONTAINER_DNS` | user | macos-container: DNS server for the gateway, orchestrator and image builder. When set, a builder running with other DNS is restarted with it. | the host's IPv4 resolver, else `1.1.1.1` |
 | `BOT_BOTTLE_FC_CACHE` | user | firecracker: cache root for the kernel, root filesystems and run dirs. | `~/.cache/bot-bottle/firecracker` |
+| `BOT_BOTTLE_START_AUTO` | user | `1` makes a guided `bot-bottle start` run the suggested bottle without asking (`--auto`); `--no-auto` asks for one run. See bottles-suggest.md. | off |
 | `BOT_BOTTLE_ARCHITECT_IDLE` | user | Seconds the bottle architect's warm bottle stays up after its last suggestion; `0` stops it after each one. | `600` |
 | `BOT_BOTTLE_FC_WORKSPACE_DISK` | user | firecracker: keep the project's workspace on a per-project disk between runs, so what the project ignores (`node_modules`, build dirs) survives. `1` for the default size, or a size like `32G`. See backends.md. | off |
 | `BOT_BOTTLE_FC_KERNEL` | user | firecracker: the guest kernel. | `vmlinux` in the firecracker cache |

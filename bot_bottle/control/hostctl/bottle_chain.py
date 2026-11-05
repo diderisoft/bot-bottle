@@ -3,8 +3,9 @@ bottles, for the console's Bottle tab: one editable form over every file the
 agent's bottle is built from.
 
 `chain` lists the files in merge order (the base first, so a later one wins),
-each with its kind (`host`, `builtin` or `project`), whether the console may
-write it (host bottles only), its digest, and its parsed frontmatter and body;
+each with its kind (`host`, `builtin`, `project`, or `run` for a run's
+unsaved bottle, ADR 0017), whether the console may write it (host bottles
+only), its digest, and its parsed frontmatter and body;
 plus this run's additions. `write` writes one host bottle in that chain, from
 data (serialized here) or raw text, if it's still what the console showed:
 the new text must parse, hold no secret value, and leave the agent's whole
@@ -37,6 +38,7 @@ def _files(identity: str) -> tuple[Any, list[dict[str, Any]]]:
     # pylint: disable=import-outside-toplevel
     from ...manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
     from ...manifest.util import ManifestError
+    from ...run_bottle import is_run_path
     from .manifest_view import _index, _load
     meta, _ = _load(identity)
     dirs = _index(meta).bottle_dirs()
@@ -52,6 +54,7 @@ def _files(identity: str) -> tuple[Any, list[dict[str, Any]]]:
                 continue
             seen.add(source.path)
             kind = ("builtin" if BUILTIN_BOTTLES_DIR in source.path.parents
+                    else "run" if is_run_path(source.path)
                     else "project" if source.project else "host")
             out.append({"name": f"./{source.path.stem}" if source.project else source.name,
                         "kind": kind, "path": source.path})

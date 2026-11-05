@@ -150,6 +150,7 @@ def _targets(identity: str) -> list[tuple[Any, bool]]:
     from ...manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
     from ...manifest.util import ManifestError
     from ...paths import bot_bottle_root
+    from ...run_bottle import is_run_path
     meta, _ = _load(identity)
     index_dirs = _index(meta).bottle_dirs()
     out: list[tuple[Any, bool]] = []
@@ -160,7 +161,8 @@ def _targets(identity: str) -> list[tuple[Any, bool]]:
         except ManifestError:
             continue
         for source in sources:
-            if source.path in seen or BUILTIN_BOTTLES_DIR in source.path.parents:
+            if source.path in seen or BUILTIN_BOTTLES_DIR in source.path.parents \
+                    or is_run_path(source.path):  # a run's unsaved bottle isn't kept into
                 continue
             seen.add(source.path)
             out.append((KeepTarget(source.path, source.path.parents[2] if source.project
@@ -185,9 +187,11 @@ def bottle_targets(identity: str, policy: str | None) -> list[dict[str, Any]]:
 
 
 def _index(meta: Any) -> Any:
-    # pylint: disable-next=import-outside-toplevel
+    """The run's manifest index, including its unsaved bottle if it has one."""
+    # pylint: disable=import-outside-toplevel
     from ...manifest.index import ManifestIndex
-    return ManifestIndex.resolve(meta.cwd or str(Path.home()))
+    from ...run_bottle import index_for
+    return index_for(ManifestIndex.resolve(meta.cwd or str(Path.home())), identity=meta.identity)
 
 
 def _load(identity: str) -> tuple[Any, Any]:

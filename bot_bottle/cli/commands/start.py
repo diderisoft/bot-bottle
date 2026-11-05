@@ -1,5 +1,11 @@
 """start: launch a bottle for a named agent and attach to its session.
 
+On a terminal, without `--bottle`, `start` is guided (`guided.py`): pick a
+harness, describe the task, get a suggested bottle, run it (`--auto` runs it
+without asking; `BOT_BOTTLE_START_AUTO=1` makes that the default and
+`--no-auto` asks again for one run). Without a terminal nothing prompts:
+`--auto "<task>"` runs a suggestion, otherwise give `--bottle`.
+
 The CLI resolves everything interactive (pickers, label, color, secrets, host
 keys, confirmations), then asks the host controller to launch. The agent runs
 in a controller-owned tmux session. Ctrl-] detaches (`bot-bottle attach <id>`
@@ -29,6 +35,7 @@ from ...manifest.loader import PROJECT_PREFIX
 from ...manifest.schema import DEFAULT_BOTTLE
 from ...manifest.preview import manifest_to_yaml
 from ..constants import PROG
+from .guided import guided_start, wants_guided
 from ..launch_client import launch, prepare_request
 from ..secrets_env import secrets_from_env
 from ..settings import settings_from_env
@@ -98,13 +105,21 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
         help="the agent's task: its first message in an interactive session, or "
              "what a --headless one runs (required there)",
     )
+    auto = parser.add_mutually_exclusive_group()
+    auto.add_argument("--auto", action="store_true", default=None,
+                      help="run the suggested bottle without asking (it isn't saved)")
+    auto.add_argument("--no-auto", dest="auto", action="store_false",
+                      help="ask before running the suggested bottle, despite "
+                           "BOT_BOTTLE_START_AUTO")
     parser.add_argument(
         "name",
         nargs="?",
         default=None,
         help=("agent name from ~/.bot-bottle/agents or ./.bot-bottle/agents "
-              "(omit to pick interactively)"),
+              "(omit to use the last one, or pick)"),
     )
+    parser.add_argument("task", nargs="?", default=None,
+                        help="the task, for a suggested bottle (same as --prompt)")
     args = parser.parse_args(argv)
     if args.cached_images and not args.headless:
         die("--cached-images is only supported with --headless")
@@ -116,9 +131,22 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
             settings, operation=replace(settings.operation, no_cache=True))
 
     manifest = ManifestIndex.resolve(os.getcwd())
+    _split_task(args, manifest)
 
     if args.headless:
         return _start_headless(manifest, args, settings, dry_run=dry_run)
+    if args.auto is None:
+        args.auto = os.environ.get("BOT_BOTTLE_START_AUTO", "") == "1"
+    if not args.bottle and (wants_guided(args) or args.auto):
+
+        def go(request: LaunchRequest, index: ManifestIndex) -> int:
+            if not sys.stdin.isatty():
+                request = replace(request, headless=True, assume_yes=True)
+            return _launch_bottle(request, index, dry_run=dry_run, verbose=args.verbose)
+        if not sys.stdin.isatty() and not (args.prompt or args.task):
+            die("without a terminal, --auto needs the task: "
+                f"{PROG} start [<agent>] --auto \"<task>\"")
+        return guided_start(args, manifest, settings, launch=go, auto=args.auto)
 
     agent_name: str | None = args.name
     if agent_name is None:
@@ -171,6 +199,17 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
         copy_cwd=args.cwd,
     )
     return _launch_bottle(request, manifest, dry_run=dry_run, verbose=args.verbose)
+
+
+def _split_task(args: argparse.Namespace, manifest: ManifestIndex) -> None:
+    """`start "<task>"`: a first argument that isn't an agent is the task."""
+    if args.name and args.task is None and args.name not in manifest.all_agent_names \
+            and (" " in args.name or args.auto):
+        args.name, args.task = None, args.name
+    if args.task is not None:
+        if args.prompt is not None:
+            die("give the task once: as an argument or with --prompt")
+        args.prompt = args.task
 
 
 def _pick_bottles(manifest: ManifestIndex) -> tuple[str, ...] | None:

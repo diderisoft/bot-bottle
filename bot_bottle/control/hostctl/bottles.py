@@ -32,7 +32,7 @@ from ...contract.hostctl import (
 from ...lib import log
 from ...manifest.schema import DEFAULT_BOTTLE
 from ...paths import host_secrets_path
-from ... import bottle_state, run_manifest
+from ... import bottle_state, run_bottle, run_manifest
 from ...backend import adoption
 from ...backend.bottle_size import memory_bytes, recorded_memory
 from ...lib.config_store import HostBudget
@@ -221,8 +221,7 @@ class BottleService:
         self._admitting = threading.Lock()
         # What adopted bottles hold until they end (e.g. a Firecracker slot).
         self._adopted: dict[str, Callable[[], None]] = {}
-        # Bottles without a holder (re-adopted) whose stop was asked for, so
-        # their exit is audited as a requested stop, not a crash.
+        # Holderless (re-adopted) bottles asked to stop: audited as a stop, not a crash.
         self._stop_requested: set[str] = set()
         # Each running session's transcript follower (PRD 0095).
         self._followers: dict[str, TranscriptFollower] = {}
@@ -283,8 +282,9 @@ class BottleService:
             backend = self._backend_for(request.settings)
         cwd = request.cwd or str(Path.home())
         # Hand edits become a version before the launch reads them (PRD 0103).
-        versions = launch_versions(cwd)
-        index = self._manifest_for(cwd)
+        versions = run_bottle.with_content(launch_versions(cwd), request.run_bottle)
+        index = run_bottle.index_for(self._manifest_for(cwd), text=request.run_bottle,
+                                     identity=request.identity)
         index.require_agent(request.agent)
         spec = BottleSpec(
             manifest=index, agent_name=request.agent, copy_cwd=request.copy_cwd,
@@ -303,6 +303,7 @@ class BottleService:
             log.stage("prepare", "Reading the bottle")
             plan = backend.prepare(spec, stage_dir=stage_dir, secrets=secrets)
             identity = str(getattr(plan, "slug", ""))
+            run_bottle.keep(identity, index)
             if request.headless:
                 _log_preflight(plan, backend.name)
             self._confirm(backend, plan, request)

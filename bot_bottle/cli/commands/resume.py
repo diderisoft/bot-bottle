@@ -19,6 +19,7 @@ from ...lib.log import die, info
 from ...manifest import ManifestIndex
 from ..constants import PROG
 from ..settings import settings_from_env
+from ...run_bottle import index_for
 from .start import _launch_bottle
 
 
@@ -73,7 +74,8 @@ def cmd_resume(argv: list[str]) -> int:
 
     # The host controller resolves the manifest from the same directory.
     cwd = metadata.cwd or os.getcwd()
-    manifest = ManifestIndex.resolve(cwd)
+    # A run's unsaved bottle (ADR 0017) is kept in its state dir.
+    manifest = index_for(ManifestIndex.resolve(cwd), identity=metadata.identity)
     manifest.require_agent(metadata.agent_name)
 
     settings = settings_from_env()

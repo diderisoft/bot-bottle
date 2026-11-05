@@ -17,8 +17,47 @@ Options:
   --json           print raw proposal JSON to stdout
 ```
 
-The CLI and the console's launch page run the same flow (`suggest.flow`):
-`bottle-architect` first, the rules path when it can't answer.
+The CLI, the guided `bot-bottle start` and the console's launch page run the
+same flow (`suggest.flow`): `bottle-architect` first, the rules path when it
+can't answer.
+
+## The guided `bot-bottle start`
+
+On a terminal, `bot-bottle start` without `--bottle` is guided:
+
+1. **Harness.** The agent you last ran (remembered in
+   `~/.bot-bottle/start.json`), else a pick among the logged-in harnesses
+   that have an agent (`setup`'s detection). `bot-bottle start codex` runs
+   that one and makes it the default.
+2. **Task.** What the agent should do. Empty runs the agent in `basic`, as a
+   plain start, with no suggestion.
+3. **Suggest**, for the current project, with a spinner. The architect's
+   warm bottle started booting when `start` did, so by now only the model
+   call is left. The proposal is shown as `bottles suggest` shows it.
+4. **Confirm:** run it, save it as a named bottle first, edit it, or
+   cancel. Edit opens the proposal as YAML in `$VISUAL`/`$EDITOR`; after you
+   save, it's validated, and it reopens with the errors inline until it
+   validates (emptying the file cancels the edit).
+5. **Launch** in that bottle with the task as the agent's first prompt.
+
+**Nothing is saved unless you ask** (ADR 0017). A suggestion that adds
+anything runs as the run's own bottle, `suggested`: kept with the run (a
+resume finds it, the console shows it read-only, the audit has its full
+text), never added to the library. "Save it as a bottle" writes it like
+`--write`, versioned like any host bottle, and runs that.
+
+**`--auto`** (ADR 0018) skips step 4: it prints one line saying what it chose
+(`--auto: running in basic, adding egress api.open-meteo.com (from
+architect)`) and runs it, unsaved. Anything the bottle missed goes through
+supervise approvals at runtime. `BOT_BOTTLE_START_AUTO=1` makes it the
+default; `--no-auto` asks again for one run.
+
+**Without a terminal nothing prompts.** `--auto` is then the only way to use
+a suggestion, and the task comes as an argument: `bot-bottle start --auto
+"fix the flaky test"` (an agent can go first: `bot-bottle start codex --auto
+"…"`). Without `--auto`, give `--bottle` (or `--headless`).
+
+`bot-bottle start claude --bottle web` launches exactly as before.
 
 ### Example
 

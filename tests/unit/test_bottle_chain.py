@@ -38,6 +38,27 @@ class TestChain(_Chain):
         self.assertEqual(["work"], got["targets"])
 
 
+class TestRunBottle(_Chain):
+    def test_a_runs_unsaved_bottle_is_listed_read_only_and_never_a_target(self) -> None:
+        # pylint: disable=import-outside-toplevel
+        from bot_bottle import run_bottle
+        from bot_bottle.bottle_state import BottleMetadata, write_metadata
+        from bot_bottle.control.hostctl import manifest_view
+        write_metadata(BottleMetadata(identity="s1", agent_name="helper", cwd="",
+                                      copy_cwd=False, started_at="",
+                                      bottle_names=("work", "suggested")))
+        run_bottle.state_dir("s1").mkdir(parents=True, exist_ok=True)
+        (run_bottle.state_dir("s1") / "suggested.md").write_text(
+            "---\negress:\n  routes:\n    - host: run.example.com\n---\n\nThis run.\n")
+        got = bottle_chain.chain("s1", LIVE)
+        self.assertIn(("suggested", "run", False),
+                      [(b["name"], b["kind"], b["writable"]) for b in got["bottles"]])
+        self.assertNotIn("suggested", got["targets"])
+        targets = [t["name"] for t in manifest_view.bottle_targets("s1", LIVE)]
+        self.assertNotIn("suggested", targets)
+        self.assertIn("work", targets)
+
+
 class TestWrite(_Chain):
     def digest(self, name: str) -> str:
         return _digest((self.bottles / f"{name}.md").read_text())

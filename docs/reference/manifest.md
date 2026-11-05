@@ -16,8 +16,10 @@ Bottles and agents are Markdown files with YAML frontmatter.
 A bottle holds what the agent may reach and with which credentials: its env,
 git identity, git-gate repos and egress routes. An agent holds who it is: its
 harness (`agent_provider`), its skills and its prompt. An agent doesn't name
-a bottle: you pick bottles at launch (`--bottle`, or the console's launch
-page), and a launch with none runs in the built-in `basic`. So an agent file
+a bottle: you pick bottles at launch (`--bottle`, the console's launch
+page, or a suggested one in the guided `bot-bottle start`,
+[bottles-suggest.md](bottles-suggest.md)), and a launch with none runs in the
+built-in `basic`. So an agent file
 works on any host, whatever its bottles are called
 ([ADR 0011](../decisions/0011-agents-dont-name-bottles.md)). Unknown keys fail
 at load, naming the key and the accepted ones.

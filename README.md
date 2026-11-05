@@ -26,11 +26,13 @@ That installs the latest release. Or, with uv (or the same with `pipx install`),
 uv tool install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git@v0.1.4"
 ```
 
-The installer runs `bot-bottle setup`, which writes a starter agent for each logged-in harness it finds (Claude Code, Codex, pi). Start one; the release's images are pulled on first run:
+The installer runs `bot-bottle setup`, which writes a starter agent for each logged-in harness it finds (Claude Code, Codex, pi). Then start, and say what the agent should do; the release's images are pulled on first run:
 
 ```sh
-bot-bottle start claude
+bot-bottle start
 ```
+
+It asks which harness (once; it remembers), asks for the task, and proposes a bottle sized to it: the hosts, repos and env it needs and no more, which you can run, edit, or save. `bot-bottle start --auto "fix the flaky test"` runs the proposal without asking. Details in [bottles-suggest.md](docs/reference/bottles-suggest.md).
 
 You also need a backend, which the installer leaves to you (`bot-bottle doctor` says what's missing):
 
@@ -57,7 +59,7 @@ egress:
 ---
 ```
 
-Run an agent in it with `bot-bottle start claude --bottle web`; agents don't name a bottle, and a launch without one runs in the built-in `basic`. Every field is in [manifest.md](docs/reference/manifest.md).
+Run an agent in it with `bot-bottle start claude --bottle web`; agents don't name a bottle, and a plain start suggests one (or runs in the built-in `basic` when you give no task). Every field is in [manifest.md](docs/reference/manifest.md).
 
 ## Learn more
 
