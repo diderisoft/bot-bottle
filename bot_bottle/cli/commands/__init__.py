@@ -31,6 +31,7 @@ _HANDLERS: dict[str, str] = {
     "jobs": "lifecycle:cmd_jobs",  # unlisted; `status --jobs`
     "pair": "pair:cmd_pair",
     "rename": "rename:cmd_rename",
+    "resolve-canary": "resolve_canary:cmd_resolve_canary",
     "resume": "resume:cmd_resume",
     "setup": "setup:cmd_setup",
     "start": "start:cmd_start",
@@ -64,8 +65,8 @@ QUICK = _lazy("quick:cmd_quick")
 # DB (where the migration prompt can't be answered on a non-TTY runner).
 NO_MIGRATION_COMMANDS = frozenset({
     "attach", "audit", "bootstrap", "bottles", "doctor", "down", "envs", "forge", "help", "host",
-    "install", "jobs", "pair", "setup", "status", "supervise", "trust", "uninstall", "up",
-    "version",
+    "install", "jobs", "pair", "resolve-canary", "setup", "status", "supervise", "trust",
+    "uninstall", "up", "version",
 })
 
 __all__ = ["COMMANDS", "NO_MIGRATION_COMMANDS", "QUICK"]

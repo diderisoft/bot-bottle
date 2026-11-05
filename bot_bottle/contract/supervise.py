@@ -1,4 +1,5 @@
-"""Supervise wire types and constants: `Proposal`, `Response`, `AuditEntry`."""
+"""Supervise wire types and constants: `Proposal`, `Response`, `AuditEntry`,
+`CanaryEvent`."""
 
 from __future__ import annotations
 
@@ -65,6 +66,17 @@ COMPONENT_FOR_TOOL: dict[str, str] = {
     TOOL_EGRESS_ALLOW: "egress",
     TOOL_EGRESS_BLOCK: "egress",
 }
+
+# Canary resolution actions: the operator acknowledges (lets the bottle
+# continue) or terminates (shuts it down and deregisters it).
+CANARY_ACTION_ACKNOWLEDGE = "acknowledge"
+CANARY_ACTION_TERMINATE = "terminate"
+CANARY_ACTIONS: tuple[str, ...] = (CANARY_ACTION_ACKNOWLEDGE, CANARY_ACTION_TERMINATE)
+
+# Canary event resolution states.
+CANARY_STATUS_UNRESOLVED = "unresolved"
+CANARY_STATUS_ACKNOWLEDGED = "acknowledged"
+CANARY_STATUS_TERMINATED = "terminated"
 
 
 def _require_str(raw: dict[str, object], key: str) -> str:
@@ -174,10 +186,67 @@ class AuditEntry:
         return dataclasses.asdict(self)
 
 
+@dataclass(frozen=True)
+class CanaryEvent:
+    """A canary hit recorded by the gateway; resolved by the operator via
+    `resolve-canary`."""
+
+    id: str
+    bottle_slug: str
+    arrival_timestamp: str
+    # Human-readable description of what triggered the hit (from ScanResult.reason).
+    reason: str
+    # The request path where the hit was detected.
+    request_path: str
+    # Resolution state: unresolved, acknowledged, or terminated.
+    status: str = CANARY_STATUS_UNRESOLVED
+    resolved_at: str = ""
+    resolution_notes: str = ""
+
+    @classmethod
+    def new(
+        cls,
+        *,
+        bottle_slug: str,
+        reason: str,
+        request_path: str,
+        now: datetime | None = None,
+    ) -> "CanaryEvent":
+        ts = (now or datetime.now(timezone.utc)).isoformat()
+        return cls(
+            id=str(uuid.uuid4()),
+            bottle_slug=bottle_slug,
+            arrival_timestamp=ts,
+            reason=reason,
+            request_path=request_path,
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return dataclasses.asdict(self)
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, object]) -> "CanaryEvent":
+        status = _require_str(raw, "status")
+        if status not in (CANARY_STATUS_UNRESOLVED, CANARY_STATUS_ACKNOWLEDGED,
+                          CANARY_STATUS_TERMINATED):
+            raise ValueError(f"unknown canary status {status!r}")
+        return cls(
+            id=_require_str(raw, "id"),
+            bottle_slug=_require_str(raw, "bottle_slug"),
+            arrival_timestamp=_require_str(raw, "arrival_timestamp"),
+            reason=_require_str(raw, "reason"),
+            request_path=_require_str(raw, "request_path"),
+            status=status,
+            resolved_at=_require_str(raw, "resolved_at"),
+            resolution_notes=_require_str(raw, "resolution_notes"),
+        )
+
+
 __all__ = [
     "ACTION_OPERATOR_EDIT",
     "ALREADY_ANSWERED",
     "AuditEntry",
+    "CanaryEvent",
     "Proposal",
     "Response",
     "STATUSES",
@@ -200,4 +269,10 @@ __all__ = [
     "DB_PATH_IN_CONTAINER",
     "DEFAULT_POLL_INTERVAL_SEC",
     "COMPONENT_FOR_TOOL",
+    "CANARY_ACTION_ACKNOWLEDGE",
+    "CANARY_ACTION_TERMINATE",
+    "CANARY_ACTIONS",
+    "CANARY_STATUS_UNRESOLVED",
+    "CANARY_STATUS_ACKNOWLEDGED",
+    "CANARY_STATUS_TERMINATED",
 ]

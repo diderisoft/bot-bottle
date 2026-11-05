@@ -284,6 +284,37 @@ class OrchestratorClient:
             raise OrchestratorClientError(
                 f"POST /supervise/respond: HTTP {status} {detail}".rstrip(), status=status)
 
+    # --- canary events ---
+
+    def canary_events(self) -> list[dict[str, object]]:
+        """Unresolved canary events (`GET /canary/events`)."""
+        payload = self._ok("GET", "/canary/events")
+        events = payload.get("events")
+        return events if isinstance(events, list) else []
+
+    def canary_resolve(
+        self,
+        event_id: str,
+        *,
+        bottle_slug: str,
+        action: str,
+        notes: str = "",
+    ) -> None:
+        """Resolve a canary event (`POST /canary/events/{id}/resolve`).
+        Raises `OrchestratorClientError` on failure."""
+        status, payload = self._request(
+            "POST",
+            f"/canary/events/{event_id}/resolve",
+            {"event_id": event_id, "bottle_slug": bottle_slug,
+             "action": action, "notes": notes},
+        )
+        if not 200 <= status < 300:
+            detail = str(payload.get("detail") or payload.get("error") or "")
+            raise OrchestratorClientError(
+                f"POST /canary/events/{event_id}/resolve: HTTP {status} {detail}".rstrip(),
+                status=status,
+            )
+
 
 # --- the environment's orchestrator ---
 #
@@ -507,6 +538,7 @@ def pending_proposals() -> list[dict[str, object]]:
 
 
 __all__ = [
+    "AlreadyAnswered",
     "OrchestratorClient",
     "OrchestratorClientError",
     "NoOrchestrator",

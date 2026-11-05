@@ -9,6 +9,7 @@ import sqlite3
 from pathlib import Path
 
 from .audit_store import AuditStore
+from .canary_store import CanaryStore
 from .queue_store import QueueStore
 from ...lib.config_store import ConfigStore
 
@@ -23,12 +24,14 @@ class StoreManager:
         return (
             QueueStore("", self.db_path).is_migrated()
             and AuditStore(self.db_path).is_migrated()
+            and CanaryStore(self.db_path).is_migrated()
             and ConfigStore(self.db_path).is_migrated()
         )
 
     def migrate(self) -> None:
         QueueStore("", self.db_path).migrate()
         AuditStore(self.db_path).migrate()
+        CanaryStore(self.db_path).migrate()
         ConfigStore(self.db_path).migrate()
 
     def is_fresh(self) -> bool:
