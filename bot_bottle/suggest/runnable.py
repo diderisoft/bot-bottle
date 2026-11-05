@@ -171,10 +171,14 @@ def _drop_unrunnable(proposal: Proposal, dirs: Dirs, source: SecretSource) -> No
         else:
             proposal.blocked = (f"{name} needs {unset}, which isn't set on this host "
                                 f"(host env or secrets file)")
-    # What's left must still start from `basic` (ADR 0011): a forge's bottle,
-    # say, carries only the forge.
-    if dropped and not any(DEFAULT_BOTTLE in _chain(n, dirs) for n in proposal.bottles):
+    # A suggested stack starts from `basic`, what a launch with no bottle gets
+    # (ADR 0011): a forge's bottle, say, carries only the forge, and picking
+    # bottles doesn't bring `basic` in by itself.
+    if stacked and not any(DEFAULT_BOTTLE in _chain(n, dirs) for n in proposal.bottles):
         proposal.bottles.insert(0, DEFAULT_BOTTLE)
+        if not dropped:
+            proposal.notes.append(f"stacked {DEFAULT_BOTTLE}: no bottle in the stack extends it, "
+                                  f"and a suggested bottle starts from it")
     for repo in proposal.additions.repos:
         forge = _grant_forge(repo.grant)
         token = next((forges_of(b)[forge] for b in (_bottle(n, dirs) for n in _base(proposal))

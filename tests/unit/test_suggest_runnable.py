@@ -113,6 +113,19 @@ class TestForges(_Library):
         self.assertEqual(["bot-bottle-dev"], out.bottles)
         self.assertEqual([GRANT], [r.grant for r in out.additions.repos])
 
+    def test_a_stack_without_basic_in_its_chain_gets_basic_first(self) -> None:
+        """The dry run's proposal stacked only gitea, which extends nothing,
+        so the agent had no PyPI: a suggested stack starts from basic."""
+        out = self.validate(_proposal(["gitea"]))
+        self.assertEqual(["basic", "gitea"], out.bottles)
+        self.assertTrue(any(n.startswith("stacked basic:") for n in out.notes))
+        self.assertEqual([GRANT], [r.grant for r in out.additions.repos])
+
+    def test_a_stack_already_on_basic_is_left_alone(self) -> None:
+        out = self.validate(_proposal(["basic", "gitea"]))
+        self.assertEqual(["basic", "gitea"], out.bottles)
+        self.assertFalse(any(n.startswith("stacked basic:") for n in out.notes))
+
     def test_with_no_declarer_the_grant_is_dropped(self) -> None:
         out = self.validate(_proposal(["basic"], ("github.com/acme/app",)))
         self.assertEqual(["basic"], out.bottles)

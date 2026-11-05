@@ -39,6 +39,9 @@ prose before or after it:
 
 Rules:
 - Prefer reuse > stack > stack+additions > new-extending > new.
+- Picking bottles doesn't bring in `basic`: a bottle has only its own
+  `extends` chain (a forge's bottle like `gitea` usually extends nothing).
+  List `basic` in `bottles` when the task needs what it allows.
 - Bias toward too little access; leave out anything uncertain.
 - Never propose inspect:false, never include secret values.
 - Grants only on connected forges listed in the input, with a bottle in
