@@ -20,12 +20,14 @@ def render_proposal(
     dirs: list[tuple[Path, bool]] | None = None,
     *,
     json_output: bool = False,
+    compact: bool = False,
 ) -> str:
     """Return the proposal as a human-readable string.
 
     When `json_output` is True, returns the raw JSON.  Otherwise prints the
     option, bottles, additions and notes, followed by the `bottle_elements`
-    preview if `dirs` is given.
+    preview if `dirs` is given. `compact` lists only what the proposal adds,
+    and each inherited bottle as one line of counts (the guided `start`).
     """
     if json_output:
         return proposal.to_json()
@@ -69,13 +71,15 @@ def render_proposal(
     if dirs is not None:
         lines.append("")
         lines.append("elements preview:")
-        lines.extend(_elements_preview(proposal, dirs))
+        lines.extend(_elements_preview(proposal, dirs, compact=compact))
     return "\n".join(lines)
 
 
 def _elements_preview(
     proposal: Proposal,
     dirs: list[tuple[Path, bool]],
+    *,
+    compact: bool = False,
 ) -> list[str]:
     """Run `bottle_elements` on the proposal's bottles + additions, return
     formatted lines.  Falls back to a short summary on import errors (e.g.
@@ -103,6 +107,8 @@ def _elements_preview(
         except Exception:  # pylint: disable=broad-exception-caught
             return ["  (could not load bottle chain for preview)"]
 
+    if compact:
+        return _compact_preview(proposal, rows)
     lines: list[str] = []
     for row in rows:
         shown = row.get("source")
@@ -116,6 +122,26 @@ def _elements_preview(
     if not lines:
         lines.append("  (no elements)")
     return lines
+
+
+def _compact_preview(proposal: Proposal, rows: list[dict[str, object]]) -> list[str]:
+    """The proposal's own rows in full, then one line per inherited bottle
+    counting what it brings, by kind."""
+    own = (f"{proposal.new_bottle.name} (new)" if proposal.new_bottle and proposal.new_bottle.name
+           else "this proposal")
+    lines: list[str] = []
+    counts: dict[str, dict[str, int]] = {}
+    for row in rows:
+        source = str(row.get("source") or "")
+        if source == "_suggest":
+            lines.append(f"  {row['kind']!s:8s} {row['name']!s:30s} {row.get('detail', '')}  [{own}]")
+        else:
+            kinds = counts.setdefault(source, {})
+            kinds[str(row["kind"])] = kinds.get(str(row["kind"]), 0) + 1
+    for source, kinds in counts.items():
+        summary = ", ".join(f"{n} {kind}" for kind, n in kinds.items())
+        lines.append(f"  {source}: {summary}")
+    return lines or ["  (no elements)"]
 
 
 __all__ = ["render_proposal"]

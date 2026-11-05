@@ -126,6 +126,19 @@ class TestForges(_Library):
         self.assertEqual(["basic", "gitea"], out.bottles)
         self.assertFalse(any(n.startswith("stacked basic:") for n in out.notes))
 
+    def test_the_compact_preview_lists_additions_and_counts_the_rest(self) -> None:
+        out = self.validate(_proposal(["basic", "gitea"]))
+        text = render_proposal(out, self.dirs, compact=True)
+        preview = text.split("elements preview:", 1)[1].splitlines()
+        self.assertTrue(any("flaky-api-demo" in line and "[this proposal]" in line
+                            for line in preview))
+        self.assertTrue(any(line.strip().startswith("basic:") and "egress" in line
+                            for line in preview))
+        self.assertTrue(any(line.strip().startswith("gitea:") for line in preview))
+        self.assertFalse(any("pypi.org" in line for line in preview))
+        full = render_proposal(out, self.dirs).split("elements preview:", 1)[1]
+        self.assertIn("pypi.org", full)
+
     def test_with_no_declarer_the_grant_is_dropped(self) -> None:
         out = self.validate(_proposal(["basic"], ("github.com/acme/app",)))
         self.assertEqual(["basic"], out.bottles)

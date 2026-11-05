@@ -228,7 +228,7 @@ def confirm(proposal: "Proposal", dirs: list[tuple[Path, bool]]
             edited = edit_proposal(proposal, dirs)
             if edited is not None:
                 proposal = edited
-                print(render_proposal(proposal, dirs))
+                print(render_proposal(proposal, dirs, compact=True))
             continue
         return None
 
@@ -266,7 +266,7 @@ def guided_start(args: argparse.Namespace, manifest: "ManifestIndex", settings: 
     if auto:
         print(auto_line(proposal), file=sys.stderr)
     else:
-        print(render_proposal(proposal, dirs))
+        print(render_proposal(proposal, dirs, compact=True))
         confirmed = confirm(proposal, dirs)
         if confirmed is None:
             info("cancelled")
