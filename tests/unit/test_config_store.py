@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import gc
+import os
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
+from unittest import mock
 
 from bot_bottle.lib.config_store import (
     DEFAULT_CACHED_IMAGE_STALE_WARNING_DAYS,
@@ -129,10 +133,6 @@ class TestConfigStore(unittest.TestCase):
             )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestConnectionsClose(unittest.TestCase):
     """Each read and write closes its connection. `with conn:` only commits,
     so a store that used it left one open per call until garbage collection,
@@ -140,7 +140,6 @@ class TestConnectionsClose(unittest.TestCase):
 
     @staticmethod
     def _open_on(path: Path) -> int:
-        import os  # pylint: disable=import-outside-toplevel
         fd_dir = "/proc/self/fd" if os.path.isdir("/proc/self/fd") else "/dev/fd"
         count = 0
         for name in os.listdir(fd_dir):
@@ -152,7 +151,6 @@ class TestConnectionsClose(unittest.TestCase):
         return count
 
     def test_repeated_calls_leave_no_connection_open(self) -> None:
-        import gc  # pylint: disable=import-outside-toplevel
         with tempfile.TemporaryDirectory() as tmp:
             path = (Path(tmp) / "bot-bottle.db").resolve()
             store = ConfigStore(path)
@@ -167,3 +165,70 @@ class TestConnectionsClose(unittest.TestCase):
                 self.assertEqual(0, self._open_on(path))
             finally:
                 gc.enable()
+def _open_fd_count() -> int:
+    """Open descriptors in this process (Linux /proc, macOS /dev/fd)."""
+    fd_dir = "/proc/self/fd" if os.path.isdir("/proc/self/fd") else "/dev/fd"
+    return len(os.listdir(fd_dir))
+
+
+class TestConfigStoreClosesConnections(unittest.TestCase):
+    """The host controller polls these every few seconds; an unclosed
+    connection per call ran it out of descriptors (EMFILE)."""
+
+    def _store(self, tmp: str) -> ConfigStore:
+        store = ConfigStore(Path(tmp) / "bot-bottle.db")
+        store.migrate()
+        return store
+
+    def test_every_method_closes_its_connection(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
+            store = self._store(tmp)
+            calls = [
+                store.cached_image_stale_warning_days,
+                store.audit_delivery,
+                store.audit_forward,
+                store.firehose,
+                store.transcript_retention_days,
+                store.host_budget,
+                lambda: store.set_audit_forward(None),
+                lambda: store.set_firehose(store.firehose()),
+                lambda: store.set_transcript_retention_days(30),
+                lambda: store.set_host_budget(store.host_budget()),
+                lambda: store.set_audit_delivery("best_effort"),
+                lambda: store.set_cached_image_stale_warning_days(1),
+            ]
+            real_connect = sqlite3.connect
+            opened: list[sqlite3.Connection] = []
+
+            def tracking_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+                conn = real_connect(*args, **kwargs)
+                opened.append(conn)
+                return conn
+
+            for call in calls:
+                opened.clear()
+                with mock.patch("sqlite3.connect", side_effect=tracking_connect):
+                    call()
+                self.assertTrue(opened)
+                for conn in opened:
+                    with self.assertRaises(sqlite3.ProgrammingError):
+                        conn.execute("SELECT 1")  # closed
+
+    def test_repeated_polls_do_not_grow_open_descriptors(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
+            store = self._store(tmp)
+            gc.disable()  # a leak must not hide behind the cyclic collector
+            try:
+                before = _open_fd_count()
+                for _ in range(200):
+                    store.audit_forward()
+                    store.audit_delivery()
+                    store.firehose()
+                after = _open_fd_count()
+            finally:
+                gc.enable()
+            self.assertLessEqual(after - before, 5)
+
+
+if __name__ == "__main__":
+    unittest.main()
