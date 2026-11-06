@@ -1,6 +1,6 @@
 # ADR 0019: Forges are described in bottles and connected on hosts
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-06
 - **Deciders:** didericis
 
