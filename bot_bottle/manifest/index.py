@@ -27,6 +27,7 @@ from .loader import (
 from ..paths import bot_bottle_root, project_manifest_dir
 from .trust import check as trust_check
 from .trust import check_agent as trust_check_agent
+from .forges import with_forge_users
 from .schema import DEFAULT_BOTTLE, validate_agent_frontmatter_keys
 from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
 
@@ -54,12 +55,15 @@ def _manifest_with_merged_git_user(
     agent: "ManifestAgent", raw_bottle: "ManifestBottle"
 ) -> "Manifest":
     """The single-agent Manifest, with the agent's git-gate.user overlaid on
-    the bottle's per field."""
+    the bottle's per field, and its repos on the forges it names in
+    `forge_users` pushing as those users."""
     merged = _merge_git_user(agent.git_user, raw_bottle.git_user)
     bottle = (
         raw_bottle if merged == raw_bottle.git_user
         else replace(raw_bottle, git_user=merged)
     )
+    if agent.forge_users:
+        bottle = with_forge_users(bottle, dict(agent.forge_users))
     return Manifest(agent=agent, bottle=bottle)
 
 
@@ -84,23 +88,28 @@ def _resolve_effective_bottle_eager(
 
 def _load_checked(
     name: str, dirs: "Sequence[tuple[Path, bool]]",
+    forge_users: "Mapping[str, str] | None" = None,
 ) -> "tuple[ManifestBottle, tuple[BottleSource, ...]]":
-    """Load one bottle chain; one with project files must be trusted."""
+    """Load one bottle chain; one with project files must be trusted, as
+    the accounts the agent's `forge_users` picks, so trusting it covers whom
+    its grants push as."""
     bottle, sources = load_bottle_chain(name, dirs)
-    trust_check(name, bottle, sources)
+    checked = with_forge_users(bottle, dict(forge_users)) if forge_users else bottle
+    trust_check(name, checked, sources)
     return bottle, sources
 
 
 def _resolve_effective_bottle_lazy(
     bottle_names: "tuple[str, ...]",
     dirs: "Sequence[tuple[Path, bool]]",
+    forge_users: "Mapping[str, str] | None" = None,
 ) -> "tuple[ManifestBottle, tuple[BottleSource, ...]]":
     """The effective bottle (lazy path) and its files, resolved from disk:
     `bottle_names` merged in order, else `DEFAULT_BOTTLE`. Raises
     UntrustedBottleError for an untrusted project bottle."""
     if not bottle_names:
-        return _load_checked(DEFAULT_BOTTLE, dirs)
-    loaded = [_load_checked(bn, dirs) for bn in bottle_names]
+        return _load_checked(DEFAULT_BOTTLE, dirs, forge_users)
+    loaded = [_load_checked(bn, dirs, forge_users) for bn in bottle_names]
     return (merge_bottles_runtime([b for b, _ in loaded]),
             tuple(s for _, sources in loaded for s in sources))
 
@@ -292,9 +301,6 @@ class ManifestIndex:
 
         validate_agent_frontmatter_keys(agent_path, fm.keys())
 
-        raw_bottle, bottle_sources = _resolve_effective_bottle_lazy(
-            bottle_names, self.bottle_dirs())
-
         # Build and validate the ManifestAgent.
         agent_dict: dict[str, object] = {
             "skills": fm.get("skills", []),
@@ -306,7 +312,11 @@ class ManifestIndex:
             agent_dict["remote"] = fm["remote"]
         if "agent_provider" in fm:
             agent_dict["agent_provider"] = fm["agent_provider"]
+        if "forge_users" in fm:
+            agent_dict["forge_users"] = fm["forge_users"]
         agent = ManifestAgent.from_dict(agent_name, agent_dict)
+        raw_bottle, bottle_sources = _resolve_effective_bottle_lazy(
+            bottle_names, self.bottle_dirs(), dict(agent.forge_users))
         if agent_name in cwd_agents:
             # A project agent's provider can spend host logins and secrets,
             # and its prompt directs whatever the user's bottle allows.

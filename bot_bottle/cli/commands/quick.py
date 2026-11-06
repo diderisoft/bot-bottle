@@ -153,8 +153,7 @@ def _connect(url: str) -> bool:
 def _onboard(cwd: Path) -> str:
     """Draft and write the project's bottle; "" when the user skips."""
     from ...onboarding import onboard  # pylint: disable=import-outside-toplevel
-    return onboard(cwd, bot_bottle_root() / "bottles", ask=_ask, say=_say,
-                   connect=_connect) or ""
+    return onboard(cwd, ask=_ask, say=_say, connect=_connect) or ""
 
 
 def cmd_quick(argv: list[str]) -> int:

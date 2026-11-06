@@ -3,6 +3,7 @@
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,6 +16,7 @@ from bot_bottle.control.git_gate_render import (
     git_gate_render_hook,
     git_gate_upstreams_for_bottle,
 )
+from bot_bottle.forge_connections import ForgeUser
 from bot_bottle.git_gate import (
     GitGate,
     GitGatePlan,
@@ -26,6 +28,7 @@ from bot_bottle.errors import MissingEnvVarError
 from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.manifest import ManifestIndex
 from tests.fixtures import fixture_minimal, fixture_with_git
+from tests.unit._forges import GITEA, connected
 
 
 def _trailer_kwargs(bottle_id: str) -> dict[str, str]:
@@ -488,21 +491,14 @@ class TestDynamicKeyProvisioning(unittest.TestCase):
         shutil.rmtree(self.stage, ignore_errors=True)
 
     def _gitea_manifest(self):
-        return ManifestIndex.from_json_obj({
-            "bottles": {
-                "dev": {
-                    "credentials": {"gitea-api": {"source": "secret", "secret": "GITEA_TOKEN"}},
-                    "git-gate": {
-                        "forges": {"gitea.example.com": {
-                            "kind": "gitea", "url": "https://gitea.example.com",
-                            "token": "$gitea-api", "host_key": "ssh-ed25519 AAAA...",
-                        }},
-                        "repos": ["gitea.example.com/org/repo:write"],
-                    }
-                }
-            },
-            "agents": {"demo": {"skills": [], "prompt": ""}},
-        })
+        conn = replace(GITEA, ssh="ssh://git@gitea.example.com", host_key="ssh-ed25519 AAAA...",
+                       users=(ForgeUser("bot", "GITEA_TOKEN", default=True),))
+        with connected(conn):
+            return ManifestIndex.from_json_obj({
+                "bottles": {"dev": {"git-gate": {
+                    "repos": ["gitea.example.com/org/repo:write"]}}},
+                "agents": {"demo": {"skills": [], "prompt": ""}},
+            })
 
     def test_resolve_identity_file_static_uses_entry_path(self):
         entry = fixture_with_git().bottles["dev"].git[0]

@@ -65,13 +65,12 @@ def rules_suggest(
     # Rule 2: write grant on origin when its forge is connected.
     origin = read_origin(cwd) if cwd is not None else None
     if origin is not None:
-        forge = find_forge(origin, host_bottles)
+        forge = find_forge(origin)
         if forge is not None:
             grant = f"{forge.key}/{origin.owner}/{origin.repo}:write"
-            base = forge.bottle
             return Proposal(
                 option=OPTION_STACK_ADDITIONS,
-                bottles=[base, "basic"],
+                bottles=["basic"],
                 new_bottle=None,
                 additions=ProposalAdditions(
                     repos=[ProposalRepo(grant=grant,

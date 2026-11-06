@@ -14,6 +14,7 @@ from bot_bottle.bottle_state import BottleMetadata, egress_state_dir, git_gate_s
     write_metadata
 from bot_bottle.contract.yaml_subset import parse_frontmatter
 from bot_bottle.control.hostctl import manifest_elements, manifest_view
+from bot_bottle.forge_connections import ForgeConnection, ForgeUser, save
 
 AGENT = "---\n---\n\nHi.\n"
 WORK = """---
@@ -39,19 +40,16 @@ egress:
 Base.
 """
 GITEA = """---
-credentials:
-  gitea-api:
-    source: secret
-    secret: GITEA_TOKEN
 git-gate:
   forges:
     gitea.example.com:
       kind: gitea
-      url: https://gitea.example.com
       ssh: ssh://git@gitea.example.com:2222
-      token: $gitea-api
 ---
 """
+CONN = ForgeConnection(host="gitea.example.com", kind="gitea", url="https://gitea.example.com",
+                       ssh="ssh://git@gitea.example.com:2222",
+                       users=(ForgeUser("bot", "GITEA_TOKEN", default=True),))
 LAUNCH = 'routes:\n  - host: "api.example.com"\n    inspect:\n      auth_scheme: "Bearer"\n' \
          '      token_env: "EGRESS_TOKEN_0"\n  - host: "example.com"\n  - host: "docs.example.com"\n'
 LIVE = LAUNCH + '  - host: "new.example.com"\n'
@@ -70,6 +68,7 @@ class _Chain(unittest.TestCase):
         for name, text in (("work", WORK), ("base", BASE), ("gitea", GITEA),
                            ("other", "---\nenv:\n  A: b\n---\n")):
             (self.bottles / f"{name}.md").write_text(text)
+        save({CONN.host: CONN}, self.root / "forges.md")
         env = mock.patch.dict(os.environ, {"HOME": str(home), "BOT_BOTTLE_ROOT": str(self.root)})
         env.start()
         self.addCleanup(env.stop)
@@ -140,9 +139,9 @@ class TestTransfer(_Chain):
         rows = {r["key"]: r for r in manifest_elements.elements("s1", None)}
         self.assertEqual("write · gitea.example.com/acme/app", rows["repo:app"]["detail"])
         self.assertEqual("write · ssh://git@h/acme/lib.git", rows["repo:lib"]["detail"])
-        # The grant's forge, from the host bottle declaring it, listed but kept there.
-        self.assertEqual(("gitea", True), (rows["forge:gitea.example.com"]["source"],
-                                           rows["forge:gitea.example.com"]["fixed"]))
+        # The grant's forge, from this host's connection to it.
+        self.assertEqual(("this host", True), (rows["forge:gitea.example.com"]["source"],
+                                               rows["forge:gitea.example.com"]["fixed"]))
         # A repo granted with no grant on record can't go into a bottle (ADR 0008).
         with self.assertRaisesRegex(manifest_view.ManifestViewError, "lib was granted"):
             manifest_elements.transfer("s1", ["repo:lib"], "other", move=True)
@@ -151,7 +150,11 @@ class TestTransfer(_Chain):
         other = self.fm("other")
         self.assertEqual(["new.example.com"], [r["host"] for r in other["egress"]["routes"]])
         self.assertEqual({"app": "gitea.example.com/acme/app"}, other["git-gate"]["repos"])
-        self.assertEqual(["gitea"], other["extends"])  # where the grant's forge is
+        # The grant's forge is described with it; nothing to extend.
+        self.assertNotIn("extends", other)
+        self.assertEqual({"gitea.example.com": {"kind": "gitea",
+                                                "ssh": "ssh://git@gitea.example.com:2222"}},
+                         other["git-gate"]["forges"])
 
     def test_refusals(self) -> None:
         for keys, target, why in (([], "other", "pick the elements"),

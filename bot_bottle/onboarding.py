@@ -3,8 +3,10 @@ bottle of its own drafts one from the checkout, shows it, and writes it as
 the project's `./main`, trusted on this host since bot-bottle wrote it.
 
 The draft comes from the checkout, never from a model: its `origin`, read-only,
-when a host bottle declares the forge it's on (connecting one first if the
-user wants), on top of `basic`'s package registries and public code.
+when this host connected the forge it's on (connecting it first if the user
+wants), on top of `basic`'s package registries and public code. The draft
+describes the forge too, so the bottle says where it goes on any machine
+(ADR 0019).
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .contract.yaml_subset import YamlSubsetError, parse_frontmatter, serialize_yaml_subset
+from .contract.yaml_subset import serialize_yaml_subset
 from .forge_connect import ssh_host_port
 from .manifest.loader import PROJECT_BOTTLE, bottle_ref
 
@@ -34,10 +36,11 @@ class Origin:
 
 @dataclass(frozen=True)
 class ForgeMatch:
-    """A host bottle declaring the forge `origin` is on."""
+    """The connected forge `origin` is on: its host, and how a bottle
+    describes it."""
 
-    bottle: str
     key: str
+    description: tuple[tuple[str, object], ...] = ()
 
 
 @dataclass
@@ -54,8 +57,9 @@ class Draft:
     def frontmatter(self) -> dict[str, object]:
         if not (self.origin and self.forge):
             return {"extends": "basic"}
-        return {"extends": [self.forge.bottle, "basic"],
-                "git-gate": {"repos": [self.grant()]}}
+        return {"extends": "basic",
+                "git-gate": {"forges": {self.forge.key: dict(self.forge.description)},
+                             "repos": [self.grant()]}}
 
     def lines(self) -> list[str]:
         if self.origin and self.forge:
@@ -92,33 +96,26 @@ def read_origin(cwd: Path) -> Origin | None:
     return parse_origin(result.stdout.strip()) if result.returncode == 0 else None
 
 
-def find_forge(origin: Origin, host_bottles: Path) -> ForgeMatch | None:
-    """The first host bottle declaring a forge whose web or SSH address is
-    `origin`'s host (and port, when both give one)."""
-    if not host_bottles.is_dir():
+def find_forge(origin: Origin) -> ForgeMatch | None:
+    """The forge this host connected whose web or SSH address is `origin`'s
+    host (and port, when both give one)."""
+    # pylint: disable=import-outside-toplevel
+    from .forge_connections import ForgeConnectionError, connections
+    from .manifest.forges import described_connection
+    try:
+        found = connections()
+    except ForgeConnectionError:
         return None
-    for path in sorted(host_bottles.glob("*.md")):
-        try:
-            fm, _ = parse_frontmatter(path.read_text())
-        except (OSError, YamlSubsetError):
-            continue
-        git = fm.get("git-gate")
-        forges = git.get("forges") if isinstance(git, dict) else None
-        if not isinstance(forges, dict):
-            continue
-        for key, entry in forges.items():
-            if not isinstance(entry, dict):
-                continue
-            ssh = str(entry.get("ssh", ""))
-            ssh_host, ssh_port = ssh_host_port(ssh) if ssh else ("", "")
-            web = urlparse(str(entry.get("url", "")))
-            # An SSH origin's port is the forge's SSH port: compare it with the
-            # SSH address only. Its host may still be the web one (a forge whose
-            # SSH address is an IP), so the web host matches it on any port.
-            web_port_ok = origin.ssh or origin.port in ("", str(web.port or ""))
-            if (origin.host == ssh_host and origin.port in ("", ssh_port)) or (
-                    origin.host == web.hostname and web_port_ok):
-                return ForgeMatch(bottle=path.stem, key=key)
+    for key, conn in sorted(found.items()):
+        ssh_host, ssh_port = ssh_host_port(conn.ssh) if conn.ssh else ("", "")
+        web = urlparse(conn.url)
+        # An SSH origin's port is the forge's SSH port: compare it with the
+        # SSH address only. Its host may still be the web one (a forge whose
+        # SSH address is an IP), so the web host matches it on any port.
+        web_port_ok = origin.ssh or origin.port in ("", str(web.port or ""))
+        if (origin.host == ssh_host and origin.port in ("", ssh_port)) or (
+                origin.host == web.hostname and web_port_ok):
+            return ForgeMatch(key=key, description=tuple(described_connection(conn).items()))
     return None
 
 
@@ -126,19 +123,19 @@ Ask = Callable[[str], str]
 Say = Callable[[str], None]
 
 
-def onboard(cwd: Path, host_bottles: Path, *, ask: Ask, say: Say,
+def onboard(cwd: Path, *, ask: Ask, say: Say,
             connect: Callable[[str], bool]) -> str | None:
     """Draft the project's bottle, let the user adjust it, and write it. The
     bottle to launch with (`./main`), or None to skip (use `basic` this once)."""
     origin = read_origin(cwd)
-    forge = find_forge(origin, host_bottles) if origin else None
+    forge = find_forge(origin) if origin else None
     if origin and forge is None:
-        say(f"origin is on {origin.host}, which no bottle of yours connects.")
+        say(f"origin is on {origin.host}, a forge this host hasn't connected.")
         if ask("Connect it now? [y/N] ").strip().lower() in ("y", "yes"):
             default = f"https://{origin.host}"
             url = ask(f"Forge URL [{default}]: ").strip() or default
             if connect(url):
-                forge = find_forge(origin, host_bottles)
+                forge = find_forge(origin)
     draft = Draft(origin=origin, forge=forge)
     while True:
         say(f"No bottle for this project yet. Drafted {bottle_ref(PROJECT_BOTTLE, True)}:")

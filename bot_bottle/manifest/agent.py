@@ -252,6 +252,9 @@ class ManifestAgent:
     # any bottle (its API route and credentials). Agents don't compose, so
     # this is the agent's alone (PRD 0098).
     agent_provider: ManifestAgentProvider = field(default_factory=ManifestAgentProvider)
+    # `forge_users: {<host>: <user>}`: which user connected on a forge this
+    # agent pushes as; a forge it doesn't name uses its default (ADR 0019).
+    forge_users: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def from_dict(cls, name: str, raw: object) -> "ManifestAgent":
@@ -342,7 +345,25 @@ class ManifestAgent:
         )
 
         return cls(skills=skills, prompt=prompt, git_user=git_user,
-                   remote_writable=remote_writable, agent_provider=agent_provider)
+                   remote_writable=remote_writable, agent_provider=agent_provider,
+                   forge_users=_forge_users(name, d.get("forge_users")))
+
+
+_HOST_RE = re.compile(r"^[A-Za-z0-9.-]+(?::[0-9]+)?$")
+_USER_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _forge_users(agent: str, raw: object) -> tuple[tuple[str, str], ...]:
+    if raw is None:
+        return ()
+    d = as_json_object(raw, f"agent '{agent}' forge_users")
+    out: list[tuple[str, str]] = []
+    for host, user in d.items():
+        if not _HOST_RE.match(host) or not isinstance(user, str) or not _USER_RE.match(user):
+            raise ManifestError(f"agent '{agent}' forge_users maps a forge's host to a user "
+                                f"connected on it (was {host!r}: {user!r})")
+        out.append((host, user))
+    return tuple(out)
 
 
 def _parse_provider_settings(

@@ -152,16 +152,16 @@ def _grant_forge(identity: str, grant: str, declared: dict[str, Any],
                  listed: list[tuple[str, str, str, str, str, bool]],
                  ) -> list[tuple[str, str, str, str, str, bool]]:
     """The forge a grant made this run is on, when no file in the chain
-    declares it: from the host bottle that does (it stays there)."""
+    describes it: this host's connection to it."""
     # pylint: disable-next=import-outside-toplevel
     from .repo_grants import find_forge
-    found = find_forge(identity, grant.split("/", 1)[0]) if grant else None
-    if found is None or not found.bottle:
+    forge = find_forge(identity, grant.split("/", 1)[0]) if grant else None
+    if forge is None:
         return []
-    key = f"forge:{found.forge.name}"
+    key = f"forge:{forge.name}"
     if key in declared or any(row[0] == key for row in listed):
         return []
-    return [(key, "forge", found.forge.name, found.forge.url, found.bottle, True)]
+    return [(key, "forge", forge.name, forge.url, "this host", True)]
 
 
 def elements(identity: str, policy: str | None) -> list[dict[str, Any]]:
@@ -209,9 +209,9 @@ def _ordered(rows: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(rows.values(), key=lambda r: (order.get(r["kind"], 9), r["name"]))
 
 
-def _set(fm: dict[str, Any], key: str, value: Any, source_fm: dict[str, Any]) -> None:
+def _set(fm: dict[str, Any], key: str, value: Any) -> None:
     """Put the element `key` (its raw `value`) into `fm`, in place. A route for
-    a host it has merges; a forge brings its credential from `source_fm`."""
+    a host it has merges."""
     # pylint: disable=import-outside-toplevel,protected-access
     from ...approvals import _merge_route
     from ...manifest.forges import parse_grant
@@ -246,10 +246,6 @@ def _set(fm: dict[str, Any], key: str, value: Any, source_fm: dict[str, Any]) ->
         git = dict(fm.get("git-gate") or {})
         git["forges"] = {**(git.get("forges") or {}), name: value}
         fm["git-gate"] = git
-        label = str(value.get("token", ""))[1:] if isinstance(value, dict) else ""
-        cred = (source_fm.get("credentials") or {}).get(label)
-        if label and cred is not None:
-            fm["credentials"] = {**(fm.get("credentials") or {}), label: cred}
 
 
 def _drop(fm: dict[str, Any], key: str) -> None:
@@ -299,51 +295,24 @@ def _run_value(identity: str, policy: str | None, key: str) -> Any:
     raise ManifestViewError(f"{name} can't be written into a bottle")
 
 
-def _forge_bottle(forge: str) -> str:
-    """The host bottle declaring the forge `forge`, or ""."""
+def _with_forge_for(fm: dict[str, Any], grant: str) -> None:
+    """Describe the forge of `grant` in `fm` (ADR 0019) if it doesn't, from
+    this host's connection to it. Raises ManifestViewError if the host hasn't
+    connected it."""
     # pylint: disable=import-outside-toplevel
-    from ...contract.yaml_subset import parse_frontmatter
-    from ...paths import bot_bottle_root
-    for path in sorted((bot_bottle_root() / "bottles").glob("*.md")):
-        try:
-            fm = parse_frontmatter(path.read_text(encoding="utf-8"))[0]
-        except Exception:  # pylint: disable=broad-exception-caught  # not this one
-            continue
-        git = fm.get("git-gate")
-        if isinstance(git, dict) and isinstance(git.get("forges"), dict) \
-                and forge in git["forges"]:
-            return path.stem
-    return ""
-
-
-def _with_forge_for(dest: Any, fm: dict[str, Any], grant: str) -> None:
-    """Make sure the bottle `dest` can resolve the forge of `grant`, extending
-    the host bottle that declares it if its chain doesn't. Raises
-    ManifestViewError if none does."""
-    # pylint: disable=import-outside-toplevel
-    from ...manifest.forges import parse_grant
-    from ...manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
-    from ...manifest.util import ManifestError
-    forge = parse_grant(grant, "a grant")[0]
-    declared = isinstance(fm.get("git-gate"), dict) and forge in (
-        fm["git-gate"].get("forges") or {})
-    if not declared and dest.path.is_file():
-        try:
-            dirs = [(dest.path.parent, dest.project is not None), (BUILTIN_BOTTLES_DIR, False)]
-            chain, _ = load_bottle_chain(dest.path.stem, dirs)
-            declared = any(f.name == forge for f in chain.forges)
-        except ManifestError:
-            declared = False
-    if declared:
+    from ...forge_connections import get
+    from ...manifest.forges import described_connection, parse_grant
+    host = parse_grant(grant, "a grant")[0]
+    git = dict(fm.get("git-gate") or {})
+    forges = dict(git.get("forges") or {})
+    if host in forges:
         return
-    holder = _forge_bottle(forge)
-    if not holder:
-        raise ManifestViewError(f"no bottle on this host declares the forge {forge}")
-    raw = fm.get("extends")
-    parents = [raw] if isinstance(raw, str) else [str(p) for p in raw] \
-        if isinstance(raw, list) else []
-    if holder not in parents and holder != dest.path.stem:
-        fm["extends"] = [*parents, holder]
+    conn = get(host)
+    if conn is None:
+        raise ManifestViewError(f"this host hasn't connected the forge {host}")
+    forges[host] = described_connection(conn)
+    git["forges"] = forges
+    fm["git-gate"] = git
 
 
 def transfer(identity: str, keys: list[str], target: str, *, move: bool) -> dict[str, Any]:
@@ -374,8 +343,8 @@ def transfer(identity: str, keys: list[str], target: str, *, move: bool) -> dict
         if row["source"] == "this run":
             value = _run_value(identity, policy, key)
             if key.startswith("repo:") and isinstance(value, str):
-                _with_forge_for(dest, dest_fm, value)
-            _set(dest_fm, key, value, {})
+                _with_forge_for(dest_fm, value)
+            _set(dest_fm, key, value)
             continue
         source = chain[row["source"]]
         if source["path"] == dest.path:
@@ -383,8 +352,8 @@ def transfer(identity: str, keys: list[str], target: str, *, move: bool) -> dict
         source_fm = dict(read_bottle(source["path"])[0])
         value = next(v for k, _, _, v in _file_elements(source_fm) if k == key)
         if key.startswith("repo:") and isinstance(value, str):
-            _with_forge_for(dest, dest_fm, value)
-        _set(dest_fm, key, value, source_fm)
+            _with_forge_for(dest_fm, value)
+        _set(dest_fm, key, value)
         if move and source["writable"]:
             taken.setdefault(row["source"], []).append(key)
     names = ", ".join(rows[k]["name"] for k in keys)

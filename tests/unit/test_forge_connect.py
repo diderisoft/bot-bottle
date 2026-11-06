@@ -15,88 +15,15 @@ from unittest import mock
 
 from bot_bottle.cli.commands.forge import cmd_forge
 from bot_bottle.contrib.gitea import forge_api
-from bot_bottle.forge_connect import (
-    ForgeEntry, bottle_path, default_key, existing_forges, ssh_host_port, write_forge,
-)
+from bot_bottle.forge_connect import ssh_host_port
+from bot_bottle.forge_connections import load
 from bot_bottle.lib.log import Die
-from bot_bottle.manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
-from bot_bottle.manifest.util import ManifestError
-from bot_bottle.manifest.versions import history
 from tests.unit import use_bottle_root
 
-ENTRY = ForgeEntry(key="gitea.example.com", kind="gitea", url="https://gitea.example.com",
-                   ssh="ssh://git@10.0.0.1:30009", account="bot", host_key="ssh-ed25519 AAAA")
-
-
-class _Tmp(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))  # pylint: disable=consider-using-with
-
-
-class TestEntry(unittest.TestCase):
-    def test_names(self) -> None:
-        self.assertEqual("GITEA_EXAMPLE_COM_TOKEN", ENTRY.secret_name)
-        self.assertEqual("gitea-example-com", ENTRY.label)
-        other = ForgeEntry(key="codex@10.0.0.1:3000", kind="gitea", url="http://10.0.0.1:3000",
-                           ssh="", account="codex", host_key="")
-        self.assertEqual("CODEX_10_0_0_1_3000_TOKEN", other.secret_name)
-        self.assertEqual("codex-10-0-0-1-3000", other.label)
-        ip = ForgeEntry(key="10.0.0.1", kind="gitea", url="http://10.0.0.1", ssh="",
-                        account="", host_key="")
-        self.assertEqual("forge-10-0-0-1", ip.label)
-
-    def test_default_key(self) -> None:
-        self.assertEqual("gitea.example.com", default_key("https://gitea.example.com", "bot", {}))
-        self.assertEqual("g.example.com:3000", default_key("http://g.example.com:3000", "bot", {}))
-        taken = {"gitea.example.com": {"account": "someone"}}
-        self.assertEqual("bot@gitea.example.com",
-                         default_key("https://gitea.example.com", "bot", taken))
-        mine = {"gitea.example.com": {"account": "bot"}}
-        self.assertEqual("gitea.example.com",
-                         default_key("https://gitea.example.com", "bot", mine))
-
+class TestSshHostPort(unittest.TestCase):
     def test_ssh_host_port(self) -> None:
         self.assertEqual(("10.0.0.1", "30009"), ssh_host_port("ssh://git@10.0.0.1:30009"))
         self.assertEqual(("h", "22"), ssh_host_port("ssh://git@h"))
-
-
-class TestWriteForge(_Tmp):
-    def test_new_bottle_loads_and_grants_resolve(self) -> None:
-        write_forge(self.tmp / "gitea.md", ENTRY)
-        (self.tmp / "dev.md").write_text(
-            "---\nextends: [gitea, basic]\ngit-gate:\n  repos: [gitea.example.com/a/b]\n---\n")
-        bottle, _ = load_bottle_chain("dev", [(self.tmp, False), (BUILTIN_BOTTLES_DIR, False)])
-        self.assertEqual("ssh://git@10.0.0.1:30009/a/b.git", bottle.git[0].Upstream)
-        self.assertEqual("GITEA_EXAMPLE_COM_TOKEN", bottle.git[0].Key.forge_token_env)
-        self.assertTrue(bottle.git[0].Key.read_only)
-        self.assertIn("gitea.example.com", [r.Host for r in bottle.egress.routes])
-
-    def test_adds_to_an_existing_bottle(self) -> None:
-        path = self.tmp / "work.md"
-        path.write_text("---\negress:\n  routes:\n    - host: gitea.example.com\n---\n\nMine.\n")
-        write_forge(path, ENTRY)
-        second = ForgeEntry(key="codex@gitea.example.com", kind="gitea",
-                            url=ENTRY.url, ssh=ENTRY.ssh, account="codex", host_key="")
-        write_forge(path, second)
-        text = path.read_text()
-        self.assertTrue(text.endswith("Mine.\n"))
-        self.assertEqual(1, text.count("- host: gitea.example.com"))  # its route kept
-        self.assertEqual({"gitea.example.com", "codex@gitea.example.com"},
-                         set(existing_forges(path)))
-
-    def test_refuses_a_malformed_section(self) -> None:
-        path = self.tmp / "bad.md"
-        path.write_text("---\ncredentials: [x]\n---\n")
-        with self.assertRaises(ManifestError):
-            write_forge(path, ENTRY)
-
-    def test_bottle_path(self) -> None:
-        self.assertEqual((self.tmp / "h" / "gitea.md", False),
-                         bottle_path("gitea", host_bottles=self.tmp / "h", cwd=self.tmp))
-        self.assertEqual((self.tmp / ".bot-bottle" / "bottles" / "main.md", True),
-                         bottle_path("./main", host_bottles=self.tmp / "h", cwd=self.tmp))
-        with self.assertRaises(ManifestError):
-            bottle_path("../x", host_bottles=self.tmp, cwd=self.tmp)
 
 
 def _response(body: object) -> mock.MagicMock:
@@ -138,9 +65,9 @@ class TestForgeApi(unittest.TestCase):
                 forge_api.check_token("https://h", "tok")
 
 
-class TestCommand(_Tmp):
+class TestCommand(unittest.TestCase):
     def setUp(self) -> None:
-        super().setUp()
+        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))  # pylint: disable=consider-using-with
         self.root = self.tmp / "root"
         self.addCleanup(use_bottle_root(self.root))
         cwd = os.getcwd()
@@ -158,34 +85,43 @@ class TestCommand(_Tmp):
                 contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(0, cmd_forge(["connect", *argv, "--token-stdin"]))
 
-    def test_writes_the_forge_bottle_and_the_secret(self) -> None:
+    def test_records_the_connection_and_the_secret(self) -> None:
         self.run_cmd("gitea.example.com")
-        bottle = self.root / "bottles" / "gitea.md"
-        self.assertIn("token: $gitea-example-com", bottle.read_text())
-        self.assertNotIn("s3cret", bottle.read_text())
+        text = (self.root / "forges.md").read_text()
+        self.assertNotIn("s3cret", text)
+        self.assertFalse((self.root / "bottles" / "gitea.md").exists())
+        conn = load(self.root / "forges.md")["gitea.example.com"]
+        self.assertEqual(("gitea", "https://gitea.example.com", "ssh://git@10.0.0.1:30009",
+                          "ssh-ed25519 AAAA"), (conn.kind, conn.url, conn.ssh, conn.host_key))
+        self.assertEqual([("bot", "GITEA_EXAMPLE_COM_TOKEN", True)],
+                         [(u.name, u.token_secret, u.default) for u in conn.users])
         secrets = (self.root / "secrets").read_text()
         self.assertIn("GITEA_EXAMPLE_COM_TOKEN=s3cret-token", secrets)
-        self.assertEqual("forge connect: gitea.example.com in gitea",
-                         history(bottle, root=self.root)[0].message)
         self.check.assert_called_once_with("https://gitea.example.com", "s3cret-token")
+
+    def test_another_user_and_the_default(self) -> None:
+        self.run_cmd("gitea.example.com")
+        self.check.return_value = forge_api.TokenCheck("codex", "", 1, 1)
+        self.run_cmd("gitea.example.com", token="other\n")
+        users = load(self.root / "forges.md")["gitea.example.com"].users
+        self.assertEqual([("bot", "GITEA_EXAMPLE_COM_TOKEN", True),
+                          ("codex", "CODEX_GITEA_EXAMPLE_COM_TOKEN", False)],
+                         [(u.name, u.token_secret, u.default) for u in users])
+        self.run_cmd("gitea.example.com", "--default", token="other\n")
+        users = load(self.root / "forges.md")["gitea.example.com"].users
+        self.assertEqual({"codex"}, {u.name for u in users if u.default})
+        self.assertEqual("CODEX_GITEA_EXAMPLE_COM_TOKEN", users[-1].token_secret)
 
     def test_ssh_override(self) -> None:
         self.run_cmd("gitea.example.com", "--ssh", "ssh://git@100.64.0.1:30009")
-        forge = existing_forges(self.root / "bottles" / "gitea.md")["gitea.example.com"]
-        self.assertEqual("ssh://git@100.64.0.1:30009", forge["ssh"])  # type: ignore[index]
+        conn = load(self.root / "forges.md")["gitea.example.com"]
+        self.assertEqual("ssh://git@100.64.0.1:30009", conn.ssh)
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(Die):
             self.run_cmd("gitea.example.com", "--ssh", "100.64.0.1")
 
-    def test_into_a_named_bottle_under_a_name(self) -> None:
-        self.run_cmd("https://gitea.example.com/", "work", "codex@gitea.example.com")
-        self.assertEqual({"codex@gitea.example.com"},
-                         set(existing_forges(self.root / "bottles" / "work.md")))
-
-    def test_into_a_project_bottle_trusts_it(self) -> None:
-        with mock.patch("bot_bottle.approvals.trust_project_bottle") as trust:
-            self.run_cmd("gitea.example.com", "./main")
-        self.assertTrue((self.tmp / ".bot-bottle" / "bottles" / "main.md").is_file())
-        trust.assert_called_once_with(self.tmp.resolve(), "main")
+    def test_transport_is_githubs(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(Die):
+            self.run_cmd("gitea.example.com", "--transport", "deploy-key")
 
     def test_refusals(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()):

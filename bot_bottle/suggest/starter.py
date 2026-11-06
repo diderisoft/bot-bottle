@@ -40,15 +40,14 @@ prose before or after it:
 Rules:
 - Prefer reuse > stack > stack+additions > new-extending > new.
 - Picking bottles doesn't bring in `basic`: a bottle has only its own
-  `extends` chain (a forge's bottle like `gitea` usually extends nothing).
-  List `basic` in `bottles` when the task needs what it allows.
+  `extends` chain. List `basic` in `bottles` when the task needs what it
+  allows.
 - Bias toward too little access; leave out anything uncertain.
 - Never propose inspect:false, never include secret values.
-- Grants only on connected forges listed in the input, with a bottle in
-  `bottles` whose `forges` declares that forge. Use the smallest bottle that
-  declares it (fewest `element_count`, usually the one named after the forge,
-  e.g. `gitea`), never a bigger bottle that extends it: everything a stacked
-  bottle grants (its `repos`, its egress) comes with it.
+- Grants only on connected forges listed in the input, named by the forge's
+  host. A grant needs no bottle stacked for its forge: never stack a bottle
+  just to reach a forge, since everything a stacked bottle grants (its
+  `repos`, its egress) comes with it.
 - Stack a bottle for what the task needs from it, not to reach one thing it
   happens to contain.
 - Never propose a bottle with `missing_secrets`: its launch fails.

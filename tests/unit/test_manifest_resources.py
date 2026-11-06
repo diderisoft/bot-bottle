@@ -172,7 +172,7 @@ class TestElements(unittest.TestCase):
     def test_listed_set_and_dropped_like_env(self) -> None:
         fm: dict[str, Any] = {"resources": {"memory": "4G"}}
         self.assertEqual([("resources:memory", "memory", "4G", "4G")], _file_elements(fm))
-        _set(fm, "resources:cpus", 4, {})
+        _set(fm, "resources:cpus", 4)
         self.assertEqual({"memory": "4G", "cpus": 4}, fm["resources"])
         _drop(fm, "resources:memory")
         self.assertEqual({"cpus": 4}, fm["resources"])

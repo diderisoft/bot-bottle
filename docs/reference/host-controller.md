@@ -413,13 +413,14 @@ written. A finished job is kept ten minutes.
 ## GitHub through the bot-bottle app
 
 The console connects github.com through the bot-bottle GitHub App's device
-flow (ADR 0012, `github_connect.py`): `github_authorize_start` (`bottle`) ->
+flow (ADR 0012, `github_connect.py`): `github_authorize_start` ->
 `github_authorize` (`user_code`, `verification_uri`, `expires_in`, or `error`)
-starts it; the host then polls GitHub itself and writes the forge when the
-operator enters the code. `github_status` -> `github_status` follows it: the
+starts it; the host then polls GitHub itself and records the connection in
+`forges.md` when the operator enters the code. `github_status` -> `github_status` follows it: the
 app's `app` slug and `install_url`, `client_id_set`, the flow's `flow`
 (`state` `idle`, `waiting` with the code, `connected` with `login`, or `error`)
-`connected` (each GitHub forge's `login` and the app's `installations`
+`connected` (each user connected on github.com through the app: `login`,
+`default`, and the app's `installations`
 — `id`, `account`, `repository_selection` — or `error`), and `needs_install`
 (authorized, but the app is installed nowhere). It asks GitHub each time, so
 the console can poll it while the operator installs the app. The token never
@@ -645,7 +646,9 @@ The reply's `elements` list everything the agent runs with
 `<kind>:<name>`, with its source: the nearest bottle file in the chain that
 declares it (the others are listed too), "this run", or "agent provider".
 A repo granted this run shows its grant, and the forge it's on is listed with
-the host bottle that declares it when nothing in the chain does.
+the source "this host" (its connection) when nothing in the chain describes
+it. Copying a granted repo into a bottle writes the forge's description with
+it, never a token (ADR 0019).
 `manifest_transfer` copies picked elements into a bottle, or moves them out of
 the file they came from. A built-in bottle's elements, and this run's, are
 copied. With `delete` it takes picked elements out of the file they come from

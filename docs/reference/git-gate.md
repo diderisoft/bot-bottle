@@ -58,66 +58,100 @@ asks the operator to confirm it, and can save it to the bottle file
 
 ### Forges and one-line grants
 
-A bottle can declare a forge once and grant repos on it in a line
-(`manifest/forges.py`; PRD 0103, design repo).
-The forge usually lives in its own bottle that others extend:
+A bottle grants repos on a forge in a line, and may describe the forge they're
+on; the host connects it (`manifest/forges.py`, `forge_connections.py`;
+[ADR 0019](../decisions/0019-forges-are-described-in-bottles-connected-on-hosts.md),
+PRD 0103 in the design repo):
 
 ```yaml
-# ~/.bot-bottle/bottles/gitea.md
-credentials:
-  gitea-api: { source: secret, secret: GITEA_TOKEN }   # value in ~/.bot-bottle/secrets
+# any bottle
+extends: basic
 git-gate:
-  forges:
-    gitea.example.com:                # the host, or <account>@<host>
-      kind: gitea
-      url: https://gitea.example.com
-      ssh: ssh://git@gitea.example.com:30009   # default ssh://git@<url host>
-      token: $gitea-api
-      host_key: ssh-ed25519 AAAA...
-
-# a bottle that extends it
-extends: [gitea, basic]
-git-gate:
+  forges:                             # optional: what to connect elsewhere
+    gitea.example.com:                # the forge's host
+      kind: gitea                     # url and ssh only when not the defaults
   repos:
     - gitea.example.com/acme/app:write
     - gitea.example.com/acme/lib      # read-only
 ```
 
-`bot-bottle forge connect <url> [<bottle>] [<name>]` writes the forge bottle
-(`cli/commands/forge.py`, `forge_connect.py`). It recognizes the forge's kind
-(`forge_kinds.py`): `github` for github.com without asking; otherwise Gitea's
-`/api/v1/version` or a GitHub Enterprise Server's `/api/v3/meta`, five seconds
-each. Any other forge is refused, naming the kinds it takes. It takes a token
-(pasted without echo, or `--token-stdin`) and asks the forge whose it is and
-which of its repos it's admin on, warning when none (deploy keys need admin). It pins the SSH host key it finds for the forge's
-repos without asking, and fails when it finds none: the forge's SSH address
-(`--ssh`, or the card's SSH field) must be reachable from the host, which a
-public name may not be. It stores the token in the host secrets file as
-`<NAME>_TOKEN`, and writes the credential and the forge entry into `<bottle>`
-(default: named after the kind, `gitea` or `github`; `./<name>` writes a
-project bottle and trusts it), as a new version. A Gitea forge also gets a
-read-only `GET` route for its packages and release downloads; GitHub serves
-those from other hosts, which a bottle that needs them routes itself.
+A grant's prefix is the forge's real host, so a committed grant means the
+same forge on every machine. A description says what the forge is: `kind`,
+and `url`/`ssh` when they aren't `https://<host>` and `ssh://git@<host>`; it
+may pin `host_key`. It never carries a token, a user or a transport: a bottle
+with `credentials:`, or with `token`, `account`, `app` or `transport` in a
+forge, fails to load, pointing at `forge connect`. No bottle needs to
+describe a forge for its grants to load.
+
+What a launch uses is the host's connection, in `~/.bot-bottle/forges.md`,
+which only `bot-bottle forge connect` writes:
+
+```yaml
+gitea.example.com:
+  kind: gitea
+  url: https://gitea.example.com
+  ssh: ssh://git@10.0.4.2:30009       # how this machine reaches it (--ssh)
+  host_key: ssh-ed25519 AAAA...       # pinned when connected
+  users:
+    alice:
+      token: $GITEA_EXAMPLE_COM_TOKEN # a name in ~/.bot-bottle/secrets
+      default: true
+    codex:
+      token: $CODEX_GITEA_EXAMPLE_COM_TOKEN
+```
+
+A grant on a forge the host hasn't connected fails to load, naming the
+`forge connect` command (with a description's URL when the chain has one).
+Where the chain describes the forge too, its `kind` must be the connection's,
+and a pinned `host_key` must be the connection's pin. Its `url` and `ssh`
+aren't compared: they're the hint for connecting it elsewhere, and the
+connection's are what's used, so a bottle can't send a token anywhere the
+host didn't connect. A launch asks `forge_connections.connections()`, the
+host's connection source, not the file.
+
+A forge's user is the account the forge says its token belongs to. A launch
+pushes as the forge's `default` user (its only one, when there's one), unless
+the agent names another with `forge_users` (see manifest.md's agent fields):
+
+```yaml
+# an agent
+forge_users:
+  gitea.example.com: codex
+```
+
+`bot-bottle forge connect <url> [--default] [--ssh URL] [--transport T]`
+records a connection (`cli/commands/forge.py`, `forge_connect.py`). It
+recognizes the forge's kind (`forge_kinds.py`): `github` for github.com
+without asking; otherwise Gitea's `/api/v1/version` or a GitHub Enterprise
+Server's `/api/v3/meta`, five seconds each. Any other forge is refused, naming
+the kinds it takes. It takes a token (pasted without echo, or
+`--token-stdin`) and asks the forge whose it is and which of its repos it's
+admin on, warning when none (deploy keys need admin). It pins the SSH host key
+it finds for the forge's repos without asking, and fails when it finds none:
+the forge's SSH address (`--ssh`, or the card's SSH field) must be reachable
+from the host, which a public name may not be. It stores the token in the
+host secrets file, as `<HOST>_TOKEN` for a forge's first user and
+`<USER>_<HOST>_TOKEN` for another (a user connected again keeps its name),
+and records the user in `forges.md`. The first user is the default; another
+becomes it with `--default`. Connecting again replaces the forge's `url`,
+`ssh` and pin.
 
 The token each kind needs (the CLI and the console's card both say it):
 
 | kind | token page | permissions |
 |---|---|---|
 | `gitea` | `<url>/user/settings/applications` | scopes `write:repository` and `read:user`, from an account that's admin on the repos |
-| `github` | `<url>/settings/personal-access-tokens/new` | a fine-grained token for the repos with Contents: read (read & write to push) and Metadata: read; Administration: read & write too only for a forge with `transport: deploy-key`; a classic token with `repo` also works |
+| `github` | `<url>/settings/personal-access-tokens/new` | a fine-grained token for the repos with Contents: read (read & write to push) and Metadata: read; Administration: read & write too only for a user connected with `--transport deploy-key`; a classic token with `repo` also works |
 
-A GitHub forge reaches its repos over HTTPS with its token by default
-([Transports](#github-transports)). With `transport: deploy-key`, and for
-Gitea always, each launch does the same: mint an ed25519 deploy key on each granted
+A GitHub forge reaches its repos over HTTPS with its user's token by default
+([Transports](#github-transports)). For a user connected with `--transport
+deploy-key`, and for Gitea always, each launch does the same: mint an ed25519 deploy key on each granted
 repo (`POST /repos/{owner}/{repo}/keys`, read-only unless `:write`; Gitea's
 API under `/api/v1`, GitHub's at `api.github.com` or a server's `/api/v3`),
 revoke the keys a previous run left registered first, and revoke each at
 teardown (`contrib/<kind>/deploy_key_provisioner.py`). A repo's key and its
 revocation record name the kind (`provider`); records from before GitHub are
-Gitea's. `<name>` is the forge key: the host by default, or
-`<account>@<host>` when the bottle already has the host for another account.
-Keys that aren't bare identifiers are written quoted
-(`"codex@gitea.example.com":`).
+Gitea's.
 
 #### github.com through the bot-bottle GitHub App
 
@@ -130,8 +164,8 @@ code to enter at `https://github.com/login/device`, or the console's host page
 (Forges) shows it. The token acts as the operator ("<user> via bot-bottle"),
 only on repos the app is installed on and the operator can reach, and only
 with the app's permissions: Contents: read & write and Metadata: read, plus
-Administration: read & write only if a forge opts into deploy keys. git-gate
-fetches and pushes with the token over HTTPS
+Administration: read & write only for a user connected with `--transport
+deploy-key`. Otherwise git-gate fetches and pushes with the token over HTTPS
 ([Transports](#github-transports)).
 
 The app is named by its slug and public client id: `bot-bottle` by default,
@@ -140,8 +174,9 @@ named environment can use its own app (dev uses `bot-bottle-dev`). No private ke
 the console: the device flow and refreshing its tokens take the client id
 alone (`contrib/github/user_token.py`).
 
-The token goes to the host secrets file as the forge's `<NAME>_TOKEN`; the
-forge is written into the `github` bottle as kind `github` with `app: <slug>`.
+The token goes to the host secrets file under the user's secret name, and the
+user is recorded on `github.com` in `forges.md` with `app: <slug>`
+(`github_connect.py`; `--default` makes it the default user).
 An expiring token (eight hours, the app's default) also keeps `_REFRESH`,
 `_EXPIRES` and `_CLIENT_ID` companions; before the token is used to mint or
 revoke a key it's renewed, under a lock, when under ten minutes remain, and
@@ -162,8 +197,11 @@ with the grant options once the repo is reachable.
 
 #### GitHub transports
 
-How git-gate reaches a GitHub repo (ADR 0014), set per forge with
-`transport:` in `git-gate.forges.<name>`:
+How git-gate reaches a GitHub repo (ADR 0014), set per connected user with
+`forge connect --transport` (`transport:` on the user in `forges.md`), for the
+app's device flow too (`forge connect github --transport T`, which on a host
+connected already changes just that). Whoever connects the user chooses; a
+bottle can't (ADR 0019):
 
 - `https` (the default): git-gate fetches and pushes
   `https://github.com/<owner>/<repo>.git` with the forge's token. Nothing is
@@ -185,10 +223,12 @@ How git-gate reaches a GitHub repo (ADR 0014), set per forge with
   GitHub). An authorization the renewer can't renew raises a console alert
   (`forge_alerts`, see host-controller.md's `host_stats`) instead of a
   warning every pass; so does a Gitea token the forge refuses.
-- `deploy-key`: a key per repo per launch, as for Gitea. The app then needs
-  Administration: read & write. Use it where GitHub itself should hold each
-  run to one repo. To use both on one host, declare the host twice: a second
-  forge named `<account>@github.com` with `transport: deploy-key`.
+- `deploy-key`: a key per repo per launch, as for Gitea. Minting needs admin
+  access to the repo (the app's Administration: read & write, or a classic
+  `repo` token from a repo admin); a token that can't mint fails the launch
+  at minting, saying so. Use it where GitHub itself should hold each run to
+  one repo. To use both on one host, connect a second user with
+  `--transport deploy-key` and pick it with an agent's `forge_users`.
 
 The trade-off: a user token can't be narrowed per repo, so it reaches every
 repo the app is installed on. git-gate is what holds each bottle to its granted
@@ -199,18 +239,20 @@ per-repo scope but need the far broader Administration permission, which the
 host's token then carries too, and an org can turn them off.
 
 While `extends` is resolved, each grant becomes a long-form entry (what
-everything after loading sees): a `gitea` key minted per launch with the forge's token, the forge's host key,
-and `read_only` unless the grant ends in `:write`. A mapping
-(`repos: {site: gitea.example.com/acme/app}`) names the gate repo; the list
-form names it after the repo. Forges and credentials merge by name through
-`extends`, a child's winning; two parents declaring one differently is a load
-error. A grant on a forge no bottle in the chain declares fails at load.
-Only the `secret` credential source exists so far.
+everything after loading sees): the connection's SSH address and pinned host
+key, a key minted per launch with the user's token (or, on GitHub over
+`https`, the token itself), and `read_only` unless the grant ends in
+`:write`. A mapping (`repos: {site: gitea.example.com/acme/app}`) names the
+gate repo; the list form names it after the repo. Descriptions merge by host
+through `extends`, a child's winning; two parents describing one differently
+is a load error.
 
 A read-only repo is marked `git-gate.readOnly` in its bare repo, and the
 pre-receive hook refuses pushes to it before scanning, saying a `:write` grant
 is needed. The trust prompt shows each repo as `fetch` or `push`, and where
-its key is minted with which secret.
+its key is minted with which secret. Trusting a project bottle also records
+this host's connection to each forge its repos are on (see manifest.md's
+Trust).
 
 ### Migrating from the old format
 
@@ -227,37 +269,41 @@ git-gate:
 ```
 
 A bottle written like this no longer loads. The error lists every such repo
-in the bottle, says whether a bottle already declares the forge, and shows the
+in the bottle, says whether this host has connected the forge, and shows the
 replacement (`manifest/legacy_git_gate.py`). To convert it:
 
-1. Connect the forge once, unless the error says a bottle already declares it:
+1. Connect the forge once, unless the error says it's connected already:
    `bot-bottle forge connect https://gitea.example.com`. When the repos' SSH
    address isn't `ssh://git@<forge host>` (here an IP and port), the error's
    command adds `--ssh` with the address they used.
 2. `bot-bottle bottles migrate <bottle>` (`manifest/migrate.py`).
 
-`migrate` adds the forge bottle to the front of `extends` (unless the chain
-already has the forge), so the bottle's own parents still win, and replaces
-each old repo with its grant. The forge is the `api_url`'s host, not the SSH
-URL's (the old default, the upstream's host, when there's no `api_url`); the
-owner and repo come from the SSH URL's path. A key without `read_only: true`
-could push, so its grant ends in `:write`; a `read_only: true` key's doesn't.
-When every repo converts and is named after its repo, they're written as a
-list, else as a mapping that keeps the gate's names (and any `static` repos).
-The repos' `host_key` and `forge_token_env` lines go: the grant uses the
-forge's pinned host key and token. `migrate` notes when those differ from the
-old ones, or the forge pins no host key.
+`migrate` replaces each old repo with its grant; nothing is added to
+`extends`. The forge is the `api_url`'s host, not the SSH URL's (the old
+default, the upstream's host, when there's no `api_url`); the owner and repo
+come from the SSH URL's path. A key without `read_only: true` could push, so
+its grant ends in `:write`; a `read_only: true` key's doesn't. When every
+repo converts and is named after its repo, they're written as a list, else as
+a mapping that keeps the gate's names (and any `static` repos). The repos'
+`host_key` and `forge_token_env` lines go: the grant uses the connection's
+pinned host key and its user's token. `migrate` notes when those differ from
+the old ones, or the connection pins no host key.
 
 Only those lines change; comments, `env`, `egress` and the rest stay as they
 were, and the result is parsed back to check that before it's written. It
 shows the diff and asks first (`--yes` doesn't ask; without a terminal it
 needs `--yes`). A host bottle's migration is a version, after any hand edits
 are versioned, so `bot-bottle bottles revert <bottle> <version>` undoes it; a
-project bottle's is left for the project to commit. With no bottle declaring
-the forge, `migrate` refuses with the same steps: connecting takes a token
+project bottle's is left for the project to commit. With the forge not
+connected, `migrate` refuses with the same steps: connecting takes a token
 typed by the operator, so it never connects one itself. A repo whose SSH path
 isn't `<owner>/<repo>`, or a file laid out in flow style, is left to edit by
 hand.
+
+A forge bottle an earlier `forge connect` wrote (`credentials:` and a `token`
+in its forge) fails to load too. Connect the forge again with
+`forge connect`, which writes `forges.md`, and remove the `credentials:`
+block and the forge's `token` and `account` lines (ADR 0019).
 
 ## Agent side
 
@@ -412,9 +458,10 @@ the running gateway and inits its bare repos at registration.
 
 An approved `add-repo` adds a repo to a running bottle
 (`git_gate/live_grant.py`, `control/hostctl/repo_grants.py`;
-PRD 0105, design repo). The host finds
-the forge in the bottles the session launched with, as their files are now,
-else in any host bottle. It records the key in the bottle's git-gate state dir
+PRD 0105, design repo). The forge is this host's connection to it, as the
+user the session's agent pushes as (its `forge_users`, else the forge's
+default); a forge the host hasn't connected can't be granted. Keeping the
+grant writes it into the bottle with the forge's description. It records the key in the bottle's git-gate state dir
 (`live-grants.json`), mints it, and adds the repo to the upstream snapshot.
 Re-provisioning the gateway then creates the repo there, and `git config --add`
 in the guest adds its `insteadOf` rewrite. Teardown revokes live-granted keys

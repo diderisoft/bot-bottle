@@ -9,7 +9,6 @@ from pathlib import Path
 from ..lib.log import warn
 from .bottle import ManifestBottle
 from .extends import resolve_bottles
-from .legacy_git_gate import OldGitGateFormatError, forges_by_host, scan_bottles
 from .schema import (
     entity_name_from_path,
     validate_bottle_frontmatter_keys,
@@ -143,8 +142,4 @@ def load_bottle_chain(
         elif isinstance(parent, list):
             to_load.extend(p for p in parent if isinstance(p, str))
 
-    try:
-        return resolve_bottles(raws)[bottle_name], tuple(sources)
-    except OldGitGateFormatError as e:
-        # Say whether a forge bottle for it exists anywhere, not only in the chain.
-        raise e.explained(forge_bottles=forges_by_host(scan_bottles(dirs))) from None
+    return resolve_bottles(raws)[bottle_name], tuple(sources)

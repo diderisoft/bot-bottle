@@ -179,20 +179,22 @@ def keep(target: KeepTarget, request: "Request") -> Path:
     return target.path
 
 
-def keep_grant(target: KeepTarget, grant: str, *, extends: str = "") -> Path:
+def keep_grant(target: KeepTarget, grant: str, *,
+               forge: dict[str, object] | None = None) -> Path:
     """Write the repo grant into `target` for later launches, replacing one for
-    the same repo name, and extend `extends` (the bottle declaring its forge)
-    when the target's chain doesn't. Trusted for a project, a version for a
+    the same repo name, with `forge` (its forge's description, ADR 0019) when
+    the bottle doesn't describe it. Trusted for a project, a version for a
     host bottle."""
     fm, body = read_bottle(target.path)
-    return save_bottle(target, bottle_text(with_grant(fm, grant, extends=extends), body),
+    return save_bottle(target, bottle_text(with_grant(fm, grant, forge=forge), body),
                        f"keep add-repo {grant}")
 
 
 def with_grant(frontmatter: dict[str, object], grant: str, *,
-               extends: str = "") -> dict[str, object]:
+               forge: dict[str, object] | None = None) -> dict[str, object]:
     """`frontmatter` with the repo grant added (replacing one for the same repo
-    name) and `extends` added to its parents if it isn't one.
+    name) and `forge`, the description of its forge, under `git-gate.forges`
+    unless one is there.
     Supports `<alias>=<grant>` form; the alias becomes the key in the bottle
     file and the repos section is upgraded to a mapping when needed."""
     # pylint: disable-next=import-outside-toplevel
@@ -226,13 +228,13 @@ def with_grant(frontmatter: dict[str, object], grant: str, *,
                                          and parse_grant(g, "a grant")[2] == repo)] \
             if isinstance(repos, list) else []
         git["repos"] = [*kept, stored]
+    if forge:
+        host = parse_grant(bare_grant, "the grant")[0]
+        forges = git.get("forges")
+        forges = dict(forges) if isinstance(forges, dict) else {}
+        forges.setdefault(host, dict(forge))
+        git["forges"] = forges
     fm["git-gate"] = git
-    if extends:
-        raw = fm.get("extends")
-        parents = [raw] if isinstance(raw, str) else \
-            [str(p) for p in raw] if isinstance(raw, list) else []
-        if extends not in parents:
-            fm["extends"] = [*parents, extends]
     return fm
 
 

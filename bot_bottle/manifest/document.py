@@ -3,8 +3,8 @@ flattened into the frontmatter of a single bottle file that reads back as the
 same bottle (PRD 0107). Used for a bottled agent's manifest versions.
 
 A repo granted on one of the chain's forges is written as its grant
-(`<forge>/<owner>/<repo>[:write]`), others in long form; the forges and the
-credentials they take their token from are kept, so the document stands alone.
+(`<forge>/<owner>/<repo>[:write]`), others in long form; the forges are
+described (never their tokens, which are the host's, ADR 0019).
 Secrets appear by name only, as in any bottle file.
 """
 
@@ -103,17 +103,12 @@ def grant_for(entry: ManifestGitEntry, forges: tuple[ManifestForge, ...] | list[
     return ""
 
 
-def forge_document(forge: ManifestForge) -> tuple[str, dict[str, object], dict[str, object]]:
-    """One forge as a bottle file declares it: its credential's label, the
-    credential, and the `git-gate.forges` entry."""
-    label = f"{forge.name.replace('@', '-at-').replace('.', '-').replace(':', '-')}-token"
-    entry: dict[str, object] = {"kind": forge.kind, "url": forge.url, "ssh": forge.ssh,
-                                "token": f"${label}"}
-    if forge.account:
-        entry["account"] = forge.account
-    if forge.host_key:
-        entry["host_key"] = forge.host_key
-    return label, {"source": "secret", "secret": forge.token_secret}, entry
+def forge_document(forge: ManifestForge) -> dict[str, object]:
+    """One forge as a bottle file describes it (`git-gate.forges`): never its
+    token or user, which are the host's (ADR 0019)."""
+    # pylint: disable-next=import-outside-toplevel
+    from .forges import described_forge
+    return described_forge(forge)
 
 
 def bottle_document(bottle: ManifestBottle) -> dict[str, object]:
@@ -134,7 +129,7 @@ def bottle_document(bottle: ManifestBottle) -> dict[str, object]:
     if bottle.forges:
         forges: dict[str, object] = {}
         for forge in bottle.forges:
-            label, credentials[label], forges[forge.name] = forge_document(forge)
+            forges[forge.name] = forge_document(forge)
         git["forges"] = forges
     if bottle.git:
         git["repos"] = {e.Name: grant_for(e, bottle.forges) or repo_document(e)

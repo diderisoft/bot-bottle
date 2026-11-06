@@ -1,7 +1,8 @@
 """Connecting GitHub through the shared `bot-bottle` GitHub App's user access
 tokens (ADR 0012), for `bot-bottle forge connect github` and the console:
 GitHub's device flow authorizes this host as the operator, and the token
-goes to the host secrets file behind a `github` forge in the `github` bottle.
+goes to the host secrets file, named under the user in `forges.md`
+(`forge_connections`, ADR 0019).
 Per launch the token adds and removes that run's deploy keys, renewed first
 when it's about to expire (`contrib/github/user_token.py`).
 
@@ -13,17 +14,15 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from . import forge_alerts
-from .forge_connect import (
-    ConnectError, ForgeEntry, bottle_path, default_key, existing_forges, write_forge,
-)
-from .manifest.util import ManifestError
+from .forge_connect import ConnectError, connected_secret, record
+from .forge_connections import ForgeConnection, ForgeUser
 
-DEFAULT_BOTTLE = "github"
+GITHUB_HOST = "github.com"
 GITHUB_URL = "https://github.com"
 GITHUB_SSH = "ssh://git@github.com"
 
@@ -33,7 +32,6 @@ class GitHubConnected:
     """GitHub connected: as whom, where it was written, where to install."""
 
     key: str
-    bottle: str
     path: Path
     login: str
     app: str
@@ -42,44 +40,39 @@ class GitHubConnected:
     expiring: bool
 
 
-def finish(tokens: Any, config: Any, *, bottle: str = "", cwd: Path,
-           host_bottles: Path) -> GitHubConnected:
-    """Write the authorized `tokens` (a `TokenSet`) as a `github` forge.
-    ConnectError saying what's wrong; the token is never logged."""
+def finish(tokens: Any, config: Any, *, make_default: bool = False,
+           transport: str = "") -> GitHubConnected:
+    """Record the authorized `tokens` (a `TokenSet`) as a user on github.com,
+    reaching repos over `transport` ("": https). ConnectError saying what's
+    wrong; the token is never logged."""
     # pylint: disable=import-outside-toplevel
     from .contrib.github.user_token import login as token_login, store
+    from .forge_connections import forges_path
     from .forge_kinds import ForgeApiError
     from .git_gate.host_key import fetch_host_key
-    from .manifest.versions import record_or_warn
     from .paths import host_secrets_path
-    if bottle.startswith("./"):
-        raise ConnectError("GitHub is connected into a host bottle, not a project's")
     try:
-        path, _ = bottle_path(bottle or DEFAULT_BOTTLE, host_bottles=host_bottles, cwd=cwd)
         login = token_login(tokens.access)
-    except (ManifestError, ForgeApiError) as e:
+    except ForgeApiError as e:
         raise ConnectError(str(e)) from e
     try:
-        host_key = fetch_host_key("github.com", "22")
+        host_key = fetch_host_key(GITHUB_HOST, "22")
     except RuntimeError as e:
         raise ConnectError(f"{e}; this host can't reach GitHub over SSH") from e
-    key = default_key(GITHUB_URL, login, existing_forges(path))
-    entry = ForgeEntry(key=key, kind="github", url=GITHUB_URL, ssh=GITHUB_SSH, account=login,
-                       host_key=host_key, app=config.slug)
-    store(host_secrets_path(), entry.secret_name, tokens, config.client_id)
-    forge_alerts.clear(entry.secret_name)
-    try:
-        write_forge(path, entry)
-    except ManifestError as e:
-        raise ConnectError(f"{path}: {e}") from e
-    record_or_warn(f"forge connect: GitHub as {login} via {config.slug} in {path.stem}")
-    return GitHubConnected(key=key, bottle=path.stem, path=path, login=login, app=config.slug,
-                           install_url=config.install_url, secret_name=entry.secret_name,
+    secret = connected_secret(GITHUB_HOST, login)
+    store(host_secrets_path(), secret, tokens, config.client_id)
+    forge_alerts.clear(secret)
+    record(ForgeConnection(host=GITHUB_HOST, kind="github", url=GITHUB_URL, ssh=GITHUB_SSH,
+                           host_key=host_key),
+           ForgeUser(name=login, token_secret=secret, app=config.slug, transport=transport),
+           make_default=make_default)
+    return GitHubConnected(key=GITHUB_HOST, path=forges_path(), login=login, app=config.slug,
+                           install_url=config.install_url, secret_name=secret,
                            expiring=bool(tokens.refresh))
 
 
-def authorize(config: Any, *, on_code: Any, bottle: str = "", cwd: Path,
-              host_bottles: Path) -> GitHubConnected:
+def authorize(config: Any, *, on_code: Any, make_default: bool = False,
+              transport: str = "") -> GitHubConnected:
     """The whole device flow, for the CLI: `on_code(device)` shows the code."""
     # pylint: disable-next=import-outside-toplevel
     from .contrib.github.user_token import start_device, wait_for_token
@@ -90,7 +83,22 @@ def authorize(config: Any, *, on_code: Any, bottle: str = "", cwd: Path,
         tokens = wait_for_token(config.client_id, device)
     except ForgeApiError as e:
         raise ConnectError(str(e)) from e
-    return finish(tokens, config, bottle=bottle, cwd=cwd, host_bottles=host_bottles)
+    return finish(tokens, config, make_default=make_default, transport=transport)
+
+
+def set_transport(login: str, transport: str) -> None:
+    """Have `login`, connected on github.com already, reach repos over
+    `transport` ("": https). ConnectError when it isn't connected."""
+    # pylint: disable-next=import-outside-toplevel
+    from .forge_connections import ForgeConnectionError, add_user, get
+    try:
+        conn = get(GITHUB_HOST)
+        if conn is None:
+            raise ConnectError("GitHub isn't connected on this host")
+        user = conn.user(login)
+        add_user(conn, replace(user, transport=transport))
+    except ForgeConnectionError as e:
+        raise ConnectError(str(e)) from e
 
 
 class _Flow:
@@ -105,8 +113,7 @@ class _Flow:
 _FLOW = _Flow()
 
 
-def start_background(*, bottle: str = "", cwd: Path, host_bottles: Path,
-                     config: Any = None) -> dict[str, object]:
+def start_background(*, config: Any = None) -> dict[str, object]:
     """Start a device flow for the console: its `user_code`,
     `verification_uri` and `expires_in`. The host waits for the operator and
     connects; `status` follows it. A new start replaces one in progress."""
@@ -131,9 +138,9 @@ def start_background(*, bottle: str = "", cwd: Path, host_bottles: Path,
     def run() -> None:
         try:
             tokens = wait_for_token(config.client_id, device, cancelled=superseded)
-            done = finish(tokens, config, bottle=bottle, cwd=cwd, host_bottles=host_bottles)
+            done = finish(tokens, config)
             result: dict[str, object] = {"state": "connected", "login": done.login,
-                                         "key": done.key, "bottle": done.bottle}
+                                         "key": done.key}
         except (ConnectError, ForgeApiError) as e:
             result = {"state": "error", "error": str(e)}
         except Exception as e:  # pylint: disable=broad-exception-caught  # shown, not raised
@@ -147,22 +154,18 @@ def start_background(*, bottle: str = "", cwd: Path, host_bottles: Path,
             "expires_in": device.expires_in}
 
 
-def _forges(host_bottles: Path) -> list[tuple[str, str, dict[str, object]]]:
-    """(bottle, forge key, entry) for each GitHub forge the host's bottles
-    declare through the app."""
-    out: list[tuple[str, str, dict[str, object]]] = []
-    for path in sorted(host_bottles.glob("*.md")):
-        try:
-            forges = existing_forges(path)
-        except Exception:  # pylint: disable=broad-exception-caught  # not ours to report
-            continue
-        for name, entry in forges.items():
-            if isinstance(entry, dict) and entry.get("kind") == "github" and entry.get("app"):
-                out.append((path.stem, name, entry))
-    return out
+def _app_users() -> list[ForgeUser]:
+    """The users connected on github.com through the app."""
+    # pylint: disable-next=import-outside-toplevel
+    from .forge_connections import ForgeConnectionError, get
+    try:
+        conn = get(GITHUB_HOST)
+    except ForgeConnectionError:
+        return []
+    return [u for u in conn.users if u.app] if conn else []
 
 
-def status(host_bottles: Path, config: Any = None) -> dict[str, object]:
+def status(config: Any = None) -> dict[str, object]:
     """The app this host uses, the console's flow in progress, and who's
     connected with which installations (or why that can't be told)."""
     # pylint: disable=import-outside-toplevel
@@ -175,13 +178,11 @@ def status(host_bottles: Path, config: Any = None) -> dict[str, object]:
         flow = dict(_FLOW.state)
     secrets = FileSecrets(host_secrets_path())
     connected: list[dict[str, object]] = []
-    for bottle, name, entry in _forges(host_bottles):
-        secret_name = _secret_name(name)
-        info: dict[str, object] = {"forge": name, "bottle": bottle,
-                                   "login": str(entry.get("account", "")),
-                                   "app": str(entry.get("app", "")), "installations": []}
+    for user in _app_users():
+        info: dict[str, object] = {"forge": GITHUB_HOST, "login": user.name, "app": user.app,
+                                   "default": user.default, "installations": []}
         try:
-            token = current_token(secret_name, secrets)
+            token = current_token(user.token_secret, secrets)
             if token is None:
                 info["error"] = "its token isn't in the host secrets; connect GitHub again"
             else:
@@ -195,30 +196,26 @@ def status(host_bottles: Path, config: Any = None) -> dict[str, object]:
             "needs_install": bool(authorized) and not any(c["installations"] for c in authorized)}
 
 
-def _secret_name(forge: str) -> str:
-    return ForgeEntry(key=forge, kind="github", url=GITHUB_URL, ssh=GITHUB_SSH, account="",
-                      host_key="").secret_name
-
-
-def connected_token(host_bottles: Path, secret_name: str = "") -> tuple[str, str] | None:
-    """(login, token) of the host's GitHub connection through the app, the
-    one in `secret_name` when given; None when there's none or its token no
-    longer works (renewed first when it's about to expire)."""
+def connected_token(secret_name: str = "") -> tuple[str, str] | None:
+    """(login, token) of a user connected on github.com through the app, the
+    one in `secret_name` when given (else the default first); None when
+    there's none or its token no longer works (renewed first when it's about
+    to expire)."""
     # pylint: disable=import-outside-toplevel
     from .contrib.github.user_token import current_token
     from .forge_kinds import ForgeApiError
     from .paths import host_secrets_path
     from .secret_source import FileSecrets
     secrets = FileSecrets(host_secrets_path())
-    for _, name, entry in _forges(host_bottles):
-        if secret_name and _secret_name(name) != secret_name:
+    for user in sorted(_app_users(), key=lambda u: not u.default):
+        if secret_name and user.token_secret != secret_name:
             continue
         try:
-            token = current_token(_secret_name(name), secrets)
+            token = current_token(user.token_secret, secrets)
         except ForgeApiError:
             continue
         if token:
-            return str(entry.get("account", "")), token
+            return user.name, token
     return None
 
 
@@ -259,5 +256,6 @@ def describe(token: str, inst: dict[str, str]) -> str:
     return f"{inst.get('account', '')} ({noun})"
 
 
-__all__ = ["DEFAULT_BOTTLE", "GitHubConnected", "authorize", "connected_token", "describe",
-           "finish", "installed", "start_background", "status", "wait_for_installation"]
+__all__ = ["GITHUB_HOST", "GitHubConnected", "authorize", "connected_token", "describe",
+           "finish", "installed", "set_transport", "start_background", "status",
+           "wait_for_installation"]

@@ -12,6 +12,7 @@ import json
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,11 +27,13 @@ from bot_bottle.control.client import AlreadyAnswered
 from bot_bottle.control.git_gate_render import git_gate_upstreams_for_bottle
 from bot_bottle.control.hostctl import remote_actions, repo_grants
 from bot_bottle.deploy_key_provisioner import DeployKeyCollisionError, get_provisioner
-from bot_bottle.forge_connect import ConnectError, ForgeEntry, connect, write_forge
+from bot_bottle.forge_connect import ConnectError, connect
+from bot_bottle.forge_connections import load
 from bot_bottle.git_gate.provision import DeployKeyRef, deploy_key_refs, revoke_key
 from bot_bottle.lib.log import Die
 from bot_bottle.manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
 from tests.unit import use_bottle_root
+from tests.unit._forges import GITHUB, connected
 
 
 def _response(body: object) -> mock.MagicMock:
@@ -189,19 +192,14 @@ class TestGitHubDeployKeys(unittest.TestCase):
                 self.provisioner.delete("acme/app", "7")
 
 
-GITHUB = ForgeEntry(key="github.com", kind="github", url="https://github.com",
-                    ssh="ssh://git@github.com", account="octo", host_key="ssh-ed25519 AAAA")
-
-
 class TestGitHubForge(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))  # pylint: disable=consider-using-with
 
+    @connected(GITHUB)
     def test_bottle_grants_github_repos(self) -> None:
-        write_forge(self.tmp / "github.md", GITHUB)
-        self.assertNotIn("egress", (self.tmp / "github.md").read_text())  # no package route
         (self.tmp / "dev.md").write_text(
-            "---\nextends: [github, basic]\n"
+            "---\nextends: [basic]\n"
             "git-gate:\n  repos: [github.com/diderisoft/bot-bottle-design:write]\n---\n")
         bottle, _ = load_bottle_chain("dev", [(self.tmp, False), (BUILTIN_BOTTLES_DIR, False)])
         entry = bottle.git[0]
@@ -216,13 +214,10 @@ class TestGitHubForge(unittest.TestCase):
                           "GITHUB_COM_TOKEN"),
                          (upstream.transport, upstream.upstream_url, upstream.token_secret))
 
-    def test_a_forge_can_opt_into_deploy_keys(self) -> None:
-        write_forge(self.tmp / "github.md", GITHUB)
-        text = (self.tmp / "github.md").read_text()
-        (self.tmp / "github.md").write_text(
-            text.replace("kind: github", "kind: github\n      transport: deploy-key", 1))
+    @connected(replace(GITHUB, users=(replace(GITHUB.users[0], transport="deploy-key"),)))
+    def test_a_user_can_opt_into_deploy_keys(self) -> None:
         (self.tmp / "dev.md").write_text(
-            "---\nextends: [github, basic]\n"
+            "---\nextends: [basic]\n"
             "git-gate:\n  repos: [github.com/diderisoft/bot-bottle-design:write]\n---\n")
         bottle, _ = load_bottle_chain("dev", [(self.tmp, False), (BUILTIN_BOTTLES_DIR, False)])
         self.assertEqual("deploy-key", bottle.git[0].Key.transport)
@@ -244,7 +239,8 @@ class TestGitHubForge(unittest.TestCase):
         legacy = DeployKeyRef(**{k: v for k, v in ref.__dict__.items() if k != "provider"})
         self.assertEqual("gitea", legacy.provider)
 
-    def test_connect_writes_a_github_bottle(self) -> None:
+    def test_connect_records_a_github_connection(self) -> None:
+        self.addCleanup(use_bottle_root(self.tmp))
         check = forge_kinds.TokenCheck("octo", "ssh://git@github.com", 3, 5)
         with mock.patch.object(github, "check_token", return_value=check) as checked, \
                 mock.patch("bot_bottle.git_gate.host_key.fetch_host_key",
@@ -252,20 +248,20 @@ class TestGitHubForge(unittest.TestCase):
                 mock.patch("bot_bottle.paths.host_secrets_path",
                            return_value=self.tmp / "secrets"), \
                 mock.patch("bot_bottle.manifest.versions.record_or_warn"):
-            done = connect("https://github.com", "tok", cwd=self.tmp,
-                           host_bottles=self.tmp / "bottles")
+            done = connect("https://github.com", "tok", transport="deploy-key")
         checked.assert_called_once_with("https://github.com", "tok")
         keyscan.assert_called_once_with("github.com", "22")
-        self.assertEqual(("github.com", "github", "octo"), (done.key, done.bottle, done.account))
-        self.assertIn("kind: github", (self.tmp / "bottles" / "github.md").read_text())
+        self.assertEqual(("github.com", "octo", True), (done.key, done.account, done.default))
+        conn = load(self.tmp / "forges.md")["github.com"]
+        self.assertEqual(("github", "deploy-key"), (conn.kind, conn.user().transport))
 
     def test_connect_refuses_another_kind_and_says_what_a_token_needs(self) -> None:
         with self.assertRaisesRegex(ConnectError, "gitlab.com isn't a forge"):
-            connect("https://gitlab.com", "tok", cwd=self.tmp, host_bottles=self.tmp)
+            connect("https://gitlab.com", "tok")
         with mock.patch.object(github, "check_token",
                                side_effect=forge_kinds.ForgeApiError("HTTP 401")), \
                 self.assertRaisesRegex(ConnectError, "Administration: read & write"):
-            connect("https://github.com", "tok", cwd=self.tmp, host_bottles=self.tmp)
+            connect("https://github.com", "tok")
 
 
 class TestCommand(unittest.TestCase):
@@ -288,7 +284,7 @@ class TestCommand(unittest.TestCase):
             self.assertEqual(0, cmd_forge(["connect", "github.com", "--token", "--no-browser"]))
         self.assertIn("settings/personal-access-tokens/new", err.getvalue())
         self.assertIn("Administration: read & write", err.getvalue())
-        self.assertTrue((self.tmp / "root" / "bottles" / "github.md").is_file())
+        self.assertTrue((self.tmp / "root" / "forges.md").is_file())
 
     def test_refuses_another_kind_before_asking_for_a_token(self) -> None:
         err = io.StringIO()
@@ -329,7 +325,7 @@ class TestVet(unittest.TestCase):
         with mock.patch.object(repo_grants, "find_forge", return_value=object()):
             self.assertEqual(("", ""), remote_actions.vet(_ask("add-repo", "git.example.com/a/b")))
         with mock.patch.object(repo_grants, "find_forge", return_value=None):
-            refusal, _ = remote_actions.vet(_ask("add-repo", "me@code.example.com:3000/a/b"))
+            refusal, _ = remote_actions.vet(_ask("add-repo", "code.example.com:3000/a/b"))
             self.assertIn("code.example.com isn't a forge bot-bottle can connect", refusal)
             self.detect.assert_called_with("https://code.example.com:3000")
             self.detect.return_value = "github"

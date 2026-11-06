@@ -70,13 +70,14 @@ def _with_run_changes(identity: str, policy: str | None, frontmatter: dict[str, 
                       ) -> tuple[dict[str, object], list[dict[str, str]], list[dict[str, str]]]:
     """`frontmatter` with this run's changes applied as a bottle file holds
     them: egress approved since launch, and repos granted while it runs (as
-    grants, extending the bottle that declares their forge if needed). Returns
+    grants, with their forge's description). Returns
     it with the changes that altered it and the ones that can't be kept.
     `only` limits it to those change keys (`egress:<host>`, `repo:<name>`)."""
     # pylint: disable=import-outside-toplevel
     from ...approvals import with_grant, with_routes
     from ...bottle_state import git_gate_state_dir
     from ...git_gate.provision import live_grant_refs, load_upstreams_snapshot
+    from ...manifest.document import forge_document
     from .repo_grants import find_forge
     fm = frontmatter
     changes: list[dict[str, str]] = []
@@ -105,8 +106,8 @@ def _with_run_changes(identity: str, policy: str | None, frontmatter: dict[str, 
                 unkept.append({"kind": "repo", "what": ref.name, "key": key,
                                "why": GRANTLESS})
             continue
-        found = find_forge(identity, ref.grant.split("/", 1)[0])
-        after, what = with_grant(fm, ref.grant, extends=found.bottle if found else ""), \
+        forge = find_forge(identity, ref.grant.split("/", 1)[0])
+        after, what = with_grant(fm, ref.grant, forge=forge_document(forge) if forge else None), \
             ref.grant
         if after != fm:
             fm = after
@@ -211,21 +212,20 @@ def _load(identity: str) -> tuple[Any, Any]:
 
 def _granted(identity: str, doc: dict[str, object], ref: Any) -> str:
     """A live grant as its grant, with the forge it's on put into `doc` (in
-    place) from whichever bottle declares it; "" when it has no grant or the
-    forge can't be found, so no bottle can hold it."""
+    place) as this host connected it; "" when it has no grant or the forge
+    isn't connected, so no bottle can hold it."""
     # pylint: disable-next=import-outside-toplevel
     from ...manifest.document import forge_document
     from .repo_grants import find_forge
     if not ref.grant:
         return ""
-    found = find_forge(identity, ref.grant.split("/", 1)[0])
-    if found is None:
+    forge = find_forge(identity, ref.grant.split("/", 1)[0])
+    if forge is None:
         return ""
     git = _dict(doc.get("git-gate"))
     forges = _dict(git.get("forges"))
-    if found.forge.name not in forges:
-        label, credential, forges[found.forge.name] = forge_document(found.forge)
-        doc["credentials"] = {**_dict(doc.get("credentials")), label: credential}
+    if forge.name not in forges:
+        forges[forge.name] = forge_document(forge)
         git["forges"] = forges
         doc["git-gate"] = git
     return str(ref.grant)
@@ -285,7 +285,7 @@ def current_manifest(identity: str, bottle: Any, policy: str | None,
             # Not as a grant, so not in a document that may become a bottle.
             unkept.append({"kind": "repo", "what": ref.name, "key": f"repo:{ref.name}",
                            "why": GRANTLESS if not ref.grant else
-                           "its forge isn't declared in any bottle now"})
+                           "its forge isn't connected on this host now"})
             continue
         git = _dict(doc.get("git-gate"))
         repos = _dict(git.get("repos"))

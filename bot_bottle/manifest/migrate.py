@@ -1,11 +1,11 @@
 """`bot-bottle bottles migrate <name>`: rewrite a bottle in the old git-gate
-format (`manifest/legacy_git_gate.py`) as grants on a forge bottle.
+format (`manifest/legacy_git_gate.py`) as grants on forges this host connected.
 
 The file is edited as text, so comments and everything outside the repos it
-converts stay as they were: the old repos' entries become grants, and the
-forge bottle is added to `extends`. The result is checked by parsing it back
-before it's written. The forge must already be connected; connecting needs a
-token typed by the operator, so `migrate` never does it.
+converts stay as they were: the old repos' entries become grants. The result
+is checked by parsing it back before it's written. The forge must already be
+connected; connecting needs a token typed by the operator, so `migrate` never
+does it.
 """
 
 from __future__ import annotations
@@ -18,10 +18,7 @@ from pathlib import Path
 
 from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
 from .forges import FORGE_KINDS
-from .legacy_git_gate import (
-    ForgeHome, Plan, explain, extends_list, flow_list, forges_by_host, list_form, new_extends,
-    old_repos, plan, scan_bottles,
-)
+from .legacy_git_gate import Plan, connected_homes, explain, list_form, old_repos, plan
 from .loader import find_bottle, load_bottle_chain
 from .util import ManifestError, as_json_object
 from .versions import record, record_hand_edits
@@ -49,32 +46,9 @@ class Migration:
             fromfile=f"{self.path} (now)", tofile=f"{self.path} (migrated)"))
 
 
-def _chain_forges(name: str, dirs: Sequence[tuple[Path, bool]]) -> dict[str, ForgeHome]:
-    """The forges `name`'s chain declares, by host, with no bottle to add."""
-    out: dict[str, ForgeHome] = {}
-    seen: set[str] = set()
-    todo = [name]
-    while todo:
-        n = todo.pop()
-        if n in seen:
-            continue
-        seen.add(n)
-        found = find_bottle(n, dirs)
-        if found is None:
-            continue
-        try:
-            fm, _ = parse_frontmatter(found[0].read_text())
-        except (OSError, YamlSubsetError):
-            continue
-        for host, homes in forges_by_host([("", fm)]).items():
-            out.setdefault(host, homes[0])
-        todo.extend(extends_list(fm.get("extends")))
-    return out
-
-
 def prepare(name: str, dirs: Sequence[tuple[Path, bool]]) -> Migration:
     """What migrating `name` would write. Raises MigrateError when it's
-    already migrated, or can't be yet (no forge bottle), saying why."""
+    already migrated, or can't be yet (its forge isn't connected), saying why."""
     found = find_bottle(name, dirs)
     if found is None:
         raise MigrateError(f"bottle '{name}' not found")
@@ -90,12 +64,11 @@ def prepare(name: str, dirs: Sequence[tuple[Path, bool]]) -> Migration:
     if not isinstance(repos, dict) or not old:
         raise MigrateError(f"bottle '{name}' has no repos in the old git-gate format; "
                            f"nothing to migrate")
-    chain = _chain_forges(name, dirs)
-    p = plan(name, old, fm.get("extends"), chain, forges_by_host(scan_bottles(dirs)))
+    p = plan(name, old, connected_homes())
     if p.missing or p.unconvertible:
-        why = (f"no bottle declares the forge {', '.join(p.missing)} yet; connect it first"
-               if p.missing else "some repos can't be converted")
-        raise MigrateError(f"{why}.\n{explain(p, fm.get('extends'), repos)}")
+        why = (f"the forge {', '.join(p.missing)} isn't connected on this host yet; "
+               f"connect it first" if p.missing else "some repos can't be converted")
+        raise MigrateError(f"{why}.\n{explain(p, repos)}")
     after = rewrite(text, p, repos)
     return Migration(bottle=name, path=path, project=project, before=text, after=after,
                      plan=p, notes=tuple(_notes(p)))
@@ -105,21 +78,20 @@ def _notes(p: Plan) -> list[str]:
     notes: list[str] = []
     for host, home in p.homes.items():
         repos = [r for r in p.repos if r.forge_host == host]
-        where = f"bottle '{home.bottle}'" if home.bottle else "this bottle's chain"
         envs = sorted({r.token_env for r in repos if r.token_env})
-        if envs and home.token_secret and envs != [home.token_secret]:
-            notes.append(f"{host}: keys will be minted with the forge's token (secret "
-                         f"{home.token_secret}), no longer {', '.join(envs)}")
+        if envs and home.token_secrets and not set(envs) <= set(home.token_secrets):
+            notes.append(f"{host}: keys will be minted with the connected user's token "
+                         f"(secret {home.token_secrets[0]}), no longer {', '.join(envs)}")
         if not home.host_key:
-            notes.append(f"{host}: forge {home.key!r} in {where} pins no host key, and the "
-                         f"repos' own host_key lines go; add host_key to the forge entry")
+            notes.append(f"{host}: the connection pins no host key, and the repos' own "
+                         f"host_key lines go; connect it again to pin one")
         elif any(r.host_key and r.host_key != home.host_key for r in repos):
-            notes.append(f"{host}: the repos' host_key differs from the one forge "
-                         f"{home.key!r} pins; the forge's is used")
+            notes.append(f"{host}: the repos' host_key differs from the one the connection "
+                         f"pins; the connection's is used")
         ssh = {r.ssh for r in repos} - {home.ssh}
         if home.ssh and ssh:
             notes.append(f"{host}: upstreams move from {', '.join(sorted(ssh))} to the "
-                         f"forge's SSH address {home.ssh}")
+                         f"connection's SSH address {home.ssh}")
     return notes
 
 
@@ -223,25 +195,6 @@ def _rewrite_repos(fm: list[str], p: Plan, repos: Mapping[str, object]) -> list[
     return out + fm[end:]
 
 
-def _rewrite_extends(fm: list[str], add: Sequence[str], extends: object) -> list[str]:
-    if not add:
-        return fm
-    at = _find_key(fm, 0, len(fm), 0, "extends")
-    if at < 0:
-        return [f"extends: {flow_list(list(add))}"] + fm
-    value = _key(fm[at])
-    assert value is not None
-    trailing = re.search(r"\s+#.*$", fm[at])
-    comment = trailing.group(0) if trailing else ""
-    if value[2]:
-        new = new_extends(extends, add)
-        return fm[:at] + [f"extends: {flow_list(extends_list(new))}{comment}"] + fm[at + 1:]
-    # A block list: the forge bottles go first.
-    first = next(i for i in range(at + 1, len(fm)) if _content(fm[i]))
-    pad = " " * _indent(fm[first])
-    return fm[:first] + [f"{pad}- {n}" for n in add] + fm[first:]
-
-
 def rewrite(text: str, p: Plan, repos: Mapping[str, object]) -> str:
     """`text` (a bottle file) with `p` applied, everything else as it was.
     Raises MigrateError when the result wouldn't read back as intended."""
@@ -253,7 +206,6 @@ def rewrite(text: str, p: Plan, repos: Mapping[str, object]) -> str:
         raise MigrateError("the frontmatter has no closing ---")
     fm_before, _ = parse_frontmatter(text)
     fm = _rewrite_repos(lines[1:close], p, repos)
-    fm = _rewrite_extends(fm, p.add_extends, fm_before.get("extends"))
     out = "\n".join([lines[0], *fm, *lines[close:]])
     _check(fm_before, out, p, repos)
     return out
@@ -262,11 +214,8 @@ def rewrite(text: str, p: Plan, repos: Mapping[str, object]) -> str:
 def _check(before: Mapping[str, object], after_text: str, p: Plan,
            repos: Mapping[str, object]) -> None:
     """The rewritten file must parse to the old frontmatter with only the
-    repos and `extends` changed."""
+    repos changed."""
     expected = dict(before)
-    ext = new_extends(before.get("extends"), p.add_extends)
-    if ext:
-        expected["extends"] = ext
     git = dict(as_json_object(before.get("git-gate"), "git-gate"))
     git["repos"] = (list(p.grants.values()) if list_form(p, repos)
                     else {n: p.grants.get(n, e) for n, e in repos.items()})

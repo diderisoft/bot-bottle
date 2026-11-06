@@ -18,32 +18,21 @@ from bot_bottle.contract.yaml_subset import parse_frontmatter
 from bot_bottle.control.client import AlreadyAnswered
 from bot_bottle.control.git_gate_render import git_gate_render_gitconfig
 from bot_bottle.control.hostctl import remote_actions, repo_grants
+from bot_bottle.forge_connections import ForgeConnection, ForgeUser
 from bot_bottle.git_gate import live_grant
 from bot_bottle.git_gate.provision import live_grant_refs, load_upstreams_snapshot
 from bot_bottle.manifest.forges import ManifestForge
 from bot_bottle.secret_source import MappingSecrets
+from tests.unit._forges import connected
 
 HOST_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
 FORGE = ManifestForge(name="gitea.example.com", kind="gitea", url="https://gitea.example.com",
                       ssh="ssh://git@gitea.example.com:2222", token_secret="GITEA_TOKEN",
                       host_key=HOST_KEY)
-FORGE_BOTTLE = f"""---
-credentials:
-  gitea-api:
-    source: secret
-    secret: GITEA_TOKEN
-git-gate:
-  forges:
-    gitea.example.com:
-      kind: gitea
-      url: https://gitea.example.com
-      ssh: ssh://git@gitea.example.com:2222
-      token: $gitea-api
-      host_key: {HOST_KEY}
----
-
-The forge.
-"""
+CONN = ForgeConnection(host="gitea.example.com", kind="gitea", url="https://gitea.example.com",
+                       ssh="ssh://git@gitea.example.com:2222", host_key=HOST_KEY,
+                       users=(ForgeUser("bot", "GITEA_TOKEN", default=True),
+                              ForgeUser("codex", "CODEX_GITEA_TOKEN")))
 ARRIVED = "2026-10-26T10:00:00+00:00"
 
 
@@ -276,33 +265,34 @@ class TestLiveGrant(_Root):
 
 
 class TestFindForge(_Root):
-    def meta(self, *names: str) -> Any:
+    def meta(self, agent: str = "pi") -> Any:
         return mock.patch("bot_bottle.bottle_state.read_metadata", return_value=BottleMetadata(
-            identity="s1", agent_name="pi", cwd="", copy_cwd=False, started_at="",
-            bottle_names=names))
+            identity="s1", agent_name=agent, cwd="", copy_cwd=False, started_at="",
+            bottle_names=()))
 
     def setUp(self) -> None:
         super().setUp()
-        (self.bottles / "gitea.md").write_text(FORGE_BOTTLE)
-        (self.bottles / "work.md").write_text("---\nextends: gitea\n---\n\nWork.\n")
-        (self.bottles / "plain.md").write_text("---\nenv:\n  A: b\n---\n\nPlain.\n")
-        (self.bottles / "broken.md").write_text("---\nextends: nowhere\n---\n")
+        self.enterContext(connected(CONN))
+        (self.root / "agents").mkdir()
+        (self.root / "agents" / "codex.md").write_text(
+            "---\nforge_users:\n  gitea.example.com: codex\n---\n")
         project = mock.patch("bot_bottle.approvals.session_project", return_value=None)
         project.start()
         self.addCleanup(project.stop)
 
-    def test_from_the_launched_chain(self) -> None:
-        with self.meta("work"):
-            found = repo_grants.find_forge("s1", "gitea.example.com")
-        assert found is not None
-        self.assertEqual(("GITEA_TOKEN", ""), (found.forge.token_secret, found.bottle))
-
-    def test_else_from_a_host_bottle_that_keeping_would_extend(self) -> None:
-        with self.meta("plain"):
+    def test_from_the_hosts_connection(self) -> None:
+        with self.meta():
             found = repo_grants.find_forge("s1", "gitea.example.com")
             self.assertIsNone(repo_grants.find_forge("s1", "other.example.com"))
         assert found is not None
-        self.assertEqual("gitea", found.bottle)
+        self.assertEqual(("GITEA_TOKEN", "ssh://git@gitea.example.com:2222"),
+                         (found.token_secret, found.ssh))
+
+    def test_as_the_user_the_agent_pushes_as(self) -> None:
+        with self.meta("codex"):
+            found = repo_grants.find_forge("s1", "gitea.example.com")
+        assert found is not None
+        self.assertEqual(("codex", "CODEX_GITEA_TOKEN"), (found.account, found.token_secret))
 
 
 class TestGrantRepo(_Root):
@@ -311,14 +301,16 @@ class TestGrantRepo(_Root):
         backend.attach_adopted.return_value = guest
         adopted = SimpleNamespace(registry_id="reg-1")
         with mock.patch.object(repo_grants, "find_forge",
-                               return_value=repo_grants.FoundForge(FORGE, "gitea")), \
+                               return_value=FORGE), \
                 mock.patch("bot_bottle.backend.adoption.read", return_value=adopted), \
                 mock.patch.object(live_grant, "_provision_dynamic_key", return_value="/k"), \
                 mock.patch("bot_bottle.backend.gateway_attach.reprovision_git_gate") as reprov:
             result = repo_grants.grant_repo(backend, "s1", "gitea.example.com/acme/app:write",
                                             secrets_file=self.root / "secrets")
         self.assertEqual({"repo": "app", "url": "ssh://git@gitea.example.com:2222/acme/app.git",
-                          "writable": True, "extends": "gitea"}, result)
+                          "writable": True, "forge": {"kind": "gitea",
+                                                      "ssh": "ssh://git@gitea.example.com:2222"}},
+                         result)
         self.assertEqual(("reg-1", "s1"), reprov.call_args.args[1:])
         self.assertIn("insteadOf", guest.scripts[-1])
 
@@ -330,14 +322,14 @@ class TestGrantRepo(_Root):
         self.assertIn("<forge>/<owner>/<repo>", str(repo_grants.grant_repo(
             mock.Mock(), "s1", "nope", secrets_file=self.root / "s")["error"]))
         with mock.patch.object(repo_grants, "find_forge",
-                               return_value=repo_grants.FoundForge(FORGE)), \
+                               return_value=FORGE), \
                 mock.patch("bot_bottle.backend.adoption.read", return_value=None):
             self.assertIn("can't reach", str(repo_grants.grant_repo(
                 mock.Mock(), "s1", grant, secrets_file=self.root / "s")["error"]))
         backend = mock.Mock()
         backend.attach_adopted.side_effect = OSError("gone")
         with mock.patch.object(repo_grants, "find_forge",
-                               return_value=repo_grants.FoundForge(FORGE)), \
+                               return_value=FORGE), \
                 mock.patch("bot_bottle.backend.adoption.read", return_value=mock.Mock()):
             self.assertIn("host controller's log", str(repo_grants.grant_repo(
                 backend, "s1", grant, secrets_file=self.root / "s")["error"]))
@@ -348,12 +340,16 @@ class TestKeepGrant(_Root):
         path = self.bottles / "pi.md"
         path.write_text("---\nextends: basic\ngit-gate:\n  repos:\n"
                         "    - gitea.example.com/acme/app\n---\n\nMine.\n")
-        keep_grant(KeepTarget(path, None), "gitea.example.com/acme/app:write", extends="gitea")
-        keep_grant(KeepTarget(path, None), "gitea.example.com/acme/lib", extends="gitea")
+        keep_grant(KeepTarget(path, None), "gitea.example.com/acme/app:write",
+                   forge={"kind": "gitea"})
+        keep_grant(KeepTarget(path, None), "gitea.example.com/acme/lib", forge={"kind": "x"})
         fm, body = parse_frontmatter(path.read_text())
         self.assertEqual(["gitea.example.com/acme/app:write", "gitea.example.com/acme/lib"],
                          fm["git-gate"]["repos"])  # type: ignore[index]
-        self.assertEqual(["basic", "gitea"], fm["extends"])
+        # The forge's description comes with the grant, once; nothing to extend.
+        self.assertEqual({"gitea.example.com": {"kind": "gitea"}},
+                         fm["git-gate"]["forges"])  # type: ignore[index]
+        self.assertEqual("basic", fm["extends"])
         self.assertEqual("Mine.", body.strip())
 
     def test_the_mapping_form_gains_a_named_grant(self) -> None:
@@ -396,7 +392,7 @@ class TestRepoCard(unittest.TestCase):
     def test_lines_and_options(self) -> None:
         target = KeepTarget(Path("/x/pi.md"), None)
         with mock.patch.object(repo_grants, "find_forge",
-                               return_value=repo_grants.FoundForge(FORGE, "gitea")), \
+                               return_value=FORGE), \
                 mock.patch("bot_bottle.approvals.keep_target", return_value=target):
             lines, options = remote_actions.card(_ask())  # type: ignore[misc]
         self.assertEqual(["add_repo", "add_repo_write", "add_repo_keep"], options)
@@ -407,7 +403,7 @@ class TestRepoCard(unittest.TestCase):
 
     def test_read_only_and_nowhere_to_keep(self) -> None:
         with mock.patch.object(repo_grants, "find_forge",
-                               return_value=repo_grants.FoundForge(FORGE)), \
+                               return_value=FORGE), \
                 mock.patch("bot_bottle.approvals.keep_target", return_value=None):
             lines, options = remote_actions.repo_attention(_ask("gitea.example.com/acme/app"))
         self.assertEqual(["add_repo"], options)
@@ -432,7 +428,7 @@ class TestAddRepoAnswer(unittest.TestCase):
         self.bottles = mock.Mock()
         self.bottles.grant_repo.return_value = {
             "repo": "app", "url": "ssh://git@h/acme/app.git", "writable": False,
-            "extends": "gitea"}
+            "forge": {"kind": "gitea"}}
         self.asking: dict[str, Any] = {"a1": _ask()}
 
     def orchestrator(self, _url: str) -> Any:
@@ -462,7 +458,7 @@ class TestAddRepoAnswer(unittest.TestCase):
                 mock.patch("bot_bottle.approvals.keep_grant") as kept:
             reply = self.answer(keep=True)
         self.assertEqual("pi", reply["kept"])
-        self.assertEqual("gitea", kept.call_args.kwargs["extends"])
+        self.assertEqual({"kind": "gitea"}, kept.call_args.kwargs["forge"])
         with mock.patch("bot_bottle.approvals.keep_target", return_value=target), \
                 mock.patch("bot_bottle.approvals.keep_grant", side_effect=OSError("ro")):
             self.assertIn("keeping it in pi failed", self.answer(keep=True)["warnings"][0])

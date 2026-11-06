@@ -5,7 +5,10 @@ A project bottle runs only once this host has trusted the hash of the project
 files in its chain; a project agent whose provider grants something, or that
 runs on one of the user's bottles, the hash of its file, of the files its
 image build takes from the project, and of what it gets from the host. Any
-change needs trusting again. The user's own manifests and the built-in `basic` need none.
+change needs trusting again. A project bottle's trust also covers this host's
+connection to each forge its repos are on (ADR 0019: where pushes go, and as
+whom), so reconnecting a forge differently asks again. The user's own
+manifests and the built-in `basic` need none.
 `trusted-bottles.json` (0600) keeps each hash with the manifest's path and
 grants, to show what changed.
 """
@@ -67,6 +70,35 @@ def grants(bottle: ManifestBottle) -> list[str]:
             lines.append(f"read    {name} (from your environment or secrets)")
     if bottle.nested_containers:
         lines.append("run     containers inside the bottle")
+    return lines
+
+
+def _fingerprint(host_key: str) -> str:
+    """An SSH host key as OpenSSH shows it: `SHA256:<base64>`."""
+    # pylint: disable-next=import-outside-toplevel
+    import base64
+    try:
+        blob = base64.b64decode(host_key.split()[1], validate=True)
+    except (IndexError, ValueError):
+        return host_key
+    return "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
+
+
+def forge_lines(bottle: ManifestBottle) -> list[str]:
+    """This host's connection to each forge `bottle`'s repos are on, one line
+    each: what trusting a project bottle records of it."""
+    used = {r.Key.api_url for r in bottle.git if r.Key.provider in FORGE_KINDS}
+    lines: list[str] = []
+    for forge in bottle.forges:
+        if forge.url not in used:
+            continue
+        line = f"forge   {forge.name}: {forge.kind} at {forge.url}, ssh {forge.ssh}"
+        if forge.host_key:
+            line += f", host key {_fingerprint(forge.host_key)}"
+        line += f", as {forge.account or '?'}"
+        if forge.kind == "github":
+            line += f" over {forge.transport or 'https'}"
+        lines.append(line)
     return lines
 
 
@@ -166,7 +198,11 @@ def check(bottle_name: str, bottle: ManifestBottle, sources: Sequence[BottleSour
     granted = beyond_basic(grants(bottle))
     if not granted:
         return  # nothing beyond basic
+    connected = forge_lines(bottle)
+    granted += connected
     digest = bottle_hash(sources)
+    if connected:
+        digest = hashlib.sha256("\0".join([digest, *connected]).encode()).hexdigest()
     entries = load_trusted()
     if any(e.hash == digest for e in entries):
         return
@@ -302,5 +338,5 @@ def prompt_text(error: UntrustedBottleError) -> str:
 
 __all__ = ["UntrustedBottleError", "agent_hash", "beyond_basic", "bottle_hash", "build_digest",
            "check",
-           "check_agent", "grants", "host_context", "load_trusted", "prompt_text",
+           "check_agent", "forge_lines", "grants", "host_context", "load_trusted", "prompt_text",
            "provider_grants", "trust"]

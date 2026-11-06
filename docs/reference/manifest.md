@@ -148,6 +148,10 @@ saying to remove the line and pick the bottle at launch.
   model route; a bottle route for that host fails the launch.
 - **`skills`**: names of skill directories copied from the host's
   `~/.claude/skills/<name>/` into the agent.
+- **`forge_users`**: `{<forge host>: <user>}`, which user connected on a
+  forge the agent pushes as; a forge it doesn't name uses its default user
+  ([git-gate.md](git-gate.md#forges-and-one-line-grants)). Grants name no
+  user, so they stay portable.
 
 ## Trust
 
@@ -160,7 +164,13 @@ trust hash covers is in [architecture.md](architecture.md#state).
   a name with one of yours. `bot-bottle <agent>` uses `./main` when the repo
   has one. The trust prompt lists every host and secret the bottle touches,
   including what it inherits through `extends`, so a cloned repo can't send a
-  credential to another host without you seeing it first.
+  credential to another host without you seeing it first. Trust also records
+  this host's connection to each forge the bottle's repos are on (`kind`,
+  `url`, `ssh`, host key, and the user its grants push as with that user's
+  transport: the forge's default user, or the one the agent's `forge_users`
+  picks, so an agent can't switch to another of your accounts unseen). When
+  one changes, the bottle asks to be trusted again, showing what changed (ADR
+  0019). Your own bottles don't.
 - **Repo agents** need trust when their `agent_provider` grants something
   (your login, a model host with a secret, or an image build), or when they
   run on one of your bottles that grants more than `basic`. A repo agent with
@@ -169,12 +179,14 @@ trust hash covers is in [architecture.md](architecture.md#state).
 ## Forges
 
 `bot-bottle forge connect <url>` lets bottles push to a Gitea or GitHub forge:
-it checks a token, pins the forge's host key and writes a `gitea` or `github`
-bottle. A bottle that
-extends it grants repos in a line,
-`git-gate: {repos: [gitea.example.com/acme/app:write]}`, each read-only unless
-`:write`, with its own deploy key per run. Details in
-[git-gate.md](git-gate.md#forges-and-one-line-grants).
+it checks a token, pins the forge's host key and records the connection in
+`~/.bot-bottle/forges.md`, under the user the token belongs to. Any bottle
+then grants repos in a line, `git-gate: {repos:
+[gitea.example.com/acme/app:write]}`, each read-only unless `:write`, with
+nothing to extend; it may describe the forge (`git-gate.forges`) so it says
+what to connect on another machine, but never carries a token. Details in
+[git-gate.md](git-gate.md#forges-and-one-line-grants) and
+[ADR 0019](../decisions/0019-forges-are-described-in-bottles-connected-on-hosts.md).
 
 A bottle written before forges, with each repo's own `url`,
 `key: {provider: gitea, ...}` and `host_key`, no longer loads; its error says

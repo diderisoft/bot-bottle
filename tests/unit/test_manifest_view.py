@@ -12,6 +12,7 @@ from unittest import mock
 
 from bot_bottle.bottle_state import BottleMetadata, git_gate_state_dir, write_metadata
 from bot_bottle.control.hostctl import manifest_view, remote_actions
+from bot_bottle import forge_connections
 
 AGENT = """---
 agent_provider:
@@ -52,19 +53,19 @@ POLICY = """routes:
 """
 
 
-# The forge this run's grants are on, in its own host bottle.
+# A host bottle describing the forge this run's grants are on; the host's
+# connection to it (`forges.md`) is what grants use (ADR 0019).
 GITEA = """---
-credentials:
-  gitea-example-com-token: {source: secret, secret: GITEA_TOKEN}
 git-gate:
   forges:
     gitea.example.com:
       kind: gitea
-      url: "https://gitea.example.com"
-      ssh: "ssh://git@h"
-      token: $gitea-example-com-token
 ---
 """
+CONN = forge_connections.ForgeConnection(
+    host="gitea.example.com", kind="gitea", url="https://gitea.example.com",
+    ssh="ssh://git@h",
+    users=(forge_connections.ForgeUser("bot", "GITEA_TOKEN", default=True),))
 
 
 class TestAgentManifest(unittest.TestCase):
@@ -79,6 +80,7 @@ class TestAgentManifest(unittest.TestCase):
         (root / "bottles" / "work.md").write_text(WORK)
         (root / "bottles" / "base.md").write_text(BASE)
         (root / "bottles" / "gitea.md").write_text(GITEA)
+        forge_connections.save({CONN.host: CONN}, root / "forges.md")
         env = mock.patch.dict(os.environ, {"HOME": str(home), "BOT_BOTTLE_ROOT": str(root)})
         env.start()
         self.addCleanup(env.stop)
@@ -259,7 +261,6 @@ class TestRunningBottle(TestAgentManifest):
     def test_a_grant_shows_as_its_grant_with_its_forge(self) -> None:
         # pylint: disable=import-outside-toplevel
         from bot_bottle.control.git_gate_render import GitGateUpstream
-        from bot_bottle.control.hostctl.repo_grants import FoundForge
         from bot_bottle.git_gate.provision import _write_upstreams_snapshot
         from bot_bottle.manifest.forges import ManifestForge
         self.grant("app", "gitea.example.com/o/app:write")
@@ -270,13 +271,13 @@ class TestRunningBottle(TestAgentManifest):
                               "ssh://git@h", "GITEA_TOKEN")
         _, manifest = manifest_view._load("s1")  # pylint: disable=protected-access
         with mock.patch("bot_bottle.control.hostctl.repo_grants.find_forge",
-                        return_value=FoundForge(forge, "gitea")):
+                        return_value=forge):
             current = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
         git = current["data"]["git-gate"]
         self.assertEqual("gitea.example.com/o/app:write", git["repos"]["app"])
-        self.assertEqual("$gitea-example-com-token", git["forges"]["gitea.example.com"]["token"])
-        self.assertEqual({"source": "secret", "secret": "GITEA_TOKEN"},
-                         current["data"]["credentials"]["gitea-example-com-token"])
+        # Described, never its token (ADR 0019).
+        self.assertEqual({"kind": "gitea"}, git["forges"]["gitea.example.com"])
+        self.assertNotIn("credentials", current["data"])
         self.assertIn("gitea.example.com/o/app:write", current["text"])
 
     def test_save_a_version_and_optionally_the_bottle(self) -> None:

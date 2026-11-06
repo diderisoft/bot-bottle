@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -28,9 +29,10 @@ from bot_bottle.git_gate.provision import (
 )
 from bot_bottle.manifest import ManifestBottle
 from bot_bottle.manifest.document import repo_document
-from bot_bottle.manifest.forges import ManifestForge, resolve_forge
+from bot_bottle.manifest.forges import ManifestForge, forges_raw, resolve_forge
 from bot_bottle.manifest.git import ManifestGitEntry, ManifestKeyConfig, git_transport
 from bot_bottle.manifest.util import ManifestError
+from tests.unit._forges import GITHUB, connected
 
 TOKEN = "ghu_" + "x" * 36
 HTTPS = GitGateUpstream(name="design", upstream_url="https://github.com/o/design.git",
@@ -84,17 +86,16 @@ class TestTransport(unittest.TestCase):
                     self.assertRaises(ManifestError):
                 _entry(transport, provider)
 
-    def test_forge_transport_is_validated_and_carried(self) -> None:
-        creds: dict[str, object] = {"gh": {"source": "secret", "secret": "GITHUB_COM_TOKEN"}}
-        forge = resolve_forge("github.com", {"kind": "github", "url": "https://github.com",
-                                             "token": "$gh", "transport": "deploy-key"},
-                              creds, "b")
+    def test_the_users_transport_is_carried_and_a_bottle_cant_set_it(self) -> None:
+        user = replace(GITHUB.users[0], transport="deploy-key")
+        with connected(replace(GITHUB, users=(user,))):
+            forge = resolve_forge("github.com", {"kind": "github"}, "b")
         self.assertEqual("deploy-key", forge.key(True)["transport"])
         self.assertNotIn("transport", ManifestForge(
             name="g", kind="github", url="u", ssh="s", token_secret="T").key(True))
-        with self.assertRaises(ManifestError):
-            resolve_forge("gitea.x", {"kind": "gitea", "url": "https://gitea.x",
-                                      "token": "$gh", "transport": "https"}, creds, "b")
+        with self.assertRaisesRegex(ManifestError, "the host's connection now"):
+            forges_raw("b", {"git-gate": {"forges": {"github.com": {
+                "kind": "github", "transport": "deploy-key"}}}})
 
     def test_document_round_trips_the_transport(self) -> None:
         self.assertEqual("deploy-key", repo_document(_entry("deploy-key"))["key"]["transport"])  # type: ignore[index]

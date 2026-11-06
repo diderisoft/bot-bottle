@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -12,9 +13,11 @@ from bot_bottle.approvals import Request
 from bot_bottle.control.client import AlreadyAnswered
 from bot_bottle.control.hostctl import remote, remote_actions
 from bot_bottle.forge_connect import ConnectError, Connected
+from bot_bottle.forge_connections import ForgeConnectionError
+from tests.unit._forges import GITEA, connected
 
-DONE = Connected(key="gitea.example.com", bottle="gitea", path=Path("/x/gitea.md"),
-                 account="bot", admin_repos=2, repos=5, ssh="ssh://git@h:2222",
+DONE = Connected(key="gitea.example.com", path=Path("/x/forges.md"),
+                 account="bot", default=True, admin_repos=2, repos=5, ssh="ssh://git@h:2222",
                  host_key="ssh-ed25519 AAAA", secret_name="GITEA_EXAMPLE_COM_TOKEN",
                  warnings=("w",))
 
@@ -34,15 +37,16 @@ class TestForgeConnect(unittest.TestCase):
 
     def test_connects_and_reports_without_the_token(self) -> None:
         with mock.patch("bot_bottle.forge_connect.connect", return_value=DONE) as connect:
-            reply = self.handle(url="gitea.example.com", token="s3cret-token", bottle="work",
-                                name="", ssh="ssh://git@h:2222")
+            reply = self.handle(url="gitea.example.com", token="s3cret-token",
+                                ssh="ssh://git@h:2222", default=True)
         self.assertEqual(("forge_connected", "q1", "gitea.example.com", "bot", 2, 5, ["w"]),
                          (reply["type"], reply["request_id"], reply["key"], reply["account"],
                           reply["admin_repos"], reply["repos"], reply["warnings"]))
         self.assertNotIn("s3cret-token", repr(reply))
         args, kwargs = connect.call_args
         self.assertEqual(("gitea.example.com", "s3cret-token"), args)
-        self.assertEqual(("work", "ssh://git@h:2222"), (kwargs["bottle"], kwargs["ssh"]))
+        self.assertEqual(("ssh://git@h:2222", True), (kwargs["ssh"], kwargs["make_default"]))
+        self.assertTrue(reply["default"])
 
     def test_says_why_it_failed(self) -> None:
         with mock.patch("bot_bottle.forge_connect.connect",
@@ -52,16 +56,11 @@ class TestForgeConnect(unittest.TestCase):
         with mock.patch("bot_bottle.forge_connect.connect", side_effect=OSError("disk")):
             self.assertIn("see the host controller's log", self.handle(url="h", token="t")["error"])
 
-    def test_not_into_a_project_bottle(self) -> None:
-        with mock.patch("bot_bottle.forge_connect.connect") as connect:
-            self.assertIn("host bottles", self.handle(url="h", token="t", bottle="./main")["error"])
-        connect.assert_not_called()
-
     def test_bad_field_types_fall_back(self) -> None:
         with mock.patch("bot_bottle.forge_connect.connect", return_value=DONE) as connect:
-            self.handle(url="h", token="t", bottle=5)
-        # The bottle named after the forge's kind.
-        self.assertEqual("", connect.call_args.kwargs["bottle"])
+            self.handle(url="h", token="t", ssh=5, default="yes")
+        self.assertEqual(("", False), (connect.call_args.kwargs["ssh"],
+                                       connect.call_args.kwargs["make_default"]))
 
 
 ARRIVED = "2026-10-26T10:00:00+00:00"
@@ -87,16 +86,15 @@ class TestForgeAttention(unittest.TestCase):
             lines, _ = remote_actions.forge_attention(_ask(), "gitea")
         self.assertNotIn("new to this host", "\n".join(lines))
 
-    def test_connected_hosts_reads_host_bottles(self) -> None:
-        import tempfile  # pylint: disable=import-outside-toplevel
-        with tempfile.TemporaryDirectory() as root:
-            bottles = Path(root) / "bottles"
-            bottles.mkdir()
-            (bottles / "gitea.md").write_text(
-                "---\ngit-gate:\n  forges:\n    a:\n      url: https://gitea.example.com\n---\n")
-            (bottles / "bad.md").write_text("---\n: [\n---\n")
-            with mock.patch("bot_bottle.paths.bot_bottle_root", return_value=Path(root)):
-                self.assertEqual({"gitea.example.com"}, remote_actions._connected_hosts())
+    def test_connected_hosts_are_the_hosts_connections(self) -> None:
+        # pylint: disable=protected-access
+        with connected(GITEA, replace(GITEA, host="g.example.com:3000",
+                                      url="https://g.example.com:3000")):
+            self.assertEqual({"gitea.example.com", "g.example.com"},
+                             remote_actions._connected_hosts())
+        with mock.patch("bot_bottle.forge_connections.connections",
+                        side_effect=ForgeConnectionError("bad")):
+            self.assertEqual(set(), remote_actions._connected_hosts())
 
 
 class TestForgeConnectAnswer(unittest.TestCase):

@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from bot_bottle.forge_connections import ForgeConnection, ForgeUser, save
 from bot_bottle.suggest.proposal import (
     OPTION_REUSE,
     OPTION_STACK_ADDITIONS,
@@ -15,24 +16,9 @@ from bot_bottle.suggest.proposal import (
 from bot_bottle.suggest.rules import rules_suggest
 
 
-_GITEA_BOTTLE = """\
----
-credentials:
-  gitea-api:
-    source: secret
-    secret: GITEA_TOKEN
-git-gate:
-  forges:
-    gitea.example.com:
-      kind: gitea
-      url: https://gitea.example.com
-      ssh: ssh://git@gitea.example.com:2222
-      token: $gitea-api
-      host_key: ssh-ed25519 AAAA
----
-
-The gitea forge bottle.
-"""
+CONN = ForgeConnection(host="gitea.example.com", kind="gitea", url="https://gitea.example.com",
+                       ssh="ssh://git@gitea.example.com:2222",
+                       users=(ForgeUser("bot", "GITEA_TOKEN", default=True),))
 
 _MAIN_BOTTLE = """\
 ---
@@ -79,7 +65,7 @@ class TestRulesWithForge(unittest.TestCase):
         self.root = self.home / ".bot-bottle"
         self.bottles = self.root / "bottles"
         self.bottles.mkdir(parents=True)
-        (self.bottles / "gitea.md").write_text(_GITEA_BOTTLE)
+        save({CONN.host: CONN}, self.root / "forges.md")
         self.cwd = self.home / "myproject"
         self.cwd.mkdir()
         env = mock.patch.dict(os.environ, {"HOME": str(self.home),
@@ -98,7 +84,7 @@ class TestRulesWithForge(unittest.TestCase):
         self._set_origin("https://gitea.example.com/acme/myapp.git")
         p = rules_suggest("deploy the app", self.cwd, host_root=self.root)
         self.assertEqual(p.option, OPTION_STACK_ADDITIONS)
-        self.assertIn("gitea", p.bottles)
+        self.assertEqual(["basic"], p.bottles)  # no forge bottle to stack
         self.assertEqual(len(p.additions.repos), 1)
         self.assertIn("acme/myapp", p.additions.repos[0].grant)
         self.assertIn(":write", p.additions.repos[0].grant)

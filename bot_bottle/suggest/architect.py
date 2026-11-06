@@ -98,7 +98,7 @@ def load_architect(host_root: Path) -> Architect:
 
 def _host_library(host_root: Path, dirs: list[tuple[Path, bool]]) -> list[dict[str, Any]]:
     """Each bottle the host knows: name, about text (body first line), extends,
-    the forges it declares and the secrets it needs that this host lacks."""
+    and the secrets it needs that this host lacks."""
     from ..control.hostctl.manifest_elements import bottle_elements
     from .runnable import host_secrets, library_facts
     secrets = host_secrets(path=host_root / "secrets")
@@ -139,7 +139,7 @@ def _host_library(host_root: Path, dirs: list[tuple[Path, bool]]) -> list[dict[s
             elem_summary = [f"{r['kind']}:{r['name']}" for r in elems[:10]]
             # What stacking it costs: every repo it grants, and its size.
             repos = [str(r.get("detail") or r["name"]) for r in elems if r["kind"] == "repo"]
-            forges, missing = library_facts(full_name, dirs, secrets)
+            missing = library_facts(full_name, dirs, secrets)
             result.append({
                 "name": full_name,
                 "about": about,
@@ -147,35 +147,19 @@ def _host_library(host_root: Path, dirs: list[tuple[Path, bool]]) -> list[dict[s
                 "elements": elem_summary,
                 "element_count": len(elems),
                 "repos": repos,
-                "forges": forges,
                 "missing_secrets": missing,
             })
     return result
 
 
-def _connected_forges(host_bottles: Path) -> list[dict[str, str]]:
-    """Forge names and URLs from the host's bottle files."""
-    from ..contract.yaml_subset import parse_frontmatter, YamlSubsetError
-    result = []
-    seen: set[str] = set()
-    if not host_bottles.is_dir():
-        return result
-    for path in sorted(host_bottles.glob("*.md")):
-        try:
-            fm, _ = parse_frontmatter(path.read_text())
-        except (OSError, YamlSubsetError):
-            continue
-        git = fm.get("git-gate")
-        forges = git.get("forges") if isinstance(git, dict) else None
-        if not isinstance(forges, dict):
-            continue
-        for key, entry in forges.items():
-            if key in seen:
-                continue
-            seen.add(key)
-            url = str(entry.get("url", "")) if isinstance(entry, dict) else ""
-            result.append({"name": key, "url": url})
-    return result
+def _connected_forges() -> list[dict[str, str]]:
+    """The forges this host connected (ADR 0019): host, kind and URL."""
+    from ..forge_connections import ForgeConnectionError, connections
+    try:
+        found = connections()
+    except ForgeConnectionError:
+        return []
+    return [{"name": host, "kind": c.kind, "url": c.url} for host, c in sorted(found.items())]
 
 
 def _secret_names(host_root: Path) -> list[str]:
@@ -212,16 +196,15 @@ def _build_prompt(
     sections = [
         f"Task: {task}",
         "",
-        "Host bottle library (`forges`: the forges a bottle declares; a repo grant on a "
-        "forge needs a bottle in the stack that declares it, so stack that bottle. "
-        "`missing_secrets`: secrets the bottle needs that this host doesn't have; "
-        "a launch with it fails, so don't propose it):",
+        "Host bottle library (`missing_secrets`: secrets the bottle needs that this host "
+        "doesn't have; a launch with it fails, so don't propose it):",
         json.dumps(library, indent=2),
         "",
         "Project metadata:",
         json.dumps(project_meta, indent=2),
         "",
-        "Connected forges:",
+        "Connected forges (a repo grant is `<name>/<owner>/<repo>[:write]` on one of "
+        "these; it needs no bottle stacked for the forge):",
         json.dumps(forges, indent=2),
         "",
         "Secret names (values never shown):",
@@ -322,7 +305,7 @@ def architect_suggest(
     secret_names: list[str] = []
     try:
         library = _host_library(host_root, dirs)
-        forges = _connected_forges(host_bottles)
+        forges = _connected_forges()
         secret_names = _secret_names(host_root)
     except Exception:  # pylint: disable=broad-exception-caught
         pass

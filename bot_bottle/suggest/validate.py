@@ -51,16 +51,31 @@ def _egress_routes(additions: ProposalAdditions) -> list[dict[str, Any]]:
     return routes
 
 
+def _forge_descriptions(grants: list[str]) -> dict[str, Any]:
+    """How a bottle describes the connected forges `grants` are on."""
+    # pylint: disable=import-outside-toplevel
+    from ..forge_connections import get
+    from ..manifest.forges import described_connection, parse_grant, split_grant_alias
+    out: dict[str, Any] = {}
+    for grant in grants:
+        try:
+            host = parse_grant(split_grant_alias(grant)[1], "a grant")[0]
+            conn = get(host)
+        except ManifestError:
+            continue
+        if conn is not None and host not in out:
+            out[host] = described_connection(conn)
+    return out
+
+
 def proposal_to_frontmatter(proposal: Proposal) -> dict[str, Any]:
     """A bottle frontmatter dict for the proposal's additions.
 
     For reuse/stack options this is an additions-only dict, stacked after
     `proposal.bottles` exactly as a launch stacks bottles (`stack_names`).
-    With repo grants it also extends those bottles: a grant resolves against
-    the forges its own bottle's chain declares, so it must see the stacked
-    forge bottle (the same bottles stack in front of it, so nothing else
-    changes). For new-extending / new it includes the `extends` from
-    `new_bottle`.
+    Repo grants come with their forges' descriptions, from this host's
+    connections, so the bottle says where they go on any machine (ADR 0019).
+    For new-extending / new it includes the `extends` from `new_bottle`.
     """
     fm: dict[str, Any] = {}
 
@@ -68,8 +83,6 @@ def proposal_to_frontmatter(proposal: Proposal) -> dict[str, Any]:
     if proposal.option in (OPTION_NEW_EXTENDING, OPTION_NEW) and proposal.new_bottle:
         extends = proposal.new_bottle.extends or (base_bottles[0] if base_bottles else "basic")
         fm["extends"] = extends
-    elif proposal.additions.repos and base_bottles:
-        fm["extends"] = base_bottles[0] if len(base_bottles) == 1 else base_bottles
 
     add = proposal.additions
     env: dict[str, str] = {}
@@ -80,7 +93,11 @@ def proposal_to_frontmatter(proposal: Proposal) -> dict[str, Any]:
 
     repos = [r.grant for r in add.repos]
     if repos:
-        fm["git-gate"] = {"repos": repos}
+        git: dict[str, Any] = {"repos": repos}
+        forges = _forge_descriptions(repos)
+        if forges:
+            git["forges"] = forges
+        fm["git-gate"] = git
 
     routes = _egress_routes(add)
     if routes:
@@ -96,9 +113,8 @@ def validate_proposal(
 ) -> tuple[Proposal, list[str]]:
     """Validate the proposal by trying to load it with the manifest loader.
 
-    First it's made runnable here (`runnable`): the bottle declaring a repo
-    grant's forge is stacked, bottles whose secrets aren't in `secrets` (the
-    host's, by default) are dropped, and `blocked` says when it still can't
+    First it's made runnable here (`runnable`): bottles whose secrets aren't
+    in `secrets` (the host's, by default) are dropped, and `blocked` says when it still can't
     run. Then invalid additions are dropped individually (first egress
     routes, then repo grants, then env vars) and returned as notes.  The
     validated Proposal and accumulated notes are returned.

@@ -19,7 +19,8 @@ BOTTLE_KEYS = frozenset(
     }
 )
 AGENT_KEYS_REQUIRED: frozenset[str] = frozenset()
-AGENT_KEYS_OPTIONAL = frozenset({"skills", "git-gate", "remote", "agent_provider"})
+AGENT_KEYS_OPTIONAL = frozenset({"skills", "git-gate", "remote", "agent_provider",
+                                 "forge_users"})
 
 # The bottle a launch runs in when none is selected. Agents don't name a
 # bottle (ADR 0011), so an agent file travels without its host's bottles.

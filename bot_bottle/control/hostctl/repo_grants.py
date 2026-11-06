@@ -5,7 +5,6 @@ grant in the bottle for later launches."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -16,48 +15,31 @@ if TYPE_CHECKING:
     from ...manifest.forges import ManifestForge
 
 
-@dataclass(frozen=True)
-class FoundForge:
-    """A forge a grant names. `bottle` is the host bottle declaring it when no
-    bottle the session launched with does (keeping the grant then extends it)."""
-
-    forge: "ManifestForge"
-    bottle: str = ""
-
-
-def _forges(name: str, dirs: list[tuple[Path, bool]]) -> tuple["ManifestForge", ...]:
-    # pylint: disable=import-outside-toplevel
-    from ...manifest.loader import load_bottle_chain
-    from ...manifest.util import ManifestError
-    try:
-        return load_bottle_chain(name, dirs)[0].forges
-    except ManifestError:
-        return ()
-
-
-def find_forge(session: str, forge_name: str) -> FoundForge | None:
-    """The forge `forge_name` from the bottles `session` launched with, as their
-    files are now (so one connected since launch counts), else from any host
-    bottle."""
+def find_forge(session: str, forge_name: str) -> "ManifestForge | None":
+    """The forge `forge_name` as this host connected it, as the user the
+    session's agent pushes as there (its `forge_users`, else the forge's
+    default); None when the host hasn't connected it."""
     # pylint: disable=import-outside-toplevel
     from ...approvals import session_project
     from ...bottle_state import read_metadata
+    from ...forge_connections import get
+    from ...manifest.forges import resolve_forge
     from ...manifest.index import ManifestIndex
-    from ...paths import bot_bottle_root
-    host_bottles = bot_bottle_root() / "bottles"
-    project = session_project(session)
-    dirs = (ManifestIndex.resolve(str(project)).bottle_dirs() if project is not None
-            else [(host_bottles, False)])
+    from ...manifest.util import ManifestError
+    if get(forge_name) is None:
+        return None
+    user = ""
     metadata = read_metadata(session)
-    for name in metadata.bottle_names if metadata else ():
-        for forge in _forges(name, dirs):
-            if forge.name == forge_name:
-                return FoundForge(forge)
-    for path in sorted(host_bottles.glob("*.md")):
-        for forge in _forges(path.stem, [(host_bottles, False)]):
-            if forge.name == forge_name:
-                return FoundForge(forge, path.stem)
-    return None
+    if metadata is not None and metadata.agent_name:
+        project = session_project(session)
+        try:
+            index = ManifestIndex.resolve(str(project or Path.home()),
+                                          missing_ok=True)
+            agent = index.load_for_agent(metadata.agent_name, metadata.bottle_names).agent
+            user = dict(agent.forge_users).get(forge_name, "")
+        except ManifestError:
+            pass  # the forge's default
+    return resolve_forge(forge_name, None, "", user)
 
 
 def grant_repo(backend: Any, identity: str, grant: str, *,
@@ -76,11 +58,11 @@ def grant_repo(backend: Any, identity: str, grant: str, *,
     from ...secret_source import FileSecrets
     try:
         forge_name = parse_grant(grant, "the grant")[0]
-        found = find_forge(identity, forge_name)
-        if found is None:
-            raise GrantError(f"no bottle on this host declares the forge {forge_name!r}; "
+        forge = find_forge(identity, forge_name)
+        if forge is None:
+            raise GrantError(f"this host hasn't connected the forge {forge_name!r}; "
                              f"connect it first")
-        entry = grant_entry(grant, found.forge)
+        entry = grant_entry(grant, forge)
         adopted = read_adoption(identity)
         guest = backend.attach_adopted(identity, adopted) if adopted is not None else None
         if adopted is None or guest is None:
@@ -96,8 +78,10 @@ def grant_repo(backend: Any, identity: str, grant: str, *,
         log.warn(f"bottle {identity}: granting {grant} failed: {type(e).__name__}: {e}")
         return {"error": "granting the repo failed; see the host controller's log"}
     log.info(f"bottle {identity}: granted {grant}")
+    # pylint: disable-next=import-outside-toplevel
+    from ...manifest.forges import described_forge
     return {"repo": entry.Name, "url": entry.Upstream, "writable": not entry.Key.read_only,
-            "extends": found.bottle}
+            "forge": described_forge(forge)}
 
 
-__all__ = ["FoundForge", "find_forge", "grant_repo"]
+__all__ = ["find_forge", "grant_repo"]

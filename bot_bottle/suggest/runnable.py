@@ -1,22 +1,19 @@
 """Make a proposal runnable on this host before anyone is asked to run it
 (PRD 0117).
 
-Two things a model can't see from bottle names alone:
-
-- **A repo grant needs its forge.** A grant `<forge>/<owner>/<repo>` loads
-  only in a stack where some bottle declares `<forge>` (`git-gate.forges`).
-  When the proposal's bottles don't, the library bottle that does is stacked
-  for it: the most basic declarer, the one other declarers extend (`gitea`,
-  which `forge connect` writes, rather than a bottle built on it). With no
-  declarer, or several unrelated ones, the grant is left for validation to
-  drop, and the note names the choices.
-- **A bottle's secrets must exist here.** An egress route that injects a
-  credential, or a granted repo's forge token, names a secret the launch
+What a model can't see from bottle names alone: **a bottle's secrets must
+exist here.** An egress route that injects a
+  credential, or a granted repo's forge token (its user's, from the host's
+  connection to the forge, ADR 0019), names a secret the launch
   resolves from the host env or the secrets file. A proposed bottle whose
   secret is missing is dropped (the stack falls back to `basic` when it was
   the only one); a secret the proposal can't do without makes it not
   runnable, with `Proposal.blocked` saying which. Secret values are never
   read into the proposal, only whether a name resolves.
+
+A repo grant needs no bottle stacked for its forge: it resolves through the
+host's connection, and a grant on a forge the host hasn't connected is left
+for validation to drop.
 """
 
 from __future__ import annotations
@@ -75,11 +72,6 @@ def _load(name: str, dirs: Dirs) -> tuple[ManifestBottle, tuple[str, ...]] | Non
     return bottle, tuple(s.name for s in sources)
 
 
-def forges_of(bottle: ManifestBottle) -> dict[str, str]:
-    """The forges a bottle's chain declares, name to token secret."""
-    return {f.name: f.token_secret for f in bottle.forges}
-
-
 def needed_secrets(bottle: ManifestBottle) -> list[str]:
     """Secrets a launch of `bottle` resolves: each injected egress
     credential and each granted repo's forge token."""
@@ -96,27 +88,10 @@ def missing_secrets(name: str, dirs: Dirs, source: SecretSource) -> list[str]:
     return [s for s in needed_secrets(loaded[0]) if not has_secret(source, s)]
 
 
-def library_facts(name: str, dirs: Dirs, source: SecretSource) -> tuple[list[str], list[str]]:
-    """For the architect's library: the forges `name` declares and its
-    secrets that don't resolve here (names only)."""
-    loaded = _load(name, dirs)
-    if loaded is None:
-        return [], []
-    bottle = loaded[0]
-    return (sorted(forges_of(bottle)),
-            [s for s in needed_secrets(bottle) if not has_secret(source, s)])
-
-
-def forge_declarers(forge: str, dirs: Dirs) -> list[str]:
-    """The most basic library bottles declaring `forge`: a declarer is left
-    out when it extends another declarer."""
-    chains = {}
-    for name in library(dirs):
-        loaded = _load(name, dirs)
-        if loaded is not None and forge in forges_of(loaded[0]):
-            chains[name] = loaded[1]
-    return [n for n, chain in chains.items()
-            if not any(other != n and other in chain for other in chains)]
+def library_facts(name: str, dirs: Dirs, source: SecretSource) -> list[str]:
+    """For the architect's library: `name`'s secrets that don't resolve here
+    (names only)."""
+    return missing_secrets(name, dirs, source)
 
 
 def _grant_forge(grant: str) -> str:
@@ -126,26 +101,16 @@ def _grant_forge(grant: str) -> str:
         return ""
 
 
-def _stack_forges(proposal: Proposal, dirs: Dirs) -> None:
-    stacked = proposal.option not in (OPTION_NEW_EXTENDING, OPTION_NEW)
-    declared: set[str] = set()
-    for name in _base(proposal):
-        loaded = _load(name, dirs)
-        if loaded is not None:
-            declared |= forges_of(loaded[0]).keys()
-    for repo in proposal.additions.repos:
-        forge = _grant_forge(repo.grant)
-        if not forge or forge in declared:
-            continue
-        found = forge_declarers(forge, dirs)
-        if len(found) == 1 and stacked:
-            proposal.bottles.append(found[0])
-            declared |= {forge}
-            proposal.notes.append(f"stacked {found[0]}: it declares the forge {forge} "
-                                  f"for the repo grant")
-        elif len(found) > 1:
-            proposal.notes.append(f"several bottles declare the forge {forge} "
-                                  f"({', '.join(sorted(found))}); stack one to keep {repo.grant}")
+def _forge_token(forge: str) -> str:
+    """The secret the host's connection to `forge` pushes with (its default
+    user's), or "" when it isn't connected."""
+    # pylint: disable-next=import-outside-toplevel
+    from ..forge_connections import get
+    try:
+        conn = get(forge)
+        return conn.user().token_secret if conn else ""
+    except ManifestError:
+        return ""
 
 
 def _base(proposal: Proposal) -> list[str]:
@@ -172,25 +137,17 @@ def _drop_unrunnable(proposal: Proposal, dirs: Dirs, source: SecretSource) -> No
             proposal.blocked = (f"{name} needs {unset}, which isn't set on this host "
                                 f"(host env or secrets file)")
     # A suggested stack starts from `basic`, what a launch with no bottle gets
-    # (ADR 0011): a forge's bottle, say, carries only the forge, and picking
-    # bottles doesn't bring `basic` in by itself.
+    # (ADR 0011): picking bottles doesn't bring `basic` in by itself.
     if stacked and not any(DEFAULT_BOTTLE in _chain(n, dirs) for n in proposal.bottles):
         proposal.bottles.insert(0, DEFAULT_BOTTLE)
         if not dropped:
             proposal.notes.append(f"stacked {DEFAULT_BOTTLE}: no bottle in the stack extends it, "
                                   f"and a suggested bottle starts from it")
     for repo in proposal.additions.repos:
-        forge = _grant_forge(repo.grant)
-        token = next((forges_of(b)[forge] for b in (_bottle(n, dirs) for n in _base(proposal))
-                      if b is not None and forge in forges_of(b)), "")
+        token = _forge_token(_grant_forge(repo.grant))
         if token and not has_secret(source, token):
             proposal.blocked = (f"the repo grant {repo.grant} needs the forge token {token}, "
                                 f"which isn't set on this host (host env or secrets file)")
-
-
-def _bottle(name: str, dirs: Dirs) -> ManifestBottle | None:
-    loaded = _load(name, dirs)
-    return loaded[0] if loaded else None
 
 
 def _chain(name: str, dirs: Dirs) -> tuple[str, ...]:
@@ -200,15 +157,13 @@ def _chain(name: str, dirs: Dirs) -> tuple[str, ...]:
 
 def make_runnable(proposal: Proposal, dirs: Dirs, source: SecretSource | None = None,
                   *, secrets: Callable[[], SecretSource] = host_secrets) -> Proposal:
-    """Stack what the proposal's repo grants need, drop bottles whose secrets
-    aren't here, and set `blocked` when it still can't run. Mutates and
-    returns `proposal`."""
+    """Drop bottles whose secrets aren't here, and set `blocked` when it still
+    can't run. Mutates and returns `proposal`."""
     source = source or secrets()
     proposal.blocked = ""
-    _stack_forges(proposal, dirs)
     _drop_unrunnable(proposal, dirs, source)
     return proposal
 
 
-__all__ = ["forge_declarers", "forges_of", "has_secret", "host_secrets", "library",
-           "library_facts", "make_runnable", "missing_secrets", "needed_secrets"]
+__all__ = ["has_secret", "host_secrets", "library", "library_facts", "make_runnable",
+           "missing_secrets", "needed_secrets"]

@@ -1,9 +1,12 @@
 """Unit: git-gate.repos manifest parsing + validation (PRD 0047)."""
 
 import unittest
+from dataclasses import replace
 
+from bot_bottle.forge_connections import ForgeUser
 from bot_bottle.manifest import ManifestError, ManifestIndex
 from bot_bottle.manifest.git import ManifestGitEntry
+from tests.unit._forges import GITEA, connected
 
 
 def _manifest(repos: dict) -> dict:  # type: ignore
@@ -341,16 +344,14 @@ class TestForgeMintedKeysAreGrants(unittest.TestCase):
         self.assertIn("- gitea.example.com/org/app:write", msg)
 
     def test_a_grant_loads_as_the_long_form(self):
-        m = ManifestIndex.from_json_obj({
-            "bottles": {"dev": {
-                "credentials": {"gitea-api": {"source": "secret", "secret": "GITEA_TOKEN"}},
-                "git-gate": {
-                    "forges": {"gitea.example.com": {
-                        "kind": "gitea", "url": "https://gitea.example.com",
-                        "ssh": "ssh://git@gitea.example.com:2222", "token": "$gitea-api"}},
+        conn = replace(GITEA, ssh="ssh://git@gitea.example.com:2222",
+                       users=(ForgeUser("bot", "GITEA_TOKEN", default=True),))
+        with connected(conn):
+            m = ManifestIndex.from_json_obj({
+                "bottles": {"dev": {"git-gate": {
                     "repos": ["gitea.example.com/org/app:write"]}}},
-            "agents": {"demo": {"skills": [], "prompt": ""}},
-        })
+                "agents": {"demo": {"skills": [], "prompt": ""}},
+            })
         e = m.bottles["dev"].git[0]
         self.assertEqual(("app", "gitea", "GITEA_TOKEN", False),
                          (e.Name, e.Key.provider, e.Key.forge_token_env, e.Key.read_only))

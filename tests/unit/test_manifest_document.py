@@ -8,19 +8,17 @@ from pathlib import Path
 from typing import Any
 
 from bot_bottle.contract.yaml_subset import parse_frontmatter, serialize_yaml_subset
+from bot_bottle.forge_connections import ForgeConnection, ForgeUser
 from bot_bottle.manifest.document import bottle_document
 from bot_bottle.manifest.extends import resolve_bottles
 from bot_bottle.manifest.loader import BUILTIN_BOTTLES_DIR
+from tests.unit._forges import connected
 
 ROOT = Path(__file__).resolve().parents[2]
 
 # A chain that exercises what the examples don't: a forge with a grant, a
 # credential route, detectors, headers, regex paths, audit and a git identity.
 PARENT = """---
-credentials:
-  gitea-api:
-    source: secret
-    secret: GITEA_TOKEN
 git-gate:
   user:
     name: bot
@@ -30,8 +28,6 @@ git-gate:
       kind: gitea
       url: https://gitea.example.com
       ssh: ssh://git@gitea.example.com:2222
-      token: $gitea-api
-      account: bot
       host_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
 egress:
   routes:
@@ -79,6 +75,14 @@ def _same(a: object, b: object) -> dict[str, object]:
              if f.name not in strip})  # type: ignore[return-value]
 
 
+CONN = ForgeConnection(
+    host="gitea.example.com", kind="gitea", url="https://gitea.example.com",
+    ssh="ssh://git@gitea.example.com:2222",
+    host_key="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
+    users=(ForgeUser("bot", "GITEA_TOKEN", default=True),))
+
+
+@connected(CONN)
 class TestRoundTrip(unittest.TestCase):
     def round_trip(self, raws: dict[str, dict[str, object]], name: str) -> None:
         original = resolve_bottles(raws)[name]
@@ -95,7 +99,10 @@ class TestRoundTrip(unittest.TestCase):
         # A repo granted on the chain's forge stays a grant, the forge with it.
         git: Any = doc["git-gate"]
         self.assertEqual("gitea.example.com/acme/app:write", git["repos"]["app"])
-        self.assertIn("gitea.example.com", git["forges"])
+        # Described: never the token or user, which are the host's.
+        self.assertEqual({"kind": "gitea", "ssh": "ssh://git@gitea.example.com:2222"},
+                         git["forges"]["gitea.example.com"])
+        self.assertNotIn("credentials", doc)
 
     def test_a_read_only_grant_and_a_long_form_repo(self) -> None:
         raws = {"parent": parse_frontmatter(PARENT)[0], "child": parse_frontmatter(CHILD.replace(

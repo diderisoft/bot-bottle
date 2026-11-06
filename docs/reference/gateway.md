@@ -227,7 +227,7 @@ queued; any other is recognized by the host controller
 ([git-gate](git-gate.md#forges-and-one-line-grants)), which refuses one that
 isn't Gitea or GitHub at once, the agent told so, before the operator sees a
 card. It's answered from the console, whose card shows the URL (marked when
-no host bottle declares that forge yet), the forge's kind, its token page and
+this host hasn't connected that forge yet), the forge's kind, its token page and
 the token it needs. The operator pastes a token there; the host connects the URL from the
 agent's proposal, never one from the console, exactly as `bot-bottle forge
 connect` does, then approves the proposal with a note naming the account. A
@@ -240,8 +240,8 @@ connected is refused at once, as above: a forge of another kind says so, and
 a Gitea or GitHub one tells the agent to `forge-connect` it first
 (`remote_actions.vet`). The console's card shows it with the access
 asked for. The operator can grant read-only instead of write, and can keep the
-grant in the bottle (the same target as a kept egress route; it also extends
-the forge's bottle when the chain doesn't). Granting adds the repo to the
+grant in the bottle (the same target as a kept egress route; the forge's
+description comes with it when the bottle doesn't have one, never a token). Granting adds the repo to the
 running bottle ([git-gate](git-gate.md#live-grants)) and approves with a note
 giving its URL.
 

@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 from ...lib import log
@@ -102,22 +101,16 @@ def _text(msg: Mapping[str, Any], key: str, default: str = "") -> str:
 
 
 async def forge_connect(msg: Mapping[str, Any]) -> dict[str, Any]:
-    """Connect a forge from the console (`forge_connect.connect`), into a host
-    bottle. The token arrives in the message and goes only to the forge and
-    the host secrets file: never into the reply or a log."""
+    """Connect a forge from the console (`forge_connect.connect`), into this
+    host's `forges.md`. The token arrives in the message and goes only to the
+    forge and the host secrets file: never into the reply or a log."""
     # pylint: disable=import-outside-toplevel
     from ...forge_connect import ConnectError, connect
-    from ...paths import bot_bottle_root
     reply: dict[str, Any] = {"type": "forge_connected", "request_id": msg.get("request_id")}
-    bottle = _text(msg, "bottle")  # "": the bottle named after the forge's kind
-    if bottle.startswith("./"):
-        reply["error"] = "the console connects forges into host bottles, not a project's"
-        return reply
     try:
         done = await asyncio.to_thread(
-            connect, _text(msg, "url"), _text(msg, "token"), bottle=bottle,
-            name=_text(msg, "name"), ssh=_text(msg, "ssh"), cwd=Path.home(),
-            host_bottles=bot_bottle_root() / "bottles")
+            connect, _text(msg, "url"), _text(msg, "token"), ssh=_text(msg, "ssh"),
+            make_default=msg.get("default") is True)
     except ConnectError as e:
         reply["error"] = str(e)
         return reply
@@ -125,8 +118,8 @@ async def forge_connect(msg: Mapping[str, Any]) -> dict[str, Any]:
         log.warn(f"remote: connecting a forge failed: {type(e).__name__}")
         reply["error"] = "connecting failed; see the host controller's log"
         return reply
-    log.info(f"remote: connected {done.key} as {done.account} into bottle {done.bottle}")
-    reply.update(key=done.key, bottle=done.bottle, account=done.account,
+    log.info(f"remote: connected {done.key} as {done.account}")
+    reply.update(key=done.key, account=done.account, default=done.default,
                  admin_repos=done.admin_repos, repos=done.repos, ssh=done.ssh,
                  host_key=done.host_key, warnings=list(done.warnings))
     return reply
@@ -139,12 +132,9 @@ async def github_authorize_start(msg: Mapping[str, Any]) -> dict[str, Any]:
     # pylint: disable=import-outside-toplevel
     from ...forge_connect import ConnectError
     from ...github_connect import start_background
-    from ...paths import bot_bottle_root
     reply: dict[str, Any] = {"type": "github_authorize", "request_id": msg.get("request_id")}
     try:
-        reply.update(await asyncio.to_thread(
-            start_background, bottle=_text(msg, "bottle"), cwd=Path.home(),
-            host_bottles=bot_bottle_root() / "bottles"))
+        reply.update(await asyncio.to_thread(start_background))
     except ConnectError as e:
         reply["error"] = str(e)
     except Exception as e:  # pylint: disable=broad-exception-caught  # reported to the console
@@ -158,10 +148,9 @@ async def github_status(msg: Mapping[str, Any]) -> dict[str, Any]:
     who's connected with which installations."""
     # pylint: disable=import-outside-toplevel
     from ...github_connect import status
-    from ...paths import bot_bottle_root
     reply: dict[str, Any] = {"type": "github_status", "request_id": msg.get("request_id")}
     try:
-        reply.update(await asyncio.to_thread(status, bot_bottle_root() / "bottles"))
+        reply.update(await asyncio.to_thread(status))
     except Exception as e:  # pylint: disable=broad-exception-caught  # reported to the console
         log.warn(f"remote: reading GitHub's status failed: {type(e).__name__}")
         reply["error"] = "reading GitHub's status failed; see the host controller's log"
@@ -169,28 +158,18 @@ async def github_status(msg: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _connected_forges() -> dict[str, str]:
-    """The hostnames of the forges this host's own bottles declare, and their
-    kinds."""
-    # pylint: disable=import-outside-toplevel
-    from urllib.parse import urlparse
-    from ...contract.yaml_subset import YamlSubsetError, parse_frontmatter
-    from ...paths import bot_bottle_root
-    hosts: dict[str, str] = {}
-    for path in sorted((bot_bottle_root() / "bottles").glob("*.md")):
-        try:
-            fm, _ = parse_frontmatter(path.read_text())
-        except (OSError, YamlSubsetError):
-            continue
-        git = fm.get("git-gate")
-        forges = git.get("forges") if isinstance(git, dict) else None
-        for entry in forges.values() if isinstance(forges, dict) else ():
-            if isinstance(entry, dict) and (host := urlparse(str(entry.get("url", ""))).hostname):
-                hosts[host] = str(entry.get("kind") or "gitea")
-    return hosts
+    """The hostnames of the forges this host connected, and their kinds."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...forge_connections import ForgeConnectionError, connections
+    try:
+        found = connections()
+    except ForgeConnectionError:
+        return {}
+    return {c.host.split(":", 1)[0]: c.kind for c in found.values()}
 
 
 def _connected_hosts() -> set[str]:
-    """The hostnames of the forges this host's own bottles declare."""
+    """The hostnames of the forges this host connected."""
     return set(_connected_forges())
 
 
@@ -245,7 +224,6 @@ async def forge_connect_answer(msg: Mapping[str, Any], asking: Mapping[str, Any]
             or not same_instant(_text(msg, "since"), request.arrived)):
         reply["error"] = "That request is no longer waiting."
         return reply
-    # Into the bottle named after the forge's kind: the card doesn't pick one.
     result = await forge_connect({"url": request.proposed, "token": _text(msg, "token"),
                                   "ssh": _text(msg, "ssh")})
     if result.get("error"):
@@ -282,7 +260,7 @@ def repo_attention(request: Any) -> tuple[list[str], list[str]]:
     if found is None:
         lines.append("forge not connected on this host: connect it, then the agent can ask again")
         return lines, []
-    reach, reauthorize = _app_reach_lines(found.forge, repo)
+    reach, reauthorize = _app_reach_lines(found, repo)
     lines += reach
     if reach:
         now = time.monotonic()
@@ -324,7 +302,7 @@ async def card_changed(request: Any, now: float | None = None) -> bool:
     found = await asyncio.to_thread(find_forge, request.session, repo.split("/", 1)[0])
     if found is None:
         return False
-    reach, _ = await asyncio.to_thread(_app_reach_lines, found.forge, repo)
+    reach, _ = await asyncio.to_thread(_app_reach_lines, found, repo)
     if reach == seen[0]:
         return False
     _unreached.pop(request.id, None)
@@ -400,7 +378,7 @@ def vet(request: Any) -> tuple[str, str]:
         forge = request.proposed.strip().split("/", 1)[0]
         if find_forge(request.session, forge) is not None:
             return "", ""
-        url = f"https://{forge.rsplit('@', 1)[-1]}"
+        url = f"https://{forge}"
         if not detect(url):
             return unsupported_forge(urlparse(url).hostname or forge), ""
         return (f"{forge} isn't connected to this host; ask for it with forge-connect "
@@ -469,7 +447,7 @@ async def add_repo_answer(msg: Mapping[str, Any], asking: Mapping[str, Any],
     target = keep_target(request.session) if msg.get("keep") is True else None
     if target is not None:
         try:
-            await asyncio.to_thread(keep_grant, target, grant, extends=result.get("extends", ""))
+            await asyncio.to_thread(keep_grant, target, grant, forge=result.get("forge"))
             reply["kept"] = target.label()
         except Exception as e:  # pylint: disable=broad-exception-caught  # granted anyway
             log.warn(f"remote: keeping {grant} failed: {type(e).__name__}: {e}")

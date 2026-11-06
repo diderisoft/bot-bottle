@@ -3,8 +3,8 @@
 Before forges, a bottle wrote each forge-minted repo in long form, with its
 own `url`, `key: {provider: gitea, forge_token_env, api_url}` and
 `host_key`. That form no longer loads: a repo on a forge is a grant,
-`<forge>/<owner>/<repo>[:write]`, on a forge some bottle in the chain
-declares (usually the one `bot-bottle forge connect` writes).
+`<forge>/<owner>/<repo>[:write]`, on a forge this host has connected
+(`bot-bottle forge connect`, ADR 0019).
 
 This module finds every such repo in a bottle at once, works out the grant
 each becomes, and explains the fix: connect the forge, then
@@ -13,8 +13,8 @@ each becomes, and explains the fix: connect the forge, then
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -78,62 +78,25 @@ def old_repos(repos: Mapping[str, object], kinds: Sequence[str]) -> list[OldRepo
 
 @dataclass(frozen=True)
 class ForgeHome:
-    """Where a forge is declared: `bottle` ("" for the bottle's own chain) and
-    its key there."""
+    """A forge this host connected (`forge_connections`), as a plan sees it."""
 
-    bottle: str
-    key: str
+    key: str            # its host, a grant's prefix
     ssh: str = ""
     host_key: str = ""
-    token_secret: str = ""
+    token_secrets: tuple[str, ...] = ()
 
 
-def forges_by_host(bottles: Iterable[tuple[str, Mapping[str, object]]]
-                   ) -> dict[str, list[ForgeHome]]:
-    """Each forge host (host[:port]) and the bottles declaring it, from
-    `(bottle, frontmatter)` pairs, in the order given."""
-    out: dict[str, list[ForgeHome]] = {}
-    for bottle, fm in bottles:
-        for key, forge in _forges_in(fm).items():
-            url = forge.get("url")
-            if not isinstance(url, str):
-                continue
-            host = urlparse(url.rstrip("/")).netloc.lower()
-            out.setdefault(host, []).append(ForgeHome(
-                bottle=bottle, key=key, ssh=str(forge.get("ssh") or ""),
-                host_key=str(forge.get("host_key") or ""),
-                token_secret=_token_secret(fm, forge)))
-    return out
-
-
-def _forges_in(fm: Mapping[str, object]) -> dict[str, dict[str, object]]:
-    git = fm.get("git-gate")
-    forges = git.get("forges") if isinstance(git, dict) else None
-    if not isinstance(forges, dict):
+def connected_homes() -> dict[str, ForgeHome]:
+    """The forges this host connected, by host."""
+    # pylint: disable-next=import-outside-toplevel
+    from .. import forge_connections
+    try:
+        found = forge_connections.connections()
+    except ManifestError:
         return {}
-    return {str(k): v for k, v in forges.items() if isinstance(v, dict)}
-
-
-def _token_secret(fm: Mapping[str, object], forge: Mapping[str, object]) -> str:
-    token = forge.get("token")
-    creds = fm.get("credentials")
-    if not (isinstance(token, str) and token.startswith("$") and isinstance(creds, dict)):
-        return ""
-    cred = creds.get(token[1:])
-    return str(cred.get("secret") or "") if isinstance(cred, dict) else ""
-
-
-def pick_forge(homes: Sequence[ForgeHome], repos: Sequence[OldRepo]) -> ForgeHome | None:
-    """The forge entry the repos should be granted on: the one whose token is
-    the secret they minted with, else the one named by the bare host, else the
-    first."""
-    if not homes:
-        return None
-    envs = {r.token_env for r in repos}
-    host = repos[0].forge_host if repos else ""
-    return (next((h for h in homes if h.token_secret and h.token_secret in envs), None)
-            or next((h for h in homes if h.key == host), None)
-            or homes[0])
+    return {host: ForgeHome(key=host, ssh=c.ssh, host_key=c.host_key,
+                            token_secrets=tuple(u.token_secret for u in c.users))
+            for host, c in found.items()}
 
 
 def scan_bottles(dirs: Sequence[tuple[Path, bool]]) -> list[tuple[str, dict[str, object]]]:
@@ -157,14 +120,6 @@ def scan_bottles(dirs: Sequence[tuple[Path, bool]]) -> list[tuple[str, dict[str,
     return out
 
 
-def extends_list(value: object) -> list[str]:
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, list):
-        return [v for v in value if isinstance(v, str)]
-    return []
-
-
 @dataclass(frozen=True)
 class Plan:
     """How one bottle's old repos become grants."""
@@ -172,9 +127,8 @@ class Plan:
     bottle: str
     repos: tuple[OldRepo, ...]
     grants: dict[str, str]                     # repo name -> grant
-    add_extends: tuple[str, ...]               # forge bottles to extend
-    missing: dict[str, tuple[OldRepo, ...]]    # forge host -> repos with no forge bottle
-    homes: dict[str, ForgeHome]                # forge host -> where it's declared
+    missing: dict[str, tuple[OldRepo, ...]]    # forge host -> repos on a forge not connected
+    homes: dict[str, ForgeHome]                # forge host -> its connection
     unconvertible: tuple[OldRepo, ...]         # upstream path isn't <owner>/<repo>
 
     def connect_command(self, host: str) -> str:
@@ -186,48 +140,22 @@ class Plan:
         return cmd
 
 
-def plan(bottle: str, repos: Sequence[OldRepo], extends: object,
-         chain_hosts: Mapping[str, ForgeHome],
-         forge_bottles: Mapping[str, Sequence[ForgeHome]]) -> Plan:
-    """`bottle`'s old repos as grants. `chain_hosts` are forges its chain
-    already declares (by host); `forge_bottles` every bottle declaring each."""
+def plan(bottle: str, repos: Sequence[OldRepo], homes: Mapping[str, ForgeHome]) -> Plan:
+    """`bottle`'s old repos as grants, on the forges `homes` (this host's
+    connections, by host)."""
     by_host: dict[str, list[OldRepo]] = {}
     for r in repos:
         by_host.setdefault(r.forge_host, []).append(r)
-    current = extends_list(extends)
-    homes: dict[str, ForgeHome] = {}
-    missing: dict[str, tuple[OldRepo, ...]] = {}
-    add: list[str] = []
-    for host, host_repos in by_host.items():
-        home = chain_hosts.get(host) or pick_forge(
-            [h for h in forge_bottles.get(host, ()) if h.bottle != bottle], host_repos)
-        if home is None:
-            missing[host] = tuple(host_repos)
-            continue
-        homes[host] = home
-        if home.bottle and home.bottle not in current and home.bottle not in add:
-            add.append(home.bottle)
-    grants = {r.name: r.grant(homes[r.forge_host].key if r.forge_host in homes else "")
-              for r in repos if r.owner}
-    return Plan(bottle=bottle, repos=tuple(repos), grants=grants, add_extends=tuple(add),
-                missing=missing, homes=homes,
-                unconvertible=tuple(r for r in repos if not r.owner))
+    found = {h: homes[h] for h in by_host if h in homes}
+    missing = {h: tuple(rs) for h, rs in by_host.items() if h not in homes}
+    grants = {r.name: r.grant() for r in repos if r.owner}
+    return Plan(bottle=bottle, repos=tuple(repos), grants=grants, missing=missing,
+                homes=found, unconvertible=tuple(r for r in repos if not r.owner))
 
 
 def flow_list(names: Sequence[str]) -> str:
     """One name bare, several as a flow list."""
     return names[0] if len(names) == 1 else "[" + ", ".join(names) + "]"
-
-
-def new_extends(extends: object, add: Sequence[str]) -> object:
-    """`extends` with the forge bottles first (so the bottle's own parents,
-    later in the list, still win), as `migrate` writes it."""
-    if not add:
-        return extends
-    current = extends_list(extends)
-    if not current and len(add) == 1:
-        return add[0]
-    return [*add, *current]
 
 
 def list_form(p: Plan, repos: Mapping[str, object]) -> bool:
@@ -238,16 +166,9 @@ def list_form(p: Plan, repos: Mapping[str, object]) -> bool:
                     for name in repos if name in p.grants))
 
 
-def hand_edit(p: Plan, extends: object, repos: Mapping[str, object]) -> str:
+def hand_edit(p: Plan, repos: Mapping[str, object]) -> str:
     """The frontmatter lines to write by hand, for the repos the plan converts."""
-    lines: list[str] = []
-    add = list(p.add_extends)
-    if p.missing and "gitea" not in extends_list(extends):
-        add.append("gitea")  # the bottle `forge connect` writes by default
-    ext = new_extends(extends, add)
-    if ext:
-        lines.append(f"extends: {flow_list(extends_list(ext))}")
-    lines += ["git-gate:", "  repos:"]
+    lines = ["git-gate:", "  repos:"]
     if list_form(p, repos):
         lines += [f"    - {g}" for g in p.grants.values()]
     else:
@@ -258,22 +179,21 @@ def hand_edit(p: Plan, extends: object, repos: Mapping[str, object]) -> str:
     return "\n".join(lines)
 
 
-def explain(p: Plan, extends: object, repos: Mapping[str, object]) -> str:
+def explain(p: Plan, repos: Mapping[str, object]) -> str:
     """Why `p.bottle` doesn't load, and the steps that fix it."""
     names = ", ".join(r.name for r in p.repos)
     lines = [f"bottle '{p.bottle}' uses the old git-gate format: its repos mint their own "
-             f"keys ({names}). Repos now come from a forge bottle, as one-line grants."]
+             f"keys ({names}). Repos are now one-line grants on a forge this host connects."]
     step = 1
     for host in p.missing:
         lines.append(f"  {step}. Connect the forge once:  {p.connect_command(host)}")
         step += 1
-    for host, home in p.homes.items():
-        where = f"bottle '{home.bottle}'" if home.bottle else "this bottle's chain"
-        lines.append(f"  {step}. {host} is connected already, as {home.key!r} in {where}.")
+    for host in p.homes:
+        lines.append(f"  {step}. {host} is connected already.")
         step += 1
     lines.append(f"  {step}. Convert this bottle:      bot-bottle bottles migrate {p.bottle}")
     if p.grants:
-        lines.append("Or edit it by hand to:\n" + _indent(hand_edit(p, extends, repos), "    "))
+        lines.append("Or edit it by hand to:\n" + _indent(hand_edit(p, repos), "    "))
     for r in p.unconvertible:
         lines.append(f"  {r.name}: {r.upstream} isn't <owner>/<repo> on the forge; "
                      f"rewrite it by hand")
@@ -289,32 +209,14 @@ class OldGitGateFormatError(ManifestError):
     """A bottle file still writes forge-minted repos in long form."""
 
     def __init__(self, bottle: str, repos: Mapping[str, object], kinds: Sequence[str], *,
-                 chain_forges: Mapping[str, object] | None = None,
-                 extends: object = None,
-                 forge_bottles: Mapping[str, Sequence[ForgeHome]] | None = None) -> None:
+                 homes: Mapping[str, ForgeHome] | None = None) -> None:
         self.bottle = bottle
         self.raw_repos = dict(repos)
         self.kinds = tuple(kinds)
-        self.chain_forges = dict(chain_forges or {})
-        self.extends = extends
-        self.forge_bottles = dict(forge_bottles or {})
-        chain = {host: replace(homes[0], bottle="")
-                 for host, homes in forges_by_host([("", {"git-gate": {
-                     "forges": self.chain_forges}})]).items()}
-        self.plan = plan(bottle, old_repos(repos, kinds), extends, chain, self.forge_bottles)
-        super().__init__(explain(self.plan, extends, repos))
-
-    def explained(self, *, extends: object = None,
-                  forge_bottles: Mapping[str, Sequence[ForgeHome]] | None = None,
-                  ) -> "OldGitGateFormatError":
-        """This error, knowing the bottle's `extends` and the forge bottles
-        this host has."""
-        return OldGitGateFormatError(
-            self.bottle, self.raw_repos, self.kinds, chain_forges=self.chain_forges,
-            extends=extends if extends is not None else self.extends,
-            forge_bottles=forge_bottles if forge_bottles is not None else self.forge_bottles)
+        self.plan = plan(bottle, old_repos(repos, kinds),
+                         connected_homes() if homes is None else homes)
+        super().__init__(explain(self.plan, repos))
 
 
-__all__ = ["DOCS", "ForgeHome", "OldGitGateFormatError", "OldRepo", "Plan", "explain",
-           "extends_list", "flow_list", "forges_by_host", "hand_edit", "list_form", "new_extends",
-           "old_repos", "pick_forge", "plan", "scan_bottles"]
+__all__ = ["DOCS", "ForgeHome", "OldGitGateFormatError", "OldRepo", "Plan", "connected_homes",
+           "explain", "flow_list", "hand_edit", "list_form", "old_repos", "plan", "scan_bottles"]

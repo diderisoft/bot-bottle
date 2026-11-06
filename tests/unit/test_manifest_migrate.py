@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle.cli.commands import bottle as bottle_cmd
+from bot_bottle.forge_connections import ForgeConnection, ForgeUser, save
 from bot_bottle.manifest import ManifestError, ManifestIndex
 from bot_bottle.manifest.legacy_git_gate import OldGitGateFormatError
 from bot_bottle.manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
@@ -54,18 +55,9 @@ OLD = ("---\n"
        "\n"
        "The dev bottle.\n")
 
-FORGE = ("---\n"
-         "credentials:\n"
-         "  gitea-example-com: { source: secret, secret: GITEA_EXAMPLE_COM_TOKEN }\n"
-         "git-gate:\n"
-         "  forges:\n"
-         "    gitea.example.com:\n"
-         "      kind: gitea\n"
-         "      url: https://gitea.example.com\n"
-         "      ssh: ssh://git@10.0.0.5:30009\n"
-         "      token: $gitea-example-com\n"
-         f"      host_key: {HOST_KEY}\n"
-         "---\n")
+CONN = ForgeConnection(host="gitea.example.com", kind="gitea", url="https://gitea.example.com",
+                       ssh="ssh://git@10.0.0.5:30009", host_key=HOST_KEY,
+                       users=(ForgeUser("bot", "GITEA_EXAMPLE_COM_TOKEN", default=True),))
 
 
 class _Host(unittest.TestCase):
@@ -76,6 +68,9 @@ class _Host(unittest.TestCase):
         self.bottles.mkdir(parents=True)
         self.enterContext(patch.dict(os.environ, {"BOT_BOTTLE_ROOT": str(self.root)}))
         self.dirs = [(self.bottles, False), (BUILTIN_BOTTLES_DIR, False)]
+
+    def connect(self) -> None:
+        save({CONN.host: CONN}, self.root / "forges.md")
 
     def write(self, name: str, text: str) -> Path:
         path = self.bottles / f"{name}.md"
@@ -112,17 +107,16 @@ class TestTheError(_Host):
         self.assertIn("- gitea.example.com/acme/textorbium\n", msg)
         self.assertNotIn("textorbium:write", msg)
 
-    def test_hand_edit_extends_the_forge_bottle(self) -> None:
+    def test_hand_edit_adds_no_extends(self) -> None:
         self.write("dev", OLD)
-        self.assertIn("extends: [gitea, basic]", self.load_error())
+        self.assertNotIn("extends", self.load_error())
 
-    def test_an_existing_forge_bottle_is_named(self) -> None:
+    def test_a_connected_forge_is_named(self) -> None:
         self.write("dev", OLD)
-        self.write("my-forge", FORGE)
+        self.connect()
         msg = self.load_error()
-        self.assertIn("connected already, as 'gitea.example.com' in bottle 'my-forge'", msg)
+        self.assertIn("gitea.example.com is connected already", msg)
         self.assertNotIn("forge connect", msg)
-        self.assertIn("extends: [my-forge, basic]", msg)
 
     def test_no_secret_values(self) -> None:
         self.write("dev", OLD)
@@ -151,21 +145,20 @@ class TestTheError(_Host):
 
 
 class TestMigrate(_Host):
-    def test_refused_without_a_forge_bottle(self) -> None:
+    def test_refused_without_a_connection(self) -> None:
         path = self.write("dev", OLD)
         with self.assertRaises(MigrateError) as ctx:
             prepare("dev", self.dirs)
         msg = str(ctx.exception)
-        self.assertIn("no bottle declares the forge gitea.example.com yet", msg)
+        self.assertIn("the forge gitea.example.com isn't connected on this host yet", msg)
         self.assertIn("bot-bottle forge connect https://gitea.example.com", msg)
         self.assertEqual(OLD, path.read_text())
 
-    def test_rewrites_only_the_repos_and_extends(self) -> None:
+    def test_rewrites_only_the_repos(self) -> None:
         self.write("dev", OLD)
-        self.write("gitea", FORGE)
+        self.connect()
         m = prepare("dev", self.dirs)
-        expected = OLD.replace("extends: basic   # registries",
-                               "extends: [gitea, basic]   # registries")
+        expected = OLD
         start = expected.index("  repos:\n") + len("  repos:\n")
         end = expected.index("\negress:")
         expected = (expected[:start]
@@ -189,31 +182,15 @@ class TestMigrate(_Host):
             "  repos:\n", "  repos:\n    lib:\n      url: ssh://git@github.com/o/lib.git\n"
                           "      key: { provider: static, path: /dev/null }\n")
         self.write("dev", text)
-        self.write("gitea", FORGE)
+        self.connect()
         after = prepare("dev", self.dirs).after
         self.assertIn("    lib:\n      url: ssh://git@github.com/o/lib.git\n", after)
         self.assertIn("    bot-bottle: gitea.example.com/acme/bot-bottle:write\n", after)
         self.assertIn("    orb: gitea.example.com/acme/textorbium\n", after)
         self.assertIn("    # the brand repo\n", after)
 
-    def test_extends_written_as_a_block_list_or_missing(self) -> None:
-        self.write("gitea", FORGE)
-        self.write("dev", OLD.replace("extends: basic   # registries\n",
-                                      "extends:\n  - basic\n"))
-        self.assertIn("extends:\n  - gitea\n  - basic\n", prepare("dev", self.dirs).after)
-        self.write("dev", OLD.replace("extends: basic   # registries\n", ""))
-        self.assertTrue(prepare("dev", self.dirs).after.startswith("---\nextends: gitea\n"))
-
-    def test_a_chain_that_has_the_forge_adds_no_extends(self) -> None:
-        self.write("gitea", FORGE)
-        self.write("base", "---\nextends: gitea\n---\n")
-        self.write("dev", OLD.replace("extends: basic", "extends: [base, basic]"))
-        m = prepare("dev", self.dirs)
-        self.assertEqual((), m.plan.add_extends)
-        self.assertIn("extends: [base, basic]", m.after)
-
     def test_an_unusual_layout_is_refused(self) -> None:
-        self.write("gitea", FORGE)
+        self.connect()
         self.write("dev", "---\ngit-gate:\n  repos: {a: {url: 'ssh://git@h/o/a.git', "
                           "key: {provider: gitea, forge_token_env: T, "
                           "api_url: 'https://gitea.example.com'}}}\n---\n")
@@ -221,20 +198,21 @@ class TestMigrate(_Host):
             prepare("dev", self.dirs)
 
     def test_nothing_to_migrate(self) -> None:
-        self.write("gitea", FORGE)
+        self.connect()
+        self.write("plain", "---\nextends: basic\n---\n")
         with self.assertRaises(MigrateError):
-            prepare("gitea", self.dirs)
+            prepare("plain", self.dirs)
 
     def test_notes_a_different_token(self) -> None:
         self.write("dev", OLD)
-        self.write("gitea", FORGE)
+        self.connect()
         notes = prepare("dev", self.dirs).notes
         self.assertTrue(any("GITEA_EXAMPLE_COM_TOKEN" in n and "GITEA_ADMIN_TOKEN" in n
                             for n in notes))
 
     def test_a_revert_restores_the_old_file(self) -> None:
         path = self.write("dev", OLD)
-        self.write("gitea", FORGE)
+        self.connect()
         sha = apply(prepare("dev", self.dirs), self.dirs, root=self.root)
         versions = history(path, root=self.root)
         self.assertEqual(sha, versions[0].sha)
@@ -262,7 +240,7 @@ class TestMigrateCommand(_Host):
 
     def test_yes_writes_it(self) -> None:
         path = self.write("dev", OLD)
-        self.write("gitea", FORGE)
+        self.connect()
         code, out = self.run_cmd(["migrate", "dev", "--yes"])
         self.assertEqual(0, code)
         self.assertIn("+    - gitea.example.com/acme/bot-bottle:write", out)
@@ -270,13 +248,13 @@ class TestMigrateCommand(_Host):
 
     def test_without_a_terminal_it_needs_yes(self) -> None:
         path = self.write("dev", OLD)
-        self.write("gitea", FORGE)
+        self.connect()
         self.assertEqual(1, self.run_cmd(["migrate", "dev"])[0])
         self.assertEqual(OLD, path.read_text())
 
     def test_declining_leaves_it(self) -> None:
         path = self.write("dev", OLD)
-        self.write("gitea", FORGE)
+        self.connect()
         with patch("builtins.input", return_value="n"):
             self.assertEqual(1, self.run_cmd(["migrate", "dev"], tty=True)[0])
         self.assertEqual(OLD, path.read_text())

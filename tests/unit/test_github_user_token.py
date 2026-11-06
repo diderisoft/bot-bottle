@@ -24,17 +24,19 @@ from unittest import mock
 
 from bot_bottle import github_connect
 from bot_bottle.cli.commands import forge as forge_cmd
-from bot_bottle.contract.yaml_subset import parse_frontmatter
 from bot_bottle.contrib.github import user_token
 from bot_bottle.contrib.github.user_token import (
     AppConfig, DeviceCode, ReauthorizeError, TokenSet,
 )
 from bot_bottle.control.hostctl import remote, remote_actions, repo_grants
-from bot_bottle.forge_connect import ConnectError, ForgeEntry, write_forge
+from bot_bottle.forge_connect import ConnectError
+from bot_bottle.forge_connections import ForgeConnection, ForgeUser, load, save
 from bot_bottle.forge_kinds import ForgeApiError
 from bot_bottle.manifest.forges import forges_raw, resolve_forge
 from bot_bottle.manifest.util import ManifestError
 from bot_bottle.secret_source import FileSecrets, MappingSecrets, remove_secret, write_secret
+from tests.unit import use_bottle_root
+from tests.unit._forges import GITHUB, connected as connected_to
 
 CONFIG = AppConfig(slug="bot-bottle-dev", client_id="Iv1.abc")
 
@@ -271,15 +273,14 @@ class TestReach(_Base):
 
 
 class TestManifest(unittest.TestCase):
-    def test_app_is_kept_on_github_forges_only(self) -> None:
-        forge = {"kind": "github", "url": "https://github.com", "token": "$gh", "app": "bot-bottle"}
-        raw = forges_raw("b", {"git-gate": {"forges": {"github.com": forge}}})
-        resolved = resolve_forge("github.com", raw["github.com"],
-                                 {"gh": {"source": "secret", "secret": "GITHUB_COM_TOKEN"}}, "b")
-        self.assertEqual(("github", "bot-bottle"), (resolved.kind, resolved.app))
-        with self.assertRaises(ManifestError):
-            forges_raw("b", {"git-gate": {"forges": {"g.example": {
-                "kind": "gitea", "url": "https://g.example", "token": "$t", "app": "x"}}}})
+    def test_the_app_is_the_hosts(self) -> None:
+        with connected_to(GITHUB):
+            resolved = resolve_forge("github.com", {"kind": "github"}, "b")
+        self.assertEqual(("github", "bot-bottle", "GITHUB_COM_TOKEN"),
+                         (resolved.kind, resolved.app, resolved.token_secret))
+        with self.assertRaisesRegex(ManifestError, "the host's connection now"):
+            forges_raw("b", {"git-gate": {"forges": {"github.com": {
+                "kind": "github", "app": "x"}}}})
 
 
 class TestConnect(unittest.TestCase):
@@ -287,7 +288,7 @@ class TestConnect(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
-        self.bottles = self.root / "bottles"
+        self.addCleanup(use_bottle_root(self.root))
         self.secrets = self.root / "secrets"
         self.enterContext(mock.patch("bot_bottle.paths.host_secrets_path",
                                      return_value=self.secrets))
@@ -297,36 +298,41 @@ class TestConnect(unittest.TestCase):
         self.enterContext(mock.patch("bot_bottle.contrib.github.user_token.login",
                                      return_value="didericis"))
 
-    def test_finish_writes_the_forge_and_keeps_the_token(self) -> None:
-        done = github_connect.finish(TokenSet("ghu_1", "ghr_1", 5), CONFIG, cwd=self.root,
-                                     host_bottles=self.bottles)
-        self.assertEqual(("github.com", "github", "didericis", "bot-bottle-dev", True,
-                          "GITHUB_COM_TOKEN"),
-                         (done.key, done.bottle, done.login, done.app, done.expiring,
-                          done.secret_name))
-        fm, _ = parse_frontmatter((self.bottles / "github.md").read_text())
-        forge = fm["git-gate"]["forges"]["github.com"]  # type: ignore[index]
+    def test_finish_records_the_connection_and_keeps_the_token(self) -> None:
+        done = github_connect.finish(TokenSet("ghu_1", "ghr_1", 5), CONFIG)
+        self.assertEqual(("github.com", "didericis", "bot-bottle-dev", True, "GITHUB_COM_TOKEN"),
+                         (done.key, done.login, done.app, done.expiring, done.secret_name))
+        conn = load(self.root / "forges.md")["github.com"]
+        user = conn.user()
         self.assertEqual(("github", "bot-bottle-dev", "didericis", "ssh-ed25519 AAAAgh"),
-                         (forge["kind"], forge["app"], forge["account"], forge["host_key"]))
+                         (conn.kind, user.app, user.name, conn.host_key))
         secrets = FileSecrets(self.secrets)
         self.assertEqual(("ghu_1", "ghr_1", "Iv1.abc"),
                          (secrets.get("GITHUB_COM_TOKEN"), secrets.get("GITHUB_COM_TOKEN_REFRESH"),
                           secrets.get("GITHUB_COM_TOKEN_CLIENT_ID")))
 
+    def test_a_transport_for_the_user(self) -> None:
+        github_connect.finish(TokenSet("ghu_1"), CONFIG, transport="deploy-key")
+        path = self.root / "forges.md"
+        self.assertEqual("deploy-key", load(path)["github.com"].user().transport)
+        github_connect.set_transport("didericis", "https")
+        user = load(path)["github.com"].user()
+        self.assertEqual(("https", True), (user.transport, user.default))
+        with self.assertRaisesRegex(ConnectError, "nobody isn't connected"):
+            github_connect.set_transport("nobody", "https")
+        path.unlink()
+        with self.assertRaisesRegex(ConnectError, "isn't connected"):
+            github_connect.set_transport("didericis", "https")
+
     def test_finish_refusals(self) -> None:
-        with self.assertRaises(ConnectError):
-            github_connect.finish(TokenSet("t"), CONFIG, bottle="./p", cwd=self.root,
-                                  host_bottles=self.bottles)
         with mock.patch("bot_bottle.contrib.github.user_token.login",
                         side_effect=ForgeApiError("401")):
             with self.assertRaises(ConnectError):
-                github_connect.finish(TokenSet("t"), CONFIG, cwd=self.root,
-                                      host_bottles=self.bottles)
+                github_connect.finish(TokenSet("t"), CONFIG)
         with mock.patch("bot_bottle.git_gate.host_key.fetch_host_key",
                         side_effect=RuntimeError("timeout")):
             with self.assertRaises(ConnectError) as cm:
-                github_connect.finish(TokenSet("t"), CONFIG, cwd=self.root,
-                                      host_bottles=self.bottles)
+                github_connect.finish(TokenSet("t"), CONFIG)
         self.assertIn("over SSH", str(cm.exception))
 
     def test_authorize_runs_the_whole_flow(self) -> None:
@@ -336,18 +342,16 @@ class TestConnect(unittest.TestCase):
                         return_value=device), \
                 mock.patch("bot_bottle.contrib.github.user_token.wait_for_token",
                            return_value=TokenSet("t")):
-            done = github_connect.authorize(CONFIG, on_code=shown.append, cwd=self.root,
-                                            host_bottles=self.bottles)
+            done = github_connect.authorize(CONFIG, on_code=shown.append)
         self.assertEqual(([device], False), (shown, done.expiring))
         with mock.patch("bot_bottle.contrib.github.user_token.start_device",
                         side_effect=ForgeApiError("no client id")):
             with self.assertRaises(ConnectError):
-                github_connect.authorize(CONFIG, on_code=shown.append, cwd=self.root,
-                                         host_bottles=self.bottles)
+                github_connect.authorize(CONFIG, on_code=shown.append)
 
     def wait_state(self, want: str) -> dict[str, object]:
         for _ in range(200):
-            flow = github_connect.status(self.bottles, CONFIG)["flow"]
+            flow = github_connect.status(CONFIG)["flow"]
             if flow["state"] == want:  # type: ignore[index]
                 return flow  # type: ignore[return-value]
             time.sleep(0.01)
@@ -367,14 +371,13 @@ class TestConnect(unittest.TestCase):
                 mock.patch("bot_bottle.contrib.github.user_token.installations",
                            return_value=[{"account": "didericis",
                                           "repository_selection": "all"}]):
-            started = github_connect.start_background(cwd=self.root, host_bottles=self.bottles,
-                                                      config=CONFIG)
+            started = github_connect.start_background(config=CONFIG)
             self.assertEqual({"user_code": "U-2", "verification_uri":
                               "https://github.com/login/device", "expires_in": 900}, started)
             self.assertEqual("U-2", self.wait_state("waiting")["user_code"])
             release.set()
             self.assertEqual("didericis", self.wait_state("connected")["login"])
-            status = github_connect.status(self.bottles, CONFIG)
+            status = github_connect.status(CONFIG)
         self.assertEqual(("bot-bottle-dev", True), (status["app"], status["client_id_set"]))
         (connected,) = status["connected"]  # type: ignore[misc]
         self.assertEqual([{"account": "didericis", "repository_selection": "all"}],
@@ -385,46 +388,45 @@ class TestConnect(unittest.TestCase):
         with mock.patch("bot_bottle.contrib.github.user_token.start_device",
                         side_effect=ForgeApiError("no device flow")):
             with self.assertRaises(ConnectError):
-                github_connect.start_background(cwd=self.root, host_bottles=self.bottles,
-                                                config=CONFIG)
+                github_connect.start_background(config=CONFIG)
         for failure in (ForgeApiError("declined"), ValueError("x")):
             with self.subTest(failure=failure), \
                     mock.patch("bot_bottle.contrib.github.user_token.start_device",
                                return_value=DeviceCode("dc", "U", "v", 900, 5)), \
                     mock.patch("bot_bottle.contrib.github.user_token.wait_for_token",
                                side_effect=failure):
-                github_connect.start_background(cwd=self.root, host_bottles=self.bottles,
-                                                config=CONFIG)
+                github_connect.start_background(config=CONFIG)
                 self.assertIn("error", self.wait_state("error"))
 
-    def app_forge(self) -> None:
-        write_forge(self.bottles / "github.md", ForgeEntry(
-            key="github.com", kind="github", url="https://github.com",
-            ssh="ssh://git@github.com", account="me", host_key="", app="bot-bottle-dev"))
+    def app_forge(self, *users: ForgeUser) -> None:
+        save({"github.com": ForgeConnection(
+            host="github.com", kind="github", url="https://github.com", ssh="ssh://git@github.com",
+            users=users or (ForgeUser("me", "GITHUB_COM_TOKEN", default=True,
+                                      app="bot-bottle-dev"),))}, self.root / "forges.md")
 
     def test_status_says_when_the_app_needs_installing(self) -> None:
         self.app_forge()
         write_secret(self.secrets, "GITHUB_COM_TOKEN", "t")
         with mock.patch("bot_bottle.contrib.github.user_token.installations", return_value=[]):
-            self.assertTrue(github_connect.status(self.bottles, CONFIG)["needs_install"])
+            self.assertTrue(github_connect.status(CONFIG)["needs_install"])
         with mock.patch("bot_bottle.contrib.github.user_token.installations",
                         return_value=[{"account": "me"}]):
-            self.assertFalse(github_connect.status(self.bottles, CONFIG)["needs_install"])
+            self.assertFalse(github_connect.status(CONFIG)["needs_install"])
         remove_secret(self.secrets, "GITHUB_COM_TOKEN")  # not authorized: nothing to install yet
-        self.assertFalse(github_connect.status(self.bottles, CONFIG)["needs_install"])
+        self.assertFalse(github_connect.status(CONFIG)["needs_install"])
 
     def test_connected_token(self) -> None:
-        self.assertIsNone(github_connect.connected_token(self.bottles))
+        self.assertIsNone(github_connect.connected_token())
         self.app_forge()
-        self.assertIsNone(github_connect.connected_token(self.bottles))  # no token yet
+        self.assertIsNone(github_connect.connected_token())  # no token yet
         write_secret(self.secrets, "GITHUB_COM_TOKEN", "t")
-        self.assertEqual(("me", "t"), github_connect.connected_token(self.bottles))
+        self.assertEqual(("me", "t"), github_connect.connected_token())
         self.assertEqual(("me", "t"),
-                         github_connect.connected_token(self.bottles, "GITHUB_COM_TOKEN"))
-        self.assertIsNone(github_connect.connected_token(self.bottles, "OTHER_TOKEN"))
+                         github_connect.connected_token("GITHUB_COM_TOKEN"))
+        self.assertIsNone(github_connect.connected_token("OTHER_TOKEN"))
         with mock.patch("bot_bottle.contrib.github.user_token.current_token",
                         side_effect=ReauthorizeError("gone")):
-            self.assertIsNone(github_connect.connected_token(self.bottles))
+            self.assertIsNone(github_connect.connected_token())
 
     def test_wait_for_installation(self) -> None:
         clock = iter([0.0, 5.0, 10.0, 700.0])
@@ -454,19 +456,15 @@ class TestConnect(unittest.TestCase):
             "t", {"account": "o", "repository_selection": "selected"}))
 
     def test_status_problems(self) -> None:
-        write_forge(self.bottles / "github.md", ForgeEntry(
-            key="github.com", kind="github", url="https://github.com",
-            ssh="ssh://git@github.com", account="me", host_key="", app="bot-bottle-dev"))
-        write_forge(self.bottles / "pat.md", ForgeEntry(
-            key="github.com", kind="github", url="https://github.com",
-            ssh="ssh://git@github.com", account="me", host_key=""))
-        (self.bottles / "broken.md").write_text("---\nx: [\n---\n")
-        (info,) = github_connect.status(self.bottles, CONFIG)["connected"]  # type: ignore[misc]
+        # A user with a pasted token isn't the app's.
+        self.app_forge(ForgeUser("me", "GITHUB_COM_TOKEN", default=True, app="bot-bottle-dev"),
+                       ForgeUser("pat", "PAT_GITHUB_COM_TOKEN"))
+        (info,) = github_connect.status(CONFIG)["connected"]  # type: ignore[misc]
         self.assertIn("isn't in the host secrets", info["error"])
         write_secret(self.secrets, "GITHUB_COM_TOKEN", "t")
         with mock.patch("bot_bottle.contrib.github.user_token.installations",
                         side_effect=ReauthorizeError("re-authorize")):
-            (info,) = github_connect.status(self.bottles, CONFIG)["connected"]  # type: ignore[misc]
+            (info,) = github_connect.status(CONFIG)["connected"]  # type: ignore[misc]
         self.assertEqual("re-authorize", info["error"])
 
 
@@ -556,7 +554,7 @@ class TestCards(unittest.TestCase):
 
     def test_add_repo_card(self) -> None:
         self.addCleanup(remote_actions._unreached.clear)
-        found = SimpleNamespace(forge=APP_FORGE, bottle="")
+        found = APP_FORGE
         with mock.patch.object(repo_grants, "find_forge", return_value=found), \
                 mock.patch("bot_bottle.approvals.keep_target", return_value=None), \
                 mock.patch.object(remote_actions, "_app_reach_lines",
@@ -568,7 +566,7 @@ class TestCards(unittest.TestCase):
 
     def test_an_unreachable_card_is_asked_again_until_it_changes(self) -> None:
         ask = _ask("add-repo", "github.com/a/b")
-        found = SimpleNamespace(forge=APP_FORGE, bottle="")
+        found = APP_FORGE
         install = ["install: https://github.com/apps/bot-bottle-dev/installations/new"]
         remote_actions._unreached.clear()
         self.addCleanup(remote_actions._unreached.clear)
@@ -608,7 +606,7 @@ class TestCli(unittest.TestCase):
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
         self.web = self.enterContext(mock.patch.object(forge_cmd.webbrowser, "open"))
         self.done = github_connect.GitHubConnected(
-            key="github.com", bottle="github", path=Path("/x/github.md"), login="me",
+            key="github.com", path=Path("/x/forges.md"), login="me",
             app="bot-bottle", install_url="i", secret_name="GITHUB_COM_TOKEN", expiring=True)
 
     def test_github_is_the_device_flow(self) -> None:
@@ -644,6 +642,30 @@ class TestCli(unittest.TestCase):
                 mock.patch("bot_bottle.github_connect.authorize", return_value=self.done):
             with self.assertRaises(SystemExit):  # connected, but no token to read back
                 forge_cmd.cmd_forge(["connect", "github", "--reauthorize"])
+
+    def test_transport(self) -> None:
+        out = io.StringIO()
+        with contextlib.redirect_stderr(out), \
+                mock.patch("bot_bottle.github_connect.authorize", return_value=self.done) as auth, \
+                mock.patch("bot_bottle.github_connect.connected_token",
+                           side_effect=[None, ("me", "t")]), \
+                mock.patch.object(forge_cmd, "_install_step"):
+            forge_cmd.cmd_forge(["connect", "github", "--transport", "deploy-key"])
+        self.assertEqual("deploy-key", auth.call_args.kwargs["transport"])
+        self.assertIn("deploy keys", out.getvalue())
+        # Connected already: just the transport changes.
+        with mock.patch("bot_bottle.github_connect.connected_token", return_value=("me", "t")), \
+                mock.patch("bot_bottle.github_connect.set_transport") as set_it, \
+                mock.patch.object(forge_cmd, "_install_step"):
+            forge_cmd.cmd_forge(["connect", "github", "--transport", "https"])
+        set_it.assert_called_once_with("me", "https")
+        with mock.patch("bot_bottle.github_connect.connected_token", return_value=("me", "t")), \
+                mock.patch("bot_bottle.github_connect.set_transport",
+                           side_effect=ConnectError("gone")):
+            with self.assertRaises(SystemExit):
+                forge_cmd.cmd_forge(["connect", "github", "--transport", "https"])
+        with self.assertRaises(SystemExit):
+            forge_cmd.cmd_forge(["connect", "github", "--transport", "carrier-pigeon"])
 
     def step(self, owner: str = "", wait: bool = True, browser: bool = True) -> None:
         forge_cmd._install_step(CONFIG, "t", owner=owner, wait=wait, browser=browser)

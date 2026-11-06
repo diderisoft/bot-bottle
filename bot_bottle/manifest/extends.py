@@ -7,11 +7,16 @@ import dataclasses
 from .bottle import ManifestAudit, ManifestBottle
 from .egress import ManifestEgressConfig, overlay_egress, validate_egress_routes
 from .forges import (
-    ManifestForge, credentials_raw, expand_grants, forges_raw, merge_named, resolve_forge, strip_chain_keys,
+    ManifestForge, credentials_raw, expand_grants, forges_raw, granted_forges, merge_named,
+    resolve_forge, strip_chain_keys,
 )
 from .git import ManifestGitUser, parse_git_gate_config
-from .legacy_git_gate import OldGitGateFormatError, forges_by_host
 from .util import ManifestError, as_json_object
+
+
+# Per bottle: its chain's forge descriptions, and the forges its chain's
+# grants name.
+ChainCache = dict[str, tuple[dict[str, object], frozenset[str]]]
 
 
 def _overlay_audit(base: ManifestBottle, override: ManifestBottle) -> ManifestAudit:
@@ -110,43 +115,41 @@ def resolve_bottles(raws: dict[str, dict[str, object]]) -> dict[str, ManifestBot
     # Each bottle's effective repos as raw dicts, so a child can merge per
     # field against its parent's.
     repos_cache: dict[str, dict[str, object]] = {}
-    # Each bottle's effective credentials and forges, which its repo grants
-    # (and its children's) resolve against.
-    chain_cache: dict[str, tuple[dict[str, object], dict[str, object]]] = {}
-    try:
-        for name in raws:
-            if name not in cache:
-                _resolve_one_bottle(name, raws, cache, repos_cache, (), chain_cache=chain_cache)
-    except OldGitGateFormatError as e:
-        # The fix depends on which bottles declare the forge; these are the
-        # ones loaded (all of them, from a JSON manifest).
-        raise e.explained(extends=raws[e.bottle].get("extends"),
-                          forge_bottles=forges_by_host(raws.items())) from None
+    # Each bottle's chain's forge descriptions, and the forges its grants use.
+    chain_cache: ChainCache = {}
+    for name in raws:
+        if name not in cache:
+            _resolve_one_bottle(name, raws, cache, repos_cache, (), chain_cache=chain_cache)
     return cache
 
 
 def _with_chain(name: str, raw: dict[str, object], parent_names: list[str],
-                chain_cache: dict[str, tuple[dict[str, object], dict[str, object]]],
-                ) -> dict[str, object]:
-    """`raw` with its repo grants expanded against the credentials and forges
-    of its chain (parents merged, then its own on top), and those two keys
-    removed; records the chain's for its children."""
-    creds: dict[str, object] = {}
+                chain_cache: ChainCache) -> dict[str, object]:
+    """`raw` with its repo grants expanded through the host's connections to
+    their forges, checked against the descriptions of its chain (parents
+    merged, then its own on top), and `git-gate.forges` removed; records the
+    chain's for its children."""
+    credentials_raw(name, raw)  # refused: a forge's token is the host's
     forges: dict[str, object] = {}
+    used: frozenset[str] = frozenset()
     for pname in parent_names:
-        parent_creds, parent_forges = chain_cache[pname]
-        creds = merge_named(creds, parent_creds, "credential")
+        parent_forges, parent_used = chain_cache[pname]
         forges = merge_named(forges, parent_forges, "forge")
-    creds = {**creds, **credentials_raw(name, raw)}
+        used |= parent_used
     forges = {**forges, **forges_raw(name, raw)}
-    chain_cache[name] = (creds, forges)
-    return strip_chain_keys(expand_grants(name, raw, forges, creds))
+    chain_cache[name] = (forges, used | granted_forges(name, raw))
+    return strip_chain_keys(expand_grants(name, raw, forges))
 
 
-def _chain_forges(name: str, chain_cache: dict[str, tuple[dict[str, object], dict[str, object]]],
-                  ) -> tuple[ManifestForge, ...]:
-    creds, forges = chain_cache[name]
-    return tuple(resolve_forge(f, raw, creds, name) for f, raw in forges.items())
+def _chain_forges(name: str, chain_cache: ChainCache) -> tuple[ManifestForge, ...]:
+    """The forges the chain grants on, as this host connected them, and those
+    it describes that this host has connected."""
+    # pylint: disable-next=import-outside-toplevel
+    from .. import forge_connections
+    forges, used = chain_cache[name]
+    connected = forge_connections.connections()
+    hosts = sorted(used | {h for h in forges if h in connected})
+    return tuple(resolve_forge(h, forges.get(h), name) for h in hosts)
 
 
 def _resolve_one_bottle(
@@ -156,7 +159,7 @@ def _resolve_one_bottle(
     repos_cache: dict[str, dict[str, object]],
     seen: tuple[str, ...],
     *,
-    chain_cache: dict[str, tuple[dict[str, object], dict[str, object]]],
+    chain_cache: ChainCache,
 ) -> ManifestBottle:
     if name in cache:
         return cache[name]
@@ -228,7 +231,7 @@ def _fold_parents(
     repos_cache: dict[str, dict[str, object]],
     seen: tuple[str, ...],
     *,
-    chain_cache: dict[str, tuple[dict[str, object], dict[str, object]]],
+    chain_cache: ChainCache,
 ) -> tuple[ManifestBottle, dict[str, object]]:
     """Resolve each parent and fold left to right, later winning. `seen`
     carries this bottle's name for cycle detection across every parent edge."""

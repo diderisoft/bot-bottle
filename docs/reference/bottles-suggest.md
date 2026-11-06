@@ -92,7 +92,7 @@ With a connected Gitea forge and a project `origin`:
 $ bot-bottle bottles suggest --rules "push a release"
 option:  stack+additions
 from:    rules
-bottles: gitea.example.com, basic
+bottles: basic
   + repo   gitea.example.com/acme/app:write  # write access to the project's own repo
 note:    rules path: origin acme/app on gitea.example.com
 ```
@@ -124,8 +124,8 @@ A proposal is a JSON object with these fields:
 - **No secrets in env.** An env var's value is visible to the agent, so an env
   name that looks like a secret (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, …)
   is dropped with a note to add it as a credential instead.
-- **Grants only on connected forges.** A repo on a forge no bottle declares
-  becomes a note instead of a grant.
+- **Grants only on connected forges.** A repo on a forge this host hasn't
+  connected becomes a note instead of a grant.
 - **Validation.** The proposal is turned into a bottle document and loaded with
   the real manifest loader.  Any element that fails is dropped and noted rather
   than failing the whole proposal.
@@ -138,14 +138,10 @@ A proposal is a JSON object with these fields:
   every path and it injects no credential; a repo grant when the base has the
   same repo with enough access; an env var when the base sets it. A
   `stack+additions` proposal left with no additions becomes `stack` or `reuse`.
-- **A repo grant brings its forge.** A grant resolves against the forges its
-  own bottle's chain declares. When the proposal's bottles don't declare the
-  grant's forge, the library bottle that does is stacked for it: the most
-  basic one, the one other declarers extend (`gitea`, as `forge connect`
-  writes it, not a bottle built on it), with a note ("stacked gitea: it
-  declares the forge gitea.example.com for the repo grant"). With no
-  declarer the grant is dropped; with several unrelated ones it's dropped
-  and the note names them.
+- **A repo grant brings only its forge's description.** A grant resolves
+  through the host's connection to its forge, so nothing is stacked for it
+  (ADR 0019); the additions bottle describes the forge (`git-gate.forges`)
+  so a saved bottle says what to connect elsewhere.
 - **Only bottles whose secrets are here.** Each injected egress credential and
   each granted repo's forge token names a secret the launch resolves from the
   host env or the secrets file. A proposed bottle whose secret isn't set is
@@ -153,14 +149,12 @@ A proposal is a JSON object with these fields:
   back to `basic` when nothing left starts from it). When the proposal can't
   do without it (a new bottle extending that bottle, or a grant whose forge
   token is missing), it's marked **can't run**, with the reason, and neither
-  the guided `start` nor `--auto` runs it. The architect's library lists each
-  bottle's `forges` and `missing_secrets`, so it can avoid both problems
-  itself.
+  the guided `start` nor `--auto` runs it. A grant's token is its forge's
+  default user's. The architect's library lists each bottle's
+  `missing_secrets`, so it can avoid proposing it.
 - **Stacks are stacked as a launch stacks them.** For options 1–3 the additions
   are a bottle merged after `bottles` in order, exactly as
-  `--bottle a --bottle b` merges them. It has no `extends`, except that with
-  repo grants it extends those same bottles so the grants see their forge
-  (they're stacked in front of it too, so the merge is unchanged).
+  `--bottle a --bottle b` merges them. It has no `extends`.
   `--write NAME` saves the additions and prints the `--bottle` flags to
   launch the stack with.
 
@@ -238,11 +232,11 @@ The input is:
 
 - the task;
 - the host's bottle library (names, about text, `extends`, compact elements,
-  the `forges` each declares, and the `missing_secrets` it needs that this
-  host lacks);
+  and the `missing_secrets` it needs that this host lacks);
 - project metadata: origin URL, the project bottle's name, and
   lockfile/manifest *file names* (never their contents);
-- connected forges (names and URLs);
+- the forges this host connected (host, kind and URL), with the rule that a
+  grant needs no bottle stacked for its forge;
 - secret *names* from the host secrets file.
 
 The answer is parsed as a proposal and validated like any other.
@@ -261,8 +255,8 @@ first that fits:
    has a trusted `.bot-bottle/bottles/main.md`, the proposal is
    `option: reuse` with `./main`.
 2. **Origin + connected forge.** When `git remote get-url origin` returns a URL
-   whose host matches a forge any host bottle declares, the proposal is
-   `option: stack+additions` with the forge bottle, `basic`, and a `:write`
+   whose host matches a forge this host connected (its web or SSH address),
+   the proposal is `option: stack+additions` with `basic` and a `:write`
    grant on the origin repo.
 3. **`basic`.** No trusted project bottle and no connected forge (or no
    project directory): `option: reuse` with `basic`.
