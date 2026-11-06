@@ -177,6 +177,9 @@ def validate_proposal(
         similar=proposal.similar,
         notes=notes,
         blocked=proposal.blocked,
+        # The architect's sentence describes what it proposed; once anything
+        # is dropped, the one made from what's left says it right.
+        summary=proposal.summary if notes == proposal.notes else "",
     )
     cleaned = drop_covered(cleaned, dirs)
     return cleaned, cleaned.notes

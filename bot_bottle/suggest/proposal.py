@@ -109,6 +109,8 @@ class Proposal:
     the path that produced it, `architect` or `rules` (set by
     `suggest.flow`, never by the model). `blocked`, when set, says why it
     can't run on this host (a secret it needs isn't set; `runnable`).
+    `summary` is the architect's one plain sentence on what it recommends
+    ("" when it gave none; `summary_line` falls back to one made here).
     """
 
     option: str
@@ -119,6 +121,7 @@ class Proposal:
     notes: list[str]
     source: str = ""
     blocked: str = ""
+    summary: str = ""
 
     # --- serialisation --------------------------------------------------
 
@@ -150,6 +153,8 @@ class Proposal:
             out["source"] = self.source
         if self.blocked:
             out["blocked"] = self.blocked
+        if self.summary:
+            out["summary"] = self.summary
         return out
 
     def to_json(self, *, indent: int = 2) -> str:
@@ -218,8 +223,10 @@ class Proposal:
             raise ValueError("proposal.notes must be an array")
         notes = [str(n) for n in raw_notes]
 
+        summary = d.get("summary", "")
         return cls(option=option, bottles=bottles, new_bottle=new_bottle,
-                   additions=additions, similar=similar, notes=notes)
+                   additions=additions, similar=similar, notes=notes,
+                   summary=" ".join(summary.split()) if isinstance(summary, str) else "")
 
     @classmethod
     def from_json(cls, text: str) -> "Proposal":

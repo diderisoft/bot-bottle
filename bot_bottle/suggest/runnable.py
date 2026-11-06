@@ -131,6 +131,7 @@ def _drop_unrunnable(proposal: Proposal, dirs: Dirs, source: SecretSource) -> No
         if stacked:
             proposal.bottles.remove(name)
             dropped = True
+            proposal.summary = ""  # it named what's gone
             proposal.notes.append(f"dropped {name}: its secret {unset} isn't set on this host "
                                   f"(host env or secrets file)")
         else:

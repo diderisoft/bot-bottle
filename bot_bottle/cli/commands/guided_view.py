@@ -374,7 +374,7 @@ class StartView:  # pylint: disable=too-many-instance-attributes
         details, error = False, ""
         step = self.current("Bottle")
         while True:
-            step.value = bottle_summary(proposal)
+            step.value = f"from the {proposal.source}" if proposal.source else ""
             step.body = review_lines(proposal, dirs, details=details, width=self.width() - 4,
                                      style=self.style) + ([self.style.red(error)] if error else [])
             self.draw(BLOCKED_KEYS if proposal.blocked else REVIEW_KEYS)
@@ -436,11 +436,47 @@ def bottle_summary(proposal: "Proposal") -> str:
 
 def review_lines(proposal: "Proposal", dirs: list[tuple[Path, bool]], *, details: bool,
                  width: int, style: screen.Style) -> list[str]:
-    """The proposal for the review step: what it adds (with why), one line of
-    counts per inherited bottle, a notes count; `details` lists the notes and
-    every element instead."""
+    """The proposal for the review step: the architect's sentence, what the
+    bottle allows counted (`3 hosts · 1 repo`) and the bottles it reuses;
+    `details` lists what it adds (with why), its notes and every element."""
     # pylint: disable-next=import-outside-toplevel
-    from ...suggest.render import render_proposal
+    from ...suggest import render
+    rows = render.proposal_elements(proposal, dirs)
+    lines = details_lines(proposal, rows, width=width, style=style) if details \
+        else summary_lines(proposal, rows, width=width, style=style)
+    if proposal.blocked:
+        lines += [style.red(w) for w in screen.wrap(f"can't run: {proposal.blocked}", width)]
+    return lines
+
+
+def summary_lines(proposal: "Proposal", rows: "list[dict[str, object]] | None", *,
+                  width: int, style: screen.Style) -> list[str]:
+    """The sentence, then `allows`, `adds` and `reuses` lines, then where the
+    rest is."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...suggest import render
+    lines = screen.wrap(render.summary_line(proposal), width)[:3] + [""]
+    label = 8
+    if rows is not None:
+        allows = " · ".join(render.allowed_counts(rows)) or "its model API only"
+        lines.append(style.dim(f"{'allows':{label}s}") + screen.fit(allows, width - label))
+    added = render.added_counts(proposal)
+    if added:
+        lines.append(style.dim(f"{'adds':{label}s}")
+                     + screen.fit(" · ".join(added), width - label))
+    reused = render.reused_bottles(proposal)
+    if reused:
+        lines.append(style.dim(f"{'reuses':{label}s}")
+                     + screen.fit(", ".join(reused), width - label))
+    n = len(proposal.notes)
+    lines.append(style.dim("d details" + (f" · {n} note{'s' if n != 1 else ''}" if n else "")))
+    return lines
+
+
+def details_lines(proposal: "Proposal", rows: "list[dict[str, object]] | None", *,
+                  width: int, style: screen.Style) -> list[str]:
+    """What the proposal adds (with why), its notes, then every element with
+    the bottle it comes from."""
     add = proposal.additions
     lines: list[str] = []
     for kind, name, why in ([("egress", e.host, e.why) for e in add.egress]
@@ -450,20 +486,16 @@ def review_lines(proposal: "Proposal", dirs: list[tuple[Path, bool]], *, details
         lines.append(f"{style.green('+')} {kind:7s}{screen.fit(name, width - 9)}")
         if why:
             lines += [style.dim(f"          {w}") for w in screen.wrap(why, width - 10)[:2]]
-    preview = render_proposal(proposal, dirs, compact=not details).split("elements preview:", 1)
-    elements = [line.strip() for line in preview[1].splitlines() if line.strip()] \
-        if len(preview) == 2 else []
-    if details:
-        for note in proposal.notes:
-            lines += [style.dim(w) for w in screen.wrap(f"note: {note}", width)]
-        lines += [screen.fit(e, width) for e in elements]
-    else:
-        lines += [style.dim(screen.fit(e, width)) for e in elements if "[this proposal]" not in e]
-        if proposal.notes:
-            n = len(proposal.notes)
-            lines.append(style.dim(f"ⓘ {n} note{'s' if n != 1 else ''} · d to read"))
-    if proposal.blocked:
-        lines += [style.red(w) for w in screen.wrap(f"can't run: {proposal.blocked}", width)]
+    for note in proposal.notes:
+        lines += [style.dim(w) for w in screen.wrap(f"note: {note}", width)]
+    if rows is None:
+        return lines + [style.dim("(the elements couldn't be loaded)")]
+    own = (f"{proposal.new_bottle.name} (new)" if proposal.new_bottle and proposal.new_bottle.name
+           else "this proposal")
+    for row in rows:
+        source = own if row.get("source") == "_suggest" else str(row.get("source") or "")
+        lines.append(screen.fit(f"{row['kind']!s:8s} {row['name']!s} {row.get('detail') or ''}"
+                                + (f"  [{source}]" if source else ""), width))
     return lines
 
 
@@ -492,4 +524,5 @@ def run_start(args: argparse.Namespace, manifest: "ManifestIndex", settings: Set
             own.close()
 
 
-__all__ = ["StartView", "bottle_summary", "review_lines", "run_start"]
+__all__ = ["StartView", "bottle_summary", "details_lines", "review_lines", "run_start",
+           "summary_lines"]

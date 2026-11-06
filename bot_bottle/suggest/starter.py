@@ -24,6 +24,7 @@ Your output must be a single JSON object matching this schema exactly — no
 prose before or after it:
 
 {
+  "summary": "<one plain sentence: what you recommend and why>",
   "option": "<reuse|stack|stack+additions|new-extending|new>",
   "bottles": ["<existing-bottle-name>", ...],
   "new_bottle": null | {"name": "...", "extends": "...", "about": "..."},

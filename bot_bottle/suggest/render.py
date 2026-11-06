@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from ..contract.yaml_subset import serialize_yaml_subset
 from .proposal import Proposal
@@ -31,7 +32,7 @@ def render_proposal(
     """
     if json_output:
         return proposal.to_json()
-    lines: list[str] = []
+    lines: list[str] = [summary_line(proposal), ""]
     lines.append(f"option:  {proposal.option}")
     if proposal.source:
         lines.append(f"from:    {proposal.source}")
@@ -75,24 +76,19 @@ def render_proposal(
     return "\n".join(lines)
 
 
-def _elements_preview(
-    proposal: Proposal,
-    dirs: list[tuple[Path, bool]],
-    *,
-    compact: bool = False,
-) -> list[str]:
-    """Run `bottle_elements` on the proposal's bottles + additions, return
-    formatted lines.  Falls back to a short summary on import errors (e.g.
-    hostctl not available in the CLI sandbox)."""
+def proposal_elements(proposal: Proposal,
+                      dirs: list[tuple[Path, bool]]) -> list[dict[str, Any]] | None:
+    """The elements a launch with `proposal` would run with (`bottle_elements`:
+    its stack's, then its own, `source` `_suggest`); None when they can't be
+    loaded."""
     try:
+        # pylint: disable-next=import-outside-toplevel
         from ..control.hostctl.manifest_elements import bottle_elements
     except ImportError:
-        return ["  (preview unavailable outside host controller)"]
-
+        return None
     fm = proposal_to_frontmatter(proposal)
     with tempfile.TemporaryDirectory() as tmp:
-        tmp_dir = Path(tmp)
-        bottles_dir = tmp_dir / "bottles"
+        bottles_dir = Path(tmp) / "bottles"
         bottles_dir.mkdir()
         if fm:
             text = f"---\n{serialize_yaml_subset(fm)}---\n\nSuggested bottle.\n"
@@ -103,10 +99,78 @@ def _elements_preview(
             tmp_dirs = list(dirs)
             names = list(proposal.bottles) or ["basic"]
         try:
-            rows = bottle_elements(names, tmp_dirs)
+            return bottle_elements(names, tmp_dirs)
         except Exception:  # pylint: disable=broad-exception-caught
-            return ["  (could not load bottle chain for preview)"]
+            return None
 
+
+# What each element kind counts as in a summary, singular and plural.
+_COUNTED = {"egress": ("host", "hosts"), "repo": ("repo", "repos"),
+            "env": ("env var", "env vars")}
+
+
+def counted(n: int, kind: str) -> str:
+    """`1 host`, `2 hosts`."""
+    one, many = _COUNTED.get(kind, (kind, kind + "s"))
+    return f"{n} {one if n == 1 else many}"
+
+
+def allowed_counts(rows: list[dict[str, Any]]) -> list[str]:
+    """What `rows` let the agent reach, counted by kind: `["3 hosts", "1 repo"]`."""
+    counts = {kind: 0 for kind in _COUNTED}
+    for row in rows:
+        if row.get("kind") in counts:
+            counts[str(row["kind"])] += 1
+    return [counted(n, kind) for kind, n in counts.items() if n]
+
+
+def added_counts(proposal: Proposal) -> list[str]:
+    """What the proposal adds to its stack, counted: `["1 host", "1 repo"]`."""
+    add = proposal.additions
+    counts = [(len(add.egress), "egress"), (len(add.repos), "repo"), (len(add.env), "env"),
+              (len(add.credentials), "credential")]
+    return [counted(n, kind) for n, kind in counts if n]
+
+
+def summary_line(proposal: Proposal) -> str:
+    """One plain sentence on what `proposal` recommends: the architect's, else
+    one made from the proposal."""
+    if proposal.summary:
+        return proposal.summary
+    nb = proposal.new_bottle
+    if nb and nb.name:
+        made = f"A new bottle, {nb.name}" + (f", extending {nb.extends}" if nb.extends else "")
+        return made + (f": {nb.about.rstrip('.')}." if nb.about else ".")
+    adds = added_counts(proposal)
+    base = " + ".join(proposal.bottles) or "basic"
+    return f"Run in {base}" + (f", adding {_and(adds)}." if adds else ".")
+
+
+def reused_bottles(proposal: Proposal) -> list[str]:
+    """The existing bottles the proposal builds on: those it stacks, or the one
+    its new bottle extends."""
+    names = list(proposal.bottles)
+    if proposal.new_bottle and proposal.new_bottle.extends \
+            and proposal.new_bottle.extends not in names:
+        names.append(proposal.new_bottle.extends)
+    return names
+
+
+def _and(parts: list[str]) -> str:
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def _elements_preview(
+    proposal: Proposal,
+    dirs: list[tuple[Path, bool]],
+    *,
+    compact: bool = False,
+) -> list[str]:
+    """The proposal's elements (`proposal_elements`) as formatted lines, or a
+    line saying they couldn't be loaded."""
+    rows = proposal_elements(proposal, dirs)
+    if rows is None:
+        return ["  (could not load the bottle chain for a preview)"]
     if compact:
         return _compact_preview(proposal, rows)
     lines: list[str] = []
@@ -145,4 +209,5 @@ def _compact_preview(proposal: Proposal, rows: list[dict[str, object]]) -> list[
     return lines or ["  (no elements)"]
 
 
-__all__ = ["render_proposal"]
+__all__ = ["added_counts", "allowed_counts", "counted", "proposal_elements",
+           "render_proposal", "reused_bottles", "summary_line"]

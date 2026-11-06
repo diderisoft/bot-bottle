@@ -157,13 +157,29 @@ class TestReview(_View):
         self.assertFalse(any((self.root / "bottles").iterdir()))
         self.assertFalse(self.view.on)
 
-    def test_the_review_is_compact_until_details(self) -> None:
+    def test_the_review_is_a_summary_until_details(self) -> None:
+        self.run_view(["q"], name="claude", prompt="t")
+        text = self.frames()
+        self.assertIn("Run in basic, adding 1 host.", text)  # no sentence from the architect
+        self.assertRegex(text, r"allows +\d+ hosts")
+        self.assertRegex(text, r"adds +1 host\b")
+        self.assertRegex(text, r"reuses +basic")
+        self.assertIn("d details · 1 note", text)
+        self.assertNotIn("+ egress", text)
+        self.assertNotIn("no key needed", text)
+        self.assertIn(guided_view.REVIEW_KEYS, text)
+
+    def test_details_list_the_additions_and_notes(self) -> None:
         self.run_view(["d", "enter"], name="claude", prompt="t")
         text = self.frames()
         self.assertIn("+ egress api.open-meteo.com", text)
-        self.assertIn("1 note · d to read", text)
-        self.assertIn("note: no key needed", text)  # after `d`
-        self.assertIn(guided_view.REVIEW_KEYS, text)
+        self.assertIn("note: no key needed", text)
+        self.assertIn("[this proposal]", text)
+
+    def test_the_architects_sentence_leads(self) -> None:
+        self.suggestion.summary = "Stack basic and add the weather API it calls."
+        self.run_view(["enter"], name="claude", prompt="t")
+        self.assertIn("Stack basic and add the weather API it calls.", self.frames())
 
     def test_save_as_writes_the_bottle_and_runs_it(self) -> None:
         with mock.patch("bot_bottle.suggest.write.write_bottle") as write:

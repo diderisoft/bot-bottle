@@ -210,7 +210,9 @@ def _build_prompt(
         "Secret names (values never shown):",
         json.dumps(secret_names, indent=2),
         "",
-        "Respond with a single JSON object as described in your system prompt.",
+        "Respond with a single JSON object as described in your system prompt. Give it a "
+        "\"summary\" key too: one plain sentence (under 25 words, no markdown) saying "
+        "what you recommend for this task and why, for the person deciding.",
     ]
     return "\n".join(sections)
 

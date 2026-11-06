@@ -38,10 +38,13 @@ steps on the same screen (`cli/screen.py`, `commands/guided_view.py`):
 3. **Suggest**, for the current project, with a spinner ("warming the
    architect…" while its bottle still boots). The architect's warm bottle
    started booting when `start` did, so usually only the model call is left.
-4. **Review.** The proposal compactly: what it adds, with why; one line of
-   counts per bottle it stacks; how many notes it has. `Enter` runs it, `s`
-   saves it as a named bottle first, `e` edits it, `d` shows its notes and
-   every element, `q` cancels. Edit opens the proposal as YAML in
+4. **Review.** The proposal in brief: one plain sentence on what it
+   recommends (the architect's `summary`, else one made from the proposal:
+   `Run in basic + gitea, adding 1 repo.`), what the bottle allows counted
+   (`allows 16 hosts · 1 repo`), what it adds counted, the bottles it reuses,
+   and how many notes it has. `Enter` runs it, `s` saves it as a named
+   bottle first, `e` edits it, `d` shows what it adds (with why), its notes
+   and every element, `q` cancels. Edit opens the proposal as YAML in
    `$VISUAL`/`$EDITOR`; after you save, it's validated, and it reopens with
    the errors inline until it validates (emptying the file cancels the
    edit). A proposal that can't run on this host (below) offers only edit
@@ -75,6 +78,8 @@ a suggestion, and the task comes as an argument: `bot-bottle start --auto
 
 ```
 $ bot-bottle bottles suggest --rules "deploy bot-bottle-console to Fly staging"
+Run in basic.
+
 option:  reuse
 from:    rules
 bottles: basic
@@ -90,6 +95,8 @@ With a connected Gitea forge and a project `origin`:
 
 ```
 $ bot-bottle bottles suggest --rules "push a release"
+Run in gitea.example.com + basic, adding 1 repo.
+
 option:  stack+additions
 from:    rules
 bottles: basic
@@ -103,6 +110,7 @@ A proposal is a JSON object with these fields:
 
 | Field | Type | Description |
 |---|---|---|
+| `summary` | string | one plain sentence on what it recommends and why, for the person deciding; asked for in the request, so architect prompts written before it still give one. Cleared when validation or the runnability check drops part of the proposal, so the review makes one from what's left |
 | `option` | string | `reuse`, `stack`, `stack+additions`, `new-extending`, or `new` (preference order) |
 | `bottles` | array | existing bottles to use or extend |
 | `new_bottle` | object or null | for `new-extending`/`new`: `{name, extends, about}` |
