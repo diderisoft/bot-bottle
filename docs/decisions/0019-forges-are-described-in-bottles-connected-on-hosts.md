@@ -43,10 +43,13 @@ the grant's text fixes which forge it means on every machine.
   load, pointing at `forge connect`.
 - `~/.bot-bottle/forges.md`, written only by `bot-bottle forge connect`, holds
   what this machine connected: the forge's `kind`, the `url` and `ssh` it
-  uses here (`--ssh` for a VPN address), the pinned `host_key`, GitHub's
-  `transport`, and its `users`, each with its token's secret name (and, for
-  github.com, its `app`), one marked `default`. A user's name is what the
-  forge reports the token belongs to.
+  uses here (`--ssh` for a VPN address), the pinned `host_key`, and its
+  `users`, one marked `default`. Each user has its token's secret name and,
+  on GitHub, its `transport` (and, for github.com, its `app`). A user's name
+  is what the forge reports the token belongs to.
+- That file is the host's connection source for now. A launch asks the
+  source, not the file, so connections could come from elsewhere later
+  without bottles changing.
 
 **A launch uses the host's connection.** A grant on a forge the host hasn't
 connected fails to load, naming the `forge connect` command (with the URL
@@ -62,14 +65,22 @@ The bottle architect, the rules path and the runnability check stop stacking
 forge bottles; a bottle they write carries the forge's description itself.
 Forge bottles that hold other things stay ordinary bottles.
 
+**The token's owner picks GitHub's transport.** `https` puts the user's token
+in the gateway for the run; `deploy-key` puts only a key per repo there, but
+minting one needs admin access to the repo (the app's Administration
+permission, or a classic `repo` token from a repo admin). Which a token can
+do isn't reliably knowable before trying, and neither is strictly safer, so
+whoever connects the user chooses, and a bottle can't. A token that can't mint
+fails the launch at minting, saying so.
+
 **The agent picks the account.** An agent's `forge_users: {<host>: <user>}`
 names which connected user it pushes as; without it, the forge's `default`
 user (or its only one). Grants name no user, so they stay portable.
 
 **Trust covers the connection.** Trusting a project bottle records, for each
 forge its grants use, this machine's connection: `kind`, `url`, `ssh`,
-`host_key`, `transport` and the default user. When any of them changes, the
-bottle asks to be trusted again, showing what changed. Each machine compares
+`host_key`, and the default user with its `transport`. When any of them
+changes, the bottle asks to be trusted again, showing what changed. Each machine compares
 only against itself. Host bottles don't re-prompt: the bottle and the
 connection are both yours.
 
