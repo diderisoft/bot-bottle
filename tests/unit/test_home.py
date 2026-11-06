@@ -12,7 +12,7 @@ from bot_bottle.cli import screen
 from bot_bottle.cli.commands import home
 from bot_bottle.cli.commands.home import Bot, Home, Snapshot
 from bot_bottle.cli.screen import Screen
-from bot_bottle.lib import log
+from bot_bottle.lib import log, prompt
 
 
 class _Tty(io.StringIO):
@@ -36,6 +36,7 @@ class _Home(unittest.TestCase):
         self.view = Screen(self.out, color=False)
         self.ran: list[tuple[str, list[str]]] = []
         self.started = 0
+        self.command: Any = None  # what a run command does, beyond being recorded
 
     def run_home(self, keys: list[str], snap: Snapshot) -> int:
         feed = iter(keys + ["q"])
@@ -45,7 +46,7 @@ class _Home(unittest.TestCase):
 
         def run(name: str, argv: list[str]) -> int:
             self.ran.append((name, argv))
-            return 0
+            return self.command(name, argv) if self.command else 0
 
         def start() -> int:
             self.started += 1
@@ -73,7 +74,7 @@ class TestStrip(_Home):
         self.assertIn("install --backend=firecracker", flat)
 
     def test_the_cursor_starts_on_the_fix(self) -> None:
-        self.run_home(["enter"], _ready(agents=[]))
+        self.run_home(["enter", "enter"], _ready(agents=[]))
         self.assertEqual([("setup", [])], self.ran)
         self.ran.clear()
         self.run_home(["enter"], _ready(services=False))
@@ -119,6 +120,57 @@ class TestEntries(_Home):
     def test_quit_leaves_the_screen(self) -> None:
         self.assertEqual(0, self.run_home([], _ready()))
         self.assertFalse(self.view.on)
+
+
+class TestSetUpInView(_Home):
+    """Set up agents runs on this view: its lines and questions here, never
+    the normal screen."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.answers: list[object] = []
+
+        def setup(_name: str, _argv: list[str]) -> int:
+            asker = prompt.current()
+            assert asker is not None
+            log.write_line("claude: ~/.claude (logged in)")
+            self.answers.append(asker.confirm("pi: sign in to OpenRouter?", default=True))
+            self.answers.append(asker.ask("Code", secret=True))
+            log.write_line("  wrote ~/.bot-bottle/agents/claude.md")
+            return 0
+
+        self.command = setup
+
+    def test_its_lines_and_questions_are_on_the_view(self) -> None:
+        with mock.patch.object(self.view, "suspend") as suspend:
+            self.run_home(["down", "down", "down", "down", "enter", "y", *"abc", "enter",
+                           "enter"], _ready())
+        suspend.assert_not_called()
+        self.assertEqual([True, "abc"], self.answers)
+        text = self.frames()
+        self.assertIn("Set up agents", text)
+        self.assertIn("claude: ~/.claude (logged in)", text)
+        self.assertIn("pi: sign in to OpenRouter?  Y/n", text)
+        self.assertIn("Code › •••", text)
+        self.assertNotIn("abc", text)  # a secret is never drawn
+        self.assertIn("wrote ~/.bot-bottle/agents/claude.md", text)
+        self.assertIn("enter back", text)
+
+    def test_esc_backs_out_of_a_question(self) -> None:
+        self.run_home(["down", "down", "down", "down", "enter", "n", *"ab", "esc", "enter"],
+                      _ready())
+        self.assertEqual([False, ""], self.answers)
+
+    def test_stepping_outside_leaves_the_view_and_asks_the_terminal(self) -> None:
+        def pair(_name: str, _argv: list[str]) -> int:
+            with prompt.outside():
+                self.answers.append(prompt.current())
+                self.answers.append(self.view.on)
+            return 0
+
+        self.command = pair
+        self.run_home(["down", "down", "down", "down", "enter", "enter"], _ready())
+        self.assertEqual([None, False], self.answers)
 
 
 class TestAgents(_Home):

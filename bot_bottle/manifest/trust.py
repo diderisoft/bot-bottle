@@ -306,15 +306,15 @@ def trust(error: UntrustedBottleError) -> None:
     _save(entries)
 
 
-def prompt_text(error: UntrustedBottleError) -> str:
-    """The trust question: what the bottle grants, or what changed."""
+def prompt_parts(error: UntrustedBottleError) -> tuple[list[str], str]:
+    """The trust question's lines (what the bottle grants, or what changed)
+    and the question itself."""
     if error.previous is None:
         lead = ("  Beyond the basic bottle, it lets the agent:" if error.kind == "bottle"
                 else "  It lets the agent:")
         lines = [f"untrusted {error.kind}: {error.bottle}  ({error.path})", "", lead]
         lines += [f"    {g}" for g in error.grants]
-        lines += ["", f"Trust this {error.kind} on this host? [y/N] "]
-        return "\n".join(lines)
+        return lines, f"Trust this {error.kind} on this host?"
     before, after = set(error.previous.grants), set(error.grants)
     lines = [f"{error.kind} changed: {error.bottle}  ({error.path})",
              f"  trusted {error.previous.trusted_at}", ""]
@@ -332,11 +332,17 @@ def prompt_text(error: UntrustedBottleError) -> str:
         lines.append("  It grants the same as before; the file changed in other ways."
                      if error.kind == "bottle" else
                      "  It grants the same as before; the file or its build inputs changed.")
-    lines += ["", f"Trust the changed {error.kind}? [y/N] "]
-    return "\n".join(lines)
+    return lines, f"Trust the changed {error.kind}?"
+
+
+def prompt_text(error: UntrustedBottleError) -> str:
+    """The trust question as the terminal asks it."""
+    lines, question = prompt_parts(error)
+    return "\n".join([*lines, "", f"{question} [y/N] "])
 
 
 __all__ = ["UntrustedBottleError", "agent_hash", "beyond_basic", "bottle_hash", "build_digest",
            "check",
-           "check_agent", "forge_lines", "grants", "host_context", "load_trusted", "prompt_text",
+           "check_agent", "forge_lines", "grants", "host_context", "load_trusted",
+           "prompt_parts", "prompt_text",
            "provider_grants", "trust"]

@@ -23,6 +23,7 @@ from ..env import env_entry_interpolated_from, env_entry_kind, prompt_secret
 from ..git_gate.host_key import preflight_host_keys
 from ..lib import log
 from ..lib.log import die, info, warn
+from ..lib.prompt import current as current_prompter
 from ..manifest import Manifest, ManifestIndex, trust
 from ..secret_source import SecretSource
 from ..util import read_tty_line
@@ -113,16 +114,30 @@ def load_trusting(index: ManifestIndex, agent: str, bottles: tuple[str, ...], *,
         except trust.UntrustedBottleError as e:
             if not interactive:
                 raise
-            sys.stderr.write("\n" + trust.prompt_text(e))
-            sys.stderr.flush()
-            if read_tty_line() not in ("y", "Y", "yes", "YES"):
+            if not _trusts(e):
                 die(f"not started; the {e.kind} stays untrusted "
                     f"(`{PROG} trust {e.bottle}` to review it later)")
             trust.trust(e)
             info(f"trusted {e.bottle} on this host")
 
 
-def _prompt_yes(question: str) -> bool:
+def _trusts(error: trust.UntrustedBottleError) -> bool:
+    """Ask whether to trust the bottle (or agent) `error` names."""
+    asker = current_prompter()
+    if asker is not None:
+        lines, question = trust.prompt_parts(error)
+        return asker.confirm(question, context=lines)
+    sys.stderr.write("\n" + trust.prompt_text(error))
+    sys.stderr.flush()
+    return read_tty_line() in ("y", "Y", "yes", "YES")
+
+
+def _prompt_yes(question: str, context: tuple[str, ...] = ()) -> bool:
+    asker = current_prompter()
+    if asker is not None:
+        return asker.confirm(question, context=context)
+    for line in context:
+        sys.stderr.write(f"bot-bottle: {line}\n")
     sys.stderr.write(f"bot-bottle: {question} [y/N] ")
     sys.stderr.flush()
     return read_tty_line() in ("y", "Y", "yes", "YES")
@@ -133,11 +148,10 @@ def confirm_controller_restart(held: list[str]) -> bool:
     Without a terminal there's no one to ask, so no."""
     if not sys.stdin.isatty():
         return False
-    sys.stderr.write(
-        f"bot-bottle: bot-bottle was updated. Restarting the host controller moves "
+    return _prompt_yes("Continue?", (
+        f"bot-bottle was updated. Restarting the host controller moves "
         f"{len(held)} running bottle(s) ({', '.join(held)}) to the new version: the agents "
-        "keep running, but attached terminals and the phone link disconnect briefly.\n")
-    return _prompt_yes("Continue?")
+        "keep running, but attached terminals and the phone link disconnect briefly.",))
 
 
 def _never(held: list[str]) -> bool:

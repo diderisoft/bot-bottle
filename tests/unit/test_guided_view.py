@@ -12,6 +12,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 from unittest import mock
 
@@ -19,7 +20,7 @@ from bot_bottle.cli import screen, start_prefs, suggest_client
 from bot_bottle.cli.commands import guided, guided_view, start
 from bot_bottle.cli.screen import DONE, Screen
 from bot_bottle.contract.hostctl import RUN_BOTTLE, LaunchRequest, Settings
-from bot_bottle.lib import log
+from bot_bottle.lib import log, prompt
 from bot_bottle.manifest import ManifestIndex
 from bot_bottle.suggest.proposal import (
     OPTION_STACK_ADDITIONS, Proposal, ProposalAdditions, ProposalEgress,
@@ -317,13 +318,13 @@ class TestAFailedLaunch(_View):
 
 
 class TestLaunchPrompts(unittest.TestCase):
-    def test_trust_and_secret_prompts_run_on_the_normal_screen(self) -> None:
+    def test_the_view_stays_up_for_the_launchs_prompts(self) -> None:
         view = Screen(_Tty(), color=False)
         view.enter()
         seen: list[bool] = []
 
         def prepare(request: LaunchRequest, *_: Any, **__: Any) -> LaunchRequest:
-            seen.append(view.on)  # what the prompts would be written over
+            seen.append(view.on)  # its prompts ask on the view (`lib.prompt`)
             return request
 
         with mock.patch.object(start, "prepare_request", side_effect=prepare), \
@@ -332,9 +333,59 @@ class TestLaunchPrompts(unittest.TestCase):
                 LaunchRequest(agent="claude", bottles=("./main",)), mock.Mock(),
                 dry_run=False, view=view, lead=[])
         self.assertEqual(0, code)
-        self.assertEqual([False], seen)
-        self.assertTrue(view.on)  # back for the launch's stages
+        self.assertEqual([True], seen)
         self.assertIs(view, launch.call_args.kwargs["view"])
+
+
+class TestQuestionsInline(_View):
+    """The questions on the way (trust, host key, secret) ask under the steps."""
+
+    def run_asking(self, keys: list[str],
+                   ask: Callable[[prompt.Prompter], object]) -> list[object]:
+        answers: list[object] = []
+
+        def asking(request: LaunchRequest, index: Any, **kw: Any) -> int:
+            asker = prompt.current()
+            assert asker is not None
+            answers.append(ask(asker))
+            answers.append(self.view.on)
+            self.launched.append((request, index, kw))
+            return 0
+
+        feed = iter(keys)
+        guided_view.StartView(self.view, _args(name="claude", prompt=""),
+                              ManifestIndex.resolve(str(self.project)), Settings(),
+                              launch=asking, keys=lambda _t=None: next(feed),
+                              cwd=self.project).run()
+        return answers
+
+    def test_a_trust_question_is_drawn_under_the_steps(self) -> None:
+        answers = self.run_asking(["y"], lambda a: a.confirm(
+            "Trust this bottle on this host?",
+            context=["untrusted bottle: ./main", "", "    reach api.example.com"]))
+        self.assertEqual([True, True], answers)
+        text = self.frames()
+        self.assertIn("untrusted bottle: ./main", text)
+        self.assertIn("Trust this bottle on this host?  y/N", text)
+        self.assertIn("y yes · n no", text)
+
+    def test_enter_takes_the_default_and_n_declines(self) -> None:
+        self.assertEqual([False, True], self.run_asking(["enter"], lambda a: a.confirm("ok?")))
+        self.assertEqual([False, True], self.run_asking(["n"], lambda a: a.confirm(
+            "ok?", default=True)))
+
+    def test_a_secret_is_typed_hidden(self) -> None:
+        answers = self.run_asking([*"s3cr", "backspace", "t", "enter"],
+                                  lambda a: a.ask("API_KEY", secret=True))
+        self.assertEqual(["s3ct", True], answers)
+        self.assertIn("API_KEY › ••••", self.frames())
+        self.assertNotIn("s3c", self.frames())
+
+    def test_the_editor_and_other_terminal_work_ask_the_terminal(self) -> None:
+        view = guided_view.StartView(self.view, _args(), ManifestIndex.resolve(str(self.project)),
+                                     Settings(), launch=lambda *a, **k: 0, cwd=self.project)
+        with prompt.redirect(view.asker), view.suspended():
+            self.assertIsNone(prompt.current())
 
 
 class TestLongTask(_View):
@@ -370,11 +421,32 @@ class TestSetupAndQuit(_View):
             self.agents("claude")
             return 0
 
-        with mock.patch("bot_bottle.cli.commands.setup.cmd_setup", side_effect=setup) as run:
+        with mock.patch("bot_bottle.cli.commands.setup.cmd_setup", side_effect=setup) as run, \
+             mock.patch.object(self.view, "suspend") as suspend:
             self.run_view(["enter", "enter"])
         run.assert_called_once_with(["--no-pair"])
+        suspend.assert_not_called()  # on this view, not the normal screen
         self.assertEqual("claude", self.launched[0][0].agent)
         self.assertIn("set up agents", self.frames())
+
+    def test_setups_lines_and_questions_show_on_the_step(self) -> None:
+        for path in (self.root / "agents").iterdir():
+            path.unlink()
+        answers: list[object] = []
+
+        def setup(_argv: list[str]) -> int:
+            log.write_line("claude: ~/.claude (logged in)")
+            asker = prompt.current()
+            assert asker is not None
+            answers.append(asker.confirm("pi: sign in to OpenRouter?", default=True))
+            self.agents("claude")
+            return 0
+
+        with mock.patch("bot_bottle.cli.commands.setup.cmd_setup", side_effect=setup):
+            self.run_view(["enter", "n", "enter"])
+        self.assertEqual([False], answers)
+        self.assertIn("claude: ~/.claude (logged in)", self.frames())
+        self.assertIn("pi: sign in to OpenRouter?  Y/n", self.frames())
 
     def test_ctrl_c_quits_without_launching(self) -> None:
         self.assertEqual(130, self.run_view(["^C"], name="claude"))

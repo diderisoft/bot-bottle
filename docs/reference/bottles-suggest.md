@@ -32,7 +32,7 @@ steps on the same screen (`cli/screen.py`, `commands/guided_view.py`):
    `~/.bot-bottle/start.json`), else a pick among the logged-in harnesses
    that have an agent (`setup`'s detection). `bot-bottle start codex` runs
    that one and makes it the default. With no agent set up, Enter runs
-   `setup` and comes back.
+   `setup` on the screen, its lines under the step.
 2. **Task.** What the agent should do. Empty runs the agent in `basic`, as a
    plain start, with no suggestion.
 3. **Suggest**, for the current project, with a spinner ("warming the
@@ -50,6 +50,12 @@ steps on the same screen (`cli/screen.py`, `commands/guided_view.py`):
    edit). A proposal that can't run on this host (below) offers only edit
    and cancel.
 5. **Launch** in that bottle with the task as the agent's first prompt.
+
+The launch's questions (trust a project bottle, confirm a git-gate host key,
+type a secret, restart an updated host controller) and `setup`'s are asked
+inline on the screen, under the steps; only `e`'s editor takes the normal
+screen. A command run on its own asks the terminal as before (`lib/prompt.py`:
+a view installs a prompter for its context, as `log.redirect` does for output).
 
 `--auto`, `--verbose` and `--dry-run` keep plain output, and nothing draws
 without a terminal. Ctrl-C quits without launching. Bare `bot-bottle`, on a

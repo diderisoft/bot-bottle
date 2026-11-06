@@ -11,8 +11,8 @@ the launch's stages drawn under them on the same screen:
       …
   enter run · s save as… · e edit · d details · q cancel
 
-- **Agent.** None set up: Enter runs `setup` (its own output, on the normal
-  screen) and comes back. Else the one named, the one remembered, the only
+- **Agent.** None set up: Enter runs `setup` on this view, its lines under
+  the step. Else the one named, the one remembered, the only
   logged-in one, or a menu.
 - **Task.** Edited on its line; empty runs the agent in `basic`.
 - **Bottle.** A spinner while the architect answers ("warming the
@@ -20,6 +20,10 @@ the launch's stages drawn under them on the same screen:
   shows its notes and every element, `e` edits it in `$EDITOR`, `s` saves it
   as a bottle first, `q` cancels.
 - **Launch.** The launch's stages, under these steps.
+
+The questions on the way (trust a project bottle, confirm a host key, type a
+secret, setup's sign-in) are asked inline, under the steps (`view_prompt`);
+only `$EDITOR` takes the normal screen.
 
 Only on the process's own terminal (`screen.usable`). Ctrl-C quits without
 launching.
@@ -35,15 +39,16 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ...contract.hostctl import LaunchRequest, Settings
-from ...lib import log
+from ...lib import log, prompt
 from ...manifest.schema import DEFAULT_BOTTLE
 from .. import screen, start_prefs, suggest_client
 from ..screen import CURRENT, DONE, FAILED, RUNNING, Screen, Step
+from ..view_prompt import ViewPrompter
 from . import guided
 
 if TYPE_CHECKING:
@@ -108,6 +113,10 @@ class StartView:  # pylint: disable=too-many-instance-attributes
         self._footer = ""  # the last frame's, for a redraw from another thread
         # Lines written to the terminal while the view was down.
         self._spoken: list[str] = []
+        # A question being asked (`lib.prompt`), drawn under the steps.
+        self.asking: list[str] = []
+        self.asker = ViewPrompter(self._show_asking, self.key, width=self.width,
+                                  style=self.style, suspend=self.suspended)
 
     # --- drawing ---
 
@@ -128,19 +137,26 @@ class StartView:  # pylint: disable=too-many-instance-attributes
             lines.append("")
             for note in self.notes[-3:]:
                 lines += [self.style.amber(w) for w in screen.wrap(note, self.width())[:2]]
+        if self.asking:
+            lines += [""] + self.asking
         self.view.draw(lines, footer=footer, left_width=self.width())
+
+    def _show_asking(self, lines: list[str] | None, footer: str) -> None:
+        self.asking = list(lines or [])
+        if lines is not None:
+            self.draw(footer)
 
     def note(self, line: str) -> None:
         line = line.removeprefix("bot-bottle: ")
         if line not in self.notes:
             self.notes.append(line)
 
-    def suspended(self):  # type: ignore[no-untyped-def]
+    @contextlib.contextmanager
+    def suspended(self) -> Generator[None]:
         """The normal screen, with bot-bottle's output going to it again."""
-        stack = contextlib.ExitStack()
-        stack.enter_context(self.view.suspend())
-        stack.enter_context(log.redirect(_to_stderr))
-        return stack
+        # Its questions ask there too.
+        with self.view.suspend(), log.redirect(_to_stderr), prompt.redirect(None):
+            yield
 
     def key(self, timeout: float | None = None) -> str | None:
         return self.keys(timeout)
@@ -155,7 +171,7 @@ class StartView:  # pylint: disable=too-many-instance-attributes
     def run(self) -> int:
         threading.Thread(target=self._warm, daemon=True).start()
         try:
-            with log.redirect(self.note):
+            with log.redirect(self.note), prompt.redirect(self.asker):
                 return self._run()
         except Cancelled:
             self.view.leave()
@@ -248,7 +264,8 @@ class StartView:  # pylint: disable=too-many-instance-attributes
         return self.done("Agent", picked)
 
     def setup_step(self) -> None:
-        """No agents: Enter runs `setup`, on the normal screen, and comes back."""
+        """No agents: Enter runs `setup` here, its lines under this step and
+        its questions inline."""
         # pylint: disable-next=import-outside-toplevel
         from ...agent_provider import get_provider
         found = [HARNESS_NAMES.get(h, h) for h in guided.HARNESSES
@@ -264,7 +281,16 @@ class StartView:  # pylint: disable=too-many-instance-attributes
                 raise Cancelled
             if key == "enter":
                 break
-        with self.suspended():
+        out: list[str] = []
+
+        def say(text: str) -> None:
+            out.extend(line.removeprefix("bot-bottle: ") for line in text.split("\n"))
+            step.body = [row for line in out for row in screen.wrap(line, self.body_width())][-8:]
+            self.draw("setting up…")
+
+        step.value, step.body = "setting up", []
+        self.draw("setting up…")
+        with log.redirect(say):  # its questions: this view's (`run`)
             from .setup import cmd_setup  # pylint: disable=import-outside-toplevel
             cmd_setup(["--no-pair"])
         # pylint: disable-next=import-outside-toplevel
@@ -272,7 +298,7 @@ class StartView:  # pylint: disable=too-many-instance-attributes
         self.manifest = ManifestIndex.resolve(str(self.cwd))
         self.steps.pop()
         if not self.agents():
-            self.steps.append(Step("Agents", "none set up", FAILED))
+            self.steps.append(Step("Agents", "none set up", FAILED, body=step.body))
             self.draw("q quit")
             while self.key() not in ("q", "esc", "enter", "ctrl-c"):
                 pass
@@ -403,12 +429,12 @@ class StartView:  # pylint: disable=too-many-instance-attributes
             elif key in ("q", "esc"):
                 raise Cancelled
 
-    def ask_line(self, step: Step, prompt: str) -> str:
+    def ask_line(self, step: Step, label: str) -> str:
         """One line typed under `step`'s body; "" on esc."""
         text, body = "", list(step.body)
         while True:
             step.body = body + [""] + screen.input_lines(
-                f"{prompt} {self.style.accent('›')} ", text, self.body_width())
+                f"{label} {self.style.accent('›')} ", text, self.body_width())
             self.draw("enter save · esc back")
             key = self.key()
             if key == "enter":

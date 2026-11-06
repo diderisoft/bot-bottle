@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 
 from .errors import MissingEnvVarError
 from .lib.log import die
+from .lib.prompt import current as current_prompter
 from .manifest import Manifest
 from .secret_source import SecretSource
 
@@ -60,8 +61,12 @@ def env_entry_interpolated_from(raw: str) -> str:
 
 
 def _read_secret_silent(name: str, prompt_body: str) -> str:
-    """Read a secret from the controlling tty without echoing."""
-    if not (sys.stdin.isatty() or sys.stderr.isatty()):
+    """Read a secret from the controlling tty without echoing (or from this
+    context's prompter, hidden there)."""
+    asker = current_prompter()
+    if asker is not None:
+        value = asker.ask(prompt_body or f"secret value for {name}", secret=True)
+    elif not (sys.stdin.isatty() or sys.stderr.isatty()):
         # /dev/tty, so this works when stdin is a pipe.
         try:
             tty = open("/dev/tty", "r+", encoding="utf-8")

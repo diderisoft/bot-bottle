@@ -12,7 +12,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
-from ..lib.log import die, info
+from ..lib.log import die, info, write_line
+from ..lib.prompt import current as current_prompter
 from ..manifest import Manifest
 from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter, serialize_yaml_subset
 
@@ -160,6 +161,16 @@ def prompt_tty(message: str) -> str:
         return sys.stdin.readline().rstrip("\n")
 
 
+def _yes(question: str, context: list[str] | None = None) -> bool:
+    """Ask `question` (after `context`): this context's prompter, else the tty."""
+    asker = current_prompter()
+    if asker is not None:
+        return asker.confirm(question, context=context or ())
+    if context:
+        sys.stderr.write("\n" + "\n".join(context) + "\n\n")
+    return prompt_tty(f"{question} [y/N] ").strip().lower() in ("y", "yes")
+
+
 # --- Public API ---
 
 
@@ -213,28 +224,24 @@ def preflight_host_keys(
         except RuntimeError as e:
             die(f"git-gate: {label}: {e}")
 
-        sys.stderr.write(f"\ngit-gate: host key for {label}:\n  {key}\n\n")
-        confirm = prompt_tty("Is this host key correct? [y/N] ")
-        if confirm.strip().lower() not in ("y", "yes"):
+        if not _yes("Is this host key correct?",
+                    [f"git-gate: host key for {label}:", f"  {key}"]):
             die(f"git-gate: {label}: host key not confirmed; aborting launch")
 
         if bottles_dir is not None:
             target_file = find_repo_bottle_file(bottles_dir, entry.Name)
             if target_file is not None:
-                save = prompt_tty(
-                    f"Save host_key for {entry.Name!r} to {target_file}? [y/N] "
-                )
-                if save.strip().lower() in ("y", "yes"):
+                if _yes(f"Save host_key for {entry.Name!r} to {target_file}?"):
                     ok = find_and_update_bottle_file(bottles_dir, entry.Name, key)
                     if not ok:
-                        sys.stderr.write(
+                        write_line(
                             f"git-gate: {label}: could not write to {target_file}; "
-                            f"host_key kept in memory for this session only\n"
+                            f"host_key kept in memory for this session only"
                         )
             else:
-                sys.stderr.write(
+                write_line(
                     f"git-gate: {label}: no bottle config file found for "
-                    f"{entry.Name!r}; host_key kept in memory for this session only\n"
+                    f"{entry.Name!r}; host_key kept in memory for this session only"
                 )
 
         idx = next(i for i, e in enumerate(updated_entries) if e.Name == entry.Name)

@@ -18,9 +18,10 @@ which prints the sudo lines); home never runs sudo.
 - **Start a bottled agent**: the guided start (`guided_view`), on this view.
 - **Agents**: running ones first. Enter attaches (Ctrl-] comes back here),
   `r` resumes a stopped one, `x` stops a running one, `n` renames.
+- **Set up agents**: `setup`, on this view: its lines under the menu, its
+  questions inline (`view_prompt`), then Enter comes back.
 - **Approvals**: `supervise`. **Host**: `up` when the services are down,
-  else `status`. **Set up agents**: `setup`. These run on the normal screen
-  and come back.
+  else `status`. These run on the normal screen and come back.
 
 Only bare and on the process's own terminal; without one, bare `bot-bottle`
 prints `status` and a hint. `bot-bottle <agent>` starts that agent as
@@ -35,14 +36,15 @@ import os
 import socket
 import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ...lib import log
+from ...lib import log, prompt
 from .. import screen
 from ..constants import PROG
 from ..screen import Screen
+from ..view_prompt import ViewPrompter
 from .guided import HARNESSES
 
 ARCHITECT = "bottle-architect"
@@ -327,7 +329,8 @@ class Home:  # pylint: disable=too-many-instance-attributes
             else:
                 self.on_normal_screen("status", [], pause=True)
         elif entry == "setup":
-            self.on_normal_screen("setup", [])
+            self.in_view("Set up agents", "setup", [])
+            self.refresh_now()
 
     def on_normal_screen(self, name: str, argv: list[str], *, pause: bool = False) -> int:
         """Run a command on the normal screen, then come back."""
@@ -339,6 +342,47 @@ class Home:  # pylint: disable=too-many-instance-attributes
             if pause:
                 _pause()
         return code
+
+    def in_view(self, title: str, name: str, argv: list[str]) -> int:
+        """Run a command on this view: its lines under `title`, its questions
+        asked inline (`lib.prompt`), then a key to come back."""
+        out: list[str] = []
+        asking: list[str] = []
+
+        def body() -> list[str]:
+            room = max(screen.size()[1] - len(self.strip_lines()) - len(asking) - 10, 3)
+            rows = [row for line in out for row in screen.wrap(line, self.width())]
+            shown = rows[-room:] if len(rows) > room else rows
+            return [self.style.bold(title), ""] + shown + asking
+
+        def say(text: str) -> None:
+            out.extend(line.removeprefix("bot-bottle: ") for line in text.split("\n"))
+            self.draw(body(), "working…")
+
+        def show(lines: list[str] | None, footer: str) -> None:
+            asking[:] = [""] + lines if lines else []
+            if lines is not None:
+                self.draw(body(), footer)
+
+        asker = ViewPrompter(show, lambda: self.keys(None), width=self.width,
+                             style=self.style, suspend=self._outside)
+        self.draw(body(), "working…")
+        with log.redirect(say), prompt.redirect(asker):
+            try:
+                code = self.run_command(name, argv)
+            except SystemExit as e:  # a command's die()
+                code = e.code if isinstance(e.code, int) else 1
+        while True:
+            self.draw(body(), "enter back")
+            if self.keys(None) in ("enter", "esc", "q", "left"):
+                return code
+
+    @contextlib.contextmanager
+    def _outside(self) -> Generator[None]:
+        """The normal screen, with bot-bottle's output going to it again."""
+        with self.view.suspend(), log.redirect(_to_stderr):
+            yield
+        self.view.invalidate()
 
     # --- agents ---
 
@@ -397,10 +441,10 @@ class Home:  # pylint: disable=too-many-instance-attributes
         self.draw(body + ["", f"{question}  y/n"], "y yes · n no")
         return self.keys(None) == "y"
 
-    def ask(self, body: list[str], prompt: str) -> str:
+    def ask(self, body: list[str], label: str) -> str:
         text = ""
         while True:
-            self.draw(body + [""] + screen.input_lines(f"{prompt} {self.style.accent('›')} ",
+            self.draw(body + [""] + screen.input_lines(f"{label} {self.style.accent('›')} ",
                                                        text, self.width()),
                       "enter save · esc back")
             key = self.keys(None)

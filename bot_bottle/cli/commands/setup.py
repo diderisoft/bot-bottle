@@ -28,11 +28,13 @@ import os
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
 from ...agent_provider import HostDetection, get_provider
 from ...contrib.pi import starter as pi_starter
 from ...control.hostctl import pairing
 from ...errors import SecretsFileError
+from ...lib import log, prompt
 from ...manifest.versions import record_or_warn
 from ...paths import bot_bottle_root, host_secrets_path
 from ...secret_source import write_secret
@@ -59,6 +61,8 @@ class Setup:
     browser: bool = True
     say: Callable[[str], None] = print
     ask: Callable[[str], str] = input
+    # A yes/no answer to a question; None asks `ask` with `[Y/n]`.
+    yes_no: Callable[[str], bool] | None = None
     sign_in: Callable[..., str] = openrouter.sign_in
     lookup: Callable[[], list[openrouter.FreeModel]] = openrouter.free_tool_models
     probe: Callable[[str, str], bool] = openrouter.probe
@@ -70,6 +74,8 @@ class Setup:
     def confirm(self, question: str) -> bool:
         if not self.interactive:
             return False
+        if self.yes_no is not None:
+            return self.yes_no(question)
         return self.ask(f"{question} [Y/n] ").strip().lower() in ("", "y", "yes")
 
     def write(self, kind: str, name: str, text: str, *, replace: bool = False) -> None:
@@ -187,9 +193,26 @@ def _offer_pair(setup: Setup, console_url: str) -> None:
         pass
     if setup.confirm("Pair this host with your phone now?"):
         from .pair import cmd_pair  # pylint: disable=import-outside-toplevel
-        cmd_pair(["--console-url", console_url])
+        with prompt.outside():  # its QR code needs the whole terminal
+            cmd_pair(["--console-url", console_url])
     else:
         setup.say(f"pair later with `{PROG} pair`")
+
+
+def _on_a_view() -> dict[str, Any]:
+    """Setup's I/O when a full-screen view runs it (`lib.prompt`): its lines
+    to the view's sink and its questions asked there. Nothing otherwise."""
+    asker = prompt.current()
+    if asker is None:
+        return {}
+
+    def ask(question: str) -> str:
+        return asker.ask(question.strip().rstrip(":"))
+
+    def yes_no(question: str) -> bool:
+        return asker.confirm(question, default=True)
+
+    return {"interactive": True, "say": log.write_line, "ask": ask, "yes_no": yes_no}
 
 
 def cmd_setup(argv: list[str]) -> int:
@@ -201,18 +224,19 @@ def cmd_setup(argv: list[str]) -> int:
     parser.add_argument("--no-pair", action="store_true")
     parser.add_argument("--console-url", default=os.environ.get("BB_CONSOLE_URL", ""))
     args = parser.parse_args(argv)
+    io: dict[str, Any] = {"interactive": sys.stdin.isatty(), **_on_a_view()}
     setup = Setup(
         home=Path(os.environ.get("HOME") or Path.home()),
         host_env=dict(os.environ),
-        interactive=sys.stdin.isatty(),
         force=args.force,
         refresh_model=args.refresh_model,
         browser=not args.no_browser,
+        **io,
     )
     try:
         status = setup.run()
     except SecretsFileError as e:
-        sys.stderr.write(f"{PROG} setup: {e}\n")
+        log.write_line(f"{PROG} setup: {e}")
         return 1
     if not args.no_pair:
         _offer_pair(setup, args.console_url.rstrip("/"))
