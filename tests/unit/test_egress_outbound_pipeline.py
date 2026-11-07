@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from bot_bottle.gateway.egress.dlp_detectors import REDACT
 from bot_bottle.gateway.egress.outbound_pipeline import (
     MutableHeaders,
     redact_request,
@@ -156,6 +157,34 @@ class TestOutboundRedaction(unittest.TestCase):
 
         self.assertTrue(clean)
         self.assertIsNone(scan_request(request, route, {}))
+
+    def test_redact_marker_does_not_trigger_re_detection(self) -> None:
+        """After redaction the marker must not be detected as a new token or
+        secret — otherwise a re-scan loop in the gateway would spin forever."""
+        request = _Request(body=f"token={_TOKEN}")
+        route = Route(host="api.example.com")
+
+        clean = redact_request(request, route, {})
+
+        self.assertTrue(clean)
+        self.assertIn(REDACT, request.text)
+        # Re-scanning the redacted text must find nothing.
+        self.assertIsNone(scan_request(request, route, {}))
+
+    def test_redact_marker_as_registered_secret_does_not_loop(self) -> None:
+        """If a registered secret happens to equal the redaction marker,
+        redact_request must still return False (not loop) — the hostname path
+        cannot be cleaned, so the caller blocks the request."""
+        env = {"EGRESS_TOKEN_X": REDACT}
+        request = _Request(body=f"payload={REDACT}")
+        route = Route(host="api.example.com")
+
+        # redact_request tries to clean the body but the REDACT marker IS the
+        # secret, so after replacement nothing changed; a re-scan still detects
+        # it → returns False (caller blocks) rather than looping.
+        clean = redact_request(request, route, env)
+
+        self.assertFalse(clean)
 
 
 if __name__ == "__main__":

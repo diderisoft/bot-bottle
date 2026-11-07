@@ -20,7 +20,7 @@ from .types import ScanResult
 # --- Snippets ---
 
 SNIPPET_CONTEXT = 40  # chars of context on each side
-REDACT = "********"  # fixed-width replacement
+REDACT = "[REDACTED]"  # replacement marker; must not match any token or secret pattern
 
 
 def _snippet(text: str, start: int, end: int) -> str:

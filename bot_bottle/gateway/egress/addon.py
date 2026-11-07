@@ -601,7 +601,8 @@ class EgressAddon:
         with `env` (this bottle's overlay). True if the request may go on,
         False if a 403 was written. Loops after each approval so a second token
         is still caught."""
-        while True:
+        _MAX_SCAN_ITERATIONS = 20
+        for _ in range(_MAX_SCAN_ITERATIONS):
             request_path, _, _ = flow.request.path.partition("?")
             result = scan_request(
                 flow.request,
@@ -658,6 +659,16 @@ class EgressAddon:
             if not approved:
                 return False  # _supervise_token_block wrote the 403
             # the approved value is now safelisted; re-scan
+
+        # Iteration limit reached: fail closed.
+        self._block(
+            flow,
+            "egress DLP: scan/approve cycle exceeded limit; request blocked",
+            ctx=self._req_ctx(flow),
+            code=blocks.SECRET,
+            anomaly=True,
+        )
+        return False
 
     async def _supervise_token_block(
         self,
