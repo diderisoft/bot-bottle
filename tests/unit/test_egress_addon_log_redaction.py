@@ -17,6 +17,8 @@ from io import StringIO
 from typing import Any
 from unittest.mock import patch
 
+from bot_bottle.gateway.egress.dlp_detectors import REDACT
+
 
 # ---------------------------------------------------------------------------
 # mitmproxy stub — must run before importing egress_addon
@@ -176,7 +178,7 @@ class TestLogRequestBodyRedacted(unittest.TestCase):
         flow = _Flow(request=_Request(body=f"key={_OPENAI_KEY}"))
         entry = _log_request(addon, flow)
         self.assertNotIn(_OPENAI_KEY, entry["body"])
-        self.assertIn("********", entry["body"])
+        self.assertIn(REDACT, entry["body"])
 
     def test_provisioned_secret_in_body_scrubbed(self) -> None:
         addon = _addon()
@@ -185,7 +187,7 @@ class TestLogRequestBodyRedacted(unittest.TestCase):
         with patch.dict("os.environ", {"EGRESS_TOKEN_0": secret}):
             entry = _log_request(addon, flow)
         self.assertNotIn(secret, entry["body"])
-        self.assertIn("********", entry["body"])
+        self.assertIn(REDACT, entry["body"])
 
     def test_clean_body_preserved(self) -> None:
         addon = _addon()
@@ -206,7 +208,7 @@ class TestLogRequestHeaderValuesRedacted(unittest.TestCase):
         flow = _Flow(request=_Request(headers={"x-api-key": _OPENAI_KEY}))
         entry = _log_request(addon, flow)
         self.assertNotIn(_OPENAI_KEY, entry["headers"].get("x-api-key", ""))
-        self.assertIn("********", entry["headers"].get("x-api-key", ""))
+        self.assertIn(REDACT, entry["headers"].get("x-api-key", ""))
 
     def test_clean_header_value_preserved(self) -> None:
         addon = _addon()
@@ -229,7 +231,7 @@ class TestLogResponseBodyRedacted(unittest.TestCase):
         )
         entry = _log_response(addon, flow)
         self.assertNotIn(_OPENAI_KEY, entry["body"])
-        self.assertIn("********", entry["body"])
+        self.assertIn(REDACT, entry["body"])
 
     def test_provisioned_secret_in_response_body_scrubbed(self) -> None:
         addon = _addon()
@@ -241,7 +243,7 @@ class TestLogResponseBodyRedacted(unittest.TestCase):
         with patch.dict("os.environ", {"EGRESS_TOKEN_0": secret}):
             entry = _log_response(addon, flow)
         self.assertNotIn(secret, entry["body"])
-        self.assertIn("********", entry["body"])
+        self.assertIn(REDACT, entry["body"])
 
     def test_clean_response_body_preserved(self) -> None:
         addon = _addon()
@@ -265,7 +267,7 @@ class TestLogResponseHeaderValuesRedacted(unittest.TestCase):
         entry = _log_response(addon, flow)
         cookie_val = entry["headers"].get("set-cookie", "")
         self.assertNotIn(_OPENAI_KEY, cookie_val)
-        self.assertIn("********", cookie_val)
+        self.assertIn(REDACT, cookie_val)
 
     def test_clean_response_header_preserved(self) -> None:
         addon = _addon()

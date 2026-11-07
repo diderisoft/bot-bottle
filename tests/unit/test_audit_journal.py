@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from bot_bottle.contract.audit import AuditEvent, canonical, record_hash
+from bot_bottle.gateway.egress.dlp_detectors import REDACT
 from bot_bottle.control.hostctl.audit_journal import (
     AuditJournal,
     AuditJournalBusy,
@@ -217,7 +218,7 @@ class Redaction(unittest.TestCase):
         event = redact(_event(untrusted={"reason": f"use {_FAKE_TOKEN} please"}))
         assert event.untrusted is not None
         self.assertNotIn(_FAKE_TOKEN, event.untrusted["reason"])
-        self.assertIn("********", event.untrusted["reason"])
+        self.assertIn(REDACT, event.untrusted["reason"])
 
     def test_token_shaped_values_in_payload_and_resource_are_scrubbed(self) -> None:
         # Host-established fields carry free text too, e.g. an egress URL.
