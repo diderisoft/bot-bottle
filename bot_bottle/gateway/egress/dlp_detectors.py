@@ -164,13 +164,15 @@ _ALNUM_MIN_LEN = 8
 
 # Minimum consecutive alphanumeric characters of a secret that must appear in
 # the outbound text to trigger a partial-match block.  Set to 12 because:
-#   - Every TOKEN_PATTERNS entry has an alnum payload ≥ 16 chars (the shortest
-#     is `dapi` + 32 alphanumeric = 36 chars), so a 12-char window catches
-#     partial leaks while staying well above common English words (≤ 7 chars).
+#   - 12 is well above the longest common English word (~7 chars) and typical
+#     JSON field names, keeping false-positive rates low on natural prose.
+#   - Real API keys and passwords provisioned in EGRESS_TOKEN_* vars all carry
+#     many more than 12 alnum chars, so the window catches partial leaks while
+#     staying comfortably below any realistic full-secret length.
 #   - Values below ~10 produce noisy false positives on natural prose and JSON.
 #   - Values above 15 risk missing heavily fragmented leaks of medium-length keys.
-# If a new token class with a shorter key is added, lower this threshold and
-# add a targeted test.
+# If a new token class with a shorter alnum payload is added, lower this
+# threshold and add a targeted test.
 PARTIAL_MATCH_MIN_LEN = 12
 
 
