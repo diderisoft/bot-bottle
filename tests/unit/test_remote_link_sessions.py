@@ -42,7 +42,7 @@ class TestTerminalSessions(unittest.TestCase):
         asyncio.run(link.discover())  # already shown: not presented again
         agent_id = remote.terminal_agent_id("app", "act-t")
         self.assertEqual([{"type": "agent_present", "agent_id": agent_id, "bottle": "app",
-                           "label": "app", "definition": "implementer", "origin": "terminal",
+                           "parent": "", "label": "app", "definition": "implementer", "origin": "terminal",
                            "writable": True, "transcript": False, "activation": "act-t"}],
                          self.presented())
         self.assertEqual({agent_id: "app"}, link.running)

@@ -12,7 +12,8 @@ The control stream (JSON lines):
   `activation`, `writable`) or `agent_errored`. Agent and bottle content from
   the console is refused. While it starts, `agent_stage` (`stage`, `title`)
   reports each launch stage, as the CLI shows them.
-- `stop` (`stop_children` bool) -> tears down the bottle and optionally its running children; `agent_stopped` follows for each.
+- `stop` (`stop_children`) -> tears the bottle down, and with `stop_children` its running
+  children too; `agent_stopped` follows for each (also when one exits itself).
 - `resume` (`agent_id`, `bottle`) -> relaunches a stopped bottle this host ran (`remote_requests`):
   `agent_started` (also for a repeat or a CLI resume of a console bottle) or `agent_errored`.
 - `hello` opens the stream; each (re)connect reports exits, reopens relays, sends
@@ -663,6 +664,8 @@ def _pending_requests() -> list[dict[str, Any]]:
 
 
 def _orchestrator(url: str = "") -> Any:
+    """A client for the orchestrator holding a request (`url`), else the
+    environment's."""
     # pylint: disable=import-outside-toplevel  # only when a request is answered
     from ..client import OrchestratorClient, env_orchestrator_url
     return OrchestratorClient(url or env_orchestrator_url())
