@@ -662,6 +662,26 @@ class NextReleaseVersion(unittest.TestCase):
         with self.assertRaises(pi.PublishError):
             pi.next_release_version("0.0.0-dev", "tok")
 
+    def test_skips_git_tagged_versions(self) -> None:
+        # Registry is empty but v0.1.6 already has a git tag.
+        with mock.patch.object(pi, "already_published", return_value=[]):
+            result = pi.next_release_version(
+                "0.1.6", "tok", tagged=frozenset({"0.1.6"}),
+            )
+        self.assertEqual("0.1.7", result)
+
+    def test_skips_multiple_git_tagged_versions(self) -> None:
+        with mock.patch.object(pi, "already_published", return_value=[]):
+            result = pi.next_release_version(
+                "0.1.6", "tok", tagged=frozenset({"0.1.6", "0.1.7"}),
+            )
+        self.assertEqual("0.1.8", result)
+
+    def test_no_tagged_set_behaves_as_before(self) -> None:
+        with mock.patch.object(pi, "already_published", return_value=[]):
+            result = pi.next_release_version("0.1.6", "tok")
+        self.assertEqual("0.1.6", result)
+
 
 class Cli(unittest.TestCase):
     def test_publish_without_a_token_aborts_before_building(self) -> None:
