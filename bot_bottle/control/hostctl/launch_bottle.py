@@ -209,9 +209,11 @@ def launch_bottle_attention(
                 removed.append(f"forge {e['name']} (not in parent)")
             else:
                 removed.append(f"{e['key']} (not in parent)")
-        lines.append(f"removed ({len(removed)}): {', '.join(removed[:5])}"
+        lines.append(f"extra ({len(removed)}): {', '.join(removed[:5])}"
                      + (f" (+{len(removed)-5} more)" if len(removed) > 5 else ""))
-    return lines, ["launch_bottle"]
+    # Each extra element is an individually approvable option (prefix "extra:").
+    extra_opts = [f"extra:{e['key']}" for e in extra]
+    return lines, ["launch_bottle", *extra_opts]
 
 
 # --- Answer ---
@@ -239,6 +241,7 @@ async def launch_bottle_answer(
     from .nudge import nudge_if_waited
 
     agent_id = str(msg.get("agent_id", ""))
+    approved_extra_keys = {k for k in msg.get("approved_extras", []) if isinstance(k, str)}
     reply: dict[str, Any] = {"type": "launch_bottle_answered",
                              "request_id": msg.get("request_id"), "agent_id": agent_id}
     request = asking.get(agent_id)
@@ -263,7 +266,8 @@ async def launch_bottle_answer(
         parent_elems = await asyncio.to_thread(elements, request.session, parent_policy)
         child_elems = bottle_elements(child_names, dirs)
         within, extra = compare_access(child_elems, parent_elems)
-        trimmed = trimmed_bottle_text(child_names, dirs, within)
+        approved_extra_elems = [e for e in extra if e["key"] in approved_extra_keys]
+        trimmed = trimmed_bottle_text(child_names, dirs, within + approved_extra_elems)
     except Exception as e:  # pylint: disable=broad-exception-caught
         log.warn(f"remote: building trimmed bottle failed: {type(e).__name__}: {e}")
         reply["error"] = "building the trimmed bottle failed; see the host controller's log"
@@ -295,12 +299,15 @@ async def launch_bottle_answer(
     if child_identity:
         await asyncio.to_thread(record_parent, child_identity, request.session)
 
-    removed_count = len(extra)
+    approved_count = len(approved_extra_elems)
+    removed_count = len(extra) - approved_count
     notes_parts = [f"launched {parsed['agent']}"]
     if child_identity:
         notes_parts.append(f"identity={child_identity}")
+    if approved_count:
+        notes_parts.append(f"{approved_count} extra(s) approved")
     if removed_count:
-        notes_parts.append(f"{removed_count} extra element(s) removed")
+        notes_parts.append(f"{removed_count} extra(s) removed")
     notes = "; ".join(notes_parts)
 
     try:
@@ -312,7 +319,7 @@ async def launch_bottle_answer(
         reply["warnings"] = ["the request was answered elsewhere meanwhile"]
 
     reply.update({"child_identity": child_identity, "agent": parsed["agent"],
-                  "label": parsed["label"], "removed": removed_count})
+                  "label": parsed["label"], "approved": approved_count, "removed": removed_count})
     return reply
 
 

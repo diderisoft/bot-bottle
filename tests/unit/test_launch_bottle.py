@@ -317,6 +317,65 @@ class TestChildren(unittest.TestCase):
         self.assertEqual(count, 0)
 
 
+# --- launch_bottle_attention: extra element options ---
+
+class TestLaunchBottleAttention(unittest.TestCase):
+    def _elem(self, key):
+        return {"key": key, "kind": key.split(":", 1)[0], "name": key.split(":", 1)[1],
+                "detail": "", "source": "test", "builtin": False, "fixed": False, "also": []}
+
+    def _request(self, proposed, justification=""):
+        from types import SimpleNamespace
+        return SimpleNamespace(proposed=proposed, justification=justification,
+                               session="test-session")
+
+    def _propose(self, **kw):
+        return json.dumps({"agent": "my-agent", "prompt": "do work",
+                           "bottles": [], "label": "", **kw})
+
+    def test_no_extra_options_when_all_within_parent(self):
+        from bot_bottle.control.hostctl.launch_bottle import launch_bottle_attention
+        parent = [self._elem("egress:api.example.com"), self._elem("repo:app")]
+        child = [self._elem("egress:api.example.com")]
+        _, opts = launch_bottle_attention(self._request(self._propose()), parent, child)
+        self.assertEqual(opts, ["launch_bottle"])
+
+    def test_extra_opts_returned_for_each_extra_element(self):
+        from bot_bottle.control.hostctl.launch_bottle import launch_bottle_attention
+        parent = [self._elem("egress:api.example.com")]
+        child = [self._elem("egress:api.example.com"),
+                 self._elem("egress:extra.example.com"),
+                 self._elem("repo:private-lib")]
+        _, opts = launch_bottle_attention(self._request(self._propose()), parent, child)
+        self.assertIn("launch_bottle", opts)
+        self.assertIn("extra:egress:extra.example.com", opts)
+        self.assertIn("extra:repo:private-lib", opts)
+        self.assertEqual(len(opts), 3)
+
+    def test_extra_opts_order_matches_extra_list(self):
+        from bot_bottle.control.hostctl.launch_bottle import launch_bottle_attention
+        parent: list = []
+        child = [self._elem("env:SECRET"), self._elem("egress:data.example.com")]
+        _, opts = launch_bottle_attention(self._request(self._propose()), parent, child)
+        self.assertEqual(opts, ["launch_bottle",
+                                "extra:env:SECRET",
+                                "extra:egress:data.example.com"])
+
+    def test_extra_line_in_card_description(self):
+        from bot_bottle.control.hostctl.launch_bottle import launch_bottle_attention
+        parent: list = []
+        child = [self._elem("env:SECRET")]
+        lines, _ = launch_bottle_attention(self._request(self._propose()), parent, child)
+        self.assertTrue(any("extra (1):" in ln for ln in lines))
+
+    def test_no_extra_line_when_all_within(self):
+        from bot_bottle.control.hostctl.launch_bottle import launch_bottle_attention
+        parent = [self._elem("env:SECRET")]
+        child = [self._elem("env:SECRET")]
+        lines, _ = launch_bottle_attention(self._request(self._propose()), parent, child)
+        self.assertFalse(any("extra" in ln for ln in lines))
+
+
 # --- approvals: launch-bottle refused from terminal ---
 
 class TestApprovalsLaunchBottle(unittest.TestCase):
