@@ -461,12 +461,15 @@ def create_network(
 
 def run_container_argv(
     argv: list[str], *, env: dict[str, str] | None = None, timeout: float | None = None,
+    stdin: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a `container` command and return the result, for callers with their
     own error types. `env` is the child env, for a bare `--env NAME` secret.
-    `timeout` raises `subprocess.TimeoutExpired`."""
+    `stdin` is fed to it (a secret kept out of argv). `timeout` raises
+    `subprocess.TimeoutExpired`."""
     return subprocess.run(
-        argv, capture_output=True, text=True, check=False, env=env, timeout=timeout)
+        argv, capture_output=True, text=True, check=False, env=env, timeout=timeout,
+        input=stdin)
 
 
 def bind_mount_spec(source: str, target: str, *, readonly: bool = False) -> str:

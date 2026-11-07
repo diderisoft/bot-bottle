@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -180,6 +181,29 @@ class TestMacosGatewayLifecycle(unittest.TestCase):
         transport = self.gw.provisioning_transport()
         assert isinstance(transport, MacosGatewayTransport)
         self.assertEqual(self.gw.name, transport.gateway)
+
+    def test_a_token_is_streamed_into_tmpfs_not_copied(self) -> None:
+        # `container cp` lands beneath a tmpfs mount, where it's never seen.
+        import tempfile  # pylint: disable=import-outside-toplevel
+        from bot_bottle.backend.macos_container.gateway_transport import (
+            MacosGatewayTransport,
+        )
+        transport = MacosGatewayTransport("gw")
+        with tempfile.NamedTemporaryFile("w", suffix="-token", delete=False) as f:
+            f.write("s3kr1t-value")
+        self.addCleanup(os.unlink, f.name)
+        ok = Mock(returncode=0, stderr="")
+        with patch("bot_bottle.backend.macos_container.util.run_container_argv",
+                   return_value=ok) as run:
+            transport.cp_into(f.name, "/dev/shm/git-gate/b1/GH-token")
+            transport.cp_into(f.name, "/etc/git-gate/pre-receive")
+        streamed, copied = run.call_args_list
+        self.assertEqual(["container", "exec", "-i", "gw", "sh", "-c", 'cat > "$1"', "sh",
+                          "/dev/shm/git-gate/b1/GH-token"], streamed.args[0])
+        self.assertEqual("s3kr1t-value", streamed.kwargs["stdin"])
+        self.assertNotIn("s3kr1t", " ".join(streamed.args[0]))
+        self.assertEqual(["container", "cp", f.name, "gw:/etc/git-gate/pre-receive"],
+                         copied.args[0])
 
 
 class TestMacosGatewayBuild(unittest.TestCase):

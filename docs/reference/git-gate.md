@@ -208,7 +208,9 @@ bottle can't (ADR 0019):
   minted. The host copies the current token into the gateway's tmpfs, as
   `/dev/shm/git-gate/<bottle_id>/<SECRET>-token` (0600; tmpfs is mounted on
   `/dev/shm` if it isn't one, and provisioning refuses to go on without it),
-  through a 0600 temp file, never a command line; teardown removes it. Every
+  through a 0600 temp file, never a command line (on macos-container it's
+  streamed in over `container exec -i`'s stdin: `container cp` lands beneath
+  a tmpfs mount, unseen); teardown removes it. Every
   four minutes the host controller renews it within ten minutes of expiry and
   copies the new one in when it changed (`control/hostctl/github_git_tokens.py`,
   `backend/provision_gateway.push_tokens`). The hooks read it per git call and
