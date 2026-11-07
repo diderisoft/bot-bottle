@@ -523,10 +523,12 @@ class TestCards(unittest.TestCase):
         self.assertEqual(["github_authorize"], options)
         self.assertIn("install: https://github.com/apps/bot-bottle-dev/installations/new", lines)
         self.assertFalse(any(line.startswith("token") for line in lines))
+        # Connected already: not refused (`special_card` allows it, the
+        # forge it asked for being there).
         connected = mock.Mock(return_value={"github.com": "github"})
         with mock.patch.object(remote_actions, "_connected_forges", connected):
-            refusal, _ = remote_actions.vet(_ask("forge-connect", "https://github.com"))
-        self.assertIn("already connected to this host", refusal)
+            self.assertEqual(("", "github"),
+                             remote_actions.vet(_ask("forge-connect", "https://github.com")))
 
     def reach(self, *, token: str | None = "t", reachable: object = True) -> Any:
         fake = mock.Mock()

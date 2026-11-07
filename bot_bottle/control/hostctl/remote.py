@@ -673,7 +673,7 @@ class ConsoleLink:
                      "the phone's answer wasn't applied")
         except Exception as e:  # pylint: disable=broad-exception-caught  # logged; still pending
             log.warn(f"remote: couldn't answer {request.session}'s request: {e}")
-            return
+            self._asking.pop(agent_id, None)  # still waiting: raise its card again
         await self.push_attention()
 
     async def reap(self) -> None:

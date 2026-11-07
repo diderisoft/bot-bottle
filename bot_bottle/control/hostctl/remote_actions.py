@@ -361,18 +361,14 @@ def vet(request: Any) -> tuple[str, str]:
     hasn't connected, can't. Asks an unknown forge what it is, briefly."""
     # pylint: disable=import-outside-toplevel
     from urllib.parse import urlparse
-    from ...contract.forges import GITHUB_HOSTS, unsupported_forge
+    from ...contract.forges import unsupported_forge
     from ...contract.supervise import TOOL_ADD_REPO, TOOL_FORGE_CONNECT
     from ...forge_kinds import detect
     from .repo_grants import find_forge
     if request.tool == TOOL_FORGE_CONNECT:
         url = request.proposed.strip()
         host = urlparse(url).hostname or ""
-        connected = _connected_forges().get(host, "")
-        if connected and host in GITHUB_HOSTS:
-            return (f"{host} is already connected to this host; ask for its repos with "
-                    f"add-repo"), connected
-        kind = connected or detect(url)
+        kind = _connected_forges().get(host, "") or detect(url)
         return ("" if kind else unsupported_forge(host or url)), kind
     if request.tool == TOOL_ADD_REPO:
         forge = request.proposed.strip().split("/", 1)[0]
@@ -386,6 +382,30 @@ def vet(request: Any) -> tuple[str, str]:
     return "", ""
 
 
+def _already_connected(request: Any, orchestrator: Any) -> bool:
+    """Allow a `forge-connect` for a forge this host connected already (the
+    operator did it another way, or before): what the agent asked for is
+    there. False when it isn't, or answering failed (the card then shows)."""
+    # pylint: disable=import-outside-toplevel
+    from urllib.parse import urlparse
+    from ...approvals import answer, ALLOW_ONCE
+    from ..client import AlreadyAnswered
+    if (urlparse(request.proposed.strip()).hostname or "") not in _connected_hosts():
+        return False  # the card asks
+    try:
+        note = answer(orchestrator(request.orchestrator), request, ALLOW_ONCE,
+                      via="this host, already connected")
+    except AlreadyAnswered:
+        return True
+    except ValueError:
+        return False  # not connected: the card asks
+    except Exception as e:  # pylint: disable=broad-exception-caught  # the card instead
+        log.warn(f"remote: allowing {request.tool} failed: {type(e).__name__}: {e}")
+        return False
+    log.info(f"remote: {request.session}: {note}")
+    return True
+
+
 async def special_card(request: Any, orchestrator: Any) -> tuple[list[str], list[str]] | None:
     """`card`, after `vet`: a request no card could meet is refused for the
     operator, the agent told why, and the card is ([], []). None when the
@@ -397,6 +417,9 @@ async def special_card(request: Any, orchestrator: Any) -> tuple[list[str], list
     from .nudge import nudge_if_waited
     if request.tool not in (TOOL_FORGE_CONNECT, TOOL_ADD_REPO):
         return None
+    if request.tool == TOOL_FORGE_CONNECT and await asyncio.to_thread(
+            _already_connected, request, orchestrator):
+        return [], []
     refusal, kind = await asyncio.to_thread(vet, request)
     if refusal:
         try:

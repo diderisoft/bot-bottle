@@ -24,6 +24,7 @@ from bot_bottle.control.client import AlreadyAnswered
 from bot_bottle.control.hostctl import console_terminal, pairing, remote
 from bot_bottle.lib.log import Die
 from tests.unit import use_bottle_root
+from tests.unit._forges import GITHUB, connected
 
 try:
     import iroh  # pyright: ignore[reportMissingImports]  # the optional `remote` extra
@@ -309,6 +310,48 @@ class TestApprovals(unittest.TestCase):
             asyncio.run(link.push_attention())
         self.assertEqual([], [m for m in sent if m["type"] == "attention"])
         self.assertEqual("reject", client.supervise_respond.call_args.kwargs["decision"])
+
+    def test_done_connected_allows_a_forge_request_once_its_connected(self) -> None:
+        pending = [{**_pending(), "tool": "forge-connect",
+                    "proposed_file": "https://github.com"}]
+        link, sent, client = self.link(pending)
+
+        def answered(*_a: object, **_k: object) -> None:
+            pending.clear()
+
+        client.supervise_respond.side_effect = answered
+        allow = {"type": "approval", "agent_id": "a1", "decision": "allow",
+                 "since": "2026-10-23T18:00:01.123456"}
+        with mock.patch("bot_bottle.control.hostctl.remote_actions._connected_forges",
+                        return_value={}), \
+                mock.patch("bot_bottle.forge_kinds.detect", return_value="github"), \
+                mock.patch("bot_bottle.control.hostctl.nudge.nudge_if_waited"), \
+                connected():
+            asyncio.run(link.push_attention())
+            asyncio.run(link.handle(allow))  # not connected yet: still waiting
+        client.supervise_respond.assert_not_called()
+        raised = [m for m in sent if m["type"] == "attention"]
+        self.assertEqual(2, len(raised))  # raised again, not shown as answered
+        with mock.patch("bot_bottle.control.hostctl.nudge.nudge_if_waited"), \
+                connected(GITHUB):
+            asyncio.run(link.handle(allow))
+        kw = client.supervise_respond.call_args.kwargs
+        self.assertEqual("approve", kw["decision"])
+        self.assertIn("connected github.com as octo; ask for its repos with add-repo",
+                      kw["notes"])
+        self.assertEqual({"type": "activity", "agent_id": "a1"}, sent[-1])
+
+    def test_a_forge_request_for_a_connected_forge_is_allowed_unseen(self) -> None:
+        pending = [{**_pending(), "tool": "forge-connect",
+                    "proposed_file": "https://github.com"}]
+        link, sent, client = self.link(pending)
+        with mock.patch("bot_bottle.control.hostctl.nudge.nudge_if_waited"), \
+                connected(GITHUB):
+            asyncio.run(link.push_attention())
+        self.assertEqual([], [m for m in sent if m["type"] == "attention"])
+        kw = client.supervise_respond.call_args.kwargs
+        self.assertEqual("approve", kw["decision"])
+        self.assertIn("ask for its repos with add-repo", kw["notes"])
 
     def test_approval_answers_the_raised_request(self) -> None:
         pending = [_pending()]

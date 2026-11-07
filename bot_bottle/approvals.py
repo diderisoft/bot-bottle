@@ -344,13 +344,39 @@ ALLOW_ONCE, ALLOW_PROJECT, DENY = "allow_once", "allow_project", "deny"
 DECISIONS = (ALLOW_ONCE, ALLOW_PROJECT, DENY)
 
 
+def _forge_now_connected(client: Any, request: Request, via: str) -> str:
+    """Allow an agent's `forge-connect` once the operator connected the forge
+    another way (GitHub's sign-in, `forge connect` on the host): the console's
+    "Done, connected". Allowing it before would tell the agent it has a
+    forge it doesn't, so that raises ValueError."""
+    # pylint: disable=import-outside-toplevel
+    from urllib.parse import urlparse
+    from . import forge_connections
+    from .control.hostctl.nudge import nudge_if_waited
+    host = urlparse(request.proposed.strip()).hostname or ""
+    try:
+        conn = forge_connections.get(host)
+    except forge_connections.ForgeConnectionError as e:
+        raise ValueError(str(e)) from e
+    if conn is None:
+        raise ValueError(f"{host or request.proposed} isn't connected on this host yet; "
+                         f"connect it, then answer again")
+    note = f"connected {host} as {conn.user().name}; ask for its repos with add-repo"
+    client.supervise_respond(request.id, bottle_slug=request.bottle, decision="approve",
+                             notes=f"{note}, from {via}")
+    nudge_if_waited(request, "approved", note)
+    return note
+
+
 def answer(client: Any, request: Request, decision: str, *, via: str) -> str:
     """Act on `decision` through the orchestrator `client` and return what
     happened. "Allow for project" also saves the routes, or raises ValueError
     if the request can't be saved. `via` is noted on the decision."""
     if decision not in DECISIONS:
         raise ValueError(f"unknown decision {decision!r}")
-    if request.tool in (TOOL_FORGE_CONNECT, TOOL_ADD_REPO) and decision != DENY:
+    if request.tool == TOOL_FORGE_CONNECT and decision != DENY:
+        return _forge_now_connected(client, request, via)
+    if request.tool == TOOL_ADD_REPO and decision != DENY:
         # Allowing alone would tell the agent it has what it asked for.
         raise ValueError("answer this request from the console's card, or deny it")
     target = keep_target(request.session) if decision == ALLOW_PROJECT else None
