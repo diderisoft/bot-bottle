@@ -8,7 +8,7 @@ FROM ${NODE_BASE_IMAGE}
 # in sync with the committed upstream archive checksums.
 ARG CODEX_VERSION=0.145.0
 
-ARG DEBIAN_SNAPSHOT=20260724T000000Z
+ARG DEBIAN_SNAPSHOT=20261101T000000Z
 RUN sed -i \
       -e "s|http://deb.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
       -e "s|https://deb.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \

@@ -5,7 +5,7 @@
 ARG NODE_BASE_IMAGE
 FROM ${NODE_BASE_IMAGE}
 
-ARG DEBIAN_SNAPSHOT=20260724T000000Z
+ARG DEBIAN_SNAPSHOT=20261101T000000Z
 RUN sed -i \
       -e "s|http://deb.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
       -e "s|https://deb.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \

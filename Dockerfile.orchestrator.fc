@@ -22,7 +22,7 @@ FROM ${ORCHESTRATOR_BASE_IMAGE}
 # snapshot.debian.org throttles under a release's parallel builds; retry
 # rather than fail the build. Retries::Delay off: apt 3.0's delayed-retry
 # queue spins ("Tried to start delayed item") until the build runs out of memory.
-ARG DEBIAN_SNAPSHOT=20260724T000000Z
+ARG DEBIAN_SNAPSHOT=20261101T000000Z
 RUN sed -i \
       -e "s|http://deb.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
       -e "s|https://deb.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
