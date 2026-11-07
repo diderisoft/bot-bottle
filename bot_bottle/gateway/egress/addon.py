@@ -185,7 +185,11 @@ class EgressAddon:
         key = (slug, _norm_host(host))
         if key not in self._safe_tokens:
             self._safe_tokens[key] = {}
-        self._safe_tokens[key][token] = time.monotonic() + self._token_allow_ttl
+        now = time.monotonic()
+        bucket = self._safe_tokens[key]
+        for stale in [t for t, exp in bucket.items() if exp <= now]:
+            del bucket[stale]
+        bucket[token] = now + self._token_allow_ttl
 
     def _serve_introspection(
         self, flow: http.HTTPFlow, path: str, config: Config,

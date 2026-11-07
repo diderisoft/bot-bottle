@@ -210,6 +210,7 @@ from bot_bottle.gateway.egress.full_log import FullLog  # noqa: E402
 from bot_bottle.gateway.egress.addon_settings import (  # noqa: E402
     DEFAULT_INBOUND_SCAN_LIMIT_BYTES,
     DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS,
+    DEFAULT_TOKEN_ALLOW_TTL_SECONDS,
     _inbound_scan_limit_from_env,
     _token_allow_timeout_from_env,
     _token_allow_ttl_from_env,
@@ -1087,9 +1088,6 @@ class TestTokenAllowTimeoutEnv(unittest.TestCase):
         with patch("sys.stderr", buf):
             value = _timeout_from({"EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS": "-3"})
         self.assertEqual(DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS, value)
-
-
-from bot_bottle.gateway.egress.addon_settings import DEFAULT_TOKEN_ALLOW_TTL_SECONDS  # noqa: E402
 
 
 def _ttl_from(env: dict[str, str]) -> float:
