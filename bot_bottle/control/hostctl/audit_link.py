@@ -10,6 +10,8 @@ them back once the user has unlocked with a passkey.
   `seq`, `ciphertext`; at most 200) -> `audit_decrypted` (`records`: `id` and
   `plaintext` or `error`) or `error`. Only for a run this host sent, and each
   read is journalled (`audit.records_read`).
+- `audit_query` (`bottle`, `activation`, `limit`) -> `audit_events`: the host
+  journal's events for one of the link's bottles (`audit_events`).
 - `audit_record` (from the host): one encrypted record of a running console
   agent's conversation (`audit_push`), every few seconds while there are new ones.
 """
@@ -18,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from typing import Any
 
 from ...lib import log
@@ -28,6 +30,7 @@ from .transcript_serve import TranscriptReader
 
 PUSH_SECONDS = 5.0
 MAX_RECORDS = 200
+MAX_AUDIT_EVENTS = 500
 
 
 class AuditLink:
@@ -147,3 +150,23 @@ class AuditLink:
 
 
 __all__ = ["AuditLink", "MAX_RECORDS", "PUSH_SECONDS"]
+
+
+async def audit_events(msg: dict[str, Any], bottles: Collection[str],
+                       query: Callable[[str, str | None, int], list[dict[str, Any]]],
+                       ) -> dict[str, Any]:
+    """The `audit_events` answer to an `audit_query`: `query`'s events for the
+    bottle, if it's one of `bottles`; anything else gets none, not an error."""
+    bottle, activation = msg.get("bottle"), msg.get("activation")
+    limit = msg.get("limit")
+    if type(limit) is not int or limit <= 0:  # pylint: disable=unidiomatic-typecheck
+        limit = MAX_AUDIT_EVENTS
+    limit = min(limit, MAX_AUDIT_EVENTS)
+    events: list[dict[str, Any]] = []
+    if isinstance(bottle, str) and bottle in bottles:
+        activation = activation if isinstance(activation, str) and activation else None
+        try:
+            events = await asyncio.to_thread(query, bottle, activation, limit)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            log.warn(f"remote: audit query for {bottle} failed: {e}")
+    return {"type": "audit_events", "request_id": msg.get("request_id"), "events": events}
