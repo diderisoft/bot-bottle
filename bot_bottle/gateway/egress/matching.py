@@ -74,8 +74,18 @@ def is_git_fetch_request(path: str, query: str) -> bool:
     )
 
 
+def _strip_port(host: str) -> str:
+    """Remove port and brackets from a host string for route matching."""
+    if host.startswith("["):
+        close = host.find("]")
+        host = host[1:close] if close >= 0 else host[1:]
+    elif ":" in host:
+        host = host.split(":", 1)[0]
+    return host
+
+
 def match_route(routes: typing.Sequence[Route], request_host: str) -> Route | None:
-    target = request_host.lower()
+    target = _strip_port(request_host.lower())
     return next((route for route in routes if route.host.lower() == target), None)
 
 

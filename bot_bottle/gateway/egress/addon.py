@@ -69,7 +69,15 @@ INTROSPECT_HOST = "_egress.local"
 
 
 def _norm_host(host: str) -> str:
-    return host.strip().strip("[]").rstrip(".").lower()
+    host = host.strip()
+    if host.startswith("["):
+        # IPv6 bracket notation: [::1] or [::1]:port
+        close = host.find("]")
+        host = host[1:close] if close >= 0 else host[1:]
+    elif ":" in host:
+        # hostname or IPv4 with port; e.g. api.example.com:443 → api.example.com
+        host = host.split(":", 1)[0]
+    return host.rstrip(".").lower()
 
 
 def host_mismatch(flow: typing.Any) -> str:

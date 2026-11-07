@@ -541,6 +541,28 @@ class TestMatchRoute(unittest.TestCase):
         self.assertIsNone(match_route(routes, "foo.example.com"))
         self.assertIsNone(match_route(routes, "example.com"))
 
+    def test_host_with_standard_port_matches(self):
+        r = match_route(self.ROUTES, "api.github.com:443")
+        self.assertIsNotNone(r)
+        self.assertEqual("api.github.com", r.host)  # type: ignore
+
+    def test_host_with_nonstandard_port_matches(self):
+        r = match_route(self.ROUTES, "api.github.com:8080")
+        self.assertIsNotNone(r)
+        self.assertEqual("api.github.com", r.host)  # type: ignore
+
+    def test_ipv6_with_port_matches(self):
+        routes = (Route(host="::1"),)
+        r = match_route(routes, "[::1]:8080")
+        self.assertIsNotNone(r)
+        self.assertEqual("::1", r.host)  # type: ignore
+
+    def test_ipv6_without_port_matches(self):
+        routes = (Route(host="::1"),)
+        r = match_route(routes, "[::1]")
+        self.assertIsNotNone(r)
+        self.assertEqual("::1", r.host)  # type: ignore
+
 
 # --- decide --------------------------------------------------------------
 
