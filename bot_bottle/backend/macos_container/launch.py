@@ -13,8 +13,8 @@ which would let it forge a neighbour's source address. It runs with
 other agents (`agent_firewall`); `container exec` can't grant a capability to
 one process. The agent isn't root, so it has neither, and its source address
 stays a reliable attribution key independent of the token. An agent that can
-get root could change its address and remove the firewall; the launch warns
-about one.
+get root could change its address and remove the firewall; launching one
+alongside other agents is refused.
 """
 
 from __future__ import annotations
@@ -459,8 +459,8 @@ def _verify_agent_firewall(
     host_ips: tuple[str, ...], peers: tuple[str, ...],
 ) -> None:
     """As the agent's user, prove its firewall keeps it off the Mac, the
-    internet and other agents, then warn if it can get root and so remove
-    it. Warns instead when the image has no `nft`."""
+    internet and other agents, then refuse if it can get root alongside peers.
+    Warns instead when the image has no `nft`."""
     if not firewalled:
         warn(f"agent {name}: its image has no `nft`, so nothing keeps it from "
              "reaching other agents on this Mac. Build it from a bot-bottle "
@@ -478,9 +478,20 @@ def _verify_agent_firewall(
     found = agent_firewall.privileges(
         bottle.exec(agent_firewall.privilege_check_script(), private=False).stdout)
     if found:
-        warn(f"agent {name} can get root ({'; '.join(found)}), so it can remove "
-             "its firewall: keeping it from other agents on this Mac is best "
-             "effort. See docs/reference/backends.md.")
+        if peers:
+            die(
+                f"agent {name} can get root ({'; '.join(found)}) and "
+                f"{len(peers)} other agent(s) are running on this host. "
+                "Refusing to co-locate them: a root-capable agent can remove "
+                "its firewall and reach the others. Stop the other agent(s) "
+                "first, or use an image that does not run as root. "
+                "See docs/reference/backends.md."
+            )
+        warn(
+            f"agent {name} can get root ({'; '.join(found)}), so it can remove "
+            "its firewall. No other agents are running now, but a later agent "
+            "will be refused alongside it. See docs/reference/backends.md."
+        )
 
 
 def _start_agent(plan: MacosContainerBottlePlan, endpoint: GatewayEndpoint) -> None:

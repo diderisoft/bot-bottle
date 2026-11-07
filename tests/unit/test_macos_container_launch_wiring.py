@@ -448,7 +448,8 @@ class TestLaunchIsolationProbe(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def _launch(self, probe: object, provision: object, *, ipv6_off: bool = True,
-                firewall: bool | Exception = True) -> list[str]:
+                firewall: bool | Exception = True,
+                peer_ips: tuple[str, ...] = ("192.168.128.20",)) -> list[str]:
         plan = _replace(
             _plan(self._tmp),
             agent_command="claude",
@@ -459,7 +460,7 @@ class TestLaunchIsolationProbe(unittest.TestCase):
         order: list[str] = []
         teardown = _Teardown()
         ctx = SimpleNamespace(bottle_id="b1", identity_token="tok",
-                              peer_ips=("192.168.128.20",))
+                              peer_ips=peer_ips)
 
         def register(*_a: object, **_k: object) -> object:
             order.append("register")
@@ -551,14 +552,23 @@ class TestLaunchIsolationProbe(unittest.TestCase):
                          firewall=ValueError("the agent's firewall didn't load"))
         self.assertIn("fail-closed", cm.exception.message)
 
-    def test_an_agent_that_can_get_root_is_warned_about(self) -> None:
+    def test_a_root_capable_agent_alongside_others_is_refused(self) -> None:
+        out = SimpleNamespace(stdout="bb-privilege=passwordless sudo\n")
+        with patch.object(MacosContainerBottle, "exec", return_value=out), \
+                self.assertRaises(Die) as cm:
+            self._launch(_quiet_probe, _no_provision)
+        self.assertIn("passwordless sudo", cm.exception.message)
+        self.assertIn("Refusing", cm.exception.message)
+        self.assertIn("co-locate", cm.exception.message)
+
+    def test_a_root_capable_agent_alone_is_warned_not_refused(self) -> None:
         out = SimpleNamespace(stdout="bb-privilege=passwordless sudo\n")
         with patch.object(MacosContainerBottle, "exec", return_value=out), \
                 patch.object(launch_mod, "warn") as warned:
-            self._launch(_quiet_probe, _no_provision)
+            self._launch(_quiet_probe, _no_provision, peer_ips=())
         message = " ".join(str(c.args[0]) for c in warned.call_args_list)
         self.assertIn("passwordless sudo", message)
-        self.assertIn("best effort", message)
+        self.assertIn("later agent", message)
 
     def test_ipv6_on_the_agent_bridge_stops_the_launch(self) -> None:
         def probe(*_a: object, **_k: object) -> None:

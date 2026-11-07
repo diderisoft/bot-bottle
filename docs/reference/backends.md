@@ -241,7 +241,7 @@ The host budget counts each running bottle at the memory it was given
 | Agent network | host-only agent network with pinned subnets | point-to-point TAP with a /31 per slot | an `--internal` /29 per agent, shared only with the gateway |
 | Way out | only the gateway is on the NAT egress network; an nft firewall in each agent's VM allows only the gateway, and a host pf anchor drops agent traffic to the host and off the subnet | `inet bot_bottle_fc` nft table: agent traffic to the gateway ports is DNAT'd to the gateway VM, everything else dropped | only the gateway is on an egress network |
 | Control plane reachable from agent | no; the agent isn't on the control network | no; no forward rule | no; the agent isn't on the `--internal` control network |
-| Agents reach each other | no, by the firewall in each agent's VM; best effort for an agent that can get root | no; no forward rule | no; no shared network |
+| Agents reach each other | no, by the firewall in each agent's VM; refused at launch for a root-capable agent alongside others | no; no forward rule | no; no shared network |
 | Isolation probe | yes, as root and as the agent, plus a DNS check | yes | yes, plus a DNS check |
 | Agent image builds | host `container build` | in the orchestrator VM with buildah, or a published ext4 image | host `docker build` |
 | `nested_containers` | yes, rootless podman in the guest | rejected | rejected |
@@ -326,8 +326,11 @@ shared network, for example to take traffic meant for the gateway. pf still
 keeps it off the Mac.
 After the probe, the launch checks, as the agent's user, whether it runs as
 root, has passwordless `sudo` or `doas`, or has a binary on `PATH` with file
-capabilities, and warns that isolation from other agents is best effort for
-it. The check can't prove an agent can't get root; it catches images built to
+capabilities. If it can get root and other agents are already running,
+the launch is refused: the risk of cross-agent sabotage through a removed
+firewall outweighs the benefit of co-locating them. If no other agents are
+running the launch warns, since the risk is deferred rather than immediate.
+The check can't prove an agent can't get root; it catches images built to
 allow it. Isolating such agents needs enforcement outside their VM, such as a
 network per agent with a relay, which `container` makes costly today: it
 can't attach a network to a running container, and vmnet doesn't route
