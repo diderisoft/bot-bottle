@@ -781,7 +781,7 @@ class BottleService:
              "label": r.meta.get("label", ""), "activation": r.meta.get("activation", ""),
              # Sessions recorded before origins were: from anywhere but the console.
              "origin": r.meta.get("origin", ORIGIN_TERMINAL), "writable": r.writable_allowed,
-             "agent_id": r.meta.get("agent_id", ""),
+             "agent_id": r.meta.get("agent_id", ""), "parent": r.meta.get("parent", ""),
              "held": r.id in held, "session": self.session_state(r.id)}
             for r in self._sessions.records() if r.kind == SESSION_KIND
         ]

@@ -12,14 +12,14 @@ The control stream (JSON lines):
   `activation`, `writable`) or `agent_errored`. Agent and bottle content from
   the console is refused. While it starts, `agent_stage` (`stage`, `title`)
   reports each launch stage, as the CLI shows them.
-- `stop` -> tears the bottle down; `agent_stopped` follows (also when one exits itself).
+- `stop` (`stop_children` bool) -> tears down the bottle and optionally its running children; `agent_stopped` follows for each.
 - `resume` (`agent_id`, `bottle`) -> relaunches a stopped bottle this host ran (`remote_requests`):
   `agent_started` (also for a repeat or a CLI resume of a console bottle) or `agent_errored`.
 - `hello` opens the stream; each (re)connect reports exits, reopens relays, sends
   `agents_running` and `host_stats` (each minute).
 - `agent_present` (from the host): a running session the console didn't launch, with a
-  host-made `agent_id`, `bottle`, `activation`, `label`, `definition`, `writable` and
-  `origin`, on every (re)connect and start; from then on it's one of the link's agents.
+  host-made `agent_id`, `bottle`, `parent`, `activation`, `label`, `definition`, `writable`
+  and `origin`, on every (re)connect and start; from then on it's one of the link's agents.
 - `attention` (from the host): a pending supervise request (`since`, `message`, `options`),
   `activity` once none waits; one no card could meet is refused (`remote_actions.vet`).
 - `approval` -> `allow`, `allow_project` or `deny`, echoing `since` (no stale answers).
@@ -61,7 +61,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
-from . import host_stats
+from . import host_stats, remote_actions
+from .children import child_agent_ids
 from .live_metrics import MetricsWatch
 from ...lib import log
 from ...util import same_instant
@@ -69,7 +70,6 @@ from .audit_index import query_host_journal
 from .audit_link import AuditLink, audit_events
 from .canary_link import CanaryLink
 from .console_terminal import HISTORY_LINES, session_terminals, type_into, valid_size
-from . import remote_actions
 from .pairing import (RemoteConfig, RemoteError, import_iroh, load_config, secret_key,
                       write_status)
 from .remote_requests import launch_extras, resume_request
@@ -243,7 +243,7 @@ class ConsoleLink:
         elif kind == "resume":
             await self._resume(str(msg.get("agent_id", "")), msg.get("bottle"))
         elif kind == "stop":
-            await self._stop(str(msg.get("agent_id", "")))
+            await self._stop(str(msg.get("agent_id", "")), bool(msg.get("stop_children")))
         elif kind == "approval":
             await self._approval(str(msg.get("agent_id", "")), str(msg.get("decision", "")),
                                  str(msg.get("since", "")))
@@ -472,13 +472,14 @@ class ConsoleLink:
     async def _audit_query(self, msg: dict[str, Any]) -> None:
         await self._send(await audit_events(msg, self.launched, self._audit))
 
-    async def _stop(self, agent_id: str) -> None:
+    async def _stop(self, agent_id: str, stop_children: bool = False) -> None:
         bottle = self.running.pop(agent_id, "")
         self.present.pop(agent_id, None)
         self._started_at.pop(agent_id, None)
         self._close_terminal(agent_id)
         if not bottle:
             return
+        child_ids = child_agent_ids(bottle, self.running) if stop_children else []
         exit_code = 0
         self._stopping.add(bottle)
         try:
@@ -491,6 +492,8 @@ class ConsoleLink:
         finally:
             self._stopping.discard(bottle)
         await self._send({"type": "agent_stopped", "agent_id": agent_id, "exit_code": exit_code})
+        for child_id in child_ids:
+            await self._stop(child_id)
 
     async def resume(self) -> None:
         """A (re)connected console: report agents that exited, reopen running
@@ -541,9 +544,9 @@ class ConsoleLink:
             terminal = await self._open_terminal(agent_id, bottle)
             present: dict[str, Any] = {
                 "type": "agent_present", "agent_id": agent_id, "bottle": bottle,
+                "parent": str(entry.get("parent", "")),
                 "label": str(entry.get("label", "")) or bottle,
-                "definition": str(entry.get("agent", "")),
-                "origin": str(entry.get("origin", "")),
+                "definition": str(entry.get("agent", "")), "origin": str(entry.get("origin", "")),
                 "writable": bool(terminal and terminal.writable),
                 "transcript": await self.transcripts.available(agent_id)}
             if activation:
@@ -660,8 +663,6 @@ def _pending_requests() -> list[dict[str, Any]]:
 
 
 def _orchestrator(url: str = "") -> Any:
-    """A client for the orchestrator holding a request (`url`), else the
-    environment's."""
     # pylint: disable=import-outside-toplevel  # only when a request is answered
     from ..client import OrchestratorClient, env_orchestrator_url
     return OrchestratorClient(url or env_orchestrator_url())
@@ -686,8 +687,7 @@ async def _read_lines(recv: "iroh.RecvStream") -> AsyncIterator[bytes]:
 async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
                            agents: Callable[[], list[str]] | None = None,
                            state: LinkState | None = None) -> None:
-    """Serve one console connection until it closes. The link resumes at the
-    first message (`hello`)."""
+    """Serve one console connection until it closes (`hello` resumes it)."""
     control = await conn.accept_bi()
     send_stream = control.send()
 

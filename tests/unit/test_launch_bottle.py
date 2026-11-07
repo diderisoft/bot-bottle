@@ -301,6 +301,24 @@ class TestChildren(unittest.TestCase):
         count = running_children_of("parent-p", FakeBottles())
         self.assertEqual(count, 2)
 
+    def test_child_agent_ids_returns_children_in_running(self):
+        from bot_bottle.bottle_state import BottleMetadata, write_metadata
+        from bot_bottle.control.hostctl.children import child_agent_ids
+        write_metadata(BottleMetadata(identity="c1", agent_name="a", cwd="",
+                                      copy_cwd=False, started_at="now", parent="p-id"))
+        write_metadata(BottleMetadata(identity="c2", agent_name="a", cwd="",
+                                      copy_cwd=False, started_at="now", parent="p-id"))
+        write_metadata(BottleMetadata(identity="c3", agent_name="a", cwd="",
+                                      copy_cwd=False, started_at="now", parent="other"))
+        running = {"agent-c1": "c1", "agent-c2": "c2", "agent-c3": "c3", "agent-p": "p-id"}
+        result = child_agent_ids("p-id", running)
+        self.assertCountEqual(result, ["agent-c1", "agent-c2"])
+
+    def test_child_agent_ids_empty_when_no_children(self):
+        from bot_bottle.control.hostctl.children import child_agent_ids
+        result = child_agent_ids("p-id", {"agent-a": "some-bottle"})
+        self.assertEqual(result, [])
+
     def test_running_children_of_zero_when_stopped(self):
         from bot_bottle.bottle_state import BottleMetadata, write_metadata
         from bot_bottle.control.hostctl.children import running_children_of

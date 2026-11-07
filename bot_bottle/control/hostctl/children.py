@@ -32,4 +32,12 @@ def is_launch_bottle_child(identity: str) -> bool:
     return meta is not None and bool(meta.parent)
 
 
-__all__ = ["DEFAULT_MAX_CHILDREN", "is_launch_bottle_child", "running_children_of"]
+def child_agent_ids(parent_bottle: str, running: "dict[str, str]") -> list[str]:
+    """Agent IDs in `running` whose bottle metadata names `parent_bottle` as parent."""
+    from ...bottle_state import read_metadata
+    return [aid for aid, bid in list(running.items())
+            if (m := read_metadata(bid)) and m.parent == parent_bottle]
+
+
+__all__ = ["DEFAULT_MAX_CHILDREN", "child_agent_ids", "is_launch_bottle_child",
+           "running_children_of"]

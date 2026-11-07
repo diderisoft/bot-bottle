@@ -1310,5 +1310,62 @@ class TestUnlessStopped(unittest.TestCase):
         self.assertEqual(("done", True), asyncio.run(go()))
 
 
+class TestStopWithChildren(unittest.TestCase):
+    """Stop-with-children: `stop_children` cascades teardown to running children."""
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="remote-stop-children."))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.addCleanup(use_bottle_root(self.root))
+
+    def _setup(self) -> tuple[remote.ConsoleLink, _Bottles, list[dict[str, Any]]]:
+        from bot_bottle.bottle_state import BottleMetadata, write_metadata
+        # Child bottle whose metadata points to bottle-1 (the parent).
+        write_metadata(BottleMetadata(identity="child-1", agent_name="a",
+                                      cwd="", copy_cwd=False, started_at="now",
+                                      parent="bottle-1"))
+        bottles = _Bottles()
+        bottles.running = {"bottle-1", "child-1"}
+        link, sent = _link(bottles)
+        # Launch the parent so it appears in link.running.
+        asyncio.run(link.handle({"type": "launch", "agent_id": "parent-a",
+                                 "definition": {"name": "implementer"}}))
+        # Fake the child into the link's running map (as discover would).
+        link.running["child-a"] = "child-1"
+        return link, bottles, sent
+
+    def test_stop_with_children_flag_tears_down_children(self) -> None:
+        link, bottles, sent = self._setup()
+        asyncio.run(link.handle({"type": "stop", "agent_id": "parent-a",
+                                 "stop_children": True}))
+        self.assertIn("bottle-1", bottles.torn_down)
+        self.assertIn("child-1", bottles.torn_down)
+        stopped_ids = {m["agent_id"] for m in sent if m.get("type") == "agent_stopped"}
+        self.assertIn("parent-a", stopped_ids)
+        self.assertIn("child-a", stopped_ids)
+
+    def test_stop_without_flag_leaves_children_running(self) -> None:
+        link, bottles, sent = self._setup()
+        asyncio.run(link.handle({"type": "stop", "agent_id": "parent-a"}))
+        self.assertIn("bottle-1", bottles.torn_down)
+        self.assertNotIn("child-1", bottles.torn_down)
+        stopped_ids = {m["agent_id"] for m in sent if m.get("type") == "agent_stopped"}
+        self.assertIn("parent-a", stopped_ids)
+        self.assertNotIn("child-a", stopped_ids)
+
+    def test_parent_field_in_agent_present(self) -> None:
+        """discovered bottles include the parent bottle id from their list entry."""
+        bottles = _Bottles()
+        bottles.running.add("child-bottle")
+        bottles.listed.append({"id": "child-bottle", "agent": "coder", "label": "child",
+                                "activation": "act-c", "origin": "terminal",
+                                "writable": True, "parent": "parent-bottle"})
+        link, sent = _link(bottles)
+        asyncio.run(link.discover())
+        present = next((m for m in sent if m.get("type") == "agent_present"), None)
+        self.assertIsNotNone(present)
+        self.assertEqual("parent-bottle", present["parent"])  # type: ignore[index]
+
+
 if __name__ == "__main__":
     unittest.main()
