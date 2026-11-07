@@ -40,6 +40,7 @@ from bot_bottle.gateway.egress.dlp import (
 )
 from bot_bottle.gateway.egress.outbound_pipeline import redact_request, scan_request
 from bot_bottle.gateway.egress.matching import (
+    _strip_port,
     decide,
     match_route,
 )
@@ -69,15 +70,7 @@ INTROSPECT_HOST = "_egress.local"
 
 
 def _norm_host(host: str) -> str:
-    host = host.strip()
-    if host.startswith("["):
-        # IPv6 bracket notation: [::1] or [::1]:port
-        close = host.find("]")
-        host = host[1:close] if close >= 0 else host[1:]
-    elif ":" in host:
-        # hostname or IPv4 with port; e.g. api.example.com:443 → api.example.com
-        host = host.split(":", 1)[0]
-    return host.rstrip(".").lower()
+    return _strip_port(host.strip()).rstrip(".").lower()
 
 
 def host_mismatch(flow: typing.Any) -> str:
