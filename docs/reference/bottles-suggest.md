@@ -94,8 +94,37 @@ steps on the same screen (`cli/screen.py`, `commands/guided_view.py`):
    review's keys. Edit opens the proposal as YAML in
    `$VISUAL`/`$EDITOR`; after you save, it's validated, and it reopens with
    the errors inline until it validates (emptying the file cancels the
-   edit). A proposal that can't run on this host (below) offers only edit
-   and cancel.
+   edit). A proposal that can't run on this host (below) offers only edit,
+   reply and cancel.
+
+   **Edits to other bottles** (PRD 0118, design repo). A proposal can also
+   change the setup, not only this run: add the project's forge and repo to
+   `./main`, say, so every later run has them. Each edit is shown above the
+   `new` line, the first pending one highlighted, its why under it:
+
+   ```
+   edit ./main  + didericis/bot-bottle (push)
+                the project's forge
+   ✓    bot-bottle-dev: edited (a new version)
+   ```
+
+   `a` accepts the first pending edit and writes it then; `x` skips it; `d`
+   shows its diff above the details. `Enter` and `s` wait until every edit
+   is accepted or skipped. An accepted project bottle edit is written in the
+   repo (it shows in `git status`, for you to commit) and trusted on this
+   host, so the launch doesn't ask again; a host bottle edit is a new
+   version (`bot-bottle bottles history`). An edit whose repos are on a
+   forge this host hasn't connected waits for `c`. The review shows the
+   stack as if every pending edit were accepted; after each decision the
+   proposal is validated again, so a stack that named a skipped new bottle
+   drops it.
+
+   **Replying.** `r` takes a line and asks the architect again, with the
+   conversation replayed: each earlier proposal, what you did with it
+   (edits accepted or skipped, forges connected) and your replies
+   (`suggest/turns.py`). Your replies stay above the gist, a line each.
+   Each turn is still a fresh headless call; the architect's bottle keeps
+   no session.
 5. **Launch** in that bottle with the task as the agent's first prompt.
 
 The launch's questions (trust a project bottle, confirm a git-gate host key,
@@ -113,6 +142,9 @@ anything runs as the run's own bottle, `suggested`: kept with the run (a
 resume finds it, the console shows it read-only, the audit has its full
 text), never added to the library. "Save it as a bottle" writes it like
 `--write`, versioned like any host bottle, and runs that.
+
+Without the screen (`--auto`, `--verbose`, no terminal), a proposal's edits
+are skipped, with a line saying so, and it's validated again without them.
 
 **`--auto`** (ADR 0018) skips step 4: it prints one line saying what it chose
 (`--auto: running in basic, adding egress api.open-meteo.com (from
@@ -171,6 +203,7 @@ A proposal is a JSON object with these fields:
 | `additions.repos` | array | repo grants: `{grant, why}`, e.g. `gitea.example.com/owner/repo:write` |
 | `additions.env` | array | env var names: `{name, why}` — values come from the secrets file |
 | `additions.credentials` | array | injected secrets: `{name, route, why}` — a secret name and the egress host it goes on |
+| `edits` | array | changes to other bottles, each accepted or skipped on the review (PRD 0118): `{bottle, extends, add, why}`. `bottle` is a host bottle, a project bottle (`./main`) or `new:<name>` (a new host bottle, with `extends`); `add` takes what `additions` does, plus `forges` (`{<host>: {kind, url}}`, the description of a forge its repos are on) |
 | `similar` | array | existing bottles close to the proposal: `{bottle, covers}` |
 | `notes` | array | free-text caveats, including why the rules answered when the architect couldn't |
 | `source` | string | which path produced it: `architect` or `rules` (set by the flow, never by the model) |
@@ -220,6 +253,16 @@ A proposal is a JSON object with these fields:
   the guided `start` nor `--auto` runs it. A grant's token is its forge's
   default user's. The architect's library lists each bottle's
   `missing_secrets`, so it can avoid proposing it.
+- **Edits.** An edit never touches a built-in bottle (a host bottle that
+  extends it is edited instead), names a host bottle that exists or a new
+  name that's free, and is checked by loading the bottle as if it were
+  accepted: one that doesn't load is dropped with a note, and so are its
+  secret-looking env names and grants on forges nothing describes (a known
+  forge this host hasn't connected is kept, as for additions). The stack
+  and its additions are then validated with every pending edit applied
+  (`suggest/edits.py`'s `overlay`), so the stack may name an edited bottle,
+  a new one by its name. Nothing is written until it's accepted; agents and
+  built-ins are never edited.
 - **Stacks are stacked as a launch stacks them.** For options 1–3 the additions
   are a bottle merged after `bottles` in order, exactly as
   `--bottle a --bottle b` merges them. It has no `extends`.
@@ -239,7 +282,9 @@ which path produced it.
 The suggestion runs in the host controller, for every caller: `bot-bottle
 bottles suggest` and `bot-bottle start` send the task there (`POST /suggest`),
 and the console's launch page asks over the link. So all three get the same
-flow and share the architect's warm bottle.
+flow and share the architect's warm bottle. A reply sends the conversation
+with the task (`turns`: each earlier proposal, what was done with it, and the
+reply).
 
 Without a project directory (the console when it doesn't send one), the
 project's bottle, origin and lockfiles aren't considered, and the proposal
@@ -308,7 +353,10 @@ The input is:
   that a grant needs no bottle stacked for its forge and that one on an
   unconnected forge is proposed as any other (the person connects it
   before the launch);
-- secret *names* from the host secrets file.
+- secret *names* from the host secrets file;
+- how to propose `edits` (built-in bottles are marked `builtin`), and to
+  keep what only this task needs in `additions`;
+- after a reply, the conversation so far (`suggest/turns.py`).
 
 The answer is parsed as a proposal and validated like any other.
 

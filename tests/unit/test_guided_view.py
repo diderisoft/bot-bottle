@@ -17,13 +17,14 @@ from typing import Any
 from unittest import mock
 
 from bot_bottle.cli import screen, start_prefs, suggest_client
-from bot_bottle.cli.commands import guided, guided_view, start
+from bot_bottle.cli.commands import guided, guided_view, review_edits, start
 from bot_bottle.cli.screen import DONE, Screen
 from bot_bottle.contract.hostctl import RUN_BOTTLE, LaunchRequest, Settings
 from bot_bottle.lib import log, prompt
 from bot_bottle.manifest import ManifestIndex
 from bot_bottle.suggest.proposal import (
-    OPTION_STACK_ADDITIONS, Proposal, ProposalAdditions, ProposalEgress, ProposalRepo,
+    OPTION_STACK_ADDITIONS, Proposal, ProposalAdditions, ProposalEdit, ProposalEgress,
+    ProposalRepo,
 )
 from bot_bottle.forge_connect import ConnectError, SshUnreachable
 from tests.unit._forges import GITEA
@@ -590,3 +591,48 @@ class TestOriginLabel(unittest.TestCase):
             self.assertEqual("gitea.dideric.is/didericis/bot-bottle",
                              guided_view.origin_of(Path(tmp)))
             self.assertEqual("", guided_view.origin_of(Path(tmp) / "nope"))
+
+
+class TestEditsAndReplies(_View):
+    """Edits to other bottles, accepted or skipped one at a time, and
+    replying to the architect (PRD 0118)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.bottle = self.root / "bottles" / "example.md"
+        self.bottle.write_text("---\nextends: basic\n---\n\nExample.\n")
+        self.suggestion.edits = [ProposalEdit(
+            "example", ProposalAdditions(egress=[ProposalEgress("api.linear.app", ["POST"])]),
+            why="tickets for every run")]
+        self.enterContext(mock.patch("bot_bottle.manifest.versions.record_or_warn"))
+
+    def test_accept_writes_it_and_then_enter_runs(self) -> None:
+        self.run_view(["enter", "a", "enter"], name="claude", prompt="t")
+        text = self.frames()
+        self.assertIn("edit example  + api.linear.app", text)
+        self.assertIn("tickets for every run", text)
+        self.assertIn(review_edits.EDIT_KEYS, text)
+        self.assertIn("accept or skip each edit first (a, x)", text)
+        self.assertIn("✓    example: edited (a new version)", text)
+        self.assertIn("api.linear.app", self.bottle.read_text())
+        self.assertEqual(1, len(self.launched))
+
+    def test_skip_leaves_the_bottle_as_it_was(self) -> None:
+        self.run_view(["x", "enter"], name="claude", prompt="t")
+        self.assertNotIn("api.linear.app", self.bottle.read_text())
+        self.assertEqual(1, len(self.launched))
+
+    def test_d_shows_the_diff(self) -> None:
+        self.run_view(["d", "q"], name="claude", prompt="t")
+        self.assertRegex(self.frames(), r"\+ +- host: api\.linear\.app")
+
+    def test_a_reply_asks_again_with_the_conversation(self) -> None:
+        revised = _proposal("api.weather.gov")
+        answers = iter([self.suggestion, revised])
+        self.suggest.side_effect = lambda *_a, **_k: next(answers)  # type: ignore[misc]
+        self.run_view(["x", "r", *"use main", "enter", "enter"], name="claude", prompt="t")
+        turns = self.suggest.call_args.kwargs["turns"]
+        self.assertEqual("use main", turns[0].reply)
+        self.assertEqual(["skipped the edit of example"], turns[0].events)
+        self.assertIn("› use main", self.frames())
+        self.assertIn("api.weather.gov", self.launched[0][0].run_bottle)

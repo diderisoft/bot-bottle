@@ -199,11 +199,14 @@ class _Handler(BaseHTTPRequestHandler):
                 raise ValueError("rules must be true or false")
             settings = Settings.from_json(body.get("settings"))
             cwd = suggest_routes.cwd_of(body.get("cwd"))
+            # pylint: disable-next=import-outside-toplevel
+            from ...suggest.turns import parse_turns
+            turns = parse_turns(body.get("turns"))
         except ValueError as e:
             self._send(400, {"error": str(e)})
             return
         job = server.jobs.start("bottle.suggest", role,
-                                lambda: suggest_routes.suggest(task, cwd, rules, settings))
+                                lambda: suggest_routes.suggest(task, cwd, rules, settings, turns))
         self._send(202, {"job": job.id})
 
     def _architect_warm(self, server: HostControlServer) -> None:

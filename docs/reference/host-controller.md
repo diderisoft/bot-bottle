@@ -371,7 +371,7 @@ Every bottle suggestion runs here, in the host controller, which keeps the
 bottle architect's own bottle warm (`architect_bottle.py`;
 [bottles-suggest.md](bottles-suggest.md#bottle-architect-default)). The CLI
 asks over HTTP, `cli` role only: `POST /suggest` (`task`, optional `cwd`,
-`rules`, `settings`) starts a `bottle.suggest` job whose `result` is
+`rules`, `settings`, and `turns`, the conversation so far after a reply) starts a `bottle.suggest` job whose `result` is
 `{"proposal": ...}`, and `POST /architect/warm` (`settings`) boots the warm
 bottle in the background and answers its `state` (`booting`, `ready`,
 `down`, or `unavailable`). The host controller boots the bottle when it

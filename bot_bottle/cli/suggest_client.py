@@ -10,12 +10,16 @@ the offline, deterministic path needs no model and no host controller.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..contract.hostctl import ARCHITECT_WARM_PATH, SUGGEST_PATH, Settings
 from ..control.hostctl import runner
 from ..control.hostctl.client import HostControlClient
 from ..control.hostctl.runner import HostControlError
 from ..suggest.proposal import Proposal
+
+if TYPE_CHECKING:
+    from ..suggest.turns import Turn
 
 NO_HOST_NOTE = "bottle-architect didn't answer (the host controller isn't reachable: {}); " \
                "this is the rules path"
@@ -26,8 +30,9 @@ def _client() -> HostControlClient:
 
 
 def suggest(task: str, cwd: Path | None, *, settings: Settings,
-            rules: bool = False) -> Proposal:
-    """The suggestion flow's validated proposal for `task`."""
+            rules: bool = False, turns: "list[Turn] | None" = None) -> Proposal:
+    """The suggestion flow's validated proposal for `task`; `turns`, the
+    conversation with the architect so far (PRD 0118)."""
     # pylint: disable-next=import-outside-toplevel
     from ..suggest.flow import suggest as local_suggest
     if rules:
@@ -36,7 +41,8 @@ def suggest(task: str, cwd: Path | None, *, settings: Settings,
         client = _client()
         job = str(client.post(SUGGEST_PATH, {
             "task": task, "cwd": str(cwd) if cwd else "", "rules": False,
-            "settings": settings.to_json()})["job"])
+            "settings": settings.to_json(),
+            **({"turns": [t.to_dict() for t in turns]} if turns else {})})["job"])
         final = client.follow(job, lambda _line: None)
     except (HostControlError, OSError) as e:
         return _local_fallback(task, cwd, str(e))

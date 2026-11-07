@@ -89,6 +89,30 @@ class ProposalNewBottle:
 
 
 @dataclass
+class ProposalEdit:
+    """A change to a bottle other than this run's (PRD 0118): `bottle` is a
+    host bottle's name, a project bottle (`./main`) or `new:<name>` (a new
+    host bottle, `extends` its parent). `add` holds what it gains, typed as
+    additions are; `forges` describes the forges its repos are on (ADR 0019).
+    Written only once the user accepts it (`suggest.edits.accept`)."""
+
+    bottle: str
+    add: ProposalAdditions
+    why: str = ""
+    extends: str = ""
+    forges: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        add = _additions_dict(self.add)
+        if self.forges:
+            add["forges"] = {h: dict(d) for h, d in self.forges.items()}
+        out: dict[str, Any] = {"bottle": self.bottle, "add": add, "why": self.why}
+        if self.extends:
+            out["extends"] = self.extends
+        return out
+
+
+@dataclass
 class ProposalSimilar:
     """An existing bottle that is close to what the proposal needs."""
 
@@ -126,6 +150,7 @@ class Proposal:
     blocked: str = ""
     summary: str = ""
     forges: dict[str, dict[str, Any]] = field(default_factory=dict)
+    edits: list[ProposalEdit] = field(default_factory=list)
 
     # --- serialisation --------------------------------------------------
 
@@ -139,16 +164,7 @@ class Proposal:
                  "about": self.new_bottle.about}
                 if self.new_bottle else None
             ),
-            "additions": {
-                "egress": [{"host": e.host, "methods": list(e.methods), "why": e.why}
-                            for e in self.additions.egress],
-                "repos": [{"grant": r.grant, "why": r.why}
-                          for r in self.additions.repos],
-                "env": [{"name": v.name, "why": v.why}
-                        for v in self.additions.env],
-                "credentials": [{"name": c.name, "route": c.route, "why": c.why}
-                                for c in self.additions.credentials],
-            },
+            "additions": _additions_dict(self.additions),
             "similar": [{"bottle": s.bottle, "covers": s.covers}
                         for s in self.similar],
             "notes": list(self.notes),
@@ -161,6 +177,8 @@ class Proposal:
             out["summary"] = self.summary
         if self.forges:
             out["forges"] = {h: dict(d) for h, d in self.forges.items()}
+        if self.edits:
+            out["edits"] = [e.to_dict() for e in self.edits]
         return out
 
     def to_json(self, *, indent: int = 2) -> str:
@@ -206,12 +224,7 @@ class Proposal:
         raw_add = d.get("additions", {})
         if not isinstance(raw_add, dict):
             raise ValueError("proposal.additions must be an object")
-        additions = ProposalAdditions(
-            egress=_parse_egress_list(raw_add.get("egress", [])),
-            repos=_parse_repo_list(raw_add.get("repos", [])),
-            env=_parse_env_list(raw_add.get("env", [])),
-            credentials=_parse_credential_list(raw_add.get("credentials", [])),
-        )
+        additions = _parse_additions(raw_add)
 
         raw_similar = d.get("similar", [])
         if not isinstance(raw_similar, list):
@@ -236,7 +249,7 @@ class Proposal:
         return cls(option=option, bottles=bottles, new_bottle=new_bottle,
                    additions=additions, similar=similar, notes=notes,
                    summary=" ".join(summary.split()) if isinstance(summary, str) else "",
-                   forges=forges)
+                   forges=forges, edits=_parse_edit_list(d.get("edits", [])))
 
     @classmethod
     def from_json(cls, text: str) -> "Proposal":
@@ -249,6 +262,47 @@ class Proposal:
 
 
 # --- helpers ----------------------------------------------------------------
+
+
+def _additions_dict(add: ProposalAdditions) -> dict[str, Any]:
+    return {
+        "egress": [{"host": e.host, "methods": list(e.methods), "why": e.why}
+                   for e in add.egress],
+        "repos": [{"grant": r.grant, "why": r.why} for r in add.repos],
+        "env": [{"name": v.name, "why": v.why} for v in add.env],
+        "credentials": [{"name": c.name, "route": c.route, "why": c.why}
+                        for c in add.credentials],
+    }
+
+
+def _parse_additions(raw: dict[str, Any]) -> ProposalAdditions:
+    return ProposalAdditions(
+        egress=_parse_egress_list(raw.get("egress", [])),
+        repos=_parse_repo_list(raw.get("repos", [])),
+        env=_parse_env_list(raw.get("env", [])),
+        credentials=_parse_credential_list(raw.get("credentials", [])),
+    )
+
+
+def _parse_edit_list(raw: object) -> list[ProposalEdit]:
+    """`edits`, skipping any that don't name a bottle or add nothing."""
+    if not isinstance(raw, list):
+        raise ValueError("proposal.edits must be an array")
+    out = []
+    for item in raw:
+        if not isinstance(item, dict) or not isinstance(item.get("bottle"), str):
+            continue
+        add = item.get("add")
+        add = add if isinstance(add, dict) else {}
+        forges = add.get("forges")
+        edit = ProposalEdit(
+            bottle=item["bottle"].strip(), add=_parse_additions(add),
+            why=str(item.get("why", "")), extends=str(item.get("extends", "") or ""),
+            forges=({str(h): dict(v) for h, v in forges.items() if isinstance(v, dict)}
+                    if isinstance(forges, dict) else {}))
+        if edit.bottle and not edit.add.is_empty():
+            out.append(edit)
+    return out
 
 
 def _parse_egress_list(raw: object) -> list[ProposalEgress]:
@@ -320,6 +374,7 @@ __all__ = [
     "Proposal",
     "ProposalAdditions",
     "ProposalCredential",
+    "ProposalEdit",
     "ProposalEgress",
     "ProposalEnv",
     "ProposalNewBottle",

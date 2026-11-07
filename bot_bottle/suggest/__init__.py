@@ -24,6 +24,7 @@ from .proposal import (
     Proposal,
     ProposalAdditions,
     ProposalCredential,
+    ProposalEdit,
     ProposalEgress,
     ProposalEnv,
     ProposalNewBottle,
@@ -33,13 +34,15 @@ from .proposal import (
 
 if TYPE_CHECKING:
     from .architect import Runner
+    from .turns import Turn
 
 
 def suggest(task: str, cwd: Path | None, *, rules: bool = False,
-            run: "Runner | None" = None, host_root: Path | None = None) -> Proposal:
+            run: "Runner | None" = None, host_root: Path | None = None,
+            turns: "list[Turn] | None" = None) -> Proposal:
     """`suggest.flow.suggest`, imported when called so the package stays light."""
     from .flow import suggest as _suggest  # pylint: disable=import-outside-toplevel
-    return _suggest(task, cwd, rules=rules, run=run, host_root=host_root)
+    return _suggest(task, cwd, rules=rules, run=run, host_root=host_root, turns=turns)
 
 
 __all__ = [
@@ -51,6 +54,7 @@ __all__ = [
     "Proposal",
     "ProposalAdditions",
     "ProposalCredential",
+    "ProposalEdit",
     "ProposalEgress",
     "ProposalEnv",
     "ProposalNewBottle",

@@ -23,6 +23,7 @@ from .architect import ArchitectError, Runner, architect_suggest
 from .proposal import Proposal
 from .rules import rules_suggest
 from .runnable import host_secrets
+from .turns import Turn
 from .validate import validate_proposal
 
 SOURCE_ARCHITECT = "architect"
@@ -53,10 +54,12 @@ def suggest(
     rules: bool = False,
     run: Runner | None = None,
     host_root: Path | None = None,
+    turns: list[Turn] | None = None,
 ) -> Proposal:
     """A validated proposal for `task`. `cwd` is the project directory, or
     None when there's none to look at. `run` asks the architect; without
-    one, the rules path answers and says why."""
+    one, the rules path answers and says why. `turns` is the conversation
+    so far (PRD 0118), for the architect."""
     # pylint: disable-next=import-outside-toplevel
     from .forges import described_forges
     host_root = host_root or bot_bottle_root()
@@ -70,7 +73,7 @@ def suggest(
             if run is None:
                 raise ArchitectError(NO_RUNNER)
             proposal = architect_suggest(task, cwd, run=run, host_root=host_root,
-                                         described=described)
+                                         described=described, turns=turns)
             source = SOURCE_ARCHITECT
         except ArchitectError as e:
             proposal, source = rules_suggest(task, cwd, host_root=host_root), SOURCE_RULES

@@ -34,6 +34,7 @@ from typing import Any
 from ..paths import bot_bottle_root
 from .proposal import Proposal
 from .starter import ARCHITECT_AGENT
+from .turns import Turn, prompt_lines
 
 TIMEOUT_SECONDS = 120
 
@@ -140,8 +141,11 @@ def _host_library(host_root: Path, dirs: list[tuple[Path, bool]]) -> list[dict[s
             # What stacking it costs: every repo it grants, and its size.
             repos = [str(r.get("detail") or r["name"]) for r in elems if r["kind"] == "repo"]
             missing = library_facts(full_name, dirs, secrets)
+            # pylint: disable-next=import-outside-toplevel
+            from ..manifest.loader import BUILTIN_BOTTLES_DIR
             result.append({
                 "name": full_name,
+                **({"builtin": True} if directory == BUILTIN_BOTTLES_DIR else {}),
                 "about": about,
                 "extends": extends,
                 "elements": elem_summary,
@@ -198,6 +202,8 @@ def _build_prompt(
     project_meta: dict[str, Any],
     forges: list[dict[str, Any]],
     secret_names: list[str],
+    *,
+    turns: "list[Turn] | None" = None,
 ) -> str:
     sections = [
         f"Task: {task}",
@@ -228,8 +234,24 @@ def _build_prompt(
         "Keep each "
         "addition's \"why\" to five words or fewer (\"fetch forecasts\"): it's shown in a "
         "column beside the host or repo.",
+        "",
+        EDITS_HELP,
+        *prompt_lines(turns or []),
     ]
     return "\n".join(sections)
+
+
+EDITS_HELP = (
+    "To fix the setup, not only this run, give an \"edits\" key too: a list of "
+    "{\"bottle\": \"./main\" (the project's bottle) or a host bottle's name or "
+    "\"new:<name>\" (with \"extends\"), \"add\": {\"egress\", \"repos\", \"env\", "
+    "\"credentials\" as in additions, and \"forges\": {\"<host>\": {\"kind\": \"gitea\" or "
+    "\"github\", \"url\": \"https://...\"}} for a forge its repos are on that no bottle "
+    "describes}, \"why\": five words or fewer}. Use one when later runs need the same "
+    "access (the project's own repo and forge belong in ./main); keep what only this "
+    "task needs in additions. Never edit a bottle marked \"builtin\". The person "
+    "accepts or skips each edit; the stack may name an edited bottle (a new one by "
+    "its name) as if it were accepted.")
 
 
 def _extract_json(text: str) -> str | None:
@@ -288,12 +310,14 @@ def architect_suggest(
     run: Runner,
     host_root: Path | None = None,
     described: dict[str, dict[str, Any]] | None = None,
+    turns: list[Turn] | None = None,
 ) -> Proposal:
     """The host's `bottle-architect` agent's proposal for `task`, not yet
     validated. `cwd` is the project directory, or None when there's none to
     look at; `run` asks the architect (its warm bottle); `described` are the
-    forges it may grant on that aren't connected (`suggest.forges`).
-    ArchitectError when the architect can't answer."""
+    forges it may grant on that aren't connected (`suggest.forges`); `turns`
+    the conversation so far (`suggest.turns`). ArchitectError when the
+    architect can't answer."""
     if host_root is None:
         host_root = bot_bottle_root()
     architect = load_architect(host_root)
@@ -331,7 +355,7 @@ def architect_suggest(
     except Exception:  # pylint: disable=broad-exception-caught
         pass
 
-    prompt = _build_prompt(task, library, project_meta, forges, secret_names)
+    prompt = _build_prompt(task, library, project_meta, forges, secret_names, turns=turns)
     raw = run(architect, prompt)
     proposal = _parse_and_repair(raw)
     if proposal is None:

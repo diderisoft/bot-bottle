@@ -65,12 +65,24 @@ class TestRoutes(unittest.TestCase):
         assert isinstance(value, dict)
         self.assertEqual("architect", value["proposal"]["source"])
 
+    def test_suggest_passes_the_conversation(self) -> None:
+        turn = {"proposal": {"option": "reuse"}, "reply": "use ./main", "events": ["x"]}
+        with mock.patch("bot_bottle.suggest.flow.suggest", return_value=_proposal()) as flow:
+            code, body = self.post("/suggest", {"task": "do it", "turns": [turn],
+                                                "settings": Settings().to_json()})
+            self.assertEqual(202, code)
+            job = self.server.jobs.get(str(body["job"]), ROLE_CLI)
+            assert job is not None
+            list(job.follow(timeout=5))
+        self.assertEqual([turn], [t.to_dict() for t in flow.call_args.kwargs["turns"]])
+
     def test_suggest_rejects_bad_requests_and_other_roles(self) -> None:
         good = {"task": "t", "settings": Settings().to_json()}
         self.assertEqual(401, self.post("/suggest", good, role=None)[0])
         self.assertEqual(403, self.post("/suggest", good, role=ROLE_ORCHESTRATOR)[0])
         for bad in ({"task": "", "settings": {}}, {"task": "t", "rules": "yes"},
-                    {"task": "t", "cwd": 5}):
+                    {"task": "t", "cwd": 5}, {"task": "t", "turns": "hi"},
+                    {"task": "t", "turns": [{"proposal": {}, "reply": 5}]}):
             with self.subTest(bad=bad):
                 self.assertEqual(400, self.post("/suggest", bad)[0])
 

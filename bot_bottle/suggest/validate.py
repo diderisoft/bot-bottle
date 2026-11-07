@@ -11,17 +11,19 @@ written to disk here.
 
 from __future__ import annotations
 
-import re
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from ..contract.yaml_subset import serialize_yaml_subset
 from ..manifest.extends import merge_bottles_runtime
-from ..manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
+from ..manifest.loader import BUILTIN_BOTTLES_DIR, find_bottle, load_bottle_chain
 from ..manifest.util import ManifestError
 from ..secret_source import SecretSource
 from .covered import drop_covered
+from .edits import SECRET_NAME, overlay, stack_name, validate_edits
+from .edits import unconnected as unconnected_forges
 from .forges import Described, connected_hosts, described_forges, grant_forge
 from .runnable import make_runnable
 from .proposal import (
@@ -138,6 +140,33 @@ def validate_proposal(
     """
     if dirs is None:
         dirs = [(BUILTIN_BOTTLES_DIR, False)]
+    known = {**proposal.forges, **described_forges(dirs), **(described or {})}
+    for edit in proposal.edits:
+        known = {**edit.forges, **known}
+    edits, edit_notes = validate_edits(proposal.edits, dirs, known)
+    before = list(proposal.notes)
+    proposal = replace(proposal, notes=before + edit_notes,
+                       bottles=[stack_name(b) for b in proposal.bottles])
+    with overlay(edits, dirs, known, loadable=True) as view:
+        cleaned = _validate(proposal, view, secrets, known)
+    cleaned.edits = edits
+    for edit in edits:
+        for host in unconnected_forges(edit):
+            cleaned.forges.setdefault(host, dict(edit.forges.get(host) or known.get(host, {})))
+    if edit_notes:
+        cleaned.summary = ""  # it described what was proposed, not what's left
+    return cleaned, cleaned.notes
+
+
+def _validate(proposal: Proposal, dirs: list[tuple[Path, bool]],
+              secrets: SecretSource | None, known: Described) -> Proposal:
+    """`validate_proposal`'s checks on the stack and its additions, with
+    `dirs` showing pending edits as if accepted."""
+    missing = [b for b in proposal.bottles if find_bottle(b, dirs) is None]
+    if missing:
+        proposal = replace(proposal, bottles=[b for b in proposal.bottles if b not in missing],
+                           notes=[*proposal.notes, *(f"dropped {b} from the stack: there's no "
+                                                     f"such bottle" for b in missing)])
     proposal = make_runnable(proposal, dirs, secrets)
     notes = list(proposal.notes)
     add = proposal.additions
@@ -150,7 +179,6 @@ def validate_proposal(
         else:
             good_egress.append(e)
 
-    known = {**proposal.forges, **described_forges(dirs), **(described or {})}
     unconnected: Described = {}
     good_repos = []
     for r in add.repos:
@@ -167,7 +195,7 @@ def validate_proposal(
 
     good_env = []
     for v in add.env:
-        if _SECRET_NAME.search(v.name):
+        if SECRET_NAME.search(v.name):
             notes.append(f"dropped env {v.name!r}: a secret mustn't be an env var, which the "
                          f"agent can read; add it to the host secrets and propose it as a "
                          f"credential on the route that needs it")
@@ -202,14 +230,7 @@ def validate_proposal(
         summary=proposal.summary if notes == proposal.notes else "",
         forges=unconnected,
     )
-    cleaned = drop_covered(cleaned, dirs)
-    return cleaned, cleaned.notes
-
-
-# An env var's value is visible to the agent, so a secret never goes in one:
-# the gateway injects it as a credential instead.
-_SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSW|API_?KEY|PRIVATE_?KEY|CREDENTIAL|AUTH",
-                          re.IGNORECASE)
+    return drop_covered(cleaned, dirs)
 
 
 def is_stacked(proposal: Proposal) -> bool:

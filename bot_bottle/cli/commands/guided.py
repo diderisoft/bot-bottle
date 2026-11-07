@@ -259,6 +259,9 @@ def guided_start(args: argparse.Namespace, manifest: "ManifestIndex", settings: 
     proposal = suggest_with_spinner(task, cwd, settings)
     dirs = bottle_dirs(cwd, bot_bottle_root())
     saved_as = ""
+    if proposal.edits:
+        sys.stderr.write(f"bot-bottle: {skipped_edits(proposal)}\n")
+        proposal = without_edits(proposal, dirs)
     if auto and proposal.blocked:
         sys.stderr.write(f"bot-bottle: --auto: the suggested bottle can't run here: "
                          f"{proposal.blocked}\n")
@@ -275,6 +278,24 @@ def guided_start(args: argparse.Namespace, manifest: "ManifestIndex", settings: 
     bottles, run_text = bottles_for(proposal, saved_as=saved_as)
     request = dataclasses.replace(base, bottles=bottles, prompt=task, run_bottle=run_text)
     return launch(request, index_for(manifest, text=run_text))
+
+
+def skipped_edits(proposal: "Proposal") -> str:
+    """What's said when a proposal's edits to other bottles are skipped
+    (only the guided view asks about each)."""
+    names = ", ".join(e.bottle for e in proposal.edits)
+    return (f"skipped the suggested edit{'s' if len(proposal.edits) > 1 else ''} to {names}; "
+            f"`bot-bottle start` on a terminal reviews them")
+
+
+def without_edits(proposal: "Proposal", dirs: list[tuple[Path, bool]]) -> "Proposal":
+    """`proposal` without its edits, validated again (its stack may have
+    named a bottle one of them made)."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...suggest.validate import validate_proposal
+    again = validate_proposal(dataclasses.replace(proposal, edits=[]), dirs)[0]
+    again.source = proposal.source
+    return again
 
 
 def auto_line(proposal: "Proposal") -> str:

@@ -54,7 +54,7 @@ from ...contract.hostctl import LaunchRequest, Settings
 from ...lib import log, prompt
 from ...manifest.schema import DEFAULT_BOTTLE
 from .. import screen, start_prefs, suggest_client
-from . import review_card
+from . import review_card, review_edits
 from ..screen import CURRENT, DONE, FAILED, RUNNING, Screen, Step
 from ..view_prompt import ViewPrompter
 from . import guided
@@ -62,13 +62,14 @@ from . import guided
 if TYPE_CHECKING:
     from ...manifest import ManifestIndex
     from ...suggest.proposal import Proposal
+    from ...suggest.turns import Turn
 
 _T = TypeVar("_T")
 ARCHITECT = "bottle-architect"
 HARNESS_NAMES = {"claude": "Claude Code", "codex": "Codex", "pi": "pi"}
-REVIEW_KEYS = "enter run · s save as… · e edit · d details · q cancel"
-BLOCKED_KEYS = "e edit · d details · q cancel"
-CONNECT_KEYS = "c connect · s save as… · e edit · d details · q cancel"
+REVIEW_KEYS = "enter run · s save as… · e edit · r reply · d details · q cancel"
+BLOCKED_KEYS = "e edit · r reply · d details · q cancel"
+CONNECT_KEYS = "c connect · s save as… · e edit · r reply · d details · q cancel"
 WARM_POLL_SECONDS = 2.0  # how often the Bottle step re-asks whether the architect is up
 # The launch callback: (request, index, view=, lead=) -> exit code.
 Launch = Callable[..., int]
@@ -206,7 +207,7 @@ class StartView:  # pylint: disable=too-many-instance-attributes
                              cwd=str(self.cwd), copy_cwd=self.args.cwd)
         if not task:
             return self._launch(base, self.manifest)
-        proposal, saved_as = self.review_step(self.suggest_step(task))
+        proposal, saved_as = self.review_step(self.suggest_step(task), task)
         # pylint: disable-next=import-outside-toplevel
         from ...run_bottle import index_for
         bottles, run_text = guided.bottles_for(proposal, saved_as=saved_as)
@@ -365,14 +366,15 @@ class StartView:  # pylint: disable=too-many-instance-attributes
 
     # --- suggestion ---
 
-    def suggest_step(self, task: str) -> "Proposal":
+    def suggest_step(self, task: str, turns: "list[Turn] | None" = None) -> "Proposal":
         result: list["Proposal"] = []
         failure: list[BaseException] = []
 
         def ask() -> None:
             try:
                 with log.redirect(self.note):
-                    result.append(suggest_client.suggest(task, self.cwd, settings=self.settings))
+                    result.append(suggest_client.suggest(task, self.cwd, settings=self.settings,
+                                                         turns=turns))
             except BaseException as e:  # pylint: disable=broad-exception-caught
                 failure.append(e)
 
@@ -390,7 +392,7 @@ class StartView:  # pylint: disable=too-many-instance-attributes
         self.steps.append(step)
         while worker.is_alive():
             step.value = ("warming the architect…" if self.warm_state == "booting"
-                          else "asking the architect…")
+                          else "revising…" if turns else "asking the architect…")
             self.view.frame += 1
             self.draw("ctrl-c quit")
             worker.join(0.1)
@@ -401,33 +403,71 @@ class StartView:  # pylint: disable=too-many-instance-attributes
 
     # --- review ---
 
-    def review_step(self, proposal: "Proposal") -> tuple["Proposal", str]:
-        # pylint: disable=import-outside-toplevel
+    def review_step(self, proposal: "Proposal", task: str = "") -> tuple["Proposal", str]:
+        # pylint: disable=import-outside-toplevel,too-many-branches,too-many-statements
         from ...paths import bot_bottle_root
+        from ...suggest.edits import EditError, accept
         from ...suggest.flow import bottle_dirs
+        from ...suggest.turns import Turn
         from ...suggest.write import SuggestWriteError, write_bottle
         dirs = bottle_dirs(self.cwd, bot_bottle_root())
         details, error, info, offset = False, "", "", 0
+        turns: list[Turn] = []
+        events: list[str] = []  # what was done since the architect last answered
+        decided: list[str] = []
         step = self.current("Bottle")
         while True:
             step.value = f"from the {proposal.source}" if proposal.source else ""
             body, offset = review_lines(proposal, dirs, details=details, width=self.body_width(),
                                         style=self.style, offset=offset,
-                                        height=screen.size()[1] - len(self.steps) - 8)
+                                        height=screen.size()[1] - len(self.steps) - 8,
+                                        turns=turns, decided=decided)
             said = ([self.style.red(w) for w in screen.wrap(error, self.body_width())] if error
                     else [self.style.dim(w) for w in screen.wrap(info, self.body_width())])
             step.body = body + said
             pending = to_connect(proposal, dirs)
-            self.draw(BLOCKED_KEYS if proposal.blocked else CONNECT_KEYS if pending
-                      else REVIEW_KEYS)
+            editing = bool(proposal.edits)
+            self.draw(_keys(proposal, pending))
             key = self.key()
+            error, info = "", ""
             if key == "c" and pending and not proposal.blocked:
                 host, url = next(iter(pending.items()))
                 ok, said_now = self.connect_forge(
                     host, url, str(proposal.forges.get(host, {}).get("kind") or ""))
                 error, info = ("", said_now) if ok else (said_now, "")
                 if ok:
+                    events.append(f"connected {host}")
                     proposal = revalidated(proposal, dirs)
+                continue
+            if key in ("a", "x") and editing:
+                edit = proposal.edits[0]
+                if key == "a":
+                    try:
+                        where = accept(edit, dirs, proposal.forges)
+                    except (EditError, OSError) as e:
+                        error = f"{edit.bottle}: {e}"
+                        continue
+                    existed = not edit.bottle.startswith("new:")
+                    decided.append(review_edits.decided_line(where.name, where.project, existed))
+                    events.append(f"accepted the edit of {edit.bottle}")
+                else:
+                    events.append(f"skipped the edit of {edit.bottle}")
+                proposal = revalidated(dataclasses.replace(proposal, edits=proposal.edits[1:]),
+                                       dirs)
+                continue
+            if key == "r":
+                reply = self.ask_line(step, "reply", "enter send · esc back")
+                if not reply:
+                    continue
+                turns.append(Turn(proposal.to_dict(), reply, events))
+                events = []
+                self.steps.pop()
+                proposal = self.suggest_step(task, turns)
+                self.steps.append(step)
+                details, offset = False, 0
+                continue
+            if key in ("enter", "s") and editing:
+                info = "accept or skip each edit first (a, x)"
                 continue
             if key == "enter" and not proposal.blocked and not pending:
                 self.steps[-1] = Step("Bottle", bottle_summary(proposal), DONE)
@@ -447,7 +487,7 @@ class StartView:  # pylint: disable=too-many-instance-attributes
                 with self.suspended():
                     edited = guided.edit_proposal(proposal, dirs)
                 if edited is not None:
-                    proposal, error = edited, ""
+                    proposal = edited
             elif key == "d":
                 details, offset = not details, 0
             elif details and key in ("up", "k", "down", "j"):
@@ -533,13 +573,13 @@ class StartView:  # pylint: disable=too-many-instance-attributes
             raise failure[0]
         return result[0]
 
-    def ask_line(self, step: Step, label: str) -> str:
+    def ask_line(self, step: Step, label: str, footer: str = "enter save · esc back") -> str:
         """One line typed under `step`'s body; "" on esc."""
         text, body = "", list(step.body)
         while True:
             step.body = body + [""] + screen.input_lines(
                 f"{label} {self.style.accent('›')} ", text, self.body_width())
-            self.draw("enter save · esc back")
+            self.draw(footer)
             key = self.key()
             if key == "enter":
                 step.body = body
@@ -564,56 +604,67 @@ def bottle_summary(proposal: "Proposal") -> str:
     return base + (f", adds {added}" if added else "") + source
 
 
-def review_lines(proposal: "Proposal", dirs: list[tuple[Path, bool]], *, details: bool,
-                 width: int, style: screen.Style, offset: int = 0,
-                 height: int = 0) -> tuple[list[str], int]:
+def review_lines(proposal: "Proposal", dirs: list[tuple[Path, bool]], *, details: bool,  # pylint: disable=too-many-arguments
+                 width: int, style: screen.Style, offset: int = 0, height: int = 0,
+                 turns: "list[Turn] | None" = None,
+                 decided: list[str] | None = None) -> tuple[list[str], int]:
     """The proposal for the review step, and the details' scroll offset
-    (clamped). At a glance: the gist, what it adds and what to do first
-    (`review.glance`). `details`: the card (`review.review`), then every
-    element under its bottle, `height` lines of them from `offset`, and the
-    notes."""
-    # pylint: disable-next=import-outside-toplevel
-    from ...suggest import render, review
+    (clamped). At a glance: the replies so far, the gist, the edits to other
+    bottles, what it adds and what to do first (`review.glance`, its
+    bottles as if the edits were accepted). `details`: the first edit's
+    diff, the card (`review.review`), then every element under its bottle,
+    `height` lines of them from `offset`, and the notes."""
+    # pylint: disable=import-outside-toplevel
+    from ...suggest import edits, render, review
     if details:
-        lines = _details(proposal, dirs, width, style)
+        with edits.overlay(proposal.edits, dirs, proposal.forges) as seen_dirs:
+            lines = (review_edits.diff_lines(proposal, dirs, width, style)
+                     + _details(proposal, seen_dirs, width, style))
         notes = [style.dim(w) for note in proposal.notes
                  for w in screen.wrap(f"note: {note}", width)]
         lines, offset = review_card.window(lines, offset, max(height - len(notes) - 1, 4),
                                            style=style)
         lines += [""] + notes if notes else []
     else:
-        seen = review.glance(proposal, dirs)
-        lines = screen.wrap(seen.gist if seen else render.summary_line(proposal), width)[:3]
+        with edits.overlay(proposal.edits, dirs, proposal.forges) as seen_dirs:
+            seen = review.glance(proposal, seen_dirs)
+        lines = review_edits.turn_lines(turns or [], width, style)
+        lines += screen.wrap(seen.gist if seen else render.summary_line(proposal), width)[:3]
         lines.append("")
+        changes = review_edits.edit_lines(proposal, decided or [], width, style)
+        lines += changes + ([""] if changes else [])
         if seen is None:
             lines.append(style.dim("(the bottles couldn't be read)"))
         else:
             lines += _hanging("new", " · ".join(seen.new) or "nothing new", width,
                               paint_label=style.amber,
                               paint=str if seen.new else style.dim)
-            for host in seen.connect:
+            for host in to_connect(proposal, dirs):
                 lines += _hanging("⚠", f"{host} isn't connected here · c connects it", width,
                                   paint_label=style.amber, paint=style.amber)
             for warn in seen.warns:
                 lines += _hanging("⚠", warn, width,
                                   paint_label=style.amber, paint=style.amber)
         n = len(proposal.notes)
-        lines += ["", style.dim("d details" + (f" · {n} note{'s' if n != 1 else ''}"
-                                                if n else ""))]
+        lines += ["", style.dim(("d diff · details" if proposal.edits else "d details")
+                                + (f" · {n} note{'s' if n != 1 else ''}" if n else ""))]
     if proposal.blocked:
         lines += [style.red(w) for w in screen.wrap(f"can't run: {proposal.blocked}", width)]
     return lines, offset
 
 
-_LABEL = 5  # "new  ", "⚠    "
+_hanging = review_edits.hanging
 
 
-def _hanging(label: str, text: str, width: int, *, paint_label: Callable[[str], str],
-             paint: Callable[[str], str]) -> list[str]:
-    """`text` after `label`, its wrapped lines under the text."""
-    rows = screen.wrap(text, max(width - _LABEL, 8)) or [""]
-    return ([paint_label(label.ljust(_LABEL)) + paint(rows[0])]
-            + [" " * _LABEL + paint(r) for r in rows[1:]])
+def _keys(proposal: "Proposal", pending: dict[str, str]) -> str:
+    """The review's keys: the first edit's while any is pending (connect
+    first when it's on a forge that isn't connected)."""
+    if proposal.edits:
+        # pylint: disable-next=import-outside-toplevel
+        from ...suggest.edits import unconnected
+        return (review_edits.EDIT_CONNECT_KEYS if unconnected(proposal.edits[0])
+                else review_edits.EDIT_KEYS)
+    return BLOCKED_KEYS if proposal.blocked else CONNECT_KEYS if pending else REVIEW_KEYS
 
 
 def _details(proposal: "Proposal", dirs: list[tuple[Path, bool]], width: int,
@@ -629,12 +680,17 @@ def _details(proposal: "Proposal", dirs: list[tuple[Path, bool]], width: int,
 
 
 def to_connect(proposal: "Proposal", dirs: list[tuple[Path, bool]]) -> dict[str, str]:
-    """Each forge to connect before `proposal` can run: host to the URL
-    `forge connect` takes."""
+    """Each forge to connect before `proposal` can run, or its first edit be
+    accepted: host to the URL `forge connect` takes."""
     # pylint: disable-next=import-outside-toplevel
-    from ...suggest import review
-    seen = review.glance(proposal, dirs)
-    return seen.connect if seen else {}
+    from ...suggest import edits, forges, review
+    with edits.overlay(proposal.edits, dirs, proposal.forges) as seen_dirs:
+        seen = review.glance(proposal, seen_dirs)
+    found = {} if seen is None else dict(seen.connect)
+    for edit in proposal.edits[:1]:
+        for host in edits.unconnected(edit):
+            found.setdefault(host, forges.connect_url(host, proposal.forges.get(host, {})))
+    return found
 
 
 def revalidated(proposal: "Proposal", dirs: list[tuple[Path, bool]]) -> "Proposal":

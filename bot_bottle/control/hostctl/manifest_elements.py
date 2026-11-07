@@ -213,7 +213,7 @@ def _set(fm: dict[str, Any], key: str, value: Any) -> None:
     """Put the element `key` (its raw `value`) into `fm`, in place. A route for
     a host it has merges."""
     # pylint: disable=import-outside-toplevel,protected-access
-    from ...approvals import _merge_route
+    from ...approvals import merge_route
     from ...manifest.forges import parse_grant
     kind, name = key.split(":", 1)
     if kind in ("env", "resources"):
@@ -225,7 +225,7 @@ def _set(fm: dict[str, Any], key: str, value: Any) -> None:
         if at is None:
             routes.append(value)
         else:
-            routes[at] = _merge_route(routes[at], value)
+            routes[at] = merge_route(routes[at], value)
         egress["routes"] = routes
         fm["egress"] = egress
     elif kind == "repo":

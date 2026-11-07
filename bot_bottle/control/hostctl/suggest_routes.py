@@ -9,10 +9,14 @@ suggest` and the console all get the same flow.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ...contract.hostctl import Settings
 from .architect_bottle import current, runner
 from .suggest_link import project_dir
+
+if TYPE_CHECKING:
+    from ...suggest.turns import Turn
 
 
 def cwd_of(raw: object) -> Path | None:
@@ -29,11 +33,13 @@ def cwd_of(raw: object) -> Path | None:
         return None
 
 
-def suggest(task: str, cwd: Path | None, rules: bool, settings: Settings) -> dict[str, object]:
-    """The job: the suggestion flow's validated proposal."""
+def suggest(task: str, cwd: Path | None, rules: bool, settings: Settings,
+            turns: "list[Turn] | None" = None) -> dict[str, object]:
+    """The job: the suggestion flow's validated proposal; `turns`, the
+    conversation so far (PRD 0118)."""
     # pylint: disable-next=import-outside-toplevel
     from ...suggest.flow import suggest as flow_suggest
-    proposal = flow_suggest(task, cwd, rules=rules, run=runner(settings))
+    proposal = flow_suggest(task, cwd, rules=rules, run=runner(settings), turns=turns)
     return {"proposal": proposal.to_dict()}
 
 

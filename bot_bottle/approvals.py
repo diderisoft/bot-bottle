@@ -254,7 +254,7 @@ def with_grant(frontmatter: dict[str, object], grant: str, *,
     return fm
 
 
-def _merge_route(old: dict[str, object], new: dict[str, object]) -> dict[str, object]:
+def merge_route(old: dict[str, object], new: dict[str, object]) -> dict[str, object]:
     """A host's route with another route for it merged in: what the old one
     allowed stays allowed (its settings too), plus the new one's matches. A
     route that already allows any request is left as it is."""
@@ -275,7 +275,7 @@ def _merge_route(old: dict[str, object], new: dict[str, object]) -> dict[str, ob
 
 def with_routes(frontmatter: dict[str, object], routes: list[Route]) -> dict[str, object]:
     """`frontmatter` with `routes` added to its egress. A host it already has a
-    route for gets the new matches merged into that route (`_merge_route`),
+    route for gets the new matches merged into that route (`merge_route`),
     so nothing it allowed is dropped; one it blocks gets the new route."""
     fm = dict(frontmatter)
     egress = fm.get("egress")
@@ -290,7 +290,7 @@ def with_routes(frontmatter: dict[str, object], routes: list[Route]) -> dict[str
         elif kept[at].get("blocked"):  # allowing a blocked host unblocks it
             kept[at] = new
         else:
-            kept[at] = _merge_route(kept[at], new)
+            kept[at] = merge_route(kept[at], new)
     egress["routes"] = kept
     fm["egress"] = egress
     return fm
