@@ -30,7 +30,7 @@ TOOL_DEFINITION: dict[str, object] = {
             "prompt": {"type": "string",
                        "description": "Initial task for the child agent (required; headless)."},
             "bottles": {"type": "array", "items": {"type": "string"},
-                        "description": "Bottle names to launch with (empty = agent default)."},
+                        "description": "Bottle names to launch with (empty = no bottle grants)."},
             "label": {"type": "string",
                       "description": "Human label for the child (optional)."},
             "justification": {"type": "string",

@@ -72,7 +72,7 @@ def trimmed_bottle_text(
     elements from `child_names`'s chain (re-read from their source files).
     Resources are included as declared in the chain files."""
     # pylint: disable=import-outside-toplevel
-    from ...contract.yaml_subset import serialize_yaml_subset
+    from ...contract.yaml_subset import parse_frontmatter, serialize_yaml_subset
     from .manifest_elements import _chain_files, _file_elements, _set
     within_keys = {e["key"] for e in within_elements}
     fm: dict[str, Any] = {}
@@ -80,7 +80,6 @@ def trimmed_bottle_text(
     chain = _chain_files(child_names, dirs)
     for f in chain:
         try:
-            from ...contract.yaml_subset import parse_frontmatter
             file_fm = parse_frontmatter(f["path"].read_text(encoding="utf-8"))[0]
         except (OSError, ValueError):
             continue
@@ -152,7 +151,7 @@ def vet_launch_bottle(request: Any, bottles: Any) -> str:
         conns = {c.host.split(":", 1)[0] for c in forge_connections().values()}
     except ForgeConnectionError:
         conns = set()
-    chain = _chain_files(child_names or (), dirs)
+    chain = _chain_files(child_names, dirs)
     for f in chain:
         try:
             file_fm = parse_frontmatter(f["path"].read_text(encoding="utf-8"))[0]
