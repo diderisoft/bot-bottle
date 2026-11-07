@@ -14,7 +14,8 @@ nor the baseline reaches it; merge commits made in the bottle are.
 A commit passes when it has a `Bot-Bottle` trailer and every one it has names
 this bottle and run. The check rejects, it never rewrites.
 
-Exit 0 to accept (clean, `warn`, or `off`), 1 to refuse.
+Exit 0 to accept (clean, `warn`, or `off`), 1 to refuse, 2 for
+infrastructure failure or misconfiguration.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from bot_bottle.contract.git_trailers import (
 
 ACCEPT = 0
 REFUSE = 1
+MISCONFIGURED = 2  # infrastructure failure or missing config; logged separately
 
 _ZERO = "0" * 40
 # How many offending commits the message lists.
@@ -131,8 +133,8 @@ def fix_command(expected: str, base: str) -> str:
     return f"git rebase --rebase-merges --exec '{amend}' {base}"
 
 
-MISCONFIGURED = ("git-gate: this bottle predates commit trailers (its repo has no "
-                 "valid {what}); relaunch it")
+_MISCONFIGURED_MSG = ("git-gate: this bottle predates commit trailers (its repo has no "
+                      "valid {what}); relaunch it")
 
 
 def _settings(git: Git, err: Callable[[str], None]) -> tuple[str, str, list[str]] | None:
@@ -145,7 +147,7 @@ def _settings(git: Git, err: Callable[[str], None]) -> tuple[str, str, list[str]
                      ("git-gate.trailer", bool(expected)),
                      ("git-gate.baseline", baseline is not None)):
         if not ok:
-            err(MISCONFIGURED.format(what=what))
+            err(_MISCONFIGURED_MSG.format(what=what))
             return None
     assert baseline is not None
     return mode, expected, baseline
@@ -155,7 +157,7 @@ def check(refs: list[tuple[str, str, str]], *, git: Git = _git,
           err: Callable[[str], None] = lambda s: print(s, file=sys.stderr)) -> int:
     settings = _settings(git, err)
     if settings is None:
-        return REFUSE
+        return MISCONFIGURED
     mode, expected, baseline = settings
     if mode == TRAILER_OFF:
         return ACCEPT
@@ -163,7 +165,7 @@ def check(refs: list[tuple[str, str, str]], *, git: Git = _git,
         excluded = exclusions(git, baseline)
     except subprocess.CalledProcessError as e:
         err(f"git-gate: could not list the gate's refs: {(e.stderr or '').strip()}")
-        return REFUSE
+        return MISCONFIGURED
     failed = False
     for _old, new, ref in refs:
         if new == _ZERO:
@@ -173,7 +175,7 @@ def check(refs: list[tuple[str, str, str]], *, git: Git = _git,
         except subprocess.CalledProcessError as e:
             err(f"git-gate: could not read the commits pushed to {ref}: "
                 f"{(e.stderr or '').strip()}")
-            return REFUSE
+            return MISCONFIGURED
         if not bad:
             continue
         failed = True

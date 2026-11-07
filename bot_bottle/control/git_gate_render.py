@@ -278,8 +278,13 @@ done < "$refs_file"
 # (git-gate.trailers: require refuses, warn only says so, off skips; a repo
 # missing its trailer settings refuses every push).
 # Rejected, never rewritten: rewriting would change the agent's hashes.
-if ! PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" \
-    python3 -m bot_bottle.gateway.git_gate.trailer_check "$refs_file"; then
+PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 -m bot_bottle.gateway.git_gate.trailer_check "$refs_file"
+trailer_rc=$?
+if [ "$trailer_rc" -eq 2 ]; then
+  audit_push forge.push_rejected failure "*" --detail "trailer-check misconfigured or failed"
+  exit 1
+elif [ "$trailer_rc" -ne 0 ]; then
   audit_push forge.push_rejected blocked "*" --detail "commits without this bottle's Bot-Bottle trailer"
   exit 1
 fi
@@ -494,8 +499,13 @@ done < "$refs_file"
 # Phase 1b: refuse a push carrying a secret this bottle holds (its canary,
 # its secret env values, its egress tokens). gitleaks only knows secret
 # *shapes*; this knows the bottle's actual values. Fails closed.
-if ! PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" \
-    python3 -m bot_bottle.gateway.git_gate.held_secret_scan "$refs_file"; then
+PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 -m bot_bottle.gateway.git_gate.held_secret_scan "$refs_file"
+held_scan_rc=$?
+if [ "$held_scan_rc" -eq 2 ]; then
+  audit_push forge.push_rejected failure "*" --detail "held-secret scan infrastructure failure; push refused fail-closed"
+  exit 1
+elif [ "$held_scan_rc" -ne 0 ]; then
   audit_push forge.push_rejected blocked "*" --detail "carries a secret this bottle holds"
   exit 1
 fi

@@ -756,7 +756,7 @@ class TestTrailerCheckInProcess(_GitCase):
             if args[0] == "for-each-ref":
                 raise subprocess.CalledProcessError(1, "git", stderr="broken refs")
             return self.gate_git(*args, stdin=stdin)
-        self.assertEqual(trailer_check.REFUSE, trailer_check.check(
+        self.assertEqual(trailer_check.MISCONFIGURED, trailer_check.check(
             [(self.upstream, self.upstream, "refs/heads/main")], git=refs_fail,
             err=self.errors.append))
         self.assertIn("could not list the gate's refs: broken refs", self.errors[-1])
@@ -764,7 +764,7 @@ class TestTrailerCheckInProcess(_GitCase):
             if args[0] == "log":
                 raise subprocess.CalledProcessError(128, "git", stderr="bad object")
             return self.gate_git(*args, stdin=stdin)
-        self.assertEqual(trailer_check.REFUSE, trailer_check.check(
+        self.assertEqual(trailer_check.MISCONFIGURED, trailer_check.check(
             [(self.upstream, "f" * 40, "refs/heads/main")], git=log_fails,
             err=self.errors.append))
         self.assertIn("could not read the commits pushed to refs/heads/main", self.errors[-1])
@@ -831,7 +831,7 @@ class TestTrailerCheckUnits(unittest.TestCase):
         def git(*args: str) -> str:
             return "bogus\n" if args[-1] == "git-gate.trailers" else ""
         errors: list[str] = []
-        self.assertEqual(1, trailer_check.check([], git=git, err=errors.append))
+        self.assertEqual(trailer_check.MISCONFIGURED, trailer_check.check([], git=git, err=errors.append))
         self.assertIn("no valid git-gate.trailers", errors[0])
 
     def test_require_without_value_refuses(self):
@@ -839,7 +839,7 @@ class TestTrailerCheckUnits(unittest.TestCase):
             if args[-1] == "git-gate.trailers":
                 return "require\n"
             raise subprocess.CalledProcessError(1, "git")
-        self.assertEqual(1, trailer_check.check([], git=git, err=lambda _s: None))
+        self.assertEqual(trailer_check.MISCONFIGURED, trailer_check.check([], git=git, err=lambda _s: None))
 
     def test_read_refs_skips_blank_lines(self):
         with tempfile.NamedTemporaryFile("w", suffix=".refs", delete=False) as f:
