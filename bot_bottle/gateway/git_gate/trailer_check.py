@@ -133,8 +133,9 @@ def fix_command(expected: str, base: str) -> str:
     return f"git rebase --rebase-merges --exec '{amend}' {base}"
 
 
-_MISCONFIGURED_MSG = ("git-gate: this bottle predates commit trailers (its repo has no "
-                      "valid {what}); relaunch it")
+_MISCONFIGURED_MSG = ("git-gate: {what} is missing or invalid; provisioning may have "
+                      "failed, or this bottle predates commit trailers. Relaunch the "
+                      "bottle to reprovision it.")
 
 
 def _settings(git: Git, err: Callable[[str], None]) -> tuple[str, str, list[str]] | None:

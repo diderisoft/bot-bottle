@@ -285,7 +285,7 @@ class TestHookRender(unittest.TestCase):
         one = "1" * 40
         result = self._run_hook_stdin(f"{'0' * 40} {one} refs/heads/main\n")
         self.assertNotIn("refusing AGit review ref", result.stderr)
-        self.assertIn("predates commit trailers", result.stderr)
+        self.assertIn("is missing or invalid", result.stderr)
 
     def test_inline_gitleaks_allow_routes_to_supervisor(self):
         hook = git_gate_render_hook()

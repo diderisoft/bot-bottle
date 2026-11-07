@@ -418,9 +418,9 @@ trailer, or a `warn` bottle.
 **Misconfiguration.** Provisioning always sets `git-gate.trailers`,
 `git-gate.trailer` and `git-gate.baseline` on every repo. A repo missing any
 of them, or whose baseline file isn't there, refuses every push (whatever the
-mode) with `this bottle predates commit trailers (its repo has no valid
-<key>); relaunch it`. Bottles launched before commit trailers have to be
-relaunched.
+mode) with `<key> is missing or invalid; provisioning may have failed, or this
+bottle predates commit trailers. Relaunch the bottle to reprovision it.`
+Relaunching the bottle reprovisiones the repo config and baseline.
 
 ### The push record
 

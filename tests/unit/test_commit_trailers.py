@@ -453,8 +453,8 @@ class TestGateTrailerCheck(_GateCase):
                 self.git("config", "--unset", key, cwd=self.gate)
                 proc = self.push(check=False)
                 self.assertNotEqual(0, proc.returncode)
-                self.assertIn(f"this bottle predates commit trailers (its repo has no "
-                              f"valid {key}); relaunch it", proc.stderr)
+                self.assertIn(f"{key} is missing or invalid", proc.stderr)
+                self.assertIn("Relaunch the bottle to reprovision it", proc.stderr)
                 self.git("config", key, value, cwd=self.gate)
 
     def test_a_missing_baseline_file_is_refused(self):
@@ -462,7 +462,7 @@ class TestGateTrailerCheck(_GateCase):
         self.baseline.unlink()
         proc = self.push(check=False)
         self.assertNotEqual(0, proc.returncode)
-        self.assertIn("no valid git-gate.baseline); relaunch it", proc.stderr)
+        self.assertIn("git-gate.baseline is missing or invalid", proc.stderr)
         self.set_mode("off")
         self.assertNotEqual(0, self.push(check=False).returncode)
 
@@ -832,7 +832,7 @@ class TestTrailerCheckUnits(unittest.TestCase):
             return "bogus\n" if args[-1] == "git-gate.trailers" else ""
         errors: list[str] = []
         self.assertEqual(trailer_check.MISCONFIGURED, trailer_check.check([], git=git, err=errors.append))
-        self.assertIn("no valid git-gate.trailers", errors[0])
+        self.assertIn("git-gate.trailers is missing or invalid", errors[0])
 
     def test_require_without_value_refuses(self):
         def git(*args: str) -> str:
