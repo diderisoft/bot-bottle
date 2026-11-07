@@ -56,8 +56,9 @@ class ViewPrompter:
         finally:
             self.show(None, "")
 
-    def ask(self, question: str, *, context: Sequence[str] = (), secret: bool = False) -> str:
-        text = ""
+    def ask(self, question: str, *, context: Sequence[str] = (), secret: bool = False,
+            default: str = "") -> str:
+        text = default
         lead = f"{question} {self.style.accent('›')} "
         try:
             while True:

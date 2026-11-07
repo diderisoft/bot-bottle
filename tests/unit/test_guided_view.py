@@ -23,8 +23,10 @@ from bot_bottle.contract.hostctl import RUN_BOTTLE, LaunchRequest, Settings
 from bot_bottle.lib import log, prompt
 from bot_bottle.manifest import ManifestIndex
 from bot_bottle.suggest.proposal import (
-    OPTION_STACK_ADDITIONS, Proposal, ProposalAdditions, ProposalEgress,
+    OPTION_STACK_ADDITIONS, Proposal, ProposalAdditions, ProposalEgress, ProposalRepo,
 )
+from bot_bottle.forge_connect import ConnectError, SshUnreachable
+from tests.unit._forges import GITEA
 
 
 def _proposal(*hosts: str, notes: list[str] | None = None) -> Proposal:
@@ -200,6 +202,93 @@ class TestReview(_View):
         self.assertEqual([], self.launched)
         self.assertIn("can't run: claude-dev needs X", self.frames())
         self.assertIn(guided_view.BLOCKED_KEYS, self.frames())
+
+
+class TestConnect(_View):
+    """A grant on a forge this host hasn't connected: `c` connects it, and the
+    run waits for it (PRD 0118)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.found: dict[str, Any] = {}
+        self.enterContext(mock.patch("bot_bottle.forge_connections.connections",
+                                     new=lambda: dict(self.found)))
+        self.enterContext(mock.patch.dict(os.environ, {"GITEA_X": "x"}))
+        self.suggestion.additions.repos = [
+            ProposalRepo("gitea.example.com/acme/app:write", "push the fix")]
+        self.suggestion.forges = {"gitea.example.com": {"kind": "gitea"}}
+
+    def connected_as(self, account: str = "bot") -> mock.Mock:
+        self.found["gitea.example.com"] = GITEA
+        return mock.Mock(account=account, warnings=())
+
+    def test_c_asks_the_token_then_enter_runs(self) -> None:
+        calls: list[dict[str, Any]] = []
+
+        def connect(url: str, token: str, **kw: Any) -> mock.Mock:
+            calls.append({"url": url, "token": token, **kw})
+            return self.connected_as()
+
+        with mock.patch("bot_bottle.forge_connect.connect", side_effect=connect):
+            self.run_view(["enter", "s", "c", *"tok", "enter", "enter"],
+                          name="claude", prompt="t")
+        text = self.frames()
+        self.assertIn("⚠    gitea.example.com isn't connected here · c connects it", text)
+        self.assertIn(guided_view.CONNECT_KEYS, text)
+        self.assertIn("Connect gitea.example.com (Gitea)", text)
+        self.assertIn("token › •••", text)
+        self.assertIn("connected gitea.example.com as bot", text)
+        self.assertEqual([{"url": "https://gitea.example.com", "token": "tok", "ssh": "",
+                           "kind": "gitea"}], calls)
+        self.assertEqual(1, len(self.launched))  # enter and s waited for it
+        self.assertIn("gitea.example.com/acme/app:write", self.launched[0][0].run_bottle)
+
+    def test_an_ssh_address_that_doesnt_answer_asks_for_another(self) -> None:
+        tried: list[str] = []
+
+        def connect(_url: str, _token: str, *, ssh: str, **_: Any) -> mock.Mock:
+            tried.append(ssh)
+            if not ssh:
+                raise SshUnreachable("ssh://git@gitea.example.com:30009", "no host key")
+            return self.connected_as()
+
+        with mock.patch("bot_bottle.forge_connect.connect", side_effect=connect):
+            self.run_view(["c", *"tok", "enter", "ctrl-u", *"ssh://git@10.0.0.1:30009",
+                           "enter", "enter"], name="claude", prompt="t")
+        text = self.frames()
+        self.assertIn("ssh://git@gitea.example.com:30009 didn't answer: no host key.", text)
+        self.assertIn("SSH address › ssh://git@gitea.example.com:30009", text)  # to edit
+        self.assertEqual(["", "ssh://git@10.0.0.1:30009"], tried)
+        self.assertEqual(1, len(self.launched))
+
+    def test_a_refused_token_asks_again_and_esc_backs_out(self) -> None:
+        with mock.patch("bot_bottle.forge_connect.connect",
+                        side_effect=ConnectError("the token didn't work: 401")):
+            self.run_view(["c", *"tok", "enter", "esc", "q"], name="claude", prompt="t")
+        self.assertIn("the token didn't work: 401", self.frames())
+        self.assertEqual([], self.launched)
+
+    def test_a_spinner_while_it_checks(self) -> None:
+        gate = threading.Event()
+        frames: list[str] = []
+
+        def connect(*_: Any, **__: Any) -> mock.Mock:
+            gate.wait(2)
+            return self.connected_as()
+
+        original = guided_view.StartView.draw
+
+        def draw(view: guided_view.StartView, footer: str = "") -> None:
+            original(view, footer)
+            frames.append(" ".join(view.asking))
+            if "connecting" in frames[-1]:
+                gate.set()
+
+        with mock.patch("bot_bottle.forge_connect.connect", side_effect=connect), \
+                mock.patch.object(guided_view.StartView, "draw", draw):
+            self.run_view(["c", *"tok", "enter", "enter"], name="claude", prompt="t")
+        self.assertTrue(any("connecting gitea.example.com: checking the token" in f
+                            for f in frames))
 
 
 class TestSuggesting(_View):

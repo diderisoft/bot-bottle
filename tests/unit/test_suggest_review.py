@@ -209,8 +209,8 @@ class TestGlance(TestReview):
         self.assertEqual("Adds Linear.", seen.gist)
         self.assertEqual(["api.linear.app", "acme/ops (push)", "acme/wiki", "MODE",
                           "$LINEAR_TOKEN"], seen.new)
-        self.assertEqual(["gitea.example.com isn't connected here: bot-bottle forge connect "
-                          "https://gitea.example.com"], seen.warns)
+        self.assertEqual({"gitea.example.com": "https://gitea.example.com"}, seen.connect)
+        self.assertEqual([], seen.warns)
         with connected(GITEA):
             seen = review.glance(_proposal(), self.dirs)
         assert seen is not None

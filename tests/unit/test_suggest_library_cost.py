@@ -61,9 +61,9 @@ class TestLibraryCost(unittest.TestCase):
 
     def test_the_prompt_lists_the_hosts_connections(self) -> None:
         with connected(CONN):
-            forges = architect._connected_forges()  # pylint: disable=protected-access
+            forges = architect._forges({})  # pylint: disable=protected-access
         self.assertEqual([{"name": "gitea.dideric.is", "kind": "gitea",
-                           "url": "https://gitea.dideric.is"}], forges)
+                           "url": "https://gitea.dideric.is", "connected": True}], forges)
 
 
 if __name__ == "__main__":

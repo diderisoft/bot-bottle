@@ -54,6 +54,7 @@ from urllib.parse import urlparse
 from ...contract.forges import unsupported_forge
 from ...forge_connect import ConnectError, connect as connect_forge, normalize_url
 from ...forge_kinds import detect, forge_api
+from ...lib import prompt
 from ...lib.log import die, info, warn
 from ...paths import host_secrets_path
 from ..constants import PROG
@@ -69,6 +70,9 @@ def _read_token(url: str, kind: str, *, from_stdin: bool, browser: bool) -> str:
          f"out of the bottle")
     if browser:
         webbrowser.open(page)
+    asker = prompt.current()  # a full-screen view asks on its screen
+    if asker is not None:
+        return asker.ask("paste the token (it isn't shown)", secret=True).strip()
     return getpass.getpass("paste the token (it isn't shown): ").strip()
 
 

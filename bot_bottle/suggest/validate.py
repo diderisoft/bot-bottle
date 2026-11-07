@@ -22,6 +22,7 @@ from ..manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
 from ..manifest.util import ManifestError
 from ..secret_source import SecretSource
 from .covered import drop_covered
+from .forges import Described, connected_hosts, described_forges, grant_forge
 from .runnable import make_runnable
 from .proposal import (
     OPTION_NEW,
@@ -51,8 +52,9 @@ def _egress_routes(additions: ProposalAdditions) -> list[dict[str, Any]]:
     return routes
 
 
-def _forge_descriptions(grants: list[str]) -> dict[str, Any]:
-    """How a bottle describes the connected forges `grants` are on."""
+def _forge_descriptions(grants: list[str], unconnected: Described) -> dict[str, Any]:
+    """How a bottle describes the forges `grants` are on: a connected one as
+    this host connected it, else as `unconnected` describes it."""
     # pylint: disable=import-outside-toplevel
     from ..forge_connections import get
     from ..manifest.forges import described_connection, parse_grant, split_grant_alias
@@ -63,8 +65,12 @@ def _forge_descriptions(grants: list[str]) -> dict[str, Any]:
             conn = get(host)
         except ManifestError:
             continue
-        if conn is not None and host not in out:
+        if host in out:
+            continue
+        if conn is not None:
             out[host] = described_connection(conn)
+        elif host in unconnected:
+            out[host] = dict(unconnected[host])
     return out
 
 
@@ -94,7 +100,7 @@ def proposal_to_frontmatter(proposal: Proposal) -> dict[str, Any]:
     repos = [r.grant for r in add.repos]
     if repos:
         git: dict[str, Any] = {"repos": repos}
-        forges = _forge_descriptions(repos)
+        forges = _forge_descriptions(repos, proposal.forges)
         if forges:
             git["forges"] = forges
         fm["git-gate"] = git
@@ -110,6 +116,7 @@ def validate_proposal(
     proposal: Proposal,
     dirs: list[tuple[Path, bool]] | None = None,
     secrets: SecretSource | None = None,
+    described: Described | None = None,
 ) -> tuple[Proposal, list[str]]:
     """Validate the proposal by trying to load it with the manifest loader.
 
@@ -122,6 +129,12 @@ def validate_proposal(
     `dirs` is the bottle search path as `(directory, is_project)` pairs (same
     as `ManifestIndex.bottle_dirs()`).  When None, only built-in bottles are
     available (sufficient for rules-path tests).
+
+    A repo grant on a forge this host hasn't connected is kept when the forge
+    is known: a bottle in `dirs` describes it, `described` does (the
+    project's origin; `suggest.forges`), or an earlier validation did
+    (`proposal.forges`). Its description goes in `forges`, for the review to
+    offer connecting it; a grant on a forge nothing describes is dropped.
     """
     if dirs is None:
         dirs = [(BUILTIN_BOTTLES_DIR, False)]
@@ -137,8 +150,15 @@ def validate_proposal(
         else:
             good_egress.append(e)
 
+    known = {**proposal.forges, **described_forges(dirs), **(described or {})}
+    unconnected: Described = {}
     good_repos = []
     for r in add.repos:
+        host = grant_forge(r.grant)
+        if host in known and host not in connected_hosts():
+            unconnected[host] = known[host]
+            good_repos.append(r)
+            continue
         err = _try_load_with_repos(proposal, [r], dirs)
         if err:
             notes.append(f"dropped repo grant {r.grant!r}: {err}")
@@ -180,6 +200,7 @@ def validate_proposal(
         # The architect's sentence describes what it proposed; once anything
         # is dropped, the one made from what's left says it right.
         summary=proposal.summary if notes == proposal.notes else "",
+        forges=unconnected,
     )
     cleaned = drop_covered(cleaned, dirs)
     return cleaned, cleaned.notes

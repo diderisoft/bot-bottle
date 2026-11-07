@@ -30,8 +30,10 @@ class Prompter(Protocol):
         """Yes or no; `default` on a bare Enter."""
         ...  # pylint: disable=unnecessary-ellipsis
 
-    def ask(self, question: str, *, context: Sequence[str] = (), secret: bool = False) -> str:
-        """A line of text ("" when they back out); `secret` hides what's typed."""
+    def ask(self, question: str, *, context: Sequence[str] = (), secret: bool = False,
+            default: str = "") -> str:
+        """A line of text ("" when they back out); `secret` hides what's typed,
+        `default` is there to edit or take."""
         ...  # pylint: disable=unnecessary-ellipsis
 
     def outside(self) -> contextlib.AbstractContextManager[None]:

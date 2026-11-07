@@ -42,8 +42,12 @@ CURSOR = "▌"
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 # Alternate screen and hidden cursor, and back. DEC 2026 synchronized output
 # shows whole frames.
-ENTER = "\x1b[?1049h\x1b[?25l\x1b[2J"
-LEAVE = "\x1b[?25h\x1b[?1049l"
+# The alternate screen, cursor hidden, and bracketed paste: a paste arrives as
+# one `paste:` key (`read_key`), so pasted text can't press a view's keys.
+ENTER = "\x1b[?1049h\x1b[?25l\x1b[?2004h\x1b[2J"
+LEAVE = "\x1b[?2004l\x1b[?25h\x1b[?1049l"
+PASTE = "paste:"
+_PASTE_START, _PASTE_END = b"\x1b[200~", b"\x1b[201~"
 SYNC_BEGIN, SYNC_END = "\x1b[?2026h", "\x1b[?2026l"
 # Layout: a margin, the left column, a gap, then the bottle.
 MARGIN = 2
@@ -495,7 +499,9 @@ _CONTROL = {"\r": "enter", "\n": "enter", "\x7f": "backspace", "\x08": "backspac
 
 def decode_key(data: str) -> str:
     """A key name for the bytes one keypress sent: `up`, `enter`, `esc`, … or
-    the character itself."""
+    the character itself. A bracketed paste is `paste:` and its text."""
+    if data.startswith(_PASTE_START.decode()):
+        return PASTE + data[len(_PASTE_START):].removesuffix(_PASTE_END.decode())
     if data.startswith("\x1b"):
         return _ESCAPES.get(data[1:], "esc")
     return _CONTROL.get(data, data)
@@ -524,6 +530,9 @@ def read_key(fd: int | None = None, *, timeout: float | None = None) -> str | No
             data += os.read(f, 1)
             if data[-1:].isalpha() or data[-1:] == b"~":
                 break
+        if data == _PASTE_START:  # the whole paste, up to its end mark
+            while not data.endswith(_PASTE_END) and select.select([f], [], [], 1.0)[0]:
+                data += os.read(f, 1)  # byte by byte: never past the end mark
     elif data and data[0] >= 0xC0:  # the rest of a UTF-8 character
         need = 1 if data[0] < 0xE0 else 2 if data[0] < 0xF0 else 3
         data += os.read(f, need)
@@ -531,7 +540,10 @@ def read_key(fd: int | None = None, *, timeout: float | None = None) -> str | No
 
 
 def edit_line(text: str, key: str) -> str:
-    """`text` after one key of line editing (printable, backspace, ctrl-u)."""
+    """`text` after one key of line editing (printable, a paste's printable
+    text on one line, backspace, ctrl-u)."""
+    if key.startswith(PASTE):
+        return text + "".join(c for c in key[len(PASTE):] if c.isprintable())
     if key == "backspace":
         return text[:-1]
     if key == "ctrl-u":
@@ -542,7 +554,8 @@ def edit_line(text: str, key: str) -> str:
 
 
 __all__ = [
-    "CURRENT", "CURSOR", "DONE", "FAILED", "PENDING", "RUNNING", "Screen", "Step", "Style",
+    "CURRENT", "CURSOR", "DONE", "FAILED", "PASTE", "PENDING", "RUNNING", "Screen", "Step",
+    "Style",
     "cells", "clip", "compose", "decode_key", "edit_line", "fit", "input_lines", "keys_mode",
     "logo_rows", "menu_lines", "read_key", "step_lines", "strip", "usable", "wants_color", "wrap",
 ]

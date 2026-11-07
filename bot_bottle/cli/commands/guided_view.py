@@ -22,8 +22,10 @@ the launch's stages drawn under them on the same screen:
   architect…" while its bottle boots), then the proposal at a glance
   (`review.glance`): the architect's gist, what it adds, what to do first;
   `d` shows the card (`review_card`: what's new, each bottle it builds on,
-  its forges) and every element (scrolled with ↑/↓) and its notes, `e` edits it in `$EDITOR`, `s` saves it
-  as a bottle first, `q` cancels.
+  its forges) and every element (scrolled with ↑/↓) and its notes, `e`
+  edits it in `$EDITOR`, `s` saves it as a bottle first, `q` cancels. A
+  forge a grant is on that isn't connected holds the run until `c`
+  connects it (`forge connect`, asked on this screen).
 - **Launch.** The launch's stages, under these steps.
 
 The questions on the way (trust a project bottle, confirm a host key, type a
@@ -46,7 +48,7 @@ import threading
 import time
 from collections.abc import Callable, Generator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from ...contract.hostctl import LaunchRequest, Settings
 from ...lib import log, prompt
@@ -61,10 +63,12 @@ if TYPE_CHECKING:
     from ...manifest import ManifestIndex
     from ...suggest.proposal import Proposal
 
+_T = TypeVar("_T")
 ARCHITECT = "bottle-architect"
 HARNESS_NAMES = {"claude": "Claude Code", "codex": "Codex", "pi": "pi"}
 REVIEW_KEYS = "enter run · s save as… · e edit · d details · q cancel"
 BLOCKED_KEYS = "e edit · d details · q cancel"
+CONNECT_KEYS = "c connect · s save as… · e edit · d details · q cancel"
 WARM_POLL_SECONDS = 2.0  # how often the Bottle step re-asks whether the architect is up
 # The launch callback: (request, index, view=, lead=) -> exit code.
 Launch = Callable[..., int]
@@ -403,20 +407,32 @@ class StartView:  # pylint: disable=too-many-instance-attributes
         from ...suggest.flow import bottle_dirs
         from ...suggest.write import SuggestWriteError, write_bottle
         dirs = bottle_dirs(self.cwd, bot_bottle_root())
-        details, error, offset = False, "", 0
+        details, error, info, offset = False, "", "", 0
         step = self.current("Bottle")
         while True:
             step.value = f"from the {proposal.source}" if proposal.source else ""
             body, offset = review_lines(proposal, dirs, details=details, width=self.body_width(),
                                         style=self.style, offset=offset,
                                         height=screen.size()[1] - len(self.steps) - 8)
-            step.body = body + ([self.style.red(error)] if error else [])
-            self.draw(BLOCKED_KEYS if proposal.blocked else REVIEW_KEYS)
+            said = ([self.style.red(w) for w in screen.wrap(error, self.body_width())] if error
+                    else [self.style.dim(w) for w in screen.wrap(info, self.body_width())])
+            step.body = body + said
+            pending = to_connect(proposal, dirs)
+            self.draw(BLOCKED_KEYS if proposal.blocked else CONNECT_KEYS if pending
+                      else REVIEW_KEYS)
             key = self.key()
-            if key == "enter" and not proposal.blocked:
+            if key == "c" and pending and not proposal.blocked:
+                host, url = next(iter(pending.items()))
+                ok, said_now = self.connect_forge(
+                    host, url, str(proposal.forges.get(host, {}).get("kind") or ""))
+                error, info = ("", said_now) if ok else (said_now, "")
+                if ok:
+                    proposal = revalidated(proposal, dirs)
+                continue
+            if key == "enter" and not proposal.blocked and not pending:
                 self.steps[-1] = Step("Bottle", bottle_summary(proposal), DONE)
                 return proposal, ""
-            if key == "s" and not proposal.blocked:
+            if key == "s" and not proposal.blocked and not pending:
                 name = self.ask_line(step, "save as")
                 if not name:
                     continue
@@ -438,6 +454,84 @@ class StartView:  # pylint: disable=too-many-instance-attributes
                 offset += -1 if key in ("up", "k") else 1
             elif key in ("q", "esc"):
                 raise Cancelled
+
+    def connect_forge(self, host: str, url: str, kind: str = "") -> tuple[bool, str]:
+        """`forge connect` for `host` on this screen: the token, then, when
+        its SSH address doesn't answer from here, another address; a spinner
+        while it checks. (connected, what to say); ("" when backed out.)
+        GitHub's sign-in takes the plain terminal."""
+        # pylint: disable=import-outside-toplevel
+        from ...forge_connect import ConnectError, SshUnreachable, connect
+        from ...forge_kinds import detect, forge_api, label
+        if host == "github.com":  # its device code and wait need the terminal
+            return self._connect_on_the_terminal(host, url)
+        kind = kind or self.busy(f"finding out what {host} is", lambda: detect(url))
+        if not kind:
+            return False, f"{host} isn't a forge bot-bottle connects"
+        api = forge_api(kind)
+        page = api.token_page(url)
+        lead = [self.style.accent(f"Connect {host} ({label(kind)})"),
+                "so the agent's pushes reach it from this machine."]
+        token, ssh, problem = "", "", ""
+        while True:
+            if not token:
+                token = self.asker.ask("token", secret=True, context=lead + [
+                    "", f"Make a token at {page}", f"  {api.TOKEN_HELP}."]
+                    + ([self.style.red(problem)] if problem else []))
+                if not token:
+                    return False, ""
+            try:
+                done = self.busy(f"connecting {host}: checking the token, pinning its SSH "
+                                 f"host key", lambda: connect(url, token, ssh=ssh, kind=kind))
+            except SshUnreachable as e:
+                ssh = self.asker.ask("SSH address", default=e.ssh, context=lead + [
+                    "", self.style.red(f"{e.ssh} didn't answer: {e.reason}."),
+                    "git-gate pushes over SSH: give the address this machine reaches "
+                    "it on (a VPN's, say), ssh://git@<host>:<port>."])
+                if not ssh:
+                    return False, ""
+                continue
+            except ConnectError as e:
+                token, problem = "", str(e)
+                continue
+            return True, (f"connected {host} as {done.account}"
+                          + "".join(f"; {w}" for w in done.warnings))
+
+    def _connect_on_the_terminal(self, host: str, url: str) -> tuple[bool, str]:
+        from .forge import connect  # pylint: disable=import-outside-toplevel
+        try:
+            with self.suspended():
+                connect([url])
+        except log.Die as e:
+            return False, e.message or f"{host} wasn't connected"
+        except SystemExit:
+            return False, f"{host} wasn't connected"
+        return True, f"connected {host}"
+
+    def busy(self, doing: str, work: Callable[[], _T]) -> _T:
+        """`work` on a thread, a spinner saying it's `doing` it meanwhile."""
+        result: list[_T] = []
+        failure: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                result.append(work())
+            except BaseException as e:  # pylint: disable=broad-exception-caught
+                failure.append(e)
+
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        spinner = Step("", f"{doing}…", RUNNING, started=time.monotonic())
+        while worker.is_alive():
+            self.view.frame += 1
+            self.asking = screen.step_lines([spinner], width=self.width(), style=self.style,
+                                            frame=self.view.frame)
+            self.draw("ctrl-c quit")
+            worker.join(0.1)
+        self.asking = []
+        if failure:
+            raise failure[0]
+        return result[0]
 
     def ask_line(self, step: Step, label: str) -> str:
         """One line typed under `step`'s body; "" on esc."""
@@ -497,6 +591,9 @@ def review_lines(proposal: "Proposal", dirs: list[tuple[Path, bool]], *, details
             lines += _hanging("new", " · ".join(seen.new) or "nothing new", width,
                               paint_label=style.amber,
                               paint=str if seen.new else style.dim)
+            for host in seen.connect:
+                lines += _hanging("⚠", f"{host} isn't connected here · c connects it", width,
+                                  paint_label=style.amber, paint=style.amber)
             for warn in seen.warns:
                 lines += _hanging("⚠", warn, width,
                                   paint_label=style.amber, paint=style.amber)
@@ -531,6 +628,24 @@ def _details(proposal: "Proposal", dirs: list[tuple[Path, bool]], width: int,
             + review_card.card(every, width=width, style=style))
 
 
+def to_connect(proposal: "Proposal", dirs: list[tuple[Path, bool]]) -> dict[str, str]:
+    """Each forge to connect before `proposal` can run: host to the URL
+    `forge connect` takes."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...suggest import review
+    seen = review.glance(proposal, dirs)
+    return seen.connect if seen else {}
+
+
+def revalidated(proposal: "Proposal", dirs: list[tuple[Path, bool]]) -> "Proposal":
+    """`proposal` validated again, after a forge it grants on was connected."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...suggest.validate import validate_proposal
+    again = validate_proposal(proposal, dirs)[0]
+    again.source = proposal.source
+    return again
+
+
 def _lasting(line: str) -> bool:
     """A warning or an error, which a note keeps; anything else is progress."""
     return any(f"{level}:" in line for level in ("warning", "error"))
@@ -556,4 +671,5 @@ def run_start(args: argparse.Namespace, manifest: "ManifestIndex", settings: Set
             own.close()
 
 
-__all__ = ["StartView", "bottle_summary", "review_lines", "run_start"]
+__all__ = ["CONNECT_KEYS", "StartView", "bottle_summary", "review_lines", "revalidated",
+           "run_start", "to_connect"]

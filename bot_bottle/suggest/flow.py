@@ -57,22 +57,27 @@ def suggest(
     """A validated proposal for `task`. `cwd` is the project directory, or
     None when there's none to look at. `run` asks the architect; without
     one, the rules path answers and says why."""
+    # pylint: disable-next=import-outside-toplevel
+    from .forges import described_forges
     host_root = host_root or bot_bottle_root()
     notes = [] if cwd is not None else [NO_PROJECT_NOTE]
+    dirs = bottle_dirs(cwd, host_root)
+    described = described_forges(dirs, cwd)
     if rules:
         proposal, source = rules_suggest(task, cwd, host_root=host_root), SOURCE_RULES
     else:
         try:
             if run is None:
                 raise ArchitectError(NO_RUNNER)
-            proposal = architect_suggest(task, cwd, run=run, host_root=host_root)
+            proposal = architect_suggest(task, cwd, run=run, host_root=host_root,
+                                         described=described)
             source = SOURCE_ARCHITECT
         except ArchitectError as e:
             proposal, source = rules_suggest(task, cwd, host_root=host_root), SOURCE_RULES
             notes.append(f"bottle-architect didn't answer ({e}); this is the rules path")
     proposal.notes[:0] = notes
-    validated = validate_proposal(proposal, bottle_dirs(cwd, host_root),
-                                  host_secrets(path=host_root / "secrets"))[0]
+    validated = validate_proposal(proposal, dirs, host_secrets(path=host_root / "secrets"),
+                                  described)[0]
     validated.source = source
     return validated
 

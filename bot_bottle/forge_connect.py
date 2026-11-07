@@ -58,6 +58,17 @@ class ConnectError(Exception):
     """The forge couldn't be connected; the message says why."""
 
 
+class SshUnreachable(ConnectError):
+    """The forge's SSH address didn't answer from here: `ssh` is the one
+    tried, and `reason` what went wrong, for asking for another."""
+
+    def __init__(self, ssh: str, reason: str) -> None:
+        super().__init__(f"{reason}; give an SSH address this host can reach, "
+                         f"e.g. ssh://git@<ip>:<port>")
+        self.ssh = ssh
+        self.reason = reason
+
+
 @dataclass(frozen=True)
 class Connected:
     """A forge connected: where it was written and what the token can do."""
@@ -123,8 +134,7 @@ def connect(url: str, token: str, *, ssh: str = "", kind: str = "",
         host_key = fetch_host_key(*ssh_host_port(ssh))
     except RuntimeError as e:
         # Without SSH, git-gate can't reach the forge's repos at all.
-        raise ConnectError(f"{e}; give an SSH address this host can reach, "
-                           f"e.g. ssh://git@<ip>:<port>") from e
+        raise SshUnreachable(ssh, str(e)) from e
     key = host_of(url)
     secret = connected_secret(key, check.account)
     write_secret(host_secrets_path(), secret, token.strip())
@@ -138,5 +148,5 @@ def connect(url: str, token: str, *, ssh: str = "", kind: str = "",
                      host_key=host_key, secret_name=secret, warnings=tuple(warnings))
 
 
-__all__ = ["ConnectError", "Connected", "connect", "connected_secret", "normalize_url",
-           "record", "ssh_host_port"]
+__all__ = ["ConnectError", "Connected", "SshUnreachable", "connect", "connected_secret",
+           "normalize_url", "record", "ssh_host_port"]

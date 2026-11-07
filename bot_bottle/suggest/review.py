@@ -53,12 +53,14 @@ class Line:
 @dataclass(frozen=True)
 class Glance:
     """The review at first sight: `gist`, the `new` grants (`api.linear.app`,
-    `acme/app (push)`, `$LINEAR_TOKEN`), and `warns`, what needs doing first
-    (`gitea.example.com isn't connected here: bot-bottle forge connect …`)."""
+    `acme/app (push)`, `$LINEAR_TOKEN`), `connect`, each forge to connect
+    before it can run, with the URL `forge connect` takes, and `warns`, any
+    other forge trouble (its connections file doesn't read)."""
 
     gist: str
     new: list[str]
     warns: list[str]
+    connect: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -369,10 +371,18 @@ def glance(proposal: Proposal, dirs: list[tuple[Path, bool]]) -> Glance | None:
             new += sorted({h.secret for h in f.hosts if h.secret})
     hosts = {h.host for f in files for h in f.hosts} | {
         r.forge for f in files for r in f.repos if r.forge}
-    warns = [f"{x.what} isn't connected here: bot-bottle forge connect https://{x.what}"
-             if x.detail.startswith(_UNCONNECTED) else f"{x.what}: {x.detail}"
-             for x in _forge_lines(files) if x.tone == "warn"]
-    return Glance(gist(proposal, {h.lower() for h in hosts}), new, warns)
+    # pylint: disable-next=import-outside-toplevel
+    from .forges import connect_url
+    warns: list[str] = []
+    connect: dict[str, str] = {}
+    for x in _forge_lines(files):
+        if x.tone != "warn":
+            continue
+        if x.detail.startswith(_UNCONNECTED):
+            connect[x.what] = connect_url(x.what, proposal.forges.get(x.what, {}))
+        else:
+            warns.append(f"{x.what}: {x.detail}")
+    return Glance(gist(proposal, {h.lower() for h in hosts}), new, warns, connect)
 
 
 def every_line(proposal: Proposal, dirs: list[tuple[Path, bool]]) -> list[Line] | None:

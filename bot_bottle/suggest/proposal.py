@@ -111,6 +111,9 @@ class Proposal:
     can't run on this host (a secret it needs isn't set; `runnable`).
     `summary` is the architect's one plain sentence on what it recommends
     ("" when it gave none; `summary_line` falls back to one made here).
+    `forges` describes each forge a repo grant is on that this host hasn't
+    connected yet (set by validation, never by the model; `suggest.forges`):
+    the review offers to connect it, and a saved bottle carries it.
     """
 
     option: str
@@ -122,6 +125,7 @@ class Proposal:
     source: str = ""
     blocked: str = ""
     summary: str = ""
+    forges: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # --- serialisation --------------------------------------------------
 
@@ -155,6 +159,8 @@ class Proposal:
             out["blocked"] = self.blocked
         if self.summary:
             out["summary"] = self.summary
+        if self.forges:
+            out["forges"] = {h: dict(d) for h, d in self.forges.items()}
         return out
 
     def to_json(self, *, indent: int = 2) -> str:
@@ -224,9 +230,13 @@ class Proposal:
         notes = [str(n) for n in raw_notes]
 
         summary = d.get("summary", "")
+        raw_forges = d.get("forges", {})
+        forges = ({str(h): dict(v) for h, v in raw_forges.items() if isinstance(v, dict)}
+                  if isinstance(raw_forges, dict) else {})
         return cls(option=option, bottles=bottles, new_bottle=new_bottle,
                    additions=additions, similar=similar, notes=notes,
-                   summary=" ".join(summary.split()) if isinstance(summary, str) else "")
+                   summary=" ".join(summary.split()) if isinstance(summary, str) else "",
+                   forges=forges)
 
     @classmethod
     def from_json(cls, text: str) -> "Proposal":

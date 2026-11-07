@@ -34,7 +34,9 @@ class _Asker:
         self.asked.append(("confirm", question, tuple(context), {"default": default}))
         return bool(self.answers.pop(0))
 
-    def ask(self, question: str, *, context: Sequence[str] = (), secret: bool = False) -> str:
+    def ask(self, question: str, *, context: Sequence[str] = (), secret: bool = False,
+            default: str = "") -> str:
+        del default  # what's answered is the test's
         self.asked.append(("ask", question, tuple(context), {"secret": secret}))
         return str(self.answers.pop(0))
 

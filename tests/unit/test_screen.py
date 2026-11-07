@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import tempfile
+import os
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -145,6 +146,16 @@ class TestKeys(unittest.TestCase):
         self.assertEqual("a", edit_line("ab", "backspace"))
         self.assertEqual("", edit_line("abc", "ctrl-u"))
         self.assertEqual("ab", edit_line("ab", "up"))
+
+    def test_a_paste_is_one_key(self) -> None:
+        self.assertEqual("paste:ssh://x", decode_key("\x1b[200~ssh://x\x1b[201~"))
+        self.assertEqual("ab ssh://x", edit_line("ab ", "paste:ssh://x\n"))
+        read, write = os.pipe()
+        self.addCleanup(os.close, read)
+        os.write(write, b"\x1b[200~save s\x1b[201~q")
+        os.close(write)
+        self.assertEqual("paste:save s", screen.read_key(read))
+        self.assertEqual("q", screen.read_key(read))
 
 
 class TestScreen(unittest.TestCase):

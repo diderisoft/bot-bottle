@@ -152,14 +152,20 @@ def _host_library(host_root: Path, dirs: list[tuple[Path, bool]]) -> list[dict[s
     return result
 
 
-def _connected_forges() -> list[dict[str, str]]:
-    """The forges this host connected (ADR 0019): host, kind and URL."""
+def _forges(described: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """The forges a grant may be on (ADR 0019): those this host connected,
+    then those a bottle describes or the project is on but that aren't
+    connected yet (`suggest.forges`), marked `connected: false`."""
     from ..forge_connections import ForgeConnectionError, connections
     try:
         found = connections()
     except ForgeConnectionError:
-        return []
-    return [{"name": host, "kind": c.kind, "url": c.url} for host, c in sorted(found.items())]
+        found = {}
+    out: list[dict[str, Any]] = [{"name": host, "kind": c.kind, "url": c.url, "connected": True}
+                                 for host, c in sorted(found.items())]
+    out += [{"name": host, "kind": str(d.get("kind") or "gitea"), "connected": False}
+            for host, d in sorted(described.items()) if host not in found]
+    return out
 
 
 def _secret_names(host_root: Path) -> list[str]:
@@ -190,7 +196,7 @@ def _build_prompt(
     task: str,
     library: list[dict[str, Any]],
     project_meta: dict[str, Any],
-    forges: list[dict[str, str]],
+    forges: list[dict[str, Any]],
     secret_names: list[str],
 ) -> str:
     sections = [
@@ -203,8 +209,10 @@ def _build_prompt(
         "Project metadata:",
         json.dumps(project_meta, indent=2),
         "",
-        "Connected forges (a repo grant is `<name>/<owner>/<repo>[:write]` on one of "
-        "these; it needs no bottle stacked for the forge):",
+        "Forges (a repo grant is `<name>/<owner>/<repo>[:write]` on one of these; it "
+        "needs no bottle stacked for the forge). Grant on one with `connected: false` "
+        "as on any other when the task needs it: the person is asked to connect it "
+        "before the launch, so don't leave the repo out or explain it in a note:",
         json.dumps(forges, indent=2),
         "",
         "Secret names (values never shown):",
@@ -250,6 +258,8 @@ def _parse_and_repair(raw: str) -> Proposal | None:
         d = json.loads(extracted)
     except json.JSONDecodeError:
         return None
+    if isinstance(d, dict):
+        d.pop("forges", None)  # validation's to set, never the model's
     try:
         return Proposal.from_dict(d)
     except (ValueError, KeyError, TypeError):
@@ -277,11 +287,13 @@ def architect_suggest(
     *,
     run: Runner,
     host_root: Path | None = None,
+    described: dict[str, dict[str, Any]] | None = None,
 ) -> Proposal:
     """The host's `bottle-architect` agent's proposal for `task`, not yet
     validated. `cwd` is the project directory, or None when there's none to
-    look at; `run` asks the architect (its warm bottle). ArchitectError when
-    the architect can't answer."""
+    look at; `run` asks the architect (its warm bottle); `described` are the
+    forges it may grant on that aren't connected (`suggest.forges`).
+    ArchitectError when the architect can't answer."""
     if host_root is None:
         host_root = bot_bottle_root()
     architect = load_architect(host_root)
@@ -310,11 +322,11 @@ def architect_suggest(
             pass
 
     library: list[dict[str, Any]] = []
-    forges: list[dict[str, str]] = []
+    forges: list[dict[str, Any]] = []
     secret_names: list[str] = []
     try:
         library = _host_library(host_root, dirs)
-        forges = _connected_forges()
+        forges = _forges(described or {})
         secret_names = _secret_names(host_root)
     except Exception:  # pylint: disable=broad-exception-caught
         pass

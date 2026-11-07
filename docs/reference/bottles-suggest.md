@@ -43,7 +43,7 @@ steps on the same screen (`cli/screen.py`, `commands/guided_view.py`):
    Adds Y so the agent can Z."; then one `new` line listing what this run
    adds that no bottle it builds on already has (hosts, repos with `(push)`
    when writable, env vars, the secrets routes carry); then a `⚠` line for
-   anything to do first, such as connecting a forge a repo is on. The gist
+   each forge a repo is on that this host hasn't connected yet. The gist
    only describes: the `new` line is always built from the proposal. A gist
    that's missing, over 160 characters, or names a host the proposal doesn't
    reach is replaced by a sentence made from the proposal (`Run in basic,
@@ -54,8 +54,7 @@ steps on the same screen (`cli/screen.py`, `commands/guided_view.py`):
    and label issues.
 
    new  api.linear.app · acme/app (push) · $LINEAR_TOKEN
-   ⚠    gitea.example.com isn't connected here: bot-bottle forge connect
-        https://gitea.example.com
+   ⚠    gitea.example.com isn't connected here · c connects it
    ```
 
    `d` shows the details: a card with a line for each thing it adds, with
@@ -83,7 +82,16 @@ steps on the same screen (`cli/screen.py`, `commands/guided_view.py`):
    ```
 
    `Enter` runs it, `s` saves it as a named bottle first, `e` edits it, `d`
-   toggles the details, `q` cancels. Edit opens the proposal as YAML in
+   toggles the details, `q` cancels. While a forge isn't connected, `Enter`
+   and `s` wait and `c` connects it on the screen: the token (the page to
+   make one at, and the scopes it needs), then a spinner while it checks the
+   token and pins the forge's SSH host key. When the SSH address the forge
+   reports doesn't answer from here, it asks for one this machine reaches
+   (a VPN's, say), the one tried filled in to edit; a refused token asks
+   again; `esc` backs out. GitHub's sign-in takes the plain terminal. Once
+   connected, the proposal is validated again and `Enter` runs it. A paste
+   arrives as one piece (bracketed paste), so pasted text never presses the
+   review's keys. Edit opens the proposal as YAML in
    `$VISUAL`/`$EDITOR`; after you save, it's validated, and it reopens with
    the errors inline until it validates (emptying the file cancels the
    edit). A proposal that can't run on this host (below) offers only edit
@@ -177,8 +185,15 @@ A proposal is a JSON object with these fields:
 - **No secrets in env.** An env var's value is visible to the agent, so an env
   name that looks like a secret (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, …)
   is dropped with a note to add it as a credential instead.
-- **Grants only on connected forges.** A repo on a forge this host hasn't
-  connected becomes a note instead of a grant.
+- **Grants on known forges.** A repo grant is kept on a forge this host
+  connected, or on one it hasn't that is known without a connection
+  (`suggest/forges.py`): a bottle in the search path describes it
+  (`git-gate.forges.<host>`), or the project's `origin` is on it (its kind
+  asked of the server, as `forge connect` does; not for an origin on an IP
+  address). The proposal carries such a forge's description (`forges`, set
+  by validation, never by the model), so a saved bottle describes it and the
+  review offers to connect it. A grant on a forge nothing describes becomes
+  a note instead.
 - **Validation.** The proposal is turned into a bottle document and loaded with
   the real manifest loader.  Any element that fails is dropped and noted rather
   than failing the whole proposal.
@@ -288,8 +303,11 @@ The input is:
   and the `missing_secrets` it needs that this host lacks);
 - project metadata: origin URL, the project bottle's name, and
   lockfile/manifest *file names* (never their contents);
-- the forges this host connected (host, kind and URL), with the rule that a
-  grant needs no bottle stacked for its forge;
+- the forges a grant may be on: those this host connected (host, kind and
+  URL), then the known ones it hasn't (`connected: false`), with the rules
+  that a grant needs no bottle stacked for its forge and that one on an
+  unconnected forge is proposed as any other (the person connects it
+  before the launch);
 - secret *names* from the host secrets file.
 
 The answer is parsed as a proposal and validated like any other.
