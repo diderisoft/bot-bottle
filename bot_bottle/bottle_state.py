@@ -74,6 +74,9 @@ class BottleMetadata:
     # state dirs.
     origin: str = ""
     agent_id: str = ""
+    # The parent bottle's identity when this bottle was launched by another
+    # bottle via `launch-bottle` (PRD 0106); empty otherwise.
+    parent: str = ""
 
 
 def metadata_path(identity: str) -> Path:
@@ -116,6 +119,7 @@ def read_metadata(identity: str) -> BottleMetadata | None:
         bottle_names=bottle_names,
         origin=str(raw_typed.get("origin", "")),
         agent_id=str(raw_typed.get("agent_id", "")),
+        parent=str(raw_typed.get("parent", "")),
     )
 
 
@@ -156,6 +160,15 @@ def rename_label(identity: str, label: str) -> bool:
     if current.label != label:
         write_metadata(dataclasses.replace(current, label=label))
     return True
+
+
+def record_parent(identity: str, parent: str) -> None:
+    """Note that `identity` was launched by `parent` via `launch-bottle`.
+    No-op without metadata."""
+    current = read_metadata(identity)
+    if current is None or current.parent == parent:
+        return
+    write_metadata(dataclasses.replace(current, parent=parent))
 
 
 def console_agent_id(identity: str) -> str:
@@ -302,6 +315,7 @@ __all__ = [
     "MAX_LABEL_CHARS",
     "clean_label",
     "rename_label",
+    "record_parent",
     "capture_session_state",
     "settle_state",
     "agent_state_dir",

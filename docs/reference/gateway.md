@@ -193,7 +193,7 @@ That blob is rendered from the bottle's `egress.routes` by
 
 `gateway/supervisor/server.py` is an MCP server the agent calls when it's
 stuck. Its tools are `egress-allow`, `egress-block`, `list-egress-routes`,
-`forge-connect`, `add-repo` and `check-proposal`. Its `initialize` instructions and the egress tool
+`forge-connect`, `add-repo`, `launch-bottle` and `check-proposal`. Its `initialize` instructions and the egress tool
 descriptions say that git never goes out through egress, even to allowed
 hosts: the bottle's repos go through git-gate with their usual URLs and no
 key or token (the agent's global gitconfig lists them as `insteadOf` rules),
@@ -244,6 +244,18 @@ grant in the bottle (the same target as a kept egress route; the forge's
 description comes with it when the bottle doesn't have one, never a token). Granting adds the repo to the
 running bottle ([git-gate](git-gate.md#live-grants)) and approves with a note
 giving its URL.
+
+`launch-bottle(agent, prompt, bottles, label, justification)` asks to start a
+child bottle (PRD 0106). The host checks names as a console launch does and
+refuses unknown agents or bottles, a forge this host hasn't connected, a child
+that is already at its parent's cap (`children.max`, default 3), or a nested
+launch (depth 1: a child can't launch children of its own). Access is compared
+with the parent's live elements (the Manifest tab's "in effect"); anything
+beyond the parent's (egress hosts, repos, env names) is listed on the card as
+removed. The card is answered from the console only; the terminal can deny it.
+On approval the host launches the child with a trimmed run-bottle that holds
+only within-parent elements, and writes the parent's identity into the child's
+session record (`parent` field in `metadata.json`).
 
 Neither request can be plainly allowed (`approvals.answer` refuses): that
 would tell the agent it has what it asked for. The terminal can only deny them.

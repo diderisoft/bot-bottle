@@ -187,7 +187,7 @@ containers, VMs, networks and volumes `bb-<name>-`; caches are shared
 | Signing keys | `~/.bot-bottle/<key file>`, mode 0600, pushed to the key holder | host |
 | Gateway CA | `~/.bot-bottle/gateway-ca/`, mounted at mitmproxy's confdir (firecracker: the infra VM dir's `gateway-ca/`) | gateway |
 | Audit journal | `~/.bot-bottle/audit/` | host controller |
-| Per-bottle metadata, compose files, logs | `~/.bot-bottle/state/<identity>/` | backend |
+| Per-bottle metadata, compose files, logs | `~/.bot-bottle/state/<identity>/` — `metadata.json` holds `identity`, `agent_name`, `cwd`, `copy_cwd`, `started_at`, `compose_project`, `backend`, `label`, `color`, `bottle_names`, `origin`, `agent_id`, and `parent` (the parent bottle's identity when launched via `launch-bottle`, PRD 0106; empty otherwise) | backend |
 | Image and kernel caches | `~/.cache/bot-bottle/`, and the runtime's own image store; `bot-bottle cleanup images` removes superseded releases at once and unused builds after 14 days, never a current pin or an image in use (PRD 0088, design repo) | backend |
 
 The gateway keeps no durable per-bottle state. When it restarts, the launcher

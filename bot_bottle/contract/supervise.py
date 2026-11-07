@@ -21,6 +21,9 @@ TOOL_FORGE_CONNECT = "forge-connect"
 # Ask for a repo on a connected forge (PRD 0105); `proposed_file` is the grant,
 # `<forge>/<owner>/<repo>[:write]`. Approval adds it to the running bottle.
 TOOL_ADD_REPO = "add-repo"
+# Ask to launch a child bottle (PRD 0106); `proposed_file` is a JSON object
+# with agent, bottles, prompt and label. Approval launches the child.
+TOOL_LAUNCH_BOTTLE = "launch-bottle"
 # Read-only agent tool that polls a proposal's decision. It never becomes a
 # `Proposal.tool`, so it isn't in `TOOLS`.
 TOOL_CHECK_PROPOSAL = "check-proposal"
@@ -35,6 +38,7 @@ TOOLS: tuple[str, ...] = (
     TOOL_LIST_EGRESS_ROUTES,
     TOOL_FORGE_CONNECT,
     TOOL_ADD_REPO,
+    TOOL_LAUNCH_BOTTLE,
 )
 
 STATUS_APPROVED = "approved"
@@ -262,6 +266,7 @@ __all__ = [
     "TOOL_GET_ENVIRONMENT",
     "TOOL_EGRESS_TOKEN_ALLOW",
     "TOOL_GITLEAKS_ALLOW",
+    "TOOL_LAUNCH_BOTTLE",
     "TOOL_LIST_EGRESS_ROUTES",
     "SUPERVISE_PORT",
     "EGRESS_FORWARD_PROXY",

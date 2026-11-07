@@ -45,6 +45,7 @@ from bot_bottle.gateway.supervisor.mcp_dispatch import (
 )
 from bot_bottle.contract import supervise as _sv
 from bot_bottle.gateway.supervisor.env_handler import handle_get_environment
+from bot_bottle.gateway.supervisor import launch_bottle_server as _lb
 
 
 # --- JSON-RPC / MCP plumbing ---
@@ -210,11 +211,10 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
     {
         "name": _sv.TOOL_EGRESS_ALLOW,
         "description": (
-            "Request operator approval to change the bottle's egress "
-            "allowlist. Pass the full proposed routes.yaml content, not "
-            "just the new host, plus a justification. Use "
-            "`list-egress-routes` first so the proposal preserves existing "
-            "routes. Allowing a host doesn't let git through to it: "
+            "Request operator approval to change the egress allowlist. "
+            "Pass the full routes.yaml (not just the host) plus a justification; "
+            "use `list-egress-routes` first. Allowing a host doesn't let "
+            "git through to it: "
             + GIT_BOUNDARY
         ),
         "inputSchema": _proposal_input_schema(),
@@ -233,13 +233,11 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
     {
         "name": _sv.TOOL_FORGE_CONNECT,
         "description": (
-            "Ask the operator to connect a git forge (Gitea or GitHub; no "
-            "other kind) to this host, so bottles can be granted its repos. "
-            "Pass the forge's web URL. A forge of another kind is refused at "
-            "once, saying so. The "
-            "operator makes a token on the forge and pastes it on their phone; "
-            "you never see it. On approval the notes say which account it "
-            "connected as. Connecting a forge doesn't give this bottle a repo: "
+            "Ask the operator to connect a git forge (Gitea or GitHub). "
+            "Pass the forge's web URL; unsupported kinds are refused at once. "
+            "The operator pastes a token on their phone; you never see it. "
+            "On approval the notes say which account connected. This "
+            "doesn't give this bottle a repo: "
             + GIT_BOUNDARY
         ),
         "inputSchema": {
@@ -258,13 +256,12 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
     {
         "name": _sv.TOOL_ADD_REPO,
         "description": (
-            "Ask the operator for a repo this bottle doesn't have, on a forge "
-            "this host has connected (if it hasn't, `forge-connect` first). "
-            "Pass the grant `<forge>/<owner>/<repo>`, adding `:write` to push; "
-            "the operator may grant read-only instead. On approval the repo is "
-            "added to this running bottle: use its normal URL (the notes give "
-            "it) and git routes it through git-gate. If its name clashes with a "
-            "repo already here, prefix a local name: `<alias>=<grant>`."
+            "Ask the operator for a repo on a forge this host has connected "
+            "(`forge-connect` if not). Pass the grant `<forge>/<owner>/<repo>`, "
+            "adding `:write` to push; the operator may grant read-only instead. "
+            "On approval the repo is added to this running bottle: use its normal "
+            "URL and git routes it through git-gate. For a name clash, use "
+            "`<alias>=<grant>`."
         ),
         "inputSchema": {
             "type": "object",
@@ -279,26 +276,19 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
             "additionalProperties": False,
         },
     },
+    _lb.TOOL_DEFINITION,
     {
         "name": _sv.TOOL_CHECK_PROPOSAL,
         "description": (
-            "Poll a previously queued proposal for the operator's decision "
-            "WITHOUT blocking or re-proposing. Pass the `proposal_id` you "
-            "got back when an `egress-allow`/`egress-block` call returned "
-            "`status: pending`. Returns the current status: `pending` (no "
-            "decision yet — poll again later), `approved`, `modified`, "
-            "`rejected`, or `unknown` (no such queued proposal — wrong id, "
-            "or it was already resolved and read)."
+            "Poll a pending proposal WITHOUT re-queuing. Pass the `proposal_id` "
+            "from a `pending` response. Returns `pending`, `approved`, `modified`, "
+            "`rejected`, or `unknown` (wrong id or already resolved)."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "proposal_id": {
-                    "type": "string",
-                    "description": (
-                        "The proposal id from a `pending` response."
-                    ),
-                },
+                "proposal_id": {"type": "string",
+                                "description": "The proposal id from a `pending` response."},
             },
             "required": ["proposal_id"],
             "additionalProperties": False,
@@ -369,6 +359,13 @@ def _refuse_unsupported_forge(tool: str, host: str) -> None:
         raise _RpcClientError(ERR_INVALID_PARAMS, f"{tool}: {unsupported_forge(host)}")
 
 
+def _build_launch_bottle_proposed(tool: str, args_raw: dict[str, object]) -> str:
+    try:
+        return _lb.build_proposed(tool, args_raw)
+    except _lb._ArgError as e:
+        raise _RpcClientError(ERR_INVALID_PARAMS, str(e)) from e
+
+
 # --- MCP handlers ---
 
 
@@ -385,6 +382,7 @@ SERVER_INSTRUCTIONS = (
     "Each request queues a proposal; if it comes back pending, poll it with "
     "`check-proposal` rather than asking again. A git forge (Gitea or GitHub) "
     "this host hasn't connected: `forge-connect`; a repo on one: `add-repo`. "
+    "To run another agent in a child bottle: `launch-bottle`. "
     + GIT_BOUNDARY
 )
 
@@ -428,7 +426,9 @@ def handle_tools_call(
             f"{name}: 'justification' is required and must be a non-empty string",
         )
 
-    if name in PROPOSED_FILE_FIELD:
+    if name == _sv.TOOL_LAUNCH_BOTTLE:
+        proposed_file = _build_launch_bottle_proposed(name, args_raw)
+    elif name in PROPOSED_FILE_FIELD:
         file_field = PROPOSED_FILE_FIELD[name]
         proposed_file = args_raw.get(file_field)
         if not isinstance(proposed_file, str):

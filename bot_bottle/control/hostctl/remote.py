@@ -596,7 +596,7 @@ class ConsoleLink:
             if target is not None:
                 lines.append(f"keep: in {target.label()}, from the next launch")
             options = ["allow_project"] if target is not None else []
-            special = await remote_actions.special_card(request, self._orchestrator)
+            special = await remote_actions.special_card(request, self._orchestrator, self._bottles)
             if special == ([], []):
                 continue  # refused for the operator, the agent told why
             lines, options = special or (lines, options)

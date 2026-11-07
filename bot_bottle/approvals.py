@@ -18,6 +18,7 @@ from .contract.supervise import (
     TOOL_EGRESS_TOKEN_ALLOW,
     TOOL_FORGE_CONNECT,
     TOOL_GITLEAKS_ALLOW,
+    TOOL_LAUNCH_BOTTLE,
 )
 from .contract.yaml_subset import parse_frontmatter, serialize_yaml_subset
 from .gateway.egress.schema import load_config
@@ -34,6 +35,7 @@ _TOOL_WORDS = {
     TOOL_EGRESS_TOKEN_ALLOW: "wants a credential sent to a host",
     TOOL_FORGE_CONNECT: "wants a git forge connected",
     TOOL_ADD_REPO: "wants a repo",
+    TOOL_LAUNCH_BOTTLE: "wants to launch a child bottle",
 }
 
 
@@ -376,7 +378,7 @@ def answer(client: Any, request: Request, decision: str, *, via: str) -> str:
         raise ValueError(f"unknown decision {decision!r}")
     if request.tool == TOOL_FORGE_CONNECT and decision != DENY:
         return _forge_now_connected(client, request, via)
-    if request.tool == TOOL_ADD_REPO and decision != DENY:
+    if request.tool in (TOOL_ADD_REPO, TOOL_LAUNCH_BOTTLE) and decision != DENY:
         # Allowing alone would tell the agent it has what it asked for.
         raise ValueError("answer this request from the console's card, or deny it")
     target = keep_target(request.session) if decision == ALLOW_PROJECT else None

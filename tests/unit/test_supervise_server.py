@@ -365,6 +365,7 @@ class TestHandleToolsList(unittest.TestCase):
                 _sv.TOOL_FORGE_CONNECT,
                 _sv.TOOL_ADD_REPO,
                 _sv.TOOL_GET_ENVIRONMENT,
+                _sv.TOOL_LAUNCH_BOTTLE,
             ]),
             sorted(names),
         )

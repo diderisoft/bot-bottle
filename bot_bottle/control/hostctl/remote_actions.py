@@ -342,15 +342,21 @@ def _app_reach_lines(forge: Any, repo: str) -> tuple[list[str], bool]:
             f"(or add the repo to its installation), then grant"], False
 
 
-def card(request: Any, kind: str = "") -> tuple[list[str], list[str]] | None:
+def card(request: Any, kind: str = "",
+         parent_elements: list[Any] | None = None,
+         child_elements: list[Any] | None = None) -> tuple[list[str], list[str]] | None:
     """The phone card for a request that takes more than allow/deny, or None.
-    `kind` is a `forge-connect`'s forge's (`vet`)."""
+    `kind` is a `forge-connect`'s forge's (`vet`). `parent_elements` and
+    `child_elements` are for a `launch-bottle` card."""
     # pylint: disable-next=import-outside-toplevel
-    from ...contract.supervise import TOOL_ADD_REPO, TOOL_FORGE_CONNECT
+    from ...contract.supervise import TOOL_ADD_REPO, TOOL_FORGE_CONNECT, TOOL_LAUNCH_BOTTLE
     if request.tool == TOOL_FORGE_CONNECT:
         return forge_attention(request, kind)
     if request.tool == TOOL_ADD_REPO:
         return repo_attention(request)
+    if request.tool == TOOL_LAUNCH_BOTTLE:
+        from .launch_bottle import launch_bottle_attention
+        return launch_bottle_attention(request, parent_elements or [], child_elements or [])
     return None
 
 
@@ -406,15 +412,59 @@ def _already_connected(request: Any, orchestrator: Any) -> bool:
     return True
 
 
-async def special_card(request: Any, orchestrator: Any) -> tuple[list[str], list[str]] | None:
+async def special_card(request: Any, orchestrator: Any,
+                       bottles: Any = None) -> tuple[list[str], list[str]] | None:
     """`card`, after `vet`: a request no card could meet is refused for the
     operator, the agent told why, and the card is ([], []). None when the
     request takes only allow/deny. A refusal that fails shows the card, which
-    the operator can deny."""
+    the operator can deny. `bottles` is a BottleService, used by `launch-bottle`
+    to check the children cap."""
     # pylint: disable=import-outside-toplevel
-    from ...contract.supervise import TOOL_ADD_REPO, TOOL_FORGE_CONNECT
+    from ...contract.supervise import TOOL_ADD_REPO, TOOL_FORGE_CONNECT, TOOL_LAUNCH_BOTTLE
     from ..client import AlreadyAnswered
     from .nudge import nudge_if_waited
+
+    async def _try_reject(reason: str) -> bool:
+        """Attempt an auto-reject; return True when it succeeded (or was
+        already answered), False when the reject itself failed (show card)."""
+        try:
+            await asyncio.to_thread(orchestrator(request.orchestrator).supervise_respond,
+                                    request.id, bottle_slug=request.bottle, decision="reject",
+                                    notes=reason)
+            await asyncio.to_thread(nudge_if_waited, request, "denied", reason)
+            log.info(f"remote: {request.session}: refused {request.tool}: {reason}")
+            return True
+        except AlreadyAnswered:
+            return True
+        except Exception as e:  # pylint: disable=broad-exception-caught  # the card instead
+            log.warn(f"remote: refusing {request.tool} failed: {type(e).__name__}: {e}")
+            return False
+
+    if request.tool == TOOL_LAUNCH_BOTTLE:
+        from .launch_bottle import launch_bottle_attention, vet_launch_bottle
+        from .manifest_elements import bottle_elements, elements
+        from .manifest_view import _live_policy
+        refusal = await asyncio.to_thread(vet_launch_bottle, request, bottles)
+        if refusal:
+            if await _try_reject(refusal):
+                return [], []
+            # Reject failed: fall through to show the card below.
+        # Build access comparison for the card.
+        try:
+            from .launch_bottle import parse_launch_proposal
+            parsed = parse_launch_proposal(request.proposed)
+            from ...manifest import ManifestIndex
+            index = ManifestIndex.resolve(str(__import__("pathlib").Path.home()), missing_ok=True)
+            dirs = index.bottle_dirs()
+            child_names = tuple(parsed["bottles"])
+            parent_policy = await asyncio.to_thread(_live_policy, request.session)
+            parent_elems = await asyncio.to_thread(elements, request.session, parent_policy)
+            child_elems = bottle_elements(child_names, dirs)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            log.warn(f"remote: building launch-bottle card failed: {type(e).__name__}: {e}")
+            parent_elems, child_elems = [], []
+        return await asyncio.to_thread(launch_bottle_attention, request, parent_elems, child_elems)
+
     if request.tool not in (TOOL_FORGE_CONNECT, TOOL_ADD_REPO):
         return None
     if request.tool == TOOL_FORGE_CONNECT and await asyncio.to_thread(
@@ -422,17 +472,9 @@ async def special_card(request: Any, orchestrator: Any) -> tuple[list[str], list
         return [], []
     refusal, kind = await asyncio.to_thread(vet, request)
     if refusal:
-        try:
-            await asyncio.to_thread(orchestrator(request.orchestrator).supervise_respond,
-                                    request.id, bottle_slug=request.bottle, decision="reject",
-                                    notes=refusal)
-            await asyncio.to_thread(nudge_if_waited, request, "denied", refusal)
-            log.info(f"remote: {request.session}: refused {request.tool}: {refusal}")
+        if await _try_reject(refusal):
             return [], []
-        except AlreadyAnswered:
-            return [], []
-        except Exception as e:  # pylint: disable=broad-exception-caught  # the card instead
-            log.warn(f"remote: refusing {request.tool} failed: {type(e).__name__}: {e}")
+        # Reject failed: show the card so the operator can deny.
     return await asyncio.to_thread(card, request, kind)
 
 
@@ -752,7 +794,9 @@ QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest,
            "rename": rename, "operator_egress_allow": egress_allow, **uploads.QUERIES}
 
 # Console answers to a card that carry more than allow/deny, by message type.
-ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer}
+from .launch_bottle import launch_bottle_answer  # noqa: E402  # after other defs
+ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer,
+           "launch_bottle_answer": launch_bottle_answer}
 # Requests about this host rather than one agent.
 HOST_REQUESTS = {"forge_connect": forge_connect, "github_authorize_start": github_authorize_start,
                  "github_status": github_status, **SUGGEST_REQUESTS}
@@ -763,4 +807,4 @@ __all__ = ["ANSWERS", "HOST_REQUESTS", "QUERIES", "add_repo_answer", "bottle_cha
            "forge_connect_answer", "github_authorize_start", "github_status", "library",
            "list_secrets", "manifest", "manifest_save", "manifest_transfer",
            "refresh_credentials", "rename", "repo_attention", "resolve", "set_secret",
-           "workspace_file"]
+           "special_card", "workspace_file"]
