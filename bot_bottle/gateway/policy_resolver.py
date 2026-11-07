@@ -148,5 +148,26 @@ class PolicyResolver:
             tokens,
         )
 
+    def fire_canary(
+        self,
+        source_ip: str,
+        identity_token: str,
+        *,
+        reason: str,
+        request_path: str,
+    ) -> str | None:
+        """Record a canary hit with the orchestrator. Returns the event id, or
+        None when unattributed. Raises `PolicyResolveError` if unreachable."""
+        payload = self._post_json("/canary/events", {
+            "source_ip": source_ip,
+            "identity_token": identity_token,
+            "reason": reason,
+            "request_path": request_path,
+        })
+        if payload is None:
+            return None
+        event_id = payload.get("event_id")
+        return event_id if isinstance(event_id, str) and event_id else None
+
 
 __all__ = ["PolicyResolver", "PolicyResolveError"]

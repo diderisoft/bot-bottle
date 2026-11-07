@@ -145,5 +145,28 @@ class OrchestratorAudit:
                               "operator_notes": notes, "decided_as": first,
                               "reason_code": "already_answered"})
 
+    # --- canary.* ---
+
+    def canary_fired(self, *, bottle_id: str, event_id: str, reason: str,
+                     request_path: str) -> None:
+        """The gateway detected a canary hit on this bottle."""
+        self._record(type="canary.fired", actor=f"bottled-agent:{bottle_id}",
+                     action="canary.fired", outcome="blocked", sensitivity="security",
+                     resource=bottle_id, bottle=bottle_id, bottled_agent=bottle_id,
+                     correlation_id=event_id,
+                     payload={"event_id": event_id, "reason": reason,
+                              "request_path": request_path})
+
+    def canary_resolved(self, *, bottle_id: str, event_id: str, action: str,
+                        notes: str) -> None:
+        """The operator resolved the canary event (acknowledged or terminated)."""
+        self._record(type="canary.resolved", actor="role:cli",
+                     action=f"canary.{action}",
+                     outcome="allowed" if action == "acknowledge" else "blocked",
+                     sensitivity="security", resource=bottle_id, bottle=bottle_id,
+                     bottled_agent=bottle_id, correlation_id=event_id,
+                     payload={"event_id": event_id, "operator_action": action,
+                              "operator_notes": notes})
+
 
 __all__ = ["OrchestratorAudit", "fingerprint"]

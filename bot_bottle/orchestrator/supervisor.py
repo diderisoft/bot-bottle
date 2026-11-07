@@ -7,8 +7,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..contract.supervise import AuditEntry, Proposal, Response
+from ..contract.supervise import AuditEntry, CanaryEvent, Proposal, Response
 from .store.audit_store import AuditStore
+from .store.canary_store import CanaryStore
 from .store.queue_store import QueueStore
 
 
@@ -23,6 +24,9 @@ class Supervisor:
 
     def _audit(self) -> AuditStore:
         return AuditStore(self._db_path)
+
+    def _canary(self) -> CanaryStore:
+        return CanaryStore(self._db_path)
 
     # --- Queue I/O ---
 
@@ -60,3 +64,30 @@ class Supervisor:
     def read_audit_entries(self, component: str, slug: str) -> list[AuditEntry]:
         """All audit entries for the component and slug."""
         return self._audit().read_audit_entries(component, slug)
+
+    # --- Canary events ---
+
+    def write_canary_event(self, event: CanaryEvent) -> None:
+        self._canary().write_event(event)
+
+    def read_canary_event(self, event_id: str) -> CanaryEvent:
+        return self._canary().read_event(event_id)
+
+    def list_unresolved_canary_events(self) -> list[CanaryEvent]:
+        return self._canary().list_unresolved()
+
+    def resolve_canary_event(
+        self,
+        event_id: str,
+        *,
+        status: str,
+        resolved_at: str,
+        notes: str,
+    ) -> bool:
+        return self._canary().resolve_event(
+            event_id, status=status, resolved_at=resolved_at, notes=notes,
+        )
+
+    def archive_canary_events(self, bottle_slug: str) -> None:
+        """Archive all canary events for `bottle_slug` (teardown/reconcile)."""
+        self._canary().archive_all_for_bottle(bottle_slug)

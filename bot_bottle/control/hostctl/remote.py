@@ -220,6 +220,8 @@ class ConsoleLink:
         self.audit_link = AuditLink(self._send, lambda: {  # console agents' records only
             a: b for a, b in self.running.items() if a not in self.present}, bottles)
         self._last_stats: float = 0.0
+        # Canary event ids already sent in this connection; re-sent on reconnect.
+        self._canary_sent: set[str] = set()
 
     # Wait on the bottle: minutes for a launch, for good if a teardown wedges.
     SLOW = frozenset({"launch", "resume", "stop"})
@@ -245,6 +247,10 @@ class ConsoleLink:
         elif kind == "approval":
             await self._approval(str(msg.get("agent_id", "")), str(msg.get("decision", "")),
                                  str(msg.get("since", "")))
+        elif kind == "resolve_canary":
+            await self._resolve_canary(str(msg.get("event_id", "")),
+                                       str(msg.get("bottle_slug", "")),
+                                       str(msg.get("action", "")))
         elif kind == "input":
             await self._input(str(msg.get("agent_id", "")), msg.get("data"))
         elif kind == "resize":
@@ -598,6 +604,53 @@ class ConsoleLink:
                               "since": request.arrived, "message": "\n".join(lines),
                               "options": options})
 
+    async def push_canary_events(self) -> None:
+        """Send `canary_fired` for unresolved canary events whose bottle is a
+        running agent; only new ones since the last push (tracked per connection).
+        Called on the tick loop so the console learns about canaries within seconds
+        of them firing."""
+        if not self.running:
+            return
+        bottle_to_agent = {v: k for k, v in self.running.items()}
+        try:
+            client = self._orchestrator()
+            events = await asyncio.to_thread(client.canary_events)
+        except Exception as e:  # pylint: disable=broad-exception-caught  # best effort
+            log.debug(f"remote: can't fetch canary events: {e}")
+            return
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            event_id = str(ev.get("id") or "")
+            bottle_slug = str(ev.get("bottle_slug") or "")
+            if not event_id or event_id in self._canary_sent:
+                continue
+            agent_id = bottle_to_agent.get(bottle_slug)
+            if agent_id is None:
+                continue
+            self._canary_sent.add(event_id)
+            await self._send({
+                "type": "canary_fired",
+                "agent_id": agent_id,
+                "event_id": event_id,
+                "bottle_slug": bottle_slug,
+                "reason": str(ev.get("reason") or ""),
+                "request_path": str(ev.get("request_path") or ""),
+                "fired_at": str(ev.get("arrival_timestamp") or ""),
+            })
+
+    async def _resolve_canary(self, event_id: str, bottle_slug: str, action: str) -> None:
+        """Forward a canary resolution from the console to the orchestrator."""
+        if not event_id or not bottle_slug or not action:
+            return
+        try:
+            client = self._orchestrator()
+            await asyncio.to_thread(client.canary_resolve, event_id,
+                                    bottle_slug=bottle_slug, action=action)
+            self._canary_sent.discard(event_id)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            log.warn(f"remote: couldn't resolve canary event {event_id!r}: {e}")
+
     async def _approval(self, agent_id: str, decision: str, since: str) -> None:
         """The console's answer to `agent_id`'s raised approval. `since` must
         match the request still shown."""
@@ -715,6 +768,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
             await link.reap()
             await link.discover()
             await link.push_attention()
+            await link.push_canary_events()
             await link.push_transcripts()
             await link.push_working()
             await link.audit_link.push()

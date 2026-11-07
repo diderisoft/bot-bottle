@@ -537,6 +537,35 @@ class EgressAddon:
         if kept:
             flow.request.headers["cookie"] = kept
 
+    def _fire_canary_event(
+        self,
+        flow: http.HTTPFlow,
+        slug: str,
+        result: ScanResult,
+        request_path: str,
+    ) -> None:
+        """Record a canary hit with the orchestrator (best-effort; never raises).
+        Called from the asyncio loop, so the RPC runs on a background thread."""
+        conn = flow.client_conn
+        source_ip = conn.peername[0] if conn is not None and conn.peername else ""
+        token = self._conn_tokens.get(getattr(conn, "id", ""), "") if conn is not None else ""
+        host = flow.request.host
+        full_path = f"{host}{request_path}"
+        reason = result.reason
+
+        async def _post() -> None:
+            try:
+                await asyncio.to_thread(
+                    self._resolver.fire_canary,
+                    source_ip, token,
+                    reason=reason,
+                    request_path=full_path,
+                )
+            except Exception:  # noqa: BLE001 - never block a request
+                pass
+
+        asyncio.ensure_future(_post())
+
     def _block_dlp(self, flow: http.HTTPFlow, result: ScanResult) -> None:
         ctx = self._req_ctx(flow)
         if result.context:
@@ -599,6 +628,8 @@ class EgressAddon:
             # Structural blocks (CRLF) and the canary have nothing to approve:
             # hard 403.
             if result.canary or policy == ON_MATCH_BLOCK or not result.matched:
+                if result.canary:
+                    self._fire_canary_event(flow, slug, result, request_path)
                 self._block_dlp(flow, result)
                 return False
 

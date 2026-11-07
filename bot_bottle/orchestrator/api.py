@@ -21,7 +21,7 @@ from ..contract.audit import AUDIT_EVENTS_PATH, GATEWAY_PRODUCERS, AuditEvent
 from ..contract.firehose import FIREHOSE_PATH, Capture
 from ..contract.auth import CONTROL_PLANE, ROLE_CLI, ROLES
 from ..contract.hostctl import BOTTLES_PATH, JOBS_PATH, ROLE_ORCHESTRATOR, LaunchRequest
-from ..contract.supervise import ALREADY_ANSWERED, TOOLS
+from ..contract.supervise import ALREADY_ANSWERED, CANARY_ACTIONS, TOOLS
 from ..contract.http import (
     MAX_BODY_BYTES,
     ORCHESTRATOR_AUTH_HEADER,
@@ -49,6 +49,7 @@ _GATEWAY_ROUTES = frozenset({
     ("POST", "/resolve"),
     ("POST", "/supervise/propose"),
     ("POST", "/supervise/poll"),
+    ("POST", "/canary/events"),
 })
 
 
@@ -135,6 +136,20 @@ class ProposeBody(IdentityBody):
 
 class PollBody(IdentityBody):
     proposal_id: StrictStr
+
+
+class CanaryFireBody(_StrictModel):
+    source_ip: StrictStr
+    identity_token: StrictStr = ""
+    reason: StrictStr
+    request_path: StrictStr
+
+
+class CanaryResolveBody(_StrictModel):
+    event_id: StrictStr
+    bottle_slug: StrictStr
+    action: StrictStr
+    notes: StrictStr = ""
 
 
 class ControlPlaneBoundary:
@@ -554,6 +569,44 @@ def create_app(
             rec.bottle_id, _required(body.proposal_id, "proposal_id"),
         )
 
+    # --- canary events ---
+
+    @app.post("/canary/events", status_code=201)
+    def canary_fire(body: CanaryFireBody) -> dict[str, str]:
+        source_ip = _required(body.source_ip, "source_ip")
+        rec = orch.resolve(source_ip, body.identity_token)
+        if rec is None:
+            audit.token_rejected("POST /canary/events", reason_code="unattributed",
+                                 src_ip=source_ip)
+            raise HTTPException(403, "unattributed")
+        reason = _required(body.reason, "reason")
+        request_path = _required(body.request_path, "request_path")
+        event_id = orch.canary_fire(
+            rec.bottle_id, reason=reason, request_path=request_path,
+        )
+        audit.canary_fired(bottle_id=rec.bottle_id, event_id=event_id,
+                           reason=reason, request_path=request_path)
+        return {"event_id": event_id}
+
+    @app.get("/canary/events")
+    def canary_events() -> dict[str, object]:
+        return {"events": orch.canary_list_unresolved()}
+
+    @app.post("/canary/events/{event_id}/resolve")
+    def canary_resolve(event_id: str, body: CanaryResolveBody) -> dict[str, object]:
+        bottle_slug = _required(body.bottle_slug, "bottle_slug")
+        action = _required(body.action, "action")
+        if action not in CANARY_ACTIONS:
+            raise HTTPException(400, f"action must be one of {list(CANARY_ACTIONS)}")
+        ok, error = orch.canary_resolve(
+            _id(event_id, "event_id"), action=action, notes=body.notes,
+        )
+        if not ok:
+            raise HTTPException(409, error)
+        audit.canary_resolved(bottle_id=bottle_slug, event_id=event_id,
+                              action=action, notes=body.notes)
+        return {"resolved": True}
+
     # --- remote launch and attach, via the host controller ---
 
     def relay() -> HostControlRelay:
@@ -652,6 +705,8 @@ def create_app(
 
 
 __all__ = [
+    "CanaryFireBody",
+    "CanaryResolveBody",
     "ControlPlaneBoundary",
     "MAX_BODY_BYTES",
     "ORCHESTRATOR_AUTH_HEADER",

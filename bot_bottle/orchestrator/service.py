@@ -15,6 +15,11 @@ from typing import Protocol
 from ..contract.supervise import (
     ALREADY_ANSWERED,
     AuditEntry,
+    CANARY_ACTIONS,
+    CANARY_ACTION_TERMINATE,
+    CANARY_STATUS_ACKNOWLEDGED,
+    CANARY_STATUS_TERMINATED,
+    CanaryEvent,
     COMPONENT_FOR_TOOL,
     POLL_STATUS_PENDING,
     POLL_STATUS_UNKNOWN,
@@ -94,8 +99,8 @@ class OrchestratorCore:
             return False
         self.registry.deregister(bottle_id)
         self._tokens.pop(bottle_id, None)
-        # Archive the bottle's unanswered proposals.
         self._supervisor.archive_all_proposals(bottle_id)
+        self._supervisor.archive_canary_events(bottle_id)
         return True
 
     def reconcile(
@@ -119,8 +124,8 @@ class OrchestratorCore:
         reaped = self.registry.reap_absent(live, grace_seconds=grace_seconds)
         for rec in reaped:
             self._tokens.pop(rec.bottle_id, None)
-            # Archive the bottle's unanswered proposals.
             self._supervisor.archive_all_proposals(rec.bottle_id)
+            self._supervisor.archive_canary_events(rec.bottle_id)
         return [rec.bottle_id for rec in reaped]
 
     def tokens_for(self, bottle_id: str) -> dict[str, str]:
@@ -296,6 +301,61 @@ class OrchestratorCore:
                     before_title="current", after_label="proposed",
                 ),
             ))
+        return True, ""
+
+    # --- canary events ---
+
+    def canary_fire(
+        self,
+        bottle_id: str,
+        *,
+        reason: str,
+        request_path: str,
+    ) -> str:
+        """Record a canary hit from the gateway. Returns the event id."""
+        event = CanaryEvent.new(
+            bottle_slug=bottle_id,
+            reason=reason,
+            request_path=request_path,
+        )
+        self._supervisor.write_canary_event(event)
+        return event.id
+
+    def canary_list_unresolved(self) -> list[dict[str, object]]:
+        """All unresolved canary events, with a human label for the bottle."""
+        events = self._supervisor.list_unresolved_canary_events()
+        out: list[dict[str, object]] = []
+        for e in events:
+            d = e.to_dict()
+            d["bottle_label"] = self._label_for(e.bottle_slug)
+            out.append(d)
+        return out
+
+    def canary_resolve(
+        self,
+        event_id: str,
+        *,
+        action: str,
+        notes: str = "",
+    ) -> tuple[bool, str]:
+        """Acknowledge or terminate the bottle for a canary event. Returns
+        (ok, error). On terminate the bottle is also deregistered."""
+        if action not in CANARY_ACTIONS:
+            return False, f"action must be one of {CANARY_ACTIONS}; got {action!r}"
+        status = (CANARY_STATUS_TERMINATED if action == CANARY_ACTION_TERMINATE
+                  else CANARY_STATUS_ACKNOWLEDGED)
+        resolved_at = datetime.now(timezone.utc).isoformat()
+        ok = self._supervisor.resolve_canary_event(
+            event_id, status=status, resolved_at=resolved_at, notes=notes,
+        )
+        if not ok:
+            return False, f"no unresolved canary event {event_id!r}"
+        if action == CANARY_ACTION_TERMINATE:
+            try:
+                event = self._supervisor.read_canary_event(event_id)
+                self.deregister_bottle(event.bottle_slug)
+            except FileNotFoundError:
+                pass
         return True, ""
 
     # --- secret reprovision ---
