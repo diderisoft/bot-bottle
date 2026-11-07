@@ -61,6 +61,11 @@ Gitea Actions enforces this for new work from 2026-07-18 onward. Earlier
 closed PRs are grandfathered rather than given artificial retrospective
 issues.
 
+`#NNN` references in commit messages and PR descriptions point to the Gitea
+issue tracker at <https://gitea.dideric.is/didericis/bot-bottle/issues>. If
+the project ever moves to another tracker, that URL remains the authoritative
+destination for all historical references.
+
 A change that alters behaviour a page in `docs/reference/` describes updates
 that page in the same pull request.
 
