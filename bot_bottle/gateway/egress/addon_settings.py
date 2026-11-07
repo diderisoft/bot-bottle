@@ -8,6 +8,10 @@ import sys
 # How long a token-blocked request waits for the operator.
 DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS = 300.0
 
+# How long an operator-approved token stays on the safelist.
+# `EGRESS_TOKEN_ALLOW_TTL_SECONDS` overrides; 0 or negative rejects.
+DEFAULT_TOKEN_ALLOW_TTL_SECONDS = 3600.0  # 1 hour
+
 # Max response bytes passed to inbound DLP; larger content isn't scanned, but
 # without a cap one big download can OOM the shared proxy.
 # `EGRESS_INBOUND_SCAN_LIMIT_BYTES` overrides; 0 disables.
@@ -52,9 +56,29 @@ def _token_allow_timeout_from_env(env: "os._Environ[str]") -> float:
     return value
 
 
+def _token_allow_ttl_from_env(env: "os._Environ[str]") -> float:
+    """`EGRESS_TOKEN_ALLOW_TTL_SECONDS`, or the default if unset or invalid."""
+    raw = env.get("EGRESS_TOKEN_ALLOW_TTL_SECONDS", "").strip()
+    if not raw:
+        return DEFAULT_TOKEN_ALLOW_TTL_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if value <= 0:
+        sys.stderr.write(
+            "egress: invalid EGRESS_TOKEN_ALLOW_TTL_SECONDS="
+            f"{raw!r}; using default {DEFAULT_TOKEN_ALLOW_TTL_SECONDS:g}s\n"
+        )
+        return DEFAULT_TOKEN_ALLOW_TTL_SECONDS
+    return value
+
+
 __all__ = [
     "DEFAULT_INBOUND_SCAN_LIMIT_BYTES",
+    "DEFAULT_TOKEN_ALLOW_TTL_SECONDS",
     "DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS",
     "_inbound_scan_limit_from_env",
     "_token_allow_timeout_from_env",
+    "_token_allow_ttl_from_env",
 ]

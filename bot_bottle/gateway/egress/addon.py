@@ -9,6 +9,7 @@ import binascii
 import json
 import os
 import sys
+import time
 import typing
 
 from mitmproxy import http  # type: ignore[import-not-found]  # pylint: disable=import-error
@@ -23,6 +24,7 @@ from bot_bottle.gateway.egress.addon_settings import (
     DEFAULT_INBOUND_SCAN_LIMIT_BYTES,
     _inbound_scan_limit_from_env,
     _token_allow_timeout_from_env,
+    _token_allow_ttl_from_env,
 )
 from bot_bottle.gateway.egress.cookie_jar import CookieJar
 from bot_bottle.gateway.egress.dlp_detectors import redact_tokens
@@ -149,11 +151,11 @@ class EgressAddon:
         audit, firehose = GatewayAudit(orch_url, "egress"), FirehoseClient(orch_url)
         self._audit, self._firehose = EgressAudit(audit), EgressFirehose(firehose)
         self._senders: tuple[GatewayAudit | FirehoseClient, ...] = (audit, firehose)
-        # Operator-approved tokens per (bottle, host): one bottle's approval
-        # never passes another's scan, and an approval for one host never lets
-        # the value go to another. In memory; only touched from the asyncio
-        # loop.
-        self._safe_tokens: dict[tuple[str, str], set[str]] = {}
+        # Operator-approved tokens per (bottle, host) with monotonic expiry
+        # times. One bottle's approval never passes another's scan, and an
+        # approval for one host never lets the value go to another. In memory;
+        # only touched from the asyncio loop.
+        self._safe_tokens: dict[tuple[str, str], dict[str, float]] = {}
         # What each host set for each bottle via Set-Cookie: the only cookies
         # a request may carry. In memory; only touched from the asyncio loop.
         self._cookies = CookieJar()
@@ -164,6 +166,7 @@ class EgressAddon:
         # Cleared on disconnect.
         self._passthrough_conns: set[str] = set()
         self._token_allow_timeout = _token_allow_timeout_from_env(os.environ)
+        self._token_allow_ttl = _token_allow_ttl_from_env(os.environ)
         self._inbound_scan_limit = _inbound_scan_limit_from_env(os.environ)
 
     @staticmethod
@@ -171,10 +174,18 @@ class EgressAddon:
         """True iff the request resolved to a bottle to attribute proposals to."""
         return bool(slug)
 
-    def _safe_tokens_for(self, slug: str, host: str) -> set[str]:
-        """This bottle's approved-token safelist for `host`, created on first
-        use."""
-        return self._safe_tokens.setdefault((slug, _norm_host(host)), set())
+    def _safe_tokens_for(self, slug: str, host: str) -> frozenset[str]:
+        """Live (non-expired) approved tokens for this bottle and host."""
+        now = time.monotonic()
+        bucket = self._safe_tokens.get((slug, _norm_host(host)), {})
+        return frozenset(t for t, exp in bucket.items() if exp > now)
+
+    def _add_safe_token(self, slug: str, host: str, token: str) -> None:
+        """Record an operator-approved token with its expiry time."""
+        key = (slug, _norm_host(host))
+        if key not in self._safe_tokens:
+            self._safe_tokens[key] = {}
+        self._safe_tokens[key][token] = time.monotonic() + self._token_allow_ttl
 
     def _serve_introspection(
         self, flow: http.HTTPFlow, path: str, config: Config,
@@ -701,7 +712,7 @@ class EgressAddon:
         if response is not None and response.get("status") in (
             STATUS_APPROVED, STATUS_MODIFIED,
         ):
-            self._safe_tokens_for(slug, host).add(result.matched)
+            self._add_safe_token(slug, host, result.matched)
             if self._flow_log(flow) >= LOG_BLOCKS:
                 sys.stderr.write(json.dumps({
                     "event": "egress_token_allowed",

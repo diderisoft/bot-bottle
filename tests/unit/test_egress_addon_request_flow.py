@@ -24,6 +24,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
 from io import StringIO
@@ -211,6 +212,7 @@ from bot_bottle.gateway.egress.addon_settings import (  # noqa: E402
     DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS,
     _inbound_scan_limit_from_env,
     _token_allow_timeout_from_env,
+    _token_allow_ttl_from_env,
 )
 from bot_bottle.gateway.egress.schema import route_to_yaml_dict  # noqa: E402
 from bot_bottle.gateway.egress.types import (  # noqa: E402
@@ -352,6 +354,7 @@ def _addon(
     a._safe_tokens = {}
     a._conn_tokens = {}
     a._token_allow_timeout = 300.0
+    a._token_allow_ttl = 3600.0
     return a
 
 
@@ -869,7 +872,7 @@ class TestWebSocket(unittest.TestCase):
     def test_safelist_applies_only_to_its_host(self) -> None:
         config = Config(routes=(Route(host="api.example.com"), Route(host="other.example.com")))
         addon = _addon(config)
-        addon._safe_tokens_for("b", "api.example.com").add(_OPENAI_KEY)
+        addon._add_safe_token("b", "api.example.com", _OPENAI_KEY)
         frame = f"k={_OPENAI_KEY}".encode()
         approved = _stash(_Flow(_Request(host="api.example.com")), config, slug="b")
         approved.websocket = _WebSocketData([_Message(frame, from_client=True)])
@@ -1086,6 +1089,34 @@ class TestTokenAllowTimeoutEnv(unittest.TestCase):
         self.assertEqual(DEFAULT_TOKEN_ALLOW_TIMEOUT_SECONDS, value)
 
 
+from bot_bottle.gateway.egress.addon_settings import DEFAULT_TOKEN_ALLOW_TTL_SECONDS  # noqa: E402
+
+
+def _ttl_from(env: dict[str, str]) -> float:
+    return _token_allow_ttl_from_env(cast(Any, env))
+
+
+class TestTokenAllowTTLEnv(unittest.TestCase):
+    def test_unset_uses_default(self) -> None:
+        self.assertEqual(DEFAULT_TOKEN_ALLOW_TTL_SECONDS, _ttl_from({}))
+
+    def test_valid_value_parsed(self) -> None:
+        self.assertEqual(1800.0, _ttl_from({"EGRESS_TOKEN_ALLOW_TTL_SECONDS": "1800"}))
+
+    def test_non_numeric_falls_back_with_warning(self) -> None:
+        buf = StringIO()
+        with patch("sys.stderr", buf):
+            value = _ttl_from({"EGRESS_TOKEN_ALLOW_TTL_SECONDS": "bad"})
+        self.assertEqual(DEFAULT_TOKEN_ALLOW_TTL_SECONDS, value)
+        self.assertIn("invalid", buf.getvalue())
+
+    def test_non_positive_falls_back(self) -> None:
+        buf = StringIO()
+        with patch("sys.stderr", buf):
+            value = _ttl_from({"EGRESS_TOKEN_ALLOW_TTL_SECONDS": "0"})
+        self.assertEqual(DEFAULT_TOKEN_ALLOW_TTL_SECONDS, value)
+
+
 # ---------------------------------------------------------------------------
 # LOG_FULL on the forward path logs the request
 # ---------------------------------------------------------------------------
@@ -1164,8 +1195,16 @@ class TestSuperviseMultiTenant(unittest.TestCase):
 
     def test_host_key_is_normalized(self) -> None:
         addon = _addon(Config(routes=()))
-        addon._safe_tokens_for("b", "API.Example.com.").add("v")
+        addon._add_safe_token("b", "API.Example.com.", "v")
         self.assertIn("v", addon._safe_tokens_for("b", "api.example.com"))
+
+    def test_approved_token_expires_after_ttl(self) -> None:
+        addon = _addon(Config(routes=()))
+        addon._token_allow_ttl = 0.001  # 1 ms
+        addon._add_safe_token("b", "api.example.com", "tok")
+        self.assertIn("tok", addon._safe_tokens_for("b", "api.example.com"))
+        time.sleep(0.05)
+        self.assertNotIn("tok", addon._safe_tokens_for("b", "api.example.com"))
 
     def test_proposal_is_attributed_to_the_source_ip_bottle(self) -> None:
         addon = self._consolidated_addon("approved")
