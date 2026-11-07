@@ -115,15 +115,6 @@ def counted(n: int, kind: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
-def allowed_counts(rows: list[dict[str, Any]]) -> list[str]:
-    """What `rows` let the agent reach, counted by kind: `["3 hosts", "1 repo"]`."""
-    counts = {kind: 0 for kind in _COUNTED}
-    for row in rows:
-        if row.get("kind") in counts:
-            counts[str(row["kind"])] += 1
-    return [counted(n, kind) for kind, n in counts.items() if n]
-
-
 def added_counts(proposal: Proposal) -> list[str]:
     """What the proposal adds to its stack, counted: `["1 host", "1 repo"]`."""
     add = proposal.additions
@@ -144,16 +135,6 @@ def summary_line(proposal: Proposal) -> str:
     adds = added_counts(proposal)
     base = " + ".join(proposal.bottles) or "basic"
     return f"Run in {base}" + (f", adding {_and(adds)}." if adds else ".")
-
-
-def reused_bottles(proposal: Proposal) -> list[str]:
-    """The existing bottles the proposal builds on: those it stacks, or the one
-    its new bottle extends."""
-    names = list(proposal.bottles)
-    if proposal.new_bottle and proposal.new_bottle.extends \
-            and proposal.new_bottle.extends not in names:
-        names.append(proposal.new_bottle.extends)
-    return names
 
 
 def _and(parts: list[str]) -> str:
@@ -209,5 +190,5 @@ def _compact_preview(proposal: Proposal, rows: list[dict[str, object]]) -> list[
     return lines or ["  (no elements)"]
 
 
-__all__ = ["added_counts", "allowed_counts", "counted", "proposal_elements",
-           "render_proposal", "reused_bottles", "summary_line"]
+__all__ = ["added_counts", "counted", "proposal_elements", "render_proposal",
+           "summary_line"]

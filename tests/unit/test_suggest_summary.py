@@ -1,5 +1,5 @@
-"""Unit: a proposal's one-sentence summary, what it allows counted, and the
-bottles it reuses (the guided start's review)."""
+"""Unit: a proposal's one-sentence summary and what it adds, counted (the
+guided start's review)."""
 
 from __future__ import annotations
 
@@ -39,7 +39,10 @@ class TestTheField(unittest.TestCase):
         self.assertNotIn("summary", Proposal.from_dict({"option": "reuse"}).to_dict())
 
     def test_the_architect_is_asked_for_one(self) -> None:
-        self.assertIn('"summary" key', _build_prompt("t", [], {}, [], []))
+        prompt = _build_prompt("t", [], {}, [], [])
+        self.assertIn('"summary" key', prompt)
+        self.assertIn("five words or fewer", prompt)
+        self.assertIn("Don't name hosts, methods or access", prompt)
 
 
 class TestValidation(unittest.TestCase):
@@ -73,13 +76,6 @@ class TestSummaryLine(unittest.TestCase):
 
 
 class TestCounts(unittest.TestCase):
-    def test_allowed_counts_by_kind(self) -> None:
-        rows: list[dict[str, object]] = [
-            {"kind": "egress"}, {"kind": "egress"}, {"kind": "repo"}, {"kind": "forge"},
-            {"kind": "env"}, {"kind": "resources"}]
-        self.assertEqual(["2 hosts", "1 repo", "1 env var"], render.allowed_counts(rows))
-        self.assertEqual([], render.allowed_counts([]))
-
     def test_added_counts(self) -> None:
         p = _proposal(additions=ProposalAdditions(egress=[ProposalEgress("a")]))
         self.assertEqual(["1 host"], render.added_counts(p))
@@ -93,15 +89,6 @@ class TestCounts(unittest.TestCase):
         rows = render.proposal_elements(p, dirs)
         assert rows is not None
         self.assertIn("api.example.com", [r["name"] for r in rows])
-        self.assertTrue(render.allowed_counts(rows)[0].endswith("hosts"))
-
-
-class TestReused(unittest.TestCase):
-    def test_a_stack_and_a_new_bottles_base(self) -> None:
-        self.assertEqual(["basic", "gitea"], render.reused_bottles(_proposal()))
-        p = _proposal(bottles=[], new_bottle=ProposalNewBottle("w", extends="basic"))
-        self.assertEqual(["basic"], render.reused_bottles(p))
-        self.assertEqual([], render.reused_bottles(_proposal(bottles=[])))
 
 
 if __name__ == "__main__":

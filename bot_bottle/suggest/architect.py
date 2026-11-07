@@ -211,8 +211,15 @@ def _build_prompt(
         json.dumps(secret_names, indent=2),
         "",
         "Respond with a single JSON object as described in your system prompt. Give it a "
-        "\"summary\" key too: one plain sentence (under 25 words, no markdown) saying "
-        "what you recommend for this task and why, for the person deciding.",
+        "\"summary\" key too: the gist for the person deciding, at most two short "
+        "sentences and 120 characters, no markdown, shaped \"Builds on <bottles>. Adds "
+        "<what> so the agent can <do what>.\" Good: \"Builds on bot-bottle-dev. Adds "
+        "Linear so the agent can read tickets and label issues.\" Good: \"Builds on basic; "
+        "it already covers this.\" Bad: \"Adds api.linear.app (GET, POST) and "
+        "acme/app:write.\" Don't name hosts, methods or access: a line below lists them. "
+        "Keep each "
+        "addition's \"why\" to five words or fewer (\"fetch forecasts\"): it's shown in a "
+        "column beside the host or repo.",
     ]
     return "\n".join(sections)
 

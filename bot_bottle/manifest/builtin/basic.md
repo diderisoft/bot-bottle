@@ -69,6 +69,8 @@ egress:
           - methods: [GET, HEAD]
 ---
 
+Package registries and public code, read-only.
+
 The built-in `basic` bottle: an agent's model provider (its own route),
 package registries and public code, read-only, and nothing else. Outbound
 DLP and inbound scanning stay on for every route. Shadow it with

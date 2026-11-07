@@ -6,9 +6,12 @@ the launch's stages drawn under them on the same screen:
   ✓ Project    ~/Code/app  (gitea.dideric.is/acme/app)
   ✓ Agent      claude
   ✓ Task       fix the flaky test in tests/test_api.py
-  ▸ Bottle     basic + gitea, adds 1                    (from the architect)
-      + repo   acme/app:write
-      …
+  ▸ Bottle     from the architect
+      Builds on basic. Adds acme/app so the agent can fix the test.
+
+      new  acme/app (push)
+
+      d details
   enter run · s save as… · e edit · d details · q cancel
 
 - **Agent.** None set up: Enter runs `setup` on this view, its lines under
@@ -16,8 +19,10 @@ the launch's stages drawn under them on the same screen:
   logged-in one, or a menu.
 - **Task.** Edited on its line; empty runs the agent in `basic`.
 - **Bottle.** A spinner while the architect answers ("warming the
-  architect…" while its bottle boots), then the proposal compactly: `d`
-  shows its notes and every element, `e` edits it in `$EDITOR`, `s` saves it
+  architect…" while its bottle boots), then the proposal at a glance
+  (`review.glance`): the architect's gist, what it adds, what to do first;
+  `d` shows the card (`review_card`: what's new, each bottle it builds on,
+  its forges) and every element (scrolled with ↑/↓) and its notes, `e` edits it in `$EDITOR`, `s` saves it
   as a bottle first, `q` cancels.
 - **Launch.** The launch's stages, under these steps.
 
@@ -47,6 +52,7 @@ from ...contract.hostctl import LaunchRequest, Settings
 from ...lib import log, prompt
 from ...manifest.schema import DEFAULT_BOTTLE
 from .. import screen, start_prefs, suggest_client
+from . import review_card
 from ..screen import CURRENT, DONE, FAILED, RUNNING, Screen, Step
 from ..view_prompt import ViewPrompter
 from . import guided
@@ -397,12 +403,14 @@ class StartView:  # pylint: disable=too-many-instance-attributes
         from ...suggest.flow import bottle_dirs
         from ...suggest.write import SuggestWriteError, write_bottle
         dirs = bottle_dirs(self.cwd, bot_bottle_root())
-        details, error = False, ""
+        details, error, offset = False, "", 0
         step = self.current("Bottle")
         while True:
             step.value = f"from the {proposal.source}" if proposal.source else ""
-            step.body = review_lines(proposal, dirs, details=details, width=self.width() - 4,
-                                     style=self.style) + ([self.style.red(error)] if error else [])
+            body, offset = review_lines(proposal, dirs, details=details, width=self.body_width(),
+                                        style=self.style, offset=offset,
+                                        height=screen.size()[1] - len(self.steps) - 8)
+            step.body = body + ([self.style.red(error)] if error else [])
             self.draw(BLOCKED_KEYS if proposal.blocked else REVIEW_KEYS)
             key = self.key()
             if key == "enter" and not proposal.blocked:
@@ -425,7 +433,9 @@ class StartView:  # pylint: disable=too-many-instance-attributes
                 if edited is not None:
                     proposal, error = edited, ""
             elif key == "d":
-                details = not details
+                details, offset = not details, 0
+            elif details and key in ("up", "k", "down", "j"):
+                offset += -1 if key in ("up", "k") else 1
             elif key in ("q", "esc"):
                 raise Cancelled
 
@@ -461,68 +471,64 @@ def bottle_summary(proposal: "Proposal") -> str:
 
 
 def review_lines(proposal: "Proposal", dirs: list[tuple[Path, bool]], *, details: bool,
-                 width: int, style: screen.Style) -> list[str]:
-    """The proposal for the review step: the architect's sentence, what the
-    bottle allows counted (`3 hosts · 1 repo`) and the bottles it reuses;
-    `details` lists what it adds (with why), its notes and every element."""
+                 width: int, style: screen.Style, offset: int = 0,
+                 height: int = 0) -> tuple[list[str], int]:
+    """The proposal for the review step, and the details' scroll offset
+    (clamped). At a glance: the gist, what it adds and what to do first
+    (`review.glance`). `details`: the card (`review.review`), then every
+    element under its bottle, `height` lines of them from `offset`, and the
+    notes."""
     # pylint: disable-next=import-outside-toplevel
-    from ...suggest import render
-    rows = render.proposal_elements(proposal, dirs)
-    lines = details_lines(proposal, rows, width=width, style=style) if details \
-        else summary_lines(proposal, rows, width=width, style=style)
+    from ...suggest import render, review
+    if details:
+        lines = _details(proposal, dirs, width, style)
+        notes = [style.dim(w) for note in proposal.notes
+                 for w in screen.wrap(f"note: {note}", width)]
+        lines, offset = review_card.window(lines, offset, max(height - len(notes) - 1, 4),
+                                           style=style)
+        lines += [""] + notes if notes else []
+    else:
+        seen = review.glance(proposal, dirs)
+        lines = screen.wrap(seen.gist if seen else render.summary_line(proposal), width)[:3]
+        lines.append("")
+        if seen is None:
+            lines.append(style.dim("(the bottles couldn't be read)"))
+        else:
+            lines += _hanging("new", " · ".join(seen.new) or "nothing new", width,
+                              paint_label=style.amber,
+                              paint=str if seen.new else style.dim)
+            for warn in seen.warns:
+                lines += _hanging("⚠", warn, width,
+                                  paint_label=style.amber, paint=style.amber)
+        n = len(proposal.notes)
+        lines += ["", style.dim("d details" + (f" · {n} note{'s' if n != 1 else ''}"
+                                                if n else ""))]
     if proposal.blocked:
         lines += [style.red(w) for w in screen.wrap(f"can't run: {proposal.blocked}", width)]
-    return lines
+    return lines, offset
 
 
-def summary_lines(proposal: "Proposal", rows: "list[dict[str, object]] | None", *,
-                  width: int, style: screen.Style) -> list[str]:
-    """The sentence, then `allows`, `adds` and `reuses` lines, then where the
-    rest is."""
+_LABEL = 5  # "new  ", "⚠    "
+
+
+def _hanging(label: str, text: str, width: int, *, paint_label: Callable[[str], str],
+             paint: Callable[[str], str]) -> list[str]:
+    """`text` after `label`, its wrapped lines under the text."""
+    rows = screen.wrap(text, max(width - _LABEL, 8)) or [""]
+    return ([paint_label(label.ljust(_LABEL)) + paint(rows[0])]
+            + [" " * _LABEL + paint(r) for r in rows[1:]])
+
+
+def _details(proposal: "Proposal", dirs: list[tuple[Path, bool]], width: int,
+             style: screen.Style) -> list[str]:
+    """The card, then every element under its bottle."""
     # pylint: disable-next=import-outside-toplevel
-    from ...suggest import render
-    lines = screen.wrap(render.summary_line(proposal), width)[:3] + [""]
-    label = 8
-    if rows is not None:
-        allows = " · ".join(render.allowed_counts(rows)) or "its model API only"
-        lines.append(style.dim(f"{'allows':{label}s}") + screen.fit(allows, width - label))
-    added = render.added_counts(proposal)
-    if added:
-        lines.append(style.dim(f"{'adds':{label}s}")
-                     + screen.fit(" · ".join(added), width - label))
-    reused = render.reused_bottles(proposal)
-    if reused:
-        lines.append(style.dim(f"{'reuses':{label}s}")
-                     + screen.fit(", ".join(reused), width - label))
-    n = len(proposal.notes)
-    lines.append(style.dim("d details" + (f" · {n} note{'s' if n != 1 else ''}" if n else "")))
-    return lines
-
-
-def details_lines(proposal: "Proposal", rows: "list[dict[str, object]] | None", *,
-                  width: int, style: screen.Style) -> list[str]:
-    """What the proposal adds (with why), its notes, then every element with
-    the bottle it comes from."""
-    add = proposal.additions
-    lines: list[str] = []
-    for kind, name, why in ([("egress", e.host, e.why) for e in add.egress]
-                            + [("repo", r.grant, r.why) for r in add.repos]
-                            + [("cred", f"{c.name} -> {c.route}", c.why) for c in add.credentials]
-                            + [("env", v.name, v.why) for v in add.env]):
-        lines.append(f"{style.green('+')} {kind:7s}{screen.fit(name, width - 9)}")
-        if why:
-            lines += [style.dim(f"          {w}") for w in screen.wrap(why, width - 10)[:2]]
-    for note in proposal.notes:
-        lines += [style.dim(w) for w in screen.wrap(f"note: {note}", width)]
-    if rows is None:
-        return lines + [style.dim("(the elements couldn't be loaded)")]
-    own = (f"{proposal.new_bottle.name} (new)" if proposal.new_bottle and proposal.new_bottle.name
-           else "this proposal")
-    for row in rows:
-        source = own if row.get("source") == "_suggest" else str(row.get("source") or "")
-        lines.append(screen.fit(f"{row['kind']!s:8s} {row['name']!s} {row.get('detail') or ''}"
-                                + (f"  [{source}]" if source else ""), width))
-    return lines
+    from ...suggest import review
+    card, every = review.review(proposal, dirs), review.every_line(proposal, dirs)
+    if card is None or every is None:
+        return [style.dim("(the bottles couldn't be read)")]
+    return (review_card.card(card, width=width, style=style) + [""]
+            + review_card.card(every, width=width, style=style))
 
 
 def _lasting(line: str) -> bool:
@@ -550,5 +556,4 @@ def run_start(args: argparse.Namespace, manifest: "ManifestIndex", settings: Set
             own.close()
 
 
-__all__ = ["StartView", "bottle_summary", "details_lines", "review_lines", "run_start",
-           "summary_lines"]
+__all__ = ["StartView", "bottle_summary", "review_lines", "run_start"]

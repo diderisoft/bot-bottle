@@ -38,13 +38,52 @@ steps on the same screen (`cli/screen.py`, `commands/guided_view.py`):
 3. **Suggest**, for the current project, with a spinner ("warming the
    architect…" while its bottle still boots). The architect's warm bottle
    started booting when `start` did, so usually only the model call is left.
-4. **Review.** The proposal in brief: one plain sentence on what it
-   recommends (the architect's `summary`, else one made from the proposal:
-   `Run in basic + gitea, adding 1 repo.`), what the bottle allows counted
-   (`allows 16 hosts · 1 repo`), what it adds counted, the bottles it reuses,
-   and how many notes it has. `Enter` runs it, `s` saves it as a named
-   bottle first, `e` edits it, `d` shows what it adds (with why), its notes
-   and every element, `q` cancels. Edit opens the proposal as YAML in
+4. **Review.** The proposal at a glance (`suggest/review.py`'s `glance`):
+   the architect's gist, at most two short sentences shaped "Builds on X.
+   Adds Y so the agent can Z."; then one `new` line listing what this run
+   adds that no bottle it builds on already has (hosts, repos with `(push)`
+   when writable, env vars, the secrets routes carry); then a `⚠` line for
+   anything to do first, such as connecting a forge a repo is on. The gist
+   only describes: the `new` line is always built from the proposal. A gist
+   that's missing, over 160 characters, or names a host the proposal doesn't
+   reach is replaced by a sentence made from the proposal (`Run in basic,
+   adding 1 host.`).
+
+   ```
+   Builds on bot-bottle-dev. Adds Linear so the agent can read tickets
+   and label issues.
+
+   new  api.linear.app · acme/app (push) · $LINEAR_TOKEN
+   ⚠    gitea.example.com isn't connected here: bot-bottle forge connect
+        https://gitea.example.com
+   ```
+
+   `d` shows the details: a card with a line for each thing it adds, with
+   the architect's why; a line of counts for each bottle it builds on,
+   nearest first, with that bottle's about text (its body's first line);
+   and, for each forge its repos are on, whom this host pushes as there, or
+   that it isn't connected here. Each line ends with what it permits in
+   brackets: a host's HTTP methods (HEAD and OPTIONS go with GET; `any` past
+   three, or for a route that isn't inspected), a repo's `push` or `read`.
+   A secret a route carries follows (`with $LINEAR_TOKEN`). A bottle's repos
+   are counted and named in a few words, by owner when three owners or
+   fewer hold them (`didericis/* ×5`), else two names and `+N`. Each
+   element counts under the nearest bottle that declares it. Under the card,
+   every host, repo and env var under its bottle (↑/↓ scroll), then the
+   notes.
+
+   ```
+   new             api.linear.app     read tickets (GET, POST)
+                                      with $LINEAR_TOKEN
+                   acme/app           label issues (push)
+   bot-bottle-dev  14 hosts           (any)
+                   5 repos            didericis/* ×5 (push)
+   basic           13 hosts           Package registries and pub… (GET)
+   forge           gitea.dideric.is   as didericis
+   ```
+
+   `Enter` runs it, `s` saves it as a named bottle first, `e` edits it, `d`
+   toggles the details, `q` cancels. Edit opens the proposal as YAML in
    `$VISUAL`/`$EDITOR`; after you save, it's validated, and it reopens with
    the errors inline until it validates (emptying the file cancels the
    edit). A proposal that can't run on this host (below) offers only edit

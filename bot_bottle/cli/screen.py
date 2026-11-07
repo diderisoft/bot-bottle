@@ -238,9 +238,11 @@ def _words(text: str) -> list[str]:
 
 
 def wrap(text: str, width: int) -> list[str]:
-    """Plain `text` wrapped to `width` (words, else hard breaks)."""
+    """Plain `text` wrapped to `width` (words, else hard breaks; never at a
+    hyphen, which would split a command or a host name)."""
     import textwrap  # pylint: disable=import-outside-toplevel
-    return textwrap.wrap(text, max(width, 8), break_long_words=True) or [""]
+    return textwrap.wrap(text, max(width, 8), break_long_words=True,
+                         break_on_hyphens=False) or [""]
 
 
 @dataclass
