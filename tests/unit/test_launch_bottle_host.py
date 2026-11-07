@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 
 from bot_bottle.approvals import Request
@@ -19,78 +20,92 @@ from bot_bottle.manifest.util import ManifestError
 ARRIVED = "2026-01-02T03:04:05+00:00"
 ME = "bot_bottle.control.hostctl.manifest_elements"
 
+Patches = list[tuple[str, dict[str, Any]]]
 
-def _proposal(**over):
+
+def _start(case: unittest.TestCase, patches: Patches) -> None:
+    for target, kw in patches:
+        patcher = mock.patch(target, **kw)
+        patcher.start()
+        case.addCleanup(patcher.stop)
+
+
+def _proposal(**over: Any) -> str:
     d = {"agent": "coder", "prompt": "write tests", "bottles": ["app-dev"], "label": "t"}
     d.update(over)
     return json.dumps(d)
 
 
-def _request(proposed=None, justification="needs a helper"):
+def _request(proposed: str | None = None, justification: str = "needs a helper") -> Request:
     return Request(id="r1", bottle="b1", session="parent-id", tool=TOOL_LAUNCH_BOTTLE,
                    justification=justification,
                    proposed=_proposal() if proposed is None else proposed,
                    current="", arrived=ARRIVED, orchestrator="o")
 
 
-def _elem(key):
+def _elem(key: str) -> dict[str, str]:
     return {"key": key, "kind": key.split(":", 1)[0], "name": key.split(":", 1)[1]}
 
 
 class _Index:
-    def __init__(self, agents=("coder",), bottles=("app-dev",)):
+    def __init__(self, agents: tuple[str, ...] = ("coder",),
+                 bottles: tuple[str, ...] = ("app-dev",)) -> None:
         self.agents = agents
         self.all_bottle_names = list(bottles)
 
-    def require_agent(self, name):
+    def require_agent(self, name: str) -> None:
         if name not in self.agents:
             raise ManifestError(f"agent {name!r} not defined")
 
-    def bottle_dirs(self):
+    def bottle_dirs(self) -> list[tuple[Path, bool]]:
         return []
 
 
 class TestVetLaunchBottle(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
+    def setUp(self) -> None:
+        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.child = False
         self.running = 0
-        self.index = _Index()
-        self.chain = []
-        self.conns = {}
+        self.index: _Index | Exception = _Index()
+        self.chain: list[dict[str, Path]] = []
+        self.conns: dict[str, Any] = {}
         self.known_bottles = {"app-dev"}
 
-        def load_chain(name, _dirs):
+        def load_chain(name: str, _dirs: Any) -> tuple[None, list[Any]]:
             if name not in self.known_bottles:
                 raise ManifestError(f"no bottle {name}")
             return None, []
 
-        def resolve(*_a, **_kw):
+        def resolve(*_a: Any, **_kw: Any) -> _Index:
             if isinstance(self.index, Exception):
                 raise self.index
             return self.index
 
-        for target, kw in (
+        def is_child(_session: str) -> bool:
+            return self.child
+
+        def running(_session: str, _bottles: Any) -> int:
+            return self.running
+
+        def chain_files(_names: Any, _dirs: Any) -> list[dict[str, Path]]:
+            return self.chain
+
+        _start(self, [
             ("bot_bottle.control.hostctl.children.is_launch_bottle_child",
-             {"side_effect": lambda _s: self.child}),
-            ("bot_bottle.control.hostctl.children.running_children_of",
-             {"side_effect": lambda _s, _b: self.running}),
+             {"side_effect": is_child}),
+            ("bot_bottle.control.hostctl.children.running_children_of", {"side_effect": running}),
             ("bot_bottle.manifest.ManifestIndex.resolve", {"side_effect": resolve}),
             ("bot_bottle.manifest.loader.load_bottle_chain", {"side_effect": load_chain}),
             ("bot_bottle.forge_connections.connections", {"side_effect": lambda: self.conns}),
-            (f"{ME}._chain_files", {"side_effect": lambda _n, _d: self.chain}),
-        ):
-            patcher = mock.patch(target, **kw)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+            (f"{ME}._chain_files", {"side_effect": chain_files}),
+        ])
 
-    def _bottle_file(self, text):
-        path = Path(self.tmp.name) / f"b{len(self.chain)}.md"
+    def _bottle_file(self, text: str) -> None:
+        path = self.tmp / f"b{len(self.chain)}.md"
         path.write_text(text, encoding="utf-8")
         self.chain.append({"path": path})
 
-    def _vet(self, proposed=None):
+    def _vet(self, proposed: str | None = None) -> str:
         return lb.vet_launch_bottle(_request(proposed), bottles=object())
 
     def test_a_meetable_request_is_empty(self):
@@ -125,14 +140,14 @@ class TestVetLaunchBottle(unittest.TestCase):
 
     def test_a_repo_on_a_connected_forge(self):
         self._bottle_file("---\ngit-gate:\n  repos:\n    - git.example.com/acme/app\n---\n")
-        self.chain.append({"path": Path(self.tmp.name) / "missing.md"})  # unreadable: skipped
+        self.chain.append({"path": self.tmp / "missing.md"})  # unreadable: skipped
         self.conns = {"x": SimpleNamespace(host="git.example.com:443")}
         self.assertEqual("", self._vet())
 
     def test_no_connections_on_record_counts_as_none(self):
         from bot_bottle.forge_connections import ForgeConnectionError
 
-        def broken():
+        def broken() -> dict[str, Any]:
             raise ForgeConnectionError("unreadable")
         self._bottle_file("---\ngit-gate:\n  repos:\n    - git.example.com/acme/app\n---\n")
         with mock.patch("bot_bottle.forge_connections.connections", side_effect=broken):
@@ -165,7 +180,9 @@ class TestLaunchBottleAttention(unittest.TestCase):
         self.assertIn("bad proposal", lines[0])
 
     def test_card_dispatches_to_it(self):
-        lines, options = remote_actions.card(_request())
+        card = remote_actions.card(_request())
+        assert card is not None
+        lines, options = card
         self.assertEqual(["launch_bottle"], options)
         self.assertEqual("agent: coder", lines[0])
 
@@ -193,11 +210,11 @@ class TestTrimmedBottleText(unittest.TestCase):
 
 
 class _Orchestrator:
-    def __init__(self, already=False):
+    def __init__(self, already: bool = False) -> None:
         self.already = already
-        self.responses = []
+        self.responses: list[tuple[str, dict[str, Any]]] = []
 
-    def supervise_respond(self, request_id, **kw):
+    def supervise_respond(self, request_id: str, **kw: Any) -> None:
         from bot_bottle.control.client import AlreadyAnswered
         if self.already:
             raise AlreadyAnswered("answered")
@@ -207,36 +224,45 @@ class _Orchestrator:
 class TestLaunchBottleAnswer(unittest.TestCase):
     def setUp(self):
         self.orch = _Orchestrator()
-        self.launched = []
-        self.parents = []
-        self.nudges = []
+        self.launched: list[tuple[Any, str]] = []
+        self.parents: list[tuple[str, str]] = []
+        self.nudges: list[tuple[Any, ...]] = []
         self.child_elems = [_elem("env:A"), _elem("env:SECRET")]
-        for target, kw in (
+
+        def child_elements(_names: Any, _dirs: Any) -> list[dict[str, str]]:
+            return self.child_elems
+
+        def record_parent(child: str, parent: str) -> None:
+            self.parents.append((child, parent))
+
+        def nudge(*args: Any) -> None:
+            self.nudges.append(args)
+
+        _start(self, [
             ("bot_bottle.manifest.ManifestIndex.resolve", {"return_value": _Index()}),
             ("bot_bottle.control.hostctl.manifest_view._live_policy", {"return_value": None}),
             (f"{ME}.elements", {"return_value": [_elem("env:A")]}),
-            (f"{ME}.bottle_elements", {"side_effect": lambda _n, _d: self.child_elems}),
+            (f"{ME}.bottle_elements", {"side_effect": child_elements}),
             ("bot_bottle.control.hostctl.launch_bottle.trimmed_bottle_text",
              {"return_value": "---\nenv:\n  A: one\n---\n"}),
-            ("bot_bottle.bottle_state.record_parent",
-             {"side_effect": lambda c, p: self.parents.append((c, p))}),
-            ("bot_bottle.control.hostctl.nudge.nudge_if_waited",
-             {"side_effect": lambda *a: self.nudges.append(a)}),
-        ):
-            patcher = mock.patch(target, **kw)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+            ("bot_bottle.bottle_state.record_parent", {"side_effect": record_parent}),
+            ("bot_bottle.control.hostctl.nudge.nudge_if_waited", {"side_effect": nudge}),
+        ])
 
-    def _launch(self, req, role):
+    def _launch(self, req: Any, role: str) -> dict[str, str]:
         self.launched.append((req, role))
         return {"bottle": "child-id"}
 
-    def _answer(self, request=None, since=ARRIVED, bottles=None):
+    def _orchestrator(self, _url: str) -> _Orchestrator:
+        return self.orch
+
+    def _answer(self, request: Request | None = None, since: str = ARRIVED,
+                bottles: Any = None) -> dict[str, Any]:
         request = request or _request()
         msg = {"agent_id": "parent-id", "request_id": 7, "since": since}
         bottles = bottles if bottles is not None else SimpleNamespace(launch=self._launch)
         return asyncio.run(lb.launch_bottle_answer(
-            msg, {"parent-id": request}, lambda _o: self.orch, bottles))
+            msg, {"parent-id": request}, self._orchestrator, bottles))
 
     def test_launches_the_child_and_approves(self):
         reply = self._answer()
@@ -244,13 +270,15 @@ class TestLaunchBottleAnswer(unittest.TestCase):
         self.assertEqual({"child_identity": "child-id", "agent": "coder", "label": "t",
                           "removed": 1}, {k: reply[k] for k in
                                           ("child_identity", "agent", "label", "removed")})
-        (req, _role), = self.launched
+        self.assertEqual(1, len(self.launched))
+        req = self.launched[0][0]
         self.assertEqual("coder", req.agent)
         self.assertEqual("app-dev", req.bottles[0])
         self.assertTrue(req.headless)
         self.assertEqual("---\nenv:\n  A: one\n---\n", req.run_bottle)
         self.assertEqual([("child-id", "parent-id")], self.parents)
-        (rid, kw), = self.orch.responses
+        self.assertEqual(1, len(self.orch.responses))
+        rid, kw = self.orch.responses[0]
         self.assertEqual("r1", rid)
         self.assertEqual("approve", kw["decision"])
         self.assertEqual("launched coder; identity=child-id; 1 extra element(s) removed",
@@ -277,7 +305,7 @@ class TestLaunchBottleAnswer(unittest.TestCase):
         self.assertIn("can't launch bottles", self._answer(bottles=object())["error"])
 
     def test_the_launch_fails(self):
-        def fail(_req, _role):
+        def fail(_req: Any, _role: str) -> dict[str, str]:
             raise RuntimeError("no room")
         reply = self._answer(bottles=SimpleNamespace(launch=fail))
         self.assertEqual("launching the child bottle failed: no room", reply["error"])
@@ -291,7 +319,9 @@ class TestLaunchBottleAnswer(unittest.TestCase):
         self.assertEqual(0, reply["removed"])
 
     def test_no_identity_back_records_no_parent(self):
-        reply = self._answer(bottles=SimpleNamespace(launch=lambda _r, _o: {}))
+        def no_identity(_req: Any, _role: str) -> dict[str, str]:
+            return {}
+        reply = self._answer(bottles=SimpleNamespace(launch=no_identity))
         self.assertEqual("", reply["child_identity"])
         self.assertEqual([], self.parents)
         self.assertEqual("launched coder; 1 extra element(s) removed",
@@ -304,25 +334,28 @@ class TestSpecialCard(unittest.TestCase):
 
     def setUp(self):
         self.orch = _Orchestrator()
-        for target, kw in (
+        _start(self, [
             ("bot_bottle.control.hostctl.nudge.nudge_if_waited", {}),
             ("bot_bottle.manifest.ManifestIndex.resolve", {"return_value": _Index()}),
             ("bot_bottle.control.hostctl.manifest_view._live_policy", {"return_value": None}),
             (f"{ME}.elements", {"return_value": []}),
             (f"{ME}.bottle_elements", {"return_value": [_elem("env:SECRET")]}),
-        ):
-            patcher = mock.patch(target, **kw)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        ])
 
-    def _card(self):
-        return asyncio.run(remote_actions.special_card(_request(), lambda _o: self.orch,
+    def _orchestrator(self, _url: str) -> _Orchestrator:
+        return self.orch
+
+    def _card(self) -> tuple[list[str], list[str]]:
+        card = asyncio.run(remote_actions.special_card(_request(), self._orchestrator,
                                                        bottles=object()))
+        assert card is not None
+        return card
 
     def test_a_refusal_answers_and_shows_no_card(self):
         with mock.patch.object(lb, "vet_launch_bottle", return_value="cap reached"):
             self.assertEqual(([], []), self._card())
-        (_, kw), = self.orch.responses
+        self.assertEqual(1, len(self.orch.responses))
+        kw = self.orch.responses[0][1]
         self.assertEqual(("reject", "cap reached"), (kw["decision"], kw["notes"]))
 
     def test_a_refusal_answered_elsewhere(self):

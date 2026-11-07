@@ -16,8 +16,6 @@ from bot_bottle.paths import host_db_path
 from bot_bottle.contract.supervise import (
     CANARY_ACTION_ACKNOWLEDGE,
     CANARY_ACTION_TERMINATE,
-    CANARY_STATUS_ACKNOWLEDGED,
-    CANARY_STATUS_TERMINATED,
 )
 from bot_bottle.orchestrator.supervisor import Supervisor
 from bot_bottle.orchestrator.service import OrchestratorCore
@@ -116,7 +114,7 @@ class TestCanaryResolve(unittest.TestCase):
         event_id = self._fire()
         core = _core()
         core.canary_resolve(event_id, action=CANARY_ACTION_ACKNOWLEDGE)
-        ok, err = core.canary_resolve(event_id, action=CANARY_ACTION_ACKNOWLEDGE)
+        ok, _ = core.canary_resolve(event_id, action=CANARY_ACTION_ACKNOWLEDGE)
         self.assertFalse(ok)
 
     def test_terminate_deregisters_bottle(self):

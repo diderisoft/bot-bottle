@@ -5,15 +5,18 @@ import json
 import os
 import tempfile
 import unittest
-from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
-from tests.unit import use_bottle_root
+
+def _no_op(*_a: Any, **_kw: Any) -> None:
+    return None
 
 
 # --- parse_launch_proposal ---
 
 class TestParseLaunchProposal(unittest.TestCase):
-    def _parse(self, d):
+    def _parse(self, d: dict[str, Any]) -> dict[str, Any]:
         from bot_bottle.control.hostctl.launch_bottle import parse_launch_proposal
         return parse_launch_proposal(json.dumps(d))
 
@@ -55,7 +58,7 @@ class TestParseLaunchProposal(unittest.TestCase):
 # --- compare_access ---
 
 class TestCompareAccess(unittest.TestCase):
-    def _elem(self, key, kind=None):
+    def _elem(self, key: str, kind: str | None = None) -> dict[str, Any]:
         k = kind or key.split(":", 1)[0]
         return {"key": key, "kind": k, "name": key.split(":", 1)[1],
                 "detail": "", "source": "test", "builtin": False, "fixed": False, "also": []}
@@ -82,19 +85,19 @@ class TestCompareAccess(unittest.TestCase):
         from bot_bottle.control.hostctl.launch_bottle import compare_access
         parent = [self._elem("repo:app")]
         child = [self._elem("repo:app"), self._elem("repo:extra-service")]
-        within, extra = compare_access(child, parent)
+        _, extra = compare_access(child, parent)
         self.assertEqual([e["key"] for e in extra], ["repo:extra-service"])
 
     def test_extra_env(self):
         from bot_bottle.control.hostctl.launch_bottle import compare_access
         parent = [self._elem("env:ALLOWED")]
         child = [self._elem("env:ALLOWED"), self._elem("env:SECRET_KEY")]
-        within, extra = compare_access(child, parent)
+        _, extra = compare_access(child, parent)
         self.assertEqual([e["key"] for e in extra], ["env:SECRET_KEY"])
 
     def test_resources_always_within(self):
         from bot_bottle.control.hostctl.launch_bottle import compare_access
-        parent: list = []
+        parent: list[dict[str, Any]] = []
         child = [self._elem("resources:memory")]
         within, extra = compare_access(child, parent)
         self.assertEqual(len(within), 1)
@@ -112,7 +115,7 @@ class TestCompareAccess(unittest.TestCase):
 # --- gateway server: _build_launch_bottle_proposed ---
 
 class TestBuildLaunchBottleProposed(unittest.TestCase):
-    def _build(self, args):
+    def _build(self, args: dict[str, Any]) -> Any:
         from bot_bottle.gateway.supervisor.server import _build_launch_bottle_proposed
         return _build_launch_bottle_proposed("launch-bottle", args)
 
@@ -292,7 +295,7 @@ class TestChildren(unittest.TestCase):
                                       copy_cwd=False, started_at="now", parent="other-parent"))
 
         class FakeBottles:
-            def session_state(self, identity):
+            def session_state(self, identity: str) -> dict[str, bool]:
                 return {"running": identity in ("c1", "c2")}
 
         count = running_children_of("parent-p", FakeBottles())
@@ -306,7 +309,8 @@ class TestChildren(unittest.TestCase):
                                       copy_cwd=False, started_at="now", parent="p-id"))
 
         class FakeBottles:
-            def session_state(self, identity):
+            def session_state(self, identity: str) -> dict[str, bool]:
+                del identity
                 return {"running": False}
 
         count = running_children_of("p-id", FakeBottles())
@@ -317,20 +321,18 @@ class TestChildren(unittest.TestCase):
 
 class TestApprovalsLaunchBottle(unittest.TestCase):
     def test_allow_raises_for_launch_bottle(self):
-        from types import SimpleNamespace
         from bot_bottle.approvals import ALLOW_ONCE, Request, answer
         from bot_bottle.contract.supervise import TOOL_LAUNCH_BOTTLE
         req = Request(id="x", bottle="b", session="s", tool=TOOL_LAUNCH_BOTTLE,
                       justification="j", proposed='{}', current="")
-        client = SimpleNamespace(supervise_respond=lambda *a, **kw: None)
+        client = SimpleNamespace(supervise_respond=_no_op)
         with self.assertRaises(ValueError):
             answer(client, req, ALLOW_ONCE, via="terminal")
 
     def test_deny_works_for_launch_bottle(self):
-        from types import SimpleNamespace
         from bot_bottle.approvals import DENY, Request, answer
         from bot_bottle.contract.supervise import TOOL_LAUNCH_BOTTLE
-        calls = []
+        calls: list[dict[str, Any]] = []
         req = Request(id="x", bottle="b", session="s", tool=TOOL_LAUNCH_BOTTLE,
                       justification="j",
                       proposed=json.dumps({"agent": "a", "prompt": "p", "bottles": [],
@@ -338,7 +340,7 @@ class TestApprovalsLaunchBottle(unittest.TestCase):
                       current="")
 
         class FakeClient:
-            def supervise_respond(self, *a, **kw):
+            def supervise_respond(self, *_a: Any, **kw: Any) -> None:
                 calls.append(kw)
 
         answer(FakeClient(), req, DENY, via="terminal")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import ItemsView, Mapping, Protocol
+from typing import AbstractSet, ItemsView, Mapping, Protocol
 
 from .dlp import (
     build_outbound_scan_text,
@@ -33,7 +33,7 @@ def scan_request(
     route: Route,
     env: Mapping[str, str],
     *,
-    safe_tokens: set[str] | None = None,
+    safe_tokens: AbstractSet[str] | None = None,
 ) -> ScanResult | None:
     """Scan every mutable outbound request surface, in canonical order."""
     request_path, _, query = request.path.partition("?")

@@ -11,12 +11,12 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
-import textwrap
 import unittest
 
 from bot_bottle.contract.git_trailers import TRAILER_KEY
 from bot_bottle.gateway.git_gate.trailer_check import (
     ACCEPT,
+    MISCONFIGURED,
     REFUSE,
     Offender,
     check,
@@ -297,22 +297,22 @@ class TestCheck(unittest.TestCase):
 
         self.assertEqual(ACCEPT, result)
 
-    def test_refuses_when_trailers_config_is_missing(self) -> None:
+    def test_misconfigured_when_trailers_config_is_missing(self) -> None:
         git = _FakeGitForCheck(mode="")
         self.addCleanup(git.cleanup)
 
         result = check(self._refs(), git=git, err=self._err)
 
-        self.assertEqual(REFUSE, result)
+        self.assertEqual(MISCONFIGURED, result)
         self.assertTrue(any("git-gate.trailers" in e for e in self.errors))
 
-    def test_refuses_when_trailer_value_config_is_missing(self) -> None:
+    def test_misconfigured_when_trailer_value_config_is_missing(self) -> None:
         git = _FakeGitForCheck(trailer="")
         self.addCleanup(git.cleanup)
 
         result = check(self._refs(), git=git, err=self._err)
 
-        self.assertEqual(REFUSE, result)
+        self.assertEqual(MISCONFIGURED, result)
         self.assertTrue(any("git-gate.trailer" in e for e in self.errors))
 
     def test_fix_command_is_included_in_error_output(self) -> None:

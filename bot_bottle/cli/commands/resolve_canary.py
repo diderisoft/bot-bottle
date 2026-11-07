@@ -28,7 +28,7 @@ from __future__ import annotations
 import sys
 import termios
 import tty
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 
 from ...control.client import (
     OrchestratorClient,
