@@ -162,7 +162,15 @@ def _compute_encoded_variants(secret: str) -> tuple[str, ...]:
 # Minimum alnum-projection length; shorter secrets false-positive.
 _ALNUM_MIN_LEN = 8
 
-# Minimum window for the partial-substring scan.
+# Minimum consecutive alphanumeric characters of a secret that must appear in
+# the outbound text to trigger a partial-match block.  Set to 12 because:
+#   - Every TOKEN_PATTERNS entry has an alnum payload ≥ 16 chars (the shortest
+#     is `dapi` + 32 alphanumeric = 36 chars), so a 12-char window catches
+#     partial leaks while staying well above common English words (≤ 7 chars).
+#   - Values below ~10 produce noisy false positives on natural prose and JSON.
+#   - Values above 15 risk missing heavily fragmented leaks of medium-length keys.
+# If a new token class with a shorter key is added, lower this threshold and
+# add a targeted test.
 PARTIAL_MATCH_MIN_LEN = 12
 
 

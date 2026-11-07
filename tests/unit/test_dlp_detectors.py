@@ -575,6 +575,50 @@ class TestFragmentationResistantMatching(unittest.TestCase):
         self.assertIn("CANON_ALPHA_SECRET", result.reason)
 
 
+class TestPartialMatchThreshold(unittest.TestCase):
+    """PARTIAL_MATCH_MIN_LEN boundary: exactly-at and just-below the window."""
+
+    # A secret long enough that its alnum projection is well above the threshold.
+    # Using a Databricks-style token (dapi + 32 chars = 36 alnum chars).
+    SECRET = "dapi" + "A" * 32   # 36 alphanumeric chars
+    ENV = {"EGRESS_TOKEN_0": SECRET}
+
+    def test_window_exactly_at_threshold_is_detected(self):
+        # Exactly PARTIAL_MATCH_MIN_LEN consecutive alnum chars from the secret.
+        partial = _alnum_projection(self.SECRET)[:PARTIAL_MATCH_MIN_LEN]
+        result = scan_known_secrets(f"data={partial}&other=x", env=self.ENV)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertIn("partial match", result.reason)
+
+    def test_window_one_below_threshold_is_not_detected(self):
+        # PARTIAL_MATCH_MIN_LEN - 1 chars: below the threshold, not blocked.
+        partial = _alnum_projection(self.SECRET)[:PARTIAL_MATCH_MIN_LEN - 1]
+        self.assertIsNone(scan_known_secrets(f"data={partial}", env=self.ENV))
+
+    def test_window_above_threshold_is_detected(self):
+        # 20 consecutive chars — well above the threshold.
+        partial = _alnum_projection(self.SECRET)[:20]
+        result = scan_known_secrets(f"payload={partial}", env=self.ENV)
+        self.assertIsNotNone(result)
+
+    def test_fragmented_across_newlines_detected(self):
+        # 12-char window split over a newline separator — alnum projection
+        # reunites them.
+        partial = _alnum_projection(self.SECRET)[:PARTIAL_MATCH_MIN_LEN]
+        split = partial[:6] + "\n" + partial[6:]
+        result = scan_known_secrets(split, env=self.ENV)
+        self.assertIsNotNone(result)
+
+    def test_fragmented_with_separator_within_window_detected(self):
+        # 12-char window with a separator character injected in the middle.
+        # The alnum projection strips it, so the consecutive window is restored.
+        partial = _alnum_projection(self.SECRET)[:PARTIAL_MATCH_MIN_LEN]
+        fragmented = partial[:6] + "-" + partial[6:]  # e.g. dapiAAA-AAAAAA
+        result = scan_known_secrets(fragmented, env=self.ENV)
+        self.assertIsNotNone(result)
+
+
 class TestRedactTokensBroadenedPrefixes(unittest.TestCase):
     SECRET = "my-provisioned-secret"
 
