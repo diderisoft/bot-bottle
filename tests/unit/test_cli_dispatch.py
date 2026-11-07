@@ -38,7 +38,7 @@ class TestMainDispatch(unittest.TestCase):
 
         with patch("bot_bottle.cli.__main__.HOME", home), \
                 patch("bot_bottle.cli.__main__.QUICK", quick), \
-                patch("bot_bottle.cli.__main__.StoreManager"):
+                patch("bot_bottle.cli.migration_gate.StoreManager"):
             self.assertEqual(0, main([]))
             self.assertEqual(0, main(["-v"]))
         self.assertEqual([[]], homes)
@@ -52,7 +52,7 @@ class TestMainDispatch(unittest.TestCase):
             return 0
 
         with patch("bot_bottle.cli.__main__.QUICK", quick), \
-                patch("bot_bottle.cli.__main__.StoreManager"), \
+                patch("bot_bottle.cli.migration_gate.StoreManager"), \
                 patch("bot_bottle.cli.__main__._is_agent", return_value=True):
             main(["pi"])
         self.assertEqual([["pi"]], seen)

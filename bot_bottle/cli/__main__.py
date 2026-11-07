@@ -15,10 +15,9 @@ from ..environment import (
 from ..errors import MissingEnvVarError, SecretsFileError
 from ..lib.log import Die, die, error
 from ..manifest import ManifestError, ManifestIndex
-from ..orchestrator.store.store_manager import StoreManager
-from ..paths import host_db_path
 from .commands import COMMANDS, HOME, NO_MIGRATION_COMMANDS, QUICK
 from .commands.help import cmd_help
+from .migration_gate import host_db_current
 
 
 def _is_agent(name: str) -> bool:
@@ -69,24 +68,8 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-retu
     except InvalidEnvironmentError as e:
         error(str(e))
         return 2
-    mgr = StoreManager(host_db_path())
-    fresh = mgr.is_fresh()  # before is_migrated, which creates the file
-    if as_sudo or command in NO_MIGRATION_COMMANDS or mgr.is_migrated():
-        pass
-    elif fresh:
-        mgr.migrate()  # a new install: nothing to migrate from, so don't ask
-    else:
-        sys.stderr.write("bot-bottle: database schema is out of date\n")
-        sys.stderr.write("Migrate now? [y/N] ")
-        sys.stderr.flush()
-        try:
-            answer = sys.stdin.readline().strip().lower()
-        except EOFError:
-            answer = ""
-        if answer != "y":
-            error("migration required — re-run and confirm to migrate")
-            return 1
-        mgr.migrate()
+    if not (as_sudo or command in NO_MIGRATION_COMMANDS) and not host_db_current():
+        return 1
     try:
         return handler(rest) or 0
     except (MissingEnvVarError, SecretsFileError) as e:

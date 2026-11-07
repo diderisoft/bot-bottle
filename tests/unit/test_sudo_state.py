@@ -101,7 +101,7 @@ class TestMainUnderSudo(unittest.TestCase):
                 mock.patch.object(cli_main, "sudo_invoker", return_value=sudo), \
                 mock.patch.object(cli_main, "root_owned_state", return_value=stale), \
                 mock.patch.object(cli_main, "ensure_active_registered") as register, \
-                mock.patch.object(cli_main, "StoreManager") as store, \
+                mock.patch("bot_bottle.cli.migration_gate.StoreManager") as store, \
                 redirect_stderr(err):
             store.return_value.is_migrated.return_value = False
             store.return_value.is_fresh.return_value = True
@@ -132,7 +132,7 @@ class TestMainUnderSudo(unittest.TestCase):
                 mock.patch.dict(cli_main.COMMANDS, {"doctor": mock.Mock(return_value=0)}), \
                 mock.patch.object(cli_main, "sudo_invoker", return_value=None), \
                 mock.patch.object(cli_main, "ensure_active_registered"), \
-                mock.patch.object(cli_main, "StoreManager"):
+                mock.patch("bot_bottle.cli.migration_gate.StoreManager"):
             self.assertEqual(0, cli_main.main(["doctor"]))
         check.assert_not_called()
 
