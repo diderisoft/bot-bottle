@@ -148,17 +148,29 @@ class KeepTarget:
 
 
 def keep_target(session: str) -> KeepTarget | None:
-    """Where a request from `session` can be kept, or None."""
+    """Where a request from `session` can be kept, or None.
+
+    Returns None for runs launched with an unsaved suggested bottle (ADR 0017):
+    "keep" must not silently write into a stacked library bottle the user
+    never chose to keep things into.
+    """
     project = session_project(session)
     if project is not None:
         return KeepTarget(project_bottle_path(project), project)
     # pylint: disable-next=import-outside-toplevel
     from .bottle_state import read_metadata
+    # pylint: disable-next=import-outside-toplevel
+    from .contract.hostctl import RUN_BOTTLE
     metadata = read_metadata(session)
     host_bottles = bot_bottle_root() / "bottles"
     names = metadata.bottle_names if metadata else ()
     if metadata is not None and not names:
         names = (DEFAULT_BOTTLE,)
+    # An unsaved run bottle is in the name list: the user launched a suggested
+    # bottle without saving it.  Writing a stacked library bottle (e.g. the
+    # forge bottle) on their behalf would be surprising and wrong.
+    if RUN_BOTTLE in names:
+        return None
     for name in names:
         if not name.startswith("./") and (host_bottles / f"{name}.md").is_file():
             return KeepTarget(host_bottles / f"{name}.md", None)

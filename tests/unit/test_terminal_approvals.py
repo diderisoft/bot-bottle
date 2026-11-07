@@ -101,6 +101,18 @@ class KeepInAHostBottle(unittest.TestCase):
                 patch("bot_bottle.bottle_state.read_metadata", return_value=None):
             self.assertIsNone(keep_target("s1"))
 
+    def test_unsaved_suggested_bottle_returns_none(self) -> None:
+        from bot_bottle.bottle_state import BottleMetadata  # pylint: disable=import-outside-toplevel
+        from bot_bottle.contract.hostctl import RUN_BOTTLE  # pylint: disable=import-outside-toplevel
+        # Simulate a guided start: bottle_names includes RUN_BOTTLE plus stacked
+        # library bottles (e.g. the forge bottle). "keep" must not silently
+        # write into the library bottle.
+        meta = BottleMetadata(identity="s1", agent_name="pi", cwd="", copy_cwd=False,
+                              started_at="", bottle_names=(RUN_BOTTLE, "gitea", "basic"))
+        with patch("bot_bottle.approvals.session_project", return_value=None), \
+                patch("bot_bottle.bottle_state.read_metadata", return_value=meta):
+            self.assertIsNone(keep_target("s1"))
+
 
 class SaveToProject(unittest.TestCase):
     def setUp(self) -> None:
