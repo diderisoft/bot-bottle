@@ -320,16 +320,15 @@ class TestChildren(unittest.TestCase):
 # --- launch_bottle_attention: extra element options ---
 
 class TestLaunchBottleAttention(unittest.TestCase):
-    def _elem(self, key):
+    def _elem(self, key: str) -> dict[str, Any]:
         return {"key": key, "kind": key.split(":", 1)[0], "name": key.split(":", 1)[1],
                 "detail": "", "source": "test", "builtin": False, "fixed": False, "also": []}
 
-    def _request(self, proposed, justification=""):
-        from types import SimpleNamespace
+    def _request(self, proposed: str, justification: str = "") -> SimpleNamespace:
         return SimpleNamespace(proposed=proposed, justification=justification,
                                session="test-session")
 
-    def _propose(self, **kw):
+    def _propose(self, **kw: Any) -> str:
         return json.dumps({"agent": "my-agent", "prompt": "do work",
                            "bottles": [], "label": "", **kw})
 
@@ -354,7 +353,7 @@ class TestLaunchBottleAttention(unittest.TestCase):
 
     def test_extra_opts_order_matches_extra_list(self):
         from bot_bottle.control.hostctl.launch_bottle import launch_bottle_attention
-        parent: list = []
+        parent: list[dict[str, Any]] = []
         child = [self._elem("env:SECRET"), self._elem("egress:data.example.com")]
         _, opts = launch_bottle_attention(self._request(self._propose()), parent, child)
         self.assertEqual(opts, ["launch_bottle",
@@ -363,7 +362,7 @@ class TestLaunchBottleAttention(unittest.TestCase):
 
     def test_extra_line_in_card_description(self):
         from bot_bottle.control.hostctl.launch_bottle import launch_bottle_attention
-        parent: list = []
+        parent: list[dict[str, Any]] = []
         child = [self._elem("env:SECRET")]
         lines, _ = launch_bottle_attention(self._request(self._propose()), parent, child)
         self.assertTrue(any("extra (1):" in ln for ln in lines))

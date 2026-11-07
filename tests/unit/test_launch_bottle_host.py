@@ -166,11 +166,14 @@ class TestLaunchBottleAttention(unittest.TestCase):
             _request(_proposal(prompt="x" * 250, bottles=[], label=""), justification=" "), [], [])
         self.assertEqual(["agent: coder", f"prompt: {'x' * 200}…"], lines)
 
-    def test_what_the_parent_lacks_is_listed_as_removed(self):
+    def test_what_the_parent_lacks_is_listed_as_extra(self):
         child = [_elem(k) for k in ("egress:a.com", "repo:app", "env:TOKEN", "forge:gh",
                                     "other:thing", "env:B", "env:C", "resources:memory")]
-        lines, _ = lb.launch_bottle_attention(_request(), [_elem("env:C")], child)
-        self.assertEqual("removed (6): egress a.com (not in parent), repo app (not in parent), "
+        lines, options = lb.launch_bottle_attention(_request(), [_elem("env:C")], child)
+        self.assertEqual(["launch_bottle", "extra:egress:a.com", "extra:repo:app",
+                          "extra:env:TOKEN", "extra:forge:gh", "extra:other:thing",
+                          "extra:env:B"], options)
+        self.assertEqual("extra (6): egress a.com (not in parent), repo app (not in parent), "
                          "env TOKEN (not in parent), forge gh (not in parent), "
                          "other:thing (not in parent) (+1 more)", lines[-1])
 
@@ -228,6 +231,11 @@ class TestLaunchBottleAnswer(unittest.TestCase):
         self.parents: list[tuple[str, str]] = []
         self.nudges: list[tuple[Any, ...]] = []
         self.child_elems = [_elem("env:A"), _elem("env:SECRET")]
+        self.trimmed_keys: list[str] = []
+
+        def trimmed(_names: Any, _dirs: Any, within: list[dict[str, str]]) -> str:
+            self.trimmed_keys = [e["key"] for e in within]
+            return "---\nenv:\n  A: one\n---\n"
 
         def child_elements(_names: Any, _dirs: Any) -> list[dict[str, str]]:
             return self.child_elems
@@ -244,7 +252,7 @@ class TestLaunchBottleAnswer(unittest.TestCase):
             (f"{ME}.elements", {"return_value": [_elem("env:A")]}),
             (f"{ME}.bottle_elements", {"side_effect": child_elements}),
             ("bot_bottle.control.hostctl.launch_bottle.trimmed_bottle_text",
-             {"return_value": "---\nenv:\n  A: one\n---\n"}),
+             {"side_effect": trimmed}),
             ("bot_bottle.bottle_state.record_parent", {"side_effect": record_parent}),
             ("bot_bottle.control.hostctl.nudge.nudge_if_waited", {"side_effect": nudge}),
         ])
@@ -257,9 +265,11 @@ class TestLaunchBottleAnswer(unittest.TestCase):
         return self.orch
 
     def _answer(self, request: Request | None = None, since: str = ARRIVED,
-                bottles: Any = None) -> dict[str, Any]:
+                bottles: Any = None, approved: Any = None) -> dict[str, Any]:
         request = request or _request()
-        msg = {"agent_id": "parent-id", "request_id": 7, "since": since}
+        msg: dict[str, Any] = {"agent_id": "parent-id", "request_id": 7, "since": since}
+        if approved is not None:
+            msg["approved_extras"] = approved
         bottles = bottles if bottles is not None else SimpleNamespace(launch=self._launch)
         return asyncio.run(lb.launch_bottle_answer(
             msg, {"parent-id": request}, self._orchestrator, bottles))
@@ -268,8 +278,10 @@ class TestLaunchBottleAnswer(unittest.TestCase):
         reply = self._answer()
         self.assertNotIn("error", reply)
         self.assertEqual({"child_identity": "child-id", "agent": "coder", "label": "t",
-                          "removed": 1}, {k: reply[k] for k in
-                                          ("child_identity", "agent", "label", "removed")})
+                          "approved": 0, "removed": 1},
+                         {k: reply[k] for k in
+                          ("child_identity", "agent", "label", "approved", "removed")})
+        self.assertEqual(["env:A"], self.trimmed_keys)  # the extra is left out
         self.assertEqual(1, len(self.launched))
         req = self.launched[0][0]
         self.assertEqual("coder", req.agent)
@@ -281,7 +293,7 @@ class TestLaunchBottleAnswer(unittest.TestCase):
         rid, kw = self.orch.responses[0]
         self.assertEqual("r1", rid)
         self.assertEqual("approve", kw["decision"])
-        self.assertEqual("launched coder; identity=child-id; 1 extra element(s) removed",
+        self.assertEqual("launched coder; identity=child-id; 1 extra(s) removed",
                          kw["notes"])
         self.assertEqual("approved", self.nudges[0][1])
 
@@ -324,8 +336,29 @@ class TestLaunchBottleAnswer(unittest.TestCase):
         reply = self._answer(bottles=SimpleNamespace(launch=no_identity))
         self.assertEqual("", reply["child_identity"])
         self.assertEqual([], self.parents)
-        self.assertEqual("launched coder; 1 extra element(s) removed",
+        self.assertEqual("launched coder; 1 extra(s) removed",
                          self.orch.responses[0][1]["notes"])
+
+
+    def test_an_approved_extra_goes_in(self):
+        reply = self._answer(approved=["env:SECRET"])
+        self.assertEqual(["env:A", "env:SECRET"], self.trimmed_keys)
+        self.assertEqual((1, 0), (reply["approved"], reply["removed"]))
+        self.assertEqual("launched coder; identity=child-id; 1 extra(s) approved",
+                         self.orch.responses[0][1]["notes"])
+
+    def test_only_the_childs_own_extras_can_be_approved(self):
+        # A key the child's bottles don't declare can't be smuggled in.
+        reply = self._answer(approved=["env:ROOT_TOKEN", "egress:evil.example", 7])
+        self.assertEqual(["env:A"], self.trimmed_keys)
+        self.assertEqual((0, 1), (reply["approved"], reply["removed"]))
+
+    def test_malformed_approvals_approve_nothing(self):
+        for approved in ("env:SECRET", {"env:SECRET": True}, 1):
+            with self.subTest(approved=approved):
+                reply = self._answer(approved=approved)
+                self.assertNotIn("error", reply)
+                self.assertEqual(["env:A"], self.trimmed_keys)
 
 
 class TestSpecialCard(unittest.TestCase):
@@ -367,20 +400,20 @@ class TestSpecialCard(unittest.TestCase):
         self.orch.supervise_respond = mock.Mock(side_effect=RuntimeError("down"))
         with mock.patch.object(lb, "vet_launch_bottle", return_value="cap reached"):
             lines, options = self._card()
-        self.assertEqual(["launch_bottle"], options)
-        self.assertIn("removed (1): env SECRET (not in parent)", lines)
+        self.assertEqual(["launch_bottle", "extra:env:SECRET"], options)
+        self.assertIn("extra (1): env SECRET (not in parent)", lines)
 
     def test_a_meetable_request_shows_the_card(self):
         with mock.patch.object(lb, "vet_launch_bottle", return_value=""):
             lines, options = self._card()
-        self.assertEqual(["launch_bottle"], options)
-        self.assertIn("removed (1): env SECRET (not in parent)", lines)
+        self.assertEqual(["launch_bottle", "extra:env:SECRET"], options)
+        self.assertIn("extra (1): env SECRET (not in parent)", lines)
 
     def test_the_card_without_the_comparison(self):
         with mock.patch.object(lb, "vet_launch_bottle", return_value=""), \
              mock.patch(f"{ME}.bottle_elements", side_effect=RuntimeError("boom")):
             lines, _ = self._card()
-        self.assertFalse(any(line.startswith("removed") for line in lines))
+        self.assertFalse(any(line.startswith("extra") for line in lines))
 
 
 if __name__ == "__main__":

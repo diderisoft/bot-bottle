@@ -241,7 +241,12 @@ async def launch_bottle_answer(
     from .nudge import nudge_if_waited
 
     agent_id = str(msg.get("agent_id", ""))
-    approved_extra_keys = {k for k in msg.get("approved_extras", []) if isinstance(k, str)}
+    # The extras the operator approved, by element key. Only the child's own
+    # extras can be approved (they're matched against `extra` below); anything
+    # else, or a malformed list, approves nothing.
+    raw_extras = msg.get("approved_extras")
+    approved_extra_keys = ({k for k in raw_extras if isinstance(k, str)}
+                           if isinstance(raw_extras, list) else set[str]())
     reply: dict[str, Any] = {"type": "launch_bottle_answered",
                              "request_id": msg.get("request_id"), "agent_id": agent_id}
     request = asking.get(agent_id)
