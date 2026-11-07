@@ -113,7 +113,9 @@ steps on the same screen (`cli/screen.py`, `commands/guided_view.py`):
    is accepted or skipped. An accepted project bottle edit is written in the
    repo (it shows in `git status`, for you to commit) and trusted on this
    host, so the launch doesn't ask again; a host bottle edit is a new
-   version (`bot-bottle bottles history`). An edit whose repos are on a
+   version (`bot-bottle bottles history`). The file keeps its comments and
+   how its unchanged lines were written (`contract/yaml_comments.py`; an
+   allowed request kept in a bottle is written the same way). An edit whose repos are on a
    forge this host hasn't connected waits for `c`. The review shows the
    stack as if every pending edit were accepted; after each decision the
    proposal is validated again, so a stack that named a skipped new bottle

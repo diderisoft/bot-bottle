@@ -313,8 +313,13 @@ def bottle_text(frontmatter: dict[str, object], body: str) -> str:
 
 
 def save_bottle(target: KeepTarget, text: str, message: str) -> Path:
-    """Write `text` to `target`: trusted for a project bottle (left for you to
-    commit), a new version named `message` for a host bottle."""
+    """Write `text` to `target`, keeping the comments the file had: trusted
+    for a project bottle (left for you to commit), a new version named
+    `message` for a host bottle."""
+    # pylint: disable-next=import-outside-toplevel
+    from .contract.yaml_comments import keep_comments
+    if target.path.is_file():
+        text = keep_comments(target.path.read_text(), text)
     target.path.parent.mkdir(parents=True, exist_ok=True)
     target.path.write_text(text)
     if target.project is not None:

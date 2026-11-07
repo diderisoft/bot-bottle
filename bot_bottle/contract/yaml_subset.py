@@ -636,7 +636,8 @@ def _needs_quoting(s: str) -> bool:
     # Characters with special meaning at the start of a value.
     if s[0] in ('"', "'", "[", "{", "!", "&", "*", "#", "|", ">", "%", "@", "`"):
         return True
-    return False
+    # ` #` starts an inline comment, so the rest would be lost.
+    return " #" in s or "\t#" in s
 
 
 def _yaml_scalar(v: object) -> str:

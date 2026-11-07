@@ -162,11 +162,15 @@ def _read(where: Target, edit: ProposalEdit) -> tuple[dict[str, Any], str]:
 
 
 def edited_text(edit: ProposalEdit, where: Target, forges: Described) -> str:
-    """The file `where` holds once `edit` is accepted."""
-    # pylint: disable-next=import-outside-toplevel
+    """The file `where` holds once `edit` is accepted, its comments kept."""
+    # pylint: disable=import-outside-toplevel
     from ..approvals import bottle_text
+    from ..contract.yaml_comments import keep_comments
     fm, body = _read(where, edit)
-    return bottle_text(edited_frontmatter(fm, edit, forges), body)
+    text = bottle_text(edited_frontmatter(fm, edit, forges), body)
+    if where.path.is_file():
+        text = keep_comments(where.path.read_text(encoding="utf-8"), text)
+    return text
 
 
 def diff(edit: ProposalEdit, dirs: Dirs, forges: Described) -> list[str]:
