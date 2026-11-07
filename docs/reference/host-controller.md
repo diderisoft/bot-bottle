@@ -401,12 +401,25 @@ one still running after 150 seconds is reported failed.
 `new_bottle` name, extends and about, whether it `writes` a bottle, and the
 `egress` hosts, `repos`, `env` names and `credentials` names and routes it
 adds — never a secret's value — plus `similar`, `notes` and `source`,
-`architect` or `rules`), or `error`.
+`architect` or `rules`; and the guided start's review, PRD 0118: the `gist`,
+the `new` grants, `connect` (each forge to connect first, with the `forge
+connect` command to run here) and `edits`, each pending edit to another
+bottle with its `bottle`, what it `adds`, `why`, the forges it `waits_on`
+and its `diff`), or `error`; with `replies` (what was said so far) and
+`decided` (each accepted edit, as written).
+`bottle_suggestion_edit` (`job`, `decision` `accept` or `skip`) ->
+`bottle_suggestion` decides the first pending edit: accepted, it's written
+here as `bot-bottle start` writes it (a project bottle trusted, a host
+bottle a new version, comments kept), and the proposal is validated again.
+`bottle_suggestion_reply` (`job`, `reply`) -> `bottle_suggestion` asks the
+architect again on the same job, the conversation replayed (at most eight
+replies).
 `bottle_suggestion_accept` (`job`, optional `name`) ->
 `bottle_suggestion_accepted` (`bottles`, `written`, or `error`) writes the
 bottle the host proposed, if it makes one, into the host's bottles as a new
 version, and answers the bottles to launch with: the existing ones for a
 reuse or stack, those plus the new one for additions, or just the new one.
+It refuses while an edit is pending.
 The console never sends a manifest, so only what this host proposed is
 written. A finished job is kept ten minutes.
 

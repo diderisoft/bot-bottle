@@ -86,12 +86,5 @@ def diff_lines(proposal: "Proposal", dirs: list[tuple[Path, bool]], width: int,
     return out + [""]
 
 
-def decided_line(name: str, project: bool, existed: bool) -> str:
-    """What an accepted edit says once written."""
-    if project:
-        return f"{name}: written in the repo and trusted; commit it"
-    return f"{name}: {'edited' if existed else 'made'} (a new version)"
-
-
-__all__ = ["EDIT_CONNECT_KEYS", "EDIT_KEYS", "decided_line", "diff_lines", "edit_lines",
+__all__ = ["EDIT_CONNECT_KEYS", "EDIT_KEYS", "diff_lines", "edit_lines",
            "hanging", "turn_lines"]

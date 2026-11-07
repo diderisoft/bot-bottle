@@ -385,6 +385,23 @@ def glance(proposal: Proposal, dirs: list[tuple[Path, bool]]) -> Glance | None:
     return Glance(gist(proposal, {h.lower() for h in hosts}), new, warns, connect)
 
 
+def pending_glance(proposal: Proposal, dirs: list[tuple[Path, bool]]) -> Glance | None:
+    """`glance` with the proposal's pending edits applied as if accepted
+    (`edits.overlay`), its `connect` also naming the forges the first edit
+    waits on."""
+    # pylint: disable-next=import-outside-toplevel
+    from . import edits
+    from .forges import connect_url  # pylint: disable=import-outside-toplevel
+    with edits.overlay(proposal.edits, dirs, proposal.forges) as seen_dirs:
+        seen = glance(proposal, seen_dirs)
+    if seen is None:
+        return None
+    for edit in proposal.edits[:1]:
+        for host in edits.unconnected(edit):
+            seen.connect.setdefault(host, connect_url(host, proposal.forges.get(host, {})))
+    return seen
+
+
 def every_line(proposal: Proposal, dirs: list[tuple[Path, bool]]) -> list[Line] | None:
     """Every host, repo and env var on its own line, under its bottle."""
     files = _files(proposal, dirs)
@@ -406,5 +423,6 @@ def every_line(proposal: Proposal, dirs: list[tuple[Path, bool]]) -> list[Line] 
     return lines + _forge_lines(files)
 
 
-__all__ = ["Glance", "Line", "NEW", "every_line", "gist", "glance", "repo_names", "review",
+__all__ = ["Glance", "Line", "NEW", "every_line", "gist", "glance", "pending_glance",
+           "repo_names", "review",
            "route_methods", "short_methods"]

@@ -312,6 +312,28 @@ def accept(edit: ProposalEdit, dirs: Dirs, forges: Described) -> Target:
     return replace(where, exists=True)
 
 
+def decided_line(where: Target, existed: bool) -> str:
+    """What an accepted edit says once written."""
+    if where.project:
+        return f"{where.name}: written in the repo and trusted; commit it"
+    return f"{where.name}: {'edited' if existed else 'made'} (a new version)"
+
+
+def decide(proposal: Proposal, dirs: Dirs, *, take: bool) -> tuple[Proposal, str, str]:
+    """Accept (`take`) or skip `proposal`'s first pending edit: (the proposal
+    validated again without it, what an accepted one says once written ("" for
+    a skip), what the architect is told). EditError when it can't be written."""
+    # pylint: disable-next=import-outside-toplevel
+    from .validate import validate_proposal
+    edit = proposal.edits[0]
+    said = ""
+    if take:
+        said = decided_line(accept(edit, dirs, proposal.forges), not new_name(edit))
+    again = validate_proposal(replace(proposal, edits=proposal.edits[1:]), dirs)[0]
+    again.source = proposal.source
+    return again, said, f"{'accepted' if take else 'skipped'} the edit of {edit.bottle}"
+
+
 def _repo_name(grant: str) -> str:
     """`owner/repo` of a grant (its alias's grant), else the grant as given."""
     bare = grant.split("=", 1)[1] if "=" in grant.split("/", 1)[0] else grant
@@ -330,6 +352,7 @@ def summary(edit: ProposalEdit) -> str:
     return " · ".join(parts) or "nothing"
 
 
-__all__ = ["NEW_PREFIX", "EditError", "Target", "accept", "diff", "edited_frontmatter",
+__all__ = ["NEW_PREFIX", "EditError", "Target", "accept", "decide", "decided_line", "diff",
+           "edited_frontmatter",
            "edited_text", "new_name", "overlay", "stack_name", "summary", "target",
            "unconnected", "validate_edits"]

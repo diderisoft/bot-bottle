@@ -14,7 +14,7 @@ from unittest import mock
 
 from bot_bottle.control.hostctl import remote_actions, suggest_link
 from bot_bottle.suggest.proposal import (
-    Proposal, ProposalAdditions, ProposalCredential, ProposalEgress, ProposalEnv,
+    Proposal, ProposalAdditions, ProposalCredential, ProposalEdit, ProposalEgress, ProposalEnv,
     ProposalNewBottle, ProposalRepo,
 )
 from bot_bottle.suggest.write import SuggestWriteError, write_bottle
@@ -48,7 +48,7 @@ class TestSuggestJobs(unittest.TestCase):
                                 credentials=[ProposalCredential(name="PYPI_TOKEN",
                                                                 route="pypi.org")])
         p = _proposal("stack+additions", ["basic"], ProposalNewBottle(name="todo-api"), add)
-        job = suggest_link.start("build a todo api", suggest=lambda t, c: p)
+        job = suggest_link.start("build a todo api", suggest=lambda t, c, _turns: p)
         st = _wait(job)
         self.assertEqual("done", st["state"])
         s = st["proposal"]
@@ -60,7 +60,7 @@ class TestSuggestJobs(unittest.TestCase):
         self.assertTrue(s["writes"])
 
     def test_a_failed_suggestion_says_so_without_details(self) -> None:
-        def boom(task: str, cwd: Path | None) -> Proposal:
+        def boom(task: str, cwd: Path | None, turns: list[Any]) -> Proposal:
             raise RuntimeError("secret detail")
         st = _wait(suggest_link.start("t", suggest=boom))
         self.assertEqual("error", st["state"])
@@ -69,11 +69,11 @@ class TestSuggestJobs(unittest.TestCase):
     def test_bad_tasks_and_too_many_jobs_are_refused(self) -> None:
         for bad in ("", "   ", "x" * (suggest_link.MAX_TASK_CHARS + 1)):
             with self.subTest(task=bad[:10]), self.assertRaises(ValueError):
-                suggest_link.start(bad, suggest=lambda t, c: _proposal())
+                suggest_link.start(bad, suggest=lambda t, c, _turns: _proposal())
         hold = __import__("threading").Event()
 
-        def slow(task: str, cwd: Path | None) -> Proposal:
-            del task, cwd
+        def slow(task: str, cwd: Path | None, turns: list[Any]) -> Proposal:
+            del task, cwd, turns
             hold.wait(5)
             return _proposal()
         for _ in range(suggest_link.MAX_JOBS):
@@ -84,7 +84,7 @@ class TestSuggestJobs(unittest.TestCase):
 
     def test_a_stuck_job_times_out_and_unknown_jobs_error(self) -> None:
         hold = __import__("threading").Event()
-        job = suggest_link.start("t", suggest=lambda t, c: (hold.wait(5), _proposal())[1],
+        job = suggest_link.start("t", suggest=lambda t, c, _turns: (hold.wait(5), _proposal())[1],
                                  clock=lambda: 0.0)
         st = suggest_link.status(job, clock=lambda: suggest_link.RUN_SECONDS + 1)
         self.assertEqual("error", st["state"])
@@ -97,7 +97,7 @@ class TestAccept(unittest.TestCase):
         suggest_link._jobs.clear()  # pylint: disable=protected-access
 
     def _done(self, p: Proposal) -> str:
-        job = suggest_link.start("t", suggest=lambda t, c: p)
+        job = suggest_link.start("t", suggest=lambda t, c, _turns: p)
         _wait(job)
         return job
 
@@ -180,8 +180,8 @@ class TestLinkRequests(unittest.TestCase):
     def _started_with(self, msg: dict[str, Any]) -> tuple[dict[str, Any], list[object]]:
         seen: list[object] = []
 
-        def fake(task: str, cwd: Path | None) -> Proposal:
-            del task
+        def fake(task: str, cwd: Path | None, turns: list[Any]) -> Proposal:
+            del task, turns
             seen.append(cwd)
             return _proposal()
 
@@ -227,3 +227,80 @@ class TestLinkRequests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReviewOnThePage(unittest.TestCase):
+    """The guided start's review over the link (PRD 0118): the gist and what
+    it adds, edits decided one at a time, and replies."""
+
+    def setUp(self) -> None:
+        suggest_link._jobs.clear()  # pylint: disable=protected-access
+        # pylint: disable-next=consider-using-with
+        root = Path(self.enterContext(tempfile.TemporaryDirectory())) / ".bot-bottle"
+        (root / "bottles").mkdir(parents=True)
+        self.bottle = root / "bottles" / "team.md"
+        self.bottle.write_text("---\nextends: basic\n# the team's\n---\n\nTeam.\n")
+        self.enterContext(mock.patch.dict("os.environ", {"BOT_BOTTLE_ROOT": str(root)}))
+        self.enterContext(mock.patch("bot_bottle.manifest.versions.record_or_warn"))
+        self.calls: list[list[str]] = []
+
+    def _job(self, *answers: Proposal) -> str:
+        queue = list(answers)
+
+        def fake(task: str, cwd: Path | None, turns: list[Any]) -> Proposal:
+            del task, cwd
+            self.calls.append([t.reply for t in turns])
+            return queue.pop(0)
+        job = suggest_link.start("t", suggest=fake)
+        _wait(job)
+        return job
+
+    @staticmethod
+    def _editing() -> Proposal:
+        p = _proposal()
+        p.edits = [ProposalEdit("team", ProposalAdditions(
+            egress=[ProposalEgress("api.linear.app", ["POST"])]), why="tickets")]
+        return p
+
+    def test_the_summary_carries_the_review(self) -> None:
+        s = _wait(self._job(self._editing()))["proposal"]
+        self.assertTrue(s["gist"])
+        edit = s["edits"][0]
+        self.assertEqual(("team", "+ api.linear.app", "tickets", []),
+                         (edit["bottle"], edit["adds"], edit["why"], edit["waits_on"]))
+        self.assertIn("+    - host: api.linear.app", edit["diff"])
+        self.assertEqual({}, s["connect"])
+
+    def test_accept_writes_the_edit_and_then_the_bottle_can_be_used(self) -> None:
+        job = self._job(self._editing())
+        self.assertEqual({"error": "accept or skip each edit first"}, suggest_link.accept(job))
+        st = suggest_link.decide_edit(job, "accept")
+        self.assertEqual([], st["proposal"]["edits"])
+        self.assertEqual(["team: edited (a new version)"], st["decided"])
+        text = self.bottle.read_text()
+        self.assertIn("api.linear.app", text)
+        self.assertIn("# the team's", text)
+        self.assertEqual({"bottles": ["basic"]}, suggest_link.accept(job))
+        self.assertIn("error", suggest_link.decide_edit(job, "accept"))
+        self.assertIn("error", suggest_link.decide_edit(job, "maybe"))
+
+    def test_a_reply_asks_again_with_what_was_said_and_done(self) -> None:
+        job = self._job(self._editing(), _proposal("stack", ["basic", "team"]))
+        suggest_link.decide_edit(job, "skip")
+        self.assertNotEqual("error", suggest_link.ask_again(job, "use team")["state"])
+        st = _wait(job)
+        self.assertEqual([[], ["use team"]], self.calls)
+        self.assertEqual(["use team"], st["replies"])
+        turn = suggest_link._jobs[job].turns[0]  # pylint: disable=protected-access
+        self.assertEqual(["skipped the edit of team"], turn.events)
+        self.assertEqual("error", suggest_link.ask_again(job, "")["state"])
+        self.assertEqual("error", suggest_link.ask_again("nope", "hi")["state"])
+        self.assertNotIn("api.linear.app", self.bottle.read_text())
+
+    def test_the_link_requests(self) -> None:
+        job = self._job(self._editing())
+        out = asyncio.run(suggest_link.REQUESTS["bottle_suggestion_edit"](
+            {"request_id": "r", "job": job, "decision": "skip"}))
+        self.assertEqual(("bottle_suggestion", "r", []),
+                         (out["type"], out["request_id"], out["proposal"]["edits"]))
+        self.assertIn("bottle_suggestion_reply", remote_actions.HOST_REQUESTS)

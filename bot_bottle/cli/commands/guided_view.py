@@ -406,7 +406,7 @@ class StartView:  # pylint: disable=too-many-instance-attributes
     def review_step(self, proposal: "Proposal", task: str = "") -> tuple["Proposal", str]:
         # pylint: disable=import-outside-toplevel,too-many-branches,too-many-statements
         from ...paths import bot_bottle_root
-        from ...suggest.edits import EditError, accept
+        from ...suggest.edits import EditError, decide
         from ...suggest.flow import bottle_dirs
         from ...suggest.turns import Turn
         from ...suggest.write import SuggestWriteError, write_bottle
@@ -440,20 +440,13 @@ class StartView:  # pylint: disable=too-many-instance-attributes
                     proposal = revalidated(proposal, dirs)
                 continue
             if key in ("a", "x") and editing:
-                edit = proposal.edits[0]
-                if key == "a":
-                    try:
-                        where = accept(edit, dirs, proposal.forges)
-                    except (EditError, OSError) as e:
-                        error = f"{edit.bottle}: {e}"
-                        continue
-                    existed = not edit.bottle.startswith("new:")
-                    decided.append(review_edits.decided_line(where.name, where.project, existed))
-                    events.append(f"accepted the edit of {edit.bottle}")
-                else:
-                    events.append(f"skipped the edit of {edit.bottle}")
-                proposal = revalidated(dataclasses.replace(proposal, edits=proposal.edits[1:]),
-                                       dirs)
+                try:
+                    proposal, said, event = decide(proposal, dirs, take=key == "a")
+                except (EditError, OSError) as e:
+                    error = f"{proposal.edits[0].bottle}: {e}"
+                    continue
+                decided += [said] if said else []
+                events.append(event)
                 continue
             if key == "r":
                 reply = self.ask_line(step, "reply", "enter send · esc back")
@@ -626,8 +619,7 @@ def review_lines(proposal: "Proposal", dirs: list[tuple[Path, bool]], *, details
                                            style=style)
         lines += [""] + notes if notes else []
     else:
-        with edits.overlay(proposal.edits, dirs, proposal.forges) as seen_dirs:
-            seen = review.glance(proposal, seen_dirs)
+        seen = review.pending_glance(proposal, dirs)
         lines = review_edits.turn_lines(turns or [], width, style)
         lines += screen.wrap(seen.gist if seen else render.summary_line(proposal), width)[:3]
         lines.append("")
@@ -683,14 +675,9 @@ def to_connect(proposal: "Proposal", dirs: list[tuple[Path, bool]]) -> dict[str,
     """Each forge to connect before `proposal` can run, or its first edit be
     accepted: host to the URL `forge connect` takes."""
     # pylint: disable-next=import-outside-toplevel
-    from ...suggest import edits, forges, review
-    with edits.overlay(proposal.edits, dirs, proposal.forges) as seen_dirs:
-        seen = review.glance(proposal, seen_dirs)
-    found = {} if seen is None else dict(seen.connect)
-    for edit in proposal.edits[:1]:
-        for host in edits.unconnected(edit):
-            found.setdefault(host, forges.connect_url(host, proposal.forges.get(host, {})))
-    return found
+    from ...suggest import review
+    seen = review.pending_glance(proposal, dirs)
+    return seen.connect if seen else {}
 
 
 def revalidated(proposal: "Proposal", dirs: list[tuple[Path, bool]]) -> "Proposal":

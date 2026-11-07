@@ -5,11 +5,19 @@
 `bottle-architect` in its warm bottle, the rules path when it can't
 answer) can take a minute, and the link mustn't wait on it. `cwd` is the
 project directory on this host, when the console has one; without it the
-proposal says there was no project to look at. `bottle_suggest_status` {job} follows it to the
-proposal, which the host keeps. `bottle_suggestion_accept` {job, name?}
-writes the bottle it proposes, if it's new, into the host's bottles and
-answers the bottles to launch with. The console never sends a manifest: what
-gets written is what this host proposed. Secret values never leave the host;
+proposal says there was no project to look at. `bottle_suggest_status` {job}
+follows it to the proposal, which the host keeps.
+
+The guided start's review on the page (PRD 0118):
+`bottle_suggestion_edit` {job, decision: accept|skip} decides the proposal's
+first pending edit to another bottle (accepted, it's written here), and
+`bottle_suggestion_reply` {job, reply} asks the architect again on the same
+job with the conversation replayed; both answer as the status does.
+
+`bottle_suggestion_accept` {job, name?} writes the bottle it proposes, if
+it's new, into the host's bottles and answers the bottles to launch with,
+once no edit is pending. The console never sends a manifest: what gets
+written is what this host proposed. Secret values never leave the host;
 only their names are in a proposal."""
 
 from __future__ import annotations
@@ -25,6 +33,9 @@ from typing import Any
 
 from ...lib import log
 from ...suggest.proposal import Proposal
+from ...suggest.turns import MAX_REPLY, MAX_TURNS, Turn
+
+Suggest = Callable[[str, "Path | None", "list[Turn]"], Proposal]
 
 MAX_TASK_CHARS = 4000
 MAX_JOBS = 4
@@ -36,26 +47,39 @@ KEEP_SECONDS = 600.0
 
 
 @dataclass
-class _Job:
+class _Job:  # pylint: disable=too-many-instance-attributes
     task: str
     started: float
+    cwd: Path | None = None
     state: str = "running"  # running | done | error
     proposal: Proposal | None = None
     error: str = ""
     accepted: list[str] = field(default_factory=list)
+    turns: list[Turn] = field(default_factory=list)
+    events: list[str] = field(default_factory=list)  # since the architect last answered
+    decided: list[str] = field(default_factory=list)  # each accepted edit, as said
+    run: "Suggest | None" = None
+    shown: tuple[object, dict[str, Any]] | None = None  # (proposal, its summary): polled often
 
 
 _jobs: dict[str, _Job] = {}
 _lock = threading.Lock()
 
 
-def _suggest(task: str, cwd: Path | None) -> Proposal:
+def _suggest(task: str, cwd: Path | None, turns: list[Turn]) -> Proposal:
     """The shared suggestion flow, as `bot-bottle bottles suggest` runs it,
     asking this host controller's warm architect."""
     # pylint: disable=import-outside-toplevel
     from ...suggest.flow import suggest
     from .architect_bottle import runner
-    return suggest(task, cwd, run=runner())
+    return suggest(task, cwd, run=runner(), turns=turns or None)
+
+
+def _dirs(job: _Job) -> list[tuple[Path, bool]]:
+    # pylint: disable=import-outside-toplevel
+    from ...paths import bot_bottle_root
+    from ...suggest.flow import bottle_dirs
+    return bottle_dirs(job.cwd, bot_bottle_root())
 
 
 def project_dir(raw: object, *, home: Path | None = None) -> Path | None:
@@ -81,8 +105,7 @@ def _expire(now: float) -> None:
         del _jobs[job_id]
 
 
-def start(task: str, *, cwd: Path | None = None,
-          suggest: Callable[[str, Path | None], Proposal] | None = None,
+def start(task: str, *, cwd: Path | None = None, suggest: Suggest | None = None,
           clock: Callable[[], float] = time.monotonic) -> str:
     """Start a suggestion for `task` and return its job id. ValueError if the
     task isn't usable or too many are running."""
@@ -95,12 +118,19 @@ def start(task: str, *, cwd: Path | None = None,
         if sum(1 for j in _jobs.values() if j.state == "running") >= MAX_JOBS:
             raise ValueError("too many suggestions are running on this host; try again soon")
         job_id = secrets.token_hex(8)
-        job = _jobs[job_id] = _Job(task=task, started=now)
-    run_suggest = suggest or _suggest
+        job = _jobs[job_id] = _Job(task=task, started=now, cwd=cwd, run=suggest or _suggest)
+    _run(job_id, job)
+    return job_id
+
+
+def _run(job_id: str, job: _Job) -> None:
+    """Ask the suggester for `job` (with its conversation) on a thread."""
+    run_suggest = job.run or _suggest
+    turns = list(job.turns)
 
     def run() -> None:
         try:
-            proposal = run_suggest(task, cwd)
+            proposal = run_suggest(job.task, job.cwd, turns)
         except Exception as e:  # pylint: disable=broad-exception-caught  # reported to the console
             log.warn(f"remote: suggesting a bottle failed: {type(e).__name__}: {e}")
             with _lock:
@@ -110,17 +140,63 @@ def start(task: str, *, cwd: Path | None = None,
             job.state, job.proposal = "done", proposal
 
     threading.Thread(target=run, daemon=True, name=f"suggest-{job_id}").start()
-    return job_id
 
 
-def summary(proposal: Proposal) -> dict[str, Any]:
-    """What the console shows of a proposal: its kind, the bottles it stacks
-    or creates, and the names (never values) of what it adds."""
+def ask_again(job_id: str, text: str, *, clock: Callable[[], float] = time.monotonic
+          ) -> dict[str, Any]:
+    """Ask the architect again on a finished job, with what was said and
+    done so far; its status (running)."""
+    text = text.strip()
+    if not text or len(text) > MAX_REPLY:
+        return {"state": "error", "error": f"a reply is 1 to {MAX_REPLY} characters"}
+    with _lock:
+        job = _jobs.get(job_id)
+        if job is None or job.state != "done" or job.proposal is None or job.accepted:
+            return {"state": "error", "error": "no suggestion to reply to (it may have expired)"}
+        if len(job.turns) >= MAX_TURNS:
+            return {"state": "error", "error": "that's as many replies as one suggestion takes; "
+                                               "start again with the task reworded"}
+        job.turns.append(Turn(job.proposal.to_dict(), text, list(job.events)))
+        job.events, job.state, job.error, job.started = [], "running", "", clock()
+    _run(job_id, job)
+    return status(job_id, clock=clock)
+
+
+def decide_edit(job_id: str, decision: str) -> dict[str, Any]:
+    """Accept or skip a finished job's first pending edit; its status, with
+    `error` (still done) when it couldn't be written."""
     # pylint: disable-next=import-outside-toplevel
+    from ...suggest.edits import EditError, decide
+    if decision not in ("accept", "skip"):
+        return {"state": "error", "error": "decide accept or skip"}
+    with _lock:
+        job = _jobs.get(job_id)
+        proposal = job.proposal if job is not None and job.state == "done" else None
+    if job is None or proposal is None or not proposal.edits:
+        return {"state": "error", "error": "no edit is waiting on that suggestion"}
+    try:
+        again, said, event = decide(proposal, _dirs(job), take=decision == "accept")
+    except (EditError, OSError) as e:
+        return {**status(job_id), "error": f"{proposal.edits[0].bottle}: {e}"}
+    with _lock:
+        job.proposal = again
+        job.decided += [said] if said else []
+        job.events.append(event)
+    return status(job_id)
+
+
+def summary(proposal: Proposal, dirs: list[tuple[Path, bool]] | None = None
+            ) -> dict[str, Any]:
+    """What the console shows of a proposal: its kind, the bottles it stacks
+    or creates, and the names (never values) of what it adds. With `dirs`,
+    the guided start's review too (PRD 0118): `gist`, `new`, `connect` (each
+    forge to connect first, with the command) and `edits`, each with its
+    diff."""
+    # pylint: disable=import-outside-toplevel
     from ...suggest.validate import is_stacked
     add = proposal.additions
     new = proposal.new_bottle
-    return {
+    return {**_review(proposal, dirs),
         "option": proposal.option,
         "bottles": list(proposal.bottles),
         "new_bottle": ({"name": new.name, "extends": new.extends, "about": new.about}
@@ -138,6 +214,24 @@ def summary(proposal: Proposal) -> dict[str, Any]:
     }
 
 
+def _review(proposal: Proposal, dirs: list[tuple[Path, bool]] | None) -> dict[str, Any]:
+    # pylint: disable=import-outside-toplevel
+    from ...suggest import edits, render, review
+    if dirs is None:
+        return {}
+    seen = review.pending_glance(proposal, dirs)
+    return {
+        "gist": seen.gist if seen else render.summary_line(proposal),
+        "new": list(seen.new) if seen else [],
+        "connect": {host: f"bot-bottle forge connect {url}"
+                    for host, url in (seen.connect if seen else {}).items()},
+        "edits": [{"bottle": e.bottle, "adds": edits.summary(e), "why": e.why,
+                   "waits_on": edits.unconnected(e),
+                   "diff": edits.diff(e, dirs, proposal.forges)[:200]}
+                  for e in proposal.edits],
+    }
+
+
 def status(job_id: str, *, clock: Callable[[], float] = time.monotonic) -> dict[str, Any]:
     """A job's state, and its proposal's summary once it's done."""
     with _lock:
@@ -146,12 +240,16 @@ def status(job_id: str, *, clock: Callable[[], float] = time.monotonic) -> dict[
             return {"state": "error", "error": "no such suggestion (it may have expired)"}
         if job.state == "running" and clock() - job.started > RUN_SECONDS:
             job.state, job.error = "error", "suggesting a bottle took too long"
-        out: dict[str, Any] = {"state": job.state}
+        out: dict[str, Any] = {"state": job.state, "replies": [t.reply for t in job.turns],
+                               "decided": list(job.decided)}
         if job.error:
             out["error"] = job.error
-        if job.proposal is not None:
-            out["proposal"] = summary(job.proposal)
-        return out
+        proposal = job.proposal if job.state != "running" else None
+    if proposal is not None:
+        if job.shown is None or job.shown[0] is not proposal:
+            job.shown = (proposal, summary(proposal, _dirs(job)))
+        out["proposal"] = job.shown[1]
+    return out
 
 
 def accept(job_id: str, name: str = "", *,
@@ -168,6 +266,8 @@ def accept(job_id: str, name: str = "", *,
             return {"bottles": list(job.accepted)}
     if job is None or proposal is None:
         return {"error": "no finished suggestion to use (it may have expired)"}
+    if proposal.edits:
+        return {"error": "accept or skip each edit first"}
     if is_stacked(proposal) and proposal.additions.is_empty():
         bottles = list(proposal.bottles) or ["basic"]
         written = ""
@@ -219,9 +319,27 @@ async def bottle_suggestion_accept(msg: Mapping[str, Any]) -> dict[str, Any]:
     return reply
 
 
+async def bottle_suggestion_edit(msg: Mapping[str, Any]) -> dict[str, Any]:
+    reply: dict[str, Any] = {"type": "bottle_suggestion", "request_id": msg.get("request_id"),
+                              "job": _text(msg, "job")}
+    reply.update(await asyncio.to_thread(decide_edit, _text(msg, "job"),
+                                          _text(msg, "decision")))
+    return reply
+
+
+async def bottle_suggestion_reply(msg: Mapping[str, Any]) -> dict[str, Any]:
+    reply: dict[str, Any] = {"type": "bottle_suggestion", "request_id": msg.get("request_id"),
+                              "job": _text(msg, "job")}
+    reply.update(await asyncio.to_thread(ask_again, _text(msg, "job"), _text(msg, "reply")))
+    return reply
+
+
 REQUESTS = {"bottle_suggest": bottle_suggest, "bottle_suggest_status": bottle_suggest_status,
-            "bottle_suggestion_accept": bottle_suggestion_accept}
+            "bottle_suggestion_accept": bottle_suggestion_accept,
+            "bottle_suggestion_edit": bottle_suggestion_edit,
+            "bottle_suggestion_reply": bottle_suggestion_reply}
 
 __all__ = ["MAX_JOBS", "MAX_TASK_CHARS", "REQUESTS", "accept", "bottle_suggest",
-           "bottle_suggest_status", "bottle_suggestion_accept", "project_dir", "start",
+           "bottle_suggest_status", "bottle_suggestion_accept", "bottle_suggestion_edit",
+           "bottle_suggestion_reply", "ask_again", "decide_edit", "project_dir", "start",
            "status", "summary"]

@@ -126,7 +126,10 @@ steps on the same screen (`cli/screen.py`, `commands/guided_view.py`):
    (edits accepted or skipped, forges connected) and your replies
    (`suggest/turns.py`). Your replies stay above the gist, a line each.
    Each turn is still a fresh headless call; the architect's bottle keeps
-   no session.
+   no session. The console's launch page shows the same review (its
+   requests: [host-controller.md](host-controller.md)), with Accept/Skip on
+   each edit, its diff, and a reply box; a forge to connect shows the
+   `forge connect` command to run on the host.
 5. **Launch** in that bottle with the task as the agent's first prompt.
 
 The launch's questions (trust a project bottle, confirm a git-gate host key,
