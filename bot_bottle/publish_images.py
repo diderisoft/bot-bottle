@@ -20,7 +20,6 @@ import gzip
 import hashlib
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -32,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .compat import PROTOCOL_VERSION
-from . import image_inputs, oci_registry, resources
+from . import image_inputs, oci_registry, release_version, resources
 from .published_artifacts import (
     ARTIFACTS_MANIFEST_NAME,
     Artifact,
@@ -316,47 +315,18 @@ def _already_published_oci(images: list[str], platforms: list[str], version: str
     return found
 
 
-_RELEASE_VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 _RELEASE_PLATFORMS = ["linux/amd64", "linux/arm64"]
 
 
-def git_release_tags(repo_root: Path | None = None) -> frozenset[str]:
-    """Versions that already have a `vX.Y.Z` git tag in the repo."""
-    if repo_root is None:
-        repo_root = resources.build_root()
-    try:
-        out = subprocess.run(
-            ["git", "tag", "--list", "v*"],
-            capture_output=True, text=True, check=True,
-            cwd=repo_root,
-        ).stdout
-    except (OSError, subprocess.CalledProcessError):
-        return frozenset()
-    tagged = set()
-    for line in out.splitlines():
-        tag = line.strip()
-        if tag.startswith("v") and _RELEASE_VERSION.match(tag[1:]):
-            tagged.add(tag[1:])
-    return frozenset(tagged)
-
-
-def next_release_version(
-    start: str, token: str, *, tagged: frozenset[str] | None = None,
-) -> str:
-    """The first version from `start` up not already published to the registry
-    or tagged in git, bumping the patch. Any image or arch already at a version
-    takes it."""
-    match = _RELEASE_VERSION.match(start)
-    if not match:
-        raise PublishError(f"{start!r} is not a MAJOR.MINOR.PATCH release version")
-    major, minor, patch = (int(g) for g in match.groups())
+def next_release_version(start: str, token: str, *, tagged: frozenset[str] = frozenset()) -> str:
+    """The first version from `start` up not already tagged in git or published
+    to the registry, bumping the patch. Any image or arch at a version takes it."""
     images = list(image_inputs.IMAGES)
-    while True:
-        version = f"{major}.{minor}.{patch}"
-        if not already_published(images, _RELEASE_PLATFORMS, version, token):
-            if tagged is None or version not in tagged:
-                return version
-        patch += 1
+    try:
+        return release_version.next_free(start, lambda v: v in tagged or bool(
+            already_published(images, _RELEASE_PLATFORMS, v, token)))
+    except ValueError as e:
+        raise PublishError(str(e)) from e
 
 
 def delete_published(
@@ -811,7 +781,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.promote:
         if args.version is None:
-            version = next_release_version(version, token, tagged=git_release_tags(repo_root))
+            version = next_release_version(version, token, tagged=release_version.git_release_tags(repo_root))
         elif existing := already_published(
                 list(image_inputs.IMAGES), _RELEASE_PLATFORMS, version, token):
             # `docker tag` + push overwrites silently.
