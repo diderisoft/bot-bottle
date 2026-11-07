@@ -1,7 +1,7 @@
 """The supervise MCP server (HTTP + JSON-RPC), shared by every bottle.
 
 Tools: `egress-allow`, `egress-block`, `list-egress-routes`, `forge-connect`,
-`add-repo`, `check-proposal`, `get-environment`.
+`add-repo`, `create-repo`, `check-proposal`, `get-environment`.
 A proposal is validated, queued with the orchestrator (`POST
 /supervise/propose`, attributed by (source_ip, identity_token)), then polled
 for up to `SUPERVISE_RESPONSE_TIMEOUT_SECONDS` (30). A decision in time is
@@ -46,6 +46,7 @@ from bot_bottle.gateway.supervisor.mcp_dispatch import (
 from bot_bottle.contract import supervise as _sv
 from bot_bottle.gateway.supervisor.env_handler import handle_get_environment
 from bot_bottle.gateway.supervisor import launch_bottle_server as _lb
+from bot_bottle.gateway.supervisor.forge_tools import FORGE_TOOL_DEFINITIONS
 
 
 # --- JSON-RPC / MCP plumbing ---
@@ -230,52 +231,7 @@ TOOL_DEFINITIONS: list[dict[str, object]] = [
         ),
         "inputSchema": _proposal_input_schema(),
     },
-    {
-        "name": _sv.TOOL_FORGE_CONNECT,
-        "description": (
-            "Ask the operator to connect a git forge (Gitea or GitHub). "
-            "Pass the forge's web URL; unsupported kinds are refused at once. "
-            "The operator pastes a token on their phone; you never see it. "
-            "On approval the notes say which account connected. This "
-            "doesn't give this bottle a repo: "
-            + GIT_BOUNDARY
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "url": {"type": "string",
-                        "description": ("The forge's web URL, e.g. https://gitea.example.com "
-                                        "or https://github.com.")},
-                "justification": {"type": "string",
-                                  "description": "Why this forge is needed."},
-            },
-            "required": ["url", "justification"],
-            "additionalProperties": False,
-        },
-    },
-    {
-        "name": _sv.TOOL_ADD_REPO,
-        "description": (
-            "Ask the operator for a repo on a forge this host has connected "
-            "(`forge-connect` if not). Pass the grant `<forge>/<owner>/<repo>`, "
-            "adding `:write` to push; the operator may grant read-only instead. "
-            "On approval the repo is added to this running bottle: use its normal "
-            "URL and git routes it through git-gate. For a name clash, use "
-            "`<alias>=<grant>`."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "repo": {"type": "string",
-                         "description": ("The grant, e.g. gitea.example.com/acme/app:write, "
-                                         "github.com/acme/app or gh-app=github.com/acme/app.")},
-                "justification": {"type": "string",
-                                  "description": "Why this repo is needed."},
-            },
-            "required": ["repo", "justification"],
-            "additionalProperties": False,
-        },
-    },
+    *FORGE_TOOL_DEFINITIONS,
     _lb.TOOL_DEFINITION,
     {
         "name": _sv.TOOL_CHECK_PROPOSAL,
@@ -309,7 +265,11 @@ PROPOSED_FILE_FIELD: dict[str, str] = {
     _sv.TOOL_EGRESS_BLOCK: "routes_yaml",
     _sv.TOOL_FORGE_CONNECT: "url",
     _sv.TOOL_ADD_REPO: "repo",
+    _sv.TOOL_CREATE_REPO: "repo",
 }
+# `<forge>/<owner>/<name>`, a repo to create (no alias, no access suffix).
+_NEW_REPO_RE = re.compile(r"^([A-Za-z0-9._-]+(?::[0-9]+)?)/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+PUBLIC_SUFFIX = ":public"
 # `[<alias>=]<forge>/<owner>/<repo>[:write]`, as `manifest.forges` reads it.
 _GRANT_RE = re.compile(r"^(?:([A-Za-z0-9._-]+)=)?([A-Za-z0-9._@:-]+)/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(:write)?$")
 
@@ -342,6 +302,11 @@ def validate_proposed_file(tool: str, content: str) -> None:
             raise _RpcClientError(ERR_INVALID_PARAMS,
                                   f"{tool}: 'url' must be the forge's https URL")
         _refuse_unsupported_forge(tool, parsed.hostname)
+    elif tool == _sv.TOOL_CREATE_REPO:
+        if not (m := _NEW_REPO_RE.match(content.strip().removesuffix(PUBLIC_SUFFIX))):
+            raise _RpcClientError(ERR_INVALID_PARAMS,
+                                  f"{tool}: 'repo' is <forge>/<owner>/<name>")
+        _refuse_unsupported_forge(tool, m.group(1).split(":", 1)[0])
     elif tool == _sv.TOOL_ADD_REPO:
         if not (m := _GRANT_RE.match(content.strip())):
             raise _RpcClientError(ERR_INVALID_PARAMS,
@@ -381,7 +346,8 @@ SERVER_INSTRUCTIONS = (
     "`list-egress-routes`, then `egress-allow` with the full routes file. "
     "Each request queues a proposal; if it comes back pending, poll it with "
     "`check-proposal` rather than asking again. A git forge (Gitea or GitHub) "
-    "this host hasn't connected: `forge-connect`; a repo on one: `add-repo`. "
+    "this host hasn't connected: `forge-connect`; a repo on one: `add-repo`; "
+    "a new repo on one: `create-repo`. "
     "To run another agent in a child bottle: `launch-bottle`. "
     + GIT_BOUNDARY
 )
@@ -436,6 +402,11 @@ def handle_tools_call(
                 ERR_INVALID_PARAMS,
                 f"{name}: '{file_field}' is required and must be a string",
             )
+        if name == _sv.TOOL_CREATE_REPO:
+            public = args_raw.get("public", False)
+            if not isinstance(public, bool):
+                raise _RpcClientError(ERR_INVALID_PARAMS, f"{name}: 'public' is true or false")
+            proposed_file = proposed_file.strip() + (PUBLIC_SUFFIX if public else "")
         validate_proposed_file(name, proposed_file)
     else:
         raise _RpcClientError(ERR_INVALID_PARAMS, f"unknown tool {name!r}")

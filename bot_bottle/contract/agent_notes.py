@@ -19,8 +19,9 @@ GIT_BOUNDARY = (
     "'^url\\..*\\.insteadof$'` lists them, each rule's value a URL to clone. "
     "A repo the bottle doesn't have can't be "
     "fetched from or pushed to through git-gate until the operator adds it "
-    "(ask with the supervise tool `add-repo`); allowing its host for egress "
-    "doesn't help."
+    "(ask with the supervise tool `add-repo`, or `create-repo` for a new "
+    "one); allowing its host for egress doesn't help, and nor does a token: "
+    "you're never given one."
 )
 
 OPERATING_NOTES = (

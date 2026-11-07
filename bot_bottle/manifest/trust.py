@@ -65,6 +65,8 @@ def grants(bottle: ManifestBottle) -> list[str]:
             api = repo.Key.api_url or f"https://{repo.UpstreamHost}"
             line += f" (key minted at {api} with ${repo.Key.forge_token_env})"
         lines.append(line)
+    for where in bottle.git_create:
+        lines.append(f"create  repos at {where}")
     for name, value in sorted(bottle.env.items()):
         if "${" in value or value == "?":
             lines.append(f"read    {name} (from your environment or secrets)")

@@ -592,7 +592,7 @@ class ConsoleLink:
         """The console's answer to `agent_id`'s raised approval. `since` must
         match the request still shown."""
         # pylint: disable=import-outside-toplevel  # the link's only approvals use
-        from ...approvals import ALLOW_ONCE, ALLOW_PROJECT, DENY, answer
+        from ...approvals import ALLOW_ONCE, ALLOW_PROJECT, DENY
         from ..client import AlreadyAnswered
         request = self._asking.get(agent_id)
         chosen = {"allow": ALLOW_ONCE, "allow_project": ALLOW_PROJECT, "deny": DENY}.get(decision)
@@ -601,8 +601,8 @@ class ConsoleLink:
             return
         try:
             client = self._orchestrator(request.orchestrator)
-            message = await asyncio.to_thread(answer, client, request, chosen,
-                                              via="the phone")
+            message = await remote_actions.answer(client, request, chosen, self._bottles,
+                                                  via="the phone")
             log.info(f"remote: {request.session}: {message}")
         except AlreadyAnswered as e:
             # Answered in the terminal first; it stands. The push clears the phone's.

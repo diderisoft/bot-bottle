@@ -24,6 +24,10 @@ TOOL_ADD_REPO = "add-repo"
 # Ask to launch a child bottle (PRD 0106); `proposed_file` is a JSON object
 # with agent, bottles, prompt and label. Approval launches the child.
 TOOL_LAUNCH_BOTTLE = "launch-bottle"
+# Ask the host to create a repo on a connected forge (PRD 0120);
+# `proposed_file` is `<forge>/<owner>/<name>`, `:public` added for a public
+# one. The host creates it as the agent's forge user and grants it (write).
+TOOL_CREATE_REPO = "create-repo"
 # Read-only agent tool that polls a proposal's decision. It never becomes a
 # `Proposal.tool`, so it isn't in `TOOLS`.
 TOOL_CHECK_PROPOSAL = "check-proposal"
@@ -39,6 +43,7 @@ TOOLS: tuple[str, ...] = (
     TOOL_FORGE_CONNECT,
     TOOL_ADD_REPO,
     TOOL_LAUNCH_BOTTLE,
+    TOOL_CREATE_REPO,
 )
 
 STATUS_APPROVED = "approved"

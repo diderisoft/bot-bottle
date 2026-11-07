@@ -319,16 +319,50 @@ def parse_git_gate_protect_default_branch(bottle_name: str, raw: object) -> bool
     return value
 
 
+# `git-gate.actions.create`: `<forge>/<owner>/<name>`, or `*` for any name.
+_CREATE_PATTERN = re.compile(
+    r"^[A-Za-z0-9._-]+(?::[0-9]+)?/[A-Za-z0-9._-]+/(?:\*|[A-Za-z0-9._-]+)$")
+
+
+def parse_git_gate_actions(bottle_name: str, raw: object) -> tuple[str, ...]:
+    """`git-gate.actions.create`: where the agent may create repos without
+    asking (PRD 0120), each `<forge>/<owner>/<name>` or `<forge>/<owner>/*`.
+    () when unset."""
+    d = as_json_object(raw, f"bottle '{bottle_name}' git-gate")
+    if "actions" not in d:
+        return ()
+    where = f"bottle '{bottle_name}' git-gate.actions"
+    actions = as_json_object(d["actions"], where)
+    for k in actions:
+        if k != "create":
+            raise ManifestError(f"{where} has unknown key {k!r}; allowed: create")
+    create = actions.get("create", [])
+    if not isinstance(create, list) or not all(isinstance(c, str) for c in create):
+        raise ManifestError(f"{where}.create must be a list of <forge>/<owner>/<name or *>")
+    for c in create:
+        if not _CREATE_PATTERN.match(c):
+            raise ManifestError(f"{where}.create: {c!r} isn't <forge>/<owner>/<name or *> "
+                                f"(`*` matches any name under one owner, never any owner)")
+    return tuple(dict.fromkeys(create))
+
+
+def create_allowed(patterns: tuple[str, ...], repo: str) -> bool:
+    """Whether `repo` (`<forge>/<owner>/<name>`) is one `patterns` allow."""
+    forge_owner, _, name = repo.rpartition("/")
+    return any(p == repo or (p.endswith("/*") and p[:-2] == forge_owner and name)
+               for p in patterns)
+
+
 def parse_git_gate_config(
     bottle_name: str,
     raw: object,
 ) -> tuple[tuple[ManifestGitEntry, ...], ManifestGitUser]:
     d = as_json_object(raw, f"bottle '{bottle_name}' git-gate")
     for k in d:
-        if k not in {"user", "repos", "trailers", "protect_default_branch"}:
+        if k not in {"user", "repos", "trailers", "protect_default_branch", "actions"}:
             raise ManifestError(
                 f"bottle '{bottle_name}' git-gate has unknown key {k!r}; "
-                f"allowed: user, repos, trailers, protect_default_branch"
+                f"allowed: user, repos, trailers, protect_default_branch, actions"
             )
 
     git_user = (

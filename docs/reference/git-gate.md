@@ -17,6 +17,8 @@ git-gate:
     email: bot@example.com
   trailers: require           # optional: require (default) | warn | off
   protect_default_branch: true  # optional: refuse deleting or rewriting it (default off)
+  actions:                    # optional: what the agent may do on a forge without a card
+    create: [github.com/acme/*]   # create-repo under acme, no card (below)
   repos:                      # local name: the gate's bare repo
     bot-bottle: gitea.example.com/org/bot-bottle:write   # a grant on a forge (below)
     lib:
@@ -51,6 +53,12 @@ every repo in the bottle, including ones added later with `add-repo`. It's off
 by default, because agents rebase their own branches and some work on the
 default branch of a scratch repo. A later bottle's value wins, so a child can
 turn off a parent's.
+
+`actions.create` lists where the agent's `create-repo` is answered without
+asking: `<forge>/<owner>/*` for any repo under an owner, or
+`<forge>/<owner>/<name>` for one (`manifest/git.py`). Lists from every bottle
+are joined. A request anywhere else gets a card (see
+[Created repos](#created-repos)).
 
 Without a `host_key`, an interactive launch fetches one with `ssh-keyscan`,
 asks the operator to confirm it, and can save it to the bottle file
@@ -470,6 +478,21 @@ in the guest adds its `insteadOf` rewrite. Teardown revokes live-granted keys
 with the launch's own. Only forge grants can be added this way. On a gateway
 restart, they are provisioned again (see
 [backends.md](backends.md#gateway-restarts)).
+
+### Created repos
+
+An agent's `create-repo` asks for a new, empty repo, `<forge>/<owner>/<name>`,
+private unless it asks for a public one (`control/hostctl/repo_create.py`;
+PRD 0120, design repo). The host refuses it, before any card, when the forge
+isn't connected here or the repo exists already (the agent is told to
+`forge-connect` or `add-repo`). Through the GitHub App, the repo's owner must have the app installed with Administration (write) accepted; until then the card carries `install:` (the install page, or the installation's settings to accept the permission), allowing it leaves it waiting, and the host asks GitHub again as for an unreachable `add-repo` (see [host-controller](host-controller.md)), raising the card again once that's fixed. Otherwise, when the bottle's `actions.create`
+allows it, the host creates it at once; else the console shows a card saying
+what will be created, as whom, and that it's then granted with write. The
+repo is created with the forge's API as the user the agent pushes as there
+(under that user, or under an org it names), then granted to the running
+bottle with write as a [live grant](#live-grants). The token stays on the
+host. A repo created but not granted is reported so; the agent can
+`add-repo` it.
 
 ### Fetch
 

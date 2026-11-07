@@ -107,6 +107,33 @@ class TestLiveGrant(_Root):
         with self.assertRaisesRegex(live_grant.GrantError, "different repo named 'app'"):
             live_grant.provision_live(other, slug="s1", stage_dir=stage, secrets=mock.Mock())
 
+    def test_a_taken_name_gets_a_proposed_alias(self) -> None:
+        stage = git_gate_state_dir("s1")
+        other = live_grant.grant_entry("gitea.example.com/elsewhere/app", FORGE)
+
+        def mint(e: Any, slug: str, stage_dir: Path, secrets: Any, **_kw: Any) -> str:
+            del e, secrets
+            return str(stage_dir / f"{slug}-key")
+
+        with mock.patch.object(live_grant, "_provision_dynamic_key", side_effect=mint):
+            live_grant.provision_live(other, slug="s1", stage_dir=stage, secrets=mock.Mock())
+        with mock.patch.object(repo_grants, "find_forge", return_value=FORGE):
+            self.assertEqual("app-gitea",
+                             repo_grants.proposed_alias("s1", "gitea.example.com/acme/app:write"))
+            self.assertEqual("", repo_grants.proposed_alias("s1",
+                                                            "gitea.example.com/elsewhere/app"))
+            self.assertEqual("", repo_grants.proposed_alias("s1", "gitea.example.com/acme/lib"))
+            self.assertEqual("", repo_grants.proposed_alias("s1", "x=gitea.example.com/acme/app"))
+            # Granted under its alias, the repo sits beside the other.
+            entry = live_grant.grant_entry("app-gitea=gitea.example.com/acme/app", FORGE)
+            with mock.patch.object(live_grant, "_provision_dynamic_key", side_effect=mint):
+                live_grant.provision_live(entry, slug="s1", stage_dir=stage,
+                                          secrets=mock.Mock())
+            self.assertEqual({"app", "app-gitea"},
+                             {u.name for u in load_upstreams_snapshot(stage)})
+            self.assertEqual("app-gitea-2",
+                             repo_grants.proposed_alias("s1", "gitea.example.com/third/app"))
+
     def test_the_same_access_again_records_the_grant(self) -> None:
         stage = git_gate_state_dir("s1")
         entry = live_grant.grant_entry("gitea.example.com/acme/app", FORGE)
@@ -401,6 +428,14 @@ class TestRepoCard(unittest.TestCase):
                      "keep: in pi"):
             self.assertIn(part, text)
 
+    def test_a_taken_name_proposes_an_alias(self) -> None:
+        with mock.patch.object(repo_grants, "find_forge", return_value=FORGE), \
+                mock.patch.object(repo_grants, "proposed_alias", return_value="app-gitea"), \
+                mock.patch("bot_bottle.approvals.keep_target", return_value=None):
+            lines, options = remote_actions.repo_attention(_ask())
+        self.assertIn("alias: app-gitea", lines)
+        self.assertEqual(["add_repo", "add_repo_write", "add_repo_alias"], options)
+
     def test_read_only_and_nowhere_to_keep(self) -> None:
         with mock.patch.object(repo_grants, "find_forge",
                                return_value=FORGE), \
@@ -451,6 +486,17 @@ class TestAddRepoAnswer(unittest.TestCase):
         self.answer(write=True)
         self.assertEqual("gitea.example.com/acme/app:write",
                          self.bottles.grant_repo.call_args.args[1])
+
+    def test_the_confirmed_alias_names_it(self) -> None:
+        self.answer(write=True, alias="app-gitea")
+        self.assertEqual("app-gitea=gitea.example.com/acme/app:write",
+                         self.bottles.grant_repo.call_args.args[1])
+        notes = self.client.supervise_respond.call_args.kwargs["notes"]
+        self.assertIn("granted gitea.example.com/acme/app (read-only, as app-gitea in the gate)",
+                      notes)
+        self.bottles.grant_repo.reset_mock()
+        self.assertIn("isn't a repo name", self.answer(alias="a/b")["error"])
+        self.bottles.grant_repo.assert_not_called()
 
     def test_keep(self) -> None:
         target = KeepTarget(Path("/x/pi.md"), None)

@@ -270,7 +270,9 @@ def login(token: str) -> str:
 
 
 def installations(token: str) -> list[dict[str, str]]:
-    """The app's installations this token reaches: account and selection."""
+    """The app's installations this token reaches: account, its `type`
+    (User or Organization), selection, and the `administration` permission
+    it accepted ("" for none; creating repos needs "write")."""
     try:
         body = _get(f"{API}/user/installations?per_page=100", token)
     except urllib.error.HTTPError as e:
@@ -282,12 +284,17 @@ def installations(token: str) -> list[dict[str, str]]:
     items = body.get("installations") if isinstance(body, dict) else None
     out: list[dict[str, str]] = []
     for inst in items if isinstance(items, list) else ():
-        account = inst.get("account") if isinstance(inst, dict) else None
-        if isinstance(inst, dict):
-            out.append({"id": str(inst.get("id", "")),
-                        "account": str(account.get("login", "")) if isinstance(account, dict)
-                        else "",
-                        "repository_selection": str(inst.get("repository_selection", ""))})
+        if not isinstance(inst, dict):
+            continue
+        account = inst.get("account")
+        account = account if isinstance(account, dict) else {}
+        perms = inst.get("permissions")
+        perms = perms if isinstance(perms, dict) else {}
+        out.append({"id": str(inst.get("id", "")),
+                    "account": str(account.get("login", "")),
+                    "type": str(account.get("type", "")),
+                    "repository_selection": str(inst.get("repository_selection", "")),
+                    "administration": str(perms.get("administration", "") or "")})
     return out
 
 

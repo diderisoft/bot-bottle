@@ -50,6 +50,19 @@ def grant_entry(grant: str, forge: ManifestForge) -> ManifestGitEntry:
     return ManifestGitEntry.from_repos_entry("(live grant)", alias or repo, raw)
 
 
+def name_taken(entry: ManifestGitEntry, stage_dir: Path) -> set[str] | None:
+    """The bottle's repo names when a different repo already has `entry`'s
+    (a grant then needs an alias), else None."""
+    upstreams = load_upstreams_snapshot(stage_dir)
+    current = next((u for u in upstreams if u.name == entry.Name), None)
+    if current is None:
+        return None
+    (upstream,) = git_gate_upstreams_for_bottle(ManifestBottle(git=(entry,)))
+    if current.upstream_url in (entry.Upstream, upstream.upstream_url):
+        return None
+    return {u.name for u in upstreams}
+
+
 def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
                    secrets: SecretSource, grant: str = "") -> GitGateUpstream:
     """Mint `entry`'s deploy key and add it to the bottle's upstream snapshot.

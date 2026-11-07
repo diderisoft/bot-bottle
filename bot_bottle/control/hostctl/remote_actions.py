@@ -11,6 +11,7 @@ from typing import Any
 
 from ...lib import log
 from . import uploads
+from .remote_create_repo import create_repo_answer
 from .suggest_link import REQUESTS as SUGGEST_REQUESTS
 
 
@@ -249,7 +250,7 @@ def repo_attention(request: Any) -> tuple[list[str], list[str]]:
     would write."""
     # pylint: disable=import-outside-toplevel
     from ...approvals import keep_target
-    from .repo_grants import find_forge
+    from .repo_grants import find_forge, proposed_alias
     grant = request.proposed.strip()
     writable = grant.endswith(":write")
     repo = grant.removesuffix(":write")
@@ -270,6 +271,10 @@ def repo_attention(request: Any) -> tuple[list[str], list[str]]:
     target = keep_target(request.session)
     options = [*(["github_authorize"] if reauthorize else []), "add_repo",
                *(["add_repo_write"] if writable else [])]
+    alias = proposed_alias(request.session, grant)
+    if alias:  # its name is another repo's here: the operator confirms one
+        lines.append(f"alias: {alias}")
+        options.append("add_repo_alias")
     if target is not None:
         lines.append(f"keep: in {target.label()}")
         options.append("add_repo_keep")
@@ -286,10 +291,12 @@ _unreached: dict[str, list[Any]] = {}
 
 
 async def card_changed(request: Any, now: float | None = None) -> bool:
-    """Whether a shown `add-repo` card that GitHub couldn't serve should be
-    raised again because that changed. Asks at most every RECHECK_SECONDS,
-    for RECHECK_FOR_SECONDS after the card was first shown."""
-    # pylint: disable-next=import-outside-toplevel
+    """Whether a shown `add-repo` or `create-repo` card that GitHub couldn't
+    serve should be raised again because that changed. Asks at most every
+    RECHECK_SECONDS, for RECHECK_FOR_SECONDS after the card was first shown."""
+    # pylint: disable=import-outside-toplevel
+    from ...contract.supervise import TOOL_CREATE_REPO
+    from .repo_create import not_ready_lines
     from .repo_grants import find_forge
     t = time.monotonic() if now is None else now
     for stale in [k for k, v in _unreached.items() if t - v[1] > RECHECK_FOR_SECONDS]:
@@ -298,11 +305,14 @@ async def card_changed(request: Any, now: float | None = None) -> bool:
     if seen is None or t - seen[2] < RECHECK_SECONDS:
         return False
     seen[2] = t
-    repo = request.proposed.strip().removesuffix(":write")
-    found = await asyncio.to_thread(find_forge, request.session, repo.split("/", 1)[0])
-    if found is None:
-        return False
-    reach, _ = await asyncio.to_thread(_app_reach_lines, found, repo)
+    if request.tool == TOOL_CREATE_REPO:
+        reach = await asyncio.to_thread(not_ready_lines, request.session, request.proposed)
+    else:
+        repo = request.proposed.strip().removesuffix(":write")
+        found = await asyncio.to_thread(find_forge, request.session, repo.split("/", 1)[0])
+        if found is None:
+            return False
+        reach, _ = await asyncio.to_thread(_app_reach_lines, found, repo)
     if reach == seen[0]:
         return False
     _unreached.pop(request.id, None)
@@ -388,19 +398,31 @@ def vet(request: Any) -> tuple[str, str]:
     return "", ""
 
 
+async def answer(client: Any, request: Any, decision: str, bottles: Any, *, via: str) -> str:
+    """`approvals.answer`, except that allowing a `create-repo` creates and
+    grants the repo here, which needs the running bottles."""
+    # pylint: disable=import-outside-toplevel
+    from ...approvals import DENY, answer as answer_plainly
+    from ...contract.supervise import TOOL_CREATE_REPO
+    if request.tool == TOOL_CREATE_REPO and decision != DENY:
+        from .remote_create_repo import create_now
+        return (await asyncio.to_thread(create_now, client, request, bottles, via))[1]
+    return await asyncio.to_thread(answer_plainly, client, request, decision, via=via)
+
+
 def _already_connected(request: Any, orchestrator: Any) -> bool:
     """Allow a `forge-connect` for a forge this host connected already (the
     operator did it another way, or before): what the agent asked for is
     there. False when it isn't, or answering failed (the card then shows)."""
     # pylint: disable=import-outside-toplevel
     from urllib.parse import urlparse
-    from ...approvals import answer, ALLOW_ONCE
+    from ... import approvals
     from ..client import AlreadyAnswered
     if (urlparse(request.proposed.strip()).hostname or "") not in _connected_hosts():
         return False  # the card asks
     try:
-        note = answer(orchestrator(request.orchestrator), request, ALLOW_ONCE,
-                      via="this host, already connected")
+        note = approvals.answer(orchestrator(request.orchestrator), request,
+                                approvals.ALLOW_ONCE, via="this host, already connected")
     except AlreadyAnswered:
         return True
     except ValueError:
@@ -420,7 +442,9 @@ async def special_card(request: Any, orchestrator: Any,
     the operator can deny. `bottles` is a BottleService, used by `launch-bottle`
     to check the children cap."""
     # pylint: disable=import-outside-toplevel
-    from ...contract.supervise import TOOL_ADD_REPO, TOOL_FORGE_CONNECT, TOOL_LAUNCH_BOTTLE
+    from ...contract.supervise import (
+        TOOL_ADD_REPO, TOOL_CREATE_REPO, TOOL_FORGE_CONNECT, TOOL_LAUNCH_BOTTLE,
+    )
     from ..client import AlreadyAnswered
     from .nudge import nudge_if_waited
 
@@ -465,6 +489,10 @@ async def special_card(request: Any, orchestrator: Any,
             parent_elems, child_elems = [], []
         return await asyncio.to_thread(launch_bottle_attention, request, parent_elems, child_elems)
 
+    if request.tool == TOOL_CREATE_REPO:
+        from .remote_create_repo import card as create_repo_card
+        return await asyncio.to_thread(create_repo_card, request, orchestrator, bottles)
+
     if request.tool not in (TOOL_FORGE_CONNECT, TOOL_ADD_REPO):
         return None
     if request.tool == TOOL_FORGE_CONNECT and await asyncio.to_thread(
@@ -487,6 +515,7 @@ async def add_repo_answer(msg: Mapping[str, Any], asking: Mapping[str, Any],
     # pylint: disable=import-outside-toplevel
     from ...approvals import keep_grant, keep_target
     from ...contract.supervise import TOOL_ADD_REPO
+    from ...manifest.forges import split_grant_alias
     from ...util import same_instant
     from ..client import AlreadyAnswered
     from .nudge import nudge_if_waited
@@ -501,6 +530,12 @@ async def add_repo_answer(msg: Mapping[str, Any], asking: Mapping[str, Any],
     grant = request.proposed.strip()
     if grant.endswith(":write") and msg.get("write") is not True:
         grant = grant.removesuffix(":write")
+    alias = _text(msg, "alias").strip()
+    if alias:  # the name the operator confirmed, for a repo whose name is taken
+        grant = f"{alias}={split_grant_alias(grant)[1]}"
+        if split_grant_alias(grant)[0] != alias:  # a local name: letters, digits, . _ -
+            reply["error"] = f"{alias!r} isn't a repo name (letters, digits, . _ -)"
+            return reply
     grant_repo = getattr(bottles, "grant_repo", None)  # BottleService's
     result: dict[str, Any] = (
         {"error": "this host controller can't grant repos"} if grant_repo is None
@@ -518,7 +553,9 @@ async def add_repo_answer(msg: Mapping[str, Any], asking: Mapping[str, Any],
             log.warn(f"remote: keeping {grant} failed: {type(e).__name__}: {e}")
             warnings.append(f"granted, but keeping it in {target.label()} failed")
     access = "write" if result.get("writable") else "read-only"
-    notes = (f"granted {grant.removesuffix(':write')} ({access}); "
+    named, bare = split_grant_alias(grant)
+    notes = (f"granted {bare.removesuffix(':write')} ({access}"
+             f"{f', as {named} in the gate' if named else ''}); "
              f"use its normal URL: {result['url']}")
     try:
         await asyncio.to_thread(orchestrator(request.orchestrator).supervise_respond,
@@ -796,12 +833,14 @@ QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest,
 # Console answers to a card that carry more than allow/deny, by message type.
 from .launch_bottle import launch_bottle_answer  # noqa: E402  # after other defs
 ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_repo_answer,
-           "launch_bottle_answer": launch_bottle_answer}
+           "launch_bottle_answer": launch_bottle_answer,
+           "create_repo_answer": create_repo_answer}
 # Requests about this host rather than one agent.
 HOST_REQUESTS = {"forge_connect": forge_connect, "github_authorize_start": github_authorize_start,
                  "github_status": github_status, **SUGGEST_REQUESTS}
 
 __all__ = ["ANSWERS", "HOST_REQUESTS", "QUERIES", "add_repo_answer", "bottle_chain",
+           "create_repo_answer",
            "egress_allow",
            "bottle_write", "card", "card_changed", "forge_attention", "forge_connect",
            "forge_connect_answer", "github_authorize_start", "github_status", "library",

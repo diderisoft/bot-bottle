@@ -193,7 +193,7 @@ That blob is rendered from the bottle's `egress.routes` by
 
 `gateway/supervisor/server.py` is an MCP server the agent calls when it's
 stuck. Its tools are `egress-allow`, `egress-block`, `list-egress-routes`,
-`forge-connect`, `add-repo`, `launch-bottle` and `check-proposal`. Its `initialize` instructions and the egress tool
+`forge-connect`, `add-repo`, `launch-bottle`, `create-repo` and `check-proposal`. Its `initialize` instructions and the egress tool
 descriptions say that git never goes out through egress, even to allowed
 hosts: the bottle's repos go through git-gate with their usual URLs and no
 key or token (the agent's global gitconfig lists them as `insteadOf` rules),
@@ -257,7 +257,16 @@ On approval the host launches the child with a trimmed run-bottle that holds
 only within-parent elements, and writes the parent's identity into the child's
 session record (`parent` field in `metadata.json`).
 
-Neither request can be plainly allowed (`approvals.answer` refuses): that
+`create-repo(repo, public, justification)` asks for a new repo,
+`<forge>/<owner>/<name>`, private unless `public` (queued with a `:public`
+suffix). The host refuses one it can't make before a card, creates one the
+bottle's `git-gate.actions.create` allows without a card, and otherwise asks
+on the console (option `create_repo`: its Create sends `create_repo_answer`,
+whose reply says what was created or why not; `remote_create_repo.py`);
+creating it also grants it with write
+([git-gate](git-gate.md#created-repos)).
+
+None of these can be plainly allowed (`approvals.answer` refuses): that
 would tell the agent it has what it asked for. The terminal can only deny them.
 
 A proposal takes one decision: the first answer stands. A later answer, such

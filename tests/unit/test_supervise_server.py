@@ -174,6 +174,33 @@ class TestValidation(unittest.TestCase):
             with self.assertRaises(_RpcError):
                 validate_proposed_file(_sv.TOOL_ADD_REPO, bad)
 
+    def test_create_repo_wants_a_new_repo(self):
+        validate_proposed_file(_sv.TOOL_CREATE_REPO, "github.com/acme/new")
+        validate_proposed_file(_sv.TOOL_CREATE_REPO, "gitea.example.com:3000/acme/new:public")
+        for bad in ("acme/new", "github.com/acme/new:write", "a=github.com/acme/new",
+                    "github.com/a/b/c", "gitlab.com/acme/new"):
+            with self.subTest(bad=bad), self.assertRaises(_RpcError):
+                validate_proposed_file(_sv.TOOL_CREATE_REPO, bad)
+
+    def test_create_repo_queues_public_as_a_suffix(self):
+        queued: list[str] = []
+
+        def queue(*_a: object, proposed_file: str, **_k: object) -> str:
+            queued.append(proposed_file)
+            return "p1"
+
+        config = ServerConfig(response_timeout_seconds=0)
+        with unittest.mock.patch.object(supervise_server, "_queue_proposal", side_effect=queue):
+            for public in (True, False):
+                _tools_call(_FakeSuperviseResolver(), {"name": _sv.TOOL_CREATE_REPO, "arguments": {
+                    "repo": "github.com/acme/new", "public": public, "justification": "x"}},
+                    config)
+            with self.assertRaises(_RpcClientError):
+                _tools_call(_FakeSuperviseResolver(), {"name": _sv.TOOL_CREATE_REPO, "arguments": {
+                    "repo": "github.com/acme/new", "public": "yes", "justification": "x"}},
+                    config)
+        self.assertEqual(["github.com/acme/new:public", "github.com/acme/new"], queued)
+
     def test_a_forge_of_another_kind_is_refused_at_once(self):
         validate_proposed_file(_sv.TOOL_FORGE_CONNECT, "https://github.com")
         validate_proposed_file(_sv.TOOL_ADD_REPO, "github.com/acme/app:write")
@@ -364,6 +391,7 @@ class TestHandleToolsList(unittest.TestCase):
                 _sv.TOOL_CHECK_PROPOSAL,
                 _sv.TOOL_FORGE_CONNECT,
                 _sv.TOOL_ADD_REPO,
+                _sv.TOOL_CREATE_REPO,
                 _sv.TOOL_GET_ENVIRONMENT,
                 _sv.TOOL_LAUNCH_BOTTLE,
             ]),

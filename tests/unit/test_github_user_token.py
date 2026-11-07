@@ -234,8 +234,10 @@ class TestReach(_Base):
             ("GET", "/repos/acme/boom"): [(500, {})],
         })
         self.assertEqual("didericis", user_token.login("t"))
-        self.assertEqual([{"id": "", "account": "didericis", "repository_selection": "all"},
-                          {"id": "", "account": "", "repository_selection": ""}],
+        self.assertEqual([{"id": "", "account": "didericis", "type": "",
+                           "repository_selection": "all", "administration": ""},
+                          {"id": "", "account": "", "type": "", "repository_selection": "",
+                           "administration": ""}],
                          user_token.installations("t"))
         self.assertTrue(user_token.reachable("t", "acme/app"))
         self.assertFalse(user_token.reachable("t", "acme/hidden"))

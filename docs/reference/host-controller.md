@@ -430,7 +430,7 @@ option, never a token field; once GitHub is connected, the request is refused
 with a note to use `add-repo`. An `add-repo` card for a repo the token can't
 reach carries `install:`; one whose authorization is gone carries
 `reauthorize:` and `github_authorize` beside the grant options. While either
-is shown, the host asks GitHub again every ten seconds for fifteen minutes
+is shown (or a `create-repo` card whose owner lacks the app, or its Administration permission, with `install:`), the host asks GitHub again every ten seconds for fifteen minutes
 (`remote_actions.card_changed`) and raises the card again when that changes,
 so it turns grantable once the app is installed.
 

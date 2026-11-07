@@ -12,7 +12,7 @@ from .egress import ManifestEgressConfig
 from .forges import ManifestForge
 from .resources import ManifestResources
 from .git import (
-    ManifestGitEntry, ManifestGitUser, parse_git_gate_config,
+    ManifestGitEntry, ManifestGitUser, parse_git_gate_actions, parse_git_gate_config,
     parse_git_gate_protect_default_branch, parse_git_gate_trailers,
 )
 from .schema import BOTTLE_KEYS
@@ -70,6 +70,9 @@ class ManifestBottle:
     # `git-gate.protect_default_branch`: None is unset (off), so a later
     # bottle can turn off what an earlier one turned on.
     git_protect_default_branch: bool | None = None
+    # `git-gate.actions.create`: where the agent may create repos without a
+    # card (PRD 0120); unioned across the chain.
+    git_create: tuple[str, ...] = ()
     egress: ManifestEgressConfig = field(default_factory=ManifestEgressConfig)
     # Run the supervise server for this bottle (default true).
     supervise: bool = True
@@ -148,11 +151,13 @@ class ManifestBottle:
         git_user = ManifestGitUser()
         git_trailers = ""
         protect_default: bool | None = None
+        git_create: tuple[str, ...] = ()
         git_raw = d.get("git-gate")
         if git_raw is not None:
             git, git_user = parse_git_gate_config(name, git_raw)
             git_trailers = parse_git_gate_trailers(name, git_raw)
             protect_default = parse_git_gate_protect_default_branch(name, git_raw)
+            git_create = parse_git_gate_actions(name, git_raw)
 
         if "agent_provider" in d:
             raise ManifestError(
@@ -195,7 +200,7 @@ class ManifestBottle:
         return cls(
             env=env, git=git,
             git_user=git_user, git_trailers=git_trailers,
-            git_protect_default_branch=protect_default, egress=egress,
+            git_protect_default_branch=protect_default, git_create=git_create, egress=egress,
             supervise=supervise_raw,
             nested_containers=nested_raw, preserve_container=preserve_raw, audit=audit,
             resources=resources, declared_fields=frozenset(d),

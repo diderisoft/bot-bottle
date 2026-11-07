@@ -53,11 +53,11 @@ def grant_repo(backend: Any, identity: str, grant: str, *,
     from ...git_gate.live_grant import (
         GrantError, grant_entry, point_agent_at_gate, provision_live,
     )
-    from ...manifest.forges import parse_grant
+    from ...manifest.forges import parse_grant, split_grant_alias
     from ...manifest.util import ManifestError
     from ...secret_source import FileSecrets
     try:
-        forge_name = parse_grant(grant, "the grant")[0]
+        forge_name = parse_grant(split_grant_alias(grant)[1], "the grant")[0]
         forge = find_forge(identity, forge_name)
         if forge is None:
             raise GrantError(f"this host hasn't connected the forge {forge_name!r}; "
@@ -84,4 +84,30 @@ def grant_repo(backend: Any, identity: str, grant: str, *,
             "forge": described_forge(forge)}
 
 
-__all__ = ["find_forge", "grant_repo"]
+def proposed_alias(identity: str, grant: str) -> str:
+    """A local name for `grant` when a different repo in the running bottle
+    `identity` already has its name: `<repo>-<forge's first label>`
+    (`skills-gitea`), numbered if that's taken too. "" when the name is free,
+    the grant names its own alias, or the bottle can't be asked."""
+    # pylint: disable=import-outside-toplevel
+    from ...bottle_state import git_gate_state_dir
+    from ...git_gate.live_grant import grant_entry, name_taken
+    from ...manifest.forges import parse_grant, split_grant_alias
+    try:
+        alias, bare = split_grant_alias(grant)
+        forge_name, _, repo, _ = parse_grant(bare, "the grant")
+        forge = find_forge(identity, forge_name)
+        if alias or forge is None:
+            return ""
+        names = name_taken(grant_entry(bare, forge), git_gate_state_dir(identity))
+    except Exception as e:  # pylint: disable=broad-exception-caught  # granting says why
+        log.debug(f"bottle {identity}: no alias for {grant}: {type(e).__name__}: {e}")
+        return ""
+    if names is None:
+        return ""
+    base = f"{repo}-{forge_name.split('.')[0]}"
+    return next(n for n in (base, *(f"{base}-{i}" for i in range(2, 100)), f"{base}-x")
+                if n not in names)
+
+
+__all__ = ["find_forge", "grant_repo", "proposed_alias"]

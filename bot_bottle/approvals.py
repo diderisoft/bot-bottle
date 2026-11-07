@@ -13,6 +13,7 @@ from typing import Any
 
 from .contract.supervise import (
     TOOL_ADD_REPO,
+    TOOL_CREATE_REPO,
     TOOL_EGRESS_ALLOW,
     TOOL_EGRESS_BLOCK,
     TOOL_EGRESS_TOKEN_ALLOW,
@@ -36,6 +37,7 @@ _TOOL_WORDS = {
     TOOL_FORGE_CONNECT: "wants a git forge connected",
     TOOL_ADD_REPO: "wants a repo",
     TOOL_LAUNCH_BOTTLE: "wants to launch a child bottle",
+    TOOL_CREATE_REPO: "wants a new repo created",
 }
 
 
@@ -378,7 +380,7 @@ def answer(client: Any, request: Request, decision: str, *, via: str) -> str:
         raise ValueError(f"unknown decision {decision!r}")
     if request.tool == TOOL_FORGE_CONNECT and decision != DENY:
         return _forge_now_connected(client, request, via)
-    if request.tool in (TOOL_ADD_REPO, TOOL_LAUNCH_BOTTLE) and decision != DENY:
+    if request.tool in (TOOL_ADD_REPO, TOOL_LAUNCH_BOTTLE, TOOL_CREATE_REPO) and decision != DENY:
         # Allowing alone would tell the agent it has what it asked for.
         raise ValueError("answer this request from the console's card, or deny it")
     target = keep_target(request.session) if decision == ALLOW_PROJECT else None
