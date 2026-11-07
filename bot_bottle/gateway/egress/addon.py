@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import binascii
 import json
 import os
 import sys
@@ -41,8 +39,12 @@ from bot_bottle.gateway.egress.dlp import (
     scan_outbound,
 )
 from bot_bottle.gateway.egress.outbound_pipeline import redact_request, scan_request
+from bot_bottle.gateway.egress.request_identity import (
+    host_mismatch,
+    norm_host,
+    token_from_proxy_auth,
+)
 from bot_bottle.gateway.egress.matching import (
-    _strip_port,
     decide,
     match_route,
 )
@@ -71,26 +73,6 @@ from bot_bottle.contract.supervise import (
 INTROSPECT_HOST = "_egress.local"
 
 
-def _norm_host(host: str) -> str:
-    return _strip_port(host.strip()).rstrip(".").lower()
-
-
-def host_mismatch(flow: typing.Any) -> str:
-    """Why the host a request names differs from the one mitmproxy connects
-    to, or "". Policy keys on that host, so a Host header, `:authority` or SNI
-    naming another one would pass as it."""
-    target = _norm_host(flow.request.host)
-    named = _norm_host(flow.request.pretty_host)
-    if named != target:
-        return (f"egress: request names host {named!r} but is addressed to "
-                f"{target!r}")
-    conn = getattr(flow, "client_conn", None)
-    sni = getattr(conn, "sni", None) if conn is not None else None
-    if sni and _norm_host(sni) != target:
-        return (f"egress: TLS SNI {_norm_host(sni)!r} doesn't match the "
-                f"addressed host {target!r}")
-    return ""
-
 # The orchestrator every request's policy is resolved against. Mandatory.
 ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
 
@@ -99,20 +81,6 @@ ORCHESTRATOR_URL_ENV = "BOT_BOTTLE_ORCHESTRATOR_URL"
 # `/resolve`. A flow without it fails closed to deny-all.
 _FLOW_CTX_KEY = "bot_bottle_egress_ctx"
 
-
-def _token_from_proxy_auth(header: str) -> str:
-    """The identity token (the password) from `Proxy-Authorization: Basic
-    base64(<bottle_id>:<token>)`; "" if malformed, which `/resolve` then
-    denies."""
-    scheme, _, encoded = header.partition(" ")
-    if scheme.lower() != "basic" or not encoded:
-        return ""
-    try:
-        decoded = base64.b64decode(encoded, validate=True).decode("utf-8")
-    except (binascii.Error, ValueError, UnicodeDecodeError):
-        return ""
-    _, _, password = decoded.partition(":")
-    return password
 
 # Poll interval while awaiting the operator.
 TOKEN_ALLOW_POLL_INTERVAL_SECONDS = 0.5
@@ -177,12 +145,12 @@ class EgressAddon:
     def _safe_tokens_for(self, slug: str, host: str) -> frozenset[str]:
         """Live (non-expired) approved tokens for this bottle and host."""
         now = time.monotonic()
-        bucket = self._safe_tokens.get((slug, _norm_host(host)), {})
+        bucket = self._safe_tokens.get((slug, norm_host(host)), {})
         return frozenset(t for t, exp in bucket.items() if exp > now)
 
     def _add_safe_token(self, slug: str, host: str, token: str) -> None:
         """Record an operator-approved token with its expiry time."""
-        key = (slug, _norm_host(host))
+        key = (slug, norm_host(host))
         if key not in self._safe_tokens:
             self._safe_tokens[key] = {}
         now = time.monotonic()
@@ -353,7 +321,7 @@ class EgressAddon:
         """This request's identity token: from `Proxy-Authorization` on plain
         HTTP, or from the tunnel's CONNECT for bumped HTTPS. Read, then
         stripped."""
-        token = _token_from_proxy_auth(
+        token = token_from_proxy_auth(
             flow.request.headers.get("Proxy-Authorization", ""))
         flow.request.headers.pop("Proxy-Authorization", None)
         flow.request.headers.pop(IDENTITY_HEADER, None)
@@ -371,7 +339,7 @@ class EgressAddon:
         connection. Refuse a host with no route. For `inspect: false` routes,
         decide the allowlist here, before TLS: block, or mark the tunnel for
         passthrough."""
-        token = _token_from_proxy_auth(
+        token = token_from_proxy_auth(
             flow.request.headers.get("Proxy-Authorization", ""))
         flow.request.headers.pop("Proxy-Authorization", None)
         conn = flow.client_conn

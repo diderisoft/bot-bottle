@@ -21,6 +21,7 @@ bot_bottle/gateway/egress/dlp.py
 bot_bottle/gateway/egress/dlp_config.py
 bot_bottle/gateway/egress/dlp_detectors.py
 bot_bottle/gateway/egress/matching.py
+bot_bottle/gateway/egress/request_identity.py
 bot_bottle/gateway/egress/schema.py
 bot_bottle/gateway/egress/types.py
 
