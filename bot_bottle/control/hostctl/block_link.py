@@ -10,8 +10,9 @@ log keeps the record.
   never the value). Never a path or a body: either can hold the secret.
 
 The host controller's audit listener fills one process-wide feed
-(`FEED.on_event`); each connection sends what arrives while it's open, and
-what arrived in the `RECENT_SECONDS` before it opened.
+(`FEED.on_event`). The host runs one console link at a time: a reconnect goes
+on from the last block sent (sending one again would count it twice), and the
+first connection after a restart sends the last `RECENT_SECONDS`.
 """
 
 from __future__ import annotations
@@ -55,6 +56,7 @@ class BlockFeed:
         self._clock = clock
         self._blocks: deque[Block] = deque(maxlen=FEED_MAX)
         self._seq = 0
+        self.sent: int | None = None  # the last block a link sent, once one has
         self._lock = threading.Lock()
 
     def on_event(self, event: AuditEvent, producer: str) -> None:
@@ -65,8 +67,10 @@ class BlockFeed:
         session, host, code = found
         detail = ""
         if code in DETAILED:
-            reason = (event.payload or {}).get("reason")
-            detail = reason[:DETAIL_MAX] if isinstance(reason, str) else ""
+            # The gateway's words are its `reason`; git-gate's, its `detail`.
+            payload = event.payload or {}
+            words = payload.get("reason") or payload.get("detail")
+            detail = words[:DETAIL_MAX] if isinstance(words, str) else ""
         self.add(session, host, code, detail)
 
     def add(self, session: str, host: str, code: str, detail: str = "") -> None:
@@ -82,8 +86,10 @@ class BlockFeed:
             return [b for b in self._blocks if b.seq > seq]
 
     def start(self, recent: float = RECENT_SECONDS) -> int:
-        """Where a new connection starts: just before the blocks of the last
-        `recent` seconds."""
+        """Where a new connection starts: after the last block sent, or, the
+        first time, just before the blocks of the last `recent` seconds."""
+        if self.sent is not None:
+            return self.sent
         cutoff = self._clock() - recent
         with self._lock:
             newer = [b.seq for b in self._blocks if b.when >= cutoff]
@@ -129,6 +135,7 @@ class BlockLink:
             self._seq = new[-1].seq
         for msg in merged.values():
             await self._send(msg)
+        self._feed.sent = self._seq
 
 
 __all__ = ["FEED", "Block", "BlockFeed", "BlockLink"]

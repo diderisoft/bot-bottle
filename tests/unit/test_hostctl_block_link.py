@@ -89,6 +89,23 @@ class Link(_Case):
         self.feed.add("b-1", "new.example", "allowlist")
         self.assertEqual(["new.example"], [m["host"] for m in self.push(self.link())])
 
+    def test_a_reconnect_goes_on_from_the_last_sent(self) -> None:
+        self.feed.add("b-1", "x.example", "allowlist")
+        self.assertEqual(1, len(self.push(self.link())))
+        self.feed.add("b-1", "y.example", "allowlist")
+        self.assertEqual(["y.example"], [m["host"] for m in self.push(self.link())])
+
+    def test_a_rejected_push_says_why(self) -> None:
+        event = AuditEvent(type="git.push", actor="bottled-agent:b-1", action="git.push",
+                           outcome="blocked", sensitivity="security",
+                           ts_event="2026-11-09T00:00:00Z", bottle="b-1",
+                           payload={"repository": "slugs.git", "reason_code": "push",
+                                    "detail": "gitleaks findings"})
+        self.feed.on_event(event, "git-gate")
+        [msg] = self.push(self.link())
+        self.assertEqual(("slugs.git", "push", "gitleaks findings"),
+                         (msg["host"], msg["reason"], msg["detail"]))
+
     def test_a_flood_waits_for_the_next_push(self) -> None:
         link = self.link()
         for i in range(block_link.SEND_MAX + 5):
