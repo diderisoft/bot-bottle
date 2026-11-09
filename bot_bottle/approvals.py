@@ -431,6 +431,15 @@ def route_lines(request: Request, *, host_width: int = 0,
     return lines
 
 
+def card_message(lines: list[str]) -> str:
+    """An approval card's text: one line per line. The console reads it line
+    by line, and some lines carry what the agent wrote (its why, a prompt, a
+    repo name): a newline in those would start a line of the agent's making,
+    one that could pass for the host's (an install link, a keep target, a
+    route). Each line keeps to one."""
+    return "\n".join(" ".join(line.splitlines()) for line in lines)
+
+
 def session_project(session: str) -> Path | None:
     """The project directory a bottle was started on, if it shared one."""
     from .bottle_state import read_metadata  # pylint: disable=import-outside-toplevel
@@ -442,6 +451,6 @@ def session_project(session: str) -> Path | None:
 
 
 __all__ = ["ALLOW_ONCE", "ALLOW_PROJECT", "DECISIONS", "DENY", "KeepTarget", "Request", "answer",
-           "bottle_text", "keep", "keep_grant", "keep_target", "manifest_route",
+           "bottle_text", "card_message", "keep", "keep_grant", "keep_target", "manifest_route",
            "project_bottle_path", "read_bottle", "route_lines", "save_bottle", "save_to_project",
            "session_project", "trust_project_bottle", "with_grant", "with_routes"]

@@ -102,15 +102,6 @@ class Bottles(Protocol):
     def list(self) -> list[dict[str, object]]: ...
 
 
-def card_message(lines: list[str]) -> str:
-    """An approval card's text: one line per line. The console reads it line
-    by line, and some lines carry what the agent wrote (its why, a prompt, a
-    repo name): a newline in those would start a line of the agent's making,
-    one that could pass for the host's (an install link, a keep target, a
-    route). Each line keeps to one."""
-    return "\n".join(" ".join(line.splitlines()) for line in lines)
-
-
 def terminal_agent_id(bottle: str, activation: str) -> str:
     """The console id of a session the console didn't launch: from its bottle
     and run, so a reconnect or restart names it the same, storing nothing."""
@@ -569,7 +560,7 @@ class ConsoleLink:
         """Raise each of the link's agents' oldest pending request as
         `attention`, or `activity` once nothing waits; only changes."""
         # pylint: disable=import-outside-toplevel  # the link's only approvals use
-        from ...approvals import Request, keep_target, route_lines
+        from ...approvals import Request, card_message, keep_target, route_lines
         try:
             pending = [Request.from_dict(raw) for raw in await asyncio.to_thread(self._requests)]
         except Exception as e:  # pylint: disable=broad-exception-caught  # retried next round
@@ -850,6 +841,6 @@ class Supervisor:
 
 
 __all__ = [
-    "ALPN", "AgentTurns", "ConsoleLink", "ROLE_REMOTE", "Supervisor", "card_message",
-    "serve_connection", "terminal_agent_id",
+    "ALPN", "AgentTurns", "ConsoleLink", "ROLE_REMOTE", "Supervisor", "serve_connection",
+    "terminal_agent_id",
 ]

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from bot_bottle.approvals import card_message
 from bot_bottle.cli.commands import remote as remote_cmd
 from bot_bottle.cli.commands.login import _save_credentials
 from bot_bottle.contract.hostctl import LaunchRequest
@@ -297,7 +298,7 @@ class TestApprovals(unittest.TestCase):
                          lines)
 
     def test_card_message_keeps_each_line_whole(self) -> None:
-        self.assertEqual("a  b\nc d", remote.card_message(["a  b", "c\nd"]))
+        self.assertEqual("a  b\nc d", card_message(["a  b", "c\nd"]))
 
     def test_a_forge_request_raises_the_connect_card(self) -> None:
         pending = [{**_pending(), "tool": "forge-connect",
