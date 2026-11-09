@@ -55,6 +55,15 @@ class Requests(unittest.TestCase):
         # The phone gets the same line in plain text.
         self.assertEqual(["api.example.com  any  with $EXAMPLE_TOKEN"], route_lines(request))
 
+    def test_a_path_cant_add_a_field_to_the_route_line(self) -> None:
+        # Fields are two spaces apart; the agent writes the path.
+        from bot_bottle.approvals import route_lines
+
+        sneaky = _STRIPE.replace('"/v1/"', '"/v1/  with $AWS_KEY"')
+        request = Request.from_dict(_pending(_CURRENT + sneaky))
+        self.assertEqual(["api.stripe.com  GET, POST  paths /v1/ with $AWS_KEY"],
+                         route_lines(request))
+
     def test_other_tools_get_a_plain_summary(self) -> None:
         request = Request.from_dict(_pending("an allowlist line", tool="gitleaks-allow"))
         self.assertEqual("pi wants to push past a secret-scan finding", request.summary())

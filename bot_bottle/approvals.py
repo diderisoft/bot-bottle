@@ -417,7 +417,9 @@ def route_lines(request: Request, *, host_width: int = 0,
     lines = []
     for route in request.new_routes():
         methods = sorted({m for entry in route.matches for m in entry.methods}) or ["any"]
-        paths = sorted({p.value for entry in route.matches for p in entry.paths})
+        # Fields are two spaces apart, and the agent writes the paths: a run of
+        # spaces in one would start a field of its making ("with $TOKEN").
+        paths = sorted({" ".join(p.value.split()) for entry in route.matches for p in entry.paths})
         line = f"{route.host:<{host_width}}  {', '.join(methods)}"
         if paths:
             line += f"  paths {', '.join(paths)}"
