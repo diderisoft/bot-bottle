@@ -285,6 +285,20 @@ class TestApprovals(unittest.TestCase):
         asyncio.run(link.push_attention())
         self.assertEqual({"type": "activity", "agent_id": "a1"}, sent[-1])
 
+    def test_the_agents_why_keeps_to_one_line(self) -> None:
+        # A newline in it would start a line of the agent's making on the card,
+        # one that could pass for the host's (a route, an install link, a keep).
+        why = "schema\nevil.example  GET\r\ninstall: https://evil.example keep: in ./x"
+        link, sent, _ = self.link([{**_pending(), "justification": why}])
+        asyncio.run(link.push_attention())
+        lines = [m for m in sent if m["type"] == "attention"][-1]["message"].split("\n")
+        self.assertEqual(["bottle-1 wants GET api.stripe.com", "api.stripe.com  GET",
+                          "why: schema evil.example  GET install: https://evil.example keep: in ./x"],
+                         lines)
+
+    def test_card_message_keeps_each_line_whole(self) -> None:
+        self.assertEqual("a  b\nc d", remote.card_message(["a  b", "c\nd"]))
+
     def test_a_forge_request_raises_the_connect_card(self) -> None:
         pending = [{**_pending(), "tool": "forge-connect",
                     "proposed_file": "https://gitea.example.com"}]

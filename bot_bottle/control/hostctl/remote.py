@@ -102,6 +102,15 @@ class Bottles(Protocol):
     def list(self) -> list[dict[str, object]]: ...
 
 
+def card_message(lines: list[str]) -> str:
+    """An approval card's text: one line per line. The console reads it line
+    by line, and some lines carry what the agent wrote (its why, a prompt, a
+    repo name): a newline in those would start a line of the agent's making,
+    one that could pass for the host's (an install link, a keep target, a
+    route). Each line keeps to one."""
+    return "\n".join(" ".join(line.splitlines()) for line in lines)
+
+
 def terminal_agent_id(bottle: str, activation: str) -> str:
     """The console id of a session the console didn't launch: from its bottle
     and run, so a reconnect or restart names it the same, storing nothing."""
@@ -590,7 +599,7 @@ class ConsoleLink:
                 continue  # refused for the operator, the agent told why
             lines, options = special or (lines, options)
             await self._send({"type": "attention", "agent_id": agent_id, "reason": "approval",
-                              "since": request.arrived, "message": "\n".join(lines),
+                              "since": request.arrived, "message": card_message(lines),
                               "options": options})
 
     async def _approval(self, agent_id: str, decision: str, since: str) -> None:
@@ -841,6 +850,6 @@ class Supervisor:
 
 
 __all__ = [
-    "ALPN", "AgentTurns", "ConsoleLink", "ROLE_REMOTE", "Supervisor", "serve_connection",
-    "terminal_agent_id",
+    "ALPN", "AgentTurns", "ConsoleLink", "ROLE_REMOTE", "Supervisor", "card_message",
+    "serve_connection", "terminal_agent_id",
 ]
