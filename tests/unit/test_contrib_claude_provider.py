@@ -189,11 +189,14 @@ class TestClaudeProvisionSkills(unittest.TestCase):
             any("mkdir -p" in s and "/home/node/.claude/skills" in s
                 for s in scripts)
         )
-        cp_targets = {c.args[1] for c in bottle.cp_in.call_args_list}
+        # The directory itself, not its contents (`src/.`), onto a dst that
+        # was removed first: cp_in makes dst a copy of src, like docker cp.
         self.assertEqual({
-            "/home/node/.claude/skills/init-prd/",
-            "/home/node/.claude/skills/verify/",
-        }, cp_targets)
+            ("/host/skills/init-prd", "/home/node/.claude/skills/init-prd"),
+            ("/host/skills/verify", "/home/node/.claude/skills/verify"),
+        }, {c.args for c in bottle.cp_in.call_args_list})
+        self.assertTrue(any("rm -rf" in s and "mkdir -p /home/node/.claude/skills" in s
+                            for s in scripts))
         self.assertEqual(
             2, sum(1 for s in scripts if "chown -R node:node" in s),
         )

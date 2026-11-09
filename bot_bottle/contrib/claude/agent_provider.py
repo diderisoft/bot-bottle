@@ -305,10 +305,13 @@ class ClaudeAgentProvider(AgentProvider):
                 )
             dst = f"{skills_dir}/{name}"
             info(f"copying skill {name} into {bottle.name}:{dst}")
-            # Skill names are validated at load; quote anyway.
             dst_q = shlex.quote(dst)
-            bottle.exec(f"rm -rf {dst_q} && mkdir -p {dst_q}", user="root")
-            bottle.cp_in(f"{src}/.", f"{dst}/")
+            # cp_in makes dst a copy of src, like `docker cp`: dst must not
+            # exist (else src lands inside it) but its parent must (docker cp
+            # won't create it). Copying `src/.` instead spilled the skill's
+            # files into skills_dir on firecracker.
+            bottle.exec(f"rm -rf {dst_q} && mkdir -p {shlex.quote(skills_dir)}", user="root")
+            bottle.cp_in(src, dst)
             bottle.exec(f"chown -R node:node {dst_q}", user="root")
 
     def provision_prompt(self, plan: "BottlePlan", bottle: "Bottle") -> str | None:

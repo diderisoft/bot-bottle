@@ -204,8 +204,8 @@ class TestCodexProvisionSkills(unittest.TestCase):
         )
         bottle.cp_in.assert_called_once()
         self.assertEqual(
-            "/home/node/.claude/skills/init-prd/",
-            bottle.cp_in.call_args.args[1],
+            ("/host/skills/init-prd", "/home/node/.claude/skills/init-prd"),
+            bottle.cp_in.call_args.args,
         )
 
 
