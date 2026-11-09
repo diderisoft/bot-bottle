@@ -443,6 +443,12 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):  # pylint: disable=too-many-
         install pointers) and return a shell exit code. Run by `bot-bottle
         install`."""
 
+    def root_setup(self) -> str | None:
+        """What this backend's one-time host setup still needs root for, in a
+        few words (`install` offers to run it under sudo), or None: it's in
+        place, it needs none, or sudo can't do it (NixOS takes a module)."""
+        return None
+
     @abstractmethod
     def status(self, *, quiet: bool = False) -> int:
         """Whether the backend's prerequisites are met: `BackendStatus.READY`

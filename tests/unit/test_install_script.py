@@ -100,13 +100,14 @@ class TestInstallScript(unittest.TestCase):  # pylint: disable=too-many-public-m
         self.assertNotIn("next: run '${BOT_BOTTLE_BIN} install'", self.text)
         self.assertNotIn("--help' to get started", self.text)
 
-    def test_runs_setup_before_doctor_reading_the_terminal(self):
-        """Under `curl | sh`, stdin is the script: setup's prompts read
-        /dev/tty instead, and without a terminal it gets /dev/null."""
-        setup, doctor = self.text.index('" setup'), self.text.index('" doctor')
-        self.assertLess(setup, doctor)
-        self.assertIn('setup </dev/tty', self.text)
-        self.assertIn('setup </dev/null', self.text)
+    def test_runs_bootstrap_reading_the_terminal(self):
+        """`bootstrap` is install (asking before its one sudo step), setup and
+        doctor. Under `curl | sh`, stdin is the script: their prompts read
+        /dev/tty instead, and without a terminal they get /dev/null (install
+        then prints the sudo step)."""
+        self.assertIn('bootstrap </dev/tty', self.text)
+        self.assertIn('bootstrap </dev/null', self.text)
+        self.assertNotIn('" setup <', self.text)  # bootstrap runs it
 
     def test_install_spec_is_overridable(self):
         # Tests / local installs point BOT_BOTTLE_INSTALL_SPEC at a checkout.
@@ -328,12 +329,20 @@ class TestInstallRef(unittest.TestCase):
 
     def test_it_ends_with_doctors_next_step(self) -> None:
         self._page(1, _tags("v0.2.0"))
-        self._stub("bot-bottle", '[ "$1" = doctor ] && echo "next: run \\`bot-bottle\\`"\n'
+        # bootstrap ends with doctor, whose last line is the next step.
+        self._stub("bot-bottle", '[ "$1" = bootstrap ] && echo "next: run \\`bot-bottle\\`"\n'
                                  'exit 0')
         proc = self._run()
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertIn("next: run `bot-bottle`", proc.stdout)
         self.assertIn("installed.", proc.stderr)
+
+    def test_a_bootstrap_that_stops_says_to_run_it_again(self) -> None:
+        self._page(1, _tags("v0.2.0"))
+        self._stub("bot-bottle", 'exit 1')
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("bootstrap' again", proc.stderr)
 
     def test_unknown_arguments_are_refused(self) -> None:
         proc = self._run("--mian")

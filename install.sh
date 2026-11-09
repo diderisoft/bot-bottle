@@ -18,11 +18,14 @@
 #
 # This script is a thin bootstrapper: it finds the latest release tag and a
 # Python 3.11+ interpreter, installs the package with uv or pipx if you have
-# either (falling back to a private venv), creates the
-# config dir, runs `bot-bottle setup` (starter agents, then an offer to pair a
-# phone) and `bot-bottle doctor`. It is idempotent (safe to re-run)
-# and never uses sudo. It does NOT install Docker or a VM backend for you —
-# `doctor` reports what's missing after install.
+# either (falling back to a private venv), creates the config dir, then runs
+# `bot-bottle bootstrap`: `install` (this host's backend setup, tmux,
+# autostart), `setup` (starter agents, then an offer to pair a phone) and
+# `doctor`. It is idempotent (safe to re-run). It never runs sudo on its own:
+# the backend's one root step (the macOS firewall, firecracker's network
+# pool) is asked about first, on a terminal, with the exact command shown,
+# and printed for you to run otherwise. It does NOT install Docker or a VM
+# runtime for you: `doctor` reports what's missing.
 #
 # Env:
 #   BOT_BOTTLE_PYTHON        interpreter to install with (skips the search)
@@ -483,26 +486,22 @@ if [ "${REMOTE}" = no ]; then
     say "(remote access) isn't available here. Everything else is."
 fi
 
-# --- starters ----------------------------------------------------------------
+# --- host setup, starters, check ----------------------------------------------
 
-# Under `curl | sh` stdin is this script, so setup's prompts (OpenRouter
-# sign-in, pairing) read from the terminal instead, when there is one.
-say "setting up starter agents ('${BOT_BOTTLE_BIN} setup')"
+# `bootstrap` is install, setup, then doctor. Under `curl | sh` stdin is this
+# script, so their prompts (the one sudo step, OpenRouter sign-in, pairing)
+# read from the terminal instead, when there is one; without one, install
+# prints the sudo step for you to run. doctor ends with the one next step for
+# this host (`next: ...`), whatever it found.
+say "setting up this host ('${BOT_BOTTLE_BIN} bootstrap')"
 if [ -t 1 ] && (: </dev/tty) 2>/dev/null; then
-    "${BOT_BOTTLE_BIN}" setup </dev/tty || say "setup didn't finish; re-run '${BOT_BOTTLE_BIN} setup'"
+    "${BOT_BOTTLE_BIN}" bootstrap </dev/tty && done=yes || done=no
 else
-    "${BOT_BOTTLE_BIN}" setup </dev/null || say "setup didn't finish; re-run '${BOT_BOTTLE_BIN} setup'"
+    "${BOT_BOTTLE_BIN}" bootstrap </dev/null && done=yes || done=no
 fi
-
-# --- verify ------------------------------------------------------------------
-
-say "checking this host ('${BOT_BOTTLE_BIN} doctor')"
-# The installer never uses sudo, so the backend's host setup (the macOS pf
-# firewall, firecracker's network pool) and autostart are left to
-# `bot-bottle install`, which prints any privileged steps. doctor ends with
-# the one next step for this host (`next: ...`), whatever it found.
-if "${BOT_BOTTLE_BIN}" doctor; then
+if [ "${done}" = yes ]; then
     say "installed."
 else
-    say "installed, but doctor found something to fix (above)."
+    say "installed, but setting up this host didn't finish: fix what it says (above),"
+    say "then run '${BOT_BOTTLE_BIN} bootstrap' again."
 fi

@@ -48,6 +48,10 @@ class MacosContainerBottleBackend(
         from . import setup as _setup
         return _setup.setup()
 
+    def root_setup(self) -> str | None:
+        from . import setup as _setup
+        return _setup.root_setup()
+
     def status(self, *, quiet: bool = False) -> int:
         from . import setup as _setup
         if quiet:

@@ -8,6 +8,9 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import os
+import shlex
+import shutil
+import subprocess
 import sys
 
 from ...backend import enumerate_active_agents, get_bottle_backend
@@ -16,7 +19,7 @@ from ...control.hostctl.build import RESTART_NEEDED
 from ...control.hostctl.client import HostControlClient
 from ...control.hostctl.orchestrator import ensure_via_daemon
 from ...control.hostctl.sessions import MIN_TMUX_VERSION, tmux_version
-from ...environment import sudo_invoker
+from ...environment import ENV_VAR, sudo_invoker
 from ..constants import PROG
 from ..launch_client import confirm_controller_restart
 from ..migration_gate import host_db_current
@@ -192,8 +195,9 @@ def _print_jobs(state: runner.HostControlState) -> None:
 
 def cmd_install(argv: list[str]) -> int:  # pylint: disable=too-many-return-statements
     parser = _parser("install", "Set up this host: backend prerequisites, tmux, autostart. "
-                                "Run the privileged part with sudo where the backend prints it "
-                                "(e.g. `sudo bot-bottle install --backend=macos-container`).")
+                                "On a terminal it offers to run the one privileged step with "
+                                "sudo; otherwise it prints it (e.g. `sudo bot-bottle install "
+                                "--backend=macos-container`).")
     parser.add_argument("--no-autostart", action="store_true",
                         help="don't install the service that keeps the host controller running")
     parser.add_argument("--undo", action="store_true",
@@ -212,7 +216,9 @@ def cmd_install(argv: list[str]) -> int:  # pylint: disable=too-many-return-stat
         found = "not installed" if version is None else f"{version[0]}.{version[1]}"
         return _fail(f"tmux {MIN_TMUX_VERSION[0]}.{MIN_TMUX_VERSION[1]}+ is required ({found}); "
                      "install it with brew, apt or nix, then rerun")
-    code = backend.setup()
+    code = _sudo_setup(backend)
+    if code is None:
+        code = backend.setup()
     if code != 0:
         return code
     if ns.no_autostart:
@@ -226,6 +232,29 @@ def cmd_install(argv: list[str]) -> int:  # pylint: disable=too-many-return-stat
         return _fail(str(e))
     print(f"host controller: running at {state.url}")
     return 0
+
+
+def _sudo_setup(backend) -> int | None:  # type: ignore[no-untyped-def]
+    """The backend's root step, run under sudo once the user agrees: its exit
+    code. None (and `setup` prints the commands instead, as without a
+    terminal) when there's nothing to ask, no one to ask, or the answer's no."""
+    need = backend.root_setup()
+    if not need or not sys.stdin.isatty() or shutil.which("sudo") is None:
+        return None
+    entry = shutil.which(sys.argv[0]) or os.path.abspath(sys.argv[0])
+    env = os.environ.get(ENV_VAR)
+    command = ["sudo", *(["env", f"{ENV_VAR}={env}"] if env else []), entry, "install",
+               f"--backend={backend.name}"]
+    sys.stderr.write(f"\n{PROG} needs root once, to {need}.\n"
+                     f"It would run: {shlex.join(command)}\n")
+    try:
+        answer = input("Run it now? [y/N] ")
+    except EOFError:
+        answer = ""
+    if answer.strip().lower() not in ("y", "yes"):
+        sys.stderr.write("Not now: here's what to run yourself.\n\n")
+        return None
+    return subprocess.run(command, check=False).returncode
 
 
 __all__ = ["cmd_down", "cmd_install", "cmd_jobs", "cmd_status", "cmd_up"]

@@ -15,8 +15,10 @@ installing `main`, when it can't find one). It finds a suitable Python, installs
 bot-bottle with its `remote` extra for phone pairing (none on Intel Macs,
 which iroh has no build for) using `uv` or `pipx` if you have either, or a
 private venv at `~/.bot-bottle/venv`, creates `~/.bot-bottle`, and runs
-`bot-bottle setup` and `bot-bottle doctor`. It is idempotent and never uses
-`sudo`. It shows one line per step (a spinner on a terminal) and keeps the
+`bot-bottle bootstrap`: `install` (the backend's host setup, tmux,
+autostart), `setup` and `doctor`, reading from your terminal under `curl | sh`.
+It is idempotent and never runs `sudo` on its own: the backend's one root step
+is asked about first ([Host setup and sudo](#host-setup-and-sudo)). It shows one line per step (a spinner on a terminal) and keeps the
 package tool's own output in `~/.bot-bottle/logs/install-<time>.log`, printing
 its end if a step fails. With `BOT_BOTTLE_ENV` set it says which environment it
 sets up. It ends with doctor's `next:` line, the one thing to do next on this
@@ -126,10 +128,28 @@ write starters (`setup`), start the services (`up`), else run `bot-bottle`.
 | firecracker (Linux default with KVM) | `/dev/kvm`, the `firecracker` binary, e2fsprogs, and the one-time network pool. Docker only for `bot-bottle up --build` (infra images from source instead of a release's). |
 | docker (fallback) | Docker |
 
+#### Host setup and sudo
+
+Each backend's one-time host setup has one step that needs root: the macOS
+host firewall, or firecracker's network pool on a systemd host. Run on a
+terminal, `bot-bottle install` (and `bootstrap`, and the installer) says what
+that step is and the exact command, and asks first:
+
+```
+bot-bottle needs root once, to install the host firewall (a pf anchor, reloaded at boot).
+It would run: sudo /Users/you/.local/bin/bot-bottle install --backend=macos-container
+Run it now? [y/N]
+```
+
+Yes runs it (sudo asks for your password); no, or no terminal, prints the
+commands for you to run instead, as below. It isn't asked once the step is in
+place, nor on NixOS (the pool is a module you import) or a Linux host without
+systemd (a script you run yourself).
+
 #### macOS: Apple Container
 
-`bot-bottle install --backend=macos-container` prints the `sudo` commands that
-install the host firewall: a pf anchor and a LaunchDaemon that reloads it at
+`bot-bottle install --backend=macos-container` offers to install, or prints the
+`sudo` commands that install, the host firewall: a pf anchor and a LaunchDaemon that reloads it at
 boot ([backends.md](backends.md#macos-container)). Without it, launches are
 refused.
 

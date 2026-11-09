@@ -110,6 +110,21 @@ def setup() -> int:
     return _firewall()
 
 
+def root_setup() -> str | None:
+    """The host firewall, when it isn't installed for the subnets setup would
+    pick (its files are world-readable: no root needed to tell)."""
+    if not _container.is_macos() or os.geteuid() == 0:
+        return None
+    try:
+        subnet, _ = host_firewall.choose_subnet()
+        subnet_v6 = host_firewall.choose_subnet_v6()
+    except RuntimeError:
+        return None  # setup says why
+    if host_firewall.state(subnet, subnet_v6) == "ok":
+        return None
+    return "install the host firewall (a pf anchor, reloaded at boot)"
+
+
 def teardown() -> int:
     if os.geteuid() == 0:
         host_firewall.uninstall(host_firewall.agent_subnet())

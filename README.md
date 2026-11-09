@@ -26,7 +26,7 @@ That installs the latest release. Or, with uv (or the same with `pipx install`),
 uv tool install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git@v0.1.4"
 ```
 
-The installer runs `bot-bottle setup`, which writes a starter agent for each logged-in harness it finds (Claude Code, Codex, pi). Then start, and say what the agent should do; the release's images are pulled on first run:
+The installer runs `bot-bottle bootstrap`: it sets up this host's backend (asking before the one step that needs `sudo`), writes a starter agent for each logged-in harness it finds (Claude Code, Codex, pi), and checks it all. Then start, and say what the agent should do; the release's images are pulled on first run:
 
 ```sh
 bot-bottle start

@@ -136,6 +136,21 @@ def setup(settings: Settings) -> int:
     return 0
 
 
+def root_setup(settings: Settings) -> str | None:
+    """The network pool's systemd unit, when it isn't installed as setup would
+    write it. NixOS takes a module and a host without systemd its own
+    script, neither of which sudo can do for you."""
+    if os.geteuid() == 0 or _is_nixos() or not _has_systemd():
+        return None
+    unit = netpool.render_systemd_unit(netpool.host_pool(settings.infra), _owner(), _script_path())
+    try:
+        if _UNIT_PATH.read_text(encoding="utf-8") == unit:
+            return None
+    except OSError:
+        pass
+    return f"install the network pool ({netpool.SYSTEMD_UNIT}: TAP devices, nft tables)"
+
+
 def _setup_systemd(pool: netpool.NetPool) -> None:
     """Install the pool as a persistent systemd unit: directly when root,
     otherwise print a copy-paste block."""

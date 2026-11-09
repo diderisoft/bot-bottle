@@ -273,6 +273,59 @@ class TestInstallUndoAndSudo(_Mocked):
         self.service.install.assert_not_called()
 
 
+class TestInstallOffersSudo(_Mocked):
+    """`install` on a terminal offers to run the backend's root step under
+    sudo, with the user's say-so; without one it prints the commands."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.backend.root_setup.return_value = "install the network pool"
+        self.enterContext(mock.patch.object(lifecycle, "tmux_version", return_value=(3, 4)))
+        self.enterContext(mock.patch.object(lifecycle.shutil, "which",
+                                            side_effect=lambda name: f"/usr/bin/{name}"))
+        self.tty = self.enterContext(mock.patch.object(lifecycle.sys.stdin, "isatty",
+                                                       return_value=True))
+        self.sudo = self.enterContext(mock.patch.object(lifecycle.subprocess, "run"))
+        self.sudo.return_value.returncode = 0
+
+    def install(self, answer: str) -> tuple[int, str]:
+        with mock.patch("builtins.input", return_value=answer):
+            code, _, err = self.run_cmd(lifecycle.cmd_install, [])
+        return code, err
+
+    def test_yes_runs_it_under_sudo_then_autostart(self) -> None:
+        with mock.patch.dict(lifecycle.os.environ, {"BOT_BOTTLE_ENV": "demo"}):
+            code, err = self.install("y")
+        self.assertEqual(0, code)
+        argv = self.sudo.call_args.args[0]
+        self.assertEqual(["sudo", "env", "BOT_BOTTLE_ENV=demo"], argv[:3])
+        self.assertEqual(["install", "--backend=firecracker"], argv[-2:])
+        self.assertIn("needs root once, to install the network pool", err)
+        self.backend.setup.assert_not_called()  # the root run did it
+        self.service.install.assert_called_once()
+
+    def test_no_prints_the_commands_as_before(self) -> None:
+        code, err = self.install("")
+        self.assertEqual(0, code)
+        self.sudo.assert_not_called()
+        self.backend.setup.assert_called_once()
+        self.assertIn("here's what to run yourself", err)
+
+    def test_a_failed_sudo_run_stops_install(self) -> None:
+        self.sudo.return_value.returncode = 1
+        self.assertEqual(1, self.install("yes")[0])
+        self.service.install.assert_not_called()
+
+    def test_nothing_to_ask_or_no_one_to_ask(self) -> None:
+        self.backend.root_setup.return_value = None
+        self.install("y")
+        self.backend.root_setup.return_value = "x"
+        self.tty.return_value = False
+        self.install("y")
+        self.sudo.assert_not_called()
+        self.assertEqual(2, self.backend.setup.call_count)
+
+
 class TestBootstrap(unittest.TestCase):
     def test_install_setup_doctor_in_order_stopping_at_a_failure(self) -> None:
         from bot_bottle.cli.commands import bootstrap  # pylint: disable=import-outside-toplevel

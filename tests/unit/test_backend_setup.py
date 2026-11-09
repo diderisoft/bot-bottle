@@ -115,6 +115,35 @@ class TestFirecrackerSetup(unittest.TestCase):
         self.assertIn("firecracker-netpool.sh up", out)
 
 
+class TestFirecrackerRootSetup(unittest.TestCase):
+    """What `install` offers to run under sudo: the pool's unit, until it's
+    installed as setup would write it."""
+
+    def _root_setup(self, *, nixos=False, systemd=True, euid=1000, unit=None):
+        path = MagicMock()
+        if unit is None:
+            path.read_text.side_effect = FileNotFoundError
+        else:
+            path.read_text.return_value = unit
+        with patch.object(fc, "_is_nixos", return_value=nixos), \
+             patch.object(fc, "_has_systemd", return_value=systemd), \
+             patch.object(fc.os, "geteuid", return_value=euid), \
+             patch.object(fc, "_UNIT_PATH", path):
+            return fc.root_setup(_S)
+
+    def test_offered_until_the_unit_is_installed(self):
+        self.assertIn("network pool", self._root_setup())
+        self.assertIn("network pool", self._root_setup(unit="an older unit"))
+        current = netpool.render_systemd_unit(netpool.host_pool(_S.infra), fc._owner(),
+                                              fc._script_path())
+        self.assertIsNone(self._root_setup(unit=current))
+
+    def test_not_offered_where_sudo_cant_do_it(self):
+        self.assertIsNone(self._root_setup(nixos=True))
+        self.assertIsNone(self._root_setup(systemd=False))
+        self.assertIsNone(self._root_setup(euid=0))
+
+
 class TestFirecrackerWarnOverlaps(unittest.TestCase):
     def test_emits_on_conflict(self):
         conflict = netpool.RouteConflict(dst="10.243.0.0/24", dev="eth0")
@@ -283,6 +312,14 @@ class TestMacosSetupStatus(unittest.TestCase):
         stack.enter_context(patch.object(mc, "_service_running", return_value=True))
         stack.enter_context(patch.object(mc.host_firewall, "state", return_value=firewall))
         return stack
+
+    def test_root_setup_offers_the_firewall_until_it_is_installed(self):
+        for firewall, offered in (("missing", True), ("stale", True), ("ok", False)):
+            with self.subTest(firewall=firewall), self._ready(firewall):
+                need = mc.root_setup()
+            self.assertEqual(offered, need is not None)
+        with patch.object(mc._container, "is_macos", return_value=False):
+            self.assertIsNone(mc.root_setup())
 
     def test_setup_not_macos(self):
         with patch.object(mc._container, "is_macos", return_value=False):
