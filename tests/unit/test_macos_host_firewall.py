@@ -303,5 +303,32 @@ class TestSubnetChoice(unittest.TestCase):
             fw.choose_subnet()
 
 
+class TestIsolationKey(unittest.TestCase):
+    """The key `BOT_BOTTLE_ISOLATION_CHECK=once` remembers the root probe by:
+    it changes with the boot, the installed rules and the network."""
+
+    def _key(self, rules: Path, boot: str = "{ sec = 1 }", subnet: str = "192.168.128.0/24",
+             host_ips: tuple[str, ...] = ("192.168.128.1",)) -> str:
+        done = subprocess.CompletedProcess([], 0, stdout=boot + "\n", stderr="")
+        with patch.object(fw.subprocess, "run", return_value=done):
+            return fw.isolation_key(subnet, host_ips, rules=rules)
+
+    def test_changes_with_boot_rules_and_network(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            rules = Path(d) / "anchor"
+            rules.write_text("block\n", encoding="utf-8")
+            key = self._key(rules)
+            self.assertEqual(key, self._key(rules))
+            self.assertNotEqual(key, self._key(rules, boot="{ sec = 2 }"))
+            self.assertNotEqual(key, self._key(rules, subnet="192.168.129.0/24"))
+            self.assertNotEqual(key, self._key(rules, host_ips=("192.168.129.1",)))
+            rules.write_text("block all\n", encoding="utf-8")
+            self.assertNotEqual(key, self._key(rules))
+
+    def test_no_boot_time_means_no_key(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual("", self._key(Path(d) / "anchor", boot=""))
+
+
 if __name__ == "__main__":
     unittest.main()

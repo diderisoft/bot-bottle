@@ -15,14 +15,27 @@ passes.
 from __future__ import annotations
 
 import contextlib
+import json
+import os
 import re
 import select
 import shlex
 import socket
+import tempfile
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Callable, cast
 
 from ..lib.log import die, info, warn
+
+# `BOT_BOTTLE_ISOLATION_CHECK` (`OperationSettings.isolation_check`; "" is
+# `once`): `always` probes on every launch; `once` skips a probe of host-wide
+# state (`once_key`) already passed for that same state; `off` skips them all.
+ALWAYS, ONCE, OFF = "always", "once", "off"
+CHECKS = (ALWAYS, ONCE, OFF)
+# Host-wide keys a probe passed for, newest last; a few, for a host that
+# moves between networks.
+_KEPT_KEYS = 8
 
 # Guest exit codes.
 _LEAK = 0  # reached the canary
@@ -79,6 +92,57 @@ PY
   fi
 }
 report() { echo "bb-isolation-probe=$1"; exit 0; }
+# With python3, every check at once: a blocked attempt is a drop that waits
+# out its timeout, so one after another they add up (~14 s behind pf).
+# The verdicts and their order are the serial path's below.
+if command -v python3 >/dev/null 2>&1; then
+  python3 - "$h:$p $more" "$peers" "$pub" "$dns" "$name" <<'PY'
+import errno, socket, sys, threading, time
+hosts, peers = sys.argv[1].split(), sys.argv[2].split()
+pub, dns, name = sys.argv[3], sys.argv[4] == "1", sys.argv[5]
+got = {}
+def connect(key, target, timeout):
+    host, _, port = target.rpartition(":")
+    s = socket.socket(); s.settimeout(timeout)
+    try:
+        got[key] = s.connect_ex((host, int(port)))
+    except OSError as e:
+        got[key] = e.errno or -1
+    finally:
+        s.close()
+def resolve():
+    try:
+        socket.getaddrinfo(name, 80)
+        got["dns"] = 0
+    except OSError:
+        got["dns"] = 1
+jobs = [(threading.Thread(target=connect, args=(("host", c), c, 3), daemon=True), 3.5)
+        for c in hosts]
+jobs += [(threading.Thread(target=connect, args=(("peer", c), c, 2), daemon=True), 2.5)
+         for c in peers]
+jobs.append((threading.Thread(target=connect, args=("pub", pub + ":443", 3), daemon=True), 3.5))
+if dns:
+    jobs.append((threading.Thread(target=resolve, daemon=True), 5))
+start = time.monotonic()
+for t, _ in jobs:
+    t.start()
+for t, limit in jobs:  # all together: this waits as long as the slowest
+    t.join(max(0.0, start + limit - time.monotonic()))
+def report(n):
+    print(f"bb-isolation-probe={n}"); sys.exit(0)
+if any(got.get(("host", c)) == 0 for c in hosts):
+    report(0)
+for c in peers:
+    if got.get(("peer", c)) in (0, errno.ECONNREFUSED):
+        print(f"bb-isolation-peer={c.rpartition(':')[0]}"); report(5)
+if got.get("pub") == 0:
+    report(4)
+if got.get("dns") == 0:
+    report(3)
+report(1)
+PY
+  exit 0
+fi
 try_connect "$h" "$p"; rc=$?
 [ "$rc" -eq 0 ] && report 0
 [ "$rc" -eq 2 ] && report 2
@@ -134,6 +198,32 @@ def host_canary_ip() -> str:
         return ""
 
 
+def verified_path() -> Path:
+    """Where the host-wide keys a probe passed for are kept."""
+    from ..paths import bot_bottle_root  # pylint: disable=import-outside-toplevel
+    return bot_bottle_root() / "state" / "isolation-verified.json"
+
+
+def _verified_keys(path: Path) -> list[str]:
+    try:
+        keys = json.loads(path.read_text(encoding="utf-8")).get("keys", [])
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [k for k in keys if isinstance(k, str)] if isinstance(keys, list) else []
+
+
+def _remember(path: Path, key: str) -> None:
+    keys = [k for k in _verified_keys(path) if k != key][-(_KEPT_KEYS - 1):] + [key]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".isolation-")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"keys": keys}, f)
+        os.replace(tmp, path)
+    except OSError as e:
+        warn(f"isolation probe: couldn't record the pass ({e}); it runs again next launch")
+
+
 def verify_isolation(
     run_guest: Callable[[str], str],
     *,
@@ -142,18 +232,35 @@ def verify_isolation(
     check_dns: bool = False,
     host_ips: Sequence[str] = (),
     peers: Sequence[str] = (),
+    check: str = "",
+    once_key: str = "",
 ) -> None:
     """Prove the agent (`what`) can't reach the host's primary address, the
     backend's other `host_ips` (e.g. the host's address on the agent network),
     the sibling agents at `peers` (the first `MAX_PEERS` of them) or a public
     address, and with `check_dns` can't resolve a public name.
     `run_guest(script)` returns the guest's stdout. Dies on a leak or a missing
-    tool, with `remedy`; warns and skips when the host has no address to test."""
+    tool, with `remedy`; warns and skips when the host has no address to test.
+
+    `check` is the `BOT_BOTTLE_ISOLATION_CHECK` setting. `once_key` names the
+    host-wide state the probe proves (a host firewall, say): with `once`, a
+    key that already passed skips the probe."""
+    mode = check or ONCE
+    if mode == OFF:
+        warn(f"isolation probe skipped for {what}: BOT_BOTTLE_ISOLATION_CHECK=off, "
+             "so nothing proves it can reach only the gateway")
+        return
     peers = sorted(set(peers))[:MAX_PEERS]
     canary_ip = host_canary_ip()
     if not canary_ip:
         warn("isolation probe skipped: host has no off-box route to test "
              "against (isolated box).")
+        return
+    key = f"{once_key}|{canary_ip}" if once_key else ""
+    if key and mode == ONCE and key in _verified_keys(verified_path()):
+        info(f"isolation: {what}: the host firewall passed this probe already, "
+             "unchanged since; not probed again (BOT_BOTTLE_ISOLATION_CHECK=always "
+             "probes every launch)")
         return
 
     with contextlib.ExitStack() as stack:
@@ -205,3 +312,5 @@ def verify_isolation(
     siblings = f" or sibling agents {', '.join(peers)}" if peers else ""
     info(f"isolation verified: {what} cannot reach host "
          f"{', '.join(ip for ip, _ in canaries)}{siblings}")
+    if key:
+        _remember(verified_path(), key)

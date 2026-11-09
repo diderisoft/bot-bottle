@@ -186,7 +186,8 @@ def launch(
         persist_env_var_secret(private_key, slot.guest_ip, ctx.env_var_secret)
 
         # Prove the VM can't reach the host directly before the agent runs.
-        isolation_probe.verify_isolation(private_key, slot.guest_ip)
+        isolation_probe.verify_isolation(private_key, slot.guest_ip,
+                                         check=plan.settings.operation.isolation_check)
 
         bottle = FirecrackerBottle(
             plan.container_name,

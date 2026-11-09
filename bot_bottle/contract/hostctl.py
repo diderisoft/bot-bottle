@@ -126,6 +126,9 @@ class OperationSettings:
     # Seconds the bottle architect's warm bottle outlives its last suggestion
     # when it isn't always on.
     architect_idle_seconds: int = 600
+    # The launch isolation probes: `always`, `once` ("": probes of host-wide
+    # state run again only when it changes) or `off`. See isolation_probe.py.
+    isolation_check: str = ""
 
 
 @dataclass(frozen=True)
@@ -195,7 +198,7 @@ class Settings:
 # them neither restarts the infra nor sends a key an older reader rejects.
 _OMIT_AT_DEFAULT = frozenset({"docker_agent_subnets", "fc_env_slots", "fc_slices_dir",
                               "fc_workspace_disk", "architect_idle_seconds",
-                              "architect_always_on"})
+                              "architect_always_on", "isolation_check"})
 
 
 def _section_json(section: OperationSettings | InfraSettings) -> dict[str, object]:

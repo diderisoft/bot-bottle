@@ -217,6 +217,7 @@ def launch(
                     "running bottles and relaunch so it is recreated."),
             check_dns=True,
             peers=ctx.peer_ips,
+            check=plan.settings.operation.isolation_check,
         )
         bottle.prompt_path = provision(plan, bottle)
         bottle.registry_id = ctx.bottle_id

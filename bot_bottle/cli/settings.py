@@ -23,6 +23,7 @@ OPERATION_ENV: dict[str, str] = {
     "fc_workspace_disk": "BOT_BOTTLE_FC_WORKSPACE_DISK",
     "architect_idle_seconds": "BOT_BOTTLE_ARCHITECT_IDLE",
     "architect_always_on": "BOT_BOTTLE_ARCHITECT_ALWAYS_ON",
+    "isolation_check": "BOT_BOTTLE_ISOLATION_CHECK",
 }
 
 INFRA_ENV: dict[str, str] = {
@@ -105,11 +106,21 @@ def _agent_subnets(raw: str, _default: object) -> object:
     return "" if pool == DEFAULT_DOCKER_AGENT_SUBNETS else pool
 
 
+def _isolation_check(raw: str, _default: object) -> object:
+    from ..backend.isolation_probe import CHECKS, ONCE  # pylint: disable=import-outside-toplevel
+    value = raw.lower()
+    if value not in CHECKS:
+        die(f"BOT_BOTTLE_ISOLATION_CHECK={raw!r}: expected {', '.join(CHECKS)}")
+    # Spelling out the default is the default.
+    return "" if value == ONCE else value
+
+
 # Fields whose env values need custom parsing.
 _SPECIAL: dict[str, Callable[[str, object], object]] = {
     "infra_build_local": lambda raw, _default: raw.lower() == "local",
     "build_engine": lambda raw, _default: raw.lower(),
     "docker_agent_subnets": _agent_subnets,
+    "isolation_check": _isolation_check,
 }
 
 

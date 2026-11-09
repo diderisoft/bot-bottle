@@ -354,6 +354,7 @@ Generated from `bot_bottle/env_vars.py`: edit that, then run
 | `BOT_BOTTLE_START_AUTO` | user | `1` makes a guided `bot-bottle start` run the suggested bottle without asking (`--auto`); `--no-auto` asks for one run. See bottles-suggest.md. | off |
 | `BOT_BOTTLE_ARCHITECT_ALWAYS_ON` | user | The bottle architect's bottle boots with the host controller and stays up; `0` boots it on demand and lets it idle out (`BOT_BOTTLE_ARCHITECT_IDLE`). See bottles-suggest.md. | on |
 | `BOT_BOTTLE_ARCHITECT_IDLE` | user | When the architect isn't always on: seconds its bottle stays up after its last suggestion; `0` stops it after each one. | `600` |
+| `BOT_BOTTLE_ISOLATION_CHECK` | user | The launch's isolation probes, which prove an agent can reach only the gateway: `always` on every launch; `once` probes host-wide state (macOS's pf) again only after a reboot, a firewall reinstall or a network change, and an agent's own firewall every launch; `off` skips them (a warning each launch). See backends.md. | `once` |
 | `BOT_BOTTLE_FC_WORKSPACE_DISK` | user | firecracker: keep the project's workspace on a per-project disk between runs, so what the project ignores (`node_modules`, build dirs) survives. `1` for the default size, or a size like `32G`. See backends.md. | off |
 | `BOT_BOTTLE_FC_KERNEL` | user | firecracker: the guest kernel. | `vmlinux` in the firecracker cache |
 | `BOT_BOTTLE_FC_DROPBEAR` | user | firecracker: the static dropbear put in every guest as its SSH server. | `dropbear` in the firecracker cache |

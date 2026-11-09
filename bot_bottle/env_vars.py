@@ -109,6 +109,13 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "When the architect isn't always on: seconds its bottle stays up after "
            "its last suggestion; `0` stops it after each one.",
            "`600`"),
+    EnvVar("BOT_BOTTLE_ISOLATION_CHECK", "user",
+           "The launch's isolation probes, which prove an agent can reach only "
+           "the gateway: `always` on every launch; `once` probes host-wide state "
+           "(macOS's pf) again only after a reboot, a firewall reinstall or a "
+           "network change, and an agent's own firewall every launch; `off` skips "
+           "them (a warning each launch). See backends.md.",
+           "`once`"),
     EnvVar("BOT_BOTTLE_FC_WORKSPACE_DISK", "user",
            "firecracker: keep the project's workspace on a per-project disk between "
            "runs, so what the project ignores (`node_modules`, build dirs) survives. "

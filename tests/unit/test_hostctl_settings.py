@@ -38,7 +38,7 @@ class TestSettingsJson(unittest.TestCase):
         # Fields added later are left out while at their default.
         self.assertEqual({f.name for f in dataclasses.fields(OperationSettings)}
                          - {"fc_workspace_disk", "architect_idle_seconds",
-                            "architect_always_on"},
+                            "architect_always_on", "isolation_check"},
                          set(body["operation"]))
         self.assertEqual({f.name for f in dataclasses.fields(InfraSettings)}
                          - {"docker_agent_subnets", "fc_env_slots", "fc_slices_dir"},
@@ -174,10 +174,12 @@ class TestEnvLoader(unittest.TestCase):
             "BOT_BOTTLE_FC_WORKSPACE_DISK": "32G",
             "BOT_BOTTLE_ARCHITECT_IDLE": "45",
             "BOT_BOTTLE_ARCHITECT_ALWAYS_ON": "0",
+            "BOT_BOTTLE_ISOLATION_CHECK": "Always",
         }
         expected = Settings(
             operation=OperationSettings(backend="firecracker", fc_workspace_disk="32G",
-                                        architect_idle_seconds=45, architect_always_on=False),
+                                        architect_idle_seconds=45, architect_always_on=False,
+                                        isolation_check="always"),
             infra=InfraSettings(
                 infra_build_local=True, build_engine="podman", artifact_cache="/cache/artifacts",
                 orchestrator_image="orch:test", gateway_image="gw:test",
@@ -220,6 +222,15 @@ class TestEnvLoader(unittest.TestCase):
                  self.assertRaises(SystemExit):
                 settings_from_env({"BOT_BOTTLE_FC_POOL_SIZE": raw})
             self.assertIn("BOT_BOTTLE_FC_POOL_SIZE", die.call_args.args[0])
+
+    def test_isolation_check_once_is_the_default_and_others_die(self) -> None:
+        self.assertEqual(Settings(), settings_from_env({"BOT_BOTTLE_ISOLATION_CHECK": "once"}))
+        self.assertEqual("off", settings_from_env(
+            {"BOT_BOTTLE_ISOLATION_CHECK": "off"}).operation.isolation_check)
+        with patch.object(loader, "die", side_effect=SystemExit) as die, \
+             self.assertRaises(SystemExit):
+            settings_from_env({"BOT_BOTTLE_ISOLATION_CHECK": "sometimes"})
+        self.assertIn("BOT_BOTTLE_ISOLATION_CHECK", die.call_args.args[0])
 
     def test_agent_subnet_pool_is_normalized(self) -> None:
         got = settings_from_env({"BOT_BOTTLE_DOCKER_AGENT_SUBNETS": " 10.9.0.0/24 "})

@@ -360,8 +360,30 @@ def wait_ipv6_off(subnet: str, *, timeout: float = REAPPLY_SECONDS + 15,
         sleep(poll)
 
 
+def isolation_key(subnet: str, host_ips: tuple[str, ...], *,
+                  rules: Path = RULES_PATH) -> str:
+    """What the root isolation probe proves, as a key that changes when that
+    could: this boot, the installed rules, the agent network and the host's
+    addresses on it. `BOT_BOTTLE_ISOLATION_CHECK=once` probes again only
+    when it does. The daemon reloads the rules each minute between."""
+    try:
+        boot = subprocess.run(["/usr/sbin/sysctl", "-n", "kern.boottime"], capture_output=True,
+                              text=True, check=False, timeout=5).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        boot = ""
+    try:
+        st = rules.stat()
+        installed = f"{st.st_mtime_ns}:{st.st_size}"
+    except OSError:
+        installed = "none"
+    # No boot time, no key: probe every launch rather than trust a stale pass.
+    if not boot:
+        return ""
+    return f"macos-pf|{boot}|{installed}|{subnet}|{','.join(host_ips)}"
+
+
 __all__ = [
-    "ANCHOR", "DAEMON_LABEL", "DAEMON_PATH", "RULES_PATH",
+    "ANCHOR", "DAEMON_LABEL", "DAEMON_PATH", "RULES_PATH", "isolation_key",
     "CANDIDATE_SUBNETS", "agent_bridge", "agent_subnet", "choose_subnet", "conflicts",
     "agent_subnet_v6", "choose_subnet_v6", "installed_subnet_v6",
     "other_environments_subnets", "other_environments_subnets_v6",

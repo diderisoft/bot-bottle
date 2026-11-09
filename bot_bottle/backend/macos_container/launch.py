@@ -269,9 +269,13 @@ def launch(
                     "--backend=macos-container`."),
             check_dns=True,
             host_ips=host_ips,
+            check=plan.settings.operation.isolation_check,
+            # pf is the host's, the same for every agent: once per state.
+            once_key=host_firewall.isolation_key(agent_subnet, host_ips),
         )
         _verify_agent_firewall(bottle, plan.container_name, firewalled,
-                               host_ips=host_ips, peers=ctx.peer_ips)
+                               host_ips=host_ips, peers=ctx.peer_ips,
+                               check=plan.settings.operation.isolation_check)
         bottle.prompt_path = provision(plan, bottle)
 
         if plan.nested_containers:
@@ -456,7 +460,7 @@ def _ensure_home(plan: MacosContainerBottlePlan) -> bool:
 
 def _verify_agent_firewall(
     bottle: MacosContainerBottle, name: str, firewalled: bool, *,
-    host_ips: tuple[str, ...], peers: tuple[str, ...],
+    host_ips: tuple[str, ...], peers: tuple[str, ...], check: str = "",
 ) -> None:
     """As the agent's user, prove its firewall keeps it off the Mac, the
     internet and other agents, then refuse if it can get root alongside peers.
@@ -474,6 +478,7 @@ def _verify_agent_firewall(
         check_dns=True,
         host_ips=host_ips,
         peers=peers,
+        check=check,
     )
     found = agent_firewall.privileges(
         bottle.exec(agent_firewall.privilege_check_script(), private=False).stdout)

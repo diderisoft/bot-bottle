@@ -13,7 +13,9 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import time
 import unittest
+from pathlib import Path
 from typing import Callable
 from unittest import mock
 
@@ -207,6 +209,95 @@ class TestGuestScriptPeerKnock(unittest.TestCase):
                 os.symlink(found, os.path.join(d, tool))
             out = self._run(path=d)
         self.assertIn("bb-isolation-probe=5", out)
+
+
+@unittest.skipUnless(shutil.which("python3"), "needs python3")
+class TestGuestScriptAllAtOnce(unittest.TestCase):
+    """With python3 the guest runs every check at once, with the serial
+    path's verdicts."""
+
+    def test_a_reached_host_canary_is_a_leak(self) -> None:
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            port = listener.getsockname()[1]
+            script = isolation_probe.guest_probe_script(
+                "127.0.0.1", _closed_port(), check_dns=False, more=[("127.0.0.1", port)])
+            out = subprocess.run(["/bin/sh", "-c", script], capture_output=True, text=True,
+                                 check=False, timeout=30).stdout
+        self.assertIn("bb-isolation-probe=0", out)
+
+    def test_dropped_checks_wait_one_timeout_not_their_sum(self) -> None:
+        # TEST-NET-1 addresses (RFC 5737) go nowhere: dropped, or no route.
+        # One after another, four would take ~12 s; together, ~3 s.
+        script = isolation_probe.guest_probe_script(
+            "192.0.2.1", 9, check_dns=False,
+            more=[("192.0.2.2", 9), ("192.0.2.3", 9), ("192.0.2.4", 9)])
+        started = time.monotonic()
+        out = subprocess.run(["/bin/sh", "-c", script], capture_output=True, text=True,
+                             check=False, timeout=30).stdout
+        self.assertLess(time.monotonic() - started, 7)
+        self.assertNotIn("bb-isolation-probe=0", out)
+        self.assertRegex(out, r"bb-isolation-probe=[14]")
+
+
+class TestCheckSetting(unittest.TestCase):
+    """`BOT_BOTTLE_ISOLATION_CHECK`: `off` skips, `once` skips a host-wide
+    probe already passed for the same key, `always` probes every time."""
+
+    def setUp(self) -> None:
+        self.enterContext(mock.patch.object(
+            isolation_probe, "host_canary_ip", return_value="127.0.0.1"))
+        tmp = self.enterContext(tempfile.TemporaryDirectory())  # pylint: disable=consider-using-with
+        self.state = os.path.join(tmp, "isolation-verified.json")
+        self.enterContext(mock.patch.object(
+            isolation_probe, "verified_path", return_value=Path(self.state)))
+        self.guest = mock.Mock(return_value=_result(1))
+
+    def _probe(self, check: str, once_key: str = "") -> str:
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            isolation_probe.verify_isolation(self.guest, what="the agent", remedy="fix it",
+                                             check=check, once_key=once_key)
+        return err.getvalue()
+
+    def test_off_never_probes_and_says_so(self) -> None:
+        self.assertIn("BOT_BOTTLE_ISOLATION_CHECK=off", self._probe("off", "k"))
+        self.guest.assert_not_called()
+
+    def test_once_probes_a_host_wide_key_once(self) -> None:
+        self._probe("", "pf|boot1")
+        self.assertIn("not probed again", self._probe("", "pf|boot1"))
+        self.assertEqual(1, self.guest.call_count)
+
+    def test_once_probes_again_when_the_key_changes(self) -> None:
+        self._probe("once", "pf|boot1")
+        self._probe("once", "pf|boot2")
+        self.assertEqual(2, self.guest.call_count)
+
+    def test_once_probes_every_time_without_a_key(self) -> None:
+        self._probe("once")
+        self._probe("once")
+        self.assertEqual(2, self.guest.call_count)
+
+    def test_always_probes_every_time_even_with_a_passed_key(self) -> None:
+        self._probe("once", "pf|boot1")
+        self._probe("always", "pf|boot1")
+        self.assertEqual(2, self.guest.call_count)
+
+    def test_a_failed_probe_is_not_remembered(self) -> None:
+        self.guest.return_value = _result(4)
+        with self.assertRaises(Die):
+            self._probe("once", "pf|boot1")
+        self.guest.return_value = _result(1)
+        self._probe("once", "pf|boot1")
+        self.assertEqual(2, self.guest.call_count)
+
+    def test_a_damaged_record_probes_again(self) -> None:
+        with open(self.state, "w", encoding="utf-8") as f:
+            f.write("{not json")
+        self._probe("once", "pf|boot1")
+        self.guest.assert_called_once()
 
 
 class TestNoCanary(unittest.TestCase):

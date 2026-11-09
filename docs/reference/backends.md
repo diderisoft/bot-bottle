@@ -542,6 +542,23 @@ On macos-container the probe runs twice: as root, whose traffic the agent's
 firewall lets through, so it tests the host pf anchor; then as the agent's
 user, against its firewall, with the sibling knock.
 
+With python3 in the guest, the checks run at once, so a launch waits about one
+timeout (a blocked attempt is a drop that waits it out) rather than their sum;
+without it they run one after another.
+
+`BOT_BOTTLE_ISOLATION_CHECK` sets how often:
+- **`once`** (the default): a probe of host-wide state, macOS's root probe of
+  the pf anchor, runs again only when that state could have changed: a new
+  boot, a reinstalled firewall (its rules file), or a new agent network,
+  host address or LAN address (`host_firewall.isolation_key`; the keys it
+  passed for are kept in `<state root>/state/isolation-verified.json`). Probes
+  of a single agent's boundary (its own firewall, its docker network, its
+  VM's nft rules, and the sibling knock) run on every launch. Between reboots,
+  the pf daemon reloads the anchor each minute.
+- **`always`**: every probe on every launch.
+- **`off`**: none, with a warning on each launch. The IPv6 wait above still
+  runs.
+
 ## Gateway restarts
 
 A restart is rare on purpose. `bot-bottle up` (with or without `--restart`,
