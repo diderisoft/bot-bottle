@@ -139,6 +139,8 @@ def console_state() -> str:
         if not pairing.load_config().enabled:
             return ""
         status = pairing.read_status() or {}
+        if status.get("unpaired"):
+            return f"console refused this host: `{PROG} pair` again"
         return "console linked" if status.get("connected") else "console not connected"
     return ""
 

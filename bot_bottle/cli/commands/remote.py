@@ -126,7 +126,8 @@ def link_line() -> str:
     if not status:
         return f"console link{console}: on, no report yet; is the host controller running?"
     age = int(time.time() - float(status.get("updated", 0)))
-    state = "connected" if status.get("connected") else "not connected"
+    state = ("connected" if status.get("connected")
+             else "refused, not paired anymore" if status.get("unpaired") else "not connected")
     error = (f" ({status['error']})" if status.get("error") and not status.get("connected")
              else "")
     return f"console link{console}: {state}{error}, {age}s ago"

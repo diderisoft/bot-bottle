@@ -64,6 +64,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
 from . import host_stats, remote_actions
 from .children import child_agent_ids
+from .link_refusal import refused_delay
 from .live_metrics import MetricsWatch
 from ...lib import log
 from ...util import same_instant
@@ -781,7 +782,8 @@ async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> 
             except Exception as e:  # pylint: disable=broad-exception-caught
                 write_status(connected=False, error=str(e)[:300] or type(e).__name__)
                 log.debug(f"remote: link down: {e}")
-            delay = BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)]
+            # A console that no longer knows this host: report it, ask again rarely.
+            delay = refused_delay(conn) or BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)]
             attempt += 1
             await asyncio.to_thread(stop.wait, delay)
     finally:

@@ -574,6 +574,17 @@ keeps under `~/.bot-bottle/` (`remote.json`, `console.json`, the iroh key
 `remote.key`, and `remote.status.json` for `bot-bottle status`) is
 `pairing.py`.
 
+**If the account is deleted** (or the host removed from it), the console no
+longer knows this host's node id and closes the link as `unregistered host`
+(`link_refusal.py`). The host only reports it: `status` shows the link as
+refused, `doctor` warns and its `next:` is `bot-bottle pair --console-url
+<url>`, home's status strip says to pair again, and the link asks only every
+ten minutes instead of on its short backoff. It changes nothing on its own:
+`console.json`, the iroh key and the link setting stay. `bot-bottle pair` then
+pairs it like a new machine, to a new account or the same console, under the
+same iroh key; the next accepted connection clears the refusal. Bottles,
+agents and the local audit journal on the host aren't affected.
+
 The console can list local agents, launch a **local agent by name** (with an
 optional prompt, bottle names and label), stop one, and view or type into
 sessions. Agent and bottle definitions always come from this host, never from

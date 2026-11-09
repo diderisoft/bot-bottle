@@ -209,6 +209,27 @@ def _check_host_controller() -> None:
         _ok("host controller", f"running at {state.url} (build {state.build_id})")
 
 
+def _repair_command() -> str:
+    """`bot-bottle pair` again, for a host the console refused, or "" when
+    it wasn't refused."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...control.hostctl import link_refusal, pairing
+    if not link_refusal.unpaired():
+        return ""
+    with contextlib.suppress(pairing.RemoteError):
+        url = str(pairing.load_console().get("url", "")).rstrip("/")
+        if url:
+            return f"`{PROG} pair --console-url {url}`"
+    return f"`{PROG} pair`"
+
+
+def _check_console_link() -> None:
+    """Advisory: the console no longer knows this host (account deleted)."""
+    if _repair_command():
+        _warn("console link", "the console refused this host: it doesn't know it anymore "
+                              "(its account was deleted, or the host was removed)")
+
+
 def _check_config_dir() -> None:
     config = bot_bottle_root()
     stale = root_owned_state()
@@ -277,7 +298,7 @@ def _has_agents() -> bool:
         if agents.is_dir() else False
 
 
-def next_step(found: BackendFindings) -> str:
+def next_step(found: BackendFindings) -> str:  # pylint: disable=too-many-return-statements
     """The one thing to do next on this host, most pressing first."""
     state = runner.running()
     if state is not None and runner.restart_needed(state):
@@ -289,6 +310,8 @@ def next_step(found: BackendFindings) -> str:
     if not found.selected and not found.any_ready:
         return ("set up a backend: Docker, or Apple Container (macOS) / Firecracker "
                 f"(Linux), then `{PROG} install`")
+    if repair := _repair_command():
+        return f"{repair} (the console no longer knows this host)"
     if not _has_agents():
         return f"`{PROG} setup`"
     if state is None:
@@ -329,6 +352,7 @@ def cmd_doctor(argv: list[str]) -> int:
     _check_config_dir()
     _check_orchestrator()
     _check_host_controller()
+    _check_console_link()
     _check_providers()
     print(f"next: {next_step(found)}")
     return 0 if all(required) else 1
