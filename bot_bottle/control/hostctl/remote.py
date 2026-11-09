@@ -70,6 +70,7 @@ from ...lib import log
 from ...util import same_instant
 from .audit_index import query_host_journal
 from .audit_link import AuditLink, audit_events
+from .block_link import BlockLink
 from .canary_link import CanaryLink
 from .console_terminal import HISTORY_LINES, session_terminals, type_into, valid_size
 from .pairing import (RemoteConfig, RemoteError, import_iroh, load_config, secret_key,
@@ -702,6 +703,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
     link = ConsoleLink(bottles, send, agents, state=state,
                        terminals=session_terminals(conn, sessions) if sessions else None)
     await link.resume()
+    blocks = BlockLink(send, lambda: link.running)
 
     async def watch() -> None:
         while True:
@@ -710,6 +712,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
             await link.discover()
             await link.push_attention()
             await link.canaries.push()
+            await blocks.push()
             await link.push_transcripts()
             await link.push_working()
             await link.audit_link.push()

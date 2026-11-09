@@ -59,6 +59,20 @@ def _blocked_host(event: AuditEvent) -> str:
     return event.resource or "?"
 
 
+def blocked(event: AuditEvent, producer: str) -> tuple[str, str, str] | None:
+    """A gateway block's (session, host, reason code), or None for any other
+    event."""
+    if producer not in GATEWAY_PRODUCERS or event.outcome != "blocked":
+        return None
+    payload = event.payload or {}
+    if REASON_CODE_KEY not in payload and producer == "supervise":
+        return None  # a supervise decision; the gateway reports the block itself
+    session = event.bottle or ""
+    if not session:
+        return None
+    return session, _blocked_host(event), reason_code(payload.get(REASON_CODE_KEY))
+
+
 def render(state: _Session, now: float) -> dict[str, str]:
     """The option values for one session at `now`."""
     letters = list(REASONS)
@@ -95,15 +109,9 @@ class BlockNotifier:
 
     def on_event(self, event: AuditEvent, producer: str) -> None:
         """An audit event the host controller heard (`HostAudit.listen`)."""
-        if producer not in GATEWAY_PRODUCERS or event.outcome != "blocked":
-            return
-        payload = event.payload or {}
-        if REASON_CODE_KEY not in payload and producer == "supervise":
-            return  # a supervise decision; the gateway reports the block itself
-        session = event.bottle or ""
-        if session not in self._held():
-            return
-        self.block(session, _blocked_host(event), reason_code(payload.get(REASON_CODE_KEY)))
+        found = blocked(event, producer)
+        if found is not None and found[0] in self._held():
+            self.block(*found)
 
     def block(self, session: str, host: str, code: str) -> None:
         now = self._clock()
@@ -147,4 +155,4 @@ class BlockNotifier:
             self.tick()
 
 
-__all__ = ["BlockNotifier", "render"]
+__all__ = ["BlockNotifier", "blocked", "render"]

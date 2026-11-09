@@ -105,6 +105,15 @@ Each agent runs in tmux on bot-bottle's own tmux server, never the user's
 
   The bar fits each client (`#{client_width}`): the notice's reason and the
   detach hint need 150 columns, and under 100 the request summary is cut.
+- `block_link.py` sends the same blocks to the console, for the shield on the
+  agent's page. They're alerts, not requests: nothing waits on them. Every
+  couple of seconds the link sends `blocked` per running agent, host and
+  reason, merged with a `count`, at most 20 at a time: `agent_id`, `host`,
+  `reason` (the code above), `at`, and, for a secret or a rejected push,
+  `detail`, the gateway's own words (they name the detector, never the
+  value). Never a path or a body, which can hold the secret. A connection
+  that opens sends the last five minutes' blocks. The audit journal keeps
+  the record.
 - A launch's warnings (an isolation gap, a stale image) stay on the session
   as `@bb_warning` and show in amber before the detach key, shortened to the
   first warning's first clause and a count of the rest: up to 70 columns,

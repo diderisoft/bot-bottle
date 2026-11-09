@@ -32,6 +32,7 @@ from .jobs import JobRegistry
 from .listeners import GuestListeners
 from .live import LiveBottles
 from .remote import Supervisor
+from .block_link import FEED as BLOCK_FEED
 from .blocks import BlockNotifier
 from .requests import RequestNotifier, orchestrator_pending
 from .server import HostControlServer
@@ -130,6 +131,8 @@ def main() -> int:
     # What each bottle blocked, from the audit events this daemon writes.
     blocks = BlockNotifier(bottles.held_ids)
     audit.listen(blocks.on_event)
+    # And on the console's agent pages, for the shield (block_link.py).
+    audit.listen(BLOCK_FEED.on_event)
     blocks.start()
     local = localsock.serve(control_socket_path(), sessions)
     if tmux_version() is not None:
