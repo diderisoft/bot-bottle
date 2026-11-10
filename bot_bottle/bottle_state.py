@@ -1,6 +1,7 @@
-"""Per-bottle state under `~/.bot-bottle/state/<identity>/`: launch metadata
-for `resume`, an optional per-bottle Dockerfile override, per-service scratch
-dirs, and the preserve marker.
+"""Per-bottle state: launch metadata for `resume` in the host DB's
+`bottled_agents` (ADR 0020), and under `~/.bot-bottle/state/<identity>/` an
+optional per-bottle Dockerfile override, per-service scratch dirs and the
+preserve marker.
 
 Each `start` mints a fresh identity (`bottle_identity`); `resume <identity>`
 relaunches from its recorded metadata.
@@ -11,12 +12,17 @@ from __future__ import annotations
 import dataclasses
 import json
 import socket
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from . import host_access
+from .contract.hostctl import BOTTLED_AGENTS_PATH, BOTTLED_AGENTS_REMOVE_PATH
 from .environment import active_name, is_live
+from .lib.db_store import MACHINE_SPECIFIC, DbStore
+from .lib.migrations import TableMigrations
 from .paths import bot_bottle_root
 
 
@@ -30,7 +36,6 @@ _EGRESS_SUBDIR = "egress"
 _GIT_GATE_SUBDIR = "git-gate"
 _SUPERVISE_SUBDIR = "supervise"
 _AGENT_SUBDIR = "agent"
-_METADATA_NAME = "metadata.json"
 # Empty marker: preserve the state dir at session end for `resume`.
 _PRESERVE_MARKER = ".preserve"
 
@@ -52,84 +57,209 @@ def globalize_slug(slug: str) -> str:
 
 @dataclass(frozen=True)
 class BottleMetadata:
-    """How a bottle was launched; read by `resume`."""
+    """How a bottle was launched; read by `resume`. A row of the host DB's
+    `bottled_agents`, the one place its label is kept."""
 
     identity: str
     agent_name: str
-    cwd: str  # empty when the workspace wasn't copied or mounted
+    cwd: str  # empty when the workspace wasn't copied
     copy_cwd: bool
     started_at: str  # ISO 8601 UTC
-    # Derivable from identity; stored so tooling needn't import compose. Empty
-    # in older state dirs.
+    # Derivable from identity; stored so tooling needn't import compose.
     compose_project: str = ""
-    # Empty in older state dirs; callers default to "docker".
     backend: str = ""
     label: str = ""
     color: str = ""
-    # Empty in older state dirs; resume falls back to the agent's `bottle:`.
+    # Empty when the launch picked none: resume uses the default bottle.
     bottle_names: tuple[str, ...] = ()
     # Who started it ("console" or "terminal") and, for the console, its id
     # for the agent, so a resume from anywhere comes back as the same agent.
-    # Written by the host controller once the agent runs; empty in older
-    # state dirs.
+    # Recorded by the host controller once the agent runs.
     origin: str = ""
     agent_id: str = ""
     # The parent bottle's identity when this bottle was launched by another
     # bottle via `launch-bottle` (PRD 0106); empty otherwise.
     parent: str = ""
 
+    def to_json(self) -> dict[str, object]:
+        return {**dataclasses.asdict(self), "bottle_names": list(self.bottle_names)}
 
-def metadata_path(identity: str) -> Path:
-    return bottle_state_dir(identity) / _METADATA_NAME
+    @classmethod
+    def from_json(cls, raw: object) -> "BottleMetadata":
+        """ValueError unless `raw` is `to_json()`'s shape."""
+        if not isinstance(raw, dict):
+            raise ValueError("a bottled agent is an object")
+        body = cast(dict[str, object], raw)
+        names = body.get("bottle_names", [])
+        if not isinstance(names, list):
+            raise ValueError("bottle_names is a list")
+        fields = {f.name for f in dataclasses.fields(cls)} - {"bottle_names", "copy_cwd"}
+        values = {name: body.get(name, "") for name in fields}
+        if not all(isinstance(v, str) for v in values.values()) or not values["identity"]:
+            raise ValueError("a bottled agent's fields are text, and it has an identity")
+        return cls(**cast(dict[str, str], values), copy_cwd=body.get("copy_cwd") is True,
+                   bottle_names=tuple(str(n) for n in names))
 
 
-def write_metadata(metadata: BottleMetadata) -> Path:
-    """Write `metadata.json` (0o644; holds no secrets)."""
-    path = metadata_path(metadata.identity)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(dataclasses.asdict(metadata), indent=2) + "\n")
-    path.chmod(0o644)
-    return path
+# What may change on a recorded bottled agent (`update_metadata`).
+CHANGEABLE = frozenset({"label", "origin", "agent_id", "parent"})
+# The per-bottled-agent tables its removal clears with it, beside its own.
+_ROWS_OF_A_BOTTLED_AGENT = (("sessions", "id"), ("snapshots", "session"))
+
+
+class BottledAgentStore(DbStore):
+    """`bottled_agents`: each bottled agent's launch metadata and, once it
+    runs, how a restarted host controller finishes it (`adoption`). The host
+    controller writes it; the CLI asks it (`BOTTLED_AGENTS_PATH`)."""
+
+    TABLES = {"bottled_agents": MACHINE_SPECIFIC}
+    _COLUMNS = ("identity", "agent_name", "cwd", "copy_cwd", "started_at", "compose_project",
+                "backend", "label", "color", "bottle_names", "origin", "agent_id", "parent")
+
+    def __init__(self, db_path: Path) -> None:
+        super().__init__(db_path, TableMigrations("bottled_agents", [
+            """
+            CREATE TABLE bottled_agents (
+                identity TEXT PRIMARY KEY,
+                agent_name TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                copy_cwd INTEGER NOT NULL,
+                started_at TEXT NOT NULL,
+                compose_project TEXT NOT NULL,
+                backend TEXT NOT NULL,
+                label TEXT NOT NULL,
+                color TEXT NOT NULL,
+                bottle_names TEXT NOT NULL,
+                origin TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                parent TEXT NOT NULL,
+                adoption TEXT
+            )
+            """,
+        ]))
+        self.migrate()
+
+    @staticmethod
+    def _row(row: sqlite3.Row) -> BottleMetadata:
+        return BottleMetadata(**{k: row[k] for k in BottledAgentStore._COLUMNS
+                                 if k not in ("copy_cwd", "bottle_names")},
+                              copy_cwd=bool(row["copy_cwd"]),
+                              bottle_names=tuple(json.loads(row["bottle_names"])))
+
+    def get(self, identity: str) -> BottleMetadata | None:
+        with self._connection() as conn:
+            row = conn.execute("SELECT * FROM bottled_agents WHERE identity = ?",
+                               (identity,)).fetchone()
+        return self._row(row) if row is not None else None
+
+    def all(self) -> list[BottleMetadata]:
+        with self._connection() as conn:
+            rows = conn.execute("SELECT * FROM bottled_agents ORDER BY started_at").fetchall()
+        return [self._row(r) for r in rows]
+
+    def put(self, metadata: BottleMetadata) -> None:
+        """Record a launch; a resume's replaces the last one's metadata."""
+        values = {**dataclasses.asdict(metadata), "copy_cwd": int(metadata.copy_cwd),
+                  "bottle_names": json.dumps(list(metadata.bottle_names))}
+        columns = ", ".join(self._COLUMNS)
+        updates = ", ".join(f"{c} = excluded.{c}" for c in self._COLUMNS[1:])
+        with self._connection() as conn:
+            conn.execute(
+                f"INSERT INTO bottled_agents ({columns}) VALUES "
+                f"({', '.join('?' * len(self._COLUMNS))}) "
+                f"ON CONFLICT(identity) DO UPDATE SET {updates}",
+                tuple(values[c] for c in self._COLUMNS))
+        self._chmod()
+
+    def update(self, identity: str, changes: dict[str, str]) -> BottleMetadata | None:
+        """Change `changes`' fields (`CHANGEABLE`) of `identity`; it as it
+        now is, or None when there's no such bottled agent."""
+        unknown = set(changes) - CHANGEABLE
+        if unknown:
+            raise ValueError(f"can't change {', '.join(sorted(unknown))}")
+        if changes:
+            with self._connection() as conn:
+                conn.execute(
+                    f"UPDATE bottled_agents SET {', '.join(f'{k} = ?' for k in changes)} "
+                    "WHERE identity = ?", (*changes.values(), identity))
+            self._chmod()
+        return self.get(identity)
+
+    def adoption(self, identity: str) -> str:
+        with self._connection() as conn:
+            row = conn.execute("SELECT adoption FROM bottled_agents WHERE identity = ?",
+                               (identity,)).fetchone()
+        return str(row["adoption"] or "") if row is not None else ""
+
+    def set_adoption(self, identity: str, adoption: str) -> bool:
+        """Record how to finish `identity`; False when it isn't recorded."""
+        with self._connection() as conn:
+            changed = conn.execute("UPDATE bottled_agents SET adoption = ? WHERE identity = ?",
+                                   (adoption, identity)).rowcount
+        self._chmod()
+        return changed > 0
+
+    def remove(self, identity: str) -> bool:
+        """Delete `identity`'s rows here and in its other tables, at once.
+        Whether it was recorded."""
+        with self._connection() as conn:
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'")}
+            for table, key in _ROWS_OF_A_BOTTLED_AGENT:
+                if table in tables:
+                    conn.execute(f"DELETE FROM {table} WHERE {key} = ?", (identity,))
+            removed = conn.execute("DELETE FROM bottled_agents WHERE identity = ?",
+                                   (identity,)).rowcount
+        self._chmod()
+        return removed > 0
+
+
+def store() -> BottledAgentStore:
+    """The host DB's bottled agents. Only in the host controller."""
+    from .paths import host_db_path  # pylint: disable=import-outside-toplevel
+    return BottledAgentStore(host_db_path())
+
+
+def _one(reply: dict[str, object]) -> BottleMetadata | None:
+    found = reply.get("bottled_agent")
+    return BottleMetadata.from_json(found) if found is not None else None
+
+
+def write_metadata(metadata: BottleMetadata) -> None:
+    """Record a launch of `metadata.identity`."""
+    if host_access.in_host_controller():
+        store().put(metadata)
+    else:
+        host_access.ask(BOTTLED_AGENTS_PATH, {"metadata": metadata.to_json()})
 
 
 def read_metadata(identity: str) -> BottleMetadata | None:
     """The recorded metadata for `identity`, or None."""
-    path = metadata_path(identity)
-    if not path.is_file():
-        return None
-    raw = json.loads(path.read_text())
-    if not isinstance(raw, dict):
-        return None
-    raw_typed = cast(dict[str, object], raw)
-    raw_bottle_names = raw_typed.get("bottle_names", [])
-    bottle_names: tuple[str, ...] = ()
-    if isinstance(raw_bottle_names, list):
-        bottle_names = tuple(str(n) for n in raw_bottle_names if isinstance(n, str))
-    return BottleMetadata(
-        identity=str(raw_typed.get("identity", identity)),
-        agent_name=str(raw_typed.get("agent_name", "")),
-        cwd=str(raw_typed.get("cwd", "")),
-        # A bottle started before the mount was removed resumes with a copy.
-        copy_cwd=bool(raw_typed.get("copy_cwd", False) or raw_typed.get("mount_cwd", False)),
-        started_at=str(raw_typed.get("started_at", "")),
-        compose_project=str(raw_typed.get("compose_project", "")),
-        backend=str(raw_typed.get("backend", "")),
-        label=str(raw_typed.get("label", "")),
-        color=str(raw_typed.get("color", "")),
-        bottle_names=bottle_names,
-        origin=str(raw_typed.get("origin", "")),
-        agent_id=str(raw_typed.get("agent_id", "")),
-        parent=str(raw_typed.get("parent", "")),
-    )
+    if host_access.in_host_controller():
+        return store().get(identity)
+    return next((m for m in all_metadata() if m.identity == identity), None)
+
+
+def all_metadata() -> list[BottleMetadata]:
+    """Every bottled agent this host records, oldest launch first."""
+    if host_access.in_host_controller():
+        return store().all()
+    found = host_access.ask(BOTTLED_AGENTS_PATH).get("bottled_agents")
+    return [BottleMetadata.from_json(m) for m in (found if isinstance(found, list) else [])]
+
+
+def update_metadata(identity: str, **changes: str) -> BottleMetadata | None:
+    """Change `changes` (`CHANGEABLE`) on `identity`'s record; it as it now
+    is, or None when nothing records it."""
+    if host_access.in_host_controller():
+        return store().update(identity, changes)
+    return _one(host_access.ask(BOTTLED_AGENTS_PATH,
+                                {"identity": identity, "changes": dict(changes)}))
 
 
 def record_origin(identity: str, origin: str, agent_id: str = "") -> None:
-    """Note who started `identity` (`BottleMetadata.origin`, `agent_id`).
-    No-op without metadata."""
-    current = read_metadata(identity)
-    if current is None or (current.origin, current.agent_id) == (origin, agent_id):
-        return
-    write_metadata(dataclasses.replace(current, origin=origin, agent_id=agent_id))
+    """Note who started `identity` (`BottleMetadata.origin`, `agent_id`)."""
+    update_metadata(identity, origin=origin, agent_id=agent_id)
 
 
 # A bottled agent's label: what people call it. Its identity never changes
@@ -152,28 +282,19 @@ def clean_label(label: object) -> str:
 
 
 def rename_label(identity: str, label: str) -> bool:
-    """Give `identity` the label `label` (already clean). False without
-    metadata: nothing records it."""
-    current = read_metadata(identity)
-    if current is None:
-        return False
-    if current.label != label:
-        write_metadata(dataclasses.replace(current, label=label))
-    return True
+    """Give `identity` the label `label` (already clean). False when nothing
+    records it."""
+    return update_metadata(identity, label=label) is not None
 
 
 def record_parent(identity: str, parent: str) -> None:
-    """Note that `identity` was launched by `parent` via `launch-bottle`.
-    No-op without metadata."""
-    current = read_metadata(identity)
-    if current is None or current.parent == parent:
-        return
-    write_metadata(dataclasses.replace(current, parent=parent))
+    """Note that `identity` was launched by `parent` via `launch-bottle`."""
+    update_metadata(identity, parent=parent)
 
 
 def console_agent_id(identity: str) -> str:
     """The console's id for the agent `identity` last ran as, when the console
-    started it; empty otherwise (a terminal bottle, or older state)."""
+    started it; empty otherwise."""
     current = read_metadata(identity)
     if current is None or current.origin != "console":
         return ""
@@ -234,7 +355,7 @@ def read_committed_image(identity: str) -> str | None:
     return tag or None
 
 
-# Per-service scratch subdirs, removed with the state dir by `cleanup_state`.
+# Per-service scratch subdirs, removed with the state dir by `remove_bottled_agent`.
 
 
 def egress_state_dir(identity: str) -> Path:
@@ -283,12 +404,24 @@ def clear_preserve_marker(identity: str) -> None:
         pass
 
 
-def cleanup_state(identity: str) -> None:
-    """Remove the bottle's state dir. Idempotent."""
-    import shutil
-    state_dir = bottle_state_dir(identity)
-    if state_dir.is_dir():
-        shutil.rmtree(state_dir, ignore_errors=True)
+def remove_bottled_agent(identity: str) -> bool:
+    """Delete the bottled agent: its state dir and its host DB rows, in one
+    call to the host controller (`delete_bottled_agent`). Whether anything
+    recorded it. Idempotent."""
+    if host_access.in_host_controller():
+        return delete_bottled_agent(identity)
+    return host_access.ask(BOTTLED_AGENTS_REMOVE_PATH, {"identity": identity}).get(
+        "removed") is True
+
+
+def delete_bottled_agent(identity: str) -> bool:
+    """`remove_bottled_agent`, in the host controller: the state dir, its
+    snapshots' patches, and its rows (`BottledAgentStore.remove`)."""
+    import shutil  # pylint: disable=import-outside-toplevel
+    from .control.hostctl.snapshots import snapshots_root  # pylint: disable=import-outside-toplevel
+    shutil.rmtree(bottle_state_dir(identity), ignore_errors=True)
+    shutil.rmtree(snapshots_root() / identity, ignore_errors=True)
+    return store().remove(identity)
 
 
 def capture_session_state(identity: str, exit_code: int) -> None:
@@ -307,12 +440,20 @@ def settle_state(identity: str) -> None:
     if is_preserved(identity):
         info(f"to resume this bottled agent: bot-bottle resume {identity}")
         return
-    cleanup_state(identity)
+    remove_bottled_agent(identity)
 
 
 __all__ = [
     "BottleMetadata",
+    "BottledAgentStore",
+    "CHANGEABLE",
     "MAX_LABEL_CHARS",
+    "all_metadata",
+    "record_origin",
+    "delete_bottled_agent",
+    "remove_bottled_agent",
+    "store",
+    "update_metadata",
     "clean_label",
     "rename_label",
     "record_parent",
@@ -322,7 +463,6 @@ __all__ = [
     "bottle_identity",
     "globalize_slug",
     "bottle_state_dir",
-    "cleanup_state",
     "clear_preserve_marker",
     "committed_image_path",
     "committed_rootfs_path",
@@ -330,7 +470,6 @@ __all__ = [
     "git_gate_state_dir",
     "is_preserved",
     "mark_preserved",
-    "metadata_path",
     "per_bottle_dockerfile",
     "per_bottle_dockerfile_path",
     "preserve_marker_path",

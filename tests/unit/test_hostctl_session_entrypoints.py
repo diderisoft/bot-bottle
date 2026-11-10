@@ -56,6 +56,8 @@ class TestLauncher(_LocalSocket):
     def test_a_spec_is_handed_out_once(self) -> None:
         self.pending("e2", ["true"])
         self.assertEqual(0, launch.main([str(self.sock), "e2"]))
+        # Its exit is recorded (the record deleted) before the root goes.
+        self.manager.wait_exit("e2", timeout=5)
         with mock.patch("sys.stderr", io.StringIO()) as err:
             self.assertEqual(127, launch.main([str(self.sock), "e2"]))
         self.assertIn("no pending command", err.getvalue())
@@ -98,14 +100,15 @@ class TestAttachCommand(unittest.TestCase):
             with mock.patch.object(attach_cmd.shutil, "which", return_value=None):
                 self.assertEqual(1, attach_cmd.cmd_attach(["s1"]))
             with mock.patch.object(attach_cmd.shutil, "which", return_value="/usr/bin/tmux"), \
-                 mock.patch.object(attach_cmd.SessionManager, "exists", return_value=False):
+                 mock.patch.object(attach_cmd, "held_bottles", return_value={}):
                 self.assertEqual(1, attach_cmd.cmd_attach(["s1"]))
         self.assertIn("tmux is not installed", err.getvalue())
         self.assertIn("no running session matching 's1'", err.getvalue())
 
     def test_execs_a_writable_tmux_attach(self) -> None:
         with mock.patch.object(attach_cmd.shutil, "which", return_value="/usr/bin/tmux"), \
-             mock.patch.object(attach_cmd.SessionManager, "exists", return_value=True), \
+             mock.patch.object(attach_cmd, "held_bottles",
+                               return_value={"s1": {"session": {"running": True}}}), \
              mock.patch.dict(attach_cmd.os.environ, {"TMUX": "/tmp/user-tmux,1,0"}), \
              mock.patch.object(attach_cmd.os, "execve") as execve:
             attach_cmd.cmd_attach(["s1"])

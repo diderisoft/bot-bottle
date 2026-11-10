@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest import mock
 
+from bot_bottle import bottle_state
 from bot_bottle.backend import adoption
 from bot_bottle.backend.docker import launch as docker_launch
 from bot_bottle.backend.firecracker import cleanup as fc_cleanup
@@ -47,21 +48,32 @@ class _Root(unittest.TestCase):
         self.err = self.enterContext(contextlib.redirect_stderr(io.StringIO()))
 
 
-class TestRecord(_Root):
-    def test_round_trips_and_holds_no_secrets(self) -> None:
-        adoption.write("b1", _RECORD)
-        self.assertEqual(_RECORD, adoption.read("b1"))
-        raw = (self.root / "state" / "b1" / "adoption.json")
-        if not raw.exists():  # wherever bottle_state_dir puts it
-            raw = next(self.root.rglob("adoption.json"))
-        self.assertEqual(0o600, raw.stat().st_mode & 0o777)
-        self.assertNotIn("token", json.loads(raw.read_text())["deploy_keys"][0].get("value", ""))
+def _bottled(identity: str) -> None:
+    bottle_state.write_metadata(bottle_state.BottleMetadata(
+        identity=identity, agent_name="demo", cwd="", copy_cwd=False, started_at="t"))
 
-    def test_missing_or_garbled_is_none(self) -> None:
+
+class TestRecord(_Root):
+    def test_round_trips_with_its_bottled_agent_and_holds_no_secrets(self) -> None:
+        _bottled("b1")
+        self.assertTrue(adoption.write("b1", _RECORD))
+        self.assertEqual(_RECORD, adoption.read("b1"))
+        stored = json.loads(bottle_state.store().adoption("b1"))
+        self.assertNotIn("token", stored["deploy_keys"][0].get("value", ""))
+        self.assertFalse(bottle_state.bottle_state_dir("b1").exists())
+
+    def test_missing_or_without_a_bottled_agent_is_none(self) -> None:
         self.assertIsNone(adoption.read("nope"))
-        adoption.write("b2", _RECORD)
-        next(self.root.rglob("adoption.json")).write_text("{not json")
+        self.assertFalse(adoption.write("nope", _RECORD))
+        self.assertIsNone(adoption.read("nope"))
+        _bottled("b2")
         self.assertIsNone(adoption.read("b2"))
+
+    def test_it_goes_with_its_bottled_agent(self) -> None:
+        _bottled("b3")
+        adoption.write("b3", _RECORD)
+        bottle_state.remove_bottled_agent("b3")
+        self.assertIsNone(adoption.read("b3"))
 
     def test_record_for_takes_the_plans_workspace_and_gitea_repos(self) -> None:
         entry = SimpleNamespace(Name="app", UpstreamHost="git.example", UpstreamPath="o/app.git",
@@ -105,6 +117,7 @@ class TestFinishAdopted(_Root):
         self.service._finish(self.record, sessions.ExitStatus(0))  # pyright: ignore[reportPrivateUsage]
 
     def test_saves_work_tears_down_and_revokes_keys(self) -> None:
+        _bottled("b1")
         adoption.write("b1", _RECORD)
         with mock.patch("bot_bottle.control.hostctl.bottles._save_work") as save, \
              mock.patch("bot_bottle.git_gate.provision.revoke_deploy_keys") as revoke:
@@ -121,6 +134,7 @@ class TestFinishAdopted(_Root):
         self.assertIn("run `bot-bottle cleanup bots`", self.err.getvalue())
 
     def test_a_failed_teardown_still_revokes_the_keys(self) -> None:
+        _bottled("b1")
         adoption.write("b1", _RECORD)
         self.backend.adopted_bottle.side_effect = RuntimeError("container gone")
         with mock.patch("bot_bottle.git_gate.provision.revoke_deploy_keys") as revoke:
@@ -129,6 +143,7 @@ class TestFinishAdopted(_Root):
         self.assertIn("teardown failed", self.err.getvalue())
 
     def test_a_key_that_cant_be_revoked_is_reported(self) -> None:
+        _bottled("b1")
         adoption.write("b1", _RECORD)
         with mock.patch("bot_bottle.control.hostctl.bottles._save_work"), \
              mock.patch("bot_bottle.git_gate.provision.revoke_deploy_keys",
@@ -140,6 +155,7 @@ class TestFinishAdopted(_Root):
         release = mock.Mock()
         self.service._adopted["b1"] = release  # pyright: ignore[reportPrivateUsage]
         self.backend.adopted_bottle.side_effect = RuntimeError("boom")
+        _bottled("b1")
         adoption.write("b1", _RECORD)
         with mock.patch("bot_bottle.git_gate.provision.revoke_deploy_keys"), \
              mock.patch("bot_bottle.control.hostctl.bottles.settle_state") as settle:

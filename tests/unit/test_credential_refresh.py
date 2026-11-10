@@ -21,7 +21,7 @@ from bot_bottle.control.hostctl import credential_refresh
 from bot_bottle.control.hostctl.credential_refresh import CredentialRefresher
 from bot_bottle.egress import CLAUDE_HOST_CREDENTIAL_TOKEN_REF, CODEX_HOST_CREDENTIAL_TOKEN_REF
 from bot_bottle.errors import HostLoginError
-from tests.unit import use_bottle_root
+from tests.unit import bottled_agent, use_bottle_root
 from tests.unit.test_codex_auth import _jwt
 
 NOW = datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)
@@ -255,9 +255,11 @@ class TestAdoptionRecord(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             restore = use_bottle_root(Path(tmp))
             try:
+                bottled_agent("b1")
                 adoption.write("b1", AdoptionRecord(container="c", registry_id="r1",
                                                     credentials=CREDS))
                 self.assertEqual(CREDS, adoption.read("b1").credentials)  # type: ignore[union-attr]
+                bottled_agent("b2")
                 adoption.write("b2", AdoptionRecord(container="c", registry_id="r2"))
                 self.assertIsNone(adoption.read("b2").credentials)  # type: ignore[union-attr]
             finally:

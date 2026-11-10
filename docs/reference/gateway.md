@@ -423,8 +423,8 @@ hosts, repos, env names.
 The card is answered from the console only. The terminal can deny it.
 
 On approval the host launches the child with a trimmed run-bottle that holds
-only within-parent elements. It writes the parent's identity into the child's
-session record, as the `parent` field in `metadata.json`.
+only within-parent elements. It records the parent's identity as the child's
+`parent`, in its `bottled_agents` row.
 
 ### `create-repo`
 

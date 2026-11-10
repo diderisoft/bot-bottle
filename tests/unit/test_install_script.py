@@ -367,6 +367,49 @@ class TestInstallRef(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertIn("bootstrap' again", proc.stderr)
 
+    def _bottled_agent(self, root: Path, identity: str, label: str = "") -> Path:
+        state = root / "state" / identity
+        state.mkdir(parents=True)
+        (state / "metadata.json").write_text(
+            '{\n  "identity": "%s",\n  "label": "%s",\n  "color": ""\n}\n' % (identity, label))
+        return state
+
+    def test_an_older_versions_bottled_agents_stop_the_upgrade_before_anything(self) -> None:
+        """Bottled agents are host DB rows now and nothing reads the old
+        files: one running or kept for resume can't cross the upgrade. The
+        refusal lists each, in every environment, with what to do."""
+        self._page(1, _tags("v0.2.0"))
+        home = self.root / "home"
+        live = self._bottled_agent(home / ".bot-bottle", "a1b2", "fix the flaky test")
+        named = self._bottled_agent(home / ".bot-bottle-envs" / "dev", "c3d4")
+        (home / ".bot-bottle" / "state" / "scratch-only").mkdir()
+        proc = self._run()
+        self.assertEqual(1, proc.returncode)
+        self.assertFalse((self.root / "uv.log").exists())
+        self.assertIn("can't carry bottled agents across it", proc.stderr)
+        self.assertIn("a1b2  (fix the flaky test)", proc.stderr)
+        self.assertIn(str(live), proc.stderr)
+        self.assertIn(str(named), proc.stderr)
+        self.assertNotIn("scratch-only", proc.stderr)
+        self.assertIn("bot-bottle cleanup bots", proc.stderr)
+        self.assertIn("bot-bottle resume <id>", proc.stderr)
+        self.assertIn("BOT_BOTTLE_ENV=<name>", proc.stderr)
+
+    def test_bot_bottle_root_is_checked_too(self) -> None:
+        self._page(1, _tags("v0.2.0"))
+        elsewhere = self.root / "elsewhere"
+        self._bottled_agent(elsewhere, "e5f6")
+        proc = self._run(BOT_BOTTLE_ROOT=str(elsewhere))
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("e5f6", proc.stderr)
+
+    def test_with_none_left_it_installs(self) -> None:
+        self._page(1, _tags("v0.2.0"))
+        (self.root / "home" / ".bot-bottle" / "state" / "scratch-only").mkdir(parents=True)
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertNotIn("bottled agents", proc.stderr)
+
     def test_unknown_arguments_are_refused(self) -> None:
         proc = self._run("--mian")
         self.assertNotEqual(0, proc.returncode)

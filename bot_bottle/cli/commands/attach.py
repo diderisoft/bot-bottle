@@ -8,25 +8,27 @@ import os
 import shutil
 import sys
 
-from ...bottle_state import read_metadata
-from ...control.hostctl.sessions import SessionManager
 from ..constants import PROG
 from ..launch_client import tmux_attach
+from .active import held_bottles
 
 
-def _resolve_session(name: str, mgr: SessionManager) -> str | None:
-    """Resolve *name* to a running session id.
+def _resolve_session(name: str, held: dict[str, dict[str, object]]) -> str | None:
+    """Resolve *name* to a running session id among the host controller's
+    bottles (`held`).
 
-    Accepts a UUID (or prefix), an old-style slug, or a human label.  UUID
-    prefix matching is unambiguous when only one session starts with the
-    prefix; label matching finds the session whose metadata label equals
-    *name* (case-insensitive).  Returns None when nothing matches, and
-    prints an error when multiple sessions are ambiguous."""
+    Accepts a UUID (or prefix) or a human label.  UUID prefix matching is
+    unambiguous when only one session starts with the prefix; label matching
+    finds the session whose bottled agent's label equals *name*
+    (case-insensitive).  Returns None when nothing matches, and prints an
+    error when multiple sessions are ambiguous."""
+    running = {sid: str(b.get("label") or "") for sid, b in held.items()
+               if isinstance(b.get("session"), dict)
+               and b["session"].get("running")}  # type: ignore[union-attr]
     # Exact match — fastest, also handles UUIDs typed in full.
-    if mgr.exists(name):
+    if name in running:
         return name
-    records = mgr.records()
-    running_ids = {r.id for r in records if mgr.exists(r.id)}
+    running_ids = set(running)
     # UUID prefix match (Docker-style: `attach abc123`).
     prefix_hits = [sid for sid in running_ids if sid.startswith(name)]
     if len(prefix_hits) == 1:
@@ -35,12 +37,9 @@ def _resolve_session(name: str, mgr: SessionManager) -> str | None:
         sys.stderr.write(f"{PROG}: ambiguous prefix {name!r} matches: "
                          + ", ".join(sorted(prefix_hits)) + "\n")
         return None
-    # Label match: read metadata for each running session.
+    # Label match.
     name_lower = name.lower()
-    label_hits = [
-        sid for sid in running_ids
-        if (m := read_metadata(sid)) is not None and (m.label or "").lower() == name_lower
-    ]
+    label_hits = [sid for sid, label in running.items() if label.lower() == name_lower]
     if len(label_hits) == 1:
         return label_hits[0]
     if len(label_hits) > 1:
@@ -60,8 +59,7 @@ def cmd_attach(argv: list[str]) -> int:
     if shutil.which("tmux") is None:
         sys.stderr.write(f"{PROG}: tmux is not installed\n")
         return 1
-    mgr = SessionManager({})
-    session = _resolve_session(name, mgr)
+    session = _resolve_session(name, held_bottles())
     if session is None:
         sys.stderr.write(f"{PROG}: no running session matching {name!r}\n")
         return 1

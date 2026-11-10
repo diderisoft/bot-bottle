@@ -35,4 +35,11 @@ def client() -> "HostControlClient":
     return HostControlClient(runner.ensure_running(), runner.cli_token())
 
 
-__all__ = ["client", "in_host_controller", "use_stores"]
+def ask(path: str, body: dict[str, object] | None = None) -> dict[str, object]:
+    """The host controller's answer on `path`: GET without a `body`, else
+    POST it. Raises `HostControlError` when it refuses or can't be reached."""
+    reached = client()
+    return reached.get(path) if body is None else reached.post(path, body)
+
+
+__all__ = ["ask", "client", "in_host_controller", "use_stores"]

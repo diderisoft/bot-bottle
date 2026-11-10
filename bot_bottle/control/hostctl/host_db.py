@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ...bottle_state import BottledAgentStore
 from ...forge_connections import ForgeStore
 from ...lib import log
 from ...lib.config_store import ConfigStore
@@ -32,6 +33,7 @@ from .audit_index import AuditIndex
 from .audit_trust import PasskeyStore
 from .pairing import PairingStore
 from .runner import REFUSED_EXIT_STATUS
+from .sessions import SessionStore
 
 BACKUPS_DIRNAME = "backups"
 KEEP_BACKUPS = 3
@@ -50,7 +52,8 @@ def stores(db_path: Path | None = None) -> list[DbStore]:
     """Every store with tables in the host DB. Most migrate as they open."""
     path = db_path or host_db_path()
     return [ConfigStore(path), ForwardCursors(path), AuditIndex(host_audit_dir(), path),
-            ForgeStore(path), TrustStore(path), PairingStore(path), PasskeyStore(path)]
+            ForgeStore(path), TrustStore(path), PairingStore(path), PasskeyStore(path),
+            BottledAgentStore(path), SessionStore(path)]
 
 
 def migrate(db_path: Path | None = None) -> None:

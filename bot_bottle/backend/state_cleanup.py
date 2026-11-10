@@ -1,8 +1,9 @@
-"""Cleanup of per-bottle state dirs, for every backend.
+"""Cleanup of left-over bottled agents' state, for every backend.
 
-A dir is an orphan when its bottle isn't live in any backend and it isn't
-preserved. Only dirs whose recorded backend was listed successfully are
-candidates, so a down runtime's state is left alone.
+A bottled agent is an orphan when its bottle isn't live in any backend and it
+isn't preserved. Only those whose recorded backend was listed successfully
+are candidates, so a down runtime's state is left alone. Removing one deletes
+its state dir and its host DB rows together (`remove_bottled_agent`).
 """
 
 from __future__ import annotations
@@ -11,19 +12,15 @@ import sys
 from collections.abc import Collection
 from dataclasses import dataclass
 
-from ..bottle_state import bottle_state_dir, is_preserved, read_metadata
+from ..bottle_state import all_metadata, is_preserved, remove_bottled_agent
 from ..contract.hostctl import Settings
 from ..lib.log import info
-from ..paths import bot_bottle_root
 from .cleanup_control import CleanupFailures
-
-# A state dir with no recorded backend is docker's.
-_DEFAULT_BACKEND = "docker"
 
 
 @dataclass(frozen=True)
 class StateCleanupPlan:
-    """Orphan state dirs to remove, by identity."""
+    """Orphan bottled agents to remove, by identity."""
 
     identities: tuple[str, ...]
 
@@ -41,41 +38,27 @@ class StateCleanupPlan:
         print(file=sys.stderr)
 
 
-def state_backend(identity: str) -> str:
-    """The backend a state dir belongs to."""
-    metadata = read_metadata(identity)
-    return (metadata.backend if metadata is not None else "") or _DEFAULT_BACKEND
-
-
-def orphan_state_dirs(live: Collection[str], listed: Collection[str]) -> list[str]:
-    """State dirs whose bottle isn't `live`, that aren't preserved, and whose
-    backend is in `listed`."""
-    state_root = bot_bottle_root() / "state"
-    if not state_root.is_dir():
-        return []
-    orphans: list[str] = []
-    for child in sorted(state_root.iterdir()):
-        identity = child.name
-        if not child.is_dir() or identity in live or is_preserved(identity):
-            continue
-        if state_backend(identity) not in listed:
-            continue
-        orphans.append(identity)
-    return orphans
+def orphans(live: Collection[str], listed: Collection[str]) -> list[str]:
+    """Recorded bottled agents whose bottle isn't `live`, that aren't
+    preserved, and whose backend is in `listed`."""
+    return sorted(m.identity for m in all_metadata()
+                  if m.identity not in live and not is_preserved(m.identity)
+                  and m.backend in listed)
 
 
 def prepare_state_cleanup(live: Collection[str], listed: Collection[str]) -> StateCleanupPlan:
-    return StateCleanupPlan(tuple(orphan_state_dirs(live, listed)))
+    return StateCleanupPlan(tuple(orphans(live, listed)))
 
 
 def cleanup_state(plan: StateCleanupPlan, settings: Settings) -> None:
     failures = CleanupFailures(timeout=settings.operation.cleanup_command_timeout_seconds)
     for identity in plan.identities:
-        path = bottle_state_dir(identity)
-        info(f"removing orphan state dir {path}")
-        failures.remove_tree(path, f"removing orphan state dir {path}")
+        info(f"removing orphan bottled agent {identity}")
+        try:
+            remove_bottled_agent(identity)
+        except Exception as exc:  # pylint: disable=broad-exception-caught  # report the rest too
+            failures.record(f"removing orphan bottled agent {identity}: {exc}")
     failures.raise_if_any()
 
 
-__all__ = ["StateCleanupPlan", "cleanup_state", "orphan_state_dirs", "prepare_state_cleanup",
-           "state_backend"]
+__all__ = ["StateCleanupPlan", "cleanup_state", "orphans", "prepare_state_cleanup"]

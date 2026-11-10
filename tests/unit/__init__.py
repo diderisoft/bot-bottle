@@ -94,6 +94,16 @@ def serve_host_controller(test: unittest.TestCase) -> None:
     test.enterContext(mock.patch.object(runner, "ensure_running", return_value=state))
 
 
+def bottled_agent(identity: str, **fields: object) -> None:
+    """Record a bottled agent `identity` (its `bottled_agents` row), as a
+    backend's prepare does, so what's kept with it (an adoption record) has
+    a row to go in."""
+    # pylint: disable-next=import-outside-toplevel
+    from bot_bottle.bottle_state import BottleMetadata, write_metadata
+    write_metadata(BottleMetadata(**{"identity": identity, "agent_name": "demo", "cwd": "",
+                                     "copy_cwd": False, "started_at": "t", **fields}))
+
+
 # The unit suite never sees the repo's committed `published-artifacts.json`:
 # with it present, launch paths resolve real pins and pull from the registry.
 # Tests that want a manifest pass a `repo_root` or patch the loader. Assigned,

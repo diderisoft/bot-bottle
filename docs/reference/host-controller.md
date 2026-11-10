@@ -106,8 +106,9 @@ Secrets never reach tmux's argv or environment.
   the control socket (`localsock.py`).
 - tmux's `pane-died` hook runs `notify.py` to report the exit. The session's
   finisher then runs, and tmux detaches every viewer.
-- Session records are written to disk, so a restarted daemon can take the
-  sessions back.
+- Session records are rows of the host database's `sessions`, so a
+  restarted daemon can take the sessions back. A record holds no label: the
+  bottled agent's row keeps it.
 
 ### After a daemon restart
 
@@ -119,9 +120,9 @@ It then re-takes what running bottles hold in its process
 (`BottleBackend.hold_adopted`). On Firecracker, that is the TAP slot lock of
 each agent VM. Each VM's VMM runs in its own session for this reason.
 
-A re-adopted session has no holder thread. So at launch the holder leaves an
-`adoption.json` in the bottle's state dir (`backend/adoption.py`). It holds
-no secrets:
+A re-adopted session has no holder thread. So at launch the holder records how
+to finish the bottle in its `bottled_agents` row (`backend/adoption.py`). It
+holds no secrets:
 
 - the container name
 - the registry id
@@ -495,19 +496,23 @@ asks over HTTP, with the `cli` role only:
 | `POST /pairing` | `{"changes": {...}, "new": bool}` | Sets the fields given. A new pairing clears the rest. Token values go to the secrets file. Answers like `GET`. |
 | `GET /audit/passkeys` | none | The trusted passkeys: `origin`, `rp_id`, `passkeys`. |
 | `POST /audit/passkeys` | the same shape | Trusts exactly those, keeping a passkey's counter where the same key was trusted. Answers like `GET`. |
+| `GET /bottled-agents` | none | `{"bottled_agents": [...]}`: every bottled agent this host records. |
+| `POST /bottled-agents` | `{"metadata": {...}}`, or `{"identity", "changes": {...}}` | Records a launch, or changes a bottled agent's `label`, `origin`, `agent_id` or `parent`. A label is checked as a rename checks it. Answers `{"bottled_agent": ...}`, null when nothing records it. |
+| `POST /bottled-agents/remove` | `{"identity"}` | Deletes its state dir, snapshots and rows together. Answers `{"removed": bool}`. |
 
 A journal that doesn't chain, or a segment that won't import, is 409.
 
 These commands use the routes: `audit query`, `export`, `rebuild`,
 `import`, `delivery`, `transcript-retention`, `forward` and `firehose`,
 `host budget`, `forge connect`, `list`, `show` and `remove`, `trust`,
-`pair`, `audit passkeys`, and `start --dry-run`. Each starts the host
+`pair`, `audit passkeys`, `start --dry-run`, `bots`, `resume`, `rename`,
+`commit` and `cleanup bots`. Each starts the host
 controller if it isn't running. `status`, home and `doctor` read the pairing
 only from a running one. `audit verify` reads only the journal's files.
 
-Code the CLI shares with the host controller reads forge connections and
-trust records the same way (`host_access.py`). In the host controller it uses
-the tables directly.
+Code the CLI shares with the host controller reads forge connections, trust
+records and bottled agents the same way (`host_access.py`). In the host
+controller it uses the tables directly.
 
 ### Checks and backups
 
@@ -727,9 +732,9 @@ After that, the session is one of the link's agents like any other:
 When the terminal and the phone both answer a request, the first answer
 stands (see [gateway.md](gateway.md#supervise)).
 
-A bottle remembers who started it. Its `metadata.json` records `origin`.
+A bottle remembers who started it. Its `bottled_agents` row records `origin`.
 For the console, it also records the console's `agent_id`, written once the
-agent runs and kept when a resume rewrites the file.
+agent runs and kept when a resume rewrites the row.
 
 So `bot-bottle resume <bottle>` on the CLI brings a console bottle back as
 **the same console agent**:
@@ -1120,9 +1125,9 @@ The reply `renamed` carries the cleaned `label`, or `error`.
 - A running agent's bottle is the one the link runs it in.
 - A stopped one's is the `bottle` the console names.
 - A label is trimmed, 1 to 128 characters, with no control characters.
-- The host writes it to the bottle's `metadata.json` and its session
-  record. So `bot-bottle bots`, the console's listings and a later resume
-  all use it.
+- The host writes it to the bottled agent's row, the one place it's kept.
+  So `bot-bottle bots`, the console's listings, its session and a later
+  resume all use it.
 
 `bot-bottle rename <bottled agent> <label>` does the same from the CLI. A
 console paired with the host keeps its own name until it's renamed there.

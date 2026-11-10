@@ -51,7 +51,7 @@ class TestWalk(unittest.TestCase):
         _write(self.state / "transcripts" / "a.jsonl", 4096)
         _write(self.state / "audit" / "x" / "j.log", 4096)
         _write(self.state / "state" / "demo" / "home.ext4", 8192)
-        _write(self.state / "state" / "demo" / "metadata.json", 4096)
+        _write(self.state / "state" / "demo" / "Dockerfile", 4096)
         _write(self.state / "build-root" / "abc" / "Dockerfile", 4096)
         _write(self.cache / "run" / "demo" / "rootfs.ext4", 8192)
         _write(self.cache / "envs" / "dev" / "run" / "d" / "rootfs.ext4", 4096)
@@ -209,12 +209,12 @@ class TestAllocation(unittest.TestCase):
     """Running = held, adopted, launching, or with a running session."""
 
     def test_counts_every_running_kind_once(self) -> None:
-        def record(i: str, label: str = "") -> Any:
-            return SimpleNamespace(id=i, kind=SESSION_KIND, meta={"label": label})
+        def record(i: str) -> Any:
+            return SimpleNamespace(id=i, kind=SESSION_KIND, meta={})
 
         manager = mock.Mock()
         manager.records.return_value = [
-            record("held", "Held"), record("adopted"), record("live"), record("ended"),
+            record("held"), record("adopted"), record("live"), record("ended"),
             SimpleNamespace(id="shell", kind="other", meta={})]
         def exit_status(bottle_id: str) -> object:
             return None if bottle_id == "live" else mock.Mock()
@@ -226,7 +226,10 @@ class TestAllocation(unittest.TestCase):
         service._adopted["adopted"] = lambda: None
         service._launching.update({"new": ("New one", BOTTLE_MEMORY_BYTES),
                                    "held": ("Held", BOTTLE_MEMORY_BYTES)})
-        got = service.allocation()
+        # The label is the bottled agent's, kept only in its row.
+        labelled = [SimpleNamespace(identity="held", label="Held")]
+        with mock.patch("bot_bottle.bottle_state.all_metadata", return_value=labelled):
+            got = service.allocation()
         self.assertEqual(["held", "adopted", "live", "new"], [b["id"] for b in got])
         self.assertEqual(["Held", "adopted", "live", "New one"], [b["label"] for b in got])
         self.assertEqual({BOTTLE_MEMORY_BYTES}, {b["memory"] for b in got})

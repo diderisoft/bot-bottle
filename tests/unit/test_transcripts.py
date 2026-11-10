@@ -24,7 +24,7 @@ from bot_bottle.control.hostctl import transcripts
 from bot_bottle.control.hostctl.audit_events import HostAudit
 from bot_bottle.control.hostctl.audit_ocsf import to_ocsf
 from bot_bottle.control.hostctl.transcripts import TranscriptFollower
-from . import use_bottle_root
+from . import bottled_agent, use_bottle_root
 
 _FIXTURE = Path(__file__).parent / "data" / "transcripts" / "pi-branched.jsonl"
 
@@ -465,6 +465,7 @@ class TestBottleService(_Root):
         self.assertEqual({}, self.followers())
         self.follow(self.pi_plan)
         self.followers().pop("s1").detach()
+        bottled_agent("s1")
         adoption.write("s1", adoption.AdoptionRecord(container="c", registry_id=""))
         self.backend.attach_adopted.return_value = self.bottle
         self.service._refollow(self.backend, record)  # pyright: ignore[reportPrivateUsage]
@@ -485,6 +486,7 @@ class TestBottleService(_Root):
         self.assertIsNone(TranscriptFollower.resume(session="s1", activation="a1",
                                                     audit=self.audit))
         from bot_bottle.backend import adoption
+        bottled_agent("s1")
         adoption.write("s1", adoption.AdoptionRecord(container="c", registry_id=""))
         self.backend.attach_adopted.side_effect = RuntimeError("boom")
         self.service._refollow(self.backend, record)  # pyright: ignore[reportPrivateUsage]

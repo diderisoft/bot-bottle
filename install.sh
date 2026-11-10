@@ -146,6 +146,35 @@ if [ "${1:-}" = "--main" ]; then
 fi
 [ "$#" -eq 0 ] || die "unknown argument '$1' (expected --main or --uninstall [--purge])"
 
+# --- no bottled agents across the upgrade -----------------------------------------
+
+# Bottled agents are kept in the host database now, and nothing reads the
+# files older versions kept them in (`state/<id>/metadata.json`). One running
+# or kept for resume couldn't be resumed or cleaned up after the upgrade, so
+# while any such file is left (the installed version's, in any environment)
+# this refuses, before anything is replaced.
+bottled_agents_left() {
+    for root in "${BOT_BOTTLE_ROOT:-}" "${HOME}/.bot-bottle" "${HOME}"/.bot-bottle-envs/*; do
+        [ -n "${root}" ] || continue
+        for meta in "${root}"/state/*/metadata.json; do
+            [ -f "${meta}" ] || continue
+            dir="${meta%/metadata.json}"
+            label="$(sed -n 's/^ *"label": *"\(.*\)",\{0,1\}$/\1/p' "${meta}" | head -n 1)"
+            printf '    %s%s\n        %s\n' "${dir##*/}" "${label:+  (${label})}" "${dir}"
+        done
+    done
+}
+left="$(bottled_agents_left | awk '!seen[$0]++')"
+if [ -n "${left}" ]; then
+    say "error: this upgrade can't carry bottled agents across it, and these are still here:"
+    printf '%s\n' "${left}" >&2
+    say "stop each running one (exit its agent, or 'bot-bottle cleanup bots' stops them all),"
+    say "and finish each kept for resume ('bot-bottle resume <id>', then exit it), or delete"
+    say "its directory to discard it; in a named environment (~/.bot-bottle-envs/<name>),"
+    say "run those with BOT_BOTTLE_ENV=<name>. Then run this installer again."
+    exit 1
+fi
+
 # Print URL $1's body.
 fetch_url() {
     if command -v curl >/dev/null 2>&1; then

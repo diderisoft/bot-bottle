@@ -59,6 +59,24 @@ end if a step fails.
 With `BOT_BOTTLE_ENV` set, it says which environment it sets up. It ends with
 doctor's `next:` line, the one thing to do next on this host.
 
+### Upgrading with bottled agents
+
+The installer refuses to upgrade while the installed version left any bottled
+agent behind, running or kept for resume, in any environment. It checks first,
+before anything is replaced.
+
+Bottled agents now live in the host database, and nothing reads the files older
+versions kept them in (`state/<id>/metadata.json`). One carried across the
+upgrade couldn't be resumed or cleaned up. The refusal lists each one:
+
+| Bottled agent | What to do |
+|---|---|
+| running | exit its agent, or run `bot-bottle cleanup bots` to stop them all |
+| kept for resume | `bot-bottle resume <id>` and exit it, or delete its directory to discard it |
+
+In a named environment, run those with `BOT_BOTTLE_ENV=<name>`. Then run the
+installer again. Installing with `uv` or `pipx` yourself skips the check.
+
 ### Without the installer
 
 Python-native users can skip it and pin the latest tag:

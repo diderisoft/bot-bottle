@@ -22,7 +22,7 @@ from bot_bottle.control.hostctl.sessions import SessionRecord
 from bot_bottle.control.hostctl.workspace_files import (
     WorkspaceFileError, content_type, read_image, read_script,
     write_file, write_script, _safe_upload_path)
-from . import use_bottle_root
+from . import bottled_agent, use_bottle_root
 
 _PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
 _SVG = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
@@ -167,6 +167,7 @@ class TestService(unittest.TestCase):
         self.backend = mock.MagicMock()
         self.service = BottleService(self.sessions, backend_for=lambda _s: self.backend,
                                      recorded_infra=lambda _b: None, audit=mock.MagicMock())
+        bottled_agent("s1")
         adoption.write("s1", adoption.AdoptionRecord(
             container="c", registry_id="", workspace=adoption.AdoptedWorkspace(
                 enabled=True, has_host_git_dir=True, guest_path="/home/node/workspace")))
@@ -285,6 +286,7 @@ class TestWriteService(unittest.TestCase):
         self.backend = mock.MagicMock()
         self.service = BottleService(self.sessions, backend_for=lambda _s: self.backend,
                                      recorded_infra=lambda _b: None, audit=mock.MagicMock())
+        bottled_agent("s1")
         adoption.write("s1", adoption.AdoptionRecord(
             container="c", registry_id="", workspace=adoption.AdoptedWorkspace(
                 enabled=True, has_host_git_dir=True, guest_path="/home/node/workspace")))

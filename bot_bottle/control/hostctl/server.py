@@ -17,6 +17,7 @@ from ...contract.audit import AuditEvent
 from ...contract.firehose import FIREHOSE_PATH, FIREHOSE_STREAM_PATH
 from ...contract.hostctl import (
     AUDIT_APPEND_PATH, AUDIT_IMPORT_PATH, AUDIT_PASSKEYS_PATH, AUDIT_PRODUCERS, AUDIT_QUERY_PATH,
+    BOTTLED_AGENTS_PATH, BOTTLED_AGENTS_REMOVE_PATH,
     AUDIT_REBUILD_PATH, AUTH_HEADER, AUTH_SCHEME, BOTTLES_PATH, FORGES_PATH, FORGES_REMOVE_PATH,
     HOST_CONFIG_PATH, HOST_CONTROL, JOBS_PATH, PAIRING_PATH, TRUST_PATH,
     LIVE_BOTTLES_PATH, ORCHESTRATOR_PATH, ROLE_ORCHESTRATOR, SESSIONS_PATH, STATUS_PATH,
@@ -47,11 +48,13 @@ _HOST_STATE: dict[str, _HostRoute] = {
     FORGES_PATH: host_state.forge_connect, FORGES_REMOVE_PATH: host_state.forge_remove,
     TRUST_PATH: host_state.trust, PAIRING_PATH: host_state.set_pairing,
     AUDIT_PASSKEYS_PATH: host_state.trust_passkeys,
+    BOTTLED_AGENTS_PATH: host_state.record_bottled_agent,
+    BOTTLED_AGENTS_REMOVE_PATH: host_state.remove_bottled_agent,
 }
 _HOST_STATE_READS: dict[str, _HostRoute] = {
     HOST_CONFIG_PATH: lambda _body: host_state.config(), FORGES_PATH: host_state.forges,
     TRUST_PATH: host_state.trusted, PAIRING_PATH: host_state.get_pairing,
-    AUDIT_PASSKEYS_PATH: host_state.passkeys,
+    AUDIT_PASSKEYS_PATH: host_state.passkeys, BOTTLED_AGENTS_PATH: host_state.bottled_agents,
 }
 
 

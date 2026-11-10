@@ -2,9 +2,10 @@
 
 A bottle's holder thread tears it down when its agent exits. After a host
 controller restart the agent keeps running but the holder is gone, so at launch
-the controller writes this record to the bottle's state dir. The next
-controller reads it to save the agent's work, tear the bottle down and revoke
-its deploy keys. It holds names and ids only, never secrets.
+the controller records this beside the bottled agent (`bottled_agents`, in the
+host DB). The next controller reads it to save the agent's work, tear the
+bottle down and revoke its deploy keys. It holds names and ids only, never
+secrets. Only the host controller reads or writes it.
 """
 
 from __future__ import annotations
@@ -14,16 +15,12 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from ..bottle_state import bottle_state_dir
+from .. import bottle_state
 from ..git_gate.provision import DeployKeyRef, deploy_key_refs
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from .base import Bottle
     from .plan import BottlePlan
-
-_FILE = "adoption.json"
 
 
 @dataclass(frozen=True)
@@ -91,30 +88,24 @@ def credentials_for(plan: "BottlePlan") -> AdoptedCredentials | None:
     return AdoptedCredentials(spec.harness, spec.token_refs, spec.guest_dir, slots)
 
 
-def _path(identity: str) -> "Path":
-    return bottle_state_dir(identity) / _FILE
-
-
-def write(identity: str, record: AdoptionRecord) -> None:
-    path = _path(identity)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(dataclasses.asdict(record), indent=2) + "\n")
-    path.chmod(0o600)
+def write(identity: str, record: AdoptionRecord) -> bool:
+    """Keep `record` with `identity`'s; False when nothing records it."""
+    return bottle_state.store().set_adoption(identity, json.dumps(dataclasses.asdict(record)))
 
 
 def read(identity: str) -> AdoptionRecord | None:
-    """The record for `identity`, or None if it's missing or unreadable."""
+    """The record for `identity`, or None if there's none."""
     try:
-        raw: Any = json.loads(_path(identity).read_text())
+        raw: Any = json.loads(bottle_state.store().adoption(identity))
         return AdoptionRecord(
             container=str(raw["container"]),
             registry_id=str(raw["registry_id"]),
-            workspace=AdoptedWorkspace(**raw.get("workspace", {})),
-            deploy_keys=tuple(DeployKeyRef(**k) for k in raw.get("deploy_keys", [])),
-            credentials=_credentials(raw.get("credentials")),
-            preserve_container=raw.get("preserve_container") is True,
+            workspace=AdoptedWorkspace(**raw["workspace"]),
+            deploy_keys=tuple(DeployKeyRef(**k) for k in raw["deploy_keys"]),
+            credentials=_credentials(raw["credentials"]),
+            preserve_container=raw["preserve_container"] is True,
         )
-    except (OSError, ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError):
         return None
 
 
@@ -123,8 +114,8 @@ def _credentials(raw: Any) -> AdoptedCredentials | None:
         return None
     return AdoptedCredentials(
         harness=str(raw["harness"]), token_refs=tuple(raw["token_refs"]),
-        guest_dir=str(raw.get("guest_dir", "")),
-        slots={str(k): tuple(v) for k, v in raw.get("slots", {}).items()})
+        guest_dir=str(raw["guest_dir"]),
+        slots={str(k): tuple(v) for k, v in raw["slots"].items()})
 
 
 __all__ = ["AdoptedCredentials", "AdoptedWorkspace", "AdoptionRecord", "credentials_for",

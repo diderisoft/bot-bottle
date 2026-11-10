@@ -1299,13 +1299,14 @@ class TestOverRealIroh(_RootCase):
         import subprocess
 
         from bot_bottle.control.hostctl import sessions as sessions_mod
+        from bot_bottle.paths import host_db_path
 
         sessions_mod.write_config()
         subprocess.run(sessions_mod.tmux("new-session", "-d", "-s", "bottle-1", "-x", "80",
                                          "-y", "24", "cat"), check=True)
         self.addCleanup(subprocess.run, sessions_mod.tmux("kill-server"), capture_output=True)
         manager = sessions_mod.SessionManager({})
-        manager._write_record(sessions_mod.SessionRecord(  # pylint: disable=protected-access
+        sessions_mod.SessionStore(host_db_path()).put(sessions_mod.SessionRecord(
             id="bottle-1", kind="bottle", writable_allowed=True))
 
         class _SessionBottles(_Bottles):

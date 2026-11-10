@@ -2,7 +2,8 @@
 
 A bottled agent is an agent definition running in its bottles under one
 identity: it runs, stops and resumes (ADR 0009). Running ones come from the
-backends and the host controller, stopped ones from their kept state.
+backends and the host controller, stopped ones from the host controller's
+record of them.
 
     bot-bottle bottled-agents [--running | --stopped]
 """
@@ -11,12 +12,12 @@ from __future__ import annotations
 
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
 
 from ...backend import enumerate_active_agents
 from ...backend.selection import get_bottle_backend
-from ...bottle_state import BottleMetadata, bottle_state_dir, is_preserved, read_metadata
-from ...paths import bot_bottle_root
+from ...bottle_state import (
+    BottleMetadata, all_metadata, bottle_state_dir, is_preserved,
+)
 from ..constants import PROG
 from ..settings import settings_from_env
 from ..table import print_table
@@ -42,34 +43,23 @@ _HEADER = ("BOTTLED AGENT", "AGENT", "LABEL", "BOTTLES", "STATE", "TERMINAL", "L
            "BACKEND", "CONTAINER")
 
 
-def _last_used(path: Path) -> float:
-    """When the state dir last changed: its own mtime or its newest entry's."""
-    times = [path.stat().st_mtime]
-    for child in path.iterdir():
+def _last_used(metadata: BottleMetadata) -> float:
+    """When it was last used: its state dir's or newest entry's mtime, else
+    when it started."""
+    path = bottle_state_dir(metadata.identity)
+    try:
+        return max([path.stat().st_mtime, *(c.stat().st_mtime for c in path.iterdir())])
+    except OSError:
         try:
-            times.append(child.stat().st_mtime)
-        except OSError:
-            continue
-    return max(times)
+            return datetime.fromisoformat(metadata.started_at).timestamp()
+        except ValueError:
+            return 0.0
 
 
 def stopped_bottles(live: set[str]) -> list[tuple[BottleMetadata, float]]:
-    """Resumable bottles not in `live`, with when each was last used, newest
-    first."""
-    state_root = bot_bottle_root() / "state"
-    if not state_root.is_dir():
-        return []
-    found: list[tuple[BottleMetadata, float]] = []
-    for child in state_root.iterdir():
-        if not child.is_dir() or child.name in live:
-            continue
-        metadata = read_metadata(child.name)
-        if metadata is None:
-            continue
-        try:
-            found.append((metadata, _last_used(bottle_state_dir(child.name))))
-        except OSError:
-            continue
+    """Recorded bottled agents not in `live`, with when each was last used,
+    newest first."""
+    found = [(m, _last_used(m)) for m in all_metadata() if m.identity not in live]
     return sorted(found, key=lambda m: m[1], reverse=True)
 
 
@@ -96,8 +86,9 @@ def _running() -> tuple[list[tuple[str, ...]], list[str]]:
     held = held_bottles()
     rows: list[tuple[str, ...]] = []
     colors: list[str] = []
+    recorded = {m.identity: m for m in all_metadata()}
     for b in enumerate_active_agents(settings_from_env()):
-        metadata = read_metadata(b.slug)
+        metadata = recorded.get(b.slug)
         bottles = ",".join(metadata.bottle_names) if metadata else ""
         rows.append((b.slug, b.agent_name, _label(b.label, b.slug), bottles, "running",
                      _terminal(held.pop(b.slug, None)), "", b.backend_name, ""))

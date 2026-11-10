@@ -22,6 +22,7 @@ from bot_bottle.control.hostctl.server import HostControlServer
 from bot_bottle.lib import websocket as ws
 from bot_bottle.manifest.agent import ManifestAgent
 from bot_bottle.manifest.util import ManifestError
+from bot_bottle.paths import host_db_path
 
 from . import use_bottle_root
 
@@ -129,8 +130,7 @@ class TestSessions(_TmuxTest):
         time.sleep(2)
         subprocess.run(sessions.tmux("new-session", "-d", "-s", "stranger", "sleep 30"),
                        capture_output=True, check=False)
-        (sessions.control_socket_path().parent / "sessions" / "stale.json").write_text(
-            json.dumps({"id": "stale", "kind": "test"}))
+        sessions.SessionStore(host_db_path()).put(sessions.SessionRecord("stale", "test"))
         manager = self._manager()
         with _quiet():
             manager.adopt()

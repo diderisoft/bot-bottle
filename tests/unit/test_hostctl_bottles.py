@@ -22,6 +22,7 @@ from typing import Any, cast
 from unittest import mock
 
 from bot_bottle import bottle_state
+from bot_bottle.backend.resolve_common import write_launch_metadata
 from bot_bottle.lib import log
 from bot_bottle.contract.auth import ROLE_CLI, ROLE_GATEWAY
 from bot_bottle.contract.hostctl import (
@@ -144,6 +145,8 @@ class FakeBackend:
         self.secrets.append(secrets)
         slug = spec.identity or spec.label or "demo-xyz12"
         bottle_state.write_per_bottle_dockerfile(slug, "FROM x\n")
+        # As every backend's prepare does (`write_launch_metadata`).
+        write_launch_metadata(slug, spec, compose_project="", backend=self.name)
         return SimpleNamespace(
             slug=slug, harness="claude",
             agent_provision=SimpleNamespace(startup_args=("--start",)),

@@ -1,10 +1,11 @@
 """The host DB's routes for the CLI (`HOST_CONFIG_PATH`, the audit index's,
 `FORGES_PATH`, `FORGES_REMOVE_PATH`, `TRUST_PATH`, `PAIRING_PATH`,
-`AUDIT_PASSKEYS_PATH`). The host controller is the host DB's only
-writer, so the CLI reads and changes host state here, never by opening the
-file (ADR 0020). These use the stores, never the routed functions shared code
-calls (`forge_connections.connections()`, `trust.load_trusted()`), which would
-ask here again.
+`AUDIT_PASSKEYS_PATH`, `BOTTLED_AGENTS_PATH`, `BOTTLED_AGENTS_REMOVE_PATH`).
+The host controller is the host DB's only writer, so the CLI reads and
+changes host state here, never by opening the file (ADR 0020). These use the
+stores, never the routed functions shared code calls
+(`forge_connections.connections()`, `trust.load_trusted()`,
+`bottle_state.read_metadata()`), which would ask here again.
 
 Each function takes the request body and returns the reply. ValueError means
 a bad request; `IndexBreak` and `AuditImportError`, a journal that can't be
@@ -16,7 +17,7 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 
-from ... import forge_connections
+from ... import bottle_state, forge_connections
 from ...forge_connections import ForgeConnection, ForgeConnectionError, ForgeStore
 from ...errors import SecretsFileError
 from ...lib.config_store import ConfigStore
@@ -168,6 +169,41 @@ def trust_passkeys(body: dict[str, object]) -> dict[str, object]:
     return audit_trust.PasskeyStore(host_db_path()).replace(wanted).to_json()
 
 
+def bottled_agents(body: dict[str, object]) -> dict[str, object]:
+    """Every bottled agent this host records."""
+    del body
+    return {"bottled_agents": [m.to_json() for m in bottle_state.store().all()]}
+
+
+def record_bottled_agent(body: dict[str, object]) -> dict[str, object]:
+    """Record a launch (`body["metadata"]`), or change `body["changes"]` of
+    `body["identity"]`. A label is checked as a rename checks it."""
+    store = bottle_state.store()
+    if "metadata" in body:
+        metadata = bottle_state.BottleMetadata.from_json(body["metadata"])
+        store.put(metadata)
+        found = store.get(metadata.identity)
+    else:
+        identity, changes = body.get("identity"), body.get("changes")
+        if not isinstance(identity, str) or not isinstance(changes, dict) or not all(
+                isinstance(v, str) for v in changes.values()):
+            raise ValueError('expected {"metadata": {...}} or {"identity", "changes": {...}}')
+        changes = {str(k): str(v) for k, v in changes.items()}
+        if "label" in changes:
+            changes["label"] = bottle_state.clean_label(changes["label"])
+        found = store.update(identity, changes)
+    return {"bottled_agent": found.to_json() if found is not None else None}
+
+
+def remove_bottled_agent(body: dict[str, object]) -> dict[str, object]:
+    """Delete `body["identity"]`'s state directory and rows."""
+    identity = body.get("identity")
+    if not isinstance(identity, str) or not identity or "/" in identity or identity in (".", ".."):
+        raise ValueError("identity must name a bottled agent")
+    return {"removed": bottle_state.delete_bottled_agent(identity)}
+
+
 __all__ = ["audit_import", "audit_query", "audit_rebuild", "config", "forge_connect",
            "forge_remove", "forges", "get_pairing", "passkeys", "set_config", "set_pairing",
-           "trust", "trust_passkeys", "trusted"]
+           "trust", "trust_passkeys", "trusted", "bottled_agents", "record_bottled_agent",
+           "remove_bottled_agent"]
