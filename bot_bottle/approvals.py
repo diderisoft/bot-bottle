@@ -25,6 +25,7 @@ from .contract.yaml_subset import parse_frontmatter, serialize_yaml_subset
 from .gateway.egress.schema import load_config
 from .gateway.egress.types import Route
 from .manifest import ManifestIndex, trust
+from .manifest.egress import route_entries, with_entries
 from .manifest.loader import PROJECT_BOTTLE, bottle_ref, load_bottle_chain
 from .manifest.schema import DEFAULT_BOTTLE
 from .manifest.versions import record_or_warn
@@ -104,24 +105,28 @@ def _comparable(route: Route) -> tuple[object, ...]:
 
 
 def manifest_route(route: Route) -> dict[str, object]:
-    """A gateway route as a bottle-manifest route."""
-    inspect: dict[str, object] = {}
-    matches = []
+    """A gateway route as a bottle-manifest route. A gateway entry's empty
+    methods allow any (`["*"]`); no entries at all is GET/HEAD."""
+    out: dict[str, object] = {"host": route.host}
+    if not route.inspect:
+        out["passthrough"] = True
+        return out
+    entries: list[dict[str, Any]] = []
     for entry in route.matches:
-        m: dict[str, object] = {}
+        m: dict[str, Any] = {}
         if entry.paths:
-            m["paths"] = [{"type": p.type, "value": p.value} for p in entry.paths]
-        if entry.methods:
-            m["methods"] = list(entry.methods)
+            m["paths"] = [p.value if p.type == "prefix" else {p.type: p.value}
+                          for p in entry.paths]
+        m["methods"] = list(entry.methods) or ["*"]
         if entry.headers:
             m["headers"] = [{"name": h.name, "value": h.value, "type": h.type}
                             for h in entry.headers]
-        matches.append(m)
-    if matches:
-        inspect["matches"] = matches
+        entries.append(m)
+    if entries:
+        out = with_entries(out, entries)
     if route.git_fetch:
-        inspect["git"] = {"fetch": True}
-    return {"host": route.host, **({"inspect": inspect} if inspect else {})}
+        out["git"] = {"fetch": True}
+    return out
 
 
 def project_bottle_path(project: Path) -> Path:
@@ -256,21 +261,15 @@ def with_grant(frontmatter: dict[str, object], grant: str, *,
 
 def merge_route(old: dict[str, object], new: dict[str, object]) -> dict[str, object]:
     """A host's route with another route for it merged in: what the old one
-    allowed stays allowed (its settings too), plus the new one's matches. A
+    allowed stays allowed (its settings too), plus what the new one allows. A
     route that already allows any request is left as it is."""
-    old_inspect = old.get("inspect", {})
-    if old_inspect is False or not isinstance(old_inspect, dict):
-        return old
-    old_matches = old_inspect.get("matches")
-    if not old_matches:
+    old_entries = route_entries(old)
+    if old_entries is None:
         return old  # any request already
-    new_inspect = new.get("inspect", {})
-    new_matches = new_inspect.get("matches") if isinstance(new_inspect, dict) else None
-    if not new_matches:  # the new one allows any request
-        return {**old, "inspect": {k: v for k, v in old_inspect.items() if k != "matches"}}
-    merged = list(old_matches) if isinstance(old_matches, list) else []  # type: ignore[arg-type]
-    merged += [m for m in new_matches if m not in merged]  # type: ignore[union-attr]
-    return {**old, "inspect": {**old_inspect, "matches": merged}}
+    new_entries = route_entries(new)
+    if new_entries is None:  # the new one allows any request
+        return with_entries(old, None)
+    return with_entries(old, old_entries + [e for e in new_entries if e not in old_entries])
 
 
 def with_routes(frontmatter: dict[str, object], routes: list[Route]) -> dict[str, object]:

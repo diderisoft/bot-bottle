@@ -5,7 +5,7 @@ from __future__ import annotations
 import typing
 
 from ...contract import blocks
-from .types import Decision, MatchEntry, PathMatch, Route
+from .types import READ_METHODS, Decision, MatchEntry, PathMatch, Route
 
 
 def _path_matches(pm: PathMatch, request_path: str) -> bool:
@@ -104,17 +104,17 @@ def decide(
         return Decision("block", (
             f"egress: request {request_method} {request_path!r} does not match any "
             f"entry in matches for {route.host!r}"), code=blocks.ROUTE)
-    # Inspected routes without gateway-injected auth default to read-only
-    # (GET/HEAD) when no matches are declared. To allow writes, add a matches
-    # entry. inspect: false (passthrough) routes are excluded: the operator
-    # explicitly opted out of gateway interception for those hosts.
-    if route.inspect and not route.injects_auth and not route.preserve_auth and not route.matches:
+    # An inspected route with no match entries is read-only (GET/HEAD), with
+    # or without injected auth: writes are allowed only by listing methods.
+    # Passthrough routes are excluded: the operator opted out of the
+    # gateway's interception for those hosts.
+    if route.inspect and not route.matches:
         method_upper = request_method.upper()
-        if method_upper not in ("GET", "HEAD"):
+        if method_upper not in READ_METHODS:
             return Decision("block", (
-                f"egress: {method_upper} {request_path!r} on {route.host!r}: routes "
-                "without gateway auth default to read-only (GET/HEAD); add a matches "
-                "entry to allow writes explicitly."), code=blocks.ROUTE)
+                f"egress: {method_upper} {request_path!r} on {route.host!r}: a route is "
+                "read-only (GET/HEAD) unless it lists methods; add methods: [...] (or "
+                "[\"*\"] for any) to allow writes."), code=blocks.ROUTE)
     if route.injects_auth:
         token = environ.get(route.token_env, "")
         if not token:
@@ -132,5 +132,5 @@ def decide_git_fetch(routes: typing.Sequence[Route], request_host: str) -> Decis
         return Decision("forward")
     return Decision("block", (
         "egress: git fetch/clone over HTTPS is not allowed by default; use git-gate "
-        "for declared repos or set egress.routes[].git.fetch=true for explicit "
+        "for declared repos or set the route's git: { fetch: true } for explicit "
         "read-only HTTPS Git access."), code=blocks.ROUTE)

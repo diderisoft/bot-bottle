@@ -14,8 +14,8 @@ from unittest.mock import patch
 
 from bot_bottle.contract.yaml_subset import parse_frontmatter
 from bot_bottle.control.hostctl import bottle_chain, remote_actions
-from bot_bottle.manifest import ManifestError, ManifestIndex
-from bot_bottle.manifest.egress import OldAuthFormatError
+from bot_bottle.manifest import ManifestIndex
+from bot_bottle.manifest.egress import OldAuthFormatError, OldRouteFormatError
 from bot_bottle.manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
 from bot_bottle.manifest.migrate import MigrateError, apply, prepare
 from bot_bottle.manifest.versions import history
@@ -23,8 +23,9 @@ from tests.unit.test_manifest_elements import _Chain
 
 
 def _refused(bottle: str) -> str:
-    return (f"{bottle} egress route api.example.com: auth now takes type and value (and name "
-            f"for a header). Run bot-bottle bottles migrate {bottle}.")
+    return (f"{bottle} egress route api.example.com: inspect is gone (auth, git and "
+            f"preserve_auth sit on the route, matches is allow, the detectors are dlp, and "
+            f"inspect: false is passthrough: true). Run bot-bottle bottles migrate {bottle}.")
 
 
 def _bottle(auth: "str | list[str]", *, flow: bool = True) -> str:
@@ -69,16 +70,16 @@ class TestRefused(_Host):
                      _bottle(["header: X-Api-Key", "token_ref: K"], flow=False),
                      _bottle("type: bearer, token_ref: K")):
             self.write(text)
-            with self.subTest(text), self.assertRaises(OldAuthFormatError) as cm:
+            with self.subTest(text), self.assertRaises(OldRouteFormatError) as cm:
                 load_bottle_chain("dev", self.dirs)
             self.assertEqual(_refused("dev"), str(cm.exception))
 
     def test_from_a_json_manifest_too(self) -> None:
-        with self.assertRaisesRegex(ManifestError, "auth now takes type and value"):
+        with self.assertRaises(OldAuthFormatError):
             ManifestIndex.from_json_obj({
                 "bottles": {"dev": {"egress": {"routes": [{
                     "host": "api.example.com",
-                    "inspect": {"auth": {"scheme": "Bearer", "token_ref": "T"}}}]}}},
+                    "auth": {"scheme": "Bearer", "token_ref": "T"}}]}}},
                 "agents": {"demo": {}},
             })
 
@@ -90,7 +91,7 @@ class TestMigrate(_Host):
 
     def auth_after(self, before: str) -> object:
         after = parse_frontmatter(self.migrated(before))[0]
-        return after["egress"]["routes"][0]["inspect"]["auth"]  # type: ignore[index]
+        return after["egress"]["routes"][0]["auth"]  # type: ignore[index]
 
     def test_each_conversion_in_flow_and_block_style(self) -> None:
         for flow, block, new in (
@@ -152,8 +153,8 @@ def _digest(text: str) -> str:
 
 OLD_WORK = ("---\nextends: base\negress:\n  routes:\n    - host: api.example.com\n"
             "      inspect:\n        auth: { scheme: Bearer, token_ref: API_TOKEN }\n---\n")
-NEW_WORK = OLD_WORK.replace("scheme: Bearer, token_ref: API_TOKEN",
-                            "type: bearer, value: secret:API_TOKEN")
+NEW_WORK = ("---\nextends: base\negress:\n  routes:\n    - host: api.example.com\n"
+            "      auth: { type: bearer, value: secret:API_TOKEN }\n---\n")
 
 
 class TestConsoleEdits(_Chain):

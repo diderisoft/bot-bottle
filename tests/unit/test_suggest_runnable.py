@@ -35,10 +35,10 @@ extends: basic
 egress:
   routes:
     - host: gitea.dideric.is
-      inspect:
-        auth:
-          type: bearer
-          value: secret:BOT_BOTTLE_CLAUDE_GITEA_TOKEN
+      methods: ["*"]
+      auth:
+        type: bearer
+        value: secret:BOT_BOTTLE_CLAUDE_GITEA_TOKEN
 ---
 
 Claude, developing bot-bottle.

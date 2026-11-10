@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import secret_ref
+from ..manifest.egress import ANY_METHOD, route_entries
 from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter, serialize_yaml_subset
 from .proposal import Proposal
 from .validate import proposal_to_frontmatter, stack_names
@@ -97,21 +98,17 @@ class _File:
 
 def route_methods(route: dict[str, Any]) -> set[str]:
     """The HTTP methods a manifest egress route lets through ("any" for all;
-    empty when it's blocked). An inspected route with no matches is read-only
-    unless the gateway injects auth on it (manifest.md)."""
+    empty when it's blocked). A route allows GET/HEAD unless it lists
+    methods (`["*"]` is any)."""
     if route.get("blocked") is True:
         return set()
-    inspect = route.get("inspect")
-    if inspect is False:
+    entries = route_entries(route)
+    if entries is None:
         return {"any"}
-    inspect = inspect if isinstance(inspect, dict) else {}
-    matches = [m for m in inspect.get("matches") or [] if isinstance(m, dict)]
-    if not matches:
-        return {"any"} if inspect.get("auth") or inspect.get("preserve_auth") else {"GET"}
     methods: set[str] = set()
-    for match in matches:
-        named = [str(m).upper() for m in match.get("methods") or []]
-        if not named:
+    for entry in entries:
+        named = [str(m).upper() for m in entry.get("methods") or []]
+        if ANY_METHOD in named:
             return {"any"}
         methods.update(named)
     return methods
@@ -148,19 +145,16 @@ def _about(body: str) -> str:
 
 
 def _secret(route: dict[str, Any]) -> str:
-    """Where the route's injected credential comes from: `secrets file NAME`,
-    for `value: secret:NAME` (or a not yet migrated `token_ref: NAME`, which
-    the review still shows)."""
-    inspect = route.get("inspect")
-    auth = inspect.get("auth") if isinstance(inspect, dict) else None
+    """Where the route's injected credential comes from: `secrets file NAME`
+    for `value: secret:NAME`, `secret env VAR` for `secret:${VAR}`."""
+    auth = route.get("auth")
     if not isinstance(auth, dict):
         return ""
     value = auth.get("value")
     if isinstance(value, str) and secret_ref.kind(value) == secret_ref.HOST_ENV:
         return f"secret env {secret_ref.host_var(value)}"
     ref = secret_ref.stored_name(value) if isinstance(value, str) else ""
-    ref = ref or auth.get("token_ref") or ""
-    return f"secrets file {str(ref).lstrip('$')}" if ref else ""
+    return f"secrets file {ref}" if ref else ""
 
 
 def _repo(name: object, value: object) -> _Repo | None:

@@ -38,19 +38,19 @@ from .proposal import (
 
 
 def _egress_routes(additions: ProposalAdditions) -> list[dict[str, Any]]:
-    """Additions' egress entries as bottle frontmatter routes (no inspect:false)."""
+    """Additions' egress entries as bottle frontmatter routes (never
+    passthrough)."""
     routes = []
     cred_by_host = {c.route: c for c in additions.credentials}
     for e in additions.egress:
         route: dict[str, Any] = {"host": e.host}
-        inspect: dict[str, Any] = {}
-        if e.methods:
-            inspect["matches"] = [{"methods": list(e.methods)}]
         cred = cred_by_host.get(e.host)
+        if e.methods:
+            route["methods"] = list(e.methods)
+        elif cred:
+            route["methods"] = ["*"]  # an API with a credential is written to
         if cred:
-            inspect["auth"] = {"type": "bearer", "value": stored(cred.name)}
-        if inspect:
-            route["inspect"] = inspect
+            route["auth"] = {"type": "bearer", "value": stored(cred.name)}
         routes.append(route)
     return routes
 

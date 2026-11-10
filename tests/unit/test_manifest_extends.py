@@ -287,10 +287,10 @@ class TestExtendsEgressMerge(unittest.TestCase):
             base={
                 "egress": {
                     "routes": [{"host": "a.example.com"}],
-                    "log": 1,
+                    "log": "blocked",
                 },
             },
-            child={"extends": "base", "egress": {"log": 2}},
+            child={"extends": "base", "egress": {"log": "full"}},
         )
         child = m.bottles["child"].egress
         self.assertEqual(["a.example.com"], [r.Host for r in child.routes])
@@ -301,7 +301,7 @@ class TestExtendsEgressMerge(unittest.TestCase):
             base={
                 "egress": {
                     "routes": [{"host": "a.example.com"}],
-                    "log": 1,
+                    "log": "blocked",
                 },
             },
             child={
@@ -322,7 +322,7 @@ class TestExtendsEgressMerge(unittest.TestCase):
             base={"egress": {"routes": [{"host": "a.example.com"}]}},
             child={
                 "extends": "base",
-                "egress": {"routes": [{"host": "A.EXAMPLE.COM", "inspect": False}]},
+                "egress": {"routes": [{"host": "A.EXAMPLE.COM", "passthrough": True}]},
             },
         )
         routes = m.bottles["child"].egress.routes

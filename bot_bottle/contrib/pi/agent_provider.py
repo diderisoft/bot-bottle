@@ -26,6 +26,7 @@ from ...agent_provider import (
 )
 from ...contract.identity import IDENTITY_HEADER
 from ...egress import EgressRoute
+from ...gateway.egress.types import ANY_REQUEST
 from ...starter import GENERAL_PROMPT, starter_agent
 from .starter import has_secret, local_starter_settings, read_local_model
 from . import transcript
@@ -288,6 +289,8 @@ class PiAgentProvider(AgentProvider):
             files=(AgentProvisionFile(models_file, _models_path(guest_home)),),
             egress_routes=(EgressRoute(
                 host=_route_host(base_url),
+                # The API is POSTs; without a key the route stays read-only.
+                matches=ANY_REQUEST if auth_scheme and api_key_env else (),
                 auth_scheme=auth_scheme,
                 token_ref=api_key_env,
             ),),

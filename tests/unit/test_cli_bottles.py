@@ -26,7 +26,7 @@ class TestBottles(unittest.TestCase):
         root.mkdir(parents=True)
         (root / "work.md").write_text("---\nextends: basic\nsupervise: true\n---\nWork.\n")
         (root / "broken.md").write_text(
-            "---\negress:\n  routes:\n    - host: x\n      dlp: {}\n---\n")
+            "---\negress:\n  routes:\n    - host: x\n      bogus: {}\n---\n")
         cwd = patch("bot_bottle.cli.commands.bottles.os.getcwd", return_value=str(self.home))
         cwd.start()
         self.addCleanup(cwd.stop)
@@ -42,7 +42,7 @@ class TestBottles(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertEqual(["work", "host", "basic", "-", "-"], rows["work"])
         self.assertEqual("built-in", rows["basic"][1])
-        self.assertIn("unknown key 'dlp'", rows["broken"][4])
+        self.assertIn("unknown key 'bogus'", rows["broken"][4])
 
     def test_history_and_revert_are_its_subcommands(self) -> None:
         with patch("bot_bottle.cli.commands.bottle.cmd_bottle", return_value=0) as old:

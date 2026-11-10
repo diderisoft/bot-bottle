@@ -291,29 +291,37 @@ class TestMergingRoutes(unittest.TestCase):
 
     def test_a_same_host_route_gains_matches_and_keeps_its_own(self) -> None:
         from bot_bottle.approvals import with_routes  # pylint: disable=import-outside-toplevel
-        fm: dict[str, object] = {"egress": {"routes": [{"host": "h", "inspect": {
-            "outbound_on_match": "redact",
-            "matches": [{"methods": ["GET"], "paths": [{"type": "prefix", "value": "/pkg/"}]}]}}]}}
+        fm: dict[str, object] = {"egress": {"routes": [{"host": "h", "dlp": {"on_match": "redact"},
+            "allow": [{"methods": ["GET"], "paths": ["/pkg/"]}]}]}}
         new = self.route('routes:\n  - host: "h"\n    inspect:\n      matches:\n'
                          '        - methods: ["GET"]\n          paths:\n'
                          '            - type: "prefix"\n              value: "/api/"\n')
         out = with_routes(fm, new)
         (route,) = out["egress"]["routes"]  # type: ignore[index]
-        self.assertEqual("redact", route["inspect"]["outbound_on_match"])
-        self.assertEqual(["/pkg/", "/api/"], [m["paths"][0]["value"]
-                                             for m in route["inspect"]["matches"]])
+        self.assertEqual({"on_match": "redact"}, route["dlp"])
+        self.assertEqual([{"methods": ["GET"], "paths": ["/pkg/"]},
+                          {"methods": ["GET"], "paths": ["/api/"]}], route["allow"])
         self.assertEqual(out, with_routes(out, new))  # adding it again changes nothing
 
     def test_any_request_wins(self) -> None:
         from bot_bottle.approvals import with_routes  # pylint: disable=import-outside-toplevel
-        anything: dict[str, object] = {"egress": {"routes": [{"host": "h"}]}}
+        anything: dict[str, object] = {"egress": {"routes": [{"host": "h", "methods": ["*"]}]}}
         narrow = self.route('routes:\n  - host: "h"\n    inspect:\n      matches:\n'
                             '        - methods: ["GET"]\n')
         self.assertEqual(anything, with_routes(anything, narrow))
-        fm: dict[str, object] = {
-            "egress": {"routes": [{"host": "h", "inspect": {"matches": [{"methods": ["GET"]}]}}]}}
-        out = with_routes(fm, self.route('routes:\n  - host: "h"\n'))
-        self.assertNotIn("matches", out["egress"]["routes"][0]["inspect"])  # type: ignore[index]
+        fm: dict[str, object] = {"egress": {"routes": [{"host": "h", "methods": ["GET"]}]}}
+        out = with_routes(fm, self.route('routes:\n  - host: "h"\n    inspect:\n      matches:\n'
+                                         '        - {}\n'))
+        self.assertEqual({"host": "h", "methods": ["*"]}, out["egress"]["routes"][0])  # type: ignore[index]
+
+    def test_a_plain_route_is_read_only_and_a_read_adds_nothing(self) -> None:
+        from bot_bottle.approvals import with_routes  # pylint: disable=import-outside-toplevel
+        plain: dict[str, object] = {"egress": {"routes": [{"host": "h"}]}}
+        self.assertEqual(plain, with_routes(plain, self.route('routes:\n  - host: "h"\n')))
+        out = with_routes(plain, self.route('routes:\n  - host: "h"\n    inspect:\n'
+                                            '      matches:\n        - methods: ["POST"]\n'))
+        self.assertEqual({"host": "h", "allow": [{}, {"methods": ["POST"]}]},
+                         out["egress"]["routes"][0])  # type: ignore[index]
 
     def test_allowing_a_blocked_host_unblocks_it(self) -> None:
         from bot_bottle.approvals import with_routes  # pylint: disable=import-outside-toplevel

@@ -52,20 +52,21 @@ def _chain_files(names: "tuple[str, ...] | list[str]",
 
 
 def _route_detail(route: dict[str, Any]) -> str:
+    # pylint: disable-next=import-outside-toplevel
+    from ...manifest.egress import route_entries
     if route.get("blocked") is True:
         return "blocked"
-    inspect = route.get("inspect")
-    if inspect is False:
-        return "not inspected"
-    if not isinstance(inspect, dict) or not inspect.get("matches"):
+    if route.get("passthrough") is True:
+        return "passthrough (not inspected)"
+    entries = route_entries(route)
+    if entries is None:
         return "any request"
     parts = []
-    for match in inspect["matches"]:
-        if not isinstance(match, dict):
-            continue
-        methods = "/".join(match.get("methods") or []) or "any"
-        paths = ", ".join(str(p.get("value", "")) for p in match.get("paths") or []
-                          if isinstance(p, dict))
+    for match in entries:
+        methods = "/".join(str(m) for m in match.get("methods") or [])
+        methods = "any" if methods == "*" else methods
+        paths = ", ".join(p if isinstance(p, str) else str(next(iter(p.values()), ""))
+                          for p in match.get("paths") or [] if isinstance(p, (str, dict)))
         parts.append(f"{methods} {paths}".strip())
     return "; ".join(parts)
 

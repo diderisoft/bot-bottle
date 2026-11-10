@@ -32,24 +32,28 @@ git-gate:
 egress:
   routes:
     - host: api.example.com
-      inspect:
-        auth:
-          type: bearer
-          value: secret:API_TOKEN
-        matches:
-          - methods: [GET, POST]
-            paths:
-              - value: /v1/
-              - type: regex
-                value: ^/v2/[a-z]+$
-            headers:
-              - name: x-kind
-                value: json
-        outbound_detectors: false
-        outbound_on_match: redact
+      auth:
+        type: bearer
+        value: secret:API_TOKEN
+      allow:
+        - methods: [GET, POST]
+          paths:
+            - /v1/
+            - regex: ^/v2/[a-z]+$
+            - exact: /health
+          headers:
+            - name: x-kind
+              value: json
+        - paths: [/docs/]
+      dlp:
+        outbound: [entropy]
+        on_match: redact
+    - host: quiet.example.com
+      methods: ["*"]
+      dlp: false
     - host: raw.example.com
-      inspect: false
-  log: 1
+      passthrough: true
+  log: blocked
 audit:
   delivery: required
 ---

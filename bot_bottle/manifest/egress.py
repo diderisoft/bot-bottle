@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import cast
+from collections.abc import Mapping
+from typing import Any, cast
 
 from .. import secret_ref
 from .util import ManifestError, as_json_object
@@ -27,7 +28,7 @@ VALID_METHODS = frozenset({
     "CONNECT",
 })
 
-OUTBOUND_DETECTOR_NAMES = frozenset({"token_patterns", "known_secrets"})
+OUTBOUND_DETECTOR_NAMES = frozenset({"token_patterns", "known_secrets", "entropy"})
 INBOUND_DETECTOR_NAMES = frozenset({"naive_injection_detection"})
 
 # What the proxy does on an outbound token match.
@@ -72,6 +73,9 @@ class ManifestMatchEntry:
 @dataclass(frozen=True)
 class ManifestEgressRoute:
     Host: str
+    # Each `allow` entry, its methods made explicit: () is any method (`["*"]`),
+    # an entry without `methods` gets the route's, else GET and HEAD. A route
+    # with `methods` but no `allow` is one entry. None at all is GET/HEAD.
     Matches: tuple[ManifestMatchEntry, ...] = ()
     # From `auth.type` (`_parse_auth`): bearer is scheme "Bearer", token is
     # "token", header is AuthHeader = its `name` with no scheme (the raw value
@@ -85,10 +89,12 @@ class ManifestEgressRoute:
     TokenFromEnv: bool = False
     Role: tuple[str, ...] = ()
     GitFetch: bool = False
+    # From `dlp`: None is the default set, () none, else exactly these.
     OutboundDetectors: tuple[str, ...] | None = None
     InboundDetectors: tuple[str, ...] | None = None
     OutboundOnMatch: str = ""
     PreserveAuth: bool = False
+    # False for `passthrough: true`.
     Inspect: bool = True
 
     @classmethod
@@ -98,125 +104,66 @@ class ManifestEgressRoute:
         host = d.get("host")
         if not isinstance(host, str) or not host:
             raise ManifestError(f"{label} missing required string field 'host'")
-
-        inspect_raw = d.get("inspect", {})
-        if inspect_raw is False:
-            inspect = False
-            inspect_d: dict[str, object] = {}
-        else:
-            inspect = True
-            inspect_d = as_json_object(inspect_raw, f"{label} inspect")
-
-        # --- matches ---
-        matches: tuple[ManifestMatchEntry, ...] = ()
-        matches_raw = inspect_d.get("matches")
-        if matches_raw is not None:
-            if not isinstance(matches_raw, list):
-                raise ManifestError(
-                    f"{label} matches must be an array "
-                    f"(was {type(matches_raw).__name__})"
-                )
-            matches_list = cast(list[object], matches_raw)
-            entries: list[ManifestMatchEntry] = []
-            for k, entry_raw in enumerate(matches_list):
-                entries.append(
-                    _parse_match_entry(label, k, entry_raw)
-                )
-            matches = tuple(entries)
-
-        # --- auth ---
-        auth_scheme = ""
-        auth_header = ""
-        token_ref = ""
-        token_from_env = False
-        if "auth" in inspect_d:
-            auth_scheme, auth_header, token_ref, token_from_env = _parse_auth(
-                label, bottle_name, host, inspect_d.get("auth"))
-
-        # --- role (reserved) ---
-        role_raw = d.get("role")
-        roles: tuple[str, ...] = ()
-        if role_raw is None:
-            roles = ()
-        elif isinstance(role_raw, str):
-            roles = (role_raw,)
-        elif isinstance(role_raw, list):
-            role_list = cast(list[object], role_raw)
-            collected_roles: list[str] = []
-            for r in role_list:
-                if not isinstance(r, str):
-                    msg = f"{label} role items must be strings (got {type(r).__name__})"
-                    raise ManifestError(msg)
-                collected_roles.append(r)
-            roles = tuple(collected_roles)
-        else:
-            raise ManifestError(
-                f"{label} role must be a string or a list of strings "
-                f"(was {type(role_raw).__name__})"
-            )
-        if roles:
-            raise ManifestError(
-                f"{label} role {roles[0]!r} is not accepted; "
-                f"the 'role' field is reserved for future use"
-            )
-
-        # --- DLP settings ---
-        outbound_detectors: tuple[str, ...] | None = None
-        inbound_detectors: tuple[str, ...] | None = None
-        outbound_on_match = ""
-        if inspect:
-            outbound_detectors, inbound_detectors, outbound_on_match = _parse_inspect_block(
-                label, inspect_d,
-            )
-
-        # --- git-over-HTTPS policy ---
-        git_fetch = False
-        if "git" in inspect_d:
-            git_d = as_json_object(inspect_d.get("git"), f"{label} inspect.git")
-            raw_fetch = git_d.get("fetch", False)
-            if isinstance(raw_fetch, bool):
-                git_fetch = raw_fetch
-            else:
-                raise ManifestError(
-                    f"{label} git.fetch must be a boolean "
-                    f"(was {type(raw_fetch).__name__})"
-                )
-            for k in git_d:
-                if k != "fetch":
-                    raise ManifestError(
-                        f"{label} git has unknown key {k!r}; "
-                        f"only 'fetch' is accepted"
-                    )
-
-        # --- preserve_auth ---
-        preserve_auth = False
-        if "preserve_auth" in inspect_d:
-            raw_preserve_auth = inspect_d.get("preserve_auth")
-            if not isinstance(raw_preserve_auth, bool):
-                raise ManifestError(
-                    f"{label} preserve_auth must be a boolean "
-                    f"(was {type(raw_preserve_auth).__name__})"
-                )
-            preserve_auth = raw_preserve_auth
-
-        for k in inspect_d:
-            if k not in (
-                "matches", "auth", "git", "preserve_auth",
-                "outbound_detectors", "inbound_detectors", "outbound_on_match",
-            ):
-                raise ManifestError(
-                    f"{label} inspect has unknown key {k!r}; accepted keys are "
-                    f"'matches', 'auth', 'git', 'preserve_auth', "
-                    f"'outbound_detectors', 'inbound_detectors', "
-                    f"'outbound_on_match'"
-                )
+        old = [k for k in OLD_ROUTE_KEYS if k in d]
+        if old:
+            raise OldRouteFormatError(bottle_name, host, old[0])
         for k in d:
-            if k not in ("host", "role", "inspect"):
+            if k not in ROUTE_KEYS:
                 raise ManifestError(
                     f"{label} has unknown key {k!r}; accepted keys are "
-                    f"'host', 'role', and 'inspect'"
-                )
+                    f"{', '.join(repr(x) for x in ROUTE_KEYS)} (and 'blocked', alone with "
+                    f"'host', to take an inherited route away)")
+        passthrough = d.get("passthrough", False)
+        if not isinstance(passthrough, bool):
+            raise ManifestError(f"{label} passthrough must be true or false")
+        if passthrough:
+            inspected_only = [k for k in ROUTE_KEYS if k not in ("host", "passthrough")
+                              and k in d]
+            if inspected_only:
+                raise ManifestError(
+                    f"{label} is passthrough: the gateway doesn't look inside it, so it "
+                    f"takes no {', '.join(inspected_only)}")
+            return cls(Host=host, Inspect=False)
 
+        route_methods = (_parse_methods(f"{label} methods", d["methods"])
+                         if "methods" in d else None)
+        matches: tuple[ManifestMatchEntry, ...] = ()
+        if "allow" in d:
+            allow_raw = d.get("allow")
+            if not isinstance(allow_raw, list) or not allow_raw:
+                raise ManifestError(f"{label} allow must be a non-empty list of entries "
+                                    f"(paths, methods, headers)")
+            matches = tuple(_parse_match_entry(label, k, entry, route_methods)
+                            for k, entry in enumerate(cast(list[object], allow_raw)))
+        elif route_methods is not None:
+            matches = (ManifestMatchEntry(Methods=route_methods),)
+
+        auth_scheme = auth_header = token_ref = ""
+        token_from_env = False
+        if "auth" in d:
+            auth_scheme, auth_header, token_ref, token_from_env = _parse_auth(
+                label, bottle_name, host, d.get("auth"))
+
+        git_fetch = False
+        if "git" in d:
+            git_d = as_json_object(d.get("git"), f"{label} git")
+            for k in git_d:
+                if k != "fetch":
+                    raise ManifestError(f"{label} git has unknown key {k!r}; only 'fetch' "
+                                        f"is accepted")
+            raw_fetch = git_d.get("fetch", False)
+            if not isinstance(raw_fetch, bool):
+                raise ManifestError(f"{label} git.fetch must be true or false "
+                                    f"(was {type(raw_fetch).__name__})")
+            git_fetch = raw_fetch
+
+        preserve_auth = d.get("preserve_auth", False)
+        if not isinstance(preserve_auth, bool):
+            raise ManifestError(f"{label} preserve_auth must be true or false "
+                                f"(was {type(preserve_auth).__name__})")
+
+        outbound, inbound, on_match = _parse_dlp(label, d["dlp"]) if "dlp" in d \
+            else (None, None, "")
         return cls(
             Host=host,
             Matches=matches,
@@ -224,14 +171,128 @@ class ManifestEgressRoute:
             AuthHeader=auth_header,
             TokenRef=token_ref,
             TokenFromEnv=token_from_env,
-            Role=roles,
             GitFetch=git_fetch,
-            OutboundDetectors=outbound_detectors,
-            InboundDetectors=inbound_detectors,
-            OutboundOnMatch=outbound_on_match,
+            OutboundDetectors=outbound,
+            InboundDetectors=inbound,
+            OutboundOnMatch=on_match,
             PreserveAuth=preserve_auth,
-            Inspect=inspect,
+            Inspect=True,
         )
+
+
+ROUTE_KEYS = ("host", "passthrough", "methods", "allow", "auth", "git", "preserve_auth",
+              "dlp")
+# Keys a route no longer takes; `bottles migrate` rewrites them.
+OLD_ROUTE_KEYS = ("inspect", "role", "matches")
+# A method list's "any method".
+ANY_METHOD = "*"
+DEFAULT_METHODS = ("GET", "HEAD")
+
+
+def route_entries(route: Mapping[str, Any]) -> list[dict[str, Any]] | None:
+    """What a route (as written, in the current shape) allows, as `allow`
+    entries each with its methods: None for any request (passthrough, or
+    `methods: ["*"]` alone); a route with neither `allow` nor `methods` is
+    one GET/HEAD entry."""
+    if route.get("passthrough") is True:
+        return None
+    methods = route.get("methods")
+    default = list(methods) if isinstance(methods, list) and methods else list(DEFAULT_METHODS)
+    allow = route.get("allow")
+    if isinstance(allow, list) and allow:
+        entries = [{**e, "methods": e.get("methods", default)} for e in allow
+                   if isinstance(e, dict)]
+    else:
+        entries = [{"methods": default}]
+    if any(set(e) == {"methods"} and e["methods"] == [ANY_METHOD] for e in entries):
+        return None
+    return entries
+
+
+def with_entries(route: Mapping[str, Any], entries: list[dict[str, Any]] | None,
+                 ) -> dict[str, Any]:
+    """`route` allowing `entries` (`route_entries`' form) instead of what it
+    did, said as briefly as the shape allows."""
+    out = {k: v for k, v in route.items() if k not in ("methods", "allow")}
+    if entries is None:
+        out["methods"] = [ANY_METHOD]
+    elif len(entries) == 1 and set(entries[0]) == {"methods"}:
+        if sorted(entries[0]["methods"]) != sorted(DEFAULT_METHODS):
+            out["methods"] = entries[0]["methods"]
+    else:
+        out["allow"] = [{k: v for k, v in e.items()
+                         if not (k == "methods" and sorted(v) == sorted(DEFAULT_METHODS))}
+                        for e in entries]
+    return out
+
+
+class OldRouteFormatError(ManifestError):
+    """A bottle file still writes a route in the old shape (`inspect`,
+    `matches`, `role`); `bottles migrate` rewrites it."""
+
+    def __init__(self, bottle: str, host: str, key: str) -> None:
+        self.bottle = bottle
+        self.host = host
+        what = {
+            "inspect": "inspect is gone (auth, git and preserve_auth sit on the route, "
+                       "matches is allow, the detectors are dlp, and inspect: false is "
+                       "passthrough: true)",
+            "matches": "matches is now allow",
+            "role": "role is gone",
+        }[key]
+        super().__init__(f"{bottle} egress route {host}: {what}. "
+                         f"Run bot-bottle bottles migrate {bottle}.")
+
+
+def _parse_methods(label: str, raw: object) -> tuple[str, ...]:
+    """A `methods` list: () for `["*"]` (any), else the methods, upper case."""
+    if not isinstance(raw, list) or not raw:
+        raise ManifestError(f"{label} must be a non-empty list of HTTP methods, or [\"*\"] "
+                            f"for any")
+    items = cast(list[object], raw)
+    if ANY_METHOD in items:
+        if len(items) != 1:
+            raise ManifestError(f"{label}: \"*\" (any method) stands alone")
+        return ()
+    out: list[str] = []
+    for j, m in enumerate(items):
+        if not isinstance(m, str) or m.upper() not in VALID_METHODS:
+            raise ManifestError(f"{label}[{j}] {m!r} is not an HTTP method")
+        out.append(m.upper())
+    return tuple(out)
+
+
+def _parse_dlp(label: str, raw: object) -> tuple[tuple[str, ...] | None,
+                                                   tuple[str, ...] | None, str]:
+    """`dlp: false` (no detectors) or `{outbound, inbound, on_match}`: a
+    listed side runs exactly those, an omitted one the defaults."""
+    if raw is False:
+        return (), (), ""
+    d = as_json_object(raw, f"{label} dlp")
+    for k in d:
+        if k not in ("outbound", "inbound", "on_match"):
+            raise ManifestError(f"{label} dlp has unknown key {k!r}; accepted keys are "
+                                f"'outbound', 'inbound' and 'on_match' (or dlp: false)")
+
+    def names(side: str, valid: frozenset[str]) -> tuple[str, ...] | None:
+        if side not in d:
+            return None
+        value = d[side]
+        if not isinstance(value, list):
+            raise ManifestError(f"{label} dlp.{side} must be a list of detectors "
+                                f"([] for none)")
+        for j, item in enumerate(cast(list[object], value)):
+            if not isinstance(item, str) or item not in valid:
+                raise ManifestError(f"{label} dlp.{side}[{j}] {item!r} is not a detector; "
+                                    f"valid: {', '.join(sorted(valid))}")
+        return tuple(cast(list[str], value))
+
+    on_match = d.get("on_match", "")
+    if on_match and on_match not in OUTBOUND_ON_MATCH_VALUES:
+        raise ManifestError(f"{label} dlp.on_match must be one of "
+                            f"{', '.join(OUTBOUND_ON_MATCH_VALUES)} (got {on_match!r})")
+    return (names("outbound", OUTBOUND_DETECTOR_NAMES), names("inbound", INBOUND_DETECTOR_NAMES),
+            str(on_match or ""))
 
 
 class OldAuthFormatError(ManifestError):
@@ -262,7 +323,7 @@ def _parse_auth(label: str, bottle: str, host: str,
       { type: token,  value: secret:NAME }            Authorization: token <v>
       { type: header, name: X-Api-Key, value: ... }   X-Api-Key: <v> (raw)
     """
-    auth = as_json_object(raw, f"{label} inspect.auth")
+    auth = as_json_object(raw, f"{label} auth")
     if not auth:
         raise ManifestError(
             f"{label} auth is empty ({{}}); omit the 'auth' key entirely if this route "
@@ -323,89 +384,60 @@ def _shown(value: str) -> str:
     return "a literal value"
 
 
-def _parse_match_entry(
-    route_label: str, k: int, raw: object,
-) -> ManifestMatchEntry:
-    label = f"{route_label} matches[{k}]"
+def _parse_match_entry(route_label: str, k: int, raw: object,
+                       route_methods: tuple[str, ...] | None) -> ManifestMatchEntry:
+    label = f"{route_label} allow[{k}]"
     d = as_json_object(raw, label)
-
-    paths: tuple[ManifestPathMatch, ...] = ()
-    paths_raw = d.get("paths")
-    if paths_raw is not None:
-        if not isinstance(paths_raw, list):
-            raise ManifestError(f"{label} paths must be an array")
-        paths_list = cast(list[object], paths_raw)
-        parsed_paths: list[ManifestPathMatch] = []
-        for j, p_raw in enumerate(paths_list):
-            parsed_paths.append(_parse_path_match(label, j, p_raw))
-        paths = tuple(parsed_paths)
-
-    methods: tuple[str, ...] = ()
-    methods_raw = d.get("methods")
-    if methods_raw is not None:
-        if not isinstance(methods_raw, list):
-            raise ManifestError(f"{label} methods must be an array")
-        methods_list = cast(list[object], methods_raw)
-        normalised: list[str] = []
-        for j, m in enumerate(methods_list):
-            if not isinstance(m, str):
-                raise ManifestError(
-                    f"{label} methods[{j}] must be a string"
-                )
-            upper = m.upper()
-            if upper not in VALID_METHODS:
-                raise ManifestError(
-                    f"{label} methods[{j}] {m!r} is not a valid HTTP method"
-                )
-            normalised.append(upper)
-        methods = tuple(normalised)
-
-    headers: tuple[ManifestHeaderMatch, ...] = ()
-    headers_raw = d.get("headers")
-    if headers_raw is not None:
-        if not isinstance(headers_raw, list):
-            raise ManifestError(f"{label} headers must be an array")
-        headers_list = cast(list[object], headers_raw)
-        parsed_headers: list[ManifestHeaderMatch] = []
-        for j, h_raw in enumerate(headers_list):
-            parsed_headers.append(_parse_header_match(label, j, h_raw))
-        headers = tuple(parsed_headers)
-
     for key in d:
         if key not in ("paths", "methods", "headers"):
-            raise ManifestError(f"{label} has unknown key {key!r}")
-
+            raise ManifestError(f"{label} has unknown key {key!r}; accepted keys are "
+                                f"'paths', 'methods' and 'headers'")
+    paths: tuple[ManifestPathMatch, ...] = ()
+    if "paths" in d:
+        paths_raw = d["paths"]
+        if not isinstance(paths_raw, list):
+            raise ManifestError(f"{label} paths must be a list")
+        paths = tuple(_parse_path_match(label, j, p)
+                      for j, p in enumerate(cast(list[object], paths_raw)))
+    if "methods" in d:
+        methods = _parse_methods(f"{label} methods", d["methods"])
+    else:
+        methods = route_methods if route_methods is not None else DEFAULT_METHODS
+    headers: tuple[ManifestHeaderMatch, ...] = ()
+    if "headers" in d:
+        headers_raw = d["headers"]
+        if not isinstance(headers_raw, list):
+            raise ManifestError(f"{label} headers must be a list")
+        headers = tuple(_parse_header_match(label, j, h)
+                        for j, h in enumerate(cast(list[object], headers_raw)))
     return ManifestMatchEntry(Paths=paths, Methods=methods, Headers=headers)
 
 
-def _parse_path_match(
-    entry_label: str, j: int, raw: object,
-) -> ManifestPathMatch:
+def _parse_path_match(entry_label: str, j: int, raw: object) -> ManifestPathMatch:
+    """A path filter: a bare string is a prefix, `{exact: /x}` exact,
+    `{regex: ...}` a regex."""
     label = f"{entry_label} paths[{j}]"
-    d = as_json_object(raw, label)
-    ptype = d.get("type", "prefix")
-    if not isinstance(ptype, str) or ptype not in PATH_MATCH_TYPES:
-        raise ManifestError(
-            f"{label} type must be one of {', '.join(PATH_MATCH_TYPES)} "
-            f"(got {ptype!r})"
-        )
-    value = d.get("value")
+    if isinstance(raw, str):
+        ptype, value = "prefix", raw
+    else:
+        d = as_json_object(raw, label)
+        if "type" in d or "value" in d:
+            raise ManifestError(
+                f"{label}: a path is a prefix string, {{exact: /x}} or {{regex: ...}} "
+                f"(no type/value). Run bot-bottle bottles migrate <bottle>.")
+        if len(d) != 1 or next(iter(d)) not in ("exact", "regex"):
+            raise ManifestError(f"{label} must be a prefix string, {{exact: /x}} or "
+                                f"{{regex: ...}}")
+        ptype, value = next(iter(d.items()))
     if not isinstance(value, str) or not value:
-        raise ManifestError(f"{label} value must be a non-empty string")
+        raise ManifestError(f"{label} must be a non-empty string")
     if ptype in ("exact", "prefix") and not value.startswith("/"):
-        raise ManifestError(
-            f"{label} value {value!r} must start with '/' for type {ptype!r}"
-        )
+        raise ManifestError(f"{label} {value!r} must start with '/'")
     if ptype == "regex":
         try:
             re.compile(value)
         except re.error as e:
-            raise ManifestError(
-                f"{label} regex {value!r} failed to compile: {e}"
-            ) from e
-    for k in d:
-        if k not in ("type", "value"):
-            raise ManifestError(f"{label} has unknown key {k!r}")
+            raise ManifestError(f"{label} regex {value!r} failed to compile: {e}") from e
     return ManifestPathMatch(Type=ptype, Value=value)
 
 
@@ -439,59 +471,9 @@ def _parse_header_match(
     return ManifestHeaderMatch(Name=name, Value=value, Type=htype)
 
 
-def _parse_inspect_block(
-    route_label: str,
-    inspect: dict[str, object],
-) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None, str]:
-    """Parse DLP settings from an inspected route."""
-    label = f"{route_label} inspect"
-    d = inspect
-
-    def _parse_field(
-        field: str,
-        valid_names: frozenset[str],
-    ) -> tuple[str, ...] | None:
-        val = d.get(field)
-        if val is None:
-            return None
-        if val is False:
-            return ()
-        if not isinstance(val, list):
-            raise ManifestError(
-                f"{label} {field} must be false, a list, or omitted"
-            )
-        items = cast(list[object], val)
-        names: list[str] = []
-        for j, item in enumerate(items):
-            if not isinstance(item, str):
-                raise ManifestError(
-                    f"{label} {field}[{j}] must be a string"
-                )
-            if item not in valid_names:
-                raise ManifestError(
-                    f"{label} {field}[{j}] {item!r} is not a valid "
-                    f"detector; valid: {', '.join(sorted(valid_names))}"
-                )
-            names.append(item)
-        return tuple(names)
-
-    outbound = _parse_field("outbound_detectors", OUTBOUND_DETECTOR_NAMES)
-    inbound = _parse_field("inbound_detectors", INBOUND_DETECTOR_NAMES)
-
-    on_match = ""
-    on_match_raw = d.get("outbound_on_match")
-    if on_match_raw is not None:
-        if not isinstance(on_match_raw, str) or on_match_raw not in OUTBOUND_ON_MATCH_VALUES:
-            raise ManifestError(
-                f"{label} outbound_on_match must be one of "
-                f"{', '.join(OUTBOUND_ON_MATCH_VALUES)} (got {on_match_raw!r})"
-            )
-        on_match = on_match_raw
-
-    return outbound, inbound, on_match
-
-
-LOG_LEVELS = frozenset({0, 1, 2})
+# `egress.log`, and the gateway's level for each.
+LOG_LEVELS = {"off": 0, "blocked": 1, "full": 2}
+LOG_NAMES = {v: k for k, v in LOG_LEVELS.items()}
 
 
 def _blocked_host(label: str, d: dict[str, object]) -> str:
@@ -549,7 +531,7 @@ class ManifestEgressConfig:
         if routes_raw is not None:
             if not isinstance(routes_raw, list):
                 raise ManifestError(
-                    f"bottle '{bottle_name}' egress.routes must be an array "
+                    f"bottle '{bottle_name}' egress.routes must be a list "
                     f"(was {type(routes_raw).__name__})"
                 )
             routes_list = cast(list[object], routes_raw)
@@ -564,16 +546,18 @@ class ManifestEgressConfig:
             # A host routed and blocked in one bottle is a duplicate too.
             validate_egress_routes(bottle_name, routes + tuple(
                 ManifestEgressRoute(Host=h) for h in blocked))
-        log_raw = d.get("log", 0)
-        if isinstance(log_raw, bool) or not isinstance(log_raw, int) \
-                or log_raw not in LOG_LEVELS:
+        log_raw = d.get("log", "off")
+        if isinstance(log_raw, int) and not isinstance(log_raw, bool) and log_raw in LOG_NAMES:
             raise ManifestError(
-                f"bottle '{bottle_name}' egress.log must be 0, 1, or 2"
-            )
+                f"bottle '{bottle_name}' egress.log: {log_raw} is now "
+                f"{LOG_NAMES[log_raw]}. Run bot-bottle bottles migrate {bottle_name}.")
+        if not isinstance(log_raw, str) or log_raw not in LOG_LEVELS:
+            raise ManifestError(
+                f"bottle '{bottle_name}' egress.log must be off, blocked or full")
         for k in d:
             if k not in ("routes", "log"):
                 raise ManifestError(
                     f"bottle '{bottle_name}' egress has unknown key {k!r}; "
                     f"accepted keys are 'routes', 'log'"
                 )
-        return cls(routes=routes, Log=log_raw, Blocked=tuple(blocked))
+        return cls(routes=routes, Log=LOG_LEVELS[log_raw], Blocked=tuple(blocked))

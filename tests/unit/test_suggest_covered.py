@@ -38,7 +38,7 @@ class TestDropCovered(unittest.TestCase):
         self.bottles = Path(self.enterContext(tempfile.TemporaryDirectory()))
         (self.bottles / "web.md").write_text(
             "---\nenv:\n  NODE_ENV: development\negress:\n  routes:\n"
-            "    - host: api.example.com\n---\n\nA bottle with an env var.\n")
+            "    - host: api.example.com\n      methods: [\"*\"]\n---\n\nA bottle with an env var.\n")
         self.dirs = [(self.bottles, False), (BUILTIN_BOTTLES_DIR, False)]
 
     def test_a_route_basic_already_allows_is_dropped_with_a_note(self) -> None:

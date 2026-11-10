@@ -31,7 +31,7 @@ BASE = {"egress": {"routes": [{"host": "a.example.com"}, {"host": "b.example.com
 class TestReplace(unittest.TestCase):
     def test_replacement_keeps_the_parents_position(self):
         b = _bottles(base=BASE, child={"extends": "base", "egress": {"routes": [
-            {"host": "d.example.com"}, {"host": "b.example.com", "inspect": False}]}})
+            {"host": "d.example.com"}, {"host": "b.example.com", "passthrough": True}]}})
         self.assertEqual(["a.example.com", "b.example.com", "c.example.com", "d.example.com"],
                          _hosts(b["child"]))
         self.assertFalse(b["child"].egress.routes[1].Inspect)
@@ -39,14 +39,14 @@ class TestReplace(unittest.TestCase):
     def test_later_parent_wins_over_earlier_parent(self):
         b = _bottles(
             p1={"egress": {"routes": [{"host": "a.example.com"}]}},
-            p2={"egress": {"routes": [{"host": "a.example.com", "inspect": False}]}},
+            p2={"egress": {"routes": [{"host": "a.example.com", "passthrough": True}]}},
             child={"extends": ["p1", "p2"]})
         self.assertEqual(["a.example.com"], _hosts(b["child"]))
         self.assertFalse(b["child"].egress.routes[0].Inspect)
 
     def test_runtime_stack_later_wins(self):
         b = _bottles(base=BASE, extra={"egress": {"routes": [
-            {"host": "c.example.com", "inspect": False}]}})
+            {"host": "c.example.com", "passthrough": True}]}})
         merged = merge_bottles_runtime([b["base"], b["extra"]])
         self.assertEqual(["a.example.com", "b.example.com", "c.example.com"], _hosts(merged))
         self.assertFalse(merged.egress.routes[2].Inspect)
@@ -80,7 +80,7 @@ class TestBlocked(unittest.TestCase):
     def test_block_with_other_keys_dies(self):
         with self.assertRaisesRegex(ManifestError, "takes only 'host'"):
             _bottles(dev={"egress": {"routes": [
-                {"host": "a.example.com", "blocked": True, "inspect": False}]}})
+                {"host": "a.example.com", "blocked": True, "passthrough": True}]}})
 
     def test_blocked_false_dies(self):
         with self.assertRaisesRegex(ManifestError, "blocked must be true"):

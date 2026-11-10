@@ -194,9 +194,8 @@ class TestProposalToFrontmatter(unittest.TestCase):
         routes = fm["egress"]["routes"]
         self.assertEqual(len(routes), 1)
         self.assertEqual(routes[0]["host"], "api.example.com")
-        # Methods go into inspect.matches
-        self.assertIn("inspect", routes[0])
-        self.assertEqual(routes[0]["inspect"]["matches"][0]["methods"], ["POST"])
+        # Methods go on the route
+        self.assertEqual(routes[0]["methods"], ["POST"])
 
     def test_credential_adds_auth_to_route(self) -> None:
         p = Proposal(
@@ -209,8 +208,7 @@ class TestProposalToFrontmatter(unittest.TestCase):
         )
         fm = proposal_to_frontmatter(p)
         route = fm["egress"]["routes"][0]
-        self.assertIn("inspect", route)
-        self.assertEqual(route["inspect"]["auth"], {"type": "bearer", "value": "secret:MY_TOKEN"})
+        self.assertEqual(route["auth"], {"type": "bearer", "value": "secret:MY_TOKEN"})
 
     def test_env_vars_as_prompt_placeholders(self) -> None:
         p = Proposal(
@@ -223,7 +221,7 @@ class TestProposalToFrontmatter(unittest.TestCase):
         fm = proposal_to_frontmatter(p)
         self.assertEqual(fm["env"]["FLY_APP"], "secret:FLY_APP")
 
-    def test_no_inspect_false_ever(self) -> None:
+    def test_no_passthrough_ever(self) -> None:
         p = Proposal(
             option=OPTION_STACK_ADDITIONS, bottles=["basic"], new_bottle=None,
             additions=ProposalAdditions(
@@ -233,9 +231,8 @@ class TestProposalToFrontmatter(unittest.TestCase):
         )
         fm = proposal_to_frontmatter(p)
         route = fm["egress"]["routes"][0]
-        # inspect:false must never appear
-        inspect_val = route.get("inspect")
-        self.assertIsNot(inspect_val, False)
+        # passthrough must never appear
+        self.assertNotIn("passthrough", route)
 
 
 class TestValidateProposal(unittest.TestCase):

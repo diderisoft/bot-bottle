@@ -9,6 +9,8 @@ partial `auth` is an error, auth omission means unauthenticated."""
 
 import unittest
 
+from bot_bottle.manifest.upgrade import new_route
+
 from bot_bottle.egress import egress_render_routes, egress_routes_for_bottle, egress_token_env_map
 from bot_bottle.gateway.egress.schema import load_config, route_to_yaml_dict
 from bot_bottle.manifest import ManifestError, ManifestIndex
@@ -32,8 +34,18 @@ def _inspect_routes(routes):  # type: ignore
             inspected = dict(route.get("inspect", {}))
             inspected.update(moved)
             route["inspect"] = inspected
-        out.append(route)
+        # Written as the old shape, then as `bottles migrate` makes it: what
+        # these tests check is the same either way.
+        out.append(new_route(route))
     return out
+
+
+def _raw_bottle(routes):  # type: ignore
+    """`routes` as written, in the current shape."""
+    return ManifestIndex.from_json_obj({
+        "bottles": {"dev": {"egress": {"routes": routes}}},
+        "agents": {"demo": {"skills": [], "prompt": ""}},
+    }).bottles["dev"]
 
 
 def _bottle(routes):  # type: ignore
@@ -314,7 +326,7 @@ class TestMatches(unittest.TestCase):
 
     def test_must_be_array(self):
         with self.assertRaises(ManifestError):
-            _bottle([{"host": "x.example", "matches": "nope"}])
+            _raw_bottle([{"host": "x.example", "allow": "nope"}])
 
     def test_path_prefix_default(self):
         b = _bottle([{"host": "x.example", "matches": [
@@ -416,7 +428,7 @@ class TestDlp(unittest.TestCase):
 
     def test_unknown_dlp_key_rejected(self):
         with self.assertRaises(ManifestError):
-            _bottle([{"host": "x.example", "dlp": {
+            _raw_bottle([{"host": "x.example", "dlp": {
                 "bogus": True,
             }}])
 
@@ -429,9 +441,21 @@ class TestDlp(unittest.TestCase):
         b = _bottle([{"host": "x.example"}])
         self.assertTrue(b.egress.routes[0].Inspect)
 
-    def test_inspect_not_dict_or_false_rejected(self):
+    def test_passthrough_not_a_bool_rejected(self):
         with self.assertRaises(ManifestError):
-            _bottle([{"host": "x.example", "inspect": "nope"}])
+            _raw_bottle([{"host": "x.example", "passthrough": "nope"}])
+
+    def test_passthrough_refuses_what_it_wouldnt_look_at(self):
+        for key, value in (("auth", {"type": "bearer", "value": "secret:T"}),
+                           ("allow", [{"methods": ["POST"]}]), ("methods", ["POST"]),
+                           ("dlp", False), ("git", {"fetch": True}), ("preserve_auth", True)):
+            with self.subTest(key=key), \
+                    self.assertRaisesRegex(ManifestError, f"passthrough.*takes no {key}"):
+                _raw_bottle([{"host": "x.example", "passthrough": True, key: value}])
+
+    def test_inspect_is_refused_saying_to_migrate(self):
+        with self.assertRaisesRegex(ManifestError, "inspect is gone.*bottles migrate dev"):
+            _raw_bottle([{"host": "x.example", "inspect": False}])
 
     def test_outbound_on_match_omitted_is_empty(self):
         b = _bottle([{"host": "x.example"}])
@@ -539,7 +563,7 @@ class TestAuth(unittest.TestCase):
                      {"header": "X-Api-Key", "token_ref": "T"}):
             with self.subTest(auth=auth), \
                     self.assertRaisesRegex(ManifestError, "bottles migrate"):
-                _bottle([{"host": "x.example", "auth": auth}])
+                _raw_bottle([{"host": "x.example", "auth": auth}])
 
     def test_header_sends_the_raw_value(self):
         b = _bottle([{
@@ -579,9 +603,10 @@ class TestAuth(unittest.TestCase):
         route = config.routes[0]
         self.assertEqual(("", "x-api-key", "EGRESS_TOKEN_0"),
                          (route.auth_scheme, route.auth_header, route.token_env))
+        # Migrated from a route that let any method through: `methods: ["*"]`.
         self.assertEqual({"host": "api.anthropic.com",
                           "inspect": {"auth_header": "x-api-key",
-                                      "token_env": "EGRESS_TOKEN_0"}},
+                                      "token_env": "EGRESS_TOKEN_0", "matches": [{}]}},
                          route_to_yaml_dict(route))
 
     def test_header_route_round_trips_through_the_bottle_document(self):
@@ -589,9 +614,8 @@ class TestAuth(unittest.TestCase):
             "host": "api.anthropic.com",
             "auth": {"type": "header", "name": "x-api-key", "value": "secret:K"},
         }])
-        self.assertEqual({"host": "api.anthropic.com",
-                          "inspect": {"auth": {"type": "header", "name": "x-api-key",
-                                               "value": "secret:K"}}},
+        self.assertEqual({"host": "api.anthropic.com", "methods": ["*"],
+                          "auth": {"type": "header", "name": "x-api-key", "value": "secret:K"}},
                          route_document(b.egress.routes[0]))
 
 
@@ -600,19 +624,11 @@ class TestRole(unittest.TestCase):
         b = _bottle([{"host": "x.example"}])
         self.assertEqual((), b.egress.routes[0].Role)
 
-    def test_any_role_rejected(self):
-        for role in ("claude_code_oauth", "codex_auth", "totally-made-up"):
-            with self.subTest(role=role):
-                with self.assertRaises(ManifestError):
-                    _bottle([{"host": "x.example", "role": role}])
-
-    def test_non_string_role_rejected(self):
-        with self.assertRaises(ManifestError):
-            _bottle([{"host": "x.example", "role": 42}])
-
-    def test_list_with_non_string_item_rejected(self):
-        with self.assertRaises(ManifestError):
-            _bottle([{"host": "x.example", "role": ["x", 42]}])
+    def test_role_is_refused_saying_to_migrate(self):
+        for role in ("claude_code_oauth", 42, ["x", 42], []):
+            with self.subTest(role=role), \
+                    self.assertRaisesRegex(ManifestError, "role is gone.*bottles migrate"):
+                _raw_bottle([{"host": "x.example", "role": role}])
 
 
 class TestPreserveAuth(unittest.TestCase):
@@ -683,14 +699,14 @@ class TestConfigShape(unittest.TestCase):
 
     def test_log_level_1_accepted(self):
         b = ManifestIndex.from_json_obj({
-            "bottles": {"dev": {"egress": {"log": 1, "routes": []}}},
+            "bottles": {"dev": {"egress": {"log": "blocked", "routes": []}}},
             "agents": {"demo": {"skills": [], "prompt": ""}},
         }).bottles["dev"]
         self.assertEqual(1, b.egress.Log)
 
     def test_log_level_2_accepted(self):
         b = ManifestIndex.from_json_obj({
-            "bottles": {"dev": {"egress": {"log": 2, "routes": []}}},
+            "bottles": {"dev": {"egress": {"log": "full", "routes": []}}},
             "agents": {"demo": {"skills": [], "prompt": ""}},
         }).bottles["dev"]
         self.assertEqual(2, b.egress.Log)

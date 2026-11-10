@@ -25,9 +25,7 @@ extends: basic
 egress:
   routes:
     - host: api.example.com
-      inspect:
-        matches:
-          - methods: [GET]
+      methods: [GET]
 ---
 
 Example API.
@@ -110,7 +108,7 @@ class TestMerge(_Dirs):
                             grants=("gitea.example.com/acme/app:write",), env=("REGION",)), {})
         routes = {r["host"]: r for r in out["egress"]["routes"]}
         self.assertEqual([{"methods": ["GET"]}, {"methods": ["POST"]}],
-                         routes["api.example.com"]["inspect"]["matches"])
+                         routes["api.example.com"]["allow"])
         self.assertIn("api.linear.app", routes)
         self.assertEqual(["gitea.example.com/acme/app:write"], out["git-gate"]["repos"])
         self.assertIn("gitea.example.com", out["git-gate"]["forges"])

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import unittest
 
+from bot_bottle.gateway.egress.types import ANY_REQUEST
+
 from bot_bottle.gateway.egress.request_pipeline import (
     GIT_PUSH_BLOCK_REASON,
     evaluate_route_policy,
@@ -66,6 +68,7 @@ class TestRoutePolicy(unittest.TestCase):
             host="api.example.com",
             auth_scheme="Bearer",
             token_env="API_TOKEN",
+            matches=ANY_REQUEST,
         )
         result = evaluate_route_policy(
             Config(routes=(route,)),

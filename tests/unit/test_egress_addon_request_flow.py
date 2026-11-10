@@ -27,6 +27,8 @@ import threading
 import time
 import types
 import unittest
+
+from bot_bottle.gateway.egress.types import MatchEntry
 from io import StringIO
 from typing import Any, cast
 from unittest.mock import patch
@@ -534,7 +536,8 @@ class TestAuthInjection(unittest.TestCase):
     def test_agent_credentials_beyond_authorization_are_stripped(self) -> None:
         # #807: an attacker's key in `x-api-key` (or a query param) must not
         # reach the injected-auth route; only the injected identity goes out.
-        route = Route(host="api.example.com", auth_scheme="Bearer", token_env="EGRESS_TOKEN_0")
+        route = Route(host="api.example.com", auth_scheme="Bearer", token_env="EGRESS_TOKEN_0",
+                      matches=(MatchEntry(methods=("POST",)),))
         addon = _addon(Config(routes=(route,)))
         flow = _Flow(_Request(
             host="api.example.com", method="POST",
@@ -555,7 +558,8 @@ class TestAuthInjection(unittest.TestCase):
     def test_named_header_route_replaces_the_agents_value(self) -> None:
         # The Claude API-key route: the agent's placeholder `x-api-key` is
         # stripped and the gateway's raw key injected in its place.
-        route = Route(host="api.anthropic.com", auth_header="x-api-key", token_env="EGRESS_TOKEN_0")
+        route = Route(host="api.anthropic.com", auth_header="x-api-key", token_env="EGRESS_TOKEN_0",
+                      matches=(MatchEntry(methods=("POST",)),))
         addon = _addon(Config(routes=(route,)))
         flow = _Flow(_Request(
             host="api.anthropic.com", method="POST",

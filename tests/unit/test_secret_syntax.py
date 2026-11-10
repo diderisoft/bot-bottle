@@ -48,7 +48,7 @@ def _manifest(env: dict[str, str], routes: list[dict[str, Any]] | None = None) -
 
 
 def _auth_route(auth: dict[str, Any]) -> dict[str, Any]:
-    return {"host": "api.example.com", "inspect": {"auth": {"type": "bearer", **auth}}}
+    return {"host": "api.example.com", "auth": {"type": "bearer", **auth}}
 
 
 class _Store(unittest.TestCase):
@@ -104,8 +104,8 @@ class TestKinds(unittest.TestCase):
     def test_the_documented_example_loads(self) -> None:
         text = ("---\nenv:\n  NPM_TOKEN: ?Paste your npm token\n  GH_TOKEN: ${GITHUB_PAT}\n"
                 "  OPENAI_API_KEY: secret:OPENAI_API_KEY\negress:\n  routes:\n"
-                "    - host: api.example.com\n      inspect:\n"
-                "        auth: { type: bearer, value: secret:EXAMPLE_API_TOKEN }\n---\n")
+                "    - host: api.example.com\n"
+                "      auth: { type: bearer, value: secret:EXAMPLE_API_TOKEN }\n---\n")
         bottle = resolve_bottles({"doc": parse_frontmatter(text)[0]})["doc"]
         self.assertEqual("EXAMPLE_API_TOKEN", bottle.egress.routes[0].TokenRef)
         self.assertEqual({"NPM_TOKEN": "?Paste your npm token", "GH_TOKEN": "${GITHUB_PAT}",
@@ -252,7 +252,7 @@ class TestStored(_Store):
 
 class TestRouteAuth(unittest.TestCase):
     def route(self, auth: dict[str, Any]) -> ManifestEgressRoute:
-        return _manifest({}, [{"host": "api.example.com", "inspect": {"auth": auth}}]
+        return _manifest({}, [{"host": "api.example.com", "auth": auth}]
                          ).bottle.egress.routes[0]
 
     def test_each_type_maps_onto_the_gateways_fields(self) -> None:
@@ -299,7 +299,7 @@ class TestRouteAuth(unittest.TestCase):
         route = self.route({"type": "bearer", "value": "secret:${GH_PAT}"})
         self.assertEqual(("GH_PAT", True), (route.TokenRef, route.TokenFromEnv))
         self.assertEqual({"type": "bearer", "value": "secret:${GH_PAT}"},
-                         route_document(route)["inspect"]["auth"])  # type: ignore[index]
+                         route_document(route)["auth"])  # type: ignore[index]
 
     def test_only_secret_name_is_a_value(self) -> None:
         with self.assertRaisesRegex(ManifestError, "secret:\\? isn't taken here"):
@@ -318,16 +318,16 @@ class TestRouteAuth(unittest.TestCase):
                      {"type": "token", "value": "secret:A"},
                      {"type": "header", "name": "x-api-key", "value": "secret:A"}):
             with self.subTest(auth["type"]):
-                self.assertEqual(auth, route_document(self.route(auth))["inspect"]["auth"])  # type: ignore[index]
+                self.assertEqual(auth, route_document(self.route(auth))["auth"])  # type: ignore[index]
         made = ManifestEgressRoute(Host="h.example", AuthScheme="Bearer", TokenRef="B")
         self.assertEqual({"type": "bearer", "value": "secret:B"},
-                         route_document(made)["inspect"]["auth"])  # type: ignore[index]
+                         route_document(made)["auth"])  # type: ignore[index]
 
     def test_a_bottle_document_round_trips(self) -> None:
         bottle = _manifest({"K": "secret:K"}, [
             _auth_route({"value": "secret:A"}),
-            {"host": "b.example.com", "inspect": {"auth": {
-                "type": "header", "name": "X-Key", "value": "secret:B"}}},
+            {"host": "b.example.com", "auth": {
+                "type": "header", "name": "X-Key", "value": "secret:B"}},
         ]).bottle
         text = serialize_yaml_subset(bottle_document(bottle))
         self.assertIn("value: secret:A", text)
@@ -447,7 +447,7 @@ class TestWriters(unittest.TestCase):
         fm = proposal_to_frontmatter(proposal)
         self.assertEqual({"FLY_APP": "secret:FLY_APP"}, fm["env"])
         self.assertEqual({"type": "bearer", "value": "secret:LINEAR_TOKEN"},
-                         fm["egress"]["routes"][0]["inspect"]["auth"])
+                         fm["egress"]["routes"][0]["auth"])
 
 
 class TestAnswersStayOutOfTheAudit(unittest.TestCase):

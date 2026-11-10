@@ -22,14 +22,13 @@ egress:
     # filter, while this host passes the filter and leaves probe 3 to
     # be decided by the DLP body scan alone.
     #
-    # outbound_on_match: block is load-bearing for the recording. The
+    # dlp.on_match: block is load-bearing for the recording. The
     # default is `supervise`, which holds the request open awaiting an
     # operator decision in `bot-bottle supervise` for up to
     # EGRESS_TOKEN_ALLOW_TIMEOUT_SECONDS (300s) — that would stall the
     # tape. `block` reproduces the immediate 403 the demo is showing off.
     - host: example.org
-      inspect:
-        outbound_on_match: block
+      dlp: { on_match: block }
 
 git-gate:
   user:

@@ -69,21 +69,131 @@ def _secret_prompt_line(line: str) -> str:
 _OLD_AUTH_KEYS = ("scheme", "header", "token_ref")
 
 
+_LOG_NAMES = {0: "off", 1: "blocked", 2: "full"}
+
+
 def _egress(doc: Doc, changes: list[str]) -> None:
     egress = doc.get("egress")
-    routes = egress.get("routes") if isinstance(egress, dict) else None
+    if not isinstance(egress, dict):
+        return
+    log = egress.get("log")
+    if isinstance(log, int) and not isinstance(log, bool) and log in _LOG_NAMES:
+        egress["log"] = _LOG_NAMES[log]
+        changes.append(f"egress.log {log} is {_LOG_NAMES[log]}")
+    routes = egress.get("routes")
     if not isinstance(routes, list):
         return
-    for route in routes:
-        if not isinstance(route, dict):
+    for i, route in enumerate(routes):
+        if not isinstance(route, dict) or route.get("blocked") is True:
             continue
-        host = str(route.get("host") or "?")
-        inspect = route.get("inspect")
-        auth = inspect.get("auth") if isinstance(inspect, dict) else None
-        if isinstance(inspect, dict) and isinstance(auth, dict) and \
-                any(k in auth for k in _OLD_AUTH_KEYS):
-            inspect["auth"] = new_auth(host, auth)
-            changes.append(f"egress route {host}: auth is type and value")
+        new = new_route(route)
+        if new != route:
+            routes[i] = new
+            changes.append(f"egress route {route.get('host')}: in the current shape")
+
+
+def new_route(route: Mapping[str, Any]) -> Doc:
+    """A route in the current shape. `inspect` goes: `inspect: false` is
+    `passthrough: true`; its `auth` (in the current form), `git` and
+    `preserve_auth` sit on the route; `matches` is `allow`, each entry
+    without methods getting `methods: ["*"]` (it allowed any); the detectors
+    are `dlp`. A route with no matches but injected auth or preserve_auth
+    allowed any method, so it gets `methods: ["*"]`. `role` is dropped."""
+    host = str(route.get("host") or "?")
+    if not any(k in route for k in ("inspect", "role", "matches")):
+        allow = route.get("allow")
+        if not isinstance(allow, list):
+            return dict(route)
+        return {**route, "allow": [_new_entry(e, keep_methods=True) for e in allow]}
+    rest = {k: v for k, v in route.items() if k not in ("host", "inspect", "role", "matches")}
+    out: Doc = {"host": route.get("host")}
+    inspect = route.get("inspect", {})
+    if inspect is False:
+        out["passthrough"] = True
+        return {**out, **rest}
+    inspect = dict(inspect) if isinstance(inspect, dict) else {}
+    if "matches" in route and "matches" not in inspect:
+        inspect["matches"] = route["matches"]
+    for key in ("auth", "git", "preserve_auth", "dlp", "methods", "allow"):
+        if key in rest and key not in inspect:
+            inspect[key] = rest.pop(key)
+    auth = inspect.get("auth")
+    if isinstance(auth, dict) and any(k in auth for k in _OLD_AUTH_KEYS):
+        auth = new_auth(host, auth)
+    allow = inspect.get("allow")
+    matches = inspect.get("matches")
+    if isinstance(matches, list):
+        allow = [_new_entry(e) for e in matches]
+    elif isinstance(allow, list):
+        allow = [_new_entry(e, keep_methods=True) for e in allow]
+    methods = inspect.get("methods")
+    if isinstance(matches, list) and isinstance(allow, list) and len(allow) == 1 \
+            and set(allow[0]) <= {"methods"} and methods is None:
+        # One entry of methods alone is the route's methods; GET and HEAD
+        # alone are the default, said by saying nothing.
+        methods = allow[0].get("methods")
+        allow = None
+        if isinstance(methods, list) and sorted(str(m).upper() for m in methods) == \
+                ["GET", "HEAD"]:
+            methods = None
+    if methods is None and allow is None and matches is None and (
+            auth is not None or inspect.get("preserve_auth") is True):
+        methods = ["*"]
+    if methods is not None:
+        out["methods"] = methods
+    if allow is not None:
+        out["allow"] = allow
+    if auth is not None:
+        out["auth"] = auth
+    for key in ("git", "preserve_auth"):
+        if key in inspect:
+            out[key] = inspect[key]
+    dlp = _new_dlp(inspect)
+    if dlp is not None:
+        out["dlp"] = dlp
+    return {**out, **{k: v for k, v in rest.items() if k not in out}}
+
+
+def _new_entry(entry: Any, *, keep_methods: bool = False) -> Any:
+    """A `matches` entry as an `allow` one: its paths in the current form,
+    and `methods: ["*"]` when it had none (it allowed any)."""
+    if not isinstance(entry, dict):
+        return entry
+    out = dict(entry)
+    if isinstance(out.get("paths"), list):
+        out["paths"] = [_new_path(p) for p in out["paths"]]
+    if "methods" not in out and not keep_methods:
+        out["methods"] = ["*"]
+    return out
+
+
+def _new_path(path: Any) -> Any:
+    """`{type: prefix, value: X}` (or no type) is `X`; exact and regex are
+    `{exact: X}` and `{regex: X}`."""
+    if not isinstance(path, dict) or "value" not in path:
+        return path
+    kind = path.get("type", "prefix")
+    value = path["value"]
+    return value if kind == "prefix" else {kind: value}
+
+
+def _new_dlp(inspect: Mapping[str, Any]) -> Any:
+    """`outbound_detectors`, `inbound_detectors`, `outbound_on_match` as
+    `dlp` (both detector lists false is `dlp: false`); None when unset."""
+    if "dlp" in inspect:
+        return inspect["dlp"]
+    out_d, in_d = inspect.get("outbound_detectors"), inspect.get("inbound_detectors")
+    on_match = inspect.get("outbound_on_match")
+    if out_d is False and in_d is False and not on_match:
+        return False
+    dlp: Doc = {}
+    if out_d is not None:
+        dlp["outbound"] = [] if out_d is False else list(out_d)
+    if in_d is not None:
+        dlp["inbound"] = [] if in_d is False else list(in_d)
+    if on_match:
+        dlp["on_match"] = on_match
+    return dlp or None
 
 
 def new_auth(host: str, auth: Mapping[str, Any]) -> Doc:

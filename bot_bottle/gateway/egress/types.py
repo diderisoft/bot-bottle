@@ -54,9 +54,17 @@ class HeaderMatch:
 
 @dataclass(frozen=True)
 class MatchEntry:
+    """One allowed kind of request; empty `methods` is any method."""
+
     paths: tuple[PathMatch, ...] = ()
     methods: tuple[str, ...] = ()
     headers: tuple[HeaderMatch, ...] = ()
+
+
+# What an inspected route with no match entries allows.
+READ_METHODS = ("GET", "HEAD")
+# A route's `matches` letting any request through: any path, any method.
+ANY_REQUEST = (MatchEntry(),)
 
 
 @dataclass(frozen=True)

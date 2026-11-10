@@ -39,6 +39,7 @@ from .codex_auth import (
 )
 from ...contract.identity import IDENTITY_HEADER
 from ...egress import CODEX_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
+from ...gateway.egress.types import ANY_REQUEST
 from ...errors import HostLoginError
 from ...lib.log import die, info
 
@@ -204,6 +205,8 @@ class CodexAgentProvider(AgentProvider):
         for host in CODEX_HOST_CREDENTIAL_HOSTS:
             egress_routes.append(EgressRoute(
                 host=host,
+                # The API is POSTs; without a login the route stays read-only.
+                matches=ANY_REQUEST if forward_host_credentials else (),
                 auth_scheme="Bearer" if forward_host_credentials else "",
                 token_ref=CODEX_HOST_CREDENTIAL_TOKEN_REF if forward_host_credentials else "",
             ))

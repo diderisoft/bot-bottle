@@ -27,7 +27,7 @@ def _index(env: dict[str, str], *, egress: bool = False, forge: bool = False) ->
     bottle: dict[str, Any] = {"env": env}
     if egress:
         bottle["egress"] = {"routes": [{
-            "host": "api.example", "inspect": {"auth": {"type": "bearer", "value": "secret:TOK"}},
+            "host": "api.example", "auth": {"type": "bearer", "value": "secret:TOK"},
         }]}
     if forge:
         bottle["git-gate"] = {"repos": ["gitea.example.com/x/y"]}

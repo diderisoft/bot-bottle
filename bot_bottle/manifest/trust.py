@@ -29,6 +29,7 @@ from ..contract.forges import FORGE_KINDS
 from ..paths import bot_bottle_root
 from .agent import ManifestAgentProvider
 from .bottle import ManifestBottle
+from .egress import DEFAULT_METHODS
 from .loader import BUILTIN_BOTTLES_DIR, BottleSource, load_bottle_chain
 from .util import ManifestError
 
@@ -52,8 +53,12 @@ def grants(bottle: ManifestBottle) -> list[str]:
     """What a bottle grants, one line each, for the trust prompt."""
     lines: list[str] = []
     for route in bottle.egress.routes:
-        methods = sorted({m for match in route.Matches for m in match.Methods})
-        what = ", ".join(methods) if methods else "any method"
+        if not route.Inspect or any(not m.Methods for m in route.Matches):
+            what = "any method"
+        else:
+            methods = sorted({m for match in route.Matches for m in match.Methods}
+                             or set(DEFAULT_METHODS))
+            what = ", ".join(methods)
         if route.GitFetch:
             what += ", git clone/fetch"
         if route.TokenRef:

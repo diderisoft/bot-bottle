@@ -3,6 +3,10 @@ resolution (PRD 0017, PRD 0053)."""
 
 import tempfile
 import unittest
+
+from bot_bottle.gateway.egress.types import MatchEntry
+
+from bot_bottle.manifest.upgrade import new_route
 from pathlib import Path
 from unittest.mock import patch
 
@@ -44,7 +48,9 @@ def _inspect_routes(routes):  # type: ignore
             inspected = dict(route.get("inspect", {}))
             inspected.update(moved)
             route["inspect"] = inspected
-        out.append(route)
+        # Written as the old shape, then as `bottles migrate` makes it: what
+        # these tests check is the same either way.
+        out.append(new_route(route))
     return out
 
 
@@ -78,7 +84,8 @@ class TestManifestRouteLift(unittest.TestCase):
         self.assertEqual("Bearer", r.auth_scheme)
         self.assertEqual("GH_PAT", r.token_ref)
         self.assertEqual("", r.token_env)
-        self.assertEqual((), r.matches)
+        # Migrated from a route that let any method through: `methods: ["*"]`.
+        self.assertEqual((MatchEntry(),), r.matches)
 
     def test_unauthenticated_route_has_empty_auth_fields(self):
         b = _bottle([{"host": "github.com", "matches": [
@@ -326,12 +333,21 @@ class TestRenderRoutes(unittest.TestCase):
         self.assertNotIn("token_env", entry["inspect"])
 
     def test_no_matches_omits_field(self):
-        b = _bottle([{
-            "host": "api.anthropic.com",
-            "auth": {"type": "bearer", "value": "secret:CL"},
-        }])
+        b = _bottle([{"host": "docs.example.com"}])
         routes = egress_routes_for_bottle(b)
-        self.assertNotIn("matches", self._parsed(routes)[0]["inspect"])
+        self.assertNotIn("matches", self._parsed(routes)[0].get("inspect", {}))
+
+    def test_an_authed_route_without_methods_is_read_only_said_explicitly(self):
+        # Any gateway reads GET/HEAD, even one from before methods were explicit.
+        b = ManifestIndex.from_json_obj({
+            "bottles": {"dev": {"egress": {"routes": [{
+                "host": "api.example.com", "auth": {"type": "bearer", "value": "secret:CL"},
+            }]}}},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
+        }).bottles["dev"]
+        routes = egress_routes_for_bottle(b)
+        self.assertEqual([{"methods": ["GET", "HEAD"]}],
+                         self._parsed(routes)[0]["inspect"]["matches"])
 
     def test_empty_routes_round_trips(self):
         rendered = egress_render_routes(())
@@ -443,7 +459,7 @@ class TestRenderRoutes(unittest.TestCase):
         from bot_bottle.gateway.egress.types import LOG_BLOCKS
         m = ManifestIndex.from_json_obj({
             "bottles": {"dev": {"egress": {
-                "log": 1,
+                "log": "blocked",
                 "routes": [{"host": "x.example"}],
             }}},
             "agents": {"demo": {"skills": [], "prompt": ""}},
@@ -622,9 +638,9 @@ class TestCanaryGeneration(unittest.TestCase):
 
 
 class TestFullLogWarning(unittest.TestCase):
-    """A bottle at `log: 2` is warned at launch where the bodies go (#934)."""
+    """A bottle at `log: full` is warned at launch where the bodies go (#934)."""
 
-    def _prepare(self, log: int) -> str:
+    def _prepare(self, log: str) -> str:
         bottle = ManifestIndex.from_json_obj({
             "bottles": {"dev": {"egress": {"routes": [], "log": log}}},
             "agents": {"demo": {"skills": [], "prompt": ""}},
@@ -635,12 +651,12 @@ class TestFullLogWarning(unittest.TestCase):
         return " ".join(str(c.args[0]) for c in warn.call_args_list)
 
     def test_log_full_warns_with_the_log_location(self):
-        message = self._prepare(2)
+        message = self._prepare("full")
         self.assertIn("/var/log/bot-bottle-egress/full.jsonl", message)
         self.assertIn("64 MiB", message)
 
     def test_lower_levels_are_quiet(self):
-        self.assertEqual(self._prepare(1), "")
+        self.assertEqual(self._prepare("blocked"), "")
 
 
 class TestEgressEnvEntries(unittest.TestCase):

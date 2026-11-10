@@ -23,7 +23,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ..manifest.bottle import ManifestBottle
-from ..manifest.egress import ManifestEgressRoute
+from ..manifest.egress import DEFAULT_METHODS, ManifestEgressRoute
 from ..manifest.extends import merge_bottles_runtime
 from ..manifest.forges import parse_grant, split_grant_alias
 from ..manifest.loader import load_bottle_chain
@@ -54,8 +54,10 @@ def base_bottles(proposal: Proposal) -> list[str]:
 
 def allowed_methods(route: ManifestEgressRoute) -> frozenset[str]:
     """The methods `route` allows on every path."""
-    if not route.Inspect or not route.Matches:
+    if not route.Inspect:
         return ALL_METHODS
+    if not route.Matches:
+        return frozenset(DEFAULT_METHODS)
     allowed: set[str] = set()
     for match in route.Matches:
         if match.Paths or match.Headers:

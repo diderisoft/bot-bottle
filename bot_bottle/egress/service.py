@@ -16,6 +16,7 @@ from ..gateway.egress.types import (
     MatchEntry as CoreMatchEntry,
     LOG_FULL,
     PathMatch as CorePathMatch,
+    READ_METHODS,
     Route,
 )
 from ..gateway.egress import full_log
@@ -102,6 +103,10 @@ def egress_manifest_routes(
                 methods=m.Methods,
                 headers=core_headers,
             ))
+        if r.Inspect and not core_matches and (r.AuthScheme or r.AuthHeader or r.PreserveAuth):
+            # Read-only, said explicitly: a gateway from before methods were
+            # explicit would otherwise let an authed route write.
+            core_matches.append(CoreMatchEntry(methods=READ_METHODS))
         out.append(EgressRoute(
             host=r.Host,
             matches=tuple(core_matches),
@@ -390,10 +395,10 @@ class Egress:
         log = bottle.egress.Log
         if log >= LOG_FULL:
             cap = full_log.MAX_BYTES * (full_log.BACKUPS + 1) // (1024 * 1024)
-            warn(f"bottle {slug}: egress log: 2 records full request and response bodies "
+            warn(f"bottle {slug}: egress log: full records full request and response bodies "
                  f"(each cut at {full_log.BODY_LIMIT_BYTES // 1024} KiB) in the gateway, in "
                  f"{full_log.DEFAULT_DIR}/{full_log.FILE_NAME} (owner-only, rotated, {cap} MiB "
-                 "at most). It is verbose and holds whole conversations; use log: 1 "
+                 "at most). It is verbose and holds whole conversations; use log: blocked "
                  "unless you are debugging.")
         audit_delivery = bottle.audit.delivery or default_audit_delivery
         firehose = bottle.audit.firehose or "full"

@@ -25,6 +25,7 @@ from ...agent_provider import (
 )
 from ...contract.identity import IDENTITY_HEADER
 from ...egress import CLAUDE_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
+from ...gateway.egress.types import ANY_REQUEST
 from ...lib.log import die, info, warn
 from ...starter import GENERAL_PROMPT, starter_agent
 from ...transcript import TranscriptEntry
@@ -245,15 +246,19 @@ class ClaudeAgentProvider(AgentProvider):
             # An API key goes in `x-api-key`, raw, as Claude Code sends it.
             egress_routes = (EgressRoute(
                 host="api.anthropic.com",
+                matches=ANY_REQUEST,  # the API is POSTs
                 auth_header="x-api-key",
                 token_ref=api_key_env,
             ),)
             env_vars["ANTHROPIC_API_KEY"] = _EGRESS_PLACEHOLDER
             hidden_env_names = frozenset({"ANTHROPIC_API_KEY"})
         else:
+            authed = bool(auth_token or forward_host_credentials)
             egress_routes = (EgressRoute(
                 host="api.anthropic.com",
-                auth_scheme="Bearer" if (auth_token or forward_host_credentials) else "",
+                # The API is POSTs; without a login the route stays read-only.
+                matches=ANY_REQUEST if authed else (),
+                auth_scheme="Bearer" if authed else "",
                 token_ref=cred_token_ref,
             ),)
         if auth_token or forward_host_credentials:

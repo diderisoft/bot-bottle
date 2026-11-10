@@ -13,25 +13,48 @@ from __future__ import annotations
 
 from ..secret_ref import stored
 from .bottle import ManifestBottle
-from .egress import ManifestEgressRoute, ManifestMatchEntry
+from .egress import (
+    ANY_METHOD, DEFAULT_METHODS, LOG_NAMES, ManifestEgressRoute, ManifestMatchEntry,
+    ManifestPathMatch,
+)
 from .forges import ManifestForge
 from .git import ManifestGitEntry
+
+
+def _methods(methods: tuple[str, ...]) -> list[str]:
+    return list(methods) or [ANY_METHOD]
+
+
+def _path(p: ManifestPathMatch) -> object:
+    return p.Value if p.Type == "prefix" else {p.Type: p.Value}
 
 
 def _match(entry: ManifestMatchEntry) -> dict[str, object]:
     out: dict[str, object] = {}
     if entry.Paths:
-        out["paths"] = [{"type": p.Type, "value": p.Value} for p in entry.Paths]
-    if entry.Methods:
-        out["methods"] = list(entry.Methods)
+        out["paths"] = [_path(p) for p in entry.Paths]
+    if entry.Methods != DEFAULT_METHODS:
+        out["methods"] = _methods(entry.Methods)
     if entry.Headers:
         out["headers"] = [{"name": h.Name, "value": h.Value, "type": h.Type}
                           for h in entry.Headers]
     return out
 
 
-def _detectors(value: tuple[str, ...] | None) -> object:
-    return False if value == () else list(value or ())
+def dlp_document(outbound: tuple[str, ...] | None, inbound: tuple[str, ...] | None,
+                 on_match: str) -> object:
+    """A route's detectors as `dlp`: false for none, else what's set; None
+    when all are the defaults."""
+    if outbound == () and inbound == () and not on_match:
+        return False
+    out: dict[str, object] = {}
+    if outbound is not None:
+        out["outbound"] = list(outbound)
+    if inbound is not None:
+        out["inbound"] = list(inbound)
+    if on_match:
+        out["on_match"] = on_match
+    return out or None
 
 
 def auth_document(scheme: str, header: str, secret: str,
@@ -49,26 +72,23 @@ def route_document(route: ManifestEgressRoute) -> dict[str, object]:
     """One egress route as a bottle file declares it."""
     out: dict[str, object] = {"host": route.Host}
     if not route.Inspect:
-        out["inspect"] = False
+        out["passthrough"] = True
         return out
-    inspect: dict[str, object] = {}
-    if route.Matches:
-        inspect["matches"] = [_match(m) for m in route.Matches]
+    whole = [m for m in route.Matches if not (m.Paths or m.Headers)]
+    if len(route.Matches) == 1 and whole:
+        out["methods"] = _methods(route.Matches[0].Methods)
+    elif route.Matches:
+        out["allow"] = [_match(m) for m in route.Matches]
     if route.AuthScheme or route.AuthHeader:
-        inspect["auth"] = auth_document(route.AuthScheme, route.AuthHeader, route.TokenRef,
-                                         route.TokenFromEnv)
+        out["auth"] = auth_document(route.AuthScheme, route.AuthHeader, route.TokenRef,
+                                    route.TokenFromEnv)
     if route.GitFetch:
-        inspect["git"] = {"fetch": True}
+        out["git"] = {"fetch": True}
     if route.PreserveAuth:
-        inspect["preserve_auth"] = True
-    if route.OutboundDetectors is not None:
-        inspect["outbound_detectors"] = _detectors(route.OutboundDetectors)
-    if route.InboundDetectors is not None:
-        inspect["inbound_detectors"] = _detectors(route.InboundDetectors)
-    if route.OutboundOnMatch:
-        inspect["outbound_on_match"] = route.OutboundOnMatch
-    if inspect:
-        out["inspect"] = inspect
+        out["preserve_auth"] = True
+    dlp = dlp_document(route.OutboundDetectors, route.InboundDetectors, route.OutboundOnMatch)
+    if dlp is not None:
+        out["dlp"] = dlp
     return out
 
 
@@ -154,7 +174,7 @@ def bottle_document(bottle: ManifestBottle) -> dict[str, object]:
         egress["routes"] = [route_document(r) for r in bottle.egress.routes] + [
             {"host": h, "blocked": True} for h in bottle.egress.Blocked]
     if bottle.egress.Log:
-        egress["log"] = bottle.egress.Log
+        egress["log"] = LOG_NAMES[bottle.egress.Log]
     if egress:
         doc["egress"] = egress
     doc["supervise"] = bottle.supervise

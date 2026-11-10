@@ -28,11 +28,9 @@ env:
 egress:
   routes:
     - host: example.com
-      inspect:
-        matches:
-          - methods: [GET]
-            paths:
-              - value: /v1/
+      allow:
+        - methods: [GET]
+          paths: [/v1/]
 ---
 
 Work bottle.

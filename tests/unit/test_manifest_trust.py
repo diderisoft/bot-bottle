@@ -22,9 +22,7 @@ extends: basic
 egress:
   routes:
     - host: api.stripe.com
-      inspect:
-        matches:
-          - methods: [GET, POST]
+      methods: [GET, POST]
 ---
 """
 
@@ -65,8 +63,11 @@ class Basic(_Project):
 
     def test_basic_is_read_only_with_git_fetch_on_github(self) -> None:
         routes = {r.Host: r for r in self.load("basic").bottle.egress.routes}
-        methods = {m for r in routes.values() for match in r.Matches for m in match.Methods}
-        self.assertEqual({"GET", "HEAD"}, methods)
+        # No route lists methods, so each is GET/HEAD only.
+        self.assertEqual((), tuple(m for r in routes.values() for m in r.Matches))
+        self.assertEqual({"reach   registry.npmjs.org             GET, HEAD"},
+                         {g for g in trust.grants(self.load("basic").bottle)
+                          if "npmjs" in g})
         self.assertTrue(routes["github.com"].GitFetch)
         self.assertFalse(routes["registry.npmjs.org"].GitFetch)
 
@@ -98,8 +99,8 @@ class ProjectBottles(_Project):
         hosts = {r.Host for r in self.load("pi", "./app").bottle.egress.routes}
         self.assertIn("api.stripe.com", hosts)
         (self.bottles / "app.md").write_text(_STRIPE.replace(
-            "          - methods: [GET, POST]\n",
-            "          - methods: [GET, POST]\n    - host: api.segment.io\n"))
+            "      methods: [GET, POST]\n",
+            "      methods: [GET, POST]\n    - host: api.segment.io\n"))
         changed = self.untrusted("pi", "./app")
         self.assertIsNotNone(changed.previous)
         text = trust.prompt_text(changed)
@@ -124,8 +125,8 @@ class ProjectBottles(_Project):
             "---\nextends: basic\nenv:\n  ASKED: ?Paste it\n  FROM_ENV: ${GITHUB_PAT}\n"
             "  STORED: secret:OPENAI_API_KEY\n  HIDDEN: secret:?Paste it\n"
             "  SECRET_ENV: secret:${GH}\n  PLAIN: hello\n"
-            "egress:\n  routes:\n    - host: api.example.com\n      inspect:\n"
-            "        auth: { type: bearer, value: secret:EXAMPLE_API_TOKEN }\n---\n")
+            "egress:\n  routes:\n    - host: api.example.com\n      methods: [\"*\"]\n"
+            "      auth: { type: bearer, value: secret:EXAMPLE_API_TOKEN }\n---\n")
         error = self.untrusted("pi", "./app")
         self.assertEqual([
             "reach   api.example.com                any method, with secrets file "

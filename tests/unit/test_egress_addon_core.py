@@ -9,6 +9,8 @@ import tempfile
 import threading
 import time
 import unittest
+
+from bot_bottle.gateway.egress.types import ANY_REQUEST
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -685,18 +687,22 @@ class TestDecide(unittest.TestCase):
                             request_method=method)
                 self.assertEqual("block", d.action)
                 self.assertEqual("route", d.code)
-                self.assertIn("matches", d.reason)
+                self.assertIn("lists methods", d.reason)
 
     def test_no_auth_with_matches_allows_explicit_writes(self):
         route = Route(host="api.example.com", matches=(MatchEntry(methods=("POST",)),))
         d = decide((route,), "api.example.com", "/data", {}, request_method="POST")
         self.assertEqual("forward", d.action)
 
-    def test_preserve_auth_allows_writes_without_matches(self):
+    def test_preserve_auth_alone_is_read_only(self):
+        # Methods, not preserve_auth or injected auth, allow writes.
         route = Route(host="registry.example.com", preserve_auth=True)
         d = decide((route,), "registry.example.com", "/v2/push", {},
                     request_method="POST")
-        self.assertEqual("forward", d.action)
+        self.assertEqual("block", d.action)
+        route = Route(host="registry.example.com", preserve_auth=True, matches=ANY_REQUEST)
+        self.assertEqual("forward", decide((route,), "registry.example.com", "/v2/push", {},
+                                           request_method="POST").action)
 
     def test_passthrough_route_allows_writes_without_matches(self):
         route = Route(host="registry.example.com", inspect=False)
@@ -704,11 +710,17 @@ class TestDecide(unittest.TestCase):
                     request_method="POST")
         self.assertEqual("forward", d.action)
 
-    def test_auth_route_allows_writes_without_matches(self):
+    def test_auth_route_alone_is_read_only(self):
         route = Route(host="api.example.com", auth_scheme="Bearer", token_env="T")
         d = decide((route,), "api.example.com", "/data", {"T": "tok"},
                     request_method="POST")
-        self.assertEqual("forward", d.action)
+        self.assertEqual("block", d.action)
+        self.assertEqual("forward", decide((route,), "api.example.com", "/data", {"T": "tok"},
+                                           request_method="GET").action)
+        route = Route(host="api.example.com", auth_scheme="Bearer", token_env="T",
+                      matches=ANY_REQUEST)
+        self.assertEqual("forward", decide((route,), "api.example.com", "/data", {"T": "tok"},
+                                           request_method="POST").action)
 
 
 # --- Decision dataclass --------------------------------------------------

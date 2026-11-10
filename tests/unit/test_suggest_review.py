@@ -34,10 +34,10 @@ extends: basic
 egress:
   routes:
     - host: api.example.com
-      inspect:
-        auth: {type: bearer, value: secret:API_TOKEN}
+      methods: ["*"]
+      auth: {type: bearer, value: secret:API_TOKEN}
     - host: pypi.org
-      inspect: false
+      passthrough: true
     - host: crates.io
       blocked: true
 git-gate:
@@ -68,14 +68,15 @@ class TestMethods(unittest.TestCase):
     def test_route_methods(self) -> None:
         cases: list[tuple[dict[str, object], set[str]]] = [
             ({"host": "h", "blocked": True}, set()),
-            ({"host": "h", "inspect": False}, {"any"}),
-            ({"host": "h"}, {"GET"}),
-            ({"host": "h", "inspect": {"auth": {"type": "bearer", "value": "secret:T"}}}, {"any"}),
-            ({"host": "h", "inspect": {"preserve_auth": True}}, {"any"}),
-            ({"host": "h", "inspect": {"matches": [{"methods": ["get", "HEAD"]},
-                                                   {"methods": ["POST"]}]}},
+            ({"host": "h", "passthrough": True}, {"any"}),
+            ({"host": "h"}, {"GET", "HEAD"}),
+            # Auth and preserve_auth no longer widen a route: methods do.
+            ({"host": "h", "auth": {"type": "bearer", "value": "secret:T"}}, {"GET", "HEAD"}),
+            ({"host": "h", "preserve_auth": True}, {"GET", "HEAD"}),
+            ({"host": "h", "methods": ["*"]}, {"any"}),
+            ({"host": "h", "allow": [{"methods": ["get", "HEAD"]}, {"methods": ["POST"]}]},
              {"GET", "HEAD", "POST"}),
-            ({"host": "h", "inspect": {"matches": [{"methods": ["GET"]}, {"paths": []}]}},
+            ({"host": "h", "allow": [{"methods": ["GET"]}, {"paths": ["/x"], "methods": ["*"]}]},
              {"any"}),
         ]
         for route, methods in cases:
