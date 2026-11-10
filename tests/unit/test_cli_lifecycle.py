@@ -279,10 +279,14 @@ class TestInstallOffersSudo(_Mocked):
 
     def setUp(self) -> None:
         super().setUp()
+
+        def which(name: str) -> str:
+            return f"/usr/bin/{name}"
+
         self.backend.root_setup.return_value = "install the network pool"
         self.enterContext(mock.patch.object(lifecycle, "tmux_version", return_value=(3, 4)))
         self.enterContext(mock.patch.object(lifecycle.shutil, "which",
-                                            side_effect=lambda name: f"/usr/bin/{name}"))
+                                            side_effect=which))
         self.tty = self.enterContext(mock.patch.object(lifecycle.sys.stdin, "isatty",
                                                        return_value=True))
         self.sudo = self.enterContext(mock.patch.object(lifecycle.subprocess, "run"))
@@ -309,6 +313,13 @@ class TestInstallOffersSudo(_Mocked):
         self.assertEqual(0, code)
         self.sudo.assert_not_called()
         self.backend.setup.assert_called_once()
+        self.assertIn("here's what to run yourself", err)
+
+    def test_no_answer_at_all_is_no(self) -> None:
+        with mock.patch("builtins.input", side_effect=EOFError):
+            code, _, err = self.run_cmd(lifecycle.cmd_install, [])
+        self.assertEqual(0, code)
+        self.sudo.assert_not_called()
         self.assertIn("here's what to run yourself", err)
 
     def test_a_failed_sudo_run_stops_install(self) -> None:

@@ -119,7 +119,8 @@ class TestFirecrackerRootSetup(unittest.TestCase):
     """What `install` offers to run under sudo: the pool's unit, until it's
     installed as setup would write it."""
 
-    def _root_setup(self, *, nixos=False, systemd=True, euid=1000, unit=None):
+    def _root_setup(self, *, nixos: bool = False, systemd: bool = True, euid: int = 1000,
+                    unit: str | None = None) -> str | None:
         path = MagicMock()
         if unit is None:
             path.read_text.side_effect = FileNotFoundError
@@ -132,8 +133,8 @@ class TestFirecrackerRootSetup(unittest.TestCase):
             return fc.root_setup(_S)
 
     def test_offered_until_the_unit_is_installed(self):
-        self.assertIn("network pool", self._root_setup())
-        self.assertIn("network pool", self._root_setup(unit="an older unit"))
+        self.assertIn("network pool", self._root_setup() or "")
+        self.assertIn("network pool", self._root_setup(unit="an older unit") or "")
         current = netpool.render_systemd_unit(netpool.host_pool(_S.infra), fc._owner(),
                                               fc._script_path())
         self.assertIsNone(self._root_setup(unit=current))
@@ -643,6 +644,25 @@ class TestBackendStatusQuiet(unittest.TestCase):
         from bot_bottle.backend.macos_container.backend import MacosContainerBottleBackend
         with patch.object(mc, "status", return_value=0):
             self.assertEqual(0, MacosContainerBottleBackend(_S).status(quiet=True))
+
+
+class TestBackendRootSetup(unittest.TestCase):
+    """Each backend's root_setup is its setup module's; docker needs none."""
+
+    def test_docker_needs_no_root(self):
+        from bot_bottle.backend.docker.backend import DockerBottleBackend
+        self.assertIsNone(DockerBottleBackend(_S).root_setup())
+
+    def test_firecracker_asks_its_setup(self):
+        from bot_bottle.backend.firecracker.backend import FirecrackerBottleBackend
+        with patch.object(fc, "root_setup", return_value="install the pool") as rs:
+            self.assertEqual("install the pool", FirecrackerBottleBackend(_S).root_setup())
+        rs.assert_called_once_with(_S)
+
+    def test_macos_asks_its_setup(self):
+        from bot_bottle.backend.macos_container.backend import MacosContainerBottleBackend
+        with patch.object(mc, "root_setup", return_value=None):
+            self.assertIsNone(MacosContainerBottleBackend(_S).root_setup())
 
 
 if __name__ == "__main__":
