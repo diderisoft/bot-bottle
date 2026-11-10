@@ -91,7 +91,11 @@ Point it somewhere specific with `BOT_BOTTLE_PYTHON=/path/to/python3`.
 If either is present the installer uses it (`uv` first) and stays out of the
 way. If neither is, bot-bottle installs into a private venv at
 `~/.bot-bottle/venv` (override with `BOT_BOTTLE_VENV`) and symlinks the entry
-point into `~/.local/bin`.
+point into `~/.local/bin`. Debian and Ubuntu ship `venv` separately
+(`python3-venv`), so when the Python has no `venv` module the installer
+fetches its own pinned uv instead (the same one it uses when there's no
+Python at all, kept under `~/.bot-bottle/uv`) and installs onto that Python
+with it, no `sudo apt install` needed.
 
 There is deliberately no `pip install --user` path. Homebrew, python.org and
 Debian/Ubuntu interpreters are all externally managed (PEP 668), which blocks

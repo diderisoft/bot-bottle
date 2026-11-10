@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -235,6 +236,28 @@ class TestInstallRef(unittest.TestCase):
     def _installed(self) -> str:
         log = (self.root / "uv.log").read_text().splitlines()
         return next(line for line in log if line.startswith("tool install")).split("--force ")[1]
+
+    def test_a_python_without_venv_installs_with_our_uv(self) -> None:
+        # Debian and Ubuntu ship venv as python3-venv: with no uv or pipx of
+        # the user's, the installer's own uv installs onto that Python.
+        if shutil.which("uv") or shutil.which("pipx"):
+            self.skipTest("a uv or pipx on this host's PATH would be used first")
+        (self.bin / "uv").unlink()
+        (self.bin / "python3").unlink()
+        self._stub("python3", f'case "$*" in *ensurepip*) exit 1 ;; esac\n'
+                              f'exec "{sys.executable}" "$@"')
+        ours = self.root / "home" / ".bot-bottle" / "uv" / "bin"
+        ours.mkdir(parents=True)
+        (ours / "uv").write_text(f'#!/bin/sh\necho "$@" >> "{self.root}/uv.log"\n'
+                                 f'[ "$1 $2" = "tool dir" ] && echo "{self.bin}"\nexit 0\n')
+        (ours / "uv").chmod(0o755)
+        self._page(1, _tags("v0.2.0"))
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        install = next(line for line in (self.root / "uv.log").read_text().splitlines()
+                       if line.startswith("tool install"))
+        self.assertIn(f"--python {self.bin / 'python3'}", install)
+        self.assertNotIn("managed venv", proc.stderr)
 
     def test_installs_the_newest_release_tag_by_semver_across_pages(self) -> None:
         self._page(1, _tags("v0.9.0", "backup/x", "v0.10.0-rc1", "v0.2.0"))

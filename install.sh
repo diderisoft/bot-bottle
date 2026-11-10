@@ -387,6 +387,18 @@ case "${PACKAGE_SPEC}" in
         ;;
 esac
 
+# A Python without its venv module (Debian and Ubuntu ship that separately,
+# as python3-venv) can't make the private venv below, and pipx needs it too.
+# uv makes its own environments: fetch ours and install onto that Python.
+if [ -z "${UV}" ] && ! command -v uv >/dev/null 2>&1 && ! command -v pipx >/dev/null 2>&1 \
+    && ! "${PYTHON}" -c 'import ensurepip, venv' >/dev/null 2>&1; then
+    if [ -x "${UV_HOME}/bin/uv" ] || { say "${PYTHON} has no venv module; fetching uv ${UV_VERSION} to install with" && fetch_uv >/dev/null; }; then
+        UV="${UV_HOME}/bin/uv"
+        PRIVATE_UV=yes
+        UV_PYTHON="${PYTHON}"
+    fi
+fi
+
 # --- config directories ------------------------------------------------------
 
 mkdir -p \
