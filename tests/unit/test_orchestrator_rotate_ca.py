@@ -207,11 +207,11 @@ class TestPersistedCaDir(unittest.TestCase):
         self.assertEqual(Path("/ca"), DockerGateway(ca_mount_source="/ca", settings=Settings()).persisted_ca_dir())
         self.assertIsNone(DockerGateway(ca_mount_source="ci-ca-volume", settings=Settings()).persisted_ca_dir())
 
-    def test_firecracker_uses_its_own_infra_dir(self) -> None:
+    def test_firecracker_keeps_its_ca_under_the_root_not_the_cache(self) -> None:
         from bot_bottle.backend.firecracker import infra_vm
         from bot_bottle.backend.firecracker.gateway import FirecrackerGateway
         with tempfile.TemporaryDirectory() as td, \
-                patch.object(infra_vm, "_infra_dir", return_value=Path(td)):
+                patch.object(infra_vm, "state_dir", return_value=Path(td)):
             self.assertEqual(Path(td) / "gateway-ca", FirecrackerGateway(Settings()).persisted_ca_dir())
 
 

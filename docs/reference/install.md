@@ -445,7 +445,8 @@ state, names and network.
 | docker agent /29s | `10.242.0.0/20` | `10.240.0.0/16`, shared by named environments (allocation skips any subnet in use) |
 | docker orchestrator host port | `127.0.0.1:8099` | a free port of 18100-18899, allocated (moves on when docker says the port is taken) and recorded per container under the state root |
 | firecracker pool | slice 0 (`bbfc*`, `bot_bottle_fc`, `bborch0`/`bbgw0`) | the slice it claims (below) |
-| firecracker run and infra dirs | `~/.cache/bot-bottle/firecracker/{run,infra}` | `~/.cache/bot-bottle/firecracker/envs/<name>/{run,infra}` |
+| firecracker run and infra dirs (cache) | `~/.cache/bot-bottle/firecracker/{run,infra}` | `~/.cache/bot-bottle/firecracker/envs/<name>/{run,infra}` |
+| firecracker registry volume and CA | `~/.bot-bottle/infra/` | `~/.bot-bottle-envs/<name>/infra/` |
 | macOS pf anchor | `com.apple/io.bot-bottle` | `com.apple/io.bot-bottle.<name>` |
 | macOS agent IPv6 /64 | `fd62:6f74:6274:6c65::/64` | a free `fd62:6f74:6275:<n>::/64`, allocated and recorded |
 

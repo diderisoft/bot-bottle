@@ -120,9 +120,12 @@ class TestRegistryVolume(unittest.TestCase):
             self.assertIn("mke2fs", argv)
             self.assertIn(str(vol), argv)
 
-    def test_registry_volume_path_under_infra_dir(self) -> None:
-        with patch.object(infra_vm, "_infra_dir", return_value=Path("/infra")):
-            self.assertEqual(Path("/infra/registry.ext4"), registry_volume_path())
+    def test_registry_volume_is_under_the_root_not_the_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as td, \
+                patch.dict("os.environ", {"BOT_BOTTLE_ROOT": td}), \
+                patch.object(infra_vm, "_infra_dir", return_value=Path("/cache/infra")):
+            self.assertEqual(Path(td) / "infra" / "registry.ext4", registry_volume_path())
+            self.assertEqual(0o700, (Path(td) / "infra").stat().st_mode & 0o777)
 
     def test_build_store_volume_created_at_its_own_path(self) -> None:
         from subprocess import CompletedProcess

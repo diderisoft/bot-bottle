@@ -32,7 +32,7 @@ from typing import Generator
 from ... import resources
 from ...contract.hostctl import HOST_CONTROL, HOSTCTL_URL_ENV, InfraSettings, Settings
 from ...lib.log import die, info
-from ...paths import REGISTRY_DB_FILENAME
+from ...paths import REGISTRY_DB_FILENAME, bot_bottle_root
 from ..docker import util as docker_mod
 from . import firecracker_vm, infra_rootfs, netpool, util
 
@@ -207,8 +207,19 @@ def boot_vm(
 
 
 def _infra_dir() -> Path:
+    """The infra VMs' run dirs, rootfs copies and keypair, in the firecracker
+    cache: all rebuilt when missing."""
     d = util.env_dir() / "infra"
     d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def state_dir() -> Path:
+    """`<root>/infra/`: what the infra VMs keep that can't be rebuilt (the
+    orchestrator's registry volume and the gateway CA), under the
+    environment's root rather than the cache."""
+    d = bot_bottle_root() / "infra"
+    d.mkdir(mode=0o700, parents=True, exist_ok=True)
     return d
 
 
@@ -294,9 +305,10 @@ def push_stream(infra: InfraVm, data: bytes, script: str, what: str) -> None:
 
 
 def gateway_ca_dir() -> Path:
-    """The firecracker gateway CA's host dir. Separate from the docker/macOS
-    dir, which docker writes as root with a 0600 key."""
-    d = _infra_dir() / "gateway-ca"
+    """The firecracker gateway CA's host dir, `<root>/infra/gateway-ca/`. Key
+    material, so not in the cache. Separate from the docker/macOS dir, which
+    docker writes as root with a 0600 key."""
+    d = state_dir() / "gateway-ca"
     d.mkdir(mode=0o700, parents=True, exist_ok=True)
     return d
 

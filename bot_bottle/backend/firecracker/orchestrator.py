@@ -31,17 +31,19 @@ _HEALTH_POLL_SECONDS = 0.5
 _SYNC_TIMEOUT_SECONDS = 15.0
 
 # The registry volume: a host ext4 file attached as `/dev/vdb` at the DB dir,
-# so the registry survives VM restarts. Loop-mount it (VM stopped) to inspect
-# `db/registry.db`.
+# so the registry survives VM restarts. It's state, not cache, so it sits under
+# the environment's root (`<root>/infra/registry.ext4`). Loop-mount it (VM
+# stopped) to inspect `db/registry.db`.
 _REGISTRY_SIZE = "512M"
 
 # The build-store volume (`/dev/vdc`): buildah's image store, so bases and
-# layers survive restarts. Sparse; `image_builder` prunes it.
+# layers survive restarts. Sparse; `image_builder` prunes it. Rebuildable, so
+# it stays in the firecracker cache.
 _BUILD_STORE_SIZE = "16G"
 
 
 def registry_volume_path() -> Path:
-    return infra_vm._infra_dir() / "registry.ext4"
+    return infra_vm.state_dir() / "registry.ext4"
 
 
 def build_store_volume_path() -> Path:

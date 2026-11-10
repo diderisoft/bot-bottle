@@ -56,13 +56,13 @@ class TestWalk(unittest.TestCase):
         _write(self.cache / "run" / "demo" / "rootfs.ext4", 8192)
         _write(self.cache / "envs" / "dev" / "run" / "d" / "rootfs.ext4", 4096)
         _write(self.cache / "infra" / "gateway" / "rootfs.ext4", 4096)
-        _write(self.cache / "infra" / "registry.ext4", 4096)
+        _write(self.state / "infra" / "registry.ext4", 4096)
         _write(self.cache / "rootfs.squashfs", 4096)
         got = self.walk()
         self.assertEqual(8192, got[budget.TRANSCRIPTS])
-        self.assertEqual(8192 + 8192 + 4096 + 4096, got[budget.VM_DISKS])
+        self.assertEqual(8192 + 8192 + 4096 + 4096 + 4096, got[budget.VM_DISKS])
         self.assertEqual(4096, got[budget.WORKSPACES])
-        self.assertEqual(4096 * 3, got[budget.IMAGES])
+        self.assertEqual(4096 * 2, got[budget.IMAGES])
 
     def test_a_sparse_disk_counts_what_it_holds(self) -> None:
         disk = self.cache / "run" / "d" / "rootfs.ext4"

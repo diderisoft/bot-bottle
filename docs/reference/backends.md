@@ -315,6 +315,11 @@ The infra pair is two persistent VMs, each booting its own rootfs
   build tooling. It reaches the orchestrator over the one forward rule its
   link allows.
 
+What the pair keeps lives under the state root's `infra/`: the registry
+volume `registry.ext4` and the CA in `gateway-ca/`. Run dirs, root filesystem
+copies and buildah's store (`build-store.ext4`) are rebuildable, so they stay
+in the firecracker cache.
+
 ### Agent builds in the orchestrator VM
 
 The orchestrator VM's buildah builds every custom Dockerfile. It builds an
