@@ -141,9 +141,18 @@ class CmdPair(unittest.TestCase):
             cmd_pair([])
         self.assertEqual(["http://remembered/api/v1/hosts/authorize"], urls)
 
-    def test_needs_a_console(self) -> None:
-        with patch("sys.stderr", io.StringIO()):
-            self.assertEqual(1, cmd_pair([]))
+    def test_with_no_console_named_pairs_with_the_hosted_one(self) -> None:
+        urls: list[str] = []
+
+        def fake_post(url: str, _payload: dict[str, Any]) -> dict[str, Any]:
+            urls.append(url)
+            raise OSError("stop here")
+
+        with patch("bot_bottle.cli.commands.login._post", side_effect=fake_post), \
+                patch.object(pairing, "node_id", return_value="node"), \
+                patch("sys.stderr", io.StringIO()):
+            cmd_pair([])
+        self.assertEqual(["https://bot-bottle.app/api/v1/hosts/authorize"], urls)
 
     def test_registered_and_store_free(self) -> None:
         from bot_bottle.cli.commands import COMMANDS, NO_MIGRATION_COMMANDS

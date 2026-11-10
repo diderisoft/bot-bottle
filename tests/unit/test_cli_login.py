@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 import tempfile
 import unittest
@@ -124,12 +125,20 @@ class TestCmdLoginMissingUrl(unittest.TestCase):
 
         self.assertEqual(cmd_login(["--help"]), 0)
 
-    def test_returns_1_without_url(self) -> None:
+    def test_without_a_url_uses_the_hosted_console(self) -> None:
         from bot_bottle.cli.commands.login import cmd_login
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("BB_CONSOLE_URL", None)
+        urls: list[str] = []
+
+        def fake_post(url: str, _payload: object) -> object:
+            urls.append(url)
+            raise OSError("stop here")
+
+        with patch.dict(os.environ, {}, clear=True), \
+                patch("bot_bottle.cli.commands.login._post", side_effect=fake_post), \
+                patch("sys.stderr", io.StringIO()):
             result = cmd_login([])
-        self.assertEqual(result, 1)
+        self.assertEqual(1, result)
+        self.assertTrue(urls and urls[0].startswith("https://bot-bottle.app/"), urls)
 
     def test_reads_env_var(self) -> None:
         """Exits 1 (network error) not because of missing URL when env var is set."""

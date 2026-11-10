@@ -13,7 +13,7 @@
 
 Flags:
   --console-url URL   Console to pair with (or BB_CONSOLE_URL, or the console
-                      this host last paired with)
+                      this host last paired with; else https://bot-bottle.app)
   --label LABEL       Host name shown on the phone (default: hostname)
 
 `bot-bottle status` shows whether the link is on and connected.
@@ -56,7 +56,7 @@ def _console_url(argv: list[str]) -> str:
             url = str(pairing.load_console().get("url", ""))
         except pairing.RemoteError:
             url = ""
-    return url.rstrip("/")
+    return (url or login.DEFAULT_CONSOLE_URL).rstrip("/")
 
 
 def _show(console_url: str, ansi: bool):
@@ -84,9 +84,6 @@ def cmd_pair(argv: list[str]) -> int:  # pylint: disable=too-many-return-stateme
         status = login.cmd_login([a for a in argv if a != "--password"])
         return status if status != 0 else cmd_remote(["enable"])
     console_url = _console_url(argv)
-    if not console_url:
-        sys.stderr.write("bot-bottle pair: --console-url or BB_CONSOLE_URL is required\n")
-        return 1
     try:
         node_id = pairing.node_id()  # remote access needs iroh; check before pairing
     except pairing.RemoteError as e:

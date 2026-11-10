@@ -576,7 +576,10 @@ consuming, the gateway stops building records. Settings are re-read every
 ## Remote access
 
 `remote.py` ([ADR 0007](../decisions/0007-remote-access-terminates-in-host-controller.md)).
-With `bot-bottle pair` (or `pair on`), the daemon dials out to the console it logged
+The console is the one `--console-url` or `BB_CONSOLE_URL` names, else the one
+this host last paired with, else the hosted console at `https://bot-bottle.app`
+(`login.DEFAULT_CONSOLE_URL`); `setup` and `bootstrap` offer to pair with the
+same one. With `bot-bottle pair` (or `pair on`), the daemon dials out to the console it logged
 in to over iroh (ALPN `bb-console/1`). It accepts no inbound connections and
 refuses a console whose node id isn't the one pinned at login. What pairing
 keeps under `~/.bot-bottle/` (`remote.json`, `console.json`, the iroh key

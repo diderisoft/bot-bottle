@@ -17,7 +17,8 @@ Flags:
   --refresh-model   re-pick the pi starter's free model (only if setup wrote it)
   --no-browser      sign in to OpenRouter by pasting a code (SSH sessions)
   --no-pair         don't offer to pair with a phone
-  --console-url URL console to pair with (or BB_CONSOLE_URL)
+  --console-url URL console to pair with (or BB_CONSOLE_URL; else
+                    https://bot-bottle.app)
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from typing import Any
 from ...agent_provider import HostDetection, get_provider
 from ...contrib.pi import starter as pi_starter
 from ...control.hostctl import pairing
+from . import login
 from ...errors import SecretsFileError
 from ...lib import log, prompt
 from ...manifest.versions import record_or_warn
@@ -222,7 +224,8 @@ def cmd_setup(argv: list[str]) -> int:
     parser.add_argument("--refresh-model", action="store_true")
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--no-pair", action="store_true")
-    parser.add_argument("--console-url", default=os.environ.get("BB_CONSOLE_URL", ""))
+    parser.add_argument("--console-url",
+                        default=os.environ.get("BB_CONSOLE_URL") or login.DEFAULT_CONSOLE_URL)
     args = parser.parse_args(argv)
     io: dict[str, Any] = {"interactive": sys.stdin.isatty(), **_on_a_view()}
     setup = Setup(

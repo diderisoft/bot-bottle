@@ -9,7 +9,8 @@ Usage:
   bot-bottle pair --password [--console-url URL] [--label LABEL]
 
 Flags:
-  --console-url URL   Target console URL (overrides BB_CONSOLE_URL)
+  --console-url URL   Target console URL (overrides BB_CONSOLE_URL; default
+                      https://bot-bottle.app)
   --label LABEL       Host label shown in the console (default: hostname)
 """
 
@@ -30,6 +31,9 @@ from typing import Any
 from ...paths import bot_bottle_root
 
 _CONSOLE_URL_ENV = "BB_CONSOLE_URL"
+# The hosted console, for a host that names no other (BB_CONSOLE_URL or
+# --console-url).
+DEFAULT_CONSOLE_URL = "https://bot-bottle.app"
 _POLL_SLEEP = 2  # seconds between polls, the console's default
 
 
@@ -38,7 +42,8 @@ def _usage() -> None:
         "usage: bot-bottle pair --password [--console-url URL] [--label LABEL]\n"
         "\n"
         "Options:\n"
-        "  --console-url URL  Console base URL (or BB_CONSOLE_URL env var)\n"
+        "  --console-url URL  Console base URL (or BB_CONSOLE_URL; default\n"
+        "                     https://bot-bottle.app)\n"
         "  --label LABEL      Host label shown in the console (default: hostname)\n"
     )
 
@@ -111,13 +116,8 @@ def cmd_login(argv: list[str]) -> int:
         _usage()
         return 0
 
-    console_url = flag(argv, "--console-url") or os.environ.get(_CONSOLE_URL_ENV)
-    if not console_url:
-        sys.stderr.write(
-            "bot-bottle pair --password: --console-url or BB_CONSOLE_URL is required\n"
-        )
-        return 1
-    console_url = console_url.rstrip("/")
+    console_url = (flag(argv, "--console-url") or os.environ.get(_CONSOLE_URL_ENV)
+                   or DEFAULT_CONSOLE_URL).rstrip("/")
 
     label = flag(argv, "--label") or socket.gethostname()
 
