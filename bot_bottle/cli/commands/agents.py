@@ -3,9 +3,6 @@
 
     bot-bottle agents                   list them (the default marked)
     bot-bottle agents default <agent>   start <agent> where none was used last
-    bot-bottle agents migrate <agent> [--yes]
-                                        rewrite an agent in an old format in
-                                        the current one, as a new version
 """
 
 from __future__ import annotations
@@ -25,10 +22,6 @@ def cmd_agents(argv: list[str]) -> int:
     from .quick import cmd_default, default_agent
     if argv and argv[0] == "default":
         return cmd_default(argv[1:])
-    if argv and argv[0] == "migrate":
-        # pylint: disable-next=import-outside-toplevel
-        from .bottle import migrate_agent
-        return migrate_agent(argv[1:])
     if argv:
         sys.stderr.write(f"{PROG} agents: unknown argument {argv[0]!r}\n\n{__doc__}")
         return 2

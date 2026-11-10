@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 from .. import secret_ref
-from .util import ManifestError, as_json_object
+from .util import ManifestError, OldFormError, as_json_object
 
 EGRESS_AUTH_SCHEMES = ("Bearer", "token")
 # `auth.name` (with `type: header`): an HTTP header name, not one of these (framing, routing and
@@ -104,9 +104,7 @@ class ManifestEgressRoute:
         host = d.get("host")
         if not isinstance(host, str) or not host:
             raise ManifestError(f"{label} missing required string field 'host'")
-        old = [k for k in OLD_ROUTE_KEYS if k in d]
-        if old:
-            raise OldRouteFormatError(bottle_name, host, old[0])
+        _refuse_old_route(bottle_name, host, d)
         for k in d:
             if k not in ROUTE_KEYS:
                 raise ManifestError(
@@ -182,7 +180,7 @@ class ManifestEgressRoute:
 
 ROUTE_KEYS = ("host", "passthrough", "methods", "allow", "auth", "git", "preserve_auth",
               "dlp")
-# Keys a route no longer takes; `bottles migrate` rewrites them.
+# Keys a route no longer takes (`_refuse_old_route`).
 OLD_ROUTE_KEYS = ("inspect", "role", "matches")
 # A method list's "any method".
 ANY_METHOD = "*"
@@ -226,22 +224,25 @@ def with_entries(route: Mapping[str, Any], entries: list[dict[str, Any]] | None,
     return out
 
 
-class OldRouteFormatError(ManifestError):
-    """A bottle file still writes a route in the old shape (`inspect`,
-    `matches`, `role`); `bottles migrate` rewrites it."""
-
-    def __init__(self, bottle: str, host: str, key: str) -> None:
-        self.bottle = bottle
-        self.host = host
-        what = {
-            "inspect": "inspect is gone (auth, git and preserve_auth sit on the route, "
-                       "matches is allow, the detectors are dlp, and inspect: false is "
-                       "passthrough: true)",
-            "matches": "matches is now allow",
-            "role": "role is gone",
-        }[key]
-        super().__init__(f"{bottle} egress route {host}: {what}. "
-                         f"Run bot-bottle bottles migrate {bottle}.")
+def _refuse_old_route(bottle: str, host: str, d: Mapping[str, object]) -> None:
+    """Refuse a route in the old shape, naming the new form."""
+    where = f"bottle '{bottle}' egress route {host}"
+    inspect = d.get("inspect", None)
+    if inspect is False:
+        raise OldFormError(where, "`inspect: false` is now `passthrough: true`")
+    if isinstance(inspect, dict) and "matches" in inspect:
+        raise OldFormError(where, "`inspect` is gone and `matches` is now `allow`, on the route")
+    if isinstance(inspect, dict) and any(k in inspect for k in (
+            "outbound_detectors", "inbound_detectors", "outbound_on_match")):
+        raise OldFormError(where, "`inspect`'s detectors are now `dlp: { outbound, inbound, "
+                                  "on_match }`, on the route")
+    if "inspect" in d:
+        raise OldFormError(where, "`inspect` is gone: its `auth`, `git` and `preserve_auth` "
+                                  "now sit on the route")
+    if "matches" in d:
+        raise OldFormError(where, "`matches` is now `allow`")
+    if "role" in d:
+        raise OldFormError(where, "`role` is gone; remove it")
 
 
 def _parse_methods(label: str, raw: object) -> tuple[str, ...]:
@@ -295,17 +296,19 @@ def _parse_dlp(label: str, raw: object) -> tuple[tuple[str, ...] | None,
             str(on_match or ""))
 
 
-class OldAuthFormatError(ManifestError):
-    """A bottle file still writes a route's auth in the old format (`scheme`,
-    `header`, `token_ref`), now `type` and `value` (and `name` for a header);
-    `bottles migrate` rewrites it (`manifest/migrate.py`)."""
-
-    def __init__(self, bottle: str, host: str) -> None:
-        self.bottle = bottle
-        self.host = host
-        super().__init__(
-            f"{bottle} egress route {host}: auth now takes type and value (and name for a "
-            f"header). Run bot-bottle bottles migrate {bottle}.")
+def _refuse_old_auth(where: str, auth: Mapping[str, object]) -> None:
+    """Refuse an auth block in the old form, naming the new one."""
+    scheme, header = auth.get("scheme"), auth.get("header")
+    if "token_ref" in auth:
+        raise OldFormError(where, "`auth.token_ref: NAME` is now `auth.value: secret:NAME`")
+    if scheme and header:
+        raise OldFormError(where, "`auth.header` with `auth.scheme` is gone: `auth.type: "
+                                  "bearer` (or `token`) sends Authorization, `type: header, "
+                                  "name: X` sends the raw value in X")
+    if header:
+        raise OldFormError(where, "`auth.header: X` is now `auth: { type: header, name: X }`")
+    raise OldFormError(where, f"`auth.scheme: {scheme}` is now `auth.type: "
+                              f"{str(scheme).lower()}`")
 
 
 # `auth.type`, and the scheme each sends in `Authorization` ("" for `header`:
@@ -329,7 +332,7 @@ def _parse_auth(label: str, bottle: str, host: str,
             f"{label} auth is empty ({{}}); omit the 'auth' key entirely if this route "
             f"is unauthenticated. Otherwise 'type' and 'value' are required.")
     if any(k in auth for k in OLD_AUTH_KEYS):
-        raise OldAuthFormatError(bottle, host)
+        _refuse_old_auth(f"bottle '{bottle}' egress route {host}", auth)
     for k in auth:
         if k not in ("type", "name", "value"):
             raise ManifestError(f"{label} auth has unknown key {k!r}; only 'type', 'name' "
@@ -422,9 +425,9 @@ def _parse_path_match(entry_label: str, j: int, raw: object) -> ManifestPathMatc
     else:
         d = as_json_object(raw, label)
         if "type" in d or "value" in d:
-            raise ManifestError(
-                f"{label}: a path is a prefix string, {{exact: /x}} or {{regex: ...}} "
-                f"(no type/value). Run bot-bottle bottles migrate <bottle>.")
+            kind = d.get("type", "prefix")
+            new = "the path itself, a string" if kind == "prefix" else f"`{{{kind}: ...}}`"
+            raise OldFormError(label, f"`{{type: {kind}, value: ...}}` is now {new}")
         if len(d) != 1 or next(iter(d)) not in ("exact", "regex"):
             raise ManifestError(f"{label} must be a prefix string, {{exact: /x}} or "
                                 f"{{regex: ...}}")
@@ -548,9 +551,8 @@ class ManifestEgressConfig:
                 ManifestEgressRoute(Host=h) for h in blocked))
         log_raw = d.get("log", "off")
         if isinstance(log_raw, int) and not isinstance(log_raw, bool) and log_raw in LOG_NAMES:
-            raise ManifestError(
-                f"bottle '{bottle_name}' egress.log: {log_raw} is now "
-                f"{LOG_NAMES[log_raw]}. Run bot-bottle bottles migrate {bottle_name}.")
+            raise OldFormError(f"bottle '{bottle_name}' egress",
+                               f"`log: {log_raw}` is now `log: {LOG_NAMES[log_raw]}`")
         if not isinstance(log_raw, str) or log_raw not in LOG_LEVELS:
             raise ManifestError(
                 f"bottle '{bottle_name}' egress.log must be off, blocked or full")

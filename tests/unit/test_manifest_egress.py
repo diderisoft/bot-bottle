@@ -453,8 +453,8 @@ class TestDlp(unittest.TestCase):
                     self.assertRaisesRegex(ManifestError, f"passthrough.*takes no {key}"):
                 _raw_bottle([{"host": "x.example", "passthrough": True, key: value}])
 
-    def test_inspect_is_refused_saying_to_migrate(self):
-        with self.assertRaisesRegex(ManifestError, "inspect is gone.*bottles migrate dev"):
+    def test_inspect_is_refused_naming_the_new_form(self):
+        with self.assertRaisesRegex(ManifestError, "`inspect: false` is now `passthrough: true`"):
             _raw_bottle([{"host": "x.example", "inspect": False}])
 
     def test_outbound_on_match_omitted_is_empty(self):
@@ -562,7 +562,7 @@ class TestAuth(unittest.TestCase):
                      {"header": "x-auth", "scheme": "Bearer", "token_ref": "T"},
                      {"header": "X-Api-Key", "token_ref": "T"}):
             with self.subTest(auth=auth), \
-                    self.assertRaisesRegex(ManifestError, "bottles migrate"):
+                    self.assertRaisesRegex(ManifestError, "is now|is gone"):
                 _raw_bottle([{"host": "x.example", "auth": auth}])
 
     def test_header_sends_the_raw_value(self):
@@ -624,10 +624,10 @@ class TestRole(unittest.TestCase):
         b = _bottle([{"host": "x.example"}])
         self.assertEqual((), b.egress.routes[0].Role)
 
-    def test_role_is_refused_saying_to_migrate(self):
+    def test_role_is_refused(self):
         for role in ("claude_code_oauth", 42, ["x", 42], []):
             with self.subTest(role=role), \
-                    self.assertRaisesRegex(ManifestError, "role is gone.*bottles migrate"):
+                    self.assertRaisesRegex(ManifestError, "`role` is gone"):
                 _raw_bottle([{"host": "x.example", "role": role}])
 
 

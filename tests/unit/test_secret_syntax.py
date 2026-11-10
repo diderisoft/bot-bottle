@@ -27,7 +27,8 @@ from bot_bottle.env import _confirm_save, resolve_env  # pylint: disable=protect
 from bot_bottle.errors import MissingEnvVarError
 from bot_bottle.manifest import Manifest, ManifestError, ManifestIndex
 from bot_bottle.manifest.document import bottle_document, route_document
-from bot_bottle.manifest.egress import ManifestEgressRoute, OldAuthFormatError
+from bot_bottle.manifest.egress import ManifestEgressRoute
+from bot_bottle.manifest.util import OldFormError
 from bot_bottle.manifest.extends import resolve_bottles
 from bot_bottle.secret_source import FileSecrets, LaunchSecrets, MappingSecrets
 from bot_bottle.suggest.proposal import (
@@ -284,16 +285,17 @@ class TestRouteAuth(unittest.TestCase):
             with self.subTest(auth), self.assertRaisesRegex(ManifestError, why):
                 self.route(auth)
 
-    def test_the_old_keys_are_refused_saying_to_migrate(self) -> None:
-        for auth in ({"scheme": "Bearer", "token_ref": "A"},
-                     {"header": "X-Api-Key", "token_ref": "A"},
-                     {"type": "bearer", "token_ref": "A"},
-                     {"type": "bearer", "value": "secret:A", "scheme": "Bearer"}):
-            with self.subTest(auth), self.assertRaises(OldAuthFormatError) as cm:
+    def test_the_old_keys_are_refused_naming_the_new_form(self) -> None:
+        for auth, new in (({"scheme": "Bearer", "token_ref": "A"},
+                           "`auth.token_ref: NAME` is now `auth.value: secret:NAME`"),
+                          ({"header": "X-Api-Key", "value": "secret:A"},
+                           "`auth.header: X` is now `auth: { type: header, name: X }`"),
+                          ({"scheme": "Bearer", "value": "secret:A"},
+                           "`auth.scheme: Bearer` is now `auth.type: bearer`")):
+            with self.subTest(auth), self.assertRaises(OldFormError) as cm:
                 self.route(auth)
-            self.assertEqual("dev egress route api.example.com: auth now takes type and value "
-                             "(and name for a header). Run bot-bottle bottles migrate dev.",
-                             str(cm.exception))
+            self.assertEqual(f"bottle 'dev' egress route api.example.com: {new} "
+                             f"(see docs/reference/manifest.md)", str(cm.exception))
 
     def test_a_secret_env_value_is_taken(self) -> None:
         route = self.route({"type": "bearer", "value": "secret:${GH_PAT}"})

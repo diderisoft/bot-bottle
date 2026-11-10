@@ -1,11 +1,12 @@
-"""`bot-bottle bottles migrate <name>` / `agents migrate <name>`: rewrite what
-a bottle or agent still writes in an old format, in one pass:
+"""`bot-bottle bottles migrate <name>`: rewrite what a bottle still writes in
+an old format, in one pass:
 
-- a bottle's repos in the old git-gate format (`manifest/legacy_git_gate.py`)
-  become grants on forges this host connected (edited as text, so comments
-  stay);
-- everything else old (`manifest/upgrade.py`) becomes its current form, each
+- repos in the old git-gate format (`manifest/legacy_git_gate.py`) become
+  grants on forges this host connected (edited as text, so comments stay);
+- the old egress shape (`manifest/upgrade.py`) becomes the current one, each
   top-level block that changes written afresh and the rest left as written.
+
+Other old forms are refused at load, naming their new form, for a hand edit.
 
 The result is checked by parsing it back before it's written, and written as
 a new version. Running it again finds nothing to do. The forge must already be
@@ -24,8 +25,8 @@ from pathlib import Path
 from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
 from .forges import FORGE_KINDS
 from .legacy_git_gate import Plan, connected_homes, explain, list_form, old_repos, plan
-from .loader import find_bottle, load_bottle_chain, scan_agent_names
-from .upgrade import UpgradeError, rewrite_text, upgrade_agent, upgrade_bottle
+from .loader import find_bottle, load_bottle_chain
+from .upgrade import UpgradeError, rewrite_text, upgrade_bottle
 from .util import ManifestError, as_json_object
 from .versions import record, record_hand_edits
 
@@ -36,8 +37,7 @@ class MigrateError(ManifestError):
 
 @dataclass(frozen=True)
 class Migration:
-    """A bottle's (or, `kind="agent"`, an agent's) file before and after, and
-    what to tell the operator."""
+    """A bottle's file before and after, and what to tell the operator."""
 
     bottle: str
     path: Path
@@ -48,7 +48,6 @@ class Migration:
     notes: tuple[str, ...]
     # What else changed, a line each.
     changes: tuple[str, ...] = ()
-    kind: str = "bottle"
 
     @property
     def what(self) -> str:
@@ -101,28 +100,6 @@ def prepare(name: str, dirs: Sequence[tuple[Path, bool]]) -> Migration:
                      plan=p, notes=tuple(_notes(p)) if p else (), changes=tuple(changes))
 
 
-def prepare_agent(name: str, agent_dirs: Sequence[tuple[Path, bool]]) -> Migration:
-    """What migrating agent `name` (found in `agent_dirs`, `(dir, project)`,
-    the first that has it) would write. Raises MigrateError when there's
-    nothing to do, saying why."""
-    found = next(((scan_agent_names(d)[name], project) for d, project in agent_dirs
-                  if name in scan_agent_names(d)), None)
-    if found is None:
-        raise MigrateError(f"agent '{name}' not found")
-    path, project = found
-    text = _read(path)
-    try:
-        doc, changes, edits = upgrade_agent(_frontmatter(path, text))
-        after = rewrite_text(text, doc, edits) if changes else text
-    except UpgradeError as e:
-        raise MigrateError(f"agent '{name}': {e}") from e
-    if not changes:
-        raise MigrateError(f"agent '{name}' is already in the current format; "
-                           f"nothing to migrate")
-    return Migration(bottle=name, path=path, project=project, before=text, after=after,
-                     plan=None, notes=(), changes=tuple(changes), kind="agent")
-
-
 def _read(path: Path) -> str:
     try:
         return path.read_text()
@@ -168,25 +145,14 @@ def apply(m: Migration, dirs: Sequence[tuple[Path, bool]], *,
         record_hand_edits(root=root)
     m.path.write_text(m.after)
     try:
-        if m.kind == "bottle":
-            load_bottle_chain(m.bottle, dirs)
-        else:
-            _check_agent(m.bottle, m.after)
+        load_bottle_chain(m.bottle, dirs)
     except ManifestError as e:
         m.path.write_text(m.before)
-        raise MigrateError(f"the migrated {m.kind} doesn't load, so it was left as it "
+        raise MigrateError(f"the migrated bottle doesn't load, so it was left as it "
                            f"was: {e}") from e
     if m.project:
         return ""
-    return record(f"{m.kind}s migrate: {m.bottle} to {m.what}", root=root)
-
-
-def _check_agent(name: str, text: str) -> None:
-    """Raise ManifestError unless `text` reads as agent `name`."""
-    # pylint: disable-next=import-outside-toplevel
-    from .agent import agent_from_frontmatter
-    fm, body = parse_frontmatter(text)
-    agent_from_frontmatter(name, fm, body)
+    return record(f"bottles migrate: {m.bottle} to {m.what}", root=root)
 
 
 # --- Text rewriting -------------------------------------------------------
@@ -306,4 +272,4 @@ def _check(before: Mapping[str, object], after_text: str, p: Plan,
                            "edit it by hand")
 
 
-__all__ = ["MigrateError", "Migration", "apply", "prepare", "prepare_agent", "rewrite"]
+__all__ = ["MigrateError", "Migration", "apply", "prepare", "rewrite"]

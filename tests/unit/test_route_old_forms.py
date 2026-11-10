@@ -15,7 +15,7 @@ from unittest.mock import patch
 from bot_bottle.contract.yaml_subset import parse_frontmatter
 from bot_bottle.control.hostctl import bottle_chain, remote_actions
 from bot_bottle.manifest import ManifestIndex
-from bot_bottle.manifest.egress import OldAuthFormatError, OldRouteFormatError
+from bot_bottle.manifest.util import OldFormError
 from bot_bottle.manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
 from bot_bottle.manifest.migrate import MigrateError, apply, prepare
 from bot_bottle.manifest.versions import history
@@ -23,9 +23,8 @@ from tests.unit.test_manifest_elements import _Chain
 
 
 def _refused(bottle: str) -> str:
-    return (f"{bottle} egress route api.example.com: inspect is gone (auth, git and "
-            f"preserve_auth sit on the route, matches is allow, the detectors are dlp, and "
-            f"inspect: false is passthrough: true). Run bot-bottle bottles migrate {bottle}.")
+    return (f"bottle '{bottle}' egress route api.example.com: `inspect` is gone and `matches` "
+            f"is now `allow`, on the route (see docs/reference/manifest.md)")
 
 
 def _bottle(auth: "str | list[str]", *, flow: bool = True) -> str:
@@ -65,17 +64,17 @@ class _Host(unittest.TestCase):
 
 
 class TestRefused(_Host):
-    def test_loading_says_to_migrate(self) -> None:
+    def test_loading_names_the_new_form(self) -> None:
         for text in (_bottle("scheme: Bearer, token_ref: EXAMPLE_API_TOKEN"),
                      _bottle(["header: X-Api-Key", "token_ref: K"], flow=False),
                      _bottle("type: bearer, token_ref: K")):
             self.write(text)
-            with self.subTest(text), self.assertRaises(OldRouteFormatError) as cm:
+            with self.subTest(text), self.assertRaises(OldFormError) as cm:
                 load_bottle_chain("dev", self.dirs)
             self.assertEqual(_refused("dev"), str(cm.exception))
 
     def test_from_a_json_manifest_too(self) -> None:
-        with self.assertRaises(OldAuthFormatError):
+        with self.assertRaises(OldFormError):
             ManifestIndex.from_json_obj({
                 "bottles": {"dev": {"egress": {"routes": [{
                     "host": "api.example.com",
@@ -165,7 +164,8 @@ class TestConsoleEdits(_Chain):
             reply = asyncio.run(remote_actions.bottle_write(
                 {"agent_id": "a1", "bottle": "work", "digest": _digest(before),
                  "content": OLD_WORK}, {"a1": "s1"}))
-        self.assertIn(_refused("work"), reply["error"])
+        self.assertIn("bottle 'work' egress route api.example.com: `inspect` is gone: its "
+                      "`auth`, `git` and `preserve_auth` now sit on the route", reply["error"])
         self.assertEqual(before, path.read_text())
 
     def test_a_bottle_write_in_the_new_format_is_saved(self) -> None:
@@ -179,7 +179,8 @@ class TestConsoleEdits(_Chain):
         (self.bottles / "work.md").write_text(OLD_WORK)
         reply = asyncio.run(remote_actions.manifest_save(
             {"agent_id": "a1", "digest": "any"}, {"a1": "s1"}))
-        self.assertIn(_refused("work"), reply["error"])
+        self.assertIn("bottle 'work' egress route api.example.com: `inspect` is gone: its "
+                      "`auth`, `git` and `preserve_auth` now sit on the route", reply["error"])
 
 
 if __name__ == "__main__":

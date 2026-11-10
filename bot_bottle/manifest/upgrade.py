@@ -1,13 +1,14 @@
-"""What `bottles migrate` / `agents migrate` turn an old manifest into, as
-plain data, and how the file's text is rewritten to say it.
+"""What `bottles migrate` turns an old bottle into, as plain data, and how the
+file's text is rewritten to say it.
 
-`upgrade_bottle` and `upgrade_agent` take a file's frontmatter and return it
-in the current format, with a line per change. `rewrite_text` writes that
+`upgrade_bottle` takes a file's frontmatter and returns it in the current
+format, with a line per change. `rewrite_text` writes that
 into the file's text, keeping what it can: each top-level block whose value
 is unchanged stays as written (comments included; a renamed key only has its
 key changed), a changed block is written afresh, and the body is untouched.
-Small edits (a `?` gaining `secret:`) are made on the line itself first, so
-their block keeps its comments.
+It converts the old egress shape (routes with `inspect`, the old auth keys,
+a numeric `log`); other old forms are refused at load with their new form
+named, for a hand edit.
 """
 
 from __future__ import annotations
@@ -39,29 +40,8 @@ def upgrade_bottle(fm: Mapping[str, Any]) -> tuple[Doc, list[str], list[LineEdit
     doc: Doc = copy.deepcopy(dict(fm))
     changes: list[str] = []
     edits: list[LineEdit] = []
-    _env_prompts(doc, changes, edits)
     _egress(doc, changes)
     return doc, changes, edits
-
-
-def _env_prompts(doc: Doc, changes: list[str], edits: list[LineEdit]) -> None:
-    """A bare `?`/`?msg` was a secret; it is now `secret:?`/`secret:?msg`."""
-    env = doc.get("env")
-    if not isinstance(env, dict):
-        return
-    names = [k for k, v in env.items() if isinstance(v, str) and v.startswith("?")]
-    for name in names:
-        env[name] = "secret:" + env[name]
-    if names:
-        changes.append(f"env {', '.join(names)}: ? is now secret:? (asked, hidden)")
-        edits.append(lambda lines: _in_block(lines, "env", _secret_prompt_line))
-
-
-_PROMPT_LINE = re.compile(r"^(?P<pre>\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*)(?P<q>[\"']?)\?")
-
-
-def _secret_prompt_line(line: str) -> str:
-    return _PROMPT_LINE.sub(lambda m: f"{m['pre']}{m['q']}secret:?", line, count=1)
 
 
 # --- Egress ------------------------------------------------------------------
@@ -238,15 +218,6 @@ def new_auth(host: str, auth: Mapping[str, Any]) -> Doc:
     return out
 
 
-# --- Agents ------------------------------------------------------------------
-
-def upgrade_agent(fm: Mapping[str, Any]) -> tuple[Doc, list[str], list[LineEdit]]:
-    """`fm` (an agent's frontmatter) in the current format, what changed, and
-    the line edits that say part of it in place."""
-    doc: Doc = copy.deepcopy(dict(fm))
-    return doc, [], []
-
-
 # --- Text --------------------------------------------------------------------
 
 _KEY_RE = re.compile(r"^(?P<key>\"[^\"]*\"|'[^']*'|[^\s:#'\"][^:#]*?)\s*:(?:\s|$)")
@@ -279,16 +250,6 @@ def _blocks(lines: list[str]) -> list[tuple[str, int, int]]:
             if _content(lines[j]):
                 end = j + 1
         out.append((key, i, end))
-    return out
-
-
-def _in_block(lines: list[str], key: str, edit: Callable[[str], str]) -> list[str]:
-    """`lines` with `edit` applied to each line under top-level `key`."""
-    out = list(lines)
-    for k, start, end in _blocks(lines):
-        if k == key:
-            for i in range(start + 1, end):
-                out[i] = edit(out[i])
     return out
 
 
@@ -353,4 +314,4 @@ def rewrite_text(text: str, doc: Mapping[str, Any], edits: list[LineEdit]) -> st
     return result
 
 
-__all__ = ["UpgradeError", "rename_top_key", "rewrite_text", "upgrade_agent", "upgrade_bottle"]
+__all__ = ["UpgradeError", "new_route", "rename_top_key", "rewrite_text", "upgrade_bottle"]

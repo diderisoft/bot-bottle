@@ -9,6 +9,18 @@ class ManifestError(Exception):
     """A manifest file (or the manifest tree) is invalid."""
 
 
+MANIFEST_DOCS = "docs/reference/manifest.md"
+
+
+class OldFormError(ManifestError):
+    """A manifest still writes something in a form it no longer takes; the
+    message names the new form, in one line."""
+
+    def __init__(self, where: str, change: str) -> None:
+        self.where = where
+        super().__init__(f"{where}: {change} (see {MANIFEST_DOCS})")
+
+
 def as_json_object(value: object, label: str) -> dict[str, object]:
     """`value` as a `dict[str, object]`; raises unless it's a str-keyed dict."""
     if not isinstance(value, dict):
