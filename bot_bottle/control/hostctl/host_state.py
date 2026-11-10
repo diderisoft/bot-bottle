@@ -1,6 +1,7 @@
 """The host DB's routes for the CLI (`HOST_CONFIG_PATH`, the audit index's,
 `FORGES_PATH`, `FORGES_REMOVE_PATH`, `TRUST_PATH`, `PAIRING_PATH`,
-`AUDIT_PASSKEYS_PATH`, `BOTTLED_AGENTS_PATH`, `BOTTLED_AGENTS_REMOVE_PATH`).
+`AUDIT_PASSKEYS_PATH`, `BOTTLED_AGENTS_PATH`, `BOTTLED_AGENTS_REMOVE_PATH`,
+`AGENT_PREFS_PATH`, `INFRA_STATE_PATH`).
 The host controller is the host DB's only writer, so the CLI reads and
 changes host state here, never by opening the file (ADR 0020). These use the
 stores, never the routed functions shared code calls
@@ -20,9 +21,11 @@ from pathlib import Path
 from ... import bottle_state, forge_connections
 from ...forge_connections import ForgeConnection, ForgeConnectionError, ForgeStore
 from ...errors import SecretsFileError
+from ...infra_state import InfraStateStore
 from ...lib.config_store import ConfigStore
 from ...manifest.trust import Trusted, TrustStore
 from . import audit_trust, pairing
+from .agent_prefs import AgentPrefsStore
 from ...paths import host_audit_dir, host_db_path
 from .audit_import import import_segment
 from .audit_index import AuditIndex, Query
@@ -203,7 +206,27 @@ def remove_bottled_agent(body: dict[str, object]) -> dict[str, object]:
     return {"removed": bottle_state.delete_bottled_agent(identity)}
 
 
+def agent_prefs(body: dict[str, object]) -> dict[str, object]:
+    """The remembered agent and each directory's."""
+    del body
+    return AgentPrefsStore(host_db_path()).prefs().to_json()
+
+
+def remember_agent(body: dict[str, object]) -> dict[str, object]:
+    """Remember `body["agent"]` for `body["dir"]` ("" for the remembered one)."""
+    agent, directory = body.get("agent"), body.get("dir", "")
+    if not isinstance(agent, str) or not agent or not isinstance(directory, str):
+        raise ValueError("agent must name an agent, and dir a directory or \"\"")
+    return AgentPrefsStore(host_db_path()).remember(agent, directory).to_json()
+
+
+def infra_state(body: dict[str, object]) -> dict[str, object]:
+    """What infra bring-up recorded."""
+    del body
+    return {"state": InfraStateStore(host_db_path()).all()}
+
+
 __all__ = ["audit_import", "audit_query", "audit_rebuild", "config", "forge_connect",
            "forge_remove", "forges", "get_pairing", "passkeys", "set_config", "set_pairing",
            "trust", "trust_passkeys", "trusted", "bottled_agents", "record_bottled_agent",
-           "remove_bottled_agent"]
+           "remove_bottled_agent", "agent_prefs", "remember_agent", "infra_state"]

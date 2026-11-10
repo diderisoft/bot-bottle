@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import hashlib
 import io
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +13,8 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest import mock
 
+from bot_bottle import bottle_state
+from bot_bottle.paths import host_db_path
 from bot_bottle.backend import adoption
 from bot_bottle.backend.base import ExecResult
 from bot_bottle.control.hostctl import remote, snapshots
@@ -48,9 +49,19 @@ class TestTake(_Root):
                           "sha256": hashlib.sha256(_PATCH.encode()).hexdigest()}, record)
         run = snapshots.snapshots_root() / "s1" / "a1"
         self.assertEqual(_PATCH, (run / f"{record['id']}.patch").read_text())
-        self.assertEqual(record, json.loads((run / f"{record['id']}.json").read_text()))
+        self.assertEqual([record], snapshots.SnapshotStore(host_db_path()).of("s1"))
+        self.assertFalse((run / f"{record['id']}.json").exists())
         self.assertEqual(0o600, (run / f"{record['id']}.patch").stat().st_mode & 0o777)
         self.assertEqual(0o700, snapshots.snapshots_root().stat().st_mode & 0o777)
+
+    def test_they_go_with_their_bottled_agent(self) -> None:
+        bottled_agent("s1")
+        take(_bottle(ExecResult(0, _PATCH, "")), _GIT, session="s1", activation="a1", seq=1)
+        take(_bottle(ExecResult(0, _PATCH, "")), _GIT, session="s2", activation="a1", seq=1)
+        bottle_state.remove_bottled_agent("s1")
+        self.assertEqual([], snapshots.SnapshotStore(host_db_path()).of("s1"))
+        self.assertFalse((snapshots.snapshots_root() / "s1").exists())
+        self.assertEqual(1, len(snapshots.SnapshotStore(host_db_path()).of("s2")))
 
     def test_only_a_git_workspace(self) -> None:
         with self.assertRaisesRegex(SnapshotUnavailable, "git checkout"):

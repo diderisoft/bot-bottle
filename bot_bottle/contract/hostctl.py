@@ -92,6 +92,11 @@ AUDIT_PASSKEYS_PATH = "/audit/passkeys"
 # its rows: {"removed": bool}.
 BOTTLED_AGENTS_PATH = "/bottled-agents"
 BOTTLED_AGENTS_REMOVE_PATH = "/bottled-agents/remove"
+# GET: {"default": agent or "", "dirs": {directory: agent}}. POST {"dir",
+# "agent"} remembers `agent` for `dir` ("" for the default); answers like GET.
+AGENT_PREFS_PATH = "/agent-prefs"
+# GET: {"state": {name: value}}, what infra bring-up recorded (`infra_state`).
+INFRA_STATE_PATH = "/infra/state"
 AUDIT_PRODUCERS = frozenset({"orchestrator", "egress", "git-gate", "supervise"})
 
 # A job `error` with this `code` needs a yes/no: resend with `assume_yes`.
@@ -428,8 +433,8 @@ def bearer(token: str) -> dict[str, str]:
 
 __all__ = [
     "AUDIT_APPEND_PATH", "AUDIT_IMPORT_PATH", "AUDIT_PRODUCERS", "AUDIT_QUERY_PATH",
-    "AUDIT_PASSKEYS_PATH", "AUDIT_REBUILD_PATH", "BOTTLED_AGENTS_PATH",
-    "BOTTLED_AGENTS_REMOVE_PATH", "ARCHITECT_WARM_PATH", "FORGES_PATH",
+    "AGENT_PREFS_PATH", "AUDIT_PASSKEYS_PATH", "AUDIT_REBUILD_PATH", "BOTTLED_AGENTS_PATH",
+    "BOTTLED_AGENTS_REMOVE_PATH", "INFRA_STATE_PATH", "ARCHITECT_WARM_PATH", "FORGES_PATH",
     "FORGES_REMOVE_PATH", "HOST_CONFIG_PATH", "PAIRING_PATH", "TRUST_PATH",
     "AUTH_HEADER", "AUTH_SCHEME", "BOTTLES_PATH", "BOTTLE_COLORS", "CONFIRM_ERROR",
     "DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS", "DEFAULT_DOCKER_AGENT_SUBNETS",

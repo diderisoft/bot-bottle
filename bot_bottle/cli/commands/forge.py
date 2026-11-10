@@ -40,7 +40,7 @@ as it expires.
                                   [--no-wait]
 
 --app and --client-id name the app (default: bot-bottle; a dev host uses its
-own) and are remembered in ~/.bot-bottle/github-app.json. A host already
+own) and are remembered in the host's settings (`github_app`). A host already
 connected isn't authorized again unless --reauthorize. Then, unless the app
 is installed (on --owner, when named), it opens the install page and waits
 for the installation (--no-wait just prints where). --transport sets how
@@ -107,7 +107,9 @@ def connect_github(argv: list[str], app_slug: str, client_id: str, owner: str = 
     installed, waiting for it. `transport` sets how git-gate reaches its
     repos as this user (ADR 0014), for a user connected already too."""
     # pylint: disable=import-outside-toplevel
-    from ...contrib.github.user_token import AppConfig, app_config, save_app_config
+    from ...contrib.github.user_token import AppConfig, app_config
+    from ...lib.config_store import GitHubApp, HostConfig
+    from ..host_state_client import set_host_config
     from ...forge_connections import TRANSPORTS
     from ...github_connect import authorize, connected_token, set_transport
     flags = {a for a in argv if a.startswith("--")}
@@ -120,7 +122,10 @@ def connect_github(argv: list[str], app_slug: str, client_id: str, owner: str = 
     config = app_config()
     if app_slug or client_id:
         config = AppConfig(slug=app_slug or config.slug, client_id=client_id or config.client_id)
-        info(f"remembered the GitHub App ({config.slug}) in {save_app_config(config)}")
+        set_host_config(HostConfig(github_app=GitHubApp(slug=config.slug,
+                                                        client_id=config.client_id)),
+                        "github_app")
+        info(f"remembered the GitHub App ({config.slug}) in this host's settings")
     browser = "--no-browser" not in flags
     existing = None if "--reauthorize" in flags else connected_token()
     if existing is not None:

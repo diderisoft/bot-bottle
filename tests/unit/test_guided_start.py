@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from tests.unit import serve_host_controller
 from bot_bottle.cli import start_prefs, suggest_client
 from bot_bottle.cli.commands import guided, start
 from bot_bottle.contract.hostctl import RUN_BOTTLE, LaunchRequest
@@ -66,6 +67,7 @@ class _Guided(unittest.TestCase):
                                         return_value=["claude", "codex"])):
             patch.start()
             self.addCleanup(patch.stop)
+        serve_host_controller(self)  # it remembers the agent (`agent_prefs`)
         self.launched: list[tuple[LaunchRequest, Any]] = []
         self.suggestion = _proposal("api.open-meteo.com")
         def answer(*_: object, **__: object) -> Proposal:

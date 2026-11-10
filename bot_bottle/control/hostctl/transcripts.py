@@ -9,11 +9,13 @@ appends them exactly as read to
 
   ~/.bot-bottle/transcripts/<session>/<activation>/<file>.jsonl   (0600)
 
-with `<file>.meta.json` beside it (the guest path, the offset read so far,
-the offset it started from and the console agent id). `follow.json` in the
-same directory holds what a restarted host controller needs to resume: the
-guest glob, the files that were there before a fresh session (never copied),
-or the sizes of those a resumed one continues, and the agent id.
+The host DB keeps the rest (`TranscriptStore`). A `transcript_files` row per
+copy holds the guest path, the offset read so far, the offset it started from
+and the console agent id. A `transcript_runs` row per run holds what a
+restarted host controller needs to resume: the guest glob, the files that
+were there before a fresh session (never copied), or the sizes of those a
+resumed one continues, the agent id and the harness. The rows go with the
+copies when retention deletes them.
 
 The copy is the agent's account, not evidence: `transcript.captured` records
 its running SHA-256 (agent-claimed) every five minutes while it grows and when
@@ -37,7 +39,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...lib import log
-from ...paths import bot_bottle_root
+from ...lib.db_store import MACHINE_SPECIFIC, DbStore
+from ...lib.migrations import TableMigrations
+from ...paths import bot_bottle_root, host_db_path
 
 # An exec reading the guest's transcripts gives up after this long.
 POLL_TIMEOUT_SECONDS = 60.0
@@ -55,7 +59,6 @@ CHECKPOINT_SECONDS = 300.0
 READ_LIMIT = 4 * 1024 * 1024
 # Bytes before the offset compared each poll, to notice an edit.
 CHECK_BYTES = 64
-_FOLLOW = "follow.json"
 
 
 def transcripts_root() -> Path:
@@ -75,22 +78,98 @@ def _make_dir(path: Path) -> None:
             p.mkdir(exist_ok=True, mode=0o700)
 
 
-def _write_json(path: Path, data: dict[str, Any]) -> None:
-    """Atomically, 0600."""
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
-    os.replace(tmp, path)
+class TranscriptStore(DbStore):
+    """Where each session run's copies stand: `transcript_runs` (how to
+    resume following it) and `transcript_files` (each copy's offsets). Only
+    the host controller reads and writes them."""
 
+    TABLES = {"transcript_runs": MACHINE_SPECIFIC, "transcript_files": MACHINE_SPECIFIC}
 
-def _read_json(path: Path) -> dict[str, Any] | None:
-    try:
-        data = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
+    def __init__(self, db_path: Path) -> None:
+        super().__init__(db_path, TableMigrations("transcripts", [
+            """
+            CREATE TABLE transcript_runs (
+                session TEXT NOT NULL,
+                activation TEXT NOT NULL,
+                glob TEXT NOT NULL,
+                skip TEXT NOT NULL,
+                start TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                harness TEXT NOT NULL,
+                closed INTEGER NOT NULL,
+                PRIMARY KEY (session, activation)
+            )
+            """,
+            """
+            CREATE TABLE transcript_files (
+                session TEXT NOT NULL,
+                activation TEXT NOT NULL,
+                copy TEXT NOT NULL,
+                guest_path TEXT NOT NULL,
+                offset INTEGER NOT NULL,
+                start INTEGER NOT NULL,
+                opened REAL NOT NULL,
+                agent_id TEXT NOT NULL,
+                closed INTEGER NOT NULL,
+                PRIMARY KEY (session, activation, copy)
+            )
+            """,
+        ]))
+        self.migrate()
+
+    @staticmethod
+    def _run(row: Any) -> dict[str, Any]:
+        return {"session": row["session"], "activation": row["activation"],
+                "glob": row["glob"], "skip": json.loads(row["skip"]),
+                "start": json.loads(row["start"]), "agent_id": row["agent_id"],
+                "harness": row["harness"], "closed": bool(row["closed"])}
+
+    def put_run(self, session: str, activation: str, *, glob: str, skip: list[str],
+                start: dict[str, int], agent_id: str, harness: str, closed: bool) -> None:
+        with self._connection() as conn:
+            conn.execute("INSERT OR REPLACE INTO transcript_runs VALUES "
+                         "(?, ?, ?, ?, ?, ?, ?, ?)",
+                         (session, activation, glob, json.dumps(skip), json.dumps(start),
+                          agent_id, harness, int(closed)))
+        self._chmod()
+
+    def run(self, session: str, activation: str) -> dict[str, Any] | None:
+        with self._connection() as conn:
+            row = conn.execute("SELECT * FROM transcript_runs WHERE session = ? AND "
+                               "activation = ?", (session, activation)).fetchone()
+        return self._run(row) if row is not None else None
+
+    def runs(self) -> list[dict[str, Any]]:
+        with self._connection() as conn:
+            rows = conn.execute("SELECT * FROM transcript_runs "
+                                "ORDER BY session, activation").fetchall()
+        return [self._run(r) for r in rows]
+
+    def put_file(self, session: str, activation: str, copy: str, *, guest_path: str,
+                 offset: int, start: int, opened: float, agent_id: str, closed: bool) -> None:
+        with self._connection() as conn:
+            conn.execute("INSERT OR REPLACE INTO transcript_files VALUES "
+                         "(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         (session, activation, copy, guest_path, offset, start, opened,
+                          agent_id, int(closed)))
+        self._chmod()
+
+    def files(self, session: str = "", activation: str = "") -> list[dict[str, Any]]:
+        """The copies of one run, or of every run when none is named."""
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM transcript_files" + (
+                    " WHERE session = ? AND activation = ?" if session else "")
+                + " ORDER BY session, activation, copy",
+                (session, activation) if session else ()).fetchall()
+        return [{k: (bool(r[k]) if k == "closed" else r[k]) for k in r.keys()} for r in rows]
+
+    def forget_run(self, session: str, activation: str) -> None:
+        """Delete a run's rows, as its copies are deleted."""
+        with self._connection() as conn:
+            for table in ("transcript_files", "transcript_runs"):
+                conn.execute(f"DELETE FROM {table} WHERE session = ? AND activation = ?",
+                             (session, activation))
 
 
 def shell_glob(pattern: str) -> str:
@@ -113,10 +192,6 @@ class _Copy:
     checkpointed_at: float = 0.0
     opened: float = 0.0  # wall clock; the newest file opened is the one shown
     start: int = 0  # the guest offset this copy starts at (a continued file)
-
-    @property
-    def meta_path(self) -> Path:
-        return self.path.with_name(self.path.name.removesuffix(".jsonl") + ".meta.json")
 
 
 def _edited(check: bytes, tail: bytes) -> bool:
@@ -197,6 +272,7 @@ class TranscriptFollower:
         self.resumed_at = dict(start or {})
         self.harness = harness
         self.dir = copy_dir(session, activation)
+        self._store = TranscriptStore(host_db_path())
         self._audit = audit
         self._clock = clock
         self._copies: dict[str, _Copy] = {}  # guest path -> its current copy
@@ -236,26 +312,23 @@ class TranscriptFollower:
                audit: "HostAudit") -> "TranscriptFollower | None":
         """The follower a previous host controller left, from its saved
         offsets; None when it followed nothing."""
-        follow = _read_json(copy_dir(session, activation) / _FOLLOW)
-        if follow is None or follow.get("closed"):
+        store = TranscriptStore(host_db_path())
+        follow = store.run(session, activation)
+        if follow is None or follow["closed"]:
             return None
-        follower = cls(session=session, activation=activation, glob=str(follow.get("glob", "")),
-                       agent_id=str(follow.get("agent_id", "")),
-                       skip=[str(p) for p in follow.get("skip", [])], audit=audit,
-                       harness=str(follow.get("harness", "")),
-                       start={str(p): int(n) for p, n in (follow.get("start") or {}).items()})
-        for meta_path in sorted(follower.dir.glob("*.meta.json")):
-            meta = _read_json(meta_path)
-            if meta is None or meta.get("closed"):
+        follower = cls(session=session, activation=activation, glob=follow["glob"],
+                       agent_id=follow["agent_id"], skip=follow["skip"], audit=audit,
+                       harness=follow["harness"], start=follow["start"])
+        for meta in store.files(session, activation):
+            if meta["closed"]:
                 continue
-            copy = follower._load(meta_path.with_name(
-                meta_path.name.removesuffix(".meta.json") + ".jsonl"), meta)
+            copy = follower._load(follower.dir / meta["copy"], meta)
             follower._copies[copy.guest_path] = copy
         return follower
 
     def _load(self, path: Path, meta: dict[str, Any]) -> _Copy:
-        copy = _Copy(path, str(meta.get("guest_path", "")), offset=int(meta.get("offset", 0)),
-                     opened=float(meta.get("opened", 0.0)), start=int(meta.get("start", 0)))
+        copy = _Copy(path, meta["guest_path"], offset=meta["offset"], opened=meta["opened"],
+                     start=meta["start"])
         try:
             data = path.read_bytes()
         except OSError:
@@ -306,7 +379,7 @@ class TranscriptFollower:
             for copy in self._copies.values():
                 self._close_copy(copy)
             self._copies.clear()
-        if self.dir.is_dir():
+        if self._store.run(self.session, self.activation) is not None:
             self._save_follow(closed=True)
 
     def poll(self, bottle: "Bottle | None" = None) -> bool:
@@ -413,22 +486,14 @@ class TranscriptFollower:
             sha256=copy.sha.hexdigest(), final=final)
 
     def _save_meta(self, copy: _Copy, *, closed: bool = False) -> None:
-        meta: dict[str, Any] = {"guest_path": copy.guest_path, "offset": copy.offset,
-                                "agent_id": self.agent_id, "opened": copy.opened}
-        if copy.start:
-            meta["start"] = copy.start
-        if closed:
-            meta["closed"] = True
-        _write_json(copy.meta_path, meta)
+        self._store.put_file(self.session, self.activation, copy.path.name,
+                             guest_path=copy.guest_path, offset=copy.offset, start=copy.start,
+                             opened=copy.opened, agent_id=self.agent_id, closed=closed)
 
     def _save_follow(self, *, closed: bool = False) -> None:
-        follow: dict[str, Any] = {"glob": self.glob, "skip": self.skip,
-                                  "agent_id": self.agent_id, "harness": self.harness}
-        if self.resumed_at:
-            follow["start"] = self.resumed_at
-        if closed:
-            follow["closed"] = True
-        _write_json(self.dir / _FOLLOW, follow)
+        self._store.put_run(self.session, self.activation, glob=self.glob, skip=self.skip,
+                            start=self.resumed_at, agent_id=self.agent_id, harness=self.harness,
+                            closed=closed)
 
     def _rel(self, path: Path) -> str:
         return str(path.relative_to(transcripts_root()))
@@ -437,15 +502,14 @@ class TranscriptFollower:
 def close_stale(live: set[str], audit: "HostAudit") -> None:
     """Close the copies of sessions that ended while no host controller ran
     (their bottles are gone): the last checkpoint is final."""
-    root = transcripts_root()
-    for follow in sorted(root.glob(f"*/*/{_FOLLOW}")) if root.is_dir() else []:
-        session, activation = follow.parent.parent.name, follow.parent.name
-        if session in live:
+    for run in TranscriptStore(host_db_path()).runs():
+        session, activation = run["session"], run["activation"]
+        if session in live or run["closed"]:
             continue
         follower = TranscriptFollower.resume(session=session, activation=activation, audit=audit)
         if follower is not None:
             follower.close()
 
 
-__all__ = ["TranscriptFollower", "close_stale", "copy_dir", "parse_listing", "poll_script",
-           "shell_glob", "transcripts_root"]
+__all__ = ["TranscriptFollower", "TranscriptStore", "close_stale", "copy_dir", "parse_listing",
+           "poll_script", "shell_glob", "transcripts_root"]

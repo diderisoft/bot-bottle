@@ -18,7 +18,7 @@ from pathlib import Path
 
 from ...environment import docker_orchestrator_port_candidates, is_live, resource_prefix
 from ...lib import log
-from ... import resources
+from ... import infra_state, resources
 from .util import image_exists as docker_image_exists
 from .util import run_docker
 from .util import tag_image as docker_tag_image
@@ -56,10 +56,9 @@ ORCHESTRATOR_SOURCE_HASH_LABEL = "bot-bottle-orchestrator-source-hash"
 # Host root mount (its registry DB and state) in the orchestrator, the only
 # container with it.
 _ROOT_IN_CONTAINER = "/bot-bottle-root"
-# A named environment's allocated host ports, one file per orchestrator
-# container under its state root, so a restart (and every other process of the
+# A named environment's allocated host ports are recorded per orchestrator
+# container (`infra_state`), so a restart (and every other process of the
 # environment) finds it, and a second pair (an isolated test's) keeps its own.
-ORCHESTRATOR_PORTS_DIRNAME = "docker-ports"
 # Ports a named environment tries before giving up.
 _PORT_ATTEMPTS = 32
 # What docker says when the host port is taken.
@@ -67,28 +66,19 @@ _PORT_TAKEN = ("port is already allocated", "address already in use",
                "failed programming external connectivity")
 
 
-def _port_file(name: str) -> Path:
-    return bot_bottle_root() / ORCHESTRATOR_PORTS_DIRNAME / name
-
-
 def recorded_orchestrator_port(name: str = ORCHESTRATOR_NAME) -> int:
-    """The host port recorded for orchestrator container `name`, 0 if none
-    (or garbage)."""
+    """The host port recorded for orchestrator container `name`
+    (`infra_state`), 0 if none (or garbage)."""
     try:
-        port = int(_port_file(name).read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
+        port = int(infra_state.get(f"docker.port.{name}"))
+    except ValueError:
         return 0
     return port if 0 < port < 65536 else 0
 
 
 def record_orchestrator_port(port: int, name: str = ORCHESTRATOR_NAME) -> None:
-    if recorded_orchestrator_port(name) == port:
-        return
-    path = _port_file(name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{name}.{os.getpid()}")
-    tmp.write_text(f"{port}\n", encoding="utf-8")
-    os.replace(tmp, path)
+    if recorded_orchestrator_port(name) != port:
+        infra_state.record({f"docker.port.{name}": str(port)})
 _DB_IN_CONTAINER = f"{_ROOT_IN_CONTAINER}/db/{REGISTRY_DB_FILENAME}"
 
 _HEALTH_POLL_SECONDS = 0.25

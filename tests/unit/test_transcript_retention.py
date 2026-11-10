@@ -6,7 +6,6 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import io
-import json
 import os
 import tempfile
 import threading
@@ -19,8 +18,9 @@ from bot_bottle.cli.commands import audit as audit_cmd
 from bot_bottle.control.hostctl import transcript_retention
 from bot_bottle.control.hostctl.audit_events import HostAudit
 from bot_bottle.control.hostctl.audit_ocsf import to_ocsf
-from bot_bottle.control.hostctl.transcripts import transcripts_root
+from bot_bottle.control.hostctl.transcripts import TranscriptStore, transcripts_root
 from bot_bottle.lib.config_store import DEFAULT_TRANSCRIPT_RETENTION_DAYS, ConfigStore
+from bot_bottle.paths import host_db_path
 from . import serve_host_controller, use_bottle_root
 
 _DAY = 86400.0
@@ -39,8 +39,11 @@ class _Root(unittest.TestCase):
         run = transcripts_root() / session / activation
         run.mkdir(parents=True)
         (run / "s.jsonl").write_bytes(data)
-        (run / "s.meta.json").write_text("{}")
-        (run / "follow.json").write_text(json.dumps({"closed": closed}))
+        store = TranscriptStore(host_db_path())
+        store.put_run(session, activation, glob="", skip=[], start={}, agent_id="c-1",
+                      harness="pi", closed=closed)
+        store.put_file(session, activation, "s.jsonl", guest_path="/g/s.jsonl", offset=5,
+                       start=0, opened=1.0, agent_id="c-1", closed=closed)
         when = _NOW - age_days * _DAY
         for p in run.iterdir():
             os.utime(p, (when, when))
@@ -55,6 +58,10 @@ class TestSweep(_Root):
         gone = transcript_retention.sweep(self.audit, 30, now=_NOW)
         self.assertEqual([old], gone)
         self.assertFalse(old.exists())
+        store = TranscriptStore(host_db_path())
+        self.assertIsNone(store.run("s1", "a1"))  # its rows go with it
+        self.assertEqual([], store.files("s1", "a1"))
+        self.assertIsNotNone(store.run("s1", "a2"))
         self.assertTrue(recent.exists() and running.exists())
         self.audit.transcript_deleted.assert_called_once_with(
             bottle="s1", activation="a1", retention_days=30,
@@ -66,10 +73,10 @@ class TestSweep(_Root):
         transcript_retention.sweep(self.audit, 30, now=_NOW)
         self.assertFalse(run.parent.exists())
 
-    def test_unreadable_follow_or_no_root(self) -> None:
+    def test_no_root_or_a_run_not_recorded(self) -> None:
         transcript_retention.sweep(self.audit, 30, now=_NOW)  # no root yet
-        run = self.run_dir("s4", "a1", closed=True, age_days=40)
-        (run / "follow.json").write_text("{nope")
+        stray = transcripts_root() / "s4" / "a1"
+        stray.mkdir(parents=True)
         self.assertEqual([], transcript_retention.sweep(self.audit, 30, now=_NOW))
 
     def test_a_failed_delete_is_reported_and_skipped(self) -> None:
@@ -119,12 +126,10 @@ class TestSetting(_Root):
     def test_show_and_set(self) -> None:
         self.assertEqual((0, "30 days\n"), self.run_cli())
         self.assertEqual((0, "7 days\n"), self.run_cli("7"))
-        from bot_bottle.paths import host_db_path
         self.assertEqual(7, ConfigStore(host_db_path()).transcript_retention_days())
         self.assertEqual(2, self.run_cli("0")[0])
 
     def test_an_unmigrated_db_reads_the_default(self) -> None:
-        from bot_bottle.paths import host_db_path
         path = host_db_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"")

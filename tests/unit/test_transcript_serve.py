@@ -18,7 +18,8 @@ from unittest import mock
 from bot_bottle.control.hostctl import remote, transcript_serve
 from bot_bottle.control.hostctl.transcript_serve import (
     SESSION_SEQ_STRIDE, TranscriptReader, find_conversation, find_copies, find_copy)
-from bot_bottle.control.hostctl.transcripts import transcripts_root
+from bot_bottle.control.hostctl.transcripts import TranscriptStore, transcripts_root
+from bot_bottle.paths import host_db_path
 from . import use_bottle_root
 
 _PI = Path(__file__).parent / "data" / "transcripts" / "pi-branched.jsonl"
@@ -31,22 +32,18 @@ class _Root(unittest.TestCase):
         self.err = self.enterContext(contextlib.redirect_stderr(io.StringIO()))
 
     def copy(self, session: str, activation: str, name: str, *, agent_id: str = "c-1",
-             data: bytes | None = None, harness: str | None = "pi", opened: float = 1.0,
+             data: bytes | None = None, harness: str = "pi", opened: float = 1.0,
              guest: str = "", start: int = 0) -> Path:
         run = transcripts_root() / session / activation
         run.mkdir(parents=True, exist_ok=True)
         path = run / f"{name}.jsonl"
         path.write_bytes(_PI.read_bytes() if data is None else data)
         guest = guest or f"/home/node/.pi/agent/sessions/--w--/{name.split('.')[0]}.jsonl"
-        meta: dict[str, Any] = {"guest_path": guest, "offset": 0, "agent_id": agent_id,
-                                "opened": opened}
-        if start:
-            meta["start"] = start
-        (run / f"{name}.meta.json").write_text(json.dumps(meta))
-        follow: dict[str, Any] = {"agent_id": agent_id, "glob": "", "skip": []}
-        if harness is not None:
-            follow["harness"] = harness
-        (run / "follow.json").write_text(json.dumps(follow))
+        store = TranscriptStore(host_db_path())
+        store.put_file(session, activation, path.name, guest_path=guest, offset=0, start=start,
+                       opened=opened, agent_id=agent_id, closed=False)
+        store.put_run(session, activation, glob="", skip=[], start={}, agent_id=agent_id,
+                      harness=harness, closed=False)
         return path
 
 
@@ -78,13 +75,6 @@ class TestFindCopy(_Root):
         found = find_copy("c-1")
         assert found is not None
         self.assertEqual(rewrite, found.path)
-
-    def test_the_harness_falls_back_to_the_path(self) -> None:
-        self.copy("s1", "a1", "x", harness=None,
-                  guest="/home/node/.claude/projects/-w/x.jsonl")
-        found = find_copy("c-1")
-        assert found is not None
-        self.assertEqual("claude", found.harness)
 
     def test_no_root(self) -> None:
         self.assertIsNone(find_copy("c-1"))
@@ -267,10 +257,10 @@ class TestReader(_Root):
         self.assertIsNone(reader.entries("c-1"))
 
     def test_has_transcript_before_any_copy(self) -> None:
-        run = transcripts_root() / "s1" / "a1"
-        run.mkdir(parents=True)
-        (run / "follow.json").write_text(json.dumps({"agent_id": "c-1"}))
+        TranscriptStore(host_db_path()).put_run("s1", "a1", glob="", skip=[], start={},
+                                                 agent_id="c-1", harness="pi", closed=False)
         self.assertTrue(TranscriptReader().has_transcript("c-1"))
+        self.assertFalse(TranscriptReader().has_transcript("c-2"))
         self.assertIsNone(TranscriptReader().last("c-1"))
 
     def test_unreadable_secrets_mask_by_pattern(self) -> None:

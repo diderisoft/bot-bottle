@@ -17,10 +17,11 @@ from typing import Any
 
 from .. import host_access
 from ..contract.hostctl import (
-    AUDIT_IMPORT_PATH, AUDIT_PASSKEYS_PATH, AUDIT_QUERY_PATH, AUDIT_REBUILD_PATH,
+    AGENT_PREFS_PATH, AUDIT_IMPORT_PATH, AUDIT_PASSKEYS_PATH, AUDIT_QUERY_PATH, AUDIT_REBUILD_PATH,
     HOST_CONFIG_PATH, PAIRING_PATH,
 )
 from ..control.hostctl import runner
+from ..control.hostctl.agent_prefs import AgentPrefs
 from ..control.hostctl.audit_index import Query
 from ..control.hostctl.audit_trust import Trust
 from ..control.hostctl.client import HostControlClient
@@ -107,5 +108,17 @@ def trust_passkeys(trust: Trust) -> Trust:
     return Trust.from_json(_client().post(AUDIT_PASSKEYS_PATH, trust.to_json()))
 
 
-__all__ = ["audit_import", "audit_passkeys", "audit_query", "audit_rebuild", "host_config",
-           "pairing", "running_pairing", "set_host_config", "set_pairing", "trust_passkeys"]
+def agent_prefs() -> AgentPrefs:
+    """The remembered agent and each directory's."""
+    return AgentPrefs.from_json(_client().get(AGENT_PREFS_PATH))
+
+
+def remember_agent(agent: str, directory: str = "") -> AgentPrefs:
+    """Remember `agent` for `directory`, or as the remembered one."""
+    return AgentPrefs.from_json(_client().post(AGENT_PREFS_PATH,
+                                               {"agent": agent, "dir": directory}))
+
+
+__all__ = ["agent_prefs", "audit_import", "audit_passkeys", "audit_query", "audit_rebuild",
+           "host_config", "pairing", "remember_agent", "running_pairing", "set_host_config",
+           "set_pairing", "trust_passkeys"]

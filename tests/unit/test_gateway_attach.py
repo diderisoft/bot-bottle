@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from bot_bottle import infra_state
 from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend import gateway_attach as ga
 from bot_bottle.backend.gateway_attach import (
@@ -230,8 +231,7 @@ class InfraServiceTrigger(unittest.TestCase):
     def _changed_settings(self, *, healthy: bool) -> MagicMock:
         """Record a fingerprint other than the service's, then ensure."""
         self.svc._record_infra_settings()  # pyright: ignore[reportPrivateUsage]
-        record = self.marker.parent / "docker.settings.json"
-        record.write_text(record.read_text().replace(self.svc.settings.infra.fingerprint(), "older"))
+        infra_state.record({"docker.fingerprint": "older"})
         with patch.object(self.svc, "is_healthy", return_value=healthy), \
              patch.object(self.svc, "stop") as stop:
             self._ensure(True)

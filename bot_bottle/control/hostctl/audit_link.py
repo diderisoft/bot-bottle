@@ -14,6 +14,9 @@ them back once the user has unlocked with a passkey.
   journal's events for one of the link's bottles (`audit_events`).
 - `audit_record` (from the host): one encrypted record of a running console
   agent's conversation (`audit_push`), every few seconds while there are new ones.
+- `audit_head` (from the host, `agent_id`) -> `audit_head` (`agent_id`, `runs`,
+  `last`): where the console's copy of the agent's chain ends, asked when this
+  host has no cursor for it (`audit_push`).
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ from collections.abc import Awaitable, Callable, Collection
 from typing import Any
 
 from ...lib import log
-from .audit_push import AuditPusher, decrypt, host_runs, load_key
+from .audit_push import AuditPusher, AuditPushStore, decrypt, load_key
 from .audit_unlock import AuditUnlock, UnlockError
 from .transcript_serve import TranscriptReader
 
@@ -34,17 +37,18 @@ MAX_AUDIT_EVENTS = 500
 
 
 class AuditLink:
-    REQUESTS = frozenset({"audit_unlock_challenge", "audit_unlock", "decrypt_audit_records"})
+    REQUESTS = frozenset({"audit_unlock_challenge", "audit_unlock", "decrypt_audit_records",
+                          "audit_head"})
 
     def __init__(self, send: Callable[[dict[str, Any]], Awaitable[None]],
                  running: Callable[[], dict[str, str]], bottles: Any, *,
-                 unlock: AuditUnlock | None = None, directory: Any = None,
+                 unlock: AuditUnlock | None = None, store: AuditPushStore | None = None,
                  clock: Callable[[], float] = time.monotonic) -> None:
         self._send = send
         self._running = running
         self._bottles = bottles
         self.unlock = unlock or AuditUnlock()
-        self._dir = directory
+        self._store = store
         self._clock = clock
         self._key: bytes | None = None
         self._key_tried = False
@@ -81,7 +85,7 @@ class AuditLink:
                 key = self._audit_key()
                 assert key is not None
                 pusher = AuditPusher(agent_id, key, self._reader.entries, self._send,
-                                     **({"directory": self._dir} if self._dir else {}))
+                                     store=self._push_store(), clock=self._clock)
                 self._pushers[agent_id] = pusher
             await pusher.push(run_id)
 
@@ -99,6 +103,11 @@ class AuditLink:
 
     async def handle(self, msg: dict[str, Any]) -> None:
         kind = msg.get("type")
+        if kind == "audit_head":  # the console's answer to a pusher's question
+            pusher = self._pushers.get(str(msg.get("agent_id") or ""))
+            if pusher is not None:
+                await asyncio.to_thread(pusher.head, msg)
+            return
         reply: dict[str, Any] = {"type": kind, "request_id": msg.get("request_id")}
         session = str(msg.get("session") or "")
         try:
@@ -123,7 +132,7 @@ class AuditLink:
         if not isinstance(records, list) or not records or len(records) > MAX_RECORDS:
             raise UnlockError(f"send 1 to {MAX_RECORDS} records")
         credential = self.unlock.check(str(msg.get("token") or ""), session, len(records))
-        if run_id not in host_runs(self._dir_path()):
+        if run_id not in self._push_store().host_runs():
             raise UnlockError("that run's records weren't sent by this host")
         key = self._audit_key()
         if key is None:
@@ -142,11 +151,11 @@ class AuditLink:
             audit.audit_records_read(run_id=run_id, count=len(out), credential_id=credential)
         return out
 
-    def _dir_path(self) -> Any:
-        if self._dir is not None:
-            return self._dir
-        from ...paths import audit_push_dir  # pylint: disable=import-outside-toplevel
-        return audit_push_dir()
+    def _push_store(self) -> AuditPushStore:
+        if self._store is None:
+            from ...paths import host_db_path  # pylint: disable=import-outside-toplevel
+            self._store = AuditPushStore(host_db_path())
+        return self._store
 
 
 __all__ = ["AuditLink", "MAX_RECORDS", "PUSH_SECONDS"]

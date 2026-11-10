@@ -1,6 +1,6 @@
 """Serve a console agent's transcript from its host copy (PRD 0095).
 
-A copy is found by the console agent id recorded beside it, so the console
+A copy is found by the console agent id recorded with it (`TranscriptStore`), so the console
 can read a session's conversation before and after a host controller
 restart, and after the session ends, until retention deletes it. Within a
 run, all session files are shown in the order they opened so that a `/clear`
@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import threading
 import time
 from collections.abc import Awaitable, Callable, Generator, Iterable
@@ -27,8 +26,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...lib import log
-from ...paths import host_secrets_path
-from .transcripts import transcripts_root
+from ...paths import host_db_path, host_secrets_path
+from .transcripts import TranscriptStore, transcripts_root
 
 if TYPE_CHECKING:
     from ...transcript import TranscriptEntry
@@ -45,10 +44,6 @@ MAX_PAGE = 200
 SESSION_SEQ_STRIDE = 10_000_000
 MAX_MATCHES = 100
 SNIPPET = 60  # characters of context either side of a match
-
-# Where each harness keeps its transcripts, for copies whose follow record
-# predates naming the harness.
-_HARNESS_BY_PATH = (("/.pi/", "pi"), ("/.claude/", "claude"), ("/.codex/", "codex"))
 
 
 @dataclass(frozen=True)
@@ -104,32 +99,9 @@ class Conversation:
         return None if data is None else data[:data.rfind(b"\n") + 1]
 
 
-def _read(path: Path) -> dict[str, Any]:
-    try:
-        data = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _harness(follow: dict[str, Any], guest_path: str) -> str:
-    if follow.get("harness"):
-        return str(follow["harness"])
-    return next((h for marker, h in _HARNESS_BY_PATH if marker in guest_path), "")
-
-
-def _pieces(root: Path) -> list[_Piece]:
-    out = []
-    for meta_path in root.glob("*/*/*.meta.json"):
-        meta = _read(meta_path)
-        copy = meta_path.with_name(meta_path.name.removesuffix(".meta.json") + ".jsonl")
-        try:
-            opened = float(meta.get("opened") or 0.0) or copy.stat().st_mtime
-        except OSError:
-            opened = 0.0
-        out.append(_Piece(copy, str(meta.get("guest_path", "")), int(meta.get("start") or 0),
-                          opened, str(meta.get("agent_id", ""))))
-    return out
+def _pieces(store: TranscriptStore, root: Path) -> list[_Piece]:
+    return [_Piece(root / f["session"] / f["activation"] / f["copy"], f["guest_path"],
+                   f["start"], f["opened"], f["agent_id"]) for f in store.files()]
 
 
 def _sessions(agent_id: str) -> list[Conversation]:
@@ -142,10 +114,10 @@ def _sessions(agent_id: str) -> list[Conversation]:
     Each session's pieces are stitched across bottle runs (a resumed run
     copies only what the agent added to a file the earlier run copied).
     """
-    root = transcripts_root()
-    if not agent_id or not root.is_dir():
+    if not agent_id:
         return []
-    pieces = _pieces(root)
+    store = TranscriptStore(host_db_path())
+    pieces = _pieces(store, transcripts_root())
     mine = [p for p in pieces if p.agent_id == agent_id]
     if not mine:
         return []
@@ -160,7 +132,7 @@ def _sessions(agent_id: str) -> list[Conversation]:
         if p.guest not in by_guest or p.opened > by_guest[p.guest].opened:
             by_guest[p.guest] = p
     # Build a Conversation per guest path, sorted by when that guest path first opened.
-    follow = _read(newest_run / "follow.json")
+    follow = store.run(newest_run.parent.name, newest_run.name) or {}
     result = []
     for guest_piece in sorted(by_guest.values(), key=lambda p: p.opened):
         chain = sorted(
@@ -169,7 +141,7 @@ def _sessions(agent_id: str) -> list[Conversation]:
         )
         result.append(Conversation(
             tuple(chain),
-            Copy(chain[-1].path, _harness(follow, guest_piece.guest),
+            Copy(chain[-1].path, str(follow.get("harness", "")),
                  newest_run.parent.name, newest_run.name),
         ))
     return result
@@ -392,10 +364,9 @@ class TranscriptReader:
 
     def has_transcript(self, agent_id: str) -> bool:
         """Whether the agent's harness keeps a transcript the host follows:
-        a follow record names it, copied or not yet."""
-        root = transcripts_root()
-        return root.is_dir() and any(
-            _read(p).get("agent_id") == agent_id for p in root.glob("*/*/follow.json"))
+        a run's record names it, copied or not yet."""
+        return bool(agent_id) and any(
+            r["agent_id"] == agent_id for r in TranscriptStore(host_db_path()).runs())
 
 
 def is_working(agent_id: str, now: float) -> bool | None:

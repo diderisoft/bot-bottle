@@ -455,9 +455,10 @@ drawn under the steps on the same screen.
 
 ### Agent step
 
-The agent you last ran is remembered in `~/.bot-bottle/start.json`. Without
-one, the pick lists the logged-in harnesses that have an agent (`setup`'s
-detection).
+The agent you last ran is remembered in the host database (`agent_prefs`). It's
+the same remembered agent a bare `bot-bottle` starts where no other was used
+last. Without one, the pick lists the logged-in harnesses that have an agent
+(`setup`'s detection).
 
 `bot-bottle start codex` runs that one and makes it the default. With no agent
 set up, Enter runs `setup` on the screen, its lines under the step.

@@ -75,6 +75,15 @@ class FirehoseSettings:
 
 
 @dataclass(frozen=True)
+class GitHubApp:
+    """The GitHub App this host's GitHub access goes through (`forge connect
+    github --app`). Both are public; "" means bot-bottle's own app."""
+
+    slug: str = ""
+    client_id: str = ""
+
+
+@dataclass(frozen=True)
 class HostConfig:
     """Every host setting the CLI shows or sets, as the host controller serves
     them (`HOST_CONFIG_PATH`)."""
@@ -84,6 +93,7 @@ class HostConfig:
     firehose: FirehoseSettings = FirehoseSettings()
     transcript_retention_days: int = DEFAULT_TRANSCRIPT_RETENTION_DAYS
     host_budget: HostBudget = HostBudget()
+    github_app: GitHubApp = GitHubApp()
 
     def to_json(self) -> dict[str, object]:
         forward = self.audit_forward
@@ -98,6 +108,8 @@ class HostConfig:
             "transcript_retention_days": self.transcript_retention_days,
             "host_budget": {"disk_gb": self.host_budget.disk_gb,
                             "memory_gb": self.host_budget.memory_gb},
+            "github_app": {"slug": self.github_app.slug,
+                           "client_id": self.github_app.client_id},
         }
 
     @classmethod
@@ -128,6 +140,12 @@ class HostConfig:
             return replace(self, host_budget=HostBudget(
                 disk_gb=_int(body.get("disk_gb", 0), "disk_gb", minimum=0),
                 memory_gb=_int(body.get("memory_gb", 0), "memory_gb", minimum=0)))
+        if name == "github_app":
+            body = _object(value, name)
+            slug, client_id = body.get("slug", ""), body.get("client_id", "")
+            if not isinstance(slug, str) or not isinstance(client_id, str):
+                raise ValueError("github_app's slug and client_id are text")
+            return replace(self, github_app=GitHubApp(slug=slug, client_id=client_id))
         raise ValueError(f"unknown host setting {name!r}")
 
 
@@ -235,6 +253,15 @@ class ConfigStore(DbStore):
             ALTER TABLE bot_bottle_config
             ADD COLUMN host_max_memory_gb INTEGER NOT NULL DEFAULT 0
             """,
+            # v13-14: the GitHub App's public slug and client id ("" = bot-bottle's)
+            """
+            ALTER TABLE bot_bottle_config
+            ADD COLUMN github_app_slug TEXT NOT NULL DEFAULT ''
+            """,
+            """
+            ALTER TABLE bot_bottle_config
+            ADD COLUMN github_app_client_id TEXT NOT NULL DEFAULT ''
+            """,
         ])
         super().__init__(db_path, migrations)
 
@@ -243,7 +270,7 @@ class ConfigStore(DbStore):
         return HostConfig(audit_delivery=self.audit_delivery(), audit_forward=self.audit_forward(),
                           firehose=self.firehose(),
                           transcript_retention_days=self.transcript_retention_days(),
-                          host_budget=self.host_budget())
+                          host_budget=self.host_budget(), github_app=self.github_app())
 
     def set_host_config(self, config: HostConfig) -> None:
         """Store each of `config`'s settings."""
@@ -253,6 +280,7 @@ class ConfigStore(DbStore):
         self.set_firehose(config.firehose)
         self.set_transcript_retention_days(config.transcript_retention_days)
         self.set_host_budget(config.host_budget)
+        self.set_github_app(config.github_app)
 
     def cached_image_stale_warning_days(self) -> int:
         if not self.db_path.is_file():
@@ -426,6 +454,33 @@ class ConfigStore(DbStore):
         self._chmod()
         return self.db_path
 
+    def github_app(self) -> GitHubApp:
+        if not self.db_path.is_file():
+            return GitHubApp()
+        try:
+            with self._connection() as conn:
+                row = conn.execute("SELECT github_app_slug, github_app_client_id "
+                                   "FROM bot_bottle_config WHERE id = 1").fetchone()
+        except sqlite3.OperationalError:
+            return GitHubApp()  # not migrated yet
+        return GitHubApp(slug=str(row["github_app_slug"]),
+                         client_id=str(row["github_app_client_id"])) if row else GitHubApp()
+
+    def set_github_app(self, app: GitHubApp) -> Path:
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO bot_bottle_config (id, github_app_slug, github_app_client_id)
+                VALUES (1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    github_app_slug = excluded.github_app_slug,
+                    github_app_client_id = excluded.github_app_client_id
+                """,
+                (app.slug, app.client_id),
+            )
+        self._chmod()
+        return self.db_path
+
     def set_audit_delivery(self, delivery: str) -> Path:
         with self._connection() as conn:
             conn.execute(
@@ -457,6 +512,7 @@ class ConfigStore(DbStore):
 __all__ = [
     "AUDIT_DELIVERIES",
     "AuditForward",
+    "GitHubApp",
     "HostBudget",
     "HostConfig",
     "FirehoseSettings",

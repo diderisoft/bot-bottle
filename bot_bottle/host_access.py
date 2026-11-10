@@ -42,4 +42,16 @@ def ask(path: str, body: dict[str, object] | None = None) -> dict[str, object]:
     return reached.get(path) if body is None else reached.post(path, body)
 
 
-__all__ = ["ask", "client", "in_host_controller", "use_stores"]
+def ask_running(path: str) -> dict[str, object] | None:
+    """GET `path` of the running host controller; None when none runs. For a
+    reader that mustn't start one."""
+    # pylint: disable=import-outside-toplevel
+    from .control.hostctl import runner
+    from .control.hostctl.client import HostControlClient
+    state = runner.running()
+    if state is None:
+        return None
+    return HostControlClient(state, runner.cli_token()).get(path)
+
+
+__all__ = ["ask", "ask_running", "client", "in_host_controller", "use_stores"]

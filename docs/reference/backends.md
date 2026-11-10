@@ -474,8 +474,8 @@ runs again after a new boot, a reinstalled firewall (its rules file), or a new
 agent network, host address or LAN address.
 
 Those keys come from `host_firewall.isolation_key`. The keys it passed for are
-kept in `<state root>/state/isolation-verified.json`. Between reboots, the pf
-daemon reloads the anchor each minute.
+kept in the host database (`isolation_passes`), the newest eight. Between
+reboots, the pf daemon reloads the anchor each minute.
 
 Probes of a single agent's boundary run on every launch. They cover its own
 firewall, its docker network, its VM's nft rules, and the sibling knock.

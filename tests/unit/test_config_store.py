@@ -62,6 +62,8 @@ class TestConfigStore(unittest.TestCase):
                 "transcript_retention_days",
                 "host_max_disk_gb",
                 "host_max_memory_gb",
+                "github_app_slug",
+                "github_app_client_id",
             ], columns)
 
     def test_firehose_settings_round_trip(self) -> None:

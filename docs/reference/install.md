@@ -560,8 +560,8 @@ It tries the /24s in an order that starts at its name's hash. It skips any a
 docker network already has. It moves on when docker reports a pool overlap,
 meaning another environment got there first.
 
-The one it gets is recorded in its state root (`docker-gateway-subnet`), so
-it's stable across restarts. An existing gateway network's subnet is adopted.
+The one it gets is recorded in its host database (`infra_state`), so it's
+stable across restarts. An existing gateway network's subnet is adopted.
 
 The macOS agent IPv6 /64 is allocated the same way at setup, skipping the ones
 other environments' anchors block. It's recorded in the installed pf rules.

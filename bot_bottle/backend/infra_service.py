@@ -13,6 +13,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
+from .. import infra_state
 from ..contract.hostctl import InfraSettings, Settings
 from ..control.client import OrchestratorClient, record_orchestrator, recorded_orchestrator
 from ..control.gateway import Gateway
@@ -62,27 +63,14 @@ def _reentrant_flock(path: Path) -> Generator[None]:
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def infra_settings_record(backend: str) -> Path:
-    """Where `backend`'s last bring-up recorded its `InfraSettings`."""
-    return bot_bottle_root() / "infra" / f"{backend}.settings.json"
-
-
-def _read_record(backend: str) -> dict[str, object] | None:
-    try:
-        record = json.loads(infra_settings_record(backend).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return record if isinstance(record, dict) else None
-
-
 def recorded_infra_settings(backend: str) -> InfraSettings | None:
-    """The `InfraSettings` `backend`'s infra was last (re)started with, or None
-    when none is recorded or the record no longer parses."""
-    record = _read_record(backend)
-    if record is None:
+    """The `InfraSettings` `backend`'s infra was last (re)started with
+    (`infra_state`), or None when none is recorded or it no longer parses."""
+    raw = infra_state.get(f"{backend}.settings")
+    if not raw:
         return None
     try:
-        return Settings.from_json({"infra": record.get("infra", {})}).infra
+        return Settings.from_json({"infra": json.loads(raw)}).infra
     except ValueError:
         return None
 
@@ -213,7 +201,7 @@ class InfraService(abc.ABC):
                 self.stop()
             url, restarted = self._bring_up(startup_timeout=startup_timeout)
             # The environment's one orchestrator, for everything that talks to it.
-            record_orchestrator(self.name, url, root=bot_bottle_root())
+            record_orchestrator(self.name, url)
             if restarted:
                 self._record_infra_settings()
             if restarted or pending:
@@ -231,7 +219,7 @@ class InfraService(abc.ABC):
         """Die if the environment's recorded orchestrator is another backend's
         and still answers: an environment runs exactly one orchestrator. One
         that's gone is replaced by this bring-up."""
-        current = recorded_orchestrator(bot_bottle_root())
+        current = recorded_orchestrator()
         if current is None or current.backend == self.name:
             return
         if not OrchestratorClient(current.url).health():
@@ -275,19 +263,15 @@ class InfraService(abc.ABC):
     def _record_infra_settings(self) -> None:
         """Record the `InfraSettings` this bring-up (re)started the pair with."""
         infra = self.settings.infra
-        record = {"fingerprint": infra.fingerprint(), "infra": self.settings.to_json()["infra"]}
-        path = infra_settings_record(self.name)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
-        tmp.replace(path)
+        infra_state.record({
+            f"{self.name}.settings": json.dumps(self.settings.to_json()["infra"],
+                                                sort_keys=True),
+            f"{self.name}.fingerprint": infra.fingerprint()})
 
     def recorded_infra_fingerprint(self) -> str | None:
         """Fingerprint of the `InfraSettings` the running pair was started
         with, or None."""
-        record = _read_record(self.name)
-        fingerprint = record.get("fingerprint") if record is not None else None
-        return fingerprint if isinstance(fingerprint, str) else None
+        return infra_state.get(f"{self.name}.fingerprint") or None
 
     def url(self) -> str:
         """Host-facing control-plane URL."""
@@ -297,4 +281,4 @@ class InfraService(abc.ABC):
         return self.orchestrator().is_healthy()
 
 
-__all__ = ["InfraService", "infra_settings_record", "recorded_infra_settings"]
+__all__ = ["InfraService", "recorded_infra_settings"]

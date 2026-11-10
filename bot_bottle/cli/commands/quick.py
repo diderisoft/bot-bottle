@@ -28,7 +28,6 @@ nothing.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -38,79 +37,45 @@ from ...lib.log import die, info
 from ...manifest import ManifestIndex
 from ...manifest.loader import PROJECT_BOTTLE, bottle_ref
 from ...manifest.schema import DEFAULT_BOTTLE
-from ...paths import bot_bottle_root
 from ...util import read_tty_line
 from ..constants import PROG
+from ..host_state_client import agent_prefs, remember_agent
 from ..settings import settings_from_env
 from .start import _launch_bottle
 
 STARTERS = ("claude", "codex", "pi")
 
 
-def _state_path() -> Path:
-    return bot_bottle_root() / "state" / "quickstart.json"
-
-
-def _load_state() -> dict[str, object]:
-    try:
-        raw = json.loads(_state_path().read_text())
-    except (OSError, ValueError):
-        return {}
-    return raw if isinstance(raw, dict) else {}
-
-
-def _save_state(state: dict[str, object]) -> None:
-    path = _state_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
-    tmp.replace(path)
-
-
 def pick_agent(manifest: ManifestIndex, cwd: Path) -> str | None:
     """The agent for bare `bot-bottle` in `cwd`: last used here, else the
-    default, else the first starter."""
-    state = _load_state()
-    last = state.get("last")
-    candidates = [
-        last.get(str(cwd)) if isinstance(last, dict) else None,
-        state.get("default"),
-        *STARTERS,
-    ]
-    for name in candidates:
+    remembered one, else the first starter."""
+    prefs = agent_prefs()
+    for name in (prefs.dirs.get(str(cwd)), prefs.default, *STARTERS):
         if isinstance(name, str) and name in manifest.all_agent_names:
             return name
     return None
 
 
 def remember(cwd: Path, agent: str) -> None:
-    state = _load_state()
-    last = state.get("last")
-    last = dict(last) if isinstance(last, dict) else {}
-    last[str(cwd)] = agent
-    state["last"] = last
-    _save_state(state)
+    remember_agent(agent, str(cwd))
 
 
 def default_agent() -> str:
     """The agent a bare `bot-bottle` starts where none was used last, or ""."""
-    default = _load_state().get("default")
-    return default if isinstance(default, str) else ""
+    return agent_prefs().default
 
 
 def cmd_default(argv: list[str]) -> int:
     if not argv or argv[0] in ("-h", "--help"):
-        default = _load_state().get("default")
+        default = default_agent()
         sys.stderr.write(f"usage: {PROG} agents default <agent>\n")
-        if isinstance(default, str):
+        if default:
             sys.stderr.write(f"current default: {default}\n")
         return 0 if argv else 2
     agent = argv[0]
     if agent not in ManifestIndex.resolve(os.getcwd()).all_agent_names:
         die(f"no agent named {agent!r}; `{PROG} agents` lists them")
-    state = _load_state()
-    state["default"] = agent
-    _save_state(state)
+    remember_agent(agent)
     info(f"`{PROG}` now starts {agent} where no other agent was used last")
     return 0
 

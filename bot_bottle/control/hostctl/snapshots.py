@@ -6,22 +6,25 @@ conversation's position then (the newest transcript `seq`). Each is kept as
 
   ~/.bot-bottle/snapshots/<session>/<activation>/<taken>.patch   (0600)
 
-with `<taken>.json` beside it (when, the seq, files and lines changed, the
-patch's size and SHA-256), and audited as `snapshot.taken`. Only a copied git
-workspace can be snapshotted; restoring one is later work.
+with a row of the host DB's `snapshots` pointing at it (when, the seq, files
+and lines changed, the patch's size and SHA-256), and audited as
+`snapshot.taken`. The row and the patch go when the bottled agent is removed
+(`bottle_state.delete_bottled_agent`). Only a copied git workspace can be
+snapshotted; restoring one is later work.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import shlex
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ...paths import bot_bottle_root
+from ...lib.db_store import MACHINE_SPECIFIC, DbStore
+from ...lib.migrations import TableMigrations
+from ...paths import bot_bottle_root, host_db_path
 
 # Exporting the workspace's changes gives up after this long.
 PATCH_TIMEOUT_SECONDS = 300.0
@@ -36,6 +39,51 @@ class SnapshotUnavailable(Exception):
 
 def snapshots_root() -> Path:
     return bot_bottle_root() / "snapshots"
+
+
+class SnapshotStore(DbStore):
+    """`snapshots`: each snapshot's record, by session, and the patch it
+    points at (relative to `snapshots_root()`)."""
+
+    TABLES = {"snapshots": MACHINE_SPECIFIC}
+    _FIELDS = ("taken", "seq", "files", "added", "removed", "bytes", "sha256")
+
+    def __init__(self, db_path: Path) -> None:
+        super().__init__(db_path, TableMigrations("snapshots", [
+            """
+            CREATE TABLE snapshots (
+                session TEXT NOT NULL,
+                id TEXT NOT NULL,
+                activation TEXT NOT NULL,
+                taken REAL NOT NULL,
+                seq INTEGER,
+                files INTEGER NOT NULL,
+                added INTEGER NOT NULL,
+                removed INTEGER NOT NULL,
+                bytes INTEGER NOT NULL,
+                sha256 TEXT NOT NULL,
+                patch TEXT NOT NULL,
+                PRIMARY KEY (session, id)
+            )
+            """,
+        ]))
+        self.migrate()
+
+    def put(self, session: str, activation: str, record: dict[str, Any]) -> None:
+        patch = f"{session}/{activation}/{record['id']}.patch"
+        with self._connection() as conn:
+            conn.execute("INSERT OR REPLACE INTO snapshots VALUES "
+                         "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         (session, record["id"], activation,
+                          *(record.get(f) for f in self._FIELDS), patch))
+        self._chmod()
+
+    def of(self, session: str) -> list[dict[str, Any]]:
+        """`session`'s snapshots, oldest first, as `take` returned them."""
+        with self._connection() as conn:
+            rows = conn.execute("SELECT * FROM snapshots WHERE session = ? ORDER BY taken",
+                                (session,)).fetchall()
+        return [{"id": r["id"], **{f: r[f] for f in self._FIELDS}} for r in rows]
 
 
 def _write(path: Path, data: bytes) -> None:
@@ -68,8 +116,8 @@ def take(bottle: "Bottle", workspace: Any, *, session: str, activation: str,
     record = {"id": stamp, "taken": taken, "seq": seq, "files": files, "added": added,
               "removed": removed, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
     _write(run / f"{stamp}.patch", data)
-    _write(run / f"{stamp}.json", (json.dumps(record, indent=2) + "\n").encode())
+    SnapshotStore(host_db_path()).put(session, activation, record)
     return record
 
 
-__all__ = ["SnapshotUnavailable", "snapshots_root", "take"]
+__all__ = ["SnapshotStore", "SnapshotUnavailable", "snapshots_root", "take"]

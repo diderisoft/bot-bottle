@@ -50,7 +50,7 @@ launch, are adopted if already healthy, and keep running between bottles.
 
 An environment ([install.md](install.md#environments)) runs exactly one
 orchestrator. Each bring-up records which backend's orchestrator it is, and
-its host URL, in `<state root>/infra/orchestrator.json`.
+its host URL, in the host database (`infra_state`).
 
 A bring-up is `bot-bottle up` or a launch's implicit one
 (`InfraService.ensure_running`). Everything that talks to "the orchestrator"
@@ -176,7 +176,7 @@ Where each kind of state lives, and what owns it.
 | Project agents and bottles | `<repo>/.bot-bottle/`, run only once trusted. Trust is kept in the host database ([below](#project-files-and-trust)) | repo |
 | Host settings, forge connections, bottled agents and their sessions, audit forwarding cursors, the audit index | `~/.bot-bottle/db/bot-bottle.db` ([below](#databases), [forge connections](#forge-connections), [bottled agents](#bottled-agents)) | host controller |
 | Registry, supervise queue, encrypted egress secrets, canary events, orchestrator settings | `registry.db` ([below](#databases)) | orchestrator |
-| The environment's orchestrator (backend and host URL) | `~/.bot-bottle/infra/orchestrator.json`, written by each bring-up | host controller |
+| What infra bring-up recorded: the environment's orchestrator (backend and host URL), each backend's infra settings, docker's subnet and ports | `bot-bottle.db`'s `infra_state`, written by each bring-up | host controller |
 | Signing keys | `~/.bot-bottle/<key file>`, mode 0600, pushed to the key holder | host |
 | Gateway CA | `~/.bot-bottle/gateway-ca/`, mounted at mitmproxy's confdir (firecracker: the infra VM dir's `gateway-ca/`) | gateway |
 | Audit journal | `~/.bot-bottle/audit/` | host controller |
@@ -199,7 +199,7 @@ Each database has one job and one writer
 
 | Database | Holds | Writer | Where |
 |---|---|---|---|
-| `bot-bottle.db` | the host's own state: settings (`bot_bottle_config`), forge connections (`forge_connections`, `forge_users`), trust records (`trust_records`), the console pairing and its link's state (`pairing`, `console_link`), trusted audit passkeys (`audit_passkeys`), bottled agents (`bottled_agents`) and their tmux sessions (`sessions`), the audit forwarder's cursors, the audit index | host controller | `~/.bot-bottle/db/` |
+| `bot-bottle.db` | the host's own state: settings (`bot_bottle_config`), forge connections (`forge_connections`, `forge_users`), trust records (`trust_records`), the console pairing and its link's state (`pairing`, `console_link`), trusted audit passkeys (`audit_passkeys`), bottled agents (`bottled_agents`) and their tmux sessions (`sessions`), the remembered agent (`agent_prefs`), transcript copies' offsets (`transcript_runs`, `transcript_files`), snapshots (`snapshots`), isolation passes (`isolation_passes`), what infra bring-up recorded (`infra_state`), the audit forwarder's and console push's cursors (`audit_push_cursors`, `audit_push_runs`), the audit index | host controller | `~/.bot-bottle/db/` |
 | `registry.db` | the orchestrator's working state: the bottle registry, encrypted egress secrets, the supervise queue and its decisions, canary events, orchestrator settings | orchestrator | docker: `~/.bot-bottle/db/`, through the orchestrator's root mount. macOS: a container volume. Firecracker: the orchestrator VM's `/dev/vdb` volume |
 
 - One helper opens every connection (`lib/db_store.connect`), in WAL mode
@@ -212,9 +212,8 @@ Each database has one job and one writer
   backup ([checks and backups](host-controller.md#checks-and-backups)).
 - Each store marks its tables portable or machine-specific (`TABLES`). The
   host settings, forge connections and audit passkeys are portable, except a
-  connection's `ssh`, this machine's address for the forge. Trust records,
-  the pairing, bottled agents and sessions are machine-specific. Nothing
-  reads the mark yet.
+  connection's `ssh`, this machine's address for the forge. Everything else
+  is machine-specific. Nothing reads the mark yet.
 - No secret value is in `bot-bottle.db`. A row names a secret in the host
   secrets file (`secret:NAME`), as forge users and the pairing's console
   tokens do.
