@@ -112,6 +112,8 @@ jobs:
           ")
           echo "version=${base}-dev.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
+      # --no-reuse: merge-manifests stitches every image's <version>-<arch>
+      # tags, so every image must be pushed at this version.
       - name: Build and push OCI images
         env:
           BOT_BOTTLE_INFRA_ARTIFACT_BASE: ghcr.io
@@ -124,6 +126,7 @@ jobs:
             --platform "${{ matrix.platform }}" \
             --version "${{ steps.version.outputs.version }}" \
             --no-ext4 \
+            --no-reuse \
             --use-buildx \
             --extra-build-arg="--cache-from=type=registry,ref=${cache_ref}" \
             --extra-build-arg="--cache-to=type=registry,ref=${cache_ref},mode=max" \

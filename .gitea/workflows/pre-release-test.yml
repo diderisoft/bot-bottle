@@ -202,6 +202,10 @@ jobs:
           }
 
       # The candidate goes to Gitea; only what passes is promoted to GHCR.
+      # An image whose inputs_hash the last release (the committed manifest)
+      # already publishes, in both formats and arches, isn't rebuilt: its GHCR
+      # entry is copied into the candidate, so the suite pulls it from GHCR as
+      # installs do. --force only replaces a rerun's own dev version.
       - name: Publish the dev version under test
         env:
           BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.BOT_BOTTLE_INFRA_ARTIFACT_TOKEN }}
@@ -214,6 +218,7 @@ jobs:
             | docker login gitea.dideric.is -u didericis --password-stdin
           python3 -m bot_bottle.publish_images \
             --version "0.0.0-dev-${{ github.run_number }}" --force \
+            --reuse-from published-artifacts.json \
             --platform linux/amd64 \
             --platform linux/arm64 \
             --work-dir "${{ github.workspace }}/candidate" \
@@ -462,6 +467,16 @@ jobs:
             exit 1
           fi
 
+      # The checkout has no tags. A release that reused every image publishes
+      # nothing at its version, so only its tag shows the version is taken.
+      - name: Fetch the release tags
+        env:
+          RELEASE_PUSH_TOKEN: ${{ secrets.BOT_BOTTLE_RELEASE_PUSH_TOKEN }}
+        run: |
+          helper='!f() { echo username=release; echo "password=$RELEASE_PUSH_TOKEN"; }; f'
+          git -c credential.helper="$helper" fetch --no-write-fetch-head \
+            https://gitea.dideric.is/didericis/bot-bottle.git 'refs/tags/v*:refs/tags/v*'
+
       - name: Download the tested manifest
         uses: actions/download-artifact@v3
         with:
@@ -472,8 +487,11 @@ jobs:
       # suite resolved, downloaded and verified are the ones that ship, and
       # every promoted digest is checked against the tested one. It copies them
       # from Gitea to the public registry (GHCR) through the registry API, so
-      # no container runtime login is needed. GHCR_TOKEN: a classic PAT with
-      # write:packages for GHCR_USER (see docs/reference/install.md).
+      # no container runtime login is needed. Entries the candidate reused are
+      # already on GHCR: they are checked there by digest and kept as they are.
+      # It writes the version to released/release-version, since a reused
+      # entry keeps its own. GHCR_TOKEN: a classic PAT with write:packages for
+      # GHCR_USER (see docs/reference/install.md).
       - name: Promote the tested dev version to the release version
         env:
           BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.GHCR_TOKEN }}
@@ -491,7 +509,8 @@ jobs:
       # installs of the tag could never use the pins (as with v0.1.4/v0.1.5).
       - name: Verify the released manifest matches the release tree
         run: |
-          version=$(python3 -c 'import json; print(next(iter(json.load(open("released/published-artifacts.json")).values()))["version"])')
+          version=$(cat released/release-version)
+          test -n "$version"
           cp released/published-artifacts.json published-artifacts.json
           sed -i "s/^version = \".*\"$/version = \"$version\"/" pyproject.toml
           python3 scripts/check_published_artifacts.py --match-sources
@@ -526,7 +545,8 @@ jobs:
             echo "BOT_BOTTLE_RELEASE_PUSH_TOKEN is not set; installs won't get this release's pins." >&2
             exit 1
           fi
-          version=$(python3 -c 'import json; print(next(iter(json.load(open("released/published-artifacts.json")).values()))["version"])')
+          version=$(cat released/release-version)
+          test -n "$version"
           git config user.name "bot-bottle release"
           git config user.email "release@bot-bottle.invalid"
           remote="https://gitea.dideric.is/didericis/bot-bottle.git"

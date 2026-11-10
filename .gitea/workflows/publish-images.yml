@@ -75,7 +75,8 @@ jobs:
         run: |
           # --jobs 2: two builds at a time, so arm64 builds under QEMU can't run the
           # runner host out of memory (default_jobs() also caps by memory).
-          set -- --work-dir candidate --platform linux/amd64 --platform linux/arm64 --jobs 2
+          # --no-reuse: a rehearsal builds every image it names.
+          set -- --work-dir candidate --platform linux/amd64 --platform linux/arm64 --jobs 2 --no-reuse
           if [ "$IMAGES" = all ]; then IMAGES=; fi
           for i in $IMAGES; do set -- "$@" --image "$i"; done
           set -- "$@" --version "${VERSION:-0.0.0-dev-${{ github.run_number }}}"
