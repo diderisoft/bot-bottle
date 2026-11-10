@@ -105,7 +105,7 @@ def _check_staged(root: Path, secrets_file: Path) -> None:
         _git(root, "reset", "-q")
         raise SecretInManifestError(
             f"not versioned: a file in {root} holds the value of {', '.join(found)} "
-            f"from the secrets file; refer to secrets by name instead")
+            f"from the secrets file; refer to it by name instead (secret:NAME)")
 
 
 def record(message: str, *, root: Path | None = None,

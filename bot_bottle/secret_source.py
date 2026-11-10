@@ -4,6 +4,12 @@ value; prepare and launch take one instead of reading the environment.
 - `MappingSecrets`: a fixed mapping (values a CLI forwards).
 - `FileSecrets`: the host secrets file.
 - `ChainSecrets`: several sources; the first hit wins.
+- `LaunchSecrets`: a launch's, kept apart by where each came from (the
+  launching process's env, the host secrets store, values typed at launch), so
+  a manifest's `${VAR}` and `secret:NAME` each read only their own.
+
+`host_store` is the host secrets store; everything that reads or saves a
+`secret:NAME` goes through it.
 
 No source renders a value in its repr or an error.
 """
@@ -59,6 +65,13 @@ class FileSecrets(SecretSource):
             self._values = self._load()
         return self._values.get(name)
 
+    def save(self, name: str, value: str) -> None:
+        """Set `name` in the file (`write_secret`) and in what this source
+        has read."""
+        write_secret(self.path, name, value)
+        if self._values is not None:
+            self._values[name] = value
+
     def items(self) -> list[tuple[str, str]]:
         """Every `(name, value)` in the file."""
         if self._values is None:
@@ -103,6 +116,41 @@ class ChainSecrets(SecretSource):
 
     def __repr__(self) -> str:
         return f"ChainSecrets({', '.join(map(repr, self.sources))})"
+
+
+class LaunchSecrets(ChainSecrets):
+    """A launch's secrets by where each came from: `env`, the launching
+    process's environment (what the CLI forwards); `store`, the host secrets
+    store; `answers`, values typed at this launch, by env entry name. As a
+    plain source it is `env`, then `store`."""
+
+    def __init__(self, env: SecretSource, store: SecretSource,
+                 answers: Mapping[str, str] | None = None) -> None:
+        super().__init__(env, store)
+        self.env = env
+        self.store = store
+        self.answers = dict(answers or {})
+
+    def __repr__(self) -> str:
+        return (f"LaunchSecrets(env={self.env!r}, store={self.store!r}, "
+                f"<{len(self.answers)} answers>)")
+
+
+def tiers(source: SecretSource) -> tuple[SecretSource, SecretSource, dict[str, str]]:
+    """`source`'s (env, store, answers). A plain source is both env and
+    store, with no answers."""
+    if isinstance(source, LaunchSecrets):
+        return source.env, source.store, source.answers
+    return source, source, {}
+
+
+def host_store(path: Path | None = None) -> FileSecrets:
+    """The host secrets store: the secrets file at `path` (default:
+    `paths.host_secrets_path`)."""
+    if path is None:
+        from .paths import host_secrets_path  # pylint: disable=import-outside-toplevel
+        path = host_secrets_path()
+    return FileSecrets(path)
 
 
 def _parse(path: Path, text: str) -> dict[str, str]:
@@ -156,5 +204,5 @@ def _rewrite(path: Path, name: str, line_for: str | None) -> None:
         raise
 
 
-__all__ = ["ChainSecrets", "FileSecrets", "MappingSecrets", "SecretSource", "remove_secret",
-           "write_secret"]
+__all__ = ["ChainSecrets", "FileSecrets", "LaunchSecrets", "MappingSecrets", "SecretSource",
+           "host_store", "remove_secret", "tiers", "write_secret"]

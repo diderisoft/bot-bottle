@@ -38,8 +38,9 @@ def digest_manifest(manifest: "Manifest") -> str:
 def digest_request(body: Mapping[str, Any]) -> str:
     """A request's fingerprint: secret names kept, values left out."""
     scrubbed = dict(body)
-    if isinstance(scrubbed.get("secrets"), Mapping):
-        scrubbed["secrets"] = sorted(scrubbed["secrets"])
+    for key in ("secrets", "answers"):
+        if isinstance(scrubbed.get(key), Mapping):
+            scrubbed[key] = sorted(scrubbed[key])
     return "sha256:" + hashlib.sha256(canonical(scrubbed).encode("utf-8")).hexdigest()
 
 

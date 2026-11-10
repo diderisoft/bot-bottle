@@ -77,17 +77,20 @@ class TestHeldSecretValues(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.stage, ignore_errors=True)
 
     def test_canary_and_secret_env_values_are_held(self) -> None:
+        # Every secret kind is held: `?`, `${VAR}` and `secret:NAME`.
         plan = _plan(self.stage,
-                     env={"API_KEY": "?", "HOST": "${HOSTNAME}", "MODE": "fast"},
-                     forwarded={"API_KEY": _HEX_SECRET, "HOST": "workstation-long-name"})
+                     env={"API_KEY": "?", "HOST": "${HOSTNAME}", "STORED": "secret:S",
+                          "MODE": "fast"},
+                     forwarded={"API_KEY": _HEX_SECRET, "HOST": "workstation-long-name",
+                                "STORED": "stored-value-long"})
         self.assertEqual(
-            {CANARY_KEY: _CANARY, "HELD_ENV_API_KEY": _HEX_SECRET},
+            {CANARY_KEY: _CANARY, "HELD_ENV_API_KEY": _HEX_SECRET,
+             "HELD_ENV_HOST": "workstation-long-name", "HELD_ENV_STORED": "stored-value-long"},
             held_secret_values(plan),
         )
 
-    def test_interpolated_and_short_values_are_not_held(self) -> None:
-        # `${VAR}` carries an ordinary host value; a short secret would match
-        # ordinary text and refuse unrelated pushes.
+    def test_short_values_are_not_held(self) -> None:
+        # A short secret would match ordinary text and refuse unrelated pushes.
         plan = _plan(self.stage, env={"PIN": "?", "USER": "${USER}"},
                      forwarded={"PIN": "1234", "USER": "eric"}, canary=False)
         self.assertEqual({}, held_secret_values(plan))

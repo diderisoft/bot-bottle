@@ -248,15 +248,16 @@ _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 # A bottle may be a project's, `./<name>` (`manifest.loader.PROJECT_PREFIX`).
 _BOTTLE = re.compile(r"^(\./)?[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _IDENTITY = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
-_MAP_FIELDS = ("secrets", "host_keys")
+_MAP_FIELDS = ("secrets", "answers", "host_keys")
 
 
 @dataclass(frozen=True)
 class LaunchRequest:
     """`POST /bottles`: a fully resolved, non-interactive launch.
 
-    `cwd`, `copy_cwd`, `secrets` and `host_keys` are `cli`-only: a path on
-    the host, and values the CLI resolved or its user confirmed."""
+    `cwd`, `copy_cwd`, `secrets`, `answers` and `host_keys` are `cli`-only: a
+    path on the host, and values the CLI resolved or its user typed or
+    confirmed."""
 
     agent: str
     bottles: tuple[str, ...] = ()
@@ -273,7 +274,11 @@ class LaunchRequest:
     settings: Settings = field(default_factory=Settings)
     cwd: str = ""
     copy_cwd: bool = False
+    # Values from the CLI's environment, by name (what `${VAR}` reads).
     secrets: dict[str, str] = field(default_factory=dict, repr=False)
+    # Values the user typed at this launch, by env entry name (a `?` entry, or
+    # a `secret:NAME` the store lacked).
+    answers: dict[str, str] = field(default_factory=dict, repr=False)
     # Repo name -> the upstream host key the user confirmed.
     host_keys: dict[str, str] = field(default_factory=dict)
     # The console's id for a session it launched; empty for a terminal launch.
@@ -349,7 +354,7 @@ class LaunchRequest:
             raise ValueError("launch: headless needs a prompt")
 
 
-LAUNCH_CLI_ONLY = ("cwd", "copy_cwd", "secrets", "host_keys", "run_bottle")
+LAUNCH_CLI_ONLY = ("cwd", "copy_cwd", "secrets", "answers", "host_keys", "run_bottle")
 # A run's unsaved bottle's name in `LaunchRequest.bottles`, and its size cap.
 RUN_BOTTLE = "suggested"
 RUN_BOTTLE_MAX_BYTES = 64 * 1024

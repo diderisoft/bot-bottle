@@ -66,7 +66,7 @@ class TestLaunchRequestSchema(unittest.TestCase):
 
     def test_cli_only_fields_are_refused_from_other_roles(self) -> None:
         for name in LAUNCH_CLI_ONLY:
-            value = {"cwd": "/w", "copy_cwd": False, "secrets": {},
+            value = {"cwd": "/w", "copy_cwd": False, "secrets": {}, "answers": {},
                      "host_keys": {}, "run_bottle": "---\n---\n"}[name]
             with self.subTest(name), self.assertRaises(PermissionError):
                 LaunchRequest.from_json({"agent": "demo", name: value}, ROLE_ORCHESTRATOR)
@@ -235,13 +235,17 @@ class TestLaunchConfirmation(_Root):
              self.assertRaises(ConfirmationNeeded):
             self.service.launch(LaunchRequest(
                 agent="demo", bottles=("dev",), label="c2", cwd="/w", copy_cwd=True,
-                secrets={"TOKEN": "v"}, host_keys={"repo": "ssh-ed25519 AAAA"}))
+                secrets={"TOKEN": "v"}, answers={"ASKED": "typed"},
+                host_keys={"repo": "ssh-ed25519 AAAA"}))
         spec = self.backend.specs[0]
         self.assertTrue(spec.headless)
         self.assertEqual(("demo", ("dev",), "/w", True),
                          (spec.agent_name, spec.bottle_names, spec.user_cwd, spec.copy_cwd))
         self.assertEqual((("repo", "ssh-ed25519 AAAA"),), spec.host_keys)
         self.assertEqual("v", self.backend.secrets[0].get("TOKEN"))
+        # Kept apart by where they came from (`LaunchSecrets`).
+        self.assertEqual("v", self.backend.secrets[0].env.get("TOKEN"))
+        self.assertEqual({"ASKED": "typed"}, self.backend.secrets[0].answers)
         self.index.require_agent.assert_called_once_with("demo")
 
     def test_a_stale_image_asks_interactive_callers_and_fails_headless_ones(self) -> None:

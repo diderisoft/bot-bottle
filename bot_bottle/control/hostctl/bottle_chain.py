@@ -131,7 +131,7 @@ def write(identity: str, bottle: str, digest: str, *,
     leaked = _secret_names_in(text)
     if leaked:
         raise ManifestViewError(f"not saved: it holds the value of {', '.join(leaked)} from the "
-                                f"secrets file; refer to secrets by name instead")
+                                f"secrets file; refer to it by name instead (secret:NAME)")
     if text == old:
         return {"bottle": bottle, "digest": digest, "content": old, "changed": False}
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")

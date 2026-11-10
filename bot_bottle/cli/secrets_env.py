@@ -1,5 +1,6 @@
-"""The CLI's `SecretSource`: this process's env, then the host secrets file.
-Built once per command."""
+"""The CLI's `SecretSource`: this process's env, then the host secrets store,
+kept apart (`LaunchSecrets`) so `${VAR}` reads only the env and `secret:NAME`
+only the store. Built once per command."""
 
 from __future__ import annotations
 
@@ -7,18 +8,16 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
-from ..paths import host_secrets_path
-from ..secret_source import ChainSecrets, FileSecrets, MappingSecrets
+from ..secret_source import LaunchSecrets, MappingSecrets, host_store
 
 
 def secrets_from_env(
     environ: Mapping[str, str] | None = None, *, secrets_file: Path | None = None,
-) -> ChainSecrets:
+) -> LaunchSecrets:
     """`environ` (default: this process's), then `secrets_file` (default: the
-    host file)."""
+    host store)."""
     env = os.environ if environ is None else environ
-    path = host_secrets_path() if secrets_file is None else secrets_file
-    return ChainSecrets(MappingSecrets(dict(env)), FileSecrets(path))
+    return LaunchSecrets(MappingSecrets(dict(env)), host_store(secrets_file))
 
 
 __all__ = ["secrets_from_env"]

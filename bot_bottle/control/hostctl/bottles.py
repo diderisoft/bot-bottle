@@ -258,7 +258,7 @@ class BottleService:
     def _launch(self, request: LaunchRequest, role: str) -> dict[str, object]:
         # pylint: disable=import-outside-toplevel
         from ...backend import BottleSpec
-        from ...secret_source import ChainSecrets, FileSecrets, MappingSecrets
+        from ...secret_source import LaunchSecrets, MappingSecrets, host_store
         from ...manifest.versions import launch_versions
         from .remote import ROLE_REMOTE
 
@@ -294,8 +294,8 @@ class BottleService:
             host_keys=tuple(sorted(request.host_keys.items())),
             fresh_guest=request.fresh_guest,
         )
-        secrets = ChainSecrets(MappingSecrets(request.secrets),
-                               FileSecrets(self._secrets_file or host_secrets_path()))
+        secrets = LaunchSecrets(MappingSecrets(request.secrets), host_store(
+            self._secrets_file or host_secrets_path()), request.answers)
         stage_dir = Path(tempfile.mkdtemp(prefix="bot-bottle-stage."))
         identity = ""
         handed_off = False

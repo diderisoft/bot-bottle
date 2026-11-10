@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
+from .. import secret_ref
 from .util import ManifestError, as_json_object
 from .egress import ManifestEgressConfig
 from .forges import ManifestForge
@@ -143,8 +144,13 @@ class ManifestBottle:
                 if not isinstance(value, str):
                     raise ManifestError(
                         f"env entry {var} in bottle '{name}' must be a JSON string "
-                        f"(was {type(value).__name__}). Use \"?<message>\" for prompt-at-runtime."
+                        f"(was {type(value).__name__}). For a secret write \"?<message>\" "
+                        f"(asked at launch), \"${{VAR}}\" (from your environment) or "
+                        f"\"secret:NAME\" (from the secrets file)."
                     )
+                problem = secret_ref.problem(value)
+                if problem:
+                    raise ManifestError(f"env entry {var} in bottle '{name}': {problem}")
                 env[var] = value
 
         git: tuple[ManifestGitEntry, ...] = ()
