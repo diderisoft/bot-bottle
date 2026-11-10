@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import IO
 
 from ...contract.hostctl import InfraSettings
-from ...environment import LIVE, active_name, registration_file
+from ...environment import LIVE, active_name, env_dir
 from ...lib.log import die
 from . import slice_claims
 
@@ -321,7 +321,7 @@ def claim_slice(infra: InfraSettings, name: str, count: int) -> int:
     """This user's environment `name`'s slice, claimed host-wide."""
     return slice_claims.claim(
         slices_dir(infra), env=name, count=count, uid=os.getuid(), user=_user(),
-        registration=registration_file(name),
+        registration=env_dir(name),
         in_use=lambda k: slice_in_use(k, infra.fc_pool_size))
 
 

@@ -46,7 +46,7 @@ class TestRootOwnedState(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.root = env.envs_dir(self.home) / "dev"
         self.root.mkdir(parents=True)
-        (self.root / "env.json").write_text("{}", encoding="utf-8")
+        (self.root / "secrets").write_text("", encoding="utf-8")
         (self.root / "db").mkdir()
 
     def _owned_by_root(self, *names: str):  # type: ignore[no-untyped-def]
@@ -67,19 +67,13 @@ class TestRootOwnedState(unittest.TestCase):
 
     def test_finds_root_owned_root_and_entries(self) -> None:
         with mock.patch.object(env.os, "geteuid", return_value=1000), \
-                self._owned_by_root("dev", "env.json"):
+                self._owned_by_root("dev", "secrets"):
             found = env.root_owned_state(self.home)
-        self.assertEqual({self.root, self.root / "env.json"}, set(found))
-
-    def test_finds_a_root_owned_registry_lock(self) -> None:
-        (env.envs_dir(self.home) / ".lock").write_text("", encoding="utf-8")
-        with mock.patch.object(env.os, "geteuid", return_value=1000), \
-                self._owned_by_root(".lock"):
-            self.assertEqual([env.envs_dir(self.home) / ".lock"], env.root_owned_state(self.home))
+        self.assertEqual({self.root, self.root / "secrets"}, set(found))
 
     def test_root_itself_owns_everything(self) -> None:
         with mock.patch.object(env.os, "geteuid", return_value=0), \
-                self._owned_by_root("dev", "env.json"):
+                self._owned_by_root("dev", "secrets"):
             self.assertEqual([], env.root_owned_state(self.home))
 
     def test_a_missing_root_is_fine(self) -> None:
@@ -100,7 +94,7 @@ class TestMainUnderSudo(unittest.TestCase):
         with mock.patch.dict(cli_main.COMMANDS, {command: handler}), \
                 mock.patch.object(cli_main, "sudo_invoker", return_value=sudo), \
                 mock.patch.object(cli_main, "root_owned_state", return_value=stale), \
-                mock.patch.object(cli_main, "ensure_active_registered") as register, \
+                mock.patch.object(cli_main, "ensure_active") as register, \
                 redirect_stderr(err):
             code = cli_main.main([command])
         return code, register, err.getvalue()
@@ -110,7 +104,7 @@ class TestMainUnderSudo(unittest.TestCase):
         self.assertEqual(0, code)
         register.assert_not_called()
 
-    def test_a_user_run_registers(self) -> None:
+    def test_a_user_run_creates_the_environment(self) -> None:
         code, register, _ = self._main("fakecmd", sudo=None, stale=[])
         self.assertEqual(0, code)
         register.assert_called_once()
@@ -126,14 +120,14 @@ class TestMainUnderSudo(unittest.TestCase):
         with mock.patch.object(cli_main, "root_owned_state") as check, \
                 mock.patch.dict(cli_main.COMMANDS, {"doctor": mock.Mock(return_value=0)}), \
                 mock.patch.object(cli_main, "sudo_invoker", return_value=None), \
-                mock.patch.object(cli_main, "ensure_active_registered"):
+                mock.patch.object(cli_main, "ensure_active"):
             self.assertEqual(0, cli_main.main(["doctor"]))
         check.assert_not_called()
 
 
 class TestDoctorReportsIt(unittest.TestCase):
     def test_warns_with_the_fix(self) -> None:
-        stale = [Path("/home/u/.bot-bottle-envs/ci-macos/env.json")]
+        stale = [Path("/home/u/.bot-bottle-envs/ci-macos/secrets")]
         with mock.patch.object(doctor, "root_owned_state", return_value=stale), \
                 mock.patch.object(doctor, "_warn") as warn:
             doctor._check_config_dir()  # pylint: disable=protected-access

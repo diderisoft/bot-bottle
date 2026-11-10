@@ -7,12 +7,12 @@ so environments of different users (a developer's `dev`, a CI runner's
 `ci-<run>`) never take the same slice.
 
 - A claim is the file `<dir>/<slot>`, JSON naming the environment, the user
-  (uid) and that user's registration file. It is written to a temp file and
-  `link`ed into place, so it appears whole or not at all, under a `flock` on
-  `<dir>/.lock` so a scan-then-claim can't race.
+  (uid) and that user's environment directory (`registration`). It is
+  written to a temp file and `link`ed into place, so it appears whole or not
+  at all, under a `flock` on `<dir>/.lock` so a scan-then-claim can't race.
 - An environment is identified by (uid, name): two users' `dev`s are two
   environments.
-- A claim is stale only when its registration file is confirmed gone (not
+- A claim is stale only when its environment directory is confirmed gone (not
   just unreadable) *and* none of the slice's TAPs is in use. A stale claim is
   replaced; a live one never is.
 - `bot-bottle envs rm` releases its environment's claim.
@@ -49,8 +49,8 @@ class Claim:
     env: str
     uid: int
     user: str
-    # The claiming user's registration file for `env`; its absence (with no
-    # TAP in use) makes the claim stale.
+    # The claiming user's directory for `env`; its absence (with no TAP in
+    # use) makes the claim stale.
     registration: str
     pid: int = 0
     claimed_at: float = 0.0

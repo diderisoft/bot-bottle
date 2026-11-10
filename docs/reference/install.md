@@ -282,7 +282,7 @@ firewall. That's a pf anchor and a LaunchDaemon that reloads it at boot
 ([backends.md](backends.md#macos-container)).
 
 Run as root through `sudo`, bot-bottle writes only those system pieces. It
-doesn't register the environment or create its database, so no root-owned
+doesn't create the environment's directory or database, so no root-owned
 state lands in your home. Your next ordinary run does that.
 
 An older version may have left some root-owned state. Unprivileged commands
@@ -462,12 +462,16 @@ Image, artifact and root-filesystem caches are content-addressed and shared by
 every environment. `live` derives exactly the names, paths and settings
 fingerprint an install had before environments existed.
 
-### Registering an environment
+### Creating an environment
 
-A named environment registers itself the first time a command runs in it, in
-`~/.bot-bottle-envs/<name>/env.json`.
+A named environment is its directory, `~/.bot-bottle-envs/<name>`. The first
+command run in it creates the directory, and `envs` lists the directories.
 
-A name whose resource prefix would match another registered environment's is
+Nothing else records an environment. Its names, paths and address ranges
+derive from the name. What it allocates is recorded in its host DB, or in the
+pf rules for the macOS /64.
+
+A new name whose resource prefix would match an existing environment's is
 refused. For example, `dev` and `dev-2` clash: `bb-dev-` matches
 `bb-dev-2-orchestrator`.
 
@@ -503,7 +507,9 @@ If part of the teardown fails, the state is kept so it can be retried.
 refuses to run in a named environment and removes only live's containers and
 networks, so remove named environments first.
 
-A root set with `BOT_BOTTLE_ROOT` outside `~/.bot-bottle-envs/` is left in
+`envs` knows only the active environment's `BOT_BOTTLE_ROOT`. Run `envs rm`
+with the same `BOT_BOTTLE_ENV` and `BOT_BOTTLE_ROOT` to tear down an
+environment kept elsewhere. A root outside `~/.bot-bottle-envs/` is left in
 place.
 
 ### Firecracker slices
@@ -544,10 +550,10 @@ The pool setup creates that directory mode 2775 for the pool's group. The group
 is `BOT_BOTTLE_FC_GROUP` or NixOS `group`, else the owner's primary group.
 Every user that runs bot-bottle must be in that group.
 
-A claim names its environment, user and registration file. It's created
+A claim names its environment, user and environment directory. It's created
 atomically under a lock.
 
-A claim is replaced only when stale: its registration is confirmed gone and
+A claim is replaced only when stale: its directory is confirmed gone and
 none of the slice's TAPs is in use. A live claim is never taken. `envs rm`
 releases it (`backend/firecracker/slice_claims.py`).
 

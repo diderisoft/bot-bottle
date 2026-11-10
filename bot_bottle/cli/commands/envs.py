@@ -4,8 +4,9 @@
   bot-bottle envs rm NAME [--force] [--dry-run]
 
 `live` is the default install (`~/.bot-bottle`). A named environment (`dev`,
-`ci-<run>`) has its own state root, resource names and firecracker pool
-slice, and registers itself the first time a command runs in it.
+`ci-<run>`) is its directory, `~/.bot-bottle-envs/<name>`, created the first
+time a command runs in it. It has its own state root, resource names and
+firecracker pool slice.
 
 `rm NAME` tears NAME down: the bottles its host controller holds, each
 available backend's leftover bottles, orchestrator, gateway, containers,
@@ -129,16 +130,24 @@ HOST_PROBE = Probe(hostctl=_hostctl_running, containers=_running_containers,
                    firecracker_infra=_firecracker_infra_running, slice=_held_slice)
 
 
+def _root(name: str, home: Path | None, environ: Mapping[str, str]) -> Path:
+    """`name`'s state root: `BOT_BOTTLE_ROOT` when `name` is the active
+    environment and it's set, else the root the name derives."""
+    override = environ.get("BOT_BOTTLE_ROOT")
+    if override and environment.active_name(environ) == name:
+        return Path(override)
+    return environment.default_root(name, home)
+
+
 def collect(probe: Probe = HOST_PROBE, *, home: Path | None = None,
             environ: Mapping[str, str] | None = None) -> list[EnvRow]:
-    """Live, then every registered environment, with what of each runs."""
+    """Live, then every named environment's directory, with what of each
+    runs."""
     env = os.environ if environ is None else environ
     active = environment.active_name(env)
-    live_root = (Path(env["BOT_BOTTLE_ROOT"]) if active == LIVE and env.get("BOT_BOTTLE_ROOT")
-                 else environment.default_root(LIVE, home))
-    entries = [(LIVE, str(live_root), 0)]
-    entries += [(r.name, r.root, probe.slice(r.name) or 0)
-                for r in environment.registered(home)]
+    entries = [(LIVE, str(_root(LIVE, home, env)), 0)]
+    entries += [(n, str(_root(n, home, env)), probe.slice(n) or 0)
+                for n in environment.named(home)]
     containers = list(probe.containers())
     rows = []
     for name, root, slot in entries:
@@ -157,8 +166,8 @@ def collect(probe: Probe = HOST_PROBE, *, home: Path | None = None,
 @dataclass(frozen=True)
 class RmPlan:
     """What `envs rm` does: run `teardown` with `env` (as the environment),
-    then delete `remove` and forget the registration. `kept` says what it
-    leaves and why."""
+    then delete `remove`, the environment's directory first. `kept` says what
+    it leaves and why."""
 
     name: str
     root: Path
@@ -178,9 +187,8 @@ def plan_rm(name: str, *, home: Path | None = None, python: str = sys.executable
             f"live is the default install and can't be removed with `envs rm`; "
             f"`{PROG} uninstall` removes bot-bottle")
     base = os.environ if environ is None else environ
-    reg = environment.read(name, home)
-    own_dir = environment.envs_dir(home) / name
-    root = Path(reg.root) if reg is not None else own_dir
+    own_dir = environment.env_dir(name, home)
+    root = _root(name, home, base)
     env = dict(base)
     env[ENV_VAR] = name
     env["BOT_BOTTLE_ROOT"] = str(root)
@@ -275,7 +283,6 @@ def execute_rm(plan: RmPlan, *, force: bool = False,
         return 1
     for path in plan.remove:
         shutil.rmtree(path, ignore_errors=True)
-    environment.unregister(plan.name)
     release(plan.name)
     for note in plan.kept:
         sys.stderr.write(f"{PROG} envs rm: kept {note}\n")

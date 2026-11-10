@@ -8,7 +8,7 @@ import os
 import sys
 
 from ..environment import (
-    InvalidEnvironmentError, active_name, ensure_active_registered, root_owned_fix,
+    InvalidEnvironmentError, active_name, ensure_active, root_owned_fix,
     root_owned_state, sudo_invoker,
 )
 from ..errors import MissingEnvVarError, SecretsFileError
@@ -49,8 +49,8 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-retu
     if handler is None:
         cmd_help()
         die(f"unknown command or agent: {command}")
-    # Under sudo only the backend's root-owned pieces are written: registering
-    # here would leave per-user state the user can't write.
+    # Under sudo only the backend's root-owned pieces are written: creating
+    # the environment here would leave per-user state the user can't write.
     as_sudo = sudo_invoker() is not None
     stale = [] if command in ("doctor", "help") else root_owned_state()  # doctor reports it
     if stale:
@@ -59,10 +59,10 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-retu
               f"{root_owned_fix(stale)}")
         return 1
     try:
-        # A named environment registers on first use; `envs` manages them
-        # and must not register the one it removes.
+        # A named environment's directory is created on first use; `envs`
+        # manages them and must not recreate the one it removes.
         if command != "envs" and not as_sudo:
-            ensure_active_registered()
+            ensure_active()
     except InvalidEnvironmentError as e:
         error(str(e))
         return 2
