@@ -9,9 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ...lib.db_store import DbStore
-from .audit_store import AuditStore
 from .canary_store import CanaryStore
-from .config_store import OrchestratorConfigStore
 from .queue_store import QueueStore
 from .registry_store import RegistryStore
 
@@ -24,8 +22,7 @@ class StoreManager:
 
     def stores(self) -> list[DbStore]:
         return [RegistryStore(self.db_path), QueueStore("", self.db_path),
-                AuditStore(self.db_path), CanaryStore(self.db_path),
-                OrchestratorConfigStore(self.db_path)]
+                CanaryStore(self.db_path)]
 
     def is_migrated(self) -> bool:
         return all(store.is_migrated() for store in self.stores())

@@ -54,7 +54,7 @@ from . import agent_firewall
 from .gateway_hosts import GATEWAY_HOSTNAME
 from . import nested_containers as nested_containers_mod
 from .bottle_plan import MacosContainerBottlePlan
-from ...orchestrator.store.config_store import resolve_teardown_timeout
+from ...orchestrator.teardown_timeout import resolve_teardown_timeout
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME, new_env_var_secret
 from .infra import MacosInfraService
 from .consolidated_launch import (

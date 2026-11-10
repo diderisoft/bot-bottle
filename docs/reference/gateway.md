@@ -356,6 +356,20 @@ later answer, such as the phone answering after the terminal did, gets a 409
 The late answer is recorded as a `decision.late` audit event naming the
 decision it lost to. So both answers are on record.
 
+**The record.** The audit journal is a decision's only record. A proposal is
+`decision.proposed`, and its answer `decision.resolved`, joined by the
+proposal id (`correlation_id`).
+
+| Field of `decision.resolved` | Holds |
+|---|---|
+| `operator_action`, `operator_notes` | the answer and its notes |
+| `diff` | the policy change applied, as a unified diff. Only when an approval or modification changes egress policy. |
+| `diff_truncated` | true when the diff was cut at 64 KiB |
+| `diff_digest` | the whole diff's SHA-256 prefix, so a cut diff can still be matched |
+
+For a bottle with `audit.delivery: required`, the record is written before
+the change is applied. A decision that can't be recorded isn't applied.
+
 git-gate's `gitleaks-allow` proposals and the egress proxy's
 `egress-token-allow` proposals use the same queue.
 

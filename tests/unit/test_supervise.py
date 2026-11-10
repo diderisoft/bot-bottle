@@ -13,10 +13,8 @@ from bot_bottle.contract import supervise
 from bot_bottle.paths import host_db_path
 from bot_bottle.lib.text import render_diff, sha256_hex
 from tests.unit import use_bottle_root
-from bot_bottle.orchestrator.store.audit_store import AuditStore
 from bot_bottle.orchestrator.store.queue_store import QueueStore
 from bot_bottle.contract.supervise import (
-    AuditEntry,
     Proposal,
     Response,
     STATUS_APPROVED,
@@ -166,90 +164,6 @@ class TestQueueIO(unittest.TestCase):
         r = Response(proposal_id="xyz", status=STATUS_REJECTED, notes="no")
         _supervisor().write_response(self.slug, r)
         self.assertEqual(r, _supervisor().read_response(self.slug, "xyz"))
-
-
-class TestAuditLog(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory(prefix="bot-bottle-supervise-audit.")
-        self._home_patch = self._patch_home(Path(self._tmp.name))
-        AuditStore(host_db_path()).migrate()
-
-    def tearDown(self):
-        self._home_patch()
-        self._tmp.cleanup()
-
-    def _patch_home(self, fake_home: Path):
-        return use_bottle_root(fake_home / ".bot-bottle")
-
-    def test_write_then_read_single_entry(self):
-        e = AuditEntry(
-            timestamp="2026-05-25T12:00:00+00:00",
-            bottle_slug="dev",
-            component="cred-proxy",
-            operator_action=STATUS_APPROVED,
-            operator_notes="lgtm",
-            justification="agent needed gh-api token",
-            diff="--- before\n+++ after\n",
-        )
-        path = _supervisor().write_audit_entry(e)
-        self.assertEqual(host_db_path(), path)
-        self.assertEqual(0o600, path.stat().st_mode & 0o777)
-        loaded = _supervisor().read_audit_entries("cred-proxy", "dev")
-        self.assertEqual([e], loaded)
-
-    def test_appends_one_line_per_entry(self):
-        for i in range(3):
-            _supervisor().write_audit_entry(AuditEntry(
-                timestamp=f"2026-05-25T12:00:0{i}+00:00",
-                bottle_slug="dev",
-                component="egress",
-                operator_action=STATUS_APPROVED,
-                operator_notes=f"n{i}",
-                justification="",
-                diff="",
-            ))
-        entries = _supervisor().read_audit_entries("egress", "dev")
-        self.assertEqual(3, len(entries))
-        self.assertEqual(
-            ["2026-05-25T12:00:00+00:00", "2026-05-25T12:00:01+00:00",
-             "2026-05-25T12:00:02+00:00"],
-            [entry.timestamp for entry in entries],
-        )
-
-    def test_separate_logs_per_component_slug(self):
-        _supervisor().write_audit_entry(AuditEntry(
-            timestamp="t",
-            bottle_slug="dev",
-            component="cred-proxy",
-            operator_action=STATUS_APPROVED,
-            operator_notes="",
-            justification="",
-            diff="",
-        ))
-        _supervisor().write_audit_entry(AuditEntry(
-            timestamp="t",
-            bottle_slug="dev",
-            component="egress",
-            operator_action=STATUS_APPROVED,
-            operator_notes="",
-            justification="",
-            diff="",
-        ))
-        _supervisor().write_audit_entry(AuditEntry(
-            timestamp="t",
-            bottle_slug="other",
-            component="cred-proxy",
-            operator_action=STATUS_REJECTED,
-            operator_notes="",
-            justification="",
-            diff="",
-        ))
-        self.assertEqual(1, len(_supervisor().read_audit_entries("cred-proxy", "dev")))
-        self.assertEqual(1, len(_supervisor().read_audit_entries("egress", "dev")))
-        self.assertEqual(1, len(_supervisor().read_audit_entries("cred-proxy", "other")))
-
-    def test_read_audit_entries_missing_log_returns_empty(self):
-        self.assertEqual([], _supervisor().read_audit_entries("cred-proxy", "no-such-bottle"))
 
 
 class TestDiffAndHash(unittest.TestCase):

@@ -57,7 +57,7 @@ def deprovision_bottle(
     """Deregister the bottle and remove its git-gate state. Idempotent. The
     orchestrator is looked up now, since it may have moved while the bottle
     ran."""
-    from ..orchestrator.store.config_store import DEFAULT_TEARDOWN_TIMEOUT_SECONDS
+    from ..orchestrator.teardown_timeout import DEFAULT_TEARDOWN_TIMEOUT_SECONDS
     url = orchestrator.url()
     if not url:
         raise OrchestratorClientError(

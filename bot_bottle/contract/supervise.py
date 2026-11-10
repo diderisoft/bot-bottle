@@ -1,5 +1,4 @@
-"""Supervise wire types and constants: `Proposal`, `Response`, `AuditEntry`,
-`CanaryEvent`."""
+"""Supervise wire types and constants: `Proposal`, `Response`, `CanaryEvent`."""
 
 from __future__ import annotations
 
@@ -179,22 +178,6 @@ class Response:
 
 
 @dataclass(frozen=True)
-class AuditEntry:
-    """One row of the per-bottle audit log."""
-
-    timestamp: str
-    bottle_slug: str
-    component: str
-    operator_action: str
-    operator_notes: str
-    justification: str
-    diff: str
-
-    def to_dict(self) -> dict[str, object]:
-        return dataclasses.asdict(self)
-
-
-@dataclass(frozen=True)
 class CanaryEvent:
     """A canary hit recorded by the gateway; resolved by the operator via
     `resolve-canary`."""
@@ -253,7 +236,6 @@ class CanaryEvent:
 __all__ = [
     "ACTION_OPERATOR_EDIT",
     "ALREADY_ANSWERED",
-    "AuditEntry",
     "CanaryEvent",
     "Proposal",
     "Response",

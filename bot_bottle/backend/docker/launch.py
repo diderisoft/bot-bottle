@@ -48,7 +48,7 @@ from .compose import (
 from .agent_network import agent_network_name, remove_agent_network
 from .consolidated_compose import agent_exec_env, consolidated_agent_compose
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
-from ...orchestrator.store.config_store import resolve_teardown_timeout
+from ...orchestrator.teardown_timeout import resolve_teardown_timeout
 from .consolidated_launch import launch_consolidated, deprovision_consolidated
 from .infra import INFRA_NAME, DockerInfraService
 from .gateway import DockerGateway

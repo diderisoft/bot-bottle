@@ -42,7 +42,7 @@ from . import (firecracker_vm, image_builder, isolation_probe, lifecycle_lock, n
                workspace_disk)
 from .bottle import FirecrackerBottle
 from .bottle_plan import FirecrackerBottlePlan
-from ...orchestrator.store.config_store import resolve_teardown_timeout
+from ...orchestrator.teardown_timeout import resolve_teardown_timeout
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from .infra import FirecrackerInfraService
 from .consolidated_launch import (
