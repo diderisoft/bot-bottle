@@ -501,7 +501,7 @@ def _verify_agent_firewall(
 
 def _start_agent(plan: MacosContainerBottlePlan, endpoint: GatewayEndpoint) -> None:
     argv = _agent_run_argv(plan, endpoint)
-    env = {**os.environ, **plan.forwarded_env}
+    env = {**os.environ, **_agent_run_env(plan)}
     info(f"container run agent {plan.container_name}")
     result = subprocess.run(
         argv, capture_output=True, text=True, env=env, check=False,
@@ -559,7 +559,8 @@ def _agent_env_entries(
     if plan.agent_supervise_url:
         env.append(f"MCP_SUPERVISE_URL={plan.agent_supervise_url}")
     if getattr(plan, "env_var_secret", ""):
-        env.append(f"{ENV_VAR_SECRET_NAME}={plan.env_var_secret}")
+        # A bare name, like the forwarded values: `_agent_run_env`.
+        env.append(ENV_VAR_SECRET_NAME)
     for name, value in sorted(plan.agent_provision.guest_env.items()):
         env.append(f"{name}={value}")
     # Bare names: values come from the `container run` process env.
@@ -567,6 +568,15 @@ def _agent_env_entries(
         env.append(name)
     env.extend(Egress().agent_env_entries(plan.egress_plan))
     return tuple(env)
+
+
+def _agent_run_env(plan: MacosContainerBottlePlan) -> dict[str, str]:
+    """The values behind `_agent_env_entries`' bare names, for the `container
+    run` process env: off its command line, which any host process can read."""
+    env = dict(plan.forwarded_env)
+    if getattr(plan, "env_var_secret", ""):
+        env[ENV_VAR_SECRET_NAME] = plan.env_var_secret
+    return env
 
 
 __all__ = ["launch"]

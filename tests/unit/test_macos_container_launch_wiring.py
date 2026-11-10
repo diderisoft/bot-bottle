@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable, cast
-from unittest.mock import ANY, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from bot_bottle.contract.hostctl import Settings
 from bot_bottle.backend import BottleImages
@@ -26,6 +26,7 @@ from bot_bottle.backend.macos_container.consolidated_launch import GatewayEndpoi
 from bot_bottle.backend.macos_container.gateway_hosts import GATEWAY_HOSTNAME
 from bot_bottle.backend.macos_container.launch import (
     _agent_run_argv,
+    _agent_run_env,
     _identity_proxy_env,
     build_or_load_images,
 )
@@ -259,10 +260,22 @@ class TestAgentRunArgv(unittest.TestCase):
         )
 
     def test_env_var_secret_is_in_configured_container_environment(self) -> None:
-        argv = _agent_run_argv(
-            _plan(Path(self._tmp.name), env_var_secret="key-material"), _endpoint(),
-        )
-        self.assertIn("ENV_VAR_SECRET=key-material", argv)
+        # By name only: the value goes in `container run`'s env, never its
+        # argv, which any host process can read.
+        plan = _plan(Path(self._tmp.name), env_var_secret="key-material")
+        argv = _agent_run_argv(plan, _endpoint())
+        self.assertIn("ENV_VAR_SECRET", argv)
+        self.assertNotIn("key-material", " ".join(argv))
+        self.assertEqual("key-material", _agent_run_env(plan)["ENV_VAR_SECRET"])
+
+    def test_start_agent_passes_the_secret_in_the_process_env(self) -> None:
+        plan = _plan(Path(self._tmp.name), env_var_secret="key-material")
+        with patch.object(launch_mod.subprocess, "run",
+                          return_value=MagicMock(returncode=0)) as run, \
+                patch.object(launch_mod, "info"):
+            launch_mod._start_agent(plan, _endpoint())  # pyright: ignore[reportPrivateUsage]
+        self.assertNotIn("key-material", " ".join(run.call_args.args[0]))
+        self.assertEqual("key-material", run.call_args.kwargs["env"]["ENV_VAR_SECRET"])
 
     def test_gives_the_bottle_its_memory(self) -> None:
         self.assertEqual(f"{BOTTLE_MEMORY_MIB}M", self.argv[self.argv.index("--memory") + 1])

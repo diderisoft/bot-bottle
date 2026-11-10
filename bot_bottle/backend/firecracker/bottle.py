@@ -6,12 +6,15 @@ longer than its `MAX_CMD_LEN` (9000 bytes), so `agent_command` stages any long
 argument (a task prompt) as a file in the guest and the guest shell reads it
 back. Commands run as `node` via `runuser` with
 HOME/USER/PATH and the bottle env set per invocation, since the VM has no
-process env of its own.
+process env of its own. No env value goes on the ssh command line, which any
+host process can read: `exec` exports them at the top of the script it pipes,
+and `agent_argv` writes them to a guest file (`_GUEST_ENV_FILE`) first.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -32,6 +35,22 @@ _HOME_FOR = {"node": "/home/node", "root": "/root"}
 LONG_ARG_BYTES = 1024
 # Where they go: root's (the ssh user's) home, unreadable to the agent.
 _GUEST_ARGS_DIR = "/root/.bot-bottle-args"
+# The agent's env, rewritten before each agent command: on the guest's tmpfs
+# `/run`, readable by `node` (the agent), writable only by root.
+_GUEST_ENV_DIR = "/run/bot-bottle-agent"
+_GUEST_ENV_FILE = f"{_GUEST_ENV_DIR}/agent.env"
+# Run the agent from its workdir with the env file's assignments: the file
+# prepends them to "$@", so this is the `env --chdir=<workdir> K=v ... <agent>`
+# it always was, with the values off the command line.
+_AGENT_SHELL = f'wd=$1; shift; . {_GUEST_ENV_FILE} && exec env --chdir="$wd" "$@"'
+# Run by the ssh user (root) with the file on stdin; renamed into place, so a
+# concurrent command never reads half of one.
+_WRITE_ENV_FILE = (
+    f'g=$(id -g node) && umask 027 && mkdir -p {_GUEST_ENV_DIR} && '
+    f'chgrp "$g" {_GUEST_ENV_DIR} && chmod 750 {_GUEST_ENV_DIR} && '
+    f't={_GUEST_ENV_FILE}.$$ && cat > "$t" && chgrp "$g" "$t" && mv -f "$t" {_GUEST_ENV_FILE}'
+)
+_SHELL_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # The VM has no image `ENV`. A built image's is recorded with its rootfs and
 # applied per command (`image_env`); a published base (a built-in harness)
 # has none, so every built-in harness's `ENV PATH` entries must be here (a
@@ -64,6 +83,17 @@ def _env_assignments_for(user: str, env: Mapping[str, str],
     for k, v in [*image.items(), *env.items()]:
         out.append(f"{k}={v}")
     return out
+
+
+def _env_exports(assignments: list[str]) -> str:
+    """`export` lines setting `assignments`, in order, for a shell script.
+    A name no shell variable can have is left out."""
+    lines = []
+    for assignment in assignments:
+        name, _, value = assignment.partition("=")
+        if _SHELL_NAME.fullmatch(name):
+            lines.append(f"export {name}={shlex.quote(value)}\n")
+    return "".join(lines)
 
 
 class FirecrackerBottle(Bottle):
@@ -113,20 +143,35 @@ class FirecrackerBottle(Bottle):
                 argv=full_argv,
             )
         )
-        # Run from the node workdir, not the root login's unreadable /root cwd.
-        # `env --chdir` keeps the command a flat argv for quoting.
+        # Run from the node workdir, not the root login's unreadable /root cwd,
+        # with the env `_write_agent_env` put in the guest.
         workdir = self.agent_workdir or _HOME_FOR["node"]
         remote = ["runuser", "-u", "node", "--",
-                  "env", f"--chdir={workdir}",
-                  *_env_assignments_for("node", self._guest_env, self._image_env),
+                  "/bin/sh", "-c", _AGENT_SHELL, "sh", workdir,
                   self.agent_executable, *full_argv]
         return remote
+
+    def _agent_env_file(self) -> str:
+        """The guest env file's contents: a `set --` that puts the agent's
+        `env` assignments before the command in "$@"."""
+        assignments = _env_assignments_for("node", self._guest_env, self._image_env)
+        return f"set -- {shlex.join(assignments)} \"$@\"\n"
+
+    def _write_agent_env(self) -> None:
+        """Write the agent's env to `_GUEST_ENV_FILE` over ssh's stdin."""
+        result = run_script([*self._ssh(tty=False), "--", _WRITE_ENV_FILE],
+                            self._agent_env_file())
+        if result.returncode != 0:
+            sys.stderr.write(result.stderr)
+            raise subprocess.CalledProcessError(
+                result.returncode, ["write agent env", _GUEST_ENV_FILE])
 
     def agent_argv(self, argv: list[str], *, tty: bool = True,
                    stage_long: bool = False) -> list[str]:
         # ssh joins the remote args into one line the guest shell re-parses, so
         # quote each token. With `stage_long`, a long token is written to a
         # guest file and read back by the guest shell as one argument.
+        self._write_agent_env()
         tokens: list[str] = []
         for i, token in enumerate(self._agent_remote_argv(argv)):
             if stage_long and len(token.encode()) > LONG_ARG_BYTES:
@@ -156,11 +201,12 @@ class FirecrackerBottle(Bottle):
     def exec(self, script: str, *, user: str = "node", timeout: float | None = None,
              private: bool = True) -> ExecResult:
         del private  # stdin always: ssh doesn't leak
-        # Pipe the script to `sh -s`, so nothing is quoted through ssh.
-        remote = ["runuser", "-u", user, "--",
-                  "env", *_env_assignments_for(user, self._guest_env, self._image_env),
-                  "/bin/sh", "-s"]
-        return run_script([*self._ssh(tty=False), "--", *remote], script, timeout=timeout)
+        # Pipe the script to `sh -s`, so nothing is quoted through ssh, after
+        # the env's exports, so no value is on the command line either.
+        remote = ["runuser", "-u", user, "--", "/bin/sh", "-s"]
+        exports = _env_exports(_env_assignments_for(user, self._guest_env, self._image_env))
+        return run_script([*self._ssh(tty=False), "--", *remote], exports + script,
+                          timeout=timeout)
 
     def cp_in(self, host_path: str, container_path: str) -> None:
         # Stream a tar over the exec channel: dropbear ships no scp or sftp.

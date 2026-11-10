@@ -470,7 +470,12 @@ image didn't hold, like the injected init and dropbear, are root's
 (`rootfs_owners.py`). A cached tree from before the record is rebuilt.
 
 A VM has no process environment of its own, so every command runs under
-`runuser … env` with HOME, USER and PATH set per invocation. A built agent
+`runuser` with HOME, USER, PATH and the bottle's env set per invocation. No
+value goes on the ssh command line, where any host process could read it: an
+`exec` script starts with the env's `export` lines on its stdin, and before each
+agent command the env is written over stdin to `/run/bot-bottle-agent/agent.env`
+(the guest's tmpfs; root's, readable by the agent's group), which the guest
+shell sources before `env --chdir=<workdir> … <agent>`. A built agent
 image (a custom Dockerfile or an overlay) records its `ENV` with its rootfs
 (`.bb-image-env.json`, read at launch) and applies it under the bottle's own
 env. A published base, a built-in harness, has none; its PATH entries are

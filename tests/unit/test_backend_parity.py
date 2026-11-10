@@ -14,7 +14,7 @@ import subprocess
 import unittest
 from pathlib import Path
 from typing import Callable
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -33,13 +33,16 @@ def _docker_bottle(guest_env: dict[str, str]) -> "object":
 
 def _firecracker_bottle(guest_env: dict[str, str]) -> "object":
     from bot_bottle.backend.firecracker.bottle import FirecrackerBottle
-    return FirecrackerBottle(
+    bottle = FirecrackerBottle(
         "bot-bottle-test",
         private_key=Path("/tmp/key"),
         guest_ip="100.64.0.1",
         guest_env=guest_env,
         agent_command="claude",
     )
+    # No guest to write the agent's env file to.
+    bottle._write_agent_env = MagicMock()  # type: ignore[method-assign]  # pylint: disable=protected-access
+    return bottle
 
 
 # One entry per backend: (label, factory).
@@ -93,16 +96,17 @@ class TestAgentArgvParity(unittest.TestCase):
                     )
 
 
-class TestFirecrackerEnvInArgv(unittest.TestCase):
-    """firecracker bottle includes guest_env values in the agent argv."""
+class TestFirecrackerEnvOffArgv(unittest.TestCase):
+    """firecracker bottle sets guest_env from a guest file, not the argv."""
 
-    def test_guest_env_in_agent_argv(self):
+    def test_guest_env_not_in_agent_argv(self):
         bottle = _firecracker_bottle(
             {"TOKEN": "abc123", "PROXY": "http://proxy:8888"},
         )
         argv = bottle.agent_argv([], tty=False)  # type: ignore[union-attr]
-        self.assertIn("TOKEN=abc123", argv)
-        self.assertIn("PROXY=http://proxy:8888", argv)
+        self.assertNotIn("abc123", " ".join(argv))
+        self.assertNotIn("http://proxy:8888", " ".join(argv))
+        self.assertIn("TOKEN=abc123", bottle._agent_env_file())  # type: ignore[attr-defined]  # pylint: disable=protected-access
 
 
 # ---------------------------------------------------------------------------

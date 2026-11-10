@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import AbstractContextManager
@@ -32,7 +33,10 @@ def _bottle(**kw: Any) -> FirecrackerBottle:
         guest_ip="100.64.0.1",
     )
     defaults.update(kw)
-    return FirecrackerBottle(**defaults)  # type: ignore[arg-type]
+    bottle = FirecrackerBottle(**defaults)  # type: ignore[arg-type]
+    # No guest to write the agent's env file to (`TestEnvOffTheHostArgv`).
+    bottle._write_agent_env = MagicMock()  # type: ignore[method-assign]  # pylint: disable=protected-access
+    return bottle
 
 
 def _pool(**fields: Any) -> netpool.NetPool:
@@ -419,25 +423,110 @@ class TestBottleAgentArgv(unittest.TestCase):
         # codex is the last simple token before the (single) prompt arg.
         self.assertEqual([*reparsed[reparsed.index("codex"):]], ["codex", prompt])
 
+    def _workdir(self, argv: list[str]) -> str:
+        # The guest shell's script takes the workdir as its first argument.
+        return argv[argv.index(fc_bottle_mod.shlex.quote(fc_bottle_mod._AGENT_SHELL)) + 2]  # pylint: disable=protected-access
+
     def test_workdir_sets_chdir(self):
-        # The agent runs from its workdir via `env --chdir` (ssh-safe;
-        # not a `sh -c 'cd …'` wrapper, which the ssh arg-join mangles).
+        # The agent runs from its workdir via `env --chdir` in the guest.
         argv = _bottle(agent_workdir="/home/node/workspace").agent_argv([], tty=False)
-        self.assertIn("--chdir=/home/node/workspace", argv)
+        self.assertEqual("/home/node/workspace", self._workdir(argv))
 
     def test_default_workdir_still_chdirs_off_root(self):
         # Even with the default workdir the agent must leave /root (the
         # root-SSH cwd it can't read); it cd's to /home/node.
         argv = _bottle().agent_argv([], tty=False)
-        self.assertIn("--chdir=/home/node", argv)
+        self.assertEqual("/home/node", self._workdir(argv))
 
-    def test_guest_env_injected(self):
-        argv = _bottle(guest_env={"HTTPS_PROXY": "http://100.64.0.0:9099"}).agent_argv(
-            [], tty=False,
-        )
-        self.assertIn("HTTPS_PROXY=http://100.64.0.0:9099", argv)
-        self.assertIn("HOME=/home/node", argv)
-        self.assertIn("USER=node", argv)
+    def test_guest_env_goes_to_the_env_file(self):
+        bottle = _bottle(guest_env={"HTTPS_PROXY": "http://100.64.0.0:9099"})
+        bottle.agent_argv([], tty=False)
+        bottle._write_agent_env.assert_called_once_with()  # type: ignore[attr-defined]  # pylint: disable=protected-access
+        assignments = fc_bottle_mod.shlex.split(bottle._agent_env_file())[2:-1]  # pylint: disable=protected-access
+        self.assertIn("HTTPS_PROXY=http://100.64.0.0:9099", assignments)
+        self.assertIn("HOME=/home/node", assignments)
+        self.assertIn("USER=node", assignments)
+
+
+class TestEnvOffTheHostArgv(unittest.TestCase):
+    """Any host process can read another's argv: the bottle's env values (a
+    `?` secret, the token-bearing proxy, ENV_VAR_SECRET) go over ssh's stdin,
+    never on its command line."""
+
+    SECRET = "sk-live-'quoted' $HOME `x`\nsecond line"
+
+    def _bottle(self, **kw: Any) -> FirecrackerBottle:
+        return FirecrackerBottle(
+            "c", private_key=Path("/k"), guest_ip="10.0.0.2",
+            guest_env={"API_KEY": self.SECRET, "ENV_VAR_SECRET": "evs-value",
+                       "HOME": "/home/custom", "PATH": "/opt/bin:/usr/bin"},
+            image_env={"PATH": "/image/bin", "USER": "root", "TOOL": "1"}, **kw)
+
+    def _ok(self) -> MagicMock:
+        return MagicMock(return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""))
+
+    def test_the_agent_command_carries_no_value(self) -> None:
+        bottle = self._bottle()
+        with patch.object(fc_bottle_mod.subprocess, "run", self._ok()) as run:
+            command, env = bottle.agent_command(["-p", "task"])
+        self.assertEqual({}, env)
+        for argv in [command, *(c.args[0] for c in run.call_args_list)]:
+            joined = " ".join(argv)
+            self.assertNotIn("sk-live", joined)
+            self.assertNotIn("evs-value", joined)
+            self.assertNotIn("/opt/bin", joined)
+        # The values went on the env file write's stdin.
+        (write,) = run.call_args_list
+        self.assertIn(fc_bottle_mod._WRITE_ENV_FILE, write.args[0])  # pylint: disable=protected-access
+        self.assertIn(fc_bottle_mod.shlex.quote(f"API_KEY={self.SECRET}"), write.kwargs["input"])
+
+    def test_the_env_file_keeps_the_precedence(self) -> None:
+        # HOME and USER, then the image's ENV, then the bottle's env over both:
+        # the order `env` applies them in, so the last of a name wins.
+        assignments = fc_bottle_mod.shlex.split(self._bottle()._agent_env_file())  # pylint: disable=protected-access
+        self.assertEqual(["set", "--"], assignments[:2])
+        self.assertEqual('$@', assignments[-1])
+        got = dict(a.split("=", 1) for a in assignments[2:-1])
+        self.assertEqual(("/home/custom", "node", "/opt/bin:/usr/bin", "1", self.SECRET),
+                         (got["HOME"], got["USER"], got["PATH"], got["TOOL"], got["API_KEY"]))
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the guest's GNU `env --chdir`")
+    def test_the_guest_shell_runs_the_agent_with_that_env(self) -> None:
+        # The remote tokens, re-parsed by a shell as the guest's login shell
+        # does, run `env --chdir=<workdir> <the file's assignments> <agent>`.
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = Path(tmp) / "agent.env"
+            bottle = self._bottle(agent_workdir=tmp, agent_command=sys.executable)
+            env_file.write_text(bottle._agent_env_file())  # pylint: disable=protected-access
+            shell = fc_bottle_mod._AGENT_SHELL.replace(  # pylint: disable=protected-access
+                fc_bottle_mod._GUEST_ENV_FILE, str(env_file))  # pylint: disable=protected-access
+            bottle._write_agent_env = MagicMock()  # type: ignore[method-assign]  # pylint: disable=protected-access
+            with patch.object(fc_bottle_mod, "_AGENT_SHELL", shell):
+                argv = bottle.agent_argv(
+                    ["-c", "import json, os; print(json.dumps([os.getcwd(), dict(os.environ)]))"],
+                    tty=False)
+            remote = argv[argv.index("--") + 1:]
+            self.assertEqual(["runuser", "-u", "node", "--"], remote[:4])
+            out = subprocess.run(["sh", "-c", " ".join(remote[4:])],
+                                 capture_output=True, text=True, check=True).stdout
+        cwd, got = json.loads(out)
+        self.assertEqual(tmp, cwd)
+        self.assertEqual((self.SECRET, "evs-value", "/home/custom", "node", "/opt/bin:/usr/bin"),
+                         (got["API_KEY"], got["ENV_VAR_SECRET"], got["HOME"], got["USER"],
+                          got["PATH"]))
+
+    def test_exec_puts_the_env_in_the_script(self) -> None:
+        with patch.object(fc_bottle_mod.subprocess, "run", self._ok()) as run:
+            self._bottle().exec('printf "%s|" "$API_KEY" "$HOME" "$USER" "$PATH" "$TOOL"')
+        joined = " ".join(run.call_args.args[0])
+        self.assertNotIn("sk-live", joined)
+        self.assertNotIn("evs-value", joined)
+        script = run.call_args.kwargs["input"]
+        self.assertIn(f"export API_KEY={fc_bottle_mod.shlex.quote(self.SECRET)}\n", script)
+        # Run as the guest would: the exports, then the script.
+        out = subprocess.run(["sh", "-s"], input=script, capture_output=True, text=True,
+                             check=True).stdout
+        self.assertEqual(f"{self.SECRET}|/home/custom|node|/opt/bin:/usr/bin|1|", out)
 
 
 class TestNetpoolDefaultsSingleSource(unittest.TestCase):
@@ -527,7 +616,7 @@ class TestBottleExecClose(unittest.TestCase):
         self.assertEqual("hi\n", r.stdout)
         # runs `runuser -u node` over ssh, script piped on stdin.
         self.assertIn("runuser", run.call_args.args[0])
-        self.assertEqual("echo hi", run.call_args.kwargs["input"])
+        self.assertTrue(run.call_args.kwargs["input"].endswith("\necho hi"))
 
     def test_exec_respects_root_user(self):
         from bot_bottle.backend.firecracker import bottle as bmod

@@ -76,8 +76,8 @@ class TestImageEnv(unittest.TestCase):
         from unittest import mock
         b = bottle.FirecrackerBottle("c", private_key=Path("/k"), guest_ip="10.0.0.2",
                                      image_env={"TOOL": "1"})
-        self.assertIn("TOOL=1", b._agent_remote_argv([]))  # pylint: disable=protected-access
+        self.assertIn("TOOL=1", b._agent_env_file())  # pylint: disable=protected-access
         with mock.patch.object(bottle.subprocess, "run",
                                return_value=mock.Mock(returncode=0, stdout="", stderr="")) as run:
             b.exec("true")
-        self.assertIn("TOOL=1", run.call_args.args[0])
+        self.assertIn("export TOOL=1\n", run.call_args.kwargs["input"])
