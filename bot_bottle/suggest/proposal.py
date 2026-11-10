@@ -51,7 +51,8 @@ class ProposalRepo:
 
 @dataclass
 class ProposalEnv:
-    """One proposed env var name (value comes from the secrets file at launch)."""
+    """One proposed env var name; the bottle reads it as `secret:NAME`, from
+    the secrets file at launch."""
 
     name: str
     why: str = ""

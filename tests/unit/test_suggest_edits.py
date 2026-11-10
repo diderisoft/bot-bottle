@@ -114,7 +114,7 @@ class TestMerge(_Dirs):
         self.assertIn("api.linear.app", routes)
         self.assertEqual(["gitea.example.com/acme/app:write"], out["git-gate"]["repos"])
         self.assertIn("gitea.example.com", out["git-gate"]["forges"])
-        self.assertEqual({"REGION": "?REGION"}, out["env"])
+        self.assertEqual({"REGION": "secret:REGION"}, out["env"])
         self.assertEqual("basic", out["extends"])
 
     def test_diff_of_a_new_bottle(self) -> None:

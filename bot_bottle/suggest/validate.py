@@ -21,6 +21,7 @@ from ..manifest.extends import merge_bottles_runtime
 from ..manifest.loader import BUILTIN_BOTTLES_DIR, find_bottle, load_bottle_chain
 from ..manifest.util import ManifestError
 from ..secret_source import SecretSource
+from ..secret_ref import stored
 from .covered import drop_covered
 from .edits import SECRET_NAME, overlay, stack_name, validate_edits
 from .edits import unconnected as unconnected_forges
@@ -47,7 +48,7 @@ def _egress_routes(additions: ProposalAdditions) -> list[dict[str, Any]]:
             inspect["matches"] = [{"methods": list(e.methods)}]
         cred = cred_by_host.get(e.host)
         if cred:
-            inspect["auth"] = {"scheme": "Bearer", "token_ref": cred.name}
+            inspect["auth"] = {"type": "bearer", "value": stored(cred.name)}
         if inspect:
             route["inspect"] = inspect
         routes.append(route)
@@ -95,7 +96,7 @@ def proposal_to_frontmatter(proposal: Proposal) -> dict[str, Any]:
     add = proposal.additions
     env: dict[str, str] = {}
     for v in add.env:
-        env[v.name] = f"?{v.name}"  # prompt-at-runtime placeholder
+        env[v.name] = stored(v.name)  # the host's saved value, by name
     if env:
         fm["env"] = env
 

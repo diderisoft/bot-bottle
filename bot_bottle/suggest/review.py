@@ -24,6 +24,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from .. import secret_ref
 from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter, serialize_yaml_subset
 from .proposal import Proposal
 from .validate import proposal_to_frontmatter, stack_names
@@ -53,7 +54,7 @@ class Line:
 @dataclass(frozen=True)
 class Glance:
     """The review at first sight: `gist`, the `new` grants (`api.linear.app`,
-    `acme/app (push)`, `$LINEAR_TOKEN`), `connect`, each forge to connect
+    `acme/app (push)`, `secrets file LINEAR_TOKEN`), `connect`, each forge to connect
     before it can run, with the URL `forge connect` takes, and `warns`, any
     other forge trouble (its connections file doesn't read)."""
 
@@ -84,6 +85,14 @@ class _File:
     hosts: list[_Host] = field(default_factory=list)
     repos: list[_Repo] = field(default_factory=list)
     env: list[str] = field(default_factory=list)
+    # Where each env var's value comes from (`secret_ref.source_label`):
+    # "asks", "env VAR", "secrets file NAME"; absent for a literal.
+    env_from: dict[str, str] = field(default_factory=dict)
+
+    def env_access(self, var: str) -> str:
+        """An env var's bracketed access: where its value comes from, else
+        `env`."""
+        return self.env_from.get(var) or "env"
 
 
 def route_methods(route: dict[str, Any]) -> set[str]:
@@ -139,10 +148,17 @@ def _about(body: str) -> str:
 
 
 def _secret(route: dict[str, Any]) -> str:
+    """Where the route's injected credential comes from: `secrets file NAME`,
+    for `value: secret:NAME` (or a not yet migrated `token_ref: NAME`, which
+    the review still shows)."""
     inspect = route.get("inspect")
     auth = inspect.get("auth") if isinstance(inspect, dict) else None
-    ref = auth.get("token_ref") if isinstance(auth, dict) else None
-    return f"${str(ref).lstrip('$')}" if ref else ""
+    if not isinstance(auth, dict):
+        return ""
+    value = auth.get("value")
+    ref = secret_ref.stored_name(value) if isinstance(value, str) else ""
+    ref = ref or auth.get("token_ref") or ""
+    return f"secrets file {str(ref).lstrip('$')}" if ref else ""
 
 
 def _repo(name: object, value: object) -> _Repo | None:
@@ -242,10 +258,13 @@ def _elements(name: str, fm: dict[str, Any], body: str, seen: set[str]) -> _File
             seen.add(f"r:{repo.name}")
             out.repos.append(repo)
     env = fm.get("env")
-    for var in env if isinstance(env, dict) else {}:
+    for var, value in (env if isinstance(env, dict) else {}).items():
         if f"e:{var}" not in seen:
             seen.add(f"e:{var}")
             out.env.append(str(var))
+            source = secret_ref.source_label(value) if isinstance(value, str) else ""
+            if source:
+                out.env_from[str(var)] = source
     return out
 
 
@@ -258,7 +277,7 @@ def _new_lines(f: _File, proposal: Proposal) -> list[Line]:
              for h in f.hosts]
     lines += [Line("", r.name, why_repo.get(r.name, ""), "push" if r.write else "read", "", NEW)
               for r in f.repos]
-    lines += [Line("", v, why_env.get(v, ""), "env", "", NEW) for v in f.env]
+    lines += [Line("", v, why_env.get(v, ""), f.env_access(v), "", NEW) for v in f.env]
     return lines
 
 
@@ -413,7 +432,7 @@ def every_line(proposal: Proposal, dirs: list[tuple[Path, bool]]) -> list[Line] 
                       "read" if short_methods(h.methods) == "GET" else "write") for h in f.hosts]
                 + [Line("", r.name, r.forge, "push" if r.write else "read", "",
                         "write" if r.write else "read") for r in f.repos]
-                + [Line("", v, "", "env") for v in f.env])
+                + [Line("", v, "", f.env_access(v)) for v in f.env])
         if f.name == NEW:
             rows = [Line("", r.what, r.detail, r.access, r.secret, NEW) for r in rows]
         if rows:

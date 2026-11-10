@@ -37,8 +37,8 @@ egress:
     - host: gitea.dideric.is
       inspect:
         auth:
-          scheme: Bearer
-          token_ref: BOT_BOTTLE_CLAUDE_GITEA_TOKEN
+          type: bearer
+          value: secret:BOT_BOTTLE_CLAUDE_GITEA_TOKEN
 ---
 
 Claude, developing bot-bottle.

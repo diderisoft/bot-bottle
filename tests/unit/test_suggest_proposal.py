@@ -210,7 +210,7 @@ class TestProposalToFrontmatter(unittest.TestCase):
         fm = proposal_to_frontmatter(p)
         route = fm["egress"]["routes"][0]
         self.assertIn("inspect", route)
-        self.assertEqual(route["inspect"]["auth"]["token_ref"], "MY_TOKEN")
+        self.assertEqual(route["inspect"]["auth"], {"type": "bearer", "value": "secret:MY_TOKEN"})
 
     def test_env_vars_as_prompt_placeholders(self) -> None:
         p = Proposal(
@@ -221,7 +221,7 @@ class TestProposalToFrontmatter(unittest.TestCase):
             similar=[], notes=[],
         )
         fm = proposal_to_frontmatter(p)
-        self.assertEqual(fm["env"]["FLY_APP"], "?FLY_APP")
+        self.assertEqual(fm["env"]["FLY_APP"], "secret:FLY_APP")
 
     def test_no_inspect_false_ever(self) -> None:
         p = Proposal(

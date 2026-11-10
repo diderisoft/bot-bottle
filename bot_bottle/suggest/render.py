@@ -56,11 +56,11 @@ def render_proposal(
     if add.credentials:
         for c in add.credentials:
             why = f"  # {c.why}" if c.why else ""
-            lines.append(f"  + cred   {c.name} -> {c.route}{why}")
+            lines.append(f"  + cred   {c.name} -> {c.route} (secrets file {c.name}){why}")
     if add.env:
         for v in add.env:
             why = f"  # {v.why}" if v.why else ""
-            lines.append(f"  + env    {v.name}{why}")
+            lines.append(f"  + env    {v.name} (secrets file {v.name}){why}")
     if proposal.similar:
         for s in proposal.similar:
             lines.append(f"similar: {s.bottle} (covers {int(s.covers * 100)}%)")

@@ -35,7 +35,7 @@ egress:
   routes:
     - host: api.example.com
       inspect:
-        auth: {scheme: Bearer, token_ref: API_TOKEN}
+        auth: {type: bearer, value: secret:API_TOKEN}
     - host: pypi.org
       inspect: false
     - host: crates.io
@@ -70,7 +70,7 @@ class TestMethods(unittest.TestCase):
             ({"host": "h", "blocked": True}, set()),
             ({"host": "h", "inspect": False}, {"any"}),
             ({"host": "h"}, {"GET"}),
-            ({"host": "h", "inspect": {"auth": {"token_ref": "T"}}}, {"any"}),
+            ({"host": "h", "inspect": {"auth": {"type": "bearer", "value": "secret:T"}}}, {"any"}),
             ({"host": "h", "inspect": {"preserve_auth": True}}, {"any"}),
             ({"host": "h", "inspect": {"matches": [{"methods": ["get", "HEAD"]},
                                                    {"methods": ["POST"]}]}},
@@ -122,10 +122,10 @@ class TestReview(unittest.TestCase):
             lines = self.lines(_proposal(additions=add))
         got = [(x.label, x.what, x.detail, x.access, x.secret, x.tone) for x in lines]
         self.assertEqual([
-            ("new", "api.linear.app", "read tickets", "GET, POST", "$LINEAR_TOKEN", "new"),
+            ("new", "api.linear.app", "read tickets", "GET, POST", "secrets file LINEAR_TOKEN", "new"),
             ("", "acme/ops", "label issues", "push", "", "new"),
-            ("", "MODE", "the mode", "env", "", "new"),
-            ("team", "2 hosts", "The team's services", "any", "$API_TOKEN", "write"),
+            ("", "MODE", "the mode", "secrets file MODE", "", "new"),
+            ("team", "2 hosts", "The team's services", "any", "secrets file API_TOKEN", "write"),
             ("", "2 repos", "acme/app, acme/web", "push", "", "write"),
             ("", "1 repo", "acme/docs", "read", "", "read"),
             ("", "4 env vars", "A, B, C +1", "", "", "read"),
@@ -208,7 +208,7 @@ class TestGlance(TestReview):
         assert seen is not None
         self.assertEqual("Adds Linear.", seen.gist)
         self.assertEqual(["api.linear.app", "acme/ops (push)", "acme/wiki", "MODE",
-                          "$LINEAR_TOKEN"], seen.new)
+                          "secrets file LINEAR_TOKEN"], seen.new)
         self.assertEqual({"gitea.example.com": "https://gitea.example.com"}, seen.connect)
         self.assertEqual([], seen.warns)
         with connected(GITEA):
