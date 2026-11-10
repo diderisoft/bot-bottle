@@ -55,7 +55,7 @@ egress:
   routes:
     - host: api.example.com
       inspect:
-        auth: { scheme: Bearer, token_ref: EXAMPLE_API_TOKEN }   # injected; the agent never sees it
+        auth: { type: bearer, value: secret:EXAMPLE_API_TOKEN }   # injected; the agent never sees it
 ---
 ```
 
