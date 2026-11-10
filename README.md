@@ -6,71 +6,43 @@
 
 Run coding agents unsupervised without letting them wreck your machine or leak your secrets.
 
-## What you get
+bot-bottle runs each agent (Claude Code, Codex or pi) in its own microVM or container. Everything the agent sends out goes through a gateway that holds your credentials and only lets through what the agent's bottle allows.
 
-- **Credentials stay outside the agent.** The gateway injects tokens on the way out; the agent only sees placeholders. → [gateway](docs/reference/gateway.md)
-- **Every outbound request is allowlisted and DLP-scanned**, per bottle, with risky matches held for your approval. → [gateway](docs/reference/gateway.md#outbound-dlp)
-- **Every push is secret-scanned and traceable to its bottle** through git-gate and `Bot-Bottle:` commit trailers. → [git-gate](docs/reference/git-gate.md#commit-trailers)
-- **Each agent runs in its own microVM or container**, checked at launch to have no way out but the gateway. → [backends](docs/reference/backends.md)
-- **A repo can't hand you a bottle you haven't trusted**; any change asks again. → [manifest](docs/reference/manifest.md#trust)
-
-## Quickstart
+## Install
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/diderisoft/bot-bottle/main/install.sh | sh
 ```
 
-That installs the latest release. Or, with uv (or the same with `pipx install`), pinning the latest `vX.Y.Z` tag:
+You need git, tmux 3.1+ and a backend: Firecracker on Linux with KVM, Apple's `container` CLI on an Apple silicon Mac, or Docker anywhere else. The installer sets up the host and creates an agent for each harness you're logged in to.
 
-```sh
-uv tool install "bot-bottle[remote] @ git+https://github.com/diderisoft/bot-bottle.git@v0.1.6"
-```
+Other install methods and requirements: [install.md](docs/reference/install.md).
 
-The installer runs `bot-bottle bootstrap`: it sets up this host's backend (asking before the one step that needs `sudo`), writes a starter agent for each logged-in harness it finds (Claude Code, Codex, pi), and checks it all. Then start, and say what the agent should do; the release's images are pulled on first run:
+## First run
 
-```sh
-bot-bottle start
-```
+1. In your project, run `bot-bottle start`.
+2. Pick an agent.
+3. Describe the task: "fix the flaky test in tests/net".
+4. Review the bottle it proposes, with only the hosts, repos and secrets the task needs. Press Enter.
 
-It asks which harness (once; it remembers), asks for the task, and proposes a bottle sized to it: the hosts, repos and env it needs and no more, which you can run, edit, or save. A bare `bot-bottle` opens a home menu: start an agent, attach to a running one, answer approvals, check the host, or set up agents. `bot-bottle start --auto "fix the flaky test"` runs the proposal without asking. Details in [bottles-suggest.md](docs/reference/bottles-suggest.md).
+The agent starts on your task. If it needs something its bottle doesn't allow, it asks you and waits.
 
-You also need a backend, which the installer leaves to you (`bot-bottle doctor` says what's missing):
+## What's protected
 
-- **macOS:** Apple's `container` CLI, plus a one-time host firewall (`bot-bottle install --backend=macos-container` prints the `sudo` lines).
-- **Linux:** Firecracker with KVM, plus a one-time network pool (`bot-bottle install --backend=firecracker`).
-- **Anywhere else:** Docker, with `--backend=docker`.
+- **Route credentials stay outside the agent.** The gateway injects them on the way out. The agent sees placeholders. → [gateway](docs/reference/gateway.md)
+- **Every outbound request is checked against the bottle's allowlist.** Requests on inspected routes are also scanned for secrets. → [gateway](docs/reference/gateway.md#outbound-dlp)
+- **Every push through git-gate is secret-scanned** and carries a `Bot-Bottle:` trailer naming its bottle. → [git-gate](docs/reference/git-gate.md#commit-trailers)
+- **Each agent runs in its own microVM or container**, checked at launch to have no way out but the gateway. → [backends](docs/reference/backends.md)
+- **A repo can't hand you a bottle you haven't trusted.** Any change asks again. → [manifest](docs/reference/manifest.md#trust)
 
-Running from `main` instead of a release (`sh -s -- --main` on the installer)? Its orchestrator and gateway images aren't published: run `bot-bottle up --build` first ([install](docs/reference/install.md#releases-and-infra-images)).
-
-Details, including Python and tmux requirements, are in [install.md](docs/reference/install.md). To remove it all: `bot-bottle uninstall`.
-
-## Your first bottle
-
-A bottle says what an agent may reach. `~/.bot-bottle/bottles/web.md`:
-
-```markdown
----
-extends: basic              # package registries, downloads only
-egress:
-  routes:
-    - host: api.example.com
-      methods: [GET, POST]  # GET and HEAD only, unless a route lists its methods
-      auth: { type: bearer, value: secret:EXAMPLE_API_TOKEN }   # injected; the agent never sees it
----
-```
-
-Run an agent in it with `bot-bottle start claude --bottle web`; agents don't name a bottle, and a plain start suggests one (or runs in the built-in `basic` when you give no task). Every field is in [manifest.md](docs/reference/manifest.md).
+What it doesn't defend against is in the [threat model](https://bot-bottle.com/docs/security/threat-model).
 
 ## Learn more
 
-- [Architecture](docs/reference/architecture.md): how the pieces fit
-- [Manifest](docs/reference/manifest.md): bottles, agents, trust, egress routes
-- [Gateway](docs/reference/gateway.md): egress proxy, DLP, supervise
-- [git-gate](docs/reference/git-gate.md): scanned pushes and commit trailers
-- [Backends](docs/reference/backends.md): macos-container, firecracker, docker
-- [Install](docs/reference/install.md): requirements, host setup, uninstall
-- [CI](docs/reference/ci.md): workflows and gates
-- [Decisions](docs/decisions/README.md): why it is this way
+- [Getting started](https://bot-bottle.com/docs/start): install, first agent, first bottle
+- [Threat model](https://bot-bottle.com/docs/security/threat-model): what's in and out of scope
+- [All docs](https://bot-bottle.com/docs)
+- In this repo: [architecture](docs/reference/architecture.md), [manifest](docs/reference/manifest.md), [gateway](docs/reference/gateway.md), [git-gate](docs/reference/git-gate.md), [backends](docs/reference/backends.md), [install](docs/reference/install.md), [bottles-suggest](docs/reference/bottles-suggest.md), [CI](docs/reference/ci.md), [decisions](docs/decisions/README.md)
 
 ## Contributing
 

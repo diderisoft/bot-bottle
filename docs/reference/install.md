@@ -1,7 +1,8 @@
 # Install
 
-How bot-bottle gets onto a host, what each backend needs there, and how it
-comes off again. The backends themselves are in [backends.md](backends.md).
+One command installs bot-bottle and sets up the host. Each backend then needs
+its own pieces, covered below, and one command takes it all off again. The
+backends themselves are in [backends.md](backends.md).
 
 ## Quick start
 
@@ -9,123 +10,178 @@ comes off again. The backends themselves are in [backends.md](backends.md).
 curl -fsSL https://raw.githubusercontent.com/diderisoft/bot-bottle/main/install.sh | sh
 ```
 
-- **Every host:** git and tmux 3.1+. Python 3.11+ if you have it; otherwise
+- **Every host:** git and tmux 3.1+. Python 3.11+ if you have it. Otherwise
   the installer fetches one.
 - **Linux:** KVM, the `firecracker` binary and e2fsprogs for the firecracker
   backend.
 - **macOS:** an Apple silicon Mac with Apple's `container` CLI. Docker
   (`--backend=docker`) is the fallback anywhere else.
 
-[Getting started](../start.md) walks through the first run. The rest of this
-page is the detail.
+[Getting started](../start.md) walks through the first run.
 
 ## Installer
+
+`install.sh` installs the latest release, sets up the host, and ends with the
+one thing to do next.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/diderisoft/bot-bottle/main/install.sh | sh
 ```
 
-`install.sh` is a bootstrapper. It installs the latest release: the newest
-`vX.Y.Z` tag, looked up through GitHub's tags API (it fails, rather than
-installing `main`, when it can't find one). It finds a suitable Python, installs
-bot-bottle with its `remote` extra for phone pairing (none on Intel Macs,
-which iroh has no build for) using `uv` or `pipx` if you have either, or a
-private venv at `~/.bot-bottle/venv`, creates `~/.bot-bottle`, and runs
-`bot-bottle bootstrap`: `install` (the backend's host setup, tmux,
-autostart), `setup` (starter agents, then an offer to pair your phone with a
-console, by default the hosted one at <https://bot-bottle.app>; optional,
-`--no-pair` skips it) and `doctor`, reading from your terminal under
-`curl | sh`.
-It is idempotent and never runs `sudo` on its own: the backend's one root step
-is asked about first ([Host setup and sudo](#host-setup-and-sudo)). It shows one line per step (a spinner on a terminal) and keeps the
-package tool's own output in `~/.bot-bottle/logs/install-<time>.log`, printing
-its end if a step fails. With `BOT_BOTTLE_ENV` set it says which environment it
-sets up. It ends with doctor's `next:` line, the one thing to do next on this
-host.
+It's a bootstrapper. In order, it:
 
-Python-native users can skip it, pinning the latest tag (`v0.1.6` here; use
-the newest one listed under the repository's tags):
+1. finds the latest release: the newest `vX.Y.Z` tag, looked up through
+   GitHub's tags API. It fails, rather than installing `main`, when it can't
+   find one.
+2. finds a suitable Python ([Python](#python)).
+3. installs bot-bottle with its `remote` extra for phone pairing. It uses `uv`
+   or `pipx` if you have either, or a private venv at `~/.bot-bottle/venv`.
+4. creates `~/.bot-bottle`.
+5. runs `bot-bottle bootstrap`, reading from your terminal under `curl | sh`.
+
+Intel Macs get no `remote` extra, since iroh has no build for them.
+
+`bot-bottle bootstrap` runs three commands:
+
+| Command | Does |
+|---|---|
+| `install` | the backend's host setup, tmux, autostart |
+| `setup` | starter agents, then an offer to pair your phone with a console. The default console is the hosted one at <https://bot-bottle.app>. Pairing is optional, and `--no-pair` skips it. |
+| `doctor` | checks the host |
+
+The installer is idempotent and never runs `sudo` on its own. The backend's one
+root step is asked about first ([Host setup and sudo](#host-setup-and-sudo)).
+
+It shows one line per step, with a spinner on a terminal. It keeps the package
+tool's own output in `~/.bot-bottle/logs/install-<time>.log`, and prints its
+end if a step fails.
+
+With `BOT_BOTTLE_ENV` set, it says which environment it sets up. It ends with
+doctor's `next:` line, the one thing to do next on this host.
+
+### Without the installer
+
+Python-native users can skip it and pin the latest tag:
 
 ```sh
 uv tool install "bot-bottle[remote] @ git+https://github.com/diderisoft/bot-bottle.git@v0.1.6"
 # or the same with: pipx install
 ```
 
-To install `main` instead, pass `--main` (`… | sh -s -- --main`) or set
-`BOT_BOTTLE_INSTALL_REF=main`, then build the infra images (below).
+`v0.1.6` is an example. Use the newest one listed under the repository's tags.
 
-The installer's settings (`BOT_BOTTLE_PYTHON`, `BOT_BOTTLE_VENV`,
-`BOT_BOTTLE_INSTALL_SPEC`, `BOT_BOTTLE_INSTALL_REF`, all optional) are in
-[Settings](#settings).
+### Installing main
+
+To install `main` instead, pass `--main` (`… | sh -s -- --main`) or set
+`BOT_BOTTLE_INSTALL_REF=main`. Then build the infra images
+([below](#releases-and-infra-images)).
+
+The installer's settings are in [Settings](#settings). They are
+`BOT_BOTTLE_PYTHON`, `BOT_BOTTLE_VENV`, `BOT_BOTTLE_INSTALL_SPEC` and
+`BOT_BOTTLE_INSTALL_REF`, all optional.
 
 ### Releases and infra images
 
-The normal path is a release: its orchestrator and gateway images are
-published publicly on GHCR, and bot-bottle pulls and verifies them, with no
-registry login ([backends.md](backends.md#infra-images)). Each release is tagged
-`vX.Y.Z` on the commit that pins its images, and both commands above install a
-tag. `main` matches the last release only until a change to the orchestrator or
-gateway lands after it. An install with no published images to match stops on
-its first bring-up and says so; it never builds them on its own
-([backends.md](backends.md#infra-images)). To run from `main` (developing
-bot-bottle, or a fix not yet released), build them locally:
+A release pulls its published orchestrator and gateway images. An install from
+`main` builds them instead:
 
 ```sh
 bot-bottle up --build    # or set BOT_BOTTLE_INFRA_BUILD=local
 ```
 
-That needs Docker on docker and firecracker hosts, and Apple's `container` on
-macOS. Launches after it keep building locally until an `up` without
-`--build` (which keeps a running, current local build rather than stopping, as
-long as no release matches the install).
+The normal path is a release. Its orchestrator and gateway images are
+published publicly on GHCR, and bot-bottle pulls and verifies them with no
+registry login ([backends.md](backends.md#infra-images)).
 
-Agent images are separate: firecracker pulls the built-in ones as
-published root filesystems, and builds an agent's overlay with Docker or Podman
-when either is present, else with buildah inside the orchestrator VM
-(`BOT_BOTTLE_BUILD_ENGINE=docker|podman|vm` picks; `backend/container_engine.py`).
-A custom Dockerfile builds in the VM.
+Each release is tagged `vX.Y.Z` on the commit that pins its images, and both
+install commands above install a tag. `main` matches the last release only
+until a change to the orchestrator or gateway lands after it.
+
+An install with no published images to match stops on its first bring-up and
+says so. It never builds them on its own
+([backends.md](backends.md#infra-images)).
+
+So to run from `main`, build them locally with the command above. That's for
+developing bot-bottle, or for a fix not yet released.
+
+- **What it needs:** Docker on docker and firecracker hosts, and Apple's
+  `container` on macOS.
+- **How long it sticks:** launches after it keep building locally until an
+  `up` without `--build`.
+- **The exception:** that `up` keeps a running, current local build rather
+  than stopping, as long as no release matches the install.
+
+Agent images are separate:
+
+- firecracker pulls the built-in ones as published root filesystems.
+- It builds an agent's overlay with Docker or Podman when either is present,
+  else with buildah inside the orchestrator VM.
+- `BOT_BOTTLE_BUILD_ENGINE=docker|podman|vm` picks
+  (`backend/container_engine.py`).
+- A custom Dockerfile builds in the VM.
 
 ## Requirements
 
+Every host needs Python 3.11 or newer (or none at all), git, tmux 3.1+, and one
+backend.
+
 ### Python
 
-**Python ≥ 3.11**, or nothing. With no suitable Python the installer has uv
-supply Python 3.13: your uv if you have one, else a pinned uv release it
-downloads, checks against its published SHA-256 and keeps privately under
-`~/.bot-bottle/uv` with that Python and bot-bottle itself, where
-`bot-bottle uninstall` removes them.
+**Python ≥ 3.11**, or nothing.
 
-When you do have Python, this is what trips people up on macOS: the `python3`
-Apple ships at `/usr/bin/python3` is **3.9.6**, which is too old. Bare
-`python3` resolves to that stub far more often than people expect.
+With no suitable Python, the installer has uv supply Python 3.13. It uses your
+uv if you have one. Otherwise it downloads a pinned uv release and checks it
+against its published SHA-256.
+
+It keeps that uv privately under `~/.bot-bottle/uv`, with that Python and
+bot-bottle itself. `bot-bottle uninstall` removes them.
+
+#### macOS's own python3 is too old
+
+When you do have Python, this is what trips people up on macOS. The `python3`
+Apple ships at `/usr/bin/python3` is **3.9.6**, which is too old.
+
+Bare `python3` resolves to that stub far more often than people expect.
 `path_helper` builds a login shell's `PATH` from `/etc/paths` and then appends
-`/etc/paths.d/*`, and `/usr/bin` sits in the former, so even when
-`/opt/homebrew/bin` *is* on the `PATH` (via `/etc/paths.d/homebrew`), it comes
-after `/usr/bin` and loses. Prepending a newer Python is something your shell
-profile does, and a fresh account, a launchd job, or a CI runner has no such
-profile.
+`/etc/paths.d/*`. `/usr/bin` sits in the former.
 
-So the installer looks past bare `python3` before giving up. It tries
-`python3`, then the versioned `python3.11`–`python3.14` names, then
-`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, and python.org
-framework builds, and says which one it picked when it isn't the obvious one.
-Point it somewhere specific with `BOT_BOTTLE_PYTHON=/path/to/python3`.
+So even when `/opt/homebrew/bin` *is* on the `PATH` (via
+`/etc/paths.d/homebrew`), it comes after `/usr/bin` and loses.
+
+Prepending a newer Python is something your shell profile does. A fresh
+account, a launchd job, or a CI runner has no such profile.
+
+So the installer looks past bare `python3` before giving up. It tries, in
+order:
+
+1. `python3`
+2. the versioned `python3.11`–`python3.14` names
+3. `/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin`
+4. python.org framework builds
+
+It says which one it picked when it isn't the obvious one. Point it somewhere
+specific with `BOT_BOTTLE_PYTHON=/path/to/python3`.
 
 ### No uv or pipx required
 
-If either is present the installer uses it (`uv` first) and stays out of the
-way. If neither is, bot-bottle installs into a private venv at
-`~/.bot-bottle/venv` (override with `BOT_BOTTLE_VENV`) and symlinks the entry
-point into `~/.local/bin`. Debian and Ubuntu ship `venv` separately
-(`python3-venv`), so when the Python has no `venv` module the installer
-fetches its own pinned uv instead (the same one it uses when there's no
-Python at all, kept under `~/.bot-bottle/uv`) and installs onto that Python
-with it, no `sudo apt install` needed.
+The installer uses `uv` or `pipx` when either is present, `uv` first, and stays
+out of the way. With neither, it uses a private venv.
+
+The venv is `~/.bot-bottle/venv`, and the installer symlinks the entry point
+into `~/.local/bin`. Override the venv path with `BOT_BOTTLE_VENV`.
+
+Debian and Ubuntu ship `venv` separately, as `python3-venv`. When the Python
+has no `venv` module, the installer fetches its own pinned uv instead and
+installs onto that Python with it. No `sudo apt install` is needed.
+
+That's the same uv it uses when there's no Python at all, kept under
+`~/.bot-bottle/uv`.
 
 There is deliberately no `pip install --user` path. Homebrew, python.org and
 Debian/Ubuntu interpreters are all externally managed (PEP 668), which blocks
-`--user` outright, so on a Mac it is never the fallback it appears to be. A
-venv is exempt from PEP 668, and `venv` is stdlib, so unlike `uv` or `pipx`
+`--user` outright. So on a Mac it is never the fallback it appears to be.
+
+A venv is exempt from PEP 668, and `venv` is stdlib. Unlike `uv` or `pipx`,
 there is nothing to bootstrap first.
 
 ### git and tmux
@@ -137,32 +193,44 @@ there is nothing to bootstrap first.
 
 ### A backend
 
-The installer deliberately does *not* install a backend; `bot-bottle doctor`
-reports what's missing afterwards. Which backend a host gets is in
-[backends.md](backends.md#selection).
-
-`doctor` checks that backend in full, the one a launch here would use
-(`BOT_BOTTLE_BACKEND`, else the one detected), and shows its diagnostics when
-it isn't ready; it decides doctor's exit code. Any other backend gets one
-`note:` line, ready or not, and is never offered for install
-(`doctor --verbose` shows every backend's diagnostics; `doctor --backend=X`
-checks X alone). `doctor` ends with `next:`, the most pressing of: restart the
-host controller (`up --restart`), set up the backend (`install --backend=…`),
-write starters (`setup`), start the services (`up`), else run `bot-bottle`.
-`doctor --next` prints only that.
+The installer deliberately does *not* install a backend. `bot-bottle doctor`
+reports what's missing afterwards.
 
 | Backend | Needs |
 |---|---|
 | macos-container (macOS default) | Apple's `container` CLI, and the one-time host firewall. No Docker. |
-| firecracker (Linux default with KVM) | `/dev/kvm`, the `firecracker` binary, e2fsprogs, and the one-time network pool. Docker only for `bot-bottle up --build` (infra images from source instead of a release's); Docker or Podman, optionally, to build agent overlays on the host. |
+| firecracker (Linux default with KVM) | `/dev/kvm`, the `firecracker` binary, e2fsprogs, and the one-time network pool. Docker only for `bot-bottle up --build` (infra images from source instead of a release's). Docker or Podman, optionally, to build agent overlays on the host. |
 | docker (fallback) | Docker |
+
+Which backend a host gets is in [backends.md](backends.md#selection).
+
+#### What doctor checks
+
+`doctor` checks one backend in full: the one a launch here would use. That's
+`BOT_BOTTLE_BACKEND`, else the one detected.
+
+It shows that backend's diagnostics when it isn't ready, and that backend
+decides doctor's exit code. Any other backend gets one `note:` line, ready or
+not, and is never offered for install.
+
+| Command | Does |
+|---|---|
+| `doctor --verbose` | shows every backend's diagnostics |
+| `doctor --backend=X` | checks X alone |
+| `doctor --next` | prints only the `next:` line |
+
+`doctor` ends with `next:`, the most pressing of:
+
+1. restart the host controller (`up --restart`)
+2. set up the backend (`install --backend=…`)
+3. write starters (`setup`)
+4. start the services (`up`)
+5. else run `bot-bottle`
 
 #### Host setup and sudo
 
-Each backend's one-time host setup has one step that needs root: the macOS
-host firewall, or firecracker's network pool on a systemd host. Run on a
-terminal, `bot-bottle install` (and `bootstrap`, and the installer) says what
-that step is and the exact command, and asks first:
+Each backend's one-time host setup has one step that needs root, and
+bot-bottle asks before running it.
 
 ```
 bot-bottle needs root once, to install the host firewall (a pf anchor, reloaded at boot).
@@ -170,61 +238,91 @@ It would run: sudo /Users/you/.local/bin/bot-bottle install --backend=macos-cont
 Run it now? [y/N]
 ```
 
-Yes runs it (sudo asks for your password); no, or no terminal, prints the
-commands for you to run instead, as below. It isn't asked once the step is in
-place, nor on NixOS (the pool is a module you import) or a Linux host without
-systemd (a script you run yourself).
+The step is the macOS host firewall, or firecracker's network pool on a
+systemd host. Run on a terminal, `bot-bottle install` says what that step is
+and the exact command, and asks first. So do `bootstrap` and the installer.
+
+- **Yes:** runs it. sudo asks for your password.
+- **No, or no terminal:** prints the commands for you to run instead, as
+  below.
+
+It isn't asked once the step is in place. Nor is it asked on NixOS, where the
+pool is a module you import. Nor on a Linux host without systemd, where it's a
+script you run yourself.
 
 #### macOS: Apple Container
 
-`bot-bottle install --backend=macos-container` offers to install, or prints the
-`sudo` commands that install, the host firewall: a pf anchor and a LaunchDaemon that reloads it at
-boot ([backends.md](backends.md#macos-container)). Without it, launches are
-refused.
+`bot-bottle install --backend=macos-container` sets up the host firewall.
+Without it, launches are refused.
+
+```sh
+bot-bottle install --backend=macos-container
+```
+
+It offers to install, or prints the `sudo` commands that install, the host
+firewall. That's a pf anchor and a LaunchDaemon that reloads it at boot
+([backends.md](backends.md#macos-container)).
 
 Run as root through `sudo`, bot-bottle writes only those system pieces. It
 doesn't register the environment or create its database, so no root-owned
-state lands in your home; your next ordinary run does that. If an older version
-left some (unprivileged commands then fail on permissions), every command but
-`doctor` stops and names the fix, which `doctor` reports too:
-`sudo chown -R "$(id -un):$(id -gn)" <the paths it lists>`.
+state lands in your home. Your next ordinary run does that.
+
+An older version may have left some root-owned state. Unprivileged commands
+then fail on permissions. Every command but `doctor` stops and names the fix,
+which `doctor` reports too:
+
+```sh
+sudo chown -R "$(id -un):$(id -gn)" <the paths it lists>
+```
 
 #### Linux: Firecracker
 
-A KVM-capable Linux host defaults to the Firecracker backend. It needs:
-
-- **`/dev/kvm`** present and accessible. Load `kvm-intel` or `kvm-amd` (and
-  enable virtualization in BIOS/firmware). The invoking user must be in the
-  `kvm` group: `sudo usermod -aG kvm "$USER"`, then log in again. bot-bottle
-  preflights this and reports exactly what's missing.
-- **`firecracker`** on `PATH`: take a release from
-  <https://github.com/firecracker-microvm/firecracker/releases>. Start flows
-  print this pointer when the binary is missing.
-- **e2fsprogs** (`mke2fs`, `debugfs`, `e2fsck`, `resize2fs`) for building root
-  filesystems. Docker is optional: `bot-bottle up --build` needs it to build
-  the infra images from source rather than downloading a release's prebuilt
-  ones, and Docker or Podman, when present, builds agent overlays on the host
-  instead of in the orchestrator VM.
-- **A one-time privileged network setup**: the per-bottle TAP pool plus the
-  fail-closed `nftables` isolation table. `bot-bottle install
-  --backend=firecracker` gives the host-appropriate config (a NixOS module, a
-  `sudo` script elsewhere) plus autostart for the host controller.
-  `bot-bottle doctor --backend=firecracker` reports what's present, including
-  whether the pool range collides with an existing route. The pool defaults to
-  `10.243.0.0/16`, an obscure RFC-1918 block that dodges Docker, libvirt, LANs
-  and, deliberately, Tailscale's `100.64.0.0/10` CGNAT range. Override it with
-  `BOT_BOTTLE_FC_IP_BASE` if it clashes on your host. The setup also reserves
-  slices for named environments ([Environments](#environments)).
+A KVM-capable Linux host defaults to the Firecracker backend.
 
 ```sh
 BOT_BOTTLE_BACKEND=firecracker bot-bottle start <agent>
 ```
 
-**NixOS.** Load the KVM module (`boot.kernelModules = [ "kvm-intel" ];` or
-`kvm-amd`) and add your user to the `kvm` group. Docker
-(`virtualisation.docker`, plus the `docker` group) is only needed to build the
-infra images from source (`bot-bottle up --build`). For the network pool, use the flake module, then
-`nixos-rebuild switch`; imperative nft and TAP rules don't survive a rebuild.
+It needs:
+
+- **`/dev/kvm`**, present and accessible.
+- **`firecracker`** on `PATH`.
+- **e2fsprogs** (`mke2fs`, `debugfs`, `e2fsck`, `resize2fs`) for building
+  root filesystems.
+- **A one-time privileged network setup:** the per-bottle TAP pool plus the
+  fail-closed `nftables` isolation table.
+
+**KVM.** Load `kvm-intel` or `kvm-amd`, and enable virtualization in
+BIOS/firmware. The invoking user must be in the `kvm` group:
+`sudo usermod -aG kvm "$USER"`, then log in again.
+
+bot-bottle preflights this and reports exactly what's missing.
+
+**firecracker.** Take a release from
+<https://github.com/firecracker-microvm/firecracker/releases>. Start flows
+print this pointer when the binary is missing.
+
+**Docker is optional.** `bot-bottle up --build` needs it to build the infra
+images from source rather than downloading a release's prebuilt ones. Docker
+or Podman, when present, builds agent overlays on the host instead of in the
+orchestrator VM.
+
+**The network pool.** `bot-bottle install --backend=firecracker` gives the
+host-appropriate config, plus autostart for the host controller. The config is
+a NixOS module, or a `sudo` script elsewhere.
+
+`bot-bottle doctor --backend=firecracker` reports what's present. That
+includes whether the pool range collides with an existing route.
+
+The pool defaults to `10.243.0.0/16`, an obscure RFC-1918 block. It dodges
+Docker, libvirt, LANs and, deliberately, Tailscale's `100.64.0.0/10` CGNAT
+range. Override it with `BOT_BOTTLE_FC_IP_BASE` if it clashes on your host.
+
+The setup also reserves slices for named environments
+([Environments](#environments)).
+
+**NixOS.** For the network pool, use the flake module, then
+`nixos-rebuild switch`. Imperative nft and TAP rules don't survive a rebuild.
 
 ```nix
 imports = [ inputs.bot-bottle.nixosModules.firecracker-netpool ];
@@ -232,35 +330,49 @@ services.bot-bottle-firecracker = { enable = true; owner = "you"; };
 ```
 
 Channel users can `imports = [ <bot-bottle>/nix/firecracker-netpool.nix ]`
-instead. `firecracker` isn't in nixpkgs as a user binary by default: install
-the release binary (pin the version) and put it on `PATH`.
+instead.
+
+Load the KVM module (`boot.kernelModules = [ "kvm-intel" ];` or `kvm-amd`) and
+add your user to the `kvm` group.
+
+Docker is only needed to build the infra images from source, with
+`bot-bottle up --build`. That's `virtualisation.docker`, plus the `docker`
+group.
+
+`firecracker` isn't in nixpkgs as a user binary by default. Install the
+release binary, pin the version, and put it on `PATH`.
 
 #### Docker
 
-The fallback for CI and hosts without Apple Container or KVM. Ask for it
-explicitly:
+Docker is the fallback for CI and hosts without Apple Container or KVM. Ask
+for it explicitly:
 
 ```sh
 BOT_BOTTLE_BACKEND=docker bot-bottle start <agent>   # or --backend=docker
 ```
 
-It is the weakest boundary; see [backends.md](backends.md#docker).
+It is the weakest boundary: agents share the host kernel unless gVisor is
+registered. See [backends.md](backends.md#docker).
 
 ### Signing in an agent
 
-A Claude agent signs in one of two ways:
+A Claude agent signs in with your host's Claude Code login, or with a
+long-lived token.
 
-- your host's Claude Code login, with
-  `agent_provider.forward_host_credentials: true`. `bot-bottle setup` writes
-  this when Claude Code is installed and logged in.
-- a long-lived token from `claude setup-token`, kept in a host variable that
-  `agent_provider.auth_token` names.
+| Way | Manifest field | Notes |
+|---|---|---|
+| your host's Claude Code login | `agent_provider.forward_host_credentials: true` | `bot-bottle setup` writes this when Claude Code is installed and logged in. |
+| a long-lived token from `claude setup-token` | `agent_provider.auth_token`, naming the host variable that holds it | |
 
-Either way the gateway injects it; the agent only ever sees a placeholder
-([host-controller.md](host-controller.md#forwarded-host-logins)). The manifest
-fields are in [manifest.md](manifest.md#agents).
+Either way the gateway injects it, and the agent only ever sees a placeholder
+([host-controller.md](host-controller.md#forwarded-host-logins)).
+
+The manifest fields are in [manifest.md](manifest.md#agents).
 
 ## First run
+
+`bot-bottle start <agent>` pulls the images on first run, then drops you into
+the agent.
 
 ```sh
 bot-bottle start <agent>   # pulls the images on first run, then drops you into the agent
@@ -269,13 +381,42 @@ bot-bottle start <agent>   # pulls the images on first run, then drops you into 
 From `main` rather than a release, run `bot-bottle up --build` first
 ([Releases and infra images](#releases-and-infra-images)).
 
+## Uninstall
+
+`bot-bottle uninstall` removes everything bot-bottle set up, after showing
+what it will remove and asking first.
+
+```sh
+bot-bottle uninstall            # everything bot-bottle set up; keeps ~/.bot-bottle
+bot-bottle uninstall --purge    # also your agents, bottles, secrets, audit journal and frozen bottles
+```
+
+It:
+
+1. stops the host controller and each backend's orchestrator and gateway, and
+   removes autostart.
+2. removes each backend's containers, networks, volumes and images, and undoes
+   each backend's privileged setup. On macOS it prints the `sudo` lines for
+   the pf firewall. `--keep-backend` skips this step.
+3. removes `~/.cache/bot-bottle` and the package itself (the installer's venv
+   and shim, or `pipx`/`uv tool uninstall`).
+
+Base images it pulled to build on, such as `python` or `node`, stay.
+
+If `bot-bottle` itself won't run, the installer can remove what it installed:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/diderisoft/bot-bottle/main/install.sh | sh -s -- --uninstall
+```
+
+That removes the installer's venv and shim and says what's left.
+
 ## Environments
 
-One host can run several independent installs side by side. `BOT_BOTTLE_ENV`
-picks one: unset (or `live`) is the normal install; a name such as `dev` or
-`ci-6839` (lowercase letters, digits and `-`, at most 24) is a separate
-environment with its own state, names and network, so working on bot-bottle or
-running CI never touches the live install (`bot_bottle/environment.py`).
+*Advanced: for working on bot-bottle or running CI beside a live install.*
+
+`BOT_BOTTLE_ENV` runs a separate install beside the live one, with its own
+state, names and network.
 
 | | `live` | a named environment `<name>` |
 |---|---|---|
@@ -290,22 +431,36 @@ running CI never touches the live install (`bot_bottle/environment.py`).
 | macOS pf anchor | `com.apple/io.bot-bottle` | `com.apple/io.bot-bottle.<name>` |
 | macOS agent IPv6 /64 | `fd62:6f74:6274:6c65::/64` | a free `fd62:6f74:6275:<n>::/64`, allocated and recorded |
 
-Explicit settings still win: `BOT_BOTTLE_ROOT`, `BOT_BOTTLE_DOCKER_*` and
-`BOT_BOTTLE_FC_*` override what the environment derives. Image, artifact and
-root-filesystem caches are content-addressed and shared by every environment.
-`live` derives exactly the names, paths and settings fingerprint an install
-had before environments existed.
+Unset, or `live`, is the normal install. A name such as `dev` or `ci-6839` is a
+separate environment (`bot_bottle/environment.py`). Working on bot-bottle or
+running CI in one never touches the live install.
 
-A named environment registers itself (`~/.bot-bottle-envs/<name>/env.json`)
-the first time a command runs in it. A name whose resource prefix would match
-another registered environment's (`dev` and `dev-2`: `bb-dev-` matches
-`bb-dev-2-orchestrator`) is refused. `doctor` and `status` print the active
-environment and its orchestrator, and warn about any other bot-bottle
-orchestrator answering.
+Names use lowercase letters, digits and `-`, at most 24.
 
-An environment runs one backend's orchestrator and gateway at a time: its
-bring-up records which, and bringing up another backend's while that one
-answers is refused ([architecture.md](architecture.md#components)).
+Explicit settings still win. `BOT_BOTTLE_ROOT`, `BOT_BOTTLE_DOCKER_*` and
+`BOT_BOTTLE_FC_*` override what the environment derives.
+
+Image, artifact and root-filesystem caches are content-addressed and shared by
+every environment. `live` derives exactly the names, paths and settings
+fingerprint an install had before environments existed.
+
+### Registering an environment
+
+A named environment registers itself the first time a command runs in it, in
+`~/.bot-bottle-envs/<name>/env.json`.
+
+A name whose resource prefix would match another registered environment's is
+refused. For example, `dev` and `dev-2` clash: `bb-dev-` matches
+`bb-dev-2-orchestrator`.
+
+`doctor` and `status` print the active environment and its orchestrator. They
+warn about any other bot-bottle orchestrator answering.
+
+An environment runs one backend's orchestrator and gateway at a time. Its
+bring-up records which. Bringing up another backend's while that one answers
+is refused ([architecture.md](architecture.md#components)).
+
+### Removing an environment
 
 ```sh
 bot-bottle envs                  # every environment, its root, and what runs
@@ -313,20 +468,36 @@ bot-bottle envs rm dev           # tear dev down and delete its state
 bot-bottle envs rm dev --dry-run # what it would remove
 ```
 
-`envs rm` runs the teardown as that environment: the bottles its host
-controller holds, each available backend's leftover bottles, orchestrator,
-gateway, containers, networks and volumes (not images), and its host
-controller and autostart unit. Then it deletes the state root and firecracker
-directory and frees the pool slice. If part of the teardown fails, the state is
-kept so it can be retried; `--force` deletes it anyway. It refuses `live`; use
-`uninstall`, which in turn refuses to run in a named environment and removes
-only live's containers and networks, so remove named environments first. A root set
-with `BOT_BOTTLE_ROOT` outside `~/.bot-bottle-envs/` is left in place.
+`envs rm` runs the teardown as that environment. It removes:
 
-**Firecracker slices.** TAPs need root, so the network-pool setup reserves the
-live pool plus `BOT_BOTTLE_FC_ENV_SLOTS` (default 4; NixOS `envSlots`) slices
-up front, and a named environment claims the lowest free one on first use with
-no root. Slice `k` (live is 0) has the live pool's size and:
+- the bottles its host controller holds
+- each available backend's leftover bottles, orchestrator, gateway,
+  containers, networks and volumes, but not images
+- its host controller and autostart unit
+
+Then it deletes the state root and firecracker directory, and frees the pool
+slice.
+
+If part of the teardown fails, the state is kept so it can be retried.
+`--force` deletes it anyway.
+
+`envs rm` refuses `live`. Use `uninstall` for that. `uninstall` in turn
+refuses to run in a named environment and removes only live's containers and
+networks, so remove named environments first.
+
+A root set with `BOT_BOTTLE_ROOT` outside `~/.bot-bottle-envs/` is left in
+place.
+
+### Firecracker slices
+
+Each named environment claims a slice of the firecracker network pool that the
+pool setup reserved up front, so it needs no root.
+
+TAPs need root, so the network-pool setup reserves the live pool plus
+`BOT_BOTTLE_FC_ENV_SLOTS` slices up front. The default is 4, or NixOS
+`envSlots`. A named environment claims the lowest free one on first use.
+
+Slice `k` (live is 0) has the live pool's size and:
 
 | | live (`k = 0`) | slice `k` (1..63) |
 |---|---|---|
@@ -338,47 +509,77 @@ no root. Slice `k` (live is 0) has the live pool's size and:
 
 Each slice costs pool size + 2 TAPs. No slice's TAP wildcard (`bbfc*`,
 `bb<k>fc*`) matches another's, so each slice's nft tables isolate only their
-own VMs. With every slice held, a named environment stops and says to remove
-one (`envs rm`) or raise `BOT_BOTTLE_FC_ENV_SLOTS` and rerun the pool setup.
-Claims are host-wide, so two users' environments (a developer's `dev`, a CI
-runner's `ci-<run>`) never share a slice: one file per claimed slice in
-`/var/lib/bot-bottle-fc/slices` (`BOT_BOTTLE_FC_SLICES_DIR`, NixOS `slicesDir`),
-which the pool setup creates mode 2775 for the pool's group
-(`BOT_BOTTLE_FC_GROUP` / NixOS `group`, else the owner's primary group). Every
-user that runs bot-bottle must be in that group. A claim names its
-environment, user and registration file, is created atomically under a lock,
-and is replaced only when stale: its registration is confirmed gone and none
-of the slice's TAPs is in use. A live claim is never taken; `envs rm` releases
-it (`backend/firecracker/slice_claims.py`).
+own VMs.
 
-**Docker and macOS subnets.** A named environment allocates its docker gateway
-/24: it tries the `10.241.0.0/16` /24s in an order that starts at its name's
-hash, skips any a docker network already has, and moves on when docker reports
-a pool overlap (another environment got there first). The one it gets is
-recorded in its state root (`docker-gateway-subnet`), so it's stable across
-restarts, and an existing gateway network's subnet is adopted. The macOS agent
-IPv6 /64 is allocated the same way at setup, skipping the ones other
-environments' anchors block, and recorded in the installed pf rules.
+With every slice held, a named environment stops. It says to remove one
+(`envs rm`), or to raise `BOT_BOTTLE_FC_ENV_SLOTS` and rerun the pool setup.
 
-That docker port is the only host port bot-bottle publishes: the docker
-gateway, macOS containers and firecracker VMs are reached on their own
-networks, never through a host port, so they can't collide.
+#### Slice claims
+
+Claims are host-wide, so two users' environments never share a slice. A
+developer's `dev` and a CI runner's `ci-<run>` are an example.
+
+There's one file per claimed slice in `/var/lib/bot-bottle-fc/slices`. Override
+the directory with `BOT_BOTTLE_FC_SLICES_DIR`, or NixOS `slicesDir`.
+
+The pool setup creates that directory mode 2775 for the pool's group. The group
+is `BOT_BOTTLE_FC_GROUP` or NixOS `group`, else the owner's primary group.
+Every user that runs bot-bottle must be in that group.
+
+A claim names its environment, user and registration file. It's created
+atomically under a lock.
+
+A claim is replaced only when stale: its registration is confirmed gone and
+none of the slice's TAPs is in use. A live claim is never taken. `envs rm`
+releases it (`backend/firecracker/slice_claims.py`).
+
+### Docker and macOS subnets
+
+A named environment allocates its docker gateway /24 from `10.241.0.0/16`, and
+records it.
+
+It tries the /24s in an order that starts at its name's hash. It skips any a
+docker network already has. It moves on when docker reports a pool overlap,
+meaning another environment got there first.
+
+The one it gets is recorded in its state root (`docker-gateway-subnet`), so
+it's stable across restarts. An existing gateway network's subnet is adopted.
+
+The macOS agent IPv6 /64 is allocated the same way at setup, skipping the ones
+other environments' anchors block. It's recorded in the installed pf rules.
+
+### Ports
+
+The docker orchestrator host port is the only host port bot-bottle publishes.
+The docker gateway, macOS containers and firecracker VMs are reached on their
+own networks, never through a host port, so they can't collide.
 
 The host controller's loopback port is ephemeral and published under each
-environment's own root. Its guest listener keeps port 8098 in every
-environment because it binds only that environment's own link address (its
-orchestrator TAP, docker publish bridge or vmnet control gateway), and the
-NixOS module opens 8098 on every slice's orchestrator TAP.
+environment's own root.
 
-**macOS.** Each environment has its own pf anchor, so a named environment
-needs its own one-time `sudo env BOT_BOTTLE_ENV=<name> bot-bottle install
---backend=macos-container`. Setup skips agent subnets other environments'
-anchors already claim.
+Its guest listener keeps port 8098 in every environment, because it binds only
+that environment's own link address. That's its orchestrator TAP, docker
+publish bridge or vmnet control gateway.
+
+The NixOS module opens 8098 on every slice's orchestrator TAP.
+
+### macOS environments
+
+Each environment has its own pf anchor, so a named environment needs its own
+one-time install:
+
+```sh
+sudo env BOT_BOTTLE_ENV=<name> bot-bottle install --backend=macos-container
+```
+
+Setup skips agent subnets other environments' anchors already claim.
 
 ## Settings
 
-Every `BOT_BOTTLE_*` variable you might set, all optional. Unset or empty
-means the default. The ones bot-bottle sets for its own processes are in
+Every `BOT_BOTTLE_*` variable you might set is below, all optional. Unset or
+empty means the default.
+
+The ones bot-bottle sets for its own processes are in
 [runtime-contract.md](runtime-contract.md#internal-environment).
 
 Generated from `bot_bottle/env_vars.py`: edit that, then run
@@ -434,30 +635,3 @@ Generated from `bot_bottle/env_vars.py`: edit that, then run
 | `BOT_BOTTLE_INFRA_EXT4_STORE` | release | Where the Firecracker rootfs is published: `oci` (an OCI artifact in the image registry) or `generic` (a Gitea generic package). | `oci` |
 | `BOT_BOTTLE_IMAGE_SOURCE_URL` | release | The image's `org.opencontainers.image.source` label, which links the packages to the repository. | `https://github.com/diderisoft/bot-bottle` |
 <!-- env-vars:settings:end -->
-
-## Uninstall
-
-```sh
-bot-bottle uninstall            # everything bot-bottle set up; keeps ~/.bot-bottle
-bot-bottle uninstall --purge    # also your agents, bottles, secrets, audit journal and frozen bottles
-```
-
-It shows what it will remove and asks first. It:
-
-1. stops the host controller and each backend's orchestrator and gateway, and
-   removes autostart;
-2. removes each backend's containers, networks, volumes and images, and undoes
-   each backend's privileged setup (on macOS it prints the `sudo` lines for
-   the pf firewall; `--keep-backend` skips this);
-3. removes `~/.cache/bot-bottle` and the package itself (the installer's venv
-   and shim, or `pipx`/`uv tool uninstall`).
-
-Base images it pulled to build on, such as `python` or `node`, stay.
-
-If `bot-bottle` itself won't run, the installer can remove what it installed:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/diderisoft/bot-bottle/main/install.sh | sh -s -- --uninstall
-```
-
-That removes the installer's venv and shim and says what's left.

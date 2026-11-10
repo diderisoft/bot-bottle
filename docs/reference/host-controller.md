@@ -1,126 +1,195 @@
 # Host controller
 
-`control/hostctl/` is the per-host daemon behind every bottle operation. The
-CLI, the orchestrator and remote consoles all go through it
-(PRD 0092, design repo). It runs as the user and adds
-no privilege: it gives every caller one API, and it is not a security
-boundary. Its routes are in
+The host controller is the per-host daemon behind every bottle operation.
+The CLI, the orchestrator and remote consoles all go through it
+(PRD 0092, design repo). Its code is in `control/hostctl/`.
+
+It runs as the user and adds no privilege. It gives every caller one API,
+and it is not a security boundary. Its routes are in
 [runtime-contract.md](runtime-contract.md#host-controller-as-the-orchestrator-sees-it).
 
 ## Running
 
-- `python -m bot_bottle.control.hostctl` binds `127.0.0.1`, on
-  `BOT_BOTTLE_HOSTCTL_PORT` or an ephemeral port. It writes
-  `{pid, port, build_id}` to `~/.bot-bottle/hostctl/`.
+The CLI starts the host controller on demand. You can also run it directly:
+
+```
+python -m bot_bottle.control.hostctl
+```
+
+- It binds `127.0.0.1`, on `BOT_BOTTLE_HOSTCTL_PORT` or an ephemeral port.
+- It writes `{pid, port, build_id}` to `~/.bot-bottle/hostctl/`.
 - The CLI trusts that file only once `GET /status` returns the same pid.
-  `runner.ensure_running` starts the daemon on demand, holding a lock so
-  concurrent CLIs start only one, and restarts a daemon whose `build_id` (a
-  hash of the package's `.py` files) differs from the CLI's. When that daemon
-  holds bottles, a launch asks first ("moves N running bottles to the new
-  version"); a headless or non-terminal launch is refused instead. Other
-  commands keep using the old daemon. `bot-bottle up --restart` restarts it
-  on purpose, with the same question; `--yes` answers it, for scripts and
-  services with no terminal (without either, they're refused). It leaves a
-  current orchestrator and gateway running (`--restart-infra` reboots them;
-  see [backends](backends.md#gateway-restarts)). The daemon also refuses a launch itself
-  once the code on disk no longer matches its `build_id`, so no path (the
-  phone included) runs a launch on mixed code.
-- An upgrade under a running daemon is reported before a launch fails:
-  `bot-bottle status` and `bot-bottle doctor` (which the installer runs) print
-  "restart needed (installed version changed)" with the `up --restart` fix,
-  and the console link's `host_stats.about` carries `restart_needed`. Nothing
-  restarts the daemon on its own.
-- `listeners.py` adds one listener per backend, where that backend's
-  orchestrator guest reaches the host: the docker publish bridge, the macOS
-  control network's vmnet gateway, or the firecracker orchestrator TAP. Each
-  accepts only peers on its link and only guest roles (`orchestrator`,
-  `gateway`). It never binds `0.0.0.0`.
-- `bot-bottle install` can add a launchd LaunchAgent or a `systemd --user`
-  unit (`service_unit.py`). A crash is restarted; a clean exit is not.
-  Stopping the daemon stops only its own process (`KillMode=process`,
-  `AbandonProcessGroup`), so agents outlive a restart. Units installed before
-  this need `bot-bottle install` again.
+- The CLI starts the daemon under a lock, so concurrent CLIs start only one.
+
+### Restarts after an upgrade
+
+The daemon's `build_id` is a hash of the package's `.py` files. The CLI
+restarts a daemon whose `build_id` differs from its own.
+
+| Case | What happens |
+|---|---|
+| The old daemon holds no bottles | The CLI restarts it. |
+| It holds bottles, launch from a terminal | The launch asks first: "moves N running bottles to the new version". |
+| It holds bottles, headless or non-terminal launch | The launch is refused. |
+| It holds bottles, any other command | The command keeps using the old daemon. |
+| `bot-bottle up --restart` | Restarts it on purpose, with the same question. |
+| `bot-bottle up --restart --yes` | Answers the question, for scripts and services with no terminal. Without a terminal or `--yes`, the restart is refused. |
+
+`up --restart` leaves a current orchestrator and gateway running.
+`--restart-infra` reboots them too (see
+[backends](backends.md#gateway-restarts)).
+
+The daemon also refuses a launch itself once the code on disk no longer
+matches its `build_id`. So no path, the phone included, runs a launch on
+mixed code.
+
+An upgrade under a running daemon is reported before a launch fails:
+
+- `bot-bottle status` and `bot-bottle doctor` print "restart needed
+  (installed version changed)" with the `up --restart` fix. The installer
+  runs `doctor`.
+- The console link's `host_stats.about` carries `restart_needed`.
+
+Nothing restarts the daemon on its own.
+
+### Listeners for the guests
+
+The host controller adds one listener per backend, where that backend's
+orchestrator guest reaches the host. It never binds `0.0.0.0`.
+
+| Backend | Listens on |
+|---|---|
+| docker | the publish bridge |
+| macos-container | the control network's vmnet gateway |
+| firecracker | the orchestrator TAP |
+
+Each listener accepts only peers on its link. It accepts only the guest
+roles, `orchestrator` and `gateway`.
+
+### As a service
+
+`bot-bottle install` can add a launchd LaunchAgent or a `systemd --user`
+unit. A crash is restarted. A clean exit is not.
+
+Stopping the daemon stops only its own process (`KillMode=process`,
+`AbandonProcessGroup`). So agents outlive a restart. Units installed before
+this need `bot-bottle install` again.
 
 ## Jobs
 
-Launch, teardown and orchestrator bring-up run as jobs (`jobs.py`). Each job
-runs in its own thread with its output captured as events: `log` lines, then
-one `result` or `error`. Clients stream them from `GET /jobs/{id}/events`.
-Jobs are held in memory and dropped `RETENTION_SECONDS` after they finish.
+Launch, teardown and orchestrator bring-up run as jobs. Clients stream a
+job's output from `GET /jobs/{id}/events`.
 
-`bottles.py` runs a launch job. It prepares the plan without prompting (the
-CLI has already asked everything), then hands it to a holder thread that
-stays inside `backend.launch(plan)` for the bottle's life and tears it down
-when the agent exits. A launch the host's budget can't fit is refused
-before it boots ([Bottles' budget](#bottles-budget)).
+- Each job runs in its own thread.
+- Its output is captured as events: `log` lines, then one `result` or
+  `error`.
+- Jobs are held in memory. They're dropped `RETENTION_SECONDS` after they
+  finish.
+
+A launch job prepares the plan without prompting, since the CLI has already
+asked everything. It then hands the plan to a holder thread. That thread
+stays inside `backend.launch(plan)` for the bottle's life, and tears the
+bottle down when the agent exits.
+
+A launch the host's budget can't fit is refused before it boots (see
+[Bottles' budget](#bottles-budget)).
 
 ## Sessions
 
-Each agent runs in tmux on bot-bottle's own tmux server, never the user's
-(`sessions.py`):
+Each agent runs in tmux, on bot-bottle's own tmux server, never the user's.
+Secrets never reach tmux's argv or environment.
 
-- The pane runs `launch.py`, which fetches the real command and env over a
-  0600 Unix socket (`localsock.py`) once. Secrets never reach tmux's argv or
-  environment.
+- The pane runs `launch.py`. It fetches the real command and env once, over
+  a 0600 Unix socket (`localsock.py`).
 - tmux's `pane-died` hook runs `notify.py` to report the exit. The session's
   finisher then runs, and tmux detaches every viewer.
-- Session records are written to disk. A restarted daemon re-adopts live
-  sessions and finishes ones that died while it was down. It then re-takes
-  what running bottles hold in its process (`BottleBackend.hold_adopted`): on
-  Firecracker, the TAP slot lock of each agent VM, whose VMM runs in its own
-  session for this reason. A re-adopted session has no holder thread, so the
-  holder leaves an `adoption.json` in the bottle's state dir at launch
-  (`backend/adoption.py`: container name, registry id, workspace layout,
-  deploy-key references; no secrets). When an adopted session ends, the daemon
-  saves the agent's work, tears the bottle down through
-  `BottleBackend.adopted_bottle`, and revokes its deploy keys with tokens from
-  the secrets file. A token that was only in the launching CLI's environment
-  can't be found then, so that key is reported for revoking by hand. Without a
-  record, `bot-bottle cleanup bots` removes the bottle.
-- `requests.py` polls the environment's orchestrator (the one its last
-  bring-up recorded; [architecture.md](architecture.md#components)) for
-  pending supervise proposals and shows a one-line summary in the session's
-  tmux status bar, outside the agent's pane where the agent can't fake or hide
-  it. Each proposal is tagged with that orchestrator's URL, and the terminal
-  popup and the phone send its answer back there.
-- `blocks.py` hears the gateway's block events as the journal writes them
-  (`HostAudit.listen`) and shows them in the same bar
-  (PRD 0099, design repo). Each block shows for five
-  seconds as `⊘ <host> · <reason>`; a burst shows the newest with `(+N)`,
-  and a notice stays up at most ten seconds (then five seconds without one,
-  so a retry loop can't keep it up). The session's counts by reason
-  stay beside it as a letter and a number (`A12 S3 P1`):
+- Session records are written to disk, so a restarted daemon can take the
+  sessions back.
 
-  | Letter | Reason (`reason_code`) |
-  |---|---|
-  | A | not on allowlist (`allowlist`) |
-  | R | outside the route's `matches`, or git over HTTPS (`route`) |
-  | S | a secret in the request (`secret`) |
-  | I | an unsafe response (`inbound`) |
-  | M | a malformed request (`request`) |
-  | D | you denied it (`denied`) |
-  | P | git-gate rejected a push (`push`) |
-  | C | bottle config: a token unset, an unattributed request (`config`) |
-  | ? | an event without a code |
+### After a daemon restart
 
-  The bar fits each client (`#{client_width}`): the notice's reason and the
-  detach hint need 150 columns, and under 100 the request summary is cut.
-- `block_link.py` sends the same blocks to the console, for the shield on the
-  agent's page. They're alerts, not requests: nothing waits on them. Every
-  couple of seconds the link sends `blocked` per running agent, host and
-  reason, merged with a `count`, at most 20 at a time: `agent_id`, `host`,
-  `reason` (the code above), `at`, and, for a secret or a rejected push,
-  `detail`, the gateway's own words (they name the detector, never the
-  value). Never a path or a body, which can hold the secret. A connection
-  that opens sends the last five minutes' blocks. The audit journal keeps
-  the record.
-- A launch's warnings (an isolation gap, a stale image) stay on the session
-  as `@bb_warning` and show in amber before the detach key, shortened to the
-  first warning's first clause and a count of the rest: up to 70 columns,
-  30 under 100. A pending request takes their place.
-  Counts live in memory and reset when the session or the daemon restarts.
+A restarted daemon re-adopts live sessions. It finishes the ones that died
+while it was down. Without a record, `bot-bottle cleanup bots` removes the
+bottle.
 
-Viewers:
+It then re-takes what running bottles hold in its process
+(`BottleBackend.hold_adopted`). On Firecracker, that is the TAP slot lock of
+each agent VM. Each VM's VMM runs in its own session for this reason.
+
+A re-adopted session has no holder thread. So at launch the holder leaves an
+`adoption.json` in the bottle's state dir (`backend/adoption.py`). It holds
+no secrets:
+
+- the container name
+- the registry id
+- the workspace layout
+- deploy-key references
+
+When an adopted session ends, the daemon:
+
+1. saves the agent's work
+2. tears the bottle down through `BottleBackend.adopted_bottle`
+3. revokes its deploy keys, with tokens from the secrets file
+
+A token that was only in the launching CLI's environment can't be found
+then. That key is reported for revoking by hand.
+
+### Status bar
+
+The session's tmux status bar shows pending requests, blocked requests and
+launch warnings. It sits outside the agent's pane, where the agent can't
+fake or hide it.
+
+**Requests.** The host controller polls the environment's orchestrator for
+pending supervise proposals. It shows a one-line summary in the bar.
+
+- The orchestrator is the one the environment's last bring-up recorded (see
+  [architecture.md](architecture.md#components)).
+- Each proposal is tagged with that orchestrator's URL. The terminal popup
+  and the phone send the answer back there.
+
+**Blocks.** The bar shows the gateway's block events as the audit journal
+writes them, through `HostAudit.listen`. The design is PRD 0099 (design
+repo).
+
+- Each block shows for five seconds as `⊘ <host> · <reason>`.
+- A burst shows the newest, with `(+N)`.
+- A notice stays up at most ten seconds. Then the bar shows five seconds
+  without one, so a retry loop can't keep it up.
+- The session's counts by reason stay beside it, as a letter and a number:
+  `A12 S3 P1`.
+- Counts live in memory. They reset when the session or the daemon
+  restarts.
+
+| Letter | Reason (`reason_code`) |
+|---|---|
+| A | not on allowlist (`allowlist`) |
+| R | outside the route's `matches`, or git over HTTPS (`route`) |
+| S | a secret in the request (`secret`) |
+| I | an unsafe response (`inbound`) |
+| M | a malformed request (`request`) |
+| D | you denied it (`denied`) |
+| P | git-gate rejected a push (`push`) |
+| C | bottle config: a token unset, an unattributed request (`config`) |
+| ? | an event without a code |
+
+The console gets the same blocks, for the shield on the agent's page (see
+[Blocks](#blocks)).
+
+**Launch warnings.** A launch's warnings stay on the session as
+`@bb_warning`. Examples are an isolation gap or a stale image.
+
+- They show in amber, before the detach key.
+- They're shortened to the first warning's first clause and a count of the
+  rest.
+- They take up to 70 columns, or 30 when the client is under 100 columns.
+- A pending request takes their place.
+
+**Width.** The bar fits each client's width (`#{client_width}`). The
+notice's reason and the detach hint need 150 columns. Under 100 columns,
+the request summary is cut.
+
+### Viewers
 
 | Viewer | Code | Transport |
 |---|---|---|
@@ -129,404 +198,287 @@ Viewers:
 | remote console | `console_terminal.py` | an iroh stream |
 
 Every non-local viewer starts read-only. It can type only if the agent's
-manifest sets `remote.writable`. The starter agents `bot-bottle setup` writes
-set it, so a paired phone can talk to them; an agent written by hand is
-view-only unless it says so.
+manifest sets `remote.writable`.
 
-The console's relay is one tmux client per agent, sized by the console's
-`resize` (the most recent viewer's terminal). The link keeps the last size
-asked for each running agent and opens every new relay at it: a relay
-reopened after a broken stream would otherwise start at tmux's default, and
-a terminal of a different size draws its output garbled.
+The starter agents that `bot-bottle setup` writes set it, so a paired phone
+can talk to them. An agent written by hand is view-only unless it says so.
 
 ## Transcripts
 
-The daemon copies each session's harness transcript to the host as it's
-written (`transcripts.py`; PRD 0095, design repo).
-pi, Claude and Codex declare one (`AgentProvider.transcript_glob`); a
-provider that doesn't isn't followed. `bot_bottle/transcript.py` holds the
-entry type the parsers share (`contrib/<harness>/transcript.py`), with
-`AgentProvider.active_entries` choosing the branch a tree-shaped transcript
-(pi, Claude) has active.
+The host controller copies each session's harness transcript to the host as
+it's written (PRD 0095, design repo). The copy is kept exactly as read,
+unparsed and unmasked.
 
-- At launch a follower notes the files already matching the glob (another
-  session's, never copied) and writes `follow.json`. A resume (the bottle's
-  home kept, its harness continuing its last conversation, as Claude's
-  `--continue` appends to the file it was writing) notes each file's size
-  instead, in `follow.json` as `start`: what the agent adds to a file is
-  copied from there, the earlier run's copy holding the rest. Then, once a second and
-  once more after the agent exits, one `exec` into the bottle reads each new
-  file's new bytes by offset (up to 4 MiB a poll) and the 64 bytes before
-  the offset. A quiet transcript is polled less often, doubling up to every 5
-  seconds; new bytes, or the console typing into the agent, bring it back to
-  every second. The poll's script (paths and offsets) goes as an argument,
-  not on stdin: on macOS every `container exec --interactive` leaks a pipe in
-  the bottle's runtime ([apple/container#2439](https://github.com/apple/container/issues/2439)),
-  which polled each second ran the host out of open files. That `exec` gives up after 60 seconds, so a wedged one can't
-  hold the follower, or the teardown waiting to close it. The daemon's other
-  background `exec`s are bounded too (reading a bottle's secret, exporting a
-  workspace's changes).
-- The bytes are appended exactly as read to
-  `~/.bot-bottle/transcripts/<session>/<activation>/<file>.jsonl` (0600, in
-  0700 directories), with
-  `<file>.meta.json` beside it: the guest path, the offset read, the guest
-  offset the copy starts at (`start`, for a resumed run's copy) and the
-  console agent id (the console's for a console launch, otherwise
-  `terminal_agent_id`). The copy isn't parsed or masked; entries are parsed
-  when read (`AgentProvider.parse_transcript`).
-- A guest file that shrinks, or whose bytes before the offset changed, keeps
-  its copy as it was; the file is copied again from its start to
-  `<file>.rewrite-<n>.jsonl`, with a `transcript.rewritten` audit event.
-- `transcript.captured` records a copy's size and running SHA-256 every five
-  minutes while it grows, when a restarted daemon resumes it, and when it
-  closes (`final: true`). The payload
-  marks it `agent-claimed`: the harness writes the file inside the bottle,
-  so it's the agent's account, not evidence. The guest path is under
-  `untrusted`.
-- `transcript_retention.py` deletes a run's copies once the run is closed
-  and unchanged for the host's retention (`bot-bottle audit
-  transcript-retention [DAYS]`, default 30), at start and daily after, with
-  a `transcript.deleted` event listing each copy's size and SHA-256.
-- The console reads a conversation over the link (`transcript_serve.py`):
-  `transcript` returns a page of the agent's entries, on the harness's
-  active branch. Each session file (a `/clear` starts a new one) is put
-  together from its copies across the bottle's runs in the order they were
-  made: a resumed run's copy continues at its `start`, a rewrite starts the
-  file over. An entry's `seq` is its place in its file plus a stride per
-  earlier session, so it never moves or names another entry. A page is from
-  the current session (since the last `/clear`), with `first` and `last`
-  bounding it; a cursor (`before`, `around`) into an earlier session, such
-  as a search hit from before a `/clear`, `all: true`, or a current session
-  with nothing in it yet reads the whole history instead. `scope` says which
-  (`current` or `all`); seqs are the same in both. And
-  `transcript_appended` tells it when more landed. Entries are parsed when
-  read and masked before they leave the host, with the egress scanner's
-  `redact_tokens`: token patterns, and every value in the host's secrets
-  file in its common encodings. The copy itself stays as read.
-  `transcript_search` finds the newest entries containing a query
-  (case-insensitive, over the masked text, so a query can't confirm a
-  secret), optionally of given kinds, with a snippet around each match.
-- `agent_working` tells the console whether a running agent is working on
-  a prompt, sent when that changes (and once per agent on each connect).
-  The harness decides from the newest lines of its copy
-  (`AgentProvider.working`): Claude's turn ends at `turn_duration` or a reply
-  that ends the turn, and starts with a prompt or a tool call; Codex's runs
-  from `task_started` to `task_complete` or `turn_aborted`. A harness without
-  markers (the default) counts as working while its copy grew within the last
-  20 seconds. It's the agent's own output, so it's an indicator for the
-  console only, never a security decision.
-- `host_stats` reports this host's storage and memory on each connect and
-  every 60 seconds (`host_stats.py`), host-wide and against the bottles'
-  budget (see [Bottles' budget](#bottles-budget)), all in bytes:
+pi, Claude and Codex declare a transcript (`AgentProvider.transcript_glob`).
+A provider that doesn't isn't followed.
 
-  ```
-  {"storage": {"used", "total", "cap"},
-   "memory": {"used", "total", "cap"},
-   "budget": {
-     "memory": {"allocated", "budget", "bottle_size",
-                "bottles": [{"id", "label", "memory", "cpu_pct", "mem_used"}]},
-     "storage": {"used", "budget",
-                 "categories": {"vm_disks", "images", "workspaces", "transcripts"},
-                 "unmeasured": ["<runtime>: <why>"]}},
-   "about": {"os", "backend", "version", "commit", "restart_needed"},
-   "forge_alerts": [{"key", "kind", "forge", "message", "since"}]}
-  ```
+Each copy is kept at:
 
-  The host-wide `storage` covers the filesystems holding the state root and
-  the caches, each counted once; `memory` is what the kernel reports in use
-  (`MemTotal - MemAvailable` on Linux; free and inactive pages on macOS).
-  `cap` repeats the budget for consoles that predate the `budget` block. A
-  budget of 0 means none is set. `budget.storage` is left out until the
-  first storage walk after the daemon starts. `about.restart_needed` is true
-  once bot-bottle was upgraded under the running daemon: it refuses launches
-  until `bot-bottle up --restart`.
+```
+~/.bot-bottle/transcripts/<session>/<activation>/<file>.jsonl
+```
 
-  `forge_alerts` are forge tokens that stopped working for good, one per
-  credential (`key` is the host secret's name), oldest first
-  (`bot_bottle/forge_alerts.py`). `kind` is `github_reauthorize` (the GitHub
-  authorization can't be renewed: its refresh token expired or was revoked;
-  raised by the git-gate token renewer) or `gitea_token_refused` (the forge
-  answered 401/403 when a launch, grant or teardown used the token). Each is
-  raised once per failure state and cleared when the credential works again
-  or is replaced (`forge connect`); network trouble is only a warning. They
-  live in the host controller's memory: after a restart the next renewal or
-  launch raises them again.
+The file is 0600, in 0700 directories. A `<file>.meta.json` beside it
+holds:
 
-  `about` is what the host's console page says about it: its OS (`macOS`,
-  or a Linux's `NAME` from `/etc/os-release`), the backend its last
-  bring-up recorded (`""` before one) and this install's version and short
-  commit (as `bot-bottle version` prints them).
+- the guest path
+- the offset read
+- `start`: the guest offset the copy starts at, for a resumed run's copy
+- the console agent id: the console's for a console launch, otherwise
+  `terminal_agent_id`
 
-  Each running bottle's `cpu_pct` and `mem_used` (bytes) are left out when
-  they can't be read (`bottle_metrics.py`). CPU % is a share of the
-  bottle's CPUs, 0-100: a Firecracker VM's vCPUs from its `config.json`
-  (one busy vCPU of two is 50%), and a container's `stats` figure capped at
-  100, since bottles set no container CPU limit to scale it by.
-- `metrics_watch` (`bottles`: bottle ids) replaces the link's watched set,
-  for the console's live gauge on the bottles someone is looking at; an
-  empty list stops it. While it's non-empty the link samples the watched
-  bottles it has running in one pass every 3 seconds, on every backend, and
-  sends `bottle_metrics` (`at`, `bottles`: `id`, `cpu_pct`, `mem_used`,
-  `memory`) (`live_metrics.py`). The interval leaves room for a container's
-  `stats` call (1-2 s each); a pass still running when the next is due skips
-  it. The set is the connection's, capped at 32: a reconnecting console
-  sends it again. The live samples keep their own CPU baseline, so the
-  minute `host_stats` figure still covers its whole minute.
-- A restarted daemon resumes each re-adopted session's copies from the
-  saved offsets, exec'ing through `BottleBackend.attach_adopted` (which
-  never tears the bottle down). Copies of sessions that ended while it was
-  down close with what they have.
+Entries are parsed when read, by `AgentProvider.parse_transcript`. The
+console reads them masked, over the link (see
+[Reading transcripts](#reading-transcripts)).
+
+| Audit event | When |
+|---|---|
+| `transcript.captured` | A copy's size and running SHA-256. Every five minutes while it grows, when a restarted daemon resumes it, and when it closes (`final: true`). |
+| `transcript.rewritten` | A guest file shrank, or its bytes before the offset changed. |
+| `transcript.deleted` | Retention deleted a run's copies. Lists each copy's size and SHA-256. |
+
+`transcript.captured` marks its payload `agent-claimed`. The harness writes
+the file inside the bottle, so it's the agent's account, not evidence. The
+guest path is under `untrusted`.
+
+**Rewrites.** When a guest file shrinks, or its bytes before the offset
+change, its copy is kept as it was. The file is copied again from its start
+to `<file>.rewrite-<n>.jsonl`.
+
+**Retention.** A run's copies are deleted once the run is closed and
+unchanged for the host's retention. That is 30 days by default. Set it
+with:
+
+```
+bot-bottle audit transcript-retention [DAYS]
+```
+
+The check runs at start and daily after.
+
+**After a restart.** A restarted daemon resumes each re-adopted session's
+copies from the saved offsets. It execs through
+`BottleBackend.attach_adopted`, which never tears the bottle down. Copies
+of sessions that ended while it was down close with what they have.
+
+### Details
+
+At launch, a follower notes the files already matching the glob. Those are
+another session's, and they're never copied. It writes `follow.json`.
+
+A resume keeps the bottle's home, and its harness continues its last
+conversation. Claude's `--continue`, for example, appends to the file it
+was writing.
+
+- For a resume, the follower notes each file's size instead, in
+  `follow.json` as `start`.
+- What the agent adds to a file is copied from there.
+- The earlier run's copy holds the rest.
+
+Polling:
+
+- The follower polls once a second, and once more after the agent exits.
+- Each poll is one `exec` into the bottle. It reads each new file's new
+  bytes by offset, up to 4 MiB a poll, plus the 64 bytes before the offset.
+- A quiet transcript is polled less often, doubling up to every 5 seconds.
+- New bytes, or the console typing into the agent, bring it back to every
+  second.
+- That `exec` gives up after 60 seconds. So a wedged one can't hold the
+  follower, or the teardown waiting to close it.
+
+The poll's script, its paths and offsets, goes as an argument, not on stdin.
+On macOS every `container exec --interactive` leaks a pipe in the bottle's
+runtime ([apple/container#2439](https://github.com/apple/container/issues/2439)).
+Polled each second, that ran the host out of open files.
+
+The daemon's other background `exec`s are bounded too. These are reading a
+bottle's secret and exporting a workspace's changes.
+
+`bot_bottle/transcript.py` holds the entry type the parsers share. The
+parsers are in `contrib/<harness>/transcript.py`. A tree-shaped transcript,
+as pi's and Claude's are, has an active branch.
+`AgentProvider.active_entries` chooses it.
 
 ## Bottles' budget
 
-`bot-bottle host budget --memory GB --disk GB` sets what bottles may use on
-this host (0 clears one; no flags shows them). It's stored in the host DB and
-read at each launch and each `host_stats` report, so a change applies at once.
-`bot-bottle host caps` is its deprecated old name.
+The budget sets what bottles may use on this host:
 
-- **Memory is allocation.** A bottle is given 2 GiB (`backend/bottle_size.py`)
-  unless its `resources:` say otherwise ([backends.md](backends.md#memory-and-vcpus)):
-  a firecracker VM's memory, a macOS container's `--memory`, a Docker agent's
-  `mem_limit`. The session record keeps what each was given (`memory`), and
-  allocated is the sum over the bottles running: held, adopted after a restart,
-  launching, or with a running session. A bottle recorded before `resources:`
-  counts at 2 GiB. A VM usually uses less than it's given, so
-  allocation can sit well above the host-wide figure.
-- **Storage is bot-bottle's own directories, plus what the container
-  runtimes hold for it.** The directories are the state root and the
-  artifact and firecracker caches, in allocated blocks (a sparse VM disk
-  counts what it holds). Every runtime on the PATH is asked too
-  (`backend/runtime_store.py`): Docker through `docker system df -v`, Apple
-  `container` through `container image list` and its store under
-  `~/Library/Application Support/com.apple.container` (`containers/`,
-  `volumes/`). A background thread (`budget.StorageMeter`) measures every
-  five minutes; launches read the last result and never measure.
-  Categories: `vm_disks` (firecracker run dirs, the infra VMs' disks, kept
-  `home.ext4` disks, and this environment's Docker or `container` containers'
-  writable layers and volumes, by its resource prefix), `transcripts`
-  (transcripts, audit, logs), `images` (the rest of the caches, the build
-  root, and the runtimes' `bot-bottle-*` images), `workspaces` (the rest of
-  the state root). A runtime image's unique bytes count, and the layers it
-  shares count once (the largest share), so runtime images are an estimate.
-  Docker's build cache isn't attributable and isn't counted. The caches and
-  runtime images are shared by every environment on the host. A runtime that
-  can't be asked is listed in `budget.storage.unmeasured` (`"docker: <why>"`)
-  rather than counted as zero.
+```
+bot-bottle host budget --memory GB --disk GB
+```
 
-`BottleService._launch` admits a launch against the budget after preparing
-it and before booting, one admission at a time (so two launches can't both
-take the last room); an admitted bottle counts as launching until its holder
-takes it. It refuses, failing the launch job (the console sees
-`agent_errored` with the message):
+- 0 clears a limit. No flags shows them.
+- It's stored in the host DB.
+- It's read at each launch and each `host_stats` report, so a change
+  applies at once.
+- `bot-bottle host caps` is its deprecated old name.
 
-- when the bottle's memory doesn't fit: "<label> needs 2 GB of memory; 0 GB
-  left in the 8 GB budget. Stop a bottle (`bot-bottle bots`) or raise the
-  budget (`bot-bottle host budget --memory …`)."
-- when bot-bottle's storage is over its budget, naming
-  `bot-bottle cleanup images` to free cached images.
+### Memory is allocation
 
-At 90% of the storage budget or more, a launch goes ahead with a warning. No
-budget set, no check.
+A bottle is given 2 GiB unless its `resources:` say otherwise (see
+[backends.md](backends.md#memory-and-vcpus)).
+
+| Backend | What is set |
+|---|---|
+| firecracker | the VM's memory |
+| macos-container | the container's `--memory` |
+| docker | the agent's `mem_limit` |
+
+The session record keeps what each bottle was given, as `memory`. A bottle
+recorded before `resources:` counts at 2 GiB.
+
+Allocated memory is the sum over the bottles running. That counts bottles
+that are held, adopted after a restart, launching, or with a running
+session.
+
+A VM usually uses less than it's given. So allocation can sit well above
+the host-wide figure.
+
+### Storage is bot-bottle's own
+
+Storage counts bot-bottle's own directories, plus what the container
+runtimes hold for it. A background thread measures it every five minutes.
+Launches read the last result and never measure.
+
+The directories are the state root and the artifact and firecracker caches.
+They count in allocated blocks, so a sparse VM disk counts what it holds.
+
+Every runtime on the PATH is asked too:
+
+| Runtime | Asked through |
+|---|---|
+| Docker | `docker system df -v` |
+| Apple `container` | `container image list`, and its store under `~/Library/Application Support/com.apple.container` (`containers/`, `volumes/`) |
+
+| Category | Holds |
+|---|---|
+| `vm_disks` | firecracker run dirs, the infra VMs' disks, kept `home.ext4` disks, and this environment's Docker or `container` containers' writable layers and volumes, by its resource prefix |
+| `transcripts` | transcripts, audit, logs |
+| `images` | the rest of the caches, the build root, and the runtimes' `bot-bottle-*` images |
+| `workspaces` | the rest of the state root |
+
+Limits of the count:
+
+- A runtime image's unique bytes count. The layers it shares count once,
+  at the largest share. So runtime images are an estimate.
+- Docker's build cache isn't attributable, and isn't counted.
+- The caches and runtime images are shared by every environment on the
+  host.
+- A runtime that can't be asked is listed in `budget.storage.unmeasured`
+  as `"docker: <why>"`. It isn't counted as zero.
+
+### Launch admission
+
+A launch is checked against the budget after it's prepared and before it
+boots. One launch is admitted at a time, so two launches can't both take
+the last room.
+
+| Case | Result |
+|---|---|
+| The bottle's memory doesn't fit | Refused: "<label> needs 2 GB of memory; 0 GB left in the 8 GB budget. Stop a bottle (`bot-bottle bots`) or raise the budget (`bot-bottle host budget --memory …`)." |
+| bot-bottle's storage is over its budget | Refused, naming `bot-bottle cleanup images` to free cached images. |
+| Storage at 90% of the budget or more | Goes ahead with a warning. |
+| No budget set | No check. |
+
+A refusal fails the launch job. The console sees `agent_errored` with the
+message. An admitted bottle counts as launching until its holder takes it.
 
 ## Forwarded host logins
 
-A bottle with `agent_provider.forward_host_credentials` gets the host's Claude
-or Codex login read once at launch; the gateway injects it and the agent holds
-a placeholder. The host's own CLI keeps refreshing its login, so every five
-minutes the host controller re-reads it through the provider
-(`AgentProvider.refresh_credentials`, `control/hostctl/credential_refresh.py`)
-and pushes a value that changed to the orchestrator that registered the
-bottle, the environment's recorded one (`POST /bottles/<id>/secret`), which the
-gateway reads per request. A push that orchestrator can't take (down, a
-rejected key, an unknown bottle) fails naming it. Only an environment with no
-orchestrator recorded yet (brought up before bring-ups recorded one) tries
-each listening orchestrator in turn, treating a 401/403, a 404 or no answer as
-"not this one", and fails only when none accepted, listing each URL and why. Codex's
-placeholder `auth.json` in the guest carries the real token's expiry, so it's
-rewritten when that moves.
+The host controller keeps a forwarded Claude or Codex login fresh in the
+bottles that use it. A bottle opts in with
+`agent_provider.forward_host_credentials`.
 
-The host's CLI revokes the old access token the moment it rotates its login,
-so the timer alone left bottles on a revoked token (`401 OAuth access token has
-been revoked`) for up to five minutes. The host controller also watches the
-files each provider names (`AgentProvider.host_login_paths`: Claude's
-`~/.claude/.credentials.json`, Codex's `auth.json`) every five seconds. When
-one changes and reads whole (a half-written file waits for the next look), the
-bottles forwarding that harness's login are refreshed at once, through the
-same path. The timer stays as the backstop, and is all a login kept outside a
-file gets (the macOS Keychain).
+The login is read once at launch. The gateway injects it, and the agent
+holds a placeholder. The host's own CLI keeps refreshing its login, so the
+host controller re-reads it:
 
-This covers bottles the host controller launched and those it adopted after a
-restart: the adoption record keeps which egress slots carry the login (nothing
-secret), and the bottle's `ENV_VAR_SECRET` is read back from inside it. A host
-login that's missing, expired or within six hours of expiring is logged once,
-with what to run on the host, and audited as `credential.renew_failed`; a
-refresh is audited as `credential.renewed`. bot-bottle doesn't spend the host's
-refresh token itself (#769).
+| Trigger | How often |
+|---|---|
+| The login file changed | checked every five seconds |
+| A timer | every five minutes |
 
-## Snapshots
+**The file watch.** The host's CLI revokes the old access token the moment
+it rotates its login. The timer alone left bottles on a revoked token
+(`401 OAuth access token has been revoked`) for up to five minutes.
 
-The console's snapshot button asks the link for `snapshot`
-(`snapshots.py`): the host attaches to the running bottle through its
-adoption record (`BottleBackend.attach_adopted`), takes the copied git
-workspace's patch since launch (the patch teardown saves), and keeps it as
-`~/.bot-bottle/snapshots/<session>/<activation>/<taken>.patch` (0600) with a
-`.json` record: when, the conversation's newest `seq` then, files and lines
-changed, size and SHA-256. Each is audited as `snapshot.taken`. A workspace
-that isn't a git copy can't be snapshotted. Restoring is not built yet.
+- The host controller watches the files each provider names
+  (`AgentProvider.host_login_paths`).
+- Those are Claude's `~/.claude/.credentials.json` and Codex's `auth.json`.
+- When one changes and reads whole, the bottles forwarding that harness's
+  login are refreshed at once, through the same path. A half-written file
+  waits for the next look.
+- The timer stays as the backstop. It is all a login kept outside a file
+  gets, such as one in the macOS Keychain.
+
+**The push.** A value that changed is pushed to the orchestrator that
+registered the bottle (`POST /bottles/<id>/secret`). That is the
+environment's recorded orchestrator. The gateway reads the value per
+request.
+
+- A push that orchestrator can't take fails, naming it. It can be down,
+  reject the key, or not know the bottle.
+- An environment brought up before bring-ups recorded an orchestrator has
+  none recorded. Only then does the host controller try each listening
+  orchestrator in turn.
+- It treats a 401/403, a 404 or no answer as "not this one". It fails only
+  when none accepted, listing each URL and why.
+
+Codex's placeholder `auth.json` in the guest carries the real token's
+expiry. So it's rewritten when that moves.
+
+### Details
+
+This covers bottles the host controller launched and those it adopted after
+a restart. The adoption record keeps which egress slots carry the login,
+which is nothing secret. The bottle's `ENV_VAR_SECRET` is read back from
+inside it.
+
+A host login that's missing, expired or within six hours of expiring is
+logged once, with what to run on the host. It's audited as
+`credential.renew_failed`. A refresh is audited as `credential.renewed`.
+
+bot-bottle doesn't spend the host's refresh token itself (#769).
 
 ## Bottle suggestions
 
-Every bottle suggestion runs here, in the host controller, which keeps the
-bottle architect's own bottle warm (`architect_bottle.py`;
-[bottles-suggest.md](bottles-suggest.md#bottle-architect-default)). The CLI
-asks over HTTP, `cli` role only: `POST /suggest` (`task`, optional `cwd`,
-`rules`, `settings`, and `turns`, the conversation so far after a reply) starts a `bottle.suggest` job whose `result` is
-`{"proposal": ...}`, and `POST /architect/warm` (`settings`) boots the warm
-bottle in the background and answers its `state` (`booting`, `ready`,
-`down`, or `unavailable`). The host controller boots the bottle when it
-starts and keeps it up (`BOT_BOTTLE_ARCHITECT_ALWAYS_ON`, the default; 512
-MiB, one CPU). Without it, `bot-bottle start` sends the warm request as soon
-as it starts and the bottle stays up `BOT_BOTTLE_ARCHITECT_IDLE` seconds
-(default 600) after its last suggestion. Either way the host controller
-tears it down when it stops, and replaces one removed from under it on the
-next suggestion. Its start and stop are audited like any bottle's, with agent
-`bottle-architect`.
+Every bottle suggestion runs in the host controller. It keeps the bottle
+architect's own bottle warm (see
+[bottles-suggest.md](bottles-suggest.md#bottle-architect-default)).
 
-### For the console
+The CLI asks over HTTP, with the `cli` role only:
 
-The console's launch page asks the host to propose a bottle for a task
-(`suggest_link.py`). `bottle_suggest` (`task`, optional
-`cwd`) -> `bottle_suggestion` (`job`, `state` `running`, or `error`) starts
-the same flow as `bot-bottle bottles suggest`: `bottle-architect` in its
-warm bottle, falling back to the rules path, validated against the host's
-bottles ([bottles-suggest.md](bottles-suggest.md)). `cwd` is a project
-directory on this host (an existing directory under the user's home, not the
-home itself); with it the proposal sees the project's bottle, origin and
-lockfiles, and without it the proposal says it had no project to look at. It
-runs off the link, so the reply comes at once; at most four run at a time, and
-one still running after 150 seconds is reported failed.
-`bottle_suggest_status` (`job`) -> `bottle_suggestion` follows it: `state`
-`running`, `done` with `proposal` (its `option`, the `bottles` it stacks, a
-`new_bottle` name, extends and about, whether it `writes` a bottle, and the
-`egress` hosts, `repos`, `env` names and `credentials` names and routes it
-adds — never a secret's value — plus `similar`, `notes` and `source`,
-`architect` or `rules`; and the guided start's review: the `gist`,
-the `new` grants, `connect` (each forge to connect first, with the `forge
-connect` command to run here) and `edits`, each pending edit to another
-bottle with its `bottle`, what it `adds`, `why`, the forges it `waits_on`
-and its `diff`), or `error`; with `replies` (what was said so far) and
-`decided` (each accepted edit, as written).
-`bottle_suggestion_edit` (`job`, `decision` `accept` or `skip`) ->
-`bottle_suggestion` decides the first pending edit: accepted, it's written
-here as `bot-bottle start` writes it (a project bottle trusted, a host
-bottle a new version, comments kept), and the proposal is validated again.
-`bottle_suggestion_reply` (`job`, `reply`) -> `bottle_suggestion` asks the
-architect again on the same job, the conversation replayed (at most eight
-replies).
-`bottle_suggestion_accept` (`job`, optional `name`) ->
-`bottle_suggestion_accepted` (`bottles`, `written`, or `error`) writes the
-bottle the host proposed, if it makes one, into the host's bottles as a new
-version, and answers the bottles to launch with: the existing ones for a
-reuse or stack, those plus the new one for additions, or just the new one.
-It refuses while an edit is pending.
-These suggestion actions take no manifest from the console: they write only
-what this host proposed. Other console actions do write bottles and secrets
-from what the console sends; see [What pairing lets the console
-do](#what-pairing-lets-the-console-do). A finished job is kept ten minutes.
+| Request | Body | Does |
+|---|---|---|
+| `POST /suggest` | `task`, optional `cwd`, `rules`, `settings`, and `turns` | Starts a `bottle.suggest` job whose `result` is `{"proposal": ...}`. |
+| `POST /architect/warm` | `settings` | Boots the warm bottle in the background and answers its `state`: `booting`, `ready`, `down` or `unavailable`. |
 
-## GitHub through the bot-bottle app
+`turns` is the conversation so far, after a reply.
 
-The console connects github.com through the bot-bottle GitHub App's device
-flow (ADR 0012, `github_connect.py`): `github_authorize_start` ->
-`github_authorize` (`user_code`, `verification_uri`, `expires_in`, or `error`)
-starts it; the host then polls GitHub itself and records the connection in
-`forges.md` when the operator enters the code. `github_status` -> `github_status` follows it: the
-app's `app` slug and `install_url`, `client_id_set`, the flow's `flow`
-(`state` `idle`, `waiting` with the code, `connected` with `login`, or `error`)
-`connected` (each user connected on github.com through the app: `login`,
-`default`, and the app's `installations`
-— `id`, `account`, `repository_selection` — or `error`), and `needs_install`
-(authorized, but the app is installed nowhere). It asks GitHub each time, so
-the console can poll it while the operator installs the app. The token never
-reaches the console. An agent's `forge-connect`
-for github.com gets a card with the install link and the `github_authorize`
-option, never a token field; once GitHub is connected, the request is refused
-with a note to use `add-repo`. An `add-repo` card for a repo the token can't
-reach carries `install:`; one whose authorization is gone carries
-`reauthorize:` and `github_authorize` beside the grant options. While either
-is shown (or a `create-repo` card whose owner lacks the app, or its Administration permission, with `install:`), the host asks GitHub again every ten seconds for fifteen minutes
-(`remote_actions.card_changed`) and raises the card again when that changes,
-so it turns grantable once the app is installed.
+The warm bottle:
 
-## Workspace images
+- By default the host controller boots it when it starts, and keeps it up
+  (`BOT_BOTTLE_ARCHITECT_ALWAYS_ON`). It has 512 MiB and one CPU.
+- Without always-on, `bot-bottle start` sends the warm request as soon as
+  it starts. The bottle stays up `BOT_BOTTLE_ARCHITECT_IDLE` seconds after
+  its last suggestion, 600 by default.
+- Either way, the host controller tears it down when it stops.
+- It replaces one removed from under it on the next suggestion.
+- Its start and stop are audited like any bottle's, with agent
+  `bottle-architect`.
 
-Agents often make a picture as a file and mention its path. The console's
-"View" button asks the link for `workspace_file` (`agent_id`, `path`); the
-reply `workspace_file` carries `content_type`, `data` (base64) and `size`,
-or `error` (`workspace_files.py`). The host attaches to the running bottle
-as for a snapshot and reads the file there through `Bottle.exec`, never from
-a host path. It reads only absolute, normalized paths under `/home/node` or
-`/tmp` with a png, jpg, gif, webp or svg extension. The guest resolves
-symlinks (`readlink -f`), and the resolved path must pass the same checks,
-there and again on the host. The content type comes from the extension,
-never from the guest. Files over 10 MiB are refused. The console serves the
-bytes with `nosniff` and a sandboxing CSP and shows them only through
-`<img>`, so an SVG's script never runs.
-
-## Uploading files to a running agent
-
-The console's `+` button lets the operator upload a file into a running
-agent's workspace. It asks the link for `put_workspace_file` (`agent_id`,
-`path`, `data` base64); the reply `workspace_file_put` carries `path` and
-`size`, or `error` (`workspace_files.py`). The host writes the file inside
-the running bottle through `Bottle.exec`, never to a host path. Only
-absolute, normalized paths under `/home/node/uploads` are accepted. The
-guest checks the prefix again before writing. Files over 5 MiB are refused.
-After the upload the console inserts the path into the message box so the
-agent can be told about it.
-
-Larger files go in chunks (`uploads.py`), so no single link message holds the
-whole file:
-
-- `upload_begin` (`agent_id`, `path`, `size`) → `upload_begun` with
-  `upload_id`, `max_bytes` (the host's ceiling, 1 GiB) and `chunk_bytes`
-  (4 MiB). It creates `<path>.partial-<id>` in the bottle.
-- `upload_chunk` (`upload_id`, `seq`, `data` base64) → `upload_chunk_ack` with
-  `received`. Chunks come in order (`seq` from 0), each at most `chunk_bytes`,
-  never past the declared `size`; each is appended to the partial.
-- `upload_end` (`upload_id`, `sha256`) → `upload_done` with the final `path`
-  and `size`. The size and SHA-256 are checked here, over what was written,
-  and in the guest when it has `sha256sum`; then the partial is moved into
-  place without overwriting: a taken name becomes `name-1.ext`, `name-2.ext`…
-- `upload_abort` (`upload_id`) → `upload_aborted`; the partial is removed.
-
-An upload belongs to the agent that began it. At most 8 are in flight on a
-host, and one with no chunk for 2 minutes is dropped with its partial. Any
-step's refusal is its reply with `error`. The console waits for each reply
-before the next chunk, and its own limit (the user's setting) is below the
-host's.
-
-## Renaming a bottled agent
-
-A bottled agent's label is what people call it; its identity is what the
-host keys everything by (state dir, VM, transcripts, deploy keys, commit
-trailers), and a rename never touches the identity. The console asks the
-link for `rename` (`agent_id`, `bottle`, `label`): a running agent's bottle
-is the one the link runs it in, and a stopped one's is the `bottle` the
-console names. The reply `renamed` carries the cleaned `label`, or `error`
-(`relabel.py`). A label is trimmed, 1 to 128 characters, with no control
-characters. The host writes it to the bottle's `metadata.json` and its
-session record, so `bot-bottle bots`, the console's listings and a later
-resume all use it. `bot-bottle rename <bottled agent> <label>` does the same
-from the CLI; a console paired with the host keeps its own name until it's
-renamed there.
+The console starts the same flow over the link (see
+[Bottle suggestions from the console](#bottle-suggestions-from-the-console)).
 
 ## Audit
 
-The host controller is the host's only audit writer. Producers are the host
-controller itself (`lifecycle.*`, `hostctl.*`), the orchestrator, and the
-gateway's `egress`, `git-gate` and `supervise`. Gateway events reach it
-through the orchestrator (`POST /audit/append`).
+The host controller is the host's only audit writer. Gateway events reach
+it through the orchestrator (`POST /audit/append`).
+
+The producers are:
+
+- the host controller itself: `lifecycle.*`, `hostctl.*`
+- the orchestrator
+- the gateway's `egress`, `git-gate` and `supervise`
 
 | Module | Does |
 |---|---|
@@ -542,245 +494,838 @@ goes ahead. Where a bottle sets `audit.delivery: required`, egress and
 git-gate refuse the action they couldn't record (see
 [gateway.md](gateway.md)).
 
-**What the chain proves.** Each record's `hash` is a plain SHA-256 over the
-previous hash and the record, with no key: nothing is signed or MACed.
-Append-only is how the writer behaves, not something the OS enforces; the
-files are ordinary files owned by the host user. So `audit verify` catches
-accidental damage and a partial edit (a changed, dropped, inserted or
-reordered record), but anyone with the host user's access can rewrite the
-whole chain from the edited record onward and it verifies clean. Whole
-records cut from the end of the newest segment also leave a valid, shorter
-chain. Tamper evidence against that needs a copy off the host:
-`bot-bottle audit forward --url <https endpoint> [--secret <name>]
-[--format native|ocsf]` has the host controller POST each record, within
-seconds of writing, to a receiver you run elsewhere, which then holds the
-chain as it was when sent (`--off` stops it). Records already sent can't be
-rewritten from the host; whoever controls the host can still change or stop
-what hasn't been sent yet. Forwarding is off until you set it.
+### What the chain proves
+
+The chain catches accidental damage and a partial edit. It does not stop
+someone with the host user's access from rewriting it.
+
+- Each record's `hash` is a plain SHA-256 over the previous hash and the
+  record, with no key. Nothing is signed or MACed.
+- Append-only is how the writer behaves, not something the OS enforces.
+  The files are ordinary files owned by the host user.
+- `audit verify` catches a changed, dropped, inserted or reordered record.
+- Anyone with the host user's access can rewrite the whole chain from the
+  edited record onward, and it verifies clean.
+- Whole records cut from the end of the newest segment also leave a valid,
+  shorter chain.
+
+Tamper evidence against that needs a copy off the host:
+
+```
+bot-bottle audit forward --url <https endpoint> [--secret <name>] [--format native|ocsf]
+```
+
+- The host controller POSTs each record, within seconds of writing, to a
+  receiver you run elsewhere.
+- The receiver then holds the chain as it was when sent.
+- Records already sent can't be rewritten from the host.
+- Whoever controls the host can still change or stop what hasn't been sent
+  yet.
+- Forwarding is off until you set it. `--off` stops it.
 
 ### Audit records on the console
 
 A console agent's conversation is also kept on the console as audit
-records, readable only through this host and only once you unlock with a
-passkey ([ADR 0013](../decisions/0013-audit-records-passkey-decrypt.md)).
+records. They're readable only through this host, and only once you unlock
+with a passkey ([ADR 0013](../decisions/0013-audit-records-passkey-decrypt.md)).
 
 | Module | Does |
 |---|---|
-| `audit_push.py` | each entry of a running console agent's conversation (the masked host copy), encrypted with AES-256-GCM under `<root>/audit.key` (created 0600 when first needed; never sent), bound to its run and position, and hash-chained to the agent's previous record across runs. Sent as `audit_record` at most 50 a tick, every 5 s. How far each agent got is in `<root>/audit-push/<agent>.json`, so a restart, resume or re-adopted bottle never sends an entry twice. Terminal-started agents aren't sent. |
-| `audit_unlock.py` | `audit_unlock_challenge` (`session`) issues a single-use challenge (two minutes) for one console session; `audit_unlock` (`session`, `assertion`) checks the passkey's WebAuthn signature on this host (`webauthn.py`: ES256 and EdDSA, the console's origin and rp id, the challenge, the signature counter) and issues a token for that session: 12 hours, or an hour unused. |
-| `audit_link.py` | `decrypt_audit_records` (`session`, `token`, `run_id`, `records`: `id`, `seq`, `ciphertext`; up to 200) -> `audit_decrypted`: only with a valid token, only for runs this host sent, at most 2000 records a minute, each read journalled as `audit.records_read`. |
-| `audit_trust.py` | the passkeys trusted to unlock, in `<root>/audit-passkeys.json` (0600) with the origin and rp id they sign for. |
+| `audit_push.py` | encrypts and sends each conversation entry as `audit_record` |
+| `audit_unlock.py` | checks a passkey's signature and issues an unlock token |
+| `audit_link.py` | decrypts records for a session with a valid token |
+| `audit_trust.py` | keeps the passkeys trusted to unlock |
 
-`bot-bottle pair` fetches the account's passkeys from the console
-(`GET /api/v1/hosts/passkeys`) and trusts them only once you confirm their
-fingerprints match the console's (Settings, Passkeys);
-`bot-bottle audit passkeys [--trust]` lists or re-fetches them. The console
-can't change them. Back up `audit.key`: without it the records can't be read.
+**Sending.** Each entry of a running console agent's conversation is sent.
+The entry is the masked host copy.
+
+- It's encrypted with AES-256-GCM under `<root>/audit.key`. The key is
+  created 0600 when first needed, and never sent.
+- Each record is bound to its run and position.
+- Each is hash-chained to the agent's previous record, across runs.
+- At most 50 are sent a tick, every 5 s.
+- How far each agent got is kept in `<root>/audit-push/<agent>.json`. So a
+  restart, resume or re-adopted bottle never sends an entry twice.
+- Terminal-started agents aren't sent.
+
+**Unlocking.**
+
+- `audit_unlock_challenge` (`session`) issues a single-use challenge for one
+  console session. It lasts two minutes.
+- `audit_unlock` (`session`, `assertion`) checks the passkey's WebAuthn
+  signature on this host.
+- The check (`webauthn.py`) covers ES256 and EdDSA, the console's origin and
+  rp id, the challenge, and the signature counter.
+- It then issues a token for that session. The token lasts 12 hours, or an
+  hour unused.
+
+**Decrypting.** `decrypt_audit_records` takes `session`, `token`, `run_id`
+and `records`, up to 200. Each record is `id`, `seq` and `ciphertext`. The
+reply is `audit_decrypted`.
+
+- It needs a valid token.
+- It works only for runs this host sent.
+- It allows at most 2000 records a minute.
+- Each read is journalled as `audit.records_read`.
+
+**Trusted passkeys.** They're kept in `<root>/audit-passkeys.json` (0600),
+with the origin and rp id they sign for.
+
+- `bot-bottle pair` fetches the account's passkeys from the console
+  (`GET /api/v1/hosts/passkeys`).
+- It trusts them only once you confirm their fingerprints match the
+  console's, under Settings, Passkeys.
+- `bot-bottle audit passkeys [--trust]` lists or re-fetches them.
+- The console can't change them.
+
+Back up `audit.key`. Without it the records can't be read.
 
 ## Firehose
 
-`firehose.py` and `firehose_sinks.py` fan the gateway's per-request records
-out to `bot-bottle audit tail` subscribers and to configured sinks:
+The firehose fans the gateway's per-request records out to
+`bot-bottle audit tail` subscribers and to configured sinks. Nothing is
+stored.
 
-- `exec`: a command that gets JSON lines on stdin, restarted with backoff.
-- `https`: NDJSON batches with a bearer token from the secrets file.
+| Sink | Gets |
+|---|---|
+| `exec` | a command that gets JSON lines on stdin, restarted with backoff |
+| `https` | NDJSON batches, with a bearer token from the secrets file |
 
-Each consumer has its own bounded queue. A consumer that falls behind drops
-its oldest records and is told how many. Nothing is stored. When nothing is
-consuming, the gateway stops building records. Settings are re-read every
-`RELOAD_SECONDS`.
+- Each consumer has its own bounded queue.
+- A consumer that falls behind drops its oldest records, and is told how
+  many.
+- When nothing is consuming, the gateway stops building records.
+- Settings are re-read every `RELOAD_SECONDS`.
 
 ## Remote access
 
-`remote.py` ([ADR 0007](../decisions/0007-remote-access-terminates-in-host-controller.md)).
-The console is the one `--console-url` or `BB_CONSOLE_URL` names, else the one
-this host last paired with, else the hosted console at `https://bot-bottle.app`
-(`login.DEFAULT_CONSOLE_URL`); `setup` and `bootstrap` offer to pair with the
-same one. With `bot-bottle pair` (or `pair on`), the daemon dials out to the console it logged
-in to over iroh (ALPN `bb-console/1`). It accepts no inbound connections and
-refuses a console whose node id isn't the one pinned at login. What pairing
-keeps under `~/.bot-bottle/` (`remote.json`, `console.json`, the iroh key
-`remote.key`, and `remote.status.json` for `bot-bottle status`) is
-`pairing.py`.
+With `bot-bottle pair` or `pair on`, the host controller dials out to the
+console over iroh. It accepts no inbound connections
+([ADR 0007](../decisions/0007-remote-access-terminates-in-host-controller.md)).
 
-**If the account is deleted** (or the host removed from it), the console no
-longer knows this host's node id and closes the link as `unregistered host`
-(`link_refusal.py`). The host only reports it: `status` shows the link as
-refused, `doctor` warns and its `next:` is `bot-bottle pair --console-url
-<url>`, home's status strip says to pair again, and the link asks only every
-ten minutes instead of on its short backoff. It changes nothing on its own:
-`console.json`, the iroh key and the link setting stay. `bot-bottle pair` then
-pairs it like a new machine, to a new account or the same console, under the
-same iroh key; the next accepted connection clears the refusal. Bottles,
-agents and the local audit journal on the host aren't affected.
+The console is the first of:
 
-The console can list local agents, launch a **local agent by name** (with an
-optional prompt, bottle names and label), stop one, and view or type into
-sessions. A launch names an agent and bottles this host already has: agent
-content sent with a launch is refused. Bottles are not read-only to the
-console, though: it can edit host bottles and the secrets file (see [What
-pairing lets the console do](#what-pairing-lets-the-console-do)), and a later
-launch runs with those edits. A launch, resume or stop runs beside the link, after that agent's
-previous one, so the console's other requests are answered while it waits on
-the bottle. A resume of a bottle already running as that same agent (Resume
-clicked twice after a Stop) answers `agent_started` again rather than an error;
-a bottle running as another agent is refused.
+1. the one `--console-url` or `BB_CONSOLE_URL` names
+2. the one this host last paired with
+3. the hosted console at `https://bot-bottle.app` (`login.DEFAULT_CONSOLE_URL`)
 
-A bottle remembers who started it: its `metadata.json` records `origin` and,
-for the console, the console's `agent_id` (written once the agent runs, kept
-when a resume rewrites the file). So `bot-bottle resume <bottle>` on the CLI
-brings a console bottle back as **the same console agent**: the host takes the
-id from the bottle's own metadata (a request can't name one) and records the
-session as `console`; the link announces it with `agent_started`, and the
-conversation keeps its id. A terminal bottle, or one recorded before this,
-resumes as a terminal session, as before.
+`setup` and `bootstrap` offer to pair with the same one.
+
+- The host dials the console it logged in to, over ALPN `bb-console/1`.
+- It refuses a console whose node id isn't the one pinned at login.
+- Pairing keeps `remote.json`, `console.json` and the iroh key `remote.key`
+  under `~/.bot-bottle/`. It also keeps `remote.status.json`, for
+  `bot-bottle status`.
+
+### What the console can reach
+
+The console can list local agents, launch one by name, stop one, and view
+or type into sessions. A launch takes an optional prompt, bottle names and
+label.
+
+- A launch names an agent and bottles this host already has.
+- Agent content sent with a launch is refused.
+- Bottles are not read-only to the console. It can edit host bottles and
+  the secrets file (see
+  [What pairing lets the console do](#what-pairing-lets-the-console-do)).
+  A later launch runs with those edits.
+
+A launch, resume or stop runs beside the link, after that agent's previous
+one. So the console's other requests are answered while it waits on the
+bottle.
+
+A resume of a bottle already running as that same agent answers
+`agent_started` again, rather than an error. That happens when Resume is
+clicked twice after a Stop. A bottle running as another agent is refused.
+
+### Console agents and terminal sessions
 
 The console sees **every session on the host**, not only the ones it
-launched. Each session record carries its `origin` (`console` or
-`terminal`). The link presents each running `terminal` session with
-`agent_present`, under an agent id derived from its bottle and activation
-(`t-…`), so it keeps the same id across reconnects and host controller
-restarts. It sends this on every connect and within a couple of seconds of a
-session starting. After that the session is one of the link's agents like any
-other: its requests are raised on the phone, its terminal is relayed (typing
-still follows the agent's `remote.writable`), its history and audit journal
-can be read, and the console can stop it. When the terminal and the phone
-both answer a request, the first answer stands (see
-[gateway.md](gateway.md#supervise)).
+launched. Each session record carries its `origin`: `console` or
+`terminal`.
 
-The console's Library asks for the host's `library`
-(`control/hostctl/library.py`): each home agent and bottle under
-`~/.bot-bottle/`, and the built-in bottles a home one doesn't shadow, with
-their text (cut at 64 KiB). The console mirrors them read-only and keeps the
-last copy for while the host is offline. Project bottles aren't sent.
+The link presents each running `terminal` session with `agent_present`.
 
-The console's launch page asks to `resolve` an agent (by name) in an ordered
-list of bottles before it launches (`library.resolved_manifest`): the reply's
-`text` (and `data`) is what that launch would run with, the bottles merged in
-order as a launch merges them (none means the built-in `basic`), as one
-bottle file's YAML. Its `elements` list each env var, egress route, repo and
-forge with the file it comes from, as the Manifest tab's Pretty view does (a
-later bottle wins a clash, so it's the source). Or `error` when it doesn't
-resolve. Names are checked as a launch's are.
+- Its agent id is derived from its bottle and activation, as `t-…`. So it
+  keeps the same id across reconnects and host controller restarts.
+- The link sends this on every connect, and within a couple of seconds of a
+  session starting.
 
-The console's Manifest tab asks for a running agent's `manifest`
-(`manifest_view.py`).
+After that, the session is one of the link's agents like any other:
 
-Each bottled agent has manifest versions (`run_manifest.py`,
-`state/<bottle>/manifest/`). Version 1 is its whole bottle chain flattened
-into one document (`manifest/document.py`), recorded at launch. A resume adds
-a version only if the files changed. Each launch and resume also records
-`launch.json`: every bottle in the chain's fingerprint
-(`manifest/fingerprint.py`: its full resolution, `extends` merged, in a
-canonical order so key, route and repo order don't count, SHA-256) and the
-host's bottle version then. The `manifest` reply's `bottle_versions` lists
-the chain in order, each with whether it still resolves to what it launched
-with (`latest`; a change to a bottle it extends counts) and, for a host
-bottle, that version (`version`, `version_at`). A project's bottle (versioned
-by its repo) and a built-in one have no version. The `manifest` reply's `current` is the
-latest version with the supervisor's changes since: egress routes the live
-policy has beyond the launch routes (`state/<bottle>/egress/routes.yaml`), and
-repos granted while it runs. It also lists what can't be kept (a route
-carrying a credential) and a digest. `manifest_save` writes it as the next
-version if the digest still matches. With `bottle` (one of the reply's
-`bottle_targets`: the launch's chain, then the host's other bottles) it also
-writes the run's changes into that bottle. With `new_bottle` it writes a new
-host bottle of that name instead, recorded as a version too and refused if
-the name is taken. Without `extend` it's flattened: the whole chain, no
-`extends`. With `extend` it extends the bottles it launched in and holds only the
-run's changes. Adding a route for a host a bottle already has merges in the
-new matches (`approvals.with_routes`), so nothing it allowed is dropped.
-`keys` limits any of these to some of the run's changes (`egress:<host>`,
-`repo:<name>`). With `remove`, they're taken away from the running bottle
-instead. Its live policy is rendered again with those routes as they
-launched (or without them) and set on the orchestrator. Repos granted while
-it runs are revoked (`git_gate.live_grant.revoke_live`). A repo it launched
-with is refused.
+- Its requests are raised on the phone.
+- Its terminal is relayed. Typing still follows the agent's
+  `remote.writable`.
+- Its history and audit journal can be read.
+- The console can stop it.
 
-The reply's `elements` list everything the agent runs with
-(`manifest_elements.py`). Each egress route, repo, forge and env var is keyed
-`<kind>:<name>`, with its source: the nearest bottle file in the chain that
-declares it (the others are listed too), "this run", or "agent provider".
-A repo granted this run shows its grant, and the forge it's on is listed with
-the source "this host" (its connection) when nothing in the chain describes
-it. Copying a granted repo into a bottle writes the forge's description with
-it, never a token (ADR 0019).
-`manifest_transfer` copies picked elements into a bottle, or moves them out of
-the file they came from. A built-in bottle's elements, and this run's, are
-copied. With `delete` it takes picked elements out of the file they come from
-(the running agent keeps them until its next launch), and this run's out of
-the running bottle. A built-in bottle's and the provider's stay. Each file
-changed is saved as a new version.
+When the terminal and the phone both answer a request, the first answer
+stands (see [gateway.md](gateway.md#supervise)).
 
-The console's editable Bottle tab reads the agent's chain with `bottle_chain`
-(`bottle_chain.py`): every bottle file the agent's bottle is built from, in
-merge order (each pick's parents before it; a later one wins), each with its
-`kind` (`host`, `builtin` or `project`), `writable` (host bottles only),
-`digest`, `content`, and parsed `frontmatter` and `body`; plus this run's
-additions (`run`) and the writable `targets`. `bottle_write` (`bottle`,
-`digest`, and `frontmatter` with `body`, or raw `content`) writes one host
-bottle of that chain: never a built-in or project bottle, nor a name outside
-the chain. The host serializes data itself, refuses text that doesn't parse
-or holds a secrets-file value, puts the file back if the agent's manifest no
-longer loads, and records a version. A digest that no longer matches replies
-`stale`. Changes apply from the next launch; the running bottle is
-unaffected.
+A bottle remembers who started it. Its `metadata.json` records `origin`.
+For the console, it also records the console's `agent_id`, written once the
+agent runs and kept when a resume rewrites the file.
+
+So `bot-bottle resume <bottle>` on the CLI brings a console bottle back as
+**the same console agent**:
+
+- The host takes the id from the bottle's own metadata. A request can't
+  name one.
+- It records the session as `console`.
+- The link announces it with `agent_started`, and the conversation keeps
+  its id.
+
+A terminal bottle, or one recorded before this, resumes as a terminal
+session, as before.
+
+### If the account is deleted
+
+When the account is deleted, or the host removed from it, the console
+closes the link as `unregistered host`. The console no longer knows this
+host's node id.
+
+The host only reports it:
+
+- `status` shows the link as refused.
+- `doctor` warns. Its `next:` is `bot-bottle pair --console-url <url>`.
+- Home's status strip says to pair again.
+- The link asks only every ten minutes, instead of on its short backoff.
+
+It changes nothing on its own. `console.json`, the iroh key and the link
+setting stay.
+
+`bot-bottle pair` then pairs it like a new machine, under the same iroh
+key. That can be to a new account or the same console. The next accepted
+connection clears the refusal.
+
+Bottles, agents and the local audit journal on the host aren't affected.
 
 ### What pairing lets the console do
 
 Pairing gives the console operator-level control over this host's bottles,
-their egress policy and the host secrets file. That is the hosted console at
-`https://bot-bottle.app` unless you paired with another. Trust it as you
-trust your own terminal: a compromised console, or a stolen console session,
-can do what follows. `bot-bottle pair off` turns the link off; the host
-controller drops it within seconds, and `bot-bottle pair on` turns it back
-on. A host that never paired has no link.
+their egress policy and the host secrets file. That console is the hosted
+one at `https://bot-bottle.app` unless you paired with another.
+
+Trust it as you trust your own terminal. A compromised console, or a stolen
+console session, can do what follows.
+
+`bot-bottle pair off` turns the link off. The host controller drops it
+within seconds. `bot-bottle pair on` turns it back on. A host that never
+paired has no link.
 
 Through the link the console can:
 
-- launch, resume and stop agents, type into their sessions (where the agent
-  is `remote.writable`), read their conversations and terminal history, and
-  upload files into a running bottle;
-- answer supervise requests: allow egress, connect a forge with a token it
-  sends (`forge_connect`), grant repos (`add_repo_answer`), create repos and
-  launch child bottles;
-- widen a running bottle's egress without a request from the agent:
+- **Run agents.** Launch, resume and stop agents. Type into their sessions
+  where the agent is `remote.writable`. Read their conversations and
+  terminal history. Upload files into a running bottle.
+- **Answer supervise requests.** Allow egress. Connect a forge with a token
+  it sends, through `forge_connect`. Grant repos (`add_repo_answer`). Create
+  repos and launch child bottles.
+- **Widen a running bottle's egress** without a request from the agent.
   `operator_egress_allow` (`host`, optional `keep`) adds a default route for
-  a host the bottle was blocked from, read-only unless it injects a
-  credential, and with `keep` writes it into the bottle file too;
-- write host bottles: `bottle_write` replaces a host bottle in a running
-  agent's chain with content the console sends, and `manifest_save` and
-  `manifest_transfer` write a run's changes or picked elements into a host
-  bottle or a new one (all described above). Host bottles
-  run as written, with no trust prompt
-  ([manifest.md](manifest.md#trust)), so these edits apply at the next
-  launch. `bottle_write` can't write a built-in or project bottle, but
-  `manifest_transfer`, a kept approval and an accepted suggestion edit can
-  change a project's bottle, which the host then trusts (left for you to
-  commit);
-- list the names in the host secrets file (`list_secrets` -> `secrets_listed`,
-  names only) and set a value in it (`set_secret` (`name`, `value`) ->
-  `secret_set`). The value is never echoed in the reply or a log line.
+  a host the bottle was blocked from.
+  - The route is read-only unless it injects a credential.
+  - With `keep`, it's written into the bottle file too.
+- **Write host bottles.** Host bottles run as written, with no trust prompt
+  ([manifest.md](manifest.md#trust)). So these edits apply at the next
+  launch.
+  - `bottle_write` replaces a host bottle in a running agent's chain with
+    content the console sends.
+  - `manifest_save` and `manifest_transfer` write a run's changes or picked
+    elements into a host bottle or a new one.
+  - `bottle_write` can't write a built-in or project bottle.
+  - `manifest_transfer`, a kept approval and an accepted suggestion edit
+    can change a project's bottle. The host then trusts it, and leaves it
+    for you to commit.
+  - All of these are described under
+    [Console link protocol](#console-link-protocol).
+- **Use the host secrets file.** List the names in it with
+  `list_secrets` -> `secrets_listed`, names only. Set a value in it with
+  `set_secret` (`name`, `value`) -> `secret_set`. The value is never echoed
+  in the reply or a log line.
 
 Together these let a console point a route's credential at a host of its
-choosing, so a compromised console can send a host secret off the host
-through a bottle. There is no action that runs a command on the host itself;
-what the console starts runs in a bottle.
+choosing. So a compromised console can send a host secret off the host
+through a bottle.
+
+There is no action that runs a command on the host itself. What the
+console starts runs in a bottle.
 
 What it can't do:
 
-- read a secret's value over the link: `list_secrets` returns names,
-  `set_secret` only writes, and replies and logs never carry a value (a
-  bottle edit can still send one to a host of its choosing, as above);
-- launch agent content of its own, or write a built-in bottle;
-- read the encrypted audit records it holds (see [Audit records on the
-  console](#audit-records-on-the-console)) without a passkey-signed unlock:
-  the key, `audit.key`, never leaves this host, a decrypt needs a token that
-  only a WebAuthn assertion from a passkey this host trusts can get, and the
-  trusted passkeys are set on the host at `bot-bottle pair`, after you
-  confirm their fingerprints. The console can't change them. This covers the
-  stored records only: conversations and terminal output read live over the
-  link reach the console readable (transcripts with host secret values and
-  token shapes masked);
-- connect to the host: the link is dial-out only, to the node id pinned at
-  login.
+- **Read a secret's value over the link.** `list_secrets` returns names.
+  `set_secret` only writes. Replies and logs never carry a value. A bottle
+  edit can still send one to a host of its choosing, as above.
+- **Launch agent content of its own**, or write a built-in bottle.
+- **Read the encrypted audit records it holds without a passkey-signed
+  unlock** (see [Audit records on the console](#audit-records-on-the-console)).
+  - The key, `audit.key`, never leaves this host.
+  - A decrypt needs a token. Only a WebAuthn assertion from a passkey this
+    host trusts can get one.
+  - The trusted passkeys are set on the host at `bot-bottle pair`, after
+    you confirm their fingerprints. The console can't change them.
+  - This covers the stored records only. Conversations and terminal output
+    read live over the link reach the console readable. Transcripts have
+    host secret values and token shapes masked.
+- **Connect to the host.** The link is dial-out only, to the node id pinned
+  at login.
+
+## Console link protocol
+
+The console and the host controller exchange these messages over the link.
+An arrow shows a request and its reply.
+
+| Message | Section |
+|---|---|
+| `host_stats` | [Host stats](#host-stats) |
+| `metrics_watch` -> `bottle_metrics` | [Live metrics](#live-metrics) |
+| `agent_working` | [Working indicator](#working-indicator) |
+| `blocked` | [Blocks](#blocks) |
+| `resize` | [Terminal relay](#terminal-relay) |
+| `transcript`, `transcript_appended`, `transcript_search` | [Reading transcripts](#reading-transcripts) |
+| `snapshot` | [Snapshots](#snapshots) |
+| `workspace_file` | [Workspace images](#workspace-images) |
+| `put_workspace_file`, `upload_*` | [Uploading files to a running agent](#uploading-files-to-a-running-agent) |
+| `rename` -> `renamed` | [Renaming a bottled agent](#renaming-a-bottled-agent) |
+| `github_authorize_start`, `github_status` | [GitHub through the bot-bottle app](#github-through-the-bot-bottle-app) |
+| `bottle_suggest`, `bottle_suggest_status`, `bottle_suggestion_*` | [Bottle suggestions from the console](#bottle-suggestions-from-the-console) |
+| `library` | [Library](#library) |
+| `resolve` | [Resolving a launch](#resolving-a-launch) |
+| `manifest`, `manifest_save`, `manifest_transfer` | [Manifest tab](#manifest-tab) |
+| `bottle_chain`, `bottle_write` | [Bottle tab](#bottle-tab) |
+| `audit_record`, `audit_unlock_challenge`, `audit_unlock`, `decrypt_audit_records` | [Audit records on the console](#audit-records-on-the-console) |
+| `list_secrets`, `set_secret`, `operator_egress_allow` | [What pairing lets the console do](#what-pairing-lets-the-console-do) |
+
+### Host stats
+
+`host_stats` reports this host's storage and memory, all in bytes. It's sent
+on each connect and every 60 seconds.
+
+```
+{"storage": {"used", "total", "cap"},
+ "memory": {"used", "total", "cap"},
+ "budget": {
+   "memory": {"allocated", "budget", "bottle_size",
+              "bottles": [{"id", "label", "memory", "cpu_pct", "mem_used"}]},
+   "storage": {"used", "budget",
+               "categories": {"vm_disks", "images", "workspaces", "transcripts"},
+               "unmeasured": ["<runtime>: <why>"]}},
+ "about": {"os", "backend", "version", "commit", "restart_needed"},
+ "forge_alerts": [{"key", "kind", "forge", "message", "since"}]}
+```
+
+It covers the host as a whole, and the bottles against their budget (see
+[Bottles' budget](#bottles-budget)).
+
+| Field | Means |
+|---|---|
+| `storage` | the filesystems holding the state root and the caches, each counted once |
+| `memory` | what the kernel reports in use: `MemTotal - MemAvailable` on Linux, free and inactive pages on macOS |
+| `cap` | repeats the budget, for consoles that predate the `budget` block |
+| `budget.*.budget` | 0 means none is set |
+| `budget.storage` | left out until the first storage walk after the daemon starts |
+| `about.restart_needed` | true once bot-bottle was upgraded under the running daemon, which refuses launches until `bot-bottle up --restart` |
+
+**`about`** is what the host's console page says about it:
+
+- its OS: `macOS`, or a Linux's `NAME` from `/etc/os-release`
+- the backend its last bring-up recorded, `""` before one
+- this install's version and short commit, as `bot-bottle version` prints
+  them
+
+**Bottle CPU and memory.** Each running bottle's `cpu_pct` and `mem_used`
+(bytes) are left out when they can't be read. CPU % is a share of the
+bottle's CPUs, 0-100.
+
+- A Firecracker VM's share is of its vCPUs, from its `config.json`. One
+  busy vCPU of two is 50%.
+- A container's is its `stats` figure, capped at 100. Bottles set no
+  container CPU limit to scale it by.
+
+**`forge_alerts`** are forge tokens that stopped working for good. There is
+one per credential, oldest first. `key` is the host secret's name.
+
+| `kind` | Raised when |
+|---|---|
+| `github_reauthorize` | The GitHub authorization can't be renewed: its refresh token expired or was revoked. Raised by the git-gate token renewer. |
+| `gitea_token_refused` | The forge answered 401/403 when a launch, grant or teardown used the token. |
+
+- Each is raised once per failure state.
+- It's cleared when the credential works again, or is replaced with
+  `forge connect`.
+- Network trouble is only a warning.
+- Alerts live in the host controller's memory. After a restart, the next
+  renewal or launch raises them again.
+
+### Live metrics
+
+`metrics_watch` sets which bottles the console's live gauge watches. Its
+`bottles` list of bottle ids replaces the link's watched set. An empty list
+stops it.
+
+- While the set is non-empty, the link samples the watched bottles it has
+  running. It does this in one pass every 3 seconds, on every backend.
+- It sends `bottle_metrics`: `at`, and `bottles` with `id`, `cpu_pct`,
+  `mem_used` and `memory`.
+- The interval leaves room for a container's `stats` call, which takes 1-2 s
+  each.
+- A pass still running when the next is due skips it.
+- The set belongs to the connection, capped at 32. A reconnecting console
+  sends it again.
+- The live samples keep their own CPU baseline. So the minute `host_stats`
+  figure still covers its whole minute.
+
+### Working indicator
+
+`agent_working` tells the console whether a running agent is working on a
+prompt. It's sent when that changes, and once per agent on each connect.
+
+The harness decides from the newest lines of its copy
+(`AgentProvider.working`):
+
+| Harness | Working |
+|---|---|
+| Claude | starts with a prompt or a tool call, ends at `turn_duration` or a reply that ends the turn |
+| Codex | from `task_started` to `task_complete` or `turn_aborted` |
+| no markers (the default) | while its copy grew within the last 20 seconds |
+
+It's the agent's own output. So it's an indicator for the console only,
+never a security decision.
+
+### Blocks
+
+The link sends the gateway's blocks to the console, for the shield on the
+agent's page. They're alerts, not requests. Nothing waits on them.
+
+Every couple of seconds the link sends `blocked` per running agent, host
+and reason. Repeats are merged with a `count`, at most 20 at a time.
+
+| Field | Holds |
+|---|---|
+| `agent_id` | the agent |
+| `host` | the blocked host |
+| `reason` | the code from the [status bar](#status-bar) table |
+| `at` | when |
+| `detail` | for a secret or a rejected push only: the gateway's own words, which name the detector, never the value |
+
+A block never carries a path or a body, which can hold the secret. A
+connection that opens gets the last five minutes' blocks. The audit journal
+keeps the record.
+
+### Terminal relay
+
+The console's relay is one tmux client per agent. The console's `resize`
+sizes it, to the most recent viewer's terminal.
+
+The link keeps the last size asked for each running agent. It opens every
+new relay at that size. Otherwise a relay reopened after a broken stream
+would start at tmux's default, and a terminal of a different size draws its
+output garbled.
+
+### Reading transcripts
+
+The console reads a conversation over the link. Entries are masked before
+they leave the host. The host's copy itself stays as read.
+
+| Message | Does |
+|---|---|
+| `transcript` | returns a page of the agent's entries, on the harness's active branch |
+| `transcript_appended` | tells the console when more landed |
+| `transcript_search` | finds the newest entries containing a query, optionally of given kinds, with a snippet around each match |
+
+Masking uses the egress scanner's `redact_tokens`. It masks token patterns,
+and every value in the host's secrets file in its common encodings.
+Entries are parsed when read, then masked.
+
+Search is case-insensitive, over the masked text. So a query can't confirm
+a secret.
+
+**How a page is built.** Each session file is put together from its copies,
+across the bottle's runs, in the order they were made. A `/clear` starts a
+new session file.
+
+- A resumed run's copy continues at its `start`.
+- A rewrite starts the file over.
+- An entry's `seq` is its place in its file, plus a stride per earlier
+  session. So it never moves, or names another entry.
+
+**Which entries a page covers.** A page is from the current session, since
+the last `/clear`. `first` and `last` bound it. These read the whole history
+instead:
+
+- a cursor, `before` or `around`, into an earlier session, such as a search
+  hit from before a `/clear`
+- `all: true`
+- a current session with nothing in it yet
+
+`scope` says which was read, `current` or `all`. Seqs are the same in both.
+
+### Snapshots
+
+The console's snapshot button asks the link for `snapshot`. Restoring is
+not built yet.
+
+1. The host attaches to the running bottle through its adoption record
+   (`BottleBackend.attach_adopted`).
+2. It takes the copied git workspace's patch since launch. That is the patch
+   teardown saves.
+3. It keeps it as
+   `~/.bot-bottle/snapshots/<session>/<activation>/<taken>.patch` (0600).
+4. A `.json` record beside it holds when, the conversation's newest `seq`
+   then, files and lines changed, size and SHA-256.
+5. Each is audited as `snapshot.taken`.
+
+A workspace that isn't a git copy can't be snapshotted.
+
+### Workspace images
+
+Agents often make a picture as a file and mention its path. The console's
+"View" button fetches it with `workspace_file`.
+
+- The request is `agent_id` and `path`.
+- The reply `workspace_file` carries `content_type`, `data` (base64) and
+  `size`, or `error`.
+
+The host attaches to the running bottle as for a snapshot. It reads the
+file there, through `Bottle.exec`, never from a host path.
+
+- It reads only absolute, normalized paths under `/home/node` or `/tmp`.
+- The extension must be png, jpg, gif, webp or svg.
+- The guest resolves symlinks with `readlink -f`. The resolved path must
+  pass the same checks, there and again on the host.
+- The content type comes from the extension, never from the guest.
+- Files over 10 MiB are refused.
+
+The console serves the bytes with `nosniff` and a sandboxing CSP. It shows
+them only through `<img>`, so an SVG's script never runs.
+
+### Uploading files to a running agent
+
+The console's `+` button uploads a file into a running agent's workspace.
+After the upload, the console inserts the path into the message box, so the
+agent can be told about it.
+
+A small file goes in one message, `put_workspace_file`.
+
+- The request is `agent_id`, `path` and `data` (base64).
+- The reply `workspace_file_put` carries `path` and `size`, or `error`.
+- The host writes the file inside the running bottle through `Bottle.exec`,
+  never to a host path.
+- Only absolute, normalized paths under `/home/node/uploads` are accepted.
+  The guest checks the prefix again before writing.
+- Files over 5 MiB are refused.
+
+Larger files go in chunks, so no single link message holds the whole file:
+
+| Request | Reply | Does |
+|---|---|---|
+| `upload_begin` (`agent_id`, `path`, `size`) | `upload_begun` with `upload_id`, `max_bytes`, `chunk_bytes` | creates `<path>.partial-<id>` in the bottle |
+| `upload_chunk` (`upload_id`, `seq`, `data` base64) | `upload_chunk_ack` with `received` | appends the chunk to the partial |
+| `upload_end` (`upload_id`, `sha256`) | `upload_done` with the final `path` and `size` | checks the upload and moves it into place |
+| `upload_abort` (`upload_id`) | `upload_aborted` | removes the partial |
+
+- `max_bytes` is the host's ceiling, 1 GiB. `chunk_bytes` is 4 MiB.
+- Chunks come in order, with `seq` from 0. Each is at most `chunk_bytes`,
+  and never past the declared `size`.
+- At `upload_end`, the size and SHA-256 are checked over what was written.
+  They're checked in the guest too, when it has `sha256sum`.
+- The partial is then moved into place without overwriting. A taken name
+  becomes `name-1.ext`, `name-2.ext`…
+
+Limits:
+
+- An upload belongs to the agent that began it.
+- At most 8 are in flight on a host.
+- One with no chunk for 2 minutes is dropped, with its partial.
+- Any step's refusal is its reply with `error`.
+- The console waits for each reply before the next chunk.
+- The console's own limit, the user's setting, is below the host's.
+
+### Renaming a bottled agent
+
+A rename changes a bottled agent's label, never its identity. The label is
+what people call it. The identity is what the host keys everything by.
+
+The identity covers the state dir, VM, transcripts, deploy keys and commit
+trailers.
+
+The console asks the link for `rename` (`agent_id`, `bottle`, `label`).
+The reply `renamed` carries the cleaned `label`, or `error`.
+
+- A running agent's bottle is the one the link runs it in.
+- A stopped one's is the `bottle` the console names.
+- A label is trimmed, 1 to 128 characters, with no control characters.
+- The host writes it to the bottle's `metadata.json` and its session
+  record. So `bot-bottle bots`, the console's listings and a later resume
+  all use it.
+
+`bot-bottle rename <bottled agent> <label>` does the same from the CLI. A
+console paired with the host keeps its own name until it's renamed there.
+
+### GitHub through the bot-bottle app
+
+The console connects github.com through the bot-bottle GitHub App's device
+flow (ADR 0012). The token never reaches the console.
+
+**Connecting.** `github_authorize_start` starts the flow. Its reply,
+`github_authorize`, carries `user_code`, `verification_uri` and
+`expires_in`, or `error`. The host then polls GitHub itself. It records the
+connection in `forges.md` when the operator enters the code.
+
+**Status.** `github_status` answers `github_status`. It asks GitHub each
+time, so the console can poll it while the operator installs the app.
+
+| Field | Holds |
+|---|---|
+| `app`, `install_url` | the app's slug and install link |
+| `client_id_set` | whether a client id is set |
+| `flow` | the flow's `state`: `idle`, `waiting` with the code, `connected` with `login`, or `error` |
+| `connected` | each user connected on github.com through the app: `login`, `default`, and the app's `installations` (`id`, `account`, `repository_selection`), or `error` |
+| `needs_install` | authorized, but the app is installed nowhere |
+
+**Cards.**
+
+- An agent's `forge-connect` for github.com gets a card with the install
+  link and the `github_authorize` option. It never gets a token field.
+- Once GitHub is connected, that request is refused with a note to use
+  `add-repo`.
+- An `add-repo` card for a repo the token can't reach carries `install:`.
+- One whose authorization is gone carries `reauthorize:`, and
+  `github_authorize` beside the grant options.
+- A `create-repo` card whose owner lacks the app, or its Administration
+  permission, carries `install:`.
+
+While any of those is shown, the host asks GitHub again every ten seconds,
+for fifteen minutes (`remote_actions.card_changed`). It raises the card
+again when that changes. So the card turns grantable once the app is
+installed.
+
+### Bottle suggestions from the console
+
+The console's launch page asks the host to propose a bottle for a task. This
+starts the same flow as `bot-bottle bottles suggest`.
+
+That flow runs `bottle-architect` in its warm bottle, falling back to the
+rules path. The proposal is validated against the host's bottles (see
+[bottles-suggest.md](bottles-suggest.md)).
+
+| Request | Reply | Does |
+|---|---|---|
+| `bottle_suggest` (`task`, optional `cwd`) | `bottle_suggestion` (`job`, `state` `running`, or `error`) | starts a suggestion |
+| `bottle_suggest_status` (`job`) | `bottle_suggestion` | follows it |
+| `bottle_suggestion_edit` (`job`, `decision` `accept` or `skip`) | `bottle_suggestion` | decides the first pending edit |
+| `bottle_suggestion_reply` (`job`, `reply`) | `bottle_suggestion` | asks the architect again on the same job |
+| `bottle_suggestion_accept` (`job`, optional `name`) | `bottle_suggestion_accepted` (`bottles`, `written`, or `error`) | writes the proposed bottle |
+
+These actions take no manifest from the console. They write only what this
+host proposed. Other console actions do write bottles and secrets from what
+the console sends (see
+[What pairing lets the console do](#what-pairing-lets-the-console-do)).
+
+**`cwd`** is a project directory on this host. It must be an existing
+directory under the user's home, not the home itself.
+
+- With it, the proposal sees the project's bottle, origin and lockfiles.
+- Without it, the proposal says it had no project to look at.
+
+**Running.** The job runs off the link, so the reply comes at once.
+
+- At most four run at a time.
+- One still running after 150 seconds is reported failed.
+- A finished job is kept ten minutes.
+
+**Status.** `bottle_suggestion` carries `state` `running`, `done` with
+`proposal`, or `error`. It also carries `replies`, what was said so far,
+and `decided`, each accepted edit as written.
+
+The `proposal` holds:
+
+- its `option`, the `bottles` it stacks, and a `new_bottle` name, extends
+  and about
+- whether it `writes` a bottle
+- the `egress` hosts, `repos`, `env` names and `credentials` names and
+  routes it adds, never a secret's value
+- `similar`, `notes`, and `source`, which is `architect` or `rules`
+
+It also holds the guided start's review:
+
+- the `gist`
+- the `new` grants
+- `connect`: each forge to connect first, with the `forge connect` command
+  to run here
+- `edits`: each pending edit to another bottle, with its `bottle`, what it
+  `adds`, `why`, the forges it `waits_on`, and its `diff`
+
+**Editing.** An accepted edit is written here as `bot-bottle start` writes
+it. A project bottle is trusted, a host bottle gets a new version, and
+comments are kept. The proposal is then validated again.
+
+**Replying.** A reply replays the conversation to the architect. At most
+eight replies are allowed.
+
+**Accepting.** `bottle_suggestion_accept` writes the bottle the host
+proposed, if it makes one, into the host's bottles as a new version. It
+refuses while an edit is pending. It answers the bottles to launch with:
+
+- the existing ones, for a reuse or stack
+- those plus the new one, for additions
+- or just the new one
+
+### Library
+
+The console's Library asks for the host's `library`. The console mirrors it
+read-only, and keeps the last copy for while the host is offline.
+
+- It holds each home agent and bottle under `~/.bot-bottle/`.
+- It holds the built-in bottles a home one doesn't shadow.
+- Each comes with its text, cut at 64 KiB.
+- Project bottles aren't sent.
+
+### Resolving a launch
+
+The console's launch page asks to `resolve` an agent, by name, in an
+ordered list of bottles before it launches. The reply shows what that launch
+would run with (`library.resolved_manifest`).
+
+- `text` and `data` are the bottles merged in order, as a launch merges
+  them, as one bottle file's YAML.
+- No bottles means the built-in `basic`.
+- `elements` lists each env var, egress route, repo and forge with the file
+  it comes from, as the Manifest tab's Pretty view does.
+- A later bottle wins a clash, so it's the source.
+- The reply is `error` when it doesn't resolve.
+- Names are checked as a launch's are.
+
+### Manifest tab
+
+The console's Manifest tab asks for a running agent's `manifest`. The reply
+shows the agent's manifest versions, what it runs with, and what changed in
+this run.
+
+**Versions.** Each bottled agent has manifest versions, under
+`state/<bottle>/manifest/`.
+
+- Version 1 is its whole bottle chain flattened into one document,
+  recorded at launch.
+- A resume adds a version only if the files changed.
+- Each launch and resume also records `launch.json`. It holds every bottle
+  in the chain's fingerprint, and the host's bottle version then.
+- A fingerprint is a SHA-256 of the bottle's full resolution, with
+  `extends` merged. It's in a canonical order, so key, route and repo order
+  don't count.
+
+**`bottle_versions`** lists the chain in order.
+
+- Each says whether it still resolves to what it launched with, as
+  `latest`. A change to a bottle it extends counts.
+- A host bottle also carries that version, as `version` and `version_at`.
+- A project's bottle is versioned by its repo, and a built-in one has no
+  version.
+
+**`current`** is the latest version, with the supervisor's changes since:
+
+- egress routes the live policy has beyond the launch routes
+  (`state/<bottle>/egress/routes.yaml`)
+- repos granted while it runs
+
+It also lists what can't be kept, such as a route carrying a credential,
+and a digest.
+
+**`elements`** lists everything the agent runs with. Each egress route,
+repo, forge and env var is keyed `<kind>:<name>`, with its source.
+
+- The source is the nearest bottle file in the chain that declares it. The
+  others are listed too.
+- The source can also be "this run" or "agent provider".
+- A repo granted this run shows its grant.
+- The forge it's on is listed with the source "this host", its connection,
+  when nothing in the chain describes it.
+- Copying a granted repo into a bottle writes the forge's description with
+  it, never a token (ADR 0019).
+
+**`manifest_save`** writes `current` as the next version, if the digest
+still matches.
+
+| Option | Effect |
+|---|---|
+| `bottle` | also writes the run's changes into that bottle, one of the reply's `bottle_targets`: the launch's chain, then the host's other bottles |
+| `new_bottle` | writes a new host bottle of that name instead, recorded as a version too, and refused if the name is taken |
+| no `extend` | the bottle is flattened: the whole chain, no `extends` |
+| `extend` | it extends the bottles it launched in, and holds only the run's changes |
+| `keys` | limits any of these to some of the run's changes: `egress:<host>`, `repo:<name>` |
+| `remove` | takes those changes away from the running bottle instead |
+
+- Adding a route for a host a bottle already has merges in the new matches
+  (`approvals.with_routes`). So nothing it allowed is dropped.
+- With `remove`, the bottle's live policy is rendered again with those
+  routes as they launched, or without them. It's then set on the
+  orchestrator.
+- With `remove`, repos granted while it runs are revoked
+  (`git_gate.live_grant.revoke_live`). A repo it launched with is refused.
+
+**`manifest_transfer`** copies picked elements into a bottle, or moves them
+out of the file they came from.
+
+- A built-in bottle's elements, and this run's, are copied.
+- With `delete`, it takes picked elements out of the file they come from.
+  The running agent keeps them until its next launch.
+- With `delete`, this run's elements are taken out of the running bottle.
+- A built-in bottle's elements and the provider's stay.
+- Each file changed is saved as a new version.
+
+### Bottle tab
+
+The console's editable Bottle tab reads the agent's chain with
+`bottle_chain`. It writes one host bottle with `bottle_write`. Changes apply
+from the next launch, and the running bottle is unaffected.
+
+`bottle_chain` returns every bottle file the agent's bottle is built from,
+in merge order. Each pick's parents come before it, and a later one wins.
+Each file carries:
+
+- `kind`: `host`, `builtin` or `project`
+- `writable`, for host bottles only
+- `digest` and `content`
+- parsed `frontmatter` and `body`
+
+It also returns this run's additions (`run`) and the writable `targets`.
+
+`bottle_write` takes `bottle`, `digest`, and either `frontmatter` with
+`body` or raw `content`. It writes one host bottle of that chain.
+
+- It never writes a built-in or project bottle, nor a name outside the
+  chain.
+- The host serializes data itself.
+- It refuses text that doesn't parse, or that holds a secrets-file value.
+- It puts the file back if the agent's manifest no longer loads.
+- It records a version.
+- A digest that no longer matches replies `stale`.
+
+## Code map
+
+Where each part lives, for readers checking the code. Paths are under
+`bot_bottle/control/hostctl/` unless shown otherwise.
+
+| Part | Code |
+|---|---|
+| Running | `runner.ensure_running`, `listeners.py`, `service_unit.py` |
+| Jobs | `jobs.py`, `bottles.py` |
+| Sessions | `sessions.py`, `launch.py`, `localsock.py`, `notify.py`, `bot_bottle/backend/adoption.py` |
+| Status bar | `requests.py`, `blocks.py` |
+| Transcripts | `transcripts.py`, `transcript_retention.py`, `bot_bottle/transcript.py` |
+| Bottles' budget | `bot_bottle/backend/bottle_size.py`, `bot_bottle/backend/runtime_store.py`, `budget.StorageMeter`, `BottleService._launch` |
+| Forwarded host logins | `credential_refresh.py`, `AgentProvider.refresh_credentials` |
+| Bottle suggestions | `architect_bottle.py`, `suggest_link.py` |
+| Firehose | `firehose.py`, `firehose_sinks.py` |
+| Remote access | `remote.py`, `pairing.py`, `link_refusal.py` |
+| Host stats | `host_stats.py`, `bot_bottle/forge_alerts.py`, `bottle_metrics.py` |
+| Live metrics | `live_metrics.py` |
+| Blocks | `block_link.py` |
+| Reading transcripts | `transcript_serve.py` |
+| Snapshots | `snapshots.py` |
+| Workspace images and uploads | `workspace_files.py`, `uploads.py` |
+| Renaming | `relabel.py` |
+| GitHub | `bot_bottle/github_connect.py` |
+| Library | `library.py` |
+| Manifest tab | `manifest_view.py`, `bot_bottle/run_manifest.py`, `bot_bottle/manifest/document.py`, `bot_bottle/manifest/fingerprint.py`, `manifest_elements.py` |
+| Bottle tab | `bottle_chain.py` |
