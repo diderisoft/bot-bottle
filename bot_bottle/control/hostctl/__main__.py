@@ -22,7 +22,7 @@ from ...lib.log import debug, info, warn
 from ...paths import bot_bottle_root
 from ...trust_domain import HostControlProvisioning, HostLink, signing_key
 from .build import current_build_id
-from .runner import HostControlState, control_socket_path, leave_callers_directory
+from .runner import HostControlState, control_socket_path, leave_callers_directory, state_dir
 from . import budget, host_db, localsock
 from .github_git_tokens import GitTokenRenewer
 from .audit_events import HostAudit
@@ -32,6 +32,7 @@ from .audit_retention import JournalPruner
 from .bottles import BottleService
 from .firehose import FirehoseHub
 from .jobs import JobRegistry
+from .log_rotation import LogRotator
 from .listeners import GuestListeners
 from .live import LiveBottles
 from .remote import Supervisor
@@ -102,6 +103,9 @@ def start_firehose() -> FirehoseHub:
 
 def main() -> int:
     leave_callers_directory()
+    # Keeps hostctl.log, which its launcher opened as stdout and stderr, from
+    # growing without bound.
+    log_rotator = LogRotator(state_dir() / "hostctl.log").start()
     # The host DB's only writer checks, backs up and migrates it before
     # anything here reads it, and won't start on a corrupt one.
     if not host_db.open_for_start():
@@ -199,6 +203,7 @@ def main() -> int:
             forwarder.close()
         firehose.close()
         audit.close()
+        log_rotator.stop()
     return 0
 
 

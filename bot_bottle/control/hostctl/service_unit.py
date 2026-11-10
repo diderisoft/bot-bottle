@@ -60,6 +60,7 @@ def unit_path(kind: str | None = None) -> Path:
 
 
 def render_launchd(spec: ServiceSpec) -> bytes:
+    # The host controller rotates it (`log_rotation`).
     log = str(state_dir() / "hostctl.log")
     return plistlib.dumps({
         "Label": LAUNCHD_LABEL,
@@ -80,6 +81,7 @@ def _systemd_quote(value: str) -> str:
 
 
 def render_systemd(spec: ServiceSpec) -> str:
+    # The host controller rotates it (`log_rotation`).
     log = state_dir() / "hostctl.log"
     lines = [
         "[Unit]",

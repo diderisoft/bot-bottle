@@ -23,6 +23,9 @@ python -m bot_bottle.control.hostctl
 - It checks, backs up and migrates the host database when it starts,
   without asking ([Host database](#host-database)).
 - The CLI starts the daemon under a lock, so concurrent CLIs start only one.
+- It logs to `~/.bot-bottle/hostctl/hostctl.log`, whichever of the CLI,
+  systemd or launchd started it. At 16 MiB the daemon moves it to
+  `hostctl.log.1` and opens a fresh one, keeping 3 older files.
 
 ### Restarts after an upgrade
 
