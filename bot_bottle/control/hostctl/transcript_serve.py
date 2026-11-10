@@ -17,10 +17,11 @@ runs over the masked text, so a query can't confirm a secret.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import threading
 import time
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Generator, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -200,15 +201,49 @@ def find_copy(agent_id: str) -> Copy | None:
     return copies[-1] if copies else None
 
 
+# The secrets running bottles hold (their `secret:` env values, typed or from
+# the env as well as stored), by bottle, while this controller holds them.
+_HELD: dict[int, tuple[str, ...]] = {}
+_HELD_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def masking(values: Iterable[str]) -> Generator[None]:
+    """Mask `values` (a bottle's held secrets) in every transcript while the
+    `with` runs."""
+    key = object()
+    with _HELD_LOCK:
+        _HELD[id(key)] = tuple(v for v in values if len(v) >= 8)
+    try:
+        yield
+    finally:
+        with _HELD_LOCK:
+            _HELD.pop(id(key), None)
+
+
+def masking_plan(plan: Any) -> "contextlib.AbstractContextManager[None]":
+    """`masking` a launching bottle's held secrets (`held_secret_values`)."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...backend.launch_common import held_secret_values
+    try:
+        values = list(held_secret_values(plan).values())
+    except AttributeError:  # a plan without egress or env (nothing held)
+        values = []
+    return masking(values)
+
+
 def _secret_values() -> dict[str, str]:
-    """The host's secrets, keyed so `redact_tokens` masks every one."""
+    """The host's secrets and the running bottles' held ones, keyed so
+    `redact_tokens` masks every one."""
     # pylint: disable=import-outside-toplevel
     from ...secret_source import FileSecrets
     try:
-        values = FileSecrets(host_secrets_path())._load()  # pylint: disable=protected-access
+        values = list(FileSecrets(host_secrets_path())._load().values())  # pylint: disable=protected-access
     except Exception:  # pylint: disable=broad-exception-caught  # mask by pattern alone
-        return {}
-    return {f"SECRET_{i}": v for i, v in enumerate(values.values()) if len(v) >= 8}
+        values = []
+    with _HELD_LOCK:
+        values += [v for held in _HELD.values() for v in held]
+    return {f"SECRET_{i}": v for i, v in enumerate(values) if len(v) >= 8}
 
 
 def mask(text: str, secrets: dict[str, str]) -> str:

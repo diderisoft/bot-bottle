@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from bot_bottle.contract.yaml_subset import parse_frontmatter
 from bot_bottle.control.hostctl import bottle_chain, remote_actions
 from bot_bottle.manifest import ManifestError, ManifestIndex
 from bot_bottle.manifest.egress import OldAuthFormatError
@@ -87,28 +88,28 @@ class TestMigrate(_Host):
         self.write(before)
         return prepare("dev", self.dirs).after
 
-    def test_each_conversion_in_flow_style(self) -> None:
-        for old, new in (
-            ("scheme: Bearer, token_ref: EXAMPLE_API_TOKEN",
-             "type: bearer, value: secret:EXAMPLE_API_TOKEN"),
-            ("scheme: token, token_ref: GH_PAT", "type: token, value: secret:GH_PAT"),
-            ("header: X-Api-Key, token_ref: API_KEY",
-             "type: header, name: X-Api-Key, value: secret:API_KEY"),
-        ):
-            with self.subTest(old):
-                self.assertEqual(_bottle(new), self.migrated(_bottle(old)))
+    def auth_after(self, before: str) -> object:
+        after = parse_frontmatter(self.migrated(before))[0]
+        return after["egress"]["routes"][0]["inspect"]["auth"]  # type: ignore[index]
 
-    def test_each_conversion_in_block_style(self) -> None:
-        for old, new in (
-            (["scheme: Bearer", "token_ref: \"EXAMPLE_API_TOKEN\"   # the token"],
-             ["type: bearer", "value: \"secret:EXAMPLE_API_TOKEN\"   # the token"]),
-            (["scheme: token", "token_ref: GH_PAT"], ["type: token", "value: secret:GH_PAT"]),
-            (["header: X-Api-Key", "token_ref: API_KEY"],
-             ["type: header", "name: X-Api-Key", "value: secret:API_KEY"]),
+    def test_each_conversion_in_flow_and_block_style(self) -> None:
+        for flow, block, new in (
+            ("scheme: Bearer, token_ref: EXAMPLE_API_TOKEN",
+             ["scheme: Bearer", "token_ref: \"EXAMPLE_API_TOKEN\"   # the token"],
+             {"type": "bearer", "value": "secret:EXAMPLE_API_TOKEN"}),
+            ("scheme: token, token_ref: GH_PAT", ["scheme: token", "token_ref: GH_PAT"],
+             {"type": "token", "value": "secret:GH_PAT"}),
+            ("header: X-Api-Key, token_ref: API_KEY", ["header: X-Api-Key", "token_ref: API_KEY"],
+             {"type": "header", "name": "X-Api-Key", "value": "secret:API_KEY"}),
         ):
-            with self.subTest(old):
-                self.assertEqual(_bottle(new, flow=False),
-                                 self.migrated(_bottle(old, flow=False)))
+            with self.subTest(flow):
+                self.assertEqual(new, self.auth_after(_bottle(flow)))
+                self.assertEqual(new, self.auth_after(_bottle(block, flow=False)))
+
+    def test_what_isnt_egress_stays_as_written(self) -> None:
+        after = self.migrated(_bottle("scheme: Bearer, token_ref: A"))
+        self.assertTrue(after.startswith("---\n# the dev bottle\nextends: basic\n"))
+        self.assertTrue(after.endswith("---\n\nThe dev bottle.\n"))
 
     def test_the_result_loads_and_is_a_version(self) -> None:
         path = self.write(_bottle("header: X-Api-Key, token_ref: API_KEY"))
@@ -119,7 +120,7 @@ class TestMigrate(_Host):
                          (route.AuthScheme, route.AuthHeader, route.TokenRef))
         versions = history(path, root=self.root)
         self.assertEqual(sha, versions[0].sha)
-        self.assertEqual("bottles migrate: dev to auth type and value", versions[0].message)
+        self.assertEqual("bottles migrate: dev to the current format", versions[0].message)
 
     def test_running_it_again_has_nothing_to_do(self) -> None:
         path = self.write(_bottle("scheme: Bearer, token_ref: A"))

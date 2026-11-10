@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from typing import Mapping
 
 from .util import ManifestError, as_json_object
-from .agent import ManifestAgent
+from .agent import ManifestAgent, agent_from_frontmatter
 from .bottle import ManifestBottle
 from .extends import merge_bottles_runtime, resolve_bottles
 from .git import ManifestGitUser
@@ -301,20 +301,7 @@ class ManifestIndex:
 
         validate_agent_frontmatter_keys(agent_path, fm.keys())
 
-        # Build and validate the ManifestAgent.
-        agent_dict: dict[str, object] = {
-            "skills": fm.get("skills", []),
-            "prompt": body.strip(),
-        }
-        if "git-gate" in fm:
-            agent_dict["git-gate"] = fm["git-gate"]
-        if "remote" in fm:
-            agent_dict["remote"] = fm["remote"]
-        if "agent_provider" in fm:
-            agent_dict["agent_provider"] = fm["agent_provider"]
-        if "forge_users" in fm:
-            agent_dict["forge_users"] = fm["forge_users"]
-        agent = ManifestAgent.from_dict(agent_name, agent_dict)
+        agent = agent_from_frontmatter(agent_name, dict(fm), body)
         raw_bottle, bottle_sources = _resolve_effective_bottle_lazy(
             bottle_names, self.bottle_dirs(), dict(agent.forge_users))
         if agent_name in cwd_agents:

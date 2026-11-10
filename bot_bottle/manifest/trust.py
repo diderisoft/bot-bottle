@@ -57,7 +57,8 @@ def grants(bottle: ManifestBottle) -> list[str]:
         if route.GitFetch:
             what += ", git clone/fetch"
         if route.TokenRef:
-            what += f", with secrets file {route.TokenRef}"
+            what += (f", with secret env {route.TokenRef}" if route.TokenFromEnv
+                     else f", with secrets file {route.TokenRef}")
         lines.append(f"reach   {route.Host:<30} {what}")
     for repo in bottle.git:
         line = f"{'fetch' if repo.Key.read_only else 'push':<7} {repo.Upstream}"
@@ -69,11 +70,13 @@ def grants(bottle: ManifestBottle) -> list[str]:
     for where in bottle.git_create:
         lines.append(f"create  repos at {where}")
     for name, value in sorted(bottle.env.items()):
-        # Every secret kind (`secret_ref`): "?"/"?<message>" asks, "${VAR}"
-        # reads the env, "secret:NAME" the secrets file.
+        # Every kind but a literal (`secret_ref`): "?" asks, "${VAR}" reads
+        # the env, "secret:NAME" the secrets file; "secret:" marks a secret,
+        # the others are inputs.
         source = secret_ref.source_label(value)
         if source:
-            lines.append(f"read    {name} ({source})")
+            what = "secret" if secret_ref.is_secret(value) else "input"
+            lines.append(f"read    {name} ({what}, {source})")
     if bottle.nested_containers:
         lines.append("run     containers inside the bottle")
     return lines

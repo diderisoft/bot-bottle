@@ -25,10 +25,8 @@ from typing import TYPE_CHECKING, Any
 
 from ...bottle_state import capture_session_state, is_preserved, settle_state
 from ...contract.auth import ROLE_CLI
-from ...contract.hostctl import (
-    CONFIRM_ERROR, ORIGIN_CONSOLE, ORIGIN_TERMINAL, InfraSettings, LaunchRequest, Settings,
-    exit_code,
-)
+from ...contract.hostctl import (CONFIRM_ERROR, ORIGIN_CONSOLE, ORIGIN_TERMINAL, InfraSettings,
+                                 LaunchRequest, Settings, exit_code)
 from ...lib import log
 from ...manifest.schema import DEFAULT_BOTTLE
 from ...paths import host_secrets_path
@@ -42,6 +40,7 @@ from .audit_events import HostAudit, digest_manifest, digest_request
 from .credential_refresh import CredentialRefresher
 from .sessions import ExitStatus, SessionManager, SessionRecord
 from .transcripts import TranscriptFollower, close_stale
+from .transcript_serve import masking_plan as masking
 
 if TYPE_CHECKING:
     from ...backend import Bottle, BottleBackend, BottlePlan
@@ -420,7 +419,7 @@ class BottleService:
         error: BaseException | None = None
         with log.redirect(sink):
             try:
-                with backend.launch(plan) as bottle:
+                with backend.launch(plan) as bottle, masking(plan):
                     # The registry id names this run in the journal.
                     activation = bottle.registry_id or str(uuid.uuid4())
                     # Onto its kept home, the agent picks up its last conversation.

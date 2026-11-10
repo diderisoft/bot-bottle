@@ -15,8 +15,8 @@ its code.
 `--headless` takes everything from flags and skips prompts, still attaching on
 the inherited PTY. `--dry-run` prepares locally and prints the preflight.
 
-Secrets (`SECRETS_HELP`): `?` asks at every launch, `${VAR}` reads the
-environment, `secret:NAME` the secrets file.
+Env values (`SECRETS_HELP`): `?` asks at every launch, `${VAR}` reads the
+environment, `secret:NAME` the secrets file; `secret:` marks a secret.
 """
 
 from __future__ import annotations
@@ -50,10 +50,12 @@ if TYPE_CHECKING:
 
 
 SECRETS_HELP = (
-    "Secrets in a bottle's env: `?` (or `?<message>`) asks at every launch; `${VAR}` "
+    "Values in a bottle's env: `?` (or `?<message>`) asks at every launch; `${VAR}` "
     "reads VAR from this shell's environment; `secret:NAME` reads NAME from the "
     "secrets file (~/.bot-bottle/secrets), asking once and offering to save it when "
-    "it's missing. A route's auth is `{ type: bearer|token|header, value: secret:NAME }` "
+    "it's missing. `secret:` marks a secret (hidden when typed, scanned for in pushes, "
+    "masked in transcripts): `secret:?` and `secret:${VAR}` are the secret forms of the "
+    "first two. A route's auth is `{ type: bearer|token|header, value: secret:NAME }` "
     "(`name: <header>` too for a header). Without a terminal nothing asks: a `?` uses "
     "a saved value of the same name, with a warning.")
 

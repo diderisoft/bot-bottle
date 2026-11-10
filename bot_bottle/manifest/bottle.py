@@ -29,6 +29,22 @@ AUDIT_DELIVERIES = ("best_effort", "required")
 FIREHOSE_MODES = ("full", "metadata")
 
 
+_WARNED: set[str] = set()
+
+
+def _warn_unmarked(var: str, value: str) -> None:
+    """Warn (once per variable) when a plain `?` or `${VAR}` has a name that
+    says it holds a secret: only `secret:` marks one."""
+    kind = secret_ref.kind(value)
+    if secret_ref.is_secret(value) or kind not in (secret_ref.PROMPT, secret_ref.HOST_ENV) \
+            or not secret_ref.secret_looking(var) or var in _WARNED:
+        return
+    _WARNED.add(var)
+    # pylint: disable-next=import-outside-toplevel
+    from ..lib.log import warn
+    warn(f"{var} isn't marked secret; write secret:? (or secret:${{VAR}}) to treat it as one.")
+
+
 @dataclass(frozen=True)
 class ManifestAudit:
     """`audit:` in a bottle; empty fields weren't set.
@@ -143,14 +159,16 @@ class ManifestBottle:
             for var, value in env_dict.items():
                 if not isinstance(value, str):
                     raise ManifestError(
-                        f"env entry {var} in bottle '{name}' must be a JSON string "
-                        f"(was {type(value).__name__}). For a secret write \"?<message>\" "
-                        f"(asked at launch), \"${{VAR}}\" (from your environment) or "
-                        f"\"secret:NAME\" (from the secrets file)."
+                        f"env entry {var} in bottle '{name}' must be a string "
+                        f"(was {type(value).__name__}). Write \"?<message>\" (asked at "
+                        f"launch), \"${{VAR}}\" (from your environment) or \"secret:NAME\" "
+                        f"(from the secrets file); \"secret:?\" and \"secret:${{VAR}}\" "
+                        f"mark the first two secret."
                     )
                 problem = secret_ref.problem(value)
                 if problem:
                     raise ManifestError(f"env entry {var} in bottle '{name}': {problem}")
+                _warn_unmarked(var, value)
                 env[var] = value
 
         git: tuple[ManifestGitEntry, ...] = ()

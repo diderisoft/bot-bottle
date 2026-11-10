@@ -13,7 +13,7 @@ from ..contract.held_secrets import CANARY_KEY, HELD_ENV_PREFIX, MIN_HELD_SECRET
 from ..contract.identity import GIT_HTTP_PORT
 from ..contract.supervise import SUPERVISE_PORT
 from ..egress import Egress, EgressPlan
-from ..env import SECRET_KINDS, env_entry_kind
+from ..env import is_secret_entry
 from ..git_gate import GitGate, GitGatePlan
 from ..lib.log import warn
 from .base import BottlePlan, BottleSpec
@@ -82,15 +82,16 @@ def registration_tokens(plan: BottlePlan) -> dict[str, str]:
 
 
 def held_secret_values(plan: BottlePlan) -> dict[str, str]:
-    """The secrets inside the bottle: its canary and its secret env values
-    (`?`, `${VAR}` and `secret:NAME` alike), excluding values shorter than
+    """The secrets inside the bottle: its canary and its env values marked
+    secret (`secret:NAME`, `secret:?`, `secret:${VAR}`; a plain `?` or
+    `${VAR}` is an input, not held), excluding values shorter than
     `MIN_HELD_SECRET_LEN`."""
     held: dict[str, str] = {}
     if plan.egress_plan.canary and plan.egress_plan.canary_env:
         held[CANARY_KEY] = plan.egress_plan.canary
     for name, raw in plan.manifest.bottle.env.items():
         value = plan.forwarded_env.get(name, "")
-        if env_entry_kind(raw) in SECRET_KINDS and len(value) >= MIN_HELD_SECRET_LEN:
+        if is_secret_entry(raw) and len(value) >= MIN_HELD_SECRET_LEN:
             held[HELD_ENV_PREFIX + name] = value
     return held
 

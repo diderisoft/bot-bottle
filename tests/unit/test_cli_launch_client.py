@@ -79,7 +79,7 @@ class TestSecrets(unittest.TestCase):
             self.assertIn(name, launch_client.needed_secrets(manifest))
 
     def test_question_entries_are_asked_only_when_interactive(self) -> None:
-        index = _index({"B": "?Your B", "A": "${HOST_A}"})
+        index = _index({"B": "secret:?Your B", "A": "${HOST_A}"})
         source = MappingSecrets({"HOST_A": "a", "B": "saved"})
         with mock.patch.object(launch_client, "secrets_from_env", return_value=source), \
              mock.patch.object(launch_client, "confirm_host_keys", return_value={}), \

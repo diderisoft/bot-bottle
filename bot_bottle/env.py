@@ -1,18 +1,18 @@
 """Resolve one agent's env entries into a backend-neutral `ResolvedEnv`.
 
-Entry kinds, by value (`secret_ref`):
-  "?" / "?<message>"  prompt: asked for at launch, every launch, hidden
-                      ("?<message>" sets the prompt). With no one to ask, a
-                      saved value under the entry's name is used, with a
-                      warning to write `secret:NAME` instead.
-  "${VAR}"            host_env: VAR from the launching process's environment.
-                      Found only in the secrets file, it is used with a
-                      warning to write `secret:VAR` instead.
-  "secret:NAME"       stored: NAME from the host secrets store. Missing, an
-                      interactive launch asks once and offers to save it.
-  anything else       literal
+Entry kinds, by value (`secret_ref`); a "secret:" prefix marks a secret:
+  "?" / "?<message>"     prompt: asked at launch, every launch, input shown
+  "secret:?<message>"    the same, input hidden
+  "${VAR}"               host_env: VAR from the launching process's env
+  "secret:${VAR}"        the same, a secret
+  "secret:NAME"          stored: NAME from the host secrets store. Missing,
+                         an interactive launch asks once (hidden) and offers
+                         to save it.
+  anything else          literal
 
-Secret values (every kind but literal) never reach argv, a file or a log;
+With no one to ask, a prompt falls back to a saved value of the entry's name,
+with a warning; a `${VAR}` found only in the secrets file is used, with a
+warning. Values of every kind but literal never reach argv, a file or a log;
 errors name only the variable.
 """
 
@@ -36,7 +36,11 @@ PROMPT = secret_ref.PROMPT
 HOST_ENV = secret_ref.HOST_ENV
 STORED = secret_ref.STORED
 LITERAL = secret_ref.LITERAL
-SECRET_KINDS = (PROMPT, HOST_ENV, STORED)
+
+
+def is_secret_entry(raw: str) -> bool:
+    """Whether an env entry is marked secret ("secret:...")."""
+    return secret_ref.is_secret(raw)
 
 
 @dataclass(frozen=True)
@@ -67,6 +71,31 @@ def env_entry_host_var(raw: str) -> str:
 def env_entry_stored_name(raw: str) -> str:
     """A stored entry's secret name."""
     return secret_ref.stored_name(raw)
+
+
+def _read_shown(name: str, prompt_body: str) -> str:
+    """Read a (not secret) value from this context's prompter or the
+    controlling tty, echoed."""
+    asker = current_prompter()
+    if asker is not None:
+        value = asker.ask(prompt_body or f"value for {name}")
+    else:
+        sys.stderr.write(f"{prompt_body}: " if prompt_body
+                         else f"bot-bottle: value for {name}: ")
+        sys.stderr.flush()
+        value = read_tty_line()
+    if not value:
+        die(f"empty value provided for '{name}'. Re-run and supply a value.")
+    return value
+
+
+def _ask(name: str, raw: str) -> str:
+    """Ask for prompt entry `name` (manifest value `raw`): hidden when it is
+    marked secret, shown otherwise."""
+    message = env_entry_prompt_message(raw)
+    if secret_ref.is_secret(raw):
+        return _read_secret_silent(name, message)
+    return _read_shown(name, message)
 
 
 def _read_secret_silent(name: str, prompt_body: str) -> str:
@@ -123,7 +152,8 @@ def _peek(source: SecretSource, name: str) -> str:
 
 
 def _hint_saved(name: str, env: SecretSource, store: SecretSource) -> None:
-    """Before asking for a `?` entry: say how to use a saved value instead."""
+    """Before asking for a prompt entry: say how to use a saved value
+    instead."""
     if _peek(store, name):
         info(f"(a saved {name} exists; write {name}: secret:{name} to use it without asking)")
     elif env is not store and _peek(env, name):
@@ -148,8 +178,8 @@ def _ask_stored(name: str, entry: str, store: SecretSource) -> str:
 def ask_env(manifest: Manifest, secrets: SecretSource,
             skip: Mapping[str, str] | None = None) -> dict[str, str]:
     """Ask the person launching for what the agent's env entries ask for:
-    every `?` entry (each launch, even with a saved value), and each
-    `secret:NAME` the store lacks (once per NAME, offering to save it).
+    every `?`/`secret:?` entry (each launch, even with a saved value), and
+    each `secret:NAME` the store lacks (once per NAME, offering to save it).
     Returns the typed values by entry name. Entries in `skip` are answered."""
     env, store, _ = tiers(secrets)
     answers: dict[str, str] = {}
@@ -160,7 +190,7 @@ def ask_env(manifest: Manifest, secrets: SecretSource,
         kind = env_entry_kind(raw)
         if kind == PROMPT:
             _hint_saved(name, env, store)
-            answers[name] = _read_secret_silent(name, env_entry_prompt_message(raw))
+            answers[name] = _ask(name, raw)
         elif kind == STORED:
             ref = env_entry_stored_name(raw)
             if ref not in typed:
@@ -171,17 +201,20 @@ def ask_env(manifest: Manifest, secrets: SecretSource,
     return answers
 
 
-def _unasked(name: str, env: SecretSource, store: SecretSource) -> str:
-    """A `?` entry's value with no one to ask: a saved one, with a warning."""
+def _unasked(name: str, raw: str, env: SecretSource, store: SecretSource) -> str:
+    """A prompt entry's value with no one to ask: a saved one, with a
+    warning."""
+    asks = "secret:?" if secret_ref.is_secret(raw) else "?"
     value = store.get(name)
     if value:
-        warn(f"{name}: ? asks at every launch; there's no one to ask here, so the saved "
-             f"value is used. Write {name}: secret:{name} to say so.")
+        warn(f"{name}: {asks} asks at every launch; there's no one to ask here, so the "
+             f"saved value is used. Write {name}: secret:{name} to say so.")
         return value
     value = env.get(name) if env is not store else None
     if value:
-        warn(f"{name}: ? asks at every launch; there's no one to ask here, so the value "
-             f"in the environment is used. Write {name}: ${{{name}}} to say so.")
+        mark = "secret:" if secret_ref.is_secret(raw) else ""
+        warn(f"{name}: {asks} asks at every launch; there's no one to ask here, so the "
+             f"value in the environment is used. Write {name}: {mark}${{{name}}} to say so.")
         return value
     raise MissingEnvVarError(
         name, f"env entry {name} is a secret with no value and prompting is not allowed "
@@ -189,15 +222,16 @@ def _unasked(name: str, env: SecretSource, store: SecretSource) -> str:
         f"secret:{name} and add {name} to the secrets file, or launch from a terminal.")
 
 
-def _from_host_env(name: str, var: str, env: SecretSource, store: SecretSource) -> str:
+def _from_host_env(name: str, raw: str, env: SecretSource, store: SecretSource) -> str:
     """A `${VAR}` entry's value: VAR from the launching environment, else (with
     a warning) from the secrets file."""
+    var = env_entry_host_var(raw)
     value = env.get(var)
     if value:
         return value
     value = store.get(var) if env is not store else None
     if value:
-        warn(f"{name}: ${{{var}}} read {var} from the secrets file; write secret:{var} "
+        warn(f"{name}: {raw} read {var} from the secrets file; write secret:{var} "
              "for that.")
         return value
     raise MissingEnvVarError(
@@ -226,7 +260,7 @@ def resolve_env(
     manifest: Manifest, secrets: SecretSource, *, prompt: bool = True,
 ) -> ResolvedEnv:
     """Resolve the agent's env entries. With `prompt`, `ask_env` asks first;
-    without it, a `?` entry falls back to a saved value and a missing one
+    without it, a prompt entry falls back to a saved value and a missing one
     raises MissingEnvVarError (as does any missing reference)."""
     env, store, answers = tiers(secrets)
     if prompt:
@@ -238,9 +272,9 @@ def resolve_env(
             continue
         kind = env_entry_kind(raw)
         if kind == PROMPT:
-            forwarded[name] = answers.get(name) or _unasked(name, env, store)
+            forwarded[name] = answers.get(name) or _unasked(name, raw, env, store)
         elif kind == HOST_ENV:
-            forwarded[name] = _from_host_env(name, env_entry_host_var(raw), env, store)
+            forwarded[name] = _from_host_env(name, raw, env, store)
         elif kind == STORED:
             forwarded[name] = _from_store(name, env_entry_stored_name(raw), store, answers)
         else:  # literal
@@ -249,6 +283,6 @@ def resolve_env(
 
 
 def prompt_secret(name: str, raw: str) -> str:
-    """Ask the tty for secret entry `name` (manifest value `raw`) without
-    echoing."""
-    return _read_secret_silent(name, env_entry_prompt_message(raw))
+    """Ask for prompt entry `name` (manifest value `raw`): hidden when it is
+    marked secret."""
+    return _ask(name, raw)

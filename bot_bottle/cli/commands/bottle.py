@@ -36,7 +36,7 @@ from pathlib import Path
 from ...lib.log import die, info
 from ...manifest import ManifestIndex
 from ...manifest.loader import BUILTIN_BOTTLES_DIR
-from ...manifest.migrate import MigrateError, apply, prepare
+from ...manifest.migrate import MigrateError, Migration, apply, prepare, prepare_agent
 from ...manifest.versions import VersionError, history, is_dirty, revert, show
 from ..constants import PROG
 
@@ -71,9 +71,32 @@ def _migrate(args: list[str]) -> int:
         m = prepare(names[0], dirs)
     except MigrateError as e:
         die(str(e))
+    return _write_migration(m, dirs, yes)
+
+
+def migrate_agent(args: list[str]) -> int:
+    """`agents migrate <name> [--yes]`."""
+    yes = "--yes" in args
+    names = [a for a in args if a != "--yes"]
+    if len(names) != 1 or names[0].startswith("-"):
+        die(f"usage: {PROG} agents migrate <name> [--yes]")
+    index = ManifestIndex.resolve(os.getcwd())
+    agent_dirs = ([(index.cwd_md / "agents", True)] if index.cwd_md is not None else [])
+    if index.home_md is not None:
+        agent_dirs.append((index.home_md / "agents", False))
+    try:
+        m = prepare_agent(names[0], agent_dirs)
+    except MigrateError as e:
+        die(str(e))
+    return _write_migration(m, index.bottle_dirs(), yes)
+
+
+def _write_migration(m: Migration, dirs: list[tuple[Path, bool]], yes: bool) -> int:
     sys.stdout.write(m.diff())
     for note in m.notes:
         info(f"note: {note}")
+    for change in m.changes:
+        info(f"changed: {change}")
     if not yes:
         if not sys.stdin.isatty():
             die("not writing it without a terminal to confirm; pass --yes")
@@ -86,7 +109,8 @@ def _migrate(args: list[str]) -> int:
         die(str(e))
     info(f"migrated {m.bottle}"
          + (f" (now {sha[:9]}; `{PROG} bottles revert {m.bottle} <version>` undoes it)"
-            if sha else "; commit it with the project"))
+            if sha and m.kind == "bottle" else
+            f" (now {sha[:9]})" if sha else "; commit it with the project"))
     return 0
 
 

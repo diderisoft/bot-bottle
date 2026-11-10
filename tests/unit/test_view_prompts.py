@@ -186,10 +186,18 @@ class TestSecret(unittest.TestCase):
     def test_asks_the_prompter_hidden(self) -> None:
         asker = _Asker("v4lue")
         with prompt.redirect(asker):
-            self.assertEqual("v4lue", env.prompt_secret("API_KEY", "?"))
+            self.assertEqual("v4lue", env.prompt_secret("API_KEY", "secret:?"))
         kind, question, _, opts = asker.asked[0]
         self.assertEqual(("ask", {"secret": True}), (kind, opts))
         self.assertIn("API_KEY", question)
+
+    def test_a_plain_question_is_shown(self) -> None:
+        asker = _Asker("v4lue")
+        with prompt.redirect(asker):
+            self.assertEqual("v4lue", env.prompt_secret("REGION", "?Which region"))
+        kind, question, _, opts = asker.asked[0]
+        self.assertEqual(("ask", {"secret": False}), (kind, opts))
+        self.assertEqual("Which region", question)
 
     def test_an_empty_answer_stops_the_launch(self) -> None:
         with prompt.redirect(_Asker("")), self.assertRaises(log.Die):

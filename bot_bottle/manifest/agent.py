@@ -9,7 +9,7 @@ from typing import cast
 from ..agent_provider import BUILTIN_HARNESSES
 from .util import ManifestError, as_json_object
 from .git import ManifestGitUser
-from .schema import AGENT_MODEL_KEYS, is_valid_entity_name, reject_agent_bottle
+from .schema import AGENT_KEYS, AGENT_MODEL_KEYS, is_valid_entity_name, reject_agent_bottle
 
 
 # A harness version lands in overlay RUN lines, so it must be strict semver.
@@ -347,6 +347,14 @@ class ManifestAgent:
         return cls(skills=skills, prompt=prompt, git_user=git_user,
                    remote_writable=remote_writable, agent_provider=agent_provider,
                    forge_users=_forge_users(name, d.get("forge_users")))
+
+
+def agent_from_frontmatter(name: str, fm: dict[str, object], body: str) -> "ManifestAgent":
+    """Agent `name` from its file's frontmatter and body (the prompt)."""
+    agent_dict: dict[str, object] = {k: v for k, v in fm.items() if k in AGENT_KEYS}
+    agent_dict["skills"] = fm.get("skills", [])
+    agent_dict["prompt"] = body.strip()
+    return ManifestAgent.from_dict(name, agent_dict)
 
 
 _HOST_RE = re.compile(r"^[A-Za-z0-9.-]+(?::[0-9]+)?$")

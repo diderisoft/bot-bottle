@@ -78,8 +78,11 @@ class ManifestEgressRoute:
     # is sent there). "" header is `Authorization`.
     AuthScheme: str = ""
     AuthHeader: str = ""
-    # The secret whose value is sent: `auth.value: secret:NAME` gives NAME.
+    # The secret whose value is sent: `auth.value: secret:NAME` gives NAME
+    # (from the store); `secret:${VAR}` gives VAR, with TokenFromEnv (from the
+    # launching environment).
     TokenRef: str = ""
+    TokenFromEnv: bool = False
     Role: tuple[str, ...] = ()
     GitFetch: bool = False
     OutboundDetectors: tuple[str, ...] | None = None
@@ -125,8 +128,9 @@ class ManifestEgressRoute:
         auth_scheme = ""
         auth_header = ""
         token_ref = ""
+        token_from_env = False
         if "auth" in inspect_d:
-            auth_scheme, auth_header, token_ref = _parse_auth(
+            auth_scheme, auth_header, token_ref, token_from_env = _parse_auth(
                 label, bottle_name, host, inspect_d.get("auth"))
 
         # --- role (reserved) ---
@@ -219,6 +223,7 @@ class ManifestEgressRoute:
             AuthScheme=auth_scheme,
             AuthHeader=auth_header,
             TokenRef=token_ref,
+            TokenFromEnv=token_from_env,
             Role=roles,
             GitFetch=git_fetch,
             OutboundDetectors=outbound_detectors,
@@ -248,8 +253,9 @@ AUTH_TYPES = {"bearer": "Bearer", "token": "token", "header": ""}
 OLD_AUTH_KEYS = ("scheme", "header", "token_ref")
 
 
-def _parse_auth(label: str, bottle: str, host: str, raw: object) -> tuple[str, str, str]:
-    """A route's `inspect.auth` as (scheme, header, secret name), the fields
+def _parse_auth(label: str, bottle: str, host: str,
+                raw: object) -> tuple[str, str, str, bool]:
+    """A route's `auth` as (scheme, header, secret name, from env), the fields
     the gateway takes:
 
       { type: bearer, value: secret:NAME }            Authorization: Bearer <v>
@@ -276,38 +282,44 @@ def _parse_auth(label: str, bottle: str, host: str, raw: object) -> tuple[str, s
     if kind != "header":
         if name is not None:
             raise ManifestError(f"{label} auth.name is only for type: header")
-        return AUTH_TYPES[kind], "", _auth_token(label, auth)
+        return (AUTH_TYPES[kind], "", *_auth_token(label, auth))
     if not isinstance(name, str) or not name:
         raise ManifestError(f"{label} auth.name (the header) is required with type: header")
     if not _HEADER_NAME.match(name):
         raise ManifestError(f"{label} auth.name {name!r} is not a valid HTTP header name")
     if name.lower() in RESERVED_AUTH_HEADERS:
         raise ManifestError(f"{label} auth.name {name!r} is reserved")
-    return "", name.lower(), _auth_token(label, auth)
+    return ("", name.lower(), *_auth_token(label, auth))
 
 
-def _auth_token(label: str, auth: dict[str, object]) -> str:
-    """An auth block's secret name, from `value: secret:NAME`. The value is
-    always a secret in the store: not asked for (`?`), not from the env
-    (`${VAR}`), not a literal."""
+def _auth_token(label: str, auth: dict[str, object]) -> tuple[str, bool]:
+    """An auth block's secret: (NAME, False) from `value: secret:NAME` (the
+    store), (VAR, True) from `secret:${VAR}` (the launching env). Not asked
+    for (`secret:?`, `?`), not a plain `${VAR}` or a literal."""
     value = auth.get("value")
     if not isinstance(value, str) or not value:
         raise ManifestError(
             f"{label} auth.value is required when 'auth' is set "
             f"(value: secret:NAME, NAME in the secrets file)")
-    if secret_ref.kind(value) != secret_ref.STORED:
-        raise ManifestError(f"{label} auth.value takes secret:NAME (was {_shown(value)})")
+    ref = secret_ref.parse(value)
+    if ref.secret and ref.kind == secret_ref.HOST_ENV:
+        return ref.name, True
+    if ref.kind != secret_ref.STORED:
+        why = (" (a route's secret is resolved where no one may be there to type it, so "
+               "secret:? isn't taken here)" if ref.secret else "")
+        raise ManifestError(f"{label} auth.value takes secret:NAME or secret:${{VAR}} "
+                            f"(was {_shown(value)}){why}")
     problem = secret_ref.problem(value)
     if problem:
         raise ManifestError(f"{label} auth.value {problem}")
-    return secret_ref.stored_name(value)
+    return ref.name, False
 
 
 def _shown(value: str) -> str:
     """How an invalid value is named in an error: a reference as written, a
     literal (perhaps the secret itself) never."""
     if secret_ref.kind(value) in (secret_ref.PROMPT, secret_ref.HOST_ENV):
-        return repr(value)
+        return repr(value)  # a reference, never the secret itself
     return "a literal value"
 
 

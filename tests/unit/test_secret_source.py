@@ -147,7 +147,7 @@ class TestResolveEnvThroughASource(unittest.TestCase):
 
     def test_secret_entry_asks_even_with_a_saved_value(self) -> None:
         # "?" asks at every launch; a saved value only earns a hint.
-        manifest = _manifest({"TOKEN": "?Enter it"})
+        manifest = _manifest({"TOKEN": "secret:?Enter it"})
         with mock.patch("bot_bottle.env._read_secret_silent", return_value="typed") as prompt, \
                 mock.patch("bot_bottle.env.info") as info:
             resolved = resolve_env(manifest, MappingSecrets({"TOKEN": "from-source"}))
@@ -157,7 +157,7 @@ class TestResolveEnvThroughASource(unittest.TestCase):
             "(a saved TOKEN exists; write TOKEN: secret:TOKEN to use it without asking)")
 
     def test_secret_entry_uses_the_saved_value_when_no_one_can_be_asked(self) -> None:
-        manifest = _manifest({"TOKEN": "?Enter it"})
+        manifest = _manifest({"TOKEN": "secret:?Enter it"})
         with mock.patch("bot_bottle.env._read_secret_silent") as prompt, \
                 mock.patch("bot_bottle.env.warn") as warn:
             resolved = resolve_env(manifest, MappingSecrets({"TOKEN": "from-source"}),
@@ -165,11 +165,11 @@ class TestResolveEnvThroughASource(unittest.TestCase):
         prompt.assert_not_called()
         self.assertEqual({"TOKEN": "from-source"}, resolved.forwarded)
         warn.assert_called_once_with(
-            "TOKEN: ? asks at every launch; there's no one to ask here, so the saved value "
-            "is used. Write TOKEN: secret:TOKEN to say so.")
+            "TOKEN: secret:? asks at every launch; there's no one to ask here, so the saved "
+            "value is used. Write TOKEN: secret:TOKEN to say so.")
 
     def test_secret_entry_prompts_when_absent(self) -> None:
-        manifest = _manifest({"TOKEN": "?Enter it"})
+        manifest = _manifest({"TOKEN": "secret:?Enter it"})
         with mock.patch("bot_bottle.env._read_secret_silent",
                         return_value="typed") as prompt:
             resolved = resolve_env(manifest, MappingSecrets({}))
@@ -177,7 +177,7 @@ class TestResolveEnvThroughASource(unittest.TestCase):
         self.assertEqual({"TOKEN": "typed"}, resolved.forwarded)
 
     def test_secret_entry_raises_when_absent_and_prompting_is_off(self) -> None:
-        manifest = _manifest({"TOKEN": "?"})
+        manifest = _manifest({"TOKEN": "secret:?"})
         with mock.patch("bot_bottle.env._read_secret_silent") as prompt, \
                 self.assertRaises(MissingEnvVarError):
             resolve_env(manifest, MappingSecrets({}), prompt=False)

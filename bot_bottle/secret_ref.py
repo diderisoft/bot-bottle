@@ -1,55 +1,90 @@
-"""Where a manifest value comes from: an env entry's value, or a route's
-`inspect.auth.token`.
+"""Where a manifest value comes from, and whether it is a secret: an env
+entry's value, a route's `auth.value`, an agent's `login`.
 
-  "?" / "?<message>"  PROMPT: asked for at launch, every launch (hidden input;
-                      the message is the prompt)
-  "${VAR}"            HOST_ENV: VAR in the launching process's environment
-  "secret:NAME"       STORED: NAME in the host secrets store (the secrets file)
-  anything else       LITERAL
+  "?" / "?<message>"      PROMPT: asked at launch, every launch, input shown
+  "${VAR}"                HOST_ENV: VAR from the launching process's env
+  "secret:NAME"           STORED: NAME from the host secrets store; secret
+  "secret:?<message>"     PROMPT, secret: asked at launch, input hidden
+  "secret:${VAR}"         HOST_ENV, secret
+  anything else           LITERAL
 
-A literal can't start with "secret:"; that is always a reference. Imports
-nothing from the manifest package, so the manifest can use it.
+A secret is push-scanned, masked in transcripts and listed as a secret in the
+trust prompt. Every non-literal value, secret or not, is kept out of argv,
+files and logs. A literal can't start with "secret:"; that is always a
+reference. Imports nothing from the manifest package, so the manifest can use
+it.
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 PROMPT = "prompt"
 HOST_ENV = "host_env"
 STORED = "stored"
 LITERAL = "literal"
 
-STORED_PREFIX = "secret:"
+SECRET_PREFIX = "secret:"
+STORED_PREFIX = SECRET_PREFIX
 _NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _HOST_ENV_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+# A name that looks like it holds a secret, for the loader's warning.
+_SECRET_LOOKING_RE = re.compile(
+    r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|PAT|CREDENTIALS?)$", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class Ref:
+    """A parsed value: its `kind`, whether it is `secret`, and its `name`
+    (the store's NAME, or the env's VAR) or prompt `message`."""
+
+    kind: str
+    secret: bool = False
+    name: str = ""
+    message: str = ""
+
+
+def parse(raw: str) -> Ref:
+    """`raw` as a `Ref` (unchecked; see `problem`)."""
+    secret = raw.startswith(SECRET_PREFIX)
+    rest = raw[len(SECRET_PREFIX):] if secret else raw
+    if rest.startswith("?"):
+        return Ref(PROMPT, secret, message=rest[1:])
+    m = _HOST_ENV_RE.match(rest)
+    if m:
+        return Ref(HOST_ENV, secret, name=m.group(1))
+    if secret:
+        return Ref(STORED, True, name=rest)
+    return Ref(LITERAL)
 
 
 def kind(raw: str) -> str:
     """PROMPT, HOST_ENV, STORED or LITERAL."""
-    if raw.startswith("?"):
-        return PROMPT
-    if raw.startswith(STORED_PREFIX):
-        return STORED
-    if _HOST_ENV_RE.match(raw):
-        return HOST_ENV
-    return LITERAL
+    return parse(raw).kind
+
+
+def is_secret(raw: str) -> bool:
+    """Whether `raw` is marked secret (starts with "secret:")."""
+    return raw.startswith(SECRET_PREFIX)
 
 
 def prompt_message(raw: str) -> str:
     """A PROMPT value's message (after the "?"); "" means the default."""
-    return raw[1:] if raw.startswith("?") else ""
+    ref = parse(raw)
+    return ref.message if ref.kind == PROMPT else ""
 
 
 def host_var(raw: str) -> str:
     """A HOST_ENV value's variable name, else ""."""
-    m = _HOST_ENV_RE.match(raw)
-    return m.group(1) if m else ""
+    ref = parse(raw)
+    return ref.name if ref.kind == HOST_ENV else ""
 
 
 def stored_name(raw: str) -> str:
     """A STORED value's secret name (unchecked; see `problem`), else ""."""
-    return raw[len(STORED_PREFIX):] if raw.startswith(STORED_PREFIX) else ""
+    ref = parse(raw)
+    return ref.name if ref.kind == STORED else ""
 
 
 def is_name(name: str) -> bool:
@@ -57,32 +92,41 @@ def is_name(name: str) -> bool:
     return bool(_NAME_RE.match(name))
 
 
+def secret_looking(name: str) -> bool:
+    """Whether a variable's name says it holds a secret (ends in KEY, TOKEN,
+    SECRET, PASSWORD, PASSWD, PAT or CREDENTIAL(S), any case)."""
+    return bool(_SECRET_LOOKING_RE.search(name))
+
+
 def problem(raw: str) -> str:
-    """Why `raw` isn't a usable value, or "" when it is: a "secret:" whose
-    name isn't env-var shaped."""
-    if kind(raw) == STORED and not is_name(stored_name(raw)):
-        return (f"{raw!r} names no valid secret: write secret:NAME, NAME made of "
-                "letters, digits and _ (not starting with a digit)")
+    """Why `raw` isn't a usable value, or "" when it is: a "secret:" that
+    names neither a prompt, an env var nor a valid secret name."""
+    ref = parse(raw)
+    if ref.kind == STORED and not is_name(ref.name):
+        return (f"{raw!r} names no valid secret: write secret:NAME (NAME made of "
+                "letters, digits and _, not starting with a digit), secret:? or "
+                "secret:${VAR}")
     return ""
 
 
 def source_label(raw: str) -> str:
     """Where the value comes from, for people: "asks", "env VAR",
     "secrets file NAME"; "" for a literal."""
-    k = kind(raw)
-    if k == PROMPT:
+    ref = parse(raw)
+    if ref.kind == PROMPT:
         return "asks"
-    if k == HOST_ENV:
-        return f"env {host_var(raw)}"
-    if k == STORED:
-        return f"secrets file {stored_name(raw)}"
+    if ref.kind == HOST_ENV:
+        return f"env {ref.name}"
+    if ref.kind == STORED:
+        return f"secrets file {ref.name}"
     return ""
 
 
 def stored(name: str) -> str:
     """The value that reads `name` from the host secrets store."""
-    return f"{STORED_PREFIX}{name}"
+    return f"{SECRET_PREFIX}{name}"
 
 
-__all__ = ["HOST_ENV", "LITERAL", "PROMPT", "STORED", "STORED_PREFIX", "host_var", "is_name",
-           "kind", "problem", "prompt_message", "source_label", "stored", "stored_name"]
+__all__ = ["HOST_ENV", "LITERAL", "PROMPT", "Ref", "SECRET_PREFIX", "STORED", "STORED_PREFIX",
+           "host_var", "is_name", "is_secret", "kind", "parse", "problem", "prompt_message",
+           "secret_looking", "source_label", "stored", "stored_name"]

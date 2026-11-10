@@ -116,28 +116,32 @@ class ProjectBottles(_Project):
         (self.bottles / "app.md").write_text(
             "---\nextends: basic\nenv:\n  BARE: \"?\"\n  KEYED: \"?Paste your key\"\n---\n")
         error = self.untrusted("pi", "./app")
-        self.assertEqual(["read    BARE (asks)", "read    KEYED (asks)"], error.grants)
+        self.assertEqual(["read    BARE (input, asks)", "read    KEYED (input, asks)"],
+                         error.grants)
 
     def test_every_secret_kind_needs_trust_and_says_where_it_comes_from(self) -> None:
         (self.bottles / "app.md").write_text(
             "---\nextends: basic\nenv:\n  ASKED: ?Paste it\n  FROM_ENV: ${GITHUB_PAT}\n"
-            "  STORED: secret:OPENAI_API_KEY\n  PLAIN: hello\n"
+            "  STORED: secret:OPENAI_API_KEY\n  HIDDEN: secret:?Paste it\n"
+            "  SECRET_ENV: secret:${GH}\n  PLAIN: hello\n"
             "egress:\n  routes:\n    - host: api.example.com\n      inspect:\n"
             "        auth: { type: bearer, value: secret:EXAMPLE_API_TOKEN }\n---\n")
         error = self.untrusted("pi", "./app")
         self.assertEqual([
             "reach   api.example.com                any method, with secrets file "
             "EXAMPLE_API_TOKEN",
-            "read    ASKED (asks)",
-            "read    FROM_ENV (env GITHUB_PAT)",
-            "read    STORED (secrets file OPENAI_API_KEY)",
+            "read    ASKED (input, asks)",
+            "read    FROM_ENV (input, env GITHUB_PAT)",
+            "read    HIDDEN (secret, asks)",
+            "read    SECRET_ENV (secret, env GH)",
+            "read    STORED (secret, secrets file OPENAI_API_KEY)",
         ], error.grants)
 
     def test_a_stored_secret_alone_needs_trust(self) -> None:
         (self.bottles / "app.md").write_text(
             "---\nextends: basic\nenv:\n  KEY: secret:KEY\n---\n")
         error = self.untrusted("pi", "./app")
-        self.assertEqual(["read    KEY (secrets file KEY)"], error.grants)
+        self.assertEqual(["read    KEY (secret, secrets file KEY)"], error.grants)
 
     def test_the_users_bottle_wins_a_name_clash_without_asking(self) -> None:
         (self.bottles / "pi.md").write_text(_STRIPE)

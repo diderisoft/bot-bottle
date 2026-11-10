@@ -156,6 +156,8 @@ def _secret(route: dict[str, Any]) -> str:
     if not isinstance(auth, dict):
         return ""
     value = auth.get("value")
+    if isinstance(value, str) and secret_ref.kind(value) == secret_ref.HOST_ENV:
+        return f"secret env {secret_ref.host_var(value)}"
     ref = secret_ref.stored_name(value) if isinstance(value, str) else ""
     ref = ref or auth.get("token_ref") or ""
     return f"secrets file {str(ref).lstrip('$')}" if ref else ""

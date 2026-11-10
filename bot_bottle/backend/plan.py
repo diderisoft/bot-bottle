@@ -23,29 +23,36 @@ from .print_util import print_multi, visible_agent_env_names
 
 class EgressTokenSecrets(SecretSource):
     """Where egress token refs resolve: `provisioned` (the agent provider's
-    values) first. A secret one of the bottle's own routes names (`auth.value:
-    secret:NAME`) then comes from the secrets store, and only with a warning
-    from the launching environment; any other (the provider's) from `secrets`
-    as before (env, then store)."""
+    values) first. A secret one of the bottle's own routes names then comes
+    from where its `auth.value` says: `secret:NAME` from the secrets store
+    (only with a warning from the launching environment), `secret:${VAR}`
+    (`env_refs`) from the launching environment (only with a warning from the
+    store). Any other (the provider's) from `secrets` as before (env, then
+    store)."""
 
     def __init__(self, provisioned: SecretSource, secrets: SecretSource,
-                 route_refs: frozenset[str]) -> None:
+                 route_refs: frozenset[str], env_refs: frozenset[str] = frozenset()) -> None:
         self._provisioned = provisioned
         self._secrets = secrets
         self._route_refs = route_refs
+        self._env_refs = env_refs
 
     def get(self, name: str) -> str | None:
         value = self._provisioned.get(name)
         if value is not None:
             return value
-        if name not in self._route_refs:
+        if name not in self._route_refs and name not in self._env_refs:
             return self._secrets.get(name)
         env, store, _ = tiers(self._secrets)
-        value = store.get(name)
-        if value is not None or env is store:
+        first, then = (env, store) if name in self._env_refs else (store, env)
+        value = first.get(name)
+        if value or env is store:
             return value
-        value = env.get(name)
-        if value:
+        value = then.get(name)
+        if value and name in self._env_refs:
+            warn(f"egress: route secret:${{{name}}} read {name} from the secrets file; "
+                 f"write secret:{name} for that.")
+        elif value:
             warn(f"egress: route token {name} came from the launching environment; "
                  f"secret:{name} reads the secrets file, so add {name} there.")
         return value
@@ -159,9 +166,11 @@ class BottlePlan(ABC):
         """Where egress token_refs resolve (`EgressTokenSecrets`): the
         provider's provisioned values, then the store for the bottle's own
         routes, else `secrets`."""
-        refs = frozenset(r.TokenRef for r in self.manifest.bottle.egress.routes if r.TokenRef)
+        routes = self.manifest.bottle.egress.routes
+        refs = frozenset(r.TokenRef for r in routes if r.TokenRef and not r.TokenFromEnv)
+        env_refs = frozenset(r.TokenRef for r in routes if r.TokenRef and r.TokenFromEnv)
         return EgressTokenSecrets(
-            MappingSecrets(self.agent_provision.provisioned_env), self.secrets, refs)
+            MappingSecrets(self.agent_provision.provisioned_env), self.secrets, refs, env_refs)
 
     def print(self) -> None:
         """Print the y/N preflight summary to stderr."""

@@ -59,6 +59,7 @@ class _Store(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
         self.path = self.dir / "secrets"
         self.ask = self.enterContext(mock.patch("bot_bottle.env._read_secret_silent"))
+        self.shown = self.enterContext(mock.patch("bot_bottle.env._read_shown"))
         self.save = self.enterContext(mock.patch("bot_bottle.env._confirm_save",
                                                  return_value=True))
         self.warn = self.enterContext(mock.patch("bot_bottle.env.warn"))
@@ -114,42 +115,53 @@ class TestKinds(unittest.TestCase):
 class TestPrompt(_Store):
     def test_interactive_asks_every_launch_and_hints_at_a_saved_value(self) -> None:
         self.ask.return_value = "typed"
-        resolved = resolve_env(_manifest({"FOO": "?Paste FOO"}), self.secrets(FOO="saved"))
+        resolved = resolve_env(_manifest({"FOO": "secret:?Paste FOO"}),
+                               self.secrets(FOO="saved"))
         self.assertEqual({"FOO": "typed"}, resolved.forwarded)
         self.ask.assert_called_once_with("FOO", "Paste FOO")
         self.info.assert_called_once_with(
             "(a saved FOO exists; write FOO: secret:FOO to use it without asking)")
         self.assertEqual([], self.warned())
 
+    def test_a_plain_question_is_asked_shown_not_hidden(self) -> None:
+        self.shown.return_value = "eu-west-1"
+        resolved = resolve_env(_manifest({"REGION": "?Which region"}), self.secrets())
+        self.assertEqual({"REGION": "eu-west-1"}, resolved.forwarded)
+        self.shown.assert_called_once_with("REGION", "Which region")
+        self.ask.assert_not_called()
+
     def test_interactive_without_a_saved_value_asks_without_a_hint(self) -> None:
         self.ask.return_value = "typed"
-        resolve_env(_manifest({"FOO": "?"}), self.secrets())
+        resolve_env(_manifest({"FOO": "secret:?"}), self.secrets())
         self.ask.assert_called_once_with("FOO", "")
         self.info.assert_not_called()
 
     def test_an_answer_typed_on_the_cli_is_used_without_asking_again(self) -> None:
-        resolved = resolve_env(_manifest({"FOO": "?"}),
+        resolved = resolve_env(_manifest({"FOO": "secret:?"}),
                                self.secrets(answers={"FOO": "typed"}, FOO="saved"), prompt=False)
         self.assertEqual({"FOO": "typed"}, resolved.forwarded)
         self.ask.assert_not_called()
         self.assertEqual([], self.warned())
 
     def test_no_one_to_ask_uses_the_saved_value_with_a_warning(self) -> None:
-        resolved = resolve_env(_manifest({"FOO": "?"}), self.secrets(FOO="saved"),
-                               prompt=False)
-        self.assertEqual({"FOO": "saved"}, resolved.forwarded)
+        for raw, asks in (("?", "?"), ("secret:?", "secret:?")):
+            self.warn.reset_mock()
+            resolved = resolve_env(_manifest({"FOO": raw}), self.secrets(FOO="saved"),
+                                   prompt=False)
+            self.assertEqual({"FOO": "saved"}, resolved.forwarded)
+            self.assertEqual([f"FOO: {asks} asks at every launch; there's no one to ask here, "
+                              "so the saved value is used. Write FOO: secret:FOO to say so."],
+                             self.warned())
         self.ask.assert_not_called()
-        self.assertEqual(["FOO: ? asks at every launch; there's no one to ask here, so the "
-                          "saved value is used. Write FOO: secret:FOO to say so."],
-                         self.warned())
+        self.shown.assert_not_called()
 
     def test_no_one_to_ask_uses_the_environments_value_with_a_warning(self) -> None:
-        resolved = resolve_env(_manifest({"FOO": "?"}), self.secrets(env={"FOO": "env"}),
+        resolved = resolve_env(_manifest({"FOO": "secret:?"}), self.secrets(env={"FOO": "env"}),
                                prompt=False)
         self.assertEqual({"FOO": "env"}, resolved.forwarded)
-        self.assertEqual(["FOO: ? asks at every launch; there's no one to ask here, so the "
-                          "value in the environment is used. Write FOO: ${FOO} to say so."],
-                         self.warned())
+        self.assertEqual(["FOO: secret:? asks at every launch; there's no one to ask here, so "
+                          "the value in the environment is used. Write FOO: secret:${FOO} to "
+                          "say so."], self.warned())
 
     def test_no_one_to_ask_and_nothing_saved_fails(self) -> None:
         with self.assertRaises(MissingEnvVarError) as cm:
@@ -175,6 +187,13 @@ class TestHostEnv(_Store):
             self.assertEqual(["GH_TOKEN: ${GITHUB_PAT} read GITHUB_PAT from the secrets file; "
                               "write secret:GITHUB_PAT for that."], self.warned())
         self.ask.assert_not_called()
+
+    def test_a_secret_env_value_reads_the_same_and_says_so_in_its_warning(self) -> None:
+        resolved = resolve_env(_manifest({"GH_TOKEN": "secret:${GITHUB_PAT}"}),
+                               self.secrets(GITHUB_PAT="file"), prompt=False)
+        self.assertEqual({"GH_TOKEN": "file"}, resolved.forwarded)
+        self.assertEqual(["GH_TOKEN: secret:${GITHUB_PAT} read GITHUB_PAT from the secrets file; "
+                          "write secret:GITHUB_PAT for that."], self.warned())
 
     def test_in_neither_fails_naming_the_variable(self) -> None:
         with self.assertRaises(MissingEnvVarError) as cm:
@@ -276,7 +295,15 @@ class TestRouteAuth(unittest.TestCase):
                              "(and name for a header). Run bot-bottle bottles migrate dev.",
                              str(cm.exception))
 
+    def test_a_secret_env_value_is_taken(self) -> None:
+        route = self.route({"type": "bearer", "value": "secret:${GH_PAT}"})
+        self.assertEqual(("GH_PAT", True), (route.TokenRef, route.TokenFromEnv))
+        self.assertEqual({"type": "bearer", "value": "secret:${GH_PAT}"},
+                         route_document(route)["inspect"]["auth"])  # type: ignore[index]
+
     def test_only_secret_name_is_a_value(self) -> None:
+        with self.assertRaisesRegex(ManifestError, "secret:\\? isn't taken here"):
+            self.route({"type": "bearer", "value": "secret:?Paste it"})
         for bad in ("?Paste it", "${API_TOKEN}", "hunter2-literal"):
             with self.subTest(bad), \
                     self.assertRaisesRegex(ManifestError, "auth.value takes secret:NAME") as cm:
@@ -343,6 +370,20 @@ class TestRouteTokenResolution(unittest.TestCase):
         with self.assertRaises(MissingEnvVarError):
             self.resolve(self.source({}, {}, {}))
 
+    def test_a_secret_env_route_value_reads_the_environment_first(self) -> None:
+        source = EgressTokenSecrets(
+            MappingSecrets({}),
+            LaunchSecrets(MappingSecrets({"GH": "env"}), MappingSecrets({"GH": "file"})),
+            frozenset(), frozenset({"GH"}))
+        self.assertEqual({"EGRESS_TOKEN_0": "env"}, self.resolve(source, "GH"))
+        self.warn.assert_not_called()
+        source = EgressTokenSecrets(
+            MappingSecrets({}), LaunchSecrets(MappingSecrets({}), MappingSecrets({"GH": "file"})),
+            frozenset(), frozenset({"GH"}))
+        self.assertEqual({"EGRESS_TOKEN_0": "file"}, self.resolve(source, "GH"))
+        self.assertIn("route secret:${GH} read GH from the secrets file",
+                      self.warn.call_args.args[0])
+
     def test_a_providers_token_resolves_as_before(self) -> None:
         # Not one of the bottle's routes: env, then store, no warning.
         self.assertEqual({"EGRESS_TOKEN_0": "env"}, self.resolve(
@@ -351,16 +392,47 @@ class TestRouteTokenResolution(unittest.TestCase):
 
 
 class TestHeldForThePushScan(unittest.TestCase):
-    def test_every_kind_is_held_and_short_values_are_not(self) -> None:
+    def test_only_secret_marked_values_are_held_and_short_ones_are_not(self) -> None:
         manifest = _manifest({"ASKED": "?", "FROM_ENV": "${GITHUB_PAT}", "STORED": "secret:K",
+                              "HIDDEN": "secret:?", "SECRET_ENV": "secret:${GH}",
                               "SHORT": "secret:S", "PLAIN": "literal-value-long"})
         plan = SimpleNamespace(
             egress_plan=SimpleNamespace(canary="", canary_env=""), manifest=manifest,
             forwarded_env={"ASKED": "asked-value-1", "FROM_ENV": "env-value-12",
-                           "STORED": "stored-value-1", "SHORT": "1234"})
-        self.assertEqual({"HELD_ENV_ASKED": "asked-value-1", "HELD_ENV_FROM_ENV": "env-value-12",
-                          "HELD_ENV_STORED": "stored-value-1"},
+                           "STORED": "stored-value-1", "HIDDEN": "hidden-value-1",
+                           "SECRET_ENV": "secret-env-value", "SHORT": "1234"})
+        self.assertEqual({"HELD_ENV_STORED": "stored-value-1", "HELD_ENV_HIDDEN": "hidden-value-1",
+                          "HELD_ENV_SECRET_ENV": "secret-env-value"},
                          held_secret_values(plan))  # type: ignore[arg-type]
+
+
+class TestMasked(unittest.TestCase):
+    def test_a_running_bottles_held_secrets_are_masked_in_transcripts(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.control.hostctl import transcript_serve
+        with mock.patch.object(transcript_serve, "host_secrets_path",
+                               return_value=Path("/nonexistent/secrets")):
+            with transcript_serve.masking(["typed-secret-value-1", "short"]):
+                values = set(transcript_serve._secret_values().values())  # pylint: disable=protected-access
+                self.assertIn("typed-secret-value-1", values)
+                self.assertNotIn("short", values)
+                self.assertNotIn("typed-secret-value-1", transcript_serve.mask(
+                    "the key is typed-secret-value-1 ok", transcript_serve._secret_values()))  # pylint: disable=protected-access
+            self.assertEqual({}, transcript_serve._secret_values())  # pylint: disable=protected-access
+
+
+class TestUnmarkedWarning(unittest.TestCase):
+    def test_a_secret_looking_name_without_secret_is_warned_about(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.manifest import bottle as bottle_module
+        with mock.patch.object(bottle_module, "_WARNED", set()), \
+                mock.patch("bot_bottle.lib.log.warn") as warn:
+            _manifest({"API_KEY": "?", "GH_PAT": "${X}", "REGION": "?", "OK_TOKEN": "secret:?",
+                       "DB_PASSWORD": "lit"})
+        self.assertEqual(
+            ["API_KEY isn't marked secret; write secret:? (or secret:${VAR}) to treat it as one.",
+             "GH_PAT isn't marked secret; write secret:? (or secret:${VAR}) to treat it as one."],
+            [c.args[0] for c in warn.call_args_list])
 
 
 class TestWriters(unittest.TestCase):

@@ -34,12 +34,15 @@ def _detectors(value: tuple[str, ...] | None) -> object:
     return False if value == () else list(value or ())
 
 
-def auth_document(scheme: str, header: str, secret: str) -> dict[str, object]:
+def auth_document(scheme: str, header: str, secret: str,
+                  from_env: bool = False) -> dict[str, object]:
     """A route's auth as a bottle file writes it: `{type: bearer|token,
-    value: secret:NAME}`, or `{type: header, name: X, value: secret:NAME}`."""
+    value: secret:NAME}`, or `{type: header, name: X, value: secret:NAME}`;
+    `secret:${VAR}` when `from_env`."""
+    value = f"secret:${{{secret}}}" if from_env else stored(secret)
     if scheme:
-        return {"type": scheme.lower(), "value": stored(secret)}
-    return {"type": "header", "name": header, "value": stored(secret)}
+        return {"type": scheme.lower(), "value": value}
+    return {"type": "header", "name": header, "value": value}
 
 
 def route_document(route: ManifestEgressRoute) -> dict[str, object]:
@@ -52,7 +55,8 @@ def route_document(route: ManifestEgressRoute) -> dict[str, object]:
     if route.Matches:
         inspect["matches"] = [_match(m) for m in route.Matches]
     if route.AuthScheme or route.AuthHeader:
-        inspect["auth"] = auth_document(route.AuthScheme, route.AuthHeader, route.TokenRef)
+        inspect["auth"] = auth_document(route.AuthScheme, route.AuthHeader, route.TokenRef,
+                                         route.TokenFromEnv)
     if route.GitFetch:
         inspect["git"] = {"fetch": True}
     if route.PreserveAuth:
