@@ -137,7 +137,7 @@ The orchestrator stores what it's given in `bot-bottle.db`, encrypted under a ra
 
 The host reads the key back to restore a bottle's tokens when the infra restarts. The agent has the key but can't reach the database.
 
-On docker and macos-container, env values reach the agent through the launching process's environment, never its command line. On firecracker they travel in the `ssh` command line that starts the agent, so they show in the host's process list while it runs.
+Env values never go on a host command line, where other host users could read them. On docker and macos-container they reach the agent through the launching process's environment. On firecracker they are sent over the `ssh` connection's input and written to a file inside the VM ([backends.md](backends.md#firecracker-the-guest-environment)).
 
 ## What protects them
 
@@ -149,7 +149,7 @@ On docker and macos-container, env values reach the agent through the launching 
 | Canary | any request carrying it on an inspected route is a 403, recorded for `bot-bottle resolve-canary` | `inspect: false` routes |
 | [git-gate push scan](git-gate.md#push) | injected tokens, the canary and `?` values of 8 or more characters, anywhere in a push | `${VAR}` values and shorter `?` values |
 | gitleaks on pushes | anything with a known token shape | shapeless values |
-| [Trust prompt](manifest.md#trust) | each `token_ref`, forge token, `?` and `${VAR}` entry, and provider login or key | `?<message>` entries |
+| [Trust prompt](manifest.md#trust) | each `token_ref`, forge token, `?` and `?<message>` entry, `${VAR}` entry, and provider login or key | |
 | Bottle file guard | a saved version or a console edit holding a secrets-file value is refused | values shorter than 8 characters |
 | Console | sees names only. Transcripts mask secrets-file values and token shapes. | values that came from your shell |
 
@@ -160,9 +160,7 @@ Launch summaries, prompts and errors name variables, never values (`env.py`, `se
 - The agent can send its own env secrets to any allowlisted host. Egress doesn't block them.
 - An `inspect: false` route is an unscanned tunnel. Anything the agent holds can go there.
 - `${VAR}` values aren't scanned anywhere. Prefer `?` for anything sensitive.
-- The trust prompt doesn't list `?<message>` entries. Read a project bottle's `env:` before trusting it.
 - The secrets file is plain text. File permissions are its only protection, so anyone with your user account can read it.
-- On firecracker, env values show in the host's process list.
 - The console can set a secret but not read one. A compromised console could still point a route at a host of its choosing and send a secret there. See [What pairing lets the console do](host-controller.md#what-pairing-lets-the-console-do).
 - A compromised gateway or orchestrator holds every running bottle's tokens. See the [threat model](../security/threat-model.md#what-we-explicitly-do-not-defend-against).
 
