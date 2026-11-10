@@ -1,11 +1,14 @@
 """A bottle's versions (PRD 0103), behind `bot-bottle bottles history|revert`,
-and `bottles migrate` for a bottle in the old git-gate format.
+and `bottles migrate` for a bottle in an old format (git-gate repos, or a
+route's auth written with `scheme`, `header` or `token_ref`).
 
   bot-bottle bottles history <name>             its versions, newest first
   bot-bottle bottles history <name> <version>   what that version changed
   bot-bottle bottles revert <name> <version>    make it what it was then
   bot-bottle bottles migrate <name> [--yes]     rewrite its old-format repos
-                                                as grants on a forge bottle
+                                                as grants on a forge bottle,
+                                                and old-format route auth as
+                                                type and value
 
 Every change to a host bottle (`~/.bot-bottle/bottles/`) is a version, hand
 edits included. A project bottle's versions are the project's commits; a
@@ -14,9 +17,13 @@ launch, and is itself a version you can revert.
 
 `migrate` turns repos whose keys a forge mints, written in long form (`url`,
 `key: {provider: gitea, ...}`, `host_key`), into one-line grants on a forge
-bottle (`bot-bottle forge connect` writes one), adding it to `extends`. It
-shows the change and asks first (`--yes` doesn't), and writes it as a new
-version, so `revert` undoes it. Everything else in the file stays as it is.
+bottle (`bot-bottle forge connect` writes one), adding it to `extends`, and
+a route's old-format auth into `type` and `value`: `scheme: Bearer` (or
+`token`) becomes `type: bearer` (or `token`), `header: X` becomes `type:
+header, name: X`, and `token_ref: NAME` becomes `value: secret:NAME` (a
+`header` with a `scheme` is left for you to rewrite). It shows the change and
+asks first (`--yes` doesn't), and writes it as a new version, so
+`revert` undoes it. Everything else in the file stays as it is.
 """
 
 from __future__ import annotations

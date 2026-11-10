@@ -5,7 +5,8 @@
     bot-bottle bottles history <name> <version>  what that version changed
     bot-bottle bottles revert <name> <version>   make it what it was then
     bot-bottle bottles migrate <name> [--yes]    rewrite old-format git-gate
-                                                 repos as forge grants
+                                                 repos as forge grants, and
+                                                 old route auth as type/value
     bot-bottle bottles suggest "<task>"          propose a bottle for a task
       [--cwd DIR]                                  project directory (default: cwd)
       [--write NAME]                               save the new bottle as NAME
