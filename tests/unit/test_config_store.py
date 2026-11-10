@@ -14,9 +14,11 @@ from unittest import mock
 from bot_bottle.lib.config_store import (
     DEFAULT_CACHED_IMAGE_STALE_WARNING_DAYS,
     AuditForward,
+    AuditRetention,
     ConfigStore,
     FirehoseSettings,
     FirehoseSink,
+    HostConfig,
 )
 from bot_bottle.orchestrator.store.store_manager import StoreManager
 
@@ -64,6 +66,8 @@ class TestConfigStore(unittest.TestCase):
                 "host_max_memory_gb",
                 "github_app_slug",
                 "github_app_client_id",
+                "audit_retention_days",
+                "audit_retention_max_gb",
             ], columns)
 
     def test_firehose_settings_round_trip(self) -> None:
@@ -89,6 +93,24 @@ class TestConfigStore(unittest.TestCase):
             self.assertEqual(forward, store.audit_forward())
             store.set_audit_forward(None)
             self.assertIsNone(store.audit_forward())
+
+    def test_audit_retention_keeps_all_until_set(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
+            store = ConfigStore(Path(tmp) / "bot-bottle.db")
+            self.assertTrue(store.audit_retention().keeps_all)  # no DB yet
+            store.migrate()
+            self.assertEqual(AuditRetention(), store.audit_retention())
+            store.set_audit_retention(AuditRetention(days=90, max_gb=4))
+            self.assertEqual(AuditRetention(days=90, max_gb=4), store.audit_retention())
+            self.assertEqual(AuditRetention(days=90, max_gb=4),
+                             store.host_config().audit_retention)
+
+    def test_audit_retention_from_json(self) -> None:
+        config = HostConfig().with_json("audit_retention", {"days": 30})
+        self.assertEqual(AuditRetention(days=30), config.audit_retention)
+        self.assertEqual({"days": 30, "max_gb": 0}, config.to_json()["audit_retention"])
+        with self.assertRaises(ValueError):
+            HostConfig().with_json("audit_retention", {"days": -1})
 
     def test_audit_delivery_defaults_to_best_effort_and_can_be_set(self) -> None:
         with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
@@ -191,10 +213,12 @@ class TestConfigStoreClosesConnections(unittest.TestCase):
                 store.audit_forward,
                 store.firehose,
                 store.transcript_retention_days,
+                store.audit_retention,
                 store.host_budget,
                 lambda: store.set_audit_forward(None),
                 lambda: store.set_firehose(store.firehose()),
                 lambda: store.set_transcript_retention_days(30),
+                lambda: store.set_audit_retention(store.audit_retention()),
                 lambda: store.set_host_budget(store.host_budget()),
                 lambda: store.set_audit_delivery("best_effort"),
                 lambda: store.set_cached_image_stale_warning_days(1),

@@ -23,7 +23,7 @@ from ...lib.config_store import AuditForward
 from ...lib.db_store import MACHINE_SPECIFIC, DbStore
 from ...lib.migrations import TableMigrations
 from ...secret_source import SecretSource
-from .audit_journal import SEGMENT_SUFFIX
+from .audit_journal import segments
 from .audit_ocsf import to_ocsf
 
 BATCH_RECORDS = 500
@@ -73,7 +73,7 @@ def read_batch(journal_dir: Path, cursor: Cursor,
     """Up to `limit` complete lines past `cursor`, and the new cursor. A torn
     final line waits for the next read."""
     lines: list[str] = []
-    for path in sorted(journal_dir.glob(f"*{SEGMENT_SUFFIX}")):
+    for path in segments(journal_dir):
         name = path.name
         if name < cursor.segment:
             continue

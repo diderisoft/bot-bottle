@@ -91,6 +91,14 @@ class AuditCommand(unittest.TestCase):
         self.assertEqual((0, "required\n"), self.run_cmd("delivery", "required"))
         self.assertEqual((0, "required\n"), self.run_cmd("delivery"))
 
+    def test_retention_keeps_every_segment_until_set(self) -> None:
+        self.assertEqual((0, "keeping every segment\n"), self.run_cmd("retention"))
+        self.assertEqual((0, "keeping up to 90 days\n"), self.run_cmd("retention", "--days", "90"))
+        self.assertEqual((0, "keeping up to 90 days and 4 GiB\n"),
+                         self.run_cmd("retention", "--max-gb", "4"))
+        self.assertEqual((0, "keeping up to 4 GiB\n"), self.run_cmd("retention", "--days", "0"))
+        self.assertEqual(2, self.run_cmd("retention", "--days", "-1")[0])
+
     def test_forward_shows_sets_and_turns_off(self) -> None:
         self.assertEqual((0, "not forwarding\n"), self.run_cmd("forward"))
         rc, out = self.run_cmd("forward", "--url", "https://siem.example/in",

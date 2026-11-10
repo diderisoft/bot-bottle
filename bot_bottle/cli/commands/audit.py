@@ -21,7 +21,9 @@ from ...control.hostctl.audit_ocsf import to_ocsf
 from ...control.hostctl.audit_verify import verify
 from ...control.hostctl.client import HostControlRefused
 from ...control.hostctl.runner import HostControlError
-from ...lib.config_store import AUDIT_DELIVERIES, AuditForward, FirehoseSink, HostConfig
+from ...lib.config_store import (
+    AUDIT_DELIVERIES, AuditForward, AuditRetention, FirehoseSink, HostConfig,
+)
 from ...paths import host_audit_dir
 from .. import host_state_client as host
 from ..constants import PROG
@@ -37,11 +39,14 @@ def _verify(_ns: argparse.Namespace) -> int:
     for chain in [directory, *imported_chains(directory)]:
         label = ("local" if chain == directory
                  else f"imported {chain.relative_to(directory / IMPORTED_DIRNAME)}")
-        report = verify(chain)
+        report = verify(chain, anchored=chain == directory)
         ok = ok and report.ok
         for problem in report.problems:
             sys.stdout.write(f"{problem}\n")
-        if report.starts_after:
+        if report.pruned_at:
+            sys.stdout.write(f"{label}: older segments were pruned; the chain starts from "
+                             f"the journal.pruned record at {report.pruned_at}\n")
+        elif report.starts_after:
             sys.stdout.write(f"{label}: starts mid-chain (older segments were removed)\n")
         verdict = "ok" if report.ok else f"BROKEN ({len(report.breaks)} break(s))"
         sys.stdout.write(f"{label}: {verdict}: {report.records} record(s) in "
@@ -154,6 +159,25 @@ def _transcript_retention(ns: argparse.Namespace) -> int:
                                   "transcript_retention_days") \
         if ns.days is not None else host.host_config()
     sys.stdout.write(f"{config.transcript_retention_days} days\n")
+    return 0
+
+
+def _retention(ns: argparse.Namespace) -> int:
+    if (ns.days is not None and ns.days < 0) or (ns.max_gb is not None and ns.max_gb < 0):
+        sys.stderr.write("retention: DAYS and GB must be 0 (no limit) or more\n")
+        return 2
+    retention = host.host_config().audit_retention
+    if ns.days is not None or ns.max_gb is not None:
+        retention = host.set_host_config(HostConfig(audit_retention=AuditRetention(
+            days=retention.days if ns.days is None else ns.days,
+            max_gb=retention.max_gb if ns.max_gb is None else ns.max_gb)),
+            "audit_retention").audit_retention
+    if retention.keeps_all:
+        sys.stdout.write("keeping every segment\n")
+        return 0
+    limits = [f"{retention.days} days" if retention.days else "",
+              f"{retention.max_gb} GiB" if retention.max_gb else ""]
+    sys.stdout.write(f"keeping up to {' and '.join(limit for limit in limits if limit)}\n")
     return 0
 
 
@@ -306,6 +330,15 @@ def cmd_audit(args: list[str]) -> int:
         help="show or set how many days ended sessions' transcript copies are kept")
     retention.add_argument("days", nargs="?", type=int)
     retention.set_defaults(run=_transcript_retention)
+    journal_retention = sub.add_parser(
+        "retention",
+        help="show or set how much of the journal is kept; older segments are pruned")
+    journal_retention.add_argument("--days", type=int,
+                                   help="prune segments older than this (0: no limit)")
+    journal_retention.add_argument("--max-gb", type=int, dest="max_gb",
+                                   help="prune the oldest segments past this many GiB "
+                                        "(0: no limit)")
+    journal_retention.set_defaults(run=_retention)
     forward = sub.add_parser(
         "forward", help="show or set where the host controller forwards the journal")
     forward.add_argument("--url", help="an https endpoint that accepts NDJSON POSTs")

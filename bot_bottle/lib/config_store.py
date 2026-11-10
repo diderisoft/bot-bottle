@@ -30,6 +30,20 @@ class HostBudget:
 
 
 @dataclass(frozen=True)
+class AuditRetention:
+    """How much of the audit journal is kept (`bot-bottle audit retention`):
+    whole segments older than `days`, or past `max_gb` GiB in all, are pruned.
+    0 = no limit; both 0 (the default) keeps everything."""
+
+    days: int = 0
+    max_gb: int = 0
+
+    @property
+    def keeps_all(self) -> bool:
+        return not self.days and not self.max_gb
+
+
+@dataclass(frozen=True)
 class AuditForward:
     """An HTTPS endpoint the journal is forwarded to. `secret` names a
     secrets-file entry sent as a bearer token."""
@@ -92,6 +106,7 @@ class HostConfig:
     audit_forward: AuditForward | None = None
     firehose: FirehoseSettings = FirehoseSettings()
     transcript_retention_days: int = DEFAULT_TRANSCRIPT_RETENTION_DAYS
+    audit_retention: AuditRetention = AuditRetention()
     host_budget: HostBudget = HostBudget()
     github_app: GitHubApp = GitHubApp()
 
@@ -106,6 +121,8 @@ class HostConfig:
                          "response_bodies": self.firehose.response_bodies,
                          "max_body_bytes": self.firehose.max_body_bytes},
             "transcript_retention_days": self.transcript_retention_days,
+            "audit_retention": {"days": self.audit_retention.days,
+                                "max_gb": self.audit_retention.max_gb},
             "host_budget": {"disk_gb": self.host_budget.disk_gb,
                             "memory_gb": self.host_budget.memory_gb},
             "github_app": {"slug": self.github_app.slug,
@@ -122,7 +139,8 @@ class HostConfig:
             config = config.with_json(name, body[name])
         return config
 
-    def with_json(self, name: str, value: object) -> "HostConfig":
+    def with_json(  # pylint: disable=too-many-return-statements  # one per setting
+            self, name: str, value: object) -> "HostConfig":
         """This config with setting `name` set from its JSON `value`.
         ValueError for an unknown setting or a bad value."""
         if name == "audit_delivery":
@@ -135,6 +153,11 @@ class HostConfig:
             return replace(self, firehose=_firehose(value))
         if name == "transcript_retention_days":
             return replace(self, transcript_retention_days=_int(value, name, minimum=1))
+        if name == "audit_retention":
+            body = _object(value, name)
+            return replace(self, audit_retention=AuditRetention(
+                days=_int(body.get("days", 0), "days", minimum=0),
+                max_gb=_int(body.get("max_gb", 0), "max_gb", minimum=0)))
         if name == "host_budget":
             body = _object(value, name)
             return replace(self, host_budget=HostBudget(
@@ -262,6 +285,15 @@ class ConfigStore(DbStore):
             ALTER TABLE bot_bottle_config
             ADD COLUMN github_app_client_id TEXT NOT NULL DEFAULT ''
             """,
+            # v15-16: audit journal retention, `bot-bottle audit retention` (0 = none)
+            """
+            ALTER TABLE bot_bottle_config
+            ADD COLUMN audit_retention_days INTEGER NOT NULL DEFAULT 0
+            """,
+            """
+            ALTER TABLE bot_bottle_config
+            ADD COLUMN audit_retention_max_gb INTEGER NOT NULL DEFAULT 0
+            """,
         ])
         super().__init__(db_path, migrations)
 
@@ -270,6 +302,7 @@ class ConfigStore(DbStore):
         return HostConfig(audit_delivery=self.audit_delivery(), audit_forward=self.audit_forward(),
                           firehose=self.firehose(),
                           transcript_retention_days=self.transcript_retention_days(),
+                          audit_retention=self.audit_retention(),
                           host_budget=self.host_budget(), github_app=self.github_app())
 
     def set_host_config(self, config: HostConfig) -> None:
@@ -279,6 +312,7 @@ class ConfigStore(DbStore):
         self.set_audit_forward(config.audit_forward)
         self.set_firehose(config.firehose)
         self.set_transcript_retention_days(config.transcript_retention_days)
+        self.set_audit_retention(config.audit_retention)
         self.set_host_budget(config.host_budget)
         self.set_github_app(config.github_app)
 
@@ -421,6 +455,40 @@ class ConfigStore(DbStore):
         self._chmod()
         return self.db_path
 
+    def audit_retention(self) -> AuditRetention:
+        """How much of the audit journal is kept (`bot-bottle audit
+        retention`); keep-all unless set."""
+        if not self.db_path.is_file():
+            return AuditRetention()
+        try:
+            with self._connection() as conn:
+                row = conn.execute(
+                    "SELECT audit_retention_days, audit_retention_max_gb "
+                    "FROM bot_bottle_config WHERE id = 1",
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return AuditRetention()  # not migrated yet
+        if row is None:
+            return AuditRetention()
+        return AuditRetention(days=int(row["audit_retention_days"]),
+                              max_gb=int(row["audit_retention_max_gb"]))
+
+    def set_audit_retention(self, retention: AuditRetention) -> Path:
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO bot_bottle_config
+                    (id, audit_retention_days, audit_retention_max_gb)
+                VALUES (1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    audit_retention_days = excluded.audit_retention_days,
+                    audit_retention_max_gb = excluded.audit_retention_max_gb
+                """,
+                (retention.days, retention.max_gb),
+            )
+        self._chmod()
+        return self.db_path
+
     def host_budget(self) -> HostBudget:
         """The bottles' memory and storage budget (`bot-bottle host budget`);
         0 = none set."""
@@ -512,6 +580,7 @@ class ConfigStore(DbStore):
 __all__ = [
     "AUDIT_DELIVERIES",
     "AuditForward",
+    "AuditRetention",
     "GitHubApp",
     "HostBudget",
     "HostConfig",

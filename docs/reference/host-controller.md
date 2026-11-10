@@ -509,7 +509,8 @@ asks over HTTP, with the `cli` role only:
 A journal that doesn't chain, or a segment that won't import, is 409.
 
 These commands use the routes: `audit query`, `export`, `rebuild`,
-`import`, `delivery`, `transcript-retention`, `forward` and `firehose`,
+`import`, `delivery`, `transcript-retention`, `retention`, `forward` and
+`firehose`,
 `host budget`, `forge connect`, `list`, `show` and `remove`, `trust`,
 `pair`, `audit passkeys`, `start --dry-run`, `bots`, `resume`, `rename`,
 `commit`, `cleanup bots`, a bare `bot-bottle`, `agents default`, the
@@ -555,9 +556,10 @@ The producers are:
 
 | Module | Does |
 |---|---|
-| `audit_journal.py` | JSONL segments in `~/.bot-bottle/audit/` (directory 0700, files 0600), which the writer only appends to. Each record hash-chains to the one before it across segments and restarts. An exclusive directory lock enforces one writer. Credential-shaped keys are refused and token-shaped values scrubbed before writing. `id` is the idempotency key. |
+| `audit_journal.py` | JSONL segments in `~/.bot-bottle/audit/` (directory 0700, files 0600), which the writer only appends to. Each record hash-chains to the one before it across segments and restarts. An exclusive directory lock enforces one writer. Credential-shaped keys are refused and token-shaped values scrubbed before writing. `id` is the idempotency key. ([Segments and retention](#segments-and-retention)) |
+| `audit_retention.py` | prunes old segments past the host's retention, at start and daily after |
 | `audit_index.py` | a SQLite index rebuilt from the journal, for `bot-bottle audit query`. It stops at the first record that doesn't chain. |
-| `audit_verify.py` | offline chain check (`bot-bottle audit verify`). Reports `truncated-tail`, `unreadable`, `edited`, `gap` and `chain-break`. |
+| `audit_verify.py` | offline chain check (`bot-bottle audit verify`). Reports `truncated-tail`, `unreadable`, `edited`, `gap` and `chain-break`, and for the local journal `unrecorded-prune`. |
 | `audit_forward.py` | at-least-once forwarding to an HTTPS endpoint, as native NDJSON or OCSF. The cursor advances only on a 2xx. |
 | `audit_ocsf.py` | maps a journal record to OCSF 1.9.0. `restricted` records ship only the envelope and chain fields. |
 | `audit_import.py` | stores segments from another host verbatim under `imported/<host>/<chain>/`, never joined to the local chain |
@@ -566,6 +568,31 @@ A journal that can't be written is logged, and the launch or teardown still
 goes ahead. Where a bottle sets `audit.delivery: required`, egress and
 git-gate refuse the action they couldn't record (see
 [gateway.md](gateway.md)).
+
+### Segments and retention
+
+A segment closes at 64 MiB, and on the first record of a new UTC day. The
+next record opens a new one, named for its UTC start time, so names sort in
+chain order. The chain carries on across segments.
+
+```
+bot-bottle audit retention [--days N] [--max-gb N]
+```
+
+The journal keeps every segment until a retention is set. `0` means no limit.
+The host controller prunes at start and daily after:
+
+- It drops only whole segments, oldest first, never the current one.
+- A segment the index hasn't read, or while forwarding is set the forwarder
+  hasn't sent, stays.
+- First it appends `journal.pruned`. That names the dropped segments, the
+  first and last dropped records (`epoch`, `seq`, time), their size, and the
+  last one's hash.
+
+The oldest kept record's `prev` is that hash. `audit verify` starts the chain
+from the `journal.pruned` record that names it. A local journal starting
+anywhere else is `unrecorded-prune`, a break. An imported chain may start
+anywhere.
 
 ### What the chain proves
 

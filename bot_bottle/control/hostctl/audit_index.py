@@ -17,7 +17,7 @@ from typing import Any
 from ...contract.audit import record_hash
 from ...lib.db_store import MACHINE_SPECIFIC, DbStore
 from ...lib.migrations import TableMigrations
-from .audit_journal import SEGMENT_SUFFIX
+from .audit_journal import segments
 from .audit_verify import verify
 
 
@@ -36,7 +36,7 @@ def imported_chains(journal_dir: Path) -> list[Path]:
 def read_chain(directory: Path) -> list[tuple[dict[str, Any], str]]:
     """Every record in a chain directory, with its line as stored."""
     out: list[tuple[dict[str, Any], str]] = []
-    for path in sorted(directory.glob(f"*{SEGMENT_SUFFIX}")):
+    for path in segments(directory):
         for raw in path.read_text(encoding="utf-8").splitlines():
             out.append((json.loads(raw), raw))
     return out
@@ -118,13 +118,19 @@ class AuditIndex(DbStore):
             "SELECT segment, offset, head FROM audit_index_cursor").fetchone()
         return (row["segment"], row["offset"], row["head"]) if row else ("", 0, "")
 
+    def cursor_segment(self) -> str:
+        """The segment file `sync` resumes in; every one before it is fully
+        indexed. "" before the first sync."""
+        with self._connection() as conn:
+            return self._cursor(conn)[0]
+
     def sync(self) -> int:
         """Index records appended since the last sync. Returns how many."""
         added = 0
         with self._connection() as conn:
             segment, offset, head = self._cursor(conn)
             first = True
-            for path in sorted(self._journal_dir.glob(f"*{SEGMENT_SUFFIX}")):
+            for path in segments(self._journal_dir):
                 name = path.name
                 if name < segment:
                     continue

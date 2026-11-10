@@ -28,6 +28,7 @@ from .github_git_tokens import GitTokenRenewer
 from .audit_events import HostAudit
 from .architect_bottle import ArchitectBottle, install as install_architect
 from .audit_forward import AuditForwarder
+from .audit_retention import JournalPruner
 from .bottles import BottleService
 from .firehose import FirehoseHub
 from .jobs import JobRegistry
@@ -114,6 +115,8 @@ def main() -> int:
     # daemon.
     audit = HostAudit.open()
     forwarder = start_forwarder(audit)
+    # Drops old journal segments past the host's retention, if one is set.
+    pruner = JournalPruner(audit).start()
     # Registers the `bottle` finisher, so it must exist before adopting.
     bottles = BottleService(sessions, audit=audit)
     # The console link (ADR 0007), while remote access is enabled.
@@ -189,6 +192,7 @@ def main() -> int:
         requests.stop()
         blocks.stop()
         retention.stop()
+        pruner.stop()
         backups.stop()
         architect.stop()
         if forwarder is not None:
