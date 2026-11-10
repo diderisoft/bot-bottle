@@ -27,7 +27,7 @@ def _index(env: dict[str, str], *, egress: bool = False, forge: bool = False) ->
     bottle: dict[str, Any] = {"env": env}
     if egress:
         bottle["egress"] = {"routes": [{
-            "host": "api.example", "inspect": {"auth": {"scheme": "Bearer", "token_ref": "TOK"}},
+            "host": "api.example", "inspect": {"auth": {"type": "bearer", "value": "secret:TOK"}},
         }]}
     if forge:
         bottle["git-gate"] = {"repos": ["gitea.example.com/x/y"]}
@@ -41,14 +41,18 @@ def _index(env: dict[str, str], *, egress: bool = False, forge: bool = False) ->
 
 class TestSecrets(unittest.TestCase):
     def test_only_the_names_the_bottle_needs_are_sent(self) -> None:
-        manifest = _index({"A": "${HOST_A}", "B": "?Your B", "C": "literal"},
+        manifest = _index({"A": "${HOST_A}", "B": "?Your B", "C": "literal",
+                           "D": "secret:STORED_D"},
                           egress=True, forge=True).load_for_agent("demo", ("dev",))
-        self.assertEqual({"HOST_A": "", "B": "?Your B", "TOK": "", "FORGE": ""},
+        self.assertEqual({"HOST_A": "", "B": "?Your B", "STORED_D": "secret:STORED_D",
+                          "TOK": "", "FORGE": ""},
                          launch_client.needed_secrets(manifest))
         source = MappingSecrets({"HOST_A": "a", "B": "b", "TOK": "t", "FORGE": "f",
-                                 "UNRELATED": "nope"})
+                                 "STORED_D": "env-d", "UNRELATED": "nope"})
+        # Only what may be read from the CLI's env: a `secret:NAME` is the
+        # store's, which the host controller reads itself.
         self.assertEqual({"HOST_A": "a", "B": "b", "TOK": "t", "FORGE": "f"},
-                         launch_client.resolve_secrets(manifest, source, prompt=False))
+                         launch_client.resolve_secrets(manifest, source))
 
     def test_tmux_attach_env_drops_tmux_and_needs_a_usable_term(self) -> None:
         with mock.patch.object(launch_client.shutil, "which", return_value="/usr/bin/tmux"):
@@ -74,16 +78,24 @@ class TestSecrets(unittest.TestCase):
             manifest = index.load_for_agent("demo", ("dev",))
             self.assertIn(name, launch_client.needed_secrets(manifest))
 
-    def test_missing_question_entries_are_prompted_only_when_interactive(self) -> None:
-        manifest = _index({"B": "?Your B", "A": "${HOST_A}"}).load_for_agent("demo", ("dev",))
-        with mock.patch.object(launch_client, "prompt_secret", return_value="typed") as ask:
-            self.assertEqual({"B": "typed"}, launch_client.resolve_secrets(
-                manifest, MappingSecrets({}), prompt=True))
-            ask.assert_called_once_with("B", "?Your B")
+    def test_question_entries_are_asked_only_when_interactive(self) -> None:
+        index = _index({"B": "?Your B", "A": "${HOST_A}"})
+        source = MappingSecrets({"HOST_A": "a", "B": "saved"})
+        with mock.patch.object(launch_client, "secrets_from_env", return_value=source), \
+             mock.patch.object(launch_client, "confirm_host_keys", return_value={}), \
+             mock.patch("bot_bottle.env._read_secret_silent", return_value="typed") as ask, \
+             mock.patch("bot_bottle.env.info"):
+            request = launch_client.prepare_request(
+                LaunchRequest(agent="demo", bottles=("dev",)), index, interactive=True)
+            # Asked even though a saved B exists; the answer rides apart.
+            ask.assert_called_once_with("B", "Your B")
+            self.assertEqual({"B": "typed"}, request.answers)
+            self.assertEqual({"HOST_A": "a", "B": "saved"}, request.secrets)
             ask.reset_mock()
-            self.assertEqual({}, launch_client.resolve_secrets(
-                manifest, MappingSecrets({}), prompt=False))
+            request = launch_client.prepare_request(
+                LaunchRequest(agent="demo", bottles=("dev",)), index, interactive=False)
             ask.assert_not_called()
+            self.assertEqual({}, request.answers)
 
     def test_prepare_request_fills_secrets_and_skips_host_keys_headless(self) -> None:
         index = _index({"A": "${HOST_A}"})
@@ -93,6 +105,7 @@ class TestSecrets(unittest.TestCase):
             request = launch_client.prepare_request(
                 LaunchRequest(agent="demo", bottles=("dev",)), index, interactive=False)
         self.assertEqual({"HOST_A": "a"}, request.secrets)
+        self.assertEqual({}, request.answers)
         keys.assert_not_called()
 
 

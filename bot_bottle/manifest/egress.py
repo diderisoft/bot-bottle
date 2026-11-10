@@ -6,10 +6,11 @@ import re
 from dataclasses import dataclass
 from typing import cast
 
+from .. import secret_ref
 from .util import ManifestError, as_json_object
 
 EGRESS_AUTH_SCHEMES = ("Bearer", "token")
-# `auth.header`: an HTTP header name, not one of these (framing, routing and
+# `auth.name` (with `type: header`): an HTTP header name, not one of these (framing, routing and
 # the gateway's cookie handling). Mirrors `gateway/egress/types.py`.
 _HEADER_NAME = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
 RESERVED_AUTH_HEADERS = frozenset({
@@ -72,10 +73,12 @@ class ManifestMatchEntry:
 class ManifestEgressRoute:
     Host: str
     Matches: tuple[ManifestMatchEntry, ...] = ()
+    # From `auth.type` (`_parse_auth`): bearer is scheme "Bearer", token is
+    # "token", header is AuthHeader = its `name` with no scheme (the raw value
+    # is sent there). "" header is `Authorization`.
     AuthScheme: str = ""
-    # The header the token goes in; "" is `Authorization`. With no scheme the
-    # raw token is sent.
     AuthHeader: str = ""
+    # The secret whose value is sent: `auth.value: secret:NAME` gives NAME.
     TokenRef: str = ""
     Role: tuple[str, ...] = ()
     GitFetch: bool = False
@@ -123,58 +126,8 @@ class ManifestEgressRoute:
         auth_header = ""
         token_ref = ""
         if "auth" in inspect_d:
-            auth_raw = inspect_d.get("auth")
-            auth_d = as_json_object(auth_raw, f"{label} inspect.auth")
-            if not auth_d:
-                raise ManifestError(
-                    f"{label} auth is empty ({{}}); omit the 'auth' key "
-                    f"entirely if this route is unauthenticated. Otherwise "
-                    f"'token_ref' and 'scheme' or 'header' are required."
-                )
-            auth_header_raw = auth_d.get("header", "")
-            if not isinstance(auth_header_raw, str):
-                raise ManifestError(
-                    f"{label} auth.header must be a string "
-                    f"(was {type(auth_header_raw).__name__})"
-                )
-            if auth_header_raw and not _HEADER_NAME.match(auth_header_raw):
-                raise ManifestError(
-                    f"{label} auth.header {auth_header_raw!r} is not a valid "
-                    f"HTTP header name"
-                )
-            if auth_header_raw.lower() in RESERVED_AUTH_HEADERS:
-                raise ManifestError(
-                    f"{label} auth.header {auth_header_raw!r} is reserved"
-                )
-            # With a named header and no scheme, the raw token is sent.
-            auth_scheme_raw = auth_d.get("scheme", "" if auth_header_raw else None)
-            if not isinstance(auth_scheme_raw, str) or not (
-                auth_scheme_raw or auth_header_raw
-            ):
-                raise ManifestError(
-                    f"{label} auth.scheme is required when 'auth' is set "
-                    f"without 'header' (non-empty string)"
-                )
-            if auth_scheme_raw and auth_scheme_raw not in EGRESS_AUTH_SCHEMES:
-                raise ManifestError(
-                    f"{label} auth.scheme {auth_scheme_raw!r} is not one of "
-                    f"{', '.join(EGRESS_AUTH_SCHEMES)}"
-                )
-            token_ref_raw = auth_d.get("token_ref")
-            if not isinstance(token_ref_raw, str) or not token_ref_raw:
-                raise ManifestError(
-                    f"{label} auth.token_ref is required when 'auth' is set "
-                    f"(name of the host env var holding the token value)"
-                )
-            for k in auth_d:
-                if k not in ("scheme", "header", "token_ref"):
-                    raise ManifestError(
-                        f"{label} auth has unknown key {k!r}; "
-                        f"only 'scheme', 'header' and 'token_ref' are accepted"
-                    )
-            auth_scheme = auth_scheme_raw
-            auth_header = auth_header_raw.lower()
-            token_ref = token_ref_raw
+            auth_scheme, auth_header, token_ref = _parse_auth(
+                label, bottle_name, host, inspect_d.get("auth"))
 
         # --- role (reserved) ---
         role_raw = d.get("role")
@@ -274,6 +227,88 @@ class ManifestEgressRoute:
             PreserveAuth=preserve_auth,
             Inspect=inspect,
         )
+
+
+class OldAuthFormatError(ManifestError):
+    """A bottle file still writes a route's auth in the old format (`scheme`,
+    `header`, `token_ref`), now `type` and `value` (and `name` for a header);
+    `bottles migrate` rewrites it (`manifest/migrate.py`)."""
+
+    def __init__(self, bottle: str, host: str) -> None:
+        self.bottle = bottle
+        self.host = host
+        super().__init__(
+            f"{bottle} egress route {host}: auth now takes type and value (and name for a "
+            f"header). Run bot-bottle bottles migrate {bottle}.")
+
+
+# `auth.type`, and the scheme each sends in `Authorization` ("" for `header`:
+# the raw value in the header `name`).
+AUTH_TYPES = {"bearer": "Bearer", "token": "token", "header": ""}
+OLD_AUTH_KEYS = ("scheme", "header", "token_ref")
+
+
+def _parse_auth(label: str, bottle: str, host: str, raw: object) -> tuple[str, str, str]:
+    """A route's `inspect.auth` as (scheme, header, secret name), the fields
+    the gateway takes:
+
+      { type: bearer, value: secret:NAME }            Authorization: Bearer <v>
+      { type: token,  value: secret:NAME }            Authorization: token <v>
+      { type: header, name: X-Api-Key, value: ... }   X-Api-Key: <v> (raw)
+    """
+    auth = as_json_object(raw, f"{label} inspect.auth")
+    if not auth:
+        raise ManifestError(
+            f"{label} auth is empty ({{}}); omit the 'auth' key entirely if this route "
+            f"is unauthenticated. Otherwise 'type' and 'value' are required.")
+    if any(k in auth for k in OLD_AUTH_KEYS):
+        raise OldAuthFormatError(bottle, host)
+    for k in auth:
+        if k not in ("type", "name", "value"):
+            raise ManifestError(f"{label} auth has unknown key {k!r}; only 'type', 'name' "
+                                f"(for a header) and 'value' are accepted")
+    kind = auth.get("type")
+    if not isinstance(kind, str) or kind not in AUTH_TYPES:
+        shown = f" (was {kind!r})" if isinstance(kind, str) else ""
+        raise ManifestError(f"{label} auth.type is required: one of "
+                            f"{', '.join(AUTH_TYPES)}{shown}")
+    name = auth.get("name")
+    if kind != "header":
+        if name is not None:
+            raise ManifestError(f"{label} auth.name is only for type: header")
+        return AUTH_TYPES[kind], "", _auth_token(label, auth)
+    if not isinstance(name, str) or not name:
+        raise ManifestError(f"{label} auth.name (the header) is required with type: header")
+    if not _HEADER_NAME.match(name):
+        raise ManifestError(f"{label} auth.name {name!r} is not a valid HTTP header name")
+    if name.lower() in RESERVED_AUTH_HEADERS:
+        raise ManifestError(f"{label} auth.name {name!r} is reserved")
+    return "", name.lower(), _auth_token(label, auth)
+
+
+def _auth_token(label: str, auth: dict[str, object]) -> str:
+    """An auth block's secret name, from `value: secret:NAME`. The value is
+    always a secret in the store: not asked for (`?`), not from the env
+    (`${VAR}`), not a literal."""
+    value = auth.get("value")
+    if not isinstance(value, str) or not value:
+        raise ManifestError(
+            f"{label} auth.value is required when 'auth' is set "
+            f"(value: secret:NAME, NAME in the secrets file)")
+    if secret_ref.kind(value) != secret_ref.STORED:
+        raise ManifestError(f"{label} auth.value takes secret:NAME (was {_shown(value)})")
+    problem = secret_ref.problem(value)
+    if problem:
+        raise ManifestError(f"{label} auth.value {problem}")
+    return secret_ref.stored_name(value)
+
+
+def _shown(value: str) -> str:
+    """How an invalid value is named in an error: a reference as written, a
+    literal (perhaps the secret itself) never."""
+    if secret_ref.kind(value) in (secret_ref.PROMPT, secret_ref.HOST_ENV):
+        return repr(value)
+    return "a literal value"
 
 
 def _parse_match_entry(

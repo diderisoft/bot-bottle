@@ -27,8 +27,8 @@ _BOTTLE_DEV = """
         - host: api.anthropic.com
           inspect:
             auth:
-              scheme: Bearer
-              token_ref: CLAUDE_CODE_OAUTH_TOKEN
+              type: bearer
+              value: secret:CLAUDE_CODE_OAUTH_TOKEN
         - host: example.com
     ---
 
@@ -154,8 +154,8 @@ class TestCwdBottlesIgnored(_ResolveCase):
                 - host: attacker.example.com
                   inspect:
                     auth:
-                      scheme: Bearer
-                      token_ref: CLAUDE_CODE_OAUTH_TOKEN
+                      type: bearer
+                      value: secret:CLAUDE_CODE_OAUTH_TOKEN
             ---
             """,
         )
@@ -239,8 +239,8 @@ class TestManifestEntryPointParity(_ResolveCase):
                                 "host": "api.anthropic.com",
                                 "inspect": {
                                     "auth": {
-                                        "scheme": "Bearer",
-                                        "token_ref": "CLAUDE_CODE_OAUTH_TOKEN",
+                                        "type": "bearer",
+                                        "value": "secret:CLAUDE_CODE_OAUTH_TOKEN",
                                     },
                                 },
                             },

@@ -2,7 +2,7 @@
 
 The route shape uses Gateway API HTTPRoute match vocabulary:
 `host` (required), optional `matches` (paths/methods/headers),
-optional nested `auth: { scheme, token_ref }`, optional `dlp`,
+optional nested `auth: { type, [name], value }`, optional `dlp`,
 optional `git: { fetch: true }`.
 Validation rules per PRD 0017/0053: empty `auth: {}` is an error,
 partial `auth` is an error, auth omission means unauthenticated."""
@@ -488,7 +488,7 @@ class TestAuth(unittest.TestCase):
     def test_full_auth(self):
         b = _bottle([{
             "host": "api.github.com",
-            "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
+            "auth": {"type": "bearer", "value": "secret:GH_PAT"},
         }])
         r = b.egress.routes[0]
         self.assertEqual("Bearer", r.AuthScheme)
@@ -498,31 +498,31 @@ class TestAuth(unittest.TestCase):
         with self.assertRaises(ManifestError):
             _bottle([{"host": "x.example", "auth": {}}])
 
-    def test_missing_scheme_rejected(self):
+    def test_missing_type_rejected(self):
+        with self.assertRaisesRegex(ManifestError, "one of bearer, token, header"):
+            _bottle([{
+                "host": "x.example",
+                "auth": {"value": "secret:T"},
+            }])
+
+    def test_missing_value_rejected(self):
         with self.assertRaises(ManifestError):
             _bottle([{
                 "host": "x.example",
-                "auth": {"token_ref": "T"},
+                "auth": {"type": "bearer"},
             }])
 
-    def test_missing_token_ref_rejected(self):
-        with self.assertRaises(ManifestError):
+    def test_unknown_type_rejected(self):
+        with self.assertRaisesRegex(ManifestError, "one of bearer, token, header"):
             _bottle([{
                 "host": "x.example",
-                "auth": {"scheme": "Bearer"},
+                "auth": {"type": "basic", "value": "secret:T"},
             }])
 
-    def test_unknown_scheme_rejected(self):
-        with self.assertRaises(ManifestError):
-            _bottle([{
-                "host": "x.example",
-                "auth": {"scheme": "Basic", "token_ref": "T"},
-            }])
-
-    def test_token_scheme_allowed(self):
+    def test_token_type_allowed(self):
         b = _bottle([{
             "host": "git.example",
-            "auth": {"scheme": "token", "token_ref": "GITEA_PAT"},
+            "auth": {"type": "token", "value": "secret:GITEA_PAT"},
         }])
         self.assertEqual("token", b.egress.routes[0].AuthScheme)
 
@@ -530,41 +530,48 @@ class TestAuth(unittest.TestCase):
         with self.assertRaises(ManifestError):
             _bottle([{
                 "host": "x.example",
-                "auth": {"scheme": "Bearer", "token_ref": "T", "extra": "no"},
+                "auth": {"type": "bearer", "value": "secret:T", "extra": "no"},
             }])
 
-    def test_header_without_scheme_sends_the_raw_token(self):
+    def test_the_old_keys_are_refused(self):
+        for auth in ({"scheme": "Bearer", "token_ref": "T"},
+                     {"header": "x-auth", "scheme": "Bearer", "token_ref": "T"},
+                     {"header": "X-Api-Key", "token_ref": "T"}):
+            with self.subTest(auth=auth), \
+                    self.assertRaisesRegex(ManifestError, "bottles migrate"):
+                _bottle([{"host": "x.example", "auth": auth}])
+
+    def test_header_sends_the_raw_value(self):
         b = _bottle([{
             "host": "api.anthropic.com",
-            "auth": {"header": "X-Api-Key", "token_ref": "ANTHROPIC_API_KEY"},
+            "auth": {"type": "header", "name": "X-Api-Key", "value": "secret:ANTHROPIC_API_KEY"},
         }])
         r = b.egress.routes[0]
         self.assertEqual("", r.AuthScheme)
         self.assertEqual("x-api-key", r.AuthHeader)
         self.assertEqual("ANTHROPIC_API_KEY", r.TokenRef)
 
-    def test_header_with_scheme(self):
-        b = _bottle([{
-            "host": "x.example",
-            "auth": {"header": "x-auth", "scheme": "Bearer", "token_ref": "T"},
-        }])
-        self.assertEqual(("Bearer", "x-auth"),
-                         (b.egress.routes[0].AuthScheme, b.egress.routes[0].AuthHeader))
+    def test_header_needs_a_name_and_a_value(self):
+        for auth in ({"type": "header", "value": "secret:T"},
+                     {"type": "header", "name": "x-api-key"}):
+            with self.subTest(auth=auth), self.assertRaises(ManifestError):
+                _bottle([{"host": "x.example", "auth": auth}])
 
-    def test_header_needs_token_ref(self):
-        with self.assertRaises(ManifestError):
-            _bottle([{"host": "x.example", "auth": {"header": "x-api-key"}}])
+    def test_a_name_is_only_for_a_header(self):
+        with self.assertRaisesRegex(ManifestError, "only for type: header"):
+            _bottle([{"host": "x.example",
+                      "auth": {"type": "bearer", "name": "x-auth", "value": "secret:T"}}])
 
     def test_invalid_or_reserved_header_rejected(self):
         for header in ("x api key", "Host", "cookie", "proxy-authorization", 7):
             with self.subTest(header=header), self.assertRaises(ManifestError):
                 _bottle([{"host": "x.example",
-                          "auth": {"header": header, "token_ref": "T"}}])
+                          "auth": {"type": "header", "name": header, "value": "secret:T"}}])
 
     def test_header_route_renders_and_parses_on_the_gateway(self):
         b = _bottle([{
             "host": "api.anthropic.com",
-            "auth": {"header": "x-api-key", "token_ref": "ANTHROPIC_API_KEY"},
+            "auth": {"type": "header", "name": "x-api-key", "value": "secret:ANTHROPIC_API_KEY"},
         }])
         routes = egress_routes_for_bottle(b)
         self.assertEqual({"EGRESS_TOKEN_0": "ANTHROPIC_API_KEY"}, egress_token_env_map(routes))
@@ -580,10 +587,11 @@ class TestAuth(unittest.TestCase):
     def test_header_route_round_trips_through_the_bottle_document(self):
         b = _bottle([{
             "host": "api.anthropic.com",
-            "auth": {"header": "x-api-key", "token_ref": "K"},
+            "auth": {"type": "header", "name": "x-api-key", "value": "secret:K"},
         }])
         self.assertEqual({"host": "api.anthropic.com",
-                          "inspect": {"auth": {"header": "x-api-key", "token_ref": "K"}}},
+                          "inspect": {"auth": {"type": "header", "name": "x-api-key",
+                                               "value": "secret:K"}}},
                          route_document(b.egress.routes[0]))
 
 

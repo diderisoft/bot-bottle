@@ -69,7 +69,7 @@ class TestManifestRouteLift(unittest.TestCase):
     def test_authenticated_route_lifted_without_slot(self):
         b = _bottle([{
             "host": "api.github.com",
-            "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
+            "auth": {"type": "bearer", "value": "secret:GH_PAT"},
         }])
         routes = egress_manifest_routes(b)
         self.assertEqual(1, len(routes))
@@ -129,7 +129,7 @@ class TestSlotAssignment(unittest.TestCase):
     def test_authenticated_route_gets_slot(self):
         b = _bottle([{
             "host": "api.github.com",
-            "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
+            "auth": {"type": "bearer", "value": "secret:GH_PAT"},
         }])
         routes = egress_routes_for_bottle(b)
         r = routes[0]
@@ -139,9 +139,9 @@ class TestSlotAssignment(unittest.TestCase):
     def test_shared_token_ref_collapses_to_one_slot(self):
         b = _bottle([
             {"host": "api.github.com",
-             "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"}},
+             "auth": {"type": "bearer", "value": "secret:GH_PAT"}},
             {"host": "github.com",
-             "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"}},
+             "auth": {"type": "bearer", "value": "secret:GH_PAT"}},
         ])
         routes = egress_routes_for_bottle(b)
         slots = {r.token_env for r in routes}
@@ -150,9 +150,9 @@ class TestSlotAssignment(unittest.TestCase):
     def test_distinct_token_refs_get_distinct_slots(self):
         b = _bottle([
             {"host": "a.example",
-             "auth": {"scheme": "Bearer", "token_ref": "T1"}},
+             "auth": {"type": "bearer", "value": "secret:T1"}},
             {"host": "b.example",
-             "auth": {"scheme": "Bearer", "token_ref": "T2"}},
+             "auth": {"type": "bearer", "value": "secret:T2"}},
         ])
         routes = egress_routes_for_bottle(b)
         slots = [r.token_env for r in routes]
@@ -161,10 +161,10 @@ class TestSlotAssignment(unittest.TestCase):
     def test_unauthenticated_routes_dont_consume_slots(self):
         b = _bottle([
             {"host": "a.example",
-             "auth": {"scheme": "Bearer", "token_ref": "T1"}},
+             "auth": {"type": "bearer", "value": "secret:T1"}},
             {"host": "passthrough.example"},
             {"host": "b.example",
-             "auth": {"scheme": "Bearer", "token_ref": "T2"}},
+             "auth": {"type": "bearer", "value": "secret:T2"}},
         ])
         routes = egress_routes_for_bottle(b)
         authed = [r.token_env for r in routes if r.token_env]
@@ -182,7 +182,7 @@ class TestRoutesForBottleManifestOnly(unittest.TestCase):
     def test_manifest_route_preserved_with_auth(self):
         b = _bottle([{
             "host": "api.anthropic.com",
-            "auth": {"scheme": "Bearer", "token_ref": "T"},
+            "auth": {"type": "bearer", "value": "secret:T"},
         }])
         routes = egress_routes_for_bottle(b)
         self.assertEqual(1, len(routes))
@@ -267,7 +267,7 @@ class TestProviderRouteMerge(unittest.TestCase):
     def test_manifest_route_kept_for_non_provisioned_host(self):
         b = _bottle([
             {"host": "api.github.com",
-             "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"}},
+             "auth": {"type": "bearer", "value": "secret:GH_PAT"}},
         ])
         pr = _provider_route("api.openai.com", CODEX_HOST_CREDENTIAL_TOKEN_REF)
         routes = egress_routes_for_bottle(b, (pr,))
@@ -281,7 +281,7 @@ class TestTokenEnvMap(unittest.TestCase):
     def test_only_authenticated_routes_contribute(self):
         b = _bottle([
             {"host": "a.example",
-             "auth": {"scheme": "Bearer", "token_ref": "T1"}},
+             "auth": {"type": "bearer", "value": "secret:T1"}},
             {"host": "passthrough.example"},
         ])
         routes = egress_routes_for_bottle(b)
@@ -305,7 +305,7 @@ class TestRenderRoutes(unittest.TestCase):
     def test_authenticated_route_serialised_with_auth_fields(self):
         b = _bottle([{
             "host": "api.github.com",
-            "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
+            "auth": {"type": "bearer", "value": "secret:GH_PAT"},
             "matches": [{"paths": [{"value": "/repos/x/"}]}],
         }])
         routes = egress_routes_for_bottle(b)
@@ -328,7 +328,7 @@ class TestRenderRoutes(unittest.TestCase):
     def test_no_matches_omits_field(self):
         b = _bottle([{
             "host": "api.anthropic.com",
-            "auth": {"scheme": "Bearer", "token_ref": "CL"},
+            "auth": {"type": "bearer", "value": "secret:CL"},
         }])
         routes = egress_routes_for_bottle(b)
         self.assertNotIn("matches", self._parsed(routes)[0]["inspect"])
@@ -341,7 +341,7 @@ class TestRenderRoutes(unittest.TestCase):
         from bot_bottle.gateway.egress.schema import load_config
         b = _bottle([
             {"host": "api.github.com",
-             "auth": {"scheme": "Bearer", "token_ref": "GH_PAT"},
+             "auth": {"type": "bearer", "value": "secret:GH_PAT"},
              "matches": [{"paths": [{"value": "/repos/x/"}]}]},
             {"host": "github.com", "matches": [
                 {"paths": [{"value": "/x/"}]}

@@ -262,12 +262,12 @@ class TestRealisticBottleFile(unittest.TestCase):
               routes:
                 - host: api.anthropic.com
                   auth:
-                    scheme: Bearer
-                    token_ref: CLAUDE_CODE_OAUTH_TOKEN
+                    type: bearer
+                    value: secret:CLAUDE_CODE_OAUTH_TOKEN
                 - host: gitea.dideric.is
                   auth:
-                    scheme: token
-                    token_ref: GITEA_TOKEN
+                    type: token
+                    value: secret:GITEA_TOKEN
                   matches:
                     - paths:
                         - value: /didericis/
@@ -286,8 +286,8 @@ class TestRealisticBottleFile(unittest.TestCase):
             out["egress"]["routes"][1]["matches"][0]["paths"][0]["value"],  # type: ignore
         )
         self.assertEqual(
-            "Bearer",
-            out["egress"]["routes"][0]["auth"]["scheme"],  # type: ignore
+            "secret:CLAUDE_CODE_OAUTH_TOKEN",
+            out["egress"]["routes"][0]["auth"]["value"],  # type: ignore
         )
         self.assertEqual(
             "ssh-ed25519 AAAA...",

@@ -12,13 +12,46 @@ from ..agent_provider import AgentProvisionPlan, PromptMode
 from ..contract.hostctl import Settings
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
-from ..lib.log import info
+from ..lib.log import info, warn
 from ..manifest import Manifest, ManifestIndex
 from ..manifest.schema import DEFAULT_BOTTLE
-from ..secret_source import ChainSecrets, MappingSecrets, SecretSource
+from ..secret_source import MappingSecrets, SecretSource, tiers
 from ..supervisor.plan import SupervisePlan
 from ..workspace import WorkspacePlan, workspace_plan
 from .print_util import print_multi, visible_agent_env_names
+
+
+class EgressTokenSecrets(SecretSource):
+    """Where egress token refs resolve: `provisioned` (the agent provider's
+    values) first. A secret one of the bottle's own routes names (`auth.value:
+    secret:NAME`) then comes from the secrets store, and only with a warning
+    from the launching environment; any other (the provider's) from `secrets`
+    as before (env, then store)."""
+
+    def __init__(self, provisioned: SecretSource, secrets: SecretSource,
+                 route_refs: frozenset[str]) -> None:
+        self._provisioned = provisioned
+        self._secrets = secrets
+        self._route_refs = route_refs
+
+    def get(self, name: str) -> str | None:
+        value = self._provisioned.get(name)
+        if value is not None:
+            return value
+        if name not in self._route_refs:
+            return self._secrets.get(name)
+        env, store, _ = tiers(self._secrets)
+        value = store.get(name)
+        if value is not None or env is store:
+            return value
+        value = env.get(name)
+        if value:
+            warn(f"egress: route token {name} came from the launching environment; "
+                 f"secret:{name} reads the secrets file, so add {name} there.")
+        return value
+
+    def __repr__(self) -> str:
+        return f"EgressTokenSecrets({self._secrets!r}, <{len(self._route_refs)} route refs>)"
 
 
 @dataclass(frozen=True)
@@ -123,10 +156,12 @@ class BottlePlan(ABC):
 
     @property
     def egress_secrets(self) -> SecretSource:
-        """Where egress token_refs resolve: the provider's provisioned values,
-        then `secrets`."""
-        return ChainSecrets(
-            MappingSecrets(self.agent_provision.provisioned_env), self.secrets)
+        """Where egress token_refs resolve (`EgressTokenSecrets`): the
+        provider's provisioned values, then the store for the bottle's own
+        routes, else `secrets`."""
+        refs = frozenset(r.TokenRef for r in self.manifest.bottle.egress.routes if r.TokenRef)
+        return EgressTokenSecrets(
+            MappingSecrets(self.agent_provision.provisioned_env), self.secrets, refs)
 
     def print(self) -> None:
         """Print the y/N preflight summary to stderr."""

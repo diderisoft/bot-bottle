@@ -50,7 +50,7 @@ def _manifest(*, supervise: bool, with_git: bool, with_egress: bool) -> Manifest
             "routes": [{
                 "host": "api.example",
                 "inspect": {
-                    "auth": {"scheme": "Bearer", "token_ref": "TOK"},
+                    "auth": {"type": "bearer", "value": "secret:TOK"},
                 },
             }],
         }

@@ -5,11 +5,13 @@ same bottle (PRD 0107). Used for a bottled agent's manifest versions.
 A repo granted on one of the chain's forges is written as its grant
 (`<forge>/<owner>/<repo>[:write]`), others in long form; the forges are
 described (never their tokens, which are the host's, ADR 0019).
-Secrets appear by name only, as in any bottle file.
+Secrets appear by name only, as in any bottle file: env values as written
+(`?`, `${VAR}`, `secret:NAME`), a route's auth as `type` and `value: secret:NAME`.
 """
 
 from __future__ import annotations
 
+from ..secret_ref import stored
 from .bottle import ManifestBottle
 from .egress import ManifestEgressRoute, ManifestMatchEntry
 from .forges import ManifestForge
@@ -32,6 +34,14 @@ def _detectors(value: tuple[str, ...] | None) -> object:
     return False if value == () else list(value or ())
 
 
+def auth_document(scheme: str, header: str, secret: str) -> dict[str, object]:
+    """A route's auth as a bottle file writes it: `{type: bearer|token,
+    value: secret:NAME}`, or `{type: header, name: X, value: secret:NAME}`."""
+    if scheme:
+        return {"type": scheme.lower(), "value": stored(secret)}
+    return {"type": "header", "name": header, "value": stored(secret)}
+
+
 def route_document(route: ManifestEgressRoute) -> dict[str, object]:
     """One egress route as a bottle file declares it."""
     out: dict[str, object] = {"host": route.Host}
@@ -42,12 +52,7 @@ def route_document(route: ManifestEgressRoute) -> dict[str, object]:
     if route.Matches:
         inspect["matches"] = [_match(m) for m in route.Matches]
     if route.AuthScheme or route.AuthHeader:
-        auth: dict[str, object] = {}
-        if route.AuthScheme:
-            auth["scheme"] = route.AuthScheme
-        if route.AuthHeader:
-            auth["header"] = route.AuthHeader
-        inspect["auth"] = {**auth, "token_ref": route.TokenRef}
+        inspect["auth"] = auth_document(route.AuthScheme, route.AuthHeader, route.TokenRef)
     if route.GitFetch:
         inspect["git"] = {"fetch": True}
     if route.PreserveAuth:

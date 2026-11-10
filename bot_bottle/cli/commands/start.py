@@ -14,6 +14,9 @@ its code.
 
 `--headless` takes everything from flags and skips prompts, still attaching on
 the inherited PTY. `--dry-run` prepares locally and prints the preflight.
+
+Secrets (`SECRETS_HELP`): `?` asks at every launch, `${VAR}` reads the
+environment, `secret:NAME` the secrets file.
 """
 
 from __future__ import annotations
@@ -46,8 +49,17 @@ if TYPE_CHECKING:
     from ..screen import Screen, Step
 
 
+SECRETS_HELP = (
+    "Secrets in a bottle's env: `?` (or `?<message>`) asks at every launch; `${VAR}` "
+    "reads VAR from this shell's environment; `secret:NAME` reads NAME from the "
+    "secrets file (~/.bot-bottle/secrets), asking once and offering to save it when "
+    "it's missing. A route's auth is `{ type: bearer|token|header, value: secret:NAME }` "
+    "(`name: <header>` too for a header). Without a terminal nothing asks: a `?` uses "
+    "a saved value of the same name, with a warning.")
+
+
 def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statements
-    parser = argparse.ArgumentParser(prog=f"{PROG} start", add_help=True)
+    parser = argparse.ArgumentParser(prog=f"{PROG} start", add_help=True, epilog=SECRETS_HELP)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help=("stream the full launch log instead of one line per stage "

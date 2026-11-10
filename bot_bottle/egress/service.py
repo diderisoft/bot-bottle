@@ -357,9 +357,10 @@ def egress_resolve_token_values(
         if value is None:
             raise MissingEnvVarError(
                 token_ref,
-                f"egress: secret '{token_ref}' is unset. Set it in the host "
-                f"env or the secrets file before launching, or remove the "
-                f"corresponding auth block from bottle.egress.routes.",
+                f"egress: secret '{token_ref}' is unset. Add it to the secrets "
+                f"file before launching (a route's `value: secret:{token_ref}` "
+                f"reads it there), or remove the corresponding auth block from "
+                f"bottle.egress.routes.",
             )
         if not value:
             raise MissingEnvVarError(

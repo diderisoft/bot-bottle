@@ -34,8 +34,8 @@ egress:
     - host: api.example.com
       inspect:
         auth:
-          scheme: Bearer
-          token_ref: API_TOKEN
+          type: bearer
+          value: secret:API_TOKEN
         matches:
           - methods: [GET, POST]
             paths:
