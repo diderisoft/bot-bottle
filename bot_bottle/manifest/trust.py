@@ -68,7 +68,9 @@ def grants(bottle: ManifestBottle) -> list[str]:
     for where in bottle.git_create:
         lines.append(f"create  repos at {where}")
     for name, value in sorted(bottle.env.items()):
-        if "${" in value or value == "?":
+        # "?" and "?<message>" are prompted secrets (`env.env_entry_kind`;
+        # not imported: `env` imports the manifest package).
+        if "${" in value or value.startswith("?"):
             lines.append(f"read    {name} (from your environment or secrets)")
     if bottle.nested_containers:
         lines.append("run     containers inside the bottle")

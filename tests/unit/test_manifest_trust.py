@@ -110,6 +110,15 @@ class ProjectBottles(_Project):
         (self.bottles / "app.md").write_text("---\nextends: basic\n---\n")
         self.load("pi", "./app")
 
+    def test_a_prompted_secret_with_a_message_needs_trust(self) -> None:
+        # "?<message>" is a prompted secret like a bare "?": the bottle must
+        # not load untrusted, and the prompt names each one.
+        (self.bottles / "app.md").write_text(
+            "---\nextends: basic\nenv:\n  BARE: \"?\"\n  KEYED: \"?Paste your key\"\n---\n")
+        error = self.untrusted("pi", "./app")
+        self.assertEqual(["read    BARE (from your environment or secrets)",
+                          "read    KEYED (from your environment or secrets)"], error.grants)
+
     def test_the_users_bottle_wins_a_name_clash_without_asking(self) -> None:
         (self.bottles / "pi.md").write_text(_STRIPE)
         hosts = {r.Host for r in self.load("pi").bottle.egress.routes}
