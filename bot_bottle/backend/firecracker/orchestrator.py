@@ -32,7 +32,7 @@ _SYNC_TIMEOUT_SECONDS = 15.0
 
 # The registry volume: a host ext4 file attached as `/dev/vdb` at the DB dir,
 # so the registry survives VM restarts. Loop-mount it (VM stopped) to inspect
-# `bot-bottle.db`.
+# `db/registry.db`.
 _REGISTRY_SIZE = "512M"
 
 # The build-store volume (`/dev/vdc`): buildah's image store, so bases and

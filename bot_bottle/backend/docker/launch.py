@@ -49,7 +49,6 @@ from .agent_network import agent_network_name, remove_agent_network
 from .consolidated_compose import agent_exec_env, consolidated_agent_compose
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from ...orchestrator.store.config_store import resolve_teardown_timeout
-from ...paths import host_db_path
 from .consolidated_launch import launch_consolidated, deprovision_consolidated
 from .infra import INFRA_NAME, DockerInfraService
 from .gateway import DockerGateway
@@ -138,7 +137,7 @@ def launch(
 
         # Register, provision git-gate state, and get the attach context.
         token_values = registration_tokens(plan)
-        teardown_timeout = resolve_teardown_timeout(host_db_path())
+        teardown_timeout = resolve_teardown_timeout()
         service = DockerInfraService(plan.settings)
         ctx = launch_consolidated(
             plan.egress_plan, git_gate_plan, service=service,
@@ -292,7 +291,7 @@ def adopted(
         remove_agent_network(agent_network_name(bottle_id), INFRA_NAME)
         if record.registry_id:
             deprovision_consolidated(record.registry_id, service=DockerInfraService(settings),
-                                     timeout=resolve_teardown_timeout(host_db_path()))
+                                     timeout=resolve_teardown_timeout())
 
 
 def attach(bottle_id: str, record: "AdoptionRecord") -> DockerBottle:

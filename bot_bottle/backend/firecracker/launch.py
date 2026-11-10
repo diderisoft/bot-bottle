@@ -43,7 +43,6 @@ from . import (firecracker_vm, image_builder, isolation_probe, lifecycle_lock, n
 from .bottle import FirecrackerBottle
 from .bottle_plan import FirecrackerBottlePlan
 from ...orchestrator.store.config_store import resolve_teardown_timeout
-from ...paths import host_db_path
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME
 from .infra import FirecrackerInfraService
 from .consolidated_launch import (
@@ -74,7 +73,7 @@ def adopted(
         shutil.rmtree(run_dir, ignore_errors=True)
         if record.registry_id:
             deprovision_consolidated(record.registry_id, service=FirecrackerInfraService(settings),
-                                     timeout=resolve_teardown_timeout(host_db_path()))
+                                     timeout=resolve_teardown_timeout())
 
 def attach(bottle_id: str, record: "AdoptionRecord") -> FirecrackerBottle:
     """A bottle a previous host controller launched, to exec into over SSH."""
@@ -108,7 +107,7 @@ def launch(
         # Register by guest IP (unspoofable via the /31 TAP and nft) and
         # provision git-gate state.
         token_values = registration_tokens(plan)
-        teardown_timeout = resolve_teardown_timeout(host_db_path())
+        teardown_timeout = resolve_teardown_timeout()
         service = FirecrackerInfraService(plan.settings)
         ctx = launch_consolidated(
             plan.egress_plan, git_gate_plan,

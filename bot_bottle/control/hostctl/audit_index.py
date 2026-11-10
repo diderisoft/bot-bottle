@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ...contract.audit import record_hash
-from ...lib.db_store import DbStore
+from ...lib.db_store import MACHINE_SPECIFIC, DbStore
 from ...lib.migrations import TableMigrations
 from .audit_journal import SEGMENT_SUFFIX
 from .audit_verify import verify
@@ -79,6 +79,11 @@ class Query:
 
 
 class AuditIndex(DbStore):
+    """The journal's index. Derived from this host's journal, so it never
+    travels."""
+
+    TABLES = {"audit_events": MACHINE_SPECIFIC, "audit_index_cursor": MACHINE_SPECIFIC}
+
     def __init__(self, journal_dir: Path, db_path: Path) -> None:
         self._journal_dir = journal_dir
         migrations = TableMigrations("audit_index", [

@@ -6,11 +6,14 @@ import sqlite3
 from pathlib import Path
 
 from ...contract.supervise import Proposal, Response
-from ...lib.db_store import DbStore
+from ...lib.db_store import MACHINE_SPECIFIC, DbStore
 from ...lib.migrations import TableMigrations
 
 
 class QueueStore(DbStore):
+    TABLES = {"supervise_proposals": MACHINE_SPECIFIC,
+              "supervise_responses": MACHINE_SPECIFIC}
+
 
     def __init__(self, queue_key: str, db_path: Path) -> None:
         self.queue_key = queue_key

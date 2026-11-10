@@ -6,11 +6,13 @@ import sqlite3
 from pathlib import Path
 
 from ...contract.supervise import AuditEntry
-from ...lib.db_store import DbStore
+from ...lib.db_store import MACHINE_SPECIFIC, DbStore
 from ...lib.migrations import TableMigrations
 
 
 class AuditStore(DbStore):
+    TABLES = {"supervise_audit_entries": MACHINE_SPECIFIC}
+
 
     def __init__(self, db_path: Path) -> None:
         # One migration per schema version; append only.

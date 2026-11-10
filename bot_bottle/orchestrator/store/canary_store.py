@@ -9,11 +9,13 @@ from ...contract.supervise import (
     CANARY_STATUS_UNRESOLVED,
     CanaryEvent,
 )
-from ...lib.db_store import DbStore
+from ...lib.db_store import MACHINE_SPECIFIC, DbStore
 from ...lib.migrations import TableMigrations
 
 
 class CanaryStore(DbStore):
+    TABLES = {"canary_events": MACHINE_SPECIFIC}
+
 
     def __init__(self, db_path: Path) -> None:
         migrations = TableMigrations("canary_store", [

@@ -29,7 +29,6 @@ from ..workspace import WorkspacePlan
 from ..lib.config_store import ConfigStore
 from ..lib.log import die
 from ..manifest import Manifest, ManifestBottle
-from ..orchestrator.store.store_manager import StoreManager
 from ..paths import host_db_path
 from ..supervisor.plan import SupervisePlan
 from . import BottleSpec
@@ -118,12 +117,11 @@ def prepare_egress(
 
 
 def prepare_supervise(bottle: ManifestBottle, slug: str) -> SupervisePlan | None:
-    """Prepare the supervise state dir and migrate the host DB. None when the
-    bottle doesn't use supervise."""
+    """Prepare the supervise state dir. None when the bottle doesn't use
+    supervise. Its queue is the orchestrator's, in its own DB."""
     if not bottle.supervise:
         return None
     supervise_state_dir(slug).mkdir(parents=True, exist_ok=True)
-    StoreManager(host_db_path()).migrate()
     return SupervisePlan(slug=slug)
 
 

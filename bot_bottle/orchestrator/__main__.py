@@ -24,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8080, help="bind port (0 = ephemeral)")
     parser.add_argument(
         "--db", type=Path, required=True,
-        help="the shared state DB (registry, supervise queue + audit)",
+        help="its own DB, registry.db (registry, egress secrets, supervise queue, canary)",
     )
     args = parser.parse_args(argv)
     if not CONTROL_PLANE.key_from_env():
@@ -34,9 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     registry = RegistryStore(args.db)
-    registry.migrate()
-    # One DB per host: the supervise and audit tables share the registry's
-    # file.
+    # Every table the orchestrator keeps shares the registry's file.
     StoreManager(registry.db_path).migrate()
 
     orchestrator = OrchestratorCore(registry)

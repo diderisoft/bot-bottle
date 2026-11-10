@@ -36,9 +36,9 @@ Each host runs one **host controller**, one **orchestrator** and one
 | Component | Runs as | Owns | Code |
 |---|---|---|---|
 | CLI | the user, on the host | prompts, pickers, secrets from the env. It talks only to the host controller | `cli/` |
-| Host controller | per-host daemon, as the user | launch, teardown, listing, tmux sessions, attach, the audit journal, the firehose, remote access | `control/hostctl/` |
+| Host controller | per-host daemon, as the user | launch, teardown, listing, tmux sessions, attach, the audit journal, the firehose, remote access, the host database `bot-bottle.db` | `control/hostctl/` |
 | Backend | library inside the host controller | building images and starting the agent and infra in containers or microVMs | `backend/` |
-| Orchestrator | per-host service in a container or microVM | the bottle registry, egress tokens (encrypted at rest), the supervise queue, the control-plane signing key. It is the sole opener of `bot-bottle.db` | `orchestrator/` |
+| Orchestrator | per-host service in a container or microVM | the bottle registry, egress tokens (encrypted at rest), the supervise queue, the control-plane signing key. It is the only opener of its own database, `registry.db` | `orchestrator/` |
 | Gateway | per-host service in a container or microVM | the egress proxy, git-gate, the supervise MCP server, the mitmproxy CA | `gateway/` |
 | Agent runtime | one container or microVM per bottle | the model harness (claude, codex, pi) and the workspace | `contrib/<provider>/` |
 
@@ -175,7 +175,8 @@ Where each kind of state lives, and what owns it.
 | User agents and bottles | `~/.bot-bottle/{agents,bottles}/`, versioned ([below](#versioned-user-files)) | user |
 | Project agents and bottles | `<repo>/.bot-bottle/`, run only once trusted. Trust is kept in `~/.bot-bottle/trusted-bottles.json` ([below](#project-files-and-trust)) | repo |
 | Forge connections | `~/.bot-bottle/forges.md` ([below](#forge-connections)) | host |
-| Registry, supervise queue, encrypted egress secrets, settings | `bot-bottle.db`: `~/.bot-bottle/db/` mounted into the orchestrator. On firecracker, the orchestrator VM's `/dev/vdb` volume | orchestrator |
+| Host settings, audit forwarding cursors, the audit index | `~/.bot-bottle/db/bot-bottle.db` ([below](#databases)) | host controller |
+| Registry, supervise queue, encrypted egress secrets, canary events, orchestrator settings | `registry.db` ([below](#databases)) | orchestrator |
 | The environment's orchestrator (backend and host URL) | `~/.bot-bottle/infra/orchestrator.json`, written by each bring-up | host controller |
 | Signing keys | `~/.bot-bottle/<key file>`, mode 0600, pushed to the key holder | host |
 | Gateway CA | `~/.bot-bottle/gateway-ca/`, mounted at mitmproxy's confdir (firecracker: the infra VM dir's `gateway-ca/`) | gateway |
@@ -191,6 +192,22 @@ containers, VMs, networks and volumes `bb-<name>-`, and shares the caches
 The gateway keeps no durable per-bottle state. When it restarts, the launcher
 re-provisions every running bottle: CA, git-gate repos and credentials, and
 egress tokens (PRD 0081, design repo).
+
+### Databases
+
+Each database has one job and one writer
+([ADR 0020](../decisions/0020-where-host-state-lives.md)).
+
+| Database | Holds | Writer | Where |
+|---|---|---|---|
+| `bot-bottle.db` | the host's own state: settings (`bot_bottle_config`), the audit forwarder's cursors, the audit index | host controller | `~/.bot-bottle/db/` |
+| `registry.db` | the orchestrator's working state: the bottle registry, encrypted egress secrets, the supervise queue and its decisions, canary events, orchestrator settings | orchestrator | docker: `~/.bot-bottle/db/`, through the orchestrator's root mount. macOS: a container volume. Firecracker: the orchestrator VM's `/dev/vdb` volume |
+
+- One helper opens every connection (`lib/db_store.connect`), in WAL mode
+  with a 5 s busy timeout.
+- Each writer migrates its database when it starts.
+- Each store marks its tables portable or machine-specific (`TABLES`). Only
+  the host settings are portable. Nothing reads the mark yet.
 
 ### Versioned user files
 

@@ -1,6 +1,5 @@
 """Entry point and dispatcher for `python -m bot_bottle.cli`: maps `bot-bottle
-<command>` to its handler, enforces the migration gate, and turns exceptions
-into exit codes.
+<command>` to its handler and turns exceptions into exit codes.
 """
 
 from __future__ import annotations
@@ -15,9 +14,8 @@ from ..environment import (
 from ..errors import MissingEnvVarError, SecretsFileError
 from ..lib.log import Die, die, error
 from ..manifest import ManifestError, ManifestIndex
-from .commands import COMMANDS, HOME, NO_MIGRATION_COMMANDS, QUICK
+from .commands import COMMANDS, HOME, QUICK
 from .commands.help import cmd_help
-from .migration_gate import host_db_current
 
 
 def _is_agent(name: str) -> bool:
@@ -52,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-retu
         cmd_help()
         die(f"unknown command or agent: {command}")
     # Under sudo only the backend's root-owned pieces are written: registering
-    # or migrating here would leave per-user state the user can't write.
+    # here would leave per-user state the user can't write.
     as_sudo = sudo_invoker() is not None
     stale = [] if command in ("doctor", "help") else root_owned_state()  # doctor reports it
     if stale:
@@ -68,8 +66,6 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-retu
     except InvalidEnvironmentError as e:
         error(str(e))
         return 2
-    if not (as_sudo or command in NO_MIGRATION_COMMANDS) and not host_db_current():
-        return 1
     try:
         return handler(rest) or 0
     except (MissingEnvVarError, SecretsFileError) as e:

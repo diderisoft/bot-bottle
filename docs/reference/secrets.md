@@ -142,7 +142,7 @@ The CLI resolves each name at launch and hands the values to the host controller
 - Injected tokens go to the orchestrator, which serves them to the gateway per request.
 - Secret env values (`secret:...`) of 8 or more characters and the canary go to the orchestrator too, so git-gate can scan pushes for them.
 
-The orchestrator stores what it's given in `bot-bottle.db`, encrypted under a random per-bottle key. That key (`ENV_VAR_SECRET`) is kept in the agent's guest, not with the database.
+The orchestrator stores what it's given in its `registry.db`, encrypted under a random per-bottle key. That key (`ENV_VAR_SECRET`) is kept in the agent's guest, not with the database.
 
 The host reads the key back to restore a bottle's tokens when the infra restarts. The agent has the key but can't reach the database.
 

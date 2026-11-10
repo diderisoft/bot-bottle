@@ -14,7 +14,6 @@ from bot_bottle.backend.docker.infra import GATEWAY_NAME, ORCHESTRATOR_NAME
 from bot_bottle.control.client import OrchestratorEndpoint
 from bot_bottle.environment import active_name
 from bot_bottle.control.hostctl.runner import HostControlState
-from bot_bottle.orchestrator.store.store_manager import StoreManager
 
 _STATE = HostControlState(pid=7, port=1234, build_id="abc")
 
@@ -108,60 +107,6 @@ class TestUpDown(_Mocked):
         self.backend.infra_service.return_value.stop.assert_not_called()
         self.assertEqual(0, self.run_cmd(lifecycle.cmd_down, ["--force"])[0])
         self.runner.stop.assert_called_with(force=True)
-
-
-class TestUpMigrates(_Mocked):
-    """`up` starts the host controller on a current host DB (#1028): it asks
-    before migrating an old one, `--yes` migrates without asking, and with
-    neither it doesn't start."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.enterContext(mock.patch.object(StoreManager, "is_migrated", return_value=False))
-        self.enterContext(mock.patch.object(StoreManager, "is_fresh", return_value=False))
-        self.migrate = self.enterContext(mock.patch.object(StoreManager, "migrate"))
-        self.sudo = self.enterContext(
-            mock.patch.object(lifecycle, "sudo_invoker", return_value=None))
-        self.ensure = self.enterContext(
-            mock.patch.object(lifecycle, "ensure_via_daemon", return_value="http://orch"))
-
-    def _up(self, argv: list[str], stdin: str = "") -> tuple[int, str]:
-        with mock.patch("sys.stdin", io.StringIO(stdin)):
-            code, _, err = self.run_cmd(lifecycle.cmd_up, argv)
-        return code, err
-
-    def test_yes_migrates_without_asking(self) -> None:
-        code, err = self._up(["--restart", "--yes"])
-        self.assertEqual(0, code)
-        self.migrate.assert_called_once_with()
-        self.assertIn("out of date; migrating", err)
-        self.assertNotIn("[y/N]", err)
-        self.ensure.assert_called_once()
-
-    def test_asks_and_migrates_on_yes(self) -> None:
-        code, err = self._up([], stdin="y\n")
-        self.assertEqual(0, code)
-        self.assertIn("Migrate now? [y/N]", err)
-        self.migrate.assert_called_once_with()
-
-    def test_unanswered_doesnt_start(self) -> None:
-        code, err = self._up(["--restart"])
-        self.assertEqual(1, code)
-        self.assertIn("up --yes", err)
-        self.migrate.assert_not_called()
-        self.runner.restart.assert_not_called()
-        self.ensure.assert_not_called()
-
-    def test_a_current_db_isnt_touched(self) -> None:
-        with mock.patch.object(StoreManager, "is_migrated", return_value=True):
-            self.assertEqual(0, self._up([])[0])
-        self.migrate.assert_not_called()
-
-    def test_not_under_sudo(self) -> None:
-        # Migrating as root would leave the user state they can't write.
-        self.sudo.return_value = "someone"
-        self.assertEqual(0, self._up([])[0])
-        self.migrate.assert_not_called()
 
 
 class TestStatusJobs(_Mocked):

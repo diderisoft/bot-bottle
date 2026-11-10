@@ -333,7 +333,7 @@ The operator decides in `bot-bottle supervise`, the terminal's request popup,
 or the console. The orchestrator applies approved egress changes to the
 bottle's stored policy, so the next request resolves the new routes.
 
-The gateway never opens `bot-bottle.db`.
+The gateway never opens a database.
 
 **Kept approvals.** An approved egress addition can also be kept
 (`approvals.py`). The terminal's `[k]`, or the phone's second option, writes

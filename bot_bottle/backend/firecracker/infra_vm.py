@@ -2,8 +2,8 @@
 rootfs with its role init as PID 1.
 
 - Orchestrator VM, on the NAT'd orchestrator link: control plane, sole
-  opener of `bot-bottle.db` on its `/dev/vdb` volume, holds the signing key,
-  runs buildah for agent builds.
+  opener of its `registry.db` on the `/dev/vdb` volume, holds the signing
+  key, runs buildah for agent builds.
 - Gateway VM, on its own NAT'd link: egress, git-http and supervise. Agent
   gateway-port traffic is DNAT'd here, never to the orchestrator. Holds the
   CA and a `gateway` token, and reaches the orchestrator at
@@ -32,7 +32,7 @@ from typing import Generator
 from ... import resources
 from ...contract.hostctl import HOST_CONTROL, HOSTCTL_URL_ENV, InfraSettings, Settings
 from ...lib.log import die, info
-from ...paths import HOST_DB_FILENAME
+from ...paths import REGISTRY_DB_FILENAME
 from ..docker import util as docker_mod
 from . import firecracker_vm, infra_rootfs, netpool, util
 
@@ -456,7 +456,7 @@ def _orchestrator_init() -> str:
     signing key, start the control plane. Refuses to start without the key."""
     return _init_head() + f"""
 # Persistent registry volume (second virtio-block device, /dev/vdb) mounted at
-# the DB dir, so bot-bottle.db survives orchestrator-VM restarts.
+# the DB dir, so registry.db survives orchestrator-VM restarts.
 mount -t ext4 /dev/vdb /var/lib/bot-bottle 2>/dev/null || true
 rm -f {_STALE_SIGNING_KEY_PATH}
 # Persistent buildah store (/dev/vdc), so pulled bases and layer cache survive
@@ -486,6 +486,6 @@ else
     {HOSTCTL_URL_ENV}="$HC_URL" {HOST_CONTROL.token_env}="$HC_JWT" \\
         python3 -m bot_bottle.orchestrator \\
         --host 0.0.0.0 --port {ORCHESTRATOR_PORT} \\
-        --db /var/lib/bot-bottle/db/{HOST_DB_FILENAME} &
+        --db /var/lib/bot-bottle/db/{REGISTRY_DB_FILENAME} &
 fi
 """ + _INIT_TAIL

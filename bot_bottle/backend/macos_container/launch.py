@@ -55,7 +55,6 @@ from .gateway_hosts import GATEWAY_HOSTNAME
 from . import nested_containers as nested_containers_mod
 from .bottle_plan import MacosContainerBottlePlan
 from ...orchestrator.store.config_store import resolve_teardown_timeout
-from ...paths import host_db_path
 from ...orchestrator.store.secret_store import ENV_VAR_SECRET_NAME, new_env_var_secret
 from .infra import MacosInfraService
 from .consolidated_launch import (
@@ -210,7 +209,7 @@ def launch(
                 f"{endpoint.network}"
             )
         token_values = registration_tokens(plan)
-        teardown_timeout = resolve_teardown_timeout(host_db_path())
+        teardown_timeout = resolve_teardown_timeout()
         ctx = register_agent(
             plan.egress_plan,
             plan.git_gate_plan,
@@ -304,7 +303,7 @@ def adopted(
         _stop_or_remove(record.container, bottle_id, record.preserve_container)
         if record.registry_id:
             deprovision_consolidated(record.registry_id, service=MacosInfraService(settings),
-                                     timeout=resolve_teardown_timeout(host_db_path()))
+                                     timeout=resolve_teardown_timeout())
 
 
 def attach(bottle_id: str, record: "AdoptionRecord") -> MacosContainerBottle:

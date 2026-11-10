@@ -6,7 +6,7 @@ A proposal is validated, queued with the orchestrator (`POST
 /supervise/propose`, attributed by (source_ip, identity_token)), then polled
 for up to `SUPERVISE_RESPONSE_TIMEOUT_SECONDS` (30). A decision in time is
 returned; otherwise `status: pending` with the proposal id, which
-`check-proposal` reads later. The server never opens `bot-bottle.db`.
+`check-proposal` reads later. The server never opens a database.
 Unattributed callers fail closed.
 
 Methods: `initialize`, `notifications/initialized`, `tools/list`, `tools/call`;

@@ -14,9 +14,13 @@ from pathlib import Path
 from .contract.auth import ORCHESTRATOR_TOKEN_FILENAME
 from .environment import LIVE, default_root
 
-# The host DB; every SQLite store shares it, namespaced by TableMigrations
+# The host DB: the host's source-of-truth state, written by the host
+# controller (ADR 0020). Its stores share it, namespaced by TableMigrations
 # schema_key.
 HOST_DB_FILENAME = "bot-bottle.db"
+# The orchestrator's own DB (registry, egress secrets, supervise queue,
+# canary state), wherever its backend keeps it. Never the host DB.
+REGISTRY_DB_FILENAME = "registry.db"
 
 # The gateway's persistent mitmproxy CA, mounted at mitmproxy's confdir so it
 # survives recreation.
@@ -69,8 +73,8 @@ def host_secrets_path() -> Path:
 
 
 def host_db_path() -> Path:
-    """`<root>/db/bot-bottle.db`. In its own directory so a backend that mounts
-    only directories can share it without exposing the rest of the root."""
+    """`<root>/db/bot-bottle.db`, the host DB. Only the host controller opens
+    it (ADR 0020); the CLI goes through its API."""
     return bot_bottle_root() / "db" / HOST_DB_FILENAME
 
 
@@ -193,6 +197,7 @@ __all__ = [
     "audit_passkeys_path",
     "audit_push_dir",
     "HOST_DB_FILENAME",
+    "REGISTRY_DB_FILENAME",
     "host_audit_dir",
     "host_artifact_cache_dir",
     "host_firecracker_cache_dir",

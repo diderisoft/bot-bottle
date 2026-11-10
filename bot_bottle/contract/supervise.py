@@ -68,7 +68,6 @@ SUPERVISE_PORT = 9100
 # `list-egress-routes`.
 EGRESS_FORWARD_PROXY = "http://127.0.0.1:9099"
 EGRESS_INTROSPECT_URL = "http://_egress.local/allowlist"
-DB_PATH_IN_CONTAINER = "/run/supervise/bot-bottle.db"
 DEFAULT_POLL_INTERVAL_SEC = 0.5
 
 COMPONENT_FOR_TOOL: dict[str, str] = {
@@ -276,7 +275,6 @@ __all__ = [
     "SUPERVISE_PORT",
     "EGRESS_FORWARD_PROXY",
     "EGRESS_INTROSPECT_URL",
-    "DB_PATH_IN_CONTAINER",
     "DEFAULT_POLL_INTERVAL_SEC",
     "COMPONENT_FOR_TOOL",
     "CANARY_ACTION_ACKNOWLEDGE",

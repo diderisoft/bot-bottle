@@ -1,14 +1,41 @@
-"""SQLite store base class."""
+"""SQLite store base class, and the one helper every database connection is
+opened with (`connect`): WAL, so readers never block the writer, and a busy
+timeout, so a writer waits out another's short transaction."""
 
 from __future__ import annotations
 
 import os
 import sqlite3
 import stat
+from collections.abc import Mapping
 from contextlib import contextmanager
 from pathlib import Path
+from typing import ClassVar
 
 from .migrations import TableMigrations
+
+# How long a connection waits for another's lock before failing.
+BUSY_TIMEOUT_MS = 5000
+
+# What each table is (ADR 0020): `PORTABLE` state could be restored onto
+# another machine; `MACHINE_SPECIFIC` state couldn't. Each store names its
+# tables in `TABLES`. Nothing reads the mark yet.
+PORTABLE = "portable"
+MACHINE_SPECIFIC = "machine-specific"
+
+
+def connect(path: Path | str) -> sqlite3.Connection:
+    """A connection to the database at `path` in WAL mode with a busy
+    timeout. Every store's connections are opened here."""
+    conn = sqlite3.connect(path, timeout=BUSY_TIMEOUT_MS / 1000)
+    try:
+        conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.Error:
+        conn.close()
+        raise
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 class DbVersionError(Exception):
@@ -17,7 +44,10 @@ class DbVersionError(Exception):
 
 class DbStore:
     """Base for SQLite stores; subclasses resolve db_path, then call
-    super().__init__."""
+    super().__init__. `TABLES` marks each table the store creates `PORTABLE`
+    or `MACHINE_SPECIFIC`."""
+
+    TABLES: ClassVar[Mapping[str, str]] = {}
 
     def __init__(self, db_path: Path, migrations: TableMigrations) -> None:
         self.db_path = db_path
@@ -75,9 +105,7 @@ class DbStore:
 
     def _connect(self) -> sqlite3.Connection:
         self._secure_db_file()
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return connect(self.db_path)
 
     @contextmanager
     def _connection(self):
@@ -109,4 +137,5 @@ class DbStore:
             self._migrations.apply(conn)
 
 
-__all__ = ["DbStore", "DbVersionError"]
+__all__ = ["BUSY_TIMEOUT_MS", "MACHINE_SPECIFIC", "PORTABLE", "DbStore", "DbVersionError",
+           "connect"]

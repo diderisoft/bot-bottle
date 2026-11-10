@@ -265,9 +265,8 @@ class TestCmdLoginFlow(unittest.TestCase):
 
 class TestDispatcherRegistration(unittest.TestCase):
     def test_pair_is_the_command_login_is_not(self) -> None:
-        from bot_bottle.cli import COMMANDS, NO_MIGRATION_COMMANDS
+        from bot_bottle.cli import COMMANDS
         self.assertIn("pair", COMMANDS)
-        self.assertIn("pair", NO_MIGRATION_COMMANDS)
         self.assertNotIn("login", COMMANDS)  # `pair --password` now
 
 if __name__ == "__main__":

@@ -187,7 +187,7 @@ class TestDockerOrchestrator(unittest.TestCase):
         self.assertNotIn("PYTHONPATH", " ".join(argv))
         # Orchestrator entrypoint args (image ENTRYPOINT is `-m bot_bottle.orchestrator`).
         self.assertNotIn("--broker", argv)
-        self.assertEqual("/bot-bottle-root/db/bot-bottle.db", argv[argv.index("--db") + 1])
+        self.assertEqual("/bot-bottle-root/db/registry.db", argv[argv.index("--db") + 1])
 
     def test_publish_maps_host_port_to_fixed_internal_port(self) -> None:
         def fake(argv: list[str], **_kw: object) -> Mock:

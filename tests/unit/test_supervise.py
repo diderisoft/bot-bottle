@@ -324,10 +324,11 @@ class TestSupervisePrepare(unittest.TestCase):
     def _patch_home(self, fake_home: Path):
         return use_bottle_root(fake_home / ".bot-bottle")
 
-    def test_prepare_creates_queue(self):
+    def test_prepare_leaves_the_queue_to_the_orchestrator(self):
         plan = prepare_supervise(_SUPERVISED, "dev")
         assert plan is not None
-        self.assertTrue(host_db_path().is_file())
+        # The queue lives in the orchestrator's registry.db, not the host DB.
+        self.assertFalse(host_db_path().exists())
         self.assertEqual("dev", plan.slug)
 
     def test_prepare_skips_unsupervised_bottles(self):

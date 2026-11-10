@@ -154,10 +154,9 @@ class CmdPair(unittest.TestCase):
             cmd_pair([])
         self.assertEqual(["https://bot-bottle.app/api/v1/hosts/authorize"], urls)
 
-    def test_registered_and_store_free(self) -> None:
-        from bot_bottle.cli.commands import COMMANDS, NO_MIGRATION_COMMANDS
+    def test_registered(self) -> None:
+        from bot_bottle.cli.commands import COMMANDS
         self.assertIn("pair", COMMANDS)
-        self.assertIn("pair", NO_MIGRATION_COMMANDS)
 
 
 if __name__ == "__main__":

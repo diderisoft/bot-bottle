@@ -58,7 +58,7 @@ class TestRoleInits(unittest.TestCase):
         self.assertIn("refusing to start the control plane", init)     # no open mode
         self.assertIn('BOT_BOTTLE_ORCHESTRATOR_TOKEN="$CP_KEY" \\\n', init)  # key -> orchestrator only
         self.assertIn("python3 -m bot_bottle.orchestrator", init)
-        self.assertIn("--db /var/lib/bot-bottle/db/bot-bottle.db", init)
+        self.assertIn("--db /var/lib/bot-bottle/db/registry.db", init)
 
     def test_the_signing_key_is_never_read_from_the_persistent_volume(self):
         # A copy an earlier boot left on /dev/vdb was read before the fresh

@@ -21,7 +21,7 @@ from ...paths import bot_bottle_root
 from ...trust_domain import HostControlProvisioning, HostLink, signing_key
 from .build import current_build_id
 from .runner import HostControlState, clear_state, leave_callers_directory, write_state
-from . import budget, localsock
+from . import budget, host_db, localsock
 from .github_git_tokens import GitTokenRenewer
 from .audit_events import HostAudit
 from .architect_bottle import ArchitectBottle, install as install_architect
@@ -65,20 +65,6 @@ def serve_running_orchestrators() -> None:
             debug(f"host controller: no {name} orchestrator to listen for: {e}")
 
 
-def migrate_new_host_db() -> None:
-    """Create a new install's or environment's host DB tables before anything
-    here writes to the file. Otherwise the first table this daemon makes (the
-    forwarder's cursor) leaves a DB the CLI can't tell from an old one, and it
-    asks to migrate. An existing DB is left to the CLI's migration gate."""
-    # pylint: disable=import-outside-toplevel
-    from ...orchestrator.store.store_manager import StoreManager
-    from ...paths import host_db_path
-    try:
-        StoreManager(host_db_path()).migrate_if_fresh()
-    except (OSError, sqlite3.Error) as e:
-        warn(f"host DB not created: {e}")
-
-
 def start_forwarder(audit: HostAudit) -> "AuditForwarder | None":
     """The journal forwarder, or None if it can't start."""
     # pylint: disable=import-outside-toplevel
@@ -115,7 +101,8 @@ def main() -> int:
     leave_callers_directory()
     port = int(os.environ.get(PORT_ENV, "0") or "0")
     sessions = SessionManager({})
-    migrate_new_host_db()
+    # The host DB's only writer migrates it before anything here reads it.
+    host_db.migrate()
     # The single audit writer and the journal forwarder live as long as the
     # daemon.
     audit = HostAudit.open()

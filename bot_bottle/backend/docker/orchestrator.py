@@ -1,6 +1,7 @@
 """The docker orchestrator: one fixed-name container, on the `--internal`
 control network plus a host-loopback publish for the CLI. Sole opener of
-`bot-bottle.db` and sole holder of the signing key.
+`<root>/db/registry.db` (the host DB beside it is the host controller's) and
+sole holder of the signing key.
 
 Docker 28+ doesn't publish ports for a container on only `--internal` networks,
 so it starts on a dedicated publish network (masquerading off, external DNS
@@ -26,7 +27,7 @@ from ...infra_image import pinned_infra_artifact, pull_pinned_image, version_env
 from ...published_artifacts import FORMAT_OCI
 from ...contract.hostctl import Settings
 from ...contract.identity import ORCHESTRATOR_TOKEN_ENV
-from ...paths import HOST_DB_FILENAME, bot_bottle_root
+from ...paths import REGISTRY_DB_FILENAME, bot_bottle_root
 from ...control.gateway import GatewayError
 from ...control.lifecycle import (
     DEFAULT_PORT,
@@ -52,8 +53,8 @@ ORCHESTRATOR_DOCKERFILE = "Dockerfile.orchestrator"
 # Container label recording the image's source hash.
 ORCHESTRATOR_SOURCE_HASH_LABEL = "bot-bottle-orchestrator-source-hash"
 
-# Host root mount (DB and state) in the orchestrator, the only container with
-# the DB.
+# Host root mount (its registry DB and state) in the orchestrator, the only
+# container with it.
 _ROOT_IN_CONTAINER = "/bot-bottle-root"
 # A named environment's allocated host ports, one file per orchestrator
 # container under its state root, so a restart (and every other process of the
@@ -88,7 +89,7 @@ def record_orchestrator_port(port: int, name: str = ORCHESTRATOR_NAME) -> None:
     tmp = path.with_name(f".{name}.{os.getpid()}")
     tmp.write_text(f"{port}\n", encoding="utf-8")
     os.replace(tmp, path)
-_DB_IN_CONTAINER = f"{_ROOT_IN_CONTAINER}/db/{HOST_DB_FILENAME}"
+_DB_IN_CONTAINER = f"{_ROOT_IN_CONTAINER}/db/{REGISTRY_DB_FILENAME}"
 
 _HEALTH_POLL_SECONDS = 0.25
 
@@ -338,8 +339,8 @@ class DockerOrchestrator(Orchestrator):
             # port.
             "--publish", f"{self._bind_host}:{port}:{DEFAULT_PORT}",
             # Runs the package baked into the freshly built image, no source
-            # mount. The root mount (a host path or a named volume) holds the
-            # DB.
+            # mount. The root mount (a host path or a named volume) holds its
+            # registry DB.
             "--volume", f"{self._root_mount_source}:{_ROOT_IN_CONTAINER}",
             # The signing key, as a bare `--env NAME`.
             "--env", ORCHESTRATOR_TOKEN_ENV,

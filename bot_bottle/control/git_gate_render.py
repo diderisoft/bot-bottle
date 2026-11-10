@@ -316,7 +316,7 @@ import sys
 from pathlib import Path
 
 # Queue over the control-plane RPC — the git-gate data plane never opens
-# bot-bottle.db. Attribution is by (source_ip, identity_token), resolved server-side, so the proposal lands under the
+# a database. Attribution is by (source_ip, identity_token), resolved server-side, so the proposal lands under the
 # calling bottle exactly as a direct write once did.
 try:
     from bot_bottle.gateway.policy_resolver import PolicyResolver, PolicyResolveError

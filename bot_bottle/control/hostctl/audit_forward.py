@@ -20,7 +20,7 @@ from pathlib import Path
 
 from ...contract.audit import AuditEvent, canonical
 from ...lib.config_store import AuditForward
-from ...lib.db_store import DbStore
+from ...lib.db_store import MACHINE_SPECIFIC, DbStore
 from ...lib.migrations import TableMigrations
 from ...secret_source import SecretSource
 from .audit_journal import SEGMENT_SUFFIX
@@ -40,6 +40,8 @@ class Cursor:
 
 class ForwardCursors(DbStore):
     """Each endpoint's cursor into the journal, in the shared host DB."""
+
+    TABLES = {"audit_forward_cursor": MACHINE_SPECIFIC}
 
     def __init__(self, db_path: Path) -> None:
         super().__init__(db_path, TableMigrations("audit_forward", [

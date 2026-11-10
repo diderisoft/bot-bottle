@@ -1,5 +1,5 @@
 """`MacosGateway`: the gateway as one Apple container on three networks. It
-never opens `bot-bottle.db` and holds only the `gateway` token. Also holds the
+never opens a database and holds only the `gateway` token. Also holds the
 network names and creation helper the infra service and launch share.
 """
 

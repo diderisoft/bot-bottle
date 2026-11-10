@@ -309,7 +309,7 @@ directories live apart (`util.env_dir`).
 The infra pair is two persistent VMs, each booting its own rootfs
 (`infra_vm.py`, `infra_rootfs.py`):
 
-- **Orchestrator VM:** the control plane, `bot-bottle.db` on a persistent
+- **Orchestrator VM:** the control plane, `registry.db` on a persistent
   `/dev/vdb` volume, the signing key, and buildah for in-VM agent builds.
 - **Gateway VM:** the data plane, with a `gateway` JWT and the CA, and no
   build tooling. It reaches the orchestrator over the one forward rule its

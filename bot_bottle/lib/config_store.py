@@ -7,7 +7,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from .db_store import DbStore
+from .db_store import PORTABLE, DbStore
 from .migrations import TableMigrations
 
 
@@ -74,6 +74,9 @@ class FirehoseSettings:
 
 class ConfigStore(DbStore):
     """SQLite store for host-side settings."""
+
+    # Host settings travel with the host's owner.
+    TABLES = {"bot_bottle_config": PORTABLE}
 
     def __init__(self, db_path: Path) -> None:
         migrations = TableMigrations("config_store", [

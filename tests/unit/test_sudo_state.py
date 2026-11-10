@@ -94,35 +94,30 @@ class TestRootOwnedState(unittest.TestCase):
 
 class TestMainUnderSudo(unittest.TestCase):
     def _main(self, command: str, *, sudo: tuple[int, int] | None,
-              stale: list[Path]) -> tuple[int, mock.MagicMock, mock.MagicMock, str]:
+              stale: list[Path]) -> tuple[int, mock.MagicMock, str]:
         handler = mock.Mock(return_value=0)
         err = io.StringIO()
         with mock.patch.dict(cli_main.COMMANDS, {command: handler}), \
                 mock.patch.object(cli_main, "sudo_invoker", return_value=sudo), \
                 mock.patch.object(cli_main, "root_owned_state", return_value=stale), \
                 mock.patch.object(cli_main, "ensure_active_registered") as register, \
-                mock.patch("bot_bottle.cli.migration_gate.StoreManager") as store, \
                 redirect_stderr(err):
-            store.return_value.is_migrated.return_value = False
-            store.return_value.is_fresh.return_value = True
             code = cli_main.main([command])
-        return code, register, store.return_value, err.getvalue()
+        return code, register, err.getvalue()
 
     def test_sudo_writes_no_per_user_state(self) -> None:
-        code, register, store, _ = self._main("fakecmd", sudo=(501, 20), stale=[])
+        code, register, _ = self._main("fakecmd", sudo=(501, 20), stale=[])
         self.assertEqual(0, code)
         register.assert_not_called()
-        store.migrate.assert_not_called()
 
-    def test_a_user_run_registers_and_migrates(self) -> None:
-        code, register, store, _ = self._main("fakecmd", sudo=None, stale=[])
+    def test_a_user_run_registers(self) -> None:
+        code, register, _ = self._main("fakecmd", sudo=None, stale=[])
         self.assertEqual(0, code)
         register.assert_called_once()
-        store.migrate.assert_called_once()
 
     def test_root_owned_state_stops_with_the_fix(self) -> None:
         stale = [Path("/home/u/.bot-bottle-envs/ci-macos")]
-        code, register, _, err = self._main("fakecmd", sudo=None, stale=stale)
+        code, register, err = self._main("fakecmd", sudo=None, stale=stale)
         self.assertEqual(1, code)
         register.assert_not_called()
         self.assertIn('sudo chown -R "$(id -un):$(id -gn)" /home/u/.bot-bottle-envs/ci-macos', err)
@@ -131,8 +126,7 @@ class TestMainUnderSudo(unittest.TestCase):
         with mock.patch.object(cli_main, "root_owned_state") as check, \
                 mock.patch.dict(cli_main.COMMANDS, {"doctor": mock.Mock(return_value=0)}), \
                 mock.patch.object(cli_main, "sudo_invoker", return_value=None), \
-                mock.patch.object(cli_main, "ensure_active_registered"), \
-                mock.patch("bot_bottle.cli.migration_gate.StoreManager"):
+                mock.patch.object(cli_main, "ensure_active_registered"):
             self.assertEqual(0, cli_main.main(["doctor"]))
         check.assert_not_called()
 

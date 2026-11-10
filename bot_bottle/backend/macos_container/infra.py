@@ -1,6 +1,6 @@
 """The macOS infra pair: two Apple containers. Only the orchestrator opens
-`bot-bottle.db`, since two guests sharing it over virtiofs would race
-incoherent `fcntl` locks.
+its `registry.db`, on a container-only volume, since two guests sharing it
+over virtiofs would race incoherent `fcntl` locks.
 
 - `bot-bottle-mac-orchestrator`: on the host-only control network only, with
   a container-only DB volume and the signing key. The CLI and the gateway

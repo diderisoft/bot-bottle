@@ -16,7 +16,7 @@ from ...lib import log
 from ... import resources
 from ...contract.hostctl import Settings
 from ...contract.identity import ORCHESTRATOR_TOKEN_ENV
-from ...paths import HOST_DB_FILENAME
+from ...paths import REGISTRY_DB_FILENAME
 from ...control.lifecycle import (
     DEFAULT_PORT,
     DEFAULT_STARTUP_TIMEOUT_SECONDS,
@@ -36,12 +36,12 @@ from .gateway import CONTROL_NETWORK
 
 ORCHESTRATOR_NAME = resource_prefix() + "mac-orchestrator"
 ORCHESTRATOR_LABEL = f"{ORCHESTRATOR_NAME}=1"
-# Volume holding `bot-bottle.db`, mounted only into the orchestrator.
+# Volume holding the orchestrator's `registry.db`, mounted only into it.
 ORCHESTRATOR_DB_VOLUME = resource_prefix() + "mac-db"
 
 # DB volume mount point; the DB is `<root>/db/<filename>`, passed as `--db`.
 _DB_ROOT_IN_CONTAINER = "/var/lib/bot-bottle"
-_DB_IN_CONTAINER = f"{_DB_ROOT_IN_CONTAINER}/db/{HOST_DB_FILENAME}"
+_DB_IN_CONTAINER = f"{_DB_ROOT_IN_CONTAINER}/db/{REGISTRY_DB_FILENAME}"
 _SRC_IN_CONTAINER = "/bot-bottle-src"
 
 _HEALTH_POLL_SECONDS = 0.25
