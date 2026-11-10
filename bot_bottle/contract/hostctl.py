@@ -73,6 +73,18 @@ AUDIT_IMPORT_PATH = "/audit/import"
 # and drops their tokens: {"removed": [user names]}.
 FORGES_PATH = "/forges"
 FORGES_REMOVE_PATH = "/forges/remove"
+# GET: {"trusted": [`Trusted.to_json()`]}, oldest first. POST a record: keeps
+# it, replacing the one for its path; answers like GET.
+TRUST_PATH = "/trust"
+# GET: {"pairing": `Pairing.to_json()`, "link": the link's last state}. POST
+# {"changes": {url, host_id, console_node_id, console_ticket, enabled,
+# access_token, refresh_token}, "new": bool} sets those (a new pairing resets
+# the rest); the token values go to the host secrets file. Answers like GET.
+PAIRING_PATH = "/pairing"
+# GET: the trusted audit passkeys, `audit_trust.Trust.to_json()`. POST one:
+# trusts exactly those, keeping a passkey's counter where it was trusted
+# already; answers like GET.
+AUDIT_PASSKEYS_PATH = "/audit/passkeys"
 AUDIT_PRODUCERS = frozenset({"orchestrator", "egress", "git-gate", "supervise"})
 
 # A job `error` with this `code` needs a yes/no: resend with `assume_yes`.
@@ -409,8 +421,8 @@ def bearer(token: str) -> dict[str, str]:
 
 __all__ = [
     "AUDIT_APPEND_PATH", "AUDIT_IMPORT_PATH", "AUDIT_PRODUCERS", "AUDIT_QUERY_PATH",
-    "AUDIT_REBUILD_PATH", "ARCHITECT_WARM_PATH", "FORGES_PATH", "FORGES_REMOVE_PATH",
-    "HOST_CONFIG_PATH",
+    "AUDIT_PASSKEYS_PATH", "AUDIT_REBUILD_PATH", "ARCHITECT_WARM_PATH", "FORGES_PATH",
+    "FORGES_REMOVE_PATH", "HOST_CONFIG_PATH", "PAIRING_PATH", "TRUST_PATH",
     "AUTH_HEADER", "AUTH_SCHEME", "BOTTLES_PATH", "BOTTLE_COLORS", "CONFIRM_ERROR",
     "DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS", "DEFAULT_DOCKER_AGENT_SUBNETS",
     "DOCKER_AGENT_SUBNET_PREFIX", "IMAGE_POLICIES", "LAUNCH_CLI_ONLY",

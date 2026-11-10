@@ -211,16 +211,16 @@ def _check_host_controller() -> None:
 
 def _repair_command() -> str:
     """`bot-bottle pair` again, for a host the console refused, or "" when
-    it wasn't refused."""
+    it wasn't refused (or no host controller runs the link)."""
     # pylint: disable-next=import-outside-toplevel
-    from ...control.hostctl import link_refusal, pairing
-    if not link_refusal.unpaired():
+    from ..host_state_client import running_pairing
+    found = None
+    with contextlib.suppress(Exception):
+        found = running_pairing()
+    if found is None or not found[1].get("unpaired"):
         return ""
-    with contextlib.suppress(pairing.RemoteError):
-        url = str(pairing.load_console().get("url", "")).rstrip("/")
-        if url:
-            return f"`{PROG} pair --console-url {url}`"
-    return f"`{PROG} pair`"
+    url = found[0].url.rstrip("/")
+    return f"`{PROG} pair --console-url {url}`" if url else f"`{PROG} pair`"
 
 
 def _check_console_link() -> None:

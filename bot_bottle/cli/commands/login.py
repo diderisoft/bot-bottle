@@ -1,9 +1,9 @@
 """`bot-bottle pair --password`: register this host with a bot-bottle console
 whose operator approves it in a signed-in browser (no QR code or passkey).
 
-Runs a device-authorization flow, then writes the access and refresh tokens
-(and the console's iroh identity, which the link pins) to
-`$BOT_BOTTLE_ROOT/console.json`.
+Runs a device-authorization flow, then has the host controller keep the
+pairing: the console's URL and iroh identity (which the link pins) in the
+host database, and the access and refresh tokens in the host secrets file.
 
 Usage:
   bot-bottle pair --password [--console-url URL] [--label LABEL]
@@ -20,15 +20,15 @@ import json
 import os
 import socket
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
-from ...paths import bot_bottle_root
+from ...control.hostctl.runner import HostControlError
+from ...paths import host_secrets_path
+from ..host_state_client import set_pairing
 
 _CONSOLE_URL_ENV = "BB_CONSOLE_URL"
 # The hosted console, for a host that names no other (BB_CONSOLE_URL or
@@ -75,40 +75,12 @@ def _get(url: str) -> tuple[int, dict[str, Any]]:
         return e.code, {}
 
 
-def _save_credentials(
-    console_url: str, host_id: str, access_token: str, refresh_token: str,
-    console_iroh: dict[str, str] | None = None,
-) -> Path:
-    path = bot_bottle_root() / "console.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    content = (
-        json.dumps(
-            {
-                "url": console_url,
-                "host_id": host_id,
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                # The console's iroh identity, pinned for `bot-bottle remote`.
-                **(console_iroh or {}),
-            },
-            indent=2,
-        )
-        + "\n"
-    )
-    fd, tmp_path_str = tempfile.mkstemp(dir=path.parent, prefix=".console-")
-    tmp = Path(tmp_path_str)
-    try:
-        tmp.chmod(0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(content)
-        os.replace(tmp, path)
-    except OSError:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
-        raise
-    return path
+def _save_credentials(console_url: str, result: dict[str, Any]) -> None:
+    """A new pairing from an approved device flow: what the console said,
+    with its iroh identity, which the link pins, when it sent one."""
+    tokens = {k: str(result[k]) for k in ("access_token", "refresh_token") if result.get(k)}
+    iroh = {k: str(result[k]) for k in ("console_node_id", "console_ticket") if result.get(k)}
+    set_pairing(new=True, url=console_url, host_id=str(result["host_id"]), **tokens, **iroh)
 
 
 def cmd_login(argv: list[str]) -> int:
@@ -176,15 +148,13 @@ def run_device_flow(
         st = result.get("status")
         if st == "approved":
             sys.stderr.write("\n\nApproved.\n")
-            path = _save_credentials(
-                console_url,
-                result["host_id"],
-                result["access_token"],
-                result["refresh_token"],
-                {k: str(result[k]) for k in ("console_node_id", "console_ticket")
-                 if result.get(k)},
-            )
-            sys.stderr.write(f"Credentials saved to {path}\n")
+            try:
+                _save_credentials(console_url, result)
+            except HostControlError as e:
+                sys.stderr.write(f"{prog}: couldn't keep the pairing: "
+                                 f"{getattr(e, 'error', '') or e}\n")
+                return 1
+            sys.stderr.write(f"Paired; the tokens are in {host_secrets_path()}\n")
             return 0
         if st == "denied":
             sys.stderr.write("\n\nDenied.\n")

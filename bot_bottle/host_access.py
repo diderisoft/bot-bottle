@@ -1,10 +1,10 @@
 """How this process reaches the host DB's state (ADR 0020).
 
 The host controller is the host DB's only writer. It calls `use_stores()` as
-it starts, and from then on code shared with the CLI (forge connections)
-reads and writes the stores directly. Any other process, the CLI above all,
-asks the host controller over its API (`client()`), starting it if it isn't
-running, so it never opens the file.
+it starts, and from then on code shared with the CLI (forge connections,
+trust records) reads and writes the stores directly. Any other process, the
+CLI above all, asks the host controller over its API (`client()`), starting
+it if it isn't running, so it never opens the file.
 """
 
 from __future__ import annotations

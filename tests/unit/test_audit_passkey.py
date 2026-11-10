@@ -22,6 +22,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
 from bot_bottle import paths
 from bot_bottle.cli.commands import audit_passkeys
+from bot_bottle.cli.host_state_client import set_pairing
 from bot_bottle.control.hostctl import audit_trust
 from bot_bottle.control.hostctl.audit_link import AuditLink
 from bot_bottle.control.hostctl.audit_push import (
@@ -34,6 +35,8 @@ from bot_bottle.control.hostctl.audit_unlock import (
 from bot_bottle.control.hostctl.webauthn import (
     WebAuthnError, b64url_encode, cose_key, fingerprint, key_alg, verify_assertion,
 )
+from bot_bottle.lib.db_store import PORTABLE
+from tests.unit import serve_host_controller, use_bottle_root
 
 RP = "console.example"
 ORIGIN = "https://console.example"
@@ -161,22 +164,24 @@ class _Tmp(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         self.dir = Path(self._tmp.name)
-        self.trust_path = self.dir / "audit-passkeys.json"
+        # The host DB under this root, which keeps the trusted passkeys.
+        self.db_path = self.dir / "db" / "bot-bottle.db"
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
     def trust(self, *pks: Passkey) -> None:
-        audit_trust.save(audit_trust.Trust(origin=ORIGIN, rp_id=RP, passkeys=[
-            audit_trust.TrustedPasskey(id=p.id, public_key=b64url_encode(p.cose)) for p in pks]),
-            self.trust_path)
+        audit_trust.PasskeyStore(self.db_path).replace(audit_trust.Trust(
+            origin=ORIGIN, rp_id=RP, passkeys=[
+                audit_trust.TrustedPasskey(id=p.id, public_key=b64url_encode(p.cose))
+                for p in pks]))
 
 
 class TestUnlock(_Tmp):
     def setUp(self) -> None:
         super().setUp()
         self.now = 1000.0
-        self.unlock = AuditUnlock(self.trust_path, clock=lambda: self.now)
+        self.unlock = AuditUnlock(self.db_path, clock=lambda: self.now)
         self.pk = Passkey()
         self.trust(self.pk)
 
@@ -185,7 +190,7 @@ class TestUnlock(_Tmp):
         return str(self.unlock.unlock(session, self.pk.assertion(str(ch["challenge"])))["token"])
 
     def test_no_trusted_passkey(self) -> None:
-        self.trust_path.unlink()
+        self.trust()
         with self.assertRaisesRegex(UnlockError, "trusts no passkey"):
             self.unlock.challenge("s1")
         with self.assertRaises(UnlockError):
@@ -200,7 +205,7 @@ class TestUnlock(_Tmp):
         token = self._unlock()
         self.assertEqual(self.pk.id, self.unlock.check(token, "s1"))
         # the counter is kept, so the same assertion's counter can't be reused
-        self.assertEqual(1, audit_trust.load(self.trust_path).passkeys[0].sign_count)
+        self.assertEqual(1, audit_trust.load(self.db_path).passkeys[0].sign_count)
 
     def test_a_challenge_is_single_use_and_bound_to_its_session(self) -> None:
         ch = str(self.unlock.challenge("s1")["challenge"])
@@ -371,7 +376,7 @@ class TestAuditLink(_Tmp):
         super().setUp()
         self.now = 1000.0
         self.sent: list[dict[str, Any]] = []
-        self.unlock = AuditUnlock(self.trust_path, clock=lambda: self.now)
+        self.unlock = AuditUnlock(self.db_path, clock=lambda: self.now)
         self.pk = Passkey()
         self.trust(self.pk)
         self.running = {"agent-1": "bottle-1"}
@@ -462,21 +467,21 @@ class TestTrust(_Tmp):
     def test_save_load_and_counters(self) -> None:
         pk = Passkey()
         self.trust(pk)
-        self.assertEqual(0o600, stat.S_IMODE(self.trust_path.stat().st_mode))
-        audit_trust.record_sign_count(pk.id, 7, self.trust_path)
-        audit_trust.record_sign_count(pk.id, 3, self.trust_path)
-        self.assertEqual(7, audit_trust.load(self.trust_path).passkeys[0].sign_count)
-        saved = audit_trust.load(self.trust_path).passkeys[0]
-        self.assertEqual(fingerprint(pk.cose), saved.fingerprint)
+        self.assertEqual(0o600, stat.S_IMODE(self.db_path.stat().st_mode))
+        audit_trust.record_sign_count(pk.id, 7, self.db_path)
+        audit_trust.record_sign_count(pk.id, 3, self.db_path)
+        self.assertEqual(7, audit_trust.load(self.db_path).passkeys[0].sign_count)
+        saved = audit_trust.load(self.db_path)
+        self.assertEqual((ORIGIN, RP, fingerprint(pk.cose)),
+                         (saved.origin, saved.rp_id, saved.passkeys[0].fingerprint))
+        self.assertEqual({"audit_passkeys": PORTABLE}, dict(audit_trust.PasskeyStore.TABLES))
+        self.assertEqual(saved, audit_trust.Trust.from_json(saved.to_json()))
 
-    def test_load_errors(self) -> None:
-        self.assertEqual([], audit_trust.load(self.trust_path).passkeys)
-        self.trust_path.write_text("[1]")
-        with self.assertRaises(audit_trust.TrustError):
-            audit_trust.load(self.trust_path)
-        self.trust_path.write_text("{bad")
-        with self.assertRaises(audit_trust.TrustError):
-            audit_trust.load(self.trust_path)
+    def test_none_trusted_and_bad_lists(self) -> None:
+        self.assertEqual([], audit_trust.load(self.db_path).passkeys)
+        for bad in ([1], {"passkeys": 1}, {"passkeys": [{"id": "x"}]}):
+            with self.subTest(bad=bad), self.assertRaises(audit_trust.TrustError):
+                audit_trust.Trust.from_json(bad)
 
     def test_origin(self) -> None:
         self.assertEqual(("https://c.example:9444", "c.example"),
@@ -507,24 +512,27 @@ class TestTrust(_Tmp):
                     self.assertRaises(audit_trust.TrustError):
                 audit_trust.fetch("https://c.example", "tok")
 
-    def test_trusted_keeps_counters_of_the_same_key(self) -> None:
-        pk = Passkey()
-        current = audit_trust.Trust(origin=ORIGIN, rp_id=RP, passkeys=[
-            audit_trust.TrustedPasskey(pk.id, b64url_encode(pk.cose), 9)])
-        fetched = [audit_trust.TrustedPasskey(pk.id, b64url_encode(pk.cose))]
-        got = audit_trust.trusted("https://console.example", fetched, current)
-        self.assertEqual(9, got.passkeys[0].sign_count)
+    def test_trusting_again_keeps_counters_of_the_same_key(self) -> None:
+        pk, other = Passkey(), Passkey("eddsa", "cred-2")
+        self.trust(pk, other)
+        audit_trust.record_sign_count(pk.id, 9, self.db_path)
+        audit_trust.record_sign_count(other.id, 4, self.db_path)
+        fetched = [audit_trust.TrustedPasskey(pk.id, b64url_encode(pk.cose)),
+                   audit_trust.TrustedPasskey(other.id, b64url_encode(Passkey().cose))]
+        got = audit_trust.PasskeyStore(self.db_path).replace(
+            audit_trust.trusted("https://console.example", fetched))
+        self.assertEqual([9, 0], [p.sign_count for p in got.passkeys])  # a new key starts over
         self.assertEqual((ORIGIN, RP), (got.origin, got.rp_id))
 
 
 class TestCli(_Tmp):
+    """`audit passkeys`, through the host controller."""
+
     def setUp(self) -> None:
         super().setUp()
         self.pk = Passkey()
-        patcher = mock.patch.object(audit_trust, "audit_passkeys_path",
-                                    return_value=self.trust_path)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.addCleanup(use_bottle_root(self.dir))
+        serve_host_controller(self)
 
     def _fetched(self) -> list[audit_trust.TrustedPasskey]:
         return [audit_trust.TrustedPasskey(self.pk.id, b64url_encode(self.pk.cose))]
@@ -534,7 +542,7 @@ class TestCli(_Tmp):
                 mock.patch("sys.stderr", io.StringIO()) as err:
             self.assertEqual(1, audit_passkeys.trust_from_console(
                 "https://console.example", "t", confirm=lambda _p: False))
-            self.assertFalse(self.trust_path.exists())
+            self.assertEqual([], audit_trust.load(self.db_path).passkeys)
             self.assertEqual(0, audit_passkeys.trust_from_console(
                 "https://console.example", "t", confirm=lambda _p: True))
         self.assertIn(fingerprint(self.pk.cose), err.getvalue())
@@ -558,15 +566,13 @@ class TestCli(_Tmp):
         with mock.patch("sys.stdout", io.StringIO()) as out:
             self.assertEqual(0, audit_passkeys.run(False))
         self.assertIn(fingerprint(self.pk.cose), out.getvalue())
-        with mock.patch("sys.stderr", io.StringIO()), \
-                mock.patch.object(audit_passkeys.pairing, "load_console",
-                                  return_value={"url": "https://c.example", "access_token": "t"}), \
-                mock.patch("sys.stdin", io.StringIO()):
+        set_pairing(new=True, url="https://c.example", access_token="t")
+        with mock.patch("sys.stderr", io.StringIO()), mock.patch("sys.stdin", io.StringIO()):
+            self.assertEqual(1, audit_passkeys.run(True))  # no terminal to confirm at
+        set_pairing(new=True)
+        with mock.patch("sys.stderr", io.StringIO()) as err:
             self.assertEqual(1, audit_passkeys.run(True))
-        with mock.patch("sys.stderr", io.StringIO()), \
-                mock.patch.object(audit_passkeys.pairing, "load_console",
-                                  side_effect=audit_passkeys.pairing.RemoteError("not paired")):
-            self.assertEqual(1, audit_passkeys.run(True))
+        self.assertIn("not paired", err.getvalue())
 
     def test_after_pairing_without_a_terminal(self) -> None:
         with mock.patch("sys.stderr", io.StringIO()) as err, mock.patch("sys.stdin", io.StringIO()):

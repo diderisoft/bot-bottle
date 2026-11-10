@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import json
 import os
 import tempfile
 import unittest
@@ -11,8 +10,10 @@ from typing import Any
 from unittest.mock import patch
 
 from bot_bottle.cli.commands.pair import cmd_pair, render_qr
+from bot_bottle.cli.host_state_client import set_pairing
 from bot_bottle.control.hostctl import pairing
 from bot_bottle.lib import qrcodegen
+from tests.unit import serve_host_controller
 
 _START = {"device_code": "dc", "user_code": "ABC-DEF", "expires_in": 300, "poll_interval": 0,
           "confirm_code": "4F-7K", "pair_url": "https://console.example/pair?code=ABC-DEF"}
@@ -46,6 +47,7 @@ class CmdPair(unittest.TestCase):
         self.addCleanup(env.stop)
         os.environ.pop("BB_CONSOLE_URL", None)
         self.posted: list[dict[str, Any]] = []
+        serve_host_controller(self)
 
     def run_pair(self, argv: list[str], polls: list[dict[str, Any]],
                  start: dict[str, Any] | None = None) -> tuple[int, str, list[list[str]]]:
@@ -82,10 +84,11 @@ class CmdPair(unittest.TestCase):
         self.assertIn("4F-7K", err)
         self.assertIn(_START["pair_url"], err)
         self.assertEqual([["enable"]], enabled)
-        with open(os.path.join(self.root, "console.json"), encoding="utf-8") as f:
-            saved = json.load(f)
-        self.assertEqual(("http://console", "at", "cn"),
-                         (saved["url"], saved["access_token"], saved["console_node_id"]))
+        saved = pairing.load_pairing()
+        self.assertEqual(("http://console", "cn", False),
+                         (saved.url, saved.console_node_id, saved.enabled))
+        self.assertEqual("at", saved.tokens()[0])  # in the secrets file, named in the DB
+        self.assertFalse(os.path.exists(os.path.join(self.root, "console.json")))
 
     def test_an_already_paired_machine_is_told_to_sign_in(self) -> None:
         _, err, _ = self.run_pair(["--console-url", "http://c"], [_APPROVED],
@@ -128,7 +131,7 @@ class CmdPair(unittest.TestCase):
         self.assertIn("needs iroh", err.getvalue())
 
     def test_falls_back_to_the_console_last_logged_in_to(self) -> None:
-        pairing.save_console({"url": "http://remembered", "access_token": "x"})
+        set_pairing(new=True, url="http://remembered", access_token="x")
         urls: list[str] = []
 
         def fake_post(url: str, _payload: dict[str, Any]) -> dict[str, Any]:

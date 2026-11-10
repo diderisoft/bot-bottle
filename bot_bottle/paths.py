@@ -33,10 +33,10 @@ SECRETS_FILENAME = "secrets"
 AUDIT_DIRNAME = "audit"
 
 # Audit records sent to the console (ADR 0013): the AES-256-GCM key they're
-# encrypted with (hex, 0600; never leaves the host), the passkeys allowed to
-# unlock reading them, and how far each agent's records have been sent.
+# encrypted with (hex, 0600; never leaves the host), and how far each agent's
+# records have been sent. The passkeys allowed to unlock reading them are in
+# the host DB (`audit_trust`).
 AUDIT_KEY_FILENAME = "audit.key"
-AUDIT_PASSKEYS_FILENAME = "audit-passkeys.json"
 AUDIT_PUSH_DIRNAME = "audit-push"
 
 
@@ -150,10 +150,6 @@ def audit_key_bytes() -> bytes:
     return key
 
 
-def audit_passkeys_path() -> Path:
-    return bot_bottle_root() / AUDIT_PASSKEYS_FILENAME
-
-
 def audit_push_dir() -> Path:
     return bot_bottle_root() / AUDIT_PUSH_DIRNAME
 
@@ -190,11 +186,9 @@ def host_firecracker_cache_dir() -> Path:
 __all__ = [
     "AUDIT_DIRNAME",
     "AUDIT_KEY_FILENAME",
-    "AUDIT_PASSKEYS_FILENAME",
     "AUDIT_PUSH_DIRNAME",
     "audit_key_bytes",
     "audit_key_path",
-    "audit_passkeys_path",
     "audit_push_dir",
     "HOST_DB_FILENAME",
     "REGISTRY_DB_FILENAME",

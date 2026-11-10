@@ -27,7 +27,9 @@ import sys
 from typing import Any
 
 from ...control.hostctl import pairing
+from ...control.hostctl.runner import HostControlError
 from ...lib import qrcodegen
+from ..host_state_client import pairing as current_pairing
 from . import audit_passkeys, login
 from .remote import cmd_remote
 
@@ -53,8 +55,8 @@ def _console_url(argv: list[str]) -> str:
     url = login.flag(argv, "--console-url") or os.environ.get("BB_CONSOLE_URL", "")
     if not url:
         try:
-            url = str(pairing.load_console().get("url", ""))
-        except pairing.RemoteError:
+            url = current_pairing()[0].url
+        except HostControlError:
             url = ""
     return (url or login.DEFAULT_CONSOLE_URL).rstrip("/")
 
@@ -97,9 +99,9 @@ def cmd_pair(argv: list[str]) -> int:  # pylint: disable=too-many-return-stateme
     if status != 0:
         return status
     try:
-        console = pairing.load_console()
-    except pairing.RemoteError as e:
-        sys.stderr.write(f"bot-bottle pair: {e}\n")
+        paired = current_pairing()[0].require()
+    except (HostControlError, pairing.RemoteError) as e:
+        sys.stderr.write(f"bot-bottle pair: {getattr(e, 'error', '') or e}\n")
     else:
-        audit_passkeys.after_pairing(str(console["url"]), str(console["access_token"]))
+        audit_passkeys.after_pairing(paired.url, paired.tokens()[0])
     return cmd_remote(["enable"])

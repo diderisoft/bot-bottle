@@ -223,8 +223,8 @@ Your own bottles and agents run as written. A repo's run only once this host
 trusts their exact contents (`bot-bottle trust <name>`), and any change asks
 again.
 
-Trust records live in `~/.bot-bottle/trusted-bottles.json`. What the trust hash
-covers is in [architecture.md](architecture.md#state).
+Trust records live in the host database. `bot-bottle trust --list` shows them.
+What the trust hash covers is in [architecture.md](architecture.md#state).
 
 ### Repo bottles
 

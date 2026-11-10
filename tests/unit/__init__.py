@@ -50,9 +50,9 @@ def _restore_home() -> None:
 atexit.register(_restore_home)
 
 # The suite runs as the host controller does: code shared with the CLI (forge
-# connections) uses the host DB's stores, under each test's root. Tests of the
-# CLI's side reach them over HTTP (`serve_host_controller`) or switch this off
-# themselves (`as_cli`).
+# connections, trust records) uses the host DB's stores, under each test's
+# root. Tests of the CLI's side reach them over HTTP (`serve_host_controller`)
+# or switch this off themselves (`as_cli`).
 from bot_bottle import host_access as _host_access  # pylint: disable=wrong-import-position
 
 _host_access.use_stores()

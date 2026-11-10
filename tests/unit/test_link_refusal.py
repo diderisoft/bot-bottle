@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from bot_bottle.control.hostctl import link_refusal, pairing, remote
+from bot_bottle.control.hostctl import link_refusal, pairing, remote, runner
+from tests.unit import serve_host_controller, use_bottle_root
 
 # What iroh's close_reason() gave for the console's close(1, b"unregistered host"),
 # measured with two local endpoints.
@@ -25,9 +26,7 @@ class _Root(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
-        patcher = mock.patch.object(pairing, "_root", return_value=self.root)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.addCleanup(use_bottle_root(self.root))
 
 
 class TestIsUnregistered(unittest.TestCase):
@@ -141,15 +140,14 @@ class TestRunLoop(_Root):
         self.assertFalse(link_refusal.unpaired())
 
     def test_nothing_is_changed_on_its_own(self) -> None:
-        pairing.save_console({"url": "https://console.example", "access_token": "t"})
+        before = pairing.store().update(
+            {"url": "https://console.example", "access_token": "t", "enabled": True,
+             "console_node_id": CONSOLE_ID, "console_ticket": "ticket"}, new=True)
         key = pairing.secret_key()
-        config = pairing.RemoteConfig(enabled=True, console_node_id=CONSOLE_ID,
-                                      console_ticket="ticket")
-        pairing.save_config(config)
         self._run(REFUSED)
-        self.assertEqual("https://console.example", pairing.load_console()["url"])
+        self.assertEqual(before, pairing.load_pairing())
+        self.assertEqual("t", pairing.load_pairing().tokens()[0])
         self.assertEqual(key, pairing.secret_key())
-        self.assertTrue(pairing.load_config().enabled)
 
 
 class TestPairAgain(_Root):
@@ -157,21 +155,32 @@ class TestPairAgain(_Root):
         """`bot-bottle pair` after a refusal: its credentials replace the
         deleted account's, under the same iroh key (so the same node id),
         and the next accepted connection clears the refusal."""
-        pairing.save_console({"url": "https://console.example", "access_token": "old"})
+        pairing.store().update({"url": "https://console.example", "access_token": "old"},
+                               new=True)
         key = pairing.secret_key()
         link_refusal.refused_delay(mock.Mock(close_reason=lambda: REFUSED))
-        pairing.save_console({"url": "https://console.example", "access_token": "new"})
-        self.assertEqual("new", pairing.load_console()["access_token"])
+        pairing.store().update({"url": "https://console.example", "access_token": "new"},
+                               new=True)
+        self.assertEqual("new", pairing.load_pairing().tokens()[0])
         self.assertEqual(key, pairing.secret_key())
         pairing.write_status(connected=True, console_node_id=CONSOLE_ID)
         self.assertFalse(link_refusal.unpaired())
 
 
 class TestSurfaces(_Root):
+    """The CLI's side, asking a running host controller."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        serve_host_controller(self)
+        self.enterContext(mock.patch.object(runner, "running",
+                                            return_value=runner.ensure_running()))
+        self.enterContext(mock.patch.object(runner, "restart_needed", return_value=False))
+
     def _refuse(self) -> None:
-        pairing.save_config(pairing.RemoteConfig(enabled=True, console_node_id=CONSOLE_ID,
-                                                 console_ticket="ticket"))
-        pairing.save_console({"url": "https://console.example/", "access_token": "t"})
+        pairing.store().update(
+            {"url": "https://console.example/", "access_token": "t", "enabled": True,
+             "console_node_id": CONSOLE_ID, "console_ticket": "ticket"}, new=True)
         link_refusal.refused_delay(mock.Mock(close_reason=lambda: REFUSED))
 
     def test_status_says_refused(self) -> None:
@@ -185,7 +194,7 @@ class TestSurfaces(_Root):
         from bot_bottle.cli.commands import doctor  # pylint: disable=import-outside-toplevel
         self._refuse()
         found = doctor.BackendFindings(selected="docker", selected_ready=True, any_ready=True)
-        with mock.patch.object(doctor.runner, "running", return_value=None):
+        with mock.patch.object(doctor, "_has_agents", return_value=True):
             self.assertEqual("`bot-bottle pair --console-url https://console.example` "
                              "(the console no longer knows this host)", doctor.next_step(found))
         with mock.patch.object(doctor, "_warn") as warn:
@@ -203,6 +212,16 @@ class TestSurfaces(_Root):
         with mock.patch.object(doctor, "_warn") as warn:
             doctor._check_console_link()  # pylint: disable=protected-access
         warn.assert_not_called()
+
+    def test_without_a_host_controller_nothing_is_said_or_started(self) -> None:
+        from bot_bottle.cli.commands import doctor, home, remote as remote_cmd  # pylint: disable=import-outside-toplevel
+        self._refuse()
+        with mock.patch.object(runner, "running", return_value=None), \
+                mock.patch.object(runner, "ensure_running") as start:
+            self.assertEqual("", doctor._repair_command())  # pylint: disable=protected-access
+            self.assertEqual("", home.console_state())
+            self.assertIn("isn't running", remote_cmd.link_line())
+        start.assert_not_called()
 
     def test_home_says_to_pair_again(self) -> None:
         from bot_bottle.cli.commands import home  # pylint: disable=import-outside-toplevel

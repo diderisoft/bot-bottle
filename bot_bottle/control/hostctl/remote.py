@@ -83,7 +83,7 @@ if TYPE_CHECKING:
 
 ALPN = b"bb-console/1"
 ROLE_REMOTE = "remote"
-# How often remote.json is reread, the reconnect backoff, and how often agents are checked.
+# How often the pairing is reread, the reconnect backoff, and how often agents are checked.
 POLL_SECONDS = 3.0
 BACKOFF_SECONDS = (1.0, 2.0, 5.0, 10.0, 30.0)
 WATCH_SECONDS = 2.0
@@ -794,7 +794,7 @@ async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> 
 
 
 class Supervisor:
-    """Runs the link while `remote.json` enables it, rereading every
+    """Runs the link while the pairing enables it, rereading every
     `POLL_SECONDS`."""
 
     def __init__(self, bottles: Bottles) -> None:

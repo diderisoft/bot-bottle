@@ -25,9 +25,12 @@ from ...forge_connections import ForgeStore
 from ...lib import log
 from ...lib.config_store import ConfigStore
 from ...lib.db_store import DbStore, connect
+from ...manifest.trust import TrustStore
 from ...paths import host_audit_dir, host_db_path
 from .audit_forward import ForwardCursors
 from .audit_index import AuditIndex
+from .audit_trust import PasskeyStore
+from .pairing import PairingStore
 from .runner import REFUSED_EXIT_STATUS
 
 BACKUPS_DIRNAME = "backups"
@@ -47,7 +50,7 @@ def stores(db_path: Path | None = None) -> list[DbStore]:
     """Every store with tables in the host DB. Most migrate as they open."""
     path = db_path or host_db_path()
     return [ConfigStore(path), ForwardCursors(path), AuditIndex(host_audit_dir(), path),
-            ForgeStore(path)]
+            ForgeStore(path), TrustStore(path), PairingStore(path), PasskeyStore(path)]
 
 
 def migrate(db_path: Path | None = None) -> None:

@@ -173,7 +173,7 @@ Where each kind of state lives, and what owns it.
 | What | Where | Owner |
 |---|---|---|
 | User agents and bottles | `~/.bot-bottle/{agents,bottles}/`, versioned ([below](#versioned-user-files)) | user |
-| Project agents and bottles | `<repo>/.bot-bottle/`, run only once trusted. Trust is kept in `~/.bot-bottle/trusted-bottles.json` ([below](#project-files-and-trust)) | repo |
+| Project agents and bottles | `<repo>/.bot-bottle/`, run only once trusted. Trust is kept in the host database ([below](#project-files-and-trust)) | repo |
 | Host settings, forge connections, audit forwarding cursors, the audit index | `~/.bot-bottle/db/bot-bottle.db` ([below](#databases), [forge connections](#forge-connections)) | host controller |
 | Registry, supervise queue, encrypted egress secrets, canary events, orchestrator settings | `registry.db` ([below](#databases)) | orchestrator |
 | The environment's orchestrator (backend and host URL) | `~/.bot-bottle/infra/orchestrator.json`, written by each bring-up | host controller |
@@ -199,7 +199,7 @@ Each database has one job and one writer
 
 | Database | Holds | Writer | Where |
 |---|---|---|---|
-| `bot-bottle.db` | the host's own state: settings (`bot_bottle_config`), forge connections (`forge_connections`, `forge_users`), the audit forwarder's cursors, the audit index | host controller | `~/.bot-bottle/db/` |
+| `bot-bottle.db` | the host's own state: settings (`bot_bottle_config`), forge connections (`forge_connections`, `forge_users`), trust records (`trust_records`), the console pairing and its link's state (`pairing`, `console_link`), trusted audit passkeys (`audit_passkeys`), the audit forwarder's cursors, the audit index | host controller | `~/.bot-bottle/db/` |
 | `registry.db` | the orchestrator's working state: the bottle registry, encrypted egress secrets, the supervise queue and its decisions, canary events, orchestrator settings | orchestrator | docker: `~/.bot-bottle/db/`, through the orchestrator's root mount. macOS: a container volume. Firecracker: the orchestrator VM's `/dev/vdb` volume |
 
 - One helper opens every connection (`lib/db_store.connect`), in WAL mode
@@ -211,8 +211,12 @@ Each database has one job and one writer
 - The host controller checks `bot-bottle.db` at start and keeps a daily
   backup ([checks and backups](host-controller.md#checks-and-backups)).
 - Each store marks its tables portable or machine-specific (`TABLES`). The
-  host settings and forge connections are portable, except a connection's
-  `ssh`, this machine's address for the forge. Nothing reads the mark yet.
+  host settings, forge connections and audit passkeys are portable, except a
+  connection's `ssh`, this machine's address for the forge. Trust records and
+  the pairing are machine-specific. Nothing reads the mark yet.
+- No secret value is in `bot-bottle.db`. A row names a secret in the host
+  secrets file (`secret:NAME`), as forge users and the pairing's console
+  tokens do.
 
 ### Versioned user files
 
@@ -230,7 +234,8 @@ Each database has one job and one writer
 ### Project files and trust
 
 Project bottles, and some project agents, run only once `bot-bottle trust`
-records them in `~/.bot-bottle/trusted-bottles.json`.
+records them in the host database (`trust_records`). The host controller
+writes them, and the CLI asks it.
 
 - Every project bottle needs trust.
 - A project agent needs trust when its `agent_provider` grants anything, or

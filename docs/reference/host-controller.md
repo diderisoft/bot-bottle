@@ -489,17 +489,25 @@ asks over HTTP, with the `cli` role only:
 | `GET /forges` | none | `{"forges": [...]}`: each connection with its users. |
 | `POST /forges` | `{"forge", "user", "make_default"}` | Records the user connected on the forge. Answers `{"forge": ...}`. A malformed connection is 400. |
 | `POST /forges/remove` | `{"host", "user"?}` | Disconnects the user, or the whole forge, and drops their tokens from the secrets file. Answers `{"removed": [...]}`. |
+| `GET /trust` | none | `{"trusted": [...]}`: the trust records, oldest first. |
+| `POST /trust` | a record: `hash`, `bottle`, `path`, `grants`, `trusted_at` | Keeps it, replacing the record for its path. Answers like `GET`. |
+| `GET /pairing` | none | `{"pairing": ..., "link": ...}`: the pairing, with its tokens' secret names, and the link's last state. |
+| `POST /pairing` | `{"changes": {...}, "new": bool}` | Sets the fields given. A new pairing clears the rest. Token values go to the secrets file. Answers like `GET`. |
+| `GET /audit/passkeys` | none | The trusted passkeys: `origin`, `rp_id`, `passkeys`. |
+| `POST /audit/passkeys` | the same shape | Trusts exactly those, keeping a passkey's counter where the same key was trusted. Answers like `GET`. |
 
 A journal that doesn't chain, or a segment that won't import, is 409.
 
 These commands use the routes: `audit query`, `export`, `rebuild`,
 `import`, `delivery`, `transcript-retention`, `forward` and `firehose`,
-`host budget`, `forge connect`, `list`, `show` and `remove`, and
-`start --dry-run`. Each starts the host controller if it isn't running.
-`audit verify` reads only the journal's files.
+`host budget`, `forge connect`, `list`, `show` and `remove`, `trust`,
+`pair`, `audit passkeys`, and `start --dry-run`. Each starts the host
+controller if it isn't running. `status`, home and `doctor` read the pairing
+only from a running one. `audit verify` reads only the journal's files.
 
-Code the CLI shares with the host controller reads forge connections the same
-way (`host_access.py`). In the host controller it uses the tables directly.
+Code the CLI shares with the host controller reads forge connections and
+trust records the same way (`host_access.py`). In the host controller it uses
+the tables directly.
 
 ### Checks and backups
 
@@ -617,14 +625,15 @@ reply is `audit_decrypted`.
 - It allows at most 2000 records a minute.
 - Each read is journalled as `audit.records_read`.
 
-**Trusted passkeys.** They're kept in `<root>/audit-passkeys.json` (0600),
-with the origin and rp id they sign for.
+**Trusted passkeys.** They're kept in the host database (`audit_passkeys`),
+with the origin and rp id they sign for and each one's signature counter.
 
 - `bot-bottle pair` fetches the account's passkeys from the console
   (`GET /api/v1/hosts/passkeys`).
 - It trusts them only once you confirm their fingerprints match the
   console's, under Settings, Passkeys.
-- `bot-bottle audit passkeys [--trust]` lists or re-fetches them.
+- `bot-bottle audit passkeys [--trust]` lists or re-fetches them. Trusting a
+  passkey again keeps its counter.
 - The console can't change them.
 
 Back up `audit.key`. Without it the records can't be read.
@@ -662,9 +671,16 @@ The console is the first of:
 
 - The host dials the console it logged in to, over ALPN `bb-console/1`.
 - It refuses a console whose node id isn't the one pinned at login.
-- Pairing keeps `remote.json`, `console.json` and the iroh key `remote.key`
-  under `~/.bot-bottle/`. It also keeps `remote.status.json`, for
-  `bot-bottle status`.
+- Pairing keeps the console's URL, this host's id on it, the pinned console
+  and whether the link is on in the host database (`pairing`).
+- The console's tokens for this host are in the host secrets file, as
+  `CONSOLE_ACCESS_TOKEN` and `CONSOLE_REFRESH_TOKEN`.
+  The `pairing` row names them.
+- The iroh key stays a key file, `~/.bot-bottle/remote.key`.
+- The link writes its state to `console_link`, for `bot-bottle status`, home
+  and `doctor`. They ask a running host controller and start none.
+- `pair`, `pair --password`, `pair on` and `off`, and token refreshes all
+  change the pairing through the host controller (`POST /pairing`).
 
 ### What the console can reach
 
@@ -740,8 +756,8 @@ The host only reports it:
 - Home's status strip says to pair again.
 - The link asks only every ten minutes, instead of on its short backoff.
 
-It changes nothing on its own. `console.json`, the iroh key and the link
-setting stay.
+It changes nothing on its own. The pairing, the iroh key and the link setting
+stay.
 
 `bot-bottle pair` then pairs it like a new machine, under the same iroh
 key. That can be to a new account or the same console. The next accepted

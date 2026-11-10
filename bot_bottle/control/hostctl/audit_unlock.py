@@ -41,9 +41,10 @@ class _Token:
 
 
 class AuditUnlock:
-    def __init__(self, trust_path: Path | None = None,
+    def __init__(self, db_path: Path | None = None,
                  clock: Callable[[], float] = time.monotonic) -> None:
-        self._trust_path = trust_path
+        # The host DB, with the trusted passkeys (`audit_trust`).
+        self._db_path = db_path
         self._clock = clock
         self._lock = threading.Lock()
         self._challenges: dict[str, tuple[float, str]] = {}  # nonce -> (expires, session)
@@ -54,7 +55,7 @@ class AuditUnlock:
         the browser needs to ask for it."""
         if not session:
             raise UnlockError("no console session")
-        trust = audit_trust.load(self._trust_path)
+        trust = audit_trust.load(self._db_path)
         if not trust.passkeys:
             raise UnlockError("this host trusts no passkey yet: run "
                               "`bot-bottle audit passkeys --trust` on it")
@@ -80,7 +81,7 @@ class AuditUnlock:
             raise UnlockError("that challenge expired or was used; try again")
         if issued[1] != session:
             raise UnlockError("that challenge was issued to another session")
-        trust = audit_trust.load(self._trust_path)
+        trust = audit_trust.load(self._db_path)
         key = trust.find(str(assertion.get("id", "")))
         if key is None:
             raise UnlockError("that passkey isn't trusted by this host")
@@ -91,7 +92,7 @@ class AuditUnlock:
                 stored_sign_count=key.sign_count)
         except WebAuthnError as e:
             raise UnlockError(str(e)) from e
-        audit_trust.record_sign_count(key.id, verified.sign_count, self._trust_path)
+        audit_trust.record_sign_count(key.id, verified.sign_count, self._db_path)
         token = secrets.token_urlsafe(32)
         with self._lock:
             self._tokens[token] = _Token(session, key.id, now, now)

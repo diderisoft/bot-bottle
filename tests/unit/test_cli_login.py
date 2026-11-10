@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-import json
 import io
 import os
 import tempfile
 import unittest
 import urllib.error
 from email.message import Message
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
+
+from bot_bottle.cli.host_state_client import set_pairing
+from bot_bottle.control.hostctl.client import HostControlRefused
+from bot_bottle.control.hostctl.pairing import load_pairing
+from tests.unit import serve_host_controller, use_bottle_root
 
 
 class TestFlagParsing(unittest.TestCase):
@@ -69,54 +74,36 @@ class TestHttpHelpers(unittest.TestCase):
             self.assertEqual(_get("http://console/status"), (410, {}))
 
 
-class TestSaveCredentials(unittest.TestCase):
-    def test_writes_json_and_sets_perms(self) -> None:
+class _Paired(unittest.TestCase):
+    """A root of its own, and its host controller: login keeps the pairing
+    there."""
+
+    def setUp(self) -> None:
+        self.tmp = self.enterContext(tempfile.TemporaryDirectory())  # pylint: disable=consider-using-with
+        self.addCleanup(use_bottle_root(Path(self.tmp)))
+        serve_host_controller(self)
+
+
+class TestSaveCredentials(_Paired):
+    def test_a_new_pairing_through_the_host_controller(self) -> None:
         from bot_bottle.cli.commands.login import _save_credentials
 
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}):
-                path = _save_credentials("http://c", "hid", "at", "rt")
-            self.assertTrue(path.exists())
-            data = json.loads(path.read_text())
-            self.assertEqual(data["url"], "http://c")
-            self.assertEqual(data["host_id"], "hid")
-            self.assertEqual(data["access_token"], "at")
-            self.assertEqual(data["refresh_token"], "rt")
-            self.assertEqual(oct(path.stat().st_mode & 0o777), oct(0o600))
+        set_pairing(new=True, url="http://old", access_token="old", enabled=True)
+        _save_credentials("http://c", {"host_id": "hid", "access_token": "at",
+                                       "refresh_token": "rt"})
+        saved = load_pairing()
+        self.assertEqual(("http://c", "hid", "", False),
+                         (saved.url, saved.host_id, saved.console_node_id, saved.enabled))
+        self.assertEqual(("at", "rt"), saved.tokens())
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "console.json")))
+        secrets = Path(self.tmp) / "secrets"
+        self.assertEqual(oct(0o600), oct(secrets.stat().st_mode & 0o777))
 
-    def test_temp_file_is_private_before_replace(self) -> None:
-        """Temp file must be 0600 at the moment os.replace is called."""
-        from bot_bottle.cli.commands.login import _save_credentials
-        from pathlib import Path as _Path
-
-        tmp_perms_at_replace: list[int] = []
-        real_replace = os.replace
-
-        def _spy_replace(
-            src: str | os.PathLike[str], dst: str | os.PathLike[str]
-        ) -> None:
-            tmp_perms_at_replace.append(_Path(src).stat().st_mode & 0o777)
-            real_replace(src, dst)
-
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}):
-                with patch("os.replace", side_effect=_spy_replace):
-                    path = _save_credentials("http://c", "hid", "at", "rt")
-                self.assertEqual(len(tmp_perms_at_replace), 1)
-                self.assertEqual(oct(tmp_perms_at_replace[0]), oct(0o600))
-                self.assertEqual(oct(path.stat().st_mode & 0o777), oct(0o600))
-
-    def test_cleanup_on_write_failure(self) -> None:
-        """Temp file is removed and no credentials remain if replace fails."""
+    def test_a_refusal_fails_the_login(self) -> None:
         from bot_bottle.cli.commands.login import _save_credentials
 
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}):
-                with patch("os.replace", side_effect=OSError("disk full")):
-                    with self.assertRaises(OSError):
-                        _save_credentials("http://c", "hid", "at", "rt")
-            leftovers = [f for f in os.listdir(tmp) if f.startswith(".console-")]
-            self.assertEqual(leftovers, [])
+        with self.assertRaises(HostControlRefused):
+            _save_credentials("http://c", {"host_id": "hid", "access_token": "a\nb"})
 
 
 class TestCmdLoginMissingUrl(unittest.TestCase):
@@ -160,7 +147,7 @@ class TestCmdLoginMissingUrl(unittest.TestCase):
         self.assertEqual(result, 1)
 
 
-class TestCmdLoginFlow(unittest.TestCase):
+class TestCmdLoginFlow(_Paired):
     def _run_with_mocks(
         self, poll_responses: list[dict[str, Any]], tmp: str
     ) -> int:
@@ -196,14 +183,9 @@ class TestCmdLoginFlow(unittest.TestCase):
             "access_token": "at",
             "refresh_token": "rt",
         }
-        with tempfile.TemporaryDirectory() as tmp:
-            result = self._run_with_mocks(
-                [{"status": "pending"}, approved], tmp
-            )
-            self.assertEqual(result, 0)
-            with open(os.path.join(tmp, "console.json"), encoding="utf-8") as f:
-                creds = json.loads(f.read())
-            self.assertEqual(creds["host_id"], "hid")
+        result = self._run_with_mocks([{"status": "pending"}, approved], self.tmp)
+        self.assertEqual(result, 0)
+        self.assertEqual("hid", load_pairing().host_id)
 
     def test_denied_flow_returns_1(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -248,14 +230,10 @@ class TestCmdLoginFlow(unittest.TestCase):
         def _fake_get(_url: str) -> tuple[int, dict[str, str]]:
             return 200, next(poll_iter)
 
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}):
-                with patch("bot_bottle.cli.commands.login._post", return_value=start_resp):
-                    with patch(
-                        "bot_bottle.cli.commands.login._get", side_effect=_fake_get
-                    ):
-                        with patch("time.sleep") as mock_sleep:
-                            result = cmd_login(["--console-url", "http://console"])
+        with patch("bot_bottle.cli.commands.login._post", return_value=start_resp):
+            with patch("bot_bottle.cli.commands.login._get", side_effect=_fake_get):
+                with patch("time.sleep") as mock_sleep:
+                    result = cmd_login(["--console-url", "http://console"])
 
         self.assertEqual(result, 0)
         self.assertTrue(mock_sleep.called)
