@@ -6,11 +6,11 @@ comes off again. The backends themselves are in [backends.md](backends.md).
 ## Installer
 
 ```sh
-curl -fsSL "https://gitea.dideric.is/api/v1/repos/didericis/bot-bottle/raw/install.sh?ref=main" | sh
+curl -fsSL https://raw.githubusercontent.com/diderisoft/bot-bottle/main/install.sh | sh
 ```
 
 `install.sh` is a bootstrapper. It installs the latest release: the newest
-`vX.Y.Z` tag, looked up through the forge's tags API (it fails, rather than
+`vX.Y.Z` tag, looked up through GitHub's tags API (it fails, rather than
 installing `main`, when it can't find one). It finds a suitable Python, installs
 bot-bottle with its `remote` extra for phone pairing (none on Intel Macs,
 which iroh has no build for) using `uv` or `pipx` if you have either, or a
@@ -24,11 +24,11 @@ its end if a step fails. With `BOT_BOTTLE_ENV` set it says which environment it
 sets up. It ends with doctor's `next:` line, the one thing to do next on this
 host.
 
-Python-native users can skip it, pinning the latest tag (`v0.1.4` here; use
+Python-native users can skip it, pinning the latest tag (`v0.1.6` here; use
 the newest one listed under the repository's tags):
 
 ```sh
-uv tool install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git@v0.1.4"
+uv tool install "bot-bottle[remote] @ git+https://github.com/diderisoft/bot-bottle.git@v0.1.6"
 # or the same with: pipx install
 ```
 

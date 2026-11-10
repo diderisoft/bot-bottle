@@ -241,7 +241,7 @@ class TestInstallRef(unittest.TestCase):
         self._page(2, _tags("v0.10.0", "v0.1.4"))
         proc = self._run()
         self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertEqual("bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/"
+        self.assertEqual("bot-bottle[remote] @ git+https://github.com/diderisoft/"
                          "bot-bottle.git@v0.10.0", self._installed())
         self.assertIn("installing bot-bottle v0.10.0", proc.stderr)
 

@@ -2,10 +2,7 @@
 # bot-bottle quick installer.
 #
 # Usage:
-#   curl -fsSL "https://gitea.dideric.is/api/v1/repos/didericis/bot-bottle/raw/install.sh?ref=main" | sh
-#
-# (The API's raw URL, not /raw/branch/...: the forge sends anonymous visitors
-# of its web raw-file pages to the login page.)
+#   curl -fsSL https://raw.githubusercontent.com/diderisoft/bot-bottle/main/install.sh | sh
 #
 # It installs the latest release: the newest `vX.Y.Z` tag, whose orchestrator
 # and gateway images are published. To install main instead (development;
@@ -13,8 +10,8 @@
 #   curl -fsSL "<the URL above>" | sh -s -- --main
 #
 # Python-native users can skip this entirely, pinning the latest tag:
-#   uv tool install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git@v0.1.4"
-#   pipx install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git@v0.1.4"
+#   uv tool install "bot-bottle[remote] @ git+https://github.com/diderisoft/bot-bottle.git@v0.1.6"
+#   pipx install "bot-bottle[remote] @ git+https://github.com/diderisoft/bot-bottle.git@v0.1.6"
 #
 # This script is a thin bootstrapper: it finds the latest release tag and a
 # Python 3.11+ interpreter, installs the package with uv or pipx if you have
@@ -47,9 +44,9 @@
 # says what's left.
 set -eu
 
-REPO_SPEC="git+https://gitea.dideric.is/didericis/bot-bottle.git"
+REPO_SPEC="git+https://github.com/diderisoft/bot-bottle.git"
 # Where the release tags are listed (unauthenticated).
-TAGS_API="https://gitea.dideric.is/api/v1/repos/didericis/bot-bottle/tags"
+TAGS_API="https://api.github.com/repos/diderisoft/bot-bottle/tags"
 VENV="${BOT_BOTTLE_VENV:-${HOME}/.bot-bottle/venv}"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=11
@@ -160,13 +157,13 @@ fetch_url() {
     fi
 }
 
-# The newest release tag (`vX.Y.Z`, by semver) from the forge's tags API,
+# The newest release tag (`vX.Y.Z`, by semver) from GitHub's tags API,
 # reading every page. Fails when it can't be fetched or there is none.
 latest_release_tag() {
     found=""
     page=1
     while [ "${page}" -le 20 ]; do
-        body="$(fetch_url "${TAGS_API}?limit=50&page=${page}")" || return 1
+        body="$(fetch_url "${TAGS_API}?per_page=100&page=${page}")" || return 1
         printf '%s' "${body}" | grep -q '"name"' || break
         found="${found}
 $(printf '%s' "${body}" \

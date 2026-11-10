@@ -17,13 +17,13 @@ Run coding agents unsupervised without letting them wreck your machine or leak y
 ## Quickstart
 
 ```sh
-curl -fsSL "https://gitea.dideric.is/api/v1/repos/didericis/bot-bottle/raw/install.sh?ref=main" | sh
+curl -fsSL https://raw.githubusercontent.com/diderisoft/bot-bottle/main/install.sh | sh
 ```
 
 That installs the latest release. Or, with uv (or the same with `pipx install`), pinning the latest `vX.Y.Z` tag:
 
 ```sh
-uv tool install "bot-bottle[remote] @ git+https://gitea.dideric.is/didericis/bot-bottle.git@v0.1.4"
+uv tool install "bot-bottle[remote] @ git+https://github.com/diderisoft/bot-bottle.git@v0.1.6"
 ```
 
 The installer runs `bot-bottle bootstrap`: it sets up this host's backend (asking before the one step that needs `sudo`), writes a starter agent for each logged-in harness it finds (Claude Code, Codex, pi), and checks it all. Then start, and say what the agent should do; the release's images are pulled on first run:

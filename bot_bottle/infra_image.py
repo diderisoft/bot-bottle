@@ -30,8 +30,7 @@ BUILD_WITH_CONTAINER = "with Apple's `container`"
 # installer installs the latest release tag. One constant, so a move to
 # another forge or a package index swaps one line.
 RELEASE_INSTALL_HINT = (
-    'curl -fsSL "https://gitea.dideric.is/api/v1/repos/didericis/bot-bottle/raw/'
-    'install.sh?ref=main" | sh')
+    'curl -fsSL https://raw.githubusercontent.com/diderisoft/bot-bottle/main/install.sh | sh')
 
 
 class InfraImagesUnpublished(RegistryError):
