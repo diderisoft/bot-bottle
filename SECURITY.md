@@ -5,8 +5,10 @@ bug we most want to hear about. Please report it privately first.
 
 ## Reporting a vulnerability
 
-Use GitHub's private vulnerability reporting: on the repository's **Security**
-tab, choose **Report a vulnerability**. Don't open a public issue or pull
+Use GitHub's private vulnerability reporting: on
+[github.com/diderisoft/bot-bottle](https://github.com/diderisoft/bot-bottle)'s
+**Security** tab, choose **Report a vulnerability**
+([direct link](https://github.com/diderisoft/bot-bottle/security/advisories/new)). Don't open a public issue or pull
 request for a suspected vulnerability.
 
 Include what you can of:
@@ -34,7 +36,7 @@ Include what you can of:
 - Limitations the docs already state, such as the Docker backend sharing the
   host kernel, or what an allowlisted host can do with the requests a bottle
   is allowed to send it. A threat model separating these from vulnerabilities
-  is planned ([#337](https://gitea.dideric.is/didericis/bot-bottle/issues/337)).
+  is planned.
 - An agent misbehaving inside its own bottle without crossing a boundary.
 - Bugs in the model harnesses (Claude Code, Codex, pi) themselves; report
   those upstream.

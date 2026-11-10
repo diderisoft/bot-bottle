@@ -45,7 +45,17 @@ Launches after it keep building locally until an `up` without `--build`. It
 needs Docker (Apple's `container` on macOS). See
 [docs/reference/backends.md](docs/reference/backends.md#infra-images).
 
-## Pull requests and the tracker
+## Issues and pull requests
+
+Report bugs and ask for features in
+[GitHub issues](https://github.com/diderisoft/bot-bottle/issues), and send
+pull requests to [the GitHub repository](https://github.com/diderisoft/bot-bottle).
+Development happens on the maintainer's own Gitea instance, which GitHub
+mirrors: an accepted pull request is applied there with your authorship kept,
+then shows up on GitHub's `main`, and the GitHub pull request is closed with
+a link to the commit. Issues are triaged into the Gitea tracker the same way.
+
+## The tracker
 
 Issues are the canonical work items and own their labels; every issue has at
 least one. Each pull request is tracked in exactly one of two ways
@@ -62,9 +72,10 @@ closed PRs are grandfathered rather than given artificial retrospective
 issues.
 
 `#NNN` references in commit messages and PR descriptions point to the Gitea
-issue tracker at <https://gitea.dideric.is/didericis/bot-bottle/issues>. If
-the project ever moves to another tracker, that URL remains the authoritative
-destination for all historical references.
+issue tracker at <https://gitea.dideric.is/didericis/bot-bottle/issues>, not to
+GitHub's issue numbers. That tracker isn't public; if the project ever moves to
+another tracker, that URL remains the authoritative destination for all
+historical references.
 
 A change that alters behaviour a page in `docs/reference/` describes updates
 that page in the same pull request.
