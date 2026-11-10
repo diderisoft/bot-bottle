@@ -20,6 +20,8 @@ from typing import Any
 from unittest import mock
 
 from bot_bottle import publish_images as pi
+from bot_bottle import publish_promote as pp
+from bot_bottle import publish_reuse as pr
 from bot_bottle.compat import PROTOCOL_VERSION
 from bot_bottle.published_artifacts import parse_artifacts_manifest, resolve
 
@@ -115,11 +117,11 @@ class PlanReuse(_Quiet):
 
     def plan(self, source: dict[str, Any], *, local: str = _HASH,
              present: bool = True, no_ext4: bool = False,
-             images: list[str] | None = None) -> dict[str, pi.ReusedImage]:
+             images: list[str] | None = None) -> dict[str, pr.ReusedImage]:
         path = _write(self.tmp / "release.json", source)
         with mock.patch.object(pi.image_inputs, "inputs_hash", return_value=local), \
-             mock.patch.object(pi, "artifact_present", return_value=present):
-            return pi.plan_reuse(images or list(source), _PLATFORMS, path,
+             mock.patch.object(pr, "artifact_present", return_value=present):
+            return pr.plan_reuse(images or list(source), _PLATFORMS, path,
                                  repo_root=self.tmp, no_ext4=no_ext4)
 
     def test_matching_hash_with_every_platform_and_format_is_reused(self) -> None:
@@ -167,9 +169,9 @@ class PlanReuse(_Quiet):
         path = _write(self.tmp / "release.json",
                       {"bot-bottle-claude": _release_entry("bot-bottle-claude")})
         with mock.patch.object(pi.image_inputs, "inputs_hash", return_value=_HASH), \
-             mock.patch.object(pi, "artifact_present",
+             mock.patch.object(pr, "artifact_present",
                                side_effect=pi.PublishError("unreachable")):
-            reused = pi.plan_reuse(["bot-bottle-claude"], _PLATFORMS, path,
+            reused = pr.plan_reuse(["bot-bottle-claude"], _PLATFORMS, path,
                                    repo_root=self.tmp)
         self.assertEqual({}, reused)
 
@@ -182,7 +184,7 @@ class PlanReuse(_Quiet):
         path = self.tmp / "release.json"
         path.write_text("{not json")
         with self.assertRaises(pi.PublishError):
-            pi.plan_reuse(["bot-bottle-claude"], _PLATFORMS, path, repo_root=self.tmp)
+            pr.plan_reuse(["bot-bottle-claude"], _PLATFORMS, path, repo_root=self.tmp)
 
 
 class PublishWithReuse(_Quiet):
@@ -204,7 +206,7 @@ class PublishWithReuse(_Quiet):
 
         self.enterContext(mock.patch.object(
             pi.image_inputs, "inputs_hash", side_effect=inputs_hash))
-        self.enterContext(mock.patch.object(pi, "artifact_present", return_value=True))
+        self.enterContext(mock.patch.object(pr, "artifact_present", return_value=True))
         self.enterContext(mock.patch.object(pi, "link_to_repo"))
         self.published = self.enterContext(
             mock.patch.object(pi, "already_published", return_value=[]))
@@ -254,7 +256,7 @@ class PublishWithReuse(_Quiet):
         self.assertEqual("0.0.0-dev-42", gateway.version)
 
     def test_no_reuse_builds_everything(self) -> None:
-        with mock.patch.object(pi, "plan_reuse") as plan:
+        with mock.patch.object(pr, "plan_reuse") as plan:
             self.assertEqual(0, self.run_main("--reuse-from", str(self.source),
                                               "--no-reuse"))
         plan.assert_not_called()
@@ -273,7 +275,7 @@ class PublishWithReuse(_Quiet):
 
     def test_the_repo_root_manifest_is_the_default_source(self) -> None:
         with mock.patch.object(pi.resources, "build_root", return_value=self.tmp), \
-             mock.patch.object(pi, "artifacts_manifest_path", return_value=self.source):
+             mock.patch.object(pr, "artifacts_manifest_path", return_value=self.source):
             self.run_main()
         self.assertEqual(["bot-bottle-gateway"], self.build.call_args.args[0])
 
@@ -293,7 +295,7 @@ class ArtifactPresent(unittest.TestCase):
         with mock.patch.dict("os.environ", {pi.TOKEN_ENV: "gitea-tok", **_GITEA}), \
              mock.patch.object(pi.oci_registry, "Registry") as registry:
             registry.return_value.manifest_exists.return_value = True
-            self.assertTrue(pi.artifact_present(artifact))
+            self.assertTrue(pr.artifact_present(artifact))
         self.assertEqual("ghcr.io", registry.call_args.args[0])
         self.assertEqual("", registry.call_args.kwargs["token"])
         registry.return_value.manifest_exists.assert_called_once_with(
@@ -307,7 +309,7 @@ class ArtifactPresent(unittest.TestCase):
         with mock.patch.dict("os.environ", _GITEA), \
              mock.patch.object(pi.oci_registry, "Registry") as registry:
             registry.return_value.blob_exists.return_value = False
-            self.assertFalse(pi.artifact_present(artifact))
+            self.assertFalse(pr.artifact_present(artifact))
         registry.return_value.blob_exists.assert_called_once_with(
             "diderisoft/bot-bottle-claude-rootfs", artifact.digest)
 
@@ -318,7 +320,7 @@ class ArtifactPresent(unittest.TestCase):
         assert artifact is not None
         with mock.patch.dict("os.environ", {pi.TOKEN_ENV: "gitea-tok", **_GITEA}), \
              mock.patch.object(pi, "_head", return_value=200) as head:
-            self.assertTrue(pi.artifact_present(artifact))
+            self.assertTrue(pr.artifact_present(artifact))
         self.assertEqual((artifact.url, "gitea-tok"), head.call_args.args)
 
     def test_an_unreachable_registry_is_an_error_not_an_absence(self) -> None:
@@ -329,7 +331,7 @@ class ArtifactPresent(unittest.TestCase):
         with mock.patch.dict("os.environ", _GITEA), \
              mock.patch.object(pi, "_head", return_value=0):
             with self.assertRaises(pi.PublishError):
-                pi.artifact_present(artifact)
+                pr.artifact_present(artifact)
 
 
 class PromoteWithReuse(_Quiet):
@@ -350,16 +352,16 @@ class PromoteWithReuse(_Quiet):
             self.copied.append(f"{artifact.image} {artifact.format} {artifact.platform}")
             return artifact.digest
 
-        self.enterContext(mock.patch.object(pi, "_promote_oci", side_effect=copy))
-        self.enterContext(mock.patch.object(pi, "_promote_ext4", side_effect=copy))
+        self.enterContext(mock.patch.object(pp, "_promote_oci", side_effect=copy))
+        self.enterContext(mock.patch.object(pp, "_promote_ext4", side_effect=copy))
         self.present = self.enterContext(
-            mock.patch.object(pi, "artifact_present", return_value=True))
+            mock.patch.object(pr, "artifact_present", return_value=True))
 
     def test_reused_entries_are_kept_and_new_ones_promoted(self) -> None:
-        promoted = pi.promote(self.manifest, "0.1.9", "tok")
+        promoted = pp.promote(self.manifest, "0.1.9", "tok")
         by_name = {p.name: p for p in promoted}
         kept = by_name["bot-bottle-claude"]
-        assert isinstance(kept, pi.ReusedImage)
+        assert isinstance(kept, pr.ReusedImage)
         self.assertEqual(self.tested["bot-bottle-claude"], kept.entry)
         self.assertIsInstance(by_name["bot-bottle-gateway"], pi.BuiltImage)
         self.assertEqual(4, len(self.copied))
@@ -371,7 +373,7 @@ class PromoteWithReuse(_Quiet):
 
     def test_the_release_manifest_mixes_both(self) -> None:
         dest = self.tmp / "released.json"
-        pi.write_artifacts_manifest(pi.promote(self.manifest, "0.1.9", "tok"), dest)
+        pi.write_artifacts_manifest(pp.promote(self.manifest, "0.1.9", "tok"), dest)
         text = dest.read_text()
         self.assertIn(_entry_block("bot-bottle-claude", self.tested["bot-bottle-claude"]),
                       text)
@@ -388,14 +390,14 @@ class PromoteWithReuse(_Quiet):
     def test_a_kept_entry_missing_from_the_registry_aborts(self) -> None:
         self.present.return_value = False
         with self.assertRaises(pi.PublishError) as ctx:
-            pi.promote(self.manifest, "0.1.9", "tok")
+            pp.promote(self.manifest, "0.1.9", "tok")
         self.assertIn("no longer has", str(ctx.exception))
 
     def test_an_entry_elsewhere_is_promoted_even_if_its_hash_was_released(self) -> None:
         """Reuse is judged by where an entry lives, not by its hash."""
         self.tested["bot-bottle-claude"] = _dev_entry("bot-bottle-claude")
         _write(self.manifest, self.tested)
-        promoted = pi.promote(self.manifest, "0.1.9", "tok")
+        promoted = pp.promote(self.manifest, "0.1.9", "tok")
         self.assertTrue(all(isinstance(p, pi.BuiltImage) for p in promoted))
         self.assertEqual(8, len(self.copied))
 
@@ -406,21 +408,21 @@ class PromoteWithReuse(_Quiet):
             rc = pi.main(["--promote", str(self.manifest), "--version", "0.1.9",
                           "--work-dir", str(work)])
         self.assertEqual(0, rc)
-        self.assertEqual("0.1.9\n", (work / pi.RELEASE_VERSION_NAME).read_text())
+        self.assertEqual("0.1.9\n", (work / pr.RELEASE_VERSION_NAME).read_text())
         # Only what was copied gets linked.
         self.assertEqual(["bot-bottle-gateway"], link.call_args.args[0])
 
     def test_in_publish_registry(self) -> None:
         entries = parse_artifacts_manifest(self.tested)
-        self.assertTrue(all(pi.in_publish_registry(a)
+        self.assertTrue(all(pr.in_publish_registry(a)
                             for a in entries["bot-bottle-claude"].artifacts))
-        self.assertFalse(any(pi.in_publish_registry(a)
+        self.assertFalse(any(pr.in_publish_registry(a)
                              for a in entries["bot-bottle-gateway"].artifacts))
 
 
 class ManifestWriter(unittest.TestCase):
     def test_an_image_twice_aborts(self) -> None:
-        reused = pi.ReusedImage("bot-bottle-claude", _release_entry("bot-bottle-claude"))
+        reused = pr.ReusedImage("bot-bottle-claude", _release_entry("bot-bottle-claude"))
         built = pi.BuiltImage("bot-bottle-claude", "0.0.0-dev", artifacts=[
             pi.BuiltArtifact("oci", "linux/amd64", _digest("1"), "t", "r", _HASH)])
         with tempfile.TemporaryDirectory() as tmp:

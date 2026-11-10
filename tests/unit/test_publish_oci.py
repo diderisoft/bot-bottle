@@ -15,6 +15,7 @@ from unittest import mock
 
 from bot_bottle import oci_registry
 from bot_bottle import publish_images as pi
+from bot_bottle import publish_promote as pp
 from bot_bottle.published_artifacts import Artifact, FORMAT_OCI, parse_artifacts_manifest
 
 from ._fake_oci_registry import SECRET, USER, FakeRegistry
@@ -124,7 +125,7 @@ class PublishToRegistry(unittest.TestCase):
                 return real(host, user=user, token=token, scheme="http")
 
             with mock.patch.object(pi.oci_registry, "Registry", side_effect=over_http):
-                promoted = pi._promote_oci(artifact, "1.0.0")
+                promoted = pp._promote_oci(artifact, "1.0.0")
         self.assertEqual(digest, promoted)
         self.assertIn(("acme/img", "1.0.0-amd64"), self.fake.manifests)
 
@@ -132,7 +133,7 @@ class PublishToRegistry(unittest.TestCase):
         artifact = Artifact(image="img", format=FORMAT_OCI, platform="linux/amd64",
                             url="no-registry-host/img:t", digest="sha256:" + "a" * 64)
         with self.assertRaises(pi.PublishError):
-            pi._promote_oci(artifact, "1.0.0")
+            pp._promote_oci(artifact, "1.0.0")
 
 
 def _sha(body: bytes) -> str:

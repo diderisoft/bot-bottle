@@ -25,6 +25,7 @@ from typing import Any
 from unittest import mock
 
 from bot_bottle import publish_images as pi
+from bot_bottle import publish_promote as pp
 
 
 def setUpModule() -> None:  # pylint: disable=invalid-name
@@ -603,6 +604,7 @@ class Promotion(unittest.TestCase):
                 promoted = pi.promote(manifest, "1.0.0", "tok")
         build.assert_not_called()
         self.assertEqual(len(promoted), 1)
+        assert isinstance(promoted[0], pi.BuiltImage)
         self.assertEqual({a.fmt for a in promoted[0].artifacts}, {"oci", "ext4"})
         self.assertEqual(promoted[0].version, "1.0.0")
         # The tested bytes' protocol ships with them; promotion never re-stamps it.
@@ -611,7 +613,7 @@ class Promotion(unittest.TestCase):
     def test_oci_is_copied_by_digest_not_tag(self) -> None:
         """What gets tagged has to be exactly what was tested."""
         with mock.patch.object(pi.oci_registry, "copy_manifest", return_value=_A) as copy:
-            pi._promote_oci(
+            pp._promote_oci(
                 mock.Mock(url="reg.example/o/img:0.0.0-dev-arm64", digest=_A,
                           platform="linux/arm64", image="img"),
                 "1.0.0")

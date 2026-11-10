@@ -5,6 +5,8 @@ Per image and platform: build, push the OCI image and record its digest, export
 a gzipped ext4 and publish it as an OCI artifact beside it (or a Gitea generic
 package, `BOT_BOTTLE_INFRA_EXT4_STORE=generic`). Then write
 `published-artifacts.json`. Formats are checked to share one `inputs_hash`.
+Images already published from the same inputs are reused (`publish_reuse`);
+`--promote` copies a tested candidate (`publish_promote`).
 
   python3 -m bot_bottle.publish_images [--platform linux/amd64 ...]
 
@@ -23,27 +25,22 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import urllib.error
-import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .compat import PROTOCOL_VERSION
-from . import image_inputs, oci_registry, release_version, resources
+from . import image_inputs, oci_registry, publish_reuse, release_version, resources
 from .published_artifacts import (
     ARTIFACTS_MANIFEST_NAME,
-    Artifact,
     FORMAT_EXT4,
     FORMAT_OCI,
-    ArtifactsManifestError,
-    ImageEntry,
-    artifacts_manifest_path,
-    parse_artifacts_manifest,
     platform_to_manifest,
 )
+from .publish_reuse import RELEASE_VERSION_NAME, ReusedImage
+from .publish_promote import promote
 
 _CHUNK = 1 << 20
 _HTTP_TIMEOUT_SECONDS = 60.0
@@ -59,9 +56,6 @@ USER_ENV = "BOT_BOTTLE_INFRA_ARTIFACT_USER"
 EXT4_STORE_ENV = "BOT_BOTTLE_INFRA_EXT4_STORE"
 STORE_OCI = "oci"
 STORE_GENERIC = "generic"
-# Beside a promoted manifest: the release version. Reused entries keep their
-# own, so the manifest's entries can't say it.
-RELEASE_VERSION_NAME = "release-version"
 
 
 class PublishError(RuntimeError):
@@ -87,24 +81,6 @@ class BuiltImage:
     artifacts: list[BuiltArtifact] = field(default_factory=list)
     # The bytes' protocol: the source's at build time, the tested manifest's on promote.
     protocol: int = PROTOCOL_VERSION
-
-
-@dataclass
-class ReusedImage:
-    """An image already published from these inputs. `entry` is its manifest
-    entry, written back byte for byte: its URLs keep naming the version that
-    published it."""
-
-    name: str
-    entry: dict[str, object]
-
-    @property
-    def version(self) -> str:
-        return str(self.entry.get("version", ""))
-
-    @property
-    def inputs_hash(self) -> str:
-        return str(self.entry.get("inputs_hash", ""))
 
 
 ManifestImage = BuiltImage | ReusedImage
@@ -467,106 +443,6 @@ def write_artifacts_manifest(images: list[ManifestImage], dest: Path) -> None:
     print(f"wrote {dest}")
 
 
-# --- Reuse: skip images whose inputs are already published ---
-
-def _host_token(host: str) -> str:
-    """The token to read from `host`: the publish token on the publish
-    registry, the scoped artifact token elsewhere, else none (public)."""
-    from . import image_registry
-    base, _, token = _config()
-    if host.lower() == base.split("://", 1)[-1].lower():
-        return token
-    return image_registry.token_for(host)
-
-
-def artifact_present(artifact: Artifact) -> bool:
-    """Whether `artifact`'s registry still serves it by its pinned digest: the
-    OCI manifest, the rootfs layer, or the generic-package file. Raises
-    `PublishError` when the registry can't be asked."""
-    if "://" in artifact.url:
-        host = urllib.parse.urlsplit(artifact.url).netloc
-        status = _head(artifact.url, _host_token(host))
-        if status == 0:
-            raise PublishError(f"checking {artifact.url} failed: registry unreachable")
-        return status == 200
-    try:
-        ref = oci_registry.parse_ref(artifact.url)
-        base, _, _ = _config()
-        if ref.host.lower() == base.split("://", 1)[-1].lower():
-            registry = _registry()
-        else:
-            registry = oci_registry.Registry(ref.host, token=_host_token(ref.host))
-        if artifact.format == FORMAT_OCI:
-            return registry.manifest_exists(ref.repo, artifact.digest)
-        return registry.blob_exists(ref.repo, artifact.digest)
-    except oci_registry.OciRegistryError as e:
-        raise PublishError(f"checking {artifact.url}@{artifact.digest} failed: {e}") from e
-
-
-def required_artifacts(platforms: list[str], *, no_ext4: bool = False) -> set[tuple[str, str]]:
-    """The `(format, platform)` pairs a publish produces per image."""
-    formats = [FORMAT_OCI] if no_ext4 else [FORMAT_OCI, FORMAT_EXT4]
-    return {(fmt, plat) for fmt in formats for plat in platforms}
-
-
-def rebuild_reason(
-    entry: ImageEntry | None, local_hash: str, required: set[tuple[str, str]],
-) -> str | None:
-    """Why `entry` can't stand in for a build from these inputs, or None when
-    it can. Presence in the registry is checked separately."""
-    if entry is None:
-        return "not in the reuse manifest"
-    if not entry.inputs_hash or entry.inputs_hash != local_hash:
-        return f"inputs {local_hash} differ from {entry.version}'s {entry.inputs_hash}"
-    if entry.protocol != PROTOCOL_VERSION:
-        return (f"{entry.version} speaks protocol {entry.protocol}, "
-                f"this tree {PROTOCOL_VERSION}")
-    have = {(a.format, a.platform) for a in entry.artifacts}
-    missing = sorted(required - have)
-    if missing:
-        return f"{entry.version} lacks " + ", ".join(f"{f} {p}" for f, p in missing)
-    return None
-
-
-def plan_reuse(
-    images: list[str],
-    platforms: list[str],
-    source: Path,
-    *,
-    repo_root: Path,
-    no_ext4: bool = False,
-) -> dict[str, ReusedImage]:
-    """The images in `source` that need no build: same `inputs_hash` and
-    protocol as this tree, every required format and platform present, and
-    every artifact still in its registry. Logs each decision."""
-    try:
-        data = json.loads(source.read_text(encoding="utf-8"))
-        entries = parse_artifacts_manifest(data)
-    except (OSError, json.JSONDecodeError, ArtifactsManifestError) as e:
-        raise PublishError(f"reuse manifest {source}: {e}") from e
-    required = required_artifacts(platforms, no_ext4=no_ext4)
-
-    reused: dict[str, ReusedImage] = {}
-    for name in images:
-        entry = entries.get(name)
-        local = image_inputs.inputs_hash(name, repo_root=repo_root) if entry else ""
-        reason = rebuild_reason(entry, local, required)
-        if reason is None and entry is not None:
-            try:
-                gone = [a for a in entry.artifacts if not artifact_present(a)]
-            except PublishError as e:
-                gone, reason = [], f"could not confirm it is still published ({e})"
-            if gone:
-                reason = "gone from its registry: " + ", ".join(
-                    f"{a.url}@{a.digest}" for a in gone)
-        if reason is not None or entry is None:
-            print(f"rebuilding {name}: {reason}")
-            continue
-        print(f"reusing {name} from {entry.version} (inputs {entry.inputs_hash})")
-        reused[name] = ReusedImage(name=name, entry=data[name])
-    return reused
-
-
 def rootfs_source_tag(
     image: str, plat: str, *, repo_root: Path, runtime: str = "docker",
 ) -> str:
@@ -695,107 +571,6 @@ def build_image(
     return produced
 
 
-def in_publish_registry(artifact: Artifact) -> bool:
-    """Whether `artifact` already lives where this run publishes `artifact`'s
-    image: a reused release entry, rather than a candidate to promote."""
-    if artifact.format == FORMAT_OCI:
-        return artifact.url.startswith(f"{oci_ref(artifact.image)}:")
-    if ext4_store() == STORE_OCI:
-        return artifact.url.startswith(f"{oci_ref(ext4_package(artifact.image))}:")
-    base, owner, _ = _config()
-    return artifact.url.startswith(
-        f"{base}/api/packages/{owner}/generic/{ext4_package(artifact.image)}/")
-
-
-def promote(
-    manifest: Path, to_version: str, token: str, *, runtime: str = "docker",
-) -> list[ManifestImage]:
-    """Copy every artifact in a tested manifest to `to_version`, never
-    rebuilding.
-
-    OCI images are copied byte for byte through the registry API into the
-    publish registry, so their digests can't change, even from another
-    registry. Rootfs bytes are downloaded (verified) and published afresh.
-
-    An entry wholly in the publish registry already (one the candidate reused
-    from an earlier release) is kept as it is, once each artifact is confirmed
-    there by digest."""
-    data = json.loads(manifest.read_text())
-    entries = parse_artifacts_manifest(data)
-    promoted: list[ManifestImage] = []
-    for name, entry in sorted(entries.items()):
-        if all(in_publish_registry(a) for a in entry.artifacts):
-            gone = [a for a in entry.artifacts if not artifact_present(a)]
-            if gone:
-                raise PublishError(
-                    f"{name}: the tested manifest pins artifacts the publish "
-                    f"registry no longer has: "
-                    + ", ".join(f"{a.url}@{a.digest}" for a in gone))
-            print(f"  keeping {name} from {entry.version} (inputs {entry.inputs_hash})")
-            promoted.append(ReusedImage(name=name, entry=data[name]))
-            continue
-        out = BuiltImage(name=name, version=to_version, protocol=entry.protocol)
-        for artifact in entry.artifacts:
-            if artifact.format == FORMAT_OCI:
-                digest = _promote_oci(artifact, to_version, runtime=runtime)
-            else:
-                digest = _promote_ext4(artifact, to_version, token)
-            if digest != artifact.digest:
-                raise PublishError(
-                    f"{name} {artifact.format}/{artifact.platform}: promoted "
-                    f"digest {digest} does not match the tested "
-                    f"{artifact.digest} — refusing to ship untested bytes"
-                )
-            is_oci = artifact.format == FORMAT_OCI
-            out.artifacts.append(BuiltArtifact(
-                fmt=artifact.format, platform=artifact.platform, digest=digest,
-                locator=(oci_tag(to_version, artifact.platform) if is_oci
-                         else ext4_filename(artifact.platform)),
-                # OCI ref from the tested manifest; ext4's namespace is unused.
-                namespace=(oci_ref(artifact.image) if is_oci
-                           else ext4_package(artifact.image)),
-                inputs_hash=entry.inputs_hash,
-            ))
-        promoted.append(out)
-    return promoted
-
-
-def _promote_oci(
-    artifact: "Artifact", to_version: str, *, runtime: str = "docker",
-) -> str:
-    """Copy a published image, by its pinned digest, to the new version's tag
-    in the publish registry and return the digest. `runtime` is unused: the
-    copy goes through the registry API."""
-    del runtime
-    from . import image_registry
-
-    target = oci_ref(artifact.image)
-    tag = oci_tag(to_version, artifact.platform)
-    print(f"  promoting {artifact.image} {artifact.platform} -> {target}:{tag}")
-    with tempfile.TemporaryDirectory(prefix="bb-promote-") as scratch:
-        try:
-            source = oci_registry.parse_ref(artifact.url)
-            src = oci_registry.Registry(source.host, token=image_registry.token_for(source.host))
-            return oci_registry.copy_manifest(
-                src, source.repo, artifact.digest, dst=_registry(),
-                dst_repo=target.split("/", 1)[1], tag=tag, scratch=Path(scratch))
-        except oci_registry.OciRegistryError as e:
-            raise PublishError(f"promoting {artifact.url}@{artifact.digest} failed: {e}") from e
-
-
-def _promote_ext4(artifact: "Artifact", to_version: str, token: str) -> str:
-    """Re-upload a published rootfs, downloaded through the verified path, at
-    the new version and return its digest."""
-    from . import image_registry
-    from .cli.settings import settings_from_env
-    from .paths import host_artifact_cache_dir
-
-    cache_root = host_artifact_cache_dir(settings_from_env().infra.artifact_cache)
-    gz = image_registry.ensure_ext4(artifact, cache_root=cache_root)
-    print(f"  promoting {artifact.image} {artifact.platform} rootfs -> {to_version}")
-    return publish_ext4(artifact.image, to_version, artifact.platform, gz, token)
-
-
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="publish_images",
@@ -831,18 +606,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="delete anything already published at this version and republish. "
              "Without it, an existing version aborts before any build starts.",
     )
-    parser.add_argument(
-        "--reuse-from", type=Path, default=None, metavar="MANIFEST",
-        help="skip building an image MANIFEST already publishes from this tree's "
-             "inputs_hash, in every requested format and platform, and copy its "
-             "entry unchanged. Default: the repo-root published-artifacts.json "
-             "(the last release), when present.",
-    )
-    parser.add_argument(
-        "--no-reuse", action="store_true",
-        help="build and publish every image, even ones whose inputs are "
-             "already published. --force alone does not imply this.",
-    )
+    publish_reuse.add_arguments(parser)
     parser.add_argument(
         "--jobs", type=int, default=None,
         help="builds to run concurrently (default: a quarter of the cores, at "
@@ -975,19 +739,10 @@ def main(argv: list[str] | None = None) -> int:
     platforms = args.platform or [current_build_platform()]
     work_dir = args.work_dir
 
-    reused: dict[str, ReusedImage] = {}
-    if not args.no_reuse:
-        source = args.reuse_from
-        if source is None and artifacts_manifest_path(repo_root).is_file():
-            source = artifacts_manifest_path(repo_root)
-        if source is None:
-            print("no published-artifacts.json to reuse from; building every image")
-        elif not source.is_file():
-            print(f"--reuse-from {source}: no such file", file=sys.stderr)
-            return 2
-        else:
-            reused = plan_reuse(requested, platforms, source,
-                                repo_root=repo_root, no_ext4=args.no_ext4)
+    reused = {} if args.no_reuse else publish_reuse.reuse_for_args(
+        requested, platforms, args.reuse_from, repo_root=repo_root, no_ext4=args.no_ext4)
+    if reused is None:
+        return 2
     images = [name for name in requested if name not in reused]
 
     existing = already_published(images, platforms, version, token) if images else []
