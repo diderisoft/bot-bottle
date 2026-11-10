@@ -494,7 +494,7 @@ def _parse_provider_settings(
         if not isinstance(models, list) or not models:
             raise ManifestError(
                 f"agent '{agent_name}' agent_provider.settings.models must "
-                "be a non-empty array of strings"
+                "be a non-empty list of strings"
             )
         for i, model in enumerate(models):
             if not isinstance(model, str) or not model:

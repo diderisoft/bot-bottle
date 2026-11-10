@@ -10,28 +10,43 @@ An agent's body is its system prompt; a bottle's body is documentation.
 
 Bottle frontmatter:
   extends:      <bottle-name> | [<bottle-name>, ...]
-  env:          { <NAME>: <env-entry>, ... }
-  git-gate:
+  env:          { <NAME>: <value>, ... }   # literal, ?msg, ${VAR}, secret:NAME,
+                                           # secret:?msg, secret:${VAR}
+  git_gate:
     user:       { name: <str>, email: <str> }
-    repos:      { <name>: <git-gate-entry>, ... }
-  egress:       { routes: [ <egress-route>, ... ] }
+    repos:      [ <forge>/<owner>/<repo>[:write], ... ] | { <name>: <entry>, ... }
+    forges, trailers, protect_default_branch, actions
+  egress:       { log: off|blocked|full, routes: [ <egress-route>, ... ] }
   supervise:    <bool>                          # default true
   nested_containers: <bool>                     # default false
   preserve_container: <bool>                    # default false: keep the guest across stop
   audit:        { delivery: ..., firehose: ... }
   resources:    { memory: <MiB | "4G">, cpus: <int> }  # default: the backend's size
 
+An egress route (`manifest/egress.py`):
+  host: <host>
+  passthrough: true                             # alone: not inspected
+  methods: [GET, POST] | ["*"]                  # default GET, HEAD
+  allow: [ { paths: [/prefix/, {exact: /x}, {regex: ...}], methods, headers } ]
+  auth: { type: bearer|token, value: secret:NAME | secret:${VAR} }
+        | { type: header, name: <header>, value: ... }
+  git: { fetch: true }
+  preserve_auth: <bool>
+  dlp: false | { outbound: [...], inbound: [...], on_match: supervise|redact|block }
+  (or { host, blocked: true } to take an inherited route away)
+
 Agent frontmatter (no `bottle`: bottles are picked at launch, `basic` if none):
   skills:       [ <skill-name>, ... ]
-  git-gate:
-    user:       { name: <str>, email: <str> }   # overlays the bottle's
+  identity:     { git: { name, email },         # overlays the bottle's git_gate.user
+                  accounts: { <forge host>: <user> } }
   remote:       { writable: <bool> }
-  agent_provider: <harness> | { harness: ..., auth_token: ...,  # default claude
-                  forward_host_credentials: ..., dockerfile: ...,
-                  settings: {...}, overlay: {...} }
-  # Claude Code subagent fields, accepted and ignored:
+  agent_provider: <harness> | { harness: ...,   # default claude
+                  login: host | { oauth_token: secret:NAME } | { api_key: secret:NAME },
+                  dockerfile_path: ..., settings: {...}, overlay: {...} }
+  # Claude Code subagent fields, accepted and ignored (`model` with a warning):
   name, description, model, color, memory
 
+Old forms are refused, naming their new form (`util.OldFormError`).
 Unknown keys raise ManifestError. `ManifestIndex` is the collection used for
 selection; `Manifest` is one agent with its effective bottle.
 """

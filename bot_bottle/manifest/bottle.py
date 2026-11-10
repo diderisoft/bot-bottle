@@ -126,16 +126,16 @@ class ManifestBottle:
         if "ssh" in d:
             raise ManifestError(
                 f"bottle '{name}' has an 'ssh' field, which has been removed. "
-                f"Declare upstreams under 'git_gate.repos' with "
-                f"url + identity + host_key; the git-gate daemon "
-                f"holds the credential and gitleaks-scans pushes."
+                f"Declare upstreams under 'git_gate.repos', as grants "
+                f"(<forge>/<owner>/<repo>[:write]) or url + key + host_key; the "
+                f"git-gate daemon holds the credential and gitleaks-scans pushes."
             )
 
         if "git" in d:
             raise ManifestError(
                 f"bottle '{name}' uses 'git' which has been replaced by "
                 f"'git_gate'. Move git.user → git_gate.user "
-                f"and git.remotes → git_gate.repos (fields: url, identity, host_key)."
+                f"and git.remotes → git_gate.repos (grants, or url + key + host_key)."
             )
 
         if "git_user" in d:

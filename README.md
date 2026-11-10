@@ -54,8 +54,8 @@ extends: basic              # package registries, downloads only
 egress:
   routes:
     - host: api.example.com
-      inspect:
-        auth: { type: bearer, value: secret:EXAMPLE_API_TOKEN }   # injected; the agent never sees it
+      methods: [GET, POST]  # GET and HEAD only, unless a route lists its methods
+      auth: { type: bearer, value: secret:EXAMPLE_API_TOKEN }   # injected; the agent never sees it
 ---
 ```
 
