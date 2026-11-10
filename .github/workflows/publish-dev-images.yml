@@ -72,9 +72,14 @@ jobs:
             | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Install e2fsprogs
+        # Ubuntu's runner image already has it. Install only if it's missing,
+        # and don't let one broken mirror index fail the update: amd64 runners
+        # have hit a 404 on resolute-security's amd64v3 index.
         run: |
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq e2fsprogs
+          if ! command -v mke2fs >/dev/null; then
+            sudo apt-get update -qq || true
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq e2fsprogs
+          fi
           mke2fs -V
 
       # Build a static dropbear SSH server for the target architecture.
