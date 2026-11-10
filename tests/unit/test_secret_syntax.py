@@ -61,6 +61,8 @@ class _Store(unittest.TestCase):
         self.path = self.dir / "secrets"
         self.ask = self.enterContext(mock.patch("bot_bottle.env._read_secret_silent"))
         self.shown = self.enterContext(mock.patch("bot_bottle.env._read_shown"))
+        # A terminal is there to ask; `TestNoOneToAsk` takes it away.
+        self.enterContext(mock.patch("bot_bottle.env.can_ask", return_value=True))
         self.save = self.enterContext(mock.patch("bot_bottle.env._confirm_save",
                                                  return_value=True))
         self.warn = self.enterContext(mock.patch("bot_bottle.env.warn"))
@@ -169,6 +171,70 @@ class TestPrompt(_Store):
             resolve_env(_manifest({"FOO": "?"}), self.secrets(), prompt=False)
         self.assertEqual("FOO", cm.exception.var_name)
         self.assertIn("prompting is not allowed", str(cm.exception))
+
+
+class TestNoOneToAsk(unittest.TestCase):
+    """An interactive launch with nothing to ask through (CI: stdin a pipe,
+    no controlling terminal) takes the no-one-to-ask path, never dies on
+    /dev/tty."""
+
+    def setUp(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle import env
+        self.env = env
+        self.dir = Path(tempfile.mkdtemp(prefix="secret-syntax."))
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.enterContext(mock.patch.object(env, "current_prompter", return_value=None))
+        self.tty = self.enterContext(mock.patch.object(env, "_open_tty", return_value=None))
+        self.warn = self.enterContext(mock.patch.object(env, "warn"))
+        self.info = self.enterContext(mock.patch.object(env, "info"))
+        self.die = self.enterContext(mock.patch.object(env, "die", side_effect=SystemExit))
+
+    def secrets(self, **stored: str) -> LaunchSecrets:
+        path = self.dir / "secrets"
+        path.write_text("".join(f"{k}={v}\n" for k, v in stored.items()))
+        path.chmod(0o600)
+        return LaunchSecrets(MappingSecrets({}), FileSecrets(path))
+
+    def terminals(self, *, stdin: bool, stderr: bool) -> None:
+        self.enterContext(mock.patch.object(self.env.sys, "stdin", mock.Mock(
+            isatty=mock.Mock(return_value=stdin))))
+        self.enterContext(mock.patch.object(self.env.sys, "stderr", mock.Mock(
+            isatty=mock.Mock(return_value=stderr))))
+
+    def test_without_a_tty_to_read_a_question_falls_back_whatever_stderr_is(self) -> None:
+        for stderr in (True, False):
+            for raw in ("?", "secret:?Paste it"):
+                with self.subTest(stderr=stderr, raw=raw):
+                    self.terminals(stdin=False, stderr=stderr)
+                    self.assertFalse(self.env.can_ask())
+                    self.warn.reset_mock()
+                    resolved = resolve_env(_manifest({"TEST_HELD_SECRET": raw}),
+                                           self.secrets(TEST_HELD_SECRET="saved-value"))
+                    self.assertEqual({"TEST_HELD_SECRET": "saved-value"}, resolved.forwarded)
+                    self.assertIn("there's no one to ask here",
+                                  self.warn.call_args.args[0])
+        self.info.assert_not_called()  # no "a saved ... exists" hint
+        self.die.assert_not_called()
+
+    def test_a_missing_stored_secret_fails_with_the_file_hint(self) -> None:
+        self.terminals(stdin=False, stderr=True)
+        with self.assertRaises(MissingEnvVarError) as cm:
+            resolve_env(_manifest({"A": "secret:NAME"}), self.secrets())
+        self.assertIn("NAME=<value>", str(cm.exception))
+        self.die.assert_not_called()
+
+    def test_the_cli_asks_nothing(self) -> None:
+        self.terminals(stdin=False, stderr=True)
+        self.assertEqual({}, self.env.ask_env(_manifest({"A": "?", "B": "secret:NAME"}),
+                                              self.secrets()))
+
+    def test_a_terminal_on_stdin_or_dev_tty_can_ask(self) -> None:
+        self.terminals(stdin=True, stderr=False)
+        self.assertTrue(self.env.can_ask())
+        self.terminals(stdin=False, stderr=False)
+        self.tty.return_value = mock.MagicMock()
+        self.assertTrue(self.env.can_ask())
 
 
 class TestHostEnv(_Store):

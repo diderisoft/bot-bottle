@@ -83,6 +83,7 @@ class TestSecrets(unittest.TestCase):
         source = MappingSecrets({"HOST_A": "a", "B": "saved"})
         with mock.patch.object(launch_client, "secrets_from_env", return_value=source), \
              mock.patch.object(launch_client, "confirm_host_keys", return_value={}), \
+             mock.patch("bot_bottle.env.can_ask", return_value=True), \
              mock.patch("bot_bottle.env._read_secret_silent", return_value="typed") as ask, \
              mock.patch("bot_bottle.env.info"):
             request = launch_client.prepare_request(

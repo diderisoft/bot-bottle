@@ -69,8 +69,8 @@ _DNS_SECRET = {
 }
 _FAKE_SECRETS = {**_GIT_PUSH_SECRETS, **_DNS_SECRET}
 
-# A `?` secret env entry (resolved from the secret source, not a literal), so
-# it is one of the secrets the bottle *holds*. Deliberately shapeless — bare
+# A `secret:NAME` env entry (resolved from the secret source, not a literal),
+# so it is one of the secrets the bottle *holds*. Deliberately shapeless — bare
 # hex matches no gitleaks rule — so only git-gate's held-secret scan can stop
 # it leaving in a push (#346).
 _HELD_SECRET = {"TEST_HELD_SECRET": "7c1e9a4f2b8d6035e1a7c94f0b2d8e63"}
@@ -120,7 +120,7 @@ class TestSandboxEscape(unittest.TestCase):
                     # attack (chunk 5) parameterizes over these so a
                     # renamed gitleaks rule doesn't silently let one
                     # shape through.
-                    "env": {**_FAKE_SECRETS, **{k: "secret:?" for k in _HELD_SECRET}},
+                    "env": {**_FAKE_SECRETS, **{k: f"secret:{k}" for k in _HELD_SECRET}},
                     # No routes of its own: the Claude provider's
                     # api.anthropic.com route is the single allowlisted
                     # host (a bottle may not redeclare it). Attack 1

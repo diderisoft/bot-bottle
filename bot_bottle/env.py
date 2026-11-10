@@ -22,6 +22,7 @@ import getpass
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import TextIO
 
 from . import secret_ref
 from .errors import MissingEnvVarError, SecretsFileError
@@ -98,35 +99,46 @@ def _ask(name: str, raw: str) -> str:
     return _read_shown(name, message)
 
 
+def _open_tty() -> "TextIO | None":
+    """The controlling terminal, opened for reading and writing, or None."""
+    try:
+        return open("/dev/tty", "r+", encoding="utf-8")  # pylint: disable=consider-using-with
+    except OSError:
+        return None
+
+
+def can_ask() -> bool:
+    """Whether a launch can ask the person anything: this context has a
+    prompter, stdin is a terminal, or the controlling terminal opens. The
+    same reach `_read_secret_silent` and `_read_shown` use; when it's false,
+    nothing asks and each entry takes its no-one-to-ask path."""
+    if current_prompter() is not None or sys.stdin.isatty():
+        return True
+    tty = _open_tty()
+    if tty is None:
+        return False
+    tty.close()
+    return True
+
+
 def _read_secret_silent(name: str, prompt_body: str) -> str:
-    """Read a secret from the controlling tty without echoing (or from this
-    context's prompter, hidden there)."""
+    """Read a secret without echoing: from this context's prompter (hidden
+    there), the terminal on stdin, else the controlling terminal."""
+    prompt = (f"{prompt_body} (input hidden): " if prompt_body
+              else f"bot-bottle: secret value for {name} (input hidden): ")
     asker = current_prompter()
     if asker is not None:
         value = asker.ask(prompt_body or f"secret value for {name}", secret=True)
-    elif not (sys.stdin.isatty() or sys.stderr.isatty()):
-        # /dev/tty, so this works when stdin is a pipe.
-        try:
-            tty = open("/dev/tty", "r+", encoding="utf-8")
-        except OSError:
-            die(
-                f"cannot prompt for secret '{name}': no tty available. "
-                f"Run from an interactive shell."
-            )
-        prompt = (
-            f"{prompt_body} (input hidden): "
-            if prompt_body
-            else f"bot-bottle: secret value for {name} (input hidden): "
-        )
-        value = getpass.getpass(prompt, stream=tty)
-        tty.close()
-    else:
-        prompt = (
-            f"{prompt_body} (input hidden): "
-            if prompt_body
-            else f"bot-bottle: secret value for {name} (input hidden): "
-        )
+    elif sys.stdin.isatty():
         value = getpass.getpass(prompt)
+    else:
+        # /dev/tty, so this works when stdin is a pipe.
+        tty = _open_tty()
+        if tty is None:
+            die(f"cannot prompt for secret '{name}': no tty available. "
+                f"Run from an interactive shell.")
+        with tty:
+            value = getpass.getpass(prompt, stream=tty)
     if not value:
         die(f"empty value provided for secret '{name}'. Re-run and supply a value.")
     return value
@@ -180,7 +192,11 @@ def ask_env(manifest: Manifest, secrets: SecretSource,
     """Ask the person launching for what the agent's env entries ask for:
     every `?`/`secret:?` entry (each launch, even with a saved value), and
     each `secret:NAME` the store lacks (once per NAME, offering to save it).
-    Returns the typed values by entry name. Entries in `skip` are answered."""
+    Returns the typed values by entry name. Entries in `skip` are answered.
+    Asks nothing when no one can be asked (`can_ask`): each entry then takes
+    its no-one-to-ask path in `resolve_env`."""
+    if not can_ask():
+        return {}
     env, store, _ = tiers(secrets)
     answers: dict[str, str] = {}
     typed: dict[str, str] = {}  # by stored name

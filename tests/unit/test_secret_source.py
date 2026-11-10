@@ -132,6 +132,11 @@ def _manifest(env: dict[str, str]) -> Manifest:
 
 
 class TestResolveEnvThroughASource(unittest.TestCase):
+    def setUp(self) -> None:
+        # A terminal is there to ask (`test_secret_syntax.TestNoOneToAsk`
+        # covers when it isn't).
+        self.enterContext(mock.patch("bot_bottle.env.can_ask", return_value=True))
+
     def test_interpolated_value_comes_from_the_source(self) -> None:
         manifest = _manifest({"API_KEY": "${HOST_KEY}", "PLAIN": "lit"})
         with mock.patch.dict(os.environ, {"HOST_KEY": "from-env"}):
