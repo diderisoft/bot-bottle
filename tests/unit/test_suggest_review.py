@@ -40,7 +40,7 @@ egress:
       passthrough: true
     - host: crates.io
       blocked: true
-git-gate:
+git_gate:
   repos:
     - gitea.example.com/acme/app:write
     - gitea.example.com/acme/web:write
@@ -180,7 +180,7 @@ class TestReview(unittest.TestCase):
 
     def test_a_shadowed_builtin_and_a_long_form_repo(self) -> None:
         (self.bottles / "basic.md").write_text(
-            "---\nextends: basic\ngit-gate:\n  repos:\n    tools:\n"
+            "---\nextends: basic\ngit_gate:\n  repos:\n    tools:\n"
             "      url: ssh://git@example.com/tools.git\n      key:\n        read_only: true\n"
             "---\n")
         lines = self.lines(_proposal(bottles=["basic"]))

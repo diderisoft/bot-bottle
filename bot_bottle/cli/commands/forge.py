@@ -8,7 +8,7 @@ connection in ~/.bot-bottle/forges.md under the user the token belongs to
 `<host>/<owner>/<repo>[:write]`, read-only unless `:write`, with nothing to
 extend. Connecting another user's token adds that user; the forge's first
 user is its default, and an agent picks another with
-`forge_users: {<host>: <user>}`.
+`identity: { accounts: {<host>: <user>} }`.
 
 The token is kept in ~/.bot-bottle/secrets, never in a bottle.
 

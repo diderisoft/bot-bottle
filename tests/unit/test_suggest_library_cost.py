@@ -13,7 +13,7 @@ from tests.unit._forges import connected
 from tests.unit.test_suggest_runnable import CONN
 
 _BIG = """---
-git-gate:
+git_gate:
   repos:
     - gitea.dideric.is/didericis/app:write
     - gitea.dideric.is/didericis/site:write

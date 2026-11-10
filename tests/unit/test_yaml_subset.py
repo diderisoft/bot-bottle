@@ -598,7 +598,7 @@ class TestSerializeYamlSubset(unittest.TestCase):
 
     def test_bottle_frontmatter_round_trip(self) -> None:
         text = textwrap.dedent("""\
-            git-gate:
+            git_gate:
               repos:
                 myrepo:
                   url: ssh://git@host/org/repo.git
@@ -612,7 +612,7 @@ class TestSerializeYamlSubset(unittest.TestCase):
         """The canonical use-case: host_key lands as a sibling of url/key."""
         from typing import cast
         text = textwrap.dedent("""\
-            git-gate:
+            git_gate:
               repos:
                 myrepo:
                   url: ssh://git@host/org/repo.git
@@ -621,11 +621,11 @@ class TestSerializeYamlSubset(unittest.TestCase):
                     path: /dev/null
         """)
         data = parse_yaml_subset(text)
-        repos = cast(dict[str, object], cast(dict[str, object], data["git-gate"])["repos"])
+        repos = cast(dict[str, object], cast(dict[str, object], data["git_gate"])["repos"])
         cast(dict[str, object], repos["myrepo"])["host_key"] = "ssh-ed25519 AAAA"
         out = serialize_yaml_subset(data)
         parsed_back = parse_yaml_subset(out)
-        repo = cast(dict[str, object], cast(dict[str, object], cast(dict[str, object], parsed_back["git-gate"])["repos"])["myrepo"])
+        repo = cast(dict[str, object], cast(dict[str, object], cast(dict[str, object], parsed_back["git_gate"])["repos"])["myrepo"])
         self.assertEqual("ssh-ed25519 AAAA", repo["host_key"])
         self.assertIn("provider", cast(dict[str, object], repo["key"]))
 

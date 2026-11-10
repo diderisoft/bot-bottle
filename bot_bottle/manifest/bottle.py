@@ -82,12 +82,12 @@ class ManifestBottle:
     # The bottle's git identity; empty skips `git config`. Independent of
     # repos.
     git_user: ManifestGitUser = field(default_factory=ManifestGitUser)
-    # `git-gate.trailers`: require, warn or off; "" is unset (require).
+    # `git_gate.trailers`: require, warn or off; "" is unset (require).
     git_trailers: str = ""
-    # `git-gate.protect_default_branch`: None is unset (off), so a later
+    # `git_gate.protect_default_branch`: None is unset (off), so a later
     # bottle can turn off what an earlier one turned on.
     git_protect_default_branch: bool | None = None
-    # `git-gate.actions.create`: where the agent may create repos without a
+    # `git_gate.actions.create`: where the agent may create repos without a
     # card (PRD 0120); unioned across the chain.
     git_create: tuple[str, ...] = ()
     egress: ManifestEgressConfig = field(default_factory=ManifestEgressConfig)
@@ -104,7 +104,7 @@ class ManifestBottle:
     audit: ManifestAudit = field(default_factory=ManifestAudit)
     # `resources:` memory and vCPUs; unset keys take the backend's usual size.
     resources: ManifestResources = field(default_factory=ManifestResources)
-    # Forges declared in the bottle's chain (`git-gate.forges`), set while
+    # Forges declared in the bottle's chain (`git_gate.forges`), set while
     # `extends` is resolved.
     forges: tuple[ManifestForge, ...] = ()
     # Fields the source declared, so an explicit `false` survives extends
@@ -126,7 +126,7 @@ class ManifestBottle:
         if "ssh" in d:
             raise ManifestError(
                 f"bottle '{name}' has an 'ssh' field, which has been removed. "
-                f"Declare upstreams under 'git-gate.repos' with "
+                f"Declare upstreams under 'git_gate.repos' with "
                 f"url + identity + host_key; the git-gate daemon "
                 f"holds the credential and gitleaks-scans pushes."
             )
@@ -134,14 +134,14 @@ class ManifestBottle:
         if "git" in d:
             raise ManifestError(
                 f"bottle '{name}' uses 'git' which has been replaced by "
-                f"'git-gate'. Move git.user → git-gate.user "
-                f"and git.remotes → git-gate.repos (fields: url, identity, host_key)."
+                f"'git_gate'. Move git.user → git_gate.user "
+                f"and git.remotes → git_gate.repos (fields: url, identity, host_key)."
             )
 
         if "git_user" in d:
             raise ManifestError(
                 f"bottle '{name}' has a 'git_user' field, which has been "
-                f"removed. Move it under 'git-gate.user'."
+                f"removed. Move it under 'git_gate.user'."
             )
 
         unknown = set(d.keys()) - BOTTLE_KEYS
@@ -176,7 +176,7 @@ class ManifestBottle:
         git_trailers = ""
         protect_default: bool | None = None
         git_create: tuple[str, ...] = ()
-        git_raw = d.get("git-gate")
+        git_raw = d.get("git_gate")
         if git_raw is not None:
             git, git_user = parse_git_gate_config(name, git_raw)
             git_trailers = parse_git_gate_trailers(name, git_raw)

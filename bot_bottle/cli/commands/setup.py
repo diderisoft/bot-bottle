@@ -1,7 +1,7 @@
 """bot-bottle setup: write starter agents for the providers on this host.
 
 Claude and Codex starters reuse an installed, logged-in CLI's login
-(`forward_host_credentials`). The pi starter uses your pi config when it can,
+(`login: host`). The pi starter uses your pi config when it can,
 else a free OpenRouter model with tool support, signing in through the browser.
 Keys go in `~/.bot-bottle/secrets` (0600).
 

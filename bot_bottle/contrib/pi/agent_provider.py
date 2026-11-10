@@ -27,6 +27,7 @@ from ...agent_provider import (
 from ...contract.identity import IDENTITY_HEADER
 from ...egress import EgressRoute
 from ...gateway.egress.types import ANY_REQUEST
+from ...secret_ref import stored
 from ...starter import GENERAL_PROMPT, starter_agent
 from .starter import has_secret, local_starter_settings, read_local_model
 from . import transcript
@@ -222,8 +223,13 @@ class PiAgentProvider(AgentProvider):
         )
 
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
-        return starter_agent(GENERAL_PROMPT,
-                             {"harness": "pi", "settings": _starter_settings(detection)})
+        settings = _starter_settings(detection)
+        block: dict[str, object] = {"harness": "pi"}
+        key = settings.pop("api_key_env", "")
+        if key:
+            block["login"] = {"api_key": stored(str(key))}
+        block["settings"] = settings
+        return starter_agent(GENERAL_PROMPT, block)
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
         # The core packages pin each other, so they move together. Extensions

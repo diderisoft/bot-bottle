@@ -41,6 +41,12 @@ def upgrade_bottle(fm: Mapping[str, Any]) -> tuple[Doc, list[str], list[LineEdit
     changes: list[str] = []
     edits: list[LineEdit] = []
     _egress(doc, changes)
+    if "git-gate" in doc:
+        # The old repos' own conversion (`migrate.rewrite`) writes under the
+        # old key; the rename keeps the rest of the block as written.
+        doc = {("git_gate" if k == "git-gate" else k): v for k, v in doc.items()}
+        changes.append("git-gate is git_gate")
+        edits.append(rename_top_key("git-gate", "git_gate"))
     return doc, changes, edits
 
 

@@ -88,10 +88,10 @@ class TestAgentOwnsProvider(unittest.TestCase):
             "bottles": {"dev": {"egress": {"routes": [{"host": "api.example.com"}]}}},
             "agents": {
                 "a": {"skills": [], "prompt": "",
-                      "agent_provider": {"harness": "claude", "auth_token": "TOK"}},
+                      "agent_provider": {"harness": "claude",
+                                         "login": {"oauth_token": "secret:TOK"}}},
                 "b": {"skills": [], "prompt": "",
-                      "agent_provider": {"harness": "codex",
-                                         "forward_host_credentials": True}},
+                      "agent_provider": {"harness": "codex", "login": "host"}},
             },
         })
         a, b = index.load_for_agent("a"), index.load_for_agent("b")
@@ -124,96 +124,75 @@ class TestMinimalRoute(unittest.TestCase):
 
 
 class TestAgentProviderHostCredentials(unittest.TestCase):
-    def test_forward_host_credentials_defaults_false(self):
+    def test_no_login_by_default(self):
         b = _provider_config_agent({"harness": "codex"})
         self.assertFalse(b.agent_provider.forward_host_credentials)
-
-    def test_forward_host_credentials_allowed_for_codex(self):
-        b = _provider_config_agent({
-            "harness": "codex",
-            "forward_host_credentials": True,
-        })
-        self.assertTrue(b.agent_provider.forward_host_credentials)
-
-    def test_forward_host_credentials_must_be_boolean(self):
-        with self.assertRaises(ManifestError):
-            _provider_config_agent({
-                "harness": "codex",
-                "forward_host_credentials": "yes",
-            })
-
-    def test_forward_host_credentials_allowed_for_claude(self):
-        b = _provider_config_agent({
-            "harness": "claude",
-            "forward_host_credentials": True,
-        })
-        self.assertTrue(b.agent_provider.forward_host_credentials)
-
-    def test_forward_host_credentials_and_auth_token_rejected_together(self):
-        with self.assertRaises(ManifestError):
-            _provider_config_agent({
-                "harness": "claude",
-                "forward_host_credentials": True,
-                "auth_token": "SOME_TOKEN",
-            })
-
-    def test_auth_token_defaults_empty(self):
-        b = _provider_config_agent({"harness": "claude"})
         self.assertEqual("", b.agent_provider.auth_token)
+        self.assertNotIn("api_key_env", b.agent_provider.settings)
 
-    def test_auth_token_allowed_for_claude(self):
+    def test_login_host_for_codex_and_claude(self):
+        for harness in ("codex", "claude"):
+            with self.subTest(harness=harness):
+                b = _provider_config_agent({"harness": harness, "login": "host"})
+                self.assertTrue(b.agent_provider.forward_host_credentials)
+
+    def test_login_host_refused_for_pi(self):
+        with self.assertRaisesRegex(ManifestError, "login: host is only supported"):
+            _provider_config_agent({"harness": "pi", "login": "host"})
+
+    def test_oauth_token_for_claude(self):
         b = _provider_config_agent({
             "harness": "claude",
-            "auth_token": "BOT_BOTTLE_CLAUDE_OAUTH_TOKEN",
+            "login": {"oauth_token": "secret:BOT_BOTTLE_CLAUDE_OAUTH_TOKEN"},
         })
         self.assertEqual("BOT_BOTTLE_CLAUDE_OAUTH_TOKEN", b.agent_provider.auth_token)
 
-    def test_auth_token_must_be_string(self):
-        with self.assertRaises(ManifestError):
-            _provider_config_agent({
-                "harness": "claude",
-                "auth_token": 42,
-            })
+    def test_oauth_token_refused_for_codex(self):
+        with self.assertRaisesRegex(ManifestError, "oauth_token is only supported"):
+            _provider_config_agent({"harness": "codex",
+                                    "login": {"oauth_token": "secret:T"}})
 
-    def test_api_key_env_allowed_for_claude(self):
+    def test_api_key_for_claude(self):
         b = _provider_config_agent({
             "harness": "claude",
-            "settings": {"api_key_env": "ANTHROPIC_API_KEY"},
+            "login": {"api_key": "secret:ANTHROPIC_API_KEY"},
         })
         self.assertEqual("ANTHROPIC_API_KEY", b.agent_provider.settings["api_key_env"])
 
-    def test_api_key_env_is_shown_as_a_grant(self):
+    def test_api_key_is_shown_as_a_grant(self):
         from bot_bottle.manifest.trust import provider_grants
         b = _provider_config_agent({
             "harness": "claude",
-            "settings": {"api_key_env": "ANTHROPIC_API_KEY"},
+            "login": {"api_key": "secret:ANTHROPIC_API_KEY"},
         })
         self.assertIn("use     $ANTHROPIC_API_KEY as your claude API key",
                       provider_grants(b.agent_provider))
 
-    def test_api_key_env_must_be_a_name(self):
-        for value in ("", 3):
-            with self.subTest(value=value), self.assertRaises(ManifestError):
-                _provider_config_agent({"harness": "claude",
-                                        "settings": {"api_key_env": value}})
+    def test_api_key_refused_for_codex(self):
+        with self.assertRaisesRegex(ManifestError, "api_key is only supported"):
+            _provider_config_agent({"harness": "codex", "login": {"api_key": "secret:K"}})
 
-    def test_api_key_env_rejected_with_oauth_options(self):
-        for extra in ({"auth_token": "T"}, {"forward_host_credentials": True}):
-            with self.subTest(extra=extra), self.assertRaises(ManifestError):
-                _provider_config_agent({"harness": "claude",
-                                        "settings": {"api_key_env": "K"}, **extra})
+    def test_login_takes_one_form_with_a_secret_name(self):
+        for login in ("yes", True, {}, {"oauth_token": "secret:A", "api_key": "secret:B"},
+                      {"oauth_token": "TOK"}, {"api_key": "?"}, {"api_key": "${K}"},
+                      {"api_key": "secret:"}, {"password": "secret:P"}):
+            with self.subTest(login=login), self.assertRaises(ManifestError):
+                _provider_config_agent({"harness": "claude", "login": login})
 
-    def test_api_key_env_rejected_for_codex(self):
-        with self.assertRaises(ManifestError):
-            _provider_config_agent({"harness": "codex",
-                                    "settings": {"api_key_env": "K"}})
-
-    def test_auth_token_rejected_for_codex(self):
-        with self.assertRaises(ManifestError):
-            _provider_config_agent({
-                "harness": "codex",
-                "auth_token": "SOME_TOKEN",
-            })
+    def test_the_old_keys_are_refused_naming_the_new_form(self):
+        for old, new in (({"forward_host_credentials": True},
+                          "`forward_host_credentials: true` is now `login: host`"),
+                         ({"auth_token": "T"},
+                          "`auth_token: NAME` is now `login: { oauth_token: secret:NAME }`"),
+                         ({"settings": {"api_key_env": "K"}},
+                          "`settings.api_key_env: NAME` is now `login: { api_key: secret:NAME }`"),
+                         ({"dockerfile": "x/Dockerfile"},
+                          "`agent_provider.dockerfile` (a path) is now "
+                          "`agent_provider.dockerfile_path`")):
+            with self.subTest(old=old), self.assertRaises(ManifestError) as cm:
+                _provider_config_agent({"harness": "claude", **old})
+            self.assertEqual(f"agent 'demo' agent_provider: {new} "
+                             f"(see docs/reference/manifest.md)", str(cm.exception))
 
     def test_settings_allowed_for_pi(self):
         b = _provider_config_agent({
@@ -250,11 +229,11 @@ class TestAgentProviderHostCredentials(unittest.TestCase):
     def test_settings_allowed_for_pi_api_key_env(self):
         b = _provider_config_agent({
             "harness": "pi",
+            "login": {"api_key": "secret:OPENROUTER_API_KEY"},
             "settings": {
                 "provider": "openrouter",
                 "base_url": "https://openrouter.ai/api/v1",
                 "api": "openai-completions",
-                "api_key_env": "OPENROUTER_API_KEY",
                 "models": ["google/gemma-4-26b-a4b-it:free"],
             },
         })
@@ -264,10 +243,8 @@ class TestAgentProviderHostCredentials(unittest.TestCase):
         with self.assertRaises(ManifestError):
             _provider_config_agent({
                 "harness": "pi",
-                "settings": {
-                    "api_key": "literal",
-                    "api_key_env": "OPENROUTER_API_KEY",
-                },
+                "login": {"api_key": "secret:OPENROUTER_API_KEY"},
+                "settings": {"api_key": "literal"},
             })
 
     def test_startup_args_allowed_for_claude(self):

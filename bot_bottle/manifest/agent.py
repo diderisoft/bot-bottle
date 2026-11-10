@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from ..agent_provider import BUILTIN_HARNESSES
-from .util import ManifestError, as_json_object
+from .. import secret_ref
+from .util import ManifestError, OldFormError, as_json_object
 from .git import ManifestGitUser
 from .schema import AGENT_KEYS, AGENT_MODEL_KEYS, is_valid_entity_name, reject_agent_bottle
 
@@ -113,10 +114,13 @@ def _overlay_str_list(where: str, key: str, raw: object) -> tuple[str, ...]:
 @dataclass(frozen=True)
 class ManifestAgentProvider:
     """The agent process's provider. `harness` picks a built-in runtime;
-    `dockerfile` optionally names a custom agent image. `auth_token` names the
-    host var holding Claude's OAuth token, injected by a provider egress route
-    while the agent gets a placeholder. `forward_host_credentials` forwards the
-    host's Codex or Claude login token through egress.
+    `dockerfile` (written `dockerfile_path`) optionally names a custom agent
+    image. `login` says how it signs in to its model API, mapped onto the
+    fields the providers take: `login: host` forwards the host's Codex or
+    Claude login (`forward_host_credentials`); `{oauth_token: secret:NAME}`
+    is Claude's OAuth token (`auth_token`); `{api_key: secret:NAME}` an API
+    key (`settings["api_key_env"]`). Each is injected by the provider's
+    egress route while the agent gets a placeholder.
     """
 
     harness: str = "claude"
@@ -138,19 +142,12 @@ class ManifestAgentProvider:
         if isinstance(raw, str):
             raw = {"harness": raw}
         d = as_json_object(raw, f"agent '{agent_name}' agent_provider")
+        _refuse_old_provider(agent_name, d)
         for k in d:
-            if k not in {
-                "harness",
-                "dockerfile",
-                "auth_token",
-                "forward_host_credentials",
-                "settings",
-                "overlay",
-            }:
+            if k not in {"harness", "dockerfile_path", "login", "settings", "overlay"}:
                 raise ManifestError(
                     f"agent '{agent_name}' agent_provider has unknown key {k!r}; "
-                    "allowed: harness, dockerfile, auth_token, "
-                    "forward_host_credentials, settings, overlay"
+                    "allowed: harness, dockerfile_path, login, settings, overlay"
                 )
         harness = d.get("harness", "claude")
         if not isinstance(harness, str) or not harness:
@@ -158,67 +155,45 @@ class ManifestAgentProvider:
                 f"agent '{agent_name}' agent_provider.harness must be a "
                 f"non-empty string"
             )
-        dockerfile = d.get("dockerfile", "")
+        dockerfile = d.get("dockerfile_path", "")
         if not isinstance(dockerfile, str):
             raise ManifestError(
-                f"agent '{agent_name}' agent_provider.dockerfile must be a "
+                f"agent '{agent_name}' agent_provider.dockerfile_path must be a "
                 f"string (was {type(dockerfile).__name__})"
             )
-        auth_token = d.get("auth_token", "")
-        if not isinstance(auth_token, str):
+        forward_host_credentials, auth_token, api_key_env = _parse_login(
+            agent_name, d["login"]) if "login" in d else (False, "", "")
+        if (forward_host_credentials or auth_token or api_key_env) \
+                and harness not in BUILTIN_HARNESSES:
             raise ManifestError(
-                f"agent '{agent_name}' agent_provider.auth_token must be a "
-                f"string (was {type(auth_token).__name__})"
-            )
-        if auth_token and harness not in BUILTIN_HARNESSES:
-            raise ManifestError(
-                f"agent '{agent_name}' agent_provider.auth_token is only "
-                f"supported for built-in harnesses "
-                f"({', '.join(sorted(BUILTIN_HARNESSES))})"
-            )
-        if auth_token and harness != "claude":
-            raise ManifestError(
-                f"agent '{agent_name}' agent_provider.auth_token is only "
-                f"supported for harness 'claude'"
-            )
-        forward_host_credentials = d.get("forward_host_credentials", False)
-        if not isinstance(forward_host_credentials, bool):
-            raise ManifestError(
-                f"agent '{agent_name}' agent_provider.forward_host_credentials "
-                f"must be a boolean (was {type(forward_host_credentials).__name__})"
-            )
-        if forward_host_credentials and harness not in BUILTIN_HARNESSES:
-            raise ManifestError(
-                f"agent '{agent_name}' agent_provider.forward_host_credentials "
-                f"is only supported for built-in harnesses "
-                f"({', '.join(sorted(BUILTIN_HARNESSES))})"
-            )
+                f"agent '{agent_name}' agent_provider.login is only supported for built-in "
+                f"harnesses ({', '.join(sorted(BUILTIN_HARNESSES))})")
         if forward_host_credentials and harness not in {"codex", "claude"}:
             raise ManifestError(
-                f"agent '{agent_name}' agent_provider.forward_host_credentials "
-                "is only supported for harnesses 'codex' and 'claude'"
-            )
-        if forward_host_credentials and auth_token:
+                f"agent '{agent_name}' agent_provider.login: host is only supported for "
+                "harnesses 'codex' and 'claude'")
+        if auth_token and harness != "claude":
             raise ManifestError(
-                f"agent '{agent_name}' agent_provider.forward_host_credentials "
-                "and auth_token both set; use one or the other"
-            )
+                f"agent '{agent_name}' agent_provider.login.oauth_token is only supported "
+                "for harness 'claude'")
+        if api_key_env and harness not in ("claude", "pi"):
+            raise ManifestError(
+                f"agent '{agent_name}' agent_provider.login.api_key is only supported for "
+                "harnesses 'claude' and 'pi'")
         settings = _parse_provider_settings(agent_name, harness, d.get("settings"))
-        if harness == "claude" and settings.get("api_key_env") and (
-            auth_token or forward_host_credentials
-        ):
-            raise ManifestError(
-                f"agent '{agent_name}' agent_provider.settings.api_key_env "
-                "can't be combined with auth_token or forward_host_credentials; "
-                "use one"
-            )
+        if api_key_env:
+            if settings.get("api_key") is not None:
+                raise ManifestError(
+                    f"agent '{agent_name}' agent_provider sets both settings.api_key and "
+                    "login.api_key; use one")
+            settings["api_key_env"] = api_key_env
         overlay = ManifestImageOverlay()
         if "overlay" in d:
             overlay = ManifestImageOverlay.from_dict(agent_name, d["overlay"])
         if not overlay.is_empty() and dockerfile:
             raise ManifestError(
                 f"agent '{agent_name}' sets both agent_provider.overlay and "
-                "agent_provider.dockerfile; an overlay builds on the published "
+                "agent_provider.dockerfile_path; an overlay builds on the published "
                 "default image, so use one or the other (an overlay's own "
                 "Dockerfile goes in overlay.dockerfile)"
             )
@@ -243,8 +218,8 @@ class ManifestAgentProvider:
 class ManifestAgent:
     skills: tuple[str, ...] = ()
     prompt: str = ""
-    # The agent's git identity, overlaid per field on the bottle's. Agents may
-    # set only `user`; `repos` carries credentials and stays bottle-only.
+    # `identity.git`: the agent's git identity, overlaid per field on the
+    # bottle's `git_gate.user`.
     git_user: ManifestGitUser = ManifestGitUser()
     # `remote.writable`: whether remote viewers may type.
     remote_writable: bool = False
@@ -252,8 +227,9 @@ class ManifestAgent:
     # any bottle (its API route and credentials). Agents don't compose, so
     # this is the agent's alone (PRD 0098).
     agent_provider: ManifestAgentProvider = field(default_factory=ManifestAgentProvider)
-    # `forge_users: {<host>: <user>}`: which user connected on a forge this
-    # agent pushes as; a forge it doesn't name uses its default (ADR 0019).
+    # `identity.accounts: {<forge host>: <user>}`: which user connected on a
+    # forge this agent pushes as; a forge it doesn't name uses its default
+    # (ADR 0019).
     forge_users: tuple[tuple[str, str], ...] = ()
 
     @classmethod
@@ -274,7 +250,7 @@ class ManifestAgent:
         if skills_raw is not None:
             if not isinstance(skills_raw, list):
                 raise ManifestError(
-                    f"agent '{name}' skills must be an array "
+                    f"agent '{name}' skills must be a list "
                     f"(was {type(skills_raw).__name__})"
                 )
             collected: list[str] = []
@@ -306,21 +282,18 @@ class ManifestAgent:
                 f"(was {type(prompt_raw).__name__})"
             )
 
-        # Agents may declare only `git-gate.user`; `repos` is bottle-only.
-        git_user = ManifestGitUser()
-        git_raw = d.get("git-gate")
-        if git_raw is not None:
-            gd = as_json_object(git_raw, f"agent '{name}' git-gate")
-            for k in gd:
-                if k != "user":
-                    raise ManifestError(
-                        f"agent '{name}' git-gate.{k} is not allowed at the "
-                        f"agent level; only git-gate.user (name/email) may be "
-                        f"set on an agent. git-gate.repos is bottle-only "
-                        f"(it carries credentials and host trust)."
-                    )
-            if "user" in gd:
-                git_user = ManifestGitUser.from_dict(name, gd["user"])
+        if "git-gate" in d:
+            raise OldFormError(f"agent '{name}'", "`git-gate.user` is now `identity.git`")
+        if "forge_users" in d:
+            raise OldFormError(f"agent '{name}'", "`forge_users` is now `identity.accounts`")
+        git_user, forge_users = _identity(name, d.get("identity"))
+        # Only the bottle architect reads `model` (`suggest.architect`).
+        if "model" in d and name != "bottle-architect" and name not in _MODEL_WARNED:
+            _MODEL_WARNED.add(name)
+            # pylint: disable-next=import-outside-toplevel
+            from ..lib.log import warn
+            warn(f"agent '{name}': model is ignored; the harness picks its model (for pi, "
+                 "agent_provider.settings.models)")
 
         remote_writable = False
         remote_raw = d.get("remote")
@@ -346,7 +319,48 @@ class ManifestAgent:
 
         return cls(skills=skills, prompt=prompt, git_user=git_user,
                    remote_writable=remote_writable, agent_provider=agent_provider,
-                   forge_users=_forge_users(name, d.get("forge_users")))
+                   forge_users=forge_users)
+
+
+# Old agent_provider keys and their new forms.
+_OLD_PROVIDER_KEYS = {
+    "dockerfile": "`agent_provider.dockerfile` (a path) is now "
+                  "`agent_provider.dockerfile_path`",
+    "forward_host_credentials": "`forward_host_credentials: true` is now `login: host`",
+    "auth_token": "`auth_token: NAME` is now `login: { oauth_token: secret:NAME }`",
+}
+
+
+def _refuse_old_provider(agent: str, d: dict[str, object]) -> None:
+    where = f"agent '{agent}' agent_provider"
+    for key, change in _OLD_PROVIDER_KEYS.items():
+        if key in d:
+            raise OldFormError(where, change)
+    settings = d.get("settings")
+    if isinstance(settings, dict) and "api_key_env" in settings:
+        raise OldFormError(where, "`settings.api_key_env: NAME` is now "
+                                  "`login: { api_key: secret:NAME }`")
+
+
+LOGIN_KINDS = ("oauth_token", "api_key")
+
+
+def _parse_login(agent: str, raw: object) -> tuple[bool, str, str]:
+    """`login` as (forward_host_credentials, auth_token, api_key_env):
+    `host`, `{oauth_token: secret:NAME}` or `{api_key: secret:NAME}`."""
+    where = f"agent '{agent}' agent_provider.login"
+    if raw == "host":
+        return True, "", ""
+    if not isinstance(raw, dict) or len(cast("dict[str, object]", raw)) != 1 \
+            or next(iter(cast("dict[str, object]", raw))) not in LOGIN_KINDS:
+        raise ManifestError(f"{where} must be host, {{ oauth_token: secret:NAME }} or "
+                            f"{{ api_key: secret:NAME }}")
+    kind, value = next(iter(cast("dict[str, object]", raw).items()))
+    if not isinstance(value, str) or secret_ref.kind(value) != secret_ref.STORED \
+            or secret_ref.problem(value):
+        raise ManifestError(f"{where}.{kind} takes secret:NAME, NAME in the secrets file")
+    name = secret_ref.stored_name(value)
+    return (False, name, "") if kind == "oauth_token" else (False, "", name)
 
 
 def agent_from_frontmatter(name: str, fm: dict[str, object], body: str) -> "ManifestAgent":
@@ -361,15 +375,32 @@ _HOST_RE = re.compile(r"^[A-Za-z0-9.-]+(?::[0-9]+)?$")
 _USER_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
+_MODEL_WARNED: set[str] = set()
+
+
+def _identity(agent: str, raw: object) -> tuple[ManifestGitUser, tuple[tuple[str, str], ...]]:
+    """`identity: { git: { name, email }, accounts: { <forge host>: <user> } }`."""
+    if raw is None:
+        return ManifestGitUser(), ()
+    d = as_json_object(raw, f"agent '{agent}' identity")
+    for k in d:
+        if k not in ("git", "accounts"):
+            raise ManifestError(f"agent '{agent}' identity has unknown key {k!r}; allowed: "
+                                f"git, accounts")
+    git_user = (ManifestGitUser.from_dict(f"agent '{agent}' identity.git", d["git"])
+                if "git" in d else ManifestGitUser())
+    return git_user, _forge_users(agent, d.get("accounts"))
+
+
 def _forge_users(agent: str, raw: object) -> tuple[tuple[str, str], ...]:
     if raw is None:
         return ()
-    d = as_json_object(raw, f"agent '{agent}' forge_users")
+    d = as_json_object(raw, f"agent '{agent}' identity.accounts")
     out: list[tuple[str, str]] = []
     for host, user in d.items():
         if not _HOST_RE.match(host) or not isinstance(user, str) or not _USER_RE.match(user):
-            raise ManifestError(f"agent '{agent}' forge_users maps a forge's host to a user "
-                                f"connected on it (was {host!r}: {user!r})")
+            raise ManifestError(f"agent '{agent}' identity.accounts maps a forge's host to a "
+                                f"user connected on it (was {host!r}: {user!r})")
         out.append((host, user))
     return tuple(out)
 
@@ -420,7 +451,7 @@ def _parse_provider_settings(
         if not isinstance(startup_args, list):
             raise ManifestError(
                 f"agent '{agent_name}' agent_provider.settings.startup_args "
-                f"must be an array of strings"
+                f"must be a list of strings"
             )
         for i, arg in enumerate(startup_args):
             if not isinstance(arg, str) or not arg:

@@ -62,7 +62,7 @@ def validate_unique_git_names(bottle_name: str, git: tuple[ManifestGitEntry, ...
     for g in git:
         if g.Name in seen:
             raise ManifestError(
-                f"bottle '{bottle_name}' git-gate.repos has duplicate name '{g.Name}'; "
+                f"bottle '{bottle_name}' git_gate.repos has duplicate name '{g.Name}'; "
                 f"each entry maps to a distinct bare repo on the gate."
             )
         seen[g.Name] = None
@@ -104,7 +104,7 @@ class ManifestGitEntry:
     gate hosts `/git/<Name>.git` and pushes upstream with `IdentityFile` after
     the scans. The URL is parsed once into the `Upstream*` fields.
 
-    From `git-gate.repos.<Name>`. `IdentityFile` comes from `key.path` for
+    From `git_gate.repos.<Name>`. `IdentityFile` comes from `key.path` for
     `static`, or at provision time for a forge kind."""
 
     Name: str
@@ -122,18 +122,18 @@ class ManifestGitEntry:
     def from_repos_entry(
         cls, bottle_name: str, repo_name: str, raw: object
     ) -> "ManifestGitEntry":
-        """Parse `git-gate.repos.<repo_name>`: `url` and `key` required,
+        """Parse `git_gate.repos.<repo_name>`: `url` and `key` required,
         `host_key` optional."""
         if not repo_name:
             raise ManifestError(
-                f"bottle '{bottle_name}' git-gate.repos has an empty key"
+                f"bottle '{bottle_name}' git_gate.repos has an empty key"
             )
         if not _GIT_NAME_RE.match(repo_name):
             raise ManifestError(
-                f"bottle '{bottle_name}' git-gate.repos name {repo_name!r} is invalid; "
+                f"bottle '{bottle_name}' git_gate.repos name {repo_name!r} is invalid; "
                 f"allowed characters: A-Z a-z 0-9 . _ -"
             )
-        label = f"git-gate.repos[{repo_name!r}]"
+        label = f"git_gate.repos[{repo_name!r}]"
         d = as_json_object(raw, f"bottle '{bottle_name}' {label}")
         for k in d:
             if k not in {"url", "key", "host_key"}:
@@ -256,32 +256,23 @@ class ManifestGitUser:
     email: str = ""
 
     @classmethod
-    def from_dict(cls, bottle_name: str, raw: object) -> "ManifestGitUser":
-        d = as_json_object(raw, f"bottle '{bottle_name}' git-gate.user")
+    def from_dict(cls, where: str, raw: object) -> "ManifestGitUser":
+        """`raw` as a git identity; `where` names it in errors (`bottle 'x'
+        git_gate.user`, `agent 'y' identity.git`)."""
+        d = as_json_object(raw, where)
         for k in d:
             if k not in {"name", "email"}:
-                raise ManifestError(
-                    f"bottle '{bottle_name}' git-gate.user has unknown key {k!r}; "
-                    f"allowed: name, email"
-                )
+                raise ManifestError(f"{where} has unknown key {k!r}; allowed: name, email")
         name = d.get("name", "")
         email = d.get("email", "")
         if not isinstance(name, str):
-            raise ManifestError(
-                f"bottle '{bottle_name}' git-gate.user.name must be a string "
-                f"(was {type(name).__name__})"
-            )
+            raise ManifestError(f"{where}.name must be a string (was {type(name).__name__})")
         if not isinstance(email, str):
-            raise ManifestError(
-                f"bottle '{bottle_name}' git-gate.user.email must be a string "
-                f"(was {type(email).__name__})"
-            )
+            raise ManifestError(f"{where}.email must be a string (was {type(email).__name__})")
         if not name and not email:
             raise ManifestError(
-                f"bottle '{bottle_name}' git-gate.user is set but neither "
-                f"name nor email is non-empty; remove the block or "
-                f"fill at least one field."
-            )
+                f"{where} is set but neither name nor email is non-empty; remove the "
+                f"block or fill at least one field.")
         return cls(name=name, email=email)
 
     def is_empty(self) -> bool:
@@ -289,49 +280,49 @@ class ManifestGitUser:
 
 
 def parse_git_gate_trailers(bottle_name: str, raw: object) -> str:
-    """`git-gate.trailers`: how git-gate checks pushed commits carry the
+    """`git_gate.trailers`: how git-gate checks pushed commits carry the
     bottle's `Bot-Bottle` trailer (`require`, `warn` or `off`); "" when
     unset, which is `require`."""
-    d = as_json_object(raw, f"bottle '{bottle_name}' git-gate")
+    d = as_json_object(raw, f"bottle '{bottle_name}' git_gate")
     if "trailers" not in d:
         return ""
     value = d["trailers"]
     if not isinstance(value, str) or value not in TRAILER_MODES:
         raise ManifestError(
-            f"bottle '{bottle_name}' git-gate.trailers must be one of "
+            f"bottle '{bottle_name}' git_gate.trailers must be one of "
             f"{', '.join(TRAILER_MODES)} (was {value!r})"
         )
     return value
 
 
 def parse_git_gate_protect_default_branch(bottle_name: str, raw: object) -> bool | None:
-    """`git-gate.protect_default_branch`: refuse deleting or rewriting each
+    """`git_gate.protect_default_branch`: refuse deleting or rewriting each
     repo's default branch upstream (#808). None when unset, which is off."""
-    d = as_json_object(raw, f"bottle '{bottle_name}' git-gate")
+    d = as_json_object(raw, f"bottle '{bottle_name}' git_gate")
     if "protect_default_branch" not in d:
         return None
     value = d["protect_default_branch"]
     if not isinstance(value, bool):
         raise ManifestError(
-            f"bottle '{bottle_name}' git-gate.protect_default_branch must be "
+            f"bottle '{bottle_name}' git_gate.protect_default_branch must be "
             f"true or false (was {value!r})"
         )
     return value
 
 
-# `git-gate.actions.create`: `<forge>/<owner>/<name>`, or `*` for any name.
+# `git_gate.actions.create`: `<forge>/<owner>/<name>`, or `*` for any name.
 _CREATE_PATTERN = re.compile(
     r"^[A-Za-z0-9._-]+(?::[0-9]+)?/[A-Za-z0-9._-]+/(?:\*|[A-Za-z0-9._-]+)$")
 
 
 def parse_git_gate_actions(bottle_name: str, raw: object) -> tuple[str, ...]:
-    """`git-gate.actions.create`: where the agent may create repos without
+    """`git_gate.actions.create`: where the agent may create repos without
     asking (PRD 0120), each `<forge>/<owner>/<name>` or `<forge>/<owner>/*`.
     () when unset."""
-    d = as_json_object(raw, f"bottle '{bottle_name}' git-gate")
+    d = as_json_object(raw, f"bottle '{bottle_name}' git_gate")
     if "actions" not in d:
         return ()
-    where = f"bottle '{bottle_name}' git-gate.actions"
+    where = f"bottle '{bottle_name}' git_gate.actions"
     actions = as_json_object(d["actions"], where)
     for k in actions:
         if k != "create":
@@ -357,16 +348,16 @@ def parse_git_gate_config(
     bottle_name: str,
     raw: object,
 ) -> tuple[tuple[ManifestGitEntry, ...], ManifestGitUser]:
-    d = as_json_object(raw, f"bottle '{bottle_name}' git-gate")
+    d = as_json_object(raw, f"bottle '{bottle_name}' git_gate")
     for k in d:
         if k not in {"user", "repos", "trailers", "protect_default_branch", "actions"}:
             raise ManifestError(
-                f"bottle '{bottle_name}' git-gate has unknown key {k!r}; "
+                f"bottle '{bottle_name}' git_gate has unknown key {k!r}; "
                 f"allowed: user, repos, trailers, protect_default_branch, actions"
             )
 
     git_user = (
-        ManifestGitUser.from_dict(bottle_name, d["user"])
+        ManifestGitUser.from_dict(f"bottle '{bottle_name}' git_gate.user", d["user"])
         if "user" in d
         else ManifestGitUser()
     )
@@ -374,7 +365,7 @@ def parse_git_gate_config(
     git: tuple[ManifestGitEntry, ...] = ()
     repos_raw = d.get("repos")
     if repos_raw is not None:
-        repos = as_json_object(repos_raw, f"bottle '{bottle_name}' git-gate.repos")
+        repos = as_json_object(repos_raw, f"bottle '{bottle_name}' git_gate.repos")
         git = tuple(
             ManifestGitEntry.from_repos_entry(bottle_name, name, entry)
             for name, entry in repos.items()

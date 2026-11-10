@@ -134,12 +134,12 @@ class TestVetLaunchBottle(unittest.TestCase):
         self.assertIn("bottle 'nope' not defined. Available: app-dev", msg)
 
     def test_a_repo_on_an_unconnected_forge(self):
-        self._bottle_file("---\ngit-gate:\n  repos:\n    - git.example.com/acme/app:write\n---\n")
+        self._bottle_file("---\ngit_gate:\n  repos:\n    - git.example.com/acme/app:write\n---\n")
         msg = self._vet()
         self.assertIn("forge 'git.example.com' isn't connected", msg)
 
     def test_a_repo_on_a_connected_forge(self):
-        self._bottle_file("---\ngit-gate:\n  repos:\n    - git.example.com/acme/app\n---\n")
+        self._bottle_file("---\ngit_gate:\n  repos:\n    - git.example.com/acme/app\n---\n")
         self.chain.append({"path": self.tmp / "missing.md"})  # unreadable: skipped
         self.conns = {"x": SimpleNamespace(host="git.example.com:443")}
         self.assertEqual("", self._vet())
@@ -149,7 +149,7 @@ class TestVetLaunchBottle(unittest.TestCase):
 
         def broken() -> dict[str, Any]:
             raise ForgeConnectionError("unreadable")
-        self._bottle_file("---\ngit-gate:\n  repos:\n    - git.example.com/acme/app\n---\n")
+        self._bottle_file("---\ngit_gate:\n  repos:\n    - git.example.com/acme/app\n---\n")
         with mock.patch("bot_bottle.forge_connections.connections", side_effect=broken):
             self.assertIn("isn't connected", self._vet())
 

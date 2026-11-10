@@ -38,7 +38,7 @@ OLD = ("---\n"
        "env:\n"
        "  FOO: bar\n"
        "\n"
-       "git-gate:\n"
+       "git_gate:\n"
        "  user:\n"
        "    name: dev-bot\n"
        "    email: bot@example.com\n"
@@ -127,7 +127,7 @@ class TestTheError(_Host):
     def test_from_a_json_manifest_too(self) -> None:
         with self.assertRaises(ManifestError) as ctx:
             ManifestIndex.from_json_obj({
-                "bottles": {"dev": {"git-gate": {"repos": {
+                "bottles": {"dev": {"git_gate": {"repos": {
                     "a": {"url": "ssh://git@10.0.0.1:2222/org/a.git",
                           "key": {"provider": "gitea", "forge_token_env": "T",
                                   "api_url": "https://git.example.com"}},
@@ -191,7 +191,7 @@ class TestMigrate(_Host):
 
     def test_an_unusual_layout_is_refused(self) -> None:
         self.connect()
-        self.write("dev", "---\ngit-gate:\n  repos: {a: {url: 'ssh://git@h/o/a.git', "
+        self.write("dev", "---\ngit_gate:\n  repos: {a: {url: 'ssh://git@h/o/a.git', "
                           "key: {provider: gitea, forge_token_env: T, "
                           "api_url: 'https://gitea.example.com'}}}\n---\n")
         with self.assertRaises(MigrateError):

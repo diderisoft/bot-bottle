@@ -123,19 +123,19 @@ class TestMergeBottlesRuntime(unittest.TestCase):
         # Regression for issue #457: override bottle declares a repo that the
         # base doesn't have → KeyError on base_repos_by_name[n].
         base = _bottle(env={"X": "base"})
-        override = _bottle(**{"git-gate": {"repos": {"myrepo": _git_repo("ssh://git@example.com/repo.git")}}})
+        override = _bottle(**{"git_gate": {"repos": {"myrepo": _git_repo("ssh://git@example.com/repo.git")}}})
         result = merge_bottles_runtime([base, override])
         self.assertIn("myrepo", [e.Name for e in result.git])
 
     def test_git_repo_only_in_base_survives_override(self):
-        base = _bottle(**{"git-gate": {"repos": {"myrepo": _git_repo("ssh://git@example.com/repo.git")}}})
+        base = _bottle(**{"git_gate": {"repos": {"myrepo": _git_repo("ssh://git@example.com/repo.git")}}})
         override = _bottle(env={"X": "override"})
         result = merge_bottles_runtime([base, override])
         self.assertIn("myrepo", [e.Name for e in result.git])
 
     def test_git_repo_override_wins_by_name(self):
-        base = _bottle(**{"git-gate": {"repos": {"myrepo": _git_repo("ssh://git@base.example.com/repo.git")}}})
-        override = _bottle(**{"git-gate": {"repos": {"myrepo": _git_repo("ssh://git@override.example.com/repo.git")}}})
+        base = _bottle(**{"git_gate": {"repos": {"myrepo": _git_repo("ssh://git@base.example.com/repo.git")}}})
+        override = _bottle(**{"git_gate": {"repos": {"myrepo": _git_repo("ssh://git@override.example.com/repo.git")}}})
         result = merge_bottles_runtime([base, override])
         self.assertEqual(1, len(result.git))
         self.assertEqual("ssh://git@override.example.com/repo.git", result.git[0].Upstream)

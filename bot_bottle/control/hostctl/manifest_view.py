@@ -222,12 +222,12 @@ def _granted(identity: str, doc: dict[str, object], ref: Any) -> str:
     forge = find_forge(identity, ref.grant.split("/", 1)[0])
     if forge is None:
         return ""
-    git = _dict(doc.get("git-gate"))
+    git = _dict(doc.get("git_gate"))
     forges = _dict(git.get("forges"))
     if forge.name not in forges:
         forges[forge.name] = forge_document(forge)
         git["forges"] = forges
-        doc["git-gate"] = git
+        doc["git_gate"] = git
     return str(ref.grant)
 
 
@@ -287,12 +287,12 @@ def current_manifest(identity: str, bottle: Any, policy: str | None,
                            "why": GRANTLESS if not ref.grant else
                            "its forge isn't connected on this host now"})
             continue
-        git = _dict(doc.get("git-gate"))
+        git = _dict(doc.get("git_gate"))
         repos = _dict(git.get("repos"))
         if repos.get(ref.name) != repo:
             repos[ref.name] = repo
             git["repos"] = repos
-            doc["git-gate"] = git
+            doc["git_gate"] = git
             access = "write" if upstream.writable else "read-only"
             changes.append({"kind": "repo", "what": f"{ref.name} ({access})",
                             "key": f"repo:{ref.name}"})

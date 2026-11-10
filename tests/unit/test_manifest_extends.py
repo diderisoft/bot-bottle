@@ -128,7 +128,7 @@ class TestExtendsEnvMerge(unittest.TestCase):
 
 
 class TestExtendsGitMerge(unittest.TestCase):
-    """git-gate.user overlays by field; git-gate.repos merges by name,
+    """git_gate.user overlays by field; git_gate.repos merges by name,
     with same-name child entries merging field-by-field (child wins)."""
 
     _GIT_ENTRY_A = {"url": "ssh://git@host-a/a.git", "key": {"provider": "static", "path": "/dev/null"}}
@@ -136,10 +136,10 @@ class TestExtendsGitMerge(unittest.TestCase):
 
     def test_child_git_repos_merge_with_parent(self):
         m = _build(
-            base={"git-gate": {"repos": {"a": self._GIT_ENTRY_A}}},
+            base={"git_gate": {"repos": {"a": self._GIT_ENTRY_A}}},
             child={
                 "extends": "base",
-                "git-gate": {"repos": {"b": self._GIT_ENTRY_B}},
+                "git_gate": {"repos": {"b": self._GIT_ENTRY_B}},
             },
         )
         names = [e.Name for e in m.bottles["child"].git]
@@ -150,10 +150,10 @@ class TestExtendsGitMerge(unittest.TestCase):
         # different names on the same host both survive the merge.
         same_host_b = {"url": "ssh://git@host-a/b.git", "key": {"provider": "static", "path": "/dev/null"}}
         m = _build(
-            base={"git-gate": {"repos": {"a": self._GIT_ENTRY_A}}},
+            base={"git_gate": {"repos": {"a": self._GIT_ENTRY_A}}},
             child={
                 "extends": "base",
-                "git-gate": {"repos": {"a2": same_host_b}},
+                "git_gate": {"repos": {"a2": same_host_b}},
             },
         )
         entries = m.bottles["child"].git
@@ -163,7 +163,7 @@ class TestExtendsGitMerge(unittest.TestCase):
 
     def test_child_omits_git_gate_inherits_full_list(self):
         m = _build(
-            base={"git-gate": {"repos": {
+            base={"git_gate": {"repos": {
                 "a": self._GIT_ENTRY_A,
                 "b": self._GIT_ENTRY_B,
             }}},
@@ -173,11 +173,11 @@ class TestExtendsGitMerge(unittest.TestCase):
         self.assertEqual(["a", "b"], names)
 
     def test_child_explicit_empty_repos_clears_parent(self):
-        # `git-gate.repos: {}` is the documented way to say "drop
+        # `git_gate.repos: {}` is the documented way to say "drop
         # the parent's repos" rather than "inherit them".
         m = _build(
-            base={"git-gate": {"repos": {"a": self._GIT_ENTRY_A}}},
-            child={"extends": "base", "git-gate": {"repos": {}}},
+            base={"git_gate": {"repos": {"a": self._GIT_ENTRY_A}}},
+            child={"extends": "base", "git_gate": {"repos": {}}},
         )
         self.assertEqual((), m.bottles["child"].git)
 
@@ -191,10 +191,10 @@ class TestExtendsGitMerge(unittest.TestCase):
             "key": {"provider": "static", "path": "/keys/id_rsa"},
         }
         m = _build(
-            base={"git-gate": {"repos": {"repo": parent_entry}}},
+            base={"git_gate": {"repos": {"repo": parent_entry}}},
             child={
                 "extends": "base",
-                "git-gate": {"repos": {"repo": {
+                "git_gate": {"repos": {"repo": {
                     "key": {"provider": "static", "path": "/keys/child"},
                 }}},
             },
@@ -215,10 +215,10 @@ class TestExtendsGitMerge(unittest.TestCase):
             "key": {"provider": "static", "path": "/keys/id_rsa"},
         }
         m = _build(
-            base={"git-gate": {"repos": {"repo": parent_entry}}},
+            base={"git_gate": {"repos": {"repo": parent_entry}}},
             child={
                 "extends": "base",
-                "git-gate": {"repos": {"repo": {
+                "git_gate": {"repos": {"repo": {
                     "url": "ssh://git@host-b/new.git",
                     "key": {"provider": "static", "path": "/keys/id_rsa"},
                 }}},
@@ -236,10 +236,10 @@ class TestExtendsGitMerge(unittest.TestCase):
             "key": {"provider": "static", "path": "/keys/id_rsa"},
         }
         m = _build(
-            base={"git-gate": {"repos": {"repo": parent_entry}}},
+            base={"git_gate": {"repos": {"repo": parent_entry}}},
             child={
                 "extends": "base",
-                "git-gate": {"repos": {
+                "git_gate": {"repos": {
                     "repo": {"key": {"provider": "static", "path": "/keys/child"}},
                     "other": self._GIT_ENTRY_B,
                 }},
@@ -253,8 +253,8 @@ class TestExtendsGitMerge(unittest.TestCase):
 
     def test_child_git_user_inherits_parent_repos(self):
         m = _build(
-            base={"git-gate": {"repos": {"a": self._GIT_ENTRY_A}}},
-            child={"extends": "base", "git-gate": {"user": {"name": "Child"}}},
+            base={"git_gate": {"repos": {"a": self._GIT_ENTRY_A}}},
+            child={"extends": "base", "git_gate": {"user": {"name": "Child"}}},
         )
         self.assertEqual(["a"], [e.Name for e in m.bottles["child"].git])
         self.assertEqual("Child", m.bottles["child"].git_user.name)
@@ -339,12 +339,12 @@ class TestExtendsEgressMerge(unittest.TestCase):
 
 
 class TestExtendsGitUserOverlay(unittest.TestCase):
-    """git-gate.user: per-field overlay. Each non-empty field on child
+    """git_gate.user: per-field overlay. Each non-empty field on child
     wins; empties fall through to parent."""
 
     def test_parent_full_child_omits(self):
         m = _build(
-            base={"git-gate": {"user": {"name": "Parent", "email": "p@x"}}},
+            base={"git_gate": {"user": {"name": "Parent", "email": "p@x"}}},
             child={"extends": "base"},
         )
         u = m.bottles["child"].git_user
@@ -353,10 +353,10 @@ class TestExtendsGitUserOverlay(unittest.TestCase):
 
     def test_child_overrides_both(self):
         m = _build(
-            base={"git-gate": {"user": {"name": "Parent", "email": "p@x"}}},
+            base={"git_gate": {"user": {"name": "Parent", "email": "p@x"}}},
             child={
                 "extends": "base",
-                "git-gate": {"user": {"name": "Child", "email": "c@x"}},
+                "git_gate": {"user": {"name": "Child", "email": "c@x"}},
             },
         )
         u = m.bottles["child"].git_user
@@ -365,8 +365,8 @@ class TestExtendsGitUserOverlay(unittest.TestCase):
 
     def test_child_adds_email_inherits_name(self):
         m = _build(
-            base={"git-gate": {"user": {"name": "Parent"}}},
-            child={"extends": "base", "git-gate": {"user": {"email": "c@x"}}},
+            base={"git_gate": {"user": {"name": "Parent"}}},
+            child={"extends": "base", "git_gate": {"user": {"email": "c@x"}}},
         )
         u = m.bottles["child"].git_user
         self.assertEqual("Parent", u.name)
@@ -374,8 +374,8 @@ class TestExtendsGitUserOverlay(unittest.TestCase):
 
     def test_child_overrides_only_email(self):
         m = _build(
-            base={"git-gate": {"user": {"name": "Parent", "email": "p@x"}}},
-            child={"extends": "base", "git-gate": {"user": {"email": "c@x"}}},
+            base={"git_gate": {"user": {"name": "Parent", "email": "p@x"}}},
+            child={"extends": "base", "git_gate": {"user": {"email": "c@x"}}},
         )
         u = m.bottles["child"].git_user
         self.assertEqual("Parent", u.name)
@@ -551,8 +551,8 @@ class TestExtendsMultiParent(unittest.TestCase):
 
     def test_two_parents_git_repos_union(self):
         m = _build(
-            p1={"git-gate": {"repos": {"a": self._GIT_A}}},
-            p2={"git-gate": {"repos": {"b": self._GIT_B}}},
+            p1={"git_gate": {"repos": {"a": self._GIT_A}}},
+            p2={"git_gate": {"repos": {"b": self._GIT_B}}},
             child={"extends": ["p1", "p2"]},
         )
         names = {e.Name for e in m.bottles["child"].git}
@@ -571,8 +571,8 @@ class TestExtendsMultiParent(unittest.TestCase):
             "key": {"provider": "static", "path": "/k2"},
         }
         m = _build(
-            p1={"git-gate": {"repos": {"repo": p1_entry}}},
-            p2={"git-gate": {"repos": {"repo": p2_entry}}},
+            p1={"git_gate": {"repos": {"repo": p1_entry}}},
+            p2={"git_gate": {"repos": {"repo": p2_entry}}},
             child={"extends": ["p1", "p2"]},
         )
         entries = m.bottles["child"].git
@@ -584,7 +584,7 @@ class TestExtendsMultiParent(unittest.TestCase):
 
     def test_p1_repos_preserved_when_p2_has_none(self):
         m = _build(
-            p1={"git-gate": {"repos": {"a": self._GIT_A}}},
+            p1={"git_gate": {"repos": {"a": self._GIT_A}}},
             p2={"env": {"X": "1"}},
             child={"extends": ["p1", "p2"]},
         )

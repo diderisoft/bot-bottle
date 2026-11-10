@@ -120,7 +120,7 @@ class TestSandboxEscape(unittest.TestCase):
                     # attack (chunk 5) parameterizes over these so a
                     # renamed gitleaks rule doesn't silently let one
                     # shape through.
-                    "env": {**_FAKE_SECRETS, **{k: "?" for k in _HELD_SECRET}},
+                    "env": {**_FAKE_SECRETS, **{k: "secret:?" for k in _HELD_SECRET}},
                     # No routes of its own: the Claude provider's
                     # api.anthropic.com route is the single allowlisted
                     # host (a bottle may not redeclare it). Attack 1
@@ -133,7 +133,7 @@ class TestSandboxEscape(unittest.TestCase):
                     # keeps the host-key preflight from ssh-keyscanning
                     # `unreachable.invalid` (which fails with no DNS);
                     # the key is never used since the push is rejected.
-                    "git-gate": {"repos": {
+                    "git_gate": {"repos": {
                         "throwaway": {
                             "url": "ssh://git@unreachable.invalid:22/throwaway.git",
                             "key": {

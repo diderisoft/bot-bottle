@@ -89,13 +89,13 @@ class TestOnboard(_Dirs):
         self.assertEqual("./main", result)
         self.assertIn("  Repos   gitea.example.com/acme/app   read", said)
         self.assertEqual({"extends": "basic",
-                          "git-gate": {"forges": {"gitea.example.com": {"kind": "gitea"}},
+                          "git_gate": {"forges": {"gitea.example.com": {"kind": "gitea"}},
                                        "repos": ["gitea.example.com/acme/app"]}}, self.written())
 
     def test_w_makes_it_writable(self) -> None:
         self.run_onboard("ssh://git@10.0.0.1:30009/acme/app.git", ["w", ""])
         self.assertEqual(["gitea.example.com/acme/app:write"],
-                         self.written()["git-gate"]["repos"])  # type: ignore[index]
+                         self.written()["git_gate"]["repos"])  # type: ignore[index]
 
     def test_skip_writes_nothing(self) -> None:
         result, _ = self.run_onboard("ssh://git@10.0.0.1:30009/acme/app.git", ["s"])
@@ -118,7 +118,7 @@ class TestOnboard(_Dirs):
                     say=lambda _l: None, connect=connect)
         self.assertEqual({"forges": {"git.other.org": {"kind": "gitea",
                                                         "ssh": "ssh://git@git.other.org:2222"}},
-                          "repos": ["git.other.org/acme/app"]}, self.written()["git-gate"])
+                          "repos": ["git.other.org/acme/app"]}, self.written()["git_gate"])
 
     def test_declining_to_connect_drafts_basic(self) -> None:
         result, said = self.run_onboard("https://github.com/acme/app", ["n", "w", ""])

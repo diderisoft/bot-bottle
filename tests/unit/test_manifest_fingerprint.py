@@ -17,7 +17,7 @@ egress:
   routes:
     - host: example.com
     - host: api.example.com
-git-gate:
+git_gate:
   repos:
     app:
       url: "ssh://git@h/acme/app.git"
@@ -29,7 +29,7 @@ git-gate:
 """
 # The same bottle, every key, route and repo in another order.
 REORDERED = """---
-git-gate:
+git_gate:
   repos:
     lib:
       url: "ssh://git@h/acme/lib.git"

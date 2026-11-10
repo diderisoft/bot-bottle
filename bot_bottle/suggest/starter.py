@@ -44,7 +44,7 @@ Rules:
   `extends` chain. List `basic` in `bottles` when the task needs what it
   allows.
 - Bias toward too little access; leave out anything uncertain.
-- Never propose inspect:false, never include secret values.
+- Never propose a passthrough route, never include secret values.
 - Grants only on connected forges listed in the input, named by the forge's
   host. A grant needs no bottle stacked for its forge: never stack a bottle
   just to reach a forge, since everything a stacked bottle grants (its
@@ -66,7 +66,7 @@ def architect_starter(agent_provider: dict[str, object] | None = None) -> str:
     slower on this structured prompt than the default."""
     # pylint: disable-next=import-outside-toplevel
     from ..contract.yaml_subset import serialize_yaml_subset
-    block = agent_provider or {"harness": "claude", "forward_host_credentials": True}
+    block = agent_provider or {"harness": "claude", "login": "host"}
     return f"---\n{_HEADER}{serialize_yaml_subset({'agent_provider': block})}---\n\n{_PROMPT}"
 
 

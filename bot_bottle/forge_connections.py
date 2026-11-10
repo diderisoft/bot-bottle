@@ -98,8 +98,8 @@ class ForgeConnection:
             return self.users[0]
         raise ForgeConnectionError(
             f"{self.host} has {len(self.users)} users connected and none is the default; "
-            f"pick one for the agent (`forge_users: {{{self.host}: <user>}}`) or connect "
-            f"one again with `--default`")
+            f"pick one for the agent (`identity: {{ accounts: {{{self.host}: <user>}} }}`) "
+            f"or connect one again with `--default`")
 
     def snapshot(self, user: ForgeUser) -> dict[str, str]:
         """What trusting a bottle that uses this forge records: where pushes go,

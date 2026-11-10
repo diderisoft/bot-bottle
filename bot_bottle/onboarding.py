@@ -58,7 +58,7 @@ class Draft:
         if not (self.origin and self.forge):
             return {"extends": "basic"}
         return {"extends": "basic",
-                "git-gate": {"forges": {self.forge.key: dict(self.forge.description)},
+                "git_gate": {"forges": {self.forge.key: dict(self.forge.description)},
                              "repos": [self.grant()]}}
 
     def lines(self) -> list[str]:

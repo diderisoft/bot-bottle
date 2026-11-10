@@ -54,7 +54,7 @@ POLICY = """routes:
 # A host bottle describing the forge this run's grants are on; the host's
 # connection to it (`forges.md`) is what grants use (ADR 0019).
 GITEA = """---
-git-gate:
+git_gate:
   forges:
     gitea.example.com:
       kind: gitea
@@ -249,7 +249,7 @@ class TestRunningBottle(TestAgentManifest):
                          current["changes"])
         self.assertEqual(["keyed.example.com"], [u["what"] for u in current["unkept"]])
         # Granted on the gitea bottle's forge: a grant, the forge with it.
-        git = current["data"]["git-gate"]
+        git = current["data"]["git_gate"]
         self.assertEqual("gitea.example.com/o/app", git["repos"]["app"])
         self.assertIn("gitea.example.com", git["forges"])
         self.assertNotIn("docs.example.com", current["base"])
@@ -271,7 +271,7 @@ class TestRunningBottle(TestAgentManifest):
         with mock.patch("bot_bottle.control.hostctl.repo_grants.find_forge",
                         return_value=forge):
             current = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
-        git = current["data"]["git-gate"]
+        git = current["data"]["git_gate"]
         self.assertEqual("gitea.example.com/o/app:write", git["repos"]["app"])
         # Described, never its token (ADR 0019).
         self.assertEqual({"kind": "gitea"}, git["forges"]["gitea.example.com"])
@@ -377,7 +377,7 @@ class TestRunningBottle(TestAgentManifest):
             manifest_view.save_manifest("s1", shown["digest"], keys=["repo:app"])
             after = manifest_view.current_manifest("s1", manifest.bottle, LIVE_POLICY)
         self.assertEqual(["egress:docs.example.com"], [c["key"] for c in after["changes"]])
-        self.assertIn("app", run_manifest.latest("s1")[1]["git-gate"]["repos"])  # type: ignore[index]
+        self.assertIn("app", run_manifest.latest("s1")[1]["git_gate"]["repos"])  # type: ignore[index]
 
     def test_a_grant_without_its_grant_string_cant_be_kept(self) -> None:
         # pylint: disable=import-outside-toplevel

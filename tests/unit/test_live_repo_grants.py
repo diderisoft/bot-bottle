@@ -302,7 +302,7 @@ class TestFindForge(_Root):
         self.enterContext(connected(CONN))
         (self.root / "agents").mkdir()
         (self.root / "agents" / "codex.md").write_text(
-            "---\nforge_users:\n  gitea.example.com: codex\n---\n")
+            "---\nidentity:\n  accounts:\n    gitea.example.com: codex\n---\n")
         project = mock.patch("bot_bottle.approvals.session_project", return_value=None)
         project.start()
         self.addCleanup(project.stop)
@@ -365,28 +365,28 @@ class TestGrantRepo(_Root):
 class TestKeepGrant(_Root):
     def test_into_a_host_bottle_as_a_version(self) -> None:
         path = self.bottles / "pi.md"
-        path.write_text("---\nextends: basic\ngit-gate:\n  repos:\n"
+        path.write_text("---\nextends: basic\ngit_gate:\n  repos:\n"
                         "    - gitea.example.com/acme/app\n---\n\nMine.\n")
         keep_grant(KeepTarget(path, None), "gitea.example.com/acme/app:write",
                    forge={"kind": "gitea"})
         keep_grant(KeepTarget(path, None), "gitea.example.com/acme/lib", forge={"kind": "x"})
         fm, body = parse_frontmatter(path.read_text())
         self.assertEqual(["gitea.example.com/acme/app:write", "gitea.example.com/acme/lib"],
-                         fm["git-gate"]["repos"])  # type: ignore[index]
+                         fm["git_gate"]["repos"])  # type: ignore[index]
         # The forge's description comes with the grant, once; nothing to extend.
         self.assertEqual({"gitea.example.com": {"kind": "gitea"}},
-                         fm["git-gate"]["forges"])  # type: ignore[index]
+                         fm["git_gate"]["forges"])  # type: ignore[index]
         self.assertEqual("basic", fm["extends"])
         self.assertEqual("Mine.", body.strip())
 
     def test_the_mapping_form_gains_a_named_grant(self) -> None:
         path = self.bottles / "pi.md"
-        path.write_text("---\ngit-gate:\n  repos:\n    site: gitea.example.com/acme/web\n---\n")
+        path.write_text("---\ngit_gate:\n  repos:\n    site: gitea.example.com/acme/web\n---\n")
         keep_grant(KeepTarget(path, None), "gitea.example.com/acme/app")
         fm, _ = parse_frontmatter(path.read_text())
         self.assertEqual({"site": "gitea.example.com/acme/web",
                           "app": "gitea.example.com/acme/app"},
-                         fm["git-gate"]["repos"])  # type: ignore[index]
+                         fm["git_gate"]["repos"])  # type: ignore[index]
         self.assertNotIn("extends", fm)
 
     def test_a_new_project_bottle_is_trusted(self) -> None:

@@ -110,8 +110,8 @@ class TestMerge(_Dirs):
         self.assertEqual([{"methods": ["GET"]}, {"methods": ["POST"]}],
                          routes["api.example.com"]["allow"])
         self.assertIn("api.linear.app", routes)
-        self.assertEqual(["gitea.example.com/acme/app:write"], out["git-gate"]["repos"])
-        self.assertIn("gitea.example.com", out["git-gate"]["forges"])
+        self.assertEqual(["gitea.example.com/acme/app:write"], out["git_gate"]["repos"])
+        self.assertIn("gitea.example.com", out["git_gate"]["forges"])
         self.assertEqual({"REGION": "secret:REGION"}, out["env"])
         self.assertEqual("basic", out["extends"])
 

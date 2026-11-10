@@ -42,7 +42,7 @@ def fixture_with_git_dict() -> dict[str, Any]:
     return {
         "bottles": {
             "dev": {
-                "git-gate": {
+                "git_gate": {
                     "repos": {
                         "bot-bottle": {
                             "url": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",

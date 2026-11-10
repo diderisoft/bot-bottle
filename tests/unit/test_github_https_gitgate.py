@@ -94,7 +94,7 @@ class TestTransport(unittest.TestCase):
         self.assertNotIn("transport", ManifestForge(
             name="g", kind="github", url="u", ssh="s", token_secret="T").key(True))
         with self.assertRaisesRegex(ManifestError, "the host's connection now"):
-            forges_raw("b", {"git-gate": {"forges": {"github.com": {
+            forges_raw("b", {"git_gate": {"forges": {"github.com": {
                 "kind": "github", "transport": "deploy-key"}}}})
 
     def test_document_round_trips_the_transport(self) -> None:

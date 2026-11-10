@@ -147,8 +147,8 @@ class TestAdditionsBottle(_Library):
         self.assertNotIn("extends", fm)
         self.assertEqual({"gitea.dideric.is": {"kind": "gitea",
                                                "ssh": "ssh://git@gitea.dideric.is:30009"}},
-                         fm["git-gate"]["forges"])
-        self.assertEqual([GRANT], fm["git-gate"]["repos"])
+                         fm["git_gate"]["forges"])
+        self.assertEqual([GRANT], fm["git_gate"]["repos"])
 
     def test_without_grants_it_stays_additions_only(self) -> None:
         from bot_bottle.suggest.validate import proposal_to_frontmatter

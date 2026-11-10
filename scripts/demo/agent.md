@@ -1,13 +1,10 @@
 ---
 # Demo agent — installed to $HOME/.bot-bottle/agents/demo.md by
 # scripts/demo-setup.sh, removed by scripts/demo-teardown.sh.
-name: demo
-description: Runs the four egress/git probes recorded in docs/demo.gif.
-model: sonnet
-bottle: demo
+# Pick its bottle at launch: `bot-bottle start demo --bottle demo`.
 agent_provider:
   harness: claude
-  auth_token: BOT_BOTTLE_CLAUDE_OAUTH_TOKEN
+  login: { oauth_token: secret:BOT_BOTTLE_CLAUDE_OAUTH_TOKEN }
 skills: []
 ---
 

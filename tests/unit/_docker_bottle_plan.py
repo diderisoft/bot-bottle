@@ -39,7 +39,7 @@ def _manifest(*, supervise: bool, with_git: bool, with_egress: bool) -> Manifest
     if supervise:
         bottle["supervise"] = True
     if with_git:
-        bottle["git-gate"] = {"repos": {
+        bottle["git_gate"] = {"repos": {
             "upstream": {
                 "url": "ssh://git@example.com:22/x/y.git",
                 "key": {"provider": "static", "path": "/etc/hostname"},

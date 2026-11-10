@@ -80,38 +80,39 @@ class TestAgentProviderValidation(unittest.TestCase):
 
     def test_dockerfile_not_string(self) -> None:
         with self.assertRaises(ManifestError):
-            ManifestAgentProvider.from_dict("b", {"dockerfile": 5})
+            ManifestAgentProvider.from_dict("b", {"dockerfile_path": 5})
 
     def test_auth_token_unknown_template(self) -> None:
         with self.assertRaises(ManifestError):
-            ManifestAgentProvider.from_dict("b", {"auth_token": "x", "harness": "weird"})
+            ManifestAgentProvider.from_dict("b", {"login": {"oauth_token": "secret:x"}, "harness": "weird"})
 
     def test_auth_token_non_claude_template(self) -> None:
         with self.assertRaises(ManifestError):
-            ManifestAgentProvider.from_dict("b", {"auth_token": "x", "harness": "codex"})
+            ManifestAgentProvider.from_dict("b", {"login": {"oauth_token": "secret:x"}, "harness": "codex"})
 
     def test_forward_creds_unknown_template(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict(
-                "b", {"forward_host_credentials": True, "harness": "weird"}
+                "b", {"login": "host", "harness": "weird"}
             )
 
     def test_forward_creds_pi_template_rejected(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict(
-                "b", {"forward_host_credentials": True, "harness": "pi"}
+                "b", {"login": "host", "harness": "pi"}
             )
 
     def test_forward_creds_claude_allowed(self) -> None:
         p = ManifestAgentProvider.from_dict(
-            "b", {"forward_host_credentials": True, "harness": "claude"}
+            "b", {"login": "host", "harness": "claude"}
         )
         self.assertTrue(p.forward_host_credentials)
 
     def test_forward_creds_and_auth_token_rejected(self) -> None:
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict(
-                "b", {"forward_host_credentials": True, "auth_token": "T", "harness": "claude"}
+                "b", {"login": {"oauth_token": "secret:T", "api_key": "secret:K"},
+                      "harness": "claude"}
             )
 
     def test_image_overlay_parses(self) -> None:
@@ -175,7 +176,7 @@ class TestAgentProviderValidation(unittest.TestCase):
         with self.assertRaises(ManifestError):
             ManifestAgentProvider.from_dict("b", {
                 "harness": "claude",
-                "dockerfile": "agent.Dockerfile",
+                "dockerfile_path": "agent.Dockerfile",
                 "overlay": {"apt": ["jq"]},
             })
 
@@ -222,7 +223,7 @@ class TestAgentProviderValidation(unittest.TestCase):
     def test_builds_custom_image_follows_dockerfile(self) -> None:
         self.assertFalse(ManifestAgentProvider.from_dict("b", {}).builds_custom_image)
         self.assertTrue(ManifestAgentProvider.from_dict(
-            "b", {"dockerfile": "agent/Dockerfile"}).builds_custom_image)
+            "b", {"dockerfile_path": "agent/Dockerfile"}).builds_custom_image)
 
     def test_overlay_rejected_for_custom_template(self) -> None:
         with self.assertRaises(ManifestError):
@@ -230,7 +231,8 @@ class TestAgentProviderValidation(unittest.TestCase):
                 "b", {"harness": "my-agent", "overlay": {"apt": ["jq"]}})
 
     def test_valid_claude_auth_token(self) -> None:
-        p = ManifestAgentProvider.from_dict("b", {"harness": "claude", "auth_token": "T"})
+        p = ManifestAgentProvider.from_dict("b", {"harness": "claude",
+                                                  "login": {"oauth_token": "secret:T"}})
         self.assertEqual("T", p.auth_token)
 
 
@@ -324,12 +326,13 @@ class TestAgentValidation(unittest.TestCase):
         with self.assertRaises(ManifestError):
             ManifestAgent.from_dict("a", {"prompt": 5})
 
-    def test_git_gate_repos_rejected_at_agent_level(self) -> None:
-        with self.assertRaises(ManifestError):
-            ManifestAgent.from_dict("a", {"git-gate": {"repos": {}}})
+    def test_git_gate_rejected_at_agent_level(self) -> None:
+        for key in ("git_gate", "git-gate"):
+            with self.subTest(key=key), self.assertRaises(ManifestError):
+                ManifestAgent.from_dict("a", {key: {"repos": {}}})
 
-    def test_git_gate_empty_is_allowed(self) -> None:
-        agent = ManifestAgent.from_dict("a", {"git-gate": {}})
+    def test_identity_empty_is_allowed(self) -> None:
+        agent = ManifestAgent.from_dict("a", {"identity": {}})
         self.assertTrue(agent.git_user.is_empty())
 
 
@@ -341,7 +344,7 @@ class TestAgentValidation(unittest.TestCase):
 class TestEagerIndexLookups(unittest.TestCase):
     def _idx(self) -> ManifestIndex:
         return _idx({
-            "bottles": {"b": {"git-gate": {"user": {"name": "Bot", "email": "b@x"}}}},
+            "bottles": {"b": {"git_gate": {"user": {"name": "Bot", "email": "b@x"}}}},
             "agents": {"a": {}},
         })
 

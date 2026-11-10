@@ -1,11 +1,8 @@
 ---
-name: researcher
-description: Investigates questions and writes well-cited research notes.
-model: opus
 # Forward the host's own Codex login instead of a stored token.
 agent_provider:
   harness: codex
-  forward_host_credentials: true
+  login: host
 ---
 
 You are a research assistant. Read widely, summarise concisely, and

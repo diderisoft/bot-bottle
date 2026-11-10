@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # A chain that exercises what the examples don't: a forge with a grant, a
 # credential route, detectors, headers, regex paths, audit and a git identity.
 PARENT = """---
-git-gate:
+git_gate:
   user:
     name: bot
     email: bot@example.com
@@ -62,7 +62,7 @@ CHILD = """---
 extends: parent
 env:
   LANG: C.UTF-8
-git-gate:
+git_gate:
   repos:
     - gitea.example.com/acme/app:write
 nested_containers: true
@@ -101,7 +101,7 @@ class TestRoundTrip(unittest.TestCase):
         doc = bottle_document(resolve_bottles(raws)["child"])
         self.assertNotIn("extends", doc)
         # A repo granted on the chain's forge stays a grant, the forge with it.
-        git: Any = doc["git-gate"]
+        git: Any = doc["git_gate"]
         self.assertEqual("gitea.example.com/acme/app:write", git["repos"]["app"])
         # Described: never the token or user, which are the host's.
         self.assertEqual({"kind": "gitea", "ssh": "ssh://git@gitea.example.com:2222"},
@@ -115,7 +115,7 @@ class TestRoundTrip(unittest.TestCase):
             "    other:\n      url: ssh://git@elsewhere.example/o/r.git\n"
             "      key: {provider: static, path: /keys/r}\n"))[0]}
         self.round_trip(raws, "child")
-        git: Any = bottle_document(resolve_bottles(raws)["child"])["git-gate"]
+        git: Any = bottle_document(resolve_bottles(raws)["child"])["git_gate"]
         self.assertEqual("gitea.example.com/acme/app", git["repos"]["app"])
         self.assertEqual("ssh://git@elsewhere.example/o/r.git", git["repos"]["other"]["url"])
 

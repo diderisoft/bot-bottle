@@ -76,7 +76,7 @@ def fetch_host_key(host: str, port: str) -> str:
 
 
 def add_host_key_to_frontmatter(file_text: str, repo_name: str, host_key: str) -> str:
-    """`file_text` with `host_key` set on `git-gate.repos.<repo_name>`.
+    """`file_text` with `host_key` set on `git_gate.repos.<repo_name>`.
     Unchanged when there's no frontmatter, no such entry, an existing key, or a
     parse failure."""
     try:
@@ -84,7 +84,7 @@ def add_host_key_to_frontmatter(file_text: str, repo_name: str, host_key: str) -
     except YamlSubsetError:
         return file_text
 
-    git_gate = fm.get("git-gate")
+    git_gate = fm.get("git_gate")
     if not isinstance(git_gate, dict):
         return file_text
     repos = git_gate.get("repos")
@@ -111,7 +111,7 @@ def find_repo_bottle_file(bottles_dir: Path, repo_name: str) -> Path | None:
             fm, _ = parse_frontmatter(text)
         except (OSError, UnicodeDecodeError, YamlSubsetError):
             continue
-        git_gate = fm.get("git-gate")
+        git_gate = fm.get("git_gate")
         if not isinstance(git_gate, dict):
             continue
         repos = git_gate.get("repos")
@@ -206,7 +206,7 @@ def preflight_host_keys(
         names = ", ".join(repr(e.Name) for e in missing)
         die(
             f"git-gate: no host_key configured for repo(s) {names}. "
-            f"Add host_key to each bottle git-gate.repos entry, or run "
+            f"Add host_key to each bottle git_gate.repos entry, or run "
             f"interactively once to have it fetched and saved automatically."
         )
 
@@ -216,7 +216,7 @@ def preflight_host_keys(
     for entry in missing:
         host = entry.UpstreamHost
         port = entry.UpstreamPort
-        label = f"git-gate.repos[{entry.Name!r}]"
+        label = f"git_gate.repos[{entry.Name!r}]"
 
         info(f"{label}: no host_key configured; fetching from {host}:{port}")
         try:

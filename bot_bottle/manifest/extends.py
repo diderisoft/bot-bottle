@@ -11,7 +11,7 @@ from .forges import (
     resolve_forge, strip_chain_keys,
 )
 from .git import ManifestGitUser, parse_git_gate_config
-from .util import ManifestError, as_json_object
+from .util import ManifestError, OldFormError, as_json_object
 
 
 # Per bottle: its chain's forge descriptions, and the forges its chain's
@@ -133,7 +133,7 @@ def _with_chain(name: str, raw: dict[str, object], parent_names: list[str],
                 chain_cache: ChainCache) -> dict[str, object]:
     """`raw` with its repo grants expanded through the host's connections to
     their forges, checked against the descriptions of its chain (parents
-    merged, then its own on top), and `git-gate.forges` removed; records the
+    merged, then its own on top), and `git_gate.forges` removed; records the
     chain's for its children."""
     credentials_raw(name, raw)  # refused: a forge's token is the host's
     forges: dict[str, object] = {}
@@ -173,6 +173,8 @@ def _resolve_one_bottle(
         chain = " -> ".join(seen + (name,))
         raise ManifestError(f"bottle '{name}' is in an extends cycle: {chain}")
     raw = raws[name]
+    if "git-gate" in raw:
+        raise OldFormError(f"bottle '{name}'", "`git-gate` is now `git_gate`")
     parent_name_raw = raw.get("extends")
     # `extends:` matters only here.
     child_raw = {k: v for k, v in raw.items() if k != "extends"}
@@ -319,8 +321,8 @@ def _merge_bottles(
     # A child that declares repos parses with the merged set from
     # `_resolve_repos_raw`.
     if _child_declares_git_gate_repos(child_raw):
-        git_raw = as_json_object(child_raw.get("git-gate", {}), "child git-gate")
-        child_raw = {**child_raw, "git-gate": {**git_raw, "repos": merged_repos_raw}}
+        git_raw = as_json_object(child_raw.get("git_gate", {}), "child git_gate")
+        child_raw = {**child_raw, "git_gate": {**git_raw, "repos": merged_repos_raw}}
 
     # Parse the child's fields, validated as for a leaf bottle.
     child = ManifestBottle.from_dict(name, child_raw)
@@ -328,7 +330,7 @@ def _merge_bottles(
     # env: child wins.
     merged_env = {**parent.env, **child.env}
 
-    # git-gate.user: per field, child wins when non-empty.
+    # git_gate.user: per field, child wins when non-empty.
     merged_git_user = ManifestGitUser(
         name=child.git_user.name or parent.git_user.name,
         email=child.git_user.email or parent.git_user.email,
@@ -390,8 +392,8 @@ def _resolve_repos_raw(
     names = list(parent_repos) + [n for n in child_repos if n not in parent_repos]
     return {
         name: {
-            **as_json_object(parent_repos.get(name, {}), "parent git-gate repo"),
-            **as_json_object(child_repos.get(name, {}), "child git-gate repo"),
+            **as_json_object(parent_repos.get(name, {}), "parent git_gate repo"),
+            **as_json_object(child_repos.get(name, {}), "child git_gate repo"),
         }
         for name in names
     }
@@ -401,15 +403,15 @@ def _declared_repos_raw(child_raw: dict[str, object]) -> dict[str, object]:
     """The child's declared repos as raw dicts, or {}."""
     if not _child_declares_git_gate_repos(child_raw):
         return {}
-    git_raw = as_json_object(child_raw.get("git-gate", {}), "child git-gate")
-    return as_json_object(git_raw.get("repos", {}), "child git-gate.repos")
+    git_raw = as_json_object(child_raw.get("git_gate", {}), "child git_gate")
+    return as_json_object(git_raw.get("repos", {}), "child git_gate.repos")
 
 
 def _child_declares_git_gate_repos(child_raw: dict[str, object]) -> bool:
-    git_raw = child_raw.get("git-gate")
+    git_raw = child_raw.get("git_gate")
     if git_raw is None:
         return False
-    git_obj = as_json_object(git_raw, "child git-gate")
+    git_obj = as_json_object(git_raw, "child git_gate")
     return "repos" in git_obj
 
 

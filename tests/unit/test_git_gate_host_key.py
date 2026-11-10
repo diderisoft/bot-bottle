@@ -161,7 +161,7 @@ class TestPromptTty(unittest.TestCase):
 class TestAddHostKeyToFrontmatter(unittest.TestCase):
     _FILE = """\
 ---
-git-gate:
+git_gate:
   repos:
     myrepo:
       url: ssh://git@host/org/repo.git
@@ -191,7 +191,7 @@ git-gate:
     def test_preserves_other_repos(self) -> None:
         text = """\
 ---
-git-gate:
+git_gate:
   repos:
     first:
       url: ssh://git@host/org/first.git
@@ -227,7 +227,7 @@ git-gate:
         self.assertEqual(text, result)
 
     def test_no_change_when_no_closing_delimiter(self) -> None:
-        text = "---\ngit-gate:\n  repos:\n    myrepo:\n      url: x\n"
+        text = "---\ngit_gate:\n  repos:\n    myrepo:\n      url: x\n"
         result = add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
         self.assertEqual(text, result)
 
@@ -237,12 +237,12 @@ git-gate:
         self.assertEqual(text, result)
 
     def test_no_change_when_repos_missing(self) -> None:
-        text = "---\ngit-gate:\n  foo: bar\n---\n"
+        text = "---\ngit_gate:\n  foo: bar\n---\n"
         result = add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
         self.assertEqual(text, result)
 
     def test_no_change_when_repo_entry_not_a_dict(self) -> None:
-        text = "---\ngit-gate:\n  repos:\n    - item\n---\n"
+        text = "---\ngit_gate:\n  repos:\n    - item\n---\n"
         result = add_host_key_to_frontmatter(text, "myrepo", "ssh-ed25519 AAAA")
         self.assertEqual(text, result)
 
@@ -262,7 +262,7 @@ class TestFindAndUpdateBottleFile(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             content = """\
 ---
-git-gate:
+git_gate:
   repos:
     myrepo:
       url: ssh://git@host/org/repo.git
@@ -281,7 +281,7 @@ git-gate:
         with tempfile.TemporaryDirectory() as d:
             content = """\
 ---
-git-gate:
+git_gate:
   repos:
     other:
       url: ssh://git@host/org/other.git
@@ -298,7 +298,7 @@ git-gate:
         with tempfile.TemporaryDirectory() as d:
             content = """\
 ---
-git-gate:
+git_gate:
   repos:
     myrepo:
       url: ssh://git@host/org/repo.git
@@ -327,7 +327,7 @@ git-gate:
 
     def test_skips_file_with_non_dict_repos(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            self._write_bottle(d, "bad", "---\ngit-gate:\n  repos:\n    - item\n---\n")
+            self._write_bottle(d, "bad", "---\ngit_gate:\n  repos:\n    - item\n---\n")
             result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
             self.assertFalse(result)
 
@@ -355,7 +355,7 @@ git-gate:
         # raises OSError — e.g. file removed or permissions changed.
         content = """\
 ---
-git-gate:
+git_gate:
   repos:
     myrepo:
       url: ssh://git@host/org/repo.git
@@ -379,7 +379,7 @@ git-gate:
         # find_and_update_bottle_file must continue rather than write.
         content = """\
 ---
-git-gate:
+git_gate:
   repos:
     myrepo:
       url: ssh://git@host/org/repo.git
@@ -407,7 +407,7 @@ git-gate:
 class TestFindRepoBottleFile(unittest.TestCase):
     _CONTENT = """\
 ---
-git-gate:
+git_gate:
   repos:
     myrepo:
       url: ssh://git@host/org/repo.git
@@ -451,12 +451,12 @@ git-gate:
 
     def test_skips_file_with_non_dict_git_gate(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "dev.md").write_text("---\ngit-gate:\n  - item\n---\n")
+            (Path(d) / "dev.md").write_text("---\ngit_gate:\n  - item\n---\n")
             self.assertIsNone(find_repo_bottle_file(Path(d), "myrepo"))
 
     def test_skips_file_with_non_dict_repos(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "dev.md").write_text("---\ngit-gate:\n  repos:\n    - item\n---\n")
+            (Path(d) / "dev.md").write_text("---\ngit_gate:\n  repos:\n    - item\n---\n")
             self.assertIsNone(find_repo_bottle_file(Path(d), "myrepo"))
 
     def test_save_prompt_includes_filename(self) -> None:
@@ -468,7 +468,7 @@ git-gate:
             bottles_dir.mkdir()
             bottle_file = bottles_dir / "dev.md"
             bottle_file.write_text(
-                "---\ngit-gate:\n  repos:\n    myrepo:\n"
+                "---\ngit_gate:\n  repos:\n    myrepo:\n"
                 "      url: ssh://git@gitea.example.com:30009/org/myrepo.git\n"
                 "      key:\n        provider: static\n        path: /dev/null\n---\n",
                 encoding="utf-8",
@@ -499,7 +499,7 @@ def _manifest_with_git(host_key: str = "") -> Manifest:
     return ManifestIndex.from_json_obj({
         "bottles": {
             "dev": {
-                "git-gate": {
+                "git_gate": {
                     "repos": {
                         "myrepo": {
                             "url": "ssh://git@gitea.example.com:30009/org/myrepo.git",
@@ -559,7 +559,7 @@ class TestPreflightHostKeys(unittest.TestCase):
             bottles_dir.mkdir()
             bottle_file = bottles_dir / "dev.md"
             bottle_file.write_text(
-                "---\ngit-gate:\n  repos:\n    myrepo:\n"
+                "---\ngit_gate:\n  repos:\n    myrepo:\n"
                 "      url: ssh://git@gitea.example.com:30009/org/myrepo.git\n"
                 "      key:\n        provider: static\n        path: /dev/null\n---\n",
                 encoding="utf-8",
@@ -588,7 +588,7 @@ class TestPreflightHostKeys(unittest.TestCase):
             bottles_dir.mkdir()
             bottle_file = bottles_dir / "dev.md"
             bottle_file.write_text(
-                "---\ngit-gate:\n  repos:\n    myrepo:\n"
+                "---\ngit_gate:\n  repos:\n    myrepo:\n"
                 "      url: ssh://git@gitea.example.com:30009/org/myrepo.git\n"
                 "      key:\n        provider: static\n        path: /dev/null\n---\n",
                 encoding="utf-8",
@@ -651,7 +651,7 @@ class TestPreflightHostKeys(unittest.TestCase):
             bottles_dir.mkdir()
             bottle_file = bottles_dir / "dev.md"
             bottle_file.write_text(
-                "---\ngit-gate:\n  repos:\n    myrepo:\n"
+                "---\ngit_gate:\n  repos:\n    myrepo:\n"
                 "      url: ssh://git@gitea.example.com:30009/org/myrepo.git\n"
                 "      key:\n        provider: static\n        path: /dev/null\n---\n",
                 encoding="utf-8",
@@ -680,7 +680,7 @@ class TestPreflightHostKeys(unittest.TestCase):
         manifest = ManifestIndex.from_json_obj({
             "bottles": {
                 "dev": {
-                    "git-gate": {
+                    "git_gate": {
                         "repos": {
                             "alpha": {
                                 "url": "ssh://git@host/org/alpha.git",

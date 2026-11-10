@@ -106,7 +106,7 @@ def proposal_to_frontmatter(proposal: Proposal) -> dict[str, Any]:
         forges = _forge_descriptions(repos, proposal.forges)
         if forges:
             git["forges"] = forges
-        fm["git-gate"] = git
+        fm["git_gate"] = git
 
     routes = _egress_routes(add)
     if routes:

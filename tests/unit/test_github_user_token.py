@@ -281,7 +281,7 @@ class TestManifest(unittest.TestCase):
         self.assertEqual(("github", "bot-bottle", "GITHUB_COM_TOKEN"),
                          (resolved.kind, resolved.app, resolved.token_secret))
         with self.assertRaisesRegex(ManifestError, "the host's connection now"):
-            forges_raw("b", {"git-gate": {"forges": {"github.com": {
+            forges_raw("b", {"git_gate": {"forges": {"github.com": {
                 "kind": "github", "app": "x"}}}})
 
 

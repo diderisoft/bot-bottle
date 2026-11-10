@@ -244,7 +244,7 @@ def _elements(name: str, fm: dict[str, Any], body: str, seen: set[str]) -> _File
         methods = route_methods(route)
         if methods:  # a blocked route takes an inherited host away
             out.hosts.append(_Host(str(route["host"]), methods, _secret(route)))
-    git = fm.get("git-gate") if isinstance(fm.get("git-gate"), dict) else {}
+    git = fm.get("git_gate") if isinstance(fm.get("git_gate"), dict) else {}
     repos = git.get("repos") if isinstance(git, dict) else None
     items = (list(repos.items()) if isinstance(repos, dict)
              else [("", g) for g in repos] if isinstance(repos, list) else [])

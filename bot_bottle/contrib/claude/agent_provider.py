@@ -126,7 +126,7 @@ class ClaudeAgentProvider(AgentProvider):
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
         del detection
         return starter_agent(GENERAL_PROMPT,
-                             {"harness": "claude", "forward_host_credentials": True})
+                             {"harness": "claude", "login": "host"})
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
         # The base installs from a committed lock; a bump has none, so npm

@@ -40,7 +40,7 @@ egress:
 Base.
 """
 GITEA = """---
-git-gate:
+git_gate:
   forges:
     gitea.example.com:
       kind: gitea
@@ -149,12 +149,12 @@ class TestTransfer(_Chain):
                                    "other", move=True)
         other = self.fm("other")
         self.assertEqual(["new.example.com"], [r["host"] for r in other["egress"]["routes"]])
-        self.assertEqual({"app": "gitea.example.com/acme/app"}, other["git-gate"]["repos"])
+        self.assertEqual({"app": "gitea.example.com/acme/app"}, other["git_gate"]["repos"])
         # The grant's forge is described with it; nothing to extend.
         self.assertNotIn("extends", other)
         self.assertEqual({"gitea.example.com": {"kind": "gitea",
                                                 "ssh": "ssh://git@gitea.example.com:2222"}},
-                         other["git-gate"]["forges"])
+                         other["git_gate"]["forges"])
 
     def test_refusals(self) -> None:
         for keys, target, why in (([], "other", "pick the elements"),

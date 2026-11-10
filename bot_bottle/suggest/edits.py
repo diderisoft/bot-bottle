@@ -140,7 +140,7 @@ def edited_frontmatter(fm: dict[str, Any], edit: ProposalEdit,
                 kept[at] = merge_route(kept[at], route)
         egress["routes"] = kept
         out["egress"] = egress
-    git = added.get("git-gate") or {}
+    git = added.get("git_gate") or {}
     described = git.get("forges") or {}
     for grant in git.get("repos") or []:
         out = with_grant(out, grant, forge=described.get(grant_forge(grant)))

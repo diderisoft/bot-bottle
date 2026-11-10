@@ -13,14 +13,16 @@ _FILENAME_RX = re.compile(r"^[a-z][a-z0-9-]*$")
 # Accepted frontmatter keys; anything else dies with a "did you mean".
 BOTTLE_KEYS = frozenset(
     {
-        "env", "extends", "agent_provider", "git-gate", "egress",
+        # `git-gate` is the old spelling, refused with the new one.
+        "env", "extends", "agent_provider", "git_gate", "git-gate", "egress",
         "supervise", "nested_containers", "preserve_container", "audit", "credentials",
         "resources",
     }
 )
 AGENT_KEYS_REQUIRED: frozenset[str] = frozenset()
-AGENT_KEYS_OPTIONAL = frozenset({"skills", "git-gate", "remote", "agent_provider",
-                                 "forge_users"})
+# `git-gate` and `forge_users` are old forms, refused with their new one.
+AGENT_KEYS_OPTIONAL = frozenset({"skills", "identity", "remote", "agent_provider",
+                                 "git-gate", "forge_users"})
 
 # The bottle a launch runs in when none is selected. Agents don't name a
 # bottle (ADR 0011), so an agent file travels without its host's bottles.

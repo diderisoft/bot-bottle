@@ -468,7 +468,7 @@ class TestPrepare(unittest.TestCase):
 
     def test_prepare_skips_known_hosts_file_when_key_missing(self):
         manifest = ManifestIndex.from_json_obj({
-            "bottles": {"dev": {"git-gate": {"repos": {
+            "bottles": {"dev": {"git_gate": {"repos": {
                 "foo": {
                     "url": "ssh://git@github.com/didericis/foo.git",
                     "key": {"provider": "static", "path": "/dev/null"},
@@ -495,7 +495,7 @@ class TestDynamicKeyProvisioning(unittest.TestCase):
                        users=(ForgeUser("bot", "GITEA_TOKEN", default=True),))
         with connected(conn):
             return ManifestIndex.from_json_obj({
-                "bottles": {"dev": {"git-gate": {
+                "bottles": {"dev": {"git_gate": {
                     "repos": ["gitea.example.com/org/repo:write"]}}},
                 "agents": {"demo": {"skills": [], "prompt": ""}},
             })

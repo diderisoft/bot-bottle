@@ -1,18 +1,15 @@
 ---
-name: implementer
-description: Implements features against PRDs in this repo.
-model: opus
 agent_provider:
   harness: claude
-  # auth_token names the host env var holding the Claude OAuth token. The
+  # login names the host secret holding the Claude OAuth token. The
   # provider adds its own api.anthropic.com egress route that injects this
   # token as the Bearer header; the agent only ever sees a placeholder
   # CLAUDE_CODE_OAUTH_TOKEN. A bottle may not declare a route for that host.
-  auth_token: BOT_BOTTLE_CLAUDE_OAUTH_TOKEN
+  login: { oauth_token: secret:BOT_BOTTLE_CLAUDE_OAUTH_TOKEN }
 skills:
   - init-prd
-git-gate:
-  user:
+identity:
+  git:
     name: implementer-bot
     email: eric+implementer@dideric.is
 ---

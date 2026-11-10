@@ -136,7 +136,7 @@ class TestLoadArchitect(unittest.TestCase):
         path = self.root / "agents" / "bottle-architect.md"
         path.parent.mkdir(parents=True)
         for agent, harness in (("---\nagent_provider:\n  harness: codex\n"
-                                "  forward_host_credentials: true\n---\n\nx\n", "codex"),
+                                "  login: host\n---\n\nx\n", "codex"),
                                ("---\nagent_provider:\n  harness: pi\n  settings:\n"
                                 "    models: [some/model]\n---\n\nx\n", "pi"),
                                ("---\nname: no provider block\n---\n\nx\n", "claude")):

@@ -1,14 +1,14 @@
-"""Unit: agent-level git-gate.user overlay + provenance (PRD 0027, PRD 0047).
+"""Unit: an agent's `identity.git` overlay + provenance (PRD 0027, PRD 0047).
 
-An agent file may declare `git-gate.user` (name/email). At
+An agent file may declare `identity.git` (name/email). At
 `ManifestIndex.load_for_agent()` it overlays the referenced bottle's
-`git-gate.user` per-field, agent-wins-on-non-empty. `git-gate.repos` is
-rejected on agents. `Manifest.git_identity_summary()` reports the
-effective identity with per-field `(agent)`/`(bottle)` provenance.
+`git_gate.user` per-field, agent-wins-on-non-empty. An agent has no
+`git_gate` (or old `git-gate`) key. `Manifest.git_identity_summary()`
+reports the effective identity with per-field `(agent)`/`(bottle)`
+provenance.
 
 The `from_json_obj` path drives `Agent.from_dict` + the overlay in
-load_for_agent; a temp-dir case locks the md loader (the `_AGENT_KEYS`
-allow + the `git-gate` threading into `agent_dict`)."""
+load_for_agent; a temp-dir case locks the md loader."""
 
 from __future__ import annotations
 
@@ -35,10 +35,10 @@ def _manifest(*, bottle_user=None, agent_git=None) -> Manifest:  # type: ignore
     """Build an index with one agent 'impl' and load it, returning a Manifest."""
     bottle: dict = {}  # type: ignore
     if bottle_user is not None:
-        bottle = {"git-gate": {"user": bottle_user}}
+        bottle = {"git_gate": {"user": bottle_user}}
     agent: dict = {"skills": [], "prompt": ""}  # type: ignore
     if agent_git is not None:
-        agent["git-gate"] = agent_git
+        agent["identity"] = {("git" if k == "user" else k): v for k, v in agent_git.items()}
     return ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle},
         "agents": {"impl": agent},
@@ -49,10 +49,10 @@ def _index(*, bottle_user: dict[str, object] | None = None, agent_git: dict[str,
     """Build an index with one agent 'impl' without loading it."""
     bottle: dict = {}  # type: ignore
     if bottle_user is not None:
-        bottle = {"git-gate": {"user": bottle_user}}
+        bottle = {"git_gate": {"user": bottle_user}}
     agent: dict = {"skills": [], "prompt": ""}  # type: ignore
     if agent_git is not None:
-        agent["git-gate"] = agent_git
+        agent["identity"] = {("git" if k == "user" else k): v for k, v in agent_git.items()}
     return ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle},
         "agents": {"impl": agent},
@@ -117,11 +117,11 @@ class TestAgentGitUserOverlay(unittest.TestCase):
             "bottles": {"dev": {
                 "env": {"FOO": "bar"},
                 "supervise": True,
-                "git-gate": {"user": {"name": "B"}},
+                "git_gate": {"user": {"name": "B"}},
             }},
             "agents": {"impl": {
                 "skills": [], "prompt": "",
-                "git-gate": {"user": {"name": "a"}},
+                "identity": {"git": {"name": "a"}},
             }},
         })
         b = idx.load_for_agent("impl", ("dev",)).bottle
@@ -131,20 +131,35 @@ class TestAgentGitUserOverlay(unittest.TestCase):
 
 
 class TestAgentGitUserRejections(unittest.TestCase):
-    def test_agent_repos_dies_bottle_only(self):
+    def test_agent_repos_dies(self):
         msg = _error_message(_manifest, agent_git={
             "repos": {"r": {"url": "ssh://git@x/y.git", "key": {"provider": "static", "path": "/dev/null"}}},
         })
-        self.assertIn("git-gate.repos", msg)
-        self.assertIn("bottle-only", msg)
+        self.assertIn("identity has unknown key 'repos'", msg)
 
-    def test_agent_unknown_git_subkey_dies(self):
+    def test_agent_unknown_identity_subkey_dies(self):
         msg = _error_message(_manifest, agent_git={"nope": {}})
-        self.assertIn("not allowed at the agent level", msg)
+        self.assertIn("identity has unknown key 'nope'", msg)
 
     def test_agent_git_user_both_empty_dies(self):
         msg = _error_message(_manifest, agent_git={"user": {"name": "", "email": ""}})
-        self.assertIn("neither name nor email", msg)
+        self.assertIn("agent 'impl' identity.git is set but neither name nor email", msg)
+
+    def test_the_old_keys_are_refused_naming_the_new_form(self):
+        for key, value, new in (("git-gate", {"user": {"name": "a"}},
+                                 "`git-gate.user` is now `identity.git`"),
+                                ("forge_users", {"gitea.example.com": "bot"},
+                                 "`forge_users` is now `identity.accounts`")):
+            with self.subTest(key=key):
+                msg = _error_message(ManifestIndex.from_json_obj, {
+                    "bottles": {"dev": {}},
+                    "agents": {"impl": {"skills": [], "prompt": "", key: value}}})
+                self.assertEqual(f"agent 'impl': {new} (see docs/reference/manifest.md)", msg)
+
+    def test_accounts_name_the_user_per_forge(self):
+        agent = ManifestIndex.from_json_obj({"bottles": {}, "agents": {"impl": {
+            "identity": {"accounts": {"gitea.example.com": "bot"}}}}}).agents["impl"]
+        self.assertEqual((("gitea.example.com", "bot"),), agent.forge_users)
 
 
 class TestGitIdentitySummary(unittest.TestCase):
@@ -179,7 +194,7 @@ class TestGitIdentitySummary(unittest.TestCase):
 
 _BOTTLE_DEV = """
     ---
-    git-gate:
+    git_gate:
       user:
         name: bottle-name
         email: bottle@example.com
@@ -190,8 +205,8 @@ _BOTTLE_DEV = """
 
 _AGENT_WITH_GIT = """
     ---
-    git-gate:
-      user:
+    identity:
+      git:
         name: agent-name
     ---
 
@@ -212,9 +227,8 @@ _AGENT_WITH_REPOS = """
 
 
 class TestAgentGitUserMdLoader(unittest.TestCase):
-    """Locks the md path: `git-gate` is an accepted agent key and threads
-    into the parsed Agent (not rejected as an unknown frontmatter key),
-    and agent `git-gate.repos` dies through the same loader."""
+    """Locks the md path: `identity` threads into the parsed Agent, and an
+    agent's old `git-gate` dies through the same loader."""
 
     def setUp(self) -> None:
         self.home = Path(tempfile.mkdtemp(prefix="cb-home-"))
@@ -246,8 +260,8 @@ class TestAgentGitUserMdLoader(unittest.TestCase):
         )
 
     def test_md_agent_repos_fails_at_preflight(self):
-        """git-gate.repos on an agent is an error; resolve() still succeeds
-        so other agents remain accessible, but load_for_agent raises."""
+        """git-gate on an agent is an error; resolve() still succeeds so
+        other agents remain accessible, but load_for_agent raises."""
         self._write("bottles/dev.md", _BOTTLE_DEV)
         self._write("agents/impl.md", _AGENT_WITH_REPOS)
         from bot_bottle.manifest import ManifestError
@@ -255,9 +269,7 @@ class TestAgentGitUserMdLoader(unittest.TestCase):
         self.assertIn("impl", names.all_agent_names)
         with self.assertRaises(ManifestError) as ctx:
             names.load_for_agent("impl", ("dev",))
-        msg = str(ctx.exception)
-        self.assertIn("git-gate.repos", msg)
-        self.assertIn("bottle-only", msg)
+        self.assertIn("`git-gate.user` is now `identity.git`", str(ctx.exception))
 
 
 if __name__ == "__main__":

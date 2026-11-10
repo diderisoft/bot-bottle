@@ -75,25 +75,25 @@ class TestManifestTrailers(unittest.TestCase):
     def test_parses_each_mode(self):
         for mode in ("require", "warn", "off"):
             with self.subTest(mode=mode):
-                b = _bottles({"dev": {"git-gate": {"trailers": mode}}}).bottles["dev"]
+                b = _bottles({"dev": {"git_gate": {"trailers": mode}}}).bottles["dev"]
                 self.assertEqual(mode, b.git_trailers)
 
     def test_rejects_unknown_mode(self):
         with self.assertRaises(ManifestError):
-            _bottles({"dev": {"git-gate": {"trailers": "maybe"}}})
+            _bottles({"dev": {"git_gate": {"trailers": "maybe"}}})
 
     def test_extends_child_wins_else_inherits(self):
         idx = _bottles({
-            "base": {"git-gate": {"trailers": "warn"}},
+            "base": {"git_gate": {"trailers": "warn"}},
             "dev": {"extends": "base"},
-            "strict": {"extends": "base", "git-gate": {"trailers": "require"}},
+            "strict": {"extends": "base", "git_gate": {"trailers": "require"}},
         })
         self.assertEqual("warn", idx.bottles["dev"].git_trailers)
         self.assertEqual("require", idx.bottles["strict"].git_trailers)
 
     def test_document_round_trip(self):
-        b = _bottles({"dev": {"git-gate": {"trailers": "off"}}}).bottles["dev"]
-        self.assertEqual({"trailers": "off"}, bottle_document(b)["git-gate"])
+        b = _bottles({"dev": {"git_gate": {"trailers": "off"}}}).bottles["dev"]
+        self.assertEqual({"trailers": "off"}, bottle_document(b)["git_gate"])
 
 
 class TestLaunchWiring(unittest.TestCase):
@@ -123,7 +123,7 @@ class TestLaunchWiring(unittest.TestCase):
     def test_prepare_saves_settings_for_reprovision(self):
         with tempfile.TemporaryDirectory() as tmp:
             stage = Path(tmp)
-            bottle = _bottles({"dev": {"git-gate": {"trailers": "warn"}}}).bottles["dev"]
+            bottle = _bottles({"dev": {"git_gate": {"trailers": "warn"}}}).bottles["dev"]
             plan = GitGate().prepare(bottle, "demo-abc12", stage, trailer=VALUE)
             self.assertEqual((VALUE, "warn"), (plan.trailer, plan.trailer_mode))
             self.assertEqual((VALUE, "warn"), load_trailer_settings(stage))

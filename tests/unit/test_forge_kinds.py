@@ -200,7 +200,7 @@ class TestGitHubForge(unittest.TestCase):
     def test_bottle_grants_github_repos(self) -> None:
         (self.tmp / "dev.md").write_text(
             "---\nextends: [basic]\n"
-            "git-gate:\n  repos: [github.com/diderisoft/bot-bottle-design:write]\n---\n")
+            "git_gate:\n  repos: [github.com/diderisoft/bot-bottle-design:write]\n---\n")
         bottle, _ = load_bottle_chain("dev", [(self.tmp, False), (BUILTIN_BOTTLES_DIR, False)])
         entry = bottle.git[0]
         self.assertEqual("ssh://git@github.com/diderisoft/bot-bottle-design.git", entry.Upstream)
@@ -218,7 +218,7 @@ class TestGitHubForge(unittest.TestCase):
     def test_a_user_can_opt_into_deploy_keys(self) -> None:
         (self.tmp / "dev.md").write_text(
             "---\nextends: [basic]\n"
-            "git-gate:\n  repos: [github.com/diderisoft/bot-bottle-design:write]\n---\n")
+            "git_gate:\n  repos: [github.com/diderisoft/bot-bottle-design:write]\n---\n")
         bottle, _ = load_bottle_chain("dev", [(self.tmp, False), (BUILTIN_BOTTLES_DIR, False)])
         self.assertEqual("deploy-key", bottle.git[0].Key.transport)
         (ref,) = deploy_key_refs(bottle)

@@ -1,4 +1,4 @@
-"""Unit: Bottle git-gate.user manifest parsing + validation (issue #86, PRD 0047)."""
+"""Unit: Bottle git_gate.user manifest parsing + validation (issue #86, PRD 0047)."""
 
 import unittest
 
@@ -16,7 +16,7 @@ def _error_message(callable_, *args, **kwargs) -> str:  # type: ignore
 
 def _manifest(git_user):  # type: ignore
     return {
-        "bottles": {"dev": {"git-gate": {"user": git_user}}},
+        "bottles": {"dev": {"git_gate": {"user": git_user}}},
         "agents": {"demo": {"skills": [], "prompt": ""}},
     }
 
@@ -75,13 +75,13 @@ class TestGitUserParsing(unittest.TestCase):
         msg = _error_message(
             ManifestIndex.from_json_obj, _manifest({"name": 42}),
         )
-        self.assertIn("git-gate.user.name must be a string", msg)
+        self.assertIn("git_gate.user.name must be a string", msg)
 
     def test_non_string_email_dies(self):
         msg = _error_message(
             ManifestIndex.from_json_obj, _manifest({"email": ["x@y.z"]}),
         )
-        self.assertIn("git-gate.user.email must be a string", msg)
+        self.assertIn("git_gate.user.email must be a string", msg)
 
     def test_legacy_top_level_git_user_dies(self):
         msg = _error_message(
@@ -92,7 +92,7 @@ class TestGitUserParsing(unittest.TestCase):
             },
         )
         self.assertIn("git_user", msg)
-        self.assertIn("git-gate.user", msg)
+        self.assertIn("git_gate.user", msg)
 
 
 class TestGitUserDirect(unittest.TestCase):

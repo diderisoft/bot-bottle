@@ -1,4 +1,4 @@
-"""Unit: `create-repo` (PRD 0120): a bottle's `git-gate.actions.create`, the
+"""Unit: `create-repo` (PRD 0120): a bottle's `git_gate.actions.create`, the
 forge API calls, and the host creating and granting the repo, with a card or
 without one."""
 
@@ -33,7 +33,7 @@ APP_FORGE = ManifestForge(name="github.com", kind="github", url="https://github.
 
 
 def _bottle(*create: str) -> ManifestBottle:
-    return ManifestBottle.from_dict("b", {"git-gate": {"actions": {"create": list(create)}}})
+    return ManifestBottle.from_dict("b", {"git_gate": {"actions": {"create": list(create)}}})
 
 
 class TestActions(unittest.TestCase):
@@ -44,13 +44,13 @@ class TestActions(unittest.TestCase):
         self.assertEqual(("github.com/octo/*", "gitea.example.com/acme/tool"), merged.git_create)
         self.assertIn("create  repos at github.com/octo/*", grants(merged))
         self.assertEqual({"create": ["github.com/octo/*", "gitea.example.com/acme/tool"]},
-                         bottle_document(merged)["git-gate"]["actions"])  # type: ignore[index]
+                         bottle_document(merged)["git_gate"]["actions"])  # type: ignore[index]
 
     def test_bad_entries(self) -> None:
         for bad in ({"create": ["github.com/*/*"]}, {"create": ["octo/*"]},
                     {"create": "github.com/octo/*"}, {"delete": []}):
             with self.subTest(bad=bad), self.assertRaises(ManifestError):
-                ManifestBottle.from_dict("b", {"git-gate": {"actions": bad}})
+                ManifestBottle.from_dict("b", {"git_gate": {"actions": bad}})
 
     def test_create_allowed(self) -> None:
         patterns = ("github.com/octo/*", "gitea.example.com/acme/tool")

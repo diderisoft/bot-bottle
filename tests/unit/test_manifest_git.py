@@ -1,4 +1,4 @@
-"""Unit: git-gate.repos manifest parsing + validation (PRD 0047)."""
+"""Unit: git_gate.repos manifest parsing + validation (PRD 0047)."""
 
 import unittest
 from dataclasses import replace
@@ -11,7 +11,7 @@ from tests.unit._forges import GITEA, connected
 
 def _manifest(repos: dict) -> dict:  # type: ignore
     return {
-        "bottles": {"dev": {"git-gate": {"repos": repos}}},
+        "bottles": {"dev": {"git_gate": {"repos": repos}}},
         "agents": {"demo": {"skills": [], "prompt": ""}},
     }
 
@@ -157,7 +157,7 @@ class TestGitEntryCrossValidation(unittest.TestCase):
         # Repo names come from dict keys; two distinct keys always produce
         # two distinct entries (uniqueness is guaranteed at the YAML/dict level).
         m = ManifestIndex.from_json_obj({
-            "bottles": {"dev": {"git-gate": {"repos": {
+            "bottles": {"dev": {"git_gate": {"repos": {
                 "foo": {
                     "url": "ssh://git@a.example/x.git",
                     "key": {"provider": "static", "path": "/dev/null"},
@@ -243,12 +243,12 @@ class TestGitEntryCrossValidation(unittest.TestCase):
             })
         except ManifestError as e:
             msg = str(e)
-        self.assertIn("git-gate", msg)
-        self.assertIn("git-gate.repos", msg)
+        self.assertIn("git_gate", msg)
+        self.assertIn("git_gate.repos", msg)
 
 
 class TestStaticKey(unittest.TestCase):
-    """git-gate.repos entries with key.provider = "static"."""
+    """git_gate.repos entries with key.provider = "static"."""
 
     def test_static_key_minimal(self):
         m = ManifestIndex.from_json_obj(_manifest({
@@ -348,7 +348,7 @@ class TestForgeMintedKeysAreGrants(unittest.TestCase):
                        users=(ForgeUser("bot", "GITEA_TOKEN", default=True),))
         with connected(conn):
             m = ManifestIndex.from_json_obj({
-                "bottles": {"dev": {"git-gate": {
+                "bottles": {"dev": {"git_gate": {
                     "repos": ["gitea.example.com/org/app:write"]}}},
                 "agents": {"demo": {"skills": [], "prompt": ""}},
             })
@@ -404,13 +404,13 @@ class TestEmptyGitGateField(unittest.TestCase):
     def test_git_gate_object_type_required(self):
         with self.assertRaises(ManifestError):
             ManifestIndex.from_json_obj({
-                "bottles": {"dev": {"git-gate": "not-a-dict"}},
+                "bottles": {"dev": {"git_gate": "not-a-dict"}},
                 "agents": {"demo": {"skills": [], "prompt": ""}},
             })
 
     def test_empty_repos_yields_empty_tuple(self):
         m = ManifestIndex.from_json_obj({
-            "bottles": {"dev": {"git-gate": {"repos": {}}}},
+            "bottles": {"dev": {"git_gate": {"repos": {}}}},
             "agents": {"demo": {"skills": [], "prompt": ""}},
         })
         self.assertEqual((), m.bottles["dev"].git)

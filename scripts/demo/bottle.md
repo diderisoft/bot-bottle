@@ -30,7 +30,7 @@ egress:
     - host: example.org
       dlp: { on_match: block }
 
-git-gate:
+git_gate:
   user:
     name: demo
     email: demo@example.invalid

@@ -122,7 +122,7 @@ class CodexAgentProvider(AgentProvider):
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
         del detection
         return starter_agent(GENERAL_PROMPT,
-                             {"harness": "codex", "forward_host_credentials": True})
+                             {"harness": "codex", "login": "host"})
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
         # As the Dockerfile's standalone install. A bump's checksum list comes

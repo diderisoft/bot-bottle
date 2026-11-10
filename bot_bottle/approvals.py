@@ -214,14 +214,14 @@ def keep_grant(target: KeepTarget, grant: str, *,
 def with_grant(frontmatter: dict[str, object], grant: str, *,
                forge: dict[str, object] | None = None) -> dict[str, object]:
     """`frontmatter` with the repo grant added (replacing one for the same repo
-    name) and `forge`, the description of its forge, under `git-gate.forges`
+    name) and `forge`, the description of its forge, under `git_gate.forges`
     unless one is there.
     Supports `<alias>=<grant>` form; the alias becomes the key in the bottle
     file and the repos section is upgraded to a mapping when needed."""
     # pylint: disable-next=import-outside-toplevel
     from .manifest.forges import parse_grant, split_grant_alias
     fm = dict(frontmatter)
-    git = fm.get("git-gate")
+    git = fm.get("git_gate")
     git = dict(git) if isinstance(git, dict) else {}
     alias, bare_grant = split_grant_alias(grant)
     repo = alias or parse_grant(bare_grant, "the grant")[2]
@@ -255,7 +255,7 @@ def with_grant(frontmatter: dict[str, object], grant: str, *,
         forges = dict(forges) if isinstance(forges, dict) else {}
         forges.setdefault(host, dict(forge))
         git["forges"] = forges
-    fm["git-gate"] = git
+    fm["git_gate"] = git
     return fm
 
 

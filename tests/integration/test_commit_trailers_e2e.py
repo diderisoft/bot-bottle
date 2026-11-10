@@ -387,7 +387,7 @@ class TestCommitTrailersEndToEnd(unittest.TestCase):
     def _launch(cls) -> None:
         assert cls._upstream is not None
         manifest = ManifestIndex.from_json_obj({
-            "bottles": {"dev": {"git-gate": {
+            "bottles": {"dev": {"git_gate": {
                 "user": {"name": "agent-bot", "email": "agent@example.com"},
                 "repos": {"app": {
                     "url": cls._upstream.url,

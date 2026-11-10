@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 def find_forge(session: str, forge_name: str) -> "ManifestForge | None":
     """The forge `forge_name` as this host connected it, as the user the
-    session's agent pushes as there (its `forge_users`, else the forge's
+    session's agent pushes as there (its `identity.accounts`, else the forge's
     default); None when the host hasn't connected it."""
     # pylint: disable=import-outside-toplevel
     from ...approvals import session_project

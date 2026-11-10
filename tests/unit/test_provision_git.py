@@ -62,7 +62,7 @@ class TestGitGateGitconfigRender(unittest.TestCase):
         # In the new format the dict key is the repo name, not a host
         # alias, so there is only one insteadOf rule — for the IP URL.
         m = ManifestIndex.from_json_obj({
-            "bottles": {"dev": {"git-gate": {"repos": {
+            "bottles": {"dev": {"git_gate": {"repos": {
                 "bot-bottle": {
                     "url": "ssh://git@192.0.2.10:30009/didericis/bot-bottle.git",
                     "key": {"provider": "static", "path": "/dev/null"},
@@ -104,7 +104,7 @@ class TestGitconfigRenderRejectsNewlineInUpstream(unittest.TestCase):
 
     def test_newline_in_upstream_raises(self):
         m = ManifestIndex.from_json_obj({
-            "bottles": {"dev": {"git-gate": {"repos": {
+            "bottles": {"dev": {"git_gate": {"repos": {
                 "evil": {
                     "url": "ssh://git@github.com/owner/\nfake-key = injected\nrepo.git",
                     "key": {"provider": "static", "path": "/dev/null"},

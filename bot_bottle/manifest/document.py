@@ -133,7 +133,7 @@ def grant_for(entry: ManifestGitEntry, forges: tuple[ManifestForge, ...] | list[
 
 
 def forge_document(forge: ManifestForge) -> dict[str, object]:
-    """One forge as a bottle file describes it (`git-gate.forges`): never its
+    """One forge as a bottle file describes it (`git_gate.forges`): never its
     token or user, which are the host's (ADR 0019)."""
     # pylint: disable-next=import-outside-toplevel
     from .forges import described_forge
@@ -168,7 +168,7 @@ def bottle_document(bottle: ManifestBottle) -> dict[str, object]:
     if credentials:
         doc["credentials"] = credentials
     if git:
-        doc["git-gate"] = git
+        doc["git_gate"] = git
     egress: dict[str, object] = {}
     if bottle.egress.routes or bottle.egress.Blocked:
         egress["routes"] = [route_document(r) for r in bottle.egress.routes] + [

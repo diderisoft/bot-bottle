@@ -54,9 +54,9 @@ def _merge_git_user(
 def _manifest_with_merged_git_user(
     agent: "ManifestAgent", raw_bottle: "ManifestBottle"
 ) -> "Manifest":
-    """The single-agent Manifest, with the agent's git-gate.user overlaid on
+    """The single-agent Manifest, with the agent's git_gate.user overlaid on
     the bottle's per field, and its repos on the forges it names in
-    `forge_users` pushing as those users."""
+    `identity.accounts` pushing as those users."""
     merged = _merge_git_user(agent.git_user, raw_bottle.git_user)
     bottle = (
         raw_bottle if merged == raw_bottle.git_user
@@ -91,7 +91,7 @@ def _load_checked(
     forge_users: "Mapping[str, str] | None" = None,
 ) -> "tuple[ManifestBottle, tuple[BottleSource, ...]]":
     """Load one bottle chain; one with project files must be trusted, as
-    the accounts the agent's `forge_users` picks, so trusting it covers whom
+    the accounts the agent's `identity.accounts` picks, so trusting it covers whom
     its grants push as."""
     bottle, sources = load_bottle_chain(name, dirs)
     checked = with_forge_users(bottle, dict(forge_users)) if forge_users else bottle
@@ -116,7 +116,7 @@ def _resolve_effective_bottle_lazy(
 
 @dataclass(frozen=True)
 class Manifest:
-    """One agent and its effective bottle, the agent's git-gate.user already
+    """One agent and its effective bottle, the agent's git_gate.user already
     overlaid. What backends use."""
 
     agent: ManifestAgent
@@ -252,7 +252,7 @@ class ManifestIndex:
     ) -> "Manifest":
         """Parse the agent and its bottle into a single-agent Manifest.
         `bottle_names` are merged in order (0 is the base); empty means
-        `DEFAULT_BOTTLE`. The bottle has the agent's git-gate.user
+        `DEFAULT_BOTTLE`. The bottle has the agent's git_gate.user
         overlaid. Raises ManifestError for an unknown or invalid agent or
         bottle."""
         effective_bottle_names: tuple[str, ...] = bottle_names or ()

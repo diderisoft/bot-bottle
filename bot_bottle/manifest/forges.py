@@ -1,9 +1,9 @@
 """Forges and one-line repo grants (PRD 0103, ADR 0019).
 
-A bottle describes a forge under `git-gate.forges`, keyed by its host, and
+A bottle describes a forge under `git_gate.forges`, keyed by its host, and
 grants repos on it in a line:
 
-  git-gate:
+  git_gate:
     forges:
       gitea.example.com:                 # optional: what to connect elsewhere
         kind: gitea
@@ -98,19 +98,19 @@ def credentials_raw(bottle_name: str, raw: dict[str, object]) -> dict[str, objec
 
 
 def forges_raw(bottle_name: str, raw: dict[str, object]) -> dict[str, object]:
-    """The bottle's own `git-gate.forges` descriptions, checked; {} when none."""
-    git = raw.get("git-gate")
+    """The bottle's own `git_gate.forges` descriptions, checked; {} when none."""
+    git = raw.get("git_gate")
     if git is None:
         return {}
-    git_d = as_json_object(git, f"bottle '{bottle_name}' git-gate")
+    git_d = as_json_object(git, f"bottle '{bottle_name}' git_gate")
     if "forges" not in git_d:
         return {}
-    forges = as_json_object(git_d["forges"], f"bottle '{bottle_name}' git-gate.forges")
+    forges = as_json_object(git_d["forges"], f"bottle '{bottle_name}' git_gate.forges")
     for name, entry in forges.items():
-        where = f"bottle '{bottle_name}' git-gate.forges[{name!r}]"
+        where = f"bottle '{bottle_name}' git_gate.forges[{name!r}]"
         if "@" in name:
             raise ManifestError(f"{where}: a forge is named by its host; the account an "
-                                f"agent pushes as is its `forge_users`, not the bottle's")
+                                f"agent pushes as is its `identity.accounts`, not the bottle's")
         if not _FORGE_NAME_RE.match(name):
             raise ManifestError(f"{where}: a forge is named by its host")
         d = as_json_object(entry, where)
@@ -171,7 +171,7 @@ def resolve_forge(name: str, described: object, bottle_name: str,
     saying how to connect it, when the host hasn't."""
     # pylint: disable-next=import-outside-toplevel
     from .. import forge_connections
-    d = as_json_object(described, f"git-gate.forges[{name!r}]") if described else {}
+    d = as_json_object(described, f"git_gate.forges[{name!r}]") if described else {}
     where = f"bottle '{bottle_name}'" if bottle_name else "this launch"
     conn = forge_connections.get(name)
     if conn is None:
@@ -194,7 +194,7 @@ def resolve_forge(name: str, described: object, bottle_name: str,
 
 def with_forge_users(bottle: Any, users: dict[str, str]) -> Any:
     """`bottle` (a ManifestBottle) with its forges, and the repos granted on
-    them, as the users `users` names by host (an agent's `forge_users`)."""
+    them, as the users `users` names by host (an agent's `identity.accounts`)."""
     forges = list(bottle.forges)
     git = list(bottle.git)
     for i, forge in enumerate(forges):
@@ -258,18 +258,18 @@ def parse_grant(grant: str, where: str) -> tuple[str, str, str, bool]:
 
 
 def normalize_repos(bottle_name: str, raw: dict[str, object]) -> dict[str, object]:
-    """`raw` with `git-gate.repos` as a mapping: a list of grants becomes
+    """`raw` with `git_gate.repos` as a mapping: a list of grants becomes
     `{<repo>: <grant>}`. Other forms are left for the long-form parser."""
-    git = raw.get("git-gate")
+    git = raw.get("git_gate")
     if git is None:
         return raw
-    git_d = as_json_object(git, f"bottle '{bottle_name}' git-gate")
+    git_d = as_json_object(git, f"bottle '{bottle_name}' git_gate")
     repos = git_d.get("repos")
     if not isinstance(repos, list):
         return raw
     mapped: dict[str, object] = {}
     for i, item in enumerate(repos):
-        where = f"bottle '{bottle_name}' git-gate.repos[{i}]"
+        where = f"bottle '{bottle_name}' git_gate.repos[{i}]"
         if not isinstance(item, str):
             raise ManifestError(f"{where}: a list of repos holds grants, "
                                 f"<forge>/<owner>/<repo>[:write]")
@@ -278,7 +278,7 @@ def normalize_repos(bottle_name: str, raw: dict[str, object]) -> dict[str, objec
             raise ManifestError(f"{where}: two grants for repos named {repo!r}; use the "
                                 f"mapping form to name them apart")
         mapped[repo] = item
-    return {**raw, "git-gate": {**git_d, "repos": mapped}}
+    return {**raw, "git_gate": {**git_d, "repos": mapped}}
 
 
 def refuse_minted_long_form(bottle_name: str, repos: dict[str, object]) -> None:
@@ -291,24 +291,24 @@ def refuse_minted_long_form(bottle_name: str, repos: dict[str, object]) -> None:
 
 def granted_forges(bottle_name: str, raw: dict[str, object]) -> set[str]:
     """The forges the bottle's own grants name."""
-    git = normalize_repos(bottle_name, raw).get("git-gate")
+    git = normalize_repos(bottle_name, raw).get("git_gate")
     repos = git.get("repos") if isinstance(git, dict) else None
     if not isinstance(repos, dict):
         return set()
-    return {parse_grant(split_grant_alias(v)[1], f"bottle '{bottle_name}' git-gate.repos")[0]
+    return {parse_grant(split_grant_alias(v)[1], f"bottle '{bottle_name}' git_gate.repos")[0]
             for v in repos.values() if isinstance(v, str)}
 
 
 def expand_grants(bottle_name: str, raw: dict[str, object],
                   forges: dict[str, object]) -> dict[str, object]:
-    """`raw` with each grant in `git-gate.repos` replaced by its long form,
+    """`raw` with each grant in `git_gate.repos` replaced by its long form,
     through the host's connection to its forge; `forges` are the descriptions
     of the bottle's whole chain."""
     raw = normalize_repos(bottle_name, raw)
-    git = raw.get("git-gate")
+    git = raw.get("git_gate")
     if git is None:
         return raw
-    git_d = as_json_object(git, f"bottle '{bottle_name}' git-gate")
+    git_d = as_json_object(git, f"bottle '{bottle_name}' git_gate")
     repos = git_d.get("repos")
     if isinstance(repos, dict):
         refuse_minted_long_form(bottle_name, repos)
@@ -319,27 +319,27 @@ def expand_grants(bottle_name: str, raw: dict[str, object],
         if not isinstance(entry, str):
             expanded[name] = entry
             continue
-        where = f"bottle '{bottle_name}' git-gate.repos[{name!r}]"
+        where = f"bottle '{bottle_name}' git_gate.repos[{name!r}]"
         forge_name, owner, repo, writable = parse_grant(entry, where)
         if "@" in forge_name:
             raise ManifestError(f"{where}: a grant names its forge by host; the account an "
-                                f"agent pushes as is its `forge_users`, not the grant's")
+                                f"agent pushes as is its `identity.accounts`, not the grant's")
         forge = resolve_forge(forge_name, forges.get(forge_name), bottle_name)
         long_form: dict[str, object] = {
             "url": f"{forge.ssh}/{owner}/{repo}.git", "key": forge.key(writable)}
         if forge.host_key:
             long_form["host_key"] = forge.host_key
         expanded[name] = long_form
-    return {**raw, "git-gate": {**git_d, "repos": expanded}}
+    return {**raw, "git_gate": {**git_d, "repos": expanded}}
 
 
 def strip_chain_keys(raw: dict[str, object]) -> dict[str, object]:
-    """`raw` without `credentials` and `git-gate.forges`, which `extends`
+    """`raw` without `credentials` and `git_gate.forges`, which `extends`
     resolves and the bottle parser doesn't read."""
     out = {k: v for k, v in raw.items() if k != "credentials"}
-    git = out.get("git-gate")
+    git = out.get("git_gate")
     if isinstance(git, dict) and "forges" in git:
-        out["git-gate"] = {k: v for k, v in git.items() if k != "forges"}
+        out["git_gate"] = {k: v for k, v in git.items() if k != "forges"}
     return out
 
 

@@ -28,7 +28,7 @@ DOCS = "docs/reference/git-gate.md#migrating-from-the-old-format"
 class OldRepo:
     """One long-form repo whose key a forge mints."""
 
-    name: str          # the gate's repo name (its key under git-gate.repos)
+    name: str          # the gate's repo name (its key under git_gate.repos)
     upstream: str      # ssh://user@host[:port]/owner/repo.git
     forge_url: str     # the forge's web/API address, scheme://host[:port]
     ssh: str           # the upstream's ssh://user@host[:port]
@@ -49,7 +49,7 @@ class OldRepo:
 
 
 def old_repos(repos: Mapping[str, object], kinds: Sequence[str]) -> list[OldRepo]:
-    """The entries of a bottle's own `git-gate.repos` (a mapping) written in
+    """The entries of a bottle's own `git_gate.repos` (a mapping) written in
     long form with a key minted by one of `kinds`."""
     out: list[OldRepo] = []
     for name, entry in repos.items():
@@ -168,7 +168,7 @@ def list_form(p: Plan, repos: Mapping[str, object]) -> bool:
 
 def hand_edit(p: Plan, repos: Mapping[str, object]) -> str:
     """The frontmatter lines to write by hand, for the repos the plan converts."""
-    lines = ["git-gate:", "  repos:"]
+    lines = ["git_gate:", "  repos:"]
     if list_form(p, repos):
         lines += [f"    - {g}" for g in p.grants.values()]
     else:

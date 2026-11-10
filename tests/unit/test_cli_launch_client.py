@@ -30,7 +30,7 @@ def _index(env: dict[str, str], *, egress: bool = False, forge: bool = False) ->
             "host": "api.example", "auth": {"type": "bearer", "value": "secret:TOK"},
         }]}
     if forge:
-        bottle["git-gate"] = {"repos": ["gitea.example.com/x/y"]}
+        bottle["git_gate"] = {"repos": ["gitea.example.com/x/y"]}
     conn = replace(GITEA, users=(ForgeUser("bot", "FORGE", default=True),))
     with connected(conn):
         return ManifestIndex.from_json_obj({
@@ -67,8 +67,8 @@ class TestSecrets(unittest.TestCase):
 
     def test_the_provider_token_names_are_sent_too(self) -> None:
         for provider, name in (
-            ({"harness": "claude", "auth_token": "CLAUDE_TOK"}, "CLAUDE_TOK"),
-            ({"harness": "pi", "settings": {"api_key_env": "PI_KEY"}}, "PI_KEY"),
+            ({"harness": "claude", "login": {"oauth_token": "secret:CLAUDE_TOK"}}, "CLAUDE_TOK"),
+            ({"harness": "pi", "login": {"api_key": "secret:PI_KEY"}}, "PI_KEY"),
         ):
             index = ManifestIndex.from_json_obj({
                 "bottles": {"dev": {"env": {}}},

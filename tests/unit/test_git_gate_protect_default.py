@@ -156,7 +156,7 @@ def _entry(name: str = "r") -> ManifestGitEntry:
 
 class TestManifest(unittest.TestCase):
     def _bottle(self, git_gate: dict[str, object]) -> ManifestBottle:
-        return ManifestBottle.from_dict("b", {"git-gate": git_gate})
+        return ManifestBottle.from_dict("b", {"git_gate": git_gate})
 
     def test_unset_is_none_and_parses_booleans(self) -> None:
         self.assertIsNone(self._bottle({}).git_protect_default_branch)
@@ -175,10 +175,10 @@ class TestManifest(unittest.TestCase):
 
     def test_document_round_trip(self) -> None:
         doc = bottle_document(ManifestBottle(git_protect_default_branch=False))
-        git_gate = doc["git-gate"]
+        git_gate = doc["git_gate"]
         assert isinstance(git_gate, dict)
         self.assertIs(False, git_gate["protect_default_branch"])
-        self.assertNotIn("git-gate", bottle_document(ManifestBottle()))
+        self.assertNotIn("git_gate", bottle_document(ManifestBottle()))
 
 
 class TestPlumbing(unittest.TestCase):

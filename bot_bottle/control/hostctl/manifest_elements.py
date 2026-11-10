@@ -85,7 +85,7 @@ def _file_elements(fm: dict[str, Any]) -> list[tuple[str, str, str, Any]]:
         if isinstance(route, dict) and route.get("host"):
             out.append((f"egress:{route['host']}", str(route["host"]), _route_detail(route),
                         route))
-    raw_git = fm.get("git-gate")
+    raw_git = fm.get("git_gate")
     git: dict[str, Any] = raw_git if isinstance(raw_git, dict) else {}
     repos = git.get("repos")
     if isinstance(repos, list):
@@ -230,7 +230,7 @@ def _set(fm: dict[str, Any], key: str, value: Any) -> None:
         egress["routes"] = routes
         fm["egress"] = egress
     elif kind == "repo":
-        git = dict(fm.get("git-gate") or {})
+        git = dict(fm.get("git_gate") or {})
         repos = git.get("repos")
         if isinstance(repos, list) and isinstance(value, str):
             repos = [g for g in repos if not (isinstance(g, str)
@@ -242,11 +242,11 @@ def _set(fm: dict[str, Any], key: str, value: Any) -> None:
             mapping[name] = value
             repos = mapping
         git["repos"] = repos
-        fm["git-gate"] = git
+        fm["git_gate"] = git
     elif kind == "forge":
-        git = dict(fm.get("git-gate") or {})
+        git = dict(fm.get("git_gate") or {})
         git["forges"] = {**(git.get("forges") or {}), name: value}
-        fm["git-gate"] = git
+        fm["git_gate"] = git
 
 
 def _drop(fm: dict[str, Any], key: str) -> None:
@@ -261,8 +261,8 @@ def _drop(fm: dict[str, Any], key: str) -> None:
         egress["routes"] = [r for r in egress.get("routes") or []
                             if not (isinstance(r, dict) and r.get("host") == name)]
         fm["egress"] = egress
-    elif kind in ("repo", "forge") and isinstance(fm.get("git-gate"), dict):
-        git = dict(fm["git-gate"])
+    elif kind in ("repo", "forge") and isinstance(fm.get("git_gate"), dict):
+        git = dict(fm["git_gate"])
         field = "repos" if kind == "repo" else "forges"
         held = git.get(field)
         if isinstance(held, list):
@@ -270,7 +270,7 @@ def _drop(fm: dict[str, Any], key: str) -> None:
                                                   and parse_grant(g, "a grant")[2] == name)]
         elif isinstance(held, dict):
             git[field] = {k: v for k, v in held.items() if k != name}
-        fm["git-gate"] = git
+        fm["git_gate"] = git
 
 
 def _run_value(identity: str, policy: str | None, key: str) -> Any:
@@ -304,7 +304,7 @@ def _with_forge_for(fm: dict[str, Any], grant: str) -> None:
     from ...forge_connections import get
     from ...manifest.forges import described_connection, parse_grant
     host = parse_grant(grant, "a grant")[0]
-    git = dict(fm.get("git-gate") or {})
+    git = dict(fm.get("git_gate") or {})
     forges = dict(git.get("forges") or {})
     if host in forges:
         return
@@ -313,7 +313,7 @@ def _with_forge_for(fm: dict[str, Any], grant: str) -> None:
         raise ManifestViewError(f"this host hasn't connected the forge {host}")
     forges[host] = described_connection(conn)
     git["forges"] = forges
-    fm["git-gate"] = git
+    fm["git_gate"] = git
 
 
 def transfer(identity: str, keys: list[str], target: str, *, move: bool) -> dict[str, Any]:

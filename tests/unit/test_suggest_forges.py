@@ -23,7 +23,7 @@ from tests.unit._forges import GITEA, connected
 
 DESCRIBES = """---
 extends: basic
-git-gate:
+git_gate:
   forges:
     code.example.org:
       kind: gitea
@@ -91,7 +91,7 @@ class TestValidation(unittest.TestCase):
         self.assertTrue(any("nowhere.example.net" in n for n in notes))
         self.assertEqual(described, p.forges)
         fm = proposal_to_frontmatter(p)
-        self.assertEqual({"gitea.example.com": {"kind": "gitea"}}, fm["git-gate"]["forges"])
+        self.assertEqual({"gitea.example.com": {"kind": "gitea"}}, fm["git_gate"]["forges"])
 
     def test_once_connected_it_loads_as_any_grant(self) -> None:
         p = _proposal("gitea.example.com/acme/app:write")
@@ -101,7 +101,7 @@ class TestValidation(unittest.TestCase):
             fm = proposal_to_frontmatter(again)
         self.assertEqual({}, again.forges)
         self.assertEqual(1, len(again.additions.repos))
-        self.assertEqual("gitea", fm["git-gate"]["forges"]["gitea.example.com"]["kind"])
+        self.assertEqual("gitea", fm["git_gate"]["forges"]["gitea.example.com"]["kind"])
 
     def test_the_glance_offers_to_connect_it(self) -> None:
         p = _proposal("gitea.example.com/acme/app:write")

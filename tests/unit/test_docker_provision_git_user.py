@@ -53,9 +53,9 @@ def _plan(*, git_user: dict | None = None,  # type: ignore
           stage_dir: Path | None = None) -> DockerBottlePlan:
     bottle_json: dict = {}  # type: ignore
     if git_user is not None:
-        bottle_json["git-gate"] = {"user": git_user}
+        bottle_json["git_gate"] = {"user": git_user}
     if git_repos is not None:
-        bottle_json.setdefault("git-gate", {})["repos"] = git_repos
+        bottle_json.setdefault("git_gate", {})["repos"] = git_repos
     index = ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle_json},
         "agents": {"demo": {"skills": [], "prompt": ""}},
