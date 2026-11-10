@@ -25,6 +25,9 @@ on:
       - 'requirements.gateway.*'
       - 'pyproject.toml'
       - '.github/workflows/publish-dev-images.yml'
+  # By hand, on any branch: how a change to this workflow is tried before
+  # it merges.
+  workflow_dispatch: {}
 
 permissions:
   contents: read
