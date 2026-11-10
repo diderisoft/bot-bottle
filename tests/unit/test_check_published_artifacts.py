@@ -72,6 +72,40 @@ class MatchSources(unittest.TestCase):
         self.assertEqual(1, len(problems))
         self.assertIn("bot-bottle-nope: not a known published image", problems[0])
 
+    def _reuse_into_release(self, gateway_hash: str) -> None:
+        """A 0.1.6 release that reused the 0.1.5 gateway (its URL keeps 0.1.5's
+        tag) and newly promoted claude."""
+        for name in ii.BUILD_INPUTS["bot-bottle-claude"]:
+            self.write(name, name)
+        self.write("pyproject.toml", _PYPROJECT.format(version="0.1.6", deps=""))
+        data = json.loads((self.root / "published-artifacts.json").read_text())
+        data[_IMAGE]["inputs_hash"] = gateway_hash
+        data[_IMAGE]["artifacts"]["oci_linux-arm64"]["url"] = (
+            "ghcr.io/diderisoft/bot-bottle-gateway:0.1.5-arm64")
+        data["bot-bottle-claude"] = {
+            "version": "0.1.6",
+            "inputs_hash": ii.inputs_hash("bot-bottle-claude", repo_root=self.root),
+            "protocol": 1,
+            "artifacts": {"oci_linux-arm64": {
+                "type": "oci", "platform": "linux-arm64",
+                "url": "ghcr.io/diderisoft/bot-bottle-claude:0.1.6-arm64",
+                "digest": "sha256:" + "c" * 64,
+            }},
+        }
+        self.write("published-artifacts.json", json.dumps(data))
+
+    def test_a_reused_entry_from_an_older_release_passes(self) -> None:
+        """Reuse is checked by inputs_hash and digest, not by the version a URL
+        carries."""
+        self._reuse_into_release(ii.inputs_hash(_IMAGE, repo_root=self.root))
+        self.assertEqual([], check_manifest(self.root, match_sources=True))
+
+    def test_a_reused_entry_with_a_stale_hash_fails(self) -> None:
+        self._reuse_into_release("0" * 16)
+        problems = check_manifest(self.root, match_sources=True)
+        self.assertEqual(1, len(problems))
+        self.assertIn(f"{_IMAGE}: pinned inputs_hash 0000000000000000", problems[0])
+
     def run_main(self, *argv: str) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(cpa, "REPO_ROOT", self.root), \
