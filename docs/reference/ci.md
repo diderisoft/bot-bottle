@@ -172,9 +172,11 @@ The matrix tests a published candidate. When every job passes, it releases
 that candidate.
 
 1. The candidate is published to Gitea as `0.0.0-dev-<run>`, with the rootfs
-   as Gitea generic packages.
+   as Gitea generic packages. Images unchanged since the last release are
+   [reused](#reusing-unchanged-images), not rebuilt.
 2. The tested images are promoted to a release version on GHCR. They are
    copied byte for byte through the registry API, the rootfs as OCI artifacts.
+   Reused entries are already on GHCR and are kept as they are.
 3. `scripts/check_published_artifacts.py --match-sources` checks that every
    pinned `inputs_hash` equals the release tree's.
 4. Their pins (`published-artifacts.json`) are committed to `main`, with
@@ -184,6 +186,61 @@ that candidate.
 
 `install.sh` installs the newest such tag. Leave the `version` input blank to
 take the first unpublished version at or above `pyproject.toml`'s.
+
+#### Reusing unchanged images
+
+An image is rebuilt only when its `inputs_hash` changed. The committed
+`published-artifacts.json`, the last release's pins, is the reuse source.
+
+```json
+"bot-bottle-claude": {
+  "artifacts": {
+    "oci_linux-amd64": {
+      "digest": "sha256:1248a312…",
+      "platform": "linux-amd64",
+      "type": "oci",
+      "url": "ghcr.io/diderisoft/bot-bottle-claude:0.1.8-amd64"
+    },
+    …
+  },
+  "inputs_hash": "300cb3deabf3744d",
+  "protocol": 1,
+  "version": "0.1.8"
+}
+```
+
+That entry can ship unchanged in a later release, such as 0.1.9. Its
+`version` and URLs keep naming the release that built it. An image is reused
+only when all of these hold:
+
+- its `inputs_hash` and `protocol` equal this tree's
+- it has both formats on both arches, `oci` and `ext4` on amd64 and arm64
+- its registry still serves every artifact by its pinned digest
+
+| Stage | A reused image |
+|---|---|
+| publish | Not built or uploaded. Its entry is copied byte for byte into the candidate manifest, logged as `reusing <image> from <version> (inputs <hash>)`. |
+| integration | Pulled from GHCR anonymously, as installs pull it. |
+| promote | Confirmed on GHCR by digest, then kept. Only entries outside GHCR, the newly built ones, are copied. |
+| `--match-sources` | Checked like any entry: its `inputs_hash` must equal the release tree's. |
+
+The release manifest therefore mixes versions. Promotion writes the release
+version to `released/release-version`, since no single entry carries it.
+
+##### Details: reuse flags and versions
+
+- `publish_images --reuse-from MANIFEST` names another reuse source.
+  `--no-reuse` builds every image. `--force` only replaces what a rerun
+  already published at its own dev version.
+- [`publish-images.yml`](../../.gitea/workflows/publish-images.yml) and
+  [`publish-dev-images.yml`](../../.github/workflows/publish-dev-images.yml)
+  pass `--no-reuse`. A rehearsal builds what it names, and the dev merge
+  stitches every image's per-arch tags.
+- A release that reuses every image publishes nothing at its version. Only
+  its git tag marks the version taken, so promote fetches the release tags
+  before picking the next free version.
+- The prune workflow cleans only Gitea, so reused GHCR artifacts stay. A
+  reused artifact deleted by hand is caught at publish and rebuilt.
 
 #### Details: release safety
 

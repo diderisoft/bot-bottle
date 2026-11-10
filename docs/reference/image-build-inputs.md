@@ -66,6 +66,16 @@ The four derived files are `requirements.gateway.lock`,
 supported image. It exercises the exact local Firecracker base-ID handoff and
 runs each provider CLI's version smoke test.
 
+## Inputs decide rebuilds
+
+A release rebuilds an image only when its `inputs_hash` changes
+([ci.md](ci.md#reusing-unchanged-images)). The hash covers the files
+`bot_bottle/image_inputs.py` lists per image, the `bot_bottle` slice an infra
+image bakes, and `pyproject.toml` without its version.
+
+A change that reaches an image some other way must be added to that list.
+Otherwise the release reuses the old image without it.
+
 ## Local check
 
 ```sh
