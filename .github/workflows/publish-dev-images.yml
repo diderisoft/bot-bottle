@@ -117,10 +117,8 @@ jobs:
             --version "${{ steps.version.outputs.version }}" \
             --no-ext4 \
             --use-buildx \
-            --extra-build-arg --cache-from \
-            --extra-build-arg "type=registry,ref=${cache_ref}" \
-            --extra-build-arg --cache-to \
-            --extra-build-arg "type=registry,ref=${cache_ref},mode=max" \
+            --extra-build-arg="--cache-from=type=registry,ref=${cache_ref}" \
+            --extra-build-arg="--cache-to=type=registry,ref=${cache_ref},mode=max" \
             --work-dir published
 
       - name: Upload per-arch manifest
