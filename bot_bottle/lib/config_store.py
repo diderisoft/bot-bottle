@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .db_store import PORTABLE, DbStore
@@ -12,6 +12,8 @@ from .migrations import TableMigrations
 
 
 DEFAULT_CACHED_IMAGE_STALE_WARNING_DAYS = 1
+# `audit.delivery` values, for the host default and a bottle's own.
+AUDIT_DELIVERIES = ("best_effort", "required")
 # The default for bottles that don't set `audit.delivery`.
 DEFAULT_AUDIT_DELIVERY = "best_effort"
 DEFAULT_TRANSCRIPT_RETENTION_DAYS = 30
@@ -70,6 +72,102 @@ class FirehoseSettings:
     request_bodies: bool = True
     response_bodies: bool = False
     max_body_bytes: int = 65536
+
+
+@dataclass(frozen=True)
+class HostConfig:
+    """Every host setting the CLI shows or sets, as the host controller serves
+    them (`HOST_CONFIG_PATH`)."""
+
+    audit_delivery: str = DEFAULT_AUDIT_DELIVERY
+    audit_forward: AuditForward | None = None
+    firehose: FirehoseSettings = FirehoseSettings()
+    transcript_retention_days: int = DEFAULT_TRANSCRIPT_RETENTION_DAYS
+    host_budget: HostBudget = HostBudget()
+
+    def to_json(self) -> dict[str, object]:
+        forward = self.audit_forward
+        return {
+            "audit_delivery": self.audit_delivery,
+            "audit_forward": None if forward is None else
+            {"url": forward.url, "secret": forward.secret, "format": forward.format},
+            "firehose": {"sinks": [s.to_json() for s in self.firehose.sinks],
+                         "request_bodies": self.firehose.request_bodies,
+                         "response_bodies": self.firehose.response_bodies,
+                         "max_body_bytes": self.firehose.max_body_bytes},
+            "transcript_retention_days": self.transcript_retention_days,
+            "host_budget": {"disk_gb": self.host_budget.disk_gb,
+                            "memory_gb": self.host_budget.memory_gb},
+        }
+
+    @classmethod
+    def from_json(cls, raw: object) -> "HostConfig":
+        """The settings in `raw`, the whole of `to_json()`'s shape. ValueError
+        if it isn't that shape."""
+        body = _object(raw, "config")
+        config = cls()
+        for name in body:
+            config = config.with_json(name, body[name])
+        return config
+
+    def with_json(self, name: str, value: object) -> "HostConfig":
+        """This config with setting `name` set from its JSON `value`.
+        ValueError for an unknown setting or a bad value."""
+        if name == "audit_delivery":
+            if value not in AUDIT_DELIVERIES:
+                raise ValueError(f"audit_delivery must be one of {list(AUDIT_DELIVERIES)}")
+            return replace(self, audit_delivery=str(value))
+        if name == "audit_forward":
+            return replace(self, audit_forward=None if value is None else _forward(value))
+        if name == "firehose":
+            return replace(self, firehose=_firehose(value))
+        if name == "transcript_retention_days":
+            return replace(self, transcript_retention_days=_int(value, name, minimum=1))
+        if name == "host_budget":
+            body = _object(value, name)
+            return replace(self, host_budget=HostBudget(
+                disk_gb=_int(body.get("disk_gb", 0), "disk_gb", minimum=0),
+                memory_gb=_int(body.get("memory_gb", 0), "memory_gb", minimum=0)))
+        raise ValueError(f"unknown host setting {name!r}")
+
+
+def _object(raw: object, where: str) -> dict[str, object]:
+    if not isinstance(raw, dict):
+        raise ValueError(f"{where} must be an object")
+    return {str(k): v for k, v in raw.items()}  # type: ignore[misc]
+
+
+def _int(raw: object, where: str, *, minimum: int) -> int:
+    if not isinstance(raw, int) or isinstance(raw, bool) or raw < minimum:
+        raise ValueError(f"{where} must be a whole number of at least {minimum}")
+    return raw
+
+
+def _forward(raw: object) -> AuditForward:
+    body = _object(raw, "audit_forward")
+    url, secret, fmt = body.get("url"), body.get("secret", ""), body.get("format", "native")
+    if not isinstance(url, str) or not url:
+        raise ValueError("audit_forward.url must be a URL")
+    if not isinstance(secret, str) or fmt not in ("native", "ocsf"):
+        raise ValueError("audit_forward needs a secret name and a format: native or ocsf")
+    return AuditForward(url=url, secret=secret, format=str(fmt))
+
+
+def _firehose(raw: object) -> FirehoseSettings:
+    body = _object(raw, "firehose")
+    sinks = body.get("sinks", [])
+    if not isinstance(sinks, list):
+        raise ValueError("firehose.sinks must be a list")
+    parsed = [FirehoseSink.from_json(s) for s in sinks]  # type: ignore[misc]
+    if any(s is None for s in parsed):
+        raise ValueError("each firehose sink is {type: exec, command} or {type: https, url}")
+    flags = [body.get(k, d) for k, d in (("request_bodies", True), ("response_bodies", False))]
+    if not all(isinstance(f, bool) for f in flags):
+        raise ValueError("firehose request_bodies and response_bodies must be true or false")
+    return FirehoseSettings(
+        sinks=tuple(s for s in parsed if s is not None), request_bodies=bool(flags[0]),
+        response_bodies=bool(flags[1]),
+        max_body_bytes=_int(body.get("max_body_bytes", 65536), "max_body_bytes", minimum=0))
 
 
 class ConfigStore(DbStore):
@@ -139,6 +237,22 @@ class ConfigStore(DbStore):
             """,
         ])
         super().__init__(db_path, migrations)
+
+    def host_config(self) -> HostConfig:
+        """Every setting `HostConfig` carries."""
+        return HostConfig(audit_delivery=self.audit_delivery(), audit_forward=self.audit_forward(),
+                          firehose=self.firehose(),
+                          transcript_retention_days=self.transcript_retention_days(),
+                          host_budget=self.host_budget())
+
+    def set_host_config(self, config: HostConfig) -> None:
+        """Store each of `config`'s settings."""
+        self.migrate()
+        self.set_audit_delivery(config.audit_delivery)
+        self.set_audit_forward(config.audit_forward)
+        self.set_firehose(config.firehose)
+        self.set_transcript_retention_days(config.transcript_retention_days)
+        self.set_host_budget(config.host_budget)
 
     def cached_image_stale_warning_days(self) -> int:
         if not self.db_path.is_file():
@@ -341,8 +455,10 @@ class ConfigStore(DbStore):
 
 
 __all__ = [
+    "AUDIT_DELIVERIES",
     "AuditForward",
     "HostBudget",
+    "HostConfig",
     "FirehoseSettings",
     "FirehoseSink",
     "DEFAULT_AUDIT_DELIVERY",

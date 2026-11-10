@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import stat
 import tempfile
 import threading
 import unittest
@@ -14,9 +15,10 @@ from unittest import mock
 
 from bot_bottle.contract.auth import CONTROL_PLANE, ROLE_CLI, ROLE_GATEWAY
 from bot_bottle.contract.hostctl import HOST_CONTROL, ROLE_ORCHESTRATOR, SERVICE_NAME, bearer
-from bot_bottle.control.hostctl import runner
+from bot_bottle.control.hostctl import host_db, localsock, runner
 from bot_bottle.control.hostctl.build import build_id
 from bot_bottle.control.hostctl.server import HostControlServer
+from bot_bottle.control.hostctl.sessions import SessionManager
 from bot_bottle.trust_domain import signing_key
 
 from . import use_bottle_root
@@ -87,26 +89,46 @@ class TestBuildId(unittest.TestCase):
             self.assertNotEqual(first, build_id(root))
 
 
-class TestState(unittest.TestCase):
+class TestDiscovery(unittest.TestCase):
+    """The CLI finds the daemon on its control socket, at a fixed path, and
+    asks it for its pid, port and build id. There is no state file."""
+
     def setUp(self) -> None:
-        self.addCleanup(use_bottle_root(Path(self.enterContext(tempfile.TemporaryDirectory()))))
+        # A short path: a Unix socket's must fit in 108 bytes.
+        root = Path(self.enterContext(tempfile.TemporaryDirectory(dir="/tmp", prefix="bbd.")))
+        self.addCleanup(use_bottle_root(root))
+        self.status: dict[str, object] = {}
 
-    def test_round_trip_and_clear_only_own_state(self) -> None:
-        state = runner.HostControlState(pid=123, port=4567, build_id="b")
-        runner.write_state(state)
-        self.assertEqual(state, runner.read_state())
-        runner.clear_state(999)
-        self.assertEqual(state, runner.read_state())
-        runner.clear_state(123)
+    def serve(self) -> None:
+        server = localsock.serve(runner.control_socket_path(), SessionManager({}),
+                                 lambda: dict(self.status) or None)
+        self.addCleanup(server.close)
+
+    def test_the_socket_is_at_a_fixed_path_under_the_root(self) -> None:
+        self.assertEqual(runner.state_dir() / "control.sock", runner.control_socket_path())
+        self.serve()
+        self.assertEqual(0o600, stat.S_IMODE(runner.control_socket_path().stat().st_mode))
+        self.assertEqual(0o700, stat.S_IMODE(runner.state_dir().stat().st_mode))
+
+    def test_reads_the_daemons_status(self) -> None:
+        self.serve()
+        self.status.update(pid=123, port=4567, build_id="b")
+        self.assertEqual(runner.HostControlState(pid=123, port=4567, build_id="b"),
+                         runner.read_state())
+        self.assertEqual(runner.read_state(), runner.running())
+        # Another environment's daemon, by its state dir.
+        self.assertEqual(runner.read_state(), runner.read_state(runner.state_dir()))
+
+    def test_a_daemon_still_starting_is_not_running_yet(self) -> None:
+        self.serve()
         self.assertIsNone(runner.read_state())
 
-    def test_unreadable_state_is_none(self) -> None:
-        runner.state_dir().mkdir(parents=True)
-        (runner.state_dir() / runner.STATE_FILENAME).write_text("{not json")
-        self.assertIsNone(runner.read_state())
-
-    def test_state_for_a_dead_daemon_is_not_running(self) -> None:
-        runner.write_state(runner.HostControlState(pid=1, port=1, build_id="b"))
+    def test_no_daemon_is_not_running(self) -> None:
+        self.assertIsNone(runner.running())
+        # A socket file left by a daemon that's gone.
+        self.serve()
+        self.status.update(pid=1, port=1, build_id="b")
+        runner.control_socket_path().unlink()
         self.assertIsNone(runner.running())
 
 
@@ -114,7 +136,8 @@ class TestEnsureRunning(unittest.TestCase):
     """Spawns real daemons under an isolated bot-bottle root."""
 
     def setUp(self) -> None:
-        self.addCleanup(use_bottle_root(Path(self.enterContext(tempfile.TemporaryDirectory()))))
+        root = Path(self.enterContext(tempfile.TemporaryDirectory(dir="/tmp", prefix="bbr.")))
+        self.addCleanup(use_bottle_root(root))
         self.addCleanup(runner.stop)
 
     def test_starts_reuses_restarts_on_new_code_and_stops(self) -> None:
@@ -131,6 +154,11 @@ class TestEnsureRunning(unittest.TestCase):
         self.assertIsNone(runner.running())
         self.assertIsNone(runner.read_state())
         self.assertFalse(runner.stop())
+        self.assertEqual([], list(runner.state_dir().glob("*.json")))
+
+    def test_the_daemon_migrates_the_host_db_as_it_starts(self) -> None:
+        runner.ensure_running()
+        self.assertTrue(all(store.is_migrated() for store in host_db.stores()))
 
     def test_a_daemon_holding_bottles_is_kept_and_only_force_stops_it(self) -> None:
         first = runner.ensure_running()

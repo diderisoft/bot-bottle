@@ -177,13 +177,16 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
     def _spec(self, workspace: str) -> Any:  # a BottleSpec
         # pylint: disable=import-outside-toplevel
         from ...backend import BottleSpec
+        from ...lib.config_store import ConfigStore
         from ...manifest import ManifestIndex
+        from ...paths import host_db_path
         index = ManifestIndex(bottles={}, agents={}, home_md=self._host_root, cwd_md=None,
                               extra_bottle_dirs=(ARCHITECT_BOTTLES_DIR,))
         return BottleSpec(manifest=index, agent_name=ARCHITECT_AGENT, copy_cwd=False,
                           user_cwd=workspace, label=ARCHITECT_AGENT,
                           bottle_names=(ARCHITECT_BOTTLE,), headless=True,
-                          image_policy="prefer-cached")
+                          image_policy="prefer-cached",
+                          default_audit_delivery=ConfigStore(host_db_path()).audit_delivery())
 
     def _hold(self, settings: Settings, generation: int) -> None:
         """The holder thread: boot, serve until idle or stopped, tear down."""

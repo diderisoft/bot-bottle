@@ -1,7 +1,8 @@
-"""Start, find and stop the host controller from the CLI. The daemon publishes
-`{pid, port, build_id}` under `bot_bottle_root()/hostctl`, trusted only once
-`GET /status` reports the same pid. `ensure_running` locks so concurrent CLIs
-start one daemon, and replaces one running other code.
+"""Start, find and stop the host controller from the CLI. The daemon answers
+on a Unix socket at a fixed path, `bot_bottle_root()/hostctl/control.sock`
+(0600, in the 0700 state dir), with its `{pid, port, build_id}`.
+`ensure_running` locks so concurrent CLIs start one daemon, and replaces one
+running other code.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from ...paths import bot_bottle_root
 from ...trust_domain import mint
 from .build import PACKAGE_ROOT, current_build_id
 
-STATE_FILENAME = "state.json"
+CONTROL_SOCKET_FILENAME = "control.sock"
 START_TIMEOUT_SECONDS = 15.0
 STOP_TIMEOUT_SECONDS = 10.0
 _POLL_SECONDS = 0.1
@@ -68,29 +69,22 @@ def state_dir() -> Path:
     return bot_bottle_root() / "hostctl"
 
 
-def write_state(state: HostControlState) -> None:
-    """Publish `state` atomically (daemon side)."""
-    directory = state_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    tmp = directory / f".{STATE_FILENAME}.{state.pid}"
-    tmp.write_text(json.dumps({"pid": state.pid, "port": state.port, "build_id": state.build_id}))
-    os.replace(tmp, directory / STATE_FILENAME)
+def control_socket_path(directory: Path | None = None) -> Path:
+    """The daemon's socket in `directory` (default: this environment's state
+    dir). The tmux launcher and exit hook use it too."""
+    return (directory or state_dir()) / CONTROL_SOCKET_FILENAME
 
 
-def clear_state(pid: int) -> None:
-    """Remove the state file if it still names `pid` (daemon side, on exit)."""
-    current = read_state()
-    if current is not None and current.pid == pid:
-        (state_dir() / STATE_FILENAME).unlink(missing_ok=True)
-
-
-def read_state(directory: Path | None = None) -> HostControlState | None:
-    """The published state in `directory` (default: this environment's)."""
+def read_state(directory: Path | None = None, timeout: float = 2.0) -> HostControlState | None:
+    """The state the daemon whose state dir is `directory` (default: this
+    environment's) reports on its socket; None if none answers, or it's still
+    starting."""
+    # pylint: disable-next=import-outside-toplevel
+    from .localsock import request
     try:
-        raw = json.loads(((directory or state_dir()) / STATE_FILENAME).read_text())
-        return HostControlState(
-            pid=int(raw["pid"]), port=int(raw["port"]), build_id=str(raw["build_id"])
-        )
+        reply = request(control_socket_path(directory), {"op": "status"}, timeout=timeout)
+        return HostControlState(pid=int(str(reply["pid"])), port=int(str(reply["port"])),
+                                build_id=str(reply["build_id"]))
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
@@ -113,8 +107,7 @@ def restart_needed(state: HostControlState) -> bool:
 
 def running() -> HostControlState | None:
     """The live host controller's state, or None."""
-    state = read_state()
-    return state if state is not None and probe(state) else None
+    return read_state()
 
 
 @contextmanager
@@ -249,21 +242,34 @@ def _start(timeout: float) -> HostControlState:
 
 
 def _await_state(pid: int | None, timeout: float) -> HostControlState:
-    """Wait for a daemon to publish its state: the one with `pid`, or any under
-    a service manager. Raises if `pid` exits or time runs out."""
+    """Wait for a daemon to answer on its socket: the one with `pid`, or any
+    under a service manager. Raises if `pid` exits or time runs out."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         state = read_state()
-        if state is not None and (pid is None or state.pid == pid) and probe(state):
+        if state is not None and (pid is None or state.pid == pid):
             return state
         if pid is not None:
             done, status = os.waitpid(pid, os.WNOHANG)
             if done == pid:
+                log_path = state_dir() / "hostctl.log"
+                why = _last_line(log_path)
                 raise HostControlError(
-                    f"host controller exited with {os.waitstatus_to_exitcode(status)}; "
-                    f"see {state_dir() / 'hostctl.log'}")
+                    f"host controller exited with {os.waitstatus_to_exitcode(status)}"
+                    + (f": {why}" if why else "") + f"; see {log_path}")
         time.sleep(_POLL_SECONDS)
     raise HostControlError(f"host controller didn't answer within {timeout:.0f}s")
+
+
+def _last_line(path: Path) -> str:
+    """The last line the daemon logged, which says why it didn't start."""
+    try:
+        with path.open("rb") as fh:
+            fh.seek(max(0, fh.seek(0, os.SEEK_END) - 4096))
+            lines = fh.read().decode(errors="replace").strip().splitlines()
+    except OSError:
+        return ""
+    return lines[-1].strip() if lines else ""
 
 
 def _stop(state: HostControlState) -> None:
@@ -289,6 +295,6 @@ def _stop(state: HostControlState) -> None:
 
 __all__ = [
     "ConfirmRestart", "HostControlError", "HostControlState", "StaleHostControllerError",
-    "restart", "stale_message", "clear_state", "cli_token", "ensure_running",
-    "probe", "read_state", "running", "state_dir", "stop", "write_state",
+    "restart", "stale_message", "cli_token", "control_socket_path", "ensure_running",
+    "probe", "read_state", "running", "state_dir", "stop",
 ]

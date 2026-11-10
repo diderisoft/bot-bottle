@@ -4,33 +4,80 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
 import tempfile
+import threading
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
 from bot_bottle.cli.commands.audit import cmd_audit
 from bot_bottle.contract.audit import AuditEvent, canonical
+from bot_bottle.contract.hostctl import HOST_CONFIG_PATH, HOST_CONTROL, ROLE_ORCHESTRATOR
+from bot_bottle.control.hostctl import runner
 from bot_bottle.control.hostctl.audit_journal import AuditJournal
+from bot_bottle.control.hostctl.client import HostControlClient, HostControlRefused
+from bot_bottle.lib.db_store import DbStore
+from bot_bottle.paths import host_audit_dir, host_db_path
+from bot_bottle.trust_domain import signing_key
+
+from . import serve_host_controller, use_bottle_root
 
 
 class AuditCommand(unittest.TestCase):
+    """Over a real host controller's routes: the index and settings are in the
+    host DB, which only the host controller opens."""
+
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         self.addCleanup(tmp.cleanup)
-        self.dir = Path(tmp.name) / "audit"
-        for name, value in (("host_audit_dir", self.dir),
-                            ("host_db_path", Path(tmp.name) / "db" / "bot-bottle.db")):
-            patcher = mock.patch(f"bot_bottle.cli.commands.audit.{name}", return_value=value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        self.addCleanup(use_bottle_root(Path(tmp.name)))
+        self.dir = host_audit_dir()
+        serve_host_controller(self)
+        # Every host DB connection, by the thread that opened it.
+        self.opened_by: list[threading.Thread] = []
+        connect = DbStore._connect  # pylint: disable=protected-access
+
+        def recording(store: DbStore) -> sqlite3.Connection:
+            self.opened_by.append(threading.current_thread())
+            return connect(store)
+        self.enterContext(mock.patch.object(DbStore, "_connect", recording))
 
     def run_cmd(self, *args: str) -> tuple[int, str]:
         out = io.StringIO()
-        with redirect_stdout(out):
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
             rc = cmd_audit(list(args))
         return rc, out.getvalue()
+
+    def test_the_cli_never_opens_the_host_db_itself(self) -> None:
+        self.journal()
+        for args in (("delivery", "required"), ("query",), ("rebuild",), ("firehose",)):
+            self.assertEqual(0, self.run_cmd(*args)[0], args)
+        self.assertTrue(self.opened_by)
+        self.assertNotIn(threading.main_thread(), self.opened_by)
+        self.assertTrue(host_db_path().is_file())
+
+    def test_a_bad_setting_is_refused_by_the_host_controller(self) -> None:
+        client = HostControlClient(runner.ensure_running(), runner.cli_token())
+        bodies: list[dict[str, object]] = [
+            {"transcript_retention_days": 0}, {"audit_delivery": "sometimes"},
+            {"no_such_setting": 1}]
+        errors: list[str] = []
+        for body in bodies:
+            with self.assertRaises(HostControlRefused) as cm:
+                client.post(HOST_CONFIG_PATH, body)
+            self.assertEqual(400, cm.exception.code, body)
+            errors.append(cm.exception.error)
+        self.assertIn("at least 1", errors[0])
+        self.assertIn("unknown host setting", errors[-1])
+
+    def test_another_role_cant_reach_host_state(self) -> None:
+        client = HostControlClient(runner.ensure_running(),
+                                   HOST_CONTROL.mint(ROLE_ORCHESTRATOR, signing_key(HOST_CONTROL)))
+        with self.assertRaises(HostControlRefused) as cm:
+            client.get(HOST_CONFIG_PATH)
+        self.assertEqual(403, cm.exception.code)
 
     def journal(self) -> AuditJournal:
         j = AuditJournal(self.dir, host="h", engine="e")

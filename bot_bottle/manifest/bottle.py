@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Mapping
 
 from .. import secret_ref
+from ..lib.config_store import AUDIT_DELIVERIES
 from .util import ManifestError, as_json_object
 from .egress import ManifestEgressConfig
 from .forges import ManifestForge
@@ -25,7 +26,6 @@ def _empty_str_dict() -> dict[str, str]:
     return {}
 
 
-AUDIT_DELIVERIES = ("best_effort", "required")
 FIREHOSE_MODES = ("full", "metadata")
 
 

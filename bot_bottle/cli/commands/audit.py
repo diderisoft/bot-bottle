@@ -1,4 +1,9 @@
-"""audit: check and search the host's audit journal."""
+"""audit: check and search the host's audit journal.
+
+The index and the settings are in the host DB, so those subcommands go
+through the host controller (`host_state_client`), starting it if needed.
+`verify` only reads the journal's files.
+"""
 
 from __future__ import annotations
 
@@ -11,19 +16,14 @@ from pathlib import Path
 from typing import Any
 
 from ...contract.audit import canonical
-from ...control.hostctl.audit_import import AuditImportError, import_segment
-from ...control.hostctl.audit_index import (
-    IMPORTED_DIRNAME,
-    AuditIndex,
-    IndexBreak,
-    Query,
-    imported_chains,
-)
+from ...control.hostctl.audit_index import IMPORTED_DIRNAME, Query, imported_chains
 from ...control.hostctl.audit_ocsf import to_ocsf
 from ...control.hostctl.audit_verify import verify
-from ...lib.config_store import AuditForward, ConfigStore, FirehoseSink
-from ...manifest.bottle import AUDIT_DELIVERIES
-from ...paths import host_audit_dir, host_db_path
+from ...control.hostctl.client import HostControlRefused
+from ...control.hostctl.runner import HostControlError
+from ...lib.config_store import AUDIT_DELIVERIES, AuditForward, FirehoseSink, HostConfig
+from ...paths import host_audit_dir
+from .. import host_state_client as host
 from ..constants import PROG
 from . import audit_passkeys
 
@@ -49,12 +49,12 @@ def _verify(_ns: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
-def _index() -> AuditIndex | None:
+def _have_journal() -> bool:
     directory = host_audit_dir()
     if not directory.is_dir():
         sys.stdout.write(f"no audit journal at {directory}\n")
-        return None
-    return AuditIndex(directory, host_db_path())
+        return False
+    return True
 
 
 _COLUMNS = ("ts_event", "type", "outcome", "bottle", "actor", "resource")
@@ -71,20 +71,20 @@ def _table(records: list[dict[str, Any]]) -> None:
 def _matching(ns: argparse.Namespace) -> list[dict[str, Any]] | None:
     """The indexed records `ns`'s filters select, after syncing the index; None
     (already reported) when there's no journal or it doesn't chain."""
-    index = _index()
-    if index is None:
+    if not _have_journal():
         return None
     try:
-        index.sync()
-    except IndexBreak as e:
-        sys.stderr.write(f"{PROG}: {e}; run `{PROG} audit verify`\n")
+        return host.audit_query(Query(
+            since=ns.since, until=ns.until, type=ns.type, host=ns.host,
+            bottle=ns.bottle, activation=ns.activation, bottled_agent=ns.agent,
+            actor=ns.actor, outcome=ns.outcome, repository=ns.repository,
+            correlation_id=ns.correlation_id, commit_sha=ns.commit, limit=ns.limit,
+        ))
+    except HostControlRefused as e:
+        if e.code != 409:
+            raise
+        sys.stderr.write(f"{PROG}: {e.error}; run `{PROG} audit verify`\n")
         return None
-    return index.query(Query(
-        since=ns.since, until=ns.until, type=ns.type, host=ns.host,
-        bottle=ns.bottle, activation=ns.activation, bottled_agent=ns.agent,
-        actor=ns.actor, outcome=ns.outcome, repository=ns.repository,
-        correlation_id=ns.correlation_id, commit_sha=ns.commit, limit=ns.limit,
-    ))
 
 
 def _query(ns: argparse.Namespace) -> int:
@@ -111,65 +111,58 @@ def _export(ns: argparse.Namespace) -> int:
 
 
 def _rebuild(_ns: argparse.Namespace) -> int:
-    index = _index()
-    if index is None:
+    if not _have_journal():
         return 0
     try:
-        count = index.rebuild()
-    except IndexBreak as e:
-        sys.stderr.write(f"{PROG}: {e}\n")
+        count = host.audit_rebuild()
+    except HostControlRefused as e:
+        if e.code != 409:
+            raise
+        sys.stderr.write(f"{PROG}: {e.error}\n")
         return 1
     sys.stdout.write(f"indexed {count} record(s)\n")
     return 0
 
 
 def _import(ns: argparse.Namespace) -> int:
-    directory = host_audit_dir()
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    index = AuditIndex(directory, host_db_path())
     try:
-        result = import_segment(directory, Path(ns.segment), index)
-    except (AuditImportError, IndexBreak, OSError) as e:
-        sys.stderr.write(f"{PROG}: can't import {ns.segment}: {e}\n")
+        result = host.audit_import(str(Path(ns.segment).resolve()))
+    except HostControlRefused as e:
+        sys.stderr.write(f"{PROG}: can't import {ns.segment}: {e.error}\n")
         return 1
-    where = result.chain.relative_to(directory)
-    if result.already_imported:
+    where = result["chain"]
+    if result["already_imported"]:
         sys.stdout.write(f"already imported into {where}\n")
     else:
-        how = "extended" if result.extended else "new chain"
-        sys.stdout.write(f"imported {result.records} record(s) into {where} ({how})\n")
+        how = "extended" if result["extended"] else "new chain"
+        sys.stdout.write(f"imported {result['records']} record(s) into {where} ({how})\n")
     return 0
 
 
 def _delivery(ns: argparse.Namespace) -> int:
-    store = ConfigStore(host_db_path())
-    if ns.mode:
-        store.migrate()
-        store.set_audit_delivery(ns.mode)
-    sys.stdout.write(f"{store.audit_delivery()}\n")
+    config = host.set_host_config(HostConfig(audit_delivery=ns.mode), "audit_delivery") \
+        if ns.mode else host.host_config()
+    sys.stdout.write(f"{config.audit_delivery}\n")
     return 0
 
 
 def _transcript_retention(ns: argparse.Namespace) -> int:
-    store = ConfigStore(host_db_path())
-    if ns.days is not None:
-        if ns.days < 1:
-            sys.stderr.write("transcript-retention: DAYS must be at least 1\n")
-            return 2
-        store.migrate()
-        store.set_transcript_retention_days(ns.days)
-    sys.stdout.write(f"{store.transcript_retention_days()} days\n")
+    if ns.days is not None and ns.days < 1:
+        sys.stderr.write("transcript-retention: DAYS must be at least 1\n")
+        return 2
+    config = host.set_host_config(HostConfig(transcript_retention_days=ns.days),
+                                  "transcript_retention_days") \
+        if ns.days is not None else host.host_config()
+    sys.stdout.write(f"{config.transcript_retention_days} days\n")
     return 0
 
 
 def _forward(ns: argparse.Namespace) -> int:
-    store = ConfigStore(host_db_path())
     if ns.off or ns.url:
-        store.migrate()
-        store.set_audit_forward(
-            None if ns.off else AuditForward(url=ns.url, secret=ns.secret or "",
-                                             format=ns.format))
-    forward = store.audit_forward()
+        forward = host.set_host_config(HostConfig(audit_forward=None if ns.off else AuditForward(
+            url=ns.url, secret=ns.secret or "", format=ns.format)), "audit_forward").audit_forward
+    else:
+        forward = host.host_config().audit_forward
     if forward is None:
         sys.stdout.write("not forwarding\n")
     else:
@@ -216,8 +209,8 @@ def _tail(ns: argparse.Namespace) -> int:
 
 
 def _firehose(ns: argparse.Namespace) -> int:
-    store = ConfigStore(host_db_path())
-    settings = store.firehose()
+    config = host.host_config()
+    settings = config.firehose
     sinks = list(settings.sinks)
     if ns.clear:
         sinks = []
@@ -239,8 +232,8 @@ def _firehose(ns: argparse.Namespace) -> int:
         max_body_bytes=settings.max_body_bytes if ns.max_body_bytes is None
         else ns.max_body_bytes)
     if changed != settings:
-        store.migrate()
-        store.set_firehose(changed)
+        changed = host.set_host_config(dataclasses.replace(config, firehose=changed),
+                                       "firehose").firehose
     on = {True: "on", False: "off"}
     sys.stdout.write(f"request bodies {on[changed.request_bodies]}, response bodies "
                      f"{on[changed.response_bodies]}, up to {changed.max_body_bytes} bytes\n")
@@ -338,4 +331,10 @@ def cmd_audit(args: list[str]) -> int:
     firehose.add_argument("--max-body-bytes", type=int)
     firehose.set_defaults(run=_firehose)
     ns = parser.parse_args(args)
-    return ns.run(ns)
+    try:
+        return ns.run(ns)
+    except HostControlRefused as e:
+        sys.stderr.write(f"{PROG} audit {ns.action}: {e.error}\n")
+    except HostControlError as e:
+        sys.stderr.write(f"{PROG} audit {ns.action}: {e}\n")
+    return 1

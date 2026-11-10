@@ -123,7 +123,8 @@ class BottlePreparationPlanner:
             resolved_env=resolved_env,
             agent_provision_plan=provision,
             egress_plan=prepare_egress(
-                bottle, slug, provision, owner=_egress_owner(spec)),
+                bottle, slug, provision, owner=_egress_owner(spec),
+                default_audit_delivery=spec.default_audit_delivery),
             git_gate_plan=prepare_git_gate(
                 bottle, slug, launch_trailer(spec, slug), workspace),
             supervise_plan=prepare_supervise(bottle, slug),

@@ -79,8 +79,7 @@ def firecracker_env_dir(name: str) -> Path:
 def _hostctl_running(root: Path) -> bool:
     # pylint: disable-next=import-outside-toplevel
     from ...control.hostctl import runner
-    state = runner.read_state(root / "hostctl")
-    return state is not None and runner.probe(state)
+    return runner.read_state(root / "hostctl") is not None
 
 
 def _lines(argv: list[str]) -> list[str]:

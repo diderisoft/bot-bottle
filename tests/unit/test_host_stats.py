@@ -16,6 +16,8 @@ from unittest import mock
 from bot_bottle.control.hostctl import budget, host_stats
 from bot_bottle.lib.config_store import ConfigStore, HostBudget
 
+from . import serve_host_controller, use_bottle_root
+
 
 class TestDiskStats(unittest.TestCase):
     def test_reports_used_and_total_for_a_real_path(self) -> None:
@@ -189,7 +191,15 @@ class TestBudgetSetting(unittest.TestCase):
         self.assertEqual(16 * 1024 ** 3, stats["budget"]["memory"]["budget"])
 
 
-class TestHostBudgetCommand(TestBudgetSetting):
+class TestHostBudgetCommand(unittest.TestCase):
+    """`bot-bottle host budget`, over a real host controller's routes."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
+        self.addCleanup(tmp.cleanup)
+        self.addCleanup(use_bottle_root(Path(tmp.name)))
+        serve_host_controller(self)
+
     def run_cmd(self, argv: list[str]) -> tuple[int, str, str]:
         from bot_bottle.cli.commands import host
         out, err = io.StringIO(), io.StringIO()

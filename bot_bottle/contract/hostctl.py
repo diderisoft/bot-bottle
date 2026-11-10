@@ -55,6 +55,17 @@ AUDIT_APPEND_PATH = "/audit/append"
 # (PRD 0117). POST {settings} to the second boots the architect's warm bottle.
 SUGGEST_PATH = "/suggest"
 ARCHITECT_WARM_PATH = "/architect/warm"
+# The host DB, for the `cli` role only: the CLI never opens it (ADR 0020).
+# GET /host/config: the host's settings (`HostConfig.to_json()`); POST sets
+# the fields given and answers with all of them.
+HOST_CONFIG_PATH = "/host/config"
+# POST {filters of `audit_index.Query`}: {"records": [...]}, after indexing
+# what's new. POST /audit/rebuild: {"indexed": n}. POST /audit/import
+# {"segment": absolute path}: {"chain", "records", "extended",
+# "already_imported"}. A journal that doesn't chain answers 409.
+AUDIT_QUERY_PATH = "/audit/query"
+AUDIT_REBUILD_PATH = "/audit/rebuild"
+AUDIT_IMPORT_PATH = "/audit/import"
 AUDIT_PRODUCERS = frozenset({"orchestrator", "egress", "git-gate", "supervise"})
 
 # A job `error` with this `code` needs a yes/no: resend with `assume_yes`.
@@ -390,8 +401,8 @@ def bearer(token: str) -> dict[str, str]:
 
 
 __all__ = [
-    "AUDIT_APPEND_PATH", "AUDIT_PRODUCERS",
-    "ARCHITECT_WARM_PATH",
+    "AUDIT_APPEND_PATH", "AUDIT_IMPORT_PATH", "AUDIT_PRODUCERS", "AUDIT_QUERY_PATH",
+    "AUDIT_REBUILD_PATH", "ARCHITECT_WARM_PATH", "HOST_CONFIG_PATH",
     "AUTH_HEADER", "AUTH_SCHEME", "BOTTLES_PATH", "BOTTLE_COLORS", "CONFIRM_ERROR",
     "DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS", "DEFAULT_DOCKER_AGENT_SUBNETS",
     "DOCKER_AGENT_SUBNET_PREFIX", "IMAGE_POLICIES", "LAUNCH_CLI_ONLY",

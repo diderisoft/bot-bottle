@@ -205,7 +205,10 @@ Each database has one job and one writer
 
 - One helper opens every connection (`lib/db_store.connect`), in WAL mode
   with a 5 s busy timeout.
-- Each writer migrates its database when it starts.
+- Each writer migrates its database when it starts, without asking.
+- The CLI reads and changes host state through the host controller's API
+  ([host-controller.md](host-controller.md#host-database)). Only
+  `bot-bottle uninstall` touches the file itself.
 - Each store marks its tables portable or machine-specific (`TABLES`). Only
   the host settings are portable. Nothing reads the mark yet.
 

@@ -23,7 +23,7 @@ from pathlib import Path
 from ...lib import log
 from ...paths import bot_bottle_root
 from .build import PACKAGE_ROOT
-from .runner import state_dir
+from .runner import control_socket_path, state_dir
 
 MIN_TMUX_VERSION = (3, 1)
 _SESSION_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -60,11 +60,6 @@ def socket_name() -> str:
 
 def config_path() -> Path:
     return state_dir() / "tmux.conf"
-
-
-def control_socket_path() -> Path:
-    """The daemon socket the launcher and exit hook use."""
-    return state_dir() / "sessions.sock"
 
 
 def tmux(*args: str) -> list[str]:

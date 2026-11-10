@@ -1,7 +1,8 @@
 """`python -m bot_bottle.control.hostctl`: run the host controller on
-127.0.0.1 (`BOT_BOTTLE_HOSTCTL_PORT`, else ephemeral), publish its state file,
-and serve until SIGTERM/SIGINT, plus a listener per backend for its
-orchestrator (see `listeners`).
+127.0.0.1 (`BOT_BOTTLE_HOSTCTL_PORT`, else ephemeral), answer on its control
+socket (`runner.control_socket_path`) with that port, and serve until
+SIGTERM/SIGINT, plus a listener per backend for its orchestrator (see
+`listeners`).
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from ...lib.log import debug, info, warn
 from ...paths import bot_bottle_root
 from ...trust_domain import HostControlProvisioning, HostLink, signing_key
 from .build import current_build_id
-from .runner import HostControlState, clear_state, leave_callers_directory, write_state
+from .runner import HostControlState, control_socket_path, leave_callers_directory
 from . import budget, host_db, localsock
 from .github_git_tokens import GitTokenRenewer
 from .audit_events import HostAudit
@@ -37,7 +38,7 @@ from .blocks import BlockNotifier
 from .requests import RequestNotifier, orchestrator_pending
 from .server import HostControlServer
 from .transcript_retention import RetentionSweeper
-from .sessions import SessionManager, control_socket_path, tmux_version, write_config
+from .sessions import SessionManager, tmux_version, write_config
 
 # Guest listeners never accept `cli`.
 GUEST_ROLES = frozenset({ROLE_ORCHESTRATOR, ROLE_GATEWAY})
@@ -121,7 +122,9 @@ def main() -> int:
     # And on the console's agent pages, for the shield (block_link.py).
     audit.listen(BLOCK_FEED.on_event)
     blocks.start()
-    local = localsock.serve(control_socket_path(), sessions)
+    # What the control socket's `status` answers once the HTTP server is up.
+    status: dict[str, object] = {}
+    local = localsock.serve(control_socket_path(), sessions, lambda: dict(status) or None)
     if tmux_version() is not None:
         write_config()
         sessions.adopt()
@@ -167,11 +170,12 @@ def main() -> int:
 
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
-    write_state(state)
+    status.update(pid=state.pid, port=state.port, build_id=state.build_id)
     info(f"host controller listening on {state.url} (pid {state.pid}, build {state.build_id})")
     try:
         server.serve_forever()
     finally:
+        status.clear()
         server.server_close()
         guests.close()
         local.close()
@@ -184,7 +188,6 @@ def main() -> int:
             forwarder.close()
         firehose.close()
         audit.close()
-        clear_state(state.pid)
     return 0
 
 

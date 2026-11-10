@@ -21,7 +21,7 @@ from bot_bottle.control.hostctl.audit_events import HostAudit
 from bot_bottle.control.hostctl.audit_ocsf import to_ocsf
 from bot_bottle.control.hostctl.transcripts import transcripts_root
 from bot_bottle.lib.config_store import DEFAULT_TRANSCRIPT_RETENTION_DAYS, ConfigStore
-from . import use_bottle_root
+from . import serve_host_controller, use_bottle_root
 
 _DAY = 86400.0
 _NOW = 1_800_000_000.0
@@ -106,6 +106,10 @@ class TestSweeper(_Root):
 
 
 class TestSetting(_Root):
+    def setUp(self) -> None:
+        super().setUp()
+        serve_host_controller(self)
+
     def run_cli(self, *argv: str) -> tuple[int, str]:
         out = io.StringIO()
         with contextlib.redirect_stdout(out):

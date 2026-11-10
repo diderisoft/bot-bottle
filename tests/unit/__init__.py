@@ -24,6 +24,8 @@ import atexit
 import os
 import shutil
 import tempfile
+import threading
+import unittest
 from collections.abc import Callable
 from pathlib import Path
 from unittest import mock
@@ -58,6 +60,24 @@ def use_bottle_root(root: Path) -> Callable[[], None]:
     patcher = mock.patch.dict(os.environ, {"BOT_BOTTLE_ROOT": str(root)})
     patcher.start()
     return patcher.stop
+
+
+def serve_host_controller(test: unittest.TestCase) -> None:
+    """Serve the host controller's routes in this process, for `test`, under
+    the bottle root it set, and point the CLI's `runner.ensure_running` at
+    them. The CLI then reaches host state as it does for real: over HTTP."""
+    # pylint: disable=import-outside-toplevel
+    from bot_bottle.contract.hostctl import HOST_CONTROL
+    from bot_bottle.control.hostctl import runner
+    from bot_bottle.control.hostctl.server import HostControlServer
+    from bot_bottle.trust_domain import signing_key
+    server = HostControlServer(("127.0.0.1", 0), "test", signing_key(HOST_CONTROL))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    test.addCleanup(server.server_close)
+    test.addCleanup(server.shutdown)
+    state = runner.HostControlState(pid=os.getpid(), port=server.server_address[1],
+                                    build_id="test")
+    test.enterContext(mock.patch.object(runner, "ensure_running", return_value=state))
 
 
 # The unit suite never sees the repo's committed `published-artifacts.json`:

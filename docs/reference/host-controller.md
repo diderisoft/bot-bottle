@@ -17,8 +17,11 @@ python -m bot_bottle.control.hostctl
 ```
 
 - It binds `127.0.0.1`, on `BOT_BOTTLE_HOSTCTL_PORT` or an ephemeral port.
-- It writes `{pid, port, build_id}` to `~/.bot-bottle/hostctl/`.
-- The CLI trusts that file only once `GET /status` returns the same pid.
+- It answers on its control socket, `~/.bot-bottle/hostctl/control.sock`
+  (0600, in a 0700 directory). Asked for `status`, it replies with its
+  `{pid, port, build_id}`. That is how the CLI finds it.
+- It migrates the host database when it starts, without asking
+  ([Host database](#host-database)).
 - The CLI starts the daemon under a lock, so concurrent CLIs start only one.
 
 ### Restarts after an upgrade
@@ -100,7 +103,7 @@ Each agent runs in tmux, on bot-bottle's own tmux server, never the user's.
 Secrets never reach tmux's argv or environment.
 
 - The pane runs `launch.py`. It fetches the real command and env once, over
-  a 0600 Unix socket (`localsock.py`).
+  the control socket (`localsock.py`).
 - tmux's `pane-died` hook runs `notify.py` to report the exit. The session's
   finisher then runs, and tmux detaches every viewer.
 - Session records are written to disk, so a restarted daemon can take the
@@ -468,6 +471,28 @@ The warm bottle:
 
 The console starts the same flow over the link (see
 [Bottle suggestions from the console](#bottle-suggestions-from-the-console)).
+
+## Host database
+
+The host controller is the only writer of the host database,
+`~/.bot-bottle/db/bot-bottle.db`
+([architecture.md](architecture.md#databases)). The CLI never opens it. It
+asks over HTTP, with the `cli` role only:
+
+| Request | Body | Does |
+|---|---|---|
+| `GET /host/config` | none | The host's settings: `audit_delivery`, `audit_forward`, `firehose`, `transcript_retention_days`, `host_budget`. |
+| `POST /host/config` | any of those settings | Sets the ones given, all or none, and answers with every setting. A bad value is 400. |
+| `POST /audit/query` | the `audit query` filters | Indexes new journal records, then answers `{"records": [...]}`. |
+| `POST /audit/rebuild` | `{}` | Re-creates the audit index. Answers `{"indexed": n}`. |
+| `POST /audit/import` | `{"segment": <absolute path>}` | Imports a segment as its own chain. Answers `chain`, `records`, `extended` and `already_imported`. |
+
+A journal that doesn't chain, or a segment that won't import, is 409.
+
+These commands use the routes: `audit query`, `export`, `rebuild`,
+`import`, `delivery`, `transcript-retention`, `forward` and `firehose`,
+`host budget`, and `start --dry-run`. Each starts the host controller if it
+isn't running. `audit verify` reads only the journal's files.
 
 ## Audit
 
@@ -1308,7 +1333,8 @@ Where each part lives, for readers checking the code. Paths are under
 
 | Part | Code |
 |---|---|
-| Running | `runner.ensure_running`, `listeners.py`, `service_unit.py` |
+| Running | `runner.ensure_running`, `runner.read_state`, `localsock.py`, `listeners.py`, `service_unit.py` |
+| Host database | `host_db.py`, `host_state.py`, `bot_bottle/cli/host_state_client.py`, `bot_bottle/lib/db_store.py` |
 | Jobs | `jobs.py`, `bottles.py` |
 | Sessions | `sessions.py`, `launch.py`, `localsock.py`, `notify.py`, `bot_bottle/backend/adoption.py` |
 | Status bar | `requests.py`, `blocks.py` |

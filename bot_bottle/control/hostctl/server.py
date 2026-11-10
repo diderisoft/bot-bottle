@@ -6,7 +6,8 @@ import ipaddress
 import json
 import os
 import socket
-from collections.abc import Iterable
+import sqlite3
+from collections.abc import Callable, Iterable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import cast
 from urllib.parse import parse_qs, urlsplit
@@ -15,15 +16,18 @@ from ...contract.auth import ROLE_CLI
 from ...contract.audit import AuditEvent
 from ...contract.firehose import FIREHOSE_PATH, FIREHOSE_STREAM_PATH
 from ...contract.hostctl import (
-    AUDIT_APPEND_PATH, AUDIT_PRODUCERS, AUTH_HEADER, AUTH_SCHEME, BOTTLES_PATH, HOST_CONTROL,
-    JOBS_PATH, LIVE_BOTTLES_PATH, ORCHESTRATOR_PATH, ROLE_ORCHESTRATOR, SESSIONS_PATH,
-    STATUS_PATH, ARCHITECT_WARM_PATH, SUGGEST_PATH, LaunchRequest, Settings, status_body,
+    AUDIT_APPEND_PATH, AUDIT_IMPORT_PATH, AUDIT_PRODUCERS, AUDIT_QUERY_PATH, AUDIT_REBUILD_PATH,
+    AUTH_HEADER, AUTH_SCHEME, BOTTLES_PATH, HOST_CONFIG_PATH, HOST_CONTROL, JOBS_PATH,
+    LIVE_BOTTLES_PATH, ORCHESTRATOR_PATH, ROLE_ORCHESTRATOR, SESSIONS_PATH, STATUS_PATH,
+    ARCHITECT_WARM_PATH, SUGGEST_PATH, LaunchRequest, Settings, status_body,
 )
 from ...lib import websocket as ws
 from ...lib.log import debug
-from . import orchestrator, suggest_routes
+from . import host_state, orchestrator, suggest_routes
 from .attach import Viewer
 from .audit_events import AuditUnavailable, digest_request
+from .audit_import import AuditImportError
+from .audit_index import IndexBreak
 from .audit_journal import AuditRedactionError
 from .bottles import BottleService
 from .firehose import FirehoseHub
@@ -34,6 +38,11 @@ from .sessions import SessionManager
 MAX_BODY_BYTES = 1 << 20
 # Roles that may launch, list, tear down and watch bottles.
 _BOTTLE_ROLES = (ROLE_CLI, ROLE_ORCHESTRATOR)
+# The host DB's routes, `cli` only: the CLI never opens the file.
+_HOST_STATE: dict[str, Callable[[dict[str, object]], dict[str, object]]] = {
+    HOST_CONFIG_PATH: host_state.set_config, AUDIT_QUERY_PATH: host_state.audit_query,
+    AUDIT_REBUILD_PATH: host_state.audit_rebuild, AUDIT_IMPORT_PATH: host_state.audit_import,
+}
 
 
 class HostControlServer(ThreadingHTTPServer):
@@ -112,6 +121,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._live(server, parse_qs(url.query))
         elif url.path == FIREHOSE_STREAM_PATH:
             self._firehose_stream(server, parse_qs(url.query))
+        elif url.path == HOST_CONFIG_PATH:
+            self._host_state(lambda _body: host_state.config(), read=True)
         else:
             self._send(404, {"error": f"no route {url.path}"})
 
@@ -247,6 +258,29 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._send(200, {"written": written})
 
+    def _host_post(self, server: HostControlServer) -> None:
+        del server
+        self._host_state(_HOST_STATE[urlsplit(self.path).path])
+
+    def _host_state(self, handler: Callable[[dict[str, object]], dict[str, object]], *,
+                    read: bool = False) -> None:
+        """A host DB route (`host_state`). A journal that won't index or a
+        segment that won't import is 409."""
+        if self._allowed((ROLE_CLI,)) is None:
+            return
+        try:
+            reply = handler({} if read else self._json_body())
+        except ValueError as e:
+            self._send(400, {"error": str(e)})
+            return
+        except (IndexBreak, AuditImportError) as e:
+            self._send(409, {"error": str(e)})
+            return
+        except (OSError, sqlite3.Error) as e:
+            self._send(500, {"error": str(e)})
+            return
+        self._send(200, reply)
+
     def _firehose_publish(self, server: HostControlServer) -> None:
         """A batch of request records the orchestrator relays from the gateway."""
         if self._allowed((ROLE_ORCHESTRATOR,)) is None:
@@ -288,7 +322,8 @@ class _Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         route = {BOTTLES_PATH: self._launch, AUDIT_APPEND_PATH: self._audit_append,
                  FIREHOSE_PATH: self._firehose_publish, SUGGEST_PATH: self._suggest,
-                 ARCHITECT_WARM_PATH: self._architect_warm}.get(path)
+                 ARCHITECT_WARM_PATH: self._architect_warm,
+                 **dict.fromkeys(_HOST_STATE, self._host_post)}.get(path)
         if route is not None:
             route(server)
             return

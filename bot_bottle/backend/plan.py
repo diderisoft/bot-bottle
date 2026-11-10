@@ -12,6 +12,7 @@ from ..agent_provider import AgentProvisionPlan, PromptMode
 from ..contract.hostctl import Settings
 from ..egress import EgressPlan
 from ..git_gate import GitGatePlan
+from ..lib.config_store import DEFAULT_AUDIT_DELIVERY
 from ..lib.log import info, warn
 from ..manifest import Manifest, ManifestIndex
 from ..manifest.schema import DEFAULT_BOTTLE
@@ -87,6 +88,10 @@ class BottleSpec:
     fresh_guest: bool = False
     # "fresh" builds as normal; "cached" reuses the local image or artifact.
     image_policy: str = "fresh"
+    # The host's `audit.delivery` default (`bot-bottle audit delivery`), for a
+    # bottle that doesn't set one. The host controller fills it from the host
+    # DB; a dry run asks the host controller for it.
+    default_audit_delivery: str = DEFAULT_AUDIT_DELIVERY
 
 
 @dataclass(frozen=True)

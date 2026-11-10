@@ -29,11 +29,11 @@ from ...contract.hostctl import (CONFIRM_ERROR, ORIGIN_CONSOLE, ORIGIN_TERMINAL,
                                  LaunchRequest, Settings, exit_code)
 from ...lib import log
 from ...manifest.schema import DEFAULT_BOTTLE
-from ...paths import host_secrets_path
+from ...paths import host_db_path, host_secrets_path
 from ... import bottle_state, run_bottle, run_manifest
 from ...backend import adoption
 from ...backend.bottle_size import memory_bytes, recorded_memory
-from ...lib.config_store import HostBudget
+from ...lib.config_store import ConfigStore, HostBudget
 from . import bottle_metrics, budget, relabel
 from .build import RESTART_NEEDED
 from .audit_events import HostAudit, digest_manifest, digest_request
@@ -292,6 +292,7 @@ class BottleService:
             image_policy=request.image_policy,
             host_keys=tuple(sorted(request.host_keys.items())),
             fresh_guest=request.fresh_guest,
+            default_audit_delivery=ConfigStore(host_db_path()).audit_delivery(),
         )
         secrets = LaunchSecrets(MappingSecrets(request.secrets), host_store(
             self._secrets_file or host_secrets_path()), request.answers)
