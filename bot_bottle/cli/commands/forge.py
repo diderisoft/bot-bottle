@@ -141,7 +141,7 @@ def connect_github(argv: list[str], app_slug: str, client_id: str, owner: str = 
              f"{', renewed as it expires' if done.expiring else ''})")
         info(_TRANSPORT_NOTE[transport or "https"])
         info("grant its repos from any bottle:")
-        info(f"  git-gate:\n    repos: [{done.key}/<owner>/<repo>:write]")
+        info(f"  git_gate:\n    repos: [{done.key}/<owner>/<repo>:write]")
         got = connected_token(done.secret_name)
         if got is None:
             die("GitHub was connected, but its token can't be read back; connect it again")
@@ -227,7 +227,7 @@ def connect(argv: list[str]) -> int:
     info(f"connected {done.key} as {done.account}{' (the default user)' if done.default else ''}"
          f" in {done.path} (token in {host_secrets_path()} as {done.secret_name})")
     info("grant its repos from any bottle:")
-    info(f"  git-gate:\n    repos: [{done.key}/<owner>/<repo>:write]")
+    info(f"  git_gate:\n    repos: [{done.key}/<owner>/<repo>:write]")
     return 0
 
 

@@ -56,6 +56,26 @@ class TestLoad(unittest.TestCase):
         with self.assertRaisesRegex(ForgeConnectionError, "nobody isn't connected"):
             gitea.user("nobody")
 
+    def test_a_token_is_secret_name_and_the_old_dollar_form_still_reads(self) -> None:
+        self.write(TEXT.replace("token: $GITEA_EXAMPLE_COM_TOKEN",
+                                "token: secret:GITEA_EXAMPLE_COM_TOKEN"))
+        found = load(self.path)
+        self.assertEqual("GITEA_EXAMPLE_COM_TOKEN", found["gitea.example.com"].user().token_secret)
+        self.assertEqual("CODEX_GITEA_EXAMPLE_COM_TOKEN",  # written as $NAME
+                         found["gitea.example.com"].user("codex").token_secret)
+        save(found, self.path)
+        text = self.path.read_text()
+        self.assertIn("token: secret:CODEX_GITEA_EXAMPLE_COM_TOKEN", text)
+        self.assertNotIn("$", text)
+        self.assertEqual(found, load(self.path))
+
+    def test_a_token_must_name_a_secret(self) -> None:
+        for bad in ("secret:", "secret:a b", "plain", "?"):
+            with self.subTest(bad=bad):
+                self.write(TEXT.replace("$GITEA_EXAMPLE_COM_TOKEN", bad))
+                with self.assertRaisesRegex(ForgeConnectionError, "as secret:NAME"):
+                    load(self.path)
+
     def test_none_connected(self) -> None:
         self.assertEqual({}, load(self.path))
 

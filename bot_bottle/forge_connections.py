@@ -12,19 +12,20 @@ prefix names:
     host_key: ssh-ed25519 AAAA...       # pinned when connected
     users:
       alice:
-        token: $GITEA_EXAMPLE_COM_TOKEN # a name in ~/.bot-bottle/secrets
+        token: secret:GITEA_EXAMPLE_COM_TOKEN   # a name in ~/.bot-bottle/secrets
         default: true
       codex:
-        token: $CODEX_GITEA_EXAMPLE_COM_TOKEN
+        token: secret:CODEX_GITEA_EXAMPLE_COM_TOKEN
   github.com:
     kind: github
     url: https://github.com
     ssh: ssh://git@github.com
     users:
-      alice: { token: $GITHUB_COM_TOKEN, app: bot-bottle, transport: https }
+      alice: { token: secret:GITHUB_COM_TOKEN, app: bot-bottle, transport: https }
   ---
 
-Only `bot-bottle forge connect` writes it. A user's name is what the forge
+Only `bot-bottle forge connect` writes it (a token as `secret:NAME`; the old
+`$NAME` still reads, so a host's file never stops working). A user's name is what the forge
 says the token belongs to. A launch uses these, never a bottle's own
 description of the forge, so a token goes only where its host connected it.
 
@@ -39,6 +40,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.parse import urlparse
 
+from . import secret_ref
 from .contract.forges import FORGE_KINDS
 from .contract.yaml_subset import YamlSubsetError, parse_frontmatter, serialize_yaml_subset
 from .manifest.util import ManifestError
@@ -143,8 +145,10 @@ def _user(host: str, kind: str, name: str, raw: object) -> ForgeUser:
     if unknown:
         raise ForgeConnectionError(f"{where} has unknown key {sorted(unknown)[0]!r}")
     token = _str(raw, "token", where)
-    if not token.startswith("$") or len(token) < 2:
-        raise ForgeConnectionError(f"{where}.token names a host secret, as $NAME")
+    # `secret:NAME`, or the `$NAME` connections written before it.
+    secret = token[1:] if token.startswith("$") else secret_ref.stored_name(token)
+    if not secret_ref.is_name(secret):
+        raise ForgeConnectionError(f"{where}.token names a host secret, as secret:NAME")
     transport = _str(raw, "transport", where)
     allowed = TRANSPORTS if kind == "github" else ("", "deploy-key")
     if transport and transport not in allowed:
@@ -156,7 +160,7 @@ def _user(host: str, kind: str, name: str, raw: object) -> ForgeUser:
     default = raw.get("default", False)
     if not isinstance(default, bool):
         raise ForgeConnectionError(f"{where}.default must be true or false")
-    return ForgeUser(name=name, token_secret=token[1:], default=default, app=app,
+    return ForgeUser(name=name, token_secret=secret, default=default, app=app,
                      transport=transport)
 
 
@@ -224,7 +228,7 @@ def _dump(conn: ForgeConnection) -> dict[str, object]:
         d["host_key"] = conn.host_key
     users: dict[str, object] = {}
     for u in conn.users:
-        entry: dict[str, object] = {"token": f"${u.token_secret}"}
+        entry: dict[str, object] = {"token": secret_ref.stored(u.token_secret)}
         if u.default:
             entry["default"] = True
         if u.app:
