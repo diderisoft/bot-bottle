@@ -20,8 +20,8 @@ python -m bot_bottle.control.hostctl
 - It answers on its control socket, `~/.bot-bottle/hostctl/control.sock`
   (0600, in a 0700 directory). Asked for `status`, it replies with its
   `{pid, port, build_id}`. That is how the CLI finds it.
-- It migrates the host database when it starts, without asking
-  ([Host database](#host-database)).
+- It checks, backs up and migrates the host database when it starts,
+  without asking ([Host database](#host-database)).
 - The CLI starts the daemon under a lock, so concurrent CLIs start only one.
 
 ### Restarts after an upgrade
@@ -493,6 +493,23 @@ These commands use the routes: `audit query`, `export`, `rebuild`,
 `import`, `delivery`, `transcript-retention`, `forward` and `firehose`,
 `host budget`, and `start --dry-run`. Each starts the host controller if it
 isn't running. `audit verify` reads only the journal's files.
+
+### Checks and backups
+
+The host controller won't start on a damaged host database.
+
+```
+bot-bottle host restore-db --list     # the backups, newest first
+bot-bottle host restore-db [BACKUP]   # put one back: the newest, or the one named
+```
+
+| When | What happens |
+|---|---|
+| It starts | `PRAGMA quick_check` on the file. On a failure it exits (status 78), naming the newest backup and when it was taken. Its systemd unit doesn't restart it. |
+| It starts, and every hour after | If the newest backup is a day old, or there is none, a new one: a `VACUUM INTO` copy in `~/.bot-bottle/db/backups/` (directory 0700, files 0600). It keeps the newest 3. |
+| `host restore-db` | Refused while the host controller runs. Otherwise it checks the backup, keeps the replaced file beside it as `bot-bottle.db.replaced-<time>`, and puts the backup in its place. |
+
+Changes since the backup are lost on a restore. Backups stay on this host.
 
 ## Audit
 

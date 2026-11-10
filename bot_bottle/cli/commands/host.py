@@ -5,18 +5,27 @@
                                      in bot-bottle's own directories (0 clears
                                      one). A launch that wouldn't fit is refused.
   caps                               the old name for `budget` (deprecated)
+  restore-db [BACKUP] [--list]       put a backup of the host database back,
+                                     the newest or the one named, while the
+                                     host controller is stopped
 
 The host controller reads the budget at each launch and each time it reports
 to the console, so a change applies at once, no restart needed. The budget
 is in the host DB, so it's read and set through the host controller.
+
+The host controller checks the host DB when it starts and keeps a daily
+backup. It refuses to start on a DB that fails the check, naming the newest
+backup; `restore-db` puts it back.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from ...backend.bottle_size import BOTTLE_MEMORY_MIB
+from ...control.hostctl import runner
 from ...control.hostctl.client import HostControlRefused
 from ...control.hostctl.runner import HostControlError
 from ...lib.config_store import HostBudget, HostConfig
@@ -46,6 +55,39 @@ def _budget(ns: argparse.Namespace) -> int:
     return 0
 
 
+def _restore_db(ns: argparse.Namespace) -> int:
+    """Replace the host DB with a backup. The host controller is its only
+    writer, so it must be stopped, and stays stopped while this runs."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...control.hostctl import host_db
+    if ns.list:
+        found = host_db.backups()
+        if not found:
+            sys.stdout.write(f"no backups in {host_db.backups_dir()}\n")
+        for backup in found:
+            sys.stdout.write(f"{backup.path.name}  taken {backup.taken:%Y-%m-%d %H:%M} UTC\n")
+        return 0
+    chosen = None
+    if ns.backup:
+        chosen = Path(ns.backup)
+        if chosen.name == ns.backup:  # a name from --list
+            chosen = host_db.backups_dir() / ns.backup
+    with runner.lock():
+        if runner.running() is not None:
+            sys.stderr.write(f"{PROG} host restore-db: the host controller is running; stop it "
+                             f"first (`{PROG} down`), then restore\n")
+            return 1
+        try:
+            restored = host_db.restore(chosen)
+        except (host_db.HostDbError, OSError) as e:
+            sys.stderr.write(f"{PROG} host restore-db: {e}\n")
+            return 1
+    sys.stdout.write(f"restored {restored.backup.name} as {restored.db}\n")
+    if restored.replaced is not None:
+        sys.stdout.write(f"the database it replaced is kept at {restored.replaced}\n")
+    return 0
+
+
 def _add_budget(sub: "argparse._SubParsersAction[argparse.ArgumentParser]", name: str,
                 help_text: str) -> None:
     parser = sub.add_parser(name, help=help_text)
@@ -62,6 +104,13 @@ def cmd_host(argv: list[str]) -> int:
     sub = parser.add_subparsers(dest="action", required=True)
     _add_budget(sub, "budget", "show or set the bottles' memory and storage budget")
     _add_budget(sub, "caps", "deprecated: use `budget`")
+    restore = sub.add_parser(
+        "restore-db", help="put a backup of the host database back (the host controller "
+                           "must be stopped)")
+    restore.add_argument("backup", nargs="?",
+                         help="a backup's name (from --list) or path; default: the newest")
+    restore.add_argument("--list", action="store_true", help="list the backups, newest first")
+    restore.set_defaults(run=_restore_db)
     ns = parser.parse_args(argv)
     try:
         return ns.run(ns)

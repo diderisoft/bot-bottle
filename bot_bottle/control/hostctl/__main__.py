@@ -100,10 +100,13 @@ def start_firehose() -> FirehoseHub:
 
 def main() -> int:
     leave_callers_directory()
+    # The host DB's only writer checks, backs up and migrates it before
+    # anything here reads it, and won't start on a corrupt one.
+    if not host_db.open_for_start():
+        return host_db.REFUSED_EXIT_STATUS
+    backups = host_db.DailyBackups().start()
     port = int(os.environ.get(PORT_ENV, "0") or "0")
     sessions = SessionManager({})
-    # The host DB's only writer migrates it before anything here reads it.
-    host_db.migrate()
     # The single audit writer and the journal forwarder live as long as the
     # daemon.
     audit = HostAudit.open()
@@ -183,6 +186,7 @@ def main() -> int:
         requests.stop()
         blocks.stop()
         retention.stop()
+        backups.stop()
         architect.stop()
         if forwarder is not None:
             forwarder.close()

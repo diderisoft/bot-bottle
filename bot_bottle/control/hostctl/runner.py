@@ -28,6 +28,9 @@ from ...trust_domain import mint
 from .build import PACKAGE_ROOT, current_build_id
 
 CONTROL_SOCKET_FILENAME = "control.sock"
+# The daemon's exit status when it refuses to start (a host DB that fails its
+# check, `host_db.py`). Its service unit doesn't restart it.
+REFUSED_EXIT_STATUS = 78
 START_TIMEOUT_SECONDS = 15.0
 STOP_TIMEOUT_SECONDS = 10.0
 _POLL_SECONDS = 0.1
@@ -111,7 +114,9 @@ def running() -> HostControlState | None:
 
 
 @contextmanager
-def _lock() -> Generator[None]:
+def lock() -> Generator[None]:
+    """Held while the daemon is started, stopped or found missing, so
+    concurrent CLIs agree on one, and while its host DB is restored."""
     directory = state_dir()
     directory.mkdir(parents=True, exist_ok=True)
     with open(directory / "lock", "w", encoding="utf-8") as fh:
@@ -130,7 +135,7 @@ def ensure_running(
     one adopts them. With bottles held, `confirm_restart` decides: yes
     restarts, no raises `StaleHostControllerError`. Without it the old
     controller is kept, for callers that launch nothing."""
-    with _lock():
+    with lock():
         state = running()
         if state is not None and state.build_id == current_build_id():
             return state
@@ -153,7 +158,7 @@ def restart(
     """Restart the host controller whatever code it runs; its bottles keep
     running and the new one adopts them. With bottles held, `confirm_restart`
     must agree or `StaleHostControllerError` is raised."""
-    with _lock():
+    with lock():
         state = running()
         if state is not None:
             held = held_bottles(state)
@@ -185,7 +190,7 @@ def cli_token() -> str:
 def stop(*, force: bool = False) -> bool:
     """Stop the host controller; False if none was running. Refuses while it
     holds bottles unless `force`."""
-    with _lock():
+    with lock():
         state = running()
         if state is None:
             return False
@@ -237,7 +242,10 @@ def _start(timeout: float) -> HostControlState:
     try:
         return _await_state(pid, timeout)
     except HostControlError:
-        os.kill(pid, signal.SIGTERM)
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass  # it exited, and was reaped, already
         raise
 
 
@@ -269,7 +277,7 @@ def _last_line(path: Path) -> str:
             lines = fh.read().decode(errors="replace").strip().splitlines()
     except OSError:
         return ""
-    return lines[-1].strip() if lines else ""
+    return lines[-1].strip().removeprefix("bot-bottle: ") if lines else ""
 
 
 def _stop(state: HostControlState) -> None:
@@ -296,5 +304,5 @@ def _stop(state: HostControlState) -> None:
 __all__ = [
     "ConfirmRestart", "HostControlError", "HostControlState", "StaleHostControllerError",
     "restart", "stale_message", "cli_token", "control_socket_path", "ensure_running",
-    "probe", "read_state", "running", "state_dir", "stop",
+    "lock", "probe", "read_state", "running", "state_dir", "stop", "REFUSED_EXIT_STATUS",
 ]

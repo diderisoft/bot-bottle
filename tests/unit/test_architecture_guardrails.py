@@ -118,7 +118,9 @@ HOST_DB_OPENERS = frozenset({
     "query_host_journal", "import_segment",
 })
 # (module, name) -> why the CLI may still use it.
-ALLOWED_HOST_DB_IMPORTS: dict[tuple[str, str], str] = {}
+ALLOWED_HOST_DB_IMPORTS: dict[tuple[str, str], str] = {
+    ("host.py", "host_db"): "restore-db replaces the file while the host controller is stopped",
+}
 
 
 class TestCliNeverOpensTheHostDb(unittest.TestCase):

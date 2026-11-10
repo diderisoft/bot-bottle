@@ -208,7 +208,9 @@ Each database has one job and one writer
 - Each writer migrates its database when it starts, without asking.
 - The CLI reads and changes host state through the host controller's API
   ([host-controller.md](host-controller.md#host-database)). Only
-  `bot-bottle uninstall` touches the file itself.
+  `bot-bottle uninstall` and `host restore-db` touch the file itself.
+- The host controller checks `bot-bottle.db` at start and keeps a daily
+  backup ([checks and backups](host-controller.md#checks-and-backups)).
 - Each store marks its tables portable or machine-specific (`TABLES`). Only
   the host settings are portable. Nothing reads the mark yet.
 

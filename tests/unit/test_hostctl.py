@@ -19,6 +19,7 @@ from bot_bottle.control.hostctl import host_db, localsock, runner
 from bot_bottle.control.hostctl.build import build_id
 from bot_bottle.control.hostctl.server import HostControlServer
 from bot_bottle.control.hostctl.sessions import SessionManager
+from bot_bottle.paths import host_db_path
 from bot_bottle.trust_domain import signing_key
 
 from . import use_bottle_root
@@ -159,6 +160,19 @@ class TestEnsureRunning(unittest.TestCase):
     def test_the_daemon_migrates_the_host_db_as_it_starts(self) -> None:
         runner.ensure_running()
         self.assertTrue(all(store.is_migrated() for store in host_db.stores()))
+
+    def test_a_corrupt_host_db_stops_the_start_naming_the_backup(self) -> None:
+        runner.ensure_running()
+        runner.stop()
+        backup = host_db.back_up()
+        with host_db_path().open("r+b") as fh:
+            fh.write(b"\xff" * 100)  # over the header
+        with self.assertRaises(runner.HostControlError) as cm:
+            runner.ensure_running()
+        self.assertIn(f"exited with {runner.REFUSED_EXIT_STATUS}", str(cm.exception))
+        self.assertIn(backup.name, str(cm.exception))
+        self.assertIn("host restore-db", str(cm.exception))
+        self.assertIsNone(runner.running())
 
     def test_a_daemon_holding_bottles_is_kept_and_only_force_stops_it(self) -> None:
         first = runner.ensure_running()

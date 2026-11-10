@@ -16,7 +16,7 @@ from pathlib import Path
 from ...environment import ENV_VAR, LIVE, active_name, resource_prefix, reverse_dns
 from ...paths import bot_bottle_root
 from .build import PACKAGE_ROOT
-from .runner import HostControlError, state_dir
+from .runner import REFUSED_EXIT_STATUS, HostControlError, state_dir
 
 # Per environment: `io.bot-bottle.hostctl` and `bot-bottle-hostctl.service` for
 # live, `io.bot-bottle.<name>.hostctl` and `bb-<name>-hostctl.service` otherwise.
@@ -89,6 +89,8 @@ def render_systemd(spec: ServiceSpec) -> str:
         "ExecStart=" + " ".join(_systemd_quote(a) for a in spec.argv()),
         *(f"Environment={_systemd_quote(f'{k}={v}')}" for k, v in spec.environment().items()),
         "Restart=on-failure",
+        "# A corrupt host DB: restarting won't help (`bot-bottle host restore-db`).",
+        f"RestartPreventExitStatus={REFUSED_EXIT_STATUS}",
         "# Agents (tmux, VMs) outlive a controller restart; the next one adopts them.",
         "KillMode=process",
         f"StandardOutput=append:{log}",
