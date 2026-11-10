@@ -30,13 +30,17 @@ Include what you can of:
 - A repository-shipped bottle or agent getting grants without the per-host
   trust prompt.
 - The launch-time isolation probe passing when the agent isn't isolated.
+- A paired console doing more than the threat model says pairing allows,
+  such as reading a secret's value or decrypting audit records without a
+  passkey-signed unlock.
 
 ## What's not a vulnerability
 
 - Limitations the docs already state, such as the Docker backend sharing the
   host kernel, or what an allowlisted host can do with the requests a bottle
-  is allowed to send it. A threat model separating these from vulnerabilities
-  is planned.
+  is allowed to send it. The [threat model](docs/security/threat-model.md)
+  lists what bot-bottle defends against and what it doesn't; a way past a
+  defence it claims is in scope.
 - An agent misbehaving inside its own bottle without crossing a boundary.
 - Bugs in the model harnesses (Claude Code, Codex, pi) themselves; report
   those upstream.

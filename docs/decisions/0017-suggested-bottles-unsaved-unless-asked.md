@@ -1,6 +1,6 @@
 # ADR 0017: Suggested bottles aren't saved unless you ask
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-05
 - **Deciders:** didericis
 

@@ -3,6 +3,22 @@
 How bot-bottle gets onto a host, what each backend needs there, and how it
 comes off again. The backends themselves are in [backends.md](backends.md).
 
+## Quick start
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/diderisoft/bot-bottle/main/install.sh | sh
+```
+
+- **Every host:** git and tmux 3.1+. Python 3.11+ if you have it; otherwise
+  the installer fetches one.
+- **Linux:** KVM, the `firecracker` binary and e2fsprogs for the firecracker
+  backend.
+- **macOS:** an Apple silicon Mac with Apple's `container` CLI. Docker
+  (`--backend=docker`) is the fallback anywhere else.
+
+[Getting started](../start.md) walks through the first run. The rest of this
+page is the detail.
+
 ## Installer
 
 ```sh
@@ -16,7 +32,10 @@ bot-bottle with its `remote` extra for phone pairing (none on Intel Macs,
 which iroh has no build for) using `uv` or `pipx` if you have either, or a
 private venv at `~/.bot-bottle/venv`, creates `~/.bot-bottle`, and runs
 `bot-bottle bootstrap`: `install` (the backend's host setup, tmux,
-autostart), `setup` and `doctor`, reading from your terminal under `curl | sh`.
+autostart), `setup` (starter agents, then an offer to pair your phone with a
+console, by default the hosted one at <https://bot-bottle.app>; optional,
+`--no-pair` skips it) and `doctor`, reading from your terminal under
+`curl | sh`.
 It is idempotent and never runs `sudo` on its own: the backend's one root step
 is asked about first ([Host setup and sudo](#host-setup-and-sudo)). It shows one line per step (a spinner on a terminal) and keeps the
 package tool's own output in `~/.bot-bottle/logs/install-<time>.log`, printing
@@ -59,6 +78,12 @@ That needs Docker on docker and firecracker hosts, and Apple's `container` on
 macOS. Launches after it keep building locally until an `up` without
 `--build` (which keeps a running, current local build rather than stopping, as
 long as no release matches the install).
+
+Agent images are separate: firecracker pulls the built-in ones as
+published root filesystems, and builds an agent's overlay with Docker or Podman
+when either is present, else with buildah inside the orchestrator VM
+(`BOT_BOTTLE_BUILD_ENGINE=docker|podman|vm` picks; `backend/container_engine.py`).
+A custom Dockerfile builds in the VM.
 
 ## Requirements
 
@@ -129,7 +154,7 @@ write starters (`setup`), start the services (`up`), else run `bot-bottle`.
 | Backend | Needs |
 |---|---|
 | macos-container (macOS default) | Apple's `container` CLI, and the one-time host firewall. No Docker. |
-| firecracker (Linux default with KVM) | `/dev/kvm`, the `firecracker` binary, e2fsprogs, and the one-time network pool. Docker only for `bot-bottle up --build` (infra images from source instead of a release's). |
+| firecracker (Linux default with KVM) | `/dev/kvm`, the `firecracker` binary, e2fsprogs, and the one-time network pool. Docker only for `bot-bottle up --build` (infra images from source instead of a release's); Docker or Podman, optionally, to build agent overlays on the host. |
 | docker (fallback) | Docker |
 
 #### Host setup and sudo
@@ -176,9 +201,10 @@ A KVM-capable Linux host defaults to the Firecracker backend. It needs:
   <https://github.com/firecracker-microvm/firecracker/releases>. Start flows
   print this pointer when the binary is missing.
 - **e2fsprogs** (`mke2fs`, `debugfs`, `e2fsck`, `resize2fs`) for building root
-  filesystems. Docker is optional: it is used only by `bot-bottle up
-  --build`, which builds the infra images from source rather than downloading
-  a release's prebuilt ones.
+  filesystems. Docker is optional: `bot-bottle up --build` needs it to build
+  the infra images from source rather than downloading a release's prebuilt
+  ones, and Docker or Podman, when present, builds agent overlays on the host
+  instead of in the orchestrator VM.
 - **A one-time privileged network setup**: the per-bottle TAP pool plus the
   fail-closed `nftables` isolation table. `bot-bottle install
   --backend=firecracker` gives the host-appropriate config (a NixOS module, a
@@ -431,7 +457,7 @@ Base images it pulled to build on, such as `python` or `node`, stay.
 If `bot-bottle` itself won't run, the installer can remove what it installed:
 
 ```sh
-curl -fsSL "<the install URL>" | sh -s -- --uninstall
+curl -fsSL https://raw.githubusercontent.com/diderisoft/bot-bottle/main/install.sh | sh -s -- --uninstall
 ```
 
 That removes the installer's venv and shim and says what's left.

@@ -10,7 +10,7 @@ A bottle already declares exactly what an agent can reach: egress routes
 (allowlisted hosts + auth) and git config (remotes + identity). We
 considered deriving an agent's system prompt — or a section of it —
 automatically from those configs, so an agent would be told up front
-what it has access to (e.g. "you can reach `gitea.dideric.is` over the
+what it has access to (e.g. "you can reach `git.example.com` over the
 git remote and its API"). The question surfaced while hand-writing that
 exact line into the `claude-implementer` prompt.
 

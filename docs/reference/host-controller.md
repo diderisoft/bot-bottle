@@ -394,8 +394,8 @@ next suggestion. Its start and stop are audited like any bottle's, with agent
 
 ### For the console
 
-The console's launch page asks the host to propose a bottle for a task (PRD
-0117, design repo; `suggest_link.py`). `bottle_suggest` (`task`, optional
+The console's launch page asks the host to propose a bottle for a task
+(`suggest_link.py`). `bottle_suggest` (`task`, optional
 `cwd`) -> `bottle_suggestion` (`job`, `state` `running`, or `error`) starts
 the same flow as `bot-bottle bottles suggest`: `bottle-architect` in its
 warm bottle, falling back to the rules path, validated against the host's
@@ -410,7 +410,7 @@ one still running after 150 seconds is reported failed.
 `new_bottle` name, extends and about, whether it `writes` a bottle, and the
 `egress` hosts, `repos`, `env` names and `credentials` names and routes it
 adds — never a secret's value — plus `similar`, `notes` and `source`,
-`architect` or `rules`; and the guided start's review, PRD 0118: the `gist`,
+`architect` or `rules`; and the guided start's review: the `gist`,
 the `new` grants, `connect` (each forge to connect first, with the `forge
 connect` command to run here) and `edits`, each pending edit to another
 bottle with its `bottle`, what it `adds`, `why`, the forges it `waits_on`
@@ -429,8 +429,10 @@ bottle the host proposed, if it makes one, into the host's bottles as a new
 version, and answers the bottles to launch with: the existing ones for a
 reuse or stack, those plus the new one for additions, or just the new one.
 It refuses while an edit is pending.
-The console never sends a manifest, so only what this host proposed is
-written. A finished job is kept ten minutes.
+These suggestion actions take no manifest from the console: they write only
+what this host proposed. Other console actions do write bottles and secrets
+from what the console sends; see [What pairing lets the console
+do](#what-pairing-lets-the-console-do). A finished job is kept ten minutes.
 
 ## GitHub through the bot-bottle app
 
@@ -521,15 +523,14 @@ renamed there.
 
 ## Audit
 
-The host controller is the host's only audit writer
-(PRD 0089, design repo). Producers are the host
+The host controller is the host's only audit writer. Producers are the host
 controller itself (`lifecycle.*`, `hostctl.*`), the orchestrator, and the
 gateway's `egress`, `git-gate` and `supervise`. Gateway events reach it
 through the orchestrator (`POST /audit/append`).
 
 | Module | Does |
 |---|---|
-| `audit_journal.py` | append-only JSONL segments in `~/.bot-bottle/audit/`. Each record hash-chains to the one before it across segments and restarts. An exclusive directory lock enforces one writer. Credential-shaped keys are refused and token-shaped values scrubbed before writing. `id` is the idempotency key. |
+| `audit_journal.py` | JSONL segments in `~/.bot-bottle/audit/` (directory 0700, files 0600), which the writer only appends to. Each record hash-chains to the one before it across segments and restarts. An exclusive directory lock enforces one writer. Credential-shaped keys are refused and token-shaped values scrubbed before writing. `id` is the idempotency key. |
 | `audit_index.py` | a SQLite index rebuilt from the journal, for `bot-bottle audit query`. It stops at the first record that doesn't chain. |
 | `audit_verify.py` | offline chain check (`bot-bottle audit verify`). Reports `truncated-tail`, `unreadable`, `edited`, `gap` and `chain-break`. |
 | `audit_forward.py` | at-least-once forwarding to an HTTPS endpoint, as native NDJSON or OCSF. The cursor advances only on a 2xx. |
@@ -540,6 +541,22 @@ A journal that can't be written is logged, and the launch or teardown still
 goes ahead. Where a bottle sets `audit.delivery: required`, egress and
 git-gate refuse the action they couldn't record (see
 [gateway.md](gateway.md)).
+
+**What the chain proves.** Each record's `hash` is a plain SHA-256 over the
+previous hash and the record, with no key: nothing is signed or MACed.
+Append-only is how the writer behaves, not something the OS enforces; the
+files are ordinary files owned by the host user. So `audit verify` catches
+accidental damage and a partial edit (a changed, dropped, inserted or
+reordered record), but anyone with the host user's access can rewrite the
+whole chain from the edited record onward and it verifies clean. Whole
+records cut from the end of the newest segment also leave a valid, shorter
+chain. Tamper evidence against that needs a copy off the host:
+`bot-bottle audit forward --url <https endpoint> [--secret <name>]
+[--format native|ocsf]` has the host controller POST each record, within
+seconds of writing, to a receiver you run elsewhere, which then holds the
+chain as it was when sent (`--off` stops it). Records already sent can't be
+rewritten from the host; whoever controls the host can still change or stop
+what hasn't been sent yet. Forwarding is off until you set it.
 
 ### Audit records on the console
 
@@ -599,8 +616,11 @@ agents and the local audit journal on the host aren't affected.
 
 The console can list local agents, launch a **local agent by name** (with an
 optional prompt, bottle names and label), stop one, and view or type into
-sessions. Agent and bottle definitions always come from this host, never from
-the console. A launch, resume or stop runs beside the link, after that agent's
+sessions. A launch names an agent and bottles this host already has: agent
+content sent with a launch is refused. Bottles are not read-only to the
+console, though: it can edit host bottles and the secrets file (see [What
+pairing lets the console do](#what-pairing-lets-the-console-do)), and a later
+launch runs with those edits. A launch, resume or stop runs beside the link, after that agent's
 previous one, so the console's other requests are answered while it waits on
 the bottle. A resume of a bottle already running as that same agent (Resume
 clicked twice after a Stop) answers `agent_started` again rather than an error;
@@ -705,3 +725,62 @@ or holds a secrets-file value, puts the file back if the agent's manifest no
 longer loads, and records a version. A digest that no longer matches replies
 `stale`. Changes apply from the next launch; the running bottle is
 unaffected.
+
+### What pairing lets the console do
+
+Pairing gives the console operator-level control over this host's bottles,
+their egress policy and the host secrets file. That is the hosted console at
+`https://bot-bottle.app` unless you paired with another. Trust it as you
+trust your own terminal: a compromised console, or a stolen console session,
+can do what follows. `bot-bottle pair off` turns the link off; the host
+controller drops it within seconds, and `bot-bottle pair on` turns it back
+on. A host that never paired has no link.
+
+Through the link the console can:
+
+- launch, resume and stop agents, type into their sessions (where the agent
+  is `remote.writable`), read their conversations and terminal history, and
+  upload files into a running bottle;
+- answer supervise requests: allow egress, connect a forge with a token it
+  sends (`forge_connect`), grant repos (`add_repo_answer`), create repos and
+  launch child bottles;
+- widen a running bottle's egress without a request from the agent:
+  `operator_egress_allow` (`host`, optional `keep`) adds a default route for
+  a host the bottle was blocked from, read-only unless it injects a
+  credential, and with `keep` writes it into the bottle file too;
+- write host bottles: `bottle_write` replaces a host bottle in a running
+  agent's chain with content the console sends, and `manifest_save` and
+  `manifest_transfer` write a run's changes or picked elements into a host
+  bottle or a new one (all described above). Host bottles
+  run as written, with no trust prompt
+  ([manifest.md](manifest.md#trust)), so these edits apply at the next
+  launch. `bottle_write` can't write a built-in or project bottle, but
+  `manifest_transfer`, a kept approval and an accepted suggestion edit can
+  change a project's bottle, which the host then trusts (left for you to
+  commit);
+- list the names in the host secrets file (`list_secrets` -> `secrets_listed`,
+  names only) and set a value in it (`set_secret` (`name`, `value`) ->
+  `secret_set`). The value is never echoed in the reply or a log line.
+
+Together these let a console point a route's credential at a host of its
+choosing, so a compromised console can send a host secret off the host
+through a bottle. There is no action that runs a command on the host itself;
+what the console starts runs in a bottle.
+
+What it can't do:
+
+- read a secret's value over the link: `list_secrets` returns names,
+  `set_secret` only writes, and replies and logs never carry a value (a
+  bottle edit can still send one to a host of its choosing, as above);
+- launch agent content of its own, or write a built-in bottle;
+- read the encrypted audit records it holds (see [Audit records on the
+  console](#audit-records-on-the-console)) without a passkey-signed unlock:
+  the key, `audit.key`, never leaves this host, a decrypt needs a token that
+  only a WebAuthn assertion from a passkey this host trusts can get, and the
+  trusted passkeys are set on the host at `bot-bottle pair`, after you
+  confirm their fingerprints. The console can't change them. This covers the
+  stored records only: conversations and terminal output read live over the
+  link reach the console readable (transcripts with host secret values and
+  token shapes masked);
+- connect to the host: the link is dial-out only, to the node id pinned at
+  login.

@@ -4,7 +4,11 @@ The per-host data plane, and the only way out for an agent. One gateway serves
 every bottle and applies each bottle's own policy, which it resolves per
 request (see [Attribution](architecture.md#attribution)). It holds the
 mitmproxy CA and a `gateway` token for the control plane, never a signing key.
-It keeps no durable per-bottle state.
+It keeps no durable per-bottle state, but while it serves a bottle it holds
+that bottle's upstream credentials: the egress tokens it injects (resolved from
+the orchestrator) and git-gate's forge tokens and deploy keys. That makes it
+the most valuable component to protect: a compromised gateway has every
+running bottle's upstream access.
 
 ## Processes
 
@@ -39,15 +43,20 @@ Basic`, so a client that waits to be challenged (git's default
 2. **Host check.** Policy keys on the host mitmproxy connects to
    (`request.host`: the `CONNECT` target or the absolute URL's host). A
    `Host` header, `:authority` or TLS SNI naming any other host gets a 403,
-   so a request can't pass as an allowlisted host while going elsewhere.
+   so a request can't pass as an allowlisted host while going elsewhere. On
+   an `inspect: false` route only the `CONNECT` target is checked (below).
 3. **Introspection.** `_egress.local/allowlist` returns the calling bottle's
    own routes.
-4. **Outbound DLP**, on routes with `inspect` enabled. Runs before auth is
+4. **Outbound DLP**, on inspected routes only (not `inspect: false`). Runs before auth is
    stripped, so a token smuggled in any header, the path, the query, the body
    or the hostname is caught. The result is handled by the route's
    [on-match policy](#outbound-dlp).
-5. **Git boundary.** Smart-HTTP push to a forge is always blocked; fetch only
-   when the route sets `git.fetch`. Pushes go through git-gate.
+5. **Git boundary.** Smart-HTTP push (`git-receive-pack`) is always blocked
+   on inspected routes; fetch only when the route sets `git.fetch`. Pushes go
+   through git-gate. This blocks the git protocol, not writes: an allowlisted
+   forge *API* route with gateway `auth` (or `preserve_auth`) can still change
+   repos, for example through a contents API, as far as its `matches` and the
+   token's scopes allow. Grant forge API routes deliberately.
 6. **Route policy** (`request_pipeline.evaluate_route_policy`). A host not on
    the allowlist, or a request matching no `matches` entry, gets a 403. An
    inspected route that declares no `matches` and has no gateway auth
@@ -71,12 +80,16 @@ relayed as raw TCP.
 
 Routes with `inspect: false` are not TLS-intercepted. The allowlist decision
 happens at `CONNECT`, and the TLS tunnel passes through untouched: no DLP, no
-auth injection, no path matching. Only TLS passes: a non-TLS stream on such a
-route is refused like any other raw TCP.
+canary check, no credential or cookie stripping, no git push block, no auth
+injection, no path matching. The TLS SNI and the `Host` inside the tunnel
+aren't checked either, so a server that answers for other names (a CDN, say)
+can be reached as those names. Such a route is an unscanned channel to its
+host: anything the agent holds can go there. Only TLS passes: a non-TLS stream
+on such a route is refused like any other raw TCP.
 
 ### Agent credentials
 
-On a route without `preserve_auth`, the only identity that goes upstream is
+On an inspected route without `preserve_auth`, the only identity that goes upstream is
 the one the gateway injects (the route's `auth`). Before injecting, the
 gateway strips every credential the agent put in the request. An agent
 handed someone else's key, by a prompt injection for example, can't act as
@@ -119,7 +132,7 @@ summary, and its `~/.claude.json` pre-approves that placeholder.
 
 ### Cookies
 
-A request's `Cookie` keeps only the cookies that host set for this bottle.
+On an inspected route, a request's `Cookie` keeps only the cookies that host set for this bottle.
 The gateway sees every response on an inspected route, and it remembers each
 `Set-Cookie` name and value per (bottle, host) (`gateway/egress/cookie_jar.py`).
 On a route without `preserve_auth`, a cookie pair the agent sends goes
@@ -137,26 +150,34 @@ to set its cookies again.
 
 ### Outbound DLP
 
+DLP runs only on inspected routes. A route with `inspect: false` is an
+unscanned channel: none of the detectors below, nor the canary check, sees
+its traffic.
+
 Detectors are in `gateway/egress/dlp_detectors.py`. Routes enable them by name
 under `dlp.outbound_detectors` and `dlp.inbound_detectors`:
 
 | Detector | Direction | Catches |
 |---|---|---|
 | `token_patterns` | outbound | vendor token shapes |
-| `known_secrets` | outbound | the bottle's own provisioned values in several encodings, including split or fragmented forms |
+| `known_secrets` | outbound | the upstream tokens the gateway injects for the bottle (`EGRESS_TOKEN_*`) in several encodings, including split or fragmented forms; not the bottle's own `?` env values, which may go to their own host |
 | `entropy` | outbound | high-entropy blobs; warns only, and only on routes that list it |
 | `naive_injection_detection` | inbound | prompt-injection phrasing in responses |
-| (always on) | outbound | CRLF header injection |
+| (always on) | outbound | CRLF header injection, and the canary (below) |
 
-Outbound detectors run unless a route narrows them. Inbound detectors run only
+On an inspected route, `token_patterns` and `known_secrets` run unless the
+route's `outbound_detectors` list leaves them out (`false` turns both
+off); `entropy` runs only when the list names it
+(`gateway/egress/dlp.py`). The CRLF and canary checks run on every inspected
+route, whatever the list. Inbound detectors run only
 on routes that name them. `naive_injection_detection` is regex phrase matching
 on response bodies, so it is trivially bypassed. The allowlist and outbound DLP
 already stop what a successful injection would try to do, which is reach a host
 or send a secret, so it is kept as an opt-in signal rather than a default.
 
 The bottle's env also carries a per-session **canary** secret. Any outbound
-appearance of it is an exfiltration attempt, and the request is always
-blocked.
+appearance of it on an inspected route is an exfiltration attempt, and the
+request is always blocked. On an `inspect: false` route it isn't seen.
 
 `dlp.outbound_on_match` decides what a token match does:
 
@@ -166,8 +187,8 @@ blocked.
 | `redact` | agent-provider routes | scrubs the value and forwards. Fails closed if a match can't be removed, for example in the hostname. |
 | `block` | | 403 |
 
-Canary hits, CRLF injection and allowlist misses are always a 403, whatever
-the policy.
+Canary hits and CRLF injection on inspected routes, and allowlist misses on
+any route, are always a 403, whatever the policy.
 
 ### Logging
 

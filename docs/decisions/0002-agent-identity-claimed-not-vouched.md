@@ -16,7 +16,7 @@ agents than for `$HOME` agents.
 
 This record exists because the decision is a **trust posture** worth
 finding on its own, separate from the feature PRD that introduced it.
-The full analysis lives in PRD 0027; the decision is summarized here.
+The decision and its reasoning are summarized here.
 
 ## Decision
 

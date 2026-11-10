@@ -1,6 +1,6 @@
 # ADR 0018: `bot-bottle start --auto` runs the suggested bottle without asking
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-05
 - **Deciders:** didericis
 

@@ -3,7 +3,7 @@
 Short, durable records of decisions — one file per decision. This is a
 lightweight [Architecture Decision Record](https://adr.github.io/)
 practice: capture *what was decided and why* in a versioned file so the
-reasoning lives in the clone, not in a Gitea issue thread or a chat log
+reasoning lives in the clone, not in an issue thread or a chat log
 that disappears when the host does.
 
 Decision records and [`docs/reference/`](../reference/architecture.md)

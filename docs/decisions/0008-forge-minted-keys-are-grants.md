@@ -1,6 +1,7 @@
 # ADR 0008: A forge-minted key is declared only as a grant
 
-- **Status:** Accepted
+- **Status:** Accepted; partly superseded by ADR 0019 (forges are described
+  in bottles and connected on hosts; the grants-only rule stands)
 - **Date:** 2026-10-27
 - **Deciders:** didericis
 

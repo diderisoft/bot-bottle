@@ -1,6 +1,6 @@
 # ADR 0016: Split a workspace's git config between the agent and git-gate
 
-- **Status:** Proposed
+- **Status:** Accepted (part 1); part 2 proposed
 - **Date:** 2026-11-04
 - **Deciders:** didericis
 

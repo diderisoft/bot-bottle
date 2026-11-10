@@ -49,11 +49,14 @@ compared the possible placements.
 - **Cost:** iroh's QUIC stack (Rust) parses network packets in a host process
   with the user's privileges, rather than in a guest. It only does so after
   the host has dialed out to a pinned console, and only when remote access is
-  enabled. If the threat model (#337) rules that out, the fallback is a
+  enabled. If the [threat model](../security/threat-model.md) rules that out, the fallback is a
   dedicated sandboxed unit with outbound-only egress.
 - **Cost:** the console must bind each host's iroh node id to its device-flow
   approval and refuse unknown node ids, and return its ticket at login. Until
-  it does, hosts shouldn't connect.
+  it does, hosts shouldn't connect. (Since shipped on the host side: the host
+  sends its node id with the device flow, saves the node id and ticket the
+  console returns, and refuses any console whose node id isn't the one
+  pinned at login.)
 - **Cost:** remote access is unavailable on Intel Macs.
 
 ## Links

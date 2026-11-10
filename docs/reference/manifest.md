@@ -238,7 +238,7 @@ applies a route is in [gateway.md](gateway.md#egress-proxy).
 | `inspect.matches[].paths` | no | Array of `{type, value}`. `type` is `prefix` (default), `exact`, or `regex`. |
 | `inspect.matches[].methods` | no | Array of HTTP method strings, e.g. `[GET, POST]`. |
 | `inspect.matches[].headers` | no | Array of `{name, value, type}`. `type` is `exact` (default) or `regex`. |
-| `inspect.outbound_detectors` | no | `false` disables outbound scanning; a list restricts it to named detectors (`token_patterns`, `known_secrets`). Omit for all. |
+| `inspect.outbound_detectors` | no | `false` turns off the content detectors; a list runs only those named (`token_patterns`, `known_secrets`, `entropy`). Omit for the defaults, `token_patterns` and `known_secrets` (`entropy` runs only when listed). The canary and CRLF checks run on every inspected route regardless. |
 | `inspect.inbound_detectors` | no | Off unless listed: name the detectors to run on responses (`naive_injection_detection`). Omit or `false` for none. |
 | `inspect.outbound_on_match` | no | What to do when an outbound token is detected: `supervise` (default for manifest routes; hold for operator approval), `redact` (scrub the value and forward), or `block` (hard 403). Agent-provider routes (e.g. `api.anthropic.com`) default to `redact`. |
 | `inspect.preserve_auth` | no | `true` forwards the client's own `Authorization` header instead of stripping it (registries whose token dance fetches per-scope tokens). |

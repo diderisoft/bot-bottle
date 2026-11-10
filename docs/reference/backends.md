@@ -48,7 +48,7 @@ artifact beside its image (`ghcr.io/diderisoft/<image>-rootfs:<version>-<arch>`:
 one gzip layer of type `application/vnd.bot-bottle.rootfs.ext4+gzip`, the empty
 config). The pin holds that reference and the layer's sha256, and the host
 fetches the layer by digest through the registry API (`oci_registry.py`) and
-checks it. Older pins that hold an HTTPS download (a Gitea generic package)
+checks it. Older pins whose `url` is a plain HTTPS download of the ext4 file
 still work. `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN` is only for a private registry,
 and goes only to `BOT_BOTTLE_INFRA_ARTIFACT_TOKEN_HOST`.
 
@@ -243,7 +243,7 @@ The host budget counts each running bottle at the memory it was given
 | Control plane reachable from agent | no; the agent isn't on the control network | no; no forward rule | no; the agent isn't on the `--internal` control network |
 | Agents reach each other | no, by the firewall in each agent's VM; refused at launch for a root-capable agent alongside others | no; no forward rule | no; no shared network |
 | Isolation probe | yes, as root and as the agent, plus a DNS check | yes | yes, plus a DNS check |
-| Agent image builds | host `container build` | in the orchestrator VM with buildah, or a published ext4 image | host `docker build` |
+| Agent image builds | host `container build` | a published ext4 image; an overlay with host Docker or Podman when present (`BOT_BOTTLE_BUILD_ENGINE`), else buildah in the orchestrator VM; a custom Dockerfile with buildah in the orchestrator VM | host `docker build` |
 | `nested_containers` | yes, rootless podman in the guest | rejected | rejected |
 | Host requirements | `container` CLI, a one-time pf anchor and LaunchDaemon | `/dev/kvm`, `firecracker`, e2fsprogs, a one-time TAP and nft setup | Docker |
 
@@ -366,8 +366,8 @@ authenticates, fetches the manifest, then 403s partway through. Docker Hub
 and GHCR also need `inspect.preserve_auth: true`: their token dance uses a
 client-fetched per-scope bearer token that the proxy would otherwise strip.
 Turn DLP off on every registry and CDN route. The bodies are compressed layer
-blobs that no detector can read, and buffering them is what triggers the
-shared-proxy OOM in #455.
+blobs that no detector can read, and buffering them is what can run the
+shared proxy out of memory.
 
 ```yaml
 nested_containers: true
@@ -441,9 +441,12 @@ The infra pair (`infra_vm.py`) is two persistent VMs, each booting its own
 rootfs (`infra_rootfs.py`):
 
 - **Orchestrator VM**: control plane, `bot-bottle.db` on a persistent
-  `/dev/vdb` volume, the signing key, and buildah for in-VM agent builds.
-  Untrusted Dockerfile `RUN` steps share this VM with the control plane.
-  That's an accepted tradeoff for not needing host Docker. It leans on the
+  `/dev/vdb` volume, the signing key, and buildah for in-VM agent builds:
+  every custom Dockerfile, and an overlay when the host has no usable Docker
+  or Podman (`BOT_BOTTLE_BUILD_ENGINE=docker|podman` picks one, `vm` always
+  builds in the VM). Untrusted Dockerfile `RUN` steps built here share this
+  VM with the control plane. That's an accepted tradeoff for not needing host
+  Docker. It leans on the
   trust gate: a project agent's trust covers its Dockerfile and overlay build
   context, so a change to them asks again before it is built
   ([architecture.md](architecture.md#state)).
@@ -585,7 +588,7 @@ the `ENV_VAR_SECRET` read back from the agent. Each backend supplies a
 
 Every bottle is attempted, then any that failed to reattach abort the
 bring-up, all named together: a bottle whose egress quietly starts failing TLS
-is worse than a loud failure (PRD 0081, design repo). Two things keep that
+is worse than a loud failure. Two things keep that
 from wedging the host:
 
 - **Host control still starts.** The orchestrator is up even when the reattach

@@ -1,7 +1,7 @@
 # `bottles suggest`
 
 `bot-bottle bottles suggest "<task>"` proposes the bottle a task needs before
-it runs (PRD 0117, design repo).  The output is always a typed proposal — never
+it runs.  The output is always a typed proposal — never
 free YAML — so the manifest loader can validate it and the pretty view can show
 what it contains.
 
@@ -50,11 +50,11 @@ steps on the same screen (`cli/screen.py`, `commands/guided_view.py`):
    adding 1 host.`).
 
    ```
-   Builds on bot-bottle-dev. Adds Linear so the agent can read tickets
+   Builds on dev. Adds Linear so the agent can read tickets
    and label issues.
 
    new  api.linear.app · acme/app (push) · $LINEAR_TOKEN
-   ⚠    gitea.example.com isn't connected here · c connects it
+   ⚠    git.example.com isn't connected here · c connects it
    ```
 
    `d` shows the details: a card with a line for each thing it adds, with
@@ -66,7 +66,7 @@ steps on the same screen (`cli/screen.py`, `commands/guided_view.py`):
    three, or for a route that isn't inspected), a repo's `push` or `read`.
    A secret a route carries follows (`with $LINEAR_TOKEN`). A bottle's repos
    are counted and named in a few words, by owner when three owners or
-   fewer hold them (`didericis/* ×5`), else two names and `+N`. Each
+   fewer hold them (`acme/* ×5`), else two names and `+N`. Each
    element counts under the nearest bottle that declares it. Under the card,
    every host, repo and env var under its bottle (↑/↓ scroll), then the
    notes.
@@ -75,10 +75,10 @@ steps on the same screen (`cli/screen.py`, `commands/guided_view.py`):
    new             api.linear.app     read tickets (GET, POST)
                                       with $LINEAR_TOKEN
                    acme/app           label issues (push)
-   bot-bottle-dev  14 hosts           (any)
-                   5 repos            didericis/* ×5 (push)
+   dev             14 hosts           (any)
+                   5 repos            acme/* ×5 (push)
    basic           13 hosts           Package registries and pub… (GET)
-   forge           gitea.dideric.is   as didericis
+   forge           git.example.com    as acme-bot
    ```
 
    `Enter` runs it, `s` saves it as a named bottle first, `e` edits it, `d`
@@ -97,15 +97,15 @@ steps on the same screen (`cli/screen.py`, `commands/guided_view.py`):
    edit). A proposal that can't run on this host (below) offers only edit,
    reply and cancel.
 
-   **Edits to other bottles** (PRD 0118, design repo). A proposal can also
+   **Edits to other bottles**. A proposal can also
    change the setup, not only this run: add the project's forge and repo to
    `./main`, say, so every later run has them. Each edit is shown above the
    `new` line, the first pending one highlighted, its why under it:
 
    ```
-   edit ./main  + didericis/bot-bottle (push)
+   edit ./main  + acme/api (push)
                 the project's forge
-   ✓    bot-bottle-dev: edited (a new version)
+   ✓    dev: edited (a new version)
    ```
 
    `a` accepts the first pending edit and writes it then; `x` skips it; `d`
@@ -181,17 +181,17 @@ elements preview:
   ...
 ```
 
-With a connected Gitea forge and a project `origin`:
+With a connected forge and a project `origin`:
 
 ```
 $ bot-bottle bottles suggest --rules "push a release"
-Run in gitea.example.com + basic, adding 1 repo.
+Run in basic, adding 1 repo.
 
 option:  stack+additions
 from:    rules
 bottles: basic
-  + repo   gitea.example.com/acme/app:write  # write access to the project's own repo
-note:    rules path: origin acme/app on gitea.example.com
+  + repo   git.example.com/acme/app:write  # write access to the project's own repo
+note:    rules path: origin acme/app on git.example.com
 ```
 
 ## The proposal
@@ -205,10 +205,10 @@ A proposal is a JSON object with these fields:
 | `bottles` | array | existing bottles to use or extend |
 | `new_bottle` | object or null | for `new-extending`/`new`: `{name, extends, about}` |
 | `additions.egress` | array | routes to add: `{host, methods, why}` |
-| `additions.repos` | array | repo grants: `{grant, why}`, e.g. `gitea.example.com/owner/repo:write` |
+| `additions.repos` | array | repo grants: `{grant, why}`, e.g. `git.example.com/owner/repo:write` |
 | `additions.env` | array | env var names: `{name, why}` — values come from the secrets file |
 | `additions.credentials` | array | injected secrets: `{name, route, why}` — a secret name and the egress host it goes on |
-| `edits` | array | changes to other bottles, each accepted or skipped on the review (PRD 0118): `{bottle, extends, add, why}`. `bottle` is a host bottle, a project bottle (`./main`) or `new:<name>` (a new host bottle, with `extends`); `add` takes what `additions` does, plus `forges` (`{<host>: {kind, url}}`, the description of a forge its repos are on) |
+| `edits` | array | changes to other bottles, each accepted or skipped on the review: `{bottle, extends, add, why}`. `bottle` is a host bottle, a project bottle (`./main`) or `new:<name>` (a new host bottle, with `extends`); `add` takes what `additions` does, plus `forges` (`{<host>: {kind, url}}`, the description of a forge its repos are on) |
 | `similar` | array | existing bottles close to the proposal: `{bottle, covers}` |
 | `notes` | array | free-text caveats, including why the rules answered when the architect couldn't |
 | `source` | string | which path produced it: `architect` or `rules` (set by the flow, never by the model) |
@@ -325,7 +325,7 @@ the host controller boots the architect's bottle when it starts and keeps it
 running (`BOT_BOTTLE_ARCHITECT_ALWAYS_ON`, on by default). It's deliberately
 tiny for that: 512 MiB (the bottle floor; claude peaks at about 320 MiB per
 call) and one CPU, which answered as fast as 1 GiB did. A bottle removed from
-under the host controller (by `bot-bottle bots cleanup`, say) is replaced on
+under the host controller (by `bot-bottle cleanup bots`, say) is replaced on
 the next suggestion, which then waits for the boot.
 
 With `BOT_BOTTLE_ARCHITECT_ALWAYS_ON=0` it boots on demand instead:
@@ -343,8 +343,9 @@ reuse across calls.
 
 Measured on macOS (macos-container, claude, its default model): 3–5 s per
 suggestion end to end in the warm bottle; a cold boot first adds about 25 s
-with cached images. On a Firecracker host before the one-shot call: 7–8 s
-warm, 26 s more cold (80 s when the images have to be built).
+with cached images. On a Firecracker host, measured before the one-shot call
+(approximate): about 7–8 s warm, about 26 s more cold (80 s when the images
+have to be built).
 
 The input is:
 
@@ -407,12 +408,7 @@ What it writes depends on the option:
 An env name is written with a `?NAME` placeholder, prompted for at launch. The
 body is the new bottle's about text and the proposal's notes.
 
-## Free/paid split
+## Hosted suggester
 
-| Free (open core) | Paid (hosted) |
-|---|---|
-| rules path; `bottle-architect` on your own model login | hosted suggester on the console launch page (fast, Anthropic's model, no setup) |
-
-The hosted path is built in a later chunk (PRD 0117, design repo).  A failure
-in the hosted path always falls back to the rules path, so a launch never waits
-on the model.
+The rules path and `bottle-architect` on your own model login are what ships.
+A hosted suggester is planned and not available yet.

@@ -27,6 +27,8 @@ signal:
   wrote (the test passes whether or not the real teardown works), while
   many of the missed *branches* are failure paths you cannot provoke
   against a real daemon on cue.
+  (The smolmachines backend has since been removed; on Linux the
+  firecracker backend replaced it.)
 
 Chasing a single global percentage (e.g. 90%) pushes the most test
 effort onto the least safety-relevant code — exactly backwards — and

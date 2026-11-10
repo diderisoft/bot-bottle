@@ -1,11 +1,12 @@
 # git-gate
 
 git-gate is the gateway's git server. Agents push and fetch through it and
-never hold an upstream credential. Pushes are scanned and forwarded upstream
-over SSH. Fetches refresh from upstream first, so the agent sees current
-state, and so does the start of each push, so its secret scan covers only
-the commits upstream doesn't have (the gateway's repos start empty after it
-restarts). A fetch is refused if upstream can't be reached; a push is still
+never hold an upstream credential. Pushes are scanned and forwarded upstream:
+over SSH, or over HTTPS with the forge's token for a GitHub repo (the
+default there; see [GitHub transports](#github-transports)). Fetches
+refresh from upstream first, so the agent sees current state, and so does
+the start of each push, so its secret scan covers only the commits upstream
+doesn't have (the gateway's repos start empty after it restarts). A fetch is refused if upstream can't be reached; a push is still
 scanned, over more history.
 
 ## Manifest
@@ -29,7 +30,9 @@ git-gate:
       host_key: ssh-ed25519 AAAA...   # pins the upstream host key
 ```
 
-Only `ssh://user@host[:port]/path` upstreams are supported (`manifest/git.py`).
+A long-form entry's `url` must be `ssh://user@host[:port]/path`
+(`manifest/git.py`). A one-line grant names no URL: its forge connection
+decides how git-gate reaches it.
 Key providers:
 
 - `static`: a key file already on the host, in the long form above. This is
@@ -68,8 +71,7 @@ asks the operator to confirm it, and can save it to the bottle file
 
 A bottle grants repos on a forge in a line, and may describe the forge they're
 on; the host connects it (`manifest/forges.py`, `forge_connections.py`;
-[ADR 0019](../decisions/0019-forges-are-described-in-bottles-connected-on-hosts.md),
-PRD 0103 in the design repo):
+[ADR 0019](../decisions/0019-forges-are-described-in-bottles-connected-on-hosts.md)):
 
 ```yaml
 # any bottle
@@ -158,8 +160,7 @@ repo (`POST /repos/{owner}/{repo}/keys`, read-only unless `:write`; Gitea's
 API under `/api/v1`, GitHub's at `api.github.com` or a server's `/api/v3`),
 revoke the keys a previous run left registered first, and revoke each at
 teardown (`contrib/<kind>/deploy_key_provisioner.py`). A repo's key and its
-revocation record name the kind (`provider`); records from before GitHub are
-Gitea's.
+revocation record name the kind (`provider`).
 
 #### github.com through the bot-bottle GitHub App
 
@@ -339,13 +340,15 @@ matches the gate's `insteadOf` rewrite, so it goes through the gate like any
 other.
 
 The agent's `NO_PROXY` covers the gateway, so git traffic to it skips the
-egress proxy. Smart-HTTP push to a forge through the egress proxy is blocked,
-so the gate is the only way to push.
+egress proxy. Smart-HTTP push to a forge through the egress proxy is blocked
+on inspected routes, so the gate is the only way to push, unless a bottle
+grants an `inspect: false` route to a forge, or a forge API route with gateway
+auth that can write to repos (see [gateway.md](gateway.md)).
 
 ## Commit trailers
 
-Every commit an agent makes carries a trailer naming the bottle and run
-(PRD 0112, design repo), and git-gate checks pushes for it. This is part of
+Every commit an agent makes carries a trailer naming the bottle and run,
+and git-gate checks pushes for it. This is part of
 the core: it works without the console.
 
 The trailer is a visible label that git-gate verifies at push time, not
@@ -467,8 +470,8 @@ the running gateway and inits its bare repos at registration.
 ### Live grants
 
 An approved `add-repo` adds a repo to a running bottle
-(`git_gate/live_grant.py`, `control/hostctl/repo_grants.py`;
-PRD 0105, design repo). The forge is this host's connection to it, as the
+(`git_gate/live_grant.py`, `control/hostctl/repo_grants.py`).
+The forge is this host's connection to it, as the
 user the session's agent pushes as (its `forge_users`, else the forge's
 default); a forge the host hasn't connected can't be granted. Keeping the
 grant writes it into the bottle with the forge's description. It records the key in the bottle's git-gate state dir
@@ -482,8 +485,8 @@ restart, they are provisioned again (see
 ### Created repos
 
 An agent's `create-repo` asks for a new, empty repo, `<forge>/<owner>/<name>`,
-private unless it asks for a public one (`control/hostctl/repo_create.py`;
-PRD 0120, design repo). The host refuses it, before any card, when the forge
+private unless it asks for a public one (`control/hostctl/repo_create.py`).
+The host refuses it, before any card, when the forge
 isn't connected here or the repo exists already (the agent is told to
 `forge-connect` or `add-repo`). Through the GitHub App, the repo's owner must have the app installed with Administration (write) accepted; until then the card carries `install:` (the install page, or the installation's settings to accept the permission), allowing it leaves it waiting, and the host asks GitHub again as for an unreachable `add-repo` (see [host-controller](host-controller.md)), raising the card again once that's fixed. Otherwise, when the bottle's `actions.create`
 allows it, the host creates it at once; else the console shows a card saying
@@ -511,15 +514,17 @@ The pre-receive hook (`git_gate_render_hook`) reads every ref first, then:
 2. Checks every new commit carries this bottle's `Bot-Bottle` trailer
    (see [Commit trailers](#commit-trailers)).
 3. Runs gitleaks over the commits the push introduces: those reachable from
-   the new tip and not from any ref the gate already has
-   (PRD 0028, design repo). The rules
+   the new tip and not from any ref the gate already has.
+   The rules
    come from `git_gate_render_gitleaks_config`. A finding refuses the push.
 4. Re-scans ignoring `# gitleaks:allow` comments. A finding hidden only by an
    inline suppression becomes a `gitleaks-allow` supervise proposal. The push
    waits for the operator and is refused on rejection or timeout.
 5. Runs `gateway/git_gate/held_secret_scan.py`, which looks for the pushing
    bottle's own secrets in every ref name, commit message, identity, path and
-   added line the push introduces. Those secrets are its `?` env values, its
+   added line the push introduces. Those secrets are its secret env
+   values (an `env:` entry written `?` or `?<prompt>`, read from the secrets
+   file or prompted for at launch), its
    egress tokens and its canary. It matches by value, so it catches secrets
    gitleaks has no rule for.
 6. With `protect_default_branch` (`git-gate.protectDefault` on the gate
