@@ -111,6 +111,7 @@ def deploy_key_refs(bottle: ManifestBottle) -> tuple[DeployKeyRef, ...]:
     )
 
 
+# Host state, not the gateway's (it gets keys pushed): ADR 0020's JSON exception.
 _LIVE_GRANTS = "live-grants.json"
 
 
@@ -295,6 +296,7 @@ def _write_upstreams_snapshot(
         }
         for u in upstreams
     ]
+    # Host state, not the gateway's (it gets keys pushed): ADR 0020's JSON exception.
     snapshot = stage_dir / "upstreams.json"
     snapshot.write_text(json.dumps(data, indent=2))
     snapshot.chmod(0o600)

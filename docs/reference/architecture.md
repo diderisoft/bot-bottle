@@ -181,7 +181,7 @@ Where each kind of state lives, and what owns it.
 | Signing keys | `~/.bot-bottle/<key file>`, mode 0600, pushed to the key holder | host |
 | Gateway CA | `~/.bot-bottle/gateway-ca/`, mounted at mitmproxy's confdir (firecracker: `~/.bot-bottle/infra/gateway-ca/`, pushed into the gateway VM) | gateway |
 | Audit journal | `~/.bot-bottle/audit/` | host controller |
-| Per-bottle scratch: compose files, env and prompt files, logs, the preserve marker | `~/.bot-bottle/state/<identity>/` | backend |
+| Per-bottle scratch: compose files, env and prompt files, logs, the preserve marker, git-gate's re-provisioning state ([git-gate.md](git-gate.md#re-provisioning-state)) | `~/.bot-bottle/state/<identity>/` | backend |
 | Image and kernel caches, VM run dirs, firecracker's build store | `~/.cache/bot-bottle/`, and the runtime's own image store ([below](#image-caches)). Only what can be downloaded or rebuilt | backend |
 
 Paths are the live environment's. A named environment, picked by `BOT_BOTTLE_ENV`, keeps

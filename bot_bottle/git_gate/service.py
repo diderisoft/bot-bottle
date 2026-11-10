@@ -45,6 +45,7 @@ def stage_git_gate_scripts(stage_dir: Path) -> tuple[Path, Path, Path]:
     gitleaks_config.chmod(0o600)
     return hook, access_hook, gitleaks_config
 
+# Host state, not the gateway's (it gets keys pushed): ADR 0020's JSON exception.
 _TRAILER_FILE = "trailer.json"
 
 

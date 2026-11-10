@@ -540,6 +540,24 @@ The value and mode are kept in the bottle's git-gate state dir, as
 `trailer.json`, for re-provisioning. They're set on each bare repo as
 `git-gate.trailer` and `git-gate.trailers`.
 
+### Re-provisioning state
+
+The host keeps what it needs to provision a bottle's git-gate again in the
+bottle's git-gate state dir, `~/.bot-bottle/state/<identity>/git-gate/`.
+
+| File | Holds |
+|---|---|
+| `upstreams.json` | each repo's upstream, transport, key file and token name |
+| `live-grants.json` | the deploy keys granted while it runs, for teardown to revoke |
+| `trailer.json` | the trailer's value and mode |
+
+- Only the host controller reads them. The gateway gets keys, repos and
+  config pushed into it, so it can't take them from the orchestrator's
+  registry.
+- They're host state kept as JSON, a known exception to
+  [ADR 0020](../decisions/0020-where-host-state-lives.md) until they move to
+  `bot-bottle.db`.
+
 ### The baseline
 
 A copied workspace can hold commits the operator made but never pushed. Those
