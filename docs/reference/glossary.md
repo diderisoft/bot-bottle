@@ -130,7 +130,7 @@ It holds the real credentials so the agent never does
 
 ## Grant
 
-A one-line repo entry in a bottle's `git-gate.repos`, such as
+A one-line repo entry in a bottle's `git_gate.repos`, such as
 `git.example.com/acme/app:write`. It gives the forge host, the repo and
 whether the agent may push.
 

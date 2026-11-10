@@ -1,5 +1,7 @@
 # ADR 0019: Forges are described in bottles and connected on hosts
 
+Syntax in this record predates v0.1.9; see [manifest.md](../reference/manifest.md).
+
 - **Status:** Accepted
 - **Date:** 2026-11-06
 - **Deciders:** didericis

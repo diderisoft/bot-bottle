@@ -1,5 +1,7 @@
 # ADR 0018: `bot-bottle start --auto` runs the suggested bottle without asking
 
+Syntax in this record predates v0.1.9; see [manifest.md](../reference/manifest.md).
+
 - **Status:** Accepted
 - **Date:** 2026-11-05
 - **Deciders:** didericis

@@ -15,7 +15,7 @@ Bottles and agents are Markdown files with YAML frontmatter.
 
 | File | Holds |
 |---|---|
-| Bottle | what the agent may reach and with which credentials: its env, git identity, git-gate repos and egress routes |
+| Bottle | what the agent may reach and with which credentials: its env, git identity, `git_gate` repos and egress routes |
 | Agent | who it is: its harness (`agent_provider`), its skills and its prompt |
 
 An agent doesn't name a bottle. You pick bottles at launch: `--bottle`, the
@@ -40,7 +40,7 @@ extends: basic           # start from the built-in package-registry routes
 env:
   NODE_ENV: development
 
-git-gate:
+git_gate:
   user:
     name: app-bot
     email: app-bot@example.com
@@ -49,24 +49,20 @@ git-gate:
 egress:
   routes:
     - host: api.example.com
-      inspect:
-        auth:
-          scheme: Bearer       # Bearer | token
-          token_ref: EXAMPLE_API_TOKEN
-        matches:               # optional: restrict to specific paths/methods/headers
-          - paths:
-              - type: prefix
-                value: /v1/
-            methods: [GET, POST]
-        outbound_detectors: [token_patterns, known_secrets]
-        inbound_detectors: [naive_injection_detection]   # opt in to response scanning
+      auth: {type: bearer, value: secret:EXAMPLE_API_TOKEN}   # bearer | token | header
+      allow:                   # optional: restrict to specific paths/methods/headers
+        - paths: [/v1/]
+          methods: [GET, POST]
+      dlp:
+        outbound: [token_patterns, known_secrets]
+        inbound: [naive_injection_detection]   # opt in to response scanning
 ---
 
 The `app-dev` bottle: push to `acme/app` on GitHub, a token over HTTPS for the
 API. The agent's provider adds its own model route.
 ````
 
-Where `env` entries and `token_ref` find their values: see [secrets.md](secrets.md).
+Where `env` entries and `auth.value` find their values: see [secrets.md](secrets.md).
 
 The grant `github.com/acme/app:write` is read-only without `:write`. It needs
 this host to have connected the forge ([Forges](#forges)).
@@ -75,7 +71,7 @@ A repo on a forge bot-bottle doesn't support yet takes the long form instead,
 with its own `url`, a `static` key file and the pinned `host_key`:
 
 ```yaml
-git-gate:
+git_gate:
   repos:
     app:
       url: ssh://git@git.example.com/acme/app.git
@@ -87,7 +83,7 @@ git-gate:
 
 This one pushes to `app` over SSH.
 
-The whole `git-gate` block, including forges and one-line repo grants, is in
+The whole `git_gate` block, including forges and one-line repo grants, is in
 [git-gate.md](git-gate.md#manifest).
 
 | Field | Reference |
@@ -118,9 +114,9 @@ The later bottle wins:
 |---|---|
 | `env` | per variable |
 | `resources` | per key (`memory`, `cpus`) |
-| `git-gate.repos` | per repo name, field by field. `repos: {}` clears them |
-| `git-gate.trailers`, `git-gate.protect_default_branch` | the later bottle's, when it sets one |
-| `git-gate.actions.create` | joined, each pattern once |
+| `git_gate.repos` | per repo name, field by field. `repos: {}` clears them |
+| `git_gate.trailers`, `git_gate.protect_default_branch` | the later bottle's, when it sets one |
+| `git_gate.actions.create` | joined, each pattern once |
 | `egress.routes` | per host, case-insensitive (below) |
 
 A later route for a host replaces the earlier one in its place. New hosts
@@ -146,7 +142,7 @@ An agent file names a harness, its skills and its prompt.
 ---
 agent_provider:          # the harness and its login; default is `claude`
   harness: claude
-  forward_host_credentials: true
+  login: host
 skills:
   - code-review
 ---
@@ -164,20 +160,24 @@ the line and pick the bottle at launch.
 | Field | Does |
 |---|---|
 | `agent_provider.harness` | `claude`, `codex` or `pi` ([images](#images)) |
-| `agent_provider.dockerfile` | the agent's own Dockerfile, a custom image |
+| `agent_provider.dockerfile_path` | the agent's own Dockerfile, a custom image |
 | `agent_provider.overlay` | layers onto the built-in image ([images](#images)) |
-| `forward_host_credentials`, `auth_token` | the agent's login ([login](#login)) |
+| `agent_provider.login` | the agent's login ([login](#login)) |
 | `skills` | names of skill directories copied from the host's `~/.claude/skills/<name>/` into the agent |
-| `forge_users` | `{<forge host>: <user>}`: which user connected on a forge the agent pushes as |
+| `identity.git` | `{name, email}`: the commit author |
+| `identity.accounts` | `{<forge host>: <user>}`: which user connected on a forge the agent pushes as |
 
-A forge `forge_users` doesn't name uses its default user
+Claude Code's own fields (`name`, `description`, `model`, `color`, `memory`)
+are ignored; `model` warns.
+
+A forge `identity.accounts` doesn't name uses its default user
 ([git-gate.md](git-gate.md#forges-and-one-line-grants)). Grants name no user,
 so they stay portable.
 
 ### Images
 
 Each harness has an image built from `bot_bottle/contrib/<harness>/Dockerfile`.
-An agent can supply its own Dockerfile with `agent_provider.dockerfile`, or
+An agent can supply its own Dockerfile with `agent_provider.dockerfile_path`, or
 layer onto the built-in image with `agent_provider.overlay`.
 
 ```yaml
@@ -199,13 +199,17 @@ All overlays must be single-stage and build `FROM ${BASE}`. bot-bottle pins
 `BASE` to the verified, digest-pinned image.
 
 `overlay.dockerfile` is exclusive with the other overlay fields. For a shared
-or complex image, use `agent_provider.dockerfile` (a custom image) instead.
+or complex image, use `agent_provider.dockerfile_path` (a custom image) instead.
 
 ### Login
 
-`forward_host_credentials: true` uses the host's Claude Code or Codex login. A
-Claude agent can instead name, in `auth_token`, a host variable holding a
-long-lived OAuth token (`claude setup-token`).
+`agent_provider.login` is one of:
+
+| Write | Uses | Harnesses |
+|---|---|---|
+| `login: host` | the host's Claude Code or Codex login | `claude`, `codex` |
+| `login: {oauth_token: secret:NAME}` | a long-lived OAuth token (`claude setup-token`) | `claude` |
+| `login: {api_key: secret:NAME}` | an API key | `claude`, `pi` |
 
 Either way the gateway injects it and the agent sees a placeholder
 ([install.md](install.md#signing-in-an-agent)).
@@ -242,7 +246,7 @@ A repo bottle always needs trust.
 For each forge, trust records its `kind`, `url`, `ssh` and host key. It also
 records the user its grants push as, with that user's transport.
 
-That user is the forge's default user, or the one the agent's `forge_users`
+That user is the forge's default user, or the one the agent's `identity.accounts`
 picks. So an agent can't switch to another of your accounts unseen.
 
 ### Repo agents
@@ -269,11 +273,12 @@ trust prompt says so.
 Any bottle then grants repos in a line, with nothing to extend:
 
 ```yaml
-git-gate: {repos: [gitea.example.com/acme/app:write]}
+git_gate:
+  repos: [gitea.example.com/acme/app:write]
 ```
 
 - Each grant is read-only unless `:write`.
-- A bottle may describe the forge (`git-gate.forges`), so it says what to
+- A bottle may describe the forge (`git_gate.forges`), so it says what to
   connect on another machine.
 - A bottle never carries a token.
 
@@ -305,7 +310,7 @@ edits included.
 |---|---|
 | `bot-bottle bottles history <name>` | lists them. Add a version to see what it changed |
 | `bot-bottle bottles revert <name> <version>` | restores one as a new version, taking effect at the next launch |
-| `bot-bottle bottles migrate <name>` | rewrites a bottle's old-format git-gate repos as forge grants, as a new version ([git-gate.md](git-gate.md#migrating-from-the-old-format)) |
+| `bot-bottle bottles migrate <name>` | rewrites a bottle's old forms as a new version: `git-gate` as `git_gate`, old-format repos as forge grants, and the old route, auth and `log` forms ([old forms](#old-forms), [git-gate.md](git-gate.md#migrating-from-the-old-format)) |
 
 A repo's bottles are versioned by the repo itself. Where versions are kept is
 in [architecture.md](architecture.md#state).
@@ -315,27 +320,38 @@ in [architecture.md](architecture.md#state).
 `egress.routes` is the bottle's allowlist. Every host not on it is refused,
 DNS-over-HTTPS resolvers included.
 
-A route has `host`, an optional `role`, and an optional `inspect` block holding
-everything else. How the proxy applies a route is in
-[gateway.md](gateway.md#egress-proxy).
+A route has `host` and the optional keys below. Unknown keys are errors. How
+the proxy applies a route is in [gateway.md](gateway.md#egress-proxy).
+
+```yaml
+egress:
+  routes:
+    - host: registry.npmjs.org # GET and HEAD only (the default)
+    - host: api.example.com
+      methods: [GET, POST]     # or ["*"] for any method
+      allow:                   # optional: narrow further
+        - paths: [/v1/]        # prefix; or {exact: /x} or {regex: ...}
+          methods: [POST]
+      auth: {type: bearer, value: secret:EXAMPLE_API_TOKEN}
+    - host: cdn.example.com
+      passthrough: true        # no inspection at all; takes no other keys
+```
 
 | Field | Required | Description |
 |---|---|---|
 | `host` | yes | Hostname to allowlist. One entry per host in a bottle. A later bottle's entry for the host replaces an inherited one ([composing](#bottles)). |
 | `blocked` | no | `true` takes an inherited `host` away. The entry then has only `host` and `blocked`. |
-| `role` | no | Reserved for future use. The key is recognised but any value is currently rejected at load. Provider auth routes (e.g. Claude's `api.anthropic.com`) are injected automatically from the agent's `agent_provider`, not via `role`. A bottle route for such a host fails the launch. |
-| `inspect` | no | `false` passes the TLS tunnel through untouched: no DLP, auth injection or path matching. Otherwise a mapping of the fields below. |
-| `inspect.auth.scheme` | when `auth` present | `Bearer` or `token`. Injected by the proxy. The agent never sees the value. |
-| `inspect.auth.token_ref` | when `auth` present | Env-var name holding the secret on the host. |
-| `inspect.matches` | no | Array of `{paths, methods, headers}` filters. A request must match at least one entry (if any are given) to be forwarded. An inspected route with no `matches` and no gateway-injected auth (`token_env`/`preserve_auth`) is read-only: only `GET` and `HEAD` pass, so list the methods (e.g. `methods: [GET, POST]`) to allow writes. |
-| `inspect.matches[].paths` | no | Array of `{type, value}`. `type` is `prefix` (default), `exact`, or `regex`. |
-| `inspect.matches[].methods` | no | Array of HTTP method strings, e.g. `[GET, POST]`. |
-| `inspect.matches[].headers` | no | Array of `{name, value, type}`. `type` is `exact` (default) or `regex`. |
-| `inspect.outbound_detectors` | no | `false` turns off the content detectors. A list runs only those named (`token_patterns`, `known_secrets`, `entropy`). Omit for the defaults, `token_patterns` and `known_secrets` (`entropy` runs only when listed). The canary and CRLF checks run on every inspected route regardless. |
-| `inspect.inbound_detectors` | no | Off unless listed: name the detectors to run on responses (`naive_injection_detection`). Omit or `false` for none. |
-| `inspect.outbound_on_match` | no | What to do when an outbound token is detected: `supervise` (default for manifest routes, held for operator approval), `redact` (scrub the value and forward), or `block` (hard 403). Agent-provider routes (e.g. `api.anthropic.com`) default to `redact`. |
-| `inspect.preserve_auth` | no | `true` forwards the client's own `Authorization` header instead of stripping it (registries whose token dance fetches per-scope tokens). |
-| `inspect.git.fetch` | no | `true` permits smart HTTP clone/fetch (`git-upload-pack`) for this host. Push (`git-receive-pack`) remains blocked. Pushes go through [git-gate](git-gate.md). |
+| `passthrough` | no | `true` passes the TLS tunnel through untouched: no DLP, canary, credential stripping, method rules or push block. An unscanned channel. The route then takes no other keys. |
+| `methods` | no | The HTTP methods the route allows, e.g. `[GET, POST]`. Without it, every inspected route allows only `GET` and `HEAD`, with or without `auth`, unless an `allow` entry lists its own. `["*"]` allows any method and stands alone. |
+| `allow` | no | Array of `{paths, methods, headers}` filters. A request must match at least one entry (if any are given) to be forwarded. |
+| `allow[].paths` | no | Array of paths. A bare string is a path prefix; `{exact: /x}` and `{regex: ...}` match exactly or by regex. |
+| `allow[].methods` | no | Array of HTTP method strings. Defaults to the route's `methods`. |
+| `allow[].headers` | no | Array of `{name, value, type}`. `type` is `exact` (default) or `regex`. |
+| `auth` | no | `{type, value}`, injected by the proxy. The agent never sees the value. `type: bearer` sends `Authorization: Bearer <value>`, `type: token` sends `Authorization: token <value>`, and `type: header` with `name: X-Api-Key` sends `X-Api-Key: <value>` (a valid, unreserved header name). `value` is `secret:NAME` or `secret:${VAR}` ([secrets.md](secrets.md)). Provider auth routes (e.g. Claude's `api.anthropic.com`) are injected automatically from the agent's `agent_provider`. A bottle route for such a host fails the launch. |
+| `dlp` | no | `false` turns off the content detectors. Otherwise `{outbound, inbound, on_match}`. A listed side runs exactly the detectors named; an omitted side keeps the defaults. `outbound` (`token_patterns`, `known_secrets`, `entropy`) defaults to `token_patterns` and `known_secrets` (`entropy` runs only when listed). `inbound` (`naive_injection_detection`) runs none unless listed. The canary and CRLF checks run on every inspected route regardless. |
+| `dlp.on_match` | no | What to do when an outbound token is detected: `supervise` (default for manifest routes, held for operator approval), `redact` (scrub the value and forward), or `block` (hard 403). Agent-provider routes (e.g. `api.anthropic.com`) default to `redact`. |
+| `preserve_auth` | no | `true` forwards the client's own `Authorization` header instead of stripping it (registries whose token dance fetches per-scope tokens). |
+| `git.fetch` | no | `true` permits smart HTTP clone/fetch (`git-upload-pack`) for this host. Push (`git-receive-pack`) remains blocked. Pushes go through [git-gate](git-gate.md). |
 
 ### Egress log
 
@@ -344,13 +360,13 @@ separate from the audit journal and the [firehose](gateway.md#request-firehose).
 
 | Value | What's logged |
 |---|---|
-| `0` (default) | Nothing beyond the audit journal. |
-| `1` | One summary line per blocked or flagged request, in the gateway's log. |
-| `2` | Also every inspected request and response, headers and body (secrets redacted, each body cut at 64 KiB), to an owner-only file in the gateway: `/var/log/bot-bottle-egress/full.jsonl`, rotated at 16 MiB with three older files kept. A launch at `log: 2` warns about this. It holds whole conversations, so use it only for debugging. |
+| `off` (default) | Nothing beyond the audit journal. |
+| `blocked` | One summary line per blocked or flagged request, in the gateway's log. |
+| `full` | Also every inspected request and response, headers and body (secrets redacted, each body cut at 64 KiB), to an owner-only file in the gateway: `/var/log/bot-bottle-egress/full.jsonl`, rotated at 16 MiB with three older files kept. A launch at `log: full` warns about this. It holds whole conversations, so use it only for debugging. |
 
 ### When outbound DLP matches
 
-The route's `inspect.outbound_on_match` decides what happens when an outbound
+The route's `dlp.on_match` decides what happens when an outbound
 detector matches a token.
 
 | Policy | What happens |
@@ -380,3 +396,30 @@ redacted snippet.
 Approving adds the value to an in-memory safelist for that bottle and that
 host, for the life of the egress proxy. The same value sent to another host is
 flagged again.
+
+## Old forms
+
+A manifest in an older form fails at load with one line naming the new form.
+
+| Old | Now |
+|---|---|
+| `git-gate` | `git_gate` |
+| `log: 0` / `log: 1` / `log: 2` | `log: off` / `log: blocked` / `log: full` |
+| `inspect: false` | `passthrough: true` |
+| `inspect: {...}` | gone: its `auth`, `git` and `preserve_auth` sit on the route, `matches` is `allow`, and the detectors are `dlp` |
+| `inspect.outbound_detectors`, `inbound_detectors`, `outbound_on_match` | `dlp: {outbound, inbound, on_match}` |
+| `matches` | `allow` |
+| `auth.token_ref: NAME`, `scheme`, `header` | `auth.value: secret:NAME`, `type`, `name` |
+| `{type: prefix, value: X}` | the path itself, a string |
+| `{type: regex, value: X}` | `{regex: X}` |
+| `role` | removed |
+| `forward_host_credentials: true` | `login: host` |
+| `auth_token: NAME` | `login: {oauth_token: secret:NAME}` |
+| `settings.api_key_env: NAME` | `login: {api_key: secret:NAME}` |
+| `agent_provider.dockerfile` (a path) | `agent_provider.dockerfile_path` |
+| agent `git-gate.user` | `identity.git` |
+| `forge_users` | `identity.accounts` |
+
+`bot-bottle bottles migrate <name>` converts a bottle's route, auth and `log`
+forms and `git-gate`, as a new version. Everything else, agents included, is
+fixed by hand.

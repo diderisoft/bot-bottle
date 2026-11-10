@@ -73,14 +73,13 @@ to one repo, and calls one API with a token the agent never sees.
 ```markdown
 ---
 extends: basic
-git-gate:
+git_gate:
   repos:
     - github.com/you/app:write
 egress:
   routes:
     - host: api.example.com
-      inspect:
-        auth: { scheme: Bearer, token_ref: EXAMPLE_API_TOKEN }
+      auth: {type: bearer, value: secret:EXAMPLE_API_TOKEN}
 ---
 ```
 

@@ -18,11 +18,11 @@ If upstream can't be reached, a push is still scanned, over more history.
 
 ## Manifest
 
-A bottle's `git-gate` block sets the agent's git identity, the push checks and
+A bottle's `git_gate` block sets the agent's git identity, the push checks and
 the repos.
 
 ```yaml
-git-gate:
+git_gate:
   user:                       # optional: the agent's git identity
     name: implementer-bot
     email: bot@example.com
@@ -102,7 +102,7 @@ they're on. The host connects it
 ```yaml
 # any bottle
 extends: basic
-git-gate:
+git_gate:
   forges:                             # optional: what to connect elsewhere
     gitea.example.com:                # the forge's host
       kind: gitea                     # url and ssh only when not the defaults
@@ -140,10 +140,10 @@ gitea.example.com:
   host_key: ssh-ed25519 AAAA...       # pinned when connected
   users:
     alice:
-      token: $GITEA_EXAMPLE_COM_TOKEN # a name in ~/.bot-bottle/secrets
+      token: secret:GITEA_EXAMPLE_COM_TOKEN # a name in ~/.bot-bottle/secrets
       default: true
     codex:
-      token: $CODEX_GITEA_EXAMPLE_COM_TOKEN
+      token: secret:CODEX_GITEA_EXAMPLE_COM_TOKEN
 ```
 
 - A grant on a forge the host hasn't connected fails to load. The error names
@@ -160,16 +160,17 @@ gitea.example.com:
 #### Forge users
 
 A launch pushes as the forge's `default` user unless the agent names another
-with `forge_users`. A forge with one user pushes as that one.
+with `identity.accounts`. A forge with one user pushes as that one.
 
 ```yaml
 # an agent
-forge_users:
-  gitea.example.com: codex
+identity:
+  accounts:
+    gitea.example.com: codex
 ```
 
 A forge's user is the account the forge says its token belongs to.
-`forge_users` is among manifest.md's agent fields.
+`identity.accounts` is among manifest.md's agent fields.
 
 #### Connecting a forge
 
@@ -353,7 +354,7 @@ Administration: read & write, or a classic `repo` token from a repo admin.
 - A token that can't mint fails the launch at minting, saying so.
 - Use it where GitHub itself should hold each run to one repo.
 - To use both on one host, connect a second user with `--transport deploy-key`.
-  Pick it with an agent's `forge_users`.
+  Pick it with an agent's `identity.accounts`.
 
 **The trade-off.** A user token can't be narrowed per repo, so it reaches every
 repo the app is installed on.
@@ -422,7 +423,7 @@ like any other.
 
 ### The only push path
 
-The gate is the only way to push, unless a bottle grants an `inspect: false`
+The gate is the only way to push, unless a bottle grants a `passthrough: true`
 route to a forge, or a forge API route with gateway auth that can write to
 repos (see [gateway.md](gateway.md)).
 
@@ -516,7 +517,7 @@ e.g.
 git rebase --rebase-merges --exec 'git -c trailer.ifexists=replace commit --amend --no-edit --allow-empty --trailer "Bot-Bottle: dev/implementer-k3x9q"' 1a2b3c4d5e6f
 ```
 
-`git-gate.trailers` in the bottle sets the mode:
+`git_gate.trailers` in the bottle sets the mode:
 
 | Mode | Does |
 |---|---|
@@ -524,7 +525,7 @@ git rebase --rebase-merges --exec 'git -c trailer.ifexists=replace commit --amen
 | `warn` | forwards the push and prints the same message |
 | `off` | doesn't check |
 
-Like other `git-gate` fields it merges through `extends`, a child's winning.
+Like other `git_gate` fields it merges through `extends`, a child's winning.
 
 The value and mode are kept in the bottle's git-gate state dir, as
 `trailer.json`, for re-provisioning. They're set on each bare repo as
@@ -622,7 +623,7 @@ An approved `add-repo` adds a repo to a running bottle
 (`git_gate/live_grant.py`, `control/hostctl/repo_grants.py`).
 
 The forge is this host's connection to it, as the user the session's agent
-pushes as. That's its `forge_users`, else the forge's default. A forge the host
+pushes as. That's its `identity.accounts`, else the forge's default. A forge the host
 hasn't connected can't be granted.
 
 1. The grant records the key in the bottle's git-gate state dir, as
@@ -718,8 +719,8 @@ name, commit message, identity, path and added line the push introduces.
 
 The bottle's own secrets are:
 
-- its secret env values: an `env:` entry written `?` or `?<prompt>`, read from
-  the secrets file or prompted for at launch
+- its secret env values of 8 or more characters: an `env:` entry written
+  `secret:NAME`, `secret:?<prompt>` or `secret:${VAR}`
 - its egress tokens
 - its canary
 
@@ -772,7 +773,9 @@ adds `--ssh` with the address they used. Here it's an IP and port.
 - Grants are written as a list when every repo converts and is named after its
   repo. Otherwise they're a mapping that keeps the gate's names and any
   `static` repos.
-- Only those lines change. Comments, `env`, `egress` and the rest stay.
+- Only those lines change, and the `git-gate` key becomes `git_gate`. Old
+  egress forms are converted too, their block written afresh
+  ([manifest.md](manifest.md#old-forms)). Comments, `env` and the rest stay.
 - The result is parsed back to check that before it's written.
 - It shows the diff and asks first. `--yes` doesn't ask, and without a
   terminal `--yes` is needed.

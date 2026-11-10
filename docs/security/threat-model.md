@@ -55,7 +55,7 @@ by naming an allowed host while connecting to another.
 |---|---|
 | Network isolation | The agent's network has no route off the host except to the gateway. This is per backend, as above. |
 | Egress proxy allowlist | Policy keys on the host the proxy connects to, matched exactly and case-insensitively. A `CONNECT` to an unlisted host is refused before anything is tunnelled. |
-| Host mismatch check | On inspected routes, a `Host` header, `:authority` or TLS SNI that differs from the connected host gets a 403. An `inspect: false` route checks only the `CONNECT` target. |
+| Host mismatch check | On inspected routes, a `Host` header, `:authority` or TLS SNI that differs from the connected host gets a 403. A `passthrough: true` route checks only the `CONNECT` target. |
 | No raw TCP | Bytes after a `CONNECT` that aren't HTTP, or TLS carrying HTTP, are refused. |
 
 **Code:** `gateway/egress/addon.py`, `gateway/egress/request_identity.py`,
@@ -96,7 +96,7 @@ credentials are stripped and before any upstream contact.
 | `token_patterns` | Vendor token shapes: AWS, GitHub, Anthropic, OpenAI, Stripe, HuggingFace, Databricks, Slack, npm, SendGrid, PyPI, Vault, and long bearer JWTs. |
 | CRLF injection | `\r\n` smuggled into outbound headers. Always on. |
 
-On a token match, the route's `dlp.outbound_on_match` decides what happens.
+On a token match, the route's `dlp.on_match` decides what happens.
 
 | Policy | Default for | Does |
 |---|---|---|
@@ -108,9 +108,9 @@ Canary and CRLF hits are always a 403.
 
 **Not covered:**
 
-- A route with `inspect: false` is an unscanned tunnel. None of this applies
+- A `passthrough: true` route is an unscanned tunnel. None of this applies
   to it.
-- The bottle's own `?` env secrets are in the agent's env. Egress doesn't
+- The bottle's own env values, secret or not, are in the agent's env. Egress doesn't
   block them, because they may legitimately go to their own host. The agent
   can send one to any allowlisted host.
 
@@ -145,7 +145,7 @@ push introduces, before any upstream connection.
 ### 5. Exfiltration via git push (the bottle's own secrets, any shape)
 
 **Threat:** the agent commits its canary, or a secret with no known shape,
-such as one of its `?` env values.
+such as one of its `secret:` env values.
 
 **Mechanism:** the held-secret scan (`gateway/git_gate/held_secret_scan.py`)
 looks for the bottle's registered values. It runs after gitleaks and before
@@ -155,7 +155,7 @@ the upstream forward. A scan that can't run refuses the push.
 |---|---|
 | the bottle's injected tokens | ref names |
 | its canary | commit messages and identities |
-| its `?` env values of at least 8 characters | diff paths and added lines |
+| its `secret:` env values of at least 8 characters | diff paths and added lines |
 | | annotated tag bodies |
 
 **Tested by:** `test_6_held_secrets_never_leave`, subTests `push secret env
@@ -176,8 +176,9 @@ never enter the agent.
 - On inspected routes, the gateway also strips credentials the agent adds
   itself. A key the agent was handed can't act on an allowlisted host.
 
-**Not covered:** values a bottle passes as env (`?` secrets) are in the
-agent's env in plain text. git-gate refuses them in a push. Egress doesn't
+**Not covered:** values a bottle passes as env (`secret:` entries, and `?`
+and `${VAR}` inputs) are in the agent's env in plain text. git-gate refuses
+the `secret:` ones in a push. Egress doesn't
 block them (see 3).
 
 See [secrets.md](../reference/secrets.md) for where each kind of secret is held.
@@ -223,11 +224,11 @@ listed one`.
 
 **Not covered:**
 
-- An `inspect: false` route isn't decrypted, so the proxy can't see a push on
-  it.
+- A `passthrough: true` route isn't decrypted, so the proxy can't see a push
+  on it.
 - This blocks the git protocol, not writes. An allowlisted forge API route
-  with gateway `auth` can still change repos within its `matches` and the
-  token's scopes. A contents API is one example.
+  with gateway `auth` can still change repos within its `methods`, `allow`
+  and the token's scopes. A contents API is one example.
 
 ---
 
@@ -280,8 +281,8 @@ bugs.
 | **Root inside a macos-container agent** | An agent with root in its VM can remove its in-guest firewall and spoof other agents. pf still keeps it off the Mac. See [Root inside a macos-container agent](#root-inside-a-macos-container-agent) below. |
 | **Malicious or backdoored agent image** | Runtime controls assume the image is trustworthy. Base images are digest-pinned. A supply-chain compromise upstream of that pin isn't detected. |
 | **Side channels** (timing, cache, Spectre-class) | Agents share physical hardware. Cross-agent side channels aren't prevented. |
-| **Unregistered or shapeless secrets** | gitleaks needs a shape or keyword. The held-secret scan only knows the bottle's registered values, of 8 characters or more. A secret the bottle wasn't given, with no known shape, passes. |
-| **`inspect: false` routes** | Unscanned tunnels: no DLP, canary check, credential stripping, git push block or SNI check. Anything the agent holds can go to that host, or to other names a server there answers for. |
+| **Unregistered or shapeless secrets** | gitleaks needs a shape or keyword. The held-secret scan only knows the bottle's registered values, of 8 characters or more. `?` and `${VAR}` inputs aren't registered. A secret the bottle wasn't given, with no known shape, passes. |
+| **`passthrough: true` routes** | Unscanned tunnels: no DLP, canary check, credential stripping, git push block or SNI check. Anything the agent holds can go to that host, or to other names a server there answers for. |
 | **What an allowlisted upstream does** | Once a request passes the gateway, bot-bottle doesn't control what the upstream does with it. That includes DNS-over-HTTPS, or a forge API writing to repos. |
 | **Policy changes on open connections** | HTTPS policy is resolved once per `CONNECT` and reused for that connection. A change, such as an approval or a removed route, takes effect on the next connection, not on one already open. |
 | **Source-IP spoofing** | Attribution is (source IP, identity token). It relies on network isolation for the source IP, not on cryptographic proof of source. See the macos-container row. |

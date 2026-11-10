@@ -1,5 +1,7 @@
 # ADR 0015: A later bottle's egress route for a host replaces the earlier one
 
+Syntax in this record predates v0.1.9; see [manifest.md](../reference/manifest.md).
+
 - **Status:** Accepted
 - **Date:** 2026-11-03
 - **Deciders:** didericis

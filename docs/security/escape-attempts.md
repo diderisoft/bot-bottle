@@ -68,7 +68,7 @@ Outbound DLP on allowed hosts is covered by unit tests, not by this suite:
 | Attack | Technique | Outcome | Test | Since |
 |---|---|---|---|---|
 | **Token-shaped secret pushed through git-gate** | Commit a README linking to an attacker URL with a `ghp_…`, `xoxb-…` or `glpat-…` token in it, and push through git-gate. | Refused by gitleaks in pre-receive, before git-gate tries the upstream. The output must name gitleaks and carry no upstream network error. | `test_5_readme_push_blocked`, subTests `secret="github"`, `"slack"`, `"gitlab"` | 2026-05-26. The current GitHub, Slack and GitLab shapes since 2026-07-11. |
-| **The bottle's own shapeless secret pushed** | Commit a bottle env secret, a `?` value, that has no token shape gitleaks knows, and push. | Refused by git-gate's held-secret scan (`gateway/git_gate/held_secret_scan.py`). It matches the bottle's registered secret values. | `test_6_held_secrets_never_leave`, subTest `attack="push secret env value"` | 2026-10-23 |
+| **The bottle's own shapeless secret pushed** | Commit a bottle env secret, a `secret:` value, that has no token shape gitleaks knows, and push. | Refused by git-gate's held-secret scan (`gateway/git_gate/held_secret_scan.py`). It matches the bottle's registered secret values. | `test_6_held_secrets_never_leave`, subTest `attack="push secret env value"` | 2026-10-23 |
 | **The canary pushed** | Commit the bottle's per-session canary value and push. | Refused by the held-secret scan. | `test_6_held_secrets_never_leave`, subTest `attack="push canary"` | 2026-10-23 |
 
 ---
@@ -77,7 +77,7 @@ Outbound DLP on allowed hosts is covered by unit tests, not by this suite:
 
 | Attack | Technique | Outcome | Test | Since |
 |---|---|---|---|---|
-| **The canary sent to an allowlisted host** | POST the canary in a JSON body to `api.anthropic.com`, which is allowed. | 403 from egress DLP naming `HELD_CANARY`. The canary check runs on every inspected route, whatever the route's DLP settings. On an `inspect: false` route it isn't seen ([gateway.md](../reference/gateway.md#outbound-dlp)). | `test_6_held_secrets_never_leave`, subTest `attack="canary to an allowlisted host"` | 2026-10-23 |
+| **The canary sent to an allowlisted host** | POST the canary in a JSON body to `api.anthropic.com`, which is allowed. | 403 from egress DLP naming `HELD_CANARY`. The canary check runs on every inspected route, whatever the route's DLP settings. On a `passthrough: true` route it isn't seen ([gateway.md](../reference/gateway.md#outbound-dlp)). | `test_6_held_secrets_never_leave`, subTest `attack="canary to an allowlisted host"` | 2026-10-23 |
 
 ---
 
@@ -90,6 +90,6 @@ The suite doesn't attempt these.
 | **Escaping the VM or container** | Kernel or hypervisor exploits, container runtime escapes, or a root-capable agent removing its in-guest firewall on macos-container ([backends.md](../reference/backends.md#agents-cant-reach-each-other)). |
 | **The control plane from inside a bottle** | Reaching or abusing the orchestrator or the host controller. Control-plane authentication and per-bottle token and allowlist isolation have their own Docker integration tests, `test_orchestrator_docker_auth.py` and `test_multitenant_isolation.py`. They don't attack from inside an agent. |
 | **Getting past the trust prompt** | A repository's bottle or agent gaining grants without this host trusting it. |
-| **`inspect: false` routes** | The suite's bottle has none, so nothing tests what an unscanned tunnel can carry. |
+| **`passthrough: true` routes** | The suite's bottle has none, so nothing tests what an unscanned tunnel can carry. |
 | **Outbound DLP on an allowed host** | For planted secrets, beyond the canary. See [the path, query, body and header note](#path-query-body-and-header-test-the-allowlist-not-dlp). |
 | **The console link** | What a paired console can do to the host ([host-controller.md](../reference/host-controller.md#what-pairing-lets-the-console-do)). |

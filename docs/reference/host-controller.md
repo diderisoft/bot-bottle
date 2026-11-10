@@ -164,7 +164,7 @@ repo).
 | Letter | Reason (`reason_code`) |
 |---|---|
 | A | not on allowlist (`allowlist`) |
-| R | outside the route's `matches`, or git over HTTPS (`route`) |
+| R | outside the route's `methods` or `allow`, or git over HTTPS (`route`) |
 | S | a secret in the request (`secret`) |
 | I | an unsafe response (`inbound`) |
 | M | a malformed request (`request`) |
@@ -386,7 +386,7 @@ message. An admitted bottle counts as launching until its holder takes it.
 
 The host controller keeps a forwarded Claude or Codex login fresh in the
 bottles that use it. A bottle opts in with
-`agent_provider.forward_host_credentials`.
+`agent_provider.login: host`.
 
 The login is read once at launch. The gateway injects it, and the agent
 holds a placeholder. The host's own CLI keeps refreshing its login, so the

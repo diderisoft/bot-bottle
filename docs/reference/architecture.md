@@ -222,7 +222,7 @@ A project agent's trust hash (`manifest/trust.py`) covers three things:
 - what it gets from the host
 - every file its image build takes from the launch directory
 
-The build files are a custom `agent_provider.dockerfile`'s bytes, and an
+The build files are a custom `agent_provider.dockerfile_path`'s bytes, and an
 overlay's staged build context. That context is its Dockerfile plus that
 Dockerfile's whole directory, or its `files`.
 

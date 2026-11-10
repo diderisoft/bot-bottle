@@ -188,7 +188,7 @@ An edit's `bottle` is a host bottle, a project bottle (`./main`) or
 
 Proposals follow these rules.
 
-- **`inspect: false` is never proposed.** Routes always allow TLS inspection.
+- **`passthrough: true` is never proposed.** Routes always allow TLS inspection.
   A user who needs pass-through edits the bottle.
 - **Secret values are never included.** `additions.credentials` carries only a
   secret *name* from the host secrets file. The gateway injects the value at
@@ -221,7 +221,7 @@ A repo grant is kept on a forge this host connected. It is also kept on one
 this host hasn't connected that is known without a connection
 (`suggest/forges.py`). A forge is known that way when either:
 
-- a bottle in the search path describes it (`git-gate.forges.<host>`), or
+- a bottle in the search path describes it (`git_gate.forges.<host>`), or
 - the project's `origin` is on it.
 
 For an `origin`, its kind is asked of the server, as `forge connect` does.
@@ -233,7 +233,7 @@ connect it.
 
 A grant on a forge nothing describes becomes a note instead.
 
-The additions bottle describes the forge of each grant (`git-gate.forges`). So
+The additions bottle describes the forge of each grant (`git_gate.forges`). So
 a saved bottle says what to connect elsewhere.
 
 #### Nothing the bottles already cover
@@ -520,7 +520,7 @@ Each line ends with what it permits, in brackets:
   three, or for a route that isn't inspected.
 - a repo's `push` or `read`.
 
-A secret a route carries follows (`with $LINEAR_TOKEN`).
+A secret a route carries follows (`with secrets file LINEAR_TOKEN`, or `with secret env VAR` for `secret:${VAR}`).
 
 A bottle's repos are counted and named in a few words. They are named by owner
 when three owners or fewer hold them (`acme/* ×5`), else by two names and

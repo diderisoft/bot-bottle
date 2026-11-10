@@ -57,7 +57,7 @@ git's default `http.proxyAuthMethod=anyauth` is such a client.
    other than the one mitmproxy connects to gets a 403.
 3. **Introspection.** `_egress.local/allowlist` returns the calling bottle's
    own routes.
-4. **Outbound DLP**, on inspected routes only, not `inspect: false`.
+4. **Outbound DLP**, on inspected routes only, not `passthrough: true`.
 5. **Git boundary.** Smart-HTTP push (`git-receive-pack`) is always blocked
    on inspected routes. Fetch is blocked unless the route sets `git.fetch`.
 6. **Route policy.** Requests the allowlist doesn't permit get a 403. Agent
@@ -78,8 +78,8 @@ HTTP, or TLS carrying HTTP, are refused rather than relayed as raw TCP.
 That is the `CONNECT` target or the absolute URL's host. So a request can't
 pass as an allowlisted host while going elsewhere.
 
-On an `inspect: false` route only the `CONNECT` target is checked (see
-[Routes with `inspect: false`](#routes-with-inspect-false)).
+On a `passthrough: true` route only the `CONNECT` target is checked (see
+[Routes with `passthrough: true`](#routes-with-passthrough-true)).
 
 **Outbound DLP** runs before auth is stripped. So a token smuggled in any
 header, the path, the query, the body or the hostname is caught. The result
@@ -90,17 +90,17 @@ not writes.
 
 An allowlisted forge *API* route with gateway `auth` or `preserve_auth` can
 still change repos, for example through a contents API. It can do as much as
-its `matches` and the token's scopes allow. Grant forge API routes
+its `methods`, `allow` and the token's scopes allow. Grant forge API routes
 deliberately.
 
 **Route policy** is `request_pipeline.evaluate_route_policy`:
 
 - A host not on the allowlist gets a 403. So does a request matching no
-  `matches` entry.
-- An inspected route that declares no `matches` and has no gateway auth
-  (`auth`/`preserve_auth`) is read-only.
+  `allow` entry.
+- An inspected route that lists no `methods`, on the route or in an `allow`
+  entry, is read-only, with or without `auth`.
 - On such a route, anything but `GET`/`HEAD` gets a 403 until the route lists
-  the methods it may use.
+  the methods it may use (`["*"]` for any).
 - The agent's [credentials](#agent-credentials) and any
   [cookies the host didn't set](#cookies) are stripped unless the route sets
   `preserve_auth`.
@@ -109,12 +109,12 @@ deliberately.
 **First contact.** With `audit.delivery: required`, the request waits for the
 first-contact record. It is refused if the record can't be written.
 
-### Routes with `inspect: false`
+### Routes with `passthrough: true`
 
-A route with `inspect: false` is an unscanned channel to its host. Anything
+A route with `passthrough: true` is an unscanned channel to its host. Anything
 the agent holds can go there.
 
-| Check | Inspected route | `inspect: false` route |
+| Check | Inspected route | `passthrough: true` route |
 |---|---|---|
 | Allowlist decision at `CONNECT` | yes | yes |
 | TLS interception | yes | no, the tunnel passes through untouched |
@@ -124,7 +124,7 @@ the agent holds can go there.
 | Credential and cookie stripping | yes | no |
 | Git push block | yes | no |
 | Auth injection | yes | no |
-| `matches` path matching | yes | no |
+| `methods` and `allow` rules | yes | no |
 | Non-HTTP raw TCP | refused | refused |
 
 Because the TLS SNI and the `Host` inside the tunnel aren't checked, a server
@@ -148,13 +148,13 @@ example, can't act as that account on an allowlisted host.
 | Headers | `Authorization`, `X-Api-Key`, `Api-Key`, `X-Goog-Api-Key`, `Private-Token`, `X-Auth-Token`, `X-Access-Token`, `X-Gitea-Token`, `X-Vault-Token`, `X-Amz-Security-Token` and `Ocp-Apim-Subscription-Key`, plus the header the route injects into |
 | Query parameters | `access_token`, `token`, `key`, `api_key`, `apikey` and `private_token`, compared case-insensitively after URL-decoding |
 
-- `matches` header filters see the request without them.
+- `allow` header filters see the request without them.
 - The lists are `CREDENTIAL_HEADERS` and `CREDENTIAL_QUERY_PARAMS` in
   `gateway/egress/request_pipeline.py`.
 - They are a denylist and can't be complete.
 - `Proxy-Authorization` and the identity header belong to the gateway. They
   are always stripped before this.
-- Routes with `inspect: false` are tunnelled, so nothing is stripped there.
+- `passthrough` routes are tunnelled, so nothing is stripped there.
 
 #### Injected auth
 
@@ -163,20 +163,19 @@ one that goes out.
 
 | Policy field | Manifest field |
 |---|---|
-| `auth_scheme` | `auth.scheme` |
-| `token_env` | `auth.token_ref` |
-| `auth_header`, optional | `auth.header` |
+| `auth_scheme` | `auth.type`: `bearer` is `Bearer`, `token` is `token` |
+| `token_env` | `auth.value` (`secret:NAME` or `secret:${VAR}`) |
+| `auth_header`, optional | `auth.name`, with `type: header` |
 
 - With no `auth_header`, the token is sent as `Authorization: <scheme> <token>`.
-- A route that names an `auth_header` puts the token in that header. It sends
-  `<scheme> <token>`, or the raw token when there's no scheme.
+- A `type: header` route puts the raw token in the header its `name` gives.
 - `Host`, `Cookie`, `Proxy-Authorization` and the framing headers can't be
   auth headers.
 - Outbound DLP doesn't scan the agent's value of the injected header, because
   it's replaced.
 
 The Claude provider uses a named header for an Anthropic API key. With
-`agent_provider.settings.api_key_env: <host secret>`, its `api.anthropic.com`
+`agent_provider.login: {api_key: secret:NAME}`, its `api.anthropic.com`
 route injects the key raw into `x-api-key`.
 
 The agent gets `ANTHROPIC_API_KEY=egress-placeholder`, hidden from the launch
@@ -210,7 +209,7 @@ Limits of the jar:
 
 ### Outbound DLP
 
-DLP runs only on inspected routes. A route with `inspect: false` is an
+DLP runs only on inspected routes. A `passthrough: true` route is an
 unscanned channel: none of the detectors below, nor the canary check, sees
 its traffic.
 
@@ -222,12 +221,12 @@ its traffic.
 | `naive_injection_detection` | inbound | only when the route names it | prompt-injection phrasing in responses |
 | (always on) | outbound | every inspected route, whatever the list | CRLF header injection, and the canary |
 
-Routes enable detectors by name under `dlp.outbound_detectors` and
-`dlp.inbound_detectors`. The detectors are in `gateway/egress/dlp_detectors.py`.
+Routes enable detectors by name under `dlp.outbound` and `dlp.inbound`. A
+listed side runs exactly those; an omitted side keeps the defaults. The detectors are in `gateway/egress/dlp_detectors.py`.
 The defaults are applied in `gateway/egress/dlp.py`.
 
-- `outbound_detectors: false` turns both `token_patterns` and `known_secrets` off.
-- `known_secrets` doesn't match the bottle's own `?` env values, which may go
+- `dlp: false` turns every detector off. The canary and CRLF checks still run.
+- `known_secrets` doesn't match the bottle's own env values, which may go
   to their own host.
 
 `naive_injection_detection` is regex phrase matching on response bodies, so
@@ -238,9 +237,9 @@ try to do. That is reaching a host or sending a secret.
 
 The bottle's env also carries a per-session **canary** secret. Any outbound
 appearance of it on an inspected route is an exfiltration attempt, and the
-request is always blocked. On an `inspect: false` route it isn't seen.
+request is always blocked. On a `passthrough: true` route it isn't seen.
 
-`dlp.outbound_on_match` decides what a token match does:
+`dlp.on_match` decides what a token match does:
 
 | Policy | Default for | Does |
 |---|---|---|
@@ -265,8 +264,8 @@ any route, are always a 403, whatever the policy.
 
 | Level | Records | Where |
 |---|---|---|
-| 1 | a summary line per blocked or flagged request | the proxy's log |
-| 2 | also each inspected request and response in full | `/var/log/bot-bottle-egress/full.jsonl`, never the proxy's log |
+| `blocked` | a summary line per blocked or flagged request | the proxy's log |
+| `full` | also each inspected request and response in full | `/var/log/bot-bottle-egress/full.jsonl`, never the proxy's log |
 
 Full records stay out of the log because on Firecracker the log is the VM's
 serial console. A few busy bottles' bodies can saturate it.
@@ -434,7 +433,7 @@ session record, as the `parent` field in `metadata.json`.
 with a `:public` suffix.
 
 - The host refuses one it can't make, before a card.
-- It creates one the bottle's `git-gate.actions.create` allows, without a card.
+- It creates one the bottle's `git_gate.actions.create` allows, without a card.
 - Otherwise it asks on the console, with option `create_repo`
   (`remote_create_repo.py`).
 - The card's Create sends `create_repo_answer`. Its reply says what was

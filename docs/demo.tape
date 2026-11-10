@@ -61,7 +61,7 @@ Show
 # scan, forward; (2) a non-allowlisted host, refused by the gateway's
 # host filter; (3) an allowlisted host carrying a credential-shaped
 # body, where the host check passes and the egress scanner's DLP body
-# scan is the only thing left — that route sets outbound_on_match:
+# scan is the only thing left — that route sets dlp.on_match:
 # block, so it is an immediate 403 rather than the default `supervise`
 # hold-for-approval.
 #

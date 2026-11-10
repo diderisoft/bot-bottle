@@ -361,8 +361,8 @@ long-lived token.
 
 | Way | Manifest field | Notes |
 |---|---|---|
-| your host's Claude Code login | `agent_provider.forward_host_credentials: true` | `bot-bottle setup` writes this when Claude Code is installed and logged in. |
-| a long-lived token from `claude setup-token` | `agent_provider.auth_token`, naming the host variable that holds it | |
+| your host's Claude Code login | `agent_provider.login: host` | `bot-bottle setup` writes this when Claude Code is installed and logged in. |
+| a long-lived token from `claude setup-token` | `agent_provider.login: {oauth_token: secret:NAME}`, naming the secret that holds it | |
 
 Either way the gateway injects it, and the agent only ever sees a placeholder
 ([host-controller.md](host-controller.md#forwarded-host-logins)).

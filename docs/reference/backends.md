@@ -221,32 +221,35 @@ egress:
   routes:
     # Docker Hub: registry, token endpoint, blob CDN.
     - host: registry-1.docker.io
-      inspect: { preserve_auth: true, outbound_detectors: false, inbound_detectors: false }
+      preserve_auth: true
+      dlp: false
     - host: auth.docker.io
-      inspect: { preserve_auth: true, outbound_detectors: false, inbound_detectors: false }
+      preserve_auth: true
+      dlp: false
     - host: production.cloudfront.docker.com
-      inspect: { outbound_detectors: false, inbound_detectors: false }
+      dlp: false
     # GHCR: registry + blob CDN.
     - host: ghcr.io
-      inspect: { preserve_auth: true, outbound_detectors: false, inbound_detectors: false }
+      preserve_auth: true
+      dlp: false
     - host: pkg-containers.githubusercontent.com
-      inspect: { outbound_detectors: false, inbound_detectors: false }
+      dlp: false
     # quay.io: registry + blob CDNs. No preserve_auth needed for public pulls.
     - host: quay.io
-      inspect: { outbound_detectors: false, inbound_detectors: false }
+      dlp: false
     - host: cdn01.quay.io
-      inspect: { outbound_detectors: false, inbound_detectors: false }
+      dlp: false
     - host: cdn02.quay.io
-      inspect: { outbound_detectors: false, inbound_detectors: false }
+      dlp: false
     - host: cdn03.quay.io
-      inspect: { outbound_detectors: false, inbound_detectors: false }
+      dlp: false
 ```
 
 Pulling images goes through the bottle's egress proxy like every other request.
 
 - **The CDN route:** the CDN is a different host. Without its route the pull
   authenticates, fetches the manifest, then 403s partway through.
-- **`preserve_auth`:** Docker Hub and GHCR need `inspect.preserve_auth: true`.
+- **`preserve_auth`:** Docker Hub and GHCR need `preserve_auth: true`.
   Their token dance uses a client-fetched per-scope bearer token that the
   proxy would otherwise strip.
 - **DLP off:** turn it off on every registry and CDN route. The bodies are
