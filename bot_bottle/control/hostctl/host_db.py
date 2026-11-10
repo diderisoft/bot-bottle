@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ...forge_connections import ForgeStore
 from ...lib import log
 from ...lib.config_store import ConfigStore
 from ...lib.db_store import DbStore, connect
@@ -43,10 +44,10 @@ class HostDbError(Exception):
 
 
 def stores(db_path: Path | None = None) -> list[DbStore]:
-    """Every store with tables in the host DB. The audit forwarder's and the
-    audit index's migrate as they open."""
+    """Every store with tables in the host DB. Most migrate as they open."""
     path = db_path or host_db_path()
-    return [ConfigStore(path), ForwardCursors(path), AuditIndex(host_audit_dir(), path)]
+    return [ConfigStore(path), ForwardCursors(path), AuditIndex(host_audit_dir(), path),
+            ForgeStore(path)]
 
 
 def migrate(db_path: Path | None = None) -> None:

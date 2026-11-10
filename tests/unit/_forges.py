@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest import mock
 
-from bot_bottle.forge_connections import ForgeConnection, ForgeUser
+from bot_bottle.forge_connections import ForgeConnection, ForgeStore, ForgeUser
+from bot_bottle.paths import HOST_DB_FILENAME
 
 GITEA = ForgeConnection(
     host="gitea.example.com", kind="gitea", url="https://gitea.example.com",
@@ -25,4 +27,13 @@ def connected(*conns: ForgeConnection) -> "mock._patch[object]":
     return mock.patch("bot_bottle.forge_connections.connections", new=lambda: dict(found))
 
 
-__all__ = ["GITEA", "GITHUB", "connected"]
+def record(root: Path, *conns: ForgeConnection) -> ForgeStore:
+    """Connect `conns` in the host DB under `root`, as `forge connect` would."""
+    store = ForgeStore(root / "db" / HOST_DB_FILENAME)
+    for conn in conns:
+        for user in conn.users:
+            store.add_user(conn, user, make_default=user.default)
+    return store
+
+
+__all__ = ["GITEA", "GITHUB", "connected", "record"]

@@ -49,6 +49,20 @@ def _restore_home() -> None:
 
 atexit.register(_restore_home)
 
+# The suite runs as the host controller does: code shared with the CLI (forge
+# connections) uses the host DB's stores, under each test's root. Tests of the
+# CLI's side reach them over HTTP (`serve_host_controller`) or switch this off
+# themselves (`as_cli`).
+from bot_bottle import host_access as _host_access  # pylint: disable=wrong-import-position
+
+_host_access.use_stores()
+
+
+def as_cli(test: unittest.TestCase) -> None:
+    """For `test`, shared code asks the host controller (start one with
+    `serve_host_controller`) instead of using the stores, as in the CLI."""
+    test.enterContext(mock.patch.object(_host_access, "_stores", False))
+
 
 def use_bottle_root(root: Path) -> Callable[[], None]:
     """Redirect ``paths.bot_bottle_root()`` to ``root`` by setting

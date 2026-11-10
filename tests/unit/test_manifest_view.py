@@ -13,6 +13,7 @@ from unittest import mock
 from bot_bottle.bottle_state import BottleMetadata, git_gate_state_dir, write_metadata
 from bot_bottle.control.hostctl import manifest_view, remote_actions
 from bot_bottle import forge_connections
+from tests.unit._forges import record
 
 AGENT = """---
 agent_provider:
@@ -52,7 +53,7 @@ POLICY = """routes:
 
 
 # A host bottle describing the forge this run's grants are on; the host's
-# connection to it (`forges.md`) is what grants use (ADR 0019).
+# connection to it (`forge_connections`) is what grants use (ADR 0019).
 GITEA = """---
 git_gate:
   forges:
@@ -78,7 +79,7 @@ class TestAgentManifest(unittest.TestCase):
         (root / "bottles" / "work.md").write_text(WORK)
         (root / "bottles" / "base.md").write_text(BASE)
         (root / "bottles" / "gitea.md").write_text(GITEA)
-        forge_connections.save({CONN.host: CONN}, root / "forges.md")
+        record(root, CONN)
         env = mock.patch.dict(os.environ, {"HOME": str(home), "BOT_BOTTLE_ROOT": str(root)})
         env.start()
         self.addCleanup(env.stop)

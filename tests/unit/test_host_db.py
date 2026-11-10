@@ -87,10 +87,10 @@ class TestEveryTableIsMarked(_Root):
         self.assertEqual(made, set(marks))
         self.assertTrue(set(marks.values()) <= {PORTABLE, MACHINE_SPECIFIC})
 
-    def test_settings_are_portable_and_the_rest_machine_specific(self) -> None:
+    def test_settings_and_forges_are_portable_and_the_rest_machine_specific(self) -> None:
         marks = _marked([*host_db.stores(self.base / "host.db"),
                          *StoreManager(self.base / "registry.db").stores()])
-        self.assertEqual({"bot_bottle_config"},
+        self.assertEqual({"bot_bottle_config", "forge_connections", "forge_users"},
                          {name for name, mark in marks.items() if mark == PORTABLE})
 
 

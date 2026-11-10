@@ -267,8 +267,18 @@ trust prompt says so.
 
 1. It checks a token.
 2. It pins the forge's host key.
-3. It records the connection in `~/.bot-bottle/forges.md`, under the user the
-   token belongs to.
+3. It records the connection in the host database, under the user the token
+   belongs to.
+
+`bot-bottle forge list` shows what this host connected:
+
+```
+$ bot-bottle forge list
+gitea.example.com            gitea   alice*, codex
+```
+
+`*` marks the default user. `forge show <host>` adds the SSH address, pinned
+host key and token names. `forge remove <host> [--user U]` disconnects.
 
 Any bottle then grants repos in a line, with nothing to extend:
 

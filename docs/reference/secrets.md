@@ -110,7 +110,7 @@ The gateway sends `Authorization: Bearer <value>` to that host. `type: token` se
 bot-bottle forge connect https://gitea.example.com
 ```
 
-The token goes into the secrets file as `<HOST>_TOKEN`, here `GITEA_EXAMPLE_COM_TOKEN`. A forge's second user gets `<USER>_<HOST>_TOKEN`. `~/.bot-bottle/forges.md` records the name (`token: secret:NAME`), never the value.
+The token goes into the secrets file as `<HOST>_TOKEN`, here `GITEA_EXAMPLE_COM_TOKEN`. A forge's second user gets `<USER>_<HOST>_TOKEN`. The host database records the name (`secret:NAME`), never the value. `bot-bottle forge remove` drops the token with the connection.
 
 A bottle grants repos (`gitea.example.com/acme/app:write`) and never names a token. A bottle with a `credentials:` block, or a `token` in a forge description, fails to load. Details are in [git-gate.md](git-gate.md#forges-and-one-line-grants).
 

@@ -66,6 +66,13 @@ HOST_CONFIG_PATH = "/host/config"
 AUDIT_QUERY_PATH = "/audit/query"
 AUDIT_REBUILD_PATH = "/audit/rebuild"
 AUDIT_IMPORT_PATH = "/audit/import"
+# GET /forges: {"forges": [`ForgeConnection.to_json()`]}. POST {"forge": a
+# connection without users, "user": `ForgeUser.to_json()`, "make_default"}
+# connects that user and answers {"forge": the connection}. POST
+# /forges/remove {"host", "user"?} disconnects the user, or the whole forge,
+# and drops their tokens: {"removed": [user names]}.
+FORGES_PATH = "/forges"
+FORGES_REMOVE_PATH = "/forges/remove"
 AUDIT_PRODUCERS = frozenset({"orchestrator", "egress", "git-gate", "supervise"})
 
 # A job `error` with this `code` needs a yes/no: resend with `assume_yes`.
@@ -402,7 +409,8 @@ def bearer(token: str) -> dict[str, str]:
 
 __all__ = [
     "AUDIT_APPEND_PATH", "AUDIT_IMPORT_PATH", "AUDIT_PRODUCERS", "AUDIT_QUERY_PATH",
-    "AUDIT_REBUILD_PATH", "ARCHITECT_WARM_PATH", "HOST_CONFIG_PATH",
+    "AUDIT_REBUILD_PATH", "ARCHITECT_WARM_PATH", "FORGES_PATH", "FORGES_REMOVE_PATH",
+    "HOST_CONFIG_PATH",
     "AUTH_HEADER", "AUTH_SCHEME", "BOTTLES_PATH", "BOTTLE_COLORS", "CONFIRM_ERROR",
     "DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS", "DEFAULT_DOCKER_AGENT_SUBNETS",
     "DOCKER_AGENT_SUBNET_PREFIX", "IMAGE_POLICIES", "LAUNCH_CLI_ONLY",

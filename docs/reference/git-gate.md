@@ -129,22 +129,30 @@ No bottle needs to describe a forge for its grants to load.
 
 #### Host connections
 
-What a launch uses is the host's connection, in `~/.bot-bottle/forges.md`.
-Only `bot-bottle forge connect` writes that file.
+What a launch uses is the host's connection, kept in the host database.
+`bot-bottle forge list` and `forge show` print them.
 
-```yaml
-gitea.example.com:
-  kind: gitea
-  url: https://gitea.example.com
-  ssh: ssh://git@10.0.4.2:30009       # how this machine reaches it (--ssh)
-  host_key: ssh-ed25519 AAAA...       # pinned when connected
-  users:
-    alice:
-      token: secret:GITEA_EXAMPLE_COM_TOKEN # a name in ~/.bot-bottle/secrets
-      default: true
-    codex:
-      token: secret:CODEX_GITEA_EXAMPLE_COM_TOKEN
 ```
+$ bot-bottle forge list
+gitea.example.com            gitea   alice*, codex
+github.com                   github  octo*
+
+$ bot-bottle forge show gitea.example.com
+gitea.example.com: gitea at https://gitea.example.com
+  ssh       ssh://git@10.0.4.2:30009
+  host key  ssh-ed25519 AAAA...
+  user      alice (token secret:GITEA_EXAMPLE_COM_TOKEN, default)
+  user      codex (token secret:CODEX_GITEA_EXAMPLE_COM_TOKEN)
+```
+
+- `*` marks a forge's default user. A token is a name in the host secrets
+  file, never its value.
+- `ssh` is how this machine reaches the forge (`--ssh`). The host key was
+  pinned when it was connected.
+- Only `forge connect` and the console's connect write a connection. The host
+  controller is the only writer (ADR 0020). The CLI goes through it.
+- `bot-bottle forge remove <host> [--user U]` disconnects one user, or the
+  whole forge. It drops their tokens from the secrets file too.
 
 - A grant on a forge the host hasn't connected fails to load. The error names
   the `forge connect` command, with a description's URL when the chain has one.
@@ -155,7 +163,8 @@ gitea.example.com:
 - The connection's `url` and `ssh` are what's used. So a bottle can't send a
   token anywhere the host didn't connect.
 - A launch asks `forge_connections.connections()`, the host's connection
-  source, not the file.
+  source. In the host controller it reads the `forge_connections` and
+  `forge_users` tables. Anywhere else it asks the host controller.
 
 #### Forge users
 
@@ -183,8 +192,8 @@ records a connection (`cli/commands/forge.py`, `forge_connect.py`).
    It warns when none, because deploy keys need admin.
 4. It pins the SSH host key it finds for the forge's repos, without asking.
    It fails when it finds none.
-5. It stores the token in the host secrets file and records the user in
-   `forges.md`.
+5. It stores the token in the host secrets file and records the user in the
+   host database.
 
 | Forge | Recognized by |
 |---|---|
@@ -263,7 +272,7 @@ The device flow and refreshing its tokens take the client id alone
 (`contrib/github/user_token.py`).
 
 **The token.** The token goes to the host secrets file under the user's secret
-name. The user is recorded on `github.com` in `forges.md` with `app: <slug>`
+name. The user is recorded on `github.com` with its app's slug
 (`github_connect.py`). `--default` makes it the default user.
 
 An expiring token lasts eight hours, the app's default.
@@ -308,8 +317,8 @@ per connected user (ADR 0014).
 | Held to granted repos by | git-gate | GitHub itself, per repo |
 | Cost | the token reaches every repo the app is installed on | needs admin on the repo, the far broader Administration permission |
 
-The transport is set with `forge connect --transport`, as `transport:` on the
-user in `forges.md`. The app's device flow takes it too.
+The transport is set with `forge connect --transport`, on the connected user.
+The app's device flow takes it too.
 
 On a host already connected, `forge connect github --transport T` changes just
 the transport. Whoever connects the user chooses. A bottle can't (ADR 0019).
@@ -789,7 +798,7 @@ adds `--ssh` with the address they used. Here it's an IP and port.
 
 A forge bottle an earlier `forge connect` wrote, with `credentials:` and a
 `token` in its forge, fails to load too. Connect the forge again with
-`forge connect`, which writes `forges.md`.
+`forge connect`, which records it in the host database.
 
 Then remove the `credentials:` block and the forge's `token` and `account`
 lines (ADR 0019).

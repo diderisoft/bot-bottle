@@ -164,10 +164,10 @@ class TestReview(unittest.TestCase):
 
     def test_a_broken_connections_file(self) -> None:
         def broken() -> dict[str, object]:
-            raise ForgeConnectionError("forges.md: bad")
+            raise ForgeConnectionError("forge h: bad")
         with unittest.mock.patch("bot_bottle.forge_connections.connections", new=broken):
             forge = self.lines(_proposal())[-1]
-        self.assertEqual(("forges.md: bad", "warn"), (forge.detail, forge.tone))
+        self.assertEqual(("forge h: bad", "warn"), (forge.detail, forge.tone))
 
     def test_a_new_bottle_and_nothing_added(self) -> None:
         p = _proposal(option=OPTION_NEW_EXTENDING, bottles=[], new_bottle=ProposalNewBottle(

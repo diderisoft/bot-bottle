@@ -1,7 +1,8 @@
-"""The host DB's routes for the CLI (`HOST_CONFIG_PATH`, `AUDIT_QUERY_PATH`,
-`AUDIT_REBUILD_PATH`, `AUDIT_IMPORT_PATH`). The host controller is the host
-DB's only writer, so the CLI reads and changes host state here, never by
-opening the file (ADR 0020).
+"""The host DB's routes for the CLI (`HOST_CONFIG_PATH`, the audit index's,
+`FORGES_PATH`, `FORGES_REMOVE_PATH`). The host controller is the host DB's only
+writer, so the CLI reads and changes host state here, never by opening the
+file (ADR 0020). These use the stores, never the routed functions shared code
+calls (`forge_connections.connections()`), which would ask here again.
 
 Each function takes the request body and returns the reply. ValueError means
 a bad request; `IndexBreak` and `AuditImportError`, a journal that can't be
@@ -13,6 +14,8 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 
+from ... import forge_connections
+from ...forge_connections import ForgeConnection, ForgeConnectionError, ForgeStore
 from ...lib.config_store import ConfigStore
 from ...paths import host_audit_dir, host_db_path
 from .audit_import import import_segment
@@ -76,4 +79,38 @@ def audit_import(body: dict[str, object]) -> dict[str, object]:
             "extended": result.extended, "already_imported": result.already_imported}
 
 
-__all__ = ["audit_import", "audit_query", "audit_rebuild", "config", "set_config"]
+def forges(body: dict[str, object]) -> dict[str, object]:
+    """Every forge this host connected."""
+    del body
+    return {"forges": [c.to_json() for c in ForgeStore(host_db_path()).connections().values()]}
+
+
+def forge_connect(body: dict[str, object]) -> dict[str, object]:
+    """Record `body["user"]` connected on `body["forge"]`."""
+    make_default = body.get("make_default", False)
+    if not isinstance(make_default, bool):
+        raise ValueError("make_default must be true or false")
+    raw = body.get("forge")
+    try:
+        conn = ForgeConnection.from_json({**raw, "users": [body.get("user")]}
+                                         if isinstance(raw, dict) else raw)
+        stored = ForgeStore(host_db_path()).add_user(
+            conn, conn.users[0], make_default=make_default)
+    except ForgeConnectionError as e:
+        raise ValueError(str(e)) from e
+    return {"forge": stored.to_json()}
+
+
+def forge_remove(body: dict[str, object]) -> dict[str, object]:
+    """Disconnect `body["user"]`, or every user, from `body["host"]`."""
+    host, user = body.get("host"), body.get("user", "")
+    if not isinstance(host, str) or not host or not isinstance(user, str):
+        raise ValueError("host must name a forge, and user a user on it")
+    try:
+        return {"removed": forge_connections.forget(host, user)}
+    except ForgeConnectionError as e:
+        raise ValueError(str(e)) from e
+
+
+__all__ = ["audit_import", "audit_query", "audit_rebuild", "config", "forge_connect",
+           "forge_remove", "forges", "set_config"]

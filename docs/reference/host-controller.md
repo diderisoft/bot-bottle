@@ -486,13 +486,20 @@ asks over HTTP, with the `cli` role only:
 | `POST /audit/query` | the `audit query` filters | Indexes new journal records, then answers `{"records": [...]}`. |
 | `POST /audit/rebuild` | `{}` | Re-creates the audit index. Answers `{"indexed": n}`. |
 | `POST /audit/import` | `{"segment": <absolute path>}` | Imports a segment as its own chain. Answers `chain`, `records`, `extended` and `already_imported`. |
+| `GET /forges` | none | `{"forges": [...]}`: each connection with its users. |
+| `POST /forges` | `{"forge", "user", "make_default"}` | Records the user connected on the forge. Answers `{"forge": ...}`. A malformed connection is 400. |
+| `POST /forges/remove` | `{"host", "user"?}` | Disconnects the user, or the whole forge, and drops their tokens from the secrets file. Answers `{"removed": [...]}`. |
 
 A journal that doesn't chain, or a segment that won't import, is 409.
 
 These commands use the routes: `audit query`, `export`, `rebuild`,
 `import`, `delivery`, `transcript-retention`, `forward` and `firehose`,
-`host budget`, and `start --dry-run`. Each starts the host controller if it
-isn't running. `audit verify` reads only the journal's files.
+`host budget`, `forge connect`, `list`, `show` and `remove`, and
+`start --dry-run`. Each starts the host controller if it isn't running.
+`audit verify` reads only the journal's files.
+
+Code the CLI shares with the host controller reads forge connections the same
+way (`host_access.py`). In the host controller it uses the tables directly.
 
 ### Checks and backups
 
@@ -1112,7 +1119,7 @@ flow (ADR 0012). The token never reaches the console.
 **Connecting.** `github_authorize_start` starts the flow. Its reply,
 `github_authorize`, carries `user_code`, `verification_uri` and
 `expires_in`, or `error`. The host then polls GitHub itself. It records the
-connection in `forges.md` when the operator enters the code.
+connection in the host database when the operator enters the code.
 
 **Status.** `github_status` answers `github_status`. It asks GitHub each
 time, so the console can poll it while the operator installs the app.

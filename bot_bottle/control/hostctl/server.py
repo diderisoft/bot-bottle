@@ -17,7 +17,8 @@ from ...contract.audit import AuditEvent
 from ...contract.firehose import FIREHOSE_PATH, FIREHOSE_STREAM_PATH
 from ...contract.hostctl import (
     AUDIT_APPEND_PATH, AUDIT_IMPORT_PATH, AUDIT_PRODUCERS, AUDIT_QUERY_PATH, AUDIT_REBUILD_PATH,
-    AUTH_HEADER, AUTH_SCHEME, BOTTLES_PATH, HOST_CONFIG_PATH, HOST_CONTROL, JOBS_PATH,
+    AUTH_HEADER, AUTH_SCHEME, BOTTLES_PATH, FORGES_PATH, FORGES_REMOVE_PATH, HOST_CONFIG_PATH,
+    HOST_CONTROL, JOBS_PATH,
     LIVE_BOTTLES_PATH, ORCHESTRATOR_PATH, ROLE_ORCHESTRATOR, SESSIONS_PATH, STATUS_PATH,
     ARCHITECT_WARM_PATH, SUGGEST_PATH, LaunchRequest, Settings, status_body,
 )
@@ -39,9 +40,14 @@ MAX_BODY_BYTES = 1 << 20
 # Roles that may launch, list, tear down and watch bottles.
 _BOTTLE_ROLES = (ROLE_CLI, ROLE_ORCHESTRATOR)
 # The host DB's routes, `cli` only: the CLI never opens the file.
-_HOST_STATE: dict[str, Callable[[dict[str, object]], dict[str, object]]] = {
+_HostRoute = Callable[[dict[str, object]], dict[str, object]]
+_HOST_STATE: dict[str, _HostRoute] = {
     HOST_CONFIG_PATH: host_state.set_config, AUDIT_QUERY_PATH: host_state.audit_query,
     AUDIT_REBUILD_PATH: host_state.audit_rebuild, AUDIT_IMPORT_PATH: host_state.audit_import,
+    FORGES_PATH: host_state.forge_connect, FORGES_REMOVE_PATH: host_state.forge_remove,
+}
+_HOST_STATE_READS: dict[str, _HostRoute] = {
+    HOST_CONFIG_PATH: lambda _body: host_state.config(), FORGES_PATH: host_state.forges,
 }
 
 
@@ -121,8 +127,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._live(server, parse_qs(url.query))
         elif url.path == FIREHOSE_STREAM_PATH:
             self._firehose_stream(server, parse_qs(url.query))
-        elif url.path == HOST_CONFIG_PATH:
-            self._host_state(lambda _body: host_state.config(), read=True)
+        elif url.path in _HOST_STATE_READS:
+            self._host_state(_HOST_STATE_READS[url.path], read=True)
         else:
             self._send(404, {"error": f"no route {url.path}"})
 
@@ -262,8 +268,7 @@ class _Handler(BaseHTTPRequestHandler):
         del server
         self._host_state(_HOST_STATE[urlsplit(self.path).path])
 
-    def _host_state(self, handler: Callable[[dict[str, object]], dict[str, object]], *,
-                    read: bool = False) -> None:
+    def _host_state(self, handler: _HostRoute, *, read: bool = False) -> None:
         """A host DB route (`host_state`). A journal that won't index or a
         segment that won't import is 409."""
         if self._allowed((ROLE_CLI,)) is None:

@@ -16,6 +16,7 @@ from types import FrameType
 
 from ...contract.auth import ROLE_GATEWAY
 from ...contract.hostctl import GUEST_PORT, HOST_CONTROL, PORT_ENV, ROLE_ORCHESTRATOR
+from ... import host_access
 from ...control.lifecycle import Orchestrator
 from ...lib.log import debug, info, warn
 from ...paths import bot_bottle_root
@@ -104,6 +105,8 @@ def main() -> int:
     # anything here reads it, and won't start on a corrupt one.
     if not host_db.open_for_start():
         return host_db.REFUSED_EXIT_STATUS
+    # Code shared with the CLI uses the stores here, not this API.
+    host_access.use_stores()
     backups = host_db.DailyBackups().start()
     port = int(os.environ.get(PORT_ENV, "0") or "0")
     sessions = SessionManager({})

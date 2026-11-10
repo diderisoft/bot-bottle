@@ -16,9 +16,10 @@ from unittest import mock
 from bot_bottle.cli.commands.forge import cmd_forge
 from bot_bottle.contrib.gitea import forge_api
 from bot_bottle.forge_connect import ssh_host_port
-from bot_bottle.forge_connections import load
+from bot_bottle.forge_connections import ForgeStore
 from bot_bottle.lib.log import Die
-from tests.unit import use_bottle_root
+from bot_bottle.paths import host_db_path
+from tests.unit import as_cli, serve_host_controller, use_bottle_root
 
 class TestSshHostPort(unittest.TestCase):
     def test_ssh_host_port(self) -> None:
@@ -87,10 +88,10 @@ class TestCommand(unittest.TestCase):
 
     def test_records_the_connection_and_the_secret(self) -> None:
         self.run_cmd("gitea.example.com")
-        text = (self.root / "forges.md").read_text()
-        self.assertNotIn("s3cret", text)
+        self.assertNotIn(b"s3cret", host_db_path().read_bytes())
         self.assertFalse((self.root / "bottles" / "gitea.md").exists())
-        conn = load(self.root / "forges.md")["gitea.example.com"]
+        self.assertFalse((self.root / "forges.md").exists())
+        conn = ForgeStore(host_db_path()).connections()["gitea.example.com"]
         self.assertEqual(("gitea", "https://gitea.example.com", "ssh://git@10.0.0.1:30009",
                           "ssh-ed25519 AAAA"), (conn.kind, conn.url, conn.ssh, conn.host_key))
         self.assertEqual([("bot", "GITEA_EXAMPLE_COM_TOKEN", True)],
@@ -103,18 +104,18 @@ class TestCommand(unittest.TestCase):
         self.run_cmd("gitea.example.com")
         self.check.return_value = forge_api.TokenCheck("codex", "", 1, 1)
         self.run_cmd("gitea.example.com", token="other\n")
-        users = load(self.root / "forges.md")["gitea.example.com"].users
+        users = ForgeStore(host_db_path()).connections()["gitea.example.com"].users
         self.assertEqual([("bot", "GITEA_EXAMPLE_COM_TOKEN", True),
                           ("codex", "CODEX_GITEA_EXAMPLE_COM_TOKEN", False)],
                          [(u.name, u.token_secret, u.default) for u in users])
         self.run_cmd("gitea.example.com", "--default", token="other\n")
-        users = load(self.root / "forges.md")["gitea.example.com"].users
+        users = ForgeStore(host_db_path()).connections()["gitea.example.com"].users
         self.assertEqual({"codex"}, {u.name for u in users if u.default})
         self.assertEqual("CODEX_GITEA_EXAMPLE_COM_TOKEN", users[-1].token_secret)
 
     def test_ssh_override(self) -> None:
         self.run_cmd("gitea.example.com", "--ssh", "ssh://git@100.64.0.1:30009")
-        conn = load(self.root / "forges.md")["gitea.example.com"]
+        conn = ForgeStore(host_db_path()).connections()["gitea.example.com"]
         self.assertEqual("ssh://git@100.64.0.1:30009", conn.ssh)
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(Die):
             self.run_cmd("gitea.example.com", "--ssh", "100.64.0.1")
@@ -141,6 +142,63 @@ class TestCommand(unittest.TestCase):
             with mock.patch.object(forge_api, "is_gitea", return_value=False), \
                     self.assertRaises(Die):
                 self.run_cmd("gitlab.com")
+
+
+class TestManage(unittest.TestCase):
+    """`forge connect`, `list`, `show` and `remove` from the CLI, through the
+    host controller."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))  # pylint: disable=consider-using-with
+        self.root = self.tmp / "root"
+        self.addCleanup(use_bottle_root(self.root))
+        serve_host_controller(self)
+        as_cli(self)
+        self.enterContext(mock.patch.object(forge_api, "is_gitea", return_value=True))
+        self.check = self.enterContext(mock.patch.object(
+            forge_api, "check_token",
+            return_value=forge_api.TokenCheck("bot", "ssh://git@10.0.0.1:30009", 1, 1)))
+        self.enterContext(mock.patch("bot_bottle.git_gate.host_key.fetch_host_key",
+                                     return_value="ssh-ed25519 AAAA"))
+
+    def forge(self, *argv: str, token: str = "s3cret-token\n") -> str:
+        out = io.StringIO()
+        with mock.patch("sys.stdin", io.StringIO(token)), contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(0, cmd_forge(list(argv)))
+        return out.getvalue()
+
+    def test_connect_writes_through_the_host_controller(self) -> None:
+        self.assertIn("no forges connected", self.forge("list"))
+        self.forge("connect", "gitea.example.com", "--token-stdin")
+        self.check.return_value = forge_api.TokenCheck("codex", "", 1, 1)
+        self.forge("connect", "gitea.example.com", "--token-stdin", token="other\n")
+        conn = ForgeStore(host_db_path()).connections()["gitea.example.com"]
+        self.assertEqual(["bot", "codex"], [u.name for u in conn.users])
+        self.assertEqual("gitea.example.com            gitea   bot*, codex\n", self.forge("list"))
+        shown = self.forge("show", "gitea.example.com")
+        self.assertIn("ssh       ssh://git@gitea.example.com", shown)  # codex reported none
+        self.assertIn("host key  ssh-ed25519 AAAA", shown)
+        self.assertIn("user      bot (token secret:GITEA_EXAMPLE_COM_TOKEN, default)", shown)
+
+    def test_remove_a_user_or_the_forge(self) -> None:
+        self.forge("connect", "gitea.example.com", "--token-stdin")
+        self.check.return_value = forge_api.TokenCheck("codex", "", 1, 1)
+        self.forge("connect", "gitea.example.com", "--token-stdin", token="other\n")
+        self.forge("remove", "gitea.example.com", "--user", "codex")
+        secrets = (self.root / "secrets").read_text()
+        self.assertNotIn("CODEX_GITEA_EXAMPLE_COM_TOKEN", secrets)
+        self.assertIn("GITEA_EXAMPLE_COM_TOKEN=s3cret-token", secrets)
+        self.forge("remove", "gitea.example.com")
+        self.assertEqual({}, ForgeStore(host_db_path()).connections())
+        self.assertNotIn("GITEA_EXAMPLE_COM_TOKEN", (self.root / "secrets").read_text())
+
+    def test_refusals(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            for argv in (["show", "nowhere.example.com"], ["remove", "nowhere.example.com"],
+                         ["show"], ["remove"], ["list", "x"], ["remove", "h", "--user"]):
+                with self.subTest(argv=argv), self.assertRaises(Die):
+                    cmd_forge(argv)
 
 
 if __name__ == "__main__":

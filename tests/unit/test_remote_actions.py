@@ -16,7 +16,7 @@ from bot_bottle.forge_connect import ConnectError, Connected
 from bot_bottle.forge_connections import ForgeConnectionError
 from tests.unit._forges import GITEA, connected
 
-DONE = Connected(key="gitea.example.com", path=Path("/x/forges.md"),
+DONE = Connected(key="gitea.example.com",
                  account="bot", default=True, admin_repos=2, repos=5, ssh="ssh://git@h:2222",
                  host_key="ssh-ed25519 AAAA", secret_name="GITEA_EXAMPLE_COM_TOKEN",
                  warnings=("w",))

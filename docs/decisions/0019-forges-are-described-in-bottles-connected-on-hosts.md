@@ -6,6 +6,9 @@ Syntax in this record predates v0.1.9; see [manifest.md](../reference/manifest.m
 - **Date:** 2026-11-06
 - **Deciders:** didericis
 
+> **Amended 2026-11-10.** [ADR 0020](0020-where-host-state-lives.md) moves
+> `forges.md` into the host database (`forge_connections`, `forge_users`).
+
 ## Context
 
 A repo grant (`gitea.example.com/acme/app:write`) loads only when a bottle in

@@ -30,13 +30,13 @@ from bot_bottle.contrib.github.user_token import (
 )
 from bot_bottle.control.hostctl import remote, remote_actions, repo_grants
 from bot_bottle.forge_connect import ConnectError
-from bot_bottle.forge_connections import ForgeConnection, ForgeUser, load, save
+from bot_bottle.forge_connections import ForgeConnection, ForgeUser, connections, remove
 from bot_bottle.forge_kinds import ForgeApiError
 from bot_bottle.manifest.forges import forges_raw, resolve_forge
 from bot_bottle.manifest.util import ManifestError
 from bot_bottle.secret_source import FileSecrets, MappingSecrets, remove_secret, write_secret
 from tests.unit import use_bottle_root
-from tests.unit._forges import GITHUB, connected as connected_to
+from tests.unit._forges import GITHUB, connected as connected_to, record
 
 CONFIG = AppConfig(slug="bot-bottle-dev", client_id="Iv1.abc")
 
@@ -304,7 +304,7 @@ class TestConnect(unittest.TestCase):
         done = github_connect.finish(TokenSet("ghu_1", "ghr_1", 5), CONFIG)
         self.assertEqual(("github.com", "didericis", "bot-bottle-dev", True, "GITHUB_COM_TOKEN"),
                          (done.key, done.login, done.app, done.expiring, done.secret_name))
-        conn = load(self.root / "forges.md")["github.com"]
+        conn = connections()["github.com"]
         user = conn.user()
         self.assertEqual(("github", "bot-bottle-dev", "didericis", "ssh-ed25519 AAAAgh"),
                          (conn.kind, user.app, user.name, conn.host_key))
@@ -315,14 +315,13 @@ class TestConnect(unittest.TestCase):
 
     def test_a_transport_for_the_user(self) -> None:
         github_connect.finish(TokenSet("ghu_1"), CONFIG, transport="deploy-key")
-        path = self.root / "forges.md"
-        self.assertEqual("deploy-key", load(path)["github.com"].user().transport)
+        self.assertEqual("deploy-key", connections()["github.com"].user().transport)
         github_connect.set_transport("didericis", "https")
-        user = load(path)["github.com"].user()
+        user = connections()["github.com"].user()
         self.assertEqual(("https", True), (user.transport, user.default))
         with self.assertRaisesRegex(ConnectError, "nobody isn't connected"):
             github_connect.set_transport("nobody", "https")
-        path.unlink()
+        remove("github.com")
         with self.assertRaisesRegex(ConnectError, "isn't connected"):
             github_connect.set_transport("didericis", "https")
 
@@ -401,10 +400,10 @@ class TestConnect(unittest.TestCase):
                 self.assertIn("error", self.wait_state("error"))
 
     def app_forge(self, *users: ForgeUser) -> None:
-        save({"github.com": ForgeConnection(
+        record(self.root, ForgeConnection(
             host="github.com", kind="github", url="https://github.com", ssh="ssh://git@github.com",
             users=users or (ForgeUser("me", "GITHUB_COM_TOKEN", default=True,
-                                      app="bot-bottle-dev"),))}, self.root / "forges.md")
+                                      app="bot-bottle-dev"),)))
 
     def test_status_says_when_the_app_needs_installing(self) -> None:
         self.app_forge()
@@ -610,7 +609,7 @@ class TestCli(unittest.TestCase):
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
         self.web = self.enterContext(mock.patch.object(forge_cmd.webbrowser, "open"))
         self.done = github_connect.GitHubConnected(
-            key="github.com", path=Path("/x/forges.md"), login="me",
+            key="github.com", login="me",
             app="bot-bottle", install_url="i", secret_name="GITHUB_COM_TOKEN", expiring=True)
 
     def test_github_is_the_device_flow(self) -> None:

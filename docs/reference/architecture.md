@@ -174,8 +174,7 @@ Where each kind of state lives, and what owns it.
 |---|---|---|
 | User agents and bottles | `~/.bot-bottle/{agents,bottles}/`, versioned ([below](#versioned-user-files)) | user |
 | Project agents and bottles | `<repo>/.bot-bottle/`, run only once trusted. Trust is kept in `~/.bot-bottle/trusted-bottles.json` ([below](#project-files-and-trust)) | repo |
-| Forge connections | `~/.bot-bottle/forges.md` ([below](#forge-connections)) | host |
-| Host settings, audit forwarding cursors, the audit index | `~/.bot-bottle/db/bot-bottle.db` ([below](#databases)) | host controller |
+| Host settings, forge connections, audit forwarding cursors, the audit index | `~/.bot-bottle/db/bot-bottle.db` ([below](#databases), [forge connections](#forge-connections)) | host controller |
 | Registry, supervise queue, encrypted egress secrets, canary events, orchestrator settings | `registry.db` ([below](#databases)) | orchestrator |
 | The environment's orchestrator (backend and host URL) | `~/.bot-bottle/infra/orchestrator.json`, written by each bring-up | host controller |
 | Signing keys | `~/.bot-bottle/<key file>`, mode 0600, pushed to the key holder | host |
@@ -200,7 +199,7 @@ Each database has one job and one writer
 
 | Database | Holds | Writer | Where |
 |---|---|---|---|
-| `bot-bottle.db` | the host's own state: settings (`bot_bottle_config`), the audit forwarder's cursors, the audit index | host controller | `~/.bot-bottle/db/` |
+| `bot-bottle.db` | the host's own state: settings (`bot_bottle_config`), forge connections (`forge_connections`, `forge_users`), the audit forwarder's cursors, the audit index | host controller | `~/.bot-bottle/db/` |
 | `registry.db` | the orchestrator's working state: the bottle registry, encrypted egress secrets, the supervise queue and its decisions, canary events, orchestrator settings | orchestrator | docker: `~/.bot-bottle/db/`, through the orchestrator's root mount. macOS: a container volume. Firecracker: the orchestrator VM's `/dev/vdb` volume |
 
 - One helper opens every connection (`lib/db_store.connect`), in WAL mode
@@ -211,8 +210,9 @@ Each database has one job and one writer
   `bot-bottle uninstall` and `host restore-db` touch the file itself.
 - The host controller checks `bot-bottle.db` at start and keeps a daily
   backup ([checks and backups](host-controller.md#checks-and-backups)).
-- Each store marks its tables portable or machine-specific (`TABLES`). Only
-  the host settings are portable. Nothing reads the mark yet.
+- Each store marks its tables portable or machine-specific (`TABLES`). The
+  host settings and forge connections are portable, except a connection's
+  `ssh`, this machine's address for the forge. Nothing reads the mark yet.
 
 ### Versioned user files
 
@@ -274,15 +274,18 @@ offers `forge connect`.
 
 ### Forge connections
 
-`~/.bot-bottle/forges.md` lists each forge this host connected, keyed by host.
-Only `bot-bottle forge connect` (`forge_connections.py`) writes it.
+`bot-bottle.db` holds each forge this host connected, keyed by host
+(`forge_connections.py`). `bot-bottle forge list` prints them.
 
-Each entry has the forge's URL, SSH address, pinned host key and users. A user
-entry holds its token secret name, the default flag, and GitHub's `app` and
-`transport`.
+| Table | Row |
+|---|---|
+| `forge_connections` | a forge's kind, URL, SSH address and pinned host key |
+| `forge_users` | a user on it: its token's secret name (`secret:NAME`), the default flag, and GitHub's `app` and `transport` |
 
-Grants resolve through this file, never through a bottle's description of the
-forge ([ADR 0019](../decisions/0019-forges-are-described-in-bottles-connected-on-hosts.md)).
+- Only `forge connect`, the console's connect and `forge remove` change them,
+  through the host controller.
+- Grants resolve through them, never through a bottle's description of the
+  forge ([ADR 0019](../decisions/0019-forges-are-described-in-bottles-connected-on-hosts.md)).
 
 ### Per-bottle metadata
 

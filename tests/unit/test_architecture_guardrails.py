@@ -115,7 +115,7 @@ class TestCliBottleCommandsAreHostControllerClients(unittest.TestCase):
 HOST_DB_OPENERS = frozenset({
     "sqlite3", "db_store", "DbStore", "ConfigStore", "AuditIndex", "ForwardCursors",
     "StoreManager", "host_db_path", "host_db", "host_state", "host_budget",
-    "query_host_journal", "import_segment",
+    "query_host_journal", "import_segment", "ForgeStore", "forget",
 })
 # (module, name) -> why the CLI may still use it.
 ALLOWED_HOST_DB_IMPORTS: dict[tuple[str, str], str] = {

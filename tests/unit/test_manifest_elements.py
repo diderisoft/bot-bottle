@@ -14,7 +14,8 @@ from bot_bottle.bottle_state import BottleMetadata, egress_state_dir, git_gate_s
     write_metadata
 from bot_bottle.contract.yaml_subset import parse_frontmatter
 from bot_bottle.control.hostctl import manifest_elements, manifest_view
-from bot_bottle.forge_connections import ForgeConnection, ForgeUser, save
+from bot_bottle.forge_connections import ForgeConnection, ForgeUser
+from tests.unit._forges import record
 
 AGENT = "---\n---\n\nHi.\n"
 WORK = """---
@@ -68,7 +69,7 @@ class _Chain(unittest.TestCase):
         for name, text in (("work", WORK), ("base", BASE), ("gitea", GITEA),
                            ("other", "---\nenv:\n  A: b\n---\n")):
             (self.bottles / f"{name}.md").write_text(text)
-        save({CONN.host: CONN}, self.root / "forges.md")
+        record(self.root, CONN)
         env = mock.patch.dict(os.environ, {"HOME": str(home), "BOT_BOTTLE_ROOT": str(self.root)})
         env.start()
         self.addCleanup(env.stop)
