@@ -16,9 +16,10 @@ from typing import TYPE_CHECKING, Any
 
 from ...lib import log
 from ...lib.config_store import AuditRetention, ConfigStore
-from ...paths import host_audit_dir, host_db_path
+from ...paths import host_db_path
 from .audit_forward import ForwardCursors
 from .audit_index import AuditIndex, IndexBreak
+from .index_db import audit_index
 
 if TYPE_CHECKING:
     from .audit_events import HostAudit
@@ -61,8 +62,7 @@ class JournalPruner:
 
     def __init__(self, audit: "HostAudit", *,
                  retention: Callable[[], AuditRetention] = _retention,
-                 index: Callable[[], AuditIndex] = lambda: AuditIndex(host_audit_dir(),
-                                                                     host_db_path()),
+                 index: Callable[[], AuditIndex] = audit_index,
                  interval: float = PRUNE_SECONDS) -> None:
         self._audit = audit
         self._retention = retention

@@ -38,6 +38,25 @@ def connect(path: Path | str) -> sqlite3.Connection:
     return conn
 
 
+def quick_check(path: Path) -> str:
+    """The first problem `PRAGMA quick_check` finds in the database at
+    `path`, or "" if it passes (or there's no file yet)."""
+    if not path.exists():
+        return ""
+    try:
+        conn = connect(path)
+    except sqlite3.DatabaseError as e:
+        return str(e)
+    try:
+        rows = conn.execute("PRAGMA quick_check").fetchall()
+    except sqlite3.DatabaseError as e:
+        return str(e)
+    finally:
+        conn.close()
+    problems = [str(row[0]) for row in rows if row[0] != "ok"]
+    return problems[0] if problems else ""
+
+
 class DbVersionError(Exception):
     """The on-disk schema is behind the migration list."""
 
@@ -138,4 +157,4 @@ class DbStore:
 
 
 __all__ = ["BUSY_TIMEOUT_MS", "MACHINE_SPECIFIC", "PORTABLE", "DbStore", "DbVersionError",
-           "connect"]
+           "connect", "quick_check"]

@@ -29,6 +29,7 @@ from .agent_prefs import AgentPrefsStore
 from ...paths import host_audit_dir, host_db_path
 from .audit_import import import_segment
 from .audit_index import AuditIndex, Query
+from .index_db import audit_index
 
 _QUERY_FIELDS = {f.name for f in dataclasses.fields(Query)}
 
@@ -50,7 +51,7 @@ def set_config(body: dict[str, object]) -> dict[str, object]:
 
 
 def _index() -> AuditIndex:
-    return AuditIndex(host_audit_dir(), host_db_path())
+    return audit_index()
 
 
 def audit_query(body: dict[str, object]) -> dict[str, object]:

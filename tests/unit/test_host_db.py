@@ -1,7 +1,8 @@
-"""Unit: the host DB (`control/hostctl/host_db.py`) and the orchestrator's
-`registry.db` keep separate tables (ADR 0020), and every table is marked
-portable or machine-specific. The host controller checks the host DB at
-start, keeps daily backups, and `host restore-db` puts one back."""
+"""Unit: the host DB (`control/hostctl/host_db.py`), the index DB
+(`index_db.py`) and the orchestrator's `registry.db` keep separate tables
+(ADR 0020), and every table is marked portable or machine-specific. The host
+controller checks the host DB at start, keeps daily backups, and `host
+restore-db` puts one back. A missing or damaged index DB is rebuilt."""
 
 from __future__ import annotations
 
@@ -17,11 +18,11 @@ from pathlib import Path
 from unittest import mock
 
 from bot_bottle.cli.commands import host as host_cmd
-from bot_bottle.control.hostctl import host_db, runner, service_unit
+from bot_bottle.control.hostctl import host_db, index_db, runner, service_unit
 from bot_bottle.lib.config_store import ConfigStore
 from bot_bottle.lib.db_store import MACHINE_SPECIFIC, PORTABLE, DbStore
 from bot_bottle.orchestrator.store.store_manager import StoreManager
-from bot_bottle.paths import host_db_path
+from bot_bottle.paths import host_audit_dir, host_db_path, index_db_path
 
 _INTERNAL = {"schema_versions", "sqlite_sequence"}
 
@@ -32,7 +33,7 @@ def _tables(path: Path) -> set[str]:
     return names - _INTERNAL
 
 
-def _marked(stores: list[DbStore]) -> dict[str, str]:
+def _marked(stores: list[DbStore] | list[index_db.DerivedIndex]) -> dict[str, str]:
     return {name: mark for store in stores for name, mark in store.TABLES.items()}
 
 
@@ -55,7 +56,8 @@ class TestHostTables(_Root):
         orchestrator = set(_marked(StoreManager(self.base / "registry.db").stores()))
         self.assertEqual(set(), tables & orchestrator)
         for name in ("orchestrator_bottles", "supervise_proposals", "canary_events",
-                     "supervise_audit_entries", "orchestrator_config"):
+                     "supervise_audit_entries", "orchestrator_config", "audit_events",
+                     "audit_index_cursor"):
             self.assertNotIn(name, tables)
 
     def test_an_older_db_is_migrated_without_asking(self) -> None:
@@ -64,6 +66,68 @@ class TestHostTables(_Root):
             db.execute("CREATE TABLE something_older (x INTEGER)")
         host_db.migrate()
         self.assertTrue(all(store.is_migrated() for store in host_db.stores()))
+
+
+class TestIndexDb(_Root):
+    """`index.db`: derived, so a missing or damaged one is rebuilt, never
+    restored or backed up."""
+
+    def journal(self) -> None:
+        # pylint: disable=import-outside-toplevel
+        from bot_bottle.contract.audit import AuditEvent
+        from bot_bottle.control.hostctl.audit_events import HostAudit
+        audit = HostAudit.open()
+        audit.record(AuditEvent(type="egress.decision", actor="bottled-agent:a",
+                                action="egress.connect", outcome="blocked",
+                                sensitivity="security", ts_event="2026-11-01T09:30:00.000Z",
+                                bottle="amber-fox"))
+        audit.close()
+
+    def start(self) -> tuple[bool, str]:
+        err = io.StringIO()
+        with redirect_stderr(err):
+            rebuilt = index_db.open_for_start()
+            if rebuilt:
+                index_db.rebuild()
+        return rebuilt, err.getvalue()
+
+    def indexed(self) -> int:
+        with sqlite3.connect(index_db_path()) as db:
+            return int(db.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0])
+
+    def test_a_missing_index_db_is_created_and_rebuilt_from_the_journal(self) -> None:
+        self.journal()
+        self.assertTrue(self.start()[0])
+        self.assertEqual({"audit_events", "audit_index_cursor"}, _tables(index_db_path()))
+        self.assertEqual(0o600, stat.S_IMODE(index_db_path().stat().st_mode))
+        self.assertTrue(list(host_audit_dir().iterdir()))
+        self.assertGreater(self.indexed(), 0)
+
+    def test_a_sound_index_db_is_kept(self) -> None:
+        self.journal()
+        self.start()
+        self.assertEqual((False, ""), self.start())
+
+    def test_a_damaged_index_db_is_deleted_and_rebuilt(self) -> None:
+        self.journal()
+        self.start()
+        count = self.indexed()
+        with sqlite3.connect(index_db_path()) as db:
+            db.execute("CREATE TABLE filler (x TEXT)")
+            db.executemany("INSERT INTO filler VALUES (?)", [("x" * 500,)] * 100)
+        _corrupt(index_db_path())
+        rebuilt, err = self.start()
+        self.assertTrue(rebuilt)
+        self.assertIn("failed its check", err)
+        self.assertEqual(count, self.indexed())
+        self.assertNotIn("filler", _tables(index_db_path()))
+
+    def test_it_isnt_backed_up_with_the_host_db(self) -> None:
+        host_db.migrate()
+        self.start()
+        backup = host_db.back_up(now=_T0)
+        self.assertNotIn("audit_events", _tables(backup))
+        self.assertEqual([backup], list(host_db.backups_dir().iterdir()))
 
 
 class TestRegistryTables(_Root):
@@ -80,10 +144,12 @@ class TestEveryTableIsMarked(_Root):
     def test_each_store_marks_exactly_the_tables_it_creates(self) -> None:
         stores = [*host_db.stores(self.base / "h" / "host.db"),
                   *StoreManager(self.base / "o" / "registry.db").stores()]
-        for store in stores:
+        indexes = index_db.stores(self.base / "i" / "index.db")
+        for store in [*stores, *indexes]:
             store.migrate()
-        made = _tables(self.base / "h" / "host.db") | _tables(self.base / "o" / "registry.db")
-        marks = _marked(stores)
+        made = (_tables(self.base / "h" / "host.db") | _tables(self.base / "o" / "registry.db")
+                | _tables(self.base / "i" / "index.db"))
+        marks = _marked(stores) | _marked(indexes)
         self.assertEqual(made, set(marks))
         self.assertTrue(set(marks.values()) <= {PORTABLE, MACHINE_SPECIFIC})
 
@@ -91,6 +157,7 @@ class TestEveryTableIsMarked(_Root):
             self) -> None:
         marks = _marked([*host_db.stores(self.base / "host.db"),
                          *StoreManager(self.base / "registry.db").stores()])
+        marks |= _marked(index_db.stores(self.base / "index.db"))
         self.assertEqual({"bot_bottle_config", "forge_connections", "forge_users",
                           "audit_passkeys"},
                          {name for name, mark in marks.items() if mark == PORTABLE})

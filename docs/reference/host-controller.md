@@ -541,6 +541,7 @@ bot-bottle host restore-db [BACKUP]   # put one back: the newest, or the one nam
 | When | What happens |
 |---|---|
 | It starts | `PRAGMA quick_check` on the file. On a failure it exits (status 78), naming the newest backup and when it was taken. Its systemd unit doesn't restart it. |
+| It starts, and `index.db` is missing or fails the same check | It deletes `index.db` and rebuilds it from the journal in the background. `index.db` has no backups. |
 | It starts, and every hour after | If the newest backup is a day old, or there is none, a new one: a `VACUUM INTO` copy in `~/.bot-bottle/db/backups/` (directory 0700, files 0600). It keeps the newest 3. |
 | `host restore-db` | Refused while the host controller runs. Otherwise it checks the backup, keeps the replaced file beside it as `bot-bottle.db.replaced-<time>`, and puts the backup in its place. |
 
@@ -561,7 +562,7 @@ The producers are:
 |---|---|
 | `audit_journal.py` | JSONL segments in `~/.bot-bottle/audit/` (directory 0700, files 0600), which the writer only appends to. Each record hash-chains to the one before it across segments and restarts. An exclusive directory lock enforces one writer. Credential-shaped keys are refused and token-shaped values scrubbed before writing. `id` is the idempotency key. ([Segments and retention](#segments-and-retention)) |
 | `audit_retention.py` | prunes old segments past the host's retention, at start and daily after |
-| `audit_index.py` | a SQLite index rebuilt from the journal, for `bot-bottle audit query`. It stops at the first record that doesn't chain. |
+| `audit_index.py` | a SQLite index of the journal in `~/.bot-bottle/db/index.db`, for `bot-bottle audit query`. It stops at the first record that doesn't chain. ([The index](#the-index)) |
 | `audit_verify.py` | offline chain check (`bot-bottle audit verify`). Reports `truncated-tail`, `unreadable`, `edited`, `gap` and `chain-break`, and for the local journal `unrecorded-prune`. |
 | `audit_forward.py` | at-least-once forwarding to an HTTPS endpoint, as native NDJSON or OCSF. The cursor advances only on a 2xx. |
 | `audit_ocsf.py` | maps a journal record to OCSF 1.9.0. `restricted` records ship only the envelope and chain fields. |
@@ -596,6 +597,18 @@ The oldest kept record's `prev` is that hash. `audit verify` starts the chain
 from the `journal.pruned` record that names it. A local journal starting
 anywhere else is `unrecorded-prune`, a break. An imported chain may start
 anywhere.
+
+### The index
+
+The audit index lives in `~/.bot-bottle/db/index.db`, not the host
+database. It is derived from the journal, so it is never backed up.
+
+- Each query first indexes records written since the last one.
+- `audit rebuild`, or a missing or damaged `index.db` at start, replays the
+  journal and the imported chains.
+- A rebuild covers only the kept segments. The `journal.pruned` records say
+  what went before them.
+- A prune waits for the index to catch up, as does a query during a rebuild.
 
 ### What the chain proves
 

@@ -19,7 +19,7 @@ from bot_bottle.control.hostctl import runner
 from bot_bottle.control.hostctl.audit_journal import AuditJournal
 from bot_bottle.control.hostctl.client import HostControlClient, HostControlRefused
 from bot_bottle.lib.db_store import DbStore
-from bot_bottle.paths import host_audit_dir, host_db_path
+from bot_bottle.paths import host_audit_dir, host_db_path, index_db_path
 from bot_bottle.trust_domain import signing_key
 
 from . import serve_host_controller, use_bottle_root
@@ -57,6 +57,20 @@ class AuditCommand(unittest.TestCase):
         self.assertTrue(self.opened_by)
         self.assertNotIn(threading.main_thread(), self.opened_by)
         self.assertTrue(host_db_path().is_file())
+        self.assertTrue(index_db_path().is_file())
+
+    def test_query_answers_from_the_index_db(self) -> None:
+        self.journal()
+        rc, out = self.run_cmd("query", "--json")
+        self.assertEqual(0, rc)
+        self.assertTrue(out.strip())
+        with sqlite3.connect(index_db_path()) as db:
+            indexed = db.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0]
+        with sqlite3.connect(host_db_path()) as db:
+            host_tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master")}
+        self.assertGreater(indexed, 0)
+        self.assertNotIn("audit_events", host_tables)
+        self.assertNotIn("audit_index_cursor", host_tables)
 
     def test_a_bad_setting_is_refused_by_the_host_controller(self) -> None:
         client = HostControlClient(runner.ensure_running(), runner.cli_token())

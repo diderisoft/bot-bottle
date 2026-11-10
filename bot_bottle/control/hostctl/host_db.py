@@ -2,7 +2,8 @@
 (ADR 0020). The host controller is its only writer. When it starts it checks
 the file (`PRAGMA quick_check`), refusing to start on a failed check, takes
 the day's backup and migrates it, without asking. The orchestrator's tables
-are in its own `registry.db` and never here.
+are in its own `registry.db`, and indexes derived from logs in `index.db`
+(`index_db.py`), never here.
 
 Backups are `VACUUM INTO` copies in `<root>/db/backups/` (0700, files 0600),
 one a day, the newest `KEEP_BACKUPS` kept. `bot-bottle host restore-db` puts
@@ -27,12 +28,11 @@ from ...forge_connections import ForgeStore
 from ...infra_state import InfraStateStore
 from ...lib import log
 from ...lib.config_store import ConfigStore
-from ...lib.db_store import DbStore, connect
+from ...lib.db_store import DbStore, connect, quick_check
 from ...manifest.trust import TrustStore
-from ...paths import host_audit_dir, host_db_path
+from ...paths import host_db_path
 from .audit_forward import ForwardCursors
 from .agent_prefs import AgentPrefsStore
-from .audit_index import AuditIndex
 from .audit_push import AuditPushStore
 from .audit_trust import PasskeyStore
 from .pairing import PairingStore
@@ -57,9 +57,9 @@ class HostDbError(Exception):
 def stores(db_path: Path | None = None) -> list[DbStore]:
     """Every store with tables in the host DB. Most migrate as they open."""
     path = db_path or host_db_path()
-    return [ConfigStore(path), ForwardCursors(path), AuditIndex(host_audit_dir(), path),
-            ForgeStore(path), TrustStore(path), PairingStore(path), PasskeyStore(path),
-            BottledAgentStore(path), SessionStore(path), AuditPushStore(path),
+    return [ConfigStore(path), ForwardCursors(path), ForgeStore(path), TrustStore(path),
+            PairingStore(path), PasskeyStore(path), BottledAgentStore(path), SessionStore(path),
+            AuditPushStore(path),
             AgentPrefsStore(path), TranscriptStore(path), SnapshotStore(path),
             IsolationPasses(path), InfraStateStore(path)]
 
@@ -73,16 +73,7 @@ def migrate(db_path: Path | None = None) -> None:
 def check(db_path: Path | None = None) -> str:
     """The first problem `PRAGMA quick_check` finds in the DB, or "" if it
     passes (or there's no file yet)."""
-    path = db_path or host_db_path()
-    if not path.exists():
-        return ""
-    try:
-        with closing(connect(path)) as conn:
-            rows = conn.execute("PRAGMA quick_check").fetchall()
-    except sqlite3.DatabaseError as e:
-        return str(e)
-    problems = [str(row[0]) for row in rows if row[0] != "ok"]
-    return problems[0] if problems else ""
+    return quick_check(db_path or host_db_path())
 
 
 @dataclass(frozen=True)

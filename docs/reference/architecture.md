@@ -174,7 +174,8 @@ Where each kind of state lives, and what owns it.
 |---|---|---|
 | User agents and bottles | `~/.bot-bottle/{agents,bottles}/`, versioned ([below](#versioned-user-files)) | user |
 | Project agents and bottles | `<repo>/.bot-bottle/`, run only once trusted. Trust is kept in the host database ([below](#project-files-and-trust)) | repo |
-| Host settings, forge connections, bottled agents and their sessions, audit forwarding cursors, the audit index | `~/.bot-bottle/db/bot-bottle.db` ([below](#databases), [forge connections](#forge-connections), [bottled agents](#bottled-agents)) | host controller |
+| Host settings, forge connections, bottled agents and their sessions, audit forwarding cursors | `~/.bot-bottle/db/bot-bottle.db` ([below](#databases), [forge connections](#forge-connections), [bottled agents](#bottled-agents)) | host controller |
+| The audit index | `~/.bot-bottle/db/index.db`, rebuilt from the journal ([below](#databases)) | host controller |
 | Registry, supervise queue, encrypted egress secrets, canary events, orchestrator settings | `registry.db` ([below](#databases)) | orchestrator |
 | What infra bring-up recorded: the environment's orchestrator (backend and host URL), each backend's infra settings, docker's subnet and ports | `bot-bottle.db`'s `infra_state`, written by each bring-up | host controller |
 | Signing keys | `~/.bot-bottle/<key file>`, mode 0600, pushed to the key holder | host |
@@ -199,7 +200,8 @@ Each database has one job and one writer
 
 | Database | Holds | Writer | Where |
 |---|---|---|---|
-| `bot-bottle.db` | the host's own state: settings (`bot_bottle_config`), forge connections (`forge_connections`, `forge_users`), trust records (`trust_records`), the console pairing and its link's state (`pairing`, `console_link`), trusted audit passkeys (`audit_passkeys`), bottled agents (`bottled_agents`) and their tmux sessions (`sessions`), the remembered agent (`agent_prefs`), transcript copies' offsets (`transcript_runs`, `transcript_files`), snapshots (`snapshots`), isolation passes (`isolation_passes`), what infra bring-up recorded (`infra_state`), the audit forwarder's and console push's cursors (`audit_push_cursors`, `audit_push_runs`), the audit index | host controller | `~/.bot-bottle/db/` |
+| `bot-bottle.db` | the host's own state: settings (`bot_bottle_config`), forge connections (`forge_connections`, `forge_users`), trust records (`trust_records`), the console pairing and its link's state (`pairing`, `console_link`), trusted audit passkeys (`audit_passkeys`), bottled agents (`bottled_agents`) and their tmux sessions (`sessions`), the remembered agent (`agent_prefs`), transcript copies' offsets (`transcript_runs`, `transcript_files`), snapshots (`snapshots`), isolation passes (`isolation_passes`), what infra bring-up recorded (`infra_state`), the audit forwarder's and console push's cursors (`audit_push_cursors`, `audit_push_runs`) | host controller | `~/.bot-bottle/db/` |
+| `index.db` | indexes derived from logs: the audit index (`audit_events`, `audit_index_cursor`) | host controller | `~/.bot-bottle/db/` |
 | `registry.db` | the orchestrator's working state: the bottle registry, encrypted egress secrets, the supervise queue and its decisions, canary events, orchestrator settings | orchestrator | docker: `~/.bot-bottle/db/`, through the orchestrator's root mount. macOS: a container volume. Firecracker: the orchestrator VM's `/dev/vdb` volume, `~/.bot-bottle/infra/registry.ext4` |
 
 - One helper opens every connection (`lib/db_store.connect`), in WAL mode
@@ -210,13 +212,16 @@ Each database has one job and one writer
   `bot-bottle uninstall` and `host restore-db` touch the file itself.
 - The host controller checks `bot-bottle.db` at start and keeps a daily
   backup ([checks and backups](host-controller.md#checks-and-backups)).
+- `index.db` has no backup. A missing or damaged one is deleted and rebuilt
+  from its log at start. A new derived index goes here, never in
+  `bot-bottle.db` (`index_db.py`).
 - Each store marks its tables portable or machine-specific (`TABLES`). The
   host settings, forge connections and audit passkeys are portable, except a
   connection's `ssh`, this machine's address for the forge. Everything else
   is machine-specific. Nothing reads the mark yet.
-- No secret value is in `bot-bottle.db`. A row names a secret in the host
-  secrets file (`secret:NAME`), as forge users and the pairing's console
-  tokens do.
+- No secret value is in `bot-bottle.db` or `index.db`. A row names a secret
+  in the host secrets file (`secret:NAME`), as forge users and the pairing's
+  console tokens do.
 
 ### Versioned user files
 

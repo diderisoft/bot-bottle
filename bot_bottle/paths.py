@@ -18,6 +18,9 @@ from .environment import LIVE, default_root
 # controller (ADR 0020). Its stores share it, namespaced by TableMigrations
 # schema_key.
 HOST_DB_FILENAME = "bot-bottle.db"
+# Beside it, the indexes derived from logs (the audit index), which the host
+# controller also writes and rebuilds when missing or damaged.
+INDEX_DB_FILENAME = "index.db"
 # The orchestrator's own DB (registry, egress secrets, supervise queue,
 # canary state), wherever its backend keeps it. Never the host DB.
 REGISTRY_DB_FILENAME = "registry.db"
@@ -75,6 +78,12 @@ def host_db_path() -> Path:
     """`<root>/db/bot-bottle.db`, the host DB. Only the host controller opens
     it (ADR 0020); the CLI goes through its API."""
     return bot_bottle_root() / "db" / HOST_DB_FILENAME
+
+
+def index_db_path() -> Path:
+    """`<root>/db/index.db`, the index DB: derived, so never backed up. Only
+    the host controller opens it."""
+    return bot_bottle_root() / "db" / INDEX_DB_FILENAME
 
 
 def host_audit_dir() -> Path:
@@ -185,6 +194,7 @@ __all__ = [
     "audit_key_bytes",
     "audit_key_path",
     "HOST_DB_FILENAME",
+    "INDEX_DB_FILENAME",
     "REGISTRY_DB_FILENAME",
     "host_audit_dir",
     "host_artifact_cache_dir",
@@ -192,6 +202,7 @@ __all__ = [
     "GATEWAY_CA_DIRNAME",
     "bot_bottle_root",
     "host_db_path",
+    "index_db_path",
     "host_gateway_ca_dir",
     "host_signing_key",
     "host_orchestrator_token",

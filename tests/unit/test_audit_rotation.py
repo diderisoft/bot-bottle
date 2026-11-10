@@ -7,7 +7,7 @@ import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -55,7 +55,7 @@ class _Case(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
         self.dir = self.root / "audit"
-        self.db = self.root / "db" / "bot-bottle.db"
+        self.db = self.root / "db" / "index.db"
         self.now = T0
 
     def journal(self, max_segment_bytes: int = 1 << 20) -> AuditJournal:
@@ -331,6 +331,23 @@ class Retention(_Case):
         self.assertEqual(1, len(pruned["payload"]["segments"]))
         self.assertIsNone(audit_retention.prune(self.audit, AuditRetention(days=1),
                                                 index=index, forwarded=lambda: ""))
+
+    def test_the_gate_reads_the_cursor_from_a_rebuilt_index_db(self) -> None:
+        # pylint: disable=import-outside-toplevel
+        from bot_bottle.control.hostctl import index_db
+        index = AuditIndex(self.dir, self.db)
+        index.sync()
+        self.db.unlink()
+        self.assertTrue(index_db.open_for_start(self.db))
+        with mock.patch.object(index_db, "host_audit_dir", return_value=self.dir), \
+                redirect_stderr(io.StringIO()):
+            index_db.rebuild(self.db)
+            fresh = index_db.audit_index(self.db)
+        self.assertEqual(segments(self.dir)[-1].name, fresh.cursor_segment())
+        pruned = audit_retention.prune(self.audit, AuditRetention(days=2), index=fresh,
+                                       forwarded=lambda: None)
+        assert pruned is not None
+        self.assertEqual(3, len(pruned["payload"]["segments"]))
 
     def test_the_pruned_record_chains(self) -> None:
         index = AuditIndex(self.dir, self.db)

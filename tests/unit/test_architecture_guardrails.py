@@ -119,7 +119,7 @@ HOST_DB_OPENERS = frozenset({
     "PairingStore", "PasskeyStore", "load_pairing", "read_status", "write_status",
     "BottledAgentStore", "delete_bottled_agent", "adoption", "SessionStore", "SessionManager",
     "AuditPushStore", "AgentPrefsStore", "TranscriptStore", "SnapshotStore", "IsolationPasses",
-    "InfraStateStore",
+    "InfraStateStore", "index_db", "index_db_path",
 })
 # (module, name) -> why the CLI may still use it.
 ALLOWED_HOST_DB_IMPORTS: dict[tuple[str, str], str] = {

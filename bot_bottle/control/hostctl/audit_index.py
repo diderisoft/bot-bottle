@@ -1,5 +1,5 @@
-"""A searchable SQLite index of the audit journal, in the host DB: a derived
-cache that `rebuild` replays from the journal.
+"""A searchable SQLite index of the audit journal, in the index DB
+(`index_db.py`): a derived cache that `rebuild` replays from the journal.
 
 `sync` indexes new records, checking each one's hash and link, so a query never
 shows a record that doesn't chain. A break stops indexing; `audit verify` says
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,11 @@ _INDEXED = (
     "activation", "actor", "outcome", "sensitivity", "correlation_id",
     "causation_id", "repository", "commit_sha",
 )
+
+
+# One writer at a time in this process: a start's rebuild, a query's sync and
+# the pruner's would otherwise read the same cursor and race for the lock.
+_WRITING = threading.RLock()
 
 
 class IndexBreak(Exception):
@@ -127,7 +133,7 @@ class AuditIndex(DbStore):
     def sync(self) -> int:
         """Index records appended since the last sync. Returns how many."""
         added = 0
-        with self._connection() as conn:
+        with _WRITING, self._connection() as conn:
             segment, offset, head = self._cursor(conn)
             first = True
             for path in segments(self._journal_dir):
@@ -168,26 +174,28 @@ class AuditIndex(DbStore):
         for directory in [self._journal_dir, *chains]:
             if not verify(directory).ok:
                 raise IndexBreak(f"the chain in {directory} is broken; run `audit verify`")
-        with self._connection() as conn:
-            conn.execute("DELETE FROM audit_events")
-            conn.execute("DELETE FROM audit_index_cursor")
-        count = self.sync()
-        for directory in chains:
-            count += self.add_records(read_chain(directory))
+        with _WRITING:
+            with self._connection() as conn:
+                conn.execute("DELETE FROM audit_events")
+                conn.execute("DELETE FROM audit_index_cursor")
+            count = self.sync()
+            for directory in chains:
+                count += self.add_records(read_chain(directory))
         return count
 
     def add_records(self, records: list[tuple[dict[str, Any], str]]) -> int:
         """Index verified records from outside the local journal, all or none.
         Known ids are skipped; a clash on (host, epoch, seq) is refused."""
-        before = self._count()
-        try:
-            with self._connection() as conn:
-                for record, raw in records:
-                    self._insert(conn, record, raw)
-        except sqlite3.IntegrityError as e:
-            raise IndexBreak(f"a record collides with one already indexed: {e}") from e
-        self._chmod()
-        return self._count() - before
+        with _WRITING:
+            before = self._count()
+            try:
+                with self._connection() as conn:
+                    for record, raw in records:
+                        self._insert(conn, record, raw)
+            except sqlite3.IntegrityError as e:
+                raise IndexBreak(f"a record collides with one already indexed: {e}") from e
+            self._chmod()
+            return self._count() - before
 
     def _count(self) -> int:
         with self._connection() as conn:
@@ -246,11 +254,11 @@ def query_host_journal(bottle: str, activation: str | None,
     """`audit query --bottle --activation --limit` on this host's journal;
     empty without one."""
     # pylint: disable-next=import-outside-toplevel
-    from ...paths import host_audit_dir, host_db_path
+    from ...paths import host_audit_dir, index_db_path
     directory = host_audit_dir()
     if not directory.is_dir():
         return []
-    index = AuditIndex(directory, host_db_path())
+    index = AuditIndex(directory, index_db_path())
     index.sync()
     return index.query(Query(bottle=bottle, activation=activation, limit=limit))
 
