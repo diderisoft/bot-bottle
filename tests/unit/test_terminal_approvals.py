@@ -11,7 +11,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.approvals import KeepTarget, Request, keep, keep_target, save_to_project
-from bot_bottle.cli.commands.supervise import Reviewer, describe
+from bot_bottle.cli.commands.supervise import Reviewer, connect_forge, describe
 from bot_bottle.contract.yaml_subset import parse_frontmatter
 from bot_bottle.control.client import AlreadyAnswered, OrchestratorClientError
 from bot_bottle.control.hostctl.requests import RequestNotifier, summaries
@@ -295,6 +295,29 @@ class Review(unittest.TestCase):
         self.assertEqual(0, reviewer.run())
         self.assertEqual(["https://github.com"], asked)
         client.supervise_respond.assert_not_called()
+
+    def test_unreadable_forges_leave_the_request_waiting(self) -> None:
+        reviewer, client = self.reviewer("a.q", [_pending("https://github.com",
+                                                          tool="forge-connect")])
+        shown: list[str] = []
+        reviewer.out = shown.append
+        with patch("bot_bottle.cli.commands.supervise.forge_connected",
+                   side_effect=ValueError("bad forges.md")):
+            self.assertEqual(0, reviewer.run())
+        client.supervise_respond.assert_not_called()
+        self.assertIn("couldn't read this host's forges: bad forges.md (press a key)", shown)
+
+    def test_connect_forge_runs_forge_connect_and_reports_whether_it_worked(self) -> None:
+        target = "bot_bottle.cli.commands.forge.connect"
+        with patch(target, return_value=0) as connect:
+            self.assertTrue(connect_forge("https://github.com"))
+        connect.assert_called_once_with(["https://github.com"])
+        with patch(target, side_effect=SystemExit(1)):
+            self.assertFalse(connect_forge("https://github.com"))
+        with patch(target, side_effect=SystemExit(0)):
+            self.assertTrue(connect_forge("https://github.com"))
+        with patch(target, side_effect=KeyboardInterrupt):
+            self.assertFalse(connect_forge("https://github.com"))
 
     def test_each_answer_goes_to_the_orchestrator_holding_it(self) -> None:
         docker, firecracker = MagicMock(), MagicMock()
