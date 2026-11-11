@@ -90,6 +90,10 @@ class RunManifestStore(DbStore):
 
 
 def _store() -> RunManifestStore:
+    # pylint: disable-next=import-outside-toplevel
+    from . import host_access
+    if not host_access.in_host_controller():
+        raise RuntimeError("only the host controller records manifest versions")
     from .paths import host_db_path  # pylint: disable=import-outside-toplevel
     return RunManifestStore(host_db_path())
 
