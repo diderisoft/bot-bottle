@@ -191,8 +191,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "docker in CI: a named volume for the gateway CA, for a runner that "
            "shares the host's Docker socket. " + GITHUB_CUTOVER),
     EnvVar("BOT_BOTTLE_DOCKER_ROOT_MOUNT", "dev",
-           "docker in CI: a named volume for the state root the orchestrator "
-           "mounts. " + GITHUB_CUTOVER),
+           "docker in CI: a named volume for the orchestrator's registry, its "
+           "only mount. " + GITHUB_CUTOVER),
     EnvVar("BOT_BOTTLE_DOCKER_CLIENT_NETWORK", "dev",
            "docker in CI: the job container's network, which the orchestrator "
            "joins. " + GITHUB_CUTOVER),

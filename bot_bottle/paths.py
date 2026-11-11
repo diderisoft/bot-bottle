@@ -107,6 +107,12 @@ def infra_state_dir() -> Path:
     return private_dir(bot_bottle_root() / "infra")
 
 
+def registry_dir_of(root: Path) -> Path:
+    """`<root>/registry/`: on docker, the orchestrator's `registry.db` and the
+    only host directory its container mounts. Make it with `private_dir`."""
+    return root / "registry"
+
+
 def host_gateway_ca_dir() -> Path:
     """The gateway CA directory, created if missing. A host directory rather
     than a Docker named volume, which `docker system prune --volumes` would
@@ -223,6 +229,7 @@ __all__ = [
     "host_signing_key",
     "infra_state_dir",
     "private_dir",
+    "registry_dir_of",
     "host_orchestrator_token",
     "host_secrets_path",
     "SECRETS_FILENAME",

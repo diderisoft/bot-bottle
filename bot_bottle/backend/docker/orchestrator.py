@@ -1,7 +1,7 @@
 """The docker orchestrator: one fixed-name container, on the `--internal`
 control network plus a host-loopback publish for the CLI. Sole opener of
-`<root>/db/registry.db` (the host DB beside it is the host controller's) and
-sole holder of the signing key.
+`<root>/registry/registry.db`, the only host directory it mounts, and sole
+holder of the signing key.
 
 Docker 28+ doesn't publish ports for a container on only `--internal` networks,
 so it starts on a dedicated publish network (masquerading off, external DNS
@@ -27,7 +27,7 @@ from ...infra_image import pinned_infra_artifact, pull_pinned_image, version_env
 from ...published_artifacts import FORMAT_OCI
 from ...contract.hostctl import Settings
 from ...contract.identity import ORCHESTRATOR_TOKEN_ENV
-from ...paths import REGISTRY_DB_FILENAME, bot_bottle_root
+from ...paths import REGISTRY_DB_FILENAME, bot_bottle_root, private_dir, registry_dir_of
 from ...control.gateway import GatewayError
 from ...control.lifecycle import (
     DEFAULT_PORT,
@@ -53,12 +53,11 @@ ORCHESTRATOR_DOCKERFILE = "Dockerfile.orchestrator"
 # Container label recording the image's source hash.
 ORCHESTRATOR_SOURCE_HASH_LABEL = "bot-bottle-orchestrator-source-hash"
 
-# Host root mount (its registry DB and state) in the orchestrator, the only
-# container with it.
-_ROOT_IN_CONTAINER = "/bot-bottle-root"
-# A named environment's allocated host ports are recorded per orchestrator
-# container (`infra_state`), so a restart (and every other process of the
-# environment) finds it, and a second pair (an isolated test's) keeps its own.
+# The registry dir (`<root>/registry/`, or CI's named volume) in the
+# orchestrator: all it mounts, so it can't reach the host DB, the secrets
+# file or the keys under the root. It gets its signing key as an env var.
+_REGISTRY_IN_CONTAINER = "/bot-bottle-registry"
+_DB_IN_CONTAINER = f"{_REGISTRY_IN_CONTAINER}/{REGISTRY_DB_FILENAME}"
 # Ports a named environment tries before giving up.
 _PORT_ATTEMPTS = 32
 # What docker says when the host port is taken.
@@ -66,6 +65,9 @@ _PORT_TAKEN = ("port is already allocated", "address already in use",
                "failed programming external connectivity")
 
 
+# A named environment's allocated host ports are recorded per orchestrator
+# container (`infra_state`), so a restart (and every other process of the
+# environment) finds it, and a second pair (an isolated test's) keeps its own.
 def recorded_orchestrator_port(name: str = ORCHESTRATOR_NAME) -> int:
     """The host port recorded for orchestrator container `name`
     (`infra_state`), 0 if none (or garbage)."""
@@ -79,7 +81,7 @@ def recorded_orchestrator_port(name: str = ORCHESTRATOR_NAME) -> int:
 def record_orchestrator_port(port: int, name: str = ORCHESTRATOR_NAME) -> None:
     if recorded_orchestrator_port(name) != port:
         infra_state.record({f"docker.port.{name}": str(port)})
-_DB_IN_CONTAINER = f"{_ROOT_IN_CONTAINER}/db/{REGISTRY_DB_FILENAME}"
+
 
 _HEALTH_POLL_SECONDS = 0.25
 
@@ -123,9 +125,12 @@ class DockerOrchestrator(Orchestrator):
         # Build context: the checkout root, or a copy staged from the wheel.
         self._repo_root = repo_root if repo_root is not None else resources.build_root()
         infra = settings.infra
-        self._root_mount_source = str(
-            root_mount_source or infra.docker_root_mount or host_root or bot_bottle_root()
-        )
+        # A named volume (CI) holds only the registry. A host root's
+        # `registry/` dir is made 0700 when the container starts.
+        volume = root_mount_source or infra.docker_root_mount
+        self._registry_host_dir = (None if volume
+                                   else registry_dir_of(host_root or bot_bottle_root()))
+        self._root_mount_source = str(volume or self._registry_host_dir)
         self._client_network = client_network or infra.docker_client_network or None
         self._client_host = (
             client_host or infra.docker_host_address
@@ -287,6 +292,8 @@ class DockerOrchestrator(Orchestrator):
         self._ensure_control_network()
         self._ensure_publish_network()
         run_docker(["docker", "rm", "--force", self.name])
+        if self._registry_host_dir is not None:
+            private_dir(self._registry_host_dir)
         # Raises rather than yield an empty key that would serve open.
         _signing_key = self.control_plane_key()
         host_env = self.host_control_env()
@@ -329,9 +336,9 @@ class DockerOrchestrator(Orchestrator):
             # port.
             "--publish", f"{self._bind_host}:{port}:{DEFAULT_PORT}",
             # Runs the package baked into the freshly built image, no source
-            # mount. The root mount (a host path or a named volume) holds its
-            # registry DB.
-            "--volume", f"{self._root_mount_source}:{_ROOT_IN_CONTAINER}",
+            # mount. Its one mount is the registry dir (a host path or a named
+            # volume).
+            "--volume", f"{self._root_mount_source}:{_REGISTRY_IN_CONTAINER}",
             # The signing key, as a bare `--env NAME`.
             "--env", ORCHESTRATOR_TOKEN_ENV,
             # The host controller's URL and an `orchestrator` token, when it is

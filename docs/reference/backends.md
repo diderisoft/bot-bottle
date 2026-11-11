@@ -365,7 +365,8 @@ There's no manifest setting. The plan records it as `use_runsc` and the compose
 file sets the runtime.
 
 - `bot-bottle-orchestrator`: on the `--internal` control network, plus a
-  loopback publish for the CLI.
+  loopback publish for the CLI. Its one mount is `~/.bot-bottle/registry/`
+  (0700), which holds `registry.db`. It gets its signing key as an env var.
 - `bot-bottle-gateway`: on the shared `bot-bottle-gateway` network, the
   control network, and each running agent's own network. It reaches the
   orchestrator by Docker DNS.

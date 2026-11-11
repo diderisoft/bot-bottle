@@ -668,7 +668,7 @@ Generated from `bot_bottle/env_vars.py`: edit that, then run
 | `BOT_BOTTLE_GATEWAY_IMAGE` | dev | The gateway image to run. | `bot-bottle-gateway:latest` |
 | `BOT_BOTTLE_HOSTCTL_PORT` | dev | The host controller's loopback port. | ephemeral |
 | `BOT_BOTTLE_DOCKER_CA_MOUNT` | dev | docker in CI: a named volume for the gateway CA, for a runner that shares the host's Docker socket. Removed at the GitHub cutover. | — |
-| `BOT_BOTTLE_DOCKER_ROOT_MOUNT` | dev | docker in CI: a named volume for the state root the orchestrator mounts. Removed at the GitHub cutover. | — |
+| `BOT_BOTTLE_DOCKER_ROOT_MOUNT` | dev | docker in CI: a named volume for the orchestrator's registry, its only mount. Removed at the GitHub cutover. | — |
 | `BOT_BOTTLE_DOCKER_CLIENT_NETWORK` | dev | docker in CI: the job container's network, which the orchestrator joins. Removed at the GitHub cutover. | — |
 | `BOT_BOTTLE_INFRA_ARTIFACT_BASE` | release | The registry the images and rootfs artifacts are published to. | `https://ghcr.io` |
 | `BOT_BOTTLE_INFRA_ARTIFACT_OWNER` | release | The registry owner the images are published under. | `diderisoft` |
