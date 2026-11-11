@@ -28,6 +28,8 @@ from ...forge_kinds import ForgeApiError
 GITHUB = "https://github.com"
 API = "https://api.github.com"
 DEFAULT_SLUG = "bot-bottle"
+# The bot-bottle app's client id. Public: the device flow needs nothing else.
+DEFAULT_CLIENT_ID = "Iv23lic3vNr5vu9o0EWL"
 _TIMEOUT_SECS = 30
 # Refreshed this long before it would expire, so a launch never starts on a
 # token that dies mid-provisioning.
@@ -61,7 +63,7 @@ def install_url(slug: str) -> str:
 
 def app_config() -> AppConfig:
     """The host setting `github_app` (each named environment has its own),
-    else the `bot-bottle` app, whose client id must be set before
+    else the `bot-bottle` app. Another app's client id must be set before
     authorizing. Read from the host DB in the host controller, else asked
     of it."""
     # pylint: disable=import-outside-toplevel
@@ -73,7 +75,9 @@ def app_config() -> AppConfig:
         app = ConfigStore(host_db_path()).github_app()
     else:
         app = HostConfig.from_json(host_access.ask(HOST_CONFIG_PATH)).github_app
-    return AppConfig(slug=app.slug or DEFAULT_SLUG, client_id=app.client_id)
+    slug = app.slug or DEFAULT_SLUG
+    default_id = DEFAULT_CLIENT_ID if slug == DEFAULT_SLUG else ""
+    return AppConfig(slug=slug, client_id=app.client_id or default_id)
 
 
 def _post_form(url: str, fields: dict[str, str]) -> dict[str, object]:

@@ -269,7 +269,8 @@ For other users git-gate fetches and pushes with the token over HTTPS
 ([Transports](#github-transports)).
 
 **The app.** The app is named by its slug and public client id. The default is
-`bot-bottle`. `--app` and `--client-id` set it, and it's kept as the host
+`bot-bottle`, whose client id is built in. `--app` and `--client-id` set
+another, and it's kept as the host
 setting `github_app`, in the host database.
 
 So each named environment can use its own app.
