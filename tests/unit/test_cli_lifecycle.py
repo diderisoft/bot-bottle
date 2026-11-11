@@ -23,6 +23,7 @@ class _Mocked(unittest.TestCase):
         self.backend = mock.MagicMock()
         self.backend.name = "firecracker"
         self.backend.setup.return_value = 0
+        self.backend.user_setup.return_value = 0
         self.backend.teardown.return_value = 0
         self.backend.infra_service.return_value.is_healthy.return_value = True
         self.backend.infra_service.return_value.url.return_value = "http://orch:8099"
@@ -251,7 +252,14 @@ class TestInstallOffersSudo(_Mocked):
         self.assertEqual(["install", "--backend=firecracker"], argv[-2:])
         self.assertIn("needs root once, to install the network pool", err)
         self.backend.setup.assert_not_called()  # the root run did it
+        self.backend.user_setup.assert_called_once()  # the user's own downloads
         self.service.install.assert_called_once()
+
+    def test_a_failed_user_setup_stops_before_autostart(self) -> None:
+        self.backend.user_setup.return_value = 1
+        code, _err = self.install("y")
+        self.assertEqual(1, code)
+        self.service.install.assert_not_called()
 
     def test_no_prints_the_commands_as_before(self) -> None:
         code, err = self.install("")

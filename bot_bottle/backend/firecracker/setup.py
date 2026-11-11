@@ -69,9 +69,9 @@ def _print_prereqs() -> None:
             "   virtualization in firmware, and add your user to the `kvm` group.\n"
         )
     sys.stderr.write(
-        "   Guest artifacts: a kernel (BOT_BOTTLE_FC_KERNEL) and static dropbear\n"
-        "   (BOT_BOTTLE_FC_DROPBEAR) must be cached, and `mke2fs` (e2fsprogs) is\n"
-        "   needed to build the rootfs.\n\n"
+        "   Guest artifacts: the kernel and static dropbear are downloaded into\n"
+        "   the cache (or set BOT_BOTTLE_FC_KERNEL / BOT_BOTTLE_FC_DROPBEAR), and\n"
+        "   `mke2fs` (e2fsprogs) is needed to build the rootfs.\n\n"
     )
 
 

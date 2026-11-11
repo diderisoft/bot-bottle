@@ -668,8 +668,8 @@ Generated from `bot_bottle/env_vars.py`: edit that, then run
 | `BOT_BOTTLE_ARCHITECT_IDLE` | user | When the architect isn't always on: seconds its bottle stays up after its last suggestion; `0` stops it after each one. | `600` |
 | `BOT_BOTTLE_ISOLATION_CHECK` | user | The launch's isolation probes, which prove an agent can reach only the gateway: `always` on every launch; `once` probes host-wide state (macOS's pf) again only after a reboot, a firewall reinstall or a network change, and an agent's own firewall every launch; `off` skips them (a warning each launch). See backends.md. | `once` |
 | `BOT_BOTTLE_FC_WORKSPACE_DISK` | user | firecracker: keep the project's workspace on a per-project disk between runs, so what the project ignores (`node_modules`, build dirs) survives. `1` for the default size, or a size like `32G`. See backends.md. | off |
-| `BOT_BOTTLE_FC_KERNEL` | user | firecracker: the guest kernel. | `vmlinux` in the firecracker cache |
-| `BOT_BOTTLE_FC_DROPBEAR` | user | firecracker: the static dropbear put in every guest as its SSH server. | `dropbear` in the firecracker cache |
+| `BOT_BOTTLE_FC_KERNEL` | user | firecracker: the guest kernel. Unset, `install` downloads the published one (`ghcr.io/diderisoft/bot-bottle-fc-guest`, by digest). | `vmlinux` in the firecracker cache |
+| `BOT_BOTTLE_FC_DROPBEAR` | user | firecracker: the static dropbear put in every guest as its SSH server. Unset, downloaded as the kernel is. | `dropbear` in the firecracker cache |
 | `BOT_BOTTLE_FC_POOL_SIZE` | user | firecracker: TAP pool slots, so concurrent bottles. Must match the host's network pool. | `8` |
 | `BOT_BOTTLE_FC_ENV_SLOTS` | user | firecracker: network-pool slices the host reserves for named environments, after the live pool. Must be at most the host's. | `4` |
 | `BOT_BOTTLE_FC_SLICES_DIR` | user | firecracker: the host-wide claims on those slices, created by the network pool setup for the pool's group. Must match the host's. | `/var/lib/bot-bottle-fc/slices` |

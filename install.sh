@@ -604,6 +604,7 @@ fi
 if [ "${done}" = yes ]; then
     say "installed."
 else
-    say "installed, but setting up this host didn't finish: fix what it says (above),"
-    say "then run '${BOT_BOTTLE_BIN} bootstrap' again."
+    say "installed, but setting up this host didn't finish."
+    printf "\nFix what it says above, then run '%s bootstrap' again:\n\n    %s bootstrap\n\n" \
+        "${BOT_BOTTLE_BIN}" "${BOT_BOTTLE_BIN}" >&2
 fi

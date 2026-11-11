@@ -319,6 +319,32 @@ def next_step(found: BackendFindings) -> str:  # pylint: disable=too-many-return
     return f"run `{PROG}`"
 
 
+def next_block(step: str, *, color: bool) -> str:
+    """`step` (from `next_step`) set apart: its first `command` alone on a
+    line, bold on a terminal, with the rest of the sentence under it."""
+    parts = step.split("`")
+    if len(parts) < 3:
+        return f"\nNext: {step}\n"
+    command = parts[1]
+    rest = "`".join(parts[2:]).strip(" ,")
+    if color:
+        command = f"\x1b[1;36m{command}\x1b[0m"
+        rest = f"\x1b[2m{rest}\x1b[0m" if rest else ""
+    lines = ["", "Next, run:", "", f"    {command}", ""]
+    if rest:
+        lines += [f"  {rest}", ""]
+    return "\n".join(lines)
+
+
+def _print_next(step: str) -> None:
+    """The one next step: a plain `next:` line off a terminal (scripts read
+    it), set apart on one."""
+    if sys.stdout.isatty():
+        print(next_block(step, color=not os.environ.get("NO_COLOR")))
+    else:
+        print(f"next: {step}")
+
+
 def cmd_doctor(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog=f"{PROG} doctor",
@@ -354,5 +380,5 @@ def cmd_doctor(argv: list[str]) -> int:
     _check_host_controller()
     _check_console_link()
     _check_providers()
-    print(f"next: {next_step(found)}")
+    _print_next(next_step(found))
     return 0 if all(required) else 1

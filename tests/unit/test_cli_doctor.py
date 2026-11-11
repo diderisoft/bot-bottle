@@ -13,6 +13,7 @@ stopped daemon or half-configured backend must not report `ok`.
 from __future__ import annotations
 
 import io
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -333,3 +334,27 @@ class TestDoctorHostController(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NextBlock(unittest.TestCase):
+    def test_the_command_stands_alone_with_the_rest_under_it(self) -> None:
+        from bot_bottle.cli.commands.doctor import next_block
+        block = next_block("`bot-bottle install --backend=firecracker` (it prints any sudo "
+                           "steps it needs)", color=False)
+        self.assertIn("\n    bot-bottle install --backend=firecracker\n", block)
+        self.assertIn("  (it prints any sudo steps it needs)", block)
+        self.assertIn("then run `bot-bottle`",
+                      next_block("`bot-bottle up`, then run `bot-bottle`", color=False))
+        self.assertEqual("\nNext: set up a backend\n", next_block("set up a backend", color=False))
+        self.assertIn("\x1b[1;36mbot-bottle\x1b[0m", next_block("run `bot-bottle`", color=True))
+
+    def test_a_terminal_gets_the_block_and_a_pipe_the_line(self) -> None:
+        from bot_bottle.cli.commands import doctor
+        with patch("sys.stdout", new_callable=io.StringIO) as out, \
+                patch.object(out, "isatty", return_value=True, create=True), \
+                patch.dict(os.environ, {"NO_COLOR": "1"}):
+            doctor._print_next("run `bot-bottle`")  # pylint: disable=protected-access
+        self.assertIn("Next, run:", out.getvalue())
+        with patch("sys.stdout", new_callable=io.StringIO) as out:
+            doctor._print_next("run `bot-bottle`")  # pylint: disable=protected-access
+        self.assertEqual("next: run `bot-bottle`\n", out.getvalue())
