@@ -8,8 +8,8 @@ them back once the user has unlocked with a passkey.
   signature itself.
 - `decrypt_audit_records` (`session`, `token`, `run_id`, `records`: `id`,
   `seq`, `ciphertext`; at most 200) -> `audit_decrypted` (`records`: `id` and
-  `plaintext` or `error`) or `error`. Only for a run this host sent, and each
-  read is journalled (`audit.records_read`).
+  `plaintext` or `error`) or `error`. A record that doesn't decrypt with this
+  host's key gets an `error`. Each read is journalled (`audit.records_read`).
 - `audit_query` (`bottle`, `activation`, `limit`) -> `audit_events`: the host
   journal's events for one of the link's bottles (`audit_events`).
 - `audit_record` (from the host): one encrypted record of a running console
@@ -132,8 +132,10 @@ class AuditLink:
         if not isinstance(records, list) or not records or len(records) > MAX_RECORDS:
             raise UnlockError(f"send 1 to {MAX_RECORDS} records")
         credential = self.unlock.check(str(msg.get("token") or ""), session, len(records))
-        if run_id not in self._push_store().host_runs():
-            raise UnlockError("that run's records weren't sent by this host")
+        # Any run, including one sent before this host's database was new
+        # (its push cursors are rebuilt from the console, ADR 0020): a record
+        # opens only with this host's key and its own run and seq, so another
+        # host's, or a moved one, gets a per-record error.
         key = self._audit_key()
         if key is None:
             raise UnlockError("this host can't read audit records (no audit key)")

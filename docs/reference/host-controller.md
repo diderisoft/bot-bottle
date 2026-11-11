@@ -689,7 +689,9 @@ and `records`, up to 200. Each record is `id`, `seq` and `ciphertext`. The
 reply is `audit_decrypted`.
 
 - It needs a valid token.
-- It works only for runs this host sent.
+- A record decrypts only with this host's key, bound to its run and `seq`.
+  One that doesn't gets its own `error`. A run sent before the host database
+  was new still decrypts.
 - It allows at most 2000 records a minute.
 - Each read is journalled as `audit.records_read`.
 

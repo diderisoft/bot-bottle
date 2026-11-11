@@ -18,8 +18,9 @@ the console answers `audit_head` with the agent's `runs` on this host (`run_id`,
 or null. Decrypting that record gives the transcript position it carried. The
 cursor is never reset here, which would send every entry again or none.
 
-Reading them back is `decrypt`: only for a run this host sent, and only once
-the user unlocked with a passkey (`audit_unlock`).
+Reading them back is `decrypt`: only with this host's key, for the record's
+own run and seq, and only once the user unlocked with a passkey
+(`audit_unlock`).
 """
 
 from __future__ import annotations
@@ -139,11 +140,6 @@ class AuditPushStore(DbStore):
             conn.executemany("INSERT OR REPLACE INTO audit_push_runs VALUES (?, ?, ?)",
                              [(run, agent_id, seq) for run, seq in state.runs.items()])
         self._chmod()
-
-    def host_runs(self) -> set[str]:
-        """Every run this host has sent records for."""
-        with self._connection() as conn:
-            return {r[0] for r in conn.execute("SELECT run_id FROM audit_push_runs")}
 
 
 def rebuilt(key: bytes, reply: dict[str, Any]) -> PushState:

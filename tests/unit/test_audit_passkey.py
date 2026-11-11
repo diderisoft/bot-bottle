@@ -334,7 +334,9 @@ class TestPusher(_PushCase):
             self.assertEqual(prev["chain_hash"], cur["prev_chain_hash"])
             self.assertEqual(hashlib.sha256((prev["chain_hash"] + cur["ciphertext"]).encode())
                              .hexdigest(), cur["chain_hash"])
-        self.assertEqual({"run-a", "run-b"}, self.store.host_runs())
+        state = self.store.load("agent-1")
+        assert state is not None
+        self.assertEqual({"run-a", "run-b"}, set(state.runs))
         self.assertTrue(all("_entry_seq" not in m for m in self.sent))
 
     def test_ciphertext_is_bound_to_its_record(self) -> None:
@@ -425,7 +427,9 @@ class TestCursorFromTheConsole(_PushCase):
             self.KEY, "run-a", m["seq"], m["ciphertext"]))["seq"] for m in self.sent])
         self.assertEqual([3, 4, 5], [m["seq"] for m in self.sent])
         self.assertEqual(earlier[-1]["chain_hash"], self.sent[0]["prev_chain_hash"])
-        self.assertEqual({"run-a"}, self.store.host_runs())
+        state = self.store.load("agent-1")
+        assert state is not None
+        self.assertEqual({"run-a"}, set(state.runs))
 
     def test_a_head_that_doesnt_decrypt_is_refused(self) -> None:
         p = self.pusher()
@@ -528,8 +532,16 @@ class TestAuditLink(_Tmp):
                 "run_id": "run-a", "records": [rec]}
         self.assertIn("passkey", self.ask({**base, "token": "nope"})["error"])
         token = self._token()
-        self.assertIn("weren't sent by this host",
-                      self.ask({**base, "token": token, "run_id": "run-z"})["error"])
+        # A run this host has no record of sending (one from before its
+        # database was new) still decrypts; one that isn't this host's
+        # doesn't.
+        foreign = self.ask({**base, "token": token, "run_id": "run-z"})
+        self.assertIn("doesn't decrypt", foreign["records"][0]["error"])
+        old_run = {"id": "old", "seq": 7, "ciphertext": encrypt(self.KEY, "run-old", 7, {"x": 1})}
+        got = self.ask({**base, "token": token, "run_id": "run-old", "records": [old_run]})
+        self.assertEqual({"x": 1}, json.loads(got["records"][0]["plaintext"]))
+        self.bottles.audit.audit_records_read.assert_called_with(
+            run_id="run-old", count=1, credential_id=self.pk.id)
         self.assertIn("records", self.ask({**base, "token": token, "records": []})["error"])
         other_session = self.ask({**base, "token": token, "session": "s2"})
         self.assertIn("passkey", other_session["error"])
