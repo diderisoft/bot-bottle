@@ -8,6 +8,8 @@ Run coding agents unsupervised without letting them wreck your machine or leak y
 
 bot-bottle runs each agent (Claude Code, Codex or pi) in its own microVM or container. Everything the agent sends out goes through a gateway that holds your credentials and only lets through what the agent's bottle allows.
 
+> **Alpha.** bot-bottle works, and I run my own agents in it every day, but the bottle format and the CLI may still change between releases, and the security design hasn't had an independent review. Please report problems, and anything that gets out of a bottle privately: see [SECURITY.md](SECURITY.md).
+
 ## Install
 
 ```sh
