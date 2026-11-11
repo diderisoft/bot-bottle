@@ -30,7 +30,6 @@ from typing import TYPE_CHECKING, Callable, Generator
 from ...contract.hostctl import Settings
 from ...bottle_state import read_committed_image
 from ...egress import Egress
-from ...image_cache import check_stale
 from ...lib.log import die, info, warn
 from ..bottle_size import cpus, memory_mib
 from ... import resources
@@ -43,6 +42,7 @@ from ..launch_common import (
     gateway_agent_urls,
     provision_git_gate_keys,
     stage_gateway_ca,
+    stale_image_checks,
     terminal_title,
 )
 from ..base import home_volume_name
@@ -313,20 +313,8 @@ def attach(bottle_id: str, record: "AdoptionRecord") -> MacosContainerBottle:
 
 
 def stale_checks(plan: MacosContainerBottlePlan) -> None:
-    """Raise StaleImageError if a cached image is past the threshold. Only
-    under the 'cached' policy."""
-    if plan.spec.image_policy not in ("cached", "prefer-cached"):
-        return
-    committed = read_committed_image(plan.slug)
-    if committed and container_mod.image_exists(committed):
-        ts = container_mod.image_created_at(committed)
-        if ts is not None:
-            check_stale(f"agent image {committed!r}", ts)
-        return
-    if container_mod.image_exists(plan.image):
-        ts = container_mod.image_created_at(plan.image)
-        if ts is not None:
-            check_stale(f"agent image {plan.image!r}", ts)
+    stale_image_checks(plan.slug, plan.image, plan.spec.image_policy,
+                       container_mod.image_exists, container_mod.image_created_at)
 
 
 def _provision_git_gate_keys(

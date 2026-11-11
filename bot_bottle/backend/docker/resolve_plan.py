@@ -10,6 +10,7 @@ from pathlib import Path
 from . import util as docker_mod
 from .bottle_plan import DockerBottlePlan
 from .. import BottleSpec
+from ..resolve_common import build_guest_env as build_guest_env  # re-exported for the backend
 from ...contract.hostctl import Settings
 from ...env import ResolvedEnv
 from ...agent_provider import AgentProvisionPlan
@@ -21,10 +22,6 @@ from ...git_gate import GitGatePlan
 
 def preflight() -> None:
     docker_mod.require_docker()
-
-
-def build_guest_env(resolved_env: ResolvedEnv) -> dict[str, str]:
-    return dict(resolved_env.literals)
 
 
 def resolve_plan(

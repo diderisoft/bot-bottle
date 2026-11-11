@@ -18,7 +18,6 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Callable, Generator
 
 from ...agent_provider import runtime_for
-from ...image_cache import check_stale
 from ...lib.log import die, info, warn
 from .. import BottleImages, isolation_probe, oci_agent_image
 from ..launch_common import (
@@ -29,6 +28,7 @@ from ..launch_common import (
     gateway_agent_urls,
     provision_git_gate_keys,
     stage_gateway_ca,
+    stale_image_checks,
     terminal_title,
 )
 from . import util as docker_mod
@@ -301,17 +301,5 @@ def attach(bottle_id: str, record: "AdoptionRecord") -> DockerBottle:
 
 
 def stale_checks(plan: DockerBottlePlan) -> None:
-    """Raise StaleImageError if a cached image is past the threshold. Only
-    under the 'cached' policy."""
-    if plan.spec.image_policy not in ("cached", "prefer-cached"):
-        return
-    committed = read_committed_image(plan.slug)
-    if committed and docker_mod.image_exists(committed):
-        ts = docker_mod.image_created_at(committed)
-        if ts is not None:
-            check_stale(f"agent image {committed!r}", ts)
-        return
-    if docker_mod.image_exists(plan.image):
-        ts = docker_mod.image_created_at(plan.image)
-        if ts is not None:
-            check_stale(f"agent image {plan.image!r}", ts)
+    stale_image_checks(plan.slug, plan.image, plan.spec.image_policy,
+                       docker_mod.image_exists, docker_mod.image_created_at)

@@ -12,8 +12,8 @@ import urllib.request
 
 from ...deploy_key_provisioner import (
     DeployKeyCollisionError, DeployKeyProvisioner, DeployKeysDisabledError,
+    generate_keypair, read_error_body, split_owner_repo,
 )
-from ..gitea.deploy_key_provisioner import generate_keypair, read_error_body, split_owner_repo
 from .forge_api import api_base, headers
 
 # Bounds the GitHub calls so a hung API can't stall a launch.

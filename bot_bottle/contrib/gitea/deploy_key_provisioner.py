@@ -7,19 +7,16 @@ The token needs Repository: Read & Write (POST and DELETE
 from __future__ import annotations
 
 import json
-import subprocess
-import tempfile
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 from ...deploy_key_provisioner import (
     DeployKeyCollisionError, DeployKeyProvisioner, ForgeTokenRefusedError,
+    generate_keypair, read_error_body, split_owner_repo,
 )
 
-# Bounds ssh-keygen and Gitea calls so a hung Gitea can't stall a launch.
+# Bounds Gitea calls so a hung Gitea can't stall a launch.
 _API_TIMEOUT_SECS = 30
-_KEYGEN_TIMEOUT_SECS = 10
 
 
 class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
@@ -35,7 +32,7 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
         key (writable unless `read_only`; git-gate pushes with it), and return
         `(key_id, private_key_bytes)`."""
         private_key, public_key = generate_keypair()
-        owner, repo = _split_owner_repo(owner_repo)
+        owner, repo = split_owner_repo(owner_repo)
         url = f"{self._api_url}/api/v1/repos/{owner}/{repo}/keys"
         payload = json.dumps({
             "key": public_key,
@@ -55,7 +52,7 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
             with urllib.request.urlopen(req, timeout=_API_TIMEOUT_SECS) as resp:
                 body = json.loads(resp.read())
         except urllib.error.HTTPError as exc:
-            _body = _read_error_body(exc)
+            _body = read_error_body(exc)
             if exc.code in (401, 403):
                 raise ForgeTokenRefusedError(self._refused(exc.code)) from exc
             if exc.code == 422:
@@ -83,7 +80,7 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
     def delete(self, owner_repo: str, key_id: str) -> None:
         """Delete the deploy key; 404 is success. Other errors raise
         RuntimeError."""
-        owner, repo = _split_owner_repo(owner_repo)
+        owner, repo = split_owner_repo(owner_repo)
         url = f"{self._api_url}/api/v1/repos/{owner}/{repo}/keys/{key_id}"
         req = urllib.request.Request(
             url,
@@ -98,7 +95,7 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
                 return
             if exc.code in (401, 403):
                 raise ForgeTokenRefusedError(self._refused(exc.code)) from exc
-            _body = _read_error_body(exc)
+            _body = read_error_body(exc)
             raise RuntimeError(
                 f"failed to delete deploy key {key_id} for {owner_repo}: "
                 f"HTTP {exc.code} — {_body}"
@@ -110,38 +107,3 @@ class GiteaDeployKeyProvisioner(DeployKeyProvisioner):
             ) from exc
 
 
-def generate_keypair() -> tuple[bytes, str]:
-    """A fresh ed25519 keypair from `ssh-keygen`: (private key, public key line).
-    Every forge kind's provisioner mints its keys with it."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        key_path = Path(tmpdir) / "key"
-        subprocess.run(
-            ["ssh-keygen", "-t", "ed25519", "-f", str(key_path), "-N", ""],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=_KEYGEN_TIMEOUT_SECS,
-        )
-        return key_path.read_bytes(), key_path.with_suffix(".pub").read_text().strip()
-
-
-def _split_owner_repo(owner_repo: str) -> tuple[str, str]:
-    """`'owner/repo'` -> `('owner', 'repo')`."""
-    parts = owner_repo.split("/", 1)
-    if len(parts) != 2 or not all(parts):
-        raise ValueError(
-            f"expected 'owner/repo' format, got {owner_repo!r}"
-        )
-    return parts[0], parts[1]
-
-
-def _read_error_body(exc: urllib.error.HTTPError) -> str:
-    try:
-        return exc.read().decode("utf-8", errors="replace")
-    except Exception:  # noqa: broad-exception-caught — safely fallback to empty error message
-        return ""
-
-
-# Shared with the other forge kinds' provisioners.
-split_owner_repo = _split_owner_repo
-read_error_body = _read_error_body

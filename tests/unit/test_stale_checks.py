@@ -78,8 +78,8 @@ class TestDockerStaleChecks(unittest.TestCase):
 
     def test_fresh_policy_is_noop(self) -> None:
         from bot_bottle.backend.docker import launch as mod
-        with patch.object(mod, "read_committed_image") as rci, \
-             patch.object(mod, "check_stale") as cs:
+        with patch("bot_bottle.backend.launch_common.read_committed_image") as rci, \
+             patch("bot_bottle.backend.launch_common.check_stale") as cs:
             mod.stale_checks(self._plan("fresh"))
         rci.assert_not_called()
         cs.assert_not_called()
@@ -88,10 +88,11 @@ class TestDockerStaleChecks(unittest.TestCase):
         from bot_bottle.backend.docker import launch as mod
         from datetime import datetime, timezone
         ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        with patch.object(mod, "read_committed_image", return_value="committed:latest"), \
+        with patch("bot_bottle.backend.launch_common.read_committed_image",
+                   return_value="committed:latest"), \
              patch.object(mod.docker_mod, "image_exists", return_value=True), \
              patch.object(mod.docker_mod, "image_created_at", return_value=ts), \
-             patch.object(mod, "check_stale") as cs:
+             patch("bot_bottle.backend.launch_common.check_stale") as cs:
             mod.stale_checks(self._plan())
         cs.assert_called_once()
         self.assertIn("committed:latest", cs.call_args.args[0])
@@ -101,19 +102,19 @@ class TestDockerStaleChecks(unittest.TestCase):
         from datetime import datetime, timezone
         ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
         plan = self._plan()
-        with patch.object(mod, "read_committed_image", return_value=""), \
+        with patch("bot_bottle.backend.launch_common.read_committed_image", return_value=""), \
              patch.object(mod.docker_mod, "image_exists", return_value=True), \
              patch.object(mod.docker_mod, "image_created_at", return_value=ts), \
-             patch.object(mod, "check_stale") as cs:
+             patch("bot_bottle.backend.launch_common.check_stale") as cs:
             mod.stale_checks(plan)
         cs.assert_called_once()
         self.assertIn(plan.image, cs.call_args.args[0])
 
     def test_image_not_present_skips_check(self) -> None:
         from bot_bottle.backend.docker import launch as mod
-        with patch.object(mod, "read_committed_image", return_value=""), \
+        with patch("bot_bottle.backend.launch_common.read_committed_image", return_value=""), \
              patch.object(mod.docker_mod, "image_exists", return_value=False), \
-             patch.object(mod, "check_stale") as cs:
+             patch("bot_bottle.backend.launch_common.check_stale") as cs:
             mod.stale_checks(self._plan())
         cs.assert_not_called()
 
@@ -126,10 +127,10 @@ class TestDockerStaleChecks(unittest.TestCase):
         def image_exists(ref: str) -> bool:
             return ref == plan.image  # Only agent present; sidecar missing.
 
-        with patch.object(mod, "read_committed_image", return_value=""), \
+        with patch("bot_bottle.backend.launch_common.read_committed_image", return_value=""), \
              patch.object(mod.docker_mod, "image_exists", side_effect=image_exists), \
              patch.object(mod.docker_mod, "image_created_at", return_value=ts), \
-             patch.object(mod, "check_stale") as cs:
+             patch("bot_bottle.backend.launch_common.check_stale") as cs:
             mod.stale_checks(plan)
         self.assertEqual(1, cs.call_count)
         self.assertIn(plan.image, cs.call_args.args[0])
@@ -159,8 +160,8 @@ class TestMacosContainerStaleChecks(unittest.TestCase):
 
     def test_fresh_policy_is_noop(self) -> None:
         from bot_bottle.backend.macos_container import launch as mod
-        with patch.object(mod, "read_committed_image") as rci, \
-             patch.object(mod, "check_stale") as cs:
+        with patch("bot_bottle.backend.launch_common.read_committed_image") as rci, \
+             patch("bot_bottle.backend.launch_common.check_stale") as cs:
             mod.stale_checks(self._plan("fresh"))
         rci.assert_not_called()
         cs.assert_not_called()
@@ -169,10 +170,11 @@ class TestMacosContainerStaleChecks(unittest.TestCase):
         from bot_bottle.backend.macos_container import launch as mod
         from datetime import datetime, timezone
         ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        with patch.object(mod, "read_committed_image", return_value="committed:latest"), \
+        with patch("bot_bottle.backend.launch_common.read_committed_image",
+                   return_value="committed:latest"), \
              patch.object(mod.container_mod, "image_exists", return_value=True), \
              patch.object(mod.container_mod, "image_created_at", return_value=ts), \
-             patch.object(mod, "check_stale") as cs:
+             patch("bot_bottle.backend.launch_common.check_stale") as cs:
             mod.stale_checks(self._plan())
         cs.assert_called_once()
         self.assertIn("committed:latest", cs.call_args.args[0])
@@ -182,19 +184,19 @@ class TestMacosContainerStaleChecks(unittest.TestCase):
         from datetime import datetime, timezone
         ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
         plan = self._plan()
-        with patch.object(mod, "read_committed_image", return_value=""), \
+        with patch("bot_bottle.backend.launch_common.read_committed_image", return_value=""), \
              patch.object(mod.container_mod, "image_exists", return_value=True), \
              patch.object(mod.container_mod, "image_created_at", return_value=ts), \
-             patch.object(mod, "check_stale") as cs:
+             patch("bot_bottle.backend.launch_common.check_stale") as cs:
             mod.stale_checks(plan)
         cs.assert_called_once()
         self.assertIn(plan.image, cs.call_args.args[0])
 
     def test_image_not_present_skips_check(self) -> None:
         from bot_bottle.backend.macos_container import launch as mod
-        with patch.object(mod, "read_committed_image", return_value=""), \
+        with patch("bot_bottle.backend.launch_common.read_committed_image", return_value=""), \
              patch.object(mod.container_mod, "image_exists", return_value=False), \
-             patch.object(mod, "check_stale") as cs:
+             patch("bot_bottle.backend.launch_common.check_stale") as cs:
             mod.stale_checks(self._plan())
         cs.assert_not_called()
 

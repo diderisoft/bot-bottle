@@ -13,16 +13,13 @@ from ...manifest import Manifest
 from ...secret_source import SecretSource
 from ...supervisor.plan import SupervisePlan
 from .. import BottleSpec
+from ..resolve_common import build_guest_env as build_guest_env  # re-exported for the backend
 from . import util
 from .bottle_plan import FirecrackerBottlePlan
 
 
 def preflight(settings: Settings) -> None:
     util.require_firecracker(settings.infra)
-
-
-def build_guest_env(resolved_env: ResolvedEnv) -> dict[str, str]:
-    return dict(resolved_env.literals)
 
 
 def resolve_plan(

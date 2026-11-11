@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..lib.log import warn
+from .util import ManifestError
 from ..paths import bot_bottle_root, host_secrets_path, project_manifest_dir
 
 TRACKED = ("agents", "bottles")
@@ -39,7 +40,7 @@ class VersionError(Exception):
     """A version couldn't be read or written."""
 
 
-class SecretInManifestError(VersionError):
+class SecretInManifestError(VersionError, ManifestError):
     """A tracked file holds a value from the host secrets file."""
 
 

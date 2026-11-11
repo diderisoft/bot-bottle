@@ -11,10 +11,12 @@ from unittest.mock import MagicMock, patch
 from bot_bottle.contrib.gitea.deploy_key_provisioner import (
     GiteaDeployKeyProvisioner,
     _API_TIMEOUT_SECS,
-    _KEYGEN_TIMEOUT_SECS,
-    _split_owner_repo,
 )
-from bot_bottle.deploy_key_provisioner import DeployKeyCollisionError
+from bot_bottle.deploy_key_provisioner import (
+    DeployKeyCollisionError,
+    _KEYGEN_TIMEOUT_SECS,
+    split_owner_repo as _split_owner_repo,
+)
 
 
 def _provisioner() -> GiteaDeployKeyProvisioner:
@@ -50,14 +52,14 @@ class TestCreate(unittest.TestCase):
         fake_public = "ssh-ed25519 AAAA fake"
 
         with patch(
-            "bot_bottle.contrib.gitea.deploy_key_provisioner.subprocess.run"
+            "bot_bottle.deploy_key_provisioner.subprocess.run"
         ) as mock_run, patch(
             "bot_bottle.contrib.gitea.deploy_key_provisioner.urllib.request.urlopen"
         ) as mock_urlopen, patch(
-            "bot_bottle.contrib.gitea.deploy_key_provisioner.Path.read_bytes",
+            "bot_bottle.deploy_key_provisioner.Path.read_bytes",
             return_value=fake_private,
         ), patch(
-            "bot_bottle.contrib.gitea.deploy_key_provisioner.Path.read_text",
+            "bot_bottle.deploy_key_provisioner.Path.read_text",
             return_value=fake_public + "\n",
         ):
             mock_urlopen.return_value = _urlopen_response({"id": fake_key_id})
@@ -88,14 +90,14 @@ class TestCreate(unittest.TestCase):
     def test_create_passes_timeout_to_ssh_keygen_and_urlopen(self):
         provisioner = _provisioner()
         with patch(
-            "bot_bottle.contrib.gitea.deploy_key_provisioner.subprocess.run"
+            "bot_bottle.deploy_key_provisioner.subprocess.run"
         ) as mock_run, patch(
             "bot_bottle.contrib.gitea.deploy_key_provisioner.urllib.request.urlopen"
         ) as mock_urlopen, patch(
-            "bot_bottle.contrib.gitea.deploy_key_provisioner.Path.read_bytes",
+            "bot_bottle.deploy_key_provisioner.Path.read_bytes",
             return_value=b"PRIVATE",
         ), patch(
-            "bot_bottle.contrib.gitea.deploy_key_provisioner.Path.read_text",
+            "bot_bottle.deploy_key_provisioner.Path.read_text",
             return_value="ssh-ed25519 AAAA\n",
         ):
             mock_urlopen.return_value = _urlopen_response({"id": 1})
@@ -107,15 +109,15 @@ class TestCreate(unittest.TestCase):
     def test_create_raises_on_http_error(self):
         provisioner = _provisioner()
         with patch(
-            "bot_bottle.contrib.gitea.deploy_key_provisioner.subprocess.run"
+            "bot_bottle.deploy_key_provisioner.subprocess.run"
         ), patch(
             "bot_bottle.contrib.gitea.deploy_key_provisioner.urllib.request.urlopen",
             side_effect=_http_error(403, "forbidden"),
         ), patch(
-            "bot_bottle.contrib.gitea.deploy_key_provisioner.Path.read_bytes",
+            "bot_bottle.deploy_key_provisioner.Path.read_bytes",
             return_value=b"pk",
         ), patch(
-            "bot_bottle.contrib.gitea.deploy_key_provisioner.Path.read_text",
+            "bot_bottle.deploy_key_provisioner.Path.read_text",
             return_value="ssh-ed25519 AAAA\n",
         ):
             with self.assertRaises(RuntimeError) as ctx:
@@ -129,15 +131,15 @@ class TestCreate(unittest.TestCase):
             "message": "422 Unprocessable Entity",
         })
         with patch(
-            "bot_bottle.contrib.gitea.deploy_key_provisioner.subprocess.run"
+            "bot_bottle.deploy_key_provisioner.subprocess.run"
         ), patch(
             "bot_bottle.contrib.gitea.deploy_key_provisioner.urllib.request.urlopen",
             side_effect=_http_error(422, collision_body),
         ), patch(
-            "bot_bottle.contrib.gitea.deploy_key_provisioner.Path.read_bytes",
+            "bot_bottle.deploy_key_provisioner.Path.read_bytes",
             return_value=b"pk",
         ), patch(
-            "bot_bottle.contrib.gitea.deploy_key_provisioner.Path.read_text",
+            "bot_bottle.deploy_key_provisioner.Path.read_text",
             return_value="ssh-ed25519 AAAA\n",
         ):
             with self.assertRaises(DeployKeyCollisionError) as ctx:

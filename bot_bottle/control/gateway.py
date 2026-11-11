@@ -116,6 +116,18 @@ class Gateway(abc.ABC):
         """The host dir the CA persists in, or None when it isn't one this
         process can clear (a named volume)."""
 
+    def _validate_orchestrator_args(self, url: str, token: str) -> None:
+        if not url:
+            raise GatewayError(
+                "gateway requires an orchestrator URL to run "
+                "(resolver-only data plane; no single-tenant fallback)"
+            )
+        if not token:
+            raise GatewayError(
+                "gateway requires a pre-minted `gateway` token to run "
+                "(the orchestrator mints it; the gateway never holds the key)"
+            )
+
     def roll_over_ca(self) -> None:
         """Replace the running gateway's CA with a new one cross-signed by the
         current one, effective on its next start. Raises `GatewayError`."""
