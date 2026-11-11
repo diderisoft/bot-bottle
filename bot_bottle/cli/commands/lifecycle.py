@@ -212,6 +212,8 @@ def cmd_install(argv: list[str]) -> int:  # pylint: disable=too-many-return-stat
     code = _sudo_setup(backend)
     if code is None:
         code = backend.setup()
+    if code == 0:
+        code = backend.user_setup()
     if code != 0:
         return code
     if ns.no_autostart:

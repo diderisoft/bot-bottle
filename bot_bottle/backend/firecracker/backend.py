@@ -53,6 +53,15 @@ class FirecrackerBottleBackend(
         from . import setup as _setup
         return _setup.setup(self.settings)
 
+    def user_setup(self) -> int:
+        from .guest_files import GuestFilesError, ensure
+        try:
+            ensure(self.settings.infra, say=print)
+        except GuestFilesError as e:
+            warn(str(e))
+            return 1
+        return 0
+
     def root_setup(self) -> str | None:
         from . import setup as _setup
         return _setup.root_setup(self.settings)

@@ -184,6 +184,7 @@ def boot_vm(
     run_dir.mkdir(parents=True, exist_ok=True)
     rootfs = run_dir / "rootfs.ext4"
     infra = settings.infra
+    util.fetch_guest_files(infra)
     if infra_rootfs.builds_locally(infra):
         util.build_rootfs_ext4(
             build_rootfs_dir(role, infra), rootfs, slack_mib=_ROOTFS_SLACK_MIB[role])
