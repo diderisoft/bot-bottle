@@ -59,6 +59,61 @@ end if a step fails.
 With `BOT_BOTTLE_ENV` set, it says which environment it sets up. It ends with
 doctor's `next:` line, the one thing to do next on this host.
 
+### Upgrading to this release
+
+From v0.1.9 or older, an upgrade takes a few steps once. This release keeps
+the host's state in its database ([ADR 0020](../decisions/0020-where-host-state-lives.md))
+and reads none of the files older versions kept it in.
+
+1. Stop or finish every bottled agent. The curl installer refuses until you
+   have ([below](#upgrading-with-bottled-agents)).
+2. Upgrade.
+3. Redo what can't be rebuilt:
+
+| Redo | How |
+|---|---|
+| Each forge connection | `bot-bottle forge connect <url>`, and `bot-bottle forge connect github` |
+| Phone pairing | `bot-bottle pair` |
+| Trust in project bottles | answer the trust prompt when a project bottle asks again |
+| Audit passkeys | `bot-bottle audit passkeys --trust` |
+
+Caches, indexes and infrastructure state rebuild themselves. Tables older
+versions kept in `db/bot-bottle.db` are dropped when the host controller
+starts.
+
+#### Old files
+
+These are unused now and safe to delete. `bot-bottle uninstall` deletes them
+in every environment (`cli/old_state.py`). Paths are relative to
+`~/.bot-bottle`, or `~/.bot-bottle-envs/<name>`.
+
+| Old file | Was |
+|---|---|
+| `console.json`, `remote.json`, `remote.status.json` | the pairing |
+| `trusted-bottles.json`, `audit-passkeys.json` | trust records, passkeys |
+| `forges.md`, `github-app.json` | forge connections |
+| `audit-push/` | the console push cursors |
+| `start.json`, `state/quickstart.json`, `state/isolation-verified.json` | the remembered agent, isolation passes |
+| `env.json` | a named environment's settings |
+| `docker-gateway-subnet`, `docker-ports/`, `infra/orchestrator.json`, `infra/*.settings.json` | infrastructure state |
+| `hostctl/state.json`, `hostctl/sessions/`, `hostctl/sessions.sock` | the host controller's state and sessions |
+| `state/<id>/metadata.json`, `adoption.json`, `manifest/log.json`, `manifest/launch.json` | bottled agents |
+| `transcripts/**/*.meta.json`, `follow.json`, `snapshots/**/*.json` | transcript and snapshot records. The `.jsonl` and `.patch` files stay. |
+| `workspace-disks/*.json` | workspace disks' owners |
+
+In `~/.cache/bot-bottle/firecracker/`, `**/infra/registry.ext4`,
+`**/infra/gateway-ca/` and `**/infra-artifact/` are unused too. They now live
+under the state root, or aren't kept. Uninstall removes the whole cache.
+
+The secrets file still holds the old token lines. No bottle needs them, so
+delete them by hand:
+
+- each forge's `<HOST>_TOKEN` and `<USER>_<HOST>_TOKEN`, with any `_REFRESH`,
+  `_EXPIRES` and `_CLIENT_ID` lines beside them.
+- `CONSOLE_ACCESS_TOKEN` and `CONSOLE_REFRESH_TOKEN`.
+
+Their new names are reserved ([secrets.md](secrets.md#reserved-names)).
+
 ### Upgrading with bottled agents
 
 The installer refuses to upgrade while the installed version left any bottled
@@ -75,7 +130,10 @@ upgrade couldn't be resumed or cleaned up. The refusal lists each one:
 | kept for resume | `bot-bottle resume <id>` and exit it, or delete its directory to discard it |
 
 In a named environment, run those with `BOT_BOTTLE_ENV=<name>`. Then run the
-installer again. Installing with `uv` or `pipx` yourself skips the check.
+installer again.
+
+The refusal is the curl installer's. Installing with `uv` or `pipx` yourself
+skips it, so stop and finish bottled agents first.
 
 ### Stopping the older host controller
 
@@ -434,8 +492,8 @@ It:
    the pf firewall. `--keep-backend` skips this step.
 3. removes `~/.cache/bot-bottle` and the package itself (the installer's venv
    and shim, or `pipx`/`uv tool uninstall`).
-4. removes the files older versions left in each environment that nothing
-   reads now, printing each one. It does this without `--purge` too.
+4. removes the [old files](#old-files) older versions left in each
+   environment, printing each one. It does this without `--purge` too.
 
 Base images it pulled to build on, such as `python` or `node`, stay.
 
