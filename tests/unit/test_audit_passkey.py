@@ -11,6 +11,7 @@ import json
 import os
 import stat
 import tempfile
+import time
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,8 +27,8 @@ from bot_bottle.cli.host_state_client import set_pairing
 from bot_bottle.control.hostctl import audit_trust
 from bot_bottle.control.hostctl.audit_link import AuditLink
 from bot_bottle.control.hostctl.audit_push import (
-    ASK_HEAD_SECONDS, BATCH, AuditPusher, AuditPushStore, PushState, decrypt, encrypt, load_key,
-    record_id, record_type,
+    ASK_HEAD_SECONDS, BATCH, AuditPusher, AuditPushStore, HeadWaits, PushState, decrypt, encrypt,
+    load_key, rebuilt, record_id, record_type,
 )
 from bot_bottle.control.hostctl.audit_unlock import (
     READS_PER_MINUTE, TOKEN_IDLE_SECONDS, TOKEN_MAX_SECONDS, AuditUnlock, UnlockError,
@@ -380,10 +381,10 @@ class TestCursorFromTheConsole(_PushCase):
         """The `audit_head` a console that kept `sent` answers."""
         runs: dict[str, int] = {}
         for record in sent:
-            runs[record["run_id"]] = runs.get(record["run_id"], 0) + 1
+            runs[record["run_id"]] = max(runs.get(record["run_id"], 0), record["seq"] + 1)
         last = sent[-1] if sent else None
         return {"type": "audit_head", "agent_id": "agent-1",
-                "runs": [{"run_id": r, "records": n} for r, n in runs.items()],
+                "runs": [{"run_id": r, "next_seq": n} for r, n in runs.items()],
                 "last": None if last is None else {k: last[k] for k in
                                                   ("run_id", "seq", "ciphertext", "chain_hash")}}
 
@@ -433,7 +434,7 @@ class TestCursorFromTheConsole(_PushCase):
 
     def test_a_head_that_doesnt_decrypt_is_refused(self) -> None:
         p = self.pusher()
-        bad = {"runs": [{"run_id": "run-a", "records": 1}],
+        bad = {"runs": [{"run_id": "run-a", "next_seq": 1}],
                "last": {"run_id": "run-a", "seq": 0, "ciphertext": "00" * 40,
                         "chain_hash": "x"}}
         with mock.patch("bot_bottle.control.hostctl.audit_push.log.warn") as warned:
@@ -441,6 +442,99 @@ class TestCursorFromTheConsole(_PushCase):
         self.assertIn("doesn't decrypt", warned.call_args[0][0])
         self.assertIsNone(self.store.load("agent-1"))
         self.assertEqual(0, asyncio.run(p.push("run-a")))
+
+
+    def _earlier(self, count: int) -> list[dict[str, Any]]:
+        """The records a host sent of run-a before its database was new."""
+        before = AuditPushStore(self.dir / "before.db")
+        before.save("agent-1", PushState())
+        earlier: list[dict[str, Any]] = []
+
+        async def keep(msg: dict[str, Any]) -> None:
+            earlier.append(msg)
+        entries = self.entries
+        self.entries = entries[:count]
+        asyncio.run(AuditPusher("agent-1", self.KEY, self._entries, keep, store=before)
+                    .push("run-a"))
+        self.entries = entries
+        return earlier
+
+    def test_next_seq_is_where_a_run_carries_on_even_with_gaps(self) -> None:
+        # The console lost record 1 of 3: a count would say 2 and resend seq 2.
+        earlier = self._earlier(3)
+        head = self._console_had([earlier[0], earlier[2]])
+        self.assertEqual([{"run_id": "run-a", "next_seq": 3}], head["runs"])
+        p = self.pusher()
+        self.assertTrue(p.head(head))
+        self.sent.clear()
+        asyncio.run(p.push("run-a"))
+        self.assertEqual(3, self.sent[0]["seq"])
+
+    def test_a_count_of_records_isnt_a_head(self) -> None:
+        state = rebuilt(self.KEY, {"runs": [{"run_id": "run-a", "records": 3}], "last": None})
+        self.assertEqual({}, state.runs)
+
+    def test_a_run_kept_for_another_agent_is_ignored(self) -> None:
+        self.store.save("agent-2", PushState(runs={"run-x": 9}))
+        p = self.pusher()
+        self.assertTrue(p.head({"runs": [{"run_id": "run-x", "next_seq": 40},
+                                         {"run_id": "run-a", "next_seq": 0}], "last": None}))
+        state = self.store.load("agent-1")
+        assert state is not None
+        self.assertEqual({"run-a": 0}, state.runs)
+        other = self.store.load("agent-2")
+        assert other is not None
+        self.assertEqual({"run-x": 9}, other.runs)
+
+    def test_a_last_record_outside_its_runs_is_no_head(self) -> None:
+        earlier = self._earlier(3)
+        head = self._console_had(earlier)
+        head["runs"] = [{"run_id": "run-b", "next_seq": 1}]
+        p = self.pusher()
+        with mock.patch("bot_bottle.control.hostctl.audit_push.log.warn") as warned:
+            self.assertFalse(p.head(head))
+        self.assertIn("isn't in one of the agent's runs", warned.call_args[0][0])
+        self.assertIsNone(self.store.load("agent-1"))
+        # Nor is one in a run this host records for another agent.
+        self.store.save("agent-2", PushState(runs={"run-a": 3}))
+        with mock.patch("bot_bottle.control.hostctl.audit_push.log.warn"):
+            self.assertFalse(p.head(self._console_had(earlier)))
+
+    def test_waiting_on_the_console_is_counted(self) -> None:
+        waits = HeadWaits()
+        p = AuditPusher("agent-1", self.KEY, self._entries, self._send, store=self.store,
+                        clock=lambda: self.now, waits=waits)
+        asyncio.run(p.push("run-a"))
+        self.assertEqual(0, waits.count(self.now))  # asked once: not waiting yet
+        self.now += ASK_HEAD_SECONDS
+        asyncio.run(p.push("run-a"))  # no answer, so it asks again
+        self.assertEqual(1, waits.count(self.now))
+        self.assertEqual(0, waits.count(self.now + 2 * ASK_HEAD_SECONDS))  # stale
+        with mock.patch("bot_bottle.control.hostctl.audit_push.log.warn"):
+            p.head({"runs": "nope"})
+        self.assertEqual(1, waits.count(self.now))
+        self.assertTrue(p.head(self._console_had([])))
+        self.assertEqual(0, waits.count(self.now))
+
+    def test_status_says_how_many_wait(self) -> None:
+        # pylint: disable=import-outside-toplevel
+        from bot_bottle.cli.commands import remote as remote_cmd
+        from bot_bottle.control.hostctl import audit_push, host_state, pairing
+        waits = HeadWaits()
+        waits.mark("agent-1", time.monotonic())
+        waits.mark("agent-2", time.monotonic())
+        with mock.patch.object(audit_push, "WAITING", waits), \
+                mock.patch.object(pairing, "store", return_value=pairing.PairingStore(
+                    self.db_path)):
+            reply = host_state.get_pairing({})
+        self.assertEqual(2, reply["link"]["audit_waiting"])  # type: ignore[index]
+        found = (pairing.Pairing(enabled=True, console_node_id="n" * 20, console_ticket="t"),
+                 {"updated": time.time(), "connected": True, "audit_waiting": 2})
+        with mock.patch.object(remote_cmd, "running_pairing", return_value=found):
+            line = remote_cmd.link_line()
+        self.assertIn("connected", line)
+        self.assertTrue(line.endswith("; audit push waiting for the console for 2 agents"),
+                        line)
 
 
 class _Bottles:

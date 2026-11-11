@@ -130,6 +130,15 @@ def link_line() -> str:
     if found is None:
         return "console link: the host controller isn't running, so neither is the link"
     config, status = found[0].config, found[1]
+    waiting = status.pop("audit_waiting", 0)
+    line = _link_state(config, status)
+    if waiting:
+        line += (f"; audit push waiting for the console for {waiting} "
+                 f"agent{'' if waiting == 1 else 's'}")
+    return line
+
+
+def _link_state(config: pairing.RemoteConfig, status: dict[str, Any]) -> str:
     if not config.enabled:
         return f"console link: off (`{PROG} pair` to pair, `{PROG} pair on` to turn it on)"
     console = f" to {config.console_node_id[:10]}…" if config.console_node_id else ""

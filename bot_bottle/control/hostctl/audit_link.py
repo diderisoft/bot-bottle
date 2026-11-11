@@ -27,7 +27,7 @@ from collections.abc import Awaitable, Callable, Collection
 from typing import Any
 
 from ...lib import log
-from .audit_push import AuditPusher, AuditPushStore, decrypt, load_key
+from .audit_push import WAITING, AuditPusher, AuditPushStore, decrypt, load_key
 from .audit_unlock import AuditUnlock, UnlockError
 from .transcript_serve import TranscriptReader
 
@@ -73,6 +73,7 @@ class AuditLink:
         running = self._running()
         for gone in set(self._pushers) - set(running):
             del self._pushers[gone]
+            WAITING.clear(gone)
         if not running or self._audit_key() is None:
             return
         runs = await asyncio.to_thread(self._activations)

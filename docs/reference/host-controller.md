@@ -667,10 +667,15 @@ The entry is the masked host copy.
 - An agent with no cursor on this host sends nothing until the console says
   where its chain ends. The host asks `audit_head` (`agent_id`), at most once
   a minute. The console answers `audit_head` with the agent's `runs` from this
-  host (`run_id`, `records`) and its `last` record (`run_id`, `seq`,
-  `ciphertext`, `chain_hash`), or null for none.
+  host (`run_id`, `next_seq`: its highest `seq` plus one) and its `last`
+  record (`run_id`, `seq`, `ciphertext`, `chain_hash`), or null for none.
 - The host decrypts that record for the transcript position it carried. It
   never resets a cursor itself, which would send every entry again or none.
+- A run this host keeps for another agent is ignored. A `last` outside the
+  answer's runs, or that doesn't decrypt, is no answer, and the host asks
+  again.
+- `bot-bottle status` counts the agents still waiting on an answer, on its
+  console link line.
 - Terminal-started agents aren't sent.
 
 **Unlocking.**

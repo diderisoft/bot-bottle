@@ -14,9 +14,12 @@ event loop but for the sends themselves.
 An agent with no cursor here (a new host database) sends nothing until the
 console says where its chain is: the pusher asks `audit_head` (`agent_id`) and
 the console answers `audit_head` with the agent's `runs` on this host (`run_id`,
-`records`) and its `last` record (`run_id`, `seq`, `ciphertext`, `chain_hash`)
-or null. Decrypting that record gives the transcript position it carried. The
-cursor is never reset here, which would send every entry again or none.
+`next_seq`: its highest seq plus one) and its `last` record (`run_id`, `seq`,
+`ciphertext`, `chain_hash`) or null. Decrypting that record gives the
+transcript position it carried. A run this host records for another agent is
+ignored, and a `last` outside the answer's runs, or that doesn't decrypt, is no
+answer: the pusher asks again, and `bot-bottle status` counts it as waiting.
+The cursor is never reset here, which would send every entry again or none.
 
 Reading them back is `decrypt`: only with this host's key, for the record's
 own run and seq, and only once the user unlocked with a passkey
@@ -34,7 +37,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -141,36 +144,88 @@ class AuditPushStore(DbStore):
                              [(run, agent_id, seq) for run, seq in state.runs.items()])
         self._chmod()
 
+    def others_runs(self, agent_id: str, run_ids: Collection[str]) -> set[str]:
+        """Which of `run_ids` this host records for an agent other than
+        `agent_id`."""
+        ids = list(run_ids)
+        if not ids:
+            return set()
+        with self._connection() as conn:
+            return {r[0] for r in conn.execute(
+                f"SELECT run_id FROM audit_push_runs WHERE agent_id != ? AND run_id IN "
+                f"({', '.join('?' for _ in ids)})", (agent_id, *ids))}
 
-def rebuilt(key: bytes, reply: dict[str, Any]) -> PushState:
-    """The cursor the console's `audit_head` reply says: its runs' record
-    counts, and from its last record (decrypted) the entry it carried and the
-    chain's head. ValueError when the reply doesn't hold one."""
+
+def _seq(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def rebuilt(key: bytes, reply: dict[str, Any], others: Collection[str] = ()) -> PushState:
+    """The cursor the console's `audit_head` reply says: each run's
+    `next_seq`, and from its last record (decrypted) the entry it carried and
+    the chain's head. Runs in `others`, which this host records for another
+    agent, are left out. ValueError when the reply doesn't hold a cursor: no
+    runs list, or a `last` that isn't in one of its runs or doesn't decrypt
+    with this host's key."""
     runs = reply.get("runs")
     if not isinstance(runs, list):
         raise ValueError("no runs")
-    counts = {str(r["run_id"]): int(r["records"]) for r in runs
-              if isinstance(r, dict) and r.get("run_id") and isinstance(r.get("records"), int)}
+    next_seqs = {str(r["run_id"]): r["next_seq"] for r in runs
+                 if isinstance(r, dict) and r.get("run_id") and _seq(r.get("next_seq"))
+                 and str(r["run_id"]) not in others}
     last = reply.get("last")
     if last is None:
-        return PushState(runs=counts)
+        return PushState(runs=next_seqs)
     if not isinstance(last, dict):
         raise ValueError("last isn't a record")
+    if str(last.get("run_id")) not in next_seqs:
+        raise ValueError("its last record isn't in one of the agent's runs")
     try:
         entry = json.loads(decrypt(key, str(last["run_id"]), int(last["seq"]),
                                    str(last["ciphertext"])))
         return PushState(last_entry_seq=int(entry["seq"]), chain_hash=str(last["chain_hash"]),
-                         runs=counts)
+                         runs=next_seqs)
     except Exception as e:  # pylint: disable=broad-exception-caught  # tampered, or not ours
         raise ValueError(f"its last record doesn't decrypt with this host's key ({e})") from e
+
+
+class HeadWaits:
+    """The agents whose pusher has no cursor and hasn't had a usable answer
+    from the console, by when it last asked or was refused. `bot-bottle
+    status` says how many, so a console that never answers is noticed."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._since: dict[str, float] = {}
+
+    def mark(self, agent_id: str, now: float) -> None:
+        with self._lock:
+            self._since[agent_id] = now
+
+    def clear(self, agent_id: str) -> None:
+        with self._lock:
+            self._since.pop(agent_id, None)
+
+    def count(self, now: float | None = None) -> int:
+        """How many are waiting: marked within two asks, so a pusher that
+        went away without clearing stops counting."""
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            return sum(1 for t in self._since.values() if now - t < 2 * ASK_HEAD_SECONDS)
+
+
+# The host controller's.
+WAITING = HeadWaits()
 
 
 class AuditPusher:
     def __init__(self, agent_id: str, key: bytes, entries: Callable[[str], list[Any] | None],
                  send: Callable[[dict[str, Any]], Awaitable[None]], *,
                  store: AuditPushStore | None = None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 waits: "HeadWaits | None" = None) -> None:
         self.agent_id = agent_id
+        self._waits = waits if waits is not None else WAITING
         self._key = key
         self._entries = entries
         self._send = send
@@ -187,13 +242,18 @@ class AuditPusher:
         if self.state is not None:
             return False
         try:
-            state = rebuilt(self._key, reply)
+            runs = reply.get("runs")
+            named = [str(r.get("run_id")) for r in runs if isinstance(r, dict)] \
+                if isinstance(runs, list) else []
+            state = rebuilt(self._key, reply, self._store.others_runs(self.agent_id, named))
         except (ValueError, KeyError, TypeError) as e:
             log.warn(f"audit: the console's head for {self.agent_id} won't do: {e}; "
                      "asking again later")
+            self._waits.mark(self.agent_id, self._clock())
             return False
         self._store.save(self.agent_id, state)
         self.state = state
+        self._waits.clear(self.agent_id)
         return True
 
     def _batch(self, run_id: str) -> list[dict[str, Any]]:
@@ -258,6 +318,9 @@ class AuditPusher:
         now = self._clock()
         if self._asked is not None and now - self._asked < ASK_HEAD_SECONDS:
             return
+        if self._asked is not None:
+            # The last question got no usable answer.
+            self._waits.mark(self.agent_id, now)
         self._asked = now
         try:
             await self._send({"type": "audit_head", "agent_id": self.agent_id})
@@ -278,5 +341,6 @@ def load_key() -> bytes | None:
         return None
 
 
-__all__ = ["ASK_HEAD_SECONDS", "AuditPushStore", "AuditPusher", "BATCH", "PushState", "decrypt",
+__all__ = ["ASK_HEAD_SECONDS", "AuditPushStore", "AuditPusher", "BATCH", "HeadWaits", "PushState",
+           "WAITING", "decrypt",
            "encrypt", "load_key", "rebuilt", "record_id", "record_type"]

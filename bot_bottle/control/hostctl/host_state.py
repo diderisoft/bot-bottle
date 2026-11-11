@@ -24,7 +24,7 @@ from ...errors import SecretsFileError
 from ...infra_state import InfraStateStore
 from ...lib.config_store import ConfigStore, HostConfig
 from ...manifest.trust import Trusted, TrustStore
-from . import audit_trust, pairing
+from . import audit_push, audit_trust, pairing
 from .agent_prefs import AgentPrefsStore
 from ...paths import host_audit_dir, host_db_path
 from .audit_import import import_segment
@@ -136,7 +136,13 @@ def trust(body: dict[str, object]) -> dict[str, object]:
 
 
 def _pairing_reply(store: pairing.PairingStore) -> dict[str, object]:
-    return {"pairing": store.pairing().to_json(), "link": store.status()}
+    link = store.status()
+    # Console agents whose records wait on the console saying where their
+    # chain is (`audit_push`).
+    waiting = audit_push.WAITING.count()
+    if waiting:
+        link["audit_waiting"] = waiting
+    return {"pairing": store.pairing().to_json(), "link": link}
 
 
 def get_pairing(body: dict[str, object]) -> dict[str, object]:
