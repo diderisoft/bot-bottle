@@ -148,6 +148,39 @@ class TestCliNeverOpensTheHostDb(unittest.TestCase):
                          "controller, never by opening the host DB:\n" + "\n".join(violations))
 
 
+# Code the CLI reaches beyond `cli/` (backends, manifests, shared state
+# helpers) runs in both processes: one that uses a host DB store must check
+# `host_access.in_host_controller()` and ask the host controller otherwise.
+# The host controller's, orchestrator's and gateway's own packages never run
+# in the CLI.
+_NOT_SHARED = ("control/hostctl/", "orchestrator/", "gateway/", "cli/")
+# The host DB's stores, and its path.
+_STORES = frozenset(
+    {name for name in HOST_DB_OPENERS if name.endswith("Store") and name != "DbStore"}
+    | {"ForwardCursors", "IsolationPasses", "AuditIndex", "host_db_path", "index_db_path"})
+
+
+class TestSharedCodeGuardsTheHostDb(unittest.TestCase):
+    def test_a_shared_module_using_a_store_checks_where_it_runs(self) -> None:
+        violations: list[str] = []
+        for path in sorted((ROOT / "bot_bottle").rglob("*.py")):
+            rel = path.relative_to(ROOT / "bot_bottle").as_posix()
+            if rel.startswith(_NOT_SHARED):
+                continue
+            used: set[str] = set()
+            for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+                if isinstance(node, ast.Name):
+                    used.add(node.id)
+                elif isinstance(node, ast.Attribute):
+                    used.add(node.attr)
+            opened = sorted(used & _STORES)
+            if opened and "in_host_controller" not in used:
+                violations.append(f"bot_bottle/{rel}: {', '.join(opened)}")
+        self.assertEqual([], violations, "shared code opens the host DB only in the host "
+                         "controller (`host_access.in_host_controller()`):\n"
+                         + "\n".join(violations))
+
+
 class TestRuntimeModuleSizes(unittest.TestCase):
     def test_no_runtime_module_grows_beyond_global_ceiling(self) -> None:
         """A coarse ceiling catches new monoliths; focused caps stay tighter.
