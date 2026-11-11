@@ -11,7 +11,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 from bot_bottle.approvals import KeepTarget, Request, keep, keep_target, save_to_project
-from bot_bottle.cli.commands.supervise import Reviewer, describe
+from bot_bottle.cli.commands.supervise import Reviewer, connect_forge, describe
 from bot_bottle.contract.yaml_subset import parse_frontmatter
 from bot_bottle.control.client import AlreadyAnswered, OrchestratorClientError
 from bot_bottle.control.hostctl.requests import RequestNotifier, summaries
@@ -246,6 +246,78 @@ class Review(unittest.TestCase):
             self.assertEqual(0, reviewer.run())
         self.assertIn("already answered elsewhere: rejected; yours wasn't applied "
                       "(press a key)", shown)
+
+    def _forge_reviewer(self, keys: str, connected: list[bool], connects: bool
+                        ) -> tuple[Reviewer, MagicMock, list[str]]:
+        reviewer, client = self.reviewer(keys, [_pending("https://github.com",
+                                                         tool="forge-connect")])
+        asked: list[str] = []
+
+        def connect(url: str) -> bool:
+            asked.append(url)
+            return connects
+
+        reviewer.connect = connect
+        user = MagicMock()
+        user.name = "octo"
+        conn = MagicMock()
+        conn.user.return_value = user
+        states = iter(connected)
+
+        def get(_host: str) -> MagicMock | None:
+            return conn if next(states) else None
+
+        patcher = patch("bot_bottle.forge_connections.get", side_effect=get)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        nudge = patch("bot_bottle.control.hostctl.nudge.nudge_if_waited")
+        nudge.start()
+        self.addCleanup(nudge.stop)
+        return reviewer, client, asked
+
+    def test_allowing_a_forge_connect_connects_it_here_first(self) -> None:
+        # Not connected when checked; connected when answered.
+        reviewer, client, asked = self._forge_reviewer("a", [False, True], connects=True)
+        self.assertEqual(0, reviewer.run())
+        self.assertEqual(["https://github.com"], asked)
+        self.assertEqual("approve", client.supervise_respond.call_args.kwargs["decision"])
+        self.assertIn("connected github.com as octo",
+                      client.supervise_respond.call_args.kwargs["notes"])
+
+    def test_a_connected_forge_is_allowed_without_connecting_again(self) -> None:
+        reviewer, client, asked = self._forge_reviewer("a", [True, True], connects=True)
+        self.assertEqual(0, reviewer.run())
+        self.assertEqual([], asked)
+        client.supervise_respond.assert_called_once()
+
+    def test_a_failed_connect_leaves_the_request_waiting(self) -> None:
+        reviewer, client, asked = self._forge_reviewer("a.q", [False], connects=False)
+        self.assertEqual(0, reviewer.run())
+        self.assertEqual(["https://github.com"], asked)
+        client.supervise_respond.assert_not_called()
+
+    def test_unreadable_forges_leave_the_request_waiting(self) -> None:
+        reviewer, client = self.reviewer("a.q", [_pending("https://github.com",
+                                                          tool="forge-connect")])
+        shown: list[str] = []
+        reviewer.out = shown.append
+        with patch("bot_bottle.cli.commands.supervise.forge_connected",
+                   side_effect=ValueError("bad forges.md")):
+            self.assertEqual(0, reviewer.run())
+        client.supervise_respond.assert_not_called()
+        self.assertIn("couldn't read this host's forges: bad forges.md (press a key)", shown)
+
+    def test_connect_forge_runs_forge_connect_and_reports_whether_it_worked(self) -> None:
+        target = "bot_bottle.cli.commands.forge.connect"
+        with patch(target, return_value=0) as connect:
+            self.assertTrue(connect_forge("https://github.com"))
+        connect.assert_called_once_with(["https://github.com"])
+        with patch(target, side_effect=SystemExit(1)):
+            self.assertFalse(connect_forge("https://github.com"))
+        with patch(target, side_effect=SystemExit(0)):
+            self.assertTrue(connect_forge("https://github.com"))
+        with patch(target, side_effect=KeyboardInterrupt):
+            self.assertFalse(connect_forge("https://github.com"))
 
     def test_each_answer_goes_to_the_orchestrator_holding_it(self) -> None:
         docker, firecracker = MagicMock(), MagicMock()

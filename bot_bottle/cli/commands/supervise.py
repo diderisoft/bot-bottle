@@ -9,6 +9,10 @@ agent's terminal whose status bar shows a request. Keys:
                            or the bottle it launched with), from the next launch
   d  deny                s  skip for now           q  close
 
+Allowing a request to connect a git forge that isn't connected yet connects
+it here first, as `bot-bottle forge connect <url>` does: GitHub's sign-in and
+the app's install, or a token for Gitea.
+
 "Allow for project" adds the route to `./.bot-bottle/bottles/<directory>.md`
 (extending `basic`). Requests carrying a credential can only be allowed once.
 """
@@ -21,8 +25,9 @@ import tty
 from collections.abc import Callable, Mapping, Sequence
 
 from ...approvals import (
-    ALLOW_ONCE, ALLOW_PROJECT, DENY, Request, answer, keep_target, route_lines,
+    ALLOW_ONCE, ALLOW_PROJECT, DENY, Request, answer, forge_connected, keep_target, route_lines,
 )
+from ...contract.supervise import TOOL_FORGE_CONNECT
 from ...control.client import (
     AlreadyAnswered, OrchestratorClient, OrchestratorClientError, pending_proposals,
 )
@@ -42,6 +47,19 @@ def read_key() -> str:
         return sys.stdin.read(1).lower()
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+
+
+def connect_forge(url: str) -> bool:
+    """Connect the forge at `url` here, as `bot-bottle forge connect` does;
+    whether it worked (its own output says why not)."""
+    # pylint: disable-next=import-outside-toplevel
+    from .forge import connect
+    try:
+        return connect([url]) == 0
+    except SystemExit as e:
+        return e.code in (0, None)
+    except KeyboardInterrupt:
+        return False
 
 
 def describe(request: Request) -> list[str]:
@@ -64,8 +82,9 @@ class Reviewer:  # pylint: disable=too-few-public-methods
     """Walks one session's pending requests, or every session's."""
 
     def __init__(self, fetch: Callable[[], Sequence[Mapping[str, object]]],
-                 client_for: Callable[[str], OrchestratorClient], session: str = "",
-                 key: Callable[[], str] = read_key, out: Callable[[str], None] = print) -> None:
+                 client_for: Callable[[str], OrchestratorClient], session: str = "", *,
+                 key: Callable[[], str] = read_key, out: Callable[[str], None] = print,
+                 connect: Callable[[str], bool] = connect_forge) -> None:
         # Pending proposals from every orchestrator, and a client for the one
         # holding a request (its answer goes back there).
         self.fetch = fetch
@@ -73,6 +92,7 @@ class Reviewer:  # pylint: disable=too-few-public-methods
         self.session = session
         self.key = key
         self.out = out
+        self.connect = connect
         self.skipped: set[str] = set()
 
     def pending(self) -> list[Request]:
@@ -93,7 +113,8 @@ class Reviewer:  # pylint: disable=too-few-public-methods
         """Show one request and act on the key pressed; returns the key."""
         self.out("\x1b[2J\x1b[H" + "\n".join(describe(request)))
         target = keep_target(request.session) if request.can_save_to_project() else None
-        choices = ["[a] allow once"]
+        connects = request.tool == TOOL_FORGE_CONNECT
+        choices = ["[a] connect it and allow" if connects else "[a] allow once"]
         if target is not None:
             choices.append(f"[k] allow and keep in {target.label()}")
         choices += ["[d] deny", "[s] skip", "[q] close"]
@@ -106,6 +127,8 @@ class Reviewer:  # pylint: disable=too-few-public-methods
         if key == "s":
             self.skipped.add(request.id)
         elif key in _DECISION:
+            if connects and key == "a" and not self._connect(request):
+                return key
             try:
                 self.out(answer(self.client_for(request.orchestrator), request, _DECISION[key],
                                 via="the terminal"))
@@ -117,6 +140,23 @@ class Reviewer:  # pylint: disable=too-few-public-methods
                 self.out(f"couldn't answer it: {e} (press a key)")
                 self.key()
         return key
+
+    def _connect(self, request: Request) -> bool:
+        """Connect the forge a `forge-connect` names, unless it is already."""
+        try:
+            if forge_connected(request):
+                return True
+        except ValueError as e:
+            self.out(f"couldn't read this host's forges: {e} (press a key)")
+            self.key()
+            return False
+        url = request.proposed.strip()
+        self.out(f"\nconnecting {url}:")
+        if self.connect(url):
+            return True
+        self.out(f"{url} wasn't connected; the request is still waiting (press a key)")
+        self.key()
+        return False
 
 
 def cmd_supervise(argv: list[str]) -> int:

@@ -88,7 +88,8 @@ class TestConfig(unittest.TestCase):
     def test_defaults_and_the_host_setting(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.addCleanup(use_bottle_root(Path(tmp)))
-            self.assertEqual(AppConfig("bot-bottle", ""), user_token.app_config())
+            self.assertEqual(AppConfig("bot-bottle", user_token.DEFAULT_CLIENT_ID),
+                             user_token.app_config())
             store = ConfigStore(host_db_path())
             store.migrate()
             store.set_github_app(GitHubApp(CONFIG.slug, CONFIG.client_id))
@@ -96,6 +97,14 @@ class TestConfig(unittest.TestCase):
             self.assertFalse((Path(tmp) / "github-app.json").exists())
         self.assertEqual("https://github.com/apps/bot-bottle-dev/installations/new",
                          CONFIG.install_url)
+
+    def test_another_app_has_no_default_client_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.addCleanup(use_bottle_root(Path(tmp)))
+            store = ConfigStore(host_db_path())
+            store.migrate()
+            store.set_github_app(GitHubApp("bot-bottle-dev", ""))
+            self.assertEqual(AppConfig("bot-bottle-dev", ""), user_token.app_config())
 
 
 class TestDeviceFlow(_Base):
