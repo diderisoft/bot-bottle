@@ -103,7 +103,6 @@ Moving state into its store comes with no code that reads the old files.
 
 | State | Rule it breaks | Why it stays |
 | :-- | :-- | :-- |
-| git-gate's `state/<id>/git-gate/*.json` | No JSON state | The host controller reads them back to provision a bottle's git-gate again. Moving them into the registry is a follow-up. |
 | A Firecracker VM's `config.json` | No JSON state | It's Firecracker's own format. It's read back for the VM's vCPUs, TAP and guest IP. |
 | Host-wide Firecracker slice claims | State lives under the environment's root | They're lock files in `/var/lib/bot-bottle-fc/slices`, shared by every environment and user on the machine. No one environment's database can hold them. |
 
