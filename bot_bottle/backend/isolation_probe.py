@@ -223,7 +223,7 @@ class IsolationPasses(DbStore):
 
     def add(self, key: str) -> None:
         """Remember `key`, keeping the newest `_KEPT_KEYS`."""
-        with self._connection() as conn:
+        with self._write_connection() as conn:
             newest = conn.execute("SELECT COALESCE(MAX(passed), 0) FROM isolation_passes"
                                   ).fetchone()[0]
             conn.execute("INSERT OR REPLACE INTO isolation_passes VALUES (?, ?)",

@@ -177,13 +177,15 @@ class BottledAgentStore(DbStore):
         unknown = set(changes) - CHANGEABLE
         if unknown:
             raise ValueError(f"can't change {', '.join(sorted(unknown))}")
-        if changes:
-            with self._connection() as conn:
+        with self._write_connection() as conn:
+            if changes:
                 conn.execute(
                     f"UPDATE bottled_agents SET {', '.join(f'{k} = ?' for k in changes)} "
                     "WHERE identity = ?", (*changes.values(), identity))
-            self._chmod()
-        return self.get(identity)
+            row = conn.execute("SELECT * FROM bottled_agents WHERE identity = ?",
+                               (identity,)).fetchone()
+        self._chmod()
+        return self._row(row) if row is not None else None
 
     def adoption(self, identity: str) -> str:
         with self._connection() as conn:
@@ -202,7 +204,7 @@ class BottledAgentStore(DbStore):
     def remove(self, identity: str) -> bool:
         """Delete `identity`'s rows here and in its other tables, at once.
         Whether it was recorded."""
-        with self._connection() as conn:
+        with self._write_connection() as conn:
             tables = {r[0] for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table'")}
             for table, key in _ROWS_OF_A_BOTTLED_AGENT:

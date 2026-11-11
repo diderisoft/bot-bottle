@@ -116,7 +116,7 @@ class PasskeyStore(DbStore):
     def replace(self, trust: Trust) -> Trust:
         """Trust exactly `trust`'s passkeys, keeping each one's counter where
         the same key was trusted already, in one transaction."""
-        with self._connection() as conn:
+        with self._write_connection() as conn:
             counts = {(r["id"], r["public_key"]): r["sign_count"]
                       for r in conn.execute("SELECT * FROM audit_passkeys")}
             conn.execute("DELETE FROM audit_passkeys")

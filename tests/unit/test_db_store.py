@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from bot_bottle.lib.db_store import BUSY_TIMEOUT_MS, DbStore, connect
+from bot_bottle.lib.db_store import BUSY_TIMEOUT_MS, DbStore, connect, immediate
 from bot_bottle.lib.migrations import TableMigrations
 
 
@@ -144,6 +144,40 @@ class TestEveryConnection(unittest.TestCase):
             finally:
                 first.close()
                 second.close()
+
+
+class TestImmediate(unittest.TestCase):
+    """`immediate`: a read-then-write holds the write lock from its read."""
+
+    def test_holds_the_write_lock_from_the_start_and_commits(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "x.db"
+            first, second = connect(path), sqlite3.connect(path, timeout=0.05)
+            try:
+                first.execute("CREATE TABLE t (x INTEGER)")
+                first.commit()
+                with immediate(first):
+                    first.execute("SELECT * FROM t").fetchall()
+                    # Another writer can't start until this one ends.
+                    with self.assertRaises(sqlite3.OperationalError):
+                        second.execute("BEGIN IMMEDIATE")
+                    first.execute("INSERT INTO t VALUES (1)")
+                self.assertEqual([(1,)], second.execute("SELECT x FROM t").fetchall())
+            finally:
+                first.close()
+                second.close()
+
+    def test_rolls_back_when_the_block_raises(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(Path(d))
+            store.migrate()
+            with self.assertRaises(RuntimeError):
+                # pylint: disable-next=protected-access
+                with store._write_connection() as conn:
+                    conn.execute("INSERT INTO items DEFAULT VALUES")
+                    raise RuntimeError("no")
+            with store._connection() as conn:  # pylint: disable=protected-access
+                self.assertEqual([], conn.execute("SELECT * FROM items").fetchall())
 
 
 if __name__ == "__main__":

@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import sqlite3
 import tempfile
+import threading
+import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 from bot_bottle import forge_connections
 from bot_bottle.forge_connections import (
@@ -107,6 +110,29 @@ class TestStore(unittest.TestCase):
         self.assertEqual(made, self.store.connections()["gitea.example.com"])
         moved = self.store.add_user(replace(GITEA, ssh="ssh://git@h"), ALICE)
         self.assertEqual("ssh://git@h", moved.ssh)
+
+    def test_two_first_users_at_once_leave_the_first_the_default(self) -> None:
+        read = ForgeStore._read  # pylint: disable=protected-access
+        started = threading.Barrier(2)
+
+        def slow_read(conn: sqlite3.Connection) -> dict[str, ForgeConnection]:
+            found = read(conn)
+            time.sleep(0.2)  # the other add reads now, if it can
+            return found
+
+        def add(user: ForgeUser) -> None:
+            started.wait()
+            ForgeStore(host_db_path()).add_user(GITEA, user)
+
+        with mock.patch.object(ForgeStore, "_read", staticmethod(slow_read)):
+            threads = [threading.Thread(target=add, args=(u,)) for u in (ALICE, CODEX)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        # The one connected first stays the default; the other saw it.
+        users = self.store.connections()["gitea.example.com"].users
+        self.assertEqual([True, False], [u.default for u in users])
 
     def test_tokens_are_named_not_kept(self) -> None:
         self.store.add_user(GITEA, ALICE)

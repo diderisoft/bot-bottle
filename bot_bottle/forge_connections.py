@@ -234,7 +234,9 @@ class ForgeStore(DbStore):
         the forge's url, ssh and pin, if they were there). The first user is
         the default; another becomes it only with `make_default`."""
         ForgeConnection.from_json({**conn.to_json(), "users": [user.to_json()]})
-        with self._connection() as db:
+        # Whether it's the default depends on who else is connected, so two
+        # first users at once can't both become it.
+        with self._write_connection() as db:
             before = self._read(db).get(conn.host)
             was = [u for u in (before.users if before else ()) if u.name == user.name]
             others = [u for u in (before.users if before else ()) if u.name != user.name]
@@ -255,7 +257,7 @@ class ForgeStore(DbStore):
     def remove(self, host: str, user: str = "") -> list[ForgeUser]:
         """Disconnect `user` from `host`, or the whole forge when no user is
         named; a forge goes with its last user. The users removed."""
-        with self._connection() as db:
+        with self._write_connection() as db:
             before = self._read(db).get(host)
             if before is None:
                 raise ForgeConnectionError(f"{host} isn't connected on this host")

@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import stat
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import ClassVar
@@ -36,6 +36,27 @@ def connect(path: Path | str) -> sqlite3.Connection:
         raise
     conn.row_factory = sqlite3.Row
     return conn
+
+
+@contextmanager
+def immediate(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """One transaction on `conn` that holds the write lock from its start
+    (`BEGIN IMMEDIATE`), committed when the block ends and rolled back if it
+    raises. For a read-then-write: in sqlite3's default mode a SELECT opens no
+    transaction, so another writer could change what was read before the
+    write."""
+    level = conn.isolation_level
+    conn.isolation_level = None
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        conn.execute("COMMIT")
+    finally:
+        conn.isolation_level = level
 
 
 def quick_check(path: Path) -> str:
@@ -135,6 +156,17 @@ class DbStore:
         finally:
             conn.close()
 
+    @contextmanager
+    def _write_connection(self) -> Iterator[sqlite3.Connection]:
+        """A connection in one `immediate` transaction, for a method that
+        reads and then writes what it read."""
+        conn = self._connect()
+        try:
+            with immediate(conn):
+                yield conn
+        finally:
+            conn.close()
+
     def is_migrated(self) -> bool:
         """True if the DB is up to date."""
         if not self.db_path.exists():
@@ -157,4 +189,4 @@ class DbStore:
 
 
 __all__ = ["BUSY_TIMEOUT_MS", "MACHINE_SPECIFIC", "PORTABLE", "DbStore", "DbVersionError",
-           "connect", "quick_check"]
+           "connect", "immediate", "quick_check"]

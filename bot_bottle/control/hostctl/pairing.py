@@ -133,7 +133,11 @@ class PairingStore(DbStore):
 
     def pairing(self) -> Pairing:
         with self._connection() as conn:
-            row = conn.execute("SELECT * FROM pairing WHERE id = 1").fetchone()
+            return self._pairing(conn)
+
+    @staticmethod
+    def _pairing(conn: sqlite3.Connection) -> Pairing:
+        row = conn.execute("SELECT * FROM pairing WHERE id = 1").fetchone()
         if row is None:
             return Pairing()
         return Pairing(url=row["url"], host_id=row["host_id"],
@@ -156,19 +160,21 @@ class PairingStore(DbStore):
             want = str if name in TOKENS else _SETTABLE[name]
             if not isinstance(value, want) or (name in TOKENS and not value):
                 raise ValueError(f"{name} must be a {'token' if name in TOKENS else want.__name__}")
-        pairing = Pairing() if new else self.pairing()
-        pairing = replace(pairing, **{k: v for k, v in changes.items() if k in _SETTABLE})
+        settings = {k: v for k, v in changes.items() if k in _SETTABLE}
         path = host_store(secrets_path).path
         for name, secret, attr in (("access_token", ACCESS_TOKEN_SECRET, "access_token_secret"),
                                    ("refresh_token", REFRESH_TOKEN_SECRET,
                                     "refresh_token_secret")):
             if name in changes:
                 write_secret(path, secret, str(changes[name]))
-                pairing = replace(pairing, **{attr: secret})
+                settings[attr] = secret
             elif new:
                 remove_secret(path, secret)
-        row = asdict(pairing)
-        with self._connection() as conn:
+        # Read and written in one transaction, so a concurrent change to
+        # other fields isn't lost.
+        with self._write_connection() as conn:
+            pairing = replace(Pairing() if new else self._pairing(conn), **settings)
+            row = asdict(pairing)
             conn.execute(f"INSERT OR REPLACE INTO pairing (id, {', '.join(row)}) "
                          f"VALUES (1, {', '.join('?' * len(row))})",
                          [int(v) if isinstance(v, bool) else v for v in row.values()])
