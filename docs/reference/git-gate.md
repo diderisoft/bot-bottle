@@ -61,21 +61,18 @@ decides how git-gate reaches it.
 | `static` | a key file already on the host | the long form above. It's for repos on a forge bot-bottle doesn't support yet. |
 | `gitea` | a fresh ed25519 deploy key, added through the forge API at launch and revoked at teardown | only a [grant on a forge](#forges-and-one-line-grants) |
 
-For `gitea` keys:
+For `gitea` keys (see also [Deploy keys](#deploy-keys)):
 
-- A key is read-only unless the grant ends in `:write`.
 - Keys last one launch. A resume or relaunch mints its own.
-- It first revokes any key a killed previous run left registered. The forge
-  refuses a second key with the same title.
+- The forge refuses a second key with the same title, so a launch first
+  revokes any key a killed previous run left registered.
 - The title is `bot-bottle:<hostname>[-<environment>]-<label>:<repo>`. The
   environment is named outside `live`.
 - The code is `git_gate/provision.py` and
   `contrib/gitea/deploy_key_provisioner.py`.
 - A bottle file with a long-form `provider: gitea` repo fails to load
-  ([ADR 0008](../decisions/0008-forge-minted-keys-are-grants.md)).
-
-See [Migrating from the old format](#migrating-from-the-old-format) for such
-files.
+  ([ADR 0008](../decisions/0008-forge-minted-keys-are-grants.md),
+  [migrating](#migrating-from-the-old-format)).
 
 **Default branch.** `protect_default_branch: true` makes git-gate refuse a push
 that deletes or rewrites each repo's default branch upstream. Rewriting means a
@@ -166,6 +163,8 @@ gitea.example.com: gitea at https://gitea.example.com
 - `bot-bottle forge remove <host> [--user U]` disconnects one user, or the
   whole forge. It drops their tokens from the secrets file too.
 
+At launch:
+
 - A grant on a forge the host hasn't connected fails to load. The error names
   the `forge connect` command, with a description's URL when the chain has one.
 - Where the chain describes the forge too, its `kind` must be the
@@ -174,9 +173,8 @@ gitea.example.com: gitea at https://gitea.example.com
   connecting it elsewhere.
 - The connection's `url` and `ssh` are what's used. So a bottle can't send a
   token anywhere the host didn't connect.
-- A launch asks `forge_connections.connections()`, the host's connection
-  source. In the host controller it reads the `forge_connections` and
-  `forge_users` tables. Anywhere else it asks the host controller.
+- Connections are the host database's `forge_connections` and `forge_users`
+  tables, read through `forge_connections.connections()`.
 
 #### Forge users
 
@@ -274,7 +272,7 @@ For other users git-gate fetches and pushes with the token over HTTPS
 `bot-bottle`. `--app` and `--client-id` set it, and it's kept as the host
 setting `github_app`, in the host database.
 
-So each named environment can use its own app. Dev uses `bot-bottle-dev`.
+So each named environment can use its own app.
 
 No private key or client secret of the app is ever on a host or the console.
 The device flow and refreshing its tokens take the client id alone
@@ -301,18 +299,12 @@ install link.
   token reaches. On a host already connected it does this straight away.
 - `--reauthorize` authorizes again.
 - With no installation, or none on `--owner <account>`, it opens the install
-  page.
-- It then asks GitHub every five seconds, for up to ten minutes, until the
-  installation appears.
-- It says where the app is installed: "all repos" or how many selected.
+  page and waits for the installation to appear.
 - `--no-wait` only prints the install link.
 
 The console's host page shows the same two steps. While an `add-repo` card for
-an unreachable repo is shown, the host asks GitHub again every ten seconds, for
-fifteen minutes.
-
-Once the repo is reachable, the host raises the card again with the grant
-options.
+an unreachable repo is shown, the host polls GitHub. Once the repo is
+reachable, it raises the card again with the grant options.
 
 #### GitHub transports
 
@@ -340,7 +332,6 @@ the transport. Whoever connects the user chooses. A bottle can't (ADR 0019).
   on without it.
 - The copy goes through a 0600 temp file, never a command line.
 - On macos-container it's streamed in over `container exec -i`'s stdin.
-  `container cp` lands beneath a tmpfs mount, unseen.
 - Teardown removes it.
 
 Every four minutes the host controller renews the token within ten minutes of
@@ -362,26 +353,23 @@ epoch seconds. So a 401 tells two cases apart:
 | after the expiry | the host controller hasn't renewed the token | start it again with `bot-bottle up` |
 | before the expiry | GitHub refused it, so the authorization was revoked | reconnect GitHub |
 
-An authorization the renewer can't renew raises a console alert instead of a
-warning every pass. So does a Gitea token the forge refuses. The alerts are
-`forge_alerts` (see host-controller.md's `host_stats`).
+An authorization the renewer can't renew raises a console alert. So does a
+Gitea token the forge refuses. The alerts are `forge_alerts` (see host-controller.md's `host_stats`).
 
-**`deploy-key`.** Minting needs admin access to the repo. That is the app's
-Administration: read & write, or a classic `repo` token from a repo admin.
+**`deploy-key`.** Minting needs the app's Administration: read & write, or a
+classic `repo` token from a repo admin.
 
 - A token that can't mint fails the launch at minting, saying so.
 - Use it where GitHub itself should hold each run to one repo.
 - To use both on one host, connect a second user with `--transport deploy-key`.
   Pick it with an agent's `identity.accounts`.
 
-**The trade-off.** A user token can't be narrowed per repo, so it reaches every
-repo the app is installed on.
+**The trade-off.** A user token can't be narrowed per repo. Over `https`,
+git-gate holds each bottle to its granted repos, with one namespace per bottle
+and `git-gate.readOnly` for a grant without `:write`.
 
-git-gate is what holds each bottle to its granted repos. It uses one namespace
-per bottle, and `git-gate.readOnly` for a grant without `:write`.
-
-The gateway holds the token only while the bottle runs. Install the app on
-selected repos to keep its reach small.
+The gateway holds the token only while the bottle runs. Install the app on selected repos to keep its
+reach small.
 
 Deploy keys keep GitHub-side per-repo scope. But they need the far broader
 Administration permission, which the host's token then carries too. An org can
@@ -407,9 +395,8 @@ A read-only repo is marked `git-gate.readOnly` in its bare repo. The
 pre-receive hook refuses pushes to it before scanning, saying a `:write` grant
 is needed.
 
-The trust prompt shows each repo as `fetch` or `push`, and where its key is
-minted with which secret. Trusting a project bottle also records this host's
-connection to each forge its repos are on (see manifest.md's Trust).
+Trusting a project bottle records this host's connection to each forge its
+repos are on (see manifest.md's Trust).
 
 ## Agent side
 
@@ -423,10 +410,6 @@ The agent's `~/.gitconfig` sends each repo's upstream URL to the gate
 
 The header is written even for a bottle without repos, since every bottle is
 given the gate's address. So a repo granted later only adds a rewrite.
-
-A bottle launched before that gets the header when it's first granted a repo.
-It's taken from its agent's proxy URL, `http://bottle:<token>@<gateway>:<port>`,
-whose host is the gate's on every backend.
 
 The agent's env also points `core.hooksPath` at the commit hooks (see
 [Commit trailers](#commit-trailers)).
@@ -545,7 +528,7 @@ git rebase --rebase-merges --exec 'git -c trailer.ifexists=replace commit --amen
 
 Like other `git_gate` fields it merges through `extends`, a child's winning.
 
-The launch keeps the value and mode for re-provisioning; a dry run keeps
+The launch keeps the value and mode for re-provisioning. A dry run keeps
 nothing. They're set on each bare repo as `git-gate.trailer` and
 `git-gate.trailers`.
 
@@ -707,14 +690,11 @@ A repo created but not granted is reported so. The agent can `add-repo` it.
 
 ### Fetch
 
-A fetch refreshes from upstream first, and fails if upstream is unreachable.
+The access hook runs `git fetch origin --prune` against the upstream before
+every `upload-pack`. It uses the repo's key and pinned known_hosts, or HTTPS
+with the token for a GitHub repo ([Transports](#github-transports)).
 
-The access hook runs before every `upload-pack`. It runs
-`git fetch origin --prune` against the upstream.
-
-It uses the repo's key and pinned known_hosts, or HTTPS with the token for a
-GitHub repo ([Transports](#github-transports)). If the upstream is unreachable,
-the fetch fails instead of serving stale data.
+If the upstream is unreachable, the fetch fails instead of serving stale data.
 
 ### Push
 
@@ -771,59 +751,14 @@ It matches by value, so it catches secrets gitleaks has no rule for.
 
 ## Migrating from the old format
 
-Before forges, each repo with a forge-minted key carried its own copy of the
-forge's settings. A bottle written like this no longer loads.
+A bottle whose repos carry their own forge settings, written before forges,
+no longer loads. Its error lists each such repo and shows the replacement
+(`manifest/legacy_git_gate.py`).
 
-```yaml
-git-gate:
-  repos:
-    app:
-      url: ssh://git@10.0.0.5:30009/acme/app.git
-      host_key: ssh-ed25519 AAAA...
-      key: { provider: gitea, forge_token_env: GITEA_ADMIN_TOKEN, api_url: https://gitea.example.com }
-```
+1. Connect the forge once with `bot-bottle forge connect <url>`, unless the
+   error says it's connected already.
+2. Run `bot-bottle bottles migrate <bottle>` (`manifest/migrate.py`). It shows
+   the diff and asks first, or doesn't with `--yes`.
 
-The error lists every such repo in the bottle. It says whether this host has
-connected the forge, and shows the replacement (`manifest/legacy_git_gate.py`).
-
-1. Connect the forge once, unless the error says it's connected already:
-   `bot-bottle forge connect https://gitea.example.com`.
-2. Run `bot-bottle bottles migrate <bottle>` (`manifest/migrate.py`).
-
-When the repos' SSH address isn't `ssh://git@<forge host>`, the error's command
-adds `--ssh` with the address they used. Here it's an IP and port.
-
-| Old | Becomes |
-|---|---|
-| a repo with `provider: gitea` | its grant. Nothing is added to `extends`. |
-| the `api_url`'s host | the forge. Without an `api_url`, the upstream's host. |
-| the SSH URL's path | the owner and repo |
-| a key without `read_only: true` | a grant ending in `:write` |
-| a key with `read_only: true` | a grant without `:write` |
-| `host_key` and `forge_token_env` | removed. The grant uses the connection's pinned host key and its user's token. |
-
-- `migrate` notes when the connection's host key or token differ from the old
-  ones, or the connection pins no host key.
-- Grants are written as a list when every repo converts and is named after its
-  repo. Otherwise they're a mapping that keeps the gate's names and any
-  `static` repos.
-- Only those lines change, and the `git-gate` key becomes `git_gate`. Old
-  egress forms are converted too, their block written afresh
-  ([manifest.md](manifest.md#old-forms)). Comments, `env` and the rest stay.
-- The result is parsed back to check that before it's written.
-- It shows the diff and asks first. `--yes` doesn't ask, and without a
-  terminal `--yes` is needed.
-- A host bottle's migration is a version, after any hand edits are versioned.
-  `bot-bottle bottles revert <bottle> <version>` undoes it.
-- A project bottle's migration is left for the project to commit.
-- With the forge not connected, `migrate` refuses with the same steps.
-  Connecting takes a token typed by the operator, so it never connects one.
-- A repo whose SSH path isn't `<owner>/<repo>`, or a file in flow style, is
-  left to edit by hand.
-
-A forge bottle an earlier `forge connect` wrote, with `credentials:` and a
-`token` in its forge, fails to load too. Connect the forge again with
-`forge connect`, which records it in the host database.
-
-Then remove the `credentials:` block and the forge's `token` and `account`
-lines (ADR 0019).
+A forge with `credentials:` or a `token` also fails to load. Connect it again
+with `forge connect`, then remove those lines (ADR 0019).

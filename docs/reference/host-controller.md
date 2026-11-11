@@ -91,8 +91,7 @@ the unit (`systemctl --user restart`, `launchctl kickstart -k`). A unit that
 runs but doesn't answer is replaced, not left to time out.
 
 Stopping the daemon stops only its own process (`KillMode=process`,
-`AbandonProcessGroup`). So agents outlive a restart. Units installed before
-this need `bot-bottle install` again.
+`AbandonProcessGroup`). So agents outlive a restart.
 
 ## Jobs
 
@@ -169,17 +168,12 @@ pending supervise proposals. It shows a one-line summary in the bar.
   and the phone send the answer back there.
 
 **Blocks.** The bar shows the gateway's block events as the audit journal
-writes them, through `HostAudit.listen`. The design is PRD 0099 (design
-repo).
+writes them, through `HostAudit.listen` (PRD 0099, design repo).
 
-- Each block shows for five seconds as `⊘ <host> · <reason>`.
-- A burst shows the newest, with `(+N)`.
-- A notice stays up at most ten seconds. Then the bar shows five seconds
-  without one, so a retry loop can't keep it up.
-- The session's counts by reason stay beside it, as a letter and a number:
-  `A12 S3 P1`.
-- Counts live in memory. They reset when the session or the daemon
-  restarts.
+- Each block shows briefly as `⊘ <host> · <reason>`. A retry loop can't
+  keep a notice up.
+- The session's counts by reason stay beside it, as a letter and a number.
+  They live in memory, and reset when the session or the daemon restarts.
 
 | Letter | Reason (`reason_code`) |
 |---|---|
@@ -196,18 +190,9 @@ repo).
 The console gets the same blocks, for the shield on the agent's page (see
 [Blocks](#blocks)).
 
-**Launch warnings.** A launch's warnings stay on the session as
-`@bb_warning`. Examples are an isolation gap or a stale image.
-
-- They show in amber, before the detach key.
-- They're shortened to the first warning's first clause and a count of the
-  rest.
-- They take up to 70 columns, or 30 when the client is under 100 columns.
-- A pending request takes their place.
-
-**Width.** The bar fits each client's width (`#{client_width}`). The
-notice's reason and the detach hint need 150 columns. Under 100 columns,
-the request summary is cut.
+**Launch warnings.** A launch's warnings, such as an isolation gap or a
+stale image, stay on the session as `@bb_warning`. A pending request takes
+their place.
 
 ### Viewers
 
@@ -302,19 +287,14 @@ was writing.
 
 Polling:
 
-- The follower polls once a second, and once more after the agent exits.
+- The follower polls about once a second, backing off while the transcript
+  is quiet, and once more after the agent exits.
 - Each poll is one `exec` into the bottle. It reads each new file's new
   bytes by offset, up to 4 MiB a poll, plus the 64 bytes before the offset.
-- A quiet transcript is polled less often, doubling up to every 5 seconds.
-- New bytes, or the console typing into the agent, bring it back to every
-  second.
 - That `exec` gives up after 60 seconds. So a wedged one can't hold the
   follower, or the teardown waiting to close it.
-
-The poll's script, its paths and offsets, goes as an argument, not on stdin.
-On macOS every `container exec --interactive` leaks a pipe in the bottle's
-runtime ([apple/container#2439](https://github.com/apple/container/issues/2439)).
-Polled each second, that ran the host out of open files.
+- The poll's script goes as an argument, not on stdin
+  ([apple/container#2439](https://github.com/apple/container/issues/2439)).
 
 The daemon's other background `exec`s are bounded too. These are reading a
 bottle's secret and exporting a workspace's changes.
@@ -349,8 +329,7 @@ A bottle is given 2 GiB unless its `resources:` say otherwise (see
 | macos-container | the container's `--memory` |
 | docker | the agent's `mem_limit` |
 
-The session record keeps what each bottle was given, as `memory`. A bottle
-recorded before `resources:` counts at 2 GiB.
+The session record keeps what each bottle was given, as `memory`.
 
 Allocated memory is the sum over the bottles running. That counts bottles
 that are held, adopted after a restart, launching, or with a running
@@ -424,8 +403,8 @@ host controller re-reads it:
 | A timer | every five minutes |
 
 **The file watch.** The host's CLI revokes the old access token the moment
-it rotates its login. The timer alone left bottles on a revoked token
-(`401 OAuth access token has been revoked`) for up to five minutes.
+it rotates its login, so the timer alone would leave bottles on a revoked
+token.
 
 - The host controller watches the files each provider names
   (`AgentProvider.host_login_paths`).
@@ -441,13 +420,8 @@ registered the bottle (`POST /bottles/<id>/secret`). That is the
 environment's recorded orchestrator. The gateway reads the value per
 request.
 
-- A push that orchestrator can't take fails, naming it. It can be down,
-  reject the key, or not know the bottle.
-- An environment brought up before bring-ups recorded an orchestrator has
-  none recorded. Only then does the host controller try each listening
-  orchestrator in turn.
-- It treats a 401/403, a 404 or no answer as "not this one". It fails only
-  when none accepted, listing each URL and why.
+A push that orchestrator can't take fails, naming it. It can be down,
+reject the key, or not know the bottle.
 
 Codex's placeholder `auth.json` in the guest carries the real token's
 expiry. So it's rewritten when that moves.
@@ -469,7 +443,7 @@ bot-bottle doesn't spend the host's refresh token itself (#769).
 
 Every bottle suggestion runs in the host controller. It keeps the bottle
 architect's own bottle warm (see
-[bottles-suggest.md](bottles-suggest.md#bottle-architect-default)).
+[architect.md](architect.md#where-it-runs)).
 
 The CLI asks over HTTP, with the `cli` role only:
 
@@ -562,8 +536,8 @@ bot-bottle host restore-db --yes      # without asking first
 
 | When | What happens |
 |---|---|
-| It starts | `PRAGMA quick_check` on the file. On a failure it exits (status 78), naming the newest backup and when it was taken. Its systemd unit doesn't restart it, and launchd retries at most once a minute. |
-| It starts, and the check passes | It migrates the file. Any table no host store owns is dropped, such as an older version's audit index or, on Docker, the orchestrator's old tables. |
+| It starts | `PRAGMA quick_check` on the file. On a failure it exits (status 78), naming the newest backup and when it was taken ([As a service](#as-a-service)). |
+| It starts, and the check passes | It migrates the file. Any table no host store owns is dropped. |
 | It answers on its control socket, and `index.db` is missing or fails the same check | In the background, it deletes `index.db` and rebuilds it from the journal. Audit queries and the prune wait for the check. `index.db` has no backups. |
 | It has migrated, and every hour after | If the newest backup is a day old, or there is none, a new one: a `VACUUM INTO` copy in `~/.bot-bottle/db/backups/` (directory 0700, files 0600). It keeps the newest 3. |
 | `host restore-db` | Refused while the host controller runs: it takes the daemon's lifetime lock, so none starts meanwhile. It says what comes back and asks first. Then it checks the backup, keeps the replaced file beside it as `bot-bottle.db.replaced-<time>`, and puts the backup in its place. |
@@ -725,8 +699,7 @@ reply is `audit_decrypted`.
 
 - It needs a valid token.
 - A record decrypts only with this host's key, bound to its run and `seq`.
-  One that doesn't gets its own `error`. A run sent before the host database
-  was new still decrypts.
+  One that doesn't gets its own `error`.
 - It allows at most 2000 records a minute.
 - Each read is journalled as `audit.records_read`.
 
@@ -805,8 +778,8 @@ one. So the console's other requests are answered while it waits on the
 bottle.
 
 A resume of a bottle already running as that same agent answers
-`agent_started` again, rather than an error. That happens when Resume is
-clicked twice after a Stop. A bottle running as another agent is refused.
+`agent_started` again, rather than an error. A bottle running as another
+agent is refused.
 
 ### Console agents and terminal sessions
 
@@ -845,8 +818,7 @@ So `bot-bottle resume <bottle>` on the CLI brings a console bottle back as
 - The link announces it with `agent_started`, and the conversation keeps
   its id.
 
-A terminal bottle, or one recorded before this, resumes as a terminal
-session, as before.
+A terminal bottle resumes as a terminal session.
 
 ### If the account is deleted
 
@@ -897,7 +869,7 @@ Through the link the console can:
   - The route is read-only unless it injects a credential.
   - With `keep`, it's written into the bottle file too.
 - **Write host bottles.** Host bottles run as written, with no trust prompt
-  ([manifest.md](manifest.md#trust)). So these edits apply at the next
+  ([projects.md](projects.md)). So these edits apply at the next
   launch.
   - `bottle_write` replaces a host bottle in a running agent's chain with
     content the console sends.
@@ -997,12 +969,9 @@ It covers the host as a whole, and the bottles against their budget (see
 | `budget.storage` | left out until the first storage walk after the daemon starts |
 | `about.restart_needed` | true once bot-bottle was upgraded under the running daemon, which refuses launches until `bot-bottle up --restart` |
 
-**`about`** is what the host's console page says about it:
-
-- its OS: `macOS`, or a Linux's `NAME` from `/etc/os-release`
-- the backend its last bring-up recorded, `""` before one
-- this install's version and short commit, as `bot-bottle version` prints
-  them
+**`about`** holds the OS (`macOS`, or a Linux's `NAME` from
+`/etc/os-release`), the backend its last bring-up recorded (`""` before one),
+and this install's version and short commit.
 
 **Bottle CPU and memory.** Each running bottle's `cpu_pct` and `mem_used`
 (bytes) are left out when they can't be read. CPU % is a share of the
@@ -1038,8 +1007,6 @@ stops it.
   running. It does this in one pass every 3 seconds, on every backend.
 - It sends `bottle_metrics`: `at`, and `bottles` with `id`, `cpu_pct`,
   `mem_used` and `memory`.
-- The interval leaves room for a container's `stats` call, which takes 1-2 s
-  each.
 - A pass still running when the next is due skips it.
 - The set belongs to the connection, capped at 32. A reconnecting console
   sends it again.
@@ -1089,9 +1056,7 @@ The console's relay is one tmux client per agent. The console's `resize`
 sizes it, to the most recent viewer's terminal.
 
 The link keeps the last size asked for each running agent. It opens every
-new relay at that size. Otherwise a relay reopened after a broken stream
-would start at tmux's default, and a terminal of a different size draws its
-output garbled.
+new relay, including one reopened after a broken stream, at that size.
 
 ### Reading transcripts
 
@@ -1106,7 +1071,6 @@ they leave the host. The host's copy itself stays as read.
 
 Masking uses the egress scanner's `redact_tokens`. It masks token patterns,
 and every value in the host's secrets file in its common encodings.
-Entries are parsed when read, then masked.
 
 Search is case-insensitive, over the masked text. So a query can't confirm
 a secret.
@@ -1133,8 +1097,7 @@ instead:
 
 ### Snapshots
 
-The console's snapshot button asks the link for `snapshot`. Restoring is
-not built yet.
+The console asks the link for `snapshot`. Restoring is not built yet.
 
 1. The host attaches to the running bottle through its adoption record
    (`BottleBackend.attach_adopted`).
@@ -1152,8 +1115,8 @@ bottled agent deletes its snapshots, rows and patches.
 
 ### Workspace images
 
-Agents often make a picture as a file and mention its path. The console's
-"View" button fetches it with `workspace_file`.
+The console fetches an image file from a running agent's workspace with
+`workspace_file`.
 
 - The request is `agent_id` and `path`.
 - The reply `workspace_file` carries `content_type`, `data` (base64) and
@@ -1174,9 +1137,7 @@ them only through `<img>`, so an SVG's script never runs.
 
 ### Uploading files to a running agent
 
-The console's `+` button uploads a file into a running agent's workspace.
-After the upload, the console inserts the path into the message box, so the
-agent can be told about it.
+The console uploads a file into a running agent's workspace.
 
 A small file goes in one message, `put_workspace_file`.
 
@@ -1280,7 +1241,7 @@ starts the same flow as `bot-bottle bottles suggest`.
 
 That flow runs `bottle-architect` in its warm bottle, falling back to the
 rules path. The proposal is validated against the host's bottles (see
-[bottles-suggest.md](bottles-suggest.md)).
+[architect.md](architect.md)).
 
 | Request | Reply | Does |
 |---|---|---|
@@ -1478,8 +1439,7 @@ It also returns this run's additions (`run`) and the writable `targets`.
 
 ## Code map
 
-Where each part lives, for readers checking the code. Paths are under
-`bot_bottle/control/hostctl/` unless shown otherwise.
+Paths are under `bot_bottle/control/hostctl/` unless shown otherwise.
 
 | Part | Code |
 |---|---|

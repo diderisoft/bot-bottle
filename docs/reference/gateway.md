@@ -222,8 +222,9 @@ its traffic.
 | (always on) | outbound | every inspected route, whatever the list | CRLF header injection, and the canary |
 
 Routes enable detectors by name under `dlp.outbound` and `dlp.inbound`. A
-listed side runs exactly those; an omitted side keeps the defaults. The detectors are in `gateway/egress/dlp_detectors.py`.
-The defaults are applied in `gateway/egress/dlp.py`.
+listed side runs exactly those. An omitted side keeps the defaults. The
+detectors are in `gateway/egress/dlp_detectors.py`, and the defaults are
+applied in `gateway/egress/dlp.py`.
 
 - `dlp: false` turns every detector off. The canary and CRLF checks still run.
 - `known_secrets` doesn't match the bottle's own env values, which may go
@@ -237,7 +238,7 @@ try to do. That is reaching a host or sending a secret.
 
 The bottle's env also carries a per-session **canary** secret. Any outbound
 appearance of it on an inspected route is an exfiltration attempt, and the
-request is always blocked. On a `passthrough: true` route it isn't seen.
+request is always blocked.
 
 `dlp.on_match` decides what a token match does:
 
@@ -303,14 +304,10 @@ Its tools are `egress-allow`, `egress-block`, `list-egress-routes`,
 | [`launch-bottle`](#launch-bottle) | a child bottle | the console only. The terminal can deny it. |
 | [`create-repo`](#create-repo) | a new repo | the console, or no card when `actions.create` allows it |
 
-Its `initialize` instructions and the egress tool descriptions say that git
-never goes out through egress, even to allowed hosts.
-
-The bottle's repos go through git-gate with their usual URLs and no key or
-token. The agent's global gitconfig lists them as `insteadOf` rules. A repo it
-doesn't have needs the operator to add it.
-
-The same note is in every agent's prompt (`contract/agent_notes.py`,
+Its `initialize` instructions, the egress tool descriptions and every
+agent's prompt say that git never goes out through egress, even to allowed
+hosts. Repos go through git-gate with their usual URLs and no key or token.
+A repo the bottle doesn't have needs the operator to add it (`contract/agent_notes.py`,
 [ADR 0003](../decisions/0003-system-prompts-stay-user-directed.md)).
 
 ### Proposals
@@ -386,11 +383,7 @@ Some forges are refused before the operator sees a card:
   ([git-gate](git-gate.md#forges-and-one-line-grants)).
 - One that isn't Gitea or GitHub is refused at once, and the agent is told so.
 
-It's answered from the console. The card shows the URL, the forge's kind, its
-token page and the token it needs. The URL is marked when this host hasn't
-connected that forge yet.
-
-The operator pastes a token there. The host connects the URL from the agent's
+It's answered from the console, where the operator pastes a token. The host connects the URL from the agent's
 proposal, never one from the console, exactly as `bot-bottle forge connect`
 does.
 
@@ -407,8 +400,7 @@ A repo on a forge this host hasn't connected is refused at once
 (`remote_actions.vet`). A forge of another kind says so. A Gitea or GitHub one
 tells the agent to `forge-connect` it first.
 
-The console's card shows the repo with the access asked for. The operator can
-grant read-only instead of write.
+The operator can grant read-only instead of the write asked for.
 
 The operator can also keep the grant in the bottle, in the same place as a
 kept egress route. The forge's description comes with it when the bottle
@@ -430,11 +422,8 @@ The host checks names as a console launch does. It refuses:
 - a child already at its parent's cap, `children.max`, default 3
 - a nested launch. Depth is 1, so a child can't launch children of its own.
 
-Access is compared with the parent's live elements, the Manifest tab's "in
-effect". Anything beyond the parent's is listed on the card as removed: egress
-hosts, repos, env names.
-
-The card is answered from the console only. The terminal can deny it.
+Access is compared with the parent's live elements. Anything beyond the
+parent's is listed on the card as removed: egress hosts, repos, env names.
 
 On approval the host launches the child with a trimmed run-bottle that holds
 only within-parent elements. It records the parent's identity as the child's

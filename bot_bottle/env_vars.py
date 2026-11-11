@@ -98,12 +98,12 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "`~/.cache/bot-bottle/firecracker`"),
     EnvVar("BOT_BOTTLE_START_AUTO", "user",
            "`1` makes a guided `bot-bottle start` run the suggested bottle without "
-           "asking (`--auto`); `--no-auto` asks for one run. See bottles-suggest.md.",
+           "asking (`--auto`); `--no-auto` asks for one run. See architect.md.",
            "off"),
     EnvVar("BOT_BOTTLE_ARCHITECT_ALWAYS_ON", "user",
            "The bottle architect's bottle boots with the host controller and stays "
            "up; `0` boots it on demand and lets it idle out "
-           "(`BOT_BOTTLE_ARCHITECT_IDLE`). See bottles-suggest.md.",
+           "(`BOT_BOTTLE_ARCHITECT_IDLE`). See architect.md.",
            "on"),
     EnvVar("BOT_BOTTLE_ARCHITECT_IDLE", "user",
            "When the architect isn't always on: seconds its bottle stays up after "

@@ -1,4 +1,4 @@
-# Manifest
+# Manifests
 
 The files that say what an agent is and what its bottle lets it do. Code is in
 `manifest/` (see the [code map](architecture.md#code-map)). How a launch uses
@@ -8,7 +8,7 @@ the result is in [architecture.md](architecture.md#launch).
 
 Bottles and agents are Markdown files with YAML frontmatter.
 
-| Kind | Yours | A repo's | Body |
+| Kind | Yours | A project's | Body |
 |---|---|---|---|
 | Bottle | `~/.bot-bottle/bottles/<name>.md` | `<repo>/.bot-bottle/bottles/<name>.md`, named `./<name>` | documentation |
 | Agent | `~/.bot-bottle/agents/<name>.md` | `<repo>/.bot-bottle/agents/<name>.md` | the agent's system prompt |
@@ -20,11 +20,14 @@ Bottles and agents are Markdown files with YAML frontmatter.
 
 An agent doesn't name a bottle. You pick bottles at launch: `--bottle`, the
 console's launch page, or a suggested one in the guided `bot-bottle start`
-([bottles-suggest.md](bottles-suggest.md)).
+([architect.md](architect.md)).
 
 A launch with none runs in the built-in `basic`. So an agent file works on any
 host, whatever its bottles are called
 ([ADR 0011](../decisions/0011-agents-dont-name-bottles.md)).
+
+A project's bottles and agents run only once this host trusts them
+([projects.md](projects.md)).
 
 Unknown keys fail at load, naming the key and the accepted ones. More examples
 are in [`examples/`](../../examples/).
@@ -217,50 +220,6 @@ Either way the gateway injects it and the agent sees a placeholder
 The provider adds its own model route. A bottle route for that host fails the
 launch.
 
-## Trust
-
-Your own bottles and agents run as written. A repo's run only once this host
-trusts their exact contents (`bot-bottle trust <name>`), and any change asks
-again.
-
-Trust records live in the host database. `bot-bottle trust --list` shows them.
-What the trust hash covers is in [architecture.md](architecture.md#state).
-
-### Repo bottles
-
-A repo bottle always needs trust.
-
-- Repo bottles are always named `./<name>`, so a repo bottle never shares a
-  name with one of yours. `bot-bottle <agent>` uses `./main` when the repo has
-  one.
-- The trust prompt lists every host and secret the bottle touches, including
-  what it inherits through `extends`. So a cloned repo can't send a credential
-  to another host without you seeing it first.
-- Trust also records this host's connection to each forge the bottle's repos
-  are on ([below](#what-forge-trust-records)).
-- When one changes, the bottle asks to be trusted again, showing what changed
-  (ADR 0019). Your own bottles don't.
-
-#### What forge trust records
-
-For each forge, trust records its `kind`, `url`, `ssh` and host key. It also
-records the user its grants push as, with that user's transport.
-
-That user is the forge's default user, or the one the agent's `identity.accounts`
-picks. So an agent can't switch to another of your accounts unseen.
-
-### Repo agents
-
-A repo agent needs trust when its `agent_provider` grants something:
-
-- your login
-- a model host with a secret
-- an image build
-
-It also needs trust when it runs on one of your bottles that grants more than
-`basic`. A repo agent with the same name as one of yours replaces it, and the
-trust prompt says so.
-
 ## Forges
 
 `bot-bottle forge connect <url>` lets bottles push to a Gitea or GitHub forge.
@@ -302,15 +261,6 @@ Its error says how to convert it. `bot-bottle bottles migrate <name>` does it
 as a new version. See
 [Migrating from the old format](git-gate.md#migrating-from-the-old-format).
 
-## Suggesting a bottle
-
-`bot-bottle bottles suggest "<task>"` proposes the bottle a task needs without
-writing anything. The full reference is [bottles-suggest.md](bottles-suggest.md).
-
-- It asks the `bottle-architect` agent: your own harness, run with no tools.
-- It falls back to the rules path. `--rules` uses the rules path only.
-- `--write NAME` saves the proposal as a new host bottle.
-
 ## Versions
 
 Every change to a bottle or agent under `~/.bot-bottle/` is a version, hand
@@ -320,7 +270,7 @@ edits included.
 |---|---|
 | `bot-bottle bottles history <name>` | lists them. Add a version to see what it changed |
 | `bot-bottle bottles revert <name> <version>` | restores one as a new version, taking effect at the next launch |
-| `bot-bottle bottles migrate <name>` | rewrites a bottle's old forms as a new version: `git-gate` as `git_gate`, old-format repos as forge grants, and the old route, auth and `log` forms ([old forms](#old-forms), [git-gate.md](git-gate.md#migrating-from-the-old-format)) |
+| `bot-bottle bottles migrate <name>` | rewrites a bottle's old forms as a new version: `git-gate` as `git_gate`, old-format repos as forge grants, and the old route, auth and `log` forms ([git-gate.md](git-gate.md#migrating-from-the-old-format)) |
 
 A repo's bottles are versioned by the repo itself. Where versions are kept is
 in [architecture.md](architecture.md#state).
@@ -406,30 +356,3 @@ redacted snippet.
 Approving adds the value to an in-memory safelist for that bottle and that
 host, for the life of the egress proxy. The same value sent to another host is
 flagged again.
-
-## Old forms
-
-A manifest in an older form fails at load with one line naming the new form.
-
-| Old | Now |
-|---|---|
-| `git-gate` | `git_gate` |
-| `log: 0` / `log: 1` / `log: 2` | `log: off` / `log: blocked` / `log: full` |
-| `inspect: false` | `passthrough: true` |
-| `inspect: {...}` | gone: its `auth`, `git` and `preserve_auth` sit on the route, `matches` is `allow`, and the detectors are `dlp` |
-| `inspect.outbound_detectors`, `inbound_detectors`, `outbound_on_match` | `dlp: {outbound, inbound, on_match}` |
-| `matches` | `allow` |
-| `auth.token_ref: NAME`, `scheme`, `header` | `auth.value: secret:NAME`, `type`, `name` |
-| `{type: prefix, value: X}` | the path itself, a string |
-| `{type: regex, value: X}` | `{regex: X}` |
-| `role` | removed |
-| `forward_host_credentials: true` | `login: host` |
-| `auth_token: NAME` | `login: {oauth_token: secret:NAME}` |
-| `settings.api_key_env: NAME` | `login: {api_key: secret:NAME}` |
-| `agent_provider.dockerfile` (a path) | `agent_provider.dockerfile_path` |
-| agent `git-gate.user` | `identity.git` |
-| `forge_users` | `identity.accounts` |
-
-`bot-bottle bottles migrate <name>` converts a bottle's route, auth and `log`
-forms and `git-gate`, as a new version. Everything else, agents included, is
-fixed by hand.

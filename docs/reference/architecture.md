@@ -35,11 +35,11 @@ Each host runs one **host controller**, one **orchestrator** and one
 
 | Component | Runs as | Owns | Code |
 |---|---|---|---|
-| CLI | the user, on the host | prompts, pickers, secrets from the env. It talks only to the host controller | `cli/` |
-| Host controller | per-host daemon, as the user | launch, teardown, listing, tmux sessions, attach, the audit journal, the firehose, remote access, the host database `bot-bottle.db` | `control/hostctl/` |
-| Backend | library inside the host controller | building images and starting the agent and infra in containers or microVMs | `backend/` |
-| Orchestrator | per-host service in a container or microVM | the bottle registry, egress tokens (encrypted at rest), the supervise queue, the control-plane signing key. It is the only opener of its own database, `registry.db` | `orchestrator/` |
-| Gateway | per-host service in a container or microVM | the egress proxy, git-gate, the supervise MCP server, the mitmproxy CA | `gateway/` |
+| CLI | the user, on the host | prompts, pickers, secrets from the env. It talks only to the host controller | [`cli/`](../../bot_bottle/cli/) |
+| Host controller | per-host daemon, as the user | launch, teardown, listing, tmux sessions, attach, the audit journal, the firehose, remote access, the host database `bot-bottle.db` | [`control/hostctl/`](../../bot_bottle/control/hostctl/) |
+| Backend | library inside the host controller | building images and starting the agent and infra in containers or microVMs | [`backend/`](../../bot_bottle/backend/) |
+| Orchestrator | per-host service in a container or microVM | the bottle registry, egress tokens (encrypted at rest), the supervise queue, the control-plane signing key. It is the only opener of its own database, `registry.db` | [`orchestrator/`](../../bot_bottle/orchestrator/) |
+| Gateway | per-host service in a container or microVM | the egress proxy, git-gate, the supervise MCP server, the mitmproxy CA | [`gateway/`](../../bot_bottle/gateway/) |
 | Agent runtime | one container or microVM per bottle | the model harness (claude, codex, pi) and the workspace | `contrib/<provider>/` |
 
 The orchestrator and gateway are the **infra pair**. They start on first
@@ -71,7 +71,7 @@ the recorded one still answers. Stop the first (`bot-bottle down --backend
 
 `status` and `doctor` warn about other bot-bottle orchestrators answering at a
 backend's well-known address, such as a leftover test run's. They say how to
-remove them (`control/client.py`).
+remove them ([`control/client.py`](../../bot_bottle/control/client.py)).
 
 ### From the agent's side
 
@@ -173,16 +173,19 @@ Where each kind of state lives, and what owns it.
 | What | Where | Owner |
 |---|---|---|
 | User agents and bottles | `~/.bot-bottle/{agents,bottles}/`, versioned ([below](#versioned-user-files)) | user |
-| Project agents and bottles | `<repo>/.bot-bottle/`, run only once trusted. Trust is kept in the host database ([below](#project-files-and-trust)) | repo |
+| Project agents and bottles | `<repo>/.bot-bottle/`, run only once trusted. Trust is kept in the host database ([projects.md](projects.md)) | repo |
 | Host settings, forge connections, bottled agents and their sessions, audit forwarding cursors | `~/.bot-bottle/db/bot-bottle.db` ([below](#databases), [forge connections](#forge-connections), [bottled agents](#bottled-agents)) | host controller |
 | The audit index | `~/.bot-bottle/db/index.db`, rebuilt from the journal ([below](#databases)) | host controller |
+| Daily backups of `bot-bottle.db` | `~/.bot-bottle/db/backups/`, mode 0700, files 0600 ([checks and backups](host-controller.md#checks-and-backups)) | host controller |
 | Registry, supervise queue, encrypted egress secrets, canary events | `registry.db` ([below](#databases)) | orchestrator |
 | What infra bring-up recorded: the environment's orchestrator (backend and host URL), each backend's infra settings, docker's subnet and ports | `bot-bottle.db`'s `infra_state`, written by each bring-up | host controller |
+| Host secrets: route tokens, logins, model keys, forge tokens, `secret:NAME` values | `~/.bot-bottle/secrets`, mode 0600 ([secrets.md](secrets.md)) | user, and bot-bottle's own writes |
 | Signing keys | `~/.bot-bottle/<key file>`, mode 0600, pushed to the key holder | host |
 | Gateway CA | `~/.bot-bottle/gateway-ca/`, mounted at mitmproxy's confdir (firecracker: `~/.bot-bottle/infra/gateway-ca/`, pushed into the gateway VM) | gateway |
 | Audit journal | `~/.bot-bottle/audit/` | host controller |
+| Audit record key, which encrypts the conversation records sent to the console | `~/.bot-bottle/audit.key`, mode 0600, never sent. Back it up: without it the sent records can't be read ([host-controller.md](host-controller.md#audit)) | host controller |
 | Per-bottle files: compose files, env and prompt files, logs, the preserve marker, its manifest versions' documents (`manifest/vNNNN.yaml`; their log is in `bot-bottle.db`), git-gate's re-provisioning state ([git-gate.md](git-gate.md#re-provisioning-state), an [ADR 0020 exception](../decisions/0020-where-host-state-lives.md#exceptions)) | `~/.bot-bottle/state/<identity>/` | backend |
-| Image and kernel caches, VM run dirs, firecracker's build store | `~/.cache/bot-bottle/`, and the runtime's own image store ([below](#image-caches)). Only what can be downloaded or rebuilt | backend |
+| Image and kernel caches, VM run dirs, firecracker's build store | `~/.cache/bot-bottle/`, and the runtime's own image store ([backends.md](backends.md#image-caches)). Only what can be downloaded or rebuilt | backend |
 
 Paths are the live environment's. A named environment, picked by `BOT_BOTTLE_ENV`, keeps
 the same layout under `~/.bot-bottle-envs/<name>/`. It prefixes its
@@ -204,13 +207,13 @@ Each database has one job and one writer
 | `index.db` | indexes derived from logs: the audit index (`audit_events`, `audit_index_cursor`) | host controller | `~/.bot-bottle/db/` |
 | `registry.db` | the orchestrator's working state: the bottle registry, encrypted egress secrets, the supervise queue and its answers, canary events | orchestrator | docker: `~/.bot-bottle/registry/` (0700), the orchestrator's only mount. macOS: a container volume. Firecracker: the orchestrator VM's `/dev/vdb` volume, `~/.bot-bottle/infra/registry.ext4` |
 
-- One helper opens every connection (`lib/db_store.connect`), in WAL mode
+- One helper opens every connection ([`lib/db_store.connect`](../../bot_bottle/lib/db_store.py)), in WAL mode
   with a 5 s busy timeout.
 - Each writer migrates its database when it starts, without asking. It drops
   any table none of its stores' `TABLES` names, such as what an older version
   kept there, and then VACUUMs.
 - A store that reads rows and writes from them does both in one
-  `BEGIN IMMEDIATE` transaction (`db_store.immediate`).
+  `BEGIN IMMEDIATE` transaction ([`db_store.immediate`](../../bot_bottle/lib/db_store.py)).
 - The CLI reads and changes host state through the host controller's API
   ([host-controller.md](host-controller.md#host-database)). Only
   `bot-bottle uninstall` and `host restore-db` touch the file itself.
@@ -218,89 +221,31 @@ Each database has one job and one writer
   backup ([checks and backups](host-controller.md#checks-and-backups)).
 - `index.db` has no backup. A missing or damaged one is deleted and rebuilt
   from its log at start. A new derived index goes here, never in
-  `bot-bottle.db` (`index_db.py`).
-- Each store marks its tables portable, machine-specific or mixed
-  (`TABLES`), and a mixed table's columns (`COLUMNS`). Nothing reads the
-  marks yet. The [table below](#what-travels) says which is which.
+  `bot-bottle.db` ([`index_db.py`](../../bot_bottle/control/hostctl/index_db.py)).
+- Each store marks its tables portable, machine-specific or mixed (`TABLES`,
+  and a mixed table's `COLUMNS`), for restoring host state onto another
+  machine. Nothing reads the marks yet.
 - No secret value is in `bot-bottle.db` or `index.db`. A row names a secret
   in the host secrets file (`secret:NAME`), as forge users and the pairing's
   console tokens do.
 
-#### What travels
-
-Portable state could be restored onto another machine. Machine-specific state
-couldn't.
-
-| State | Mark |
-|---|---|
-| Audit passkeys (`audit_passkeys`), forge users (`forge_users`) | portable |
-| Forge connections (`forge_connections`) | mixed: `ssh`, this machine's address for the forge, is machine-specific |
-| Host settings (`bot_bottle_config`) | mixed: the host budget, `audit_retention_max_gb`, `cached_image_stale_warning_days` and the firehose sinks (exec sinks run this machine's programs) are machine-specific |
-| Every other table | machine-specific |
-
 ### Versioned user files
 
 `~/.bot-bottle/` holds a git repo that tracks only `agents/` and `bottles/`
-(`manifest/versions.py`, PRD 0103 in the design repo).
+([`manifest/versions.py`](../../bot_bottle/manifest/versions.py), PRD 0103 in the design repo).
 
 - bot-bottle commits its own writes.
 - Hand edits are committed as "edited by hand" before a launch reads them.
 - It refuses a commit holding a value from the secrets file.
 - The launch audit event records the version (`bottle_versions`).
 - `bot-bottle bottles history` and `revert` read and restore versions.
-- `bottles migrate` (`manifest/migrate.py`) rewrites an old-format bottle as
+- `bottles migrate` ([`manifest/migrate.py`](../../bot_bottle/manifest/migrate.py)) rewrites an old-format bottle as
   forge grants, as a version.
-
-### Project files and trust
-
-Project bottles, and some project agents, run only once `bot-bottle trust`
-records them in the host database (`trust_records`). The host controller
-writes them, and the CLI asks it.
-
-- Every project bottle needs trust.
-- A project agent needs trust when its `agent_provider` grants anything, or
-  when it runs on a host bottle granting more than `basic`.
-- A project bottle's trust also covers this host's connection to each forge
-  its repos are on (ADR 0019).
-
-A project agent's trust hash (`manifest/trust.py`) covers three things:
-
-- its `.md`
-- what it gets from the host
-- every file its image build takes from the launch directory
-
-The build files are a custom `agent_provider.dockerfile_path`'s bytes, and an
-overlay's staged build context. That context is its Dockerfile plus that
-Dockerfile's whole directory, or its `files`.
-
-`agent_overlay.inputs_digest` digests the overlay context. It is the overlay
-cache key's context, staged on a placeholder base, so the two can't drift.
-
-Editing any of these files asks again. So does a missing input appearing.
-
-Trust records from before builds were covered have no `scheme`. They
-re-prompt once for agents that build, and the prompt says why.
-
-A project agent replaces a home agent of the same name, and its trust prompt
-says so.
-
-A project bottle is named `./<name>`, so it never shadows or is shadowed by a
-host bottle. `bot-bottle <agent>` uses `./main` when the project has one.
-
-### Onboarding
-
-A terminal launch in a project with no project bottle first drafts one from
-the checkout (`onboarding.py`). Once you accept it, bot-bottle writes it and
-trusts it.
-
-The draft grants the project's `origin`, read-only, with the forge's
-description, when this host connected that forge. When it hasn't, onboarding
-offers `forge connect`.
 
 ### Forge connections
 
 `bot-bottle.db` holds each forge this host connected, keyed by host
-(`forge_connections.py`). `bot-bottle forge list` prints them.
+([`forge_connections.py`](../../bot_bottle/forge_connections.py)). `bot-bottle forge list` prints them.
 
 | Table | Row |
 |---|---|
@@ -333,57 +278,47 @@ fields:
   for resume. It also removes one that records no backend, and a state dir
   no row records, which nothing can resume.
 
-### Image caches
-
-`bot-bottle cleanup images` removes superseded releases at once, and unused
-builds after 14 days. It never removes a current pin or an image in use (PRD
-0088, design repo).
-
 ## Other reference pages
 
-- [backends.md](backends.md): the three backends and their isolation
-- [install.md](install.md): installing, host requirements, environments, uninstalling
-- [manifest.md](manifest.md): bottle and agent files, trust, egress routes
-- [gateway.md](gateway.md): egress proxy, DLP, supervise, firehose, CA
-- [git-gate.md](git-gate.md): the git push and fetch gate
-- [host-controller.md](host-controller.md): sessions, jobs, audit, remote access
-- [runtime-contract.md](runtime-contract.md): routes, roles, tokens and env
-- [glossary.md](glossary.md): terms
-- [ci.md](ci.md), [image-build-inputs.md](image-build-inputs.md): CI and image hashing
+Every reference page is listed in the [reference index](README.md).
 
-## For contributors
+## Source layout
 
 ### Layers
 
-`bot_bottle/` has three layers, enforced by `tests/unit/test_layering.py`
-(PRD 0087, design repo).
+The orchestrator and gateway images copy only
+[`contract/`](../../bot_bottle/contract/), [`lib/`](../../bot_bottle/lib/) and
+their own package. So service code can't import host code, and a CLI change
+doesn't rebuild them. [`image_inputs.py`](../../bot_bottle/image_inputs.py)
+hashes the same paths.
+
+[`bot_bottle/`](../../bot_bottle/) has four layers, enforced by
+[`tests/unit/test_layering.py`](../../tests/unit/test_layering.py) (PRD 0087,
+design repo).
 
 | Layer | Packages | May import |
 |---|---|---|
-| contract | `contract/` | stdlib, `contract` |
-| lib | `lib/` | stdlib, `lib` |
-| services | `orchestrator/`, `gateway/` | stdlib, their pinned deps, `contract`, `lib`, themselves |
+| contract | [`contract/`](../../bot_bottle/contract/) | stdlib, `contract` |
+| lib | [`lib/`](../../bot_bottle/lib/) | stdlib, `lib` |
+| services | [`orchestrator/`](../../bot_bottle/orchestrator/), [`gateway/`](../../bot_bottle/gateway/) | stdlib, their pinned deps, `contract`, `lib`, themselves |
 | host | everything else | anything |
 
-The service images copy only `contract/`, `lib/` and their own package. So a
-CLI change doesn't rebuild them. `image_inputs.py` hashes the same paths.
-
-`contract/` is the wire format between host and services. It is specified in
+[`contract/`](../../bot_bottle/contract/) is the wire format between host and services. It is specified in
 [runtime-contract.md](runtime-contract.md).
 
 ### Code map
 
 | Package / module | Does |
 |---|---|
-| `manifest/` | loads agent and bottle Markdown files, resolves `extends:`, seals the bottle, project bottle and agent trust |
-| `agent_provider.py`, `contrib/` | per-harness image, command, auth and egress routes |
-| `egress/`, `git_gate/`, `supervisor/` | host-side plans for each gateway service, built from the sealed bottle |
-| `backend/base.py` | `BottleBackend`: `prepare` → `launch` → `provision` → teardown |
-| `backend/launch_common.py`, `provision_gateway.py`, `gateway_attach.py` | launch steps every backend shares |
+| [`manifest/`](../../bot_bottle/manifest/) | loads agent and bottle Markdown files, resolves `extends:`, seals the bottle, project bottle and agent trust |
+| [`agent_provider.py`](../../bot_bottle/agent_provider.py), [`contrib/`](../../bot_bottle/contrib/) | per-harness image, command, auth and egress routes |
+| [`egress/`](../../bot_bottle/egress/), [`git_gate/`](../../bot_bottle/git_gate/), [`supervisor/`](../../bot_bottle/supervisor/) | host-side plans for each gateway service, built from the sealed bottle |
+| [`backend/base.py`](../../bot_bottle/backend/base.py) | `BottleBackend`: `prepare` → `launch` → `provision` → teardown |
+| [`backend/launch_common.py`](../../bot_bottle/backend/launch_common.py), [`provision_gateway.py`](../../bot_bottle/backend/provision_gateway.py), [`gateway_attach.py`](../../bot_bottle/backend/gateway_attach.py) | launch steps every backend shares |
 | `backend/{docker,firecracker,macos_container}/` | per-backend launch, infra, cleanup, freeze |
-| `control/` | host side of the control plane: orchestrator client and lifecycle, registration, git-gate render, CA rotation |
-| `control/hostctl/` | the host controller daemon |
-| `contract/` | routes, token roles, shared constants, the YAML subset parser |
-| `orchestrator/` | FastAPI control plane and its SQLite stores |
-| `gateway/` | mitmproxy addon, git smart-HTTP server, supervise server, bootstrap |
-| `lib/` | stdlib-only helpers shared by host and services |
+| [`control/`](../../bot_bottle/control/) | host side of the control plane: orchestrator client and lifecycle, registration, git-gate render, CA rotation |
+| [`control/hostctl/`](../../bot_bottle/control/hostctl/) | the host controller daemon |
+| [`contract/`](../../bot_bottle/contract/) | routes, token roles, shared constants, the YAML subset parser |
+| [`orchestrator/`](../../bot_bottle/orchestrator/) | FastAPI control plane and its SQLite stores |
+| [`gateway/`](../../bot_bottle/gateway/) | mitmproxy addon, git smart-HTTP server, supervise server, bootstrap |
+| [`lib/`](../../bot_bottle/lib/) | stdlib-only helpers shared by host and services |

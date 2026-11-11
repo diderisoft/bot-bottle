@@ -102,9 +102,8 @@ Setup checks interface addresses and routes other than vmnet bridges
 (`conflicts`). A launch is refused while something else uses the subnet, with
 setup as the remedy.
 
-Setup lists what it changes before printing the `sudo` block. The daemon only
-ever touches `bridge*` interfaces, so a LAN that happens to use the agent
-subnet's first address is left alone.
+The daemon only ever touches `bridge*` interfaces, so a LAN that happens to use
+the agent subnet's first address is left alone.
 
 #### Launch refusals
 
@@ -170,9 +169,7 @@ After the probe, the launch checks, as the agent's user, whether the agent:
 
 If it can get root:
 
-- **Other agents are already running:** the launch is refused. The risk of
-  cross-agent sabotage through a removed firewall outweighs the benefit of
-  co-locating them.
+- **Other agents are already running:** the launch is refused.
 - **No other agents are running:** the launch warns, since the risk is
   deferred rather than immediate.
 
@@ -194,8 +191,7 @@ by a rootless podman service in the guest. It's a build and test convenience,
 not a security boundary.
 
 The podman service is guest-local. It starts after the bottle is registered and
-exposes its Docker-compatible API socket, so the agent still runs `docker` and
-`docker compose`.
+exposes a Docker-compatible API socket.
 
 Nothing is mounted from the host. Docker Desktop's socket stays out of the
 bottle, and the guest gains no outer VM capabilities. The docker and
@@ -205,7 +201,7 @@ firecracker backends reject the flag rather than silently ignore it.
 inside a nested container is the agent user outside it. The bottle remains the
 boundary.
 
-The reason is that rootless Docker doesn't work here at all. Apple Container's
+Podman is used because rootless Docker doesn't work here. Apple Container's
 capability bounding set omits `CAP_SYS_ADMIN`, which the kernel requires to
 write a multi-range `uid_map`. Podman avoids that requirement by falling back
 to a single-UID mapping.
@@ -245,7 +241,7 @@ egress:
       dlp: false
 ```
 
-Pulling images goes through the bottle's egress proxy like every other request.
+Pulls go through the bottle's egress proxy like every other request.
 
 - **The CDN route:** the CDN is a different host. Without its route the pull
   authenticates, fetches the manifest, then 403s partway through.
@@ -271,8 +267,6 @@ The gateway's CA bundle and proxy settings are wired in automatically. So
 `docker run … curl https://…` works with no extra flags (no `--add-host`, `-e`,
 or `-v`).
 
-Two things to know when testing that:
-
 - **Public DNS fails by design.** Everything egresses through the proxy, so
   `nslookup` failing is expected and is not evidence of a problem.
 - **Use `curl`, because BusyBox `wget` will lie to you.** Alpine's BusyBox
@@ -297,11 +291,8 @@ Networking is set up once with root by `scripts/firecracker-netpool.sh` or
   table is missing.
 
 After the live pool, the setup reserves `BOT_BOTTLE_FC_ENV_SLOTS` (default 4)
-slices for named environments. Slice `k` is `bb<k>fc*` TAPs from
-`10.243.<k>.0`, tables `bot_bottle_fc<k>*` and infra links `bborch<k>`/`bbgw<k>`.
-
-`netpool.env_slice` computes the slices. The math is in
-[install.md](install.md#environments). Each environment's VMs and run
+slices for named environments, computed by `netpool.env_slice`
+([install.md](install.md#environments)). Each environment's VMs and run
 directories live apart (`util.env_dir`).
 
 ### The infra pair
@@ -351,8 +342,8 @@ guest environment.
 
 ## docker
 
-Docker is the weakest boundary: agents share the host kernel unless gVisor is
-registered. The code is in `backend/docker/`.
+Agents share the host kernel unless gVisor is registered. The code is in
+`backend/docker/`.
 
 Names below are the live environment's. A named one uses `bb-<name>-` and its
 own subnets ([install.md](install.md#environments)).
@@ -418,9 +409,6 @@ adopted bottle's, and `cleanup`.
 A recreated gateway has lost its agent-network attachments. Reattach joins it
 to each running bottle's network at `.2` again.
 
-A bottle launched before per-agent networks stays on the shared
-`bot-bottle-gateway` network until it's relaunched.
-
 #### Secrets
 
 The agent's compose file holds only bare env names. Values such as
@@ -463,12 +451,6 @@ On macos-container the probe runs twice:
    host pf anchor.
 2. As the agent's user, against its firewall, with the sibling knock.
 
-### Timing
-
-With python3 in the guest, the checks run at once. A launch then waits about
-one timeout rather than their sum, since a blocked attempt is a drop that waits
-it out. Without python3 they run one after another.
-
 ### How often
 
 `BOT_BOTTLE_ISOLATION_CHECK` sets how often the probes run:
@@ -484,11 +466,10 @@ runs again after a new boot, a reinstalled firewall (its rules file), or a new
 agent network, host address or LAN address.
 
 Those keys come from `host_firewall.isolation_key`. The keys it passed for are
-kept in the host database (`isolation_passes`), the newest eight. Between
-reboots, the pf daemon reloads the anchor each minute.
+kept in the host database (`isolation_passes`), the newest eight.
 
-Probes of a single agent's boundary run on every launch. They cover its own
-firewall, its docker network, its VM's nft rules, and the sibling knock.
+The per-agent probes cover its own firewall, its docker network, its VM's nft
+rules, and the sibling knock.
 
 ## The agent's home
 
@@ -587,12 +568,10 @@ BOT_BOTTLE_FC_WORKSPACE_DISK=1     # or a size, such as 32G
 ```
 
 On firecracker this keeps the workspace on a disk of its own, so what the agent
-installed or built there survives to the next launch. The default size is 16G,
-sparse (`backend/firecracker/workspace_disk.py`).
-
-Without it, a new bottled agent starts with a fresh home on every backend. What
-the agent installed or built in the workspace (`node_modules`, a `.venv`, a
-build dir) is then gone the next time the project is launched.
+installed or built there (`node_modules`, a `.venv`, a build dir) survives to
+the next launch of the project. Without it, a new bottled agent starts with a
+fresh home on every backend. The default size is 16G, sparse
+(`backend/firecracker/workspace_disk.py`).
 
 **One disk per project, agent and bottle stack, per user.** It's
 `<state root>/workspace-disks/<hash>.ext4`, keyed on the project's real path,
@@ -749,18 +728,9 @@ docker and firecracker build with Docker. macos-container builds with Apple's
 
 Without the opt-in, an install with nothing published to match stops before
 bring-up touches anything (`InfraService.require_infra_images`). An install
-from `main` after the last release is one:
-
-```
-bot-bottle: error: this install (0.1.4 @ 1a2b3c4d5e6f, unreleased) has no published infra images.
-    Install a release: curl -fsSL https://raw.githubusercontent.com/diderisoft/bot-bottle/main/install.sh | sh
-    Or build them locally (needs Docker): bot-bottle up --build
-    (BOT_BOTTLE_INFRA_BUILD=local does the same for every command.)
-```
-
-The version is the package's. The commit comes from git in a checkout, or from
-the install's `direct_url.json`. Re-running the installer installs the latest
-release tag (`infra_image.RELEASE_INSTALL_HINT`).
+from `main` after the last release is one. The error says to install a release
+with the installer, which installs the latest release tag
+(`infra_image.RELEASE_INSTALL_HINT`), or to build locally.
 
 ### When `--build` sticks
 
@@ -781,27 +751,23 @@ A cold start or `up --restart-infra` still needs a matching release or
 
 ## Gateway restarts
 
-The orchestrator and gateway restart only for new images or changed settings.
-When they do, running bottles lose the network for about ten seconds.
+The orchestrator and gateway restart only for new images (their inputs hash) or
+changed settings. When they do, running bottles lose the network for about ten
+seconds.
 
 `bot-bottle up` adopts a running orchestrator and gateway when they're healthy
 and booted the current images and settings. That holds with or without
-`--restart`, which restarts the host controller.
-
-Only new images (their inputs hash) or changed settings reboot them. `bot-bottle
-up --restart-infra` forces it.
+`--restart`, which restarts the host controller. `bot-bottle up
+--restart-infra` forces a reboot.
 
 A reboot builds or downloads the new images first, while the old pair still
-serves. Then it cuts over: running bottles lose the network for the ten or so
-seconds the pair takes to boot and reattach them.
+serves. Then it cuts over, and the new pair boots and reattaches the running
+bottles. A harness's own retries usually cover the gap. Claude Code retries a
+failed request up to ten times.
 
-A harness's own retries usually cover that. Claude Code retries a failed
-request up to ten times.
-
-The CA agents trust doesn't change across reboots. The host keeps it and
-pushes it into each new gateway. The gateway's first boot mints it.
-
-So a running agent's process, which read its trust store once at start, keeps
+The CA agents trust doesn't change across reboots. The gateway's first boot
+mints it, and the host keeps it and pushes it into each new gateway. So a
+running agent's process, which read its trust store once at start, keeps
 trusting the gateway.
 
 ### Reattach
@@ -839,6 +805,15 @@ To clear a bottle that won't reattach:
 3. Resume it (`bot-bottle resume <bottle>`), which provisions it against the
    current gateway. If it's gone (its VM or container died), `bot-bottle
    cleanup bots` removes what's left.
+
+## Image caches
+
+`bot-bottle cleanup images` removes superseded releases at once, and unused
+builds after 14 days. It never removes a current pin or an image in use (PRD
+0088, design repo).
+
+Each backend lists what it keeps, and why, through `cache_entries()`
+([below](#lifecycle)).
 
 ## Internals
 
@@ -887,8 +862,6 @@ tar headers are recorded as it's unpacked (`<tree>/.bb-owners`).
 After `mke2fs -d`, one `debugfs -w` pass gives each inode the owner and mode
 the image had. Files the image didn't hold, like the injected init and
 dropbear, are root's (`rootfs_owners.py`).
-
-A cached tree from before the record is rebuilt.
 
 ### firecracker: the guest environment
 

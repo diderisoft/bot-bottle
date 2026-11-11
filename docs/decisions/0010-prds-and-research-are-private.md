@@ -49,4 +49,4 @@ how the system works and why, and anyone reviewing a security tool needs them.
 ## Links
 
 - Issue #612 (move PRDs out of the public tree).
-- [`docs/README.md`](../README.md) — which document to write.
+- [`docs/about-these-docs.md`](../about-these-docs.md) — which document to write.

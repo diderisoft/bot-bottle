@@ -43,5 +43,5 @@ friction that pushes people towards a wide-open bottle.
 ## Links
 
 - ADR 0017: suggested bottles aren't saved unless asked.
-- [bottles-suggest.md](../reference/bottles-suggest.md).
+- [architect.md](../reference/architect.md).
 - PRD 0117 (design repo): suggested bottles.

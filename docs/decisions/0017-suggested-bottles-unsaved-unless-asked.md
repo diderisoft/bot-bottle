@@ -49,6 +49,6 @@ when you ask ("Save it as a bottle, then run it", or `bottles suggest
 
 ## Links
 
-- [bottles-suggest.md](../reference/bottles-suggest.md): the guided start.
+- [architect.md](../reference/architect.md): the guided start.
 - ADR 0018: `--auto`, which runs the suggestion without asking.
 - PRD 0117 (design repo): suggested bottles.

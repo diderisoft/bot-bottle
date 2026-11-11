@@ -33,7 +33,7 @@ The agent starts on your task. If it needs something its bottle doesn't allow, i
 - **Every outbound request is checked against the bottle's allowlist.** Requests on inspected routes are also scanned for secrets. → [gateway](docs/reference/gateway.md#outbound-dlp)
 - **Every push through git-gate is secret-scanned** and carries a `Bot-Bottle:` trailer naming its bottle. → [git-gate](docs/reference/git-gate.md#commit-trailers)
 - **Each agent runs in its own microVM or container**, checked at launch to have no way out but the gateway. → [backends](docs/reference/backends.md)
-- **A repo can't hand you a bottle you haven't trusted.** Any change asks again. → [manifest](docs/reference/manifest.md#trust)
+- **A repo can't hand you a bottle you haven't trusted.** Any change asks again. → [projects](docs/reference/projects.md)
 
 What it doesn't defend against is in the [threat model](https://bot-bottle.com/docs/security/threat-model).
 
@@ -42,7 +42,7 @@ What it doesn't defend against is in the [threat model](https://bot-bottle.com/d
 - [Getting started](https://bot-bottle.com/docs/start): install, first agent, first bottle
 - [Threat model](https://bot-bottle.com/docs/security/threat-model): what's in and out of scope
 - [All docs](https://bot-bottle.com/docs)
-- In this repo: [architecture](docs/reference/architecture.md), [manifest](docs/reference/manifest.md), [gateway](docs/reference/gateway.md), [git-gate](docs/reference/git-gate.md), [backends](docs/reference/backends.md), [install](docs/reference/install.md), [bottles-suggest](docs/reference/bottles-suggest.md), [CI](docs/reference/ci.md), [decisions](docs/decisions/README.md)
+- In this repo: [architecture](docs/reference/architecture.md), [manifest](docs/reference/manifest.md), [gateway](docs/reference/gateway.md), [git-gate](docs/reference/git-gate.md), [backends](docs/reference/backends.md), [install](docs/reference/install.md), [architect](docs/reference/architect.md), [CI](docs/reference/ci.md), [decisions](docs/decisions/README.md)
 
 ## Contributing
 

@@ -36,7 +36,8 @@ backend remains available with `BOT_BOTTLE_BACKEND=docker` or
 - `.gitignore` — OS junk.
 - `.bot-bottle/` — per-repo agent and bottle manifests (YAML markdown format).
 - `examples/` — example bottles and agents showing the manifest format.
-- `docs/README.md` — docs overview; when to write which document.
+- `docs/README.md` — docs overview: the key ideas, and where to go next.
+- `docs/about-these-docs.md` — when to write which document, and the docs style.
 - `docs/reference/` — how the system works **now**. Read
   `docs/reference/architecture.md` first; it links the rest (backends,
   install, manifest, gateway, git-gate, host controller, runtime contract,
@@ -52,7 +53,7 @@ backend remains available with `BOT_BOTTLE_BACKEND=docker` or
 - Design rationale lives in `docs/decisions/` and `docs/reference/`.
   Decision records are ADR-lite, numbered `NNNN-kebab.md`, for policies,
   boundaries and load-bearing choices; see `docs/decisions/README.md`
-  and `docs/README.md`.
+  and `docs/about-these-docs.md`.
 - PRDs and research notes live in the private `diderisoft/bot-bottle-design`
   repo (ADR 0010), for those who have access. This repo must make sense
   without it: mention a PRD in plain text ("PRD 0081 (design repo)"),

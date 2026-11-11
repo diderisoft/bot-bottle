@@ -1,8 +1,7 @@
 # Getting started
 
-bot-bottle runs a coding agent in its own VM. The agent can do anything
-inside it. Everything it sends out goes through a gateway that holds your
-credentials and only lets through what its bottle allows.
+Install bot-bottle, run your first agent and write your first bottle. For what
+bottles, agents and secrets are, see the [overview](README.md).
 
 ## Install
 

@@ -1,12 +1,12 @@
 # Runtime contract
 
-Build against this contract, not against host code. It is what crosses the
-boundary between the host and the services that run in guests: the
-orchestrator's control plane and the host controller's API.
+Build against this contract, not against host code, whether you're writing
+an operator's own tooling or a port. It is what crosses the boundary between
+the host and the services in guests: the orchestrator's control plane and the
+host controller's API.
 
-That applies to anything built against bot-bottle's services, such as an
-operator's own tooling or a port. Each section names the `contract/` module
-that is its reference implementation.
+Each section names the `contract/` module that is its reference
+implementation.
 
 | Side | Status | Design |
 |---|---|---|
@@ -88,8 +88,7 @@ access log.
 
 `contract/hostctl.py`, served by `control/hostctl/server.py`
 
-The host controller is the per-host daemon behind every bottle operation. An
-orchestrator it brought up reaches it through these.
+An orchestrator the host controller brought up reaches it through these.
 
 | Input | Detail |
 |---|---|
@@ -115,11 +114,10 @@ treat it as "nothing is running".
 
 ## Internal environment
 
-These are the `BOT_BOTTLE_*` variables bot-bottle sets for its own processes.
-None is a knob. The ones you can set are in [install.md](install.md#settings).
+bot-bottle sets these `BOT_BOTTLE_*` variables for its own processes. None
+is a knob. The ones you can set are in [install.md](install.md#settings).
 
-The table is generated from `bot_bottle/env_vars.py` by
-`scripts/gen_env_docs.py`.
+`scripts/gen_env_docs.py` generates the table from `bot_bottle/env_vars.py`.
 
 <!-- env-vars:internal:begin -->
 | Variable | Does | Default |

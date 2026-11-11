@@ -9,7 +9,7 @@ that disappears when the host does.
 Decision records and [`docs/reference/`](../reference/architecture.md)
 are the public record of the design. PRDs and research notes live in
 the private design repo (ADR 0010); a record here must stand without
-them. See [`docs/README.md`](../README.md) for when to write a decision
+them. See [`docs/about-these-docs.md`](../about-these-docs.md) for when to write a decision
 record.
 
 ## Format

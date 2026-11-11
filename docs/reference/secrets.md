@@ -174,7 +174,7 @@ Env values never go on a host command line, where other host users could read th
 | Canary | any request carrying it on an inspected route is a 403, recorded for `bot-bottle resolve-canary` | `passthrough` routes |
 | [git-gate push scan](git-gate.md#push) | injected tokens, the canary and secret env values of 8 or more characters, anywhere in a push | `?` and `${VAR}` inputs, and shorter secret values |
 | gitleaks on pushes | anything with a known token shape | shapeless values |
-| [Trust prompt](manifest.md#trust) | each route `auth.value`, forge token, `secret:` entry (listed as `secret`), `?` and `${VAR}` entry (listed as `input`), and provider login or key | |
+| [Trust prompt](projects.md) | each route `auth.value`, forge token, `secret:` entry (listed as `secret`), `?` and `${VAR}` entry (listed as `input`), and provider login or key | |
 | Bottle file guard | a saved version or a console edit holding a secrets-file value is refused | values shorter than 8 characters |
 | Console | sees names only. Transcripts mask secret values and token shapes. | `?` and `${VAR}` inputs. Typed and shell secrets after the host controller restarts and re-adopts a running bottle. |
 

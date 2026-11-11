@@ -43,8 +43,6 @@ Docker is the weakest boundary.
 | 10 | Unattributed supervise requests | attribution through the orchestrator |
 | 11 | One agent reaching another | a VM or container per bottle, and network separation per backend |
 
-Each row is detailed below.
-
 ### 1. Network exfiltration to unlisted hosts
 
 **Threat:** the agent contacts a host not on its bottle's egress allowlist.
@@ -178,8 +176,7 @@ never enter the agent.
 
 **Not covered:** values a bottle passes as env (`secret:` entries, and `?`
 and `${VAR}` inputs) are in the agent's env in plain text. git-gate refuses
-the `secret:` ones in a push. Egress doesn't
-block them (see 3).
+the `secret:` ones in a push. Egress doesn't block them (see 3).
 
 See [secrets.md](../reference/secrets.md) for where each kind of secret is held.
 
@@ -275,8 +272,8 @@ bugs.
 | **Compromised host** | Root on the host, or the host user's own access, controls every bottle, the infra pair and all state. This is host security, not a sandbox problem. |
 | **Compromised orchestrator** | It holds the control-plane signing key, the bottle registry and every bottle's egress tokens, encrypted at rest. Compromise allows minting `cli` and `gateway` tokens, changing allowlists and reading tokens. |
 | **Compromised gateway** | It holds every running bottle's upstream credentials while it serves them, and the mitmproxy CA. Compromise gives all of that. It is the most valuable component to protect. |
-| **Compromised or hostile console** | See [The console](#the-console) below. Pairing gives the console operator-level control. `bot-bottle pair off` turns the link off. |
-| **Audit journal rewritten on the host** | The hash chain has no key. Whoever has the host user's access can rewrite the whole chain, or cut its tail, and it still verifies. See [The audit journal](#the-audit-journal) below. |
+| **Compromised or hostile console** | Pairing gives the console operator-level control. See [The console](#the-console) below. |
+| **Audit journal rewritten on the host** | The hash chain has no key. See [The audit journal](#the-audit-journal) below. |
 | **Escape from the VM or container** | A kernel, hypervisor or container-runtime exploit is out of scope. See [VM and container escape](#vm-and-container-escape) below. |
 | **Root inside a macos-container agent** | An agent with root in its VM can remove its in-guest firewall and spoof other agents. pf still keeps it off the Mac. See [Root inside a macos-container agent](#root-inside-a-macos-container-agent) below. |
 | **Malicious or backdoored agent image** | Runtime controls assume the image is trustworthy. Base images are digest-pinned. A supply-chain compromise upstream of that pin isn't detected. |
@@ -318,8 +315,6 @@ host user.
 See [host-controller.md](../reference/host-controller.md#audit).
 
 ### VM and container escape
-
-A kernel, hypervisor or container-runtime exploit is out of scope.
 
 - On docker the agent shares the host kernel. gVisor narrows that when
   installed.
