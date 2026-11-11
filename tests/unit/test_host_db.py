@@ -65,7 +65,8 @@ class TestHostTables(_Root):
         host_db_path().parent.mkdir(parents=True, mode=0o700)
         with sqlite3.connect(host_db_path()) as db:
             db.execute("CREATE TABLE something_older (x INTEGER)")
-        host_db.migrate()
+        with redirect_stderr(io.StringIO()):
+            host_db.migrate()
         self.assertTrue(all(store.is_migrated() for store in host_db.stores()))
 
     def test_migrate_drops_nothing_a_host_store_owns(self) -> None:
@@ -88,7 +89,8 @@ class TestHostTables(_Root):
             db.execute("CREATE TABLE schema_versions (module TEXT PRIMARY KEY, "
                        "version INTEGER NOT NULL DEFAULT 0)")
             db.execute("INSERT INTO schema_versions VALUES ('orchestrator_registry', 3)")
-        host_db.migrate()
+        with redirect_stderr(io.StringIO()):
+            host_db.migrate()
         ConfigStore(host_db_path()).set_audit_delivery("required")
         dropped = host_db.migrate()
         self.assertEqual([], dropped)  # dropped on the first start, nothing after
@@ -450,6 +452,39 @@ class TestRestoreCommand(_HostDb):
         code, _, err = self.run_cmd()
         self.assertEqual(1, code)
         self.assertIn("no backups", err)
+
+
+class TestDaemonLock(_Root):
+    """The host controller's lifetime lock: two never run for one root."""
+
+    def test_one_holder_at_a_time_naming_the_first(self) -> None:
+        fd = runner.hold_daemon_lock()
+        try:
+            with self.assertRaisesRegex(runner.DaemonLockHeld, f"pid {os.getpid()}"):
+                runner.hold_daemon_lock()
+        finally:
+            os.close(fd)
+        os.close(runner.hold_daemon_lock())  # free again
+
+    def test_a_second_host_controller_exits_before_touching_anything(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.control.hostctl import __main__ as daemon
+        fd = runner.hold_daemon_lock()
+        cwd = os.getcwd()
+        socket_path = runner.control_socket_path()
+        socket_path.write_text("a live daemon's socket")
+        try:
+            with mock.patch.object(daemon, "LogRotator") as rotator, \
+                    mock.patch.object(daemon.host_db, "open_for_start") as opened, \
+                    redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(runner.REFUSED_EXIT_STATUS, daemon.main())
+        finally:
+            os.close(fd)
+            os.chdir(cwd)
+        rotator.assert_not_called()
+        opened.assert_not_called()
+        self.assertTrue(socket_path.exists())
+        self.assertIn("not starting", err.getvalue())
 
 
 if __name__ == "__main__":

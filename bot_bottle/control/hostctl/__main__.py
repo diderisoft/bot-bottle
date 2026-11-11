@@ -18,11 +18,14 @@ from ...contract.auth import ROLE_GATEWAY
 from ...contract.hostctl import GUEST_PORT, HOST_CONTROL, PORT_ENV, ROLE_ORCHESTRATOR
 from ... import host_access
 from ...control.lifecycle import Orchestrator
-from ...lib.log import debug, info, warn
+from ...lib.log import debug, error, info, warn
 from ...paths import bot_bottle_root
 from ...trust_domain import HostControlProvisioning, HostLink, signing_key
 from .build import current_build_id
-from .runner import HostControlState, control_socket_path, leave_callers_directory, state_dir
+from .runner import (
+    DaemonLockHeld, HostControlState, control_socket_path, hold_daemon_lock,
+    leave_callers_directory, state_dir,
+)
 from . import budget, host_db, index_db, localsock
 from .github_git_tokens import GitTokenRenewer
 from .audit_events import HostAudit
@@ -103,6 +106,14 @@ def start_firehose() -> FirehoseHub:
 
 def main() -> int:
     leave_callers_directory()
+    # Held for this process's life: a second host controller for this root
+    # stops here, before it touches the log, the host DB or the control
+    # socket (which it would otherwise unlink from under the first).
+    try:
+        lifetime = hold_daemon_lock()
+    except DaemonLockHeld as e:
+        error(f"not starting: {e}")
+        return host_db.REFUSED_EXIT_STATUS
     # Keeps hostctl.log, which its launcher opened as stdout and stderr, from
     # growing without bound.
     log_rotator = LogRotator(state_dir() / "hostctl.log").start()
@@ -208,6 +219,7 @@ def main() -> int:
         firehose.close()
         audit.close()
         log_rotator.stop()
+        os.close(lifetime)
     return 0
 
 

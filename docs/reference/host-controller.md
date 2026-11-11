@@ -23,6 +23,9 @@ python -m bot_bottle.control.hostctl
 - It checks, migrates and backs up the host database when it starts,
   without asking ([Host database](#host-database)).
 - The CLI starts the daemon under a lock, so concurrent CLIs start only one.
+- The daemon holds `~/.bot-bottle/hostctl/daemon.lock` (`flock`) for its
+  whole life. A second one for the same root exits at once (status 78),
+  before it touches the log, the host database or the control socket.
 - It logs to `~/.bot-bottle/hostctl/hostctl.log`, whichever of the CLI,
   systemd or launchd started it. At 16 MiB the daemon moves it to
   `hostctl.log.1` and opens a fresh one, keeping 3 older files.
@@ -76,6 +79,10 @@ roles, `orchestrator` and `gateway`.
 
 `bot-bottle install` can add a launchd LaunchAgent or a `systemd --user`
 unit. A crash is restarted. A clean exit is not.
+
+When the CLI finds no daemon answering, it has the service manager restart
+the unit (`systemctl --user restart`, `launchctl kickstart -k`). A unit that
+runs but doesn't answer is replaced, not left to time out.
 
 Stopping the daemon stops only its own process (`KillMode=process`,
 `AbandonProcessGroup`). So agents outlive a restart. Units installed before

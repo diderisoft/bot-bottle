@@ -91,7 +91,8 @@ def render_systemd(spec: ServiceSpec) -> str:
         "ExecStart=" + " ".join(_systemd_quote(a) for a in spec.argv()),
         *(f"Environment={_systemd_quote(f'{k}={v}')}" for k, v in spec.environment().items()),
         "Restart=on-failure",
-        "# A corrupt host DB: restarting won't help (`bot-bottle host restore-db`).",
+        "# A corrupt host DB (`bot-bottle host restore-db`), or another host controller",
+        "# running: restarting won't help.",
         f"RestartPreventExitStatus={REFUSED_EXIT_STATUS}",
         "# Agents (tmux, VMs) outlive a controller restart; the next one adopts them.",
         "KillMode=process",
@@ -164,15 +165,16 @@ def uninstall() -> bool:
     return True
 
 
-def start() -> None:
-    """Have the service manager start the daemon."""
+def restart() -> None:
+    """Have the service manager (re)start the daemon: start it if it isn't
+    running, restart it if it is (a daemon that doesn't answer)."""
     if manager() == "launchd":
-        _run(["launchctl", "kickstart", _launchd_target()])
+        _run(["launchctl", "kickstart", "-k", _launchd_target()])
     else:
-        _run(["systemctl", "--user", "start", SYSTEMD_UNIT])
+        _run(["systemctl", "--user", "restart", SYSTEMD_UNIT])
 
 
 __all__ = [
     "LAUNCHD_LABEL", "SYSTEMD_UNIT", "ServiceSpec", "install", "installed", "manager",
-    "render_launchd", "render_systemd", "start", "uninstall", "unit_path",
+    "render_launchd", "render_systemd", "restart", "uninstall", "unit_path",
 ]

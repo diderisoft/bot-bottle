@@ -28,6 +28,9 @@ from ...trust_domain import mint
 from .build import PACKAGE_ROOT, current_build_id
 
 CONTROL_SOCKET_FILENAME = "control.sock"
+# Held (`flock`) by the host controller for its whole life, so two never run
+# for one root, and by `host restore-db` while it replaces the host DB.
+DAEMON_LOCK_FILENAME = "daemon.lock"
 # The daemon's exit status when it refuses to start (a host DB that fails its
 # check, `host_db.py`). Its service unit doesn't restart it.
 REFUSED_EXIT_STATUS = 78
@@ -127,6 +130,43 @@ def lock() -> Generator[None]:
             fcntl.flock(fh, fcntl.LOCK_UN)
 
 
+class DaemonLockHeld(HostControlError):
+    """Another process holds the host controller's lifetime lock."""
+
+
+def hold_daemon_lock(directory: Path | None = None) -> int:
+    """Take the host controller's lifetime lock in `directory` (default:
+    this environment's state dir) and note this process's pid in it. The fd
+    holding it; it's released when the fd is closed or the process exits.
+    `DaemonLockHeld` (naming the holder) when another process holds it."""
+    directory = directory or state_dir()
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # Not inherited by what the daemon starts (tmux, VMs), which outlive it.
+    fd = os.open(directory / DAEMON_LOCK_FILENAME, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        holder = os.read(fd, 32).decode(errors="replace").strip()
+        os.close(fd)
+        raise DaemonLockHeld(
+            f"another host controller (or `host restore-db`) holds {directory / DAEMON_LOCK_FILENAME}"
+            + (f" (pid {holder})" if holder.isdigit() else "")) from None
+    os.ftruncate(fd, 0)
+    os.pwrite(fd, f"{os.getpid()}\n".encode(), 0)
+    return fd
+
+
+@contextmanager
+def daemon_lock(directory: Path | None = None) -> Generator[None]:
+    """Hold the host controller's lifetime lock for a block, so none starts
+    meanwhile. `DaemonLockHeld` when one is running."""
+    fd = hold_daemon_lock(directory)
+    try:
+        yield
+    finally:
+        os.close(fd)
+
+
 def ensure_running(
     timeout: float = START_TIMEOUT_SECONDS, *, confirm_restart: ConfirmRestart | None = None,
 ) -> HostControlState:
@@ -217,8 +257,9 @@ def _start(timeout: float) -> HostControlState:
     from . import service_unit  # pylint: disable=import-outside-toplevel
 
     if service_unit.installed():
-        # The service manager owns the daemon.
-        service_unit.start()
+        # The service manager owns the daemon. One it runs that doesn't
+        # answer is restarted: starting a running unit does nothing.
+        service_unit.restart()
         return _await_state(None, timeout)
     directory = state_dir()
     log_path = directory / "hostctl.log"
@@ -302,7 +343,7 @@ def _stop(state: HostControlState) -> None:
 
 
 __all__ = [
-    "ConfirmRestart", "HostControlError", "HostControlState", "StaleHostControllerError",
+    "ConfirmRestart", "DAEMON_LOCK_FILENAME", "DaemonLockHeld", "HostControlError", "HostControlState", "StaleHostControllerError",
     "restart", "stale_message", "cli_token", "control_socket_path", "ensure_running",
-    "lock", "probe", "read_state", "running", "state_dir", "stop", "REFUSED_EXIT_STATUS",
+    "daemon_lock", "hold_daemon_lock", "lock", "probe", "read_state", "running", "state_dir", "stop", "REFUSED_EXIT_STATUS",
 ]

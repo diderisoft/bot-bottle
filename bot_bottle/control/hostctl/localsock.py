@@ -24,7 +24,9 @@ Status = Callable[[], "dict[str, object] | None"]
 
 def serve(path: Path, manager: SessionManager,
           status_of: Status = lambda: None) -> socket.socket:
-    """Bind `path` and answer requests on a daemon thread; returns the socket."""
+    """Bind `path` and answer requests on a daemon thread; returns the socket.
+    A socket already at `path` is replaced: the caller holds the daemon's
+    lifetime lock (`runner.hold_daemon_lock`), so it's a dead daemon's."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.parent.chmod(0o700)
     path.unlink(missing_ok=True)

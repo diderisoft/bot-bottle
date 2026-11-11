@@ -67,8 +67,8 @@ class TestInstall(_Isolated):
                             for c in self.calls))
         with mock.patch.object(service_unit, "bot_bottle_root", return_value=Path("/other")):
             self.assertFalse(service_unit.installed())
-        service_unit.start()
-        self.assertEqual("kickstart", self.calls[-1][1])
+        service_unit.restart()
+        self.assertEqual(["launchctl", "kickstart", "-k"], self.calls[-1][:3])
         self.assertTrue(service_unit.uninstall())
         self.assertFalse(path.exists())
         self.assertFalse(service_unit.uninstall())
@@ -79,8 +79,9 @@ class TestInstall(_Isolated):
         self.assertTrue(service_unit.installed())
         self.assertIn(["systemctl", "--user", "enable", "--now", service_unit.SYSTEMD_UNIT],
                       self.calls)
-        service_unit.start()
-        self.assertEqual(["systemctl", "--user", "start", service_unit.SYSTEMD_UNIT],
+        # Restart, not start: a unit that runs but doesn't answer is replaced.
+        service_unit.restart()
+        self.assertEqual(["systemctl", "--user", "restart", service_unit.SYSTEMD_UNIT],
                          self.calls[-1])
         self.assertTrue(service_unit.uninstall())
         self.assertFalse(path.exists())
@@ -97,7 +98,7 @@ class TestRunnerAndCli(_Isolated):
     def test_runner_starts_through_the_service_when_installed(self) -> None:
         state = runner.HostControlState(pid=1, port=2, build_id="b")
         with mock.patch.object(service_unit, "installed", return_value=True), \
-             mock.patch.object(service_unit, "start") as start, \
+             mock.patch.object(service_unit, "restart") as start, \
              mock.patch.object(runner, "_await_state", return_value=state) as wait:
             self.assertEqual(state, runner._start(5))  # pyright: ignore[reportPrivateUsage]
         start.assert_called_once()
