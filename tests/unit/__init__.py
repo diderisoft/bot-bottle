@@ -98,10 +98,13 @@ def bottled_agent(identity: str, **fields: object) -> None:
     """Record a bottled agent `identity` (its `bottled_agents` row), as a
     backend's prepare does, so what's kept with it (an adoption record) has
     a row to go in."""
-    # pylint: disable-next=import-outside-toplevel
+    # pylint: disable=import-outside-toplevel
+    import dataclasses
     from bot_bottle.bottle_state import BottleMetadata, write_metadata
-    write_metadata(BottleMetadata(**{"identity": identity, "agent_name": "demo", "cwd": "",
-                                     "copy_cwd": False, "started_at": "t", **fields}))
+    write_metadata(dataclasses.replace(
+        BottleMetadata(identity=identity, agent_name="demo", cwd="", copy_cwd=False,
+                       started_at="t"),
+        **fields))
 
 
 # The unit suite never sees the repo's committed `published-artifacts.json`:
