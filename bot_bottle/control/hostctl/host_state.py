@@ -22,7 +22,7 @@ from ... import bottle_state, forge_connections
 from ...forge_connections import ForgeConnection, ForgeConnectionError, ForgeStore
 from ...errors import SecretsFileError
 from ...infra_state import InfraStateStore
-from ...lib.config_store import ConfigStore
+from ...lib.config_store import ConfigStore, HostConfig
 from ...manifest.trust import Trusted, TrustStore
 from . import audit_trust, pairing
 from .agent_prefs import AgentPrefsStore
@@ -40,13 +40,14 @@ def config() -> dict[str, object]:
 
 
 def set_config(body: dict[str, object]) -> dict[str, object]:
-    """Set the settings `body` names, all or none, and answer with every
-    setting."""
-    store = ConfigStore(host_db_path())
-    changed = store.host_config()
+    """Set the settings `body` names, all or none, in one transaction, and
+    answer with every setting. Settings it doesn't name aren't written, so a
+    concurrent change to another one isn't lost."""
+    changed = HostConfig()
     for name, value in body.items():
         changed = changed.with_json(name, value)
-    store.set_host_config(changed)
+    store = ConfigStore(host_db_path())
+    store.set_host_config(changed, body)
     return store.host_config().to_json()
 
 

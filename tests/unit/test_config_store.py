@@ -121,6 +121,48 @@ class TestConfigStore(unittest.TestCase):
             store.set_audit_delivery("required")
             self.assertEqual("required", store.audit_delivery())
 
+    def test_set_host_config_writes_only_the_named_settings(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
+            store = ConfigStore(Path(tmp) / "bot-bottle.db")
+            store.migrate()
+            store.set_audit_delivery("required")
+            store.set_transcript_retention_days(9)
+            # A writer that read before those changes, setting one other
+            # setting, leaves them alone.
+            store.set_host_config(HostConfig(audit_retention=AuditRetention(days=3)),
+                                  ["audit_retention"])
+            config = store.host_config()
+            self.assertEqual("required", config.audit_delivery)
+            self.assertEqual(9, config.transcript_retention_days)
+            self.assertEqual(3, config.audit_retention.days)
+
+    def test_set_host_config_is_one_write(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
+            store = ConfigStore(Path(tmp) / "bot-bottle.db")
+            store.migrate()
+            with mock.patch.object(store, "_set_columns", wraps=store._set_columns) as written:
+                store.set_host_config(HostConfig(audit_delivery="required",
+                                                 transcript_retention_days=4),
+                                      ["audit_delivery", "transcript_retention_days"])
+            written.assert_called_once_with({"audit_delivery": "required",
+                                             "transcript_retention_days": 4})
+            with self.assertRaises(ValueError):
+                store.set_host_config(HostConfig(), ["nope"])
+
+    def test_host_route_sets_only_what_the_body_names(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.control.hostctl import host_state
+        from tests.unit import use_bottle_root  # pylint: disable=import-outside-toplevel
+        with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
+            self.addCleanup(use_bottle_root(Path(tmp)))
+            ConfigStore(Path(tmp) / "db" / "bot-bottle.db").set_host_config(
+                HostConfig(transcript_retention_days=11))
+            reply = host_state.set_config({"audit_delivery": "required"})
+            self.assertEqual("required", reply["audit_delivery"])
+            self.assertEqual(11, reply["transcript_retention_days"])
+            with self.assertRaises(ValueError):
+                host_state.set_config({"audit_delivery": "required", "bogus": 1})
+
     def test_store_manager_includes_config_store(self) -> None:
         with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
             db = Path(tmp) / "bot-bottle.db"
