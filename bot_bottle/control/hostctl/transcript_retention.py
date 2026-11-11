@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from ...lib import log
 from ...paths import host_db_path
-from .transcripts import TranscriptStore, transcripts_root
+from .transcripts import TranscriptStore, copy_dir, transcripts_root
 
 if TYPE_CHECKING:
     from .audit_events import HostAudit
@@ -51,7 +51,12 @@ def sweep(audit: "HostAudit", retention_days: int, *, now: float | None = None) 
     for recorded in store.runs():
         if not recorded["closed"]:
             continue
-        run = root / recorded["session"] / recorded["activation"]
+        try:
+            # A row's ids name the dir it deletes: only ever one under root.
+            run = copy_dir(recorded["session"], recorded["activation"])
+        except ValueError as e:
+            log.warn(f"transcripts: not sweeping a run recorded as {e}")
+            continue
         try:
             if not run.is_dir() or _last_change(run) >= cutoff:
                 continue

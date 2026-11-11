@@ -232,8 +232,11 @@ Each copy is kept at:
 ~/.bot-bottle/transcripts/<session>/<activation>/<file>.jsonl
 ```
 
-The file is 0600, in 0700 directories. Its row in the host database
-(`transcript_files`) holds:
+The file is 0600, in 0700 directories. The session and activation are
+checked as ids when their row is written. Every path built from a row is
+checked to stay under `transcripts/` before it's read or deleted.
+
+Its row in the host database (`transcript_files`) holds:
 
 - the guest path
 - the offset read
@@ -513,7 +516,7 @@ asks over HTTP, with the `cli` role only:
 | `POST /agent-prefs` | `{"agent", "dir"}` | Remembers the agent for the directory, or as the remembered one when `dir` is `""`. Answers like `GET`. |
 | `GET /infra/state` | none | `{"state": {...}}`: what infra bring-up recorded. |
 | `GET /bottled-agents` | none | `{"bottled_agents": [...]}`: every bottled agent this host records. |
-| `POST /bottled-agents` | `{"metadata": {...}}`, or `{"identity", "changes": {...}}` | Records a launch, or changes a bottled agent's `label`, `origin`, `agent_id` or `parent`. A label is checked as a rename checks it. Answers `{"bottled_agent": ...}`, null when nothing records it. |
+| `POST /bottled-agents` | `{"metadata": {...}}`, or `{"identity", "changes": {...}}` | Records a launch, or changes a bottled agent's `label`, `origin`, `agent_id` or `parent`. A label is checked as a rename checks it. An identity is letters, digits, `-` and `_`, since it names a directory. Answers `{"bottled_agent": ...}`, null when nothing records it. |
 | `POST /bottled-agents/remove` | `{"identity"}` | Deletes its state dir, snapshots and rows together. Answers `{"removed": bool}`. |
 
 A journal that doesn't chain, or a segment that won't import, is 409.

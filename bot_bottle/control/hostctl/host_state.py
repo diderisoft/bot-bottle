@@ -23,6 +23,7 @@ from ...forge_connections import ForgeConnection, ForgeConnectionError, ForgeSto
 from ...errors import SecretsFileError
 from ...infra_state import InfraStateStore
 from ...lib.config_store import ConfigStore, HostConfig
+from ...lib.safe_path import check_id
 from ...manifest.trust import Trusted, TrustStore
 from . import audit_push, audit_trust, pairing
 from .agent_prefs import AgentPrefsStore
@@ -199,6 +200,7 @@ def record_bottled_agent(body: dict[str, object]) -> dict[str, object]:
         if not isinstance(identity, str) or not isinstance(changes, dict) or not all(
                 isinstance(v, str) for v in changes.values()):
             raise ValueError('expected {"metadata": {...}} or {"identity", "changes": {...}}')
+        check_id(identity, "identity")
         changes = {str(k): str(v) for k, v in changes.items()}
         if "label" in changes:
             changes["label"] = bottle_state.clean_label(changes["label"])
@@ -208,9 +210,7 @@ def record_bottled_agent(body: dict[str, object]) -> dict[str, object]:
 
 def remove_bottled_agent(body: dict[str, object]) -> dict[str, object]:
     """Delete `body["identity"]`'s state directory and rows."""
-    identity = body.get("identity")
-    if not isinstance(identity, str) or not identity or "/" in identity or identity in (".", ".."):
-        raise ValueError("identity must name a bottled agent")
+    identity = check_id(body.get("identity"), "identity")
     return {"removed": bottle_state.delete_bottled_agent(identity)}
 
 

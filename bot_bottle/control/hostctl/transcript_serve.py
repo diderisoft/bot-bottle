@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...lib import log
+from ...lib.safe_path import check_id, under
 from ...paths import host_db_path, host_secrets_path
 from .transcripts import TranscriptStore, transcripts_root
 
@@ -100,8 +101,17 @@ class Conversation:
 
 
 def _pieces(store: TranscriptStore, root: Path) -> list[_Piece]:
-    return [_Piece(root / f["session"] / f["activation"] / f["copy"], f["guest_path"],
-                   f["start"], f["opened"], f["agent_id"]) for f in store.files()]
+    """Each recorded copy, skipping a row whose path would leave `root`."""
+    pieces: list[_Piece] = []
+    for f in store.files():
+        try:
+            path = under(root, check_id(f["session"], "a session"),
+                         check_id(f["activation"], "an activation"), f["copy"])
+        except ValueError as e:
+            log.warn(f"transcripts: not reading a copy recorded as {e}")
+            continue
+        pieces.append(_Piece(path, f["guest_path"], f["start"], f["opened"], f["agent_id"]))
+    return pieces
 
 
 def _sessions(agent_id: str) -> list[Conversation]:

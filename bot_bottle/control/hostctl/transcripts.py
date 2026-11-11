@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any
 from ...lib import log
 from ...lib.db_store import MACHINE_SPECIFIC, DbStore
 from ...lib.migrations import TableMigrations
+from ...lib.safe_path import check_id, under
 from ...paths import bot_bottle_root, host_db_path
 
 # An exec reading the guest's transcripts gives up after this long.
@@ -66,7 +67,16 @@ def transcripts_root() -> Path:
 
 
 def copy_dir(session: str, activation: str) -> Path:
-    return transcripts_root() / session / activation
+    """`<root>/transcripts/<session>/<activation>/`; ValueError unless both
+    are ids (`safe_path.check_id`)."""
+    return under(transcripts_root(), check_id(session, "a session"),
+                 check_id(activation, "an activation"))
+
+
+def _check_copy(copy: str) -> str:
+    if not copy.endswith(".jsonl") or Path(copy).name != copy:
+        raise ValueError(f"a transcript copy is a .jsonl file name (was {copy!r})")
+    return copy
 
 
 def _make_dir(path: Path) -> None:
@@ -126,6 +136,7 @@ class TranscriptStore(DbStore):
 
     def put_run(self, session: str, activation: str, *, glob: str, skip: list[str],
                 start: dict[str, int], agent_id: str, harness: str, closed: bool) -> None:
+        copy_dir(session, activation)  # the ids its copies' dir is named by
         with self._connection() as conn:
             conn.execute("INSERT OR REPLACE INTO transcript_runs VALUES "
                          "(?, ?, ?, ?, ?, ?, ?, ?)",
@@ -147,6 +158,7 @@ class TranscriptStore(DbStore):
 
     def put_file(self, session: str, activation: str, copy: str, *, guest_path: str,
                  offset: int, start: int, opened: float, agent_id: str, closed: bool) -> None:
+        under(copy_dir(session, activation), _check_copy(copy))
         with self._connection() as conn:
             conn.execute("INSERT OR REPLACE INTO transcript_files VALUES "
                          "(?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -322,7 +334,7 @@ class TranscriptFollower:
         for meta in store.files(session, activation):
             if meta["closed"]:
                 continue
-            copy = follower._load(follower.dir / meta["copy"], meta)
+            copy = follower._load(under(follower.dir, _check_copy(meta["copy"])), meta)
             follower._copies[copy.guest_path] = copy
         return follower
 

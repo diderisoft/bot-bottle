@@ -148,6 +148,13 @@ class TestRemoveBottledAgent(_FakeHomeMixin, unittest.TestCase):
     def test_idempotent_when_nothing_is_there(self):
         self.assertFalse(bottle_state.remove_bottled_agent("never-existed"))
 
+    def test_an_identity_that_isnt_one_path_part_is_refused(self):
+        for bad in ("", ".", "..", "../x", "a/b", ".hidden"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                bottle_state.delete_bottled_agent(bad)
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                BottleMetadata.from_json({"identity": bad, "agent_name": "a"})
+
     def test_a_state_dir_without_a_row_is_no_bottled_agent(self):
         bottle_state.write_per_bottle_dockerfile("stray", "FROM x\n")
         self.assertEqual([], bottle_state.all_metadata())

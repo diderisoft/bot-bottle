@@ -79,6 +79,27 @@ class TestSweep(_Root):
         stray.mkdir(parents=True)
         self.assertEqual([], transcript_retention.sweep(self.audit, 30, now=_NOW))
 
+    def test_a_row_naming_a_path_outside_the_root_is_never_deleted(self) -> None:
+        outside = self.root / "keep"
+        outside.mkdir()
+        with TranscriptStore(host_db_path())._connection() as conn:  # pylint: disable=protected-access
+            conn.execute("INSERT INTO transcript_runs VALUES (?, ?, '', '[]', '{}', '', '', 1)",
+                         ("..", "keep"))
+        self.assertEqual([], transcript_retention.sweep(self.audit, 0, now=_NOW + 1e9))
+        self.assertTrue(outside.exists())
+        self.assertIn("not sweeping", self.err.getvalue())
+
+    def test_ids_are_checked_when_written(self) -> None:
+        store = TranscriptStore(host_db_path())
+        for session, activation in (("..", "a"), ("s", "../x"), ("", "a"), ("s", ".")):
+            with self.subTest(session=session, activation=activation), \
+                    self.assertRaises(ValueError):
+                store.put_run(session, activation, glob="", skip=[], start={}, agent_id="",
+                              harness="", closed=False)
+        with self.assertRaises(ValueError):
+            store.put_file("s", "a", "../s.jsonl", guest_path="", offset=0, start=0,
+                           opened=0.0, agent_id="", closed=False)
+
     def test_a_failed_delete_is_reported_and_skipped(self) -> None:
         self.run_dir("s5", "a1", closed=True, age_days=40)
         with mock.patch.object(transcript_retention.shutil, "rmtree",

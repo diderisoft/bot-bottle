@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from ...lib.db_store import MACHINE_SPECIFIC, DbStore
 from ...lib.migrations import TableMigrations
+from ...lib.safe_path import check_id, under
 from ...paths import bot_bottle_root, host_db_path
 
 # Exporting the workspace's changes gives up after this long.
@@ -108,7 +109,8 @@ def take(bottle: "Bottle", workspace: Any, *, session: str, activation: str,
     patch = result.stdout
     taken = clock()
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(taken)) + f"-{int(taken * 1000) % 1000:03d}"
-    run = snapshots_root() / session / activation
+    run = under(snapshots_root(), check_id(session, "a session"),
+                check_id(activation, "an activation"))
     for d in (snapshots_root(), run.parent, run):
         d.mkdir(parents=True, exist_ok=True, mode=0o700)
     data = patch.encode("utf-8")

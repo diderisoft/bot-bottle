@@ -23,6 +23,7 @@ from .contract.hostctl import BOTTLED_AGENTS_PATH, BOTTLED_AGENTS_REMOVE_PATH
 from .environment import active_name, is_live
 from .lib.db_store import MACHINE_SPECIFIC, DbStore
 from .lib.migrations import TableMigrations
+from .lib.safe_path import check_id, under
 from .paths import bot_bottle_root
 
 
@@ -95,8 +96,10 @@ class BottleMetadata:
             raise ValueError("bottle_names is a list")
         fields = {f.name for f in dataclasses.fields(cls)} - {"bottle_names", "copy_cwd"}
         values = {name: body.get(name, "") for name in fields}
-        if not all(isinstance(v, str) for v in values.values()) or not values["identity"]:
-            raise ValueError("a bottled agent's fields are text, and it has an identity")
+        if not all(isinstance(v, str) for v in values.values()):
+            raise ValueError("a bottled agent's fields are text")
+        # Its state dir is named after it.
+        check_id(values["identity"], "a bottled agent's identity")
         return cls(**cast(dict[str, str], values), copy_cwd=body.get("copy_cwd") is True,
                    bottle_names=tuple(str(n) for n in names))
 
@@ -159,6 +162,7 @@ class BottledAgentStore(DbStore):
 
     def put(self, metadata: BottleMetadata) -> None:
         """Record a launch; a resume's replaces the last one's metadata."""
+        check_id(metadata.identity, "a bottled agent's identity")
         values = {**dataclasses.asdict(metadata), "copy_cwd": int(metadata.copy_cwd),
                   "bottle_names": json.dumps(list(metadata.bottle_names))}
         columns = ", ".join(self._COLUMNS)
@@ -426,8 +430,9 @@ def delete_bottled_agent(identity: str) -> bool:
     snapshots' patches, and its rows (`BottledAgentStore.remove`)."""
     import shutil  # pylint: disable=import-outside-toplevel
     from .control.hostctl.snapshots import snapshots_root  # pylint: disable=import-outside-toplevel
-    shutil.rmtree(bottle_state_dir(identity), ignore_errors=True)
-    shutil.rmtree(snapshots_root() / identity, ignore_errors=True)
+    check_id(identity, "a bottled agent's identity")
+    shutil.rmtree(under(state_root(), identity), ignore_errors=True)
+    shutil.rmtree(under(snapshots_root(), identity), ignore_errors=True)
     return store().remove(identity)
 
 
