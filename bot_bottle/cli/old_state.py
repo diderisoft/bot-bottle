@@ -20,6 +20,8 @@ OLD_STATE = (
     "state/quickstart.json", "state/isolation-verified.json",
     "state/*/metadata.json", "state/*/adoption.json",
     "state/*/manifest/log.json", "state/*/manifest/launch.json",
+    "state/*/git-gate/upstreams.json", "state/*/git-gate/live-grants.json",
+    "state/*/git-gate/trailer.json",
     "transcripts/*/*/*.meta.json", "transcripts/*/*/follow.json",
     "snapshots/*/*/*.json",
     "workspace-disks/*.json",

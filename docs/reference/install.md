@@ -98,6 +98,7 @@ in every environment (`cli/old_state.py`). Paths are relative to
 | `docker-gateway-subnet`, `docker-ports/`, `infra/orchestrator.json`, `infra/*.settings.json` | infrastructure state |
 | `hostctl/state.json`, `hostctl/sessions/`, `hostctl/sessions.sock` | the host controller's state and sessions |
 | `state/<id>/metadata.json`, `adoption.json`, `manifest/log.json`, `manifest/launch.json` | bottled agents |
+| `state/<id>/git-gate/upstreams.json`, `live-grants.json`, `trailer.json` | git-gate's re-provisioning state |
 | `transcripts/**/*.meta.json`, `follow.json`, `snapshots/**/*.json` | transcript and snapshot records. The `.jsonl` and `.patch` files stay. |
 | `workspace-disks/*.json` | workspace disks' owners |
 
