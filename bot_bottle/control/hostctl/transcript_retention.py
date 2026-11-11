@@ -95,8 +95,12 @@ class RetentionSweeper:
     def start(self) -> None:
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 5.0) -> None:
+        """Stop, waiting for a sweep in progress, so nothing writes the host DB
+        after the host controller (or a test) has moved on."""
         self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout)
 
     def _run(self) -> None:
         while True:
