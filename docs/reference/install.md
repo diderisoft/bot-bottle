@@ -488,9 +488,9 @@ Nothing else records an environment. Its names, paths and address ranges
 derive from the name. What it allocates is recorded in its host DB, or in the
 pf rules for the macOS /64.
 
-A new name whose resource prefix would match an existing environment's is
-refused. For example, `dev` and `dev-2` clash: `bb-dev-` matches
-`bb-dev-2-orchestrator`.
+A name whose resource prefix would match another environment's is refused,
+even when its directory is already there. For example, `dev` and `dev-2`
+clash: `bb-dev-` matches `bb-dev-2-orchestrator`.
 
 `doctor` and `status` print the active environment and its orchestrator. They
 warn about any other bot-bottle orchestrator answering.

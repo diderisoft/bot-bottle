@@ -221,20 +221,23 @@ def prefix_clash(name: str, others: list[str]) -> str:
 
 def create(name: str, home: Path | None = None) -> Path:
     """`name`'s directory, created if it's new (idempotent). Raises
-    InvalidEnvironmentError for live, or for a new name whose prefix clashes
-    with an existing environment's. The check runs after the `mkdir`, so two
-    clashing names created at once both see the other and both back out."""
+    InvalidEnvironmentError for live, or for a name whose prefix clashes with
+    another environment's, whether its directory is new or was already there
+    (made by hand, or before the other). The check runs after the `mkdir`, so
+    two clashing names created at once both see the other and both back out."""
     validate(name)
     if name == LIVE:
         raise InvalidEnvironmentError("live isn't a named environment")
     path = env_dir(name, home)
     try:
         path.mkdir(parents=True)
+        made = True
     except FileExistsError:
-        return path
+        made = False
     clash = prefix_clash(name, named(home))
     if clash:
-        path.rmdir()
+        if made:
+            path.rmdir()
         raise InvalidEnvironmentError(
             f"environment {name!r} would share resource names with {clash!r} "
             f"({resource_prefix(name)}* vs {resource_prefix(clash)}*); pick another "

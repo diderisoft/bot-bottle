@@ -301,6 +301,11 @@ class TestEnvironmentDirectories(_TmpHome):
             self.assertFalse(env.env_dir(clash, self.home).exists())
         env.create("dev2", self.home)  # no clash
         self.assertEqual(["dev", "dev2"], env.named(self.home))
+        # One whose directory is already there is checked too, and kept.
+        env.env_dir("dev-3", self.home).mkdir()
+        with self.assertRaises(env.InvalidEnvironmentError):
+            env.create("dev-3", self.home)
+        self.assertTrue(env.env_dir("dev-3", self.home).is_dir())
         self.assertEqual("", env.prefix_clash("ci-12", ["ci-1", "ci-123"]))
         self.assertEqual("ci", env.prefix_clash("ci-1", ["ci"]))
 
