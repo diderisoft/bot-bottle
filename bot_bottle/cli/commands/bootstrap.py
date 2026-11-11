@@ -45,8 +45,8 @@ def cmd_bootstrap(argv: list[str]) -> int:
         sys.stderr.write(f"\n== {PROG} {name}\n")
         code = step(args)
         if code:
-            sys.stderr.write(f"\n{PROG} bootstrap: `{name}` didn't finish (exit {code}); "
-                             f"fix what it says, then run `{PROG} bootstrap` again\n")
+            sys.stderr.write(f"\n{PROG} bootstrap: `{name}` didn't finish (exit {code}).\n"
+                             f"Fix what it says above, then run:\n\n    {PROG} bootstrap\n\n")
             return code
     return 0
 

@@ -1,0 +1,24 @@
+# Publish the Firecracker guest kernel and static dropbear to GHCR as
+# `bot-bottle-fc-guest:<arch>` (bot_bottle/backend/firecracker/guest_files.py).
+# Hosts download them by the digests pinned in guest_files.DIGESTS, so a new
+# kernel or dropbear is published here first, then its printed digests are
+# committed. Runs on the KVM runner, which caches both (docs/reference/ci.md).
+name: publish-fc-guest
+
+on:
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: [self-hosted, kvm]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Publish the guest files
+        env:
+          BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          BOT_BOTTLE_INFRA_ARTIFACT_USER: ${{ vars.GHCR_USER || 'didericis' }}
+        run: |
+          python3 -m bot_bottle.publish_fc_guest "$(uname -m)" \
+            /var/cache/bot-bottle-fc/vmlinux /var/cache/bot-bottle-fc/dropbear

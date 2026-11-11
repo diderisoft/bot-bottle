@@ -596,6 +596,12 @@ fi
 # prints the sudo step for you to run. doctor ends with the one next step for
 # this host (`next: ...`), whatever it found.
 say "setting up this host ('${BOT_BOTTLE_BIN} bootstrap')"
+# Setup may download tools (Linux: firecracker) into BIN_DIR, and the host
+# controller's service keeps this PATH: have it there either way.
+case ":${PATH}:" in
+    *":${BIN_DIR}:"*) ;;
+    *) PATH="${BIN_DIR}:${PATH}"; export PATH ;;
+esac
 if [ -t 1 ] && (: </dev/tty) 2>/dev/null; then
     "${BOT_BOTTLE_BIN}" bootstrap </dev/tty && done=yes || done=no
 else
@@ -604,6 +610,7 @@ fi
 if [ "${done}" = yes ]; then
     say "installed."
 else
-    say "installed, but setting up this host didn't finish: fix what it says (above),"
-    say "then run '${BOT_BOTTLE_BIN} bootstrap' again."
+    say "installed, but setting up this host didn't finish."
+    printf "\nFix what it says above, then run '%s bootstrap' again:\n\n    %s bootstrap\n\n" \
+        "${BOT_BOTTLE_BIN}" "${BOT_BOTTLE_BIN}" >&2
 fi

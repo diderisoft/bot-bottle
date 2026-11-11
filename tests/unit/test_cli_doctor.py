@@ -13,11 +13,12 @@ stopped daemon or half-configured backend must not report `ok`.
 from __future__ import annotations
 
 import io
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from bot_bottle.cli.commands import doctor
 from bot_bottle.control.client import OrchestratorEndpoint
@@ -333,3 +334,59 @@ class TestDoctorHostController(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NextBlock(unittest.TestCase):
+    def test_the_command_stands_alone_with_the_rest_under_it(self) -> None:
+        from bot_bottle.cli.commands.doctor import next_block
+        block = next_block("`bot-bottle install --backend=firecracker` (it prints any sudo "
+                           "steps it needs)", color=False)
+        self.assertIn("\n    bot-bottle install --backend=firecracker\n", block)
+        self.assertIn("  (it prints any sudo steps it needs)", block)
+        self.assertIn("then run `bot-bottle`",
+                      next_block("`bot-bottle up`, then run `bot-bottle`", color=False))
+        self.assertEqual("\nNext: set up a backend\n", next_block("set up a backend", color=False))
+        self.assertIn("\x1b[1;36mbot-bottle\x1b[0m", next_block("run `bot-bottle`", color=True))
+
+    def test_a_terminal_gets_the_block_and_a_pipe_the_line(self) -> None:
+        from bot_bottle.cli.commands import doctor
+        with patch("sys.stdout", new_callable=io.StringIO) as out, \
+                patch.object(out, "isatty", return_value=True, create=True), \
+                patch.dict(os.environ, {"NO_COLOR": "1"}):
+            doctor._print_next("run `bot-bottle`")  # pylint: disable=protected-access
+        self.assertIn("Next, run:", out.getvalue())
+        with patch("sys.stdout", new_callable=io.StringIO) as out:
+            doctor._print_next("run `bot-bottle`")  # pylint: disable=protected-access
+        self.assertEqual("next: run `bot-bottle`\n", out.getvalue())
+
+
+class AppleContainer(unittest.TestCase):
+    def test_a_mac_without_it_is_told_to_install_it_before_anything_else(self) -> None:
+        from bot_bottle.cli.commands import doctor
+        found = doctor.BackendFindings(selected="docker", selected_ready=True, any_ready=True,
+                                       wants_apple_container=True)
+        with patch.object(doctor.runner, "running", return_value=None):
+            step = doctor.next_step(found)
+        self.assertIn(doctor.APPLE_CONTAINER_RELEASES, step)
+        block = doctor.next_block(step, color=False)
+        self.assertIn("Next, install Apple Container", block)
+        self.assertIn("\n    container system start\n", block)
+
+    def test_only_a_mac_whose_backend_wasnt_chosen_wants_it(self) -> None:
+        from bot_bottle.cli.commands import doctor
+        settings = MagicMock()
+        settings.operation.backend = ""
+        with patch.object(doctor, "settings_from_env", return_value=settings), \
+                patch.object(doctor, "selected_backend", return_value="docker"), \
+                patch.object(doctor, "known_backend_names", return_value=[]), \
+                patch.object(doctor.sys, "platform", "darwin"), \
+                redirect_stdout(io.StringIO()) as out:
+            self.assertTrue(doctor._check_backends().wants_apple_container)  # pylint: disable=protected-access
+        self.assertIn("Apple Container isn't installed", out.getvalue())
+        settings.operation.backend = "docker"
+        with patch.object(doctor, "settings_from_env", return_value=settings), \
+                patch.object(doctor, "selected_backend", return_value="docker"), \
+                patch.object(doctor, "known_backend_names", return_value=[]), \
+                patch.object(doctor.sys, "platform", "darwin"), \
+                redirect_stdout(io.StringIO()):
+            self.assertFalse(doctor._check_backends().wants_apple_container)  # pylint: disable=protected-access

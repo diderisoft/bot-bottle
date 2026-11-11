@@ -16,6 +16,7 @@ from pathlib import Path
 from ... import resources
 from .. import container_engine
 from ...contract.hostctl import Settings
+from . import binary as _binary
 from . import netpool
 from . import util
 
@@ -53,13 +54,8 @@ def _print_prereqs() -> None:
         sys.stderr.write(f"1) firecracker binary: found ({fc}).\n")
     else:
         sys.stderr.write(
-            "1) firecracker binary: NOT found on PATH. Install a release binary "
-            "and put it on PATH:\n"
-            f"     {_FC_RELEASES}\n"
-            "   e.g.: download firecracker-vX.Y.Z-$(uname -m).tgz, extract, and\n"
-            "     install -m755 release-*/firecracker-* ~/.local/bin/firecracker\n"
-            "   (NixOS: not packaged as a user binary — fetch the release, pin\n"
-            "    the version, and add it to PATH.)\n"
+            f"1) firecracker binary: not on PATH yet; install downloads Firecracker "
+            f"{_binary.VERSION} into ~/.local/bin (or install your own: {_FC_RELEASES}).\n"
         )
     if util.is_host_capable():
         sys.stderr.write("   KVM: /dev/kvm present.\n")
@@ -69,9 +65,9 @@ def _print_prereqs() -> None:
             "   virtualization in firmware, and add your user to the `kvm` group.\n"
         )
     sys.stderr.write(
-        "   Guest artifacts: a kernel (BOT_BOTTLE_FC_KERNEL) and static dropbear\n"
-        "   (BOT_BOTTLE_FC_DROPBEAR) must be cached, and `mke2fs` (e2fsprogs) is\n"
-        "   needed to build the rootfs.\n\n"
+        "   Guest artifacts: the kernel and static dropbear are downloaded into\n"
+        "   the cache (or set BOT_BOTTLE_FC_KERNEL / BOT_BOTTLE_FC_DROPBEAR), and\n"
+        "   `mke2fs` (e2fsprogs) is needed to build the rootfs.\n\n"
     )
 
 

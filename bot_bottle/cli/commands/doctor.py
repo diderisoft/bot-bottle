@@ -31,6 +31,7 @@ from ..constants import PROG
 from ..settings import settings_from_env
 
 MIN_PYTHON = (3, 11)
+APPLE_CONTAINER_RELEASES = "https://github.com/apple/container/releases"
 
 
 def _ok(label: str, detail: str) -> None:
@@ -89,6 +90,9 @@ class BackendFindings:
     selected: str = ""
     selected_ready: bool = False
     any_ready: bool = False
+    # A Mac without Apple Container, its backend not chosen by hand: the one
+    # VM backend it could have is missing.
+    wants_apple_container: bool = False
 
 
 def _check_backends(verbose: bool = False) -> BackendFindings:
@@ -97,6 +101,11 @@ def _check_backends(verbose: bool = False) -> BackendFindings:
     advice to install them. With no backend selectable, any ready one does."""
     settings = settings_from_env()
     found = BackendFindings(selected=selected_backend(settings))
+    found.wants_apple_container = (sys.platform == "darwin" and not settings.operation.backend
+                                   and found.selected != "macos-container")
+    if found.wants_apple_container:
+        _warn("backend", "Apple Container isn't installed, so agents can't run in VMs here "
+                         f"(install it: {APPLE_CONTAINER_RELEASES})")
     ready: list[str] = []
     for name in known_backend_names():
         needs = backend_os_requirement(name)
@@ -304,6 +313,10 @@ def next_step(found: BackendFindings) -> str:  # pylint: disable=too-many-return
     if state is not None and runner.restart_needed(state):
         return (f"`{PROG} up --restart` (the host controller runs older code; "
                 f"running bottles keep running)")
+    if found.wants_apple_container:
+        return ("install Apple Container for VM isolation (stronger than Docker): the .pkg "
+                f"from {APPLE_CONTAINER_RELEASES}, then run `container system start`, "
+                f"then `{PROG} install`")
     if found.selected and not found.selected_ready:
         return (f"`{PROG} install --backend={found.selected}` "
                 f"(it prints any sudo steps it needs)")
@@ -317,6 +330,34 @@ def next_step(found: BackendFindings) -> str:  # pylint: disable=too-many-return
     if state is None:
         return f"`{PROG} up`, then run `{PROG}`"
     return f"run `{PROG}`"
+
+
+def next_block(step: str, *, color: bool) -> str:
+    """`step` (from `next_step`) set apart: its first `command` alone on a
+    line, bold on a terminal, with the rest of the sentence under it."""
+    parts = step.split("`")
+    if len(parts) < 3:
+        return f"\nNext: {step}\n"
+    command = parts[1]
+    lead = parts[0].strip(" ,")
+    rest = "`".join(parts[2:]).strip(" ,")
+    if color:
+        command = f"\x1b[1;36m{command}\x1b[0m"
+        rest = f"\x1b[2m{rest}\x1b[0m" if rest else ""
+    heading = f"Next, {lead}:" if lead and lead != "run" else "Next, run:"
+    lines = ["", heading, "", f"    {command}", ""]
+    if rest:
+        lines += [f"  {rest}", ""]
+    return "\n".join(lines)
+
+
+def _print_next(step: str) -> None:
+    """The one next step: a plain `next:` line off a terminal (scripts read
+    it), set apart on one."""
+    if sys.stdout.isatty():
+        print(next_block(step, color=not os.environ.get("NO_COLOR")))
+    else:
+        print(f"next: {step}")
 
 
 def cmd_doctor(argv: list[str]) -> int:
@@ -354,5 +395,5 @@ def cmd_doctor(argv: list[str]) -> int:
     _check_host_controller()
     _check_console_link()
     _check_providers()
-    print(f"next: {next_step(found)}")
+    _print_next(next_step(found))
     return 0 if all(required) else 1

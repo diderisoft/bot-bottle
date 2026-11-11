@@ -53,6 +53,19 @@ class FirecrackerBottleBackend(
         from . import setup as _setup
         return _setup.setup(self.settings)
 
+    def user_setup(self) -> int:
+        """Download what's missing into the user's own directories: the
+        `firecracker` binary, then the guest kernel and dropbear."""
+        from . import binary
+        from .guest_files import GuestFilesError, ensure
+        try:
+            binary.ensure(say=print)
+            ensure(self.settings.infra, say=print)
+        except (binary.BinaryError, GuestFilesError) as e:
+            warn(str(e))
+            return 1
+        return 0
+
     def root_setup(self) -> str | None:
         from . import setup as _setup
         return _setup.root_setup(self.settings)

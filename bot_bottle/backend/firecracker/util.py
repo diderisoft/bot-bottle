@@ -84,6 +84,7 @@ def require_firecracker(infra: InfraSettings) -> None:
         info("Install: https://github.com/firecracker-microvm/firecracker/releases")
         die("firecracker not found on PATH")
     _require_kvm()
+    fetch_guest_files(infra)
     if not kernel_path(infra).is_file():
         die(f"guest kernel not found at {kernel_path(infra)}. Set "
             "BOT_BOTTLE_FC_KERNEL or place a vmlinux there.")
@@ -93,6 +94,17 @@ def require_firecracker(infra: InfraSettings) -> None:
     if shutil.which("mke2fs") is None:
         die("mke2fs (e2fsprogs) not found — required to build guest rootfs")
     _require_network_pool(netpool.from_settings(infra))
+
+
+def fetch_guest_files(infra: InfraSettings) -> None:
+    """Download the guest kernel and dropbear the default cache is missing,
+    or die saying why they can't be."""
+    # pylint: disable-next=import-outside-toplevel
+    from .guest_files import GuestFilesError, ensure
+    try:
+        ensure(infra, say=info)
+    except GuestFilesError as e:
+        die(str(e))
 
 
 def _require_kvm() -> None:
