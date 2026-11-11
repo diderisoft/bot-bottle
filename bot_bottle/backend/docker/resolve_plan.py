@@ -10,7 +10,7 @@ from pathlib import Path
 from . import util as docker_mod
 from .bottle_plan import DockerBottlePlan
 from .. import BottleSpec
-from ..resolve_common import build_guest_env  # noqa: F401 — re-exported for callers
+from ..resolve_common import build_guest_env as build_guest_env  # re-exported for the backend
 from ...contract.hostctl import Settings
 from ...env import ResolvedEnv
 from ...agent_provider import AgentProvisionPlan

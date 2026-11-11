@@ -13,7 +13,7 @@ from ...manifest import Manifest
 from ...secret_source import SecretSource
 from ...supervisor.plan import SupervisePlan
 from .. import BottleSpec
-from ..resolve_common import build_guest_env  # noqa: F401 — re-exported for callers
+from ..resolve_common import build_guest_env as build_guest_env  # re-exported for the backend
 from . import util
 from .bottle_plan import FirecrackerBottlePlan
 
