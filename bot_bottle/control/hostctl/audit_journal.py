@@ -25,7 +25,7 @@ import json
 import os
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -128,6 +128,17 @@ def _next_segment_id(now: float, current: str) -> str:
 def segments(directory: Path) -> list[Path]:
     """The journal's segment files, oldest first."""
     return sorted(directory.glob(f"*{SEGMENT_SUFFIX}"))
+
+
+def complete_lines(path: Path, offset: int = 0) -> Iterator[bytes]:
+    """Each complete line of a segment from byte `offset`, newline kept, one at
+    a time (a segment can be gigabytes). A torn final line is left out."""
+    with path.open("rb") as f:
+        f.seek(offset)
+        for raw in f:
+            if not raw.endswith(b"\n"):
+                return
+            yield raw
 
 
 def _cut_torn_tail(path: Path, chunk: int = 1 << 16) -> int:
@@ -412,6 +423,7 @@ __all__ = [
     "SEGMENT_MAX_BYTES",
     "SEGMENT_SUFFIX",
     "TORN_TAIL",
+    "complete_lines",
     "first_record",
     "last_record",
     "redact",

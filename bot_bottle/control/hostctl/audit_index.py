@@ -13,12 +13,13 @@ import sqlite3
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 from ...contract.audit import record_hash
 from ...lib.db_store import MACHINE_SPECIFIC, DbStore
 from ...lib.migrations import TableMigrations
-from .audit_journal import segments
+from .audit_journal import complete_lines, segments
 from .audit_verify import verify
 
 
@@ -34,13 +35,12 @@ def imported_chains(journal_dir: Path) -> list[Path]:
                   for c in host.iterdir() if c.is_dir())
 
 
-def read_chain(directory: Path) -> list[tuple[dict[str, Any], str]]:
+def read_chain(directory: Path) -> Iterator[tuple[dict[str, Any], str]]:
     """Every record in a chain directory, with its line as stored."""
-    out: list[tuple[dict[str, Any], str]] = []
     for path in segments(directory):
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            out.append((json.loads(raw), raw))
-    return out
+        for raw in complete_lines(path):
+            line = raw.decode("utf-8").rstrip("\n")
+            yield json.loads(line), line
 
 # Columns copied straight from a record.
 _FIELDS = (
@@ -61,6 +61,8 @@ _INDEXED = (
 # One writer at a time in this process: a start's rebuild, a query's sync and
 # the pruner's would otherwise read the same cursor and race for the lock.
 _WRITING = threading.RLock()
+# `sync` commits after this many records.
+SYNC_COMMIT_RECORDS = 10_000
 
 
 class IndexBreak(Exception):
@@ -130,6 +132,11 @@ class AuditIndex(DbStore):
         with self._connection() as conn:
             return self._cursor(conn)[0]
 
+    @staticmethod
+    def _save_cursor(conn: sqlite3.Connection, segment: str, offset: int, head: str) -> None:
+        conn.execute("INSERT OR REPLACE INTO audit_index_cursor VALUES (1, ?, ?, ?)",
+                     (segment, offset, head))
+
     def sync(self) -> int:
         """Index records appended since the last sync. Returns how many."""
         added = 0
@@ -140,12 +147,8 @@ class AuditIndex(DbStore):
                 name = path.name
                 if name < segment:
                     continue
-                start = offset if name == segment else 0
-                with path.open("rb") as f:
-                    f.seek(start)
-                    data = f.read()
-                complete = data[:data.rfind(b"\n") + 1]  # never a torn tail
-                for raw in complete.splitlines():
+                offset = offset if name == segment else 0
+                for raw in complete_lines(path, offset):  # never a torn tail
                     record = json.loads(raw)
                     if not isinstance(record, dict):
                         raise IndexBreak(f"{name}: not a JSON record")
@@ -155,15 +158,19 @@ class AuditIndex(DbStore):
                     if record_hash(str(record.get("prev", "")), record) != record.get("hash"):
                         raise IndexBreak(f"{name}: record {record.get('id')} "
                                          f"does not match its hash")
-                    self._insert(conn, record, raw.decode("utf-8"))
+                    self._insert(conn, record, raw.decode("utf-8").rstrip("\n"))
                     head = str(record["hash"])
                     first = False
                     added += 1
-                segment, offset = name, start + len(complete)
+                    offset += len(raw)
+                    if added % SYNC_COMMIT_RECORDS == 0:
+                        # A first sync of a large journal keeps what it has
+                        # done, and the WAL stays small.
+                        self._save_cursor(conn, name, offset, head)
+                        conn.commit()
+                segment = name
             if segment:
-                conn.execute(
-                    "INSERT OR REPLACE INTO audit_index_cursor VALUES (1, ?, ?, ?)",
-                    (segment, offset, head))
+                self._save_cursor(conn, segment, offset, head)
         self._chmod()
         return added
 
@@ -183,7 +190,7 @@ class AuditIndex(DbStore):
                 count += self.add_records(read_chain(directory))
         return count
 
-    def add_records(self, records: list[tuple[dict[str, Any], str]]) -> int:
+    def add_records(self, records: Iterable[tuple[dict[str, Any], str]]) -> int:
         """Index verified records from outside the local journal, all or none.
         Known ids are skipped; a clash on (host, epoch, seq) is refused."""
         with _WRITING:

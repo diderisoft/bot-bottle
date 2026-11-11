@@ -23,6 +23,7 @@ head anchored elsewhere (an exporter's cursor).
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -98,6 +99,13 @@ def verify(directory: Path, *, anchored: bool = False) -> VerifyReport:
     return verify_segments(journal_segments(directory), anchored=anchored)
 
 
+def _lines(path: Path) -> Iterator[bytes]:
+    """A segment's lines, newline kept, one at a time: a segment can be
+    gigabytes. Only a torn final line lacks the newline."""
+    with path.open("rb") as f:
+        yield from f
+
+
 def verify_segments(segments: list[Path], *, anchored: bool = False) -> VerifyReport:
     """Check `segments`, in the order given, as one chain."""
     report = VerifyReport()
@@ -108,15 +116,11 @@ def verify_segments(segments: list[Path], *, anchored: bool = False) -> VerifyRe
     before: dict[str, Any] | None = None
     for index, path in enumerate(segments):
         name = path.name
-        data = path.read_bytes()
-        lines = data.split(b"\n")
-        torn = lines.pop()  # b"" when the file ends in a newline
-        if torn:
-            last_segment = index == len(segments) - 1
-            kind = "truncated-tail" if last_segment else "unreadable"
-            report.problems.append(Problem(
-                kind, name, len(lines) + 1, f"partial final line ({len(torn)} bytes)"))
-        for number, raw in enumerate(lines, start=1):
+        torn: tuple[int, int] | None = None  # (line number, bytes)
+        for number, raw in enumerate(_lines(path), start=1):
+            if not raw.endswith(b"\n"):
+                torn = (number, len(raw))
+                break
             try:
                 record = json.loads(raw)
                 if not isinstance(record, dict):
@@ -146,6 +150,11 @@ def verify_segments(segments: list[Path], *, anchored: bool = False) -> VerifyRe
             prev = str(record.get("hash", ""))
             before = record
             report.records += 1
+        if torn:
+            last_segment = index == len(segments) - 1
+            kind = "truncated-tail" if last_segment else "unreadable"
+            report.problems.append(Problem(
+                kind, name, torn[0], f"partial final line ({torn[1]} bytes)"))
     # A seq that jumps forward and later comes back is a reorder.
     for i, epoch in gap_epochs:
         if epoch in reordered:

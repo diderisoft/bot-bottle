@@ -23,7 +23,7 @@ from ...lib.config_store import AuditForward
 from ...lib.db_store import MACHINE_SPECIFIC, DbStore
 from ...lib.migrations import TableMigrations
 from ...secret_source import SecretSource
-from .audit_journal import segments
+from .audit_journal import complete_lines, segments
 from .audit_ocsf import to_ocsf
 
 BATCH_RECORDS = 500
@@ -78,14 +78,13 @@ def read_batch(journal_dir: Path, cursor: Cursor,
         if name < cursor.segment:
             continue
         offset = cursor.offset if name == cursor.segment else 0
-        with path.open("rb") as f:
-            f.seek(offset)
-            data = f.read()
-        for raw in data.splitlines(keepends=True):
-            if not raw.endswith(b"\n") or len(lines) >= limit:
+        for raw in complete_lines(path, offset):
+            if len(lines) >= limit:
                 return lines, Cursor(name, offset)
             lines.append(raw.decode("utf-8").rstrip("\n"))
             offset += len(raw)
+        if offset < path.stat().st_size:  # a torn line, or one still arriving
+            return lines, Cursor(name, offset)
         cursor = Cursor(name, offset)
     return lines, cursor
 

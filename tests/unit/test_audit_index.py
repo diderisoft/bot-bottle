@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from bot_bottle.contract.audit import AuditEvent
 from bot_bottle.control.hostctl.audit_index import AuditIndex, IndexBreak, Query
@@ -88,6 +89,20 @@ class Index(unittest.TestCase):
         with self.journal.path.open("a") as f:
             f.write('{"id":"half')
         self.assertEqual(index.sync(), 1)
+
+    def test_a_long_sync_keeps_what_it_committed_before_a_break(self) -> None:
+        for _ in range(4):
+            self.append()
+        lines = self.journal.path.read_text().splitlines()
+        record = json.loads(lines[-1])
+        record["outcome"] = "allowed"
+        lines[-1] = json.dumps(record)
+        self.journal.path.write_text("\n".join(lines) + "\n")
+        index = AuditIndex(self.dir, self.db)
+        with patch("bot_bottle.control.hostctl.audit_index.SYNC_COMMIT_RECORDS", 2), \
+                self.assertRaises(IndexBreak):
+            index.sync()
+        self.assertEqual(len(index.query(Query())), 4)  # the segment_open record and 3
 
     def test_rebuild_replays_the_journal(self) -> None:
         self.append()
