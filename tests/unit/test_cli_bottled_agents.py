@@ -12,7 +12,9 @@ from collections.abc import Callable
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from bot_bottle.bottle_state import BottleMetadata, mark_preserved, metadata_path, write_metadata
+from bot_bottle.bottle_state import (
+    BottleMetadata, bottle_state_dir, mark_preserved, write_metadata, write_per_bottle_dockerfile,
+)
 from bot_bottle.cli.commands import bottled_agents
 
 
@@ -23,11 +25,11 @@ def _bottle(identity: str, *, label: str = "", bottles: tuple[str, ...] = (),
                                   backend="macos-container", bottle_names=bottles))
     if kept:
         mark_preserved(identity)
+    else:
+        write_per_bottle_dockerfile(identity, "FROM x\n")
     when = time.time() - age
-    paths = [metadata_path(identity), metadata_path(identity).parent]
-    if kept:
-        paths.append(metadata_path(identity).parent / ".preserve")
-    for path in paths:
+    state = bottle_state_dir(identity)
+    for path in (state, *state.iterdir()):
         os.utime(path, (when, when))
 
 

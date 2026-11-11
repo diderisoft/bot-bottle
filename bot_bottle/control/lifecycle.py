@@ -39,7 +39,7 @@ def source_hash(repo_root: Path) -> str:
 
 class Orchestrator(abc.ABC):
     """The per-host orchestrator service, one impl per backend. Sole holder of
-    the signing key and sole opener of `bot-bottle.db`, so it mints the
+    the signing key and sole opener of its `registry.db`, so it mints the
     gateway's token."""
 
     # Control-plane auth provisioning; never starts the orchestrator without

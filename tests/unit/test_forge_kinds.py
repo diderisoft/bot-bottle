@@ -28,7 +28,7 @@ from bot_bottle.control.git_gate_render import git_gate_upstreams_for_bottle
 from bot_bottle.control.hostctl import remote_actions, repo_grants
 from bot_bottle.deploy_key_provisioner import DeployKeyCollisionError, get_provisioner
 from bot_bottle.forge_connect import ConnectError, connect
-from bot_bottle.forge_connections import load
+from bot_bottle.forge_connections import connections
 from bot_bottle.git_gate.provision import DeployKeyRef, deploy_key_refs, revoke_key
 from bot_bottle.lib.log import Die
 from bot_bottle.manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
@@ -252,7 +252,7 @@ class TestGitHubForge(unittest.TestCase):
         checked.assert_called_once_with("https://github.com", "tok")
         keyscan.assert_called_once_with("github.com", "22")
         self.assertEqual(("github.com", "octo", True), (done.key, done.account, done.default))
-        conn = load(self.tmp / "forges.md")["github.com"]
+        conn = connections()["github.com"]
         self.assertEqual(("github", "deploy-key"), (conn.kind, conn.user().transport))
 
     def test_connect_refuses_another_kind_and_says_what_a_token_needs(self) -> None:
@@ -284,7 +284,7 @@ class TestCommand(unittest.TestCase):
             self.assertEqual(0, cmd_forge(["connect", "github.com", "--token", "--no-browser"]))
         self.assertIn("settings/personal-access-tokens/new", err.getvalue())
         self.assertIn("Administration: read & write", err.getvalue())
-        self.assertTrue((self.tmp / "root" / "forges.md").is_file())
+        self.assertIn("github.com", connections())
 
     def test_refuses_another_kind_before_asking_for_a_token(self) -> None:
         err = io.StringIO()

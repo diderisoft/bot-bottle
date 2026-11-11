@@ -13,9 +13,12 @@ from unittest.mock import patch
 
 from bot_bottle.cli.commands.trust import cmd_trust
 from bot_bottle.cli.launch_client import load_trusting
+from bot_bottle.lib.db_store import MACHINE_SPECIFIC
 from bot_bottle.lib.log import Die
 from bot_bottle.manifest import ManifestIndex, trust
 from bot_bottle.manifest.util import ManifestError
+from bot_bottle.paths import host_db_path
+from tests.unit import as_cli, serve_host_controller
 
 _STRIPE = """---
 extends: basic
@@ -163,11 +166,22 @@ class ProjectBottles(_Project):
         self.assertIn("./main", names)
         self.assertIn("main", names)
 
-    def test_the_trust_file_is_private(self) -> None:
+    def test_trust_records_are_in_the_host_db(self) -> None:
         (self.bottles / "app.md").write_text(_STRIPE)
-        trust.trust(self.untrusted("pi", "./app"))
-        path = Path(os.environ["BOT_BOTTLE_ROOT"]) / trust.TRUST_FILE
-        self.assertEqual(0o600, stat.S_IMODE(path.stat().st_mode))
+        error = self.untrusted("pi", "./app")
+        trust.trust(error)
+        records = trust.TrustStore(host_db_path()).records()
+        self.assertEqual([(error.hash, "./app", str(error.path), tuple(error.grants))],
+                         [(r.hash, r.bottle, r.path, r.grants) for r in records])
+        self.assertEqual({"trust_records": MACHINE_SPECIFIC}, dict(trust.TrustStore.TABLES))
+        self.assertFalse((Path(os.environ["BOT_BOTTLE_ROOT"]) / "trusted-bottles.json").exists())
+        self.assertEqual(0o600, stat.S_IMODE(host_db_path().stat().st_mode))
+        self.load("pi", "./app")  # trusted now
+        (self.bottles / "app.md").write_text(_STRIPE + "\n")
+        changed = self.untrusted("pi", "./app")
+        self.assertEqual(records[0], changed.previous)
+        trust.trust(changed)
+        self.assertEqual([changed.hash], [r.hash for r in trust.load_trusted()])
 
 
 class Launching(_Project):
@@ -420,29 +434,28 @@ class ProjectAgentBuildInputs(_Project):
         outside.write_text("two\n")  # can't build either way: still trusted
         self.load()
 
-    def test_trust_from_before_builds_were_covered_explains_the_reprompt(self) -> None:
-        self.write_agent(_OVERLAY_DOCKERFILE_AGENT)
-        path = self.agents / "pi.md"
-        old = trust.agent_hash("pi", path)  # the hash before #813
-        trust.trust(self.untrusted())
-        entry = trust.load_trusted()[0]
-        self.assertEqual(trust.SCHEME, entry.scheme)
-        trust._save([trust.Trusted(old, "pi", str(path), entry.grants,  # pylint: disable=protected-access
-                                   "2026-01-01")])
-        error = self.untrusted()
-        self.assertEqual(1, error.previous.scheme if error.previous else None)
-        self.assertIn("now also covers the files its image build takes",
-                      trust.prompt_text(error))
 
-    def test_agents_that_build_nothing_keep_their_old_trust(self) -> None:
-        self.write_agent(_PI_OWN_HOST)
-        path = self.agents / "pi.md"
-        # It replaces the user's `pi`, which its hash has always covered.
-        home_agent = self.home / ".bot-bottle" / "agents" / "pi.md"
-        context = trust.host_context("pi", home_agent=home_agent)
-        trust._save([trust.Trusted(trust.agent_hash("pi", path, context), "pi",  # pylint: disable=protected-access
-                                   str(path), (), "2026-01-01")])
-        self.load()
+class ThroughTheHostController(_Project):
+    """The CLI's side: trust is checked and recorded through the host
+    controller, the records' only writer."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        serve_host_controller(self)
+        as_cli(self)
+        (self.bottles / "app.md").write_text(_STRIPE)
+
+    def test_trust_then_load(self) -> None:
+        error = self.untrusted("pi", "./app")
+        trust.trust(error)
+        self.assertEqual([error.hash], [r.hash for r in trust.TrustStore(host_db_path()).records()])
+        self.assertEqual([error.hash], [r.hash for r in trust.load_trusted()])
+        self.load("pi", "./app")
+
+    def test_a_bad_record_is_refused(self) -> None:
+        with patch.object(trust.Trusted, "to_json", return_value={"hash": ""}), \
+                self.assertRaisesRegex(ManifestError, "a trust record is"):
+            trust.trust(self.untrusted("pi", "./app"))
 
 
 if __name__ == "__main__":

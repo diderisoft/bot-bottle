@@ -1,4 +1,4 @@
-"""`Supervisor`: the supervise queue and audit stores at `db_path`, as owned by
+"""`Supervisor`: the supervise queue and canary stores at `db_path`, as owned by
 `OrchestratorCore`. Types are in `contract.supervise`. The data plane never
 imports this.
 """
@@ -7,23 +7,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..contract.supervise import AuditEntry, CanaryEvent, Proposal, Response
-from .store.audit_store import AuditStore
+from ..contract.supervise import CanaryEvent, Proposal, Response
 from .store.canary_store import CanaryStore
 from .store.queue_store import QueueStore
 
 
 class Supervisor:
-    """Supervise queue and audit I/O against `db_path`."""
+    """Supervise queue and canary I/O against `db_path`. Decisions are
+    recorded only in the audit journal (`decision.resolved`)."""
 
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
 
     def _queue(self, queue_key: str) -> QueueStore:
         return QueueStore(queue_key, self._db_path)
-
-    def _audit(self) -> AuditStore:
-        return AuditStore(self._db_path)
 
     def _canary(self) -> CanaryStore:
         return CanaryStore(self._db_path)
@@ -51,19 +48,9 @@ class Supervisor:
     def read_response(self, bottle_slug: str, proposal_id: str) -> Response:
         return self._queue(bottle_slug).read_response(proposal_id)
 
-    def archive_all_proposals(self, bottle_slug: str) -> None:
-        """Archive every proposal and response for `bottle_slug`. Idempotent."""
-        self._queue(bottle_slug).archive_all()
-
-    # --- Audit log ---
-
-    def write_audit_entry(self, entry: AuditEntry) -> Path:
-        """Append `entry` to the host supervise audit table."""
-        return self._audit().write_audit_entry(entry)
-
-    def read_audit_entries(self, component: str, slug: str) -> list[AuditEntry]:
-        """All audit entries for the component and slug."""
-        return self._audit().read_audit_entries(component, slug)
+    def delete_proposals(self, bottle_slug: str) -> None:
+        """Delete every proposal and response for `bottle_slug`. Idempotent."""
+        self._queue(bottle_slug).delete_all()
 
     # --- Canary events ---
 
@@ -88,6 +75,6 @@ class Supervisor:
             event_id, status=status, resolved_at=resolved_at, notes=notes,
         )
 
-    def archive_canary_events(self, bottle_slug: str) -> None:
-        """Archive all canary events for `bottle_slug` (teardown/reconcile)."""
-        self._canary().archive_all_for_bottle(bottle_slug)
+    def delete_canary_events(self, bottle_slug: str) -> None:
+        """Delete all canary events for `bottle_slug` (teardown/reconcile)."""
+        self._canary().delete_all_for_bottle(bottle_slug)

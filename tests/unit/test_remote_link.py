@@ -22,9 +22,9 @@ from bot_bottle.cli.commands import remote as remote_cmd
 from bot_bottle.cli.commands.login import _save_credentials
 from bot_bottle.contract.hostctl import LaunchRequest
 from bot_bottle.control.client import AlreadyAnswered
-from bot_bottle.control.hostctl import console_terminal, pairing, remote
+from bot_bottle.control.hostctl import console_terminal, pairing, remote, runner
 from bot_bottle.lib.log import Die
-from tests.unit import use_bottle_root
+from tests.unit import serve_host_controller, use_bottle_root
 from tests.unit._forges import GITHUB, connected
 
 try:
@@ -428,6 +428,28 @@ class _RootCase(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp(prefix="remote-root."))
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.addCleanup(use_bottle_root(self.root))
+
+
+def _save_config(config: pairing.RemoteConfig) -> None:
+    """What `pair on` and `pair off` leave in the pairing."""
+    pairing.store().update({"enabled": config.enabled, "console_node_id": config.console_node_id,
+                            "console_ticket": config.console_ticket})
+
+
+def _login(**extra: str) -> None:
+    """A pairing, as `bot-bottle pair` leaves it before `pair on`."""
+    pairing.store().update({"url": "https://console", "host_id": "h1", "access_token": "at",
+                            "refresh_token": "rt", **extra}, new=True)
+
+
+class _CliCase(_RootCase):
+    """The CLI's side, through a running host controller."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        serve_host_controller(self)
+        self.enterContext(mock.patch.object(runner, "running",
+                                            return_value=runner.ensure_running()))
 
 
 class _Terminal:
@@ -894,9 +916,33 @@ class TestConsoleTerminal(unittest.TestCase):
 
 class TestConfig(_RootCase):
     def test_config_round_trips_privately(self) -> None:
-        pairing.save_config(pairing.RemoteConfig(True, "cid", "ticket"))
+        _save_config(pairing.RemoteConfig(True, "cid", "ticket"))
         self.assertEqual(pairing.RemoteConfig(True, "cid", "ticket"), pairing.load_config())
-        self.assertEqual(0o600, (self.root / pairing.REMOTE_FILE).stat().st_mode & 0o777)
+        self.assertEqual(0o600, (self.root / "db" / "bot-bottle.db").stat().st_mode & 0o777)
+        self.assertEqual({"pairing": "machine-specific", "console_link": "machine-specific"},
+                         dict(pairing.PairingStore.TABLES))
+
+    def test_tokens_are_secrets_the_pairing_names(self) -> None:
+        token = "console-access-token-" + "x" * 20
+        paired = pairing.store().update({"url": "https://console", "access_token": token,
+                                         "refresh_token": "rt"}, new=True)
+        self.assertEqual((pairing.ACCESS_TOKEN_SECRET, pairing.REFRESH_TOKEN_SECRET),
+                         (paired.access_token_secret, paired.refresh_token_secret))
+        self.assertEqual((token, "rt"), paired.tokens())
+        self.assertNotIn(token.encode(), (self.root / "db" / "bot-bottle.db").read_bytes())
+        self.assertIn(token, (self.root / "secrets").read_text())
+        again = pairing.store().update({"url": "https://other", "access_token": "a2"}, new=True)
+        self.assertEqual(("a2", ""), again.tokens())  # a new pairing drops the old refresh
+        self.assertEqual("", again.refresh_token_secret)
+        refused: list[dict[str, object]] = [{"nope": 1}, {"enabled": "yes"},
+                                            {"access_token": ""}]
+        for bad in refused:
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                pairing.store().update(bad)
+
+    def test_not_paired_says_so(self) -> None:
+        with self.assertRaisesRegex(pairing.RemoteError, "not paired"):
+            pairing.load_pairing().require()
 
     def test_missing_config_is_disabled(self) -> None:
         self.assertFalse(pairing.load_config().enabled)
@@ -907,10 +953,16 @@ class TestConfig(_RootCase):
         self.assertEqual(0o600, (self.root / pairing.KEY_FILE).stat().st_mode & 0o777)
 
     def test_login_pins_the_console_identity(self) -> None:
-        _save_credentials("https://console", "h1", "at", "rt",
-                          {"console_node_id": "cid", "console_ticket": "tk"})
-        saved = json.loads((self.root / "console.json").read_text())
-        self.assertEqual(("cid", "tk"), (saved["console_node_id"], saved["console_ticket"]))
+        serve_host_controller(self)
+        _save_credentials("https://console", {"host_id": "h1", "access_token": "at",
+                                              "refresh_token": "rt", "console_node_id": "cid",
+                                              "console_ticket": "tk"})
+        saved = pairing.load_pairing()
+        self.assertEqual(("https://console", "h1", "cid", "tk", False),
+                         (saved.url, saved.host_id, saved.console_node_id, saved.console_ticket,
+                          saved.enabled))
+        self.assertEqual(("at", "rt"), saved.tokens())
+        self.assertFalse((self.root / "console.json").exists())
 
 
 class TestLocalAgents(unittest.TestCase):
@@ -933,10 +985,9 @@ class TestLocalAgents(unittest.TestCase):
             self.assertEqual([], remote.local_agents())
 
 
-class TestRemoteEnable(_RootCase):
+class TestRemoteEnable(_CliCase):
     def _login(self, **extra: str) -> None:
-        pairing.save_console({"url": "https://console", "host_id": "h1",
-                             "access_token": "at", "refresh_token": "rt", **extra})
+        _login(**extra)
 
     def _enable(self, responses: list[object]) -> tuple[int, str, list[tuple[Any, ...]]]:
         calls: list[tuple[Any, ...]] = []
@@ -962,7 +1013,6 @@ class TestRemoteEnable(_RootCase):
         self.assertEqual(("PUT", "https://console/api/v1/hosts/iroh",
                           {"node_id": "hostnode"}, "at"), calls[0])
         self.assertEqual(pairing.RemoteConfig(True, "cid", "tk"), pairing.load_config())
-        self.assertEqual("cid", pairing.load_console()["console_node_id"])
 
     def test_refreshes_an_expired_token_once(self) -> None:
         self._login()
@@ -971,7 +1021,7 @@ class TestRemoteEnable(_RootCase):
                                      {"console_node_id": "cid", "console_ticket": "tk"}])
         self.assertEqual(0, rc)
         self.assertEqual("at2", calls[-1][3])
-        self.assertEqual("at2", pairing.load_console()["access_token"])
+        self.assertEqual(("at2", "rt"), pairing.load_pairing().tokens())
 
     def test_refuses_a_console_whose_identity_changed(self) -> None:
         self._login(console_node_id="pinned")
@@ -985,7 +1035,7 @@ class TestRemoteEnable(_RootCase):
         rc, output, _ = self._enable([{"host_id": "h0", "console_node_id": "cid",
                                        "console_ticket": "tk"}])
         self.assertEqual(0, rc)
-        self.assertEqual("h0", pairing.load_console()["host_id"])
+        self.assertEqual("h0", pairing.load_pairing().host_id)
         self.assertIn("already paired", output)
 
     def test_a_machine_paired_to_another_account_says_so(self) -> None:
@@ -1013,7 +1063,7 @@ class TestRemoteEnable(_RootCase):
         self.assertIn("bot-bottle[remote]", err.getvalue())
 
 
-class TestRemoteCommand(_RootCase):
+class TestRemoteCommand(_CliCase):
     """The CLI's other paths: the HTTP helper, refusals, disable and status."""
 
     def _run(self, *argv: str, **patches: Any) -> tuple[int, str]:
@@ -1028,8 +1078,7 @@ class TestRemoteCommand(_RootCase):
         return rc, out.getvalue()
 
     def _login(self) -> None:
-        pairing.save_console({"url": "https://console", "host_id": "h1",
-                             "access_token": "at", "refresh_token": "rt"})
+        _login()
 
     def test_request_sends_json_with_the_bearer_token(self) -> None:
         sent: dict[str, Any] = {}
@@ -1067,13 +1116,13 @@ class TestRemoteCommand(_RootCase):
         self.assertFalse(pairing.load_config().enabled)
 
     def test_disable_keeps_the_pinned_console(self) -> None:
-        pairing.save_config(pairing.RemoteConfig(True, "cid", "tk"))
+        _save_config(pairing.RemoteConfig(True, "cid", "tk"))
         self.assertEqual(0, self._run("disable")[0])
         self.assertEqual(pairing.RemoteConfig(False, "cid", "tk"), pairing.load_config())
 
     def test_status_reports_the_link(self) -> None:
         self.assertIn("console link: off", self._run("status")[1])
-        pairing.save_config(pairing.RemoteConfig(True, "cid0123456789", "tk"))
+        _save_config(pairing.RemoteConfig(True, "cid0123456789", "tk"))
         self.assertIn("no report yet", self._run("status")[1])
         pairing.write_status(connected=False, error="console unreachable")
         output = self._run("status")[1]
@@ -1085,13 +1134,16 @@ class TestRemoteCommand(_RootCase):
         self.assertEqual(2, self._run("bogus")[0])
         self.assertEqual(0, self._run("--help")[0])
 
-    def test_a_malformed_status_file_reads_as_no_report(self) -> None:
-        (self.root / pairing.STATUS_FILE).write_text("[not, an, object")
+    def test_no_report_before_the_link_writes_one(self) -> None:
         self.assertEqual({}, pairing.read_status())
+        pairing.write_status(connected=True, console_node_id="cid")
+        status = pairing.read_status()
+        self.assertEqual((True, False, "", "cid"), (status["connected"], status["unpaired"],
+                                                    status["error"], status["console_node_id"]))
 
 
 class TestSupervisor(_RootCase):
-    """The link runs exactly while remote.json says it's enabled."""
+    """The link runs exactly while the pairing says it's enabled."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -1120,9 +1172,9 @@ class TestSupervisor(_RootCase):
         supervisor.start()
         self.addCleanup(supervisor.close)
         self.assertFalse(self._wait(lambda: self.started))  # disabled: nothing runs
-        pairing.save_config(pairing.RemoteConfig(True, "cid", "tk"))
+        _save_config(pairing.RemoteConfig(True, "cid", "tk"))
         self.assertTrue(self._wait(lambda: self.started))
-        pairing.save_config(pairing.RemoteConfig(False, "cid", "tk"))
+        _save_config(pairing.RemoteConfig(False, "cid", "tk"))
         self.assertTrue(self.stopped.wait(2))
         self.assertTrue(self._wait(
             lambda: "disabled" in str(pairing.read_status().get("error"))))
@@ -1131,7 +1183,7 @@ class TestSupervisor(_RootCase):
         async def failing(*_args: Any) -> None:
             raise pairing.RemoteError("install `bot-bottle[remote]`")
 
-        pairing.save_config(pairing.RemoteConfig(True, "cid", "tk"))
+        _save_config(pairing.RemoteConfig(True, "cid", "tk"))
         with mock.patch.object(remote, "run", failing):
             supervisor = remote.Supervisor(_Bottles())
             supervisor.start()
@@ -1170,7 +1222,7 @@ class TestOverRealIroh(_RootCase):
                 preset=lib.preset_n0(), secret_key=os.urandom(32), alpns=[remote.ALPN]))
             pinned = str(ep.id()) if pin_console else str(
                 lib.SecretKey.from_bytes(os.urandom(32)).public())
-            pairing.save_config(pairing.RemoteConfig(
+            _save_config(pairing.RemoteConfig(
                 True, pinned, str(lib.EndpointTicket.from_addr(ep.addr()))))
             stop = threading.Event()
             host = threading.Thread(target=lambda: asyncio.run(
@@ -1202,7 +1254,7 @@ class TestOverRealIroh(_RootCase):
         async def console_side() -> None:
             ep = await lib.Endpoint.bind(lib.EndpointOptions(
                 preset=lib.preset_n0(), secret_key=os.urandom(32), alpns=[remote.ALPN]))
-            pairing.save_config(pairing.RemoteConfig(
+            _save_config(pairing.RemoteConfig(
                 True, str(ep.id()), str(lib.EndpointTicket.from_addr(ep.addr()))))
             stop = threading.Event()
             host = threading.Thread(target=lambda: asyncio.run(
@@ -1247,13 +1299,14 @@ class TestOverRealIroh(_RootCase):
         import subprocess
 
         from bot_bottle.control.hostctl import sessions as sessions_mod
+        from bot_bottle.paths import host_db_path
 
         sessions_mod.write_config()
         subprocess.run(sessions_mod.tmux("new-session", "-d", "-s", "bottle-1", "-x", "80",
                                          "-y", "24", "cat"), check=True)
         self.addCleanup(subprocess.run, sessions_mod.tmux("kill-server"), capture_output=True)
         manager = sessions_mod.SessionManager({})
-        manager._write_record(sessions_mod.SessionRecord(  # pylint: disable=protected-access
+        sessions_mod.SessionStore(host_db_path()).put(sessions_mod.SessionRecord(
             id="bottle-1", kind="bottle", writable_allowed=True))
 
         class _SessionBottles(_Bottles):
@@ -1265,7 +1318,7 @@ class TestOverRealIroh(_RootCase):
         async def console_side() -> None:
             ep = await lib.Endpoint.bind(lib.EndpointOptions(
                 preset=lib.preset_n0(), secret_key=os.urandom(32), alpns=[remote.ALPN]))
-            pairing.save_config(pairing.RemoteConfig(
+            _save_config(pairing.RemoteConfig(
                 True, str(ep.id()), str(lib.EndpointTicket.from_addr(ep.addr()))))
             stop = threading.Event()
             host = threading.Thread(target=lambda: asyncio.run(

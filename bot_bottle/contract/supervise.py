@@ -1,5 +1,4 @@
-"""Supervise wire types and constants: `Proposal`, `Response`, `AuditEntry`,
-`CanaryEvent`."""
+"""Supervise wire types and constants: `Proposal`, `Response`, `CanaryEvent`."""
 
 from __future__ import annotations
 
@@ -68,7 +67,6 @@ SUPERVISE_PORT = 9100
 # `list-egress-routes`.
 EGRESS_FORWARD_PROXY = "http://127.0.0.1:9099"
 EGRESS_INTROSPECT_URL = "http://_egress.local/allowlist"
-DB_PATH_IN_CONTAINER = "/run/supervise/bot-bottle.db"
 DEFAULT_POLL_INTERVAL_SEC = 0.5
 
 COMPONENT_FOR_TOOL: dict[str, str] = {
@@ -180,22 +178,6 @@ class Response:
 
 
 @dataclass(frozen=True)
-class AuditEntry:
-    """One row of the per-bottle audit log."""
-
-    timestamp: str
-    bottle_slug: str
-    component: str
-    operator_action: str
-    operator_notes: str
-    justification: str
-    diff: str
-
-    def to_dict(self) -> dict[str, object]:
-        return dataclasses.asdict(self)
-
-
-@dataclass(frozen=True)
 class CanaryEvent:
     """A canary hit recorded by the gateway; resolved by the operator via
     `resolve-canary`."""
@@ -254,7 +236,6 @@ class CanaryEvent:
 __all__ = [
     "ACTION_OPERATOR_EDIT",
     "ALREADY_ANSWERED",
-    "AuditEntry",
     "CanaryEvent",
     "Proposal",
     "Response",
@@ -276,7 +257,6 @@ __all__ = [
     "SUPERVISE_PORT",
     "EGRESS_FORWARD_PROXY",
     "EGRESS_INTROSPECT_URL",
-    "DB_PATH_IN_CONTAINER",
     "DEFAULT_POLL_INTERVAL_SEC",
     "COMPONENT_FOR_TOOL",
     "CANARY_ACTION_ACKNOWLEDGE",

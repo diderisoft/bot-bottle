@@ -24,6 +24,8 @@ import atexit
 import os
 import shutil
 import tempfile
+import threading
+import unittest
 from collections.abc import Callable
 from pathlib import Path
 from unittest import mock
@@ -47,6 +49,20 @@ def _restore_home() -> None:
 
 atexit.register(_restore_home)
 
+# The suite runs as the host controller does: code shared with the CLI (forge
+# connections, trust records) uses the host DB's stores, under each test's
+# root. Tests of the CLI's side reach them over HTTP (`serve_host_controller`)
+# or switch this off themselves (`as_cli`).
+from bot_bottle import host_access as _host_access  # pylint: disable=wrong-import-position
+
+_host_access.use_stores()
+
+
+def as_cli(test: unittest.TestCase) -> None:
+    """For `test`, shared code asks the host controller (start one with
+    `serve_host_controller`) instead of using the stores, as in the CLI."""
+    test.enterContext(mock.patch.object(_host_access, "_stores", False))
+
 
 def use_bottle_root(root: Path) -> Callable[[], None]:
     """Redirect ``paths.bot_bottle_root()`` to ``root`` by setting
@@ -58,6 +74,37 @@ def use_bottle_root(root: Path) -> Callable[[], None]:
     patcher = mock.patch.dict(os.environ, {"BOT_BOTTLE_ROOT": str(root)})
     patcher.start()
     return patcher.stop
+
+
+def serve_host_controller(test: unittest.TestCase) -> None:
+    """Serve the host controller's routes in this process, for `test`, under
+    the bottle root it set, and point the CLI's `runner.ensure_running` at
+    them. The CLI then reaches host state as it does for real: over HTTP."""
+    # pylint: disable=import-outside-toplevel
+    from bot_bottle.contract.hostctl import HOST_CONTROL
+    from bot_bottle.control.hostctl import runner
+    from bot_bottle.control.hostctl.server import HostControlServer
+    from bot_bottle.trust_domain import signing_key
+    server = HostControlServer(("127.0.0.1", 0), "test", signing_key(HOST_CONTROL))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    test.addCleanup(server.server_close)
+    test.addCleanup(server.shutdown)
+    state = runner.HostControlState(pid=os.getpid(), port=server.server_address[1],
+                                    build_id="test")
+    test.enterContext(mock.patch.object(runner, "ensure_running", return_value=state))
+
+
+def bottled_agent(identity: str, **fields: object) -> None:
+    """Record a bottled agent `identity` (its `bottled_agents` row), as a
+    backend's prepare does, so what's kept with it (an adoption record) has
+    a row to go in."""
+    # pylint: disable=import-outside-toplevel
+    import dataclasses
+    from bot_bottle.bottle_state import BottleMetadata, write_metadata
+    write_metadata(dataclasses.replace(
+        BottleMetadata(identity=identity, agent_name="demo", cwd="", copy_cwd=False,
+                       started_at="t"),
+        **fields))
 
 
 # The unit suite never sees the repo's committed `published-artifacts.json`:

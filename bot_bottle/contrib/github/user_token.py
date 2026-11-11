@@ -28,7 +28,6 @@ from ...forge_kinds import ForgeApiError
 GITHUB = "https://github.com"
 API = "https://api.github.com"
 DEFAULT_SLUG = "bot-bottle"
-CONFIG_FILENAME = "github-app.json"
 _TIMEOUT_SECS = 30
 # Refreshed this long before it would expire, so a launch never starts on a
 # token that dies mid-provisioning.
@@ -60,29 +59,21 @@ def install_url(slug: str) -> str:
     return f"{GITHUB}/apps/{slug}/installations/new"
 
 
-def app_config(root: Path | None = None) -> AppConfig:
-    """`<root>/github-app.json` (each named environment has its own), else the
-    `bot-bottle` app, whose client id must be set before authorizing."""
-    # pylint: disable-next=import-outside-toplevel
-    from ...paths import bot_bottle_root
-    stored: dict[str, object] = {}
-    try:
-        raw = json.loads(((root or bot_bottle_root()) / CONFIG_FILENAME).read_text())
-        stored = raw if isinstance(raw, dict) else {}
-    except (OSError, ValueError):
-        pass
-    return AppConfig(slug=str(stored.get("slug") or DEFAULT_SLUG),
-                     client_id=str(stored.get("client_id") or ""))
-
-
-def save_app_config(config: AppConfig, root: Path | None = None) -> Path:
-    # pylint: disable-next=import-outside-toplevel
-    from ...paths import bot_bottle_root
-    path = (root or bot_bottle_root()) / CONFIG_FILENAME
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"slug": config.slug, "client_id": config.client_id},
-                               indent=2) + "\n")
-    return path
+def app_config() -> AppConfig:
+    """The host setting `github_app` (each named environment has its own),
+    else the `bot-bottle` app, whose client id must be set before
+    authorizing. Read from the host DB in the host controller, else asked
+    of it."""
+    # pylint: disable=import-outside-toplevel
+    from ... import host_access
+    from ...contract.hostctl import HOST_CONFIG_PATH
+    from ...lib.config_store import ConfigStore, HostConfig
+    from ...paths import host_db_path
+    if host_access.in_host_controller():
+        app = ConfigStore(host_db_path()).github_app()
+    else:
+        app = HostConfig.from_json(host_access.ask(HOST_CONFIG_PATH)).github_app
+    return AppConfig(slug=app.slug or DEFAULT_SLUG, client_id=app.client_id)
 
 
 def _post_form(url: str, fields: dict[str, str]) -> dict[str, object]:
@@ -328,5 +319,5 @@ def reachable(token: str, owner_repo: str) -> bool:
 
 __all__ = ["AppConfig", "DEFAULT_SLUG", "DeviceCode", "REAUTHORIZE", "ReauthorizeError",
            "TokenSet", "app_config", "current_token", "install_url", "installations", "login",
-           "reachable", "refresh", "save_app_config", "selected_count", "start_device", "store",
+           "reachable", "refresh", "selected_count", "start_device", "store",
            "wait_for_token"]

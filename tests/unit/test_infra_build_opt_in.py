@@ -18,7 +18,8 @@ from bot_bottle.backend.gateway_attach import AttachPolicy
 from bot_bottle.backend import infra_service as infra_service_mod
 from bot_bottle.backend.firecracker import infra_rootfs, infra_vm
 from bot_bottle.backend.firecracker.infra import FirecrackerInfraService
-from bot_bottle.backend.infra_service import InfraService, infra_settings_record
+from bot_bottle import infra_state
+from bot_bottle.backend.infra_service import InfraService
 from bot_bottle.backend.macos_container.infra import MacosInfraService
 from bot_bottle.contract.hostctl import InfraSettings, Settings
 from bot_bottle.control.client import (
@@ -84,10 +85,8 @@ class _BringUp(unittest.TestCase):
         return patch.object(infra_service_mod, "published_infra_matches", return_value=value)
 
     def _record(self, infra: InfraSettings) -> None:
-        path = infra_settings_record("fake")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"fingerprint": infra.fingerprint(),
-                                    "infra": Settings(infra=infra).to_json()["infra"]}))
+        infra_state.record({"fake.fingerprint": infra.fingerprint(),
+                            "fake.settings": json.dumps(Settings(infra=infra).to_json()["infra"])})
 
     def _ensure(self, svc: _Service, *, inherit_build: bool = True) -> str:
         with redirect_stderr(io.StringIO()):
@@ -212,7 +211,7 @@ class TestOneOrchestratorPerEnvironment(_BringUp):
         with self._matches(True):
             self._ensure(_Service(Settings()))
         self.assertEqual(OrchestratorEndpoint("fake", "http://orch"),
-                         recorded_orchestrator(self.root))
+                         recorded_orchestrator())
 
     def test_a_second_backend_is_refused_while_the_first_answers(self) -> None:
         with self._matches(True):
@@ -225,7 +224,7 @@ class TestOneOrchestratorPerEnvironment(_BringUp):
                       caught.exception.message)
         self.assertIn("`bot-bottle down --backend fake`", caught.exception.message)
         self.assertEqual([], other.brought_up_with)
-        self.assertEqual("fake", recorded_orchestrator(self.root).backend)  # type: ignore[union-attr]
+        self.assertEqual("fake", recorded_orchestrator().backend)  # type: ignore[union-attr]
 
     def test_a_gone_orchestrator_is_replaced_and_the_same_backend_readopted(self) -> None:
         with self._matches(True):
@@ -235,7 +234,7 @@ class TestOneOrchestratorPerEnvironment(_BringUp):
         other = self._other()
         with self._matches(True), patch.object(OrchestratorClient, "health", return_value=False):
             self._ensure(other)
-        self.assertEqual("other", recorded_orchestrator(self.root).backend)  # type: ignore[union-attr]
+        self.assertEqual("other", recorded_orchestrator().backend)  # type: ignore[union-attr]
 
 
 class TestFirecracker(unittest.TestCase):

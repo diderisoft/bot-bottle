@@ -14,7 +14,6 @@ from typing import Protocol
 
 from ..contract.supervise import (
     ALREADY_ANSWERED,
-    AuditEntry,
     CANARY_ACTIONS,
     CANARY_ACTION_TERMINATE,
     CANARY_STATUS_ACKNOWLEDGED,
@@ -54,7 +53,7 @@ class LiveSource(Protocol):
     def live_source_ips(self) -> list[str]: ...
 
 
-class OrchestratorCore:
+class OrchestratorCore:  # pylint: disable=too-many-public-methods
     """Owns the bottle registry and the supervise queue."""
 
     def __init__(
@@ -99,8 +98,8 @@ class OrchestratorCore:
             return False
         self.registry.deregister(bottle_id)
         self._tokens.pop(bottle_id, None)
-        self._supervisor.archive_all_proposals(bottle_id)
-        self._supervisor.archive_canary_events(bottle_id)
+        self._supervisor.delete_proposals(bottle_id)
+        self._supervisor.delete_canary_events(bottle_id)
         return True
 
     def reconcile(
@@ -124,8 +123,8 @@ class OrchestratorCore:
         reaped = self.registry.reap_absent(live, grace_seconds=grace_seconds)
         for rec in reaped:
             self._tokens.pop(rec.bottle_id, None)
-            self._supervisor.archive_all_proposals(rec.bottle_id)
-            self._supervisor.archive_canary_events(rec.bottle_id)
+            self._supervisor.delete_proposals(rec.bottle_id)
+            self._supervisor.delete_canary_events(rec.bottle_id)
         return [rec.bottle_id for rec in reaped]
 
     def tokens_for(self, bottle_id: str) -> dict[str, str]:
@@ -242,6 +241,35 @@ class OrchestratorCore:
         except FileNotFoundError:
             return None
 
+    def supervise_diff(self, proposal_id: str, *, bottle_slug: str, decision: str,
+                       final_file: str | None = None) -> str:
+        """The policy change `decision` would apply, rendered for its
+        `decision.resolved`; "" when it changes no policy (a reject, a tool
+        that doesn't apply, or a proposal or bottle that's gone). Asked under
+        `respond_lock`, so it's what `supervise_respond` then applies."""
+        change = self._policy_change(proposal_id, bottle_slug,
+                                     _RESPOND_STATUS.get(decision, ""), final_file)
+        if change is None:
+            return ""
+        tool, before, after = change
+        return render_diff(before, after, label=COMPONENT_FOR_TOOL[tool],
+                           before_title="current", after_label="proposed")
+
+    def _policy_change(self, proposal_id: str, bottle_slug: str, status: str,
+                       final_file: str | None) -> tuple[str, str, str] | None:
+        """(tool, current policy, new policy) for a decision that applies one."""
+        try:
+            proposal = self._supervisor.read_proposal(bottle_slug, proposal_id)
+        except FileNotFoundError:
+            return None
+        if status not in (STATUS_APPROVED, STATUS_MODIFIED) or proposal.tool not in _APPLY_TOOLS:
+            return None
+        rec = self._record_for_slug(bottle_slug)
+        if rec is None:
+            return None
+        new_policy = final_file if final_file is not None else proposal.proposed_file
+        return proposal.tool, rec.policy, new_policy
+
     def supervise_respond(
         self,
         proposal_id: str,
@@ -253,9 +281,10 @@ class OrchestratorCore:
     ) -> tuple[bool, str]:
         """Record and apply an operator decision (approve, modify or reject).
         An egress approval rewrites the bottle's policy (served on the next
-        `/resolve`), then the Response unblocks the agent and an audit entry is
-        written. Returns (ok, error). A proposal that already has a decision
-        keeps it: the error starts with `ALREADY_ANSWERED`."""
+        `/resolve`), then the Response unblocks the agent. The journal's
+        `decision.resolved` is its record (`supervise_diff`). Returns (ok,
+        error). A proposal that already has a decision keeps it: the error
+        starts with `ALREADY_ANSWERED`."""
         status = _RESPOND_STATUS.get(decision)
         if status is None:
             return False, f"unknown decision {decision!r}"
@@ -272,7 +301,6 @@ class OrchestratorCore:
         if first is not None:
             return False, f"{ALREADY_ANSWERED} ({first})"
 
-        diff_before, diff_after = "", ""
         if status in (STATUS_APPROVED, STATUS_MODIFIED) and proposal.tool in _APPLY_TOOLS:
             new_policy = final_file if final_file is not None else proposal.proposed_file
             rec = self._record_for_slug(bottle_slug)
@@ -281,26 +309,11 @@ class OrchestratorCore:
                     f"bottle {bottle_slug!r} is no longer registered; "
                     "cannot apply the route change"
                 )
-            diff_before, diff_after = rec.policy, new_policy
             self.set_policy(rec.bottle_id, new_policy)
 
         self._supervisor.write_response(bottle_slug, Response(
             proposal_id=proposal_id, status=status, notes=notes, final_file=final_file,
         ))
-        component = COMPONENT_FOR_TOOL.get(proposal.tool)
-        if component is not None:
-            self._supervisor.write_audit_entry(AuditEntry(
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                bottle_slug=bottle_slug,
-                component=component,
-                operator_action=status,
-                operator_notes=notes,
-                justification=proposal.justification,
-                diff=render_diff(
-                    diff_before, diff_after, label=component,
-                    before_title="current", after_label="proposed",
-                ),
-            ))
         return True, ""
 
     # --- canary events ---

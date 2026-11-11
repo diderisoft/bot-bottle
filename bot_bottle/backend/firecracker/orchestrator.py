@@ -31,17 +31,19 @@ _HEALTH_POLL_SECONDS = 0.5
 _SYNC_TIMEOUT_SECONDS = 15.0
 
 # The registry volume: a host ext4 file attached as `/dev/vdb` at the DB dir,
-# so the registry survives VM restarts. Loop-mount it (VM stopped) to inspect
-# `bot-bottle.db`.
+# so the registry survives VM restarts. It's state, not cache, so it sits under
+# the environment's root (`<root>/infra/registry.ext4`). Loop-mount it (VM
+# stopped) to inspect `db/registry.db`.
 _REGISTRY_SIZE = "512M"
 
 # The build-store volume (`/dev/vdc`): buildah's image store, so bases and
-# layers survive restarts. Sparse; `image_builder` prunes it.
+# layers survive restarts. Sparse; `image_builder` prunes it. Rebuildable, so
+# it stays in the firecracker cache.
 _BUILD_STORE_SIZE = "16G"
 
 
 def registry_volume_path() -> Path:
-    return infra_vm._infra_dir() / "registry.ext4"
+    return infra_vm.state_dir() / "registry.ext4"
 
 
 def build_store_volume_path() -> Path:
@@ -162,16 +164,19 @@ class FirecrackerOrchestrator(Orchestrator):
 
 
 def _ensure_volume(vol: Path, size: str, label: str) -> Path:
-    if vol.exists():
-        return vol
-    info(f"creating infra {label} volume {vol} ({size})")
-    proc = subprocess.run(
-        ["mke2fs", "-q", "-t", "ext4", "-F", str(vol), size],
-        capture_output=True, text=True, check=False,
-    )
-    if proc.returncode != 0:
-        vol.unlink(missing_ok=True)
-        die(f"creating {label} volume failed: {proc.stderr.strip()}")
+    """`vol`, created on first use, and 0600 either way: the registry holds
+    bottle tokens and encrypted egress secrets, and `mke2fs` follows the
+    umask."""
+    if not vol.exists():
+        info(f"creating infra {label} volume {vol} ({size})")
+        proc = subprocess.run(
+            ["mke2fs", "-q", "-t", "ext4", "-F", str(vol), size],
+            capture_output=True, text=True, check=False,
+        )
+        if proc.returncode != 0:
+            vol.unlink(missing_ok=True)
+            die(f"creating {label} volume failed: {proc.stderr.strip()}")
+    vol.chmod(0o600)
     return vol
 
 

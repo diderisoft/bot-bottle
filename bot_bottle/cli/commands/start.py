@@ -389,9 +389,11 @@ def _launch_bottle(request: LaunchRequest, manifest: ManifestIndex, *, dry_run: 
 
 
 def _dry_run(request: LaunchRequest, manifest: ManifestIndex) -> int:
-    """Prepare locally and print the preflight; nothing starts."""
+    """Prepare locally and print the preflight; nothing starts. The host's
+    audit default comes from the host controller, which holds the host DB."""
     # pylint: disable=import-outside-toplevel
     from ...backend import BottleSpec, get_bottle_backend
+    from ..host_state_client import host_config
 
     spec = BottleSpec(
         manifest=manifest,
@@ -404,6 +406,7 @@ def _dry_run(request: LaunchRequest, manifest: ManifestIndex) -> int:
         bottle_names=request.bottles,
         headless=request.headless,
         image_policy=request.image_policy,
+        default_audit_delivery=host_config().audit_delivery,
     )
     backend = get_bottle_backend(request.settings, prompt=not request.headless)
     stage_dir = Path(tempfile.mkdtemp(prefix="bot-bottle-stage."))

@@ -16,7 +16,7 @@ from bot_bottle.forge_connect import ConnectError, Connected
 from bot_bottle.forge_connections import ForgeConnectionError
 from tests.unit._forges import GITEA, connected
 
-DONE = Connected(key="gitea.example.com", path=Path("/x/forges.md"),
+DONE = Connected(key="gitea.example.com",
                  account="bot", default=True, admin_repos=2, repos=5, ssh="ssh://git@h:2222",
                  host_key="ssh-ed25519 AAAA", secret_name="GITEA_EXAMPLE_COM_TOKEN",
                  warnings=("w",))
@@ -196,6 +196,12 @@ class TestSecretActions(unittest.TestCase):
                          (reply["type"], reply["request_id"], reply["name"]))
         self.assertNotIn("error", reply)
         ws.assert_called_once_with(Path("/fake"), "ANTHROPIC_API_KEY", "sk-ant-s3cret")
+
+    def test_set_refuses_bot_bottles_own_names(self) -> None:
+        with mock.patch("bot_bottle.secret_source.write_secret") as ws:
+            reply = self.handle("set_secret", name="BB_HOST_CONSOLE_ACCESS_TOKEN", value="x")
+        self.assertIn("reserved", reply["error"])
+        ws.assert_not_called()
 
     def test_set_value_never_in_reply(self) -> None:
         with mock.patch("bot_bottle.secret_source.write_secret"), \

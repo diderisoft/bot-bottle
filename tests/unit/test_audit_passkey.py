@@ -11,6 +11,7 @@ import json
 import os
 import stat
 import tempfile
+import time
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,11 +23,12 @@ from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
 from bot_bottle import paths
 from bot_bottle.cli.commands import audit_passkeys
+from bot_bottle.cli.host_state_client import set_pairing
 from bot_bottle.control.hostctl import audit_trust
 from bot_bottle.control.hostctl.audit_link import AuditLink
 from bot_bottle.control.hostctl.audit_push import (
-    BATCH, AuditPusher, decrypt, encrypt, host_runs, load_key, load_state, record_id,
-    record_type,
+    ASK_HEAD_SECONDS, BATCH, AuditPusher, AuditPushStore, HeadWaits, PushState, decrypt, encrypt,
+    load_key, rebuilt, record_id, record_type,
 )
 from bot_bottle.control.hostctl.audit_unlock import (
     READS_PER_MINUTE, TOKEN_IDLE_SECONDS, TOKEN_MAX_SECONDS, AuditUnlock, UnlockError,
@@ -34,6 +36,8 @@ from bot_bottle.control.hostctl.audit_unlock import (
 from bot_bottle.control.hostctl.webauthn import (
     WebAuthnError, b64url_encode, cose_key, fingerprint, key_alg, verify_assertion,
 )
+from bot_bottle.lib.db_store import PORTABLE
+from tests.unit import serve_host_controller, use_bottle_root
 
 RP = "console.example"
 ORIGIN = "https://console.example"
@@ -161,22 +165,24 @@ class _Tmp(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         self.dir = Path(self._tmp.name)
-        self.trust_path = self.dir / "audit-passkeys.json"
+        # The host DB under this root, which keeps the trusted passkeys.
+        self.db_path = self.dir / "db" / "bot-bottle.db"
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
     def trust(self, *pks: Passkey) -> None:
-        audit_trust.save(audit_trust.Trust(origin=ORIGIN, rp_id=RP, passkeys=[
-            audit_trust.TrustedPasskey(id=p.id, public_key=b64url_encode(p.cose)) for p in pks]),
-            self.trust_path)
+        audit_trust.PasskeyStore(self.db_path).replace(audit_trust.Trust(
+            origin=ORIGIN, rp_id=RP, passkeys=[
+                audit_trust.TrustedPasskey(id=p.id, public_key=b64url_encode(p.cose))
+                for p in pks]))
 
 
 class TestUnlock(_Tmp):
     def setUp(self) -> None:
         super().setUp()
         self.now = 1000.0
-        self.unlock = AuditUnlock(self.trust_path, clock=lambda: self.now)
+        self.unlock = AuditUnlock(self.db_path, clock=lambda: self.now)
         self.pk = Passkey()
         self.trust(self.pk)
 
@@ -185,7 +191,7 @@ class TestUnlock(_Tmp):
         return str(self.unlock.unlock(session, self.pk.assertion(str(ch["challenge"])))["token"])
 
     def test_no_trusted_passkey(self) -> None:
-        self.trust_path.unlink()
+        self.trust()
         with self.assertRaisesRegex(UnlockError, "trusts no passkey"):
             self.unlock.challenge("s1")
         with self.assertRaises(UnlockError):
@@ -200,7 +206,7 @@ class TestUnlock(_Tmp):
         token = self._unlock()
         self.assertEqual(self.pk.id, self.unlock.check(token, "s1"))
         # the counter is kept, so the same assertion's counter can't be reused
-        self.assertEqual(1, audit_trust.load(self.trust_path).passkeys[0].sign_count)
+        self.assertEqual(1, audit_trust.load(self.db_path).passkeys[0].sign_count)
 
     def test_a_challenge_is_single_use_and_bound_to_its_session(self) -> None:
         ch = str(self.unlock.challenge("s1")["challenge"])
@@ -265,13 +271,15 @@ class _Entry:
         return {"seq": self.seq, "kind": self.kind, "text": f"entry {self.seq}"}
 
 
-class TestPusher(_Tmp):
+class _PushCase(_Tmp):
     KEY = bytes(range(32))
 
     def setUp(self) -> None:
         super().setUp()
         self.entries = [_Entry(i * 10) for i in range(BATCH + 5)] + [_Entry(999, meta=True)]
         self.sent: list[dict[str, Any]] = []
+        self.now = 1000.0
+        self.store = AuditPushStore(self.db_path)
 
     async def _send(self, msg: dict[str, Any]) -> None:
         self.sent.append(msg)
@@ -280,8 +288,15 @@ class TestPusher(_Tmp):
         return list(self.entries)
 
     def pusher(self) -> AuditPusher:
-        return AuditPusher("agent-1", self.KEY, self._entries, self._send,
-                           directory=self.dir)
+        return AuditPusher("agent-1", self.KEY, self._entries, self._send, store=self.store,
+                           clock=lambda: self.now)
+
+
+class TestPusher(_PushCase):
+    def setUp(self) -> None:
+        super().setUp()
+        # A cursor as the console's head for a new agent sets it.
+        self.store.save("agent-1", PushState())
 
     def test_batches_and_never_repeats(self) -> None:
         p = self.pusher()
@@ -320,7 +335,9 @@ class TestPusher(_Tmp):
             self.assertEqual(prev["chain_hash"], cur["prev_chain_hash"])
             self.assertEqual(hashlib.sha256((prev["chain_hash"] + cur["ciphertext"]).encode())
                              .hexdigest(), cur["chain_hash"])
-        self.assertEqual({"run-a", "run-b"}, host_runs(self.dir))
+        state = self.store.load("agent-1")
+        assert state is not None
+        self.assertEqual({"run-a", "run-b"}, set(state.runs))
         self.assertTrue(all("_entry_seq" not in m for m in self.sent))
 
     def test_ciphertext_is_bound_to_its_record(self) -> None:
@@ -335,24 +352,189 @@ class TestPusher(_Tmp):
             if len(self.sent) == 3:
                 raise ConnectionError("dropped")
             self.sent.append(msg)
-        p = AuditPusher("agent-1", self.KEY, self._entries, flaky, directory=self.dir)
+        p = AuditPusher("agent-1", self.KEY, self._entries, flaky, store=self.store)
         self.assertEqual(3, asyncio.run(p.push("run-a")))
-        self.assertEqual(20, load_state(self.dir, "agent-1").last_entry_seq)
+        state = self.store.load("agent-1")
+        assert state is not None
+        self.assertEqual(20, state.last_entry_seq)
         self.sent.clear()
         p2 = self.pusher()
         asyncio.run(p2.push("run-a"))
         self.assertEqual(3, self.sent[0]["seq"])
 
-    def test_unreadable_state_starts_over_and_no_run_sends_nothing(self) -> None:
-        (self.dir / "agent-1.json").write_text("{not json")
-        self.assertIsNone(load_state(self.dir, "agent-1").last_entry_seq)
+    def test_no_run_sends_nothing(self) -> None:
         self.assertEqual(0, asyncio.run(self.pusher().push("")))
 
     def test_a_reader_error_is_retried_later(self) -> None:
         def boom(_a: str) -> list[Any]:
             raise OSError("gone")
-        p = AuditPusher("agent-1", self.KEY, boom, self._send, directory=self.dir)
+        p = AuditPusher("agent-1", self.KEY, boom, self._send, store=self.store)
         self.assertEqual(0, asyncio.run(p.push("run-a")))
+
+
+class TestCursorFromTheConsole(_PushCase):
+    """With no cursor here (a new host database), the pusher sends nothing
+    and asks the console where the agent's chain is; it never starts over or
+    skips ahead on its own."""
+
+    def _console_had(self, sent: list[dict[str, Any]]) -> dict[str, Any]:
+        """The `audit_head` a console that kept `sent` answers."""
+        runs: dict[str, int] = {}
+        for record in sent:
+            runs[record["run_id"]] = max(runs.get(record["run_id"], 0), record["seq"] + 1)
+        last = sent[-1] if sent else None
+        return {"type": "audit_head", "agent_id": "agent-1",
+                "runs": [{"run_id": r, "next_seq": n} for r, n in runs.items()],
+                "last": None if last is None else {k: last[k] for k in
+                                                  ("run_id", "seq", "ciphertext", "chain_hash")}}
+
+    def test_it_asks_and_sends_nothing_until_answered(self) -> None:
+        p = self.pusher()
+        self.assertEqual(0, asyncio.run(p.push("run-a")))
+        self.assertEqual([{"type": "audit_head", "agent_id": "agent-1"}], self.sent)
+        self.assertEqual(0, asyncio.run(p.push("run-a")))  # not asked again yet
+        self.assertEqual(1, len(self.sent))
+        self.now += ASK_HEAD_SECONDS
+        asyncio.run(p.push("run-a"))
+        self.assertEqual(2, len(self.sent))
+        self.assertIsNone(self.store.load("agent-1"))
+
+    def test_a_new_agent_starts_its_chain(self) -> None:
+        p = self.pusher()
+        asyncio.run(p.push("run-a"))
+        self.sent.clear()
+        self.assertTrue(p.head(self._console_had([])))
+        self.assertEqual(BATCH, asyncio.run(p.push("run-a")))
+        self.assertIsNone(self.sent[0]["prev_chain_hash"])
+        self.assertEqual(0, self.sent[0]["seq"])
+
+    def test_the_chain_carries_on_where_the_console_has_it(self) -> None:
+        # What a host sent before its database was new: 3 records of run-a.
+        before = AuditPushStore(self.dir / "before.db")
+        before.save("agent-1", PushState())
+        earlier: list[dict[str, Any]] = []
+
+        async def keep(msg: dict[str, Any]) -> None:
+            earlier.append(msg)
+        self.entries = self.entries[:3]
+        asyncio.run(AuditPusher("agent-1", self.KEY, self._entries, keep, store=before)
+                    .push("run-a"))
+        self.entries = [_Entry(i * 10) for i in range(6)]
+        p = self.pusher()
+        self.assertTrue(p.head(self._console_had(earlier)))
+        self.sent.clear()
+        self.assertEqual(3, asyncio.run(p.push("run-a")))
+        self.assertEqual([30, 40, 50], [json.loads(decrypt(
+            self.KEY, "run-a", m["seq"], m["ciphertext"]))["seq"] for m in self.sent])
+        self.assertEqual([3, 4, 5], [m["seq"] for m in self.sent])
+        self.assertEqual(earlier[-1]["chain_hash"], self.sent[0]["prev_chain_hash"])
+        state = self.store.load("agent-1")
+        assert state is not None
+        self.assertEqual({"run-a"}, set(state.runs))
+
+    def test_a_head_that_doesnt_decrypt_is_refused(self) -> None:
+        p = self.pusher()
+        bad = {"runs": [{"run_id": "run-a", "next_seq": 1}],
+               "last": {"run_id": "run-a", "seq": 0, "ciphertext": "00" * 40,
+                        "chain_hash": "x"}}
+        with mock.patch("bot_bottle.control.hostctl.audit_push.log.warn") as warned:
+            self.assertFalse(p.head(bad))
+        self.assertIn("doesn't decrypt", warned.call_args[0][0])
+        self.assertIsNone(self.store.load("agent-1"))
+        self.assertEqual(0, asyncio.run(p.push("run-a")))
+
+
+    def _earlier(self, count: int) -> list[dict[str, Any]]:
+        """The records a host sent of run-a before its database was new."""
+        before = AuditPushStore(self.dir / "before.db")
+        before.save("agent-1", PushState())
+        earlier: list[dict[str, Any]] = []
+
+        async def keep(msg: dict[str, Any]) -> None:
+            earlier.append(msg)
+        entries = self.entries
+        self.entries = entries[:count]
+        asyncio.run(AuditPusher("agent-1", self.KEY, self._entries, keep, store=before)
+                    .push("run-a"))
+        self.entries = entries
+        return earlier
+
+    def test_next_seq_is_where_a_run_carries_on_even_with_gaps(self) -> None:
+        # The console lost record 1 of 3: a count would say 2 and resend seq 2.
+        earlier = self._earlier(3)
+        head = self._console_had([earlier[0], earlier[2]])
+        self.assertEqual([{"run_id": "run-a", "next_seq": 3}], head["runs"])
+        p = self.pusher()
+        self.assertTrue(p.head(head))
+        self.sent.clear()
+        asyncio.run(p.push("run-a"))
+        self.assertEqual(3, self.sent[0]["seq"])
+
+    def test_a_count_of_records_isnt_a_head(self) -> None:
+        state = rebuilt(self.KEY, {"runs": [{"run_id": "run-a", "records": 3}], "last": None})
+        self.assertEqual({}, state.runs)
+
+    def test_a_run_kept_for_another_agent_is_ignored(self) -> None:
+        self.store.save("agent-2", PushState(runs={"run-x": 9}))
+        p = self.pusher()
+        self.assertTrue(p.head({"runs": [{"run_id": "run-x", "next_seq": 40},
+                                         {"run_id": "run-a", "next_seq": 0}], "last": None}))
+        state = self.store.load("agent-1")
+        assert state is not None
+        self.assertEqual({"run-a": 0}, state.runs)
+        other = self.store.load("agent-2")
+        assert other is not None
+        self.assertEqual({"run-x": 9}, other.runs)
+
+    def test_a_last_record_outside_its_runs_is_no_head(self) -> None:
+        earlier = self._earlier(3)
+        head = self._console_had(earlier)
+        head["runs"] = [{"run_id": "run-b", "next_seq": 1}]
+        p = self.pusher()
+        with mock.patch("bot_bottle.control.hostctl.audit_push.log.warn") as warned:
+            self.assertFalse(p.head(head))
+        self.assertIn("isn't in one of the agent's runs", warned.call_args[0][0])
+        self.assertIsNone(self.store.load("agent-1"))
+        # Nor is one in a run this host records for another agent.
+        self.store.save("agent-2", PushState(runs={"run-a": 3}))
+        with mock.patch("bot_bottle.control.hostctl.audit_push.log.warn"):
+            self.assertFalse(p.head(self._console_had(earlier)))
+
+    def test_waiting_on_the_console_is_counted(self) -> None:
+        waits = HeadWaits()
+        p = AuditPusher("agent-1", self.KEY, self._entries, self._send, store=self.store,
+                        clock=lambda: self.now, waits=waits)
+        asyncio.run(p.push("run-a"))
+        self.assertEqual(0, waits.count(self.now))  # asked once: not waiting yet
+        self.now += ASK_HEAD_SECONDS
+        asyncio.run(p.push("run-a"))  # no answer, so it asks again
+        self.assertEqual(1, waits.count(self.now))
+        self.assertEqual(0, waits.count(self.now + 2 * ASK_HEAD_SECONDS))  # stale
+        with mock.patch("bot_bottle.control.hostctl.audit_push.log.warn"):
+            p.head({"runs": "nope"})
+        self.assertEqual(1, waits.count(self.now))
+        self.assertTrue(p.head(self._console_had([])))
+        self.assertEqual(0, waits.count(self.now))
+
+    def test_status_says_how_many_wait(self) -> None:
+        # pylint: disable=import-outside-toplevel
+        from bot_bottle.cli.commands import remote as remote_cmd
+        from bot_bottle.control.hostctl import audit_push, host_state, pairing
+        waits = HeadWaits()
+        waits.mark("agent-1", time.monotonic())
+        waits.mark("agent-2", time.monotonic())
+        with mock.patch.object(audit_push, "WAITING", waits), \
+                mock.patch.object(pairing, "store", return_value=pairing.PairingStore(
+                    self.db_path)):
+            reply = host_state.get_pairing({})
+        self.assertEqual(2, reply["link"]["audit_waiting"])  # type: ignore[index]
+        found = (pairing.Pairing(enabled=True, console_node_id="n" * 20, console_ticket="t"),
+                 {"updated": time.time(), "connected": True, "audit_waiting": 2})
+        with mock.patch.object(remote_cmd, "running_pairing", return_value=found):
+            line = remote_cmd.link_line()
+        self.assertIn("connected", line)
+        self.assertTrue(line.endswith("; audit push waiting for the console for 2 agents"),
+                        line)
 
 
 class _Bottles:
@@ -371,13 +553,15 @@ class TestAuditLink(_Tmp):
         super().setUp()
         self.now = 1000.0
         self.sent: list[dict[str, Any]] = []
-        self.unlock = AuditUnlock(self.trust_path, clock=lambda: self.now)
+        self.unlock = AuditUnlock(self.db_path, clock=lambda: self.now)
         self.pk = Passkey()
         self.trust(self.pk)
         self.running = {"agent-1": "bottle-1"}
         self.bottles = _Bottles([{"id": "bottle-1", "activation": "run-a"}])
+        store = AuditPushStore(self.db_path)
+        store.save("agent-1", PushState())
         self.link = AuditLink(self._send, lambda: self.running, self.bottles, unlock=self.unlock,
-                              directory=self.dir, clock=lambda: self.now)
+                              store=store, clock=lambda: self.now)
         self.link._key, self.link._key_tried = self.KEY, True  # pylint: disable=protected-access
         self.link._reader = mock.Mock(  # pylint: disable=protected-access
             entries=mock.Mock(return_value=[_Entry(1), _Entry(2)]))
@@ -442,8 +626,16 @@ class TestAuditLink(_Tmp):
                 "run_id": "run-a", "records": [rec]}
         self.assertIn("passkey", self.ask({**base, "token": "nope"})["error"])
         token = self._token()
-        self.assertIn("weren't sent by this host",
-                      self.ask({**base, "token": token, "run_id": "run-z"})["error"])
+        # A run this host has no record of sending (one from before its
+        # database was new) still decrypts; one that isn't this host's
+        # doesn't.
+        foreign = self.ask({**base, "token": token, "run_id": "run-z"})
+        self.assertIn("doesn't decrypt", foreign["records"][0]["error"])
+        old_run = {"id": "old", "seq": 7, "ciphertext": encrypt(self.KEY, "run-old", 7, {"x": 1})}
+        got = self.ask({**base, "token": token, "run_id": "run-old", "records": [old_run]})
+        self.assertEqual({"x": 1}, json.loads(got["records"][0]["plaintext"]))
+        self.bottles.audit.audit_records_read.assert_called_with(
+            run_id="run-old", count=1, credential_id=self.pk.id)
         self.assertIn("records", self.ask({**base, "token": token, "records": []})["error"])
         other_session = self.ask({**base, "token": token, "session": "s2"})
         self.assertIn("passkey", other_session["error"])
@@ -452,6 +644,17 @@ class TestAuditLink(_Tmp):
         self.assertIn("doesn't decrypt", tampered["error"])
         self.link._key = None  # pylint: disable=protected-access
         self.assertIn("no audit key", self.ask({**base, "token": token})["error"])
+
+    def test_the_consoles_head_reaches_its_pusher(self) -> None:
+        self.running = {"agent-2": "bottle-1"}
+        self.now += 10
+        asyncio.run(self.link.push())
+        self.assertEqual([{"type": "audit_head", "agent_id": "agent-2"}], self.sent)
+        asyncio.run(self.link.handle({"type": "audit_head", "agent_id": "agent-2", "runs": [],
+                                      "last": None}))
+        self.now += 10
+        asyncio.run(self.link.push())
+        self.assertEqual(["audit_record", "audit_record"], [m["type"] for m in self.sent[1:]])
 
     def test_unlock_needs_an_assertion(self) -> None:
         got = self.ask({"type": "audit_unlock", "request_id": "r", "session": "s1"})
@@ -462,21 +665,21 @@ class TestTrust(_Tmp):
     def test_save_load_and_counters(self) -> None:
         pk = Passkey()
         self.trust(pk)
-        self.assertEqual(0o600, stat.S_IMODE(self.trust_path.stat().st_mode))
-        audit_trust.record_sign_count(pk.id, 7, self.trust_path)
-        audit_trust.record_sign_count(pk.id, 3, self.trust_path)
-        self.assertEqual(7, audit_trust.load(self.trust_path).passkeys[0].sign_count)
-        saved = audit_trust.load(self.trust_path).passkeys[0]
-        self.assertEqual(fingerprint(pk.cose), saved.fingerprint)
+        self.assertEqual(0o600, stat.S_IMODE(self.db_path.stat().st_mode))
+        audit_trust.record_sign_count(pk.id, 7, self.db_path)
+        audit_trust.record_sign_count(pk.id, 3, self.db_path)
+        self.assertEqual(7, audit_trust.load(self.db_path).passkeys[0].sign_count)
+        saved = audit_trust.load(self.db_path)
+        self.assertEqual((ORIGIN, RP, fingerprint(pk.cose)),
+                         (saved.origin, saved.rp_id, saved.passkeys[0].fingerprint))
+        self.assertEqual({"audit_passkeys": PORTABLE}, dict(audit_trust.PasskeyStore.TABLES))
+        self.assertEqual(saved, audit_trust.Trust.from_json(saved.to_json()))
 
-    def test_load_errors(self) -> None:
-        self.assertEqual([], audit_trust.load(self.trust_path).passkeys)
-        self.trust_path.write_text("[1]")
-        with self.assertRaises(audit_trust.TrustError):
-            audit_trust.load(self.trust_path)
-        self.trust_path.write_text("{bad")
-        with self.assertRaises(audit_trust.TrustError):
-            audit_trust.load(self.trust_path)
+    def test_none_trusted_and_bad_lists(self) -> None:
+        self.assertEqual([], audit_trust.load(self.db_path).passkeys)
+        for bad in ([1], {"passkeys": 1}, {"passkeys": [{"id": "x"}]}):
+            with self.subTest(bad=bad), self.assertRaises(audit_trust.TrustError):
+                audit_trust.Trust.from_json(bad)
 
     def test_origin(self) -> None:
         self.assertEqual(("https://c.example:9444", "c.example"),
@@ -507,24 +710,27 @@ class TestTrust(_Tmp):
                     self.assertRaises(audit_trust.TrustError):
                 audit_trust.fetch("https://c.example", "tok")
 
-    def test_trusted_keeps_counters_of_the_same_key(self) -> None:
-        pk = Passkey()
-        current = audit_trust.Trust(origin=ORIGIN, rp_id=RP, passkeys=[
-            audit_trust.TrustedPasskey(pk.id, b64url_encode(pk.cose), 9)])
-        fetched = [audit_trust.TrustedPasskey(pk.id, b64url_encode(pk.cose))]
-        got = audit_trust.trusted("https://console.example", fetched, current)
-        self.assertEqual(9, got.passkeys[0].sign_count)
+    def test_trusting_again_keeps_counters_of_the_same_key(self) -> None:
+        pk, other = Passkey(), Passkey("eddsa", "cred-2")
+        self.trust(pk, other)
+        audit_trust.record_sign_count(pk.id, 9, self.db_path)
+        audit_trust.record_sign_count(other.id, 4, self.db_path)
+        fetched = [audit_trust.TrustedPasskey(pk.id, b64url_encode(pk.cose)),
+                   audit_trust.TrustedPasskey(other.id, b64url_encode(Passkey().cose))]
+        got = audit_trust.PasskeyStore(self.db_path).replace(
+            audit_trust.trusted("https://console.example", fetched))
+        self.assertEqual([9, 0], [p.sign_count for p in got.passkeys])  # a new key starts over
         self.assertEqual((ORIGIN, RP), (got.origin, got.rp_id))
 
 
 class TestCli(_Tmp):
+    """`audit passkeys`, through the host controller."""
+
     def setUp(self) -> None:
         super().setUp()
         self.pk = Passkey()
-        patcher = mock.patch.object(audit_trust, "audit_passkeys_path",
-                                    return_value=self.trust_path)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.addCleanup(use_bottle_root(self.dir))
+        serve_host_controller(self)
 
     def _fetched(self) -> list[audit_trust.TrustedPasskey]:
         return [audit_trust.TrustedPasskey(self.pk.id, b64url_encode(self.pk.cose))]
@@ -534,7 +740,7 @@ class TestCli(_Tmp):
                 mock.patch("sys.stderr", io.StringIO()) as err:
             self.assertEqual(1, audit_passkeys.trust_from_console(
                 "https://console.example", "t", confirm=lambda _p: False))
-            self.assertFalse(self.trust_path.exists())
+            self.assertEqual([], audit_trust.load(self.db_path).passkeys)
             self.assertEqual(0, audit_passkeys.trust_from_console(
                 "https://console.example", "t", confirm=lambda _p: True))
         self.assertIn(fingerprint(self.pk.cose), err.getvalue())
@@ -558,15 +764,13 @@ class TestCli(_Tmp):
         with mock.patch("sys.stdout", io.StringIO()) as out:
             self.assertEqual(0, audit_passkeys.run(False))
         self.assertIn(fingerprint(self.pk.cose), out.getvalue())
-        with mock.patch("sys.stderr", io.StringIO()), \
-                mock.patch.object(audit_passkeys.pairing, "load_console",
-                                  return_value={"url": "https://c.example", "access_token": "t"}), \
-                mock.patch("sys.stdin", io.StringIO()):
+        set_pairing(new=True, url="https://c.example", access_token="t")
+        with mock.patch("sys.stderr", io.StringIO()), mock.patch("sys.stdin", io.StringIO()):
+            self.assertEqual(1, audit_passkeys.run(True))  # no terminal to confirm at
+        set_pairing(new=True)
+        with mock.patch("sys.stderr", io.StringIO()) as err:
             self.assertEqual(1, audit_passkeys.run(True))
-        with mock.patch("sys.stderr", io.StringIO()), \
-                mock.patch.object(audit_passkeys.pairing, "load_console",
-                                  side_effect=audit_passkeys.pairing.RemoteError("not paired")):
-            self.assertEqual(1, audit_passkeys.run(True))
+        self.assertIn("not paired", err.getvalue())
 
     def test_after_pairing_without_a_terminal(self) -> None:
         with mock.patch("sys.stderr", io.StringIO()) as err, mock.patch("sys.stdin", io.StringIO()):

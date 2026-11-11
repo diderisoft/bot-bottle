@@ -9,8 +9,12 @@ change needs trusting again. A project bottle's trust also covers this host's
 connection to each forge its repos are on (ADR 0019: where pushes go, and as
 whom), so reconnecting a forge differently asks again. The user's own
 manifests and the built-in `basic` need none.
-`trusted-bottles.json` (0600) keeps each hash with the manifest's path and
-grants, to show what changed.
+
+The host DB's `trust_records` (ADR 0020) keeps each hash with the manifest's
+path and grants, to show what changed. They're machine-specific: a project
+bottle's trust records this machine's forge connections. In the host
+controller they're read and written directly; anywhere else through it
+(`TRUST_PATH`), their only writer.
 """
 
 from __future__ import annotations
@@ -20,25 +24,19 @@ import json
 import os
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .. import secret_ref
+from .. import host_access, secret_ref
 from ..contract.forges import FORGE_KINDS
-from ..paths import bot_bottle_root
+from ..lib.db_store import MACHINE_SPECIFIC, DbStore
+from ..lib.migrations import TableMigrations
 from .agent import ManifestAgentProvider
 from .bottle import ManifestBottle
 from .egress import DEFAULT_METHODS
 from .loader import BUILTIN_BOTTLES_DIR, BottleSource, load_bottle_chain
 from .util import ManifestError
-
-TRUST_FILE = "trusted-bottles.json"
-
-# A trust record's scheme. 2: a project agent's hash covers its image build
-# inputs. Records without one are 1, from before that.
-SCHEME = 2
-
 
 def bottle_hash(sources: Sequence[BottleSource]) -> str:
     """sha256 over the chain's project files (name and bytes): moving the repo
@@ -151,7 +149,22 @@ class Trusted:
     path: str
     grants: tuple[str, ...]
     trusted_at: str
-    scheme: int = 1
+
+    def to_json(self) -> dict[str, object]:
+        return {**asdict(self), "grants": list(self.grants)}
+
+    @classmethod
+    def from_json(cls, raw: object) -> "Trusted":
+        """A record in `to_json`'s shape; ValueError if it isn't."""
+        if not isinstance(raw, dict):
+            raise ValueError("a trust record must be an object")
+        listed = raw.get("grants", [])
+        fields = {k: raw.get(k) for k in ("hash", "bottle", "path", "trusted_at")}
+        if not all(isinstance(v, str) for v in fields.values()) or not fields["hash"] \
+                or not fields["path"] or not isinstance(listed, list) \
+                or not all(isinstance(g, str) for g in listed):
+            raise ValueError("a trust record is {hash, bottle, path, grants, trusted_at}")
+        return cls(grants=tuple(listed), **fields)  # type: ignore[arg-type]
 
 
 class UntrustedBottleError(ManifestError):
@@ -172,36 +185,71 @@ class UntrustedBottleError(ManifestError):
             f"`bot-bottle trust {bottle}` in that project")
 
 
-def _trust_path() -> Path:
-    return bot_bottle_root() / TRUST_FILE
+class TrustStore(DbStore):
+    """The host DB's trust records, one per manifest path. Only the host
+    controller opens it."""
+
+    # Trusting a project bottle records this machine's forge connections.
+    TABLES = {"trust_records": MACHINE_SPECIFIC}
+
+    def __init__(self, db_path: Path) -> None:
+        super().__init__(db_path, TableMigrations("trust_records", [
+            # `grants`: a JSON list of the lines the trust prompt showed.
+            """
+            CREATE TABLE trust_records (
+                path TEXT PRIMARY KEY,
+                hash TEXT NOT NULL,
+                bottle TEXT NOT NULL,
+                grants TEXT NOT NULL,
+                trusted_at TEXT NOT NULL
+            )
+            """,
+        ]))
+        self.migrate()
+
+    def records(self) -> list[Trusted]:
+        """Every record, oldest first."""
+        with self._connection() as conn:
+            rows = conn.execute("SELECT * FROM trust_records ORDER BY rowid").fetchall()
+        return [Trusted(hash=r["hash"], bottle=r["bottle"], path=r["path"],
+                        grants=tuple(json.loads(r["grants"])), trusted_at=r["trusted_at"])
+                for r in rows]
+
+    def put(self, record: Trusted) -> None:
+        """Keep `record`, replacing the one for the same path."""
+        with self._connection() as conn:
+            conn.execute("DELETE FROM trust_records WHERE path = ?", (record.path,))
+            conn.execute("INSERT INTO trust_records VALUES (?, ?, ?, ?, ?)",
+                         (record.path, record.hash, record.bottle,
+                          json.dumps(list(record.grants)), record.trusted_at))
+        self._chmod()
+
+
+def _store() -> TrustStore:
+    # pylint: disable-next=import-outside-toplevel
+    from ..paths import host_db_path
+    return TrustStore(host_db_path())
+
+
+def _ask(body: dict[str, object] | None = None) -> dict[str, object]:
+    """The host controller's answer on `TRUST_PATH`, as ManifestError when it
+    refuses or can't be reached."""
+    # pylint: disable=import-outside-toplevel
+    from ..contract.hostctl import TRUST_PATH
+    from ..control.hostctl.runner import HostControlError
+    try:
+        client = host_access.client()
+        return client.get(TRUST_PATH) if body is None else client.post(TRUST_PATH, body)
+    except HostControlError as e:
+        raise ManifestError(f"this host's trust records: {getattr(e, 'error', '') or e}") from e
 
 
 def load_trusted() -> list[Trusted]:
-    try:
-        raw = json.loads(_trust_path().read_text())
-    except (OSError, ValueError):
-        return []
-    entries = raw.get("trusted") if isinstance(raw, dict) else None
-    out: list[Trusted] = []
-    for e in entries if isinstance(entries, list) else []:
-        if isinstance(e, dict):
-            scheme = e.get("scheme", 1)
-            out.append(Trusted(str(e.get("hash", "")), str(e.get("bottle", "")),
-                               str(e.get("path", "")), tuple(e.get("grants") or ()),
-                               str(e.get("trusted_at", "")),
-                               scheme if isinstance(scheme, int) else 1))
-    return out
-
-
-def _save(entries: list[Trusted]) -> None:
-    path = _trust_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    body = json.dumps({"trusted": [e.__dict__ for e in entries]}, indent=2) + "\n"
-    tmp = path.with_suffix(".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(body)
-    tmp.replace(path)
+    """What this host trusts, oldest first."""
+    if host_access.in_host_controller():
+        return _store().records()
+    found = _ask().get("trusted")
+    return [Trusted.from_json(r) for r in (found if isinstance(found, list) else [])]
 
 
 def check(bottle_name: str, bottle: ManifestBottle, sources: Sequence[BottleSource]) -> None:
@@ -229,8 +277,7 @@ def check(bottle_name: str, bottle: ManifestBottle, sources: Sequence[BottleSour
 def agent_hash(name: str, path: Path, context: Sequence[str] = (), build: str = "") -> str:
     """sha256 over a project agent file (name and bytes), `context` (what it
     gets from the host beyond its provider) and `build` (`build_digest`), so a
-    change to any of them asks again. With no build inputs it is the hash
-    from before builds were covered, so those agents keep their trust."""
+    change to any of them asks again."""
     digest = hashlib.sha256(b"agent\0" + name.encode() + b"\0" + path.read_bytes())
     for line in context:
         digest.update(b"\0" + line.encode())
@@ -314,10 +361,12 @@ def check_agent(name: str, path: Path, provider: ManifestAgentProvider, *,
 
 def trust(error: UntrustedBottleError) -> None:
     """Trust the bottle in `error` on this host, replacing an earlier version."""
-    entries = [e for e in load_trusted() if e.path != str(error.path)]
-    entries.append(Trusted(error.hash, error.bottle, str(error.path), tuple(error.grants),
-                           time.strftime("%Y-%m-%d"), SCHEME))
-    _save(entries)
+    record = Trusted(error.hash, error.bottle, str(error.path), tuple(error.grants),
+                     time.strftime("%Y-%m-%d"))
+    if host_access.in_host_controller():
+        _store().put(record)
+    else:
+        _ask(record.to_json())
 
 
 def prompt_parts(error: UntrustedBottleError) -> tuple[list[str], str]:
@@ -332,11 +381,6 @@ def prompt_parts(error: UntrustedBottleError) -> tuple[list[str], str]:
     before, after = set(error.previous.grants), set(error.grants)
     lines = [f"{error.kind} changed: {error.bottle}  ({error.path})",
              f"  trusted {error.previous.trusted_at}", ""]
-    builds = any(g.startswith("build ") for g in error.grants)
-    if error.kind == "agent" and builds and error.previous.scheme < 2:
-        lines += ["  Trust now also covers the files its image build takes from the",
-                  "  project (the Dockerfile and its directory, or the overlay files),",
-                  "  which your earlier trust didn't. Review them before trusting.", ""]
     added = [g for g in error.grants if g not in before]
     removed = [g for g in error.previous.grants if g not in after]
     if added or removed:
@@ -355,8 +399,8 @@ def prompt_text(error: UntrustedBottleError) -> str:
     return "\n".join([*lines, "", f"{question} [y/N] "])
 
 
-__all__ = ["UntrustedBottleError", "agent_hash", "beyond_basic", "bottle_hash", "build_digest",
-           "check",
+__all__ = ["TrustStore", "Trusted", "UntrustedBottleError", "agent_hash", "beyond_basic",
+           "bottle_hash", "build_digest", "check",
            "check_agent", "forge_lines", "grants", "host_context", "load_trusted",
            "prompt_parts", "prompt_text",
            "provider_grants", "trust"]

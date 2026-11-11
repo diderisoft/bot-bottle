@@ -15,26 +15,26 @@ passes.
 from __future__ import annotations
 
 import contextlib
-import json
-import os
 import re
 import select
 import shlex
 import socket
-import tempfile
+import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Callable, cast
 
+from ..lib.db_store import MACHINE_SPECIFIC, DbStore
 from ..lib.log import die, info, warn
+from ..lib.migrations import TableMigrations
 
 # `BOT_BOTTLE_ISOLATION_CHECK` (`OperationSettings.isolation_check`; "" is
 # `once`): `always` probes on every launch; `once` skips a probe of host-wide
 # state (`once_key`) already passed for that same state; `off` skips them all.
 ALWAYS, ONCE, OFF = "always", "once", "off"
 CHECKS = (ALWAYS, ONCE, OFF)
-# Host-wide keys a probe passed for, newest last; a few, for a host that
-# moves between networks.
+# Host-wide keys a probe passed for (`isolation_passes`, in the host DB),
+# newest last; a few, for a host that moves between networks.
 _KEPT_KEYS = 8
 
 # Guest exit codes.
@@ -198,29 +198,62 @@ def host_canary_ip() -> str:
         return ""
 
 
-def verified_path() -> Path:
-    """Where the host-wide keys a probe passed for are kept."""
-    from ..paths import bot_bottle_root  # pylint: disable=import-outside-toplevel
-    return bot_bottle_root() / "state" / "isolation-verified.json"
+class IsolationPasses(DbStore):
+    """`isolation_passes`: the host-wide keys a probe passed for, a cache the
+    host controller keeps (launches run there). Machine-specific."""
+
+    TABLES = {"isolation_passes": MACHINE_SPECIFIC}
+
+    def __init__(self, db_path: Path) -> None:
+        super().__init__(db_path, TableMigrations("isolation_passes", [
+            """
+            CREATE TABLE isolation_passes (
+                key TEXT PRIMARY KEY,
+                passed INTEGER NOT NULL
+            )
+            """,
+        ]))
+        self.migrate()
+
+    def keys(self) -> list[str]:
+        """Newest last."""
+        with self._connection() as conn:
+            return [r[0] for r in conn.execute("SELECT key FROM isolation_passes "
+                                               "ORDER BY passed, rowid")]
+
+    def add(self, key: str) -> None:
+        """Remember `key`, keeping the newest `_KEPT_KEYS`."""
+        with self._write_connection() as conn:
+            newest = conn.execute("SELECT COALESCE(MAX(passed), 0) FROM isolation_passes"
+                                  ).fetchone()[0]
+            conn.execute("INSERT OR REPLACE INTO isolation_passes VALUES (?, ?)",
+                         (key, newest + 1))
+            conn.execute("DELETE FROM isolation_passes WHERE key NOT IN (SELECT key FROM "
+                         "isolation_passes ORDER BY passed DESC LIMIT ?)", (_KEPT_KEYS,))
+        self._chmod()
 
 
-def _verified_keys(path: Path) -> list[str]:
+def _passes() -> IsolationPasses | None:
+    """The kept passes, in the host controller; elsewhere none are kept, so
+    a probe always runs."""
+    # pylint: disable=import-outside-toplevel
+    from .. import host_access
+    from ..paths import host_db_path
+    return IsolationPasses(host_db_path()) if host_access.in_host_controller() else None
+
+
+def _passed(key: str) -> bool:
+    passes = _passes()
+    return passes is not None and key in passes.keys()
+
+
+def _remember(key: str) -> None:
+    passes = _passes()
+    if passes is None:
+        return
     try:
-        keys = json.loads(path.read_text(encoding="utf-8")).get("keys", [])
-    except (OSError, ValueError, AttributeError):
-        return []
-    return [k for k in keys if isinstance(k, str)] if isinstance(keys, list) else []
-
-
-def _remember(path: Path, key: str) -> None:
-    keys = [k for k in _verified_keys(path) if k != key][-(_KEPT_KEYS - 1):] + [key]
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".isolation-")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump({"keys": keys}, f)
-        os.replace(tmp, path)
-    except OSError as e:
+        passes.add(key)
+    except sqlite3.Error as e:
         warn(f"isolation probe: couldn't record the pass ({e}); it runs again next launch")
 
 
@@ -257,7 +290,7 @@ def verify_isolation(
              "against (isolated box).")
         return
     key = f"{once_key}|{canary_ip}" if once_key else ""
-    if key and mode == ONCE and key in _verified_keys(verified_path()):
+    if key and mode == ONCE and _passed(key):
         info(f"isolation: {what}: the host firewall passed this probe already, "
              "unchanged since; not probed again (BOT_BOTTLE_ISOLATION_CHECK=always "
              "probes every launch)")
@@ -313,4 +346,4 @@ def verify_isolation(
     info(f"isolation verified: {what} cannot reach host "
          f"{', '.join(ip for ip, _ in canaries)}{siblings}")
     if key:
-        _remember(verified_path(), key)
+        _remember(key)

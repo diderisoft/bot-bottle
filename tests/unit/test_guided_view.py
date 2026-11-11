@@ -27,6 +27,7 @@ from bot_bottle.suggest.proposal import (
     ProposalRepo,
 )
 from bot_bottle.forge_connect import ConnectError, SshUnreachable
+from tests.unit import serve_host_controller
 from tests.unit._forges import GITEA
 
 
@@ -75,6 +76,7 @@ class _View(unittest.TestCase):
                       mock.patch.object(guided_view, "origin_of", return_value="")):
             patch.start()
             self.addCleanup(patch.stop)
+        serve_host_controller(self)  # it remembers the agent (`agent_prefs`)
         self.warm = self.enterContext(mock.patch.object(suggest_client, "warm",
                                                         return_value="ready"))
         self.suggestion = _proposal("api.open-meteo.com", notes=["no key needed"])

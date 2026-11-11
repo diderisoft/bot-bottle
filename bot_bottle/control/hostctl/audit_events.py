@@ -93,6 +93,15 @@ class HostAudit:
         except Exception as e:  # pylint: disable=broad-exception-caught
             warn(f"audit: couldn't record {event.type}: {e}")
 
+    def prune(self, *, max_age_days: int, max_bytes: int,
+              keep_from: str) -> dict[str, Any] | None:
+        """Prune the journal's old segments (`AuditJournal.prune`); None when
+        nothing went or there's no journal."""
+        if self._journal is None:
+            return None
+        return self._journal.prune(max_age_days=max_age_days, max_bytes=max_bytes,
+                                   keep_from=keep_from)
+
     def append(self, event: AuditEvent, *, producer: str) -> bool:
         """Write an event another component sent. False for an already-written
         retry; AuditRedactionError for a credential-shaped key."""

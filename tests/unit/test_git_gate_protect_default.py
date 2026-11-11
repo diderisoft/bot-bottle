@@ -4,7 +4,6 @@ repo with the upstream stubbed."""
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import tempfile
@@ -18,11 +17,12 @@ from bot_bottle.control.git_gate_render import (
     git_gate_render_provision,
     git_gate_upstreams_for_bottle,
 )
-from bot_bottle.git_gate.provision import _write_upstreams_snapshot, load_upstreams_snapshot
+from bot_bottle.git_gate.provision import save_upstreams, saved_upstreams
 from bot_bottle.manifest import ManifestBottle, ManifestGitEntry
 from bot_bottle.manifest.document import bottle_document
 from bot_bottle.manifest.extends import merge_bottles_runtime
 from bot_bottle.manifest.util import ManifestError
+from tests.unit import use_bottle_root
 
 ZERO = "0" * 40
 
@@ -199,20 +199,14 @@ class TestPlumbing(unittest.TestCase):
         line = next(l for l in script.splitlines() if l.startswith("init_repo "))
         self.assertTrue(line.endswith(" true"), line)
 
-    def test_snapshot_keeps_it_for_reprovision(self) -> None:
+    def test_the_host_db_keeps_it_for_reprovision(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            stage = Path(d)
+            self.addCleanup(use_bottle_root(Path(d)))
             up = GitGateUpstream(name="r", upstream_url="u", upstream_host="h", upstream_port="22",
                                  identity_file="", known_host_key="", protect_default_branch=True)
-            _write_upstreams_snapshot(stage, (up,))
-            (loaded,) = load_upstreams_snapshot(stage)
+            save_upstreams("s1", (up,))
+            (loaded,) = saved_upstreams("s1")
             self.assertTrue(loaded.protect_default_branch)
-            # A snapshot from before the setting reads as unprotected.
-            data = json.loads((stage / "upstreams.json").read_text())
-            del data[0]["protect_default_branch"]
-            (stage / "upstreams.json").write_text(json.dumps(data))
-            (old,) = load_upstreams_snapshot(stage)
-            self.assertFalse(old.protect_default_branch)
 
 
 if __name__ == "__main__":

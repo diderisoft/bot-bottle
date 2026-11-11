@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Mapping
 
 from .. import secret_ref
+from ..lib.config_store import AUDIT_DELIVERIES
 from .util import ManifestError, as_json_object
 from .egress import ManifestEgressConfig
 from .forges import ManifestForge
@@ -25,7 +26,6 @@ def _empty_str_dict() -> dict[str, str]:
     return {}
 
 
-AUDIT_DELIVERIES = ("best_effort", "required")
 FIREHOSE_MODES = ("full", "metadata")
 
 
@@ -165,7 +165,9 @@ class ManifestBottle:
                         f"(from the secrets file); \"secret:?\" and \"secret:${{VAR}}\" "
                         f"mark the first two secret."
                     )
-                problem = secret_ref.problem(value)
+                # A prompt entry falls back to the secret saved under its
+                # own name, so the name can't be a reserved one either.
+                problem = secret_ref.reserved_problem(var) or secret_ref.problem(value)
                 if problem:
                     raise ManifestError(f"env entry {var} in bottle '{name}': {problem}")
                 _warn_unmarked(var, value)

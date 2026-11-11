@@ -21,6 +21,8 @@ from unittest import mock
 
 from bot_bottle.backend import isolation_probe
 from bot_bottle.lib.log import Die
+from bot_bottle.paths import host_db_path
+from tests.unit import as_cli, use_bottle_root
 
 
 def _canary(script: str) -> tuple[str, int]:
@@ -249,9 +251,7 @@ class TestCheckSetting(unittest.TestCase):
         self.enterContext(mock.patch.object(
             isolation_probe, "host_canary_ip", return_value="127.0.0.1"))
         tmp = self.enterContext(tempfile.TemporaryDirectory())  # pylint: disable=consider-using-with
-        self.state = os.path.join(tmp, "isolation-verified.json")
-        self.enterContext(mock.patch.object(
-            isolation_probe, "verified_path", return_value=Path(self.state)))
+        self.addCleanup(use_bottle_root(Path(tmp)))
         self.guest = mock.Mock(return_value=_result(1))
 
     def _probe(self, check: str, once_key: str = "") -> str:
@@ -293,11 +293,18 @@ class TestCheckSetting(unittest.TestCase):
         self._probe("once", "pf|boot1")
         self.assertEqual(2, self.guest.call_count)
 
-    def test_a_damaged_record_probes_again(self) -> None:
-        with open(self.state, "w", encoding="utf-8") as f:
-            f.write("{not json")
+    def test_passes_are_kept_in_the_host_db_a_few_at_a_time(self) -> None:
+        for n in range(isolation_probe._KEPT_KEYS + 2):  # pylint: disable=protected-access
+            self._probe("once", f"pf|net{n}")
+        kept = isolation_probe.IsolationPasses(host_db_path()).keys()
+        self.assertEqual([f"pf|net{n}|127.0.0.1" for n in range(2, 10)], kept)
+        self.assertNotIn("not probed again", self._probe("once", "pf|net0"))
+
+    def test_outside_the_host_controller_nothing_is_kept(self) -> None:
+        as_cli(self)
         self._probe("once", "pf|boot1")
-        self.guest.assert_called_once()
+        self._probe("once", "pf|boot1")
+        self.assertEqual(2, self.guest.call_count)
 
 
 class TestNoCanary(unittest.TestCase):

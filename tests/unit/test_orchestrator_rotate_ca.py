@@ -1,16 +1,23 @@
 """Unit: the `rotate_ca` one-shot CLI rotates every backend's gateway CA
-(issue #450, PRD 0090)."""
+(issue #450, PRD 0090), in the host controller."""
 
 from __future__ import annotations
 
+import io
+import os
 import tempfile
+import threading
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from bot_bottle import host_access, infra_state
 from bot_bottle.contract.hostctl import Settings
 from bot_bottle.control.gateway import GatewayError, GatewayProvisionError
 from bot_bottle.control import rotate_ca
+from bot_bottle.paths import host_db_path
+from tests.unit import as_cli, serve_host_controller, use_bottle_root
 
 
 def _service(ca_dir: Path | None, *, running: bool = False, stays_running: bool = False,
@@ -44,9 +51,10 @@ def _ca_files(d: Path) -> list[Path]:
 
 class TestRotateCaCli(unittest.TestCase):
     def _main(self, services: list[tuple[str, MagicMock]]) -> int:
+        """The host controller's side: 0 when every group rotated."""
         with patch.object(rotate_ca, "_services",
                           return_value=[(n, lambda s=s: s) for n, s in services]):
-            return rotate_ca.main([])
+            return 0 if rotate_ca.rotate(Settings())["rotated"] is True else 1
 
     def test_a_running_gateway_is_rolled_over_restarted_and_reattached(self) -> None:
         # Running agents keep validating via the cross-signature, so the CA is
@@ -171,6 +179,52 @@ class TestRotateCaCli(unittest.TestCase):
         self.assertEqual(0, self._main([]))
 
 
+class TestRotateCaFromTheCli(unittest.TestCase):
+    """`python -m bot_bottle.control.rotate_ca` runs as the CLI: the rotation,
+    whose restarts record infrastructure state, runs in the host controller."""
+
+    def setUp(self) -> None:
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))  # pylint: disable=consider-using-with
+        self.addCleanup(use_bottle_root(root / ".bot-bottle"))
+        self.enterContext(patch.dict(os.environ, {"BOT_BOTTLE_BACKEND": "docker"}))
+        serve_host_controller(self)
+        as_cli(self)
+        # The host controller is served on its own threads; this one is the CLI.
+        cli_thread = threading.current_thread()
+        self.enterContext(patch.object(
+            host_access, "in_host_controller",
+            side_effect=lambda: threading.current_thread() is not cli_thread))
+
+    def _main(self, service: MagicMock) -> tuple[int, str]:
+        out = io.StringIO()
+        with patch.object(rotate_ca, "_services", return_value=[("docker", lambda: service)]), \
+                redirect_stdout(out):
+            code = rotate_ca.main([])
+        return code, out.getvalue()
+
+    def test_the_restart_records_its_infra_state_in_the_host_controller(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            service = _service(_seed(d), running=True)
+            # A real bring-up records what it started (the gateway subnet, the
+            # orchestrator's port); only the host controller may.
+            service.ensure_running.side_effect = lambda: infra_state.record(
+                {"docker.gateway_subnet": "10.1.2.0/24"})
+            code, out = self._main(service)
+        self.assertEqual(0, code, out)
+        self.assertEqual(2, service.ensure_running.call_count)
+        self.assertIn("rotate-ca: done", out)
+        self.assertEqual("10.1.2.0/24",
+                         infra_state.InfraStateStore(host_db_path()).all()["docker.gateway_subnet"])
+
+    def test_a_failed_group_is_a_non_zero_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            service = _service(_seed(d), running=True,
+                               roll_error=GatewayError("could not roll the gateway CA over"))
+            code, out = self._main(service)
+        self.assertEqual(1, code)
+        self.assertIn("docker: rotation failed: could not roll the gateway CA over", out)
+
+
 class TestGatewayRollOver(unittest.TestCase):
     def test_runs_the_rollover_in_the_gateway_with_a_known_path(self) -> None:
         from bot_bottle.backend.docker.gateway import DockerGateway
@@ -207,11 +261,11 @@ class TestPersistedCaDir(unittest.TestCase):
         self.assertEqual(Path("/ca"), DockerGateway(ca_mount_source="/ca", settings=Settings()).persisted_ca_dir())
         self.assertIsNone(DockerGateway(ca_mount_source="ci-ca-volume", settings=Settings()).persisted_ca_dir())
 
-    def test_firecracker_uses_its_own_infra_dir(self) -> None:
+    def test_firecracker_keeps_its_ca_under_the_root_not_the_cache(self) -> None:
         from bot_bottle.backend.firecracker import infra_vm
         from bot_bottle.backend.firecracker.gateway import FirecrackerGateway
         with tempfile.TemporaryDirectory() as td, \
-                patch.object(infra_vm, "_infra_dir", return_value=Path(td)):
+                patch.object(infra_vm, "state_dir", return_value=Path(td)):
             self.assertEqual(Path(td) / "gateway-ca", FirecrackerGateway(Settings()).persisted_ca_dir())
 
 

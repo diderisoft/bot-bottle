@@ -5,13 +5,25 @@ One `AuditPusher` per agent. Each entry of its conversation (as the host's
 transcript copy holds it, masked: `transcript_serve`) is encrypted with the
 host's AES-256-GCM audit key (`<root>/audit.key`, never sent), bound to its
 run and position, and hash-chained to the last record sent for the agent, so
-the chain carries on across its runs. How far it got is kept in
-`<root>/audit-push/<agent>.json`: a restarted host controller, a resume or a
-re-adopted bottle carries on there, never sending an entry twice. A tick sends
-at most `BATCH` records, off the event loop but for the sends themselves.
+the chain carries on across its runs. How far it got is kept in the host DB
+(`audit_push_cursors`, and `audit_push_runs` for each run's next record): a
+restarted host controller, a resume or a re-adopted bottle carries on there,
+never sending an entry twice. A tick sends at most `BATCH` records, off the
+event loop but for the sends themselves.
 
-Reading them back is `decrypt`: only for a run this host sent, and only once
-the user unlocked with a passkey (`audit_unlock`).
+An agent with no cursor here (a new host database) sends nothing until the
+console says where its chain is: the pusher asks `audit_head` (`agent_id`) and
+the console answers `audit_head` with the agent's `runs` on this host (`run_id`,
+`next_seq`: its highest seq plus one) and its `last` record (`run_id`, `seq`,
+`ciphertext`, `chain_hash`) or null. Decrypting that record gives the
+transcript position it carried. A run this host records for another agent is
+ignored, and a `last` outside the answer's runs, or that doesn't decrypt, is no
+answer: the pusher asks again, and `bot-bottle status` counts it as waiting.
+The cursor is never reset here, which would send every entry again or none.
+
+Reading them back is `decrypt`: only with this host's key, for the record's
+own run and seq, and only once the user unlocked with a passkey
+(`audit_unlock`).
 """
 
 from __future__ import annotations
@@ -21,27 +33,31 @@ import hashlib
 import importlib.util
 import json
 import os
-import re
+import sqlite3
 import threading
+import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...lib import log
-from ...paths import audit_key_bytes, audit_push_dir
+from ...lib.db_store import MACHINE_SPECIFIC, DbStore
+from ...lib.migrations import TableMigrations
+from ...paths import audit_key_bytes, host_db_path
 
 if TYPE_CHECKING:
     from ...transcript import TranscriptEntry
 
 BATCH = 50
+# How often an agent with no cursor asks the console for its chain's head.
+ASK_HEAD_SECONDS = 60.0
 _NS = uuid.UUID("6f0b6e8c-6c1f-4a8e-9b1a-2f6a6b0c7e51")
 _RECORD_TYPES = {"user": "user_message", "assistant": "assistant_message",
                  "tool_call": "tool_call", "tool_result": "tool_result_meta",
                  "system": "system_event"}
-_SAFE = re.compile(r"[^A-Za-z0-9._-]")
 
 
 def record_type(entry: "TranscriptEntry") -> str:
@@ -83,59 +99,166 @@ class PushState:
     runs: dict[str, int] = field(default_factory=dict)  # run id -> its next record seq
 
 
-def _state_path(directory: Path, agent_id: str) -> Path:
-    return directory / f"{_SAFE.sub('_', agent_id)}.json"
+class AuditPushStore(DbStore):
+    """How far each agent's records were sent: its cursor (the transcript
+    entry last sent and the chain's head) and each run's next record."""
+
+    TABLES = {"audit_push_cursors": MACHINE_SPECIFIC, "audit_push_runs": MACHINE_SPECIFIC}
+
+    def __init__(self, db_path: Path) -> None:
+        super().__init__(db_path, TableMigrations("audit_push", [
+            """
+            CREATE TABLE audit_push_cursors (
+                agent_id TEXT PRIMARY KEY,
+                last_entry_seq INTEGER,
+                chain_hash TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE audit_push_runs (
+                run_id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                next_seq INTEGER NOT NULL
+            )
+            """,
+        ]))
+        self.migrate()
+
+    def load(self, agent_id: str) -> PushState | None:
+        """`agent_id`'s cursor, or None when this host has none."""
+        with self._connection() as conn:
+            row = conn.execute("SELECT last_entry_seq, chain_hash FROM audit_push_cursors "
+                               "WHERE agent_id = ?", (agent_id,)).fetchone()
+            runs = conn.execute("SELECT run_id, next_seq FROM audit_push_runs "
+                                "WHERE agent_id = ?", (agent_id,)).fetchall()
+        if row is None:
+            return None
+        return PushState(last_entry_seq=row["last_entry_seq"], chain_hash=row["chain_hash"],
+                         runs={r["run_id"]: r["next_seq"] for r in runs})
+
+    def save(self, agent_id: str, state: PushState) -> None:
+        with self._connection() as conn:
+            conn.execute("INSERT OR REPLACE INTO audit_push_cursors VALUES (?, ?, ?)",
+                         (agent_id, state.last_entry_seq, state.chain_hash))
+            conn.executemany("INSERT OR REPLACE INTO audit_push_runs VALUES (?, ?, ?)",
+                             [(run, agent_id, seq) for run, seq in state.runs.items()])
+        self._chmod()
+
+    def others_runs(self, agent_id: str, run_ids: Collection[str]) -> set[str]:
+        """Which of `run_ids` this host records for an agent other than
+        `agent_id`."""
+        ids = list(run_ids)
+        if not ids:
+            return set()
+        with self._connection() as conn:
+            return {r[0] for r in conn.execute(
+                f"SELECT run_id FROM audit_push_runs WHERE agent_id != ? AND run_id IN "
+                f"({', '.join('?' for _ in ids)})", (agent_id, *ids))}
 
 
-def load_state(directory: Path, agent_id: str) -> PushState:
-    path = _state_path(directory, agent_id)
+def _seq(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def rebuilt(key: bytes, reply: dict[str, Any], others: Collection[str] = ()) -> PushState:
+    """The cursor the console's `audit_head` reply says: each run's
+    `next_seq`, and from its last record (decrypted) the entry it carried and
+    the chain's head. Runs in `others`, which this host records for another
+    agent, are left out. ValueError when the reply doesn't hold a cursor: no
+    runs list, or a `last` that isn't in one of its runs or doesn't decrypt
+    with this host's key."""
+    runs = reply.get("runs")
+    if not isinstance(runs, list):
+        raise ValueError("no runs")
+    next_seqs = {str(r["run_id"]): r["next_seq"] for r in runs
+                 if isinstance(r, dict) and r.get("run_id") and _seq(r.get("next_seq"))
+                 and str(r["run_id"]) not in others}
+    last = reply.get("last")
+    if last is None:
+        return PushState(runs=next_seqs)
+    if not isinstance(last, dict):
+        raise ValueError("last isn't a record")
+    if str(last.get("run_id")) not in next_seqs:
+        raise ValueError("its last record isn't in one of the agent's runs")
     try:
-        raw = json.loads(path.read_text())
-    except FileNotFoundError:
-        return PushState()
-    except (OSError, ValueError) as e:
-        log.warn(f"audit: {path} is unreadable ({e}); starting its records over")
-        return PushState()
-    last = raw.get("last_entry_seq")
-    return PushState(last_entry_seq=last if isinstance(last, int) else None,
-                     chain_hash=str(raw.get("chain_hash", "")),
-                     runs={str(k): int(v) for k, v in dict(raw.get("runs", {})).items()})
+        entry = json.loads(decrypt(key, str(last["run_id"]), int(last["seq"]),
+                                   str(last["ciphertext"])))
+        return PushState(last_entry_seq=int(entry["seq"]), chain_hash=str(last["chain_hash"]),
+                         runs=next_seqs)
+    except Exception as e:  # pylint: disable=broad-exception-caught  # tampered, or not ours
+        raise ValueError(f"its last record doesn't decrypt with this host's key ({e})") from e
 
 
-def save_state(directory: Path, agent_id: str, state: PushState) -> None:
-    directory.mkdir(parents=True, exist_ok=True)
-    path = _state_path(directory, agent_id)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps({"last_entry_seq": state.last_entry_seq,
-                               "chain_hash": state.chain_hash, "runs": state.runs}))
-    os.replace(tmp, path)
+class HeadWaits:
+    """The agents whose pusher has no cursor and hasn't had a usable answer
+    from the console, by when it last asked or was refused. `bot-bottle
+    status` says how many, so a console that never answers is noticed."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._since: dict[str, float] = {}
+
+    def mark(self, agent_id: str, now: float) -> None:
+        with self._lock:
+            self._since[agent_id] = now
+
+    def clear(self, agent_id: str) -> None:
+        with self._lock:
+            self._since.pop(agent_id, None)
+
+    def count(self, now: float | None = None) -> int:
+        """How many are waiting: marked within two asks, so a pusher that
+        went away without clearing stops counting."""
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            return sum(1 for t in self._since.values() if now - t < 2 * ASK_HEAD_SECONDS)
 
 
-def host_runs(directory: Path) -> set[str]:
-    """Every run this host has sent records for."""
-    out: set[str] = set()
-    for path in directory.glob("*.json") if directory.is_dir() else []:
-        try:
-            out.update(dict(json.loads(path.read_text()).get("runs", {})))
-        except (OSError, ValueError, AttributeError):
-            continue
-    return out
+# The host controller's.
+WAITING = HeadWaits()
 
 
 class AuditPusher:
     def __init__(self, agent_id: str, key: bytes, entries: Callable[[str], list[Any] | None],
                  send: Callable[[dict[str, Any]], Awaitable[None]], *,
-                 directory: Path | None = None) -> None:
+                 store: AuditPushStore | None = None,
+                 clock: Callable[[], float] = time.monotonic,
+                 waits: "HeadWaits | None" = None) -> None:
         self.agent_id = agent_id
+        self._waits = waits if waits is not None else WAITING
         self._key = key
         self._entries = entries
         self._send = send
-        self._dir = directory or audit_push_dir()
+        self._store = store or AuditPushStore(host_db_path())
+        self._clock = clock
+        self._asked: float | None = None
         self._lock = threading.Lock()
-        self.state = load_state(self._dir, agent_id)
+        # None until this host has a cursor for the agent (`head`).
+        self.state: PushState | None = self._store.load(agent_id)
+
+    def head(self, reply: dict[str, Any]) -> bool:
+        """Take the console's `audit_head` answer as the cursor, unless one
+        is here already. Whether it was taken."""
+        if self.state is not None:
+            return False
+        try:
+            runs = reply.get("runs")
+            named = [str(r.get("run_id")) for r in runs if isinstance(r, dict)] \
+                if isinstance(runs, list) else []
+            state = rebuilt(self._key, reply, self._store.others_runs(self.agent_id, named))
+        except (ValueError, KeyError, TypeError) as e:
+            log.warn(f"audit: the console's head for {self.agent_id} won't do: {e}; "
+                     "asking again later")
+            self._waits.mark(self.agent_id, self._clock())
+            return False
+        self._store.save(self.agent_id, state)
+        self.state = state
+        self._waits.clear(self.agent_id)
+        return True
 
     def _batch(self, run_id: str) -> list[dict[str, Any]]:
         """The next records to send, built (and the state advanced) off the loop."""
+        assert self.state is not None
         entries = self._entries(self.agent_id) or []
         last = self.state.last_entry_seq
         fresh = [e for e in entries if not e.meta and (last is None or e.seq > last)][:BATCH]
@@ -159,6 +282,9 @@ class AuditPusher:
         """Send the next batch for `run_id`; how many went."""
         if not run_id:
             return 0
+        if self.state is None:
+            await self._ask_head()
+            return 0
         try:
             batch = await asyncio.to_thread(self._batch, run_id)
         except Exception as e:  # pylint: disable=broad-exception-caught  # tried again next tick
@@ -173,13 +299,33 @@ class AuditPusher:
                 log.warn(f"audit: couldn't send {self.agent_id}'s record: {e}")
                 break
             with self._lock:
+                assert self.state is not None
                 self.state.last_entry_seq = entry_seq
                 self.state.chain_hash = record["chain_hash"]
                 self.state.runs[run_id] = record["seq"] + 1
             sent += 1
         if sent:
-            await asyncio.to_thread(save_state, self._dir, self.agent_id, self.state)
+            assert self.state is not None
+            try:
+                await asyncio.to_thread(self._store.save, self.agent_id, self.state)
+            except sqlite3.Error as e:
+                log.warn(f"audit: couldn't keep how far {self.agent_id}'s records went: {e}")
         return sent
+
+    async def _ask_head(self) -> None:
+        """Ask the console where the agent's chain is, at most every
+        `ASK_HEAD_SECONDS`."""
+        now = self._clock()
+        if self._asked is not None and now - self._asked < ASK_HEAD_SECONDS:
+            return
+        if self._asked is not None:
+            # The last question got no usable answer.
+            self._waits.mark(self.agent_id, now)
+        self._asked = now
+        try:
+            await self._send({"type": "audit_head", "agent_id": self.agent_id})
+        except Exception as e:  # pylint: disable=broad-exception-caught  # the link dropped
+            log.warn(f"audit: couldn't ask for {self.agent_id}'s chain: {e}")
 
 
 def load_key() -> bytes | None:
@@ -195,5 +341,6 @@ def load_key() -> bytes | None:
         return None
 
 
-__all__ = ["AuditPusher", "BATCH", "PushState", "decrypt", "encrypt", "host_runs", "load_key",
-           "load_state", "record_id", "record_type", "save_state"]
+__all__ = ["ASK_HEAD_SECONDS", "AuditPushStore", "AuditPusher", "BATCH", "HeadWaits", "PushState",
+           "WAITING", "decrypt",
+           "encrypt", "load_key", "rebuilt", "record_id", "record_type"]

@@ -16,12 +16,14 @@ from pathlib import Path
 from ...environment import ENV_VAR, LIVE, active_name, resource_prefix, reverse_dns
 from ...paths import bot_bottle_root
 from .build import PACKAGE_ROOT
-from .runner import HostControlError, state_dir
+from .runner import REFUSED_EXIT_STATUS, HostControlError, state_dir
 
 # Per environment: `io.bot-bottle.hostctl` and `bot-bottle-hostctl.service` for
 # live, `io.bot-bottle.<name>.hostctl` and `bb-<name>-hostctl.service` otherwise.
 LAUNCHD_LABEL = f"{reverse_dns()}.hostctl"
 SYSTEMD_UNIT = f"{resource_prefix()}hostctl.service"
+# launchd's least time between starts of the host controller, in seconds.
+THROTTLE_SECONDS = 60
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,7 @@ def unit_path(kind: str | None = None) -> Path:
 
 
 def render_launchd(spec: ServiceSpec) -> bytes:
+    # The host controller rotates it (`log_rotation`).
     log = str(state_dir() / "hostctl.log")
     return plistlib.dumps({
         "Label": LAUNCHD_LABEL,
@@ -67,6 +70,9 @@ def render_launchd(spec: ServiceSpec) -> bytes:
         "EnvironmentVariables": spec.environment(),
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
+        # A refusal to start (a corrupt host DB, exit 78) is retried no more
+        # often than this, rather than in a tight loop.
+        "ThrottleInterval": THROTTLE_SECONDS,
         # Agents (tmux, VMs) outlive a controller restart; the next one adopts
         # them.
         "AbandonProcessGroup": True,
@@ -80,6 +86,7 @@ def _systemd_quote(value: str) -> str:
 
 
 def render_systemd(spec: ServiceSpec) -> str:
+    # The host controller rotates it (`log_rotation`).
     log = state_dir() / "hostctl.log"
     lines = [
         "[Unit]",
@@ -89,6 +96,8 @@ def render_systemd(spec: ServiceSpec) -> str:
         "ExecStart=" + " ".join(_systemd_quote(a) for a in spec.argv()),
         *(f"Environment={_systemd_quote(f'{k}={v}')}" for k, v in spec.environment().items()),
         "Restart=on-failure",
+        "# A corrupt host DB (`bot-bottle host restore-db`): restarting won't help.",
+        f"RestartPreventExitStatus={REFUSED_EXIT_STATUS}",
         "# Agents (tmux, VMs) outlive a controller restart; the next one adopts them.",
         "KillMode=process",
         f"StandardOutput=append:{log}",
@@ -160,15 +169,17 @@ def uninstall() -> bool:
     return True
 
 
-def start() -> None:
-    """Have the service manager start the daemon."""
+def restart() -> None:
+    """Have the service manager (re)start the daemon: start it if it isn't
+    running, restart it if it is (a daemon that doesn't answer)."""
     if manager() == "launchd":
-        _run(["launchctl", "kickstart", _launchd_target()])
+        _run(["launchctl", "kickstart", "-k", _launchd_target()])
     else:
-        _run(["systemctl", "--user", "start", SYSTEMD_UNIT])
+        _run(["systemctl", "--user", "restart", SYSTEMD_UNIT])
 
 
 __all__ = [
-    "LAUNCHD_LABEL", "SYSTEMD_UNIT", "ServiceSpec", "install", "installed", "manager",
-    "render_launchd", "render_systemd", "start", "uninstall", "unit_path",
+    "LAUNCHD_LABEL", "SYSTEMD_UNIT", "THROTTLE_SECONDS", "ServiceSpec", "install", "installed",
+    "manager",
+    "render_launchd", "render_systemd", "restart", "uninstall", "unit_path",
 ]

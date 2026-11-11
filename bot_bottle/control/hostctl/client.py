@@ -14,6 +14,21 @@ from ...contract.hostctl import JOBS_PATH, bearer
 from .runner import HostControlError, HostControlState
 
 
+class HostControlRefused(HostControlError):
+    """The host controller answered with an error status. `error` is its
+    message."""
+
+    def __init__(self, code: int, path: str, detail: str) -> None:
+        super().__init__(f"host controller: {code} on {path}: {detail}")
+        self.code = code
+        try:
+            body = json.loads(detail)
+        except ValueError:
+            body = None
+        self.error = str(body["error"]) if isinstance(body, dict) and "error" in body \
+            else detail
+
+
 class HostControlClient:
     def __init__(self, state: HostControlState, token: str) -> None:
         self._base = state.url
@@ -31,7 +46,7 @@ class HostControlClient:
             return urllib.request.urlopen(req, timeout=timeout)
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace")[:300]
-            raise HostControlError(f"host controller: {e.code} on {path}: {detail}") from None
+            raise HostControlRefused(e.code, path, detail) from None
         except OSError as e:
             raise HostControlError(f"host controller unreachable: {e}") from None
 
@@ -39,8 +54,9 @@ class HostControlClient:
         with self._open(path, timeout=10) as resp:
             return json.loads(resp.read())
 
-    def post(self, path: str, body: dict[str, object]) -> dict[str, object]:
-        with self._open(path, timeout=30, body=body) as resp:
+    def post(self, path: str, body: dict[str, object],
+             timeout: float = 30) -> dict[str, object]:
+        with self._open(path, timeout=timeout, body=body) as resp:
             return json.loads(resp.read())
 
     def delete(self, path: str) -> dict[str, object]:
@@ -85,4 +101,4 @@ class HostControlClient:
         raise HostControlError(f"host controller: job {job_id} ended without a result")
 
 
-__all__ = ["HostControlClient"]
+__all__ = ["HostControlClient", "HostControlRefused"]

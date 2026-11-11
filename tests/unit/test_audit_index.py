@@ -27,7 +27,7 @@ class Index(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         self.addCleanup(tmp.cleanup)
         self.dir = Path(tmp.name) / "audit"
-        self.db = Path(tmp.name) / "db" / "bot-bottle.db"
+        self.db = Path(tmp.name) / "db" / "index.db"
         self.journal = AuditJournal(self.dir, host="h", engine="e")
 
     def append(self, **overrides: Any) -> dict[str, Any]:

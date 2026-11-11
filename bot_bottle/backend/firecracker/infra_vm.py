@@ -2,8 +2,8 @@
 rootfs with its role init as PID 1.
 
 - Orchestrator VM, on the NAT'd orchestrator link: control plane, sole
-  opener of `bot-bottle.db` on its `/dev/vdb` volume, holds the signing key,
-  runs buildah for agent builds.
+  opener of its `registry.db` on the `/dev/vdb` volume, holds the signing
+  key, runs buildah for agent builds.
 - Gateway VM, on its own NAT'd link: egress, git-http and supervise. Agent
   gateway-port traffic is DNAT'd here, never to the orchestrator. Holds the
   CA and a `gateway` token, and reaches the orchestrator at
@@ -32,7 +32,7 @@ from typing import Generator
 from ... import resources
 from ...contract.hostctl import HOST_CONTROL, HOSTCTL_URL_ENV, InfraSettings, Settings
 from ...lib.log import die, info
-from ...paths import HOST_DB_FILENAME
+from ...paths import REGISTRY_DB_FILENAME, infra_state_dir, private_dir
 from ..docker import util as docker_mod
 from . import firecracker_vm, infra_rootfs, netpool, util
 
@@ -154,16 +154,14 @@ def singleton_lock() -> Generator[None, None, None]:
 
 
 def stop() -> None:
-    """Stop both infra VMs (idempotent): the recorded VMMs, any firecracker
-    still bound to an infra config (PID files drift), and a legacy combined VM.
-    Survivors would hold a link's TAP. Drops the version marker."""
+    """Stop both infra VMs (idempotent): the recorded VMMs, and any
+    firecracker still bound to an infra config (PID files drift). Survivors
+    would hold a link's TAP. Drops the version marker."""
     _kill_pidfile(_orch_dir())
     _kill_pidfile(_gw_dir())
-    _kill_pidfile(_infra_dir())  # legacy combined VM
     _kill_infra_firecrackers()
     _pid_file(_orch_dir()).unlink(missing_ok=True)
     _pid_file(_gw_dir()).unlink(missing_ok=True)
-    _pid_file(_infra_dir()).unlink(missing_ok=True)  # legacy
     _version_file().unlink(missing_ok=True)
 
 
@@ -207,9 +205,16 @@ def boot_vm(
 
 
 def _infra_dir() -> Path:
-    d = util.env_dir() / "infra"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    """The infra VMs' run dirs, rootfs copies and keypair, in the firecracker
+    cache: all rebuilt when missing. 0700, for the private key."""
+    return private_dir(util.env_dir() / "infra")
+
+
+def state_dir() -> Path:
+    """`<root>/infra/`: what the infra VMs keep that can't be rebuilt (the
+    orchestrator's registry volume and the gateway CA), under the
+    environment's root rather than the cache. 0700."""
+    return infra_state_dir()
 
 
 def _orch_dir() -> Path:
@@ -294,11 +299,10 @@ def push_stream(infra: InfraVm, data: bytes, script: str, what: str) -> None:
 
 
 def gateway_ca_dir() -> Path:
-    """The firecracker gateway CA's host dir. Separate from the docker/macOS
-    dir, which docker writes as root with a 0600 key."""
-    d = _infra_dir() / "gateway-ca"
-    d.mkdir(mode=0o700, parents=True, exist_ok=True)
-    return d
+    """The firecracker gateway CA's host dir, `<root>/infra/gateway-ca/`. Key
+    material, so not in the cache. Separate from the docker/macOS dir, which
+    docker writes as root with a 0600 key."""
+    return private_dir(state_dir() / "gateway-ca")
 
 
 def _stable_keypair() -> tuple[Path, str]:
@@ -355,13 +359,8 @@ def _kill_pidfile(run_dir: Path) -> None:
 
 def _kill_infra_firecrackers(proc_root: Path = Path("/proc")) -> None:
     """SIGKILL any firecracker whose `--config-file` is one of this host's
-    infra configs (including the legacy combined one), regardless of PID files.
-    Agent VMs are untouched."""
-    cfgs = {
-        str(_orch_dir() / "config.json"),
-        str(_gw_dir() / "config.json"),
-        str(_infra_dir() / "config.json"),  # legacy combined VM
-    }
+    infra configs, regardless of PID files. Agent VMs are untouched."""
+    cfgs = {str(_orch_dir() / "config.json"), str(_gw_dir() / "config.json")}
     for entry in proc_root.iterdir():
         if not entry.name.isdigit():
             continue
@@ -456,7 +455,7 @@ def _orchestrator_init() -> str:
     signing key, start the control plane. Refuses to start without the key."""
     return _init_head() + f"""
 # Persistent registry volume (second virtio-block device, /dev/vdb) mounted at
-# the DB dir, so bot-bottle.db survives orchestrator-VM restarts.
+# the DB dir, so registry.db survives orchestrator-VM restarts.
 mount -t ext4 /dev/vdb /var/lib/bot-bottle 2>/dev/null || true
 rm -f {_STALE_SIGNING_KEY_PATH}
 # Persistent buildah store (/dev/vdc), so pulled bases and layer cache survive
@@ -486,6 +485,6 @@ else
     {HOSTCTL_URL_ENV}="$HC_URL" {HOST_CONTROL.token_env}="$HC_JWT" \\
         python3 -m bot_bottle.orchestrator \\
         --host 0.0.0.0 --port {ORCHESTRATOR_PORT} \\
-        --db /var/lib/bot-bottle/db/{HOST_DB_FILENAME} &
+        --db /var/lib/bot-bottle/db/{REGISTRY_DB_FILENAME} &
 fi
 """ + _INIT_TAIL

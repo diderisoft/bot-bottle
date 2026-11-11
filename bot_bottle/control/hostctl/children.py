@@ -10,15 +10,12 @@ DEFAULT_MAX_CHILDREN = 3
 def running_children_of(parent_identity: str, bottles: Any) -> int:
     """Count running children of `parent_identity` (bottles with `parent` set
     to it in their metadata). `bottles` is a BottleService."""
-    from ...bottle_state import bot_bottle_root, read_metadata
-    state_root = bot_bottle_root() / "state"
+    from ...bottle_state import all_metadata
     count = 0
-    for meta_path in state_root.glob("*/metadata.json"):
-        identity = meta_path.parent.name
-        meta = read_metadata(identity)
-        if meta is None or meta.parent != parent_identity:
+    for meta in all_metadata():
+        if meta.parent != parent_identity:
             continue
-        state = bottles.session_state(identity) if bottles is not None else {}
+        state = bottles.session_state(meta.identity) if bottles is not None else {}
         if state.get("running"):
             count += 1
     return count

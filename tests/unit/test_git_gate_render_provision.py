@@ -29,6 +29,7 @@ from bot_bottle.git_gate import (
 from bot_bottle.git_gate.plan import GitGatePlan
 from bot_bottle.git_gate.provision import provision_git_gate_dynamic_keys
 from bot_bottle.manifest.git import ManifestGitEntry, ManifestKeyConfig
+from tests.unit import use_bottle_root
 
 
 def _entry(**kw: Any) -> ManifestGitEntry:
@@ -159,7 +160,15 @@ def _gate_plan(d: str) -> GitGatePlan:
                                                   identity_file="", known_host_key=""),))
 
 
-class TestLeftoverKeys(unittest.TestCase):
+class _Root(unittest.TestCase):
+    """The host DB rows each test writes go under its own root."""
+
+    def setUp(self) -> None:
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))  # pylint: disable=consider-using-with
+        self.addCleanup(use_bottle_root(root))
+
+
+class TestLeftoverKeys(_Root):
     """A run killed before teardown leaves its keys registered; the next
     launch under the slug revokes them before minting its own."""
 
@@ -209,14 +218,14 @@ def _bottle(*entries: ManifestGitEntry) -> Any:
     return cast(Any, types.SimpleNamespace(git=entries))
 
 
-class TestRevokeProvisionedKeys(unittest.TestCase):
+class TestRevokeProvisionedKeys(_Root):
     def test_revokes_gitea_key_when_id_present(self) -> None:
         fake = _FakeProvisioner()
         with tempfile.TemporaryDirectory() as d, \
                 patch("bot_bottle.deploy_key_provisioner.get_provisioner", return_value=fake), \
                 patch("sys.stderr"):
             (Path(d) / "repo-deploy-key-id").write_text("kid123")
-            revoke_git_gate_provisioned_keys(_bottle(_gitea_entry()), Path(d), _TOKEN)
+            revoke_git_gate_provisioned_keys(_bottle(_gitea_entry()), "myslug", Path(d), _TOKEN)
         self.assertEqual([("o/r", "kid123")], fake.deleted)
 
     def test_skips_non_gitea_entry(self) -> None:
@@ -224,7 +233,7 @@ class TestRevokeProvisionedKeys(unittest.TestCase):
         static_entry = _entry(Key=ManifestKeyConfig(provider="static", path="/k"))
         with tempfile.TemporaryDirectory() as d, \
                 patch("bot_bottle.deploy_key_provisioner.get_provisioner", return_value=fake):
-            revoke_git_gate_provisioned_keys(_bottle(static_entry), Path(d), _TOKEN)
+            revoke_git_gate_provisioned_keys(_bottle(static_entry), "myslug", Path(d), _TOKEN)
         self.assertEqual([], fake.deleted)
 
     def test_skips_when_id_file_missing(self) -> None:
@@ -232,7 +241,7 @@ class TestRevokeProvisionedKeys(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, \
                 patch("bot_bottle.deploy_key_provisioner.get_provisioner", return_value=fake):
             # no id file written -> entry skipped
-            revoke_git_gate_provisioned_keys(_bottle(_gitea_entry()), Path(d), _TOKEN)
+            revoke_git_gate_provisioned_keys(_bottle(_gitea_entry()), "myslug", Path(d), _TOKEN)
         self.assertEqual([], fake.deleted)
 
     def test_missing_token_raises(self) -> None:
@@ -240,7 +249,7 @@ class TestRevokeProvisionedKeys(unittest.TestCase):
             (Path(d) / "repo-deploy-key-id").write_text("kid123")
             with self.assertRaises(MissingEnvVarError):
                 revoke_git_gate_provisioned_keys(
-                    _bottle(_gitea_entry()), Path(d), MappingSecrets({}))
+                    _bottle(_gitea_entry()), "myslug", Path(d), MappingSecrets({}))
 
 
 if __name__ == "__main__":

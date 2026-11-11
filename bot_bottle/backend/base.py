@@ -111,8 +111,8 @@ class ActiveAgent:
 
     backend_name: str
     slug: str
-    agent_name: str  # from metadata.json; "?" if missing
-    started_at: str  # ISO 8601 from metadata.json; "" if missing
+    agent_name: str  # its bottled agent record's; "?" if missing
+    started_at: str  # ISO 8601, its bottled agent record's; "" if missing
     services: tuple[str, ...]  # alphabetical
     label: str = ""
     color: str = ""

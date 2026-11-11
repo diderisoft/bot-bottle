@@ -57,6 +57,7 @@ _BY_TYPE: dict[str, tuple[int, int]] = {
     "lifecycle.bottled_agent_stop": (APPLICATION_LIFECYCLE, 4),  # Stop
     "lifecycle.bottled_agent_crash": (APPLICATION_LIFECYCLE, 4),
     "audit.segment_open": (EVENT_LOG_ACTIVITY, 5),  # Rotate
+    "journal.pruned": (EVENT_LOG_ACTIVITY, 2),  # Delete
     "audit.export_failed": (EVENT_LOG_ACTIVITY, 3),  # Export
     "transcript.captured": (EVENT_LOG_ACTIVITY, 4),  # Archive
     "transcript.rewritten": (DETECTION_FINDING, 1),

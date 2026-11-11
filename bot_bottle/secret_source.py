@@ -178,6 +178,16 @@ def write_secret(path: Path, name: str, value: str) -> None:
     _rewrite(path, name, f"{name}={value}")
 
 
+def write_user_secret(path: Path, name: str, value: str) -> None:
+    """`write_secret` for a name someone else chose (the console, `setup`):
+    SecretsFileError for one of bot-bottle's own (`secret_ref.is_reserved`)."""
+    # pylint: disable-next=import-outside-toplevel
+    from .secret_ref import reserved_problem
+    if reserved_problem(name):
+        raise SecretsFileError(reserved_problem(name))
+    write_secret(path, name, value)
+
+
 def remove_secret(path: Path, name: str) -> None:
     """Drop `name` from the secrets file at `path`; absent is fine."""
     if path.exists():
@@ -205,4 +215,4 @@ def _rewrite(path: Path, name: str, line_for: str | None) -> None:
 
 
 __all__ = ["ChainSecrets", "FileSecrets", "LaunchSecrets", "MappingSecrets", "SecretSource",
-           "host_store", "remove_secret", "tiers", "write_secret"]
+           "host_store", "remove_secret", "tiers", "write_secret", "write_user_secret"]

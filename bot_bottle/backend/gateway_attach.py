@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from ..bottle_state import git_gate_state_dir
 from ..control.gateway import Gateway, GatewayError
 from ..git_gate.plan import GitGatePlan
-from ..git_gate.provision import load_upstreams_snapshot
+from ..git_gate.provision import saved_upstreams
 from ..git_gate.service import load_baseline, load_trailer_settings, stage_git_gate_scripts
 from ..lib.log import info, warn
 from ..control.client import OrchestratorClient, OrchestratorClientError
@@ -151,14 +151,15 @@ def reattach_running_bottles(
 
 def reprovision_git_gate(transport: GatewayTransport, bottle_id: str, slug: str) -> None:
     """Re-provision one bottle's git-gate repos, credentials and hooks, as a
-    launch does. Upstreams and credentials come from its state dir; hooks are
-    rendered from the current code."""
+    launch does. Upstreams and the trailer check come from the host DB,
+    credentials from its state dir; hooks are rendered from the current
+    code."""
     state_dir = git_gate_state_dir(slug)
-    upstreams = load_upstreams_snapshot(state_dir)
+    upstreams = saved_upstreams(slug)
     if not upstreams:
         return
     hook, access_hook, gitleaks = stage_git_gate_scripts(state_dir)
-    trailer, trailer_mode = load_trailer_settings(state_dir)
+    trailer, trailer_mode = load_trailer_settings(slug)
     provision_git_gate(transport, bottle_id, GitGatePlan(
         slug=slug,
         hook_script=hook,

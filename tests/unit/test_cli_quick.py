@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from tests.unit import serve_host_controller
 from bot_bottle.cli.commands import quick
 from bot_bottle.contract.hostctl import LaunchRequest
 from bot_bottle.lib.log import Die
@@ -30,6 +31,8 @@ class Quick(unittest.TestCase):
         env = patch.dict(os.environ, {"BOT_BOTTLE_ROOT": str(self.root)})
         env.start()
         self.addCleanup(env.stop)
+        # The remembered agents are the host controller's (`agent_prefs`).
+        serve_host_controller(self)
         self.launched: list[LaunchRequest] = []
 
         def launch(request: LaunchRequest, *_args: object, **_kwargs: object) -> int:
@@ -88,6 +91,21 @@ class Quick(unittest.TestCase):
         third = self.project.parent / "third"
         third.mkdir()
         self.assertEqual("zeta", self.run_quick([], ["codex", "zeta"], cwd=third).agent)
+
+    def test_one_remembered_agent_for_start_and_bare_bot_bottle(self) -> None:
+        """`agent_prefs` keeps one remembered agent, in the host DB: what the
+        guided start ran last is bare `bot-bottle`'s default, and a
+        directory's own choice overrides it."""
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.cli import start_prefs
+        start_prefs.remember_agent("zeta")
+        self.assertEqual("zeta", quick.default_agent())
+        self.assertEqual("zeta", self.run_quick([], ["codex", "zeta"]).agent)
+        self.run_quick(["codex"], ["codex", "zeta"])
+        self.assertEqual("codex", self.run_quick([], ["codex", "zeta"]).agent)
+        self.assertEqual("zeta", start_prefs.remembered_agent())
+        self.assertFalse((self.root / "start.json").exists())
+        self.assertFalse((self.root / "state" / "quickstart.json").exists())
 
     def test_dry_run_is_a_flag_and_skips_onboarding(self) -> None:
         with patch("sys.stdin.isatty", return_value=True), \

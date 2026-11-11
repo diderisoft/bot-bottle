@@ -27,6 +27,31 @@ def fingerprint(secret: str) -> str:
     return "sha256:" + hashlib.sha256(secret.encode("utf-8")).hexdigest()[:16]
 
 
+# The most of a decision's policy diff its `decision.resolved` carries. A
+# longer one is cut, flagged `diff_truncated`; `diff_digest` names it whole.
+DIFF_MAX_BYTES = 64 * 1024
+
+
+def capped_diff(diff: str) -> dict[str, Any]:
+    """`decision.resolved`'s diff fields: the diff, cut to DIFF_MAX_BYTES of
+    UTF-8, its fingerprint, and whether it was cut. Empty for no diff."""
+    if not diff:
+        return {}
+    raw = diff.encode("utf-8")
+    cut = len(raw) > DIFF_MAX_BYTES
+    return {"diff": raw[:DIFF_MAX_BYTES].decode("utf-8", "ignore") if cut else diff,
+            "diff_digest": fingerprint(diff), "diff_truncated": cut}
+
+
+def _split_diff(diff: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """`capped_diff` as (payload fields, untrusted fields). The diff's text
+    carries what the agent proposed, so it goes under `untrusted`, which an
+    export of a restricted record drops; its digest and cut flag don't."""
+    fields = capped_diff(diff)
+    text = fields.pop("diff", None)
+    return fields, ({"diff": text} if text is not None else None)
+
+
 # Registry id -> slug, remembered so late events still get a slug.
 _SLUG_CACHE_LIMIT = 10_000
 
@@ -122,16 +147,20 @@ class OrchestratorAudit:
                      untrusted={"agent_rationale": justification})
 
     def resolved(self, *, bottle_id: str, proposal_id: str, decision: str,
-                 notes: str, required: bool = False) -> bool:
+                 notes: str, diff: str = "", required: bool = False) -> bool:
         """The operator's answer: approve or modify allows, reject blocks.
-        `required` records before applying; False means it wasn't recorded."""
+        `diff` is the policy change it applies, rendered; the journal is its
+        only record (`capped_diff`), its text under `untrusted`. `required`
+        records before applying; False means it wasn't recorded."""
+        diff_fields, untrusted = _split_diff(diff)
         return self._record(required=required, type="decision.resolved", actor="role:cli",
                      action=f"supervise.{decision}",
                      outcome="blocked" if decision == "reject" else "allowed",
                      sensitivity="security", resource=bottle_id, bottle=bottle_id,
                      bottled_agent=bottle_id, correlation_id=proposal_id,
                      payload={"proposal_id": proposal_id, "operator_action": decision,
-                              "operator_notes": notes})
+                              "operator_notes": notes, **diff_fields},
+                     untrusted=untrusted)
 
     def answered_late(self, *, bottle_id: str, proposal_id: str, decision: str,
                       notes: str, first: str) -> None:
@@ -169,4 +198,4 @@ class OrchestratorAudit:
                               "operator_notes": notes})
 
 
-__all__ = ["OrchestratorAudit", "fingerprint"]
+__all__ = ["DIFF_MAX_BYTES", "OrchestratorAudit", "capped_diff", "fingerprint"]

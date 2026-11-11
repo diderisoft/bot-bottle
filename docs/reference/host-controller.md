@@ -17,9 +17,20 @@ python -m bot_bottle.control.hostctl
 ```
 
 - It binds `127.0.0.1`, on `BOT_BOTTLE_HOSTCTL_PORT` or an ephemeral port.
-- It writes `{pid, port, build_id}` to `~/.bot-bottle/hostctl/`.
-- The CLI trusts that file only once `GET /status` returns the same pid.
+- It answers on its control socket, `~/.bot-bottle/hostctl/control.sock`
+  (0600, in a 0700 directory). Asked for `status`, it replies with its
+  `{pid, port, build_id}`. That is how the CLI finds it.
+- It checks, migrates and backs up the host database when it starts,
+  without asking ([Host database](#host-database)).
 - The CLI starts the daemon under a lock, so concurrent CLIs start only one.
+- The daemon holds `~/.bot-bottle/hostctl/daemon.lock` (`flock`) for its
+  whole life.
+- A second one for the same root exits at once, before it touches the log,
+  the host database or the control socket. Its status is 0, so nothing
+  restarts it.
+- It logs to `~/.bot-bottle/hostctl/hostctl.log`, whichever of the CLI,
+  systemd or launchd started it. At 16 MiB the daemon moves it to
+  `hostctl.log.1` and opens a fresh one, keeping 3 older files.
 
 ### Restarts after an upgrade
 
@@ -71,6 +82,14 @@ roles, `orchestrator` and `gateway`.
 `bot-bottle install` can add a launchd LaunchAgent or a `systemd --user`
 unit. A crash is restarted. A clean exit is not.
 
+- A refusal to start (status 78, a corrupt host database) isn't restarted by
+  systemd (`RestartPreventExitStatus`).
+- launchd retries it, at most once a minute (`ThrottleInterval`).
+
+When the CLI finds no daemon answering, it has the service manager restart
+the unit (`systemctl --user restart`, `launchctl kickstart -k`). A unit that
+runs but doesn't answer is replaced, not left to time out.
+
 Stopping the daemon stops only its own process (`KillMode=process`,
 `AbandonProcessGroup`). So agents outlive a restart. Units installed before
 this need `bot-bottle install` again.
@@ -100,11 +119,12 @@ Each agent runs in tmux, on bot-bottle's own tmux server, never the user's.
 Secrets never reach tmux's argv or environment.
 
 - The pane runs `launch.py`. It fetches the real command and env once, over
-  a 0600 Unix socket (`localsock.py`).
+  the control socket (`localsock.py`).
 - tmux's `pane-died` hook runs `notify.py` to report the exit. The session's
   finisher then runs, and tmux detaches every viewer.
-- Session records are written to disk, so a restarted daemon can take the
-  sessions back.
+- Session records are rows of the host database's `sessions`, so a
+  restarted daemon can take the sessions back. A record holds no label: the
+  bottled agent's row keeps it.
 
 ### After a daemon restart
 
@@ -116,9 +136,9 @@ It then re-takes what running bottles hold in its process
 (`BottleBackend.hold_adopted`). On Firecracker, that is the TAP slot lock of
 each agent VM. Each VM's VMM runs in its own session for this reason.
 
-A re-adopted session has no holder thread. So at launch the holder leaves an
-`adoption.json` in the bottle's state dir (`backend/adoption.py`). It holds
-no secrets:
+A re-adopted session has no holder thread. So at launch the holder records how
+to finish the bottle in its `bottled_agents` row (`backend/adoption.py`). It
+holds no secrets:
 
 - the container name
 - the registry id
@@ -218,8 +238,11 @@ Each copy is kept at:
 ~/.bot-bottle/transcripts/<session>/<activation>/<file>.jsonl
 ```
 
-The file is 0600, in 0700 directories. A `<file>.meta.json` beside it
-holds:
+The file is 0600, in 0700 directories. The session and activation are
+checked as ids when their row is written. Every path built from a row is
+checked to stay under `transcripts/` before it's read or deleted.
+
+Its row in the host database (`transcript_files`) holds:
 
 - the guest path
 - the offset read
@@ -253,7 +276,9 @@ with:
 bot-bottle audit transcript-retention [DAYS]
 ```
 
-The check runs at start and daily after.
+The check runs at start and daily after. A run's rows go with its copies.
+They outlive the bottled agent, as the copies do, so the console can read a
+stopped agent's conversation.
 
 **After a restart.** A restarted daemon resumes each re-adopted session's
 copies from the saved offsets. It execs through
@@ -263,14 +288,15 @@ of sessions that ended while it was down close with what they have.
 ### Details
 
 At launch, a follower notes the files already matching the glob. Those are
-another session's, and they're never copied. It writes `follow.json`.
+another session's, and they're never copied. It records them with the run
+(`transcript_runs`): the glob, those files, the agent id and the harness.
 
 A resume keeps the bottle's home, and its harness continues its last
 conversation. Claude's `--continue`, for example, appends to the file it
 was writing.
 
-- For a resume, the follower notes each file's size instead, in
-  `follow.json` as `start`.
+- For a resume, the follower notes each file's size instead, in the run's
+  row as `start`.
 - What the agent adds to a file is copied from there.
 - The earlier run's copy holds the rest.
 
@@ -469,6 +495,83 @@ The warm bottle:
 The console starts the same flow over the link (see
 [Bottle suggestions from the console](#bottle-suggestions-from-the-console)).
 
+## Host database
+
+The host controller is the only writer of the host database,
+`~/.bot-bottle/db/bot-bottle.db`
+([architecture.md](architecture.md#databases)). The CLI never opens it. It
+asks over HTTP, with the `cli` role only:
+
+| Request | Body | Does |
+|---|---|---|
+| `GET /host/config` | none | The host's settings: `audit_delivery`, `audit_forward`, `firehose`, `transcript_retention_days`, `audit_retention`, `host_budget`, `github_app`. |
+| `POST /host/config` | any of those settings | Sets the ones given, all or none, and answers with every setting. A bad value is 400. |
+| `POST /audit/query` | the `audit query` filters | Indexes new journal records, then answers `{"records": [...]}`. |
+| `POST /audit/rebuild` | `{}` | Re-creates the audit index. Answers `{"indexed": n}`. |
+| `POST /audit/import` | `{"segment": <absolute path>}` | Imports a segment as its own chain. Answers `chain`, `records`, `extended` and `already_imported`. |
+| `GET /forges` | none | `{"forges": [...]}`: each connection with its users. |
+| `POST /forges` | `{"forge", "user", "make_default"}` | Records the user connected on the forge. Answers `{"forge": ...}`. A malformed connection is 400. |
+| `POST /forges/remove` | `{"host", "user"?}` | Disconnects the user, or the whole forge, and drops their tokens from the secrets file. Answers `{"removed": [...]}`. |
+| `GET /trust` | none | `{"trusted": [...]}`: the trust records, oldest first. |
+| `POST /trust` | a record: `hash`, `bottle`, `path`, `grants`, `trusted_at` | Keeps it, replacing the record for its path. Answers like `GET`. |
+| `GET /pairing` | none | `{"pairing": ..., "link": ...}`: the pairing, with its tokens' secret names, and the link's last state. |
+| `POST /pairing` | `{"changes": {...}, "new": bool}` | Sets the fields given. A new pairing clears the rest. Token values go to the secrets file. Answers like `GET`. |
+| `GET /audit/passkeys` | none | The trusted passkeys: `origin`, `rp_id`, `passkeys`. |
+| `POST /audit/passkeys` | the same shape | Trusts exactly those, keeping a passkey's counter where the same key was trusted. Answers like `GET`. |
+| `GET /agent-prefs` | none | `{"default", "dirs"}`: the remembered agent and each directory's last one. |
+| `POST /agent-prefs` | `{"agent", "dir"}` | Remembers the agent for the directory, or as the remembered one when `dir` is `""`. Answers like `GET`. |
+| `GET /infra/state` | none | `{"state": {...}}`: what infra bring-up recorded. |
+| `GET /bottled-agents` | none | `{"bottled_agents": [...]}`: every bottled agent this host records. |
+| `POST /bottled-agents` | `{"metadata": {...}}`, or `{"identity", "changes": {...}}` | Records a launch, or changes a bottled agent's `label`, `origin`, `agent_id` or `parent`. A label is checked as a rename checks it. An identity is letters, digits, `-` and `_`, since it names a directory. Answers `{"bottled_agent": ...}`, null when nothing records it. |
+| `POST /bottled-agents/remove` | `{"identity"}` | Deletes its state dir, snapshots and rows together. Answers `{"removed": bool}`. |
+| `GET /workspace-disks` | none | `{"disks": {key: {...}}}`: each Firecracker workspace disk's project, agent, bottles, owner and last user. |
+| `POST /workspace-disks/remove` | `{"key"}` | Deletes the disk, its lock file and its row unless a bottle has it. Answers `{"removed": bool}`. |
+
+A journal that doesn't chain, or a segment that won't import, is 409.
+
+These commands use the routes, and each starts the host controller if it
+isn't running:
+
+- `audit query`, `export`, `rebuild`, `import`, `delivery`,
+  `transcript-retention`, `retention`, `forward`, `firehose` and `passkeys`
+- `host budget`, `forge connect`, `list`, `show` and `remove`, `trust`, `pair`
+- `start --dry-run`, `bots`, `resume`, `rename`, `commit`, `cleanup bots`,
+  `cleanup workspaces`, a bare `bot-bottle`, `agents default`, the guided
+  `start` and `forge connect github --app`
+
+`status`, home and `doctor` read the pairing only from a running one.
+`audit verify` reads only the journal's files.
+
+What infra bring-up recorded (`infra_state`) is read only from a running host
+controller, never starting one. Bring-up runs in the host controller, its only
+writer. `down`, `doctor`, `version` and `resolve-canary` read it this way.
+
+Code the CLI shares with the host controller reads forge connections, trust
+records, bottled agents and the GitHub app the same way (`host_access.py`). In the host
+controller it uses the tables directly.
+
+### Checks and backups
+
+The host controller won't start on a damaged host database.
+
+```
+bot-bottle host restore-db --list     # the backups, newest first
+bot-bottle host restore-db [BACKUP]   # put one back: the newest, or the one named
+bot-bottle host restore-db --yes      # without asking first
+```
+
+| When | What happens |
+|---|---|
+| It starts | `PRAGMA quick_check` on the file. On a failure it exits (status 78), naming the newest backup and when it was taken. Its systemd unit doesn't restart it, and launchd retries at most once a minute. |
+| It starts, and the check passes | It migrates the file. Any table no host store owns is dropped, such as an older version's audit index or, on Docker, the orchestrator's old tables. |
+| It answers on its control socket, and `index.db` is missing or fails the same check | In the background, it deletes `index.db` and rebuilds it from the journal. Audit queries and the prune wait for the check. `index.db` has no backups. |
+| It has migrated, and every hour after | If the newest backup is a day old, or there is none, a new one: a `VACUUM INTO` copy in `~/.bot-bottle/db/backups/` (directory 0700, files 0600). It keeps the newest 3. |
+| `host restore-db` | Refused while the host controller runs: it takes the daemon's lifetime lock, so none starts meanwhile. It says what comes back and asks first. Then it checks the backup, keeps the replaced file beside it as `bot-bottle.db.replaced-<time>`, and puts the backup in its place. |
+
+Changes since the backup are lost on a restore. Trust records, audit
+passkeys and forge connections come back as the backup has them, including
+ones removed since. Backups stay on this host.
+
 ## Audit
 
 The host controller is the host's only audit writer. Gateway events reach
@@ -482,9 +585,10 @@ The producers are:
 
 | Module | Does |
 |---|---|
-| `audit_journal.py` | JSONL segments in `~/.bot-bottle/audit/` (directory 0700, files 0600), which the writer only appends to. Each record hash-chains to the one before it across segments and restarts. An exclusive directory lock enforces one writer. Credential-shaped keys are refused and token-shaped values scrubbed before writing. `id` is the idempotency key. |
-| `audit_index.py` | a SQLite index rebuilt from the journal, for `bot-bottle audit query`. It stops at the first record that doesn't chain. |
-| `audit_verify.py` | offline chain check (`bot-bottle audit verify`). Reports `truncated-tail`, `unreadable`, `edited`, `gap` and `chain-break`. |
+| `audit_journal.py` | JSONL segments in `~/.bot-bottle/audit/` (directory 0700, files 0600), which the writer only appends to. Each record hash-chains to the one before it across segments and restarts. An exclusive directory lock enforces one writer. Credential-shaped keys are refused and token-shaped values scrubbed before writing. `id` is the idempotency key, checked against the current segment. ([Segments and retention](#segments-and-retention)) |
+| `audit_retention.py` | prunes old segments past the host's retention, at start and daily after |
+| `audit_index.py` | a SQLite index of the journal in `~/.bot-bottle/db/index.db`, for `bot-bottle audit query`. It stops at the first record that doesn't chain. ([The index](#the-index)) |
+| `audit_verify.py` | offline chain check (`bot-bottle audit verify`). Reports `truncated-tail`, `unreadable`, `edited`, `gap` and `chain-break`, and for the local journal `unrecorded-prune`. |
 | `audit_forward.py` | at-least-once forwarding to an HTTPS endpoint, as native NDJSON or OCSF. The cursor advances only on a 2xx. |
 | `audit_ocsf.py` | maps a journal record to OCSF 1.9.0. `restricted` records ship only the envelope and chain fields. |
 | `audit_import.py` | stores segments from another host verbatim under `imported/<host>/<chain>/`, never joined to the local chain |
@@ -493,6 +597,48 @@ A journal that can't be written is logged, and the launch or teardown still
 goes ahead. Where a bottle sets `audit.delivery: required`, egress and
 git-gate refuse the action they couldn't record (see
 [gateway.md](gateway.md)).
+
+### Segments and retention
+
+A segment closes at 64 MiB, and on the first record of a new UTC day. The
+next record opens a new one, named for its UTC start time, so names sort in
+chain order. The chain carries on across segments.
+
+```
+bot-bottle audit retention [--days N] [--max-gb N]
+```
+
+The journal keeps every segment until a retention is set. `0` means no limit.
+The host controller prunes at start and daily after:
+
+- It drops only whole segments, oldest first, never the current one.
+- A segment the index hasn't read, or while forwarding is set the forwarder
+  hasn't sent, stays.
+- First it appends `journal.pruned`.
+
+| It names | With |
+|---|---|
+| the dropped segments | and their size |
+| the first and last dropped records | `epoch`, `seq` and time |
+| the last dropped record's hash | the oldest kept record's `prev` |
+| each dropped segment's last hash | `segment_last_hashes`, which a crash partway through the deletes leaves as the oldest kept `prev` |
+
+- `audit verify` starts the chain from the `journal.pruned` record that names
+  the oldest kept record's `prev`.
+- A local journal starting anywhere else is `unrecorded-prune`, a break.
+- An imported chain may start anywhere.
+
+### The index
+
+The audit index lives in `~/.bot-bottle/db/index.db`, not the host
+database. It is derived from the journal, so it is never backed up.
+
+- Each query first indexes records written since the last one.
+- `audit rebuild`, or a missing or damaged `index.db` at start, replays the
+  journal and the imported chains.
+- A rebuild covers only the kept segments. The `journal.pruned` records say
+  what went before them.
+- A prune waits for the index to catch up, as does a query during a rebuild.
 
 ### What the chain proves
 
@@ -544,8 +690,22 @@ The entry is the masked host copy.
 - Each record is bound to its run and position.
 - Each is hash-chained to the agent's previous record, across runs.
 - At most 50 are sent a tick, every 5 s.
-- How far each agent got is kept in `<root>/audit-push/<agent>.json`. So a
-  restart, resume or re-adopted bottle never sends an entry twice.
+- How far each agent got is kept in the host database (`audit_push_cursors`,
+  and `audit_push_runs` for each run's next record). So a restart, resume or
+  re-adopted bottle never sends an entry twice.
+- An agent with no cursor on this host sends nothing until the console says
+  where its chain ends. The host asks `audit_head` (`agent_id`), at most once
+  a minute. The console answers with:
+  - the agent's `runs` from this host (`run_id`, and `next_seq`, its highest
+    `seq` plus one)
+  - its `last` record (`run_id`, `seq`, `ciphertext`, `chain_hash`), or null
+- The host decrypts that record for the transcript position it carried. It
+  never resets a cursor itself, which would send every entry again or none.
+- A run this host keeps for another agent is ignored. A `last` outside the
+  answer's runs, or that doesn't decrypt, is no answer, and the host asks
+  again.
+- `bot-bottle status` counts the agents still waiting on an answer, on its
+  console link line.
 - Terminal-started agents aren't sent.
 
 **Unlocking.**
@@ -564,18 +724,21 @@ and `records`, up to 200. Each record is `id`, `seq` and `ciphertext`. The
 reply is `audit_decrypted`.
 
 - It needs a valid token.
-- It works only for runs this host sent.
+- A record decrypts only with this host's key, bound to its run and `seq`.
+  One that doesn't gets its own `error`. A run sent before the host database
+  was new still decrypts.
 - It allows at most 2000 records a minute.
 - Each read is journalled as `audit.records_read`.
 
-**Trusted passkeys.** They're kept in `<root>/audit-passkeys.json` (0600),
-with the origin and rp id they sign for.
+**Trusted passkeys.** They're kept in the host database (`audit_passkeys`),
+with the origin and rp id they sign for and each one's signature counter.
 
 - `bot-bottle pair` fetches the account's passkeys from the console
   (`GET /api/v1/hosts/passkeys`).
 - It trusts them only once you confirm their fingerprints match the
   console's, under Settings, Passkeys.
-- `bot-bottle audit passkeys [--trust]` lists or re-fetches them.
+- `bot-bottle audit passkeys [--trust]` lists or re-fetches them. Trusting a
+  passkey again keeps its counter.
 - The console can't change them.
 
 Back up `audit.key`. Without it the records can't be read.
@@ -613,9 +776,16 @@ The console is the first of:
 
 - The host dials the console it logged in to, over ALPN `bb-console/1`.
 - It refuses a console whose node id isn't the one pinned at login.
-- Pairing keeps `remote.json`, `console.json` and the iroh key `remote.key`
-  under `~/.bot-bottle/`. It also keeps `remote.status.json`, for
-  `bot-bottle status`.
+- Pairing keeps the console's URL, this host's id on it, the pinned console
+  and whether the link is on in the host database (`pairing`).
+- The console's tokens for this host are in the host secrets file, as
+  `BB_HOST_CONSOLE_ACCESS_TOKEN` and `BB_HOST_CONSOLE_REFRESH_TOKEN`. No bottle
+  can read those names. The `pairing` row names them.
+- The iroh key stays a key file, `~/.bot-bottle/remote.key`.
+- The link writes its state to `console_link`, for `bot-bottle status`, home
+  and `doctor`. They ask a running host controller and start none.
+- `pair`, `pair --password`, `pair on` and `off`, and token refreshes all
+  change the pairing through the host controller (`POST /pairing`).
 
 ### What the console can reach
 
@@ -662,9 +832,9 @@ After that, the session is one of the link's agents like any other:
 When the terminal and the phone both answer a request, the first answer
 stands (see [gateway.md](gateway.md#supervise)).
 
-A bottle remembers who started it. Its `metadata.json` records `origin`.
+A bottle remembers who started it. Its `bottled_agents` row records `origin`.
 For the console, it also records the console's `agent_id`, written once the
-agent runs and kept when a resume rewrites the file.
+agent runs and kept when a resume rewrites the row.
 
 So `bot-bottle resume <bottle>` on the CLI brings a console bottle back as
 **the same console agent**:
@@ -691,8 +861,8 @@ The host only reports it:
 - Home's status strip says to pair again.
 - The link asks only every ten minutes, instead of on its short backoff.
 
-It changes nothing on its own. `console.json`, the iroh key and the link
-setting stay.
+It changes nothing on its own. The pairing, the iroh key and the link setting
+stay.
 
 `bot-bottle pair` then pairs it like a new machine, under the same iroh
 key. That can be to a new account or the same console. The next accepted
@@ -739,10 +909,11 @@ Through the link the console can:
     for you to commit.
   - All of these are described under
     [Console link protocol](#console-link-protocol).
-- **Use the host secrets file.** List the names in it with
-  `list_secrets` -> `secrets_listed`, names only. Set a value in it with
-  `set_secret` (`name`, `value`) -> `secret_set`. The value is never echoed
-  in the reply or a log line.
+- **Use the host secrets file.**
+  - `list_secrets` -> `secrets_listed` lists the names in it, names only.
+  - `set_secret` (`name`, `value`) -> `secret_set` sets a value. The value is
+    never echoed in the reply or a log line. A reserved `BB_HOST_` name is
+    refused.
 
 Together these let a console point a route's credential at a host of its
 choosing. So a compromised console can send a host secret off the host
@@ -793,7 +964,7 @@ An arrow shows a request and its reply.
 | `resolve` | [Resolving a launch](#resolving-a-launch) |
 | `manifest`, `manifest_save`, `manifest_transfer` | [Manifest tab](#manifest-tab) |
 | `bottle_chain`, `bottle_write` | [Bottle tab](#bottle-tab) |
-| `audit_record`, `audit_unlock_challenge`, `audit_unlock`, `decrypt_audit_records` | [Audit records on the console](#audit-records-on-the-console) |
+| `audit_record`, `audit_head`, `audit_unlock_challenge`, `audit_unlock`, `decrypt_audit_records` | [Audit records on the console](#audit-records-on-the-console) |
 | `list_secrets`, `set_secret`, `operator_egress_allow` | [What pairing lets the console do](#what-pairing-lets-the-console-do) |
 
 ### Host stats
@@ -971,11 +1142,13 @@ not built yet.
    teardown saves.
 3. It keeps it as
    `~/.bot-bottle/snapshots/<session>/<activation>/<taken>.patch` (0600).
-4. A `.json` record beside it holds when, the conversation's newest `seq`
-   then, files and lines changed, size and SHA-256.
+4. A row of the host database's `snapshots` points at it. It holds when,
+   the conversation's newest `seq` then, files and lines changed, size and
+   SHA-256.
 5. Each is audited as `snapshot.taken`.
 
-A workspace that isn't a git copy can't be snapshotted.
+A workspace that isn't a git copy can't be snapshotted. Removing the
+bottled agent deletes its snapshots, rows and patches.
 
 ### Workspace images
 
@@ -1055,9 +1228,9 @@ The reply `renamed` carries the cleaned `label`, or `error`.
 - A running agent's bottle is the one the link runs it in.
 - A stopped one's is the `bottle` the console names.
 - A label is trimmed, 1 to 128 characters, with no control characters.
-- The host writes it to the bottle's `metadata.json` and its session
-  record. So `bot-bottle bots`, the console's listings and a later resume
-  all use it.
+- The host writes it to the bottled agent's row, the one place it's kept.
+  So `bot-bottle bots`, the console's listings, its session and a later
+  resume all use it.
 
 `bot-bottle rename <bottled agent> <label>` does the same from the CLI. A
 console paired with the host keeps its own name until it's renamed there.
@@ -1070,7 +1243,7 @@ flow (ADR 0012). The token never reaches the console.
 **Connecting.** `github_authorize_start` starts the flow. Its reply,
 `github_authorize`, carries `user_code`, `verification_uri` and
 `expires_in`, or `error`. The host then polls GitHub itself. It records the
-connection in `forges.md` when the operator enters the code.
+connection in the host database when the operator enters the code.
 
 **Status.** `github_status` answers `github_status`. It asks GitHub each
 time, so the console can poll it while the operator installs the app.
@@ -1202,14 +1375,16 @@ The console's Manifest tab asks for a running agent's `manifest`. The reply
 shows the agent's manifest versions, what it runs with, and what changed in
 this run.
 
-**Versions.** Each bottled agent has manifest versions, under
-`state/<bottle>/manifest/`.
+**Versions.** Each bottled agent has manifest versions. Each version's
+document is `state/<bottle>/manifest/vNNNN.yaml`. When and why it was written
+is a row of `run_manifest_versions` in the host database.
 
 - Version 1 is its whole bottle chain flattened into one document,
   recorded at launch.
 - A resume adds a version only if the files changed.
-- Each launch and resume also records `launch.json`. It holds every bottle
-  in the chain's fingerprint, and the host's bottle version then.
+- Each launch and resume also records a row of `run_manifest_launches`. It
+  holds every bottle in the chain's fingerprint, and the host's bottle
+  version then.
 - A fingerprint is a SHA-256 of the bottle's full resolution, with
   `extends` merged. It's in a canonical order, so key, route and repo order
   don't count.
@@ -1308,7 +1483,8 @@ Where each part lives, for readers checking the code. Paths are under
 
 | Part | Code |
 |---|---|
-| Running | `runner.ensure_running`, `listeners.py`, `service_unit.py` |
+| Running | `runner.ensure_running`, `runner.read_state`, `localsock.py`, `listeners.py`, `service_unit.py` |
+| Host database | `host_db.py`, `host_state.py`, `bot_bottle/cli/host_state_client.py`, `bot_bottle/lib/db_store.py` |
 | Jobs | `jobs.py`, `bottles.py` |
 | Sessions | `sessions.py`, `launch.py`, `localsock.py`, `notify.py`, `bot_bottle/backend/adoption.py` |
 | Status bar | `requests.py`, `blocks.py` |

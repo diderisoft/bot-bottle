@@ -1,23 +1,24 @@
 """A new label for a bottled agent (`relabel`, the console's `rename`,
-`bot-bottle rename`): its metadata and session record change, its identity
-doesn't."""
+`bot-bottle rename`): its `bottled_agents` row changes, its identity doesn't.
+The label is kept there only: its session record has none, and `bot-bottle
+rename` changes it through the host controller."""
 
 from __future__ import annotations
 
 import asyncio
-import json
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from tests.unit import use_bottle_root
+from tests.unit import as_cli, serve_host_controller, use_bottle_root
 from bot_bottle.bottle_state import (
     MAX_LABEL_CHARS, BottleMetadata, clean_label, read_metadata, rename_label, write_metadata,
 )
-from bot_bottle.control.hostctl import relabel, remote_actions, sessions
-from bot_bottle.control.hostctl.runner import state_dir
+from bot_bottle.control.hostctl import relabel, remote_actions
+from bot_bottle.control.hostctl.sessions import SessionRecord, SessionStore
+from bot_bottle.paths import host_db_path
 
 
 def _meta(identity: str = "fix-it", label: str = "fix it") -> BottleMetadata:
@@ -30,18 +31,6 @@ class _Root(unittest.TestCase):
         root = Path(self.enterContext(  # pylint: disable=consider-using-with
             tempfile.TemporaryDirectory(prefix="relabel.")))
         self.addCleanup(use_bottle_root(root))
-        self.manager = sessions.SessionManager({})
-
-    def _session(self, identity: str = "fix-it", label: str = "fix it") -> None:
-        path = state_dir() / "sessions" / f"{identity}.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"id": identity, "kind": "bottle",
-                                    "meta": {"label": label, "agent": "claude"}}))
-
-    def _session_label(self, identity: str = "fix-it") -> object:
-        record = self.manager.record(identity)
-        assert record is not None
-        return record.meta.get("label")
 
 
 class TestCleanLabel(unittest.TestCase):
@@ -59,7 +48,7 @@ class TestCleanLabel(unittest.TestCase):
 
 
 class TestRenameLabel(_Root):
-    def test_metadata_takes_the_label_and_keeps_the_identity(self) -> None:
+    def test_the_row_takes_the_label_and_keeps_the_identity(self) -> None:
         write_metadata(_meta())
         self.assertTrue(rename_label("fix-it", "the flaky test"))
         meta = read_metadata("fix-it")
@@ -67,57 +56,29 @@ class TestRenameLabel(_Root):
         self.assertEqual(("fix-it", "the flaky test", "claude"),
                          (meta.identity, meta.label, meta.agent_name))
 
-    def test_no_metadata(self) -> None:
+    def test_no_row(self) -> None:
         self.assertFalse(rename_label("nobody", "x"))
-
-    def test_the_same_label_writes_nothing(self) -> None:
-        write_metadata(_meta())
-        with mock.patch("bot_bottle.bottle_state.write_metadata") as write:
-            self.assertTrue(rename_label("fix-it", "fix it"))
-        write.assert_not_called()
-
-
-class TestSessionRelabel(_Root):
-    def test_the_record_takes_the_label(self) -> None:
-        self._session()
-        self.assertTrue(self.manager.relabel("fix-it", "renamed"))
-        self.assertEqual("renamed", self._session_label())
-
-    def test_no_record(self) -> None:
-        self.assertFalse(self.manager.relabel("nobody", "x"))
-
-    def test_the_same_label_writes_nothing(self) -> None:
-        self._session()
-        with mock.patch.object(self.manager, "_write_record") as write:
-            self.assertTrue(self.manager.relabel("fix-it", "fix it"))
-        write.assert_not_called()
 
 
 class TestRename(_Root):
-    def test_both_records(self) -> None:
+    def test_the_label_is_kept_once(self) -> None:
         write_metadata(_meta())
-        self._session()
-        self.assertEqual({"label": "new name"},
-                         relabel.rename(self.manager, "fix-it", "  new name "))
+        SessionStore(host_db_path()).put(SessionRecord("fix-it", "bottle", {"agent": "claude"}))
+        self.assertEqual({"label": "new name"}, relabel.rename("fix-it", "  new name "))
         meta = read_metadata("fix-it")
         assert meta is not None
         self.assertEqual("new name", meta.label)
-        self.assertEqual("new name", self._session_label())
-
-    def test_either_record_is_enough(self) -> None:
-        write_metadata(_meta("stopped"))
-        self.assertEqual({"label": "a"}, relabel.rename(self.manager, "stopped", "a"))
-        self._session("presented")
-        self.assertEqual({"label": "b"}, relabel.rename(self.manager, "presented", "b"))
-        self.assertEqual({"label": "c"}, relabel.rename(None, "stopped", "c"))
+        record = SessionStore(host_db_path()).get("fix-it")
+        assert record is not None
+        self.assertNotIn("label", record.meta)
 
     def test_nothing_records_it(self) -> None:
         self.assertEqual({"error": "this host has no bottle ghost"},
-                         relabel.rename(self.manager, "ghost", "x"))
+                         relabel.rename("ghost", "x"))
 
     def test_a_bad_label_changes_nothing(self) -> None:
         write_metadata(_meta())
-        self.assertIn("error", relabel.rename(self.manager, "fix-it", " "))
+        self.assertIn("error", relabel.rename("fix-it", " "))
         meta = read_metadata("fix-it")
         assert meta is not None
         self.assertEqual("fix it", meta.label)
@@ -165,7 +126,12 @@ class TestRenameRequest(unittest.TestCase):
 
 
 class TestRenameCommand(_Root):
-    def test_renames(self) -> None:
+    def setUp(self) -> None:
+        super().setUp()
+        serve_host_controller(self)
+        as_cli(self)
+
+    def test_renames_through_the_host_controller(self) -> None:
         # pylint: disable-next=import-outside-toplevel
         from bot_bottle.cli.commands.rename import cmd_rename
         write_metadata(_meta())

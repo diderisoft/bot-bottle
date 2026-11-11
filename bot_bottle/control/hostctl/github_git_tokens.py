@@ -20,9 +20,8 @@ from typing import Any
 from ... import forge_alerts
 from ...backend import adoption
 from ...backend.provision_gateway import github_token, github_token_expires, push_tokens
-from ...bottle_state import git_gate_state_dir
 from ...contrib.github.user_token import ReauthorizeError
-from ...git_gate.provision import load_upstreams_snapshot
+from ...git_gate.provision import saved_upstreams
 from ...lib import log
 
 # Shorter than the ten minutes `current_token` renews ahead of expiry, so a
@@ -77,7 +76,7 @@ class GitTokenRenewer:
         return pushed
 
     def _renew(self, identity: str) -> bool:
-        upstreams = tuple(u for u in load_upstreams_snapshot(git_gate_state_dir(identity))
+        upstreams = tuple(u for u in saved_upstreams(identity)
                           if u.transport == "https" and u.token_secret)
         if not upstreams:
             return False

@@ -11,12 +11,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle.cli.commands import bottle as bottle_cmd
-from bot_bottle.forge_connections import ForgeConnection, ForgeUser, save
+from bot_bottle.forge_connections import ForgeConnection, ForgeUser
 from bot_bottle.manifest import ManifestError, ManifestIndex
 from bot_bottle.manifest.legacy_git_gate import OldGitGateFormatError
 from bot_bottle.manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
 from bot_bottle.manifest.migrate import MigrateError, apply, prepare
 from bot_bottle.manifest.versions import history, revert
+from tests.unit._forges import record
 
 HOST_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOldHostKey"
 
@@ -70,7 +71,7 @@ class _Host(unittest.TestCase):
         self.dirs = [(self.bottles, False), (BUILTIN_BOTTLES_DIR, False)]
 
     def connect(self) -> None:
-        save({CONN.host: CONN}, self.root / "forges.md")
+        record(self.root, CONN)
 
     def write(self, name: str, text: str) -> Path:
         path = self.bottles / f"{name}.md"

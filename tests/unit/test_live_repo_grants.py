@@ -20,7 +20,7 @@ from bot_bottle.control.git_gate_render import git_gate_render_gitconfig
 from bot_bottle.control.hostctl import remote_actions, repo_grants
 from bot_bottle.forge_connections import ForgeConnection, ForgeUser
 from bot_bottle.git_gate import live_grant
-from bot_bottle.git_gate.provision import live_grant_refs, load_upstreams_snapshot
+from bot_bottle.git_gate.provision import live_grant_refs, saved_upstreams
 from bot_bottle.manifest.forges import ManifestForge
 from bot_bottle.secret_source import MappingSecrets
 from tests.unit._forges import connected
@@ -88,7 +88,7 @@ class TestLiveGrant(_Root):
 
         def mint(e: Any, slug: str, stage_dir: Path, secrets: Any, **_kw: Any) -> str:
             del e, secrets
-            self.assertEqual(1, len(live_grant_refs(stage_dir)))  # recorded first
+            self.assertEqual(1, len(live_grant_refs("s1")))  # recorded first
             (stage_dir / "app-deploy-key-id").write_text("7")
             return str(stage_dir / f"{slug}-key")
 
@@ -96,11 +96,11 @@ class TestLiveGrant(_Root):
             upstream = live_grant.provision_live(entry, slug="s1", stage_dir=stage,
                                                  secrets=mock.Mock())
         self.assertFalse(upstream.writable)
-        (snap,) = load_upstreams_snapshot(stage)
+        (snap,) = saved_upstreams("s1")
         self.assertEqual(("app", str(stage / "s1-key")), (snap.name, snap.identity_file))
         self.assertIn("[gitea.example.com]:2222 ssh-ed25519",
                       (stage / "app-known_hosts").read_text())
-        self.assertEqual("acme/app.git", live_grant_refs(stage)[0].upstream_path)
+        self.assertEqual("acme/app.git", live_grant_refs("s1")[0].upstream_path)
         with self.assertRaisesRegex(live_grant.GrantError, r"already has app \(read-only\)"):
             live_grant.provision_live(entry, slug="s1", stage_dir=stage, secrets=mock.Mock())
         other = live_grant.grant_entry("gitea.example.com/elsewhere/app", FORGE)
@@ -130,7 +130,7 @@ class TestLiveGrant(_Root):
                 live_grant.provision_live(entry, slug="s1", stage_dir=stage,
                                           secrets=mock.Mock())
             self.assertEqual({"app", "app-gitea"},
-                             {u.name for u in load_upstreams_snapshot(stage)})
+                             {u.name for u in saved_upstreams("s1")})
             self.assertEqual("app-gitea-2",
                              repo_grants.proposed_alias("s1", "gitea.example.com/third/app"))
 
@@ -143,7 +143,7 @@ class TestLiveGrant(_Root):
                                       grant="gitea.example.com/acme/app")
         self.assertEqual(1, mint.call_count)  # no second key
         self.assertEqual(["gitea.example.com/acme/app"],
-                         [r.grant for r in live_grant_refs(stage)])
+                         [r.grant for r in live_grant_refs("s1")])
 
     def test_regranting_with_write_replaces_the_key(self) -> None:
         stage = git_gate_state_dir("s1")
@@ -168,9 +168,9 @@ class TestLiveGrant(_Root):
                 slug="s1", stage_dir=stage, secrets=mock.Mock())
         self.assertEqual("7", revoke.call_args.args[1])  # the old key, after minting
         self.assertEqual(["", ":write"], suffixes)  # titles unique per repo
-        (snap,) = load_upstreams_snapshot(stage)
+        (snap,) = saved_upstreams("s1")
         self.assertTrue(snap.writable)
-        self.assertEqual(1, len(live_grant_refs(stage)))
+        self.assertEqual(1, len(live_grant_refs("s1")))
 
     def test_revoke_a_live_grant(self) -> None:
         stage = git_gate_state_dir("s1")
@@ -189,21 +189,21 @@ class TestLiveGrant(_Root):
         guest = _Guest(rewrites="")
         guest.header = "url.http://gw:9420/app.git.insteadof ssh://git@h/acme/app.git\n"
         with self.assertRaisesRegex(live_grant.GrantError, "came with the bottle"):
-            live_grant.revoke_live("app", stage_dir=stage, secrets=mock.Mock(),
+            live_grant.revoke_live("app", identity="s1", stage_dir=stage, secrets=mock.Mock(),
                                    transport=transport, registry_id="r",
                                    bottle=guest, launched=("app",))  # type: ignore[arg-type]
         with mock.patch.object(live_grant, "revoke_key") as revoke:
-            live_grant.revoke_live("app", stage_dir=stage, secrets=mock.Mock(),
+            live_grant.revoke_live("app", identity="s1", stage_dir=stage, secrets=mock.Mock(),
                                    transport=transport, registry_id="r",
                                    bottle=guest, launched=())  # type: ignore[arg-type]
         self.assertEqual("7", revoke.call_args.args[1])
-        self.assertEqual((), load_upstreams_snapshot(stage))
-        self.assertEqual((), live_grant_refs(stage))
+        self.assertEqual((), saved_upstreams("s1"))
+        self.assertEqual((), live_grant_refs("s1"))
         self.assertFalse((stage / "app-key").exists())
         self.assertIn("/git/r/app.git", transport.exec.call_args.args[0])
         self.assertIn("--unset-all url.http://gw:9420/app.git.insteadof", guest.scripts[-1])
         with self.assertRaisesRegex(live_grant.GrantError, "wasn't granted"):
-            live_grant.revoke_live("app", stage_dir=stage, secrets=mock.Mock(),
+            live_grant.revoke_live("app", identity="s1", stage_dir=stage, secrets=mock.Mock(),
                                    transport=transport, registry_id="r",
                                    bottle=guest, launched=())  # type: ignore[arg-type]
 
@@ -243,9 +243,9 @@ class TestLiveGrant(_Root):
         stage.mkdir(parents=True)
         ref = DeployKeyRef("app", "GITEA_TOKEN", "https://gitea.example.com",
                            "gitea.example.com", "acme/app.git")
-        record_live_grant(stage, ref)
+        record_live_grant("s1", ref)
         with mock.patch("bot_bottle.git_gate.provision.revoke_deploy_keys") as revoke:
-            revoke_git_gate_provisioned_keys(ManifestBottle(), stage, mock.Mock())
+            revoke_git_gate_provisioned_keys(ManifestBottle(), "s1", stage, mock.Mock())
         self.assertEqual((ref,), revoke.call_args.args[0])
 
     def test_point_agent_at_gate(self) -> None:

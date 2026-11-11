@@ -220,20 +220,6 @@ class TestBottleMetadataParent(unittest.TestCase):
         self.assertIsNotNone(got)
         self.assertEqual(got.parent, "parent-id")  # type: ignore[union-attr]
 
-    def test_read_metadata_missing_parent_defaults_empty(self):
-        import json
-        from bot_bottle.bottle_state import BottleMetadata, read_metadata, write_metadata
-        m = BottleMetadata(identity="old-id", agent_name="bot", cwd="",
-                           copy_cwd=False, started_at="2026-01-01T00:00:00Z")
-        path = write_metadata(m)
-        # Simulate old metadata without parent field.
-        raw = json.loads(path.read_text())
-        raw.pop("parent", None)
-        path.write_text(json.dumps(raw))
-        got = read_metadata("old-id")
-        self.assertIsNotNone(got)
-        self.assertEqual(got.parent, "")  # type: ignore[union-attr]
-
     def test_record_parent(self):
         from bot_bottle.bottle_state import BottleMetadata, read_metadata, record_parent, write_metadata
         m = BottleMetadata(identity="cid", agent_name="bot", cwd="",

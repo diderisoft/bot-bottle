@@ -34,7 +34,7 @@ import unittest
 from pathlib import Path
 
 from bot_bottle.backend import BottleSpec, get_bottle_backend
-from bot_bottle.bottle_state import cleanup_state
+from bot_bottle.bottle_state import remove_bottled_agent
 from bot_bottle.cli.secrets_env import secrets_from_env
 from bot_bottle.cli.settings import settings_from_env
 from bot_bottle.egress.service import _CANARY_ENV_WORDS  # pyright: ignore[reportPrivateUsage]
@@ -209,7 +209,7 @@ class TestSandboxEscape(unittest.TestCase):
             cls._bottle = None
         if cls._identity:
             try:
-                cleanup_state(cls._identity)
+                remove_bottled_agent(cls._identity)
             except BaseException:
                 pass
             cls._identity = ""

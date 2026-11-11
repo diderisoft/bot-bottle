@@ -3,8 +3,9 @@
 Sessions run on bot-bottle's own tmux server, launched with a command that
 fetches the real argv and env from the daemon, so secrets never reach tmux. A
 `pane-died` hook reports the exit; the finisher runs and the session is killed.
-Records persist, so a restarted daemon re-adopts live sessions and finishes
-dead ones.
+Records persist in the host DB's `sessions`, so a restarted daemon re-adopts
+live sessions and finishes dead ones. A bottle's session record holds no
+label: the label is its bottled agent's (`bottle_state`).
 """
 
 from __future__ import annotations
@@ -13,17 +14,20 @@ import hashlib
 import json
 import re
 import shlex
+import sqlite3
 import subprocess
 import sys
 import threading
 from collections.abc import Callable, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ...lib import log
-from ...paths import bot_bottle_root
+from ...lib.db_store import MACHINE_SPECIFIC, DbStore
+from ...lib.migrations import TableMigrations
+from ...paths import bot_bottle_root, host_db_path
 from .build import PACKAGE_ROOT
-from .runner import state_dir
+from .runner import control_socket_path, state_dir
 
 MIN_TMUX_VERSION = (3, 1)
 _SESSION_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -50,6 +54,52 @@ class SessionRecord:
     writable_allowed: bool = False
 
 
+class SessionStore(DbStore):
+    """`sessions`: the record of each session the host controller started,
+    deleted when the session ends (or its bottled agent is removed)."""
+
+    TABLES = {"sessions": MACHINE_SPECIFIC}
+
+    def __init__(self, db_path: Path) -> None:
+        super().__init__(db_path, TableMigrations("sessions", [
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                meta TEXT NOT NULL,
+                writable_allowed INTEGER NOT NULL
+            )
+            """,
+        ]))
+        self.migrate()
+
+    @staticmethod
+    def _record(row: "sqlite3.Row") -> SessionRecord:
+        return SessionRecord(row["id"], row["kind"], json.loads(row["meta"]),
+                             bool(row["writable_allowed"]))
+
+    def all(self) -> list[SessionRecord]:
+        with self._connection() as conn:
+            rows = conn.execute("SELECT * FROM sessions ORDER BY id").fetchall()
+        return [self._record(r) for r in rows]
+
+    def get(self, session_id: str) -> SessionRecord | None:
+        with self._connection() as conn:
+            row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        return self._record(row) if row is not None else None
+
+    def put(self, record: SessionRecord) -> None:
+        with self._connection() as conn:
+            conn.execute("INSERT OR REPLACE INTO sessions VALUES (?, ?, ?, ?)",
+                         (record.id, record.kind, json.dumps(record.meta),
+                          int(record.writable_allowed)))
+        self._chmod()
+
+    def delete(self, session_id: str) -> None:
+        with self._connection() as conn:
+            conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+
+
 def socket_name() -> str:
     """bot-bottle's tmux server name, per root, so roots never share sessions."""
     root = bot_bottle_root().resolve()
@@ -60,11 +110,6 @@ def socket_name() -> str:
 
 def config_path() -> Path:
     return state_dir() / "tmux.conf"
-
-
-def control_socket_path() -> Path:
-    """The daemon socket the launcher and exit hook use."""
-    return state_dir() / "sessions.sock"
 
 
 def tmux(*args: str) -> list[str]:
@@ -217,39 +262,15 @@ class SessionManager:
     # --- records ---
 
     def records(self) -> list[SessionRecord]:
-        """Every session record on disk."""
-        directory = state_dir() / "sessions"
-        found = (self.record(p.stem) for p in sorted(directory.glob("*.json"))) \
-            if directory.is_dir() else iter(())
-        return [r for r in found if r is not None]
+        """Every session record."""
+        return self._store().all()
 
-    def _record_path(self, session_id: str) -> Path:
-        return state_dir() / "sessions" / f"{session_id}.json"
+    @staticmethod
+    def _store() -> SessionStore:
+        return SessionStore(host_db_path())
 
     def record(self, session_id: str) -> SessionRecord | None:
-        try:
-            raw = json.loads(self._record_path(session_id).read_text(encoding="utf-8"))
-            return SessionRecord(**raw)
-        except (OSError, ValueError, TypeError):
-            return None
-
-    def relabel(self, session_id: str, label: str) -> bool:
-        """Set the session record's label; False when there's no record."""
-        with self._cond:
-            record = self.record(session_id)
-            if record is None:
-                return False
-            if record.meta.get("label") != label:
-                record.meta["label"] = label
-                self._write_record(record)
-            return True
-
-    def _write_record(self, record: SessionRecord) -> None:
-        path = self._record_path(record.id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(asdict(record)), encoding="utf-8")
-        tmp.replace(path)
+        return self._store().get(session_id)
 
     # --- lifecycle ---
 
@@ -261,7 +282,7 @@ class SessionManager:
         if self.exists(record.id):
             raise SessionError(f"session {record.id} already exists")
         write_config()
-        self._write_record(record)
+        self._store().put(record)
         with self._cond:
             self._specs[record.id] = (list(argv), dict(env))
             self._exits.pop(record.id, None)
@@ -281,7 +302,7 @@ class SessionManager:
         if proc.returncode != 0:
             with self._cond:
                 self._specs.pop(record.id, None)
-            self._record_path(record.id).unlink(missing_ok=True)
+            self._store().delete(record.id)
             raise SessionError(f"tmux new-session failed: {proc.stderr.strip()}")
 
     def spec(self, session_id: str) -> tuple[list[str], dict[str, str]] | None:
@@ -319,7 +340,7 @@ class SessionManager:
         finally:
             subprocess.run(tmux("kill-session", "-t", f"={session_id}"),
                            capture_output=True, check=False)
-            self._record_path(session_id).unlink(missing_ok=True)
+            self._store().delete(session_id)
             with self._cond:
                 self._exits[session_id] = exit_status
                 self._finishing.discard(session_id)
@@ -370,15 +391,14 @@ class SessionManager:
         for line in proc.stdout.splitlines() if proc.returncode == 0 else []:
             name, dead, status, sig = (line.split(" ") + ["", "", ""])[:4]
             live[name] = (dead == "1", int(status) if status.isdigit() else 0, sig)
-        records_dir = state_dir() / "sessions"
-        known = {p.stem for p in records_dir.glob("*.json")} if records_dir.is_dir() else set()
+        known = {r.id for r in self.records()}
         for name, (dead, status, sig) in live.items():
             if name not in known:
                 log.warn(f"tmux session {name} isn't one this host controller started; leaving it")
             elif dead:
                 self.died(name, ExitStatus(status, sig))
         for name in known - set(live):
-            self._record_path(name).unlink(missing_ok=True)
+            self._store().delete(name)
 
     # --- viewers ---
 
@@ -419,5 +439,6 @@ class SessionManager:
 
 __all__ = [
     "ExitStatus", "MIN_TMUX_VERSION", "SessionError", "SessionManager", "SessionRecord",
+    "SessionStore",
     "config_path", "control_socket_path", "socket_name", "tmux", "tmux_version", "write_config",
 ]

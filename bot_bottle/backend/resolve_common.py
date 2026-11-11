@@ -26,11 +26,9 @@ from ..git_gate.commit_hooks import hooks_env
 from ..git_gate.service import workspace_baseline
 from ..manifest.schema import DEFAULT_BOTTLE
 from ..workspace import WorkspacePlan
-from ..lib.config_store import ConfigStore
+from ..lib.config_store import DEFAULT_AUDIT_DELIVERY
 from ..lib.log import die
 from ..manifest import Manifest, ManifestBottle
-from ..orchestrator.store.store_manager import StoreManager
-from ..paths import host_db_path
 from ..supervisor.plan import SupervisePlan
 from . import BottleSpec
 
@@ -107,23 +105,23 @@ def with_commit_hooks_env(provision: AgentProvisionPlan) -> AgentProvisionPlan:
 
 def prepare_egress(
     bottle: ManifestBottle, slug: str, provision: AgentProvisionPlan,
-    owner: str = "",
+    owner: str = "", default_audit_delivery: str = DEFAULT_AUDIT_DELIVERY,
 ) -> EgressPlan:
-    """`owner` names the agent and bottle in a same-host route error."""
+    """`owner` names the agent and bottle in a same-host route error.
+    `default_audit_delivery` is the host's, for a bottle that sets none."""
     egress_dir = egress_state_dir(slug)
     egress_dir.mkdir(parents=True, exist_ok=True)
     return Egress().prepare(
         bottle, slug, egress_dir, provision.egress_routes,
-        default_audit_delivery=ConfigStore(host_db_path()).audit_delivery(), owner=owner)
+        default_audit_delivery=default_audit_delivery, owner=owner)
 
 
 def prepare_supervise(bottle: ManifestBottle, slug: str) -> SupervisePlan | None:
-    """Prepare the supervise state dir and migrate the host DB. None when the
-    bottle doesn't use supervise."""
+    """Prepare the supervise state dir. None when the bottle doesn't use
+    supervise. Its queue is the orchestrator's, in its own DB."""
     if not bottle.supervise:
         return None
     supervise_state_dir(slug).mkdir(parents=True, exist_ok=True)
-    StoreManager(host_db_path()).migrate()
     return SupervisePlan(slug=slug)
 
 

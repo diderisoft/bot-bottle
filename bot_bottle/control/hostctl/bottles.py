@@ -29,11 +29,11 @@ from ...contract.hostctl import (CONFIRM_ERROR, ORIGIN_CONSOLE, ORIGIN_TERMINAL,
                                  LaunchRequest, Settings, exit_code)
 from ...lib import log
 from ...manifest.schema import DEFAULT_BOTTLE
-from ...paths import host_secrets_path
+from ...paths import host_db_path, host_secrets_path
 from ... import bottle_state, run_bottle, run_manifest
 from ...backend import adoption
 from ...backend.bottle_size import memory_bytes, recorded_memory
-from ...lib.config_store import HostBudget
+from ...lib.config_store import ConfigStore, HostBudget
 from . import bottle_metrics, budget, relabel
 from .build import RESTART_NEEDED
 from .audit_events import HostAudit, digest_manifest, digest_request
@@ -292,6 +292,7 @@ class BottleService:
             image_policy=request.image_policy,
             host_keys=tuple(sorted(request.host_keys.items())),
             fresh_guest=request.fresh_guest,
+            default_audit_delivery=ConfigStore(host_db_path()).audit_delivery(),
         )
         secrets = LaunchSecrets(MappingSecrets(request.secrets), host_store(
             self._secrets_file or host_secrets_path()), request.answers)
@@ -326,7 +327,7 @@ class BottleService:
         finally:
             with self._lock:
                 self._launching.pop(identity, None)
-            if not handed_off:
+            if not handed_off and not self._running(identity):  # never a running one's
                 settle_state(identity)
                 shutil.rmtree(stage_dir, ignore_errors=True)
 
@@ -352,11 +353,12 @@ class BottleService:
             taken = set(self._held) | set(self._adopted)
             launching = dict(self._launching)
         out: list[dict[str, object]] = []
+        labels = {m.identity: m.label for m in bottle_state.all_metadata()}
         for r in self._sessions.records():
             if r.kind != SESSION_KIND:
                 continue
             if r.id in taken or r.id in launching or self.session_state(r.id)["running"]:
-                entry: dict[str, object] = {"id": r.id, "label": r.meta.get("label", "") or r.id,
+                entry: dict[str, object] = {"id": r.id, "label": labels.get(r.id) or r.id,
                                             "memory": recorded_memory(r.meta)}
                 metrics = bottle_metrics.collect(r.id, str(r.meta.get("backend") or ""))
                 if metrics is not None:
@@ -433,11 +435,9 @@ class BottleService:
                                  continuing=continuing)
                     # Lets a restarted controller finish this bottle.
                     record = adoption.record_for(plan, bottle)
-                    try:
-                        adoption.write(identity, record)
-                    except OSError as e:
-                        log.warn(f"bottle {identity}: couldn't record how to finish it "
-                                 f"after a host controller restart: {e}")
+                    if not adoption.write(identity, record):
+                        log.warn(f"bottle {identity}: has no record to keep how to finish it "
+                                 "after a host controller restart")
                     run_manifest.record_launch(
                         identity, plan.manifest.bottle, names=_chain(request),
                         cwd=request.cwd, host_version=str(versions.get("host", "")))
@@ -449,7 +449,7 @@ class BottleService:
                     self._sessions.start(SessionRecord(
                         id=identity, kind=SESSION_KIND,
                         meta={"backend": backend.name, "agent": request.agent,
-                              "label": request.label, "provider": harness,
+                              "provider": harness,
                               "activation": activation, "manifest_digest": policy,
                               "memory": memory_bytes(plan.manifest.bottle),
                               "origin": ORIGIN_CONSOLE if from_console else ORIGIN_TERMINAL,
@@ -458,12 +458,9 @@ class BottleService:
                               **({"agent_id": request.agent_id} if request.agent_id else {})},
                         writable_allowed=plan.manifest.agent.remote_writable,
                     ), command, env, warnings)
-                    try:
-                        bottle_state.record_origin(
-                            identity, ORIGIN_CONSOLE if from_console else ORIGIN_TERMINAL,
-                            request.agent_id if from_console else "")
-                    except OSError as e:
-                        log.warn(f"bottle {identity}: couldn't record who started it: {e}")
+                    bottle_state.record_origin(
+                        identity, ORIGIN_CONSOLE if from_console else ORIGIN_TERMINAL,
+                        request.agent_id if from_console else "")
                     log.info(f"agent running in session {identity}")
                     self.audit.bottled_agent_start(
                         bottle=identity, activation=activation, manifest_digest=policy,
@@ -689,7 +686,7 @@ class BottleService:
             log.warn(f"bottle {record.id}: teardown failed: {e}; run `bot-bottle cleanup bots`")
         try:
             state = git_gate_state_dir(record.id)
-            revoke_deploy_keys(adopted.deploy_keys + live_grant_refs(state), state,
+            revoke_deploy_keys(adopted.deploy_keys + live_grant_refs(record.id), state,
                                FileSecrets(self._secrets_file or host_secrets_path()))
         except Exception as e:  # pylint: disable=broad-exception-caught  # report, don't crash
             log.warn(f"bottle {record.id}: couldn't revoke its deploy keys: {e}; "
@@ -713,7 +710,7 @@ class BottleService:
 
     def rename(self, identity: str, label: str) -> dict[str, object]:
         """A new label for the bottle `identity` (`relabel.rename`)."""
-        return relabel.rename(self._sessions, identity, label)
+        return relabel.rename(identity, label)
 
     def read_workspace_image(self, identity: str, path: str) -> dict[str, object]:
         """An image file from a running bottle (`workspace_files.serve_read`)."""
@@ -775,12 +772,14 @@ class BottleService:
         """`GET /bottles`: the bottles whose sessions this daemon knows."""
         with self._lock:
             held = set(self._held)
+        # The label and parent are the bottled agent's, kept only there.
+        recorded = {m.identity: m for m in bottle_state.all_metadata()}
         return [
             {"id": r.id, "backend": r.meta.get("backend", ""), "agent": r.meta.get("agent", ""),
-             "label": r.meta.get("label", ""), "activation": r.meta.get("activation", ""),
-             # Sessions recorded before origins were: from anywhere but the console.
-             "origin": r.meta.get("origin", ORIGIN_TERMINAL), "writable": r.writable_allowed,
-             "agent_id": r.meta.get("agent_id", ""), "parent": r.meta.get("parent", ""),
+             "label": m.label if (m := recorded.get(r.id)) else "",
+             "parent": m.parent if m else "", "activation": r.meta.get("activation", ""),
+             "origin": r.meta["origin"], "writable": r.writable_allowed,
+             "agent_id": r.meta.get("agent_id", ""),
              "held": r.id in held, "session": self.session_state(r.id)}
             for r in self._sessions.records() if r.kind == SESSION_KIND
         ]

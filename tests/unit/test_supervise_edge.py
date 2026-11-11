@@ -1,4 +1,4 @@
-"""Unit: supervise queue/audit error + edge branches (coverage ratchet,
+"""Unit: supervise queue error + edge branches (coverage ratchet,
 ADR 0004). Complements test_supervise.py with the malformed-input and
 fallback paths."""
 
@@ -10,11 +10,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle.contract import supervise
-from bot_bottle.orchestrator.store.audit_store import AuditStore
 from bot_bottle.paths import bot_bottle_root, host_db_path
 from bot_bottle.orchestrator.store.queue_store import QueueStore
 from bot_bottle.contract.supervise import (
-    AuditEntry,
     Proposal,
     STATUS_APPROVED,
     TOOL_EGRESS_ALLOW,
@@ -78,41 +76,8 @@ class TestReadMalformed(unittest.TestCase):
                 self.assertEqual([], _supervisor().list_pending_proposals("slug"))
 
 
-class TestReadAuditEntries(unittest.TestCase):
-    def test_missing_log_returns_empty(self) -> None:
-        with tempfile.TemporaryDirectory() as home, \
-                patch.dict("os.environ", {"HOME": home}):
-            self.assertEqual([], _supervisor().read_audit_entries("egress", "nope"))
-
-    def test_reads_entries_from_db(self) -> None:
-        with tempfile.TemporaryDirectory() as home, \
-                patch.dict("os.environ", {"HOME": home}):
-            AuditStore(host_db_path()).migrate()
-            _supervisor().write_audit_entry(AuditEntry(
-                timestamp="t",
-                bottle_slug="slug",
-                component="egress",
-                operator_action="approve",
-                operator_notes="",
-                justification="",
-                diff="",
-            ))
-            _supervisor().write_audit_entry(AuditEntry(
-                timestamp="t",
-                bottle_slug="other",
-                component="egress",
-                operator_action="reject",
-                operator_notes="",
-                justification="",
-                diff="",
-            ))
-            entries = _supervisor().read_audit_entries("egress", "slug")
-            self.assertEqual(1, len(entries))
-            self.assertEqual("approve", entries[0].operator_action)
-
-
 class TestStoreGuardBranches(unittest.TestCase):
-    """Direct QueueStore / AuditStore construction and early-return guard branches."""
+    """Direct QueueStore construction and early-return guard branches."""
 
     def test_queue_store_explicit_db_path(self):
         with tempfile.TemporaryDirectory() as d:
@@ -142,22 +107,6 @@ class TestStoreGuardBranches(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             db = Path(d) / "q.db"
             store = QueueStore("key", db_path=db)
-            with patch("os.fchmod", side_effect=OSError("ro")):
-                with self.assertRaisesRegex(OSError, "ro"):
-                    store.migrate()
-
-    def test_audit_store_missing_db_read_returns_empty(self):
-        with tempfile.TemporaryDirectory() as d:
-            db = Path(d) / "a.db"
-            store = AuditStore(db_path=db)
-            store.migrate()
-            db.unlink()
-            self.assertEqual([], store.read_audit_entries("egress", "slug"))
-
-    def test_audit_store_chmod_oserror_fails_closed(self):
-        with tempfile.TemporaryDirectory() as d:
-            db = Path(d) / "a.db"
-            store = AuditStore(db_path=db)
             with patch("os.fchmod", side_effect=OSError("ro")):
                 with self.assertRaisesRegex(OSError, "ro"):
                     store.migrate()

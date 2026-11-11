@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -17,7 +18,10 @@ from bot_bottle.contract.audit import AuditEvent
 from bot_bottle.contract.auth import ROLE_CLI, ROLE_GATEWAY, mint
 from bot_bottle.contract.http import ORCHESTRATOR_AUTH_HEADER
 from bot_bottle.contract.supervise import TOOL_EGRESS_ALLOW
-from bot_bottle.orchestrator.audit_events import OrchestratorAudit
+from bot_bottle.lib.text import render_diff
+from bot_bottle.orchestrator.audit_events import (
+    DIFF_MAX_BYTES, OrchestratorAudit, capped_diff, fingerprint,
+)
 from bot_bottle.orchestrator.audit_sender import AuditSender
 from bot_bottle.orchestrator.hostctl_relay import HostControlUnreachable
 from bot_bottle.orchestrator.server import create_app
@@ -48,7 +52,7 @@ class _Sink:
         return [e.type for e in self.events]
 
 
-class ApiEvents(unittest.TestCase):
+class ApiEvents(unittest.TestCase):  # pylint: disable=too-many-public-methods
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         self.addCleanup(tmp.cleanup)
@@ -186,7 +190,53 @@ class ApiEvents(unittest.TestCase):
         self.sink.writes = True
         self.assertEqual(200, self.call("POST", "/supervise/respond", respond)[0])
         self.assertIn("g.com", self.policy(rec.bottle_id))
-        self.assertEqual("decision.resolved", self.sink.sent_now[-1].type)
+        resolved = self.sink.sent_now[-1]
+        self.assertEqual("decision.resolved", resolved.type)
+        # Recorded before applying, it still carries the change applied.
+        assert resolved.untrusted is not None
+        self.assertIn("+  - host: g.com", resolved.untrusted["diff"])
+        self.assertIn("-routes: []", resolved.untrusted["diff"])
+
+    def test_an_applied_decision_carries_its_policy_diff(self) -> None:
+        rec = self.register("amber-fox", "best_effort")
+        _, body = self.call("POST", "/supervise/propose", {
+            "source_ip": rec.source_ip, "identity_token": rec.identity_token,
+            "tool": TOOL_EGRESS_ALLOW, "proposed_file": "routes:\n  - host: g.com\n",
+            "justification": "need it"}, role=ROLE_GATEWAY)
+        final = "routes:\n  - host: h.com\n"
+        self.assertEqual(200, self.call("POST", "/supervise/respond", {
+            "proposal_id": body["proposal_id"], "bottle_slug": rec.bottle_id,
+            "decision": "modify", "final_file": final})[0])
+        resolved = self.sink.events[-1]
+        assert resolved.payload is not None and resolved.untrusted is not None
+        # The diff's text is what the agent proposed: a claim, which an
+        # export of a restricted record drops. Its digest isn't.
+        self.assertNotIn("diff", resolved.payload)
+        diff = resolved.untrusted["diff"]
+        self.assertEqual(render_diff("routes: []\n", final, label="egress",
+                                     before_title="current", after_label="proposed"), diff)
+        self.assertEqual((fingerprint(diff), False),
+                         (resolved.payload["diff_digest"], resolved.payload["diff_truncated"]))
+
+    def test_a_rejection_carries_no_diff(self) -> None:
+        rec = self.register("amber-fox", "best_effort")
+        _, body = self.call("POST", "/supervise/propose", {
+            "source_ip": rec.source_ip, "identity_token": rec.identity_token,
+            "tool": TOOL_EGRESS_ALLOW, "proposed_file": "routes:\n  - host: g.com\n",
+            "justification": "need it"}, role=ROLE_GATEWAY)
+        self.call("POST", "/supervise/respond", {
+            "proposal_id": body["proposal_id"], "bottle_slug": rec.bottle_id,
+            "decision": "reject"})
+        payload = self.sink.events[-1].payload
+        assert payload is not None
+        self.assertNotIn("diff", payload)
+        self.assertIsNone(self.sink.events[-1].untrusted)
+
+    def test_no_supervise_audit_table(self) -> None:
+        with sqlite3.connect(self.store.db_path) as db:
+            tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master")}
+        self.assertNotIn("supervise_audit_entries", tables)
+        self.assertNotIn("orchestrator_config", tables)
 
     def test_the_firehose_relays_to_the_host_controller_named_by_slug(self) -> None:
         rec = self.register("amber-fox", "best_effort")
@@ -250,6 +300,28 @@ class ApiEvents(unittest.TestCase):
         self.assertEqual(("rejected", "allowed once, from the phone"),
                          (late.payload["decided_as"], late.payload["operator_notes"]))
         self.assertEqual(resolved.correlation_id, late.correlation_id)
+
+
+class DiffCap(unittest.TestCase):
+    def test_a_long_diff_is_cut_flagged_and_named_whole(self) -> None:
+        diff = "+" + "é" * DIFF_MAX_BYTES
+        fields = capped_diff(diff)
+        self.assertTrue(fields["diff_truncated"])
+        self.assertLessEqual(len(fields["diff"].encode("utf-8")), DIFF_MAX_BYTES)
+        self.assertTrue(diff.startswith(fields["diff"]))
+        self.assertEqual(fingerprint(diff), fields["diff_digest"])
+
+    def test_the_cut_diff_reaches_the_record(self) -> None:
+        sink = _Sink()
+        OrchestratorAudit(sink).resolved(bottle_id="b", proposal_id="p", decision="approve",
+                                         notes="", diff="x" * (DIFF_MAX_BYTES + 10))
+        event = sink.events[-1]
+        assert event.payload is not None and event.untrusted is not None
+        self.assertEqual((DIFF_MAX_BYTES, True),
+                         (len(event.untrusted["diff"]), event.payload["diff_truncated"]))
+
+    def test_no_diff_no_fields(self) -> None:
+        self.assertEqual({}, capped_diff(""))
 
 
 class _FirehoseRelay:

@@ -50,7 +50,7 @@ from unittest import mock
 
 from bot_bottle.backend import BottleSpec, get_bottle_backend
 from bot_bottle.backend.docker.infra import DockerInfraService
-from bot_bottle.bottle_state import cleanup_state
+from bot_bottle.bottle_state import remove_bottled_agent
 from bot_bottle.cli.secrets_env import secrets_from_env
 from bot_bottle.cli.settings import settings_from_env
 from bot_bottle.contract.hostctl import AUDIT_APPEND_PATH, LIVE_BOTTLES_PATH
@@ -227,7 +227,7 @@ class _BottleUpstream(_Upstream):
         try:
             self._cm.__exit__(None, None, None)
         finally:
-            cleanup_state(self.identity)
+            remove_bottled_agent(self.identity)
 
 
 # ---- the audit record --------------------------------------------------------
@@ -419,7 +419,7 @@ class TestCommitTrailersEndToEnd(unittest.TestCase):
             cls._launch_cm = cls._bottle = None
         if cls._identity:
             try:
-                cleanup_state(cls._identity)
+                remove_bottled_agent(cls._identity)
             except BaseException:  # pylint: disable=broad-exception-caught
                 pass
             cls._identity = ""

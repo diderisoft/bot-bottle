@@ -516,12 +516,16 @@ def create_app(
                 audit.answered_late(bottle_id=bottle_slug, proposal_id=proposal_id,
                                     decision=decision, notes=body.notes, first=first)
                 raise HTTPException(409, f"{ALREADY_ANSWERED} ({first})")
+            # The policy change, rendered before it's applied: the journal is
+            # the decision's only record.
+            diff = orch.supervise_diff(proposal_id, bottle_slug=bottle_slug,
+                                       decision=decision, final_file=body.final_file)
             # A `required` bottle's decision is recorded before it's applied,
             # and not applied if it can't be.
             required = orch.audit_delivery(bottle_slug) == "required"
             if required and not audit.resolved(
                     bottle_id=bottle_slug, proposal_id=proposal_id,
-                    decision=decision, notes=body.notes, required=True):
+                    decision=decision, notes=body.notes, diff=diff, required=True):
                 raise HTTPException(503, "audit event not written; decision not applied")
             ok, error = orch.supervise_respond(
                 proposal_id,
@@ -534,7 +538,7 @@ def create_app(
                 raise HTTPException(409, error)
             if not required:
                 audit.resolved(bottle_id=bottle_slug, proposal_id=proposal_id,
-                               decision=decision, notes=body.notes)
+                               decision=decision, notes=body.notes, diff=diff)
         return {"responded": True}
 
     @app.post("/supervise/propose", status_code=201)

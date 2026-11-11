@@ -19,8 +19,8 @@ from ...published_artifacts import FORMAT_OCI
 from .gateway_transport import DockerGatewayTransport
 from ...contract.hostctl import Settings
 from ...contract.identity import ORCHESTRATOR_AUTH_JWT_ENV
-from ...paths import bot_bottle_root, host_gateway_ca_dir
-from ... import resources
+from ...paths import host_gateway_ca_dir
+from ... import infra_state, resources
 from ...control.gateway import (
   Gateway, GatewayTransport, GATEWAY_NAME, GATEWAY_NETWORK,
   GATEWAY_DOCKERFILE, GATEWAY_LABEL, MITMPROXY_HOME,
@@ -32,35 +32,25 @@ DEFAULT_GATEWAY_SUBNET = "10.242.255.0/24"
 # The gateway's route out; only the gateway is on it.
 GATEWAY_EGRESS_NETWORK = resource_prefix() + "gateway-egress"
 _GATEWAY_SUBNET_LABEL = "bot-bottle.gateway-subnet"
-# A named environment's allocated gateway subnet, under its state root, so it
-# stays put across restarts.
-GATEWAY_SUBNET_FILENAME = "docker-gateway-subnet"
+# A named environment's allocated gateway subnet (`infra_state`), so it stays
+# put across restarts.
+_GATEWAY_SUBNET_STATE = "docker.gateway_subnet"
 # Candidates a named environment tries before giving up.
 _ALLOCATE_ATTEMPTS = 32
 _IP_FORWARD = "net.ipv4.ip_forward"
 
 
-def _subnet_file() -> Path:
-    return bot_bottle_root() / GATEWAY_SUBNET_FILENAME
-
-
 def recorded_gateway_subnet() -> str:
     """The environment's recorded gateway subnet, "" if none (or garbage)."""
     try:
-        raw = _subnet_file().read_text(encoding="utf-8").strip()
-        return str(ipaddress.IPv4Network(raw))
-    except (OSError, ValueError):
+        return str(ipaddress.IPv4Network(infra_state.get(_GATEWAY_SUBNET_STATE)))
+    except ValueError:
         return ""
 
 
 def record_gateway_subnet(subnet: str) -> None:
-    path = _subnet_file()
-    if recorded_gateway_subnet() == subnet:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{GATEWAY_SUBNET_FILENAME}.{os.getpid()}")
-    tmp.write_text(subnet + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    if recorded_gateway_subnet() != subnet:
+        infra_state.record({_GATEWAY_SUBNET_STATE: subnet})
 
 
 class DockerGateway(Gateway):

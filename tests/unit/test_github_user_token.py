@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import io
 import json
+import os
 import tempfile
 import threading
 import time
@@ -30,13 +31,15 @@ from bot_bottle.contrib.github.user_token import (
 )
 from bot_bottle.control.hostctl import remote, remote_actions, repo_grants
 from bot_bottle.forge_connect import ConnectError
-from bot_bottle.forge_connections import ForgeConnection, ForgeUser, load, save
+from bot_bottle.forge_connections import ForgeConnection, ForgeUser, connections, remove
 from bot_bottle.forge_kinds import ForgeApiError
 from bot_bottle.manifest.forges import forges_raw, resolve_forge
 from bot_bottle.manifest.util import ManifestError
 from bot_bottle.secret_source import FileSecrets, MappingSecrets, remove_secret, write_secret
-from tests.unit import use_bottle_root
-from tests.unit._forges import GITHUB, connected as connected_to
+from bot_bottle.lib.config_store import ConfigStore, GitHubApp
+from bot_bottle.paths import host_db_path
+from tests.unit import serve_host_controller, use_bottle_root
+from tests.unit._forges import GITHUB, connected as connected_to, record
 
 CONFIG = AppConfig(slug="bot-bottle-dev", client_id="Iv1.abc")
 
@@ -82,14 +85,15 @@ DEVICE = {"device_code": "dc", "user_code": "ABCD-1234",
 
 
 class TestConfig(unittest.TestCase):
-    def test_defaults_and_the_file(self) -> None:
+    def test_defaults_and_the_host_setting(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            self.assertEqual(AppConfig("bot-bottle", ""), user_token.app_config(root))
-            user_token.save_app_config(CONFIG, root)
-            self.assertEqual(CONFIG, user_token.app_config(root))
-            (root / "github-app.json").write_text("[]")
-            self.assertEqual("bot-bottle", user_token.app_config(root).slug)
+            self.addCleanup(use_bottle_root(Path(tmp)))
+            self.assertEqual(AppConfig("bot-bottle", ""), user_token.app_config())
+            store = ConfigStore(host_db_path())
+            store.migrate()
+            store.set_github_app(GitHubApp(CONFIG.slug, CONFIG.client_id))
+            self.assertEqual(CONFIG, user_token.app_config())
+            self.assertFalse((Path(tmp) / "github-app.json").exists())
         self.assertEqual("https://github.com/apps/bot-bottle-dev/installations/new",
                          CONFIG.install_url)
 
@@ -302,27 +306,27 @@ class TestConnect(unittest.TestCase):
 
     def test_finish_records_the_connection_and_keeps_the_token(self) -> None:
         done = github_connect.finish(TokenSet("ghu_1", "ghr_1", 5), CONFIG)
-        self.assertEqual(("github.com", "didericis", "bot-bottle-dev", True, "GITHUB_COM_TOKEN"),
+        name = "BB_HOST_FORGE_GITHUB_COM__DIDERICIS_TOKEN"
+        self.assertEqual(("github.com", "didericis", "bot-bottle-dev", True, name),
                          (done.key, done.login, done.app, done.expiring, done.secret_name))
-        conn = load(self.root / "forges.md")["github.com"]
+        conn = connections()["github.com"]
         user = conn.user()
         self.assertEqual(("github", "bot-bottle-dev", "didericis", "ssh-ed25519 AAAAgh"),
                          (conn.kind, user.app, user.name, conn.host_key))
         secrets = FileSecrets(self.secrets)
         self.assertEqual(("ghu_1", "ghr_1", "Iv1.abc"),
-                         (secrets.get("GITHUB_COM_TOKEN"), secrets.get("GITHUB_COM_TOKEN_REFRESH"),
-                          secrets.get("GITHUB_COM_TOKEN_CLIENT_ID")))
+                         (secrets.get(name), secrets.get(f"{name}_REFRESH"),
+                          secrets.get(f"{name}_CLIENT_ID")))
 
     def test_a_transport_for_the_user(self) -> None:
         github_connect.finish(TokenSet("ghu_1"), CONFIG, transport="deploy-key")
-        path = self.root / "forges.md"
-        self.assertEqual("deploy-key", load(path)["github.com"].user().transport)
+        self.assertEqual("deploy-key", connections()["github.com"].user().transport)
         github_connect.set_transport("didericis", "https")
-        user = load(path)["github.com"].user()
+        user = connections()["github.com"].user()
         self.assertEqual(("https", True), (user.transport, user.default))
         with self.assertRaisesRegex(ConnectError, "nobody isn't connected"):
             github_connect.set_transport("nobody", "https")
-        path.unlink()
+        remove("github.com")
         with self.assertRaisesRegex(ConnectError, "isn't connected"):
             github_connect.set_transport("didericis", "https")
 
@@ -401,10 +405,10 @@ class TestConnect(unittest.TestCase):
                 self.assertIn("error", self.wait_state("error"))
 
     def app_forge(self, *users: ForgeUser) -> None:
-        save({"github.com": ForgeConnection(
+        record(self.root, ForgeConnection(
             host="github.com", kind="github", url="https://github.com", ssh="ssh://git@github.com",
             users=users or (ForgeUser("me", "GITHUB_COM_TOKEN", default=True,
-                                      app="bot-bottle-dev"),))}, self.root / "forges.md")
+                                      app="bot-bottle-dev"),)))
 
     def test_status_says_when_the_app_needs_installing(self) -> None:
         self.app_forge()
@@ -610,21 +614,20 @@ class TestCli(unittest.TestCase):
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
         self.web = self.enterContext(mock.patch.object(forge_cmd.webbrowser, "open"))
         self.done = github_connect.GitHubConnected(
-            key="github.com", path=Path("/x/forges.md"), login="me",
+            key="github.com", login="me",
             app="bot-bottle", install_url="i", secret_name="GITHUB_COM_TOKEN", expiring=True)
 
     def test_github_is_the_device_flow(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, \
-                mock.patch("bot_bottle.paths.bot_bottle_root", return_value=Path(tmp)), \
-                mock.patch("bot_bottle.github_connect.authorize",
-                           return_value=self.done) as auth, \
+        tmp = self.enterContext(tempfile.TemporaryDirectory())
+        self.enterContext(mock.patch.dict(os.environ, {"BOT_BOTTLE_ROOT": tmp}))
+        serve_host_controller(self)  # the app is a host setting
+        with mock.patch("bot_bottle.github_connect.authorize", return_value=self.done) as auth, \
                 mock.patch("bot_bottle.github_connect.connected_token",
                            side_effect=[None, ("me", "t")]), \
                 mock.patch.object(forge_cmd, "_install_step") as step:
             self.assertEqual(0, forge_cmd.cmd_forge(
                 ["connect", "github", "--app", "bot-bottle-dev", "--client-id", "Iv1.x"]))
-            self.assertEqual(AppConfig("bot-bottle-dev", "Iv1.x"),
-                             user_token.app_config(Path(tmp)))
+            self.assertEqual(AppConfig("bot-bottle-dev", "Iv1.x"), user_token.app_config())
         self.assertEqual("t", step.call_args.args[1])
         config = auth.call_args.args[0]
         self.assertEqual("Iv1.x", config.client_id)

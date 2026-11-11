@@ -1,17 +1,17 @@
-"""The orchestrator's store manager: as sole opener of `bot-bottle.db` it
-migrates every table in it.
+"""The orchestrator's store manager: migrates every table in its
+`registry.db`. The orchestrator is that file's only opener, on every backend;
+the host DB (`bot-bottle.db`) is the host controller's and never holds these
+tables.
 """
 
 from __future__ import annotations
 
-import contextlib
-import sqlite3
 from pathlib import Path
 
-from .audit_store import AuditStore
+from ...lib.db_store import DbStore, drop_unowned
 from .canary_store import CanaryStore
 from .queue_store import QueueStore
-from ...lib.config_store import ConfigStore
+from .registry_store import RegistryStore
 
 
 class StoreManager:
@@ -20,41 +20,21 @@ class StoreManager:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
 
+    def stores(self) -> list[DbStore]:
+        return [RegistryStore(self.db_path), QueueStore("", self.db_path),
+                CanaryStore(self.db_path)]
+
     def is_migrated(self) -> bool:
-        return (
-            QueueStore("", self.db_path).is_migrated()
-            and AuditStore(self.db_path).is_migrated()
-            and CanaryStore(self.db_path).is_migrated()
-            and ConfigStore(self.db_path).is_migrated()
-        )
+        return all(store.is_migrated() for store in self.stores())
 
-    def migrate(self) -> None:
-        QueueStore("", self.db_path).migrate()
-        AuditStore(self.db_path).migrate()
-        CanaryStore(self.db_path).migrate()
-        ConfigStore(self.db_path).migrate()
-
-    def is_fresh(self) -> bool:
-        """Whether the DB is missing or holds no tables yet: a new install or
-        environment, with nothing in it to migrate. Reads without creating
-        the file."""
-        if not self.db_path.exists():
-            return True
-        try:
-            with contextlib.closing(
-                    sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)) as db:
-                return db.execute("SELECT count(*) FROM sqlite_master WHERE type = 'table'"
-                                  ).fetchone()[0] == 0
-        except sqlite3.Error:
-            return False
-
-    def migrate_if_fresh(self) -> bool:
-        """Create a fresh DB's tables (no question to ask: there's nothing to
-        migrate from). True if it did."""
-        if not self.is_fresh():
-            return False
-        self.migrate()
-        return True
+    def migrate(self) -> list[str]:
+        """Bring every table up to date, and drop any no store here owns.
+        Returns the tables dropped."""
+        stores = self.stores()
+        for store in stores:
+            store.migrate()
+        return drop_unowned(self.db_path, [t for s in stores for t in s.TABLES],
+                            [s.schema_key for s in stores])
 
 
 __all__ = ["StoreManager"]

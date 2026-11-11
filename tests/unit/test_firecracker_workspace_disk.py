@@ -20,8 +20,9 @@ from bot_bottle.cli.commands.cleanup_workspaces import cmd_cleanup_workspaces
 from bot_bottle.cli.settings import settings_from_env
 from bot_bottle.control.hostctl import budget
 from bot_bottle.lib.log import Die
+from bot_bottle.paths import host_db_path
 from bot_bottle.workspace import resync_clear_script
-from tests.unit import use_bottle_root
+from tests.unit import as_cli, serve_host_controller, use_bottle_root
 
 
 def _fake_run(argv: list[str], **_kw: object) -> subprocess.CompletedProcess[str]:
@@ -218,6 +219,9 @@ class TestListingAndRemove(_Root):
         gone = wd.acquire(self.tmp / "gone", "claude", ("dev",), slug="b", size="1024M")
         assert gone is not None
         gone.release()
+        # The CLI reads and removes through the host controller.
+        serve_host_controller(self)
+        as_cli(self)
         with redirect_stderr(io.StringIO()) as err:
             self.assertEqual(0, cmd_cleanup_workspaces(["--dry-run"]))
         self.assertIn("project gone", err.getvalue())
@@ -232,6 +236,21 @@ class TestListingAndRemove(_Root):
         with redirect_stderr(io.StringIO()) as err:
             cmd_cleanup_workspaces([])
         self.assertIn("no workspace disks", err.getvalue())
+        self.assertEqual([], list(wd.disk_dir().iterdir()))  # no lock or sidecar left
+
+    def test_its_record_is_a_host_db_row(self) -> None:
+        disk = self.acquire("a")
+        assert disk is not None
+        self.addCleanup(disk.release)
+        self.assertEqual([disk.path.name, disk.path.with_suffix(".lock").name],
+                         sorted(p.name for p in wd.disk_dir().iterdir()))
+        meta = wd.WorkspaceDiskStore(host_db_path()).get(disk.path.stem)
+        self.assertEqual((str(self.project.resolve()), "claude", ["dev"], "a"),
+                         (meta["project"], meta["agent"], meta["bottles"], meta["owner"]))
+
+    def test_remove_takes_only_a_workspace_disk(self) -> None:
+        with self.assertRaises(ValueError):
+            wd.remove(wd.disk_dir() / ".." / "secrets")
 
     def test_listing_with_no_dir_is_empty(self) -> None:
         self.assertEqual([], wd.listing())

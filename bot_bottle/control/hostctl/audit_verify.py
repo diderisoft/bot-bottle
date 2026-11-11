@@ -8,10 +8,16 @@ alone. Reports:
 - `gap`: `seq` skips forward within an epoch.
 - `chain-break`: `prev` doesn't match for any other reason (reorder, insert,
   loss across epochs).
+- `unrecorded-prune` (`anchored` only): the chain starts after a record no
+  `journal.pruned` record names, so older segments went without the writer
+  pruning them.
 
-Checking continues past a break, so one pass finds them all. Whole records cut
-from the end of the newest segment leave a valid shorter chain; catching that
-needs the head anchored elsewhere (an exporter's cursor).
+Checking continues past a break, so one pass finds them all. A chain whose
+older segments were pruned starts from the `journal.pruned` record naming the
+hash its first record's `prev` carries: `last_hash`, or one of
+`segment_last_hashes` when a crash stopped the deletes partway. Whole records cut from the end
+of the newest segment leave a valid shorter chain; catching that needs the
+head anchored elsewhere (an exporter's cursor).
 """
 
 from __future__ import annotations
@@ -22,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from ...contract.audit import record_hash
-from .audit_journal import SEGMENT_SUFFIX, TORN_TAIL
+from .audit_journal import PRUNED, TORN_TAIL, segments as journal_segments
 
 
 @dataclass(frozen=True)
@@ -44,6 +50,9 @@ class VerifyReport:
     # `prev` of the first record: empty at genesis, set when older segments
     # were pruned.
     starts_after: str = ""
+    # Where the `journal.pruned` record naming `starts_after` is, as
+    # `segment:line`; "" when there's none.
+    pruned_at: str = ""
     problems: list[Problem] = field(default_factory=list)
 
     @property
@@ -73,12 +82,23 @@ def _check(record: dict[str, Any], before: dict[str, Any] | None,
     return found
 
 
-def verify(directory: Path) -> VerifyReport:
-    """Check every segment in `directory` as one chain."""
-    return verify_segments(sorted(directory.glob(f"*{SEGMENT_SUFFIX}")))
+def _names(pruned: dict[str, Any], start: str) -> bool:
+    """Whether a `journal.pruned` payload names the hash `start` a chain
+    starts after: its last one, or any dropped segment's, which is where the
+    chain starts if a crash stopped the deletes partway."""
+    hashes = pruned.get("segment_last_hashes")
+    return pruned.get("last_hash") == start or (
+        isinstance(hashes, list) and start in hashes)
 
 
-def verify_segments(segments: list[Path]) -> VerifyReport:
+def verify(directory: Path, *, anchored: bool = False) -> VerifyReport:
+    """Check every segment in `directory` as one chain. `anchored`: the chain
+    is a whole journal (the host's own), so a start after anything but a
+    recorded prune is a break. An imported chain may start anywhere."""
+    return verify_segments(journal_segments(directory), anchored=anchored)
+
+
+def verify_segments(segments: list[Path], *, anchored: bool = False) -> VerifyReport:
     """Check `segments`, in the order given, as one chain."""
     report = VerifyReport()
     gap_epochs: list[tuple[int, Any]] = []  # (index into problems, epoch)
@@ -108,6 +128,9 @@ def verify_segments(segments: list[Path]) -> VerifyReport:
             if before is None:
                 report.starts_after = str(record.get("prev", ""))
             payload = record.get("payload") or {}
+            if record.get("type") == PRUNED and isinstance(payload, dict) and \
+                    report.starts_after and _names(payload, report.starts_after):
+                report.pruned_at = f"{name}:{number}"
             if record.get("type") == "audit.truncation_detected" and \
                     isinstance(payload, dict) and payload.get("cause") == TORN_TAIL:
                 report.problems.append(Problem(
@@ -128,6 +151,11 @@ def verify_segments(segments: list[Path]) -> VerifyReport:
         if epoch in reordered:
             p = report.problems[i]
             report.problems[i] = Problem("chain-break", p.segment, p.line, p.detail)
+    if anchored and report.starts_after and not report.pruned_at and segments:
+        report.problems.insert(0, Problem(
+            "unrecorded-prune", segments[0].name, 1,
+            f"the chain starts after {report.starts_after[:16]}, which no "
+            f"{PRUNED} record names"))
     report.head = prev
     return report
 

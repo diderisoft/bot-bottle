@@ -3,20 +3,24 @@ unlock reading its audit records from the console (ADR 0013).
 
 With `--trust` it fetches the account's passkeys from the console and trusts
 them once you confirm their fingerprints match the ones the console shows
-(Settings, Passkeys). `bot-bottle pair` asks the same after pairing.
+(Settings, Passkeys). `bot-bottle pair` asks the same after pairing. The host
+controller keeps them (`AUDIT_PASSKEYS_PATH`).
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from typing import Any
 
 from ...control.hostctl import audit_trust, pairing
+from ...control.hostctl.runner import HostControlError
 from ...paths import audit_key_path
+from ..host_state_client import audit_passkeys, pairing as current_pairing, set_pairing
+from ..host_state_client import trust_passkeys
 
 
 def _ask(prompt: str) -> bool:
@@ -48,11 +52,13 @@ def trust_from_console(console_url: str, access_token: str, *,
         sys.stderr.write("Not trusted. Run `bot-bottle audit passkeys --trust` to try again.\n")
         return 1
     try:
-        trust = audit_trust.trusted(console_url, fetched, audit_trust.load())
+        trust = trust_passkeys(audit_trust.trusted(console_url, fetched))
     except audit_trust.TrustError as e:
         sys.stderr.write(f"bot-bottle: {e}\n")
         return 1
-    audit_trust.save(trust)
+    except HostControlError as e:
+        sys.stderr.write(f"bot-bottle: can't trust them: {getattr(e, 'error', '') or e}\n")
+        return 1
     sys.stderr.write(f"Trusted {len(trust.passkeys)} passkey(s) for {trust.origin}.\n")
     return 0
 
@@ -69,14 +75,14 @@ def after_pairing(console_url: str, access_token: str) -> None:
                          "unlock reading them from the console.\n")
 
 
-def fresh_access_token(console: dict[str, Any], *, timeout: float = 10.0) -> str:
+def fresh_access_token(paired: pairing.Pairing, *, timeout: float = 10.0) -> str:
     """The host's console access token, refreshed first (it's short-lived:
-    a stale one gets a 401). The new one is saved as `bot-bottle pair on`
-    saves it; if the refresh fails, the stored token is tried as it is."""
-    refresh = console.get("refresh_token")
+    a stale one gets a 401). The new one is kept as `bot-bottle pair on`
+    keeps it; if the refresh fails, the stored token is tried as it is."""
+    access, refresh = paired.tokens()
     if refresh:
         req = urllib.request.Request(
-            f"{str(console['url']).rstrip('/')}/api/v1/hosts/token/refresh",
+            f"{paired.url.rstrip('/')}/api/v1/hosts/token/refresh",
             data=json.dumps({"refresh_token": refresh}).encode(),
             headers={"Content-Type": "application/json"}, method="POST")
         try:
@@ -85,26 +91,27 @@ def fresh_access_token(console: dict[str, Any], *, timeout: float = 10.0) -> str
         except (urllib.error.URLError, OSError, ValueError, AttributeError):
             token = None
         if isinstance(token, str) and token:
-            console["access_token"] = token
-            pairing.save_console(console)
-    return str(console["access_token"])
+            with contextlib.suppress(HostControlError):
+                set_pairing(access_token=token)
+            access = token
+    return access
 
 
 def run(trust: bool) -> int:
     if trust:
         try:
-            console = pairing.load_console()
-        except pairing.RemoteError as e:
-            sys.stderr.write(f"bot-bottle: {e}\n")
+            paired = current_pairing()[0].require()
+        except (pairing.RemoteError, HostControlError) as e:
+            sys.stderr.write(f"bot-bottle: {getattr(e, 'error', '') or e}\n")
             return 1
         if not sys.stdin.isatty():
             sys.stderr.write("bot-bottle: trusting passkeys needs you at a terminal to confirm\n")
             return 1
-        return trust_from_console(str(console["url"]), fresh_access_token(console))
+        return trust_from_console(paired.url, fresh_access_token(paired))
     try:
-        current = audit_trust.load()
-    except audit_trust.TrustError as e:
-        sys.stderr.write(f"bot-bottle: {e}\n")
+        current = audit_passkeys()
+    except (audit_trust.TrustError, HostControlError) as e:
+        sys.stderr.write(f"bot-bottle: {getattr(e, 'error', '') or e}\n")
         return 1
     if not current.passkeys:
         sys.stdout.write("No passkeys trusted; `bot-bottle audit passkeys --trust` adds them.\n")

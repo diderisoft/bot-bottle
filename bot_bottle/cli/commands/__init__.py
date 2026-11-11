@@ -62,12 +62,4 @@ COMMANDS = {name: _lazy(spec) for name, spec in _HANDLERS.items()}
 QUICK = _lazy("quick:cmd_quick")
 HOME = _lazy("home:cmd_home")
 
-# Commands that never open the store, so they run before or without a migrated
-# DB (where the migration prompt can't be answered on a non-TTY runner).
-NO_MIGRATION_COMMANDS = frozenset({
-    "attach", "audit", "bootstrap", "bottles", "doctor", "down", "envs", "forge", "help", "host",
-    "install", "jobs", "pair", "resolve-canary", "setup", "status", "supervise", "trust",
-    "uninstall", "up", "version",
-})
-
-__all__ = ["COMMANDS", "HOME", "NO_MIGRATION_COMMANDS", "QUICK"]
+__all__ = ["COMMANDS", "HOME", "QUICK"]

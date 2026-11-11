@@ -23,7 +23,6 @@ from tests.unit import use_bottle_root
 from bot_bottle.contract import supervise as _sv
 from bot_bottle.orchestrator.supervisor import Supervisor
 from bot_bottle.orchestrator.store import queue_store as _qs
-from bot_bottle.orchestrator.store import audit_store as _as
 from bot_bottle.paths import host_db_path
 
 from bot_bottle.gateway.supervisor import server as supervise_server  # noqa: E402
@@ -441,7 +440,6 @@ class TestHandleToolsCall(unittest.TestCase):
         self._home_patch = use_bottle_root(Path(self._tmp.name) / ".bot-bottle")
         self.resolver = _FakeSuperviseResolver("dev")
         _qs.QueueStore("dev", host_db_path()).migrate()
-        _as.AuditStore(host_db_path()).migrate()
 
     def tearDown(self):
         self._home_patch()
@@ -857,7 +855,6 @@ class TestNonBlockingSupervise(unittest.TestCase):
         self._home_patch = use_bottle_root(Path(self._tmp.name) / ".bot-bottle")
         self.resolver = _FakeSuperviseResolver("dev")
         _qs.QueueStore("dev", host_db_path()).migrate()
-        _as.AuditStore(host_db_path()).migrate()
 
     def tearDown(self):
         self._home_patch()

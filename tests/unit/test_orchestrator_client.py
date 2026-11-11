@@ -13,6 +13,7 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from bot_bottle import infra_state
 from bot_bottle.contract.auth import ROLE_CLI, verify
 from bot_bottle.control.client import (
     ORCHESTRATOR_KEY,
@@ -28,12 +29,14 @@ from bot_bottle.control.client import (
     env_orchestrator_url,
     first_accepting,
     listening_orchestrators,
-    orchestrator_record_path,
     pending_proposals,
     record_orchestrator,
     recorded_orchestrator,
     stray_orchestrators,
 )
+
+from bot_bottle.control.hostctl import runner
+from tests.unit import as_cli, serve_host_controller
 
 _URLOPEN = "bot_bottle.control.client.urllib.request.urlopen"
 
@@ -314,13 +317,25 @@ class _Root(unittest.TestCase):
 
 
 class TestEnvOrchestrator(_Root):
-    def test_record_round_trips_and_garbage_is_none(self) -> None:
+    def test_record_round_trips_in_the_host_db(self) -> None:
         self.assertIsNone(recorded_orchestrator())
         record_orchestrator("firecracker", _FC)
         self.assertEqual(OrchestratorEndpoint("firecracker", _FC), recorded_orchestrator())
-        self.assertEqual(self.root / "infra" / "orchestrator.json", orchestrator_record_path())
-        orchestrator_record_path().write_text("[1, 2]", encoding="utf-8")
-        self.assertIsNone(recorded_orchestrator())
+        self.assertEqual({"orchestrator.backend": "firecracker", "orchestrator.url": _FC},
+                         infra_state.recorded())
+        self.assertFalse((self.root / "infra" / "orchestrator.json").exists())
+
+    def test_outside_the_host_controller_it_is_read_from_a_running_one(self) -> None:
+        record_orchestrator("firecracker", _FC)
+        as_cli(self)
+        with patch("bot_bottle.control.hostctl.runner.running", return_value=None):
+            self.assertIsNone(recorded_orchestrator())  # none is started for it
+        with self.assertRaisesRegex(RuntimeError, "only the host controller"):
+            record_orchestrator("docker", "http://127.0.0.1:1")
+        serve_host_controller(self)
+        state = runner.ensure_running()
+        with patch("bot_bottle.control.hostctl.runner.running", return_value=state):
+            self.assertEqual(OrchestratorEndpoint("firecracker", _FC), recorded_orchestrator())
 
     def test_none_recorded_says_so_and_never_probes_other_backends(self) -> None:
         with patch("bot_bottle.control.client._candidates",

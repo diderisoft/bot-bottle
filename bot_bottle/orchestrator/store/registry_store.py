@@ -1,6 +1,6 @@
 """The bottle registry: each live bottle's source IP and identity token, and
-fail-closed attribution (both must match one active record), in the shared host
-DB.
+fail-closed attribution (both must match one active record), in the
+orchestrator's `registry.db`.
 
 The source IP is the network-layer signal (unspoofable on firecracker, weaker
 elsewhere); the identity token is an application-layer secret a bottle can't
@@ -17,7 +17,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from ...lib.db_store import DbStore
+from ...lib.db_store import MACHINE_SPECIFIC, DbStore
 from ...lib.migrations import TableMigrations
 
 # 256 bits, URL-safe.
@@ -114,15 +114,11 @@ def _row_to_record(row: sqlite3.Row) -> BottleRecord:
 class RegistryStore(DbStore):
     """SQLite-backed registry of live bottles + fail-closed attribution."""
 
+    TABLES = {"orchestrator_bottles": MACHINE_SPECIFIC,
+              "bottled_agent_secrets": MACHINE_SPECIFIC}
+
     def __init__(self, db_path: Path) -> None:
         super().__init__(db_path, _MIGRATIONS)
-
-    def _connect(self) -> sqlite3.Connection:
-        """A connection with a busy timeout."""
-        conn = super()._connect()
-        # Ride out lock contention with the other stores on the shared DB.
-        conn.execute("PRAGMA busy_timeout=5000")
-        return conn
 
     def register(
         self,

@@ -95,42 +95,53 @@ class TestWaitForHealth(unittest.TestCase):
         die.assert_called_once()
 
 
+def _mke2fs(argv: list[str], **_kw: object) -> object:
+    """`mke2fs` as the umask leaves it: the image file, 0644."""
+    from subprocess import CompletedProcess
+    Path(argv[-2]).write_bytes(b"")
+    Path(argv[-2]).chmod(0o644)
+    return CompletedProcess(argv, 0)
+
+
 class TestRegistryVolume(unittest.TestCase):
     def test_reuses_existing_volume(self) -> None:
         orch = FirecrackerOrchestrator(Settings())
         with tempfile.TemporaryDirectory() as td:
             vol = Path(td) / "registry.ext4"
             vol.write_bytes(b"")  # already present
+            vol.chmod(0o644)
             with patch(f"{_ORCH}.registry_volume_path", return_value=vol), \
                     patch(f"{_ORCH}.subprocess.run") as run:
                 out = orch._ensure_registry_volume()
             run.assert_not_called()  # no mke2fs when it exists
             self.assertEqual(vol, out)
+            self.assertEqual(0o600, vol.stat().st_mode & 0o777)
 
     def test_creates_volume_when_missing(self) -> None:
-        from subprocess import CompletedProcess
         orch = FirecrackerOrchestrator(Settings())
         with tempfile.TemporaryDirectory() as td:
             vol = Path(td) / "registry.ext4"
             with patch(f"{_ORCH}.registry_volume_path", return_value=vol), \
-                    patch(f"{_ORCH}.subprocess.run",
-                          return_value=CompletedProcess([], 0)) as run:
+                    patch(f"{_ORCH}.subprocess.run", side_effect=_mke2fs) as run:
                 orch._ensure_registry_volume()
             argv = run.call_args.args[0]
             self.assertIn("mke2fs", argv)
             self.assertIn(str(vol), argv)
+            self.assertEqual(0o600, vol.stat().st_mode & 0o777)
 
-    def test_registry_volume_path_under_infra_dir(self) -> None:
-        with patch.object(infra_vm, "_infra_dir", return_value=Path("/infra")):
-            self.assertEqual(Path("/infra/registry.ext4"), registry_volume_path())
+    def test_registry_volume_is_under_the_root_not_the_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as td, \
+                patch.dict("os.environ", {"BOT_BOTTLE_ROOT": td}), \
+                patch.object(infra_vm, "_infra_dir", return_value=Path("/cache/infra")):
+            (Path(td) / "infra").mkdir(mode=0o755)  # as an older lock left it
+            self.assertEqual(Path(td) / "infra" / "registry.ext4", registry_volume_path())
+            self.assertEqual(0o700, (Path(td) / "infra").stat().st_mode & 0o777)
 
     def test_build_store_volume_created_at_its_own_path(self) -> None:
-        from subprocess import CompletedProcess
         orch = FirecrackerOrchestrator(Settings())
         with tempfile.TemporaryDirectory() as td:
             with patch.object(infra_vm, "_infra_dir", return_value=Path(td)), \
-                    patch(f"{_ORCH}.subprocess.run",
-                          return_value=CompletedProcess([], 0)) as run:
+                    patch(f"{_ORCH}.subprocess.run", side_effect=_mke2fs) as run:
                 out = orch._ensure_build_store_volume()
                 self.assertEqual(build_store_volume_path(), out)
             self.assertEqual(Path(td) / "build-store.ext4", out)

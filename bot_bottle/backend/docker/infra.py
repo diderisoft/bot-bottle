@@ -1,7 +1,8 @@
 """The docker infra pair: two containers.
 
 - `bot-bottle-orchestrator`: on the `--internal` control network, plus a
-  loopback publish for the CLI. Sole opener of `bot-bottle.db`; holds the key.
+  loopback publish for the CLI. Sole opener of `<root>/registry/registry.db`,
+  the only host directory it mounts; holds the key.
 - `bot-bottle-gateway`: on the shared gateway network, every bottle's own
   agent network (joined at launch) and the control network, so it reaches the
   orchestrator by name while agents can't reach it at all. Holds the `gateway`

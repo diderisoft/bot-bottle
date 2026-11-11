@@ -9,11 +9,13 @@ from ...contract.supervise import (
     CANARY_STATUS_UNRESOLVED,
     CanaryEvent,
 )
-from ...lib.db_store import DbStore
+from ...lib.db_store import MACHINE_SPECIFIC, DbStore
 from ...lib.migrations import TableMigrations
 
 
 class CanaryStore(DbStore):
+    TABLES = {"canary_events": MACHINE_SPECIFIC}
+
 
     def __init__(self, db_path: Path) -> None:
         migrations = TableMigrations("canary_store", [
@@ -31,6 +33,10 @@ class CanaryStore(DbStore):
                 archived INTEGER NOT NULL DEFAULT 0
             )
             """,
+            # v2-3: a gone bottle's events are deleted, not archived: the
+            # journal records them (`canary.*`).
+            "DELETE FROM canary_events WHERE archived = 1",
+            "ALTER TABLE canary_events DROP COLUMN archived",
         ])
         super().__init__(db_path, migrations)
 
@@ -40,8 +46,8 @@ class CanaryStore(DbStore):
                 """
                 INSERT OR REPLACE INTO canary_events (
                     id, bottle_slug, arrival_timestamp, reason, request_path,
-                    status, resolved_at, resolution_notes, archived
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    status, resolved_at, resolution_notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.id,
@@ -59,7 +65,7 @@ class CanaryStore(DbStore):
     def read_event(self, event_id: str) -> CanaryEvent:
         with self._connection() as conn:
             row = conn.execute(
-                "SELECT * FROM canary_events WHERE id = ? AND archived = 0",
+                "SELECT * FROM canary_events WHERE id = ?",
                 (event_id,),
             ).fetchone()
         if row is None:
@@ -73,7 +79,7 @@ class CanaryStore(DbStore):
             rows = conn.execute(
                 """
                 SELECT * FROM canary_events
-                WHERE status = ? AND archived = 0
+                WHERE status = ?
                 ORDER BY arrival_timestamp, id
                 """,
                 (CANARY_STATUS_UNRESOLVED,),
@@ -95,23 +101,20 @@ class CanaryStore(DbStore):
                 """
                 UPDATE canary_events
                 SET status = ?, resolved_at = ?, resolution_notes = ?
-                WHERE id = ? AND status = ? AND archived = 0
+                WHERE id = ? AND status = ?
                 """,
                 (status, resolved_at, notes, event_id, CANARY_STATUS_UNRESOLVED),
             )
         self._chmod()
         return cursor.rowcount > 0
 
-    def archive_all_for_bottle(self, bottle_slug: str) -> None:
-        """Archive every canary event for `bottle_slug` (bottle teardown or
-        reconcile). Idempotent."""
+    def delete_all_for_bottle(self, bottle_slug: str) -> None:
+        """Delete every canary event for `bottle_slug` (bottle teardown or
+        reconcile). The journal is their record. Idempotent."""
         if not self.db_path.is_file():
             return
         with self._connection() as conn:
-            conn.execute(
-                "UPDATE canary_events SET archived = 1 WHERE bottle_slug = ?",
-                (bottle_slug,),
-            )
+            conn.execute("DELETE FROM canary_events WHERE bottle_slug = ?", (bottle_slug,))
 
     @staticmethod
     def _row_to_event(row: sqlite3.Row) -> CanaryEvent:

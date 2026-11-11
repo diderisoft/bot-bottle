@@ -129,22 +129,30 @@ No bottle needs to describe a forge for its grants to load.
 
 #### Host connections
 
-What a launch uses is the host's connection, in `~/.bot-bottle/forges.md`.
-Only `bot-bottle forge connect` writes that file.
+What a launch uses is the host's connection, kept in the host database.
+`bot-bottle forge list` and `forge show` print them.
 
-```yaml
-gitea.example.com:
-  kind: gitea
-  url: https://gitea.example.com
-  ssh: ssh://git@10.0.4.2:30009       # how this machine reaches it (--ssh)
-  host_key: ssh-ed25519 AAAA...       # pinned when connected
-  users:
-    alice:
-      token: secret:GITEA_EXAMPLE_COM_TOKEN # a name in ~/.bot-bottle/secrets
-      default: true
-    codex:
-      token: secret:CODEX_GITEA_EXAMPLE_COM_TOKEN
 ```
+$ bot-bottle forge list
+gitea.example.com            gitea   alice*, codex
+github.com                   github  octo*
+
+$ bot-bottle forge show gitea.example.com
+gitea.example.com: gitea at https://gitea.example.com
+  ssh       ssh://git@10.0.4.2:30009
+  host key  ssh-ed25519 AAAA...
+  user      alice (token secret:BB_HOST_FORGE_GITEA_EXAMPLE_COM__ALICE_TOKEN, default)
+  user      codex (token secret:BB_HOST_FORGE_GITEA_EXAMPLE_COM__CODEX_TOKEN)
+```
+
+- `*` marks a forge's default user. A token is a name in the host secrets
+  file, never its value.
+- `ssh` is how this machine reaches the forge (`--ssh`). The host key was
+  pinned when it was connected.
+- Only `forge connect` and the console's connect write a connection. The host
+  controller is the only writer (ADR 0020). The CLI goes through it.
+- `bot-bottle forge remove <host> [--user U]` disconnects one user, or the
+  whole forge. It drops their tokens from the secrets file too.
 
 - A grant on a forge the host hasn't connected fails to load. The error names
   the `forge connect` command, with a description's URL when the chain has one.
@@ -155,7 +163,8 @@ gitea.example.com:
 - The connection's `url` and `ssh` are what's used. So a bottle can't send a
   token anywhere the host didn't connect.
 - A launch asks `forge_connections.connections()`, the host's connection
-  source, not the file.
+  source. In the host controller it reads the `forge_connections` and
+  `forge_users` tables. Anywhere else it asks the host controller.
 
 #### Forge users
 
@@ -183,8 +192,8 @@ records a connection (`cli/commands/forge.py`, `forge_connect.py`).
    It warns when none, because deploy keys need admin.
 4. It pins the SSH host key it finds for the forge's repos, without asking.
    It fails when it finds none.
-5. It stores the token in the host secrets file and records the user in
-   `forges.md`.
+5. It stores the token in the host secrets file and records the user in the
+   host database.
 
 | Forge | Recognized by |
 |---|---|
@@ -196,12 +205,9 @@ records a connection (`cli/commands/forge.py`, `forge_connect.py`).
 The forge's SSH address must be reachable from the host, which a public name
 may not be. Give it with `--ssh`, or the card's SSH field.
 
-| User | Secret name |
-|---|---|
-| a forge's first user | `<HOST>_TOKEN` |
-| another user | `<USER>_<HOST>_TOKEN` |
-
-A user connected again keeps its name. The first user is the default. Another
+Each user's token is kept as `BB_HOST_FORGE_<HOST>__<USER>_TOKEN`, a name no
+bottle can read ([secrets.md](secrets.md#reserved-names)). A user connected
+again keeps its name. The first user is the default. Another
 becomes it with `--default`.
 
 Connecting again replaces the forge's `url`, `ssh` and pin.
@@ -253,8 +259,8 @@ For other users git-gate fetches and pushes with the token over HTTPS
 ([Transports](#github-transports)).
 
 **The app.** The app is named by its slug and public client id. The default is
-`bot-bottle`. `--app` and `--client-id` set it, and it's kept in
-`<root>/github-app.json`.
+`bot-bottle`. `--app` and `--client-id` set it, and it's kept as the host
+setting `github_app`, in the host database.
 
 So each named environment can use its own app. Dev uses `bot-bottle-dev`.
 
@@ -263,7 +269,7 @@ The device flow and refreshing its tokens take the client id alone
 (`contrib/github/user_token.py`).
 
 **The token.** The token goes to the host secrets file under the user's secret
-name. The user is recorded on `github.com` in `forges.md` with `app: <slug>`
+name. The user is recorded on `github.com` with its app's slug
 (`github_connect.py`). `--default` makes it the default user.
 
 An expiring token lasts eight hours, the app's default.
@@ -308,8 +314,8 @@ per connected user (ADR 0014).
 | Held to granted repos by | git-gate | GitHub itself, per repo |
 | Cost | the token reaches every repo the app is installed on | needs admin on the repo, the far broader Administration permission |
 
-The transport is set with `forge connect --transport`, as `transport:` on the
-user in `forges.md`. The app's device flow takes it too.
+The transport is set with `forge connect --transport`, on the connected user.
+The app's device flow takes it too.
 
 On a host already connected, `forge connect github --transport T` changes just
 the transport. Whoever connects the user chooses. A bottle can't (ADR 0019).
@@ -527,9 +533,26 @@ git rebase --rebase-merges --exec 'git -c trailer.ifexists=replace commit --amen
 
 Like other `git_gate` fields it merges through `extends`, a child's winning.
 
-The value and mode are kept in the bottle's git-gate state dir, as
-`trailer.json`, for re-provisioning. They're set on each bare repo as
-`git-gate.trailer` and `git-gate.trailers`.
+The launch keeps the value and mode for re-provisioning; a dry run keeps
+nothing. They're set on each bare repo as `git-gate.trailer` and
+`git-gate.trailers`.
+
+### Re-provisioning state
+
+What the host needs to provision a bottle's git-gate again is rows of the
+host database, keyed by the bottled agent's identity (`git_gate/state.py`).
+
+| Table | Holds |
+|---|---|
+| `git_gate_upstreams` | each repo's upstream, transport, key file, known_hosts file and token name |
+| `git_gate_live_grants` | the deploy keys granted while it runs, for teardown to revoke |
+| `git_gate_trailers` | the trailer's value and mode |
+
+- Only the host controller reads and writes them. The gateway gets keys,
+  repos and config pushed into it.
+- They go with the bottled agent's other rows when it's removed.
+- The keys themselves stay files in the bottle's git-gate state dir,
+  `~/.bot-bottle/state/<identity>/git-gate/`.
 
 ### The baseline
 
@@ -626,9 +649,8 @@ The forge is this host's connection to it, as the user the session's agent
 pushes as. That's its `identity.accounts`, else the forge's default. A forge the host
 hasn't connected can't be granted.
 
-1. The grant records the key in the bottle's git-gate state dir, as
-   `live-grants.json`.
-2. It mints the key and adds the repo to the upstream snapshot.
+1. The grant records the key as a row of `git_gate_live_grants`.
+2. It mints the key and adds the repo to `git_gate_upstreams`.
 3. Re-provisioning the gateway then creates the repo there.
 4. `git config --add` in the guest adds its `insteadOf` rewrite.
 
@@ -789,7 +811,7 @@ adds `--ssh` with the address they used. Here it's an IP and port.
 
 A forge bottle an earlier `forge connect` wrote, with `credentials:` and a
 `token` in its forge, fails to load too. Connect the forge again with
-`forge connect`, which writes `forges.md`.
+`forge connect`, which records it in the host database.
 
 Then remove the `credentials:` block and the forge's `token` and `account`
 lines (ADR 0019).

@@ -51,7 +51,7 @@ class TestMacosOrchestratorRun(unittest.TestCase):
         # Image ENTRYPOINT is `-m bot_bottle.orchestrator`; these are its args.
         self.assertNotIn("--broker", argv)
         self.assertIn("bot-bottle-orchestrator:latest", argv)
-        self.assertEqual("/var/lib/bot-bottle/db/bot-bottle.db",
+        self.assertEqual("/var/lib/bot-bottle/db/registry.db",
                          argv[argv.index("--db") + 1])
 
     def test_db_is_a_container_only_volume(self) -> None:

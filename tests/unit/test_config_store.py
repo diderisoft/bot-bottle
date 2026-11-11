@@ -14,9 +14,11 @@ from unittest import mock
 from bot_bottle.lib.config_store import (
     DEFAULT_CACHED_IMAGE_STALE_WARNING_DAYS,
     AuditForward,
+    AuditRetention,
     ConfigStore,
     FirehoseSettings,
     FirehoseSink,
+    HostConfig,
 )
 from bot_bottle.orchestrator.store.store_manager import StoreManager
 
@@ -62,6 +64,10 @@ class TestConfigStore(unittest.TestCase):
                 "transcript_retention_days",
                 "host_max_disk_gb",
                 "host_max_memory_gb",
+                "github_app_slug",
+                "github_app_client_id",
+                "audit_retention_days",
+                "audit_retention_max_gb",
             ], columns)
 
     def test_firehose_settings_round_trip(self) -> None:
@@ -88,6 +94,24 @@ class TestConfigStore(unittest.TestCase):
             store.set_audit_forward(None)
             self.assertIsNone(store.audit_forward())
 
+    def test_audit_retention_keeps_all_until_set(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
+            store = ConfigStore(Path(tmp) / "bot-bottle.db")
+            self.assertTrue(store.audit_retention().keeps_all)  # no DB yet
+            store.migrate()
+            self.assertEqual(AuditRetention(), store.audit_retention())
+            store.set_audit_retention(AuditRetention(days=90, max_gb=4))
+            self.assertEqual(AuditRetention(days=90, max_gb=4), store.audit_retention())
+            self.assertEqual(AuditRetention(days=90, max_gb=4),
+                             store.host_config().audit_retention)
+
+    def test_audit_retention_from_json(self) -> None:
+        config = HostConfig().with_json("audit_retention", {"days": 30})
+        self.assertEqual(AuditRetention(days=30), config.audit_retention)
+        self.assertEqual({"days": 30, "max_gb": 0}, config.to_json()["audit_retention"])
+        with self.assertRaises(ValueError):
+            HostConfig().with_json("audit_retention", {"days": -1})
+
     def test_audit_delivery_defaults_to_best_effort_and_can_be_set(self) -> None:
         with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
             store = ConfigStore(Path(tmp) / "bot-bottle.db")
@@ -96,6 +120,49 @@ class TestConfigStore(unittest.TestCase):
             self.assertEqual("best_effort", store.audit_delivery())
             store.set_audit_delivery("required")
             self.assertEqual("required", store.audit_delivery())
+
+    def test_set_host_config_writes_only_the_named_settings(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
+            store = ConfigStore(Path(tmp) / "bot-bottle.db")
+            store.migrate()
+            store.set_audit_delivery("required")
+            store.set_transcript_retention_days(9)
+            # A writer that read before those changes, setting one other
+            # setting, leaves them alone.
+            store.set_host_config(HostConfig(audit_retention=AuditRetention(days=3)),
+                                  ["audit_retention"])
+            config = store.host_config()
+            self.assertEqual("required", config.audit_delivery)
+            self.assertEqual(9, config.transcript_retention_days)
+            self.assertEqual(3, config.audit_retention.days)
+
+    def test_set_host_config_is_one_write(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
+            store = ConfigStore(Path(tmp) / "bot-bottle.db")
+            store.migrate()
+            # pylint: disable-next=protected-access
+            with mock.patch.object(store, "_set_columns", wraps=store._set_columns) as written:
+                store.set_host_config(HostConfig(audit_delivery="required",
+                                                 transcript_retention_days=4),
+                                      ["audit_delivery", "transcript_retention_days"])
+            written.assert_called_once_with({"audit_delivery": "required",
+                                             "transcript_retention_days": 4})
+            with self.assertRaises(ValueError):
+                store.set_host_config(HostConfig(), ["nope"])
+
+    def test_host_route_sets_only_what_the_body_names(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.control.hostctl import host_state
+        from tests.unit import use_bottle_root  # pylint: disable=import-outside-toplevel
+        with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
+            self.addCleanup(use_bottle_root(Path(tmp)))
+            ConfigStore(Path(tmp) / "db" / "bot-bottle.db").set_host_config(
+                HostConfig(transcript_retention_days=11))
+            reply = host_state.set_config({"audit_delivery": "required"})
+            self.assertEqual("required", reply["audit_delivery"])
+            self.assertEqual(11, reply["transcript_retention_days"])
+            with self.assertRaises(ValueError):
+                host_state.set_config({"audit_delivery": "required", "bogus": 1})
 
     def test_store_manager_includes_config_store(self) -> None:
         with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
@@ -189,10 +256,12 @@ class TestConfigStoreClosesConnections(unittest.TestCase):
                 store.audit_forward,
                 store.firehose,
                 store.transcript_retention_days,
+                store.audit_retention,
                 store.host_budget,
                 lambda: store.set_audit_forward(None),
                 lambda: store.set_firehose(store.firehose()),
                 lambda: store.set_transcript_retention_days(30),
+                lambda: store.set_audit_retention(store.audit_retention()),
                 lambda: store.set_host_budget(store.host_budget()),
                 lambda: store.set_audit_delivery("best_effort"),
                 lambda: store.set_cached_image_stale_warning_days(1),

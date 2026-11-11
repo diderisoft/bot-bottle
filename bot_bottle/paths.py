@@ -14,9 +14,16 @@ from pathlib import Path
 from .contract.auth import ORCHESTRATOR_TOKEN_FILENAME
 from .environment import LIVE, default_root
 
-# The host DB; every SQLite store shares it, namespaced by TableMigrations
+# The host DB: the host's source-of-truth state, written by the host
+# controller (ADR 0020). Its stores share it, namespaced by TableMigrations
 # schema_key.
 HOST_DB_FILENAME = "bot-bottle.db"
+# Beside it, the indexes derived from logs (the audit index), which the host
+# controller also writes and rebuilds when missing or damaged.
+INDEX_DB_FILENAME = "index.db"
+# The orchestrator's own DB (registry, egress secrets, supervise queue,
+# canary state), wherever its backend keeps it. Never the host DB.
+REGISTRY_DB_FILENAME = "registry.db"
 
 # The gateway's persistent mitmproxy CA, mounted at mitmproxy's confdir so it
 # survives recreation.
@@ -29,11 +36,10 @@ SECRETS_FILENAME = "secrets"
 AUDIT_DIRNAME = "audit"
 
 # Audit records sent to the console (ADR 0013): the AES-256-GCM key they're
-# encrypted with (hex, 0600; never leaves the host), the passkeys allowed to
-# unlock reading them, and how far each agent's records have been sent.
+# encrypted with (hex, 0600; never leaves the host). How far each agent's
+# records have been sent (`audit_push`) and the passkeys allowed to unlock
+# reading them (`audit_trust`) are in the host DB.
 AUDIT_KEY_FILENAME = "audit.key"
-AUDIT_PASSKEYS_FILENAME = "audit-passkeys.json"
-AUDIT_PUSH_DIRNAME = "audit-push"
 
 
 def bot_bottle_root(home: Path | None = None) -> Path:
@@ -69,14 +75,42 @@ def host_secrets_path() -> Path:
 
 
 def host_db_path() -> Path:
-    """`<root>/db/bot-bottle.db`. In its own directory so a backend that mounts
-    only directories can share it without exposing the rest of the root."""
+    """`<root>/db/bot-bottle.db`, the host DB. Only the host controller opens
+    it (ADR 0020); the CLI goes through its API."""
     return bot_bottle_root() / "db" / HOST_DB_FILENAME
+
+
+def index_db_path() -> Path:
+    """`<root>/db/index.db`, the index DB: derived, so never backed up. Only
+    the host controller opens it."""
+    return bot_bottle_root() / "db" / INDEX_DB_FILENAME
 
 
 def host_audit_dir() -> Path:
     """`<root>/audit/`. Only the host controller writes here."""
     return bot_bottle_root() / AUDIT_DIRNAME
+
+
+def private_dir(path: Path) -> Path:
+    """`path` as a directory only the user can open (0700), created if
+    missing and tightened if it was made looser before."""
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if stat.S_IMODE(path.stat().st_mode) != 0o700:
+        path.chmod(0o700)
+    return path
+
+
+def infra_state_dir() -> Path:
+    """`<root>/infra/`, 0700: the infra's locks and markers, and on Firecracker
+    what its VMs keep that can't be rebuilt (the registry volume, the gateway
+    CA)."""
+    return private_dir(bot_bottle_root() / "infra")
+
+
+def registry_dir_of(root: Path) -> Path:
+    """`<root>/registry/`: on docker, the orchestrator's `registry.db` and the
+    only host directory its container mounts. Make it with `private_dir`."""
+    return root / "registry"
 
 
 def host_gateway_ca_dir() -> Path:
@@ -146,13 +180,6 @@ def audit_key_bytes() -> bytes:
     return key
 
 
-def audit_passkeys_path() -> Path:
-    return bot_bottle_root() / AUDIT_PASSKEYS_FILENAME
-
-
-def audit_push_dir() -> Path:
-    return bot_bottle_root() / AUDIT_PUSH_DIRNAME
-
 
 def host_orchestrator_token() -> str:
     """The `control-plane` domain's signing key."""
@@ -186,21 +213,23 @@ def host_firecracker_cache_dir() -> Path:
 __all__ = [
     "AUDIT_DIRNAME",
     "AUDIT_KEY_FILENAME",
-    "AUDIT_PASSKEYS_FILENAME",
-    "AUDIT_PUSH_DIRNAME",
     "audit_key_bytes",
     "audit_key_path",
-    "audit_passkeys_path",
-    "audit_push_dir",
     "HOST_DB_FILENAME",
+    "INDEX_DB_FILENAME",
+    "REGISTRY_DB_FILENAME",
     "host_audit_dir",
     "host_artifact_cache_dir",
     "host_firecracker_cache_dir",
     "GATEWAY_CA_DIRNAME",
     "bot_bottle_root",
     "host_db_path",
+    "index_db_path",
     "host_gateway_ca_dir",
     "host_signing_key",
+    "infra_state_dir",
+    "private_dir",
+    "registry_dir_of",
     "host_orchestrator_token",
     "host_secrets_path",
     "SECRETS_FILENAME",

@@ -278,51 +278,54 @@ class TestNamedDerivations(unittest.TestCase):
         self.assertEqual(util.cache_dir() / "envs" / "dev", util.env_dir("dev"))
 
 
-class TestRegistry(_TmpHome):
-    def test_register_is_idempotent(self) -> None:
-        root = env.default_root("dev", self.home)
-        reg = env.register("dev", root, self.home)
-        self.assertEqual(env.Registration("dev", str(root)), reg)
-        self.assertEqual(reg, env.register("dev", root, self.home))
-        self.assertEqual([reg], env.registered(self.home))
-        self.assertEqual(root / "env.json", env.registration_file("dev", self.home))
+class TestEnvironmentDirectories(_TmpHome):
+    def test_create_is_idempotent_and_lists_the_directory(self) -> None:
+        path = env.create("dev", self.home)
+        self.assertEqual(env.default_root("dev", self.home), path)
+        self.assertTrue(path.is_dir())
+        self.assertEqual(path, env.create("dev", self.home))
+        self.assertEqual(["dev"], env.named(self.home))
+        self.assertEqual([], list(path.iterdir()))  # nothing records it but the directory
 
-    def test_live_isnt_registered(self) -> None:
+    def test_live_isnt_a_named_environment(self) -> None:
         with self.assertRaises(env.InvalidEnvironmentError):
-            env.register("live", self.home / ".bot-bottle", self.home)
-        self.assertEqual([], env.registered(self.home))
+            env.create("live", self.home)
+        self.assertEqual([], env.named(self.home))
 
     def test_a_name_sharing_a_prefix_is_refused(self) -> None:
-        env.register("dev", env.default_root("dev", self.home), self.home)
+        env.create("dev", self.home)
         for clash in ("dev-2", "dev-a-b"):
             with self.subTest(clash=clash), self.assertRaises(env.InvalidEnvironmentError) as cm:
-                env.register(clash, env.default_root(clash, self.home), self.home)
+                env.create(clash, self.home)
             self.assertIn("envs rm dev", str(cm.exception))
-        env.register("dev2", env.default_root("dev2", self.home), self.home)  # no clash
+            self.assertFalse(env.env_dir(clash, self.home).exists())
+        env.create("dev2", self.home)  # no clash
+        self.assertEqual(["dev", "dev2"], env.named(self.home))
+        # One whose directory is already there is checked too, and kept.
+        env.env_dir("dev-3", self.home).mkdir()
+        with self.assertRaises(env.InvalidEnvironmentError):
+            env.create("dev-3", self.home)
+        self.assertTrue(env.env_dir("dev-3", self.home).is_dir())
         self.assertEqual("", env.prefix_clash("ci-12", ["ci-1", "ci-123"]))
         self.assertEqual("ci", env.prefix_clash("ci-1", ["ci"]))
 
-    def test_ensure_active_registered(self) -> None:
+    def test_ensure_active(self) -> None:
         with mock.patch.dict(os.environ, {"BOT_BOTTLE_ENV": "dev", "HOME": str(self.home)}):
             os.environ.pop("BOT_BOTTLE_ROOT", None)
-            self.assertEqual("dev", env.ensure_active_registered())
-            reg = env.read("dev")
-        self.assertIsNotNone(reg)
-        assert reg is not None
-        self.assertEqual(str(self.home / ".bot-bottle-envs" / "dev"), reg.root)
+            self.assertEqual("dev", env.ensure_active())
+        self.assertTrue((self.home / ".bot-bottle-envs" / "dev").is_dir())
         with mock.patch.dict(os.environ, {"HOME": str(self.home)}):
             os.environ.pop("BOT_BOTTLE_ENV", None)
-            self.assertEqual("live", env.ensure_active_registered())
-        self.assertEqual(["dev"], [r.name for r in env.registered(self.home)])
+            self.assertEqual("live", env.ensure_active())
+        self.assertEqual(["dev"], env.named(self.home))
 
-    def test_unreadable_registrations_are_skipped(self) -> None:
-        (self.home / ".bot-bottle-envs" / "junk").mkdir(parents=True)
-        (self.home / ".bot-bottle-envs" / "junk" / "env.json").write_text("{nope")
-        (self.home / ".bot-bottle-envs" / "other").mkdir()
-        (self.home / ".bot-bottle-envs" / "other" / "env.json").write_text(
-            json.dumps({"name": "different", "root": "/r"}))
-        self.assertEqual([], env.registered(self.home))
-        self.assertEqual([], env.registered(self.home / "missing"))
+    def test_only_directories_with_valid_names_are_environments(self) -> None:
+        base = self.home / ".bot-bottle-envs"
+        for name in ("ci-7", "Junk", ".hidden", "live"):
+            (base / name).mkdir(parents=True)
+        (base / "file").write_text("")
+        self.assertEqual(["ci-7"], env.named(self.home))
+        self.assertEqual([], env.named(self.home / "missing"))
 
 
 class TestSliceClaims(_TmpHome):
@@ -341,9 +344,9 @@ class TestSliceClaims(_TmpHome):
 
     def _claim(self, user: str, uid: int, name: str, count: int = 3) -> int:
         home = self._home(user)
-        env.register(name, env.default_root(name, home), home)
+        env.create(name, home)
         return slice_claims.claim(self.dir, env=name, count=count, uid=uid, user=user,
-                                  registration=env.registration_file(name, home),
+                                  registration=env.env_dir(name, home),
                                   in_use=lambda k: k in self.busy)
 
     def test_two_users_never_share_a_slice(self) -> None:
@@ -375,13 +378,13 @@ class TestSliceClaims(_TmpHome):
 
     def test_a_stale_claim_is_replaced(self) -> None:
         self._claim("alice", 1000, "dev")
-        # alice's registration is gone (her env was deleted by hand).
-        (self._home("alice") / ".bot-bottle-envs" / "dev" / "env.json").unlink()
+        # alice's environment is gone (deleted by hand).
+        (self._home("alice") / ".bot-bottle-envs" / "dev").rmdir()
         self.assertEqual(1, self._claim("runner", 1001, "ci-7"))
 
     def test_a_live_claim_is_never_stolen(self) -> None:
         self._claim("alice", 1000, "dev")
-        (self._home("alice") / ".bot-bottle-envs" / "dev" / "env.json").unlink()
+        (self._home("alice") / ".bot-bottle-envs" / "dev").rmdir()
         self.busy.add(1)  # but its VMs still hold the TAPs
         self.assertEqual(2, self._claim("runner", 1001, "ci-7"))
 
@@ -884,12 +887,11 @@ class _Probe:
 
 
 class TestEnvsList(_TmpHome):
-    def test_lists_live_then_registered_with_what_runs(self) -> None:
+    def test_lists_live_then_each_directory_with_what_runs(self) -> None:
         # pylint: disable-next=import-outside-toplevel
         from bot_bottle.cli.commands.envs import EnvRow, collect
-        dev_root = env.default_root("dev", self.home)
-        env.register("dev", dev_root, self.home)
-        env.register("ci-7", env.default_root("ci-7", self.home), self.home)
+        dev_root = env.create("dev", self.home)
+        env.create("ci-7", self.home)
         probe = _Probe(hostctl={str(self.home / ".bot-bottle")},
                        containers=["bot-bottle-orchestrator", "bot-bottle-s1", "bb-dev-gateway",
                                    "unrelated", "bb-ci-70-x"],
@@ -908,9 +910,11 @@ class TestEnvsList(_TmpHome):
         rows = collect(probe, home=self.home, environ={"BOT_BOTTLE_ROOT": "/custom"})
         self.assertEqual("/custom", rows[0].root)
         self.assertTrue(rows[0].active)
+        env.create("dev", self.home)
         rows = collect(probe, home=self.home,
                        environ={"BOT_BOTTLE_ROOT": "/custom", "BOT_BOTTLE_ENV": "dev"})
         self.assertEqual(str(self.home / ".bot-bottle"), rows[0].root)
+        self.assertEqual("/custom", rows[1].root)
 
     def test_cmd_prints_a_table(self) -> None:
         # pylint: disable-next=import-outside-toplevel
@@ -940,8 +944,7 @@ class TestEnvsRm(_TmpHome):
                 self._plan(name)
 
     def test_plan_for_a_default_root(self) -> None:
-        root = env.default_root("dev", self.home)
-        env.register("dev", root, self.home)
+        root = env.create("dev", self.home)
         plan = self._plan("dev")
         self.assertEqual(root, plan.root)
         self.assertEqual(("/py", "-P", "-m", "bot_bottle.cli", "envs", "_teardown"),
@@ -968,22 +971,26 @@ class TestEnvsRm(_TmpHome):
         self.assertEqual(2, proc.returncode, proc.stderr)
         self.assertIn("refusing to tear down live", proc.stderr)
 
-    def test_an_unregistered_name_still_plans_its_default_dirs(self) -> None:
+    def test_a_missing_directory_still_plans_its_default_dirs(self) -> None:
         plan = self._plan("ci-9")
         self.assertEqual(self.home / ".bot-bottle-envs" / "ci-9", plan.root)
 
+    def _plan_with_root(self, root: Path):  # type: ignore[no-untyped-def]
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.cli.commands.envs import plan_rm
+        return plan_rm("dev", home=self.home, python="/py",
+                       environ={"BOT_BOTTLE_ENV": "dev", "BOT_BOTTLE_ROOT": str(root)})
+
     def test_an_explicit_root_is_kept(self) -> None:
         other = self.home / "elsewhere"
-        env.register("dev", other, self.home)
-        plan = self._plan("dev")
+        plan = self._plan_with_root(other)
         self.assertEqual(other, plan.root)
         self.assertNotIn(other, plan.remove)
         self.assertIn("outside", plan.kept[0])
 
     def test_a_root_pointing_at_live_is_kept(self) -> None:
         live = self.home / ".bot-bottle"
-        env.register("dev", live, self.home)
-        plan = self._plan("dev")
+        plan = self._plan_with_root(live)
         self.assertNotIn(live, plan.remove)
         self.assertIn("live install", plan.kept[0])
 
@@ -1003,39 +1010,38 @@ class TestEnvsRm(_TmpHome):
             return execute_rm(plan, force=force, run=run,
                               release=lambda n: self.released.append(n) is None), calls
 
-    def _registered_dev(self):  # type: ignore[no-untyped-def]
-        root = env.default_root("dev", self.home)
-        env.register("dev", root, self.home)
+    def _created_dev(self):  # type: ignore[no-untyped-def]
+        root = env.create("dev", self.home)
         (root / "db").mkdir(parents=True)
         fc = self.home / ".cache" / "bot-bottle" / "firecracker" / "envs" / "dev"
         fc.mkdir(parents=True)
         return root, fc
 
     def test_a_clean_teardown_deletes_state_and_frees_the_slot(self) -> None:
-        root, fc = self._registered_dev()
+        root, fc = self._created_dev()
         code, calls = self._execute(self._plan("dev"), 0)
         self.assertEqual(0, code)
         self.assertEqual(1, len(calls))
         self.assertFalse(root.exists())
         self.assertFalse(fc.exists())
-        self.assertIsNone(env.read("dev", self.home))
+        self.assertEqual([], env.named(self.home))
         self.assertEqual(["dev"], self.released)
 
     def test_a_failed_teardown_keeps_state(self) -> None:
-        root, fc = self._registered_dev()
+        root, fc = self._created_dev()
         code, _ = self._execute(self._plan("dev"), 1)
         self.assertEqual(1, code)
         self.assertTrue(root.exists())
         self.assertTrue(fc.exists())
-        self.assertIsNotNone(env.read("dev", self.home))
+        self.assertEqual(["dev"], env.named(self.home))
         self.assertEqual([], self.released)
 
     def test_force_deletes_state_after_a_failed_teardown(self) -> None:
-        root, _ = self._registered_dev()
+        root, _ = self._created_dev()
         code, _ = self._execute(self._plan("dev"), 1, force=True)
         self.assertEqual(1, code)
         self.assertFalse(root.exists())
-        self.assertIsNone(env.read("dev", self.home))
+        self.assertEqual([], env.named(self.home))
 
     def test_cmd_refuses_live(self) -> None:
         # pylint: disable-next=import-outside-toplevel

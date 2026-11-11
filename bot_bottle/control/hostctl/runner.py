@@ -1,7 +1,8 @@
-"""Start, find and stop the host controller from the CLI. The daemon publishes
-`{pid, port, build_id}` under `bot_bottle_root()/hostctl`, trusted only once
-`GET /status` reports the same pid. `ensure_running` locks so concurrent CLIs
-start one daemon, and replaces one running other code.
+"""Start, find and stop the host controller from the CLI. The daemon answers
+on a Unix socket at a fixed path, `bot_bottle_root()/hostctl/control.sock`
+(0600, in the 0700 state dir), with its `{pid, port, build_id}`.
+`ensure_running` locks so concurrent CLIs start one daemon, and replaces one
+running other code.
 """
 
 from __future__ import annotations
@@ -26,7 +27,15 @@ from ...paths import bot_bottle_root
 from ...trust_domain import mint
 from .build import PACKAGE_ROOT, current_build_id
 
-STATE_FILENAME = "state.json"
+CONTROL_SOCKET_FILENAME = "control.sock"
+# Held (`flock`) by the host controller for its whole life, so two never run
+# for one root, and by `host restore-db` while it replaces the host DB.
+DAEMON_LOCK_FILENAME = "daemon.lock"
+# The daemon's exit status when it refuses to start (a host DB that fails its
+# check, `host_db.py`). Its systemd unit doesn't restart it, and launchd waits
+# `service_unit.THROTTLE_SECONDS` between tries. Finding another host
+# controller running for the root isn't a failure: that exits 0.
+REFUSED_EXIT_STATUS = 78
 START_TIMEOUT_SECONDS = 15.0
 STOP_TIMEOUT_SECONDS = 10.0
 _POLL_SECONDS = 0.1
@@ -68,29 +77,22 @@ def state_dir() -> Path:
     return bot_bottle_root() / "hostctl"
 
 
-def write_state(state: HostControlState) -> None:
-    """Publish `state` atomically (daemon side)."""
-    directory = state_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    tmp = directory / f".{STATE_FILENAME}.{state.pid}"
-    tmp.write_text(json.dumps({"pid": state.pid, "port": state.port, "build_id": state.build_id}))
-    os.replace(tmp, directory / STATE_FILENAME)
+def control_socket_path(directory: Path | None = None) -> Path:
+    """The daemon's socket in `directory` (default: this environment's state
+    dir). The tmux launcher and exit hook use it too."""
+    return (directory or state_dir()) / CONTROL_SOCKET_FILENAME
 
 
-def clear_state(pid: int) -> None:
-    """Remove the state file if it still names `pid` (daemon side, on exit)."""
-    current = read_state()
-    if current is not None and current.pid == pid:
-        (state_dir() / STATE_FILENAME).unlink(missing_ok=True)
-
-
-def read_state(directory: Path | None = None) -> HostControlState | None:
-    """The published state in `directory` (default: this environment's)."""
+def read_state(directory: Path | None = None, timeout: float = 2.0) -> HostControlState | None:
+    """The state the daemon whose state dir is `directory` (default: this
+    environment's) reports on its socket; None if none answers, or it's still
+    starting."""
+    # pylint: disable-next=import-outside-toplevel
+    from .localsock import request
     try:
-        raw = json.loads(((directory or state_dir()) / STATE_FILENAME).read_text())
-        return HostControlState(
-            pid=int(raw["pid"]), port=int(raw["port"]), build_id=str(raw["build_id"])
-        )
+        reply = request(control_socket_path(directory), {"op": "status"}, timeout=timeout)
+        return HostControlState(pid=int(str(reply["pid"])), port=int(str(reply["port"])),
+                                build_id=str(reply["build_id"]))
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
@@ -113,12 +115,13 @@ def restart_needed(state: HostControlState) -> bool:
 
 def running() -> HostControlState | None:
     """The live host controller's state, or None."""
-    state = read_state()
-    return state if state is not None and probe(state) else None
+    return read_state()
 
 
 @contextmanager
-def _lock() -> Generator[None]:
+def lock() -> Generator[None]:
+    """Held while the daemon is started, stopped or found missing, so
+    concurrent CLIs agree on one, and while its host DB is restored."""
     directory = state_dir()
     directory.mkdir(parents=True, exist_ok=True)
     with open(directory / "lock", "w", encoding="utf-8") as fh:
@@ -129,6 +132,44 @@ def _lock() -> Generator[None]:
             fcntl.flock(fh, fcntl.LOCK_UN)
 
 
+class DaemonLockHeld(HostControlError):
+    """Another process holds the host controller's lifetime lock."""
+
+
+def hold_daemon_lock(directory: Path | None = None) -> int:
+    """Take the host controller's lifetime lock in `directory` (default:
+    this environment's state dir) and note this process's pid in it. The fd
+    holding it; it's released when the fd is closed or the process exits.
+    `DaemonLockHeld` (naming the holder) when another process holds it."""
+    directory = directory or state_dir()
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # Not inherited by what the daemon starts (tmux, VMs), which outlive it.
+    fd = os.open(directory / DAEMON_LOCK_FILENAME, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        holder = os.read(fd, 32).decode(errors="replace").strip()
+        os.close(fd)
+        raise DaemonLockHeld(
+            "another host controller (or `host restore-db`) holds "
+            f"{directory / DAEMON_LOCK_FILENAME}"
+            + (f" (pid {holder})" if holder.isdigit() else "")) from None
+    os.ftruncate(fd, 0)
+    os.pwrite(fd, f"{os.getpid()}\n".encode(), 0)
+    return fd
+
+
+@contextmanager
+def daemon_lock(directory: Path | None = None) -> Generator[None]:
+    """Hold the host controller's lifetime lock for a block, so none starts
+    meanwhile. `DaemonLockHeld` when one is running."""
+    fd = hold_daemon_lock(directory)
+    try:
+        yield
+    finally:
+        os.close(fd)
+
+
 def ensure_running(
     timeout: float = START_TIMEOUT_SECONDS, *, confirm_restart: ConfirmRestart | None = None,
 ) -> HostControlState:
@@ -137,7 +178,7 @@ def ensure_running(
     one adopts them. With bottles held, `confirm_restart` decides: yes
     restarts, no raises `StaleHostControllerError`. Without it the old
     controller is kept, for callers that launch nothing."""
-    with _lock():
+    with lock():
         state = running()
         if state is not None and state.build_id == current_build_id():
             return state
@@ -160,7 +201,7 @@ def restart(
     """Restart the host controller whatever code it runs; its bottles keep
     running and the new one adopts them. With bottles held, `confirm_restart`
     must agree or `StaleHostControllerError` is raised."""
-    with _lock():
+    with lock():
         state = running()
         if state is not None:
             held = held_bottles(state)
@@ -192,7 +233,7 @@ def cli_token() -> str:
 def stop(*, force: bool = False) -> bool:
     """Stop the host controller; False if none was running. Refuses while it
     holds bottles unless `force`."""
-    with _lock():
+    with lock():
         state = running()
         if state is None:
             return False
@@ -219,8 +260,9 @@ def _start(timeout: float) -> HostControlState:
     from . import service_unit  # pylint: disable=import-outside-toplevel
 
     if service_unit.installed():
-        # The service manager owns the daemon.
-        service_unit.start()
+        # The service manager owns the daemon. One it runs that doesn't
+        # answer is restarted: starting a running unit does nothing.
+        service_unit.restart()
         return _await_state(None, timeout)
     directory = state_dir()
     log_path = directory / "hostctl.log"
@@ -244,26 +286,44 @@ def _start(timeout: float) -> HostControlState:
     try:
         return _await_state(pid, timeout)
     except HostControlError:
-        os.kill(pid, signal.SIGTERM)
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass  # it exited, and was reaped, already
         raise
 
 
 def _await_state(pid: int | None, timeout: float) -> HostControlState:
-    """Wait for a daemon to publish its state: the one with `pid`, or any under
-    a service manager. Raises if `pid` exits or time runs out."""
+    """Wait for a daemon to answer on its socket: the one with `pid`, or any
+    under a service manager. Raises if `pid` exits or time runs out."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         state = read_state()
-        if state is not None and (pid is None or state.pid == pid) and probe(state):
+        if state is not None and (pid is None or state.pid == pid):
             return state
         if pid is not None:
             done, status = os.waitpid(pid, os.WNOHANG)
+            if done == pid and os.waitstatus_to_exitcode(status) == 0 and state is not None:
+                return state  # another host controller was running: that one
             if done == pid:
+                log_path = state_dir() / "hostctl.log"
+                why = _last_line(log_path)
                 raise HostControlError(
-                    f"host controller exited with {os.waitstatus_to_exitcode(status)}; "
-                    f"see {state_dir() / 'hostctl.log'}")
+                    f"host controller exited with {os.waitstatus_to_exitcode(status)}"
+                    + (f": {why}" if why else "") + f"; see {log_path}")
         time.sleep(_POLL_SECONDS)
     raise HostControlError(f"host controller didn't answer within {timeout:.0f}s")
+
+
+def _last_line(path: Path) -> str:
+    """The last line the daemon logged, which says why it didn't start."""
+    try:
+        with path.open("rb") as fh:
+            fh.seek(max(0, fh.seek(0, os.SEEK_END) - 4096))
+            lines = fh.read().decode(errors="replace").strip().splitlines()
+    except OSError:
+        return ""
+    return lines[-1].strip().removeprefix("bot-bottle: ") if lines else ""
 
 
 def _stop(state: HostControlState) -> None:
@@ -288,7 +348,8 @@ def _stop(state: HostControlState) -> None:
 
 
 __all__ = [
-    "ConfirmRestart", "HostControlError", "HostControlState", "StaleHostControllerError",
-    "restart", "stale_message", "clear_state", "cli_token", "ensure_running",
-    "probe", "read_state", "running", "state_dir", "stop", "write_state",
+    "ConfirmRestart", "DAEMON_LOCK_FILENAME", "DaemonLockHeld", "HostControlError",
+    "HostControlState", "StaleHostControllerError", "restart", "stale_message", "cli_token",
+    "control_socket_path", "ensure_running", "daemon_lock", "hold_daemon_lock", "lock", "probe",
+    "read_state", "running", "state_dir", "stop", "REFUSED_EXIT_STATUS",
 ]

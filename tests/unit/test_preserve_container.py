@@ -21,7 +21,7 @@ from bot_bottle.manifest.bottle import ManifestBottle
 from bot_bottle.manifest.document import bottle_document
 from bot_bottle.manifest.extends import merge_bottles_runtime
 from bot_bottle.manifest.util import ManifestError
-from tests.unit import use_bottle_root
+from tests.unit import bottled_agent, use_bottle_root
 
 
 class _Root(unittest.TestCase):
@@ -83,6 +83,7 @@ class TestWhenTheGuestIsKept(_Root):
 
     def test_an_adopted_bottle_remembers_it(self) -> None:
         record = adoption.AdoptionRecord(container="c", registry_id="r", preserve_container=True)
+        bottled_agent("b1")
         adoption.write("b1", record)
         loaded = adoption.read("b1")
         assert loaded is not None

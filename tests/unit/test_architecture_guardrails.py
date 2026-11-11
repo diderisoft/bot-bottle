@@ -46,8 +46,8 @@ BOTTLE_CLIENT_MODULES = (
 )
 # (module, name imported from bot_bottle.backend) -> why it's still needed.
 ALLOWED_BACKEND_IMPORTS: dict[tuple[str, str], str] = {
-    ("start.py", "BottleSpec"): "--dry-run prepares locally, without the daemon",
-    ("start.py", "get_bottle_backend"): "--dry-run prepares locally, without the daemon",
+    ("start.py", "BottleSpec"): "--dry-run prepares locally, without a launch",
+    ("start.py", "get_bottle_backend"): "--dry-run prepares locally, without a launch",
     ("start.py", "BottlePlan"): "the dry-run preflight renderer's parameter type",
     ("start.py", "launch_isolation_note"): "the dry-run preflight's docker boundary note",
     ("active.py", "enumerate_active_agents"): "bottles the host controller doesn't hold",
@@ -107,6 +107,78 @@ class TestCliBottleCommandsAreHostControllerClients(unittest.TestCase):
                 if attr in FORBIDDEN_CALLS or (attr == "prepare" and id(node) not in prepare_ok):
                     violations.append(f"{path.relative_to(ROOT)}:{node.lineno}: .{attr}()")
         self.assertEqual([], violations, "bottle operations belong to the host controller:\n"
+                         + "\n".join(violations))
+
+
+# What opens the host DB. Only the host controller does (ADR 0020); the CLI
+# goes through its API (`cli/host_state_client.py`).
+HOST_DB_OPENERS = frozenset({
+    "sqlite3", "db_store", "DbStore", "ConfigStore", "AuditIndex", "ForwardCursors",
+    "StoreManager", "host_db_path", "host_db", "host_state", "host_budget",
+    "query_host_journal", "import_segment", "ForgeStore", "forget", "TrustStore",
+    "PairingStore", "PasskeyStore", "load_pairing", "read_status", "write_status",
+    "BottledAgentStore", "delete_bottled_agent", "adoption", "SessionStore", "SessionManager",
+    "AuditPushStore", "AgentPrefsStore", "TranscriptStore", "SnapshotStore", "IsolationPasses",
+    "InfraStateStore", "GitGateStore", "RunManifestStore", "WorkspaceDiskStore", "index_db",
+    "index_db_path",
+})
+# (module, name) -> why the CLI may still use it.
+ALLOWED_HOST_DB_IMPORTS: dict[tuple[str, str], str] = {
+    ("host.py", "host_db"): "restore-db replaces the file while the host controller is stopped",
+}
+
+
+class TestCliNeverOpensTheHostDb(unittest.TestCase):
+    def test_no_cli_module_imports_a_host_db_opener(self) -> None:
+        violations: list[str] = []
+        for path in CLI.rglob("*.py"):
+            tree = ast.parse(path.read_text(), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    names = [a.name for a in node.names]
+                    names.append((node.module or "").rsplit(".", 1)[-1])
+                elif isinstance(node, ast.Import):
+                    names = [a.name for a in node.names]
+                else:
+                    continue
+                violations.extend(
+                    f"{path.relative_to(ROOT)}:{node.lineno}: {name}" for name in names
+                    if name in HOST_DB_OPENERS
+                    and (path.name, name) not in ALLOWED_HOST_DB_IMPORTS)
+        self.assertEqual([], violations, "the CLI reaches host state through the host "
+                         "controller, never by opening the host DB:\n" + "\n".join(violations))
+
+
+# Code the CLI reaches beyond `cli/` (backends, manifests, shared state
+# helpers) runs in both processes: one that uses a host DB store must check
+# `host_access.in_host_controller()` and ask the host controller otherwise.
+# The host controller's, orchestrator's and gateway's own packages never run
+# in the CLI.
+_NOT_SHARED = ("control/hostctl/", "orchestrator/", "gateway/", "cli/")
+# The host DB's stores, and its path.
+_STORES = frozenset(
+    {name for name in HOST_DB_OPENERS if name.endswith("Store") and name != "DbStore"}
+    | {"ForwardCursors", "IsolationPasses", "AuditIndex", "host_db_path", "index_db_path"})
+
+
+class TestSharedCodeGuardsTheHostDb(unittest.TestCase):
+    def test_a_shared_module_using_a_store_checks_where_it_runs(self) -> None:
+        violations: list[str] = []
+        for path in sorted((ROOT / "bot_bottle").rglob("*.py")):
+            rel = path.relative_to(ROOT / "bot_bottle").as_posix()
+            if rel.startswith(_NOT_SHARED):
+                continue
+            used: set[str] = set()
+            for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+                if isinstance(node, ast.Name):
+                    used.add(node.id)
+                elif isinstance(node, ast.Attribute):
+                    used.add(node.attr)
+            opened = sorted(used & _STORES)
+            if opened and "in_host_controller" not in used:
+                violations.append(f"bot_bottle/{rel}: {', '.join(opened)}")
+        self.assertEqual([], violations, "shared code opens the host DB only in the host "
+                         "controller (`host_access.in_host_controller()`):\n"
                          + "\n".join(violations))
 
 

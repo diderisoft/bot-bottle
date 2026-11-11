@@ -29,8 +29,9 @@ HOSTCTL_URL_ENV = "BOT_BOTTLE_HOSTCTL_URL"
 STATUS_PATH = "/status"
 # GET /jobs, /jobs/{id}, /jobs/{id}/events (streamed NDJSON).
 JOBS_PATH = "/jobs"
-# POST /orchestrator/{ensure,restart} start jobs; POST /orchestrator/status
-# answers. Each takes {"settings": Settings.to_json()}.
+# POST /orchestrator/{ensure,restart,rotate-ca} start jobs (rotate-ca's result
+# is {"rotated": bool}); POST /orchestrator/status answers. Each takes
+# {"settings": Settings.to_json()}.
 ORCHESTRATOR_PATH = "/orchestrator"
 # GET /sessions/{id}: {"running": bool, "exit": {"status", "signal"} | null}.
 # GET /sessions/{id}/attach upgrades to the attach WebSocket.
@@ -55,6 +56,54 @@ AUDIT_APPEND_PATH = "/audit/append"
 # (PRD 0117). POST {settings} to the second boots the architect's warm bottle.
 SUGGEST_PATH = "/suggest"
 ARCHITECT_WARM_PATH = "/architect/warm"
+# The host DB, for the `cli` role only: the CLI never opens it (ADR 0020).
+# GET /host/config: the host's settings (`HostConfig.to_json()`); POST sets
+# the fields given and answers with all of them.
+HOST_CONFIG_PATH = "/host/config"
+# POST {filters of `audit_index.Query`}: {"records": [...]}, after indexing
+# what's new. POST /audit/rebuild: {"indexed": n}. POST /audit/import
+# {"segment": absolute path}: {"chain", "records", "extended",
+# "already_imported"}. A journal that doesn't chain answers 409.
+AUDIT_QUERY_PATH = "/audit/query"
+AUDIT_REBUILD_PATH = "/audit/rebuild"
+AUDIT_IMPORT_PATH = "/audit/import"
+# GET /forges: {"forges": [`ForgeConnection.to_json()`]}. POST {"forge": a
+# connection without users, "user": `ForgeUser.to_json()`, "make_default"}
+# connects that user and answers {"forge": the connection}. POST
+# /forges/remove {"host", "user"?} disconnects the user, or the whole forge,
+# and drops their tokens: {"removed": [user names]}.
+FORGES_PATH = "/forges"
+FORGES_REMOVE_PATH = "/forges/remove"
+# GET: {"trusted": [`Trusted.to_json()`]}, oldest first. POST a record: keeps
+# it, replacing the one for its path; answers like GET.
+TRUST_PATH = "/trust"
+# GET: {"pairing": `Pairing.to_json()`, "link": the link's last state}. POST
+# {"changes": {url, host_id, console_node_id, console_ticket, enabled,
+# access_token, refresh_token}, "new": bool} sets those (a new pairing resets
+# the rest); the token values go to the host secrets file. Answers like GET.
+PAIRING_PATH = "/pairing"
+# GET: the trusted audit passkeys, `audit_trust.Trust.to_json()`. POST one:
+# trusts exactly those, keeping a passkey's counter where it was trusted
+# already; answers like GET.
+AUDIT_PASSKEYS_PATH = "/audit/passkeys"
+# GET: {"bottled_agents": [`BottleMetadata.to_json()`]}. POST {"metadata": one}
+# records a launch; POST {"identity", "changes": {label, origin, agent_id,
+# parent}} changes those of one. Both answer {"bottled_agent": it or null}.
+# POST /bottled-agents/remove {"identity"} deletes its state directory and
+# its rows: {"removed": bool}.
+BOTTLED_AGENTS_PATH = "/bottled-agents"
+BOTTLED_AGENTS_REMOVE_PATH = "/bottled-agents/remove"
+# GET: {"default": agent or "", "dirs": {directory: agent}}. POST {"dir",
+# "agent"} remembers `agent` for `dir` ("" for the default); answers like GET.
+AGENT_PREFS_PATH = "/agent-prefs"
+# GET: {"state": {name: value}}, what infra bring-up recorded (`infra_state`).
+INFRA_STATE_PATH = "/infra/state"
+# GET: {"disks": {key: {project, agent, bottles, owner, last_slug}}}, each
+# Firecracker workspace disk's row. POST /workspace-disks/remove {"key"}
+# deletes the disk, its lock file and its row unless a bottle has it attached:
+# {"removed": bool}.
+WORKSPACE_DISKS_PATH = "/workspace-disks"
+WORKSPACE_DISKS_REMOVE_PATH = "/workspace-disks/remove"
 AUDIT_PRODUCERS = frozenset({"orchestrator", "egress", "git-gate", "supervise"})
 
 # A job `error` with this `code` needs a yes/no: resend with `assume_yes`.
@@ -390,8 +439,11 @@ def bearer(token: str) -> dict[str, str]:
 
 
 __all__ = [
-    "AUDIT_APPEND_PATH", "AUDIT_PRODUCERS",
-    "ARCHITECT_WARM_PATH",
+    "AUDIT_APPEND_PATH", "AUDIT_IMPORT_PATH", "AUDIT_PRODUCERS", "AUDIT_QUERY_PATH",
+    "AGENT_PREFS_PATH", "AUDIT_PASSKEYS_PATH", "AUDIT_REBUILD_PATH", "BOTTLED_AGENTS_PATH",
+    "BOTTLED_AGENTS_REMOVE_PATH", "INFRA_STATE_PATH", "WORKSPACE_DISKS_PATH",
+    "WORKSPACE_DISKS_REMOVE_PATH", "ARCHITECT_WARM_PATH", "FORGES_PATH",
+    "FORGES_REMOVE_PATH", "HOST_CONFIG_PATH", "PAIRING_PATH", "TRUST_PATH",
     "AUTH_HEADER", "AUTH_SCHEME", "BOTTLES_PATH", "BOTTLE_COLORS", "CONFIRM_ERROR",
     "DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS", "DEFAULT_DOCKER_AGENT_SUBNETS",
     "DOCKER_AGENT_SUBNET_PREFIX", "IMAGE_POLICIES", "LAUNCH_CLI_ONLY",

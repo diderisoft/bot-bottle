@@ -9,6 +9,19 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle.image_cache import StaleImageError, check_stale, check_stale_path
+from bot_bottle.lib.config_store import DEFAULT_CACHED_IMAGE_STALE_WARNING_DAYS
+from tests.unit import as_cli
+
+
+class TestOutsideTheHostController(unittest.TestCase):
+    def test_the_cli_keeps_to_the_default_without_opening_the_host_db(self):
+        as_cli(self)
+        with patch("bot_bottle.image_cache.ConfigStore") as cs:
+            check_stale("test image", datetime.now(tz=timezone.utc))
+            with self.assertRaises(StaleImageError):
+                check_stale("test image", datetime.now(tz=timezone.utc) - timedelta(
+                    days=DEFAULT_CACHED_IMAGE_STALE_WARNING_DAYS + 1))
+        cs.assert_not_called()
 
 
 class TestCheckStale(unittest.TestCase):

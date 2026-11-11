@@ -6,7 +6,6 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import io
-import json
 import os
 import tempfile
 import threading
@@ -19,9 +18,10 @@ from bot_bottle.cli.commands import audit as audit_cmd
 from bot_bottle.control.hostctl import transcript_retention
 from bot_bottle.control.hostctl.audit_events import HostAudit
 from bot_bottle.control.hostctl.audit_ocsf import to_ocsf
-from bot_bottle.control.hostctl.transcripts import transcripts_root
+from bot_bottle.control.hostctl.transcripts import TranscriptStore, transcripts_root
 from bot_bottle.lib.config_store import DEFAULT_TRANSCRIPT_RETENTION_DAYS, ConfigStore
-from . import use_bottle_root
+from bot_bottle.paths import host_db_path
+from . import serve_host_controller, use_bottle_root
 
 _DAY = 86400.0
 _NOW = 1_800_000_000.0
@@ -39,8 +39,11 @@ class _Root(unittest.TestCase):
         run = transcripts_root() / session / activation
         run.mkdir(parents=True)
         (run / "s.jsonl").write_bytes(data)
-        (run / "s.meta.json").write_text("{}")
-        (run / "follow.json").write_text(json.dumps({"closed": closed}))
+        store = TranscriptStore(host_db_path())
+        store.put_run(session, activation, glob="", skip=[], start={}, agent_id="c-1",
+                      harness="pi", closed=closed)
+        store.put_file(session, activation, "s.jsonl", guest_path="/g/s.jsonl", offset=5,
+                       start=0, opened=1.0, agent_id="c-1", closed=closed)
         when = _NOW - age_days * _DAY
         for p in run.iterdir():
             os.utime(p, (when, when))
@@ -55,6 +58,10 @@ class TestSweep(_Root):
         gone = transcript_retention.sweep(self.audit, 30, now=_NOW)
         self.assertEqual([old], gone)
         self.assertFalse(old.exists())
+        store = TranscriptStore(host_db_path())
+        self.assertIsNone(store.run("s1", "a1"))  # its rows go with it
+        self.assertEqual([], store.files("s1", "a1"))
+        self.assertIsNotNone(store.run("s1", "a2"))
         self.assertTrue(recent.exists() and running.exists())
         self.audit.transcript_deleted.assert_called_once_with(
             bottle="s1", activation="a1", retention_days=30,
@@ -66,11 +73,32 @@ class TestSweep(_Root):
         transcript_retention.sweep(self.audit, 30, now=_NOW)
         self.assertFalse(run.parent.exists())
 
-    def test_unreadable_follow_or_no_root(self) -> None:
+    def test_no_root_or_a_run_not_recorded(self) -> None:
         transcript_retention.sweep(self.audit, 30, now=_NOW)  # no root yet
-        run = self.run_dir("s4", "a1", closed=True, age_days=40)
-        (run / "follow.json").write_text("{nope")
+        stray = transcripts_root() / "s4" / "a1"
+        stray.mkdir(parents=True)
         self.assertEqual([], transcript_retention.sweep(self.audit, 30, now=_NOW))
+
+    def test_a_row_naming_a_path_outside_the_root_is_never_deleted(self) -> None:
+        outside = self.root / "keep"
+        outside.mkdir()
+        with TranscriptStore(host_db_path())._connection() as conn:  # pylint: disable=protected-access
+            conn.execute("INSERT INTO transcript_runs VALUES (?, ?, '', '[]', '{}', '', '', 1)",
+                         ("..", "keep"))
+        self.assertEqual([], transcript_retention.sweep(self.audit, 0, now=_NOW + 1e9))
+        self.assertTrue(outside.exists())
+        self.assertIn("not sweeping", self.err.getvalue())
+
+    def test_ids_are_checked_when_written(self) -> None:
+        store = TranscriptStore(host_db_path())
+        for session, activation in (("..", "a"), ("s", "../x"), ("", "a"), ("s", ".")):
+            with self.subTest(session=session, activation=activation), \
+                    self.assertRaises(ValueError):
+                store.put_run(session, activation, glob="", skip=[], start={}, agent_id="",
+                              harness="", closed=False)
+        with self.assertRaises(ValueError):
+            store.put_file("s", "a", "../s.jsonl", guest_path="", offset=0, start=0,
+                           opened=0.0, agent_id="", closed=False)
 
     def test_a_failed_delete_is_reported_and_skipped(self) -> None:
         self.run_dir("s5", "a1", closed=True, age_days=40)
@@ -106,6 +134,10 @@ class TestSweeper(_Root):
 
 
 class TestSetting(_Root):
+    def setUp(self) -> None:
+        super().setUp()
+        serve_host_controller(self)
+
     def run_cli(self, *argv: str) -> tuple[int, str]:
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -115,12 +147,10 @@ class TestSetting(_Root):
     def test_show_and_set(self) -> None:
         self.assertEqual((0, "30 days\n"), self.run_cli())
         self.assertEqual((0, "7 days\n"), self.run_cli("7"))
-        from bot_bottle.paths import host_db_path
         self.assertEqual(7, ConfigStore(host_db_path()).transcript_retention_days())
         self.assertEqual(2, self.run_cli("0")[0])
 
     def test_an_unmigrated_db_reads_the_default(self) -> None:
-        from bot_bottle.paths import host_db_path
         path = host_db_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"")

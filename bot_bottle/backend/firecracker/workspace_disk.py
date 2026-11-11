@@ -14,6 +14,11 @@ mounted on the host, and one guest at a time.
 What a later run sees: the project's files as they are on the host now (the
 filtered copy again; the last run's changes came back as its patch), and the
 ignored files the last run left, such as `node_modules` or a build dir.
+
+Which project, agent and bottles each disk is for, and which bottled agent has
+it, is a row of the host DB's `workspace_disks`, keyed by the disk's name. The
+host controller, where launches run, writes it; `cleanup workspaces` reads and
+removes through it (`WORKSPACE_DISKS_PATH`).
 """
 
 from __future__ import annotations
@@ -26,9 +31,13 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO
+from typing import IO, Any, cast
 
+from ... import host_access
+from ...contract.hostctl import WORKSPACE_DISKS_PATH, WORKSPACE_DISKS_REMOVE_PATH
+from ...lib.db_store import MACHINE_SPECIFIC, DbStore
 from ...lib.log import die, info, warn
+from ...lib.migrations import TableMigrations
 from ...workspace import DiskInfo
 
 DEFAULT_SIZE = "16G"
@@ -41,6 +50,8 @@ _SIZE_RE = re.compile(r"^([1-9][0-9]*)([MG])$")
 _MIN_MIB = 512
 _MAX_MIB = 1024 * 1024
 _GUEST_PATH_RE = re.compile(r"^/[A-Za-z0-9._/-]+$")
+# A disk's name (`disk_key`).
+_KEY_RE = re.compile(r"^[0-9a-f]{16}$")
 
 
 def requested_size(setting: str) -> str | None:
@@ -96,23 +107,82 @@ class WorkspaceDisk:
         self._lock = None
 
 
-def _meta_path(disk: Path) -> Path:
-    return disk.with_suffix(".json")
+class WorkspaceDiskStore(DbStore):
+    """`workspace_disks`: each disk's project, agent and bottles, the bottled
+    agent that has it (`owner`, "" for none) and the one that used it last."""
+
+    TABLES = {"workspace_disks": MACHINE_SPECIFIC}
+
+    def __init__(self, db_path: Path) -> None:
+        super().__init__(db_path, TableMigrations("workspace_disks", [
+            """
+            CREATE TABLE workspace_disks (
+                key TEXT PRIMARY KEY,
+                project TEXT NOT NULL,
+                agent TEXT NOT NULL,
+                bottles TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                last_slug TEXT NOT NULL
+            )
+            """,
+        ]))
+        self.migrate()
+
+    @staticmethod
+    def _meta(row: Any) -> dict[str, object]:
+        return {"project": row["project"], "agent": row["agent"],
+                "bottles": json.loads(row["bottles"]), "owner": row["owner"],
+                "last_slug": row["last_slug"]}
+
+    def all(self) -> dict[str, dict[str, object]]:
+        with self._connection() as conn:
+            return {r["key"]: self._meta(r)
+                    for r in conn.execute("SELECT * FROM workspace_disks")}
+
+    def get(self, key: str) -> dict[str, object]:
+        with self._connection() as conn:
+            row = conn.execute("SELECT * FROM workspace_disks WHERE key = ?", (key,)).fetchone()
+        return {} if row is None else self._meta(row)
+
+    def put(self, key: str, meta: dict[str, object]) -> None:
+        with self._connection() as conn:
+            conn.execute("INSERT OR REPLACE INTO workspace_disks VALUES (?, ?, ?, ?, ?, ?)",
+                         (key, str(meta.get("project", "")), str(meta.get("agent", "")),
+                          json.dumps(list(cast(list[str], meta.get("bottles", [])))),
+                          str(meta.get("owner", "")), str(meta.get("last_slug", ""))))
+        self._chmod()
+
+    def forget(self, key: str) -> None:
+        with self._connection() as conn:
+            conn.execute("DELETE FROM workspace_disks WHERE key = ?", (key,))
+
+
+def _store() -> WorkspaceDiskStore:
+    from ...paths import host_db_path  # pylint: disable=import-outside-toplevel
+    return WorkspaceDiskStore(host_db_path())
+
+
+def _metas() -> dict[str, dict[str, object]]:
+    """Every disk's row, by key: from the host DB in the host controller,
+    else from it over its API, started if need be. Without its rows every
+    disk would look orphaned to `cleanup workspaces`."""
+    if host_access.in_host_controller():
+        return _store().all()
+    disks = host_access.ask(WORKSPACE_DISKS_PATH).get("disks")
+    return ({str(k): v for k, v in disks.items() if isinstance(v, dict)}
+            if isinstance(disks, dict) else {})
 
 
 def _read_meta(disk: Path) -> dict[str, object]:
-    try:
-        raw = json.loads(_meta_path(disk).read_text())
-    except (OSError, ValueError):
-        return {}
-    return raw if isinstance(raw, dict) else {}
+    if host_access.in_host_controller():
+        return _store().get(disk.stem)
+    return _metas().get(disk.stem, {})
 
 
 def _write_meta(disk: Path, meta: dict[str, object]) -> None:
-    path = _meta_path(disk)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=2)
+    if not host_access.in_host_controller():
+        raise RuntimeError("only the host controller records workspace disks")
+    _store().put(disk.stem, meta)
 
 
 def _owner_running(owner: str) -> bool:
@@ -122,9 +192,9 @@ def _owner_running(owner: str) -> bool:
     return bool(owner) and (util.env_dir() / "run" / owner).is_dir()
 
 
-def in_use(disk: Path) -> bool:
+def in_use(disk: Path, meta: dict[str, object] | None = None) -> bool:
     """Whether a running bottle has `disk` attached."""
-    return _owner_running(str(_read_meta(disk).get("owner", "")))
+    return _owner_running(str((_read_meta(disk) if meta is None else meta).get("owner", "")))
 
 
 def acquire(
@@ -219,27 +289,45 @@ def listing() -> list[DiskInfo]:
     directory = disk_dir()
     if not directory.is_dir():
         return []
+    metas = _metas()
     out = []
     for path in sorted(directory.glob("*.ext4")):
-        project = str(_read_meta(path).get("project", ""))
+        meta = metas.get(path.stem, {})
+        project = str(meta.get("project", ""))
         out.append(DiskInfo(path=path, project=project, bytes=path.stat().st_blocks * 512,
-                            in_use=in_use(path),
+                            in_use=in_use(path, meta),
                             orphaned=not project or not Path(project).is_dir()))
     return out
 
 
 def remove(path: Path) -> bool:
-    """Delete a disk and its files unless it's in use. True if removed."""
+    """Delete a disk, its lock file and its row unless it's in use. True if
+    removed. Outside the host controller, it does it (the row is its)."""
+    if not host_access.in_host_controller():
+        _check_disk_path(path)
+        return host_access.ask(WORKSPACE_DISKS_REMOVE_PATH, {"key": path.stem}).get(
+            "removed") is True
+    return remove_here(path)
+
+
+def _check_disk_path(path: Path) -> None:
+    if path.parent != disk_dir() or path.suffix != ".ext4" or not _KEY_RE.match(path.stem):
+        raise ValueError(f"{path} isn't a workspace disk")
+
+
+def remove_here(path: Path) -> bool:
+    """`remove`, in the host controller."""
+    _check_disk_path(path)
     lock = open(path.with_suffix(".lock"), "a", encoding="utf-8")  # pylint: disable=consider-using-with
     try:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             return False
-        if in_use(path):
+        if in_use(path, _store().get(path.stem)):
             return False
-        for p in (path, _meta_path(path)):
-            p.unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
+        _store().forget(path.stem)
         path.with_suffix(".lock").unlink(missing_ok=True)
         return True
     finally:
@@ -247,7 +335,7 @@ def remove(path: Path) -> bool:
 
 
 __all__ = [
-    "DEFAULT_SIZE", "STATE_MARKER", "DiskInfo", "WorkspaceDisk", "acquire", "boot_arg", "disk_dir",
-    "disk_key", "guest_path_ok", "in_use", "listing", "remove", "requested_size",
-    "workspace_mode",
+    "DEFAULT_SIZE", "STATE_MARKER", "DiskInfo", "WorkspaceDisk", "WorkspaceDiskStore", "acquire",
+    "boot_arg", "disk_dir", "disk_key", "guest_path_ok", "in_use", "listing", "remove",
+    "remove_here", "requested_size", "workspace_mode",
 ]

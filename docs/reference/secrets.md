@@ -29,7 +29,7 @@ Secrets live on the host. Bottles refer to them by name. The gateway adds most o
 ```
 # ~/.bot-bottle/secrets
 EXAMPLE_API_TOKEN=tok_live_abc123
-GITEA_EXAMPLE_COM_TOKEN=6f1c...
+BB_HOST_FORGE_GITEA_EXAMPLE_COM__ALICE_TOKEN=6f1c...
 ```
 
 The file is `~/.bot-bottle/secrets`. A named environment uses `~/.bot-bottle-envs/<name>/secrets`, and `BOT_BOTTLE_ROOT` moves it.
@@ -37,6 +37,19 @@ The file is `~/.bot-bottle/secrets`. A named environment uses `~/.bot-bottle-env
 - One `NAME=value` per line. Blank lines and `#` comments are skipped.
 - The value is everything after the first `=`, taken literally. Quotes are part of the value.
 - A malformed line fails with its line number. The line itself is never printed.
+
+### Reserved names
+
+Names starting with `BB_HOST_` are bot-bottle's own. Only bot-bottle reads them, never a bottle or agent.
+
+| Name | Holds |
+|---|---|
+| `BB_HOST_CONSOLE_ACCESS_TOKEN`, `BB_HOST_CONSOLE_REFRESH_TOKEN` | the console's tokens for this host |
+| `BB_HOST_FORGE_<HOST>__<USER>_TOKEN` | a forge user's token (see [Forges](#forges)) |
+
+- A bottle naming one fails to load. That covers `secret:NAME`, `secret:${VAR}`, `${VAR}`, a route's `auth.value`, a `login` and an env entry's own name.
+- A launch refuses one too, however the bottle was built.
+- Other names, such as `BOT_BOTTLE_CLAUDE_OAUTH_TOKEN`, are a bottle's to use.
 
 bot-bottle refuses to read the file unless you own it and it has no group or other access. The error says to run `chmod 600`. bot-bottle's own writes replace the file atomically at mode 0600.
 
@@ -110,7 +123,10 @@ The gateway sends `Authorization: Bearer <value>` to that host. `type: token` se
 bot-bottle forge connect https://gitea.example.com
 ```
 
-The token goes into the secrets file as `<HOST>_TOKEN`, here `GITEA_EXAMPLE_COM_TOKEN`. A forge's second user gets `<USER>_<HOST>_TOKEN`. `~/.bot-bottle/forges.md` records the name (`token: secret:NAME`), never the value.
+The token goes into the secrets file as `BB_HOST_FORGE_<HOST>__<USER>_TOKEN`, here `BB_HOST_FORGE_GITEA_EXAMPLE_COM__ALICE_TOKEN`. It's a [reserved name](#reserved-names), so no bottle can read it. The host database records the name (`secret:NAME`), never the value. `bot-bottle forge remove` drops the token with the connection.
+
+- Each part is upper-cased, with each run of other characters as one `_`. So `__` only ever separates the host from the user.
+- Two forges or users that differ only in punctuation would share a name. Connecting the second is refused until the first is removed.
 
 A bottle grants repos (`gitea.example.com/acme/app:write`) and never names a token. A bottle with a `credentials:` block, or a `token` in a forge description, fails to load. Details are in [git-gate.md](git-gate.md#forges-and-one-line-grants).
 
@@ -142,7 +158,7 @@ The CLI resolves each name at launch and hands the values to the host controller
 - Injected tokens go to the orchestrator, which serves them to the gateway per request.
 - Secret env values (`secret:...`) of 8 or more characters and the canary go to the orchestrator too, so git-gate can scan pushes for them.
 
-The orchestrator stores what it's given in `bot-bottle.db`, encrypted under a random per-bottle key. That key (`ENV_VAR_SECRET`) is kept in the agent's guest, not with the database.
+The orchestrator stores what it's given in its `registry.db`, encrypted under a random per-bottle key. That key (`ENV_VAR_SECRET`) is kept in the agent's guest, not with the database.
 
 The host reads the key back to restore a bottle's tokens when the infra restarts. The agent has the key but can't reach the database.
 

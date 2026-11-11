@@ -17,22 +17,21 @@ and volume, so `dev` and `ci-<run>` never touch the live install.
 Explicit settings (`BOT_BOTTLE_ROOT`, `BOT_BOTTLE_DOCKER_*`, `BOT_BOTTLE_FC_*`)
 still win. Image and artifact caches are content-addressed and shared.
 
-`live` derives exactly today's values. A named environment registers itself
-under `~/.bot-bottle-envs/<name>/env.json` the first time a command runs in it;
-`bot-bottle envs` lists those and `envs rm` removes one.
+`live` derives exactly today's values. A named environment is its directory,
+`~/.bot-bottle-envs/<name>`, created the first time a command runs in it;
+`bot-bottle envs` lists those directories and `envs rm` removes one. Nothing
+else records it: everything above derives from the name, and what an
+environment allocates is recorded in its host DB or, for the macOS /64, the
+pf rules.
 """
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import ipaddress
-import json
 import os
 import re
-from collections.abc import Generator, Iterator, Mapping
-from contextlib import contextmanager
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 ENV_VAR = "BOT_BOTTLE_ENV"
@@ -44,8 +43,6 @@ _NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
 
 LIVE_ROOT_DIRNAME = ".bot-bottle"
 ENVS_DIRNAME = ".bot-bottle-envs"
-ENV_FILENAME = "env.json"
-_LOCK_FILENAME = ".lock"
 
 LIVE_PREFIX = "bot-bottle-"
 NAMED_PREFIX = "bb-"
@@ -69,7 +66,7 @@ NAMED_DOCKER_PORT_COUNT = 800
 
 
 class InvalidEnvironmentError(ValueError):
-    """A bad environment name, or one that can't be registered."""
+    """A bad environment name, or one that can't be created."""
 
 
 def validate(name: str) -> str:
@@ -131,7 +128,7 @@ def macos_agent_subnet_v6(name: str | None = None) -> str:
 
 
 def envs_dir(home: Path | None = None) -> Path:
-    """Where named environments register and keep their state."""
+    """Where named environments live, one directory each."""
     return (home if home is not None else Path.home()) / ENVS_DIRNAME
 
 
@@ -181,70 +178,31 @@ def docker_agent_subnets(name: str | None = None) -> str:
     return LIVE_DOCKER_AGENT_SUBNETS if name == LIVE else NAMED_DOCKER_AGENT_SUBNETS
 
 
-# --- the per-user registry of named environments ---
+# --- named environments: one directory each ---
 
-@dataclass(frozen=True)
-class Registration:
-    """A named environment as `env.json` records it."""
-
-    name: str
-    root: str
-
-    def to_json(self) -> dict[str, object]:
-        return {"name": self.name, "root": self.root}
+def env_dir(name: str, home: Path | None = None) -> Path:
+    """`name`'s directory, `~/.bot-bottle-envs/<name>`. Its existence is the
+    environment: a host-wide firecracker slice claim names it, so its absence
+    marks the claim stale."""
+    return envs_dir(home) / name
 
 
-def registration_file(name: str, home: Path | None = None) -> Path:
-    """`name`'s `env.json`. A host-wide firecracker slice claim names it, so
-    its absence marks the claim stale."""
-    return envs_dir(home) / name / ENV_FILENAME
-
-
-_env_file = registration_file
-
-
-def read(name: str, home: Path | None = None) -> Registration | None:
-    """`name`'s registration, or None if it has none (or it's unreadable)."""
+def named(home: Path | None = None) -> list[str]:
+    """Every named environment, by name: the directories under
+    `~/.bot-bottle-envs/` with a valid name."""
     try:
-        raw = json.loads(_env_file(name, home).read_text(encoding="utf-8"))
-        return Registration(name=str(raw["name"]), root=str(raw["root"]))
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-
-
-def registered(home: Path | None = None) -> list[Registration]:
-    """Every registered named environment, by name."""
-    base = envs_dir(home)
-    try:
-        names = sorted(p.name for p in base.iterdir() if p.is_dir())
+        entries = list(envs_dir(home).iterdir())
     except OSError:
         return []
-    out: list[Registration] = []
-    for n in names:
-        reg = read(n, home)
-        if reg is not None and reg.name == n:
-            out.append(reg)
-    return out
-
-
-def _write(reg: Registration, home: Path | None = None) -> None:
-    path = _env_file(reg.name, home)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{ENV_FILENAME}.{os.getpid()}")
-    tmp.write_text(json.dumps(reg.to_json(), sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
-
-
-@contextmanager
-def _locked(home: Path | None = None) -> Generator[None]:
-    base = envs_dir(home)
-    base.mkdir(parents=True, exist_ok=True)
-    with open(base / _LOCK_FILENAME, "w", encoding="utf-8") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
+    out: list[str] = []
+    for p in entries:
         try:
-            yield
-        finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+            validate(p.name)
+        except InvalidEnvironmentError:
+            continue
+        if p.name != LIVE and p.is_dir():
+            out.append(p.name)
+    return sorted(out)
 
 
 def prefix_clash(name: str, others: list[str]) -> str:
@@ -261,26 +219,30 @@ def prefix_clash(name: str, others: list[str]) -> str:
     return ""
 
 
-def register(name: str, root: Path, home: Path | None = None) -> Registration:
-    """Record `name` (idempotent). Raises
-    InvalidEnvironmentError for live or a name whose prefix clashes with a
-    registered environment's."""
+def create(name: str, home: Path | None = None) -> Path:
+    """`name`'s directory, created if it's new (idempotent). Raises
+    InvalidEnvironmentError for live, or for a name whose prefix clashes with
+    another environment's, whether its directory is new or was already there
+    (made by hand, or before the other). The check runs after the `mkdir`, so
+    two clashing names created at once both see the other and both back out."""
     validate(name)
     if name == LIVE:
         raise InvalidEnvironmentError("live isn't a named environment")
-    with _locked(home):
-        existing = read(name, home)
-        if existing is not None and existing.root == str(root):
-            return existing
-        clash = prefix_clash(name, [r.name for r in registered(home)])
-        if clash:
-            raise InvalidEnvironmentError(
-                f"environment {name!r} would share resource names with {clash!r} "
-                f"({resource_prefix(name)}* vs {resource_prefix(clash)}*); pick another "
-                f"name or remove it with `bot-bottle envs rm {clash}`")
-        reg = Registration(name=name, root=str(root))
-        _write(reg, home)
-        return reg
+    path = env_dir(name, home)
+    try:
+        path.mkdir(parents=True)
+        made = True
+    except FileExistsError:
+        made = False
+    clash = prefix_clash(name, named(home))
+    if clash:
+        if made:
+            path.rmdir()
+        raise InvalidEnvironmentError(
+            f"environment {name!r} would share resource names with {clash!r} "
+            f"({resource_prefix(name)}* vs {resource_prefix(clash)}*); pick another "
+            f"name or remove it with `bot-bottle envs rm {clash}`")
+    return path
 
 
 def sudo_invoker() -> tuple[int, int] | None:
@@ -299,13 +261,13 @@ def sudo_invoker() -> tuple[int, int] | None:
 def root_owned_state(home: Path | None = None) -> list[Path]:
     """Per-user state a run as root left behind (e.g. an earlier
     `sudo bot-bottle install`), which this user can no longer write. Checks
-    the registry lock and the active state root with its top-level entries."""
+    the active state root and its top-level entries."""
     if os.geteuid() == 0:
         return []
     # pylint: disable-next=import-outside-toplevel
     from .paths import bot_bottle_root
     root = bot_bottle_root(home)
-    candidates = [envs_dir(home) / _LOCK_FILENAME, root]
+    candidates = [root]
     try:
         candidates += sorted(root.iterdir())
     except OSError:
@@ -326,30 +288,21 @@ def root_owned_fix(paths: list[Path]) -> str:
     return f'sudo chown -R "$(id -un):$(id -gn)" {targets}'
 
 
-def ensure_active_registered() -> str:
-    """Register the active environment if it's a named one; its name."""
-    # pylint: disable-next=import-outside-toplevel
-    from .paths import bot_bottle_root
+def ensure_active() -> str:
+    """Create the active environment's directory if it's a named one; its
+    name."""
     name = active_name()
     if name != LIVE:
-        register(name, bot_bottle_root())
+        create(name)
     return name
-
-
-def unregister(name: str, home: Path | None = None) -> None:
-    """Forget `name`'s registration."""
-    validate(name)
-    with _locked(home):
-        _env_file(name, home).unlink(missing_ok=True)
 
 
 __all__ = [
     "ENV_VAR", "ENVS_DIRNAME", "LIVE", "LIVE_PREFIX", "MAX_NAME_LENGTH",
-    "InvalidEnvironmentError", "Registration", "active_name", "default_root",
+    "InvalidEnvironmentError", "active_name", "create", "default_root",
     "docker_agent_subnets", "docker_gateway_candidates", "docker_gateway_subnet",
-    "docker_orchestrator_port_candidates",
-    "ensure_active_registered", "envs_dir", "is_live", "macos_agent_subnet_v6",
-    "macos_agent_subnet_v6_candidates", "prefix_clash", "read", "register", "registered",
-    "registration_file", "resource_prefix", "reverse_dns", "root_owned_fix", "root_owned_state",
-    "sudo_invoker", "unregister", "validate",
+    "docker_orchestrator_port_candidates", "ensure_active", "env_dir", "envs_dir",
+    "is_live", "macos_agent_subnet_v6", "macos_agent_subnet_v6_candidates", "named",
+    "prefix_clash", "resource_prefix", "reverse_dns", "root_owned_fix", "root_owned_state",
+    "sudo_invoker", "validate",
 ]

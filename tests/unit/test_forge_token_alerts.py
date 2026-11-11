@@ -27,6 +27,7 @@ from bot_bottle.control.hostctl import host_stats
 from bot_bottle.control.hostctl.github_git_tokens import GitTokenRenewer
 from bot_bottle.deploy_key_provisioner import ForgeTokenRefusedError
 from bot_bottle.git_gate import provision
+from tests.unit import use_bottle_root
 
 HTTPS = GitGateUpstream(name="design", upstream_url="https://github.com/o/design.git",
                         upstream_host="github.com", upstream_port="443", identity_file="",
@@ -74,10 +75,9 @@ class TestRenewerAlerts(unittest.TestCase):
     def setUp(self) -> None:
         forge_alerts.reset()
         self.addCleanup(forge_alerts.reset)
-        stage = Path(self.enterContext(tempfile.TemporaryDirectory()))  # pylint: disable=consider-using-with
-        provision._write_upstreams_snapshot(stage, (HTTPS,))  # pylint: disable=protected-access
-        self.enterContext(mock.patch(
-            "bot_bottle.control.hostctl.github_git_tokens.git_gate_state_dir", return_value=stage))
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))  # pylint: disable=consider-using-with
+        self.addCleanup(use_bottle_root(root))
+        provision.save_upstreams("s1", (HTTPS,))
         self.enterContext(mock.patch(
             "bot_bottle.control.hostctl.github_git_tokens.adoption.read",
             return_value=SimpleNamespace(registry_id="r1")))

@@ -36,9 +36,9 @@ Each host runs one **host controller**, one **orchestrator** and one
 | Component | Runs as | Owns | Code |
 |---|---|---|---|
 | CLI | the user, on the host | prompts, pickers, secrets from the env. It talks only to the host controller | `cli/` |
-| Host controller | per-host daemon, as the user | launch, teardown, listing, tmux sessions, attach, the audit journal, the firehose, remote access | `control/hostctl/` |
+| Host controller | per-host daemon, as the user | launch, teardown, listing, tmux sessions, attach, the audit journal, the firehose, remote access, the host database `bot-bottle.db` | `control/hostctl/` |
 | Backend | library inside the host controller | building images and starting the agent and infra in containers or microVMs | `backend/` |
-| Orchestrator | per-host service in a container or microVM | the bottle registry, egress tokens (encrypted at rest), the supervise queue, the control-plane signing key. It is the sole opener of `bot-bottle.db` | `orchestrator/` |
+| Orchestrator | per-host service in a container or microVM | the bottle registry, egress tokens (encrypted at rest), the supervise queue, the control-plane signing key. It is the only opener of its own database, `registry.db` | `orchestrator/` |
 | Gateway | per-host service in a container or microVM | the egress proxy, git-gate, the supervise MCP server, the mitmproxy CA | `gateway/` |
 | Agent runtime | one container or microVM per bottle | the model harness (claude, codex, pi) and the workspace | `contrib/<provider>/` |
 
@@ -50,7 +50,7 @@ launch, are adopted if already healthy, and keep running between bottles.
 
 An environment ([install.md](install.md#environments)) runs exactly one
 orchestrator. Each bring-up records which backend's orchestrator it is, and
-its host URL, in `<state root>/infra/orchestrator.json`.
+its host URL, in the host database (`infra_state`).
 
 A bring-up is `bot-bottle up` or a launch's implicit one
 (`InfraService.ensure_running`). Everything that talks to "the orchestrator"
@@ -173,15 +173,16 @@ Where each kind of state lives, and what owns it.
 | What | Where | Owner |
 |---|---|---|
 | User agents and bottles | `~/.bot-bottle/{agents,bottles}/`, versioned ([below](#versioned-user-files)) | user |
-| Project agents and bottles | `<repo>/.bot-bottle/`, run only once trusted. Trust is kept in `~/.bot-bottle/trusted-bottles.json` ([below](#project-files-and-trust)) | repo |
-| Forge connections | `~/.bot-bottle/forges.md` ([below](#forge-connections)) | host |
-| Registry, supervise queue, encrypted egress secrets, settings | `bot-bottle.db`: `~/.bot-bottle/db/` mounted into the orchestrator. On firecracker, the orchestrator VM's `/dev/vdb` volume | orchestrator |
-| The environment's orchestrator (backend and host URL) | `~/.bot-bottle/infra/orchestrator.json`, written by each bring-up | host controller |
+| Project agents and bottles | `<repo>/.bot-bottle/`, run only once trusted. Trust is kept in the host database ([below](#project-files-and-trust)) | repo |
+| Host settings, forge connections, bottled agents and their sessions, audit forwarding cursors | `~/.bot-bottle/db/bot-bottle.db` ([below](#databases), [forge connections](#forge-connections), [bottled agents](#bottled-agents)) | host controller |
+| The audit index | `~/.bot-bottle/db/index.db`, rebuilt from the journal ([below](#databases)) | host controller |
+| Registry, supervise queue, encrypted egress secrets, canary events | `registry.db` ([below](#databases)) | orchestrator |
+| What infra bring-up recorded: the environment's orchestrator (backend and host URL), each backend's infra settings, docker's subnet and ports | `bot-bottle.db`'s `infra_state`, written by each bring-up | host controller |
 | Signing keys | `~/.bot-bottle/<key file>`, mode 0600, pushed to the key holder | host |
-| Gateway CA | `~/.bot-bottle/gateway-ca/`, mounted at mitmproxy's confdir (firecracker: the infra VM dir's `gateway-ca/`) | gateway |
+| Gateway CA | `~/.bot-bottle/gateway-ca/`, mounted at mitmproxy's confdir (firecracker: `~/.bot-bottle/infra/gateway-ca/`, pushed into the gateway VM) | gateway |
 | Audit journal | `~/.bot-bottle/audit/` | host controller |
-| Per-bottle metadata, compose files, logs | `~/.bot-bottle/state/<identity>/` ([below](#per-bottle-metadata)) | backend |
-| Image and kernel caches | `~/.cache/bot-bottle/`, and the runtime's own image store ([below](#image-caches)) | backend |
+| Per-bottle files: compose files, env and prompt files, logs, the preserve marker, its manifest versions' documents (`manifest/vNNNN.yaml`; their log is in `bot-bottle.db`), git-gate's re-provisioning state ([git-gate.md](git-gate.md#re-provisioning-state), an [ADR 0020 exception](../decisions/0020-where-host-state-lives.md#exceptions)) | `~/.bot-bottle/state/<identity>/` | backend |
+| Image and kernel caches, VM run dirs, firecracker's build store | `~/.cache/bot-bottle/`, and the runtime's own image store ([below](#image-caches)). Only what can be downloaded or rebuilt | backend |
 
 Paths are the live environment's. A named environment, picked by `BOT_BOTTLE_ENV`, keeps
 the same layout under `~/.bot-bottle-envs/<name>/`. It prefixes its
@@ -191,6 +192,51 @@ containers, VMs, networks and volumes `bb-<name>-`, and shares the caches
 The gateway keeps no durable per-bottle state. When it restarts, the launcher
 re-provisions every running bottle: CA, git-gate repos and credentials, and
 egress tokens (PRD 0081, design repo).
+
+### Databases
+
+Each database has one job and one writer
+([ADR 0020](../decisions/0020-where-host-state-lives.md)).
+
+| Database | Holds | Writer | Where |
+|---|---|---|---|
+| `bot-bottle.db` | the host's own state: settings (`bot_bottle_config`), forge connections (`forge_connections`, `forge_users`), trust records (`trust_records`), the console pairing and its link's state (`pairing`, `console_link`), trusted audit passkeys (`audit_passkeys`), bottled agents (`bottled_agents`) and their tmux sessions (`sessions`), each one's manifest versions and what it launched with (`run_manifest_versions`, `run_manifest_launches`), the remembered agent (`agent_prefs`), transcript copies' offsets (`transcript_runs`, `transcript_files`), snapshots (`snapshots`), isolation passes (`isolation_passes`), what infra bring-up recorded (`infra_state`), Firecracker workspace disks' owners (`workspace_disks`), what re-provisioning a bottle's git-gate needs (`git_gate_upstreams`, `git_gate_live_grants`, `git_gate_trailers`), the audit forwarder's and console push's cursors (`audit_forward_cursor`, `audit_push_cursors`, `audit_push_runs`) | host controller | `~/.bot-bottle/db/` |
+| `index.db` | indexes derived from logs: the audit index (`audit_events`, `audit_index_cursor`) | host controller | `~/.bot-bottle/db/` |
+| `registry.db` | the orchestrator's working state: the bottle registry, encrypted egress secrets, the supervise queue and its answers, canary events | orchestrator | docker: `~/.bot-bottle/registry/` (0700), the orchestrator's only mount. macOS: a container volume. Firecracker: the orchestrator VM's `/dev/vdb` volume, `~/.bot-bottle/infra/registry.ext4` |
+
+- One helper opens every connection (`lib/db_store.connect`), in WAL mode
+  with a 5 s busy timeout.
+- Each writer migrates its database when it starts, without asking. It drops
+  any table none of its stores' `TABLES` names, such as what an older version
+  kept there, and then VACUUMs.
+- A store that reads rows and writes from them does both in one
+  `BEGIN IMMEDIATE` transaction (`db_store.immediate`).
+- The CLI reads and changes host state through the host controller's API
+  ([host-controller.md](host-controller.md#host-database)). Only
+  `bot-bottle uninstall` and `host restore-db` touch the file itself.
+- The host controller checks `bot-bottle.db` at start and keeps a daily
+  backup ([checks and backups](host-controller.md#checks-and-backups)).
+- `index.db` has no backup. A missing or damaged one is deleted and rebuilt
+  from its log at start. A new derived index goes here, never in
+  `bot-bottle.db` (`index_db.py`).
+- Each store marks its tables portable, machine-specific or mixed
+  (`TABLES`), and a mixed table's columns (`COLUMNS`). Nothing reads the
+  marks yet. The [table below](#what-travels) says which is which.
+- No secret value is in `bot-bottle.db` or `index.db`. A row names a secret
+  in the host secrets file (`secret:NAME`), as forge users and the pairing's
+  console tokens do.
+
+#### What travels
+
+Portable state could be restored onto another machine. Machine-specific state
+couldn't.
+
+| State | Mark |
+|---|---|
+| Audit passkeys (`audit_passkeys`), forge users (`forge_users`) | portable |
+| Forge connections (`forge_connections`) | mixed: `ssh`, this machine's address for the forge, is machine-specific |
+| Host settings (`bot_bottle_config`) | mixed: the host budget, `audit_retention_max_gb`, `cached_image_stale_warning_days` and the firehose sinks (exec sinks run this machine's programs) are machine-specific |
+| Every other table | machine-specific |
 
 ### Versioned user files
 
@@ -208,7 +254,8 @@ egress tokens (PRD 0081, design repo).
 ### Project files and trust
 
 Project bottles, and some project agents, run only once `bot-bottle trust`
-records them in `~/.bot-bottle/trusted-bottles.json`.
+records them in the host database (`trust_records`). The host controller
+writes them, and the CLI asks it.
 
 - Every project bottle needs trust.
 - A project agent needs trust when its `agent_provider` grants anything, or
@@ -252,25 +299,39 @@ offers `forge connect`.
 
 ### Forge connections
 
-`~/.bot-bottle/forges.md` lists each forge this host connected, keyed by host.
-Only `bot-bottle forge connect` (`forge_connections.py`) writes it.
+`bot-bottle.db` holds each forge this host connected, keyed by host
+(`forge_connections.py`). `bot-bottle forge list` prints them.
 
-Each entry has the forge's URL, SSH address, pinned host key and users. A user
-entry holds its token secret name, the default flag, and GitHub's `app` and
-`transport`.
+| Table | Row |
+|---|---|
+| `forge_connections` | a forge's kind, URL, SSH address and pinned host key |
+| `forge_users` | a user on it: its token's secret name (`secret:NAME`), the default flag, and GitHub's `app` and `transport` |
 
-Grants resolve through this file, never through a bottle's description of the
-forge ([ADR 0019](../decisions/0019-forges-are-described-in-bottles-connected-on-hosts.md)).
+- Only `forge connect`, the console's connect and `forge remove` change them,
+  through the host controller.
+- Grants resolve through them, never through a bottle's description of the
+  forge ([ADR 0019](../decisions/0019-forges-are-described-in-bottles-connected-on-hosts.md)).
 
-### Per-bottle metadata
+### Bottled agents
 
-`~/.bot-bottle/state/<identity>/metadata.json` holds these fields:
+A bottled agent is a row of `bot-bottle.db`'s `bottled_agents`, with these
+fields:
 
 `identity`, `agent_name`, `cwd`, `copy_cwd`, `started_at`, `compose_project`,
 `backend`, `label`, `color`, `bottle_names`, `origin`, `agent_id`, `parent`.
 
-`parent` is the parent bottle's identity when launched via `launch-bottle`
-(PRD 0106), and empty otherwise.
+- The label is kept only here. Its session record points at the row by
+  identity, so a rename changes one place.
+- `parent` is the parent bottle's identity when launched via `launch-bottle`
+  (PRD 0106), and empty otherwise.
+- Once it runs, the row also holds how a restarted host controller finishes
+  it ([host-controller.md](host-controller.md#after-a-daemon-restart)).
+- Removing a bottled agent deletes its state dir, snapshots and rows
+  (`bottled_agents`, `sessions`, `snapshots`, `run_manifest_*`) in one call
+  to the host controller. Listings read the rows, never the directories.
+- `cleanup` removes a bottled agent whose bottle isn't live, unless it's kept
+  for resume. It also removes one that records no backend, and a state dir
+  no row records, which nothing can resume.
 
 ### Image caches
 

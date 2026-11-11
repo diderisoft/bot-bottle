@@ -1,9 +1,9 @@
 """`bot-bottle forge connect` (PRD 0103, ADR 0019): check a forge token, pin
-the forge's SSH host key, and record the connection in `~/.bot-bottle/forges.md`
+the forge's SSH host key, and record the connection in the host DB
 (`forge_connections`).
 
 The forge is Gitea or GitHub (`forge_kinds`). The token goes to the host
-secrets file; `forges.md` names it under the user the forge says owns it.
+secrets file; the connection names it under the user the forge says owns it.
 Bottles then grant the forge's repos as `<host>/<owner>/<repo>[:write]`
 without stacking anything.
 """
@@ -12,12 +12,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from urllib.parse import urlparse
 
 from . import forge_alerts
 from .forge_connections import (
-    ForgeConnection, ForgeUser, add_user, forges_path, get as get_connection, host_of,
+    ForgeConnection, ForgeUser, add_user, connections, host_of,
     secret_name as user_secret_name,
 )
 from .manifest.util import ManifestError
@@ -25,23 +24,29 @@ from .manifest.util import ManifestError
 
 def connected_secret(host: str, user: str) -> str:
     """The secret name `user`'s token on `host` is kept under: the one it
-    has if connected already, else `<HOST>_TOKEN` for a forge's first user,
-    `<USER>_<HOST>_TOKEN` for another."""
-    conn = get_connection(host)
-    for u in conn.users if conn else ():
-        if u.name == user:
-            return u.token_secret
-    return user_secret_name(host, user, first=not (conn and conn.users))
+    has if connected already, else `BB_HOST_FORGE_<HOST>__<USER>_TOKEN`.
+    ConnectError when another connection's token has that name already."""
+    name = user_secret_name(host, user)
+    for conn in connections().values():
+        for u in conn.users:
+            if (conn.host, u.name) == (host, user):
+                return u.token_secret
+            if u.token_secret == name:
+                raise ConnectError(
+                    f"{u.name} on {conn.host} keeps its token as {name}, the name "
+                    f"{user} on {host} would take; disconnect it first "
+                    f"(bot-bottle forge remove {conn.host} --user {u.name})")
+    return name
 
 
 def record(conn: ForgeConnection, user: ForgeUser, *,
            make_default: bool = False) -> ForgeConnection:
-    """Write `conn` with `user` connected on it, as ConnectError when
-    `forges.md` won't take it."""
+    """Record `conn` with `user` connected on it, as ConnectError when the
+    host won't take it."""
     try:
         return add_user(conn, user, make_default=make_default)
     except (ManifestError, OSError) as e:
-        raise ConnectError(f"{forges_path()}: {e}") from e
+        raise ConnectError(f"couldn't record the connection: {e}") from e
 
 
 Keyscan = Callable[[str, str], str]
@@ -71,10 +76,9 @@ class SshUnreachable(ConnectError):
 
 @dataclass(frozen=True)
 class Connected:
-    """A forge connected: where it was written and what the token can do."""
+    """A forge connected, and what the token can do."""
 
     key: str            # the forge's host, a grant's prefix
-    path: Path
     account: str
     default: bool
     admin_repos: int
@@ -95,7 +99,7 @@ def connect(url: str, token: str, *, ssh: str = "", kind: str = "",
     """`bot-bottle forge connect`, for the CLI and the console alike: check the
     forge is a kind bot-bottle connects (Gitea, GitHub) and the token works,
     pin the forge's SSH host key, keep the token in the host secrets file,
-    and record the user it belongs to in `forges.md`. `kind` skips
+    and record the user it belongs to. `kind` skips
     recognizing the forge again; `transport` is GitHub's (ADR 0014). Raises
     ConnectError saying what's wrong. The token is never logged or returned."""
     # pylint: disable=import-outside-toplevel
@@ -142,7 +146,7 @@ def connect(url: str, token: str, *, ssh: str = "", kind: str = "",
     conn = record(ForgeConnection(host=key, kind=kind, url=url, ssh=ssh, host_key=host_key),
                   ForgeUser(name=check.account, token_secret=secret, transport=transport),
                   make_default=make_default)
-    return Connected(key=key, path=forges_path(), account=check.account,
+    return Connected(key=key, account=check.account,
                      default=conn.user().name == check.account,
                      admin_repos=check.admin_repos, repos=check.repos, ssh=ssh,
                      host_key=host_key, secret_name=secret, warnings=tuple(warnings))

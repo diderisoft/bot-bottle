@@ -278,6 +278,12 @@ def resolve_env(
     """Resolve the agent's env entries. With `prompt`, `ask_env` asks first;
     without it, a prompt entry falls back to a saved value and a missing one
     raises MissingEnvVarError (as does any missing reference)."""
+    for name, raw in manifest.bottle.env.items():
+        # The manifest refuses these too; a value built some other way can't
+        # read bot-bottle's own tokens either.
+        reserved = secret_ref.reserved_problem(name) or secret_ref.problem(raw)
+        if reserved:
+            raise MissingEnvVarError(name, f"env entry {name}: {reserved}")
     env, store, answers = tiers(secrets)
     if prompt:
         answers = {**answers, **ask_env(manifest, secrets, skip=answers)}

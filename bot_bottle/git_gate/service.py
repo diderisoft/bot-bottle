@@ -5,8 +5,6 @@ provision and revoke deploy keys, and check upstream host keys.
 from __future__ import annotations
 
 import dataclasses
-
-import json
 import subprocess
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -25,6 +23,7 @@ from ..control.git_gate_render import (
 )
 from .plan import GitGatePlan
 from . import provision as _provision
+from . import state as _state
 from . import host_key as _host_key
 
 
@@ -45,25 +44,17 @@ def stage_git_gate_scripts(stage_dir: Path) -> tuple[Path, Path, Path]:
     gitleaks_config.chmod(0o600)
     return hook, access_hook, gitleaks_config
 
-_TRAILER_FILE = "trailer.json"
+def save_trailer_settings(identity: str, trailer: str, mode: str) -> None:
+    """Keep the trailer check's value and mode for the bottled agent
+    `identity`, so a gateway re-provision applies the same check. A launch
+    keeps them, after its preflight; a dry run doesn't."""
+    _state.store().set_trailer(identity, trailer, mode)
 
 
-def save_trailer_settings(stage_dir: Path, trailer: str, mode: str) -> None:
-    """Keep the trailer check's value and mode in the git-gate state dir, so
-    a gateway re-provision applies the same check."""
-    path = stage_dir / _TRAILER_FILE
-    path.write_text(json.dumps({"trailer": trailer, "mode": mode}))
-    path.chmod(0o600)
-
-
-def load_trailer_settings(stage_dir: Path) -> tuple[str, str]:
+def load_trailer_settings(identity: str) -> tuple[str, str]:
     """(trailer, mode) as `save_trailer_settings` kept them; ("", "") when
-    they can't be read, which git-gate refuses pushes over."""
-    try:
-        data = json.loads((stage_dir / _TRAILER_FILE).read_text(encoding="utf-8"))
-        return str(data["trailer"]), trailer_mode(str(data["mode"]))
-    except (OSError, ValueError, KeyError, TypeError):
-        return "", ""
+    none were, which git-gate refuses pushes over."""
+    return _state.store().trailer(identity)
 
 
 BASELINE_FILE = "baseline-commits"
@@ -119,7 +110,9 @@ class GitGate:
         get their identity file at launch. `trailer` is the `Bot-Bottle`
         value commits must carry, checked as `bottle.git_trailers` says;
         `baseline` is the commits the workspace brought in, which needn't
-        carry it. Both are saved with the scripts, for a re-provision."""
+        carry it; it's saved with the scripts, for a re-provision. The
+        trailer is the launch's to keep (`save_trailer_settings`), so a dry
+        run leaves nothing behind but files."""
         if not TRAILER_VALUE_RE.fullmatch(trailer):
             raise ValueError(f"git-gate: unsafe trailer value {trailer!r}")
         upstreams = git_gate_upstreams_for_bottle(bottle)
@@ -138,7 +131,6 @@ class GitGate:
             upstreams_with_files.append(
                 dataclasses.replace(u, known_hosts_file=known_hosts_file))
         mode = trailer_mode(bottle.git_trailers)
-        save_trailer_settings(stage_dir, trailer, mode)
         return GitGatePlan(
             slug=slug,
             hook_script=hook,
@@ -159,10 +151,12 @@ class GitGate:
         return _provision.provision_git_gate_dynamic_keys(bottle, plan, stage_dir, secrets)
 
     def revoke_provisioned_keys(
-        self, bottle: ManifestBottle, stage_dir: Path, secrets: SecretSource,
+        self, bottle: ManifestBottle, identity: str, stage_dir: Path,
+        secrets: SecretSource,
     ) -> None:
-        """Revoke every deploy key provisioned for `bottle`."""
-        _provision.revoke_git_gate_provisioned_keys(bottle, stage_dir, secrets)
+        """Revoke every deploy key provisioned for `bottle`, the bottled agent
+        `identity`."""
+        _provision.revoke_git_gate_provisioned_keys(bottle, identity, stage_dir, secrets)
 
     def preflight_host_keys(
         self, manifest: Manifest, *, headless: bool, home_md: Path | None,

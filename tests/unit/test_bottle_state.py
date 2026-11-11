@@ -11,7 +11,6 @@ from tests.unit import use_bottle_root
 from bot_bottle import bottle_state
 from bot_bottle.bottle_state import (
     BottleMetadata,
-    metadata_path,
     read_metadata,
     write_metadata,
 )
@@ -118,9 +117,9 @@ class TestPreserveMarker(_FakeHomeMixin, unittest.TestCase):
         self.assertTrue(str(path).endswith("/.bot-bottle/state/dev-x/.preserve"))
 
 
-class TestCleanupState(_FakeHomeMixin, unittest.TestCase):
-    """cleanup_state removes the entire per-bottle state dir.
-    Called by cli.py when a session ends without the preserve marker."""
+class TestRemoveBottledAgent(_FakeHomeMixin, unittest.TestCase):
+    """Removing a bottled agent deletes its state dir, its snapshots' patches
+    and its host DB rows together; nothing is inferred from directories."""
 
     def setUp(self):
         self._setup_fake_home()
@@ -128,16 +127,37 @@ class TestCleanupState(_FakeHomeMixin, unittest.TestCase):
     def tearDown(self):
         self._teardown_fake_home()
 
-    def test_removes_state_dir_and_contents(self):
+    def test_removes_the_state_dir_and_the_rows(self):
+        from bot_bottle.control.hostctl.sessions import SessionRecord, SessionStore
+        from bot_bottle.control.hostctl.snapshots import snapshots_root
+        from bot_bottle.paths import host_db_path
+        write_metadata(BottleMetadata(identity="dev-x", agent_name="dev", cwd="",
+                                      copy_cwd=False, started_at="t"))
+        SessionStore(host_db_path()).put(SessionRecord("dev-x", "bottle", {}))
+        SessionStore(host_db_path()).put(SessionRecord("other", "bottle", {}))
+        (snapshots_root() / "dev-x" / "act").mkdir(parents=True)
         bottle_state.write_per_bottle_dockerfile("dev-x", "FROM x\n")
         d = bottle_state.bottle_state_dir("dev-x")
-        self.assertTrue(d.is_dir())
-        bottle_state.cleanup_state("dev-x")
+        self.assertTrue(bottle_state.remove_bottled_agent("dev-x"))
         self.assertFalse(d.exists())
+        self.assertFalse((snapshots_root() / "dev-x").exists())
+        self.assertIsNone(read_metadata("dev-x"))
+        self.assertIsNone(SessionStore(host_db_path()).get("dev-x"))
+        self.assertIsNotNone(SessionStore(host_db_path()).get("other"))
 
-    def test_idempotent_when_dir_missing(self):
-        # Never created — should not raise.
-        bottle_state.cleanup_state("never-existed")
+    def test_idempotent_when_nothing_is_there(self):
+        self.assertFalse(bottle_state.remove_bottled_agent("never-existed"))
+
+    def test_an_identity_that_isnt_one_path_part_is_refused(self):
+        for bad in ("", ".", "..", "../x", "a/b", ".hidden"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                bottle_state.delete_bottled_agent(bad)
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                BottleMetadata.from_json({"identity": bad, "agent_name": "a"})
+
+    def test_a_state_dir_without_a_row_is_no_bottled_agent(self):
+        bottle_state.write_per_bottle_dockerfile("stray", "FROM x\n")
+        self.assertEqual([], bottle_state.all_metadata())
 
 
 class TestBottleMetadata(_FakeHomeMixin, unittest.TestCase):
@@ -157,29 +177,21 @@ class TestBottleMetadata(_FakeHomeMixin, unittest.TestCase):
             cwd="/proj/A",
             copy_cwd=True,
             started_at="2026-05-25T12:00:00+00:00",
+            compose_project="bot-bottle-dev-a4f8c",
+            backend="firecracker",
+            label="a label",
+            bottle_names=("basic", "./main"),
+            parent="p-1",
         )
         write_metadata(meta)
-        loaded = read_metadata("dev-a4f8c")
-        self.assertEqual(meta, loaded)
+        self.assertEqual(meta, read_metadata("dev-a4f8c"))
+        self.assertEqual(meta, BottleMetadata.from_json(meta.to_json()))
 
-    def test_a_bottle_that_mounted_its_project_resumes_with_a_copy(self):
-        path = metadata_path("dev-m")
-        path.parent.mkdir(parents=True)
-        path.write_text('{"agent_name": "dev", "cwd": "/proj/A", "copy_cwd": false, '
-                        '"mount_cwd": true, "started_at": "t"}')
-        loaded = read_metadata("dev-m")
-        assert loaded is not None
-        self.assertEqual(("/proj/A", True), (loaded.cwd, loaded.copy_cwd))
-
-    def test_metadata_lives_under_state_dir(self):
-        meta = BottleMetadata(
-            identity="dev-x", agent_name="dev",
-            cwd="", copy_cwd=False, started_at="t",
-        )
-        path = write_metadata(meta)
-        self.assertTrue(
-            str(path).endswith("/.bot-bottle/state/dev-x/metadata.json"),
-        )
+    def test_it_is_a_host_db_row_not_a_file(self):
+        write_metadata(BottleMetadata(identity="dev-x", agent_name="dev", cwd="",
+                                      copy_cwd=False, started_at="t"))
+        self.assertFalse(bottle_state.bottle_state_dir("dev-x").exists())
+        self.assertEqual(["dev-x"], [m.identity for m in bottle_state.all_metadata()])
 
     def test_overwriting_metadata_updates_timestamp(self):
         # `resume` re-writes metadata with a fresh started_at;
@@ -196,66 +208,48 @@ class TestBottleMetadata(_FakeHomeMixin, unittest.TestCase):
         assert loaded is not None
         self.assertEqual("t2", loaded.started_at)
 
+    def test_only_some_fields_change(self):
+        write_metadata(BottleMetadata(identity="dev-z", agent_name="dev", cwd="",
+                                      copy_cwd=False, started_at="t"))
+        with self.assertRaisesRegex(ValueError, "can't change agent_name"):
+            bottle_state.update_metadata("dev-z", agent_name="other")
+        self.assertIsNone(bottle_state.update_metadata("ghost", label="x"))
 
-class TestBottleMetadataBackend(_FakeHomeMixin, unittest.TestCase):
-    """PRD 0040: backend field is persisted and read back."""
+
+class TestTheCliGoesThroughTheHostController(_FakeHomeMixin, unittest.TestCase):
+    """Outside the host controller, every read and write is a request to it:
+    one writer for the host DB."""
 
     def setUp(self):
+        from tests.unit import as_cli, serve_host_controller
         self._setup_fake_home()
+        self.addCleanup(self._teardown_fake_home)
+        serve_host_controller(self)
+        as_cli(self)
 
-    def tearDown(self):
-        self._teardown_fake_home()
+    def test_write_read_change_and_remove(self):
+        from unittest import mock
+        from bot_bottle import host_access
+        meta = BottleMetadata(identity="cli-1", agent_name="dev", cwd="/p", copy_cwd=True,
+                              started_at="t", bottle_names=("basic",))
+        with mock.patch.object(host_access, "ask", wraps=host_access.ask) as asked:
+            write_metadata(meta)
+            self.assertEqual(meta, read_metadata("cli-1"))
+            changed = bottle_state.update_metadata("cli-1", label="  renamed ")
+            assert changed is not None
+            self.assertEqual("renamed", changed.label)
+            bottle_state.write_per_bottle_dockerfile("cli-1", "FROM x\n")
+            self.assertTrue(bottle_state.remove_bottled_agent("cli-1"))
+        self.assertEqual(4, asked.call_count)
+        self.assertEqual([], bottle_state.all_metadata())
+        self.assertFalse(bottle_state.bottle_state_dir("cli-1").exists())
 
-    def test_backend_field_roundtrips_docker(self):
-        meta = BottleMetadata(
-            identity="dev-b1",
-            agent_name="dev",
-            cwd="",
-            copy_cwd=False,
-            started_at="2026-06-02T00:00:00+00:00",
-            compose_project="bot-bottle-dev-b1",
-            backend="docker",
-        )
-        write_metadata(meta)
-        loaded = read_metadata("dev-b1")
-        self.assertIsNotNone(loaded)
-        assert loaded is not None
-        self.assertEqual("docker", loaded.backend)
-
-    def test_backend_field_roundtrips_firecracker(self):
-        meta = BottleMetadata(
-            identity="dev-b2",
-            agent_name="dev",
-            cwd="",
-            copy_cwd=False,
-            started_at="2026-06-02T00:00:00+00:00",
-            compose_project="",
-            backend="firecracker",
-        )
-        write_metadata(meta)
-        loaded = read_metadata("dev-b2")
-        self.assertIsNotNone(loaded)
-        assert loaded is not None
-        self.assertEqual("firecracker", loaded.backend)
-
-    def test_missing_backend_field_defaults_to_empty(self):
-        # Old state dirs written before PRD 0040 have no backend key.
-        import json
-        from bot_bottle import bottle_state as bs
-        path = bs.metadata_path("dev-b3")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({
-            "identity": "dev-b3",
-            "agent_name": "dev",
-            "cwd": "",
-            "copy_cwd": False,
-            "started_at": "2026-06-02T00:00:00+00:00",
-            "compose_project": "bot-bottle-dev-b3",
-        }))
-        loaded = read_metadata("dev-b3")
-        self.assertIsNotNone(loaded)
-        assert loaded is not None
-        self.assertEqual("", loaded.backend)
+    def test_a_bad_label_is_refused_by_the_host_controller(self):
+        from bot_bottle.control.hostctl.client import HostControlRefused
+        write_metadata(BottleMetadata(identity="cli-2", agent_name="dev", cwd="",
+                                      copy_cwd=False, started_at="t"))
+        with self.assertRaises(HostControlRefused):
+            bottle_state.update_metadata("cli-2", label="a\x00b")
 
 
 class TestCommittedImage(_FakeHomeMixin, unittest.TestCase):
@@ -325,7 +319,7 @@ class TestWhoStartedIt(unittest.TestCase):
             identity="b1", agent_name="demo", cwd="", copy_cwd=False, started_at="",
             origin=origin, agent_id=agent_id))
 
-    def test_older_metadata_has_neither(self) -> None:
+    def test_a_bottle_not_started_yet_has_neither(self) -> None:
         self._write()
         meta = bottle_state.read_metadata("b1")
         assert meta is not None
@@ -346,7 +340,7 @@ class TestWhoStartedIt(unittest.TestCase):
         assert meta is not None
         self.assertEqual(("console", "c-2"), (meta.origin, meta.agent_id))
         self.assertEqual("demo", meta.agent_name)
-        bottle_state.record_origin("missing", "console", "c-2")  # no metadata: no-op
+        bottle_state.record_origin("missing", "console", "c-2")  # no row: no-op
         self.assertIsNone(bottle_state.read_metadata("missing"))
 
 

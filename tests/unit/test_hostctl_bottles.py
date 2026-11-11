@@ -22,6 +22,7 @@ from typing import Any, cast
 from unittest import mock
 
 from bot_bottle import bottle_state
+from bot_bottle.backend.resolve_common import write_launch_metadata
 from bot_bottle.lib import log
 from bot_bottle.contract.auth import ROLE_CLI, ROLE_GATEWAY
 from bot_bottle.contract.hostctl import (
@@ -144,6 +145,8 @@ class FakeBackend:
         self.secrets.append(secrets)
         slug = spec.identity or spec.label or "demo-xyz12"
         bottle_state.write_per_bottle_dockerfile(slug, "FROM x\n")
+        # As every backend's prepare does (`write_launch_metadata`).
+        write_launch_metadata(slug, spec, compose_project="", backend=self.name)
         return SimpleNamespace(
             slug=slug, harness="claude",
             agent_provision=SimpleNamespace(startup_args=("--start",)),
@@ -612,17 +615,17 @@ class TestOrchestratorLaunchSettings(_Root):
 
 class TestRecordedInfraSettings(unittest.TestCase):
     def test_reads_what_bring_up_recorded(self) -> None:
-        from bot_bottle.backend.infra_service import (  # pylint: disable=import-outside-toplevel
-            infra_settings_record, recorded_infra_settings)
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.backend.infra_service import recorded_infra_settings
+        from bot_bottle import infra_state  # pylint: disable=import-outside-toplevel
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.addCleanup(use_bottle_root(root))
         self.assertIsNone(recorded_infra_settings("docker"))
-        path = infra_settings_record("docker")
-        path.parent.mkdir(parents=True)
         infra = InfraSettings(egress_port=7777)
-        path.write_text(json.dumps({"infra": Settings(infra=infra).to_json()["infra"]}))
+        infra_state.record(
+            {"docker.settings": json.dumps(Settings(infra=infra).to_json()["infra"])})
         self.assertEqual(infra, recorded_infra_settings("docker"))
-        path.write_text(json.dumps({"infra": {"retired_knob": 1}}))
+        infra_state.record({"docker.settings": json.dumps({"retired_knob": 1})})
         self.assertIsNone(recorded_infra_settings("docker"))
 
 

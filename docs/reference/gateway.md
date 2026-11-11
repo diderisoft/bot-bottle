@@ -333,7 +333,7 @@ The operator decides in `bot-bottle supervise`, the terminal's request popup,
 or the console. The orchestrator applies approved egress changes to the
 bottle's stored policy, so the next request resolves the new routes.
 
-The gateway never opens `bot-bottle.db`.
+The gateway never opens a database.
 
 **Kept approvals.** An approved egress addition can also be kept
 (`approvals.py`). The terminal's `[k]`, or the phone's second option, writes
@@ -355,6 +355,20 @@ later answer, such as the phone answering after the terminal did, gets a 409
 
 The late answer is recorded as a `decision.late` audit event naming the
 decision it lost to. So both answers are on record.
+
+**The record.** The audit journal is a decision's only record. A proposal is
+`decision.proposed`, and its answer `decision.resolved`, joined by the
+proposal id (`correlation_id`).
+
+| Field of `decision.resolved` | Holds |
+|---|---|
+| `operator_action`, `operator_notes` | the answer and its notes |
+| `untrusted.diff` | the policy change applied, as a unified diff. Only when an approval or modification changes egress policy. It carries the agent's proposed text, so it's a claim, and an export of a restricted record drops it. |
+| `diff_truncated` | true when the diff was cut at 64 KiB |
+| `diff_digest` | the whole diff's SHA-256 prefix, so a cut or dropped diff can still be matched |
+
+For a bottle with `audit.delivery: required`, the record is written before
+the change is applied. A decision that can't be recorded isn't applied.
 
 git-gate's `gitleaks-allow` proposals and the egress proxy's
 `egress-token-allow` proposals use the same queue.
@@ -423,8 +437,8 @@ hosts, repos, env names.
 The card is answered from the console only. The terminal can deny it.
 
 On approval the host launches the child with a trimmed run-bottle that holds
-only within-parent elements. It writes the parent's identity into the child's
-session record, as the `parent` field in `metadata.json`.
+only within-parent elements. It records the parent's identity as the child's
+`parent`, in its `bottled_agents` row.
 
 ### `create-repo`
 
@@ -478,8 +492,10 @@ A full queue drops the oldest event. It records an
 The mitmproxy CA lives in a host directory mounted at mitmproxy's confdir, so
 it survives the gateway being recreated.
 
-`python -m bot_bottle.control.rotate_ca` rotates it by running
-`gateway/ca_rollover.py` in the gateway:
+`python -m bot_bottle.control.rotate_ca` has the host controller rotate it
+(`POST /orchestrator/rotate-ca`, a job whose lines it prints), since restarting
+a gateway records infrastructure state only the host controller writes. The
+rotation runs `gateway/ca_rollover.py` in the gateway:
 
 1. It mints a new CA cross-signed by the old one.
 2. It restarts each gateway and reattaches its bottles.

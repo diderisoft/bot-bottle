@@ -1,8 +1,8 @@
 """Connecting GitHub through the shared `bot-bottle` GitHub App's user access
 tokens (ADR 0012), for `bot-bottle forge connect github` and the console:
 GitHub's device flow authorizes this host as the operator, and the token
-goes to the host secrets file, named under the user in `forges.md`
-(`forge_connections`, ADR 0019).
+goes to the host secrets file, named under the user in the host's forge
+connections (`forge_connections`, ADR 0019).
 Per launch the token adds and removes that run's deploy keys, renewed first
 when it's about to expire (`contrib/github/user_token.py`).
 
@@ -15,7 +15,6 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import Any
 
 from . import forge_alerts
@@ -29,10 +28,9 @@ GITHUB_SSH = "ssh://git@github.com"
 
 @dataclass(frozen=True)
 class GitHubConnected:
-    """GitHub connected: as whom, where it was written, where to install."""
+    """GitHub connected: as whom, and where to install."""
 
     key: str
-    path: Path
     login: str
     app: str
     install_url: str
@@ -47,7 +45,6 @@ def finish(tokens: Any, config: Any, *, make_default: bool = False,
     wrong; the token is never logged."""
     # pylint: disable=import-outside-toplevel
     from .contrib.github.user_token import login as token_login, store
-    from .forge_connections import forges_path
     from .forge_kinds import ForgeApiError
     from .git_gate.host_key import fetch_host_key
     from .paths import host_secrets_path
@@ -66,7 +63,7 @@ def finish(tokens: Any, config: Any, *, make_default: bool = False,
                            host_key=host_key),
            ForgeUser(name=login, token_secret=secret, app=config.slug, transport=transport),
            make_default=make_default)
-    return GitHubConnected(key=GITHUB_HOST, path=forges_path(), login=login, app=config.slug,
+    return GitHubConnected(key=GITHUB_HOST, login=login, app=config.slug,
                            install_url=config.install_url, secret_name=secret,
                            expiring=bool(tokens.refresh))
 

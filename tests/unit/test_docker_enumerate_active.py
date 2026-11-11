@@ -1,7 +1,7 @@
 """Unit: docker backend's `enumerate_active` (issue #77).
 
 The full enumerate function fans out to `docker compose ls`,
-`docker ps`, and per-bottle metadata.json reads — too much for a
+`docker ps`, and per-bottle metadata reads — too much for a
 unit test. Tests split into:
 
   - Parser tests for `_parse_services_by_project`: pure function,

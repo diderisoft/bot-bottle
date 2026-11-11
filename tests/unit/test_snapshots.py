@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import hashlib
 import io
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +13,8 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest import mock
 
+from bot_bottle import bottle_state
+from bot_bottle.paths import host_db_path
 from bot_bottle.backend import adoption
 from bot_bottle.backend.base import ExecResult
 from bot_bottle.control.hostctl import remote, snapshots
@@ -22,7 +23,7 @@ from bot_bottle.control.hostctl.audit_ocsf import to_ocsf
 from bot_bottle.control.hostctl.bottles import BottleService
 from bot_bottle.control.hostctl.sessions import SessionRecord
 from bot_bottle.control.hostctl.snapshots import SnapshotUnavailable, take
-from . import use_bottle_root
+from . import bottled_agent, use_bottle_root
 
 _PATCH = "diff --git a/x.txt b/x.txt\n--- a/x.txt\n+++ b/x.txt\n@@ -1 +1,2 @@\n a\n+b\n"
 _GIT = SimpleNamespace(enabled=True, has_host_git_dir=True, guest_path="/home/node/workspace")
@@ -48,9 +49,19 @@ class TestTake(_Root):
                           "sha256": hashlib.sha256(_PATCH.encode()).hexdigest()}, record)
         run = snapshots.snapshots_root() / "s1" / "a1"
         self.assertEqual(_PATCH, (run / f"{record['id']}.patch").read_text())
-        self.assertEqual(record, json.loads((run / f"{record['id']}.json").read_text()))
+        self.assertEqual([record], snapshots.SnapshotStore(host_db_path()).of("s1"))
+        self.assertFalse((run / f"{record['id']}.json").exists())
         self.assertEqual(0o600, (run / f"{record['id']}.patch").stat().st_mode & 0o777)
         self.assertEqual(0o700, snapshots.snapshots_root().stat().st_mode & 0o777)
+
+    def test_they_go_with_their_bottled_agent(self) -> None:
+        bottled_agent("s1")
+        take(_bottle(ExecResult(0, _PATCH, "")), _GIT, session="s1", activation="a1", seq=1)
+        take(_bottle(ExecResult(0, _PATCH, "")), _GIT, session="s2", activation="a1", seq=1)
+        bottle_state.remove_bottled_agent("s1")
+        self.assertEqual([], snapshots.SnapshotStore(host_db_path()).of("s1"))
+        self.assertFalse((snapshots.snapshots_root() / "s1").exists())
+        self.assertEqual(1, len(snapshots.SnapshotStore(host_db_path()).of("s2")))
 
     def test_only_a_git_workspace(self) -> None:
         with self.assertRaisesRegex(SnapshotUnavailable, "git checkout"):
@@ -74,6 +85,7 @@ class TestService(_Root):
         self.audit = mock.MagicMock(spec=HostAudit)
         self.service = BottleService(self.sessions, backend_for=lambda _s: self.backend,
                                      recorded_infra=lambda _b: None, audit=self.audit)
+        bottled_agent("s1")
         adoption.write("s1", adoption.AdoptionRecord(
             container="c", registry_id="", workspace=adoption.AdoptedWorkspace(
                 enabled=True, has_host_git_dir=True, guest_path="/home/node/workspace")))

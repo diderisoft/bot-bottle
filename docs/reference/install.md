@@ -59,6 +59,99 @@ end if a step fails.
 With `BOT_BOTTLE_ENV` set, it says which environment it sets up. It ends with
 doctor's `next:` line, the one thing to do next on this host.
 
+### Upgrading to this release
+
+From v0.1.9 or older, an upgrade takes a few steps once. This release keeps
+the host's state in its database ([ADR 0020](../decisions/0020-where-host-state-lives.md))
+and reads none of the files older versions kept it in.
+
+1. Stop or finish every bottled agent. The curl installer refuses until you
+   have ([below](#upgrading-with-bottled-agents)).
+2. Upgrade.
+3. Redo what can't be rebuilt:
+
+| Redo | How |
+|---|---|
+| Each forge connection | `bot-bottle forge connect <url>`, and `bot-bottle forge connect github` |
+| Phone pairing | `bot-bottle pair` |
+| Trust in project bottles | answer the trust prompt when a project bottle asks again |
+| Audit passkeys | `bot-bottle audit passkeys --trust` |
+
+Caches, indexes and infrastructure state rebuild themselves. Tables older
+versions kept in `db/bot-bottle.db` are dropped when the host controller
+starts.
+
+#### Old files
+
+These are unused now and safe to delete. `bot-bottle uninstall` deletes them
+in every environment (`cli/old_state.py`). Paths are relative to
+`~/.bot-bottle`, or `~/.bot-bottle-envs/<name>`.
+
+| Old file | Was |
+|---|---|
+| `console.json`, `remote.json`, `remote.status.json` | the pairing |
+| `trusted-bottles.json`, `audit-passkeys.json` | trust records, passkeys |
+| `forges.md`, `github-app.json` | forge connections |
+| `audit-push/` | the console push cursors |
+| `start.json`, `state/quickstart.json`, `state/isolation-verified.json` | the remembered agent, isolation passes |
+| `env.json` | a named environment's settings |
+| `docker-gateway-subnet`, `docker-ports/`, `infra/orchestrator.json`, `infra/*.settings.json` | infrastructure state |
+| `hostctl/state.json`, `hostctl/sessions/`, `hostctl/sessions.sock` | the host controller's state and sessions |
+| `state/<id>/metadata.json`, `adoption.json`, `manifest/log.json`, `manifest/launch.json` | bottled agents |
+| `state/<id>/git-gate/upstreams.json`, `live-grants.json`, `trailer.json` | git-gate's re-provisioning state |
+| `transcripts/**/*.meta.json`, `follow.json`, `snapshots/**/*.json` | transcript and snapshot records. The `.jsonl` and `.patch` files stay. |
+| `workspace-disks/*.json` | workspace disks' owners |
+
+In `~/.cache/bot-bottle/firecracker/`, `**/infra/registry.ext4`,
+`**/infra/gateway-ca/` and `**/infra-artifact/` are unused too. They now live
+under the state root, or aren't kept. Uninstall removes the whole cache.
+
+The secrets file still holds the old token lines. No bottle needs them, so
+delete them by hand:
+
+- each forge's `<HOST>_TOKEN` and `<USER>_<HOST>_TOKEN`, with any `_REFRESH`,
+  `_EXPIRES` and `_CLIENT_ID` lines beside them.
+- `CONSOLE_ACCESS_TOKEN` and `CONSOLE_REFRESH_TOKEN`.
+
+Their new names are reserved ([secrets.md](secrets.md#reserved-names)).
+
+### Upgrading with bottled agents
+
+The installer refuses to upgrade while the installed version left any bottled
+agent behind, running or kept for resume, in any environment. It checks first,
+before anything is replaced.
+
+Bottled agents now live in the host database, and nothing reads the files older
+versions kept them in (`state/<id>/metadata.json`). One carried across the
+upgrade couldn't be resumed or cleaned up. The refusal lists each one:
+
+| Bottled agent | What to do |
+|---|---|
+| running | exit its agent, or run `bot-bottle cleanup bots` to stop them all |
+| kept for resume | `bot-bottle resume <id>` and exit it, or delete its directory to discard it |
+
+In a named environment, run those with `BOT_BOTTLE_ENV=<name>`. Then run the
+installer again.
+
+The refusal is the curl installer's. Installing with `uv` or `pipx` yourself
+skips it, so stop and finish bottled agents first.
+
+### Stopping the older host controller
+
+With no bottled agents left, the installer stops a host controller from
+v0.1.9 or older before it replaces the package. The new CLI can't find one: it
+looks on `hostctl/control.sock`, and the old one published itself in
+`hostctl/state.json`.
+
+- It runs the old `bot-bottle down`.
+- It stops each environment's service unit (`systemctl --user stop`,
+  `launchctl bootout`).
+- It stops the process `state.json` names, if that is still a host
+  controller.
+
+Installing with `uv` or `pipx` yourself skips this too: run `bot-bottle down`
+first.
+
 ### Without the installer
 
 Python-native users can skip it and pin the latest tag:
@@ -264,7 +357,7 @@ firewall. That's a pf anchor and a LaunchDaemon that reloads it at boot
 ([backends.md](backends.md#macos-container)).
 
 Run as root through `sudo`, bot-bottle writes only those system pieces. It
-doesn't register the environment or create its database, so no root-owned
+doesn't create the environment's directory or database, so no root-owned
 state lands in your home. Your next ordinary run does that.
 
 An older version may have left some root-owned state. Unprivileged commands
@@ -400,6 +493,8 @@ It:
    the pf firewall. `--keep-backend` skips this step.
 3. removes `~/.cache/bot-bottle` and the package itself (the installer's venv
    and shim, or `pipx`/`uv tool uninstall`).
+4. removes the [old files](#old-files) older versions left in each
+   environment, printing each one. It does this without `--purge` too.
 
 Base images it pulled to build on, such as `python` or `node`, stay.
 
@@ -427,7 +522,8 @@ state, names and network.
 | docker agent /29s | `10.242.0.0/20` | `10.240.0.0/16`, shared by named environments (allocation skips any subnet in use) |
 | docker orchestrator host port | `127.0.0.1:8099` | a free port of 18100-18899, allocated (moves on when docker says the port is taken) and recorded per container under the state root |
 | firecracker pool | slice 0 (`bbfc*`, `bot_bottle_fc`, `bborch0`/`bbgw0`) | the slice it claims (below) |
-| firecracker run and infra dirs | `~/.cache/bot-bottle/firecracker/{run,infra}` | `~/.cache/bot-bottle/firecracker/envs/<name>/{run,infra}` |
+| firecracker run and infra dirs (cache) | `~/.cache/bot-bottle/firecracker/{run,infra}` | `~/.cache/bot-bottle/firecracker/envs/<name>/{run,infra}` |
+| firecracker registry volume and CA | `~/.bot-bottle/infra/` | `~/.bot-bottle-envs/<name>/infra/` |
 | macOS pf anchor | `com.apple/io.bot-bottle` | `com.apple/io.bot-bottle.<name>` |
 | macOS agent IPv6 /64 | `fd62:6f74:6274:6c65::/64` | a free `fd62:6f74:6275:<n>::/64`, allocated and recorded |
 
@@ -444,14 +540,18 @@ Image, artifact and root-filesystem caches are content-addressed and shared by
 every environment. `live` derives exactly the names, paths and settings
 fingerprint an install had before environments existed.
 
-### Registering an environment
+### Creating an environment
 
-A named environment registers itself the first time a command runs in it, in
-`~/.bot-bottle-envs/<name>/env.json`.
+A named environment is its directory, `~/.bot-bottle-envs/<name>`. The first
+command run in it creates the directory, and `envs` lists the directories.
 
-A name whose resource prefix would match another registered environment's is
-refused. For example, `dev` and `dev-2` clash: `bb-dev-` matches
-`bb-dev-2-orchestrator`.
+Nothing else records an environment. Its names, paths and address ranges
+derive from the name. What it allocates is recorded in its host DB, or in the
+pf rules for the macOS /64.
+
+A name whose resource prefix would match another environment's is refused,
+even when its directory is already there. For example, `dev` and `dev-2`
+clash: `bb-dev-` matches `bb-dev-2-orchestrator`.
 
 `doctor` and `status` print the active environment and its orchestrator. They
 warn about any other bot-bottle orchestrator answering.
@@ -485,7 +585,9 @@ If part of the teardown fails, the state is kept so it can be retried.
 refuses to run in a named environment and removes only live's containers and
 networks, so remove named environments first.
 
-A root set with `BOT_BOTTLE_ROOT` outside `~/.bot-bottle-envs/` is left in
+`envs` knows only the active environment's `BOT_BOTTLE_ROOT`. Run `envs rm`
+with the same `BOT_BOTTLE_ENV` and `BOT_BOTTLE_ROOT` to tear down an
+environment kept elsewhere. A root outside `~/.bot-bottle-envs/` is left in
 place.
 
 ### Firecracker slices
@@ -526,10 +628,10 @@ The pool setup creates that directory mode 2775 for the pool's group. The group
 is `BOT_BOTTLE_FC_GROUP` or NixOS `group`, else the owner's primary group.
 Every user that runs bot-bottle must be in that group.
 
-A claim names its environment, user and registration file. It's created
+A claim names its environment, user and environment directory. It's created
 atomically under a lock.
 
-A claim is replaced only when stale: its registration is confirmed gone and
+A claim is replaced only when stale: its directory is confirmed gone and
 none of the slice's TAPs is in use. A live claim is never taken. `envs rm`
 releases it (`backend/firecracker/slice_claims.py`).
 
@@ -542,8 +644,8 @@ It tries the /24s in an order that starts at its name's hash. It skips any a
 docker network already has. It moves on when docker reports a pool overlap,
 meaning another environment got there first.
 
-The one it gets is recorded in its state root (`docker-gateway-subnet`), so
-it's stable across restarts. An existing gateway network's subnet is adopted.
+The one it gets is recorded in its host database (`infra_state`), so it's
+stable across restarts. An existing gateway network's subnet is adopted.
 
 The macOS agent IPv6 /64 is allocated the same way at setup, skipping the ones
 other environments' anchors block. It's recorded in the installed pf rules.
@@ -627,7 +729,7 @@ Generated from `bot_bottle/env_vars.py`: edit that, then run
 | `BOT_BOTTLE_GATEWAY_IMAGE` | dev | The gateway image to run. | `bot-bottle-gateway:latest` |
 | `BOT_BOTTLE_HOSTCTL_PORT` | dev | The host controller's loopback port. | ephemeral |
 | `BOT_BOTTLE_DOCKER_CA_MOUNT` | dev | docker in CI: a named volume for the gateway CA, for a runner that shares the host's Docker socket. Removed at the GitHub cutover. | — |
-| `BOT_BOTTLE_DOCKER_ROOT_MOUNT` | dev | docker in CI: a named volume for the state root the orchestrator mounts. Removed at the GitHub cutover. | — |
+| `BOT_BOTTLE_DOCKER_ROOT_MOUNT` | dev | docker in CI: a named volume for the orchestrator's registry, its only mount. Removed at the GitHub cutover. | — |
 | `BOT_BOTTLE_DOCKER_CLIENT_NETWORK` | dev | docker in CI: the job container's network, which the orchestrator joins. Removed at the GitHub cutover. | — |
 | `BOT_BOTTLE_INFRA_ARTIFACT_BASE` | release | The registry the images and rootfs artifacts are published to. | `https://ghcr.io` |
 | `BOT_BOTTLE_INFRA_ARTIFACT_OWNER` | release | The registry owner the images are published under. | `diderisoft` |

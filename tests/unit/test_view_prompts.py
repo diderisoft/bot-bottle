@@ -228,8 +228,8 @@ class TestSetupOnAView(unittest.TestCase):
                           yes_no=lambda _q: True)
         seen: list[object] = []
         with prompt.redirect(asker), \
-             mock.patch.object(setup.pairing, "load_console",
-                               side_effect=setup.pairing.RemoteError("no")), \
+             mock.patch.object(setup, "current_pairing",
+                               return_value=(setup.pairing.Pairing(), {})), \
              mock.patch("bot_bottle.cli.commands.pair.cmd_pair",
                         side_effect=lambda _argv: seen.append(  # pyright: ignore
                             prompt.current())):

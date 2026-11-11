@@ -1,9 +1,14 @@
 """bot-bottle forge: connect a forge so bottles can grant its repos in a line.
 
   bot-bottle forge connect <url> [--default] [--ssh URL] [--transport T]
+  bot-bottle forge list                    the forges this host connected
+  bot-bottle forge show <host>             one forge: its addresses, pin and users
+  bot-bottle forge remove <host> [--user U]
+                                           disconnect a user, or the whole forge,
+                                           and drop their tokens
 
-Checks a token for the forge, pins its SSH host key, and records the
-connection in ~/.bot-bottle/forges.md under the user the token belongs to
+`connect` checks a token for the forge, pins its SSH host key, and records
+the connection in the host database under the user the token belongs to
 (ADR 0019). Any bottle then grants the forge's repos as
 `<host>/<owner>/<repo>[:write]`, read-only unless `:write`, with nothing to
 extend. Connecting another user's token adds that user; the forge's first
@@ -35,7 +40,7 @@ as it expires.
                                   [--no-wait]
 
 --app and --client-id name the app (default: bot-bottle; a dev host uses its
-own) and are remembered in ~/.bot-bottle/github-app.json. A host already
+own) and are remembered in the host's settings (`github_app`). A host already
 connected isn't authorized again unless --reauthorize. Then, unless the app
 is installed (on --owner, when named), it opens the install page and waits
 for the installation (--no-wait just prints where). --transport sets how
@@ -53,6 +58,9 @@ from urllib.parse import urlparse
 
 from ...contract.forges import unsupported_forge
 from ...forge_connect import ConnectError, connect as connect_forge, normalize_url
+from ...forge_connections import (
+    ForgeConnection, ForgeConnectionError, ForgeUser, connections, remove,
+)
 from ...forge_kinds import detect, forge_api
 from ...lib import prompt
 from ...lib.log import die, info, warn
@@ -99,7 +107,9 @@ def connect_github(argv: list[str], app_slug: str, client_id: str, owner: str = 
     installed, waiting for it. `transport` sets how git-gate reaches its
     repos as this user (ADR 0014), for a user connected already too."""
     # pylint: disable=import-outside-toplevel
-    from ...contrib.github.user_token import AppConfig, app_config, save_app_config
+    from ...contrib.github.user_token import AppConfig, app_config
+    from ...lib.config_store import GitHubApp, HostConfig
+    from ..host_state_client import set_host_config
     from ...forge_connections import TRANSPORTS
     from ...github_connect import authorize, connected_token, set_transport
     flags = {a for a in argv if a.startswith("--")}
@@ -112,7 +122,10 @@ def connect_github(argv: list[str], app_slug: str, client_id: str, owner: str = 
     config = app_config()
     if app_slug or client_id:
         config = AppConfig(slug=app_slug or config.slug, client_id=client_id or config.client_id)
-        info(f"remembered the GitHub App ({config.slug}) in {save_app_config(config)}")
+        set_host_config(HostConfig(github_app=GitHubApp(slug=config.slug,
+                                                        client_id=config.client_id)),
+                        "github_app")
+        info(f"remembered the GitHub App ({config.slug}) in this host's settings")
     browser = "--no-browser" not in flags
     existing = None if "--reauthorize" in flags else connected_token()
     if existing is not None:
@@ -136,7 +149,7 @@ def connect_github(argv: list[str], app_slug: str, client_id: str, owner: str = 
                              transport=transport)
         except ConnectError as e:
             die(str(e))
-        info(f"connected GitHub as {done.login} via {done.app} (in {done.path}; the "
+        info(f"connected GitHub as {done.login} via {done.app} (the "
              f"token in {host_secrets_path()} as {done.secret_name}"
              f"{', renewed as it expires' if done.expiring else ''})")
         info(_TRANSPORT_NOTE[transport or "https"])
@@ -225,14 +238,70 @@ def connect(argv: list[str]) -> int:
     for line in done.warnings:
         warn(line)
     info(f"connected {done.key} as {done.account}{' (the default user)' if done.default else ''}"
-         f" in {done.path} (token in {host_secrets_path()} as {done.secret_name})")
+         f" (token in {host_secrets_path()} as {done.secret_name})")
     info("grant its repos from any bottle:")
     info(f"  git_gate:\n    repos: [{done.key}/<owner>/<repo>:write]")
     return 0
 
 
+def _connections() -> dict[str, ForgeConnection]:
+    try:
+        return connections()
+    except ForgeConnectionError as e:
+        die(str(e))
+
+
+def _user_line(user: ForgeUser) -> str:
+    extra = [what for what, on in (("default", user.default), (f"app {user.app}", user.app),
+                                   (f"over {user.transport}", user.transport)) if on]
+    return f"{user.name} (token secret:{user.token_secret}" + \
+        "".join(f", {e}" for e in extra) + ")"
+
+
+def list_forges(argv: list[str]) -> int:
+    if argv:
+        die(f"usage: {PROG} forge list")
+    found = _connections()
+    if not found:
+        print(f"no forges connected on this host (`{PROG} forge connect <url>` connects one)")
+    for host, conn in found.items():
+        users = ", ".join(u.name + ("*" if u.default else "") for u in conn.users)
+        print(f"{host:<28} {conn.kind:<7} {users or 'no users'}")
+    return 0
+
+
+def show_forge(argv: list[str]) -> int:
+    if len(argv) != 1:
+        die(f"usage: {PROG} forge show <host>")
+    conn = _connections().get(argv[0])
+    if conn is None:
+        die(f"{argv[0]} isn't connected on this host (`{PROG} forge list` lists them)")
+    print(f"{conn.host}: {conn.kind} at {conn.url}")
+    print(f"  ssh       {conn.ssh}")
+    print(f"  host key  {conn.host_key or 'not pinned'}")
+    for user in conn.users:
+        print(f"  user      {_user_line(user)}")
+    return 0
+
+
+def remove_forge(argv: list[str]) -> int:
+    user, argv = _take(argv, "--user")
+    if len(argv) != 1 or argv[0].startswith("--"):
+        die(f"usage: {PROG} forge remove <host> [--user U]")
+    try:
+        removed = remove(argv[0], user)
+    except ForgeConnectionError as e:
+        die(str(e))
+    info(f"disconnected {', '.join(removed)} from {argv[0]}, and dropped "
+         f"{'its token' if len(removed) == 1 else 'their tokens'} from {host_secrets_path()}")
+    return 0
+
+
+_ACTIONS = {"connect": connect, "list": list_forges, "show": show_forge, "remove": remove_forge}
+
+
 def cmd_forge(argv: list[str]) -> int:
-    if not argv or argv[0] in ("-h", "--help") or argv[0] != "connect":
+    if not argv or argv[0] not in _ACTIONS:
         sys.stderr.write(__doc__ or "")
         return 0 if argv and argv[0] in ("-h", "--help") else 2
-    return connect(argv[1:])
+    return _ACTIONS[argv[0]](argv[1:])

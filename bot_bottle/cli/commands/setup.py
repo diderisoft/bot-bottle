@@ -24,6 +24,7 @@ Flags:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import os
 import sys
@@ -34,6 +35,7 @@ from typing import Any
 from ...agent_provider import HostDetection, get_provider
 from ...contrib.pi import starter as pi_starter
 from ...control.hostctl import pairing
+from ...control.hostctl.runner import HostControlError
 from . import login
 from ...errors import SecretsFileError
 from ...lib import log, prompt
@@ -42,6 +44,7 @@ from ...paths import bot_bottle_root, host_secrets_path
 from ...secret_source import write_secret
 from ...starter import STARTER_MARKER
 from ..constants import PROG
+from ..host_state_client import pairing as current_pairing
 from .. import openrouter
 
 PROVIDERS = ("claude", "codex", "pi")
@@ -188,11 +191,9 @@ class Setup:
 def _offer_pair(setup: Setup, console_url: str) -> None:
     if not setup.interactive or not console_url:
         return
-    try:
-        pairing.load_console()
+    with contextlib.suppress(HostControlError, pairing.RemoteError):
+        current_pairing()[0].require()
         return  # already paired or logged in
-    except pairing.RemoteError:
-        pass
     if setup.confirm("Pair this host with your phone now?"):
         from .pair import cmd_pair  # pylint: disable=import-outside-toplevel
         with prompt.outside():  # its QR code needs the whole terminal

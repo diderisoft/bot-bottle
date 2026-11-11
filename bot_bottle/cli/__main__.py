@@ -1,6 +1,5 @@
 """Entry point and dispatcher for `python -m bot_bottle.cli`: maps `bot-bottle
-<command>` to its handler, enforces the migration gate, and turns exceptions
-into exit codes.
+<command>` to its handler and turns exceptions into exit codes.
 """
 
 from __future__ import annotations
@@ -9,15 +8,14 @@ import os
 import sys
 
 from ..environment import (
-    InvalidEnvironmentError, active_name, ensure_active_registered, root_owned_fix,
+    InvalidEnvironmentError, active_name, ensure_active, root_owned_fix,
     root_owned_state, sudo_invoker,
 )
 from ..errors import MissingEnvVarError, SecretsFileError
 from ..lib.log import Die, die, error
 from ..manifest import ManifestError, ManifestIndex
-from .commands import COMMANDS, HOME, NO_MIGRATION_COMMANDS, QUICK
+from .commands import COMMANDS, HOME, QUICK
 from .commands.help import cmd_help
-from .migration_gate import host_db_current
 
 
 def _is_agent(name: str) -> bool:
@@ -51,8 +49,8 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-retu
     if handler is None:
         cmd_help()
         die(f"unknown command or agent: {command}")
-    # Under sudo only the backend's root-owned pieces are written: registering
-    # or migrating here would leave per-user state the user can't write.
+    # Under sudo only the backend's root-owned pieces are written: creating
+    # the environment here would leave per-user state the user can't write.
     as_sudo = sudo_invoker() is not None
     stale = [] if command in ("doctor", "help") else root_owned_state()  # doctor reports it
     if stale:
@@ -61,15 +59,13 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-retu
               f"{root_owned_fix(stale)}")
         return 1
     try:
-        # A named environment registers on first use; `envs` manages them
-        # and must not register the one it removes.
+        # A named environment's directory is created on first use; `envs`
+        # manages them and must not recreate the one it removes.
         if command != "envs" and not as_sudo:
-            ensure_active_registered()
+            ensure_active()
     except InvalidEnvironmentError as e:
         error(str(e))
         return 2
-    if not (as_sudo or command in NO_MIGRATION_COMMANDS) and not host_db_current():
-        return 1
     try:
         return handler(rest) or 0
     except (MissingEnvVarError, SecretsFileError) as e:

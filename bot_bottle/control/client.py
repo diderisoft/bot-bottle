@@ -6,12 +6,10 @@ non-success here is an error to surface. Stdlib only.
 from __future__ import annotations
 
 import json
-import os
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 
 from ..environment import active_name, is_live
 from ..lib.log import debug
@@ -20,7 +18,6 @@ from ..contract.hostctl import Settings
 from ..contract.supervise import ALREADY_ANSWERED
 from ..trust_domain import mint
 from ..contract.http import ORCHESTRATOR_AUTH_HEADER
-from ..paths import bot_bottle_root
 
 DEFAULT_TIMEOUT_SECONDS = 5.0
 
@@ -320,10 +317,9 @@ class OrchestratorClient:
 #
 # An environment runs exactly one orchestrator. Its bring-up
 # (`InfraService.ensure_running`) records which backend's it is and the URL the
-# host reaches it at; everything that talks to "the orchestrator" uses that
-# record, never another backend's orchestrator that happens to be listening.
-
-ORCHESTRATOR_RECORD = "orchestrator.json"
+# host reaches it at (`infra_state`); everything that talks to "the
+# orchestrator" uses that record, never another backend's orchestrator that
+# happens to be listening.
 
 
 @dataclass(frozen=True)
@@ -334,36 +330,19 @@ class OrchestratorEndpoint:
     url: str
 
 
-def orchestrator_record_path(root: Path | None = None) -> Path:
-    """Where the environment records its orchestrator: `<root>/infra/`."""
-    return (root if root is not None else bot_bottle_root()) / "infra" / ORCHESTRATOR_RECORD
+def recorded_orchestrator() -> OrchestratorEndpoint | None:
+    """The orchestrator the environment's last bring-up recorded
+    (`infra_state`), or None."""
+    from .. import infra_state  # pylint: disable=import-outside-toplevel
+    state = infra_state.recorded()
+    backend, url = state.get("orchestrator.backend", ""), state.get("orchestrator.url", "")
+    return OrchestratorEndpoint(backend=backend, url=url) if backend and url else None
 
 
-def recorded_orchestrator(root: Path | None = None) -> OrchestratorEndpoint | None:
-    """The orchestrator the environment's last bring-up recorded, or None
-    (never brought up, or the record doesn't parse)."""
-    try:
-        raw = json.loads(orchestrator_record_path(root).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if not isinstance(raw, dict):
-        return None
-    backend, url = raw.get("backend"), raw.get("url")
-    if not isinstance(backend, str) or not isinstance(url, str) or not backend or not url:
-        return None
-    return OrchestratorEndpoint(backend=backend, url=url)
-
-
-def record_orchestrator(backend: str, url: str, root: Path | None = None) -> None:
+def record_orchestrator(backend: str, url: str) -> None:
     """Record `backend`'s orchestrator at `url` as the environment's."""
-    if recorded_orchestrator(root) == OrchestratorEndpoint(backend, url):
-        return
-    path = orchestrator_record_path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{ORCHESTRATOR_RECORD}.{os.getpid()}")
-    tmp.write_text(json.dumps({"backend": backend, "url": url}, sort_keys=True) + "\n",
-                   encoding="utf-8")
-    os.replace(tmp, path)
+    from .. import infra_state  # pylint: disable=import-outside-toplevel
+    infra_state.record({"orchestrator.backend": backend, "orchestrator.url": url})
 
 
 class NoOrchestrator(OrchestratorClientError):
@@ -552,7 +531,6 @@ __all__ = [
     "for_bottle",
     "listening_orchestrators",
     "no_orchestrator_message",
-    "orchestrator_record_path",
     "pending_proposals",
     "record_orchestrator",
     "recorded_orchestrator",

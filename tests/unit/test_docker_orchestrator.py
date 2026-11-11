@@ -17,6 +17,7 @@ from bot_bottle.backend.docker.orchestrator import (
 )
 from bot_bottle.control.gateway import GatewayError
 from bot_bottle.control.lifecycle import OrchestratorStartError, source_hash
+from bot_bottle.paths import bot_bottle_root
 
 _ORCH = "bot_bottle.backend.docker.orchestrator"
 _RUN = f"{_ORCH}.run_docker"
@@ -70,7 +71,7 @@ class TestDockerOrchestrator(unittest.TestCase):
         argv = next(c.args[0] for c in run.call_args_list
                     if c.args[0][:2] == ["docker", "run"])
         self.assertEqual("0.0.0.0:8099:8099", argv[argv.index("--publish") + 1])
-        self.assertIn("state-volume:/bot-bottle-root", argv)
+        self.assertIn("state-volume:/bot-bottle-registry", argv)
 
     def test_host_path_and_named_root_mount_are_mutually_exclusive(self) -> None:
         with self.assertRaisesRegex(ValueError, "host_root or root_mount_source"):
@@ -187,7 +188,13 @@ class TestDockerOrchestrator(unittest.TestCase):
         self.assertNotIn("PYTHONPATH", " ".join(argv))
         # Orchestrator entrypoint args (image ENTRYPOINT is `-m bot_bottle.orchestrator`).
         self.assertNotIn("--broker", argv)
-        self.assertEqual("/bot-bottle-root/db/bot-bottle.db", argv[argv.index("--db") + 1])
+        self.assertEqual("/bot-bottle-registry/registry.db", argv[argv.index("--db") + 1])
+        # Its one mount is the root's registry dir, 0700: not the root, with
+        # the host DB, the secrets file and the keys.
+        registry = bot_bottle_root() / "registry"
+        self.assertEqual([f"{registry}:/bot-bottle-registry"],
+                         [argv[i + 1] for i, a in enumerate(argv) if a == "--volume"])
+        self.assertEqual(0o700, registry.stat().st_mode & 0o777)
 
     def test_publish_maps_host_port_to_fixed_internal_port(self) -> None:
         def fake(argv: list[str], **_kw: object) -> Mock:

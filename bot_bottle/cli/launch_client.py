@@ -18,7 +18,7 @@ from ..contract.hostctl import (
 )
 from ..control.hostctl import runner
 from ..control.hostctl.client import HostControlClient
-from ..control.hostctl.sessions import SessionManager
+from ..control.hostctl.sessions import tmux
 from ..env import (
     HOST_ENV, PROMPT, STORED, ask_env, env_entry_host_var, env_entry_kind, env_entry_stored_name,
 )
@@ -240,7 +240,7 @@ def tmux_attach(session_id: str) -> tuple[list[str], dict[str, str]]:
     tmux_bin = shutil.which("tmux")
     if tmux_bin is None:
         die("tmux is not installed")
-    argv = SessionManager({}).attach_argv(session_id, read_only=False)
+    argv = tmux("attach-session", "-t", f"={session_id}")
     argv[0] = tmux_bin
     env = {k: v for k, v in os.environ.items() if k != "TMUX"}
     # tmux won't attach to a terminal it can't drive.

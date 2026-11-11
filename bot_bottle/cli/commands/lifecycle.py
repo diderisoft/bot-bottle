@@ -19,10 +19,9 @@ from ...control.hostctl.build import RESTART_NEEDED
 from ...control.hostctl.client import HostControlClient
 from ...control.hostctl.orchestrator import ensure_via_daemon
 from ...control.hostctl.sessions import MIN_TMUX_VERSION, tmux_version
-from ...environment import ENV_VAR, sudo_invoker
+from ...environment import ENV_VAR
 from ..constants import PROG
 from ..launch_client import confirm_controller_restart
-from ..migration_gate import host_db_current
 from ..settings import settings_from_env
 
 
@@ -64,15 +63,9 @@ def cmd_up(argv: list[str]) -> int:
                              "gateway, name it and bring the rest up instead of failing "
                              "(then stop and resume it)")
     parser.add_argument("--yes", "-y", action="store_true",
-                        help="don't ask before migrating an out-of-date host DB or, with "
-                             "--restart, moving running bottles to the new host controller "
-                             "(for scripts and services)")
+                        help="with --restart, don't ask before moving running bottles to "
+                             "the new host controller (for scripts and services)")
     ns = parser.parse_args(argv)
-    # The controller opens the host DB's stores, so it starts on a current
-    # schema (#1028). Under sudo, migrating would leave state the user can't write.
-    if sudo_invoker() is None and not host_db_current(
-            assume_yes=ns.yes, hint=f", or run `{PROG} up --yes`"):
-        return 1
     settings = settings_from_env()
     if ns.build:
         settings = dataclasses.replace(

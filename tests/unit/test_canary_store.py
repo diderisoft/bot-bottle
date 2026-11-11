@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -135,22 +136,24 @@ class TestCanaryStoreIO(unittest.TestCase):
         # status is still acknowledged (first stands)
         self.assertEqual(CANARY_STATUS_ACKNOWLEDGED, s.read_event(e.id).status)
 
-    def test_archive_all_for_bottle(self):
+    def test_delete_all_for_bottle(self):
         e1 = _event(bottle_slug="dev")
         e2 = _event(bottle_slug="dev")
         e3 = _event(bottle_slug="other")
         s = self._store()
         for e in (e1, e2, e3):
             s.write_event(e)
-        s.archive_all_for_bottle("dev")
-        # dev's events are gone from unresolved
+        s.delete_all_for_bottle("dev")
+        # dev's events are gone, not kept: the journal is their record
         remaining = s.list_unresolved()
         self.assertEqual(1, len(remaining))
         self.assertEqual("other", remaining[0].bottle_slug)
+        with sqlite3.connect(s.db_path) as db:
+            self.assertEqual(1, db.execute("SELECT COUNT(*) FROM canary_events").fetchone()[0])
 
-    def test_archive_idempotent_on_missing_db(self):
+    def test_delete_idempotent_on_missing_db(self):
         # Should not raise when no DB exists
-        CanaryStore(host_db_path()).archive_all_for_bottle("dev")
+        CanaryStore(host_db_path()).delete_all_for_bottle("dev")
 
 
 class TestSupervisorCanaryDelegation(unittest.TestCase):
@@ -184,11 +187,11 @@ class TestSupervisorCanaryDelegation(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual([], sv.list_unresolved_canary_events())
 
-    def test_archive_canary_events(self):
+    def test_delete_canary_events(self):
         sv = _supervisor()
         e = _event(bottle_slug="dev")
         sv.write_canary_event(e)
-        sv.archive_canary_events("dev")
+        sv.delete_canary_events("dev")
         self.assertEqual([], sv.list_unresolved_canary_events())
 
 

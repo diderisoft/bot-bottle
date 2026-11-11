@@ -6,7 +6,9 @@ import ipaddress
 import json
 import os
 import socket
-from collections.abc import Iterable
+import sqlite3
+from collections.abc import Callable, Iterable
+from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import cast
 from urllib.parse import parse_qs, urlsplit
@@ -15,15 +17,22 @@ from ...contract.auth import ROLE_CLI
 from ...contract.audit import AuditEvent
 from ...contract.firehose import FIREHOSE_PATH, FIREHOSE_STREAM_PATH
 from ...contract.hostctl import (
-    AUDIT_APPEND_PATH, AUDIT_PRODUCERS, AUTH_HEADER, AUTH_SCHEME, BOTTLES_PATH, HOST_CONTROL,
-    JOBS_PATH, LIVE_BOTTLES_PATH, ORCHESTRATOR_PATH, ROLE_ORCHESTRATOR, SESSIONS_PATH,
-    STATUS_PATH, ARCHITECT_WARM_PATH, SUGGEST_PATH, LaunchRequest, Settings, status_body,
+    AUDIT_APPEND_PATH, AUDIT_IMPORT_PATH, AUDIT_PASSKEYS_PATH, AUDIT_PRODUCERS, AUDIT_QUERY_PATH,
+    AGENT_PREFS_PATH, BOTTLED_AGENTS_PATH, BOTTLED_AGENTS_REMOVE_PATH, INFRA_STATE_PATH,
+    AUDIT_REBUILD_PATH, AUTH_HEADER, AUTH_SCHEME, BOTTLES_PATH, FORGES_PATH, FORGES_REMOVE_PATH,
+    HOST_CONFIG_PATH, HOST_CONTROL, JOBS_PATH, PAIRING_PATH, TRUST_PATH,
+    LIVE_BOTTLES_PATH, ORCHESTRATOR_PATH, ROLE_ORCHESTRATOR, SESSIONS_PATH, STATUS_PATH,
+    WORKSPACE_DISKS_PATH, WORKSPACE_DISKS_REMOVE_PATH,
+    ARCHITECT_WARM_PATH, SUGGEST_PATH, LaunchRequest, Settings, status_body,
 )
 from ...lib import websocket as ws
 from ...lib.log import debug
-from . import orchestrator, suggest_routes
+from .. import rotate_ca
+from . import host_state, orchestrator, suggest_routes
 from .attach import Viewer
 from .audit_events import AuditUnavailable, digest_request
+from .audit_import import AuditImportError
+from .audit_index import IndexBreak
 from .audit_journal import AuditRedactionError
 from .bottles import BottleService
 from .firehose import FirehoseHub
@@ -34,6 +43,26 @@ from .sessions import SessionManager
 MAX_BODY_BYTES = 1 << 20
 # Roles that may launch, list, tear down and watch bottles.
 _BOTTLE_ROLES = (ROLE_CLI, ROLE_ORCHESTRATOR)
+# The host DB's routes, `cli` only: the CLI never opens the file.
+_HostRoute = Callable[[dict[str, object]], dict[str, object]]
+_HOST_STATE: dict[str, _HostRoute] = {
+    HOST_CONFIG_PATH: host_state.set_config, AUDIT_QUERY_PATH: host_state.audit_query,
+    AUDIT_REBUILD_PATH: host_state.audit_rebuild, AUDIT_IMPORT_PATH: host_state.audit_import,
+    FORGES_PATH: host_state.forge_connect, FORGES_REMOVE_PATH: host_state.forge_remove,
+    TRUST_PATH: host_state.trust, PAIRING_PATH: host_state.set_pairing,
+    AUDIT_PASSKEYS_PATH: host_state.trust_passkeys,
+    BOTTLED_AGENTS_PATH: host_state.record_bottled_agent,
+    BOTTLED_AGENTS_REMOVE_PATH: host_state.remove_bottled_agent,
+    AGENT_PREFS_PATH: host_state.remember_agent,
+    WORKSPACE_DISKS_REMOVE_PATH: host_state.remove_workspace_disk,
+}
+_HOST_STATE_READS: dict[str, _HostRoute] = {
+    HOST_CONFIG_PATH: lambda _body: host_state.config(), FORGES_PATH: host_state.forges,
+    TRUST_PATH: host_state.trusted, PAIRING_PATH: host_state.get_pairing,
+    AUDIT_PASSKEYS_PATH: host_state.passkeys, BOTTLED_AGENTS_PATH: host_state.bottled_agents,
+    AGENT_PREFS_PATH: host_state.agent_prefs, INFRA_STATE_PATH: host_state.infra_state,
+    WORKSPACE_DISKS_PATH: host_state.workspace_disks,
+}
 
 
 class HostControlServer(ThreadingHTTPServer):
@@ -112,6 +141,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._live(server, parse_qs(url.query))
         elif url.path == FIREHOSE_STREAM_PATH:
             self._firehose_stream(server, parse_qs(url.query))
+        elif url.path in _HOST_STATE_READS:
+            self._host_state(_HOST_STATE_READS[url.path], read=True)
         else:
             self._send(404, {"error": f"no route {url.path}"})
 
@@ -247,6 +278,28 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._send(200, {"written": written})
 
+    def _host_post(self, server: HostControlServer) -> None:
+        del server
+        self._host_state(_HOST_STATE[urlsplit(self.path).path])
+
+    def _host_state(self, handler: _HostRoute, *, read: bool = False) -> None:
+        """A host DB route (`host_state`). A journal that won't index or a
+        segment that won't import is 409."""
+        if self._allowed((ROLE_CLI,)) is None:
+            return
+        try:
+            reply = handler({} if read else self._json_body())
+        except ValueError as e:
+            self._send(400, {"error": str(e)})
+            return
+        except (IndexBreak, AuditImportError) as e:
+            self._send(409, {"error": str(e)})
+            return
+        except (OSError, sqlite3.Error) as e:
+            self._send(500, {"error": str(e)})
+            return
+        self._send(200, reply)
+
     def _firehose_publish(self, server: HostControlServer) -> None:
         """A batch of request records the orchestrator relays from the gateway."""
         if self._allowed((ROLE_ORCHESTRATOR,)) is None:
@@ -288,13 +341,14 @@ class _Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         route = {BOTTLES_PATH: self._launch, AUDIT_APPEND_PATH: self._audit_append,
                  FIREHOSE_PATH: self._firehose_publish, SUGGEST_PATH: self._suggest,
-                 ARCHITECT_WARM_PATH: self._architect_warm}.get(path)
+                 ARCHITECT_WARM_PATH: self._architect_warm,
+                 **dict.fromkeys(_HOST_STATE, self._host_post)}.get(path)
         if route is not None:
             route(server)
             return
         action = path.removeprefix(ORCHESTRATOR_PATH + "/")
         if not path.startswith(ORCHESTRATOR_PATH + "/") or \
-                action not in ("ensure", "restart", "status"):
+                action not in ("ensure", "restart", "status", "rotate-ca"):
             self._send(404, {"error": f"no route {path}"})
             return
         role = self._role()
@@ -316,11 +370,10 @@ class _Handler(BaseHTTPRequestHandler):
         if action == "status":
             self._send(200, orchestrator.status(settings))
             return
-        job = server.jobs.start(
-            f"orchestrator.{action}", role,
-            lambda: orchestrator.ensure(settings, restart=action == "restart",
-                                        allow_reattach_failures=allow),
-        )
+        work = partial(rotate_ca.rotate, settings) if action == "rotate-ca" else \
+            partial(orchestrator.ensure, settings, restart=action == "restart",
+                    allow_reattach_failures=allow)
+        job = server.jobs.start(f"orchestrator.{action}", role, work)
         self._send(202, {"job": job.id})
 
     def _json_body(self) -> dict[str, object]:

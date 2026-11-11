@@ -132,13 +132,15 @@ def backend_name(settings) -> str:  # type: ignore[no-untyped-def]
 
 
 def console_state() -> str:
-    """`console linked`, `console not connected`, or "" when unpaired."""
+    """`console linked`, `console not connected`, or "" when unpaired or no
+    host controller runs the link."""
     # pylint: disable=import-outside-toplevel
     with contextlib.suppress(Exception):
-        from ...control.hostctl import pairing
-        if not pairing.load_config().enabled:
+        from ..host_state_client import running_pairing
+        found = running_pairing()
+        if found is None or not found[0].enabled:
             return ""
-        status = pairing.read_status() or {}
+        status = found[1]
         if status.get("unpaired"):
             return f"console refused this host: `{PROG} pair` again"
         return "console linked" if status.get("connected") else "console not connected"

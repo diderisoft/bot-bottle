@@ -24,10 +24,24 @@ from bot_bottle.control.hostctl import transcripts
 from bot_bottle.control.hostctl.audit_events import HostAudit
 from bot_bottle.control.hostctl.audit_ocsf import to_ocsf
 from bot_bottle.control.hostctl.transcripts import TranscriptFollower
-from . import use_bottle_root
+from bot_bottle.paths import host_db_path
+from . import bottled_agent, use_bottle_root
 
 _FIXTURE = Path(__file__).parent / "data" / "transcripts" / "pi-branched.jsonl"
 
+
+
+def _meta_row(name: str) -> dict[str, Any]:
+    """Copy `name`'s `transcript_files` row (session s1, run a1)."""
+    return next(f for f in transcripts.TranscriptStore(host_db_path()).files("s1", "a1")
+                if f["copy"] == f"{name}.jsonl")
+
+
+def _run_row() -> dict[str, Any]:
+    """The `transcript_runs` row of session s1, run a1."""
+    found = transcripts.TranscriptStore(host_db_path()).run("s1", "a1")
+    assert found is not None
+    return found
 
 class LocalBottle:
     """Runs `exec` scripts in a local shell."""
@@ -237,18 +251,21 @@ class TestFollower(_Root):
         self.assertEqual(0o600, copy.stat().st_mode & 0o777)
         for d in (transcripts.transcripts_root(), self.copy_dir().parent, self.copy_dir()):
             self.assertEqual(0o700, d.stat().st_mode & 0o777)
-        meta = json.loads((self.copy_dir() / "s.meta.json").read_text())
-        self.assertGreater(meta.pop("opened"), 0)
-        self.assertEqual({"guest_path": str(new), "offset": 16, "agent_id": "t-abc"}, meta)
+        meta = _meta_row("s")
+        self.assertGreater(meta["opened"], 0)
+        self.assertEqual({"guest_path": str(new), "offset": 16, "agent_id": "t-abc", "start": 0,
+                          "closed": False},
+                         {k: meta[k] for k in ("guest_path", "offset", "agent_id", "start",
+                                               "closed")})
         self.assertEqual([str(self.guest / "old.jsonl")],
-                         json.loads((self.copy_dir() / "follow.json").read_text())["skip"])
+                         _run_row()["skip"])
 
     def test_a_resumed_session_copies_what_it_adds_to_its_files(self) -> None:
         # `--continue` appends to the conversation file the last run wrote.
         old = self.guest / "s.jsonl"
         old.write_bytes(b'{"a":1}\n')
         follower = self.begin(continuing=True)
-        follow = json.loads((self.copy_dir() / "follow.json").read_text())
+        follow = _run_row()
         self.assertEqual(([], {str(old): 8}), (follow["skip"], follow["start"]))
         self.assertFalse(follower.poll(cast(Any, self.bottle)))
         self.assertEqual([], list(self.copy_dir().glob("*.jsonl")))
@@ -257,7 +274,7 @@ class TestFollower(_Root):
         self.assertTrue(follower.poll(cast(Any, self.bottle)))
         copy = self.copy_dir() / "s.jsonl"
         self.assertEqual(b'{"b":2}\n', copy.read_bytes())
-        meta = json.loads((self.copy_dir() / "s.meta.json").read_text())
+        meta = _meta_row("s")
         self.assertEqual((16, 8), (meta["offset"], meta["start"]))
         # Its copy holds less than the edit check reads: not an edit.
         with old.open("ab") as f:
@@ -269,7 +286,7 @@ class TestFollower(_Root):
         (self.guest / "t.jsonl").write_bytes(b'{"c":3}\n')
         follower.poll(cast(Any, self.bottle))
         self.assertEqual(b'{"c":3}\n', (self.copy_dir() / "t.jsonl").read_bytes())
-        self.assertNotIn("start", json.loads((self.copy_dir() / "t.meta.json").read_text()))
+        self.assertEqual(0, _meta_row("t")["start"])
 
     def test_a_restarted_controller_continues_from_the_recorded_sizes(self) -> None:
         old = self.guest / "s.jsonl"
@@ -296,7 +313,7 @@ class TestFollower(_Root):
         self.assertTrue(follower.poll(cast(Any, self.bottle)))
         follower.poll(cast(Any, self.bottle))
         self.assertEqual(b'{"x":0}\n', (self.copy_dir() / "s.jsonl").read_bytes())
-        self.assertNotIn("start", json.loads((self.copy_dir() / "s.meta.json").read_text()))
+        self.assertEqual(0, _meta_row("s")["start"])
 
     def test_an_unreadable_listing_continues_nothing(self) -> None:
         self.bottle.fail = False
@@ -314,7 +331,7 @@ class TestFollower(_Root):
         self.assertEqual({"bottle": "s1", "activation": "a1", "copy": "s1/a1/s.jsonl",
                           "guest_path": str(self.guest / "s.jsonl"), "size": 5,
                           "sha256": hashlib.sha256(b"line\n").hexdigest(), "final": True}, final)
-        self.assertTrue(json.loads((self.copy_dir() / "s.meta.json").read_text())["closed"])
+        self.assertTrue(_meta_row("s")["closed"])
         self.assertIsNone(TranscriptFollower.resume(session="s1", activation="a1",
                                                     audit=self.audit))
 
@@ -424,7 +441,7 @@ class TestBottleService(_Root):
     def test_a_held_pi_session_is_followed_and_closed(self) -> None:
         from bot_bottle.control.hostctl.remote import terminal_agent_id
         self.follow(self.pi_plan)
-        follow = json.loads((self.copy_dir() / "follow.json").read_text())
+        follow = _run_row()
         self.assertEqual(terminal_agent_id("s1", "a1"), follow["agent_id"])
         (self.guest / "s.jsonl").write_text("a\n")
         self.service._unfollow("s1", cast(Any, self.bottle))  # pyright: ignore[reportPrivateUsage]
@@ -434,13 +451,13 @@ class TestBottleService(_Root):
     def test_a_kept_home_continues_its_files(self) -> None:
         (self.guest / "s.jsonl").write_text("a\n")
         self.follow(self.pi_plan, continuing=True)
-        follow = json.loads((self.copy_dir() / "follow.json").read_text())
+        follow = _run_row()
         self.assertEqual({str(self.guest / "s.jsonl"): 2}, follow["start"])
         self.service._unfollow("s1", cast(Any, self.bottle))  # pyright: ignore[reportPrivateUsage]
 
     def test_a_console_launch_records_its_agent_id(self) -> None:
         self.follow(self.pi_plan, agent_id="c-42")
-        self.assertEqual("c-42", json.loads((self.copy_dir() / "follow.json").read_text())
+        self.assertEqual("c-42", _run_row()
                          ["agent_id"])
         self.service._unfollow("s1")  # pyright: ignore[reportPrivateUsage]
 
@@ -465,6 +482,7 @@ class TestBottleService(_Root):
         self.assertEqual({}, self.followers())
         self.follow(self.pi_plan)
         self.followers().pop("s1").detach()
+        bottled_agent("s1")
         adoption.write("s1", adoption.AdoptionRecord(container="c", registry_id=""))
         self.backend.attach_adopted.return_value = self.bottle
         self.service._refollow(self.backend, record)  # pyright: ignore[reportPrivateUsage]
@@ -485,6 +503,7 @@ class TestBottleService(_Root):
         self.assertIsNone(TranscriptFollower.resume(session="s1", activation="a1",
                                                     audit=self.audit))
         from bot_bottle.backend import adoption
+        bottled_agent("s1")
         adoption.write("s1", adoption.AdoptionRecord(container="c", registry_id=""))
         self.backend.attach_adopted.side_effect = RuntimeError("boom")
         self.service._refollow(self.backend, record)  # pyright: ignore[reportPrivateUsage]

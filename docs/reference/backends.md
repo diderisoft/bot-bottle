@@ -309,11 +309,20 @@ directories live apart (`util.env_dir`).
 The infra pair is two persistent VMs, each booting its own rootfs
 (`infra_vm.py`, `infra_rootfs.py`):
 
-- **Orchestrator VM:** the control plane, `bot-bottle.db` on a persistent
+- **Orchestrator VM:** the control plane, `registry.db` on a persistent
   `/dev/vdb` volume, the signing key, and buildah for in-VM agent builds.
 - **Gateway VM:** the data plane, with a `gateway` JWT and the CA, and no
   build tooling. It reaches the orchestrator over the one forward rule its
   link allows.
+
+What the pair keeps lives under the state root's `infra/`: the registry
+volume `registry.ext4` and the CA in `gateway-ca/`. Run dirs, root filesystem
+copies and buildah's store (`build-store.ext4`) are rebuildable, so they stay
+in the firecracker cache.
+
+- Both `infra/` directories and `gateway-ca/` are 0700, tightened at start if
+  they were looser.
+- Each volume is 0600, since `mke2fs` follows the umask.
 
 ### Agent builds in the orchestrator VM
 
@@ -356,7 +365,8 @@ There's no manifest setting. The plan records it as `use_runsc` and the compose
 file sets the runtime.
 
 - `bot-bottle-orchestrator`: on the `--internal` control network, plus a
-  loopback publish for the CLI.
+  loopback publish for the CLI. Its one mount is `~/.bot-bottle/registry/`
+  (0700), which holds `registry.db`. It gets its signing key as an env var.
 - `bot-bottle-gateway`: on the shared `bot-bottle-gateway` network, the
   control network, and each running agent's own network. It reaches the
   orchestrator by Docker DNS.
@@ -474,8 +484,8 @@ runs again after a new boot, a reinstalled firewall (its rules file), or a new
 agent network, host address or LAN address.
 
 Those keys come from `host_firewall.isolation_key`. The keys it passed for are
-kept in `<state root>/state/isolation-verified.json`. Between reboots, the pf
-daemon reloads the anchor each minute.
+kept in the host database (`isolation_passes`), the newest eight. Between
+reboots, the pf daemon reloads the anchor each minute.
 
 Probes of a single agent's boundary run on every launch. They cover its own
 firewall, its docker network, its VM's nft rules, and the sibling knock.
@@ -589,6 +599,9 @@ build dir) is then gone the next time the project is launched.
 the agent, and the bottle names in launch order. A different bottle stack gets
 its own disk, so nothing an agent left there runs in a bottle with other
 permissions.
+
+What each disk is for, and who has it, is a row of the host database's
+`workspace_disks`.
 
 **Attached, never mounted on the host.** It's the VM's third drive
 (`/dev/vdc`), which the guest init mounts at the workspace path from

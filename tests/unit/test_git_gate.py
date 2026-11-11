@@ -28,6 +28,7 @@ from bot_bottle.errors import MissingEnvVarError
 from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.manifest import ManifestIndex
 from tests.fixtures import fixture_minimal, fixture_with_git
+from tests.unit import use_bottle_root
 from tests.unit._forges import GITEA, connected
 
 
@@ -484,6 +485,7 @@ class TestPrepare(unittest.TestCase):
 class TestDynamicKeyProvisioning(unittest.TestCase):
     def setUp(self):
         self.stage = Path(tempfile.mkdtemp())
+        self.addCleanup(use_bottle_root(self.stage))
 
     def tearDown(self):
         import shutil
@@ -536,7 +538,7 @@ class TestDynamicKeyProvisioning(unittest.TestCase):
 
     def test_revoke_skips_non_gitea_and_missing_id_file(self):
         revoke_git_gate_provisioned_keys(
-            fixture_with_git().bottles["dev"], self.stage, MappingSecrets({}))
+            fixture_with_git().bottles["dev"], "demo", self.stage, MappingSecrets({}))
 
     def test_revoke_calls_delete_for_gitea_entry(self):
         bottle = self._gitea_manifest().bottles["dev"]
@@ -546,7 +548,7 @@ class TestDynamicKeyProvisioning(unittest.TestCase):
         ) as mock_get_provisioner:
             provisioner = mock_get_provisioner.return_value
             revoke_git_gate_provisioned_keys(
-                bottle, self.stage, MappingSecrets({"GITEA_TOKEN": "token"}))
+                bottle, "demo", self.stage, MappingSecrets({"GITEA_TOKEN": "token"}))
         mock_get_provisioner.assert_called_once()
         provisioner.delete.assert_called_once_with("org/repo", "123")
 
@@ -554,7 +556,7 @@ class TestDynamicKeyProvisioning(unittest.TestCase):
         bottle = self._gitea_manifest().bottles["dev"]
         (self.stage / "repo-deploy-key-id").write_text("123\n")
         with self.assertRaises(MissingEnvVarError) as cm:
-            revoke_git_gate_provisioned_keys(bottle, self.stage, MappingSecrets({}))
+            revoke_git_gate_provisioned_keys(bottle, "demo", self.stage, MappingSecrets({}))
         self.assertIn("secret is not set", str(cm.exception))
 
 

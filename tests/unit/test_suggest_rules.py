@@ -8,12 +8,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from bot_bottle.forge_connections import ForgeConnection, ForgeUser, save
+from bot_bottle.forge_connections import ForgeConnection, ForgeUser
 from bot_bottle.suggest.proposal import (
     OPTION_REUSE,
     OPTION_STACK_ADDITIONS,
 )
 from bot_bottle.suggest.rules import rules_suggest
+from tests.unit._forges import record
 
 
 CONN = ForgeConnection(host="gitea.example.com", kind="gitea", url="https://gitea.example.com",
@@ -65,7 +66,7 @@ class TestRulesWithForge(unittest.TestCase):
         self.root = self.home / ".bot-bottle"
         self.bottles = self.root / "bottles"
         self.bottles.mkdir(parents=True)
-        save({CONN.host: CONN}, self.root / "forges.md")
+        record(self.root, CONN)
         self.cwd = self.home / "myproject"
         self.cwd.mkdir()
         env = mock.patch.dict(os.environ, {"HOME": str(self.home),

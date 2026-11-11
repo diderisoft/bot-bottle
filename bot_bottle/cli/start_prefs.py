@@ -1,43 +1,28 @@
 """What the guided `bot-bottle start` remembers for you: the agent (harness)
-you last ran, in `~/.bot-bottle/start.json`. Missing or unreadable, nothing
-is remembered and `start` asks."""
+you last ran, the host's remembered agent (`agent_prefs`, kept by the host
+controller). With none, or no host controller to ask, nothing is remembered
+and `start` asks."""
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-from ..paths import bot_bottle_root
-
-PREFS_FILE = "start.json"
-
-
-def _path() -> Path:
-    return bot_bottle_root() / PREFS_FILE
-
-
-def _read() -> dict[str, object]:
-    try:
-        data = json.loads(_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+from ..control.hostctl.runner import HostControlError
+from . import host_state_client
 
 
 def remembered_agent() -> str:
-    """The agent the guided start last ran, or ""."""
-    agent = _read().get("agent")
-    return agent if isinstance(agent, str) else ""
+    """The remembered agent, or ""."""
+    try:
+        return host_state_client.agent_prefs().default
+    except HostControlError:
+        return ""
 
 
 def remember_agent(agent: str) -> None:
-    """Make `agent` the guided start's default; never fails the launch."""
-    data = {**_read(), "agent": agent}
+    """Make `agent` the remembered one; never fails the launch."""
     try:
-        _path().parent.mkdir(parents=True, exist_ok=True)
-        _path().write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    except OSError:
+        host_state_client.remember_agent(agent)
+    except HostControlError:
         pass
 
 
-__all__ = ["PREFS_FILE", "remember_agent", "remembered_agent"]
+__all__ = ["remember_agent", "remembered_agent"]

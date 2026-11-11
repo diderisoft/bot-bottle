@@ -7,11 +7,12 @@ iroh hands the close back as text, e.g.
 
     closed by peer: unregistered host (code 1)
 
-The link only reports it: `unpaired` in remote.status.json (what `status`,
-`doctor` and home read) and a long wait before trying again. It never acts on
-its own: console.json, the iroh key and the link setting stay as they are, so
-a `bot-bottle pair` (to the same console, or a new account) is all it takes,
-and the next connection that's accepted clears it. Only the pinned console can
+The link only reports it: `unpaired` in the link's state
+(`pairing.read_status`, what `status`, `doctor` and home read) and a long wait
+before trying again. It never acts on its own: the pairing, the iroh key and
+the link setting stay as they are, so a `bot-bottle pair` (to the same
+console, or a new account) is all it takes, and the next connection that's
+accepted clears it. Only the pinned console can
 send it: `run` checks the console's node id before serving.
 """
 

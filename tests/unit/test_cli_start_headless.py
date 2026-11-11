@@ -168,8 +168,9 @@ class TestCmdStartHeadless(unittest.TestCase):
 class TestDryRun(unittest.TestCase):
     """--dry-run prepares locally, prints the preflight and starts nothing."""
 
-    def test_prepares_renders_and_settles_without_the_daemon(self):
+    def test_prepares_renders_and_settles_without_launching(self):
         from bot_bottle.contract.hostctl import LaunchRequest
+        from bot_bottle.lib.config_store import HostConfig
         mock_backend = MagicMock()
         mock_backend.prepare.return_value = MagicMock(slug="demo-abc")
         mock_backend.name = "test-backend"
@@ -180,13 +181,17 @@ class TestDryRun(unittest.TestCase):
              patch.object(start_mod, "_text_render_preflight", return_value=render), \
              patch.object(start_mod, "settle_state") as settle, \
              patch.object(start_mod, "launch") as launch, \
-             patch.object(start_mod, "info"):
+             patch.object(start_mod, "info"), \
+             patch("bot_bottle.cli.host_state_client.host_config",
+                   return_value=HostConfig(audit_delivery="required")):
             rc = start_mod._launch_bottle(request, MagicMock(), dry_run=True)
 
         self.assertEqual(0, rc)
         render.assert_called_once_with(mock_backend.prepare.return_value, "test-backend")
         spec = mock_backend.prepare.call_args.args[0]
         self.assertEqual(("demo", ("dev",)), (spec.agent_name, spec.bottle_names))
+        # The host's audit default is the host controller's, from the host DB.
+        self.assertEqual("required", spec.default_audit_delivery)
         settle.assert_called_once_with("demo-abc")
         launch.assert_not_called()
 

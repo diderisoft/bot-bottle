@@ -6,7 +6,7 @@ A proposal is validated, queued with the orchestrator (`POST
 /supervise/propose`, attributed by (source_ip, identity_token)), then polled
 for up to `SUPERVISE_RESPONSE_TIMEOUT_SECONDS` (30). A decision in time is
 returned; otherwise `status: pending` with the proposal id, which
-`check-proposal` reads later. The server never opens `bot-bottle.db`.
+`check-proposal` reads later. The server never opens a database.
 Unattributed callers fail closed.
 
 Methods: `initialize`, `notifications/initialized`, `tools/list`, `tools/call`;
@@ -495,8 +495,8 @@ def handle_check_proposal(
     identity_token: str,
 ) -> dict[str, object]:
     """Non-blocking poll of a proposal by id, attributed so a bottle reads only
-    its own. Never creates a Proposal. The orchestrator archives a decided
-    proposal on read."""
+    its own. Never creates a Proposal. The orchestrator deletes a bottle's
+    proposals when the bottle goes."""
     args_raw = params.get("arguments", {})
     if not isinstance(args_raw, dict):
         raise _RpcClientError(ERR_INVALID_PARAMS, "tools/call 'arguments' must be an object")

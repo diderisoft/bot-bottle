@@ -150,7 +150,7 @@ privilege and is not a security boundary
 
 The per-host control-plane service. It holds the bottle registry, encrypted
 egress tokens, the supervise queue and the signing key, and is the only opener
-of `bot-bottle.db`.
+of its own database, `registry.db`.
 
 With the gateway it forms the **infra pair**
 ([architecture.md](architecture.md#components)).
