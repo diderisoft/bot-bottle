@@ -130,17 +130,30 @@ def segments(directory: Path) -> list[Path]:
     return sorted(directory.glob(f"*{SEGMENT_SUFFIX}"))
 
 
-def _cut_torn_tail(path: Path) -> int:
-    """Cut a partial final line left by a crash. Returns bytes cut."""
-    data = path.read_bytes()
-    if not data or data.endswith(b"\n"):
-        return 0
-    keep = data.rfind(b"\n") + 1
-    warn(f"audit journal {path.name}: dropping a torn final line "
-         f"({len(data) - keep} bytes) left by an interrupted append")
+def _cut_torn_tail(path: Path, chunk: int = 1 << 16) -> int:
+    """Cut a partial final line left by a crash. Returns bytes cut. Reads
+    back from the end only: a segment can be gigabytes."""
     with path.open("r+b") as f:
+        size = f.seek(0, os.SEEK_END)
+        if size == 0:
+            return 0
+        f.seek(size - 1)
+        if f.read(1) == b"\n":
+            return 0
+        pos = size
+        keep = 0
+        while pos > 0:
+            start = max(0, pos - chunk)
+            f.seek(start)
+            nl = f.read(pos - start).rfind(b"\n")
+            if nl >= 0:
+                keep = start + nl + 1
+                break
+            pos = start
+        warn(f"audit journal {path.name}: dropping a torn final line "
+             f"({size - keep} bytes) left by an interrupted append")
         f.truncate(keep)
-    return len(data) - keep
+    return size - keep
 
 
 def _hold_writer_lock(directory: Path) -> int:
@@ -156,12 +169,23 @@ def _hold_writer_lock(directory: Path) -> int:
     return fd
 
 
-def _ids(paths: list[Path]) -> set[str]:
-    ids: set[str] = set()
-    for path in paths:
-        for raw in path.read_bytes().splitlines():
-            ids.add(str(json.loads(raw).get("id")))
-    return ids
+# How much of the current segment's end start-up reads for known ids.
+RECENT_IDS_BYTES = 8 << 20
+
+
+def _recent_ids(path: Path | None, window: int = RECENT_IDS_BYTES) -> set[str]:
+    """The ids in the last `window` bytes of `path`: enough for a producer's
+    retry, without reading a segment that may be gigabytes."""
+    if path is None:
+        return set()
+    with path.open("rb") as f:
+        size = f.seek(0, os.SEEK_END)
+        start = max(0, size - window)
+        f.seek(start)
+        data = f.read()
+    if start:
+        data = data[data.find(b"\n") + 1:]  # the first line is likely cut
+    return {str(json.loads(raw).get("id")) for raw in data.splitlines() if raw}
 
 
 def first_record(path: Path) -> dict[str, Any] | None:
@@ -221,14 +245,14 @@ class AuditJournal:
                 last = last_record(path)
                 if last is not None:
                     break
-        # Known ids, from the current segment only: reading every kept
-        # segment would read the whole journal (gigabytes on a busy host)
-        # before the host controller answers. An id repeats only when a
-        # producer retries an append whose reply it lost, seconds to minutes
-        # later, so its original is in the current segment unless the
-        # journal rotated in between. Then the record is written twice,
-        # which the index (one row per id) and verify both take.
-        self._ids = _ids(existing[-1:])
+        # Known ids, from the end of the current segment only: reading more
+        # would read gigabytes before the host controller answers. An id
+        # repeats only when a producer retries an append whose reply it
+        # lost, seconds to minutes later, so its original is in the last few
+        # megabytes unless the journal rotated in between. Then the record
+        # is written twice, which the index (one row per id) and verify both
+        # take.
+        self._ids = _recent_ids(existing[-1] if existing else None)
         self._seq = 0
         self._segment = ""
         if last is None:

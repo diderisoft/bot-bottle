@@ -200,6 +200,48 @@ class Idempotency(_JournalCase):
         _assert_chained(self, _records(self.dir))
 
 
+class LargeSegments(_JournalCase):
+    """Start-up reads only the end of the current segment: on a host whose
+    journal is one multi-gigabyte segment, reading it whole kept the host
+    controller from ever answering."""
+
+    def test_recent_ids_read_only_the_window_and_skip_its_cut_first_line(self) -> None:
+        from bot_bottle.control.hostctl import audit_journal
+        j = self.journal()
+        events = [_event() for _ in range(40)]
+        for event in events:
+            j.append(event, producer="egress")
+        path = j.path
+        window = len(path.read_bytes().splitlines()[-1]) * 3  # about three records
+        ids = audit_journal._recent_ids(path, window)  # pylint: disable=protected-access
+        self.assertIn(events[-1].id, ids)
+        self.assertNotIn(events[0].id, ids)
+        self.assertLessEqual(len(ids), 3)
+
+    def test_a_retry_after_a_restart_is_dropped_with_a_small_window(self) -> None:
+        from unittest import mock
+        from bot_bottle.control.hostctl import audit_journal
+        event = _event()
+        first = self.journal()
+        for _ in range(20):
+            first.append(_event(), producer="egress")
+        first.append(event, producer="egress")
+        with mock.patch.object(audit_journal, "RECENT_IDS_BYTES", 2048):
+            second = self.restart(first)
+        self.assertIsNone(second.append(event, producer="egress"))
+
+    def test_a_torn_tail_is_found_across_read_chunks(self) -> None:
+        from bot_bottle.control.hostctl import audit_journal
+        path = self.dir / "seg.jsonl"
+        self.dir.mkdir(parents=True, exist_ok=True)
+        whole = b'{"id": "a"}\n' * 50
+        path.write_bytes(whole + b'{"id": "torn-and-long' + b"x" * 300)
+        cut = audit_journal._cut_torn_tail(path, chunk=64)  # pylint: disable=protected-access
+        self.assertEqual(len(b'{"id": "torn-and-long') + 300, cut)
+        self.assertEqual(whole, path.read_bytes())
+        self.assertEqual(0, audit_journal._cut_torn_tail(path, chunk=64))  # pylint: disable=protected-access
+
+
 class Redaction(unittest.TestCase):
     def test_a_credential_shaped_key_is_refused(self) -> None:
         for key in ("token", "Authorization", "api_key", "github_token", "db_password"):

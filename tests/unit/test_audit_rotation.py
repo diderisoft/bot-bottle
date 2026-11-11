@@ -154,16 +154,16 @@ class KnownIds(_Case):
         current = _event()
         j.append(current, producer="egress")
         j.close()
-        read: list[list[Path]] = []
-        real = audit_journal._ids  # pylint: disable=protected-access
+        read: list[Path | None] = []
+        real = audit_journal._recent_ids  # pylint: disable=protected-access
 
-        def ids(paths: list[Path]) -> set[str]:
-            read.append(list(paths))
-            return real(paths)
+        def ids(path: Path | None) -> set[str]:
+            read.append(path)
+            return real(path)
 
-        with mock.patch.object(audit_journal, "_ids", ids):
+        with mock.patch.object(audit_journal, "_recent_ids", ids):
             again = self.journal()
-        self.assertEqual([[segments(self.dir)[-1]]], read)
+        self.assertEqual([segments(self.dir)[-1]], read)
         self.assertIsNone(again.append(current, producer="egress"))  # a retry: dropped
         # One from before the last rotation is written again; readers take it.
         self.assertIsNotNone(again.append(old, producer="egress"))
