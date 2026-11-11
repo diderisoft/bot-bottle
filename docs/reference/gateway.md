@@ -383,9 +383,12 @@ Some forges are refused before the operator sees a card:
   ([git-gate](git-gate.md#forges-and-one-line-grants)).
 - One that isn't Gitea or GitHub is refused at once, and the agent is told so.
 
-It's answered from the console, where the operator pastes a token. The host connects the URL from the agent's
-proposal, never one from the console, exactly as `bot-bottle forge connect`
-does.
+It's answered from the console, where the operator pastes a token (or, for
+github.com, signs in to the GitHub App). The host connects the URL from the
+agent's proposal, never one from the console, exactly as `bot-bottle forge
+connect` does. In the terminal's popup (`bot-bottle supervise`), allowing it
+runs `bot-bottle forge connect <url>` there first, then allows it once the
+forge is connected.
 
 Then the host approves the proposal with a note naming the account. A failed
 connect leaves it waiting. The token never reaches the agent (PRD 0105,

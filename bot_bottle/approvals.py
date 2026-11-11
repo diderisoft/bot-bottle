@@ -352,20 +352,31 @@ ALLOW_ONCE, ALLOW_PROJECT, DENY = "allow_once", "allow_project", "deny"
 DECISIONS = (ALLOW_ONCE, ALLOW_PROJECT, DENY)
 
 
+def forge_connected(request: Request) -> bool:
+    """Whether the forge an agent's `forge-connect` names is connected on
+    this host. ValueError when the connections can't be read."""
+    return _forge_connection(request)[1] is not None
+
+
+def _forge_connection(request: Request) -> tuple[str, Any]:
+    # pylint: disable=import-outside-toplevel
+    from urllib.parse import urlparse
+    from . import forge_connections
+    host = urlparse(request.proposed.strip()).hostname or ""
+    try:
+        return host, forge_connections.get(host)
+    except forge_connections.ForgeConnectionError as e:
+        raise ValueError(str(e)) from e
+
+
 def _forge_now_connected(client: Any, request: Request, via: str) -> str:
     """Allow an agent's `forge-connect` once the operator connected the forge
     another way (GitHub's sign-in, `forge connect` on the host): the console's
     "Done, connected". Allowing it before would tell the agent it has a
     forge it doesn't, so that raises ValueError."""
-    # pylint: disable=import-outside-toplevel
-    from urllib.parse import urlparse
-    from . import forge_connections
+    # pylint: disable-next=import-outside-toplevel
     from .control.hostctl.nudge import nudge_if_waited
-    host = urlparse(request.proposed.strip()).hostname or ""
-    try:
-        conn = forge_connections.get(host)
-    except forge_connections.ForgeConnectionError as e:
-        raise ValueError(str(e)) from e
+    host, conn = _forge_connection(request)
     if conn is None:
         raise ValueError(f"{host or request.proposed} isn't connected on this host yet; "
                          f"connect it, then answer again")
@@ -450,6 +461,6 @@ def session_project(session: str) -> Path | None:
 
 
 __all__ = ["ALLOW_ONCE", "ALLOW_PROJECT", "DECISIONS", "DENY", "KeepTarget", "Request", "answer",
-           "bottle_text", "card_message", "keep", "keep_grant", "keep_target", "manifest_route",
+           "bottle_text", "card_message", "forge_connected", "keep", "keep_grant", "keep_target", "manifest_route",
            "project_bottle_path", "read_bottle", "route_lines", "save_bottle", "save_to_project",
            "session_project", "trust_project_bottle", "with_grant", "with_routes"]

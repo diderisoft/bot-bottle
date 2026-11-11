@@ -247,6 +247,52 @@ class Review(unittest.TestCase):
         self.assertIn("already answered elsewhere: rejected; yours wasn't applied "
                       "(press a key)", shown)
 
+    def _forge_reviewer(self, keys: str, connected: list[bool], connects: bool
+                        ) -> tuple[Reviewer, MagicMock, list[str]]:
+        reviewer, client = self.reviewer(keys, [_pending("https://github.com",
+                                                         tool="forge-connect")])
+        asked: list[str] = []
+
+        def connect(url: str) -> bool:
+            asked.append(url)
+            return connects
+
+        reviewer.connect = connect
+        user = MagicMock()
+        user.name = "octo"
+        conn = MagicMock()
+        conn.user.return_value = user
+        states = iter(connected)
+        patcher = patch("bot_bottle.forge_connections.get",
+                        side_effect=lambda _host: conn if next(states) else None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        nudge = patch("bot_bottle.control.hostctl.nudge.nudge_if_waited")
+        nudge.start()
+        self.addCleanup(nudge.stop)
+        return reviewer, client, asked
+
+    def test_allowing_a_forge_connect_connects_it_here_first(self) -> None:
+        # Not connected when checked; connected when answered.
+        reviewer, client, asked = self._forge_reviewer("a", [False, True], connects=True)
+        self.assertEqual(0, reviewer.run())
+        self.assertEqual(["https://github.com"], asked)
+        self.assertEqual("approve", client.supervise_respond.call_args.kwargs["decision"])
+        self.assertIn("connected github.com as octo",
+                      client.supervise_respond.call_args.kwargs["notes"])
+
+    def test_a_connected_forge_is_allowed_without_connecting_again(self) -> None:
+        reviewer, client, asked = self._forge_reviewer("a", [True, True], connects=True)
+        self.assertEqual(0, reviewer.run())
+        self.assertEqual([], asked)
+        client.supervise_respond.assert_called_once()
+
+    def test_a_failed_connect_leaves_the_request_waiting(self) -> None:
+        reviewer, client, asked = self._forge_reviewer("a.q", [False], connects=False)
+        self.assertEqual(0, reviewer.run())
+        self.assertEqual(["https://github.com"], asked)
+        client.supervise_respond.assert_not_called()
+
     def test_each_answer_goes_to_the_orchestrator_holding_it(self) -> None:
         docker, firecracker = MagicMock(), MagicMock()
         clients = {"http://docker": docker, "http://fc": firecracker}
