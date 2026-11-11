@@ -53,7 +53,7 @@ class TestFirecrackerPrereqs(unittest.TestCase):
         with patch.object(fc.shutil, "which", return_value=None), \
              patch.object(fc.util, "is_host_capable", return_value=False):
             _, out = _cap(fc._print_prereqs)
-        self.assertIn("NOT found on PATH", out)
+        self.assertIn("not on PATH yet; install downloads Firecracker", out)
         self.assertIn("KVM: /dev/kvm missing", out)
 
 
