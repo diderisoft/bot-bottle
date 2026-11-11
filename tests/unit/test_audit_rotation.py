@@ -185,6 +185,34 @@ class Pruning(_Case):
         j.prune(max_age_days=1, keep_from="~")
         self.assertTrue(verify(self.dir, anchored=True).ok)
 
+    def test_a_crash_partway_through_the_deletes_still_verifies(self) -> None:
+        j = self.journal()
+        self.days_of_segments(j, 4)
+        before = segments(self.dir)
+        lasts = [last_record(p) for p in before[:3]]
+        real_unlink = Path.unlink
+        deleted: list[Path] = []
+
+        def crash_after_one(path: Path, missing_ok: bool = False) -> None:
+            if deleted:
+                raise KeyboardInterrupt("the host lost power")
+            deleted.append(path)
+            real_unlink(path, missing_ok=missing_ok)
+
+        with mock.patch.object(Path, "unlink", crash_after_one), \
+                self.assertRaises(KeyboardInterrupt):
+            j.prune(max_age_days=1, keep_from="~")
+        self.assertEqual([before[0]], deleted)
+        self.assertEqual(before[1:], segments(self.dir)[:len(before) - 1])
+        pruned = _records(self.dir)[-1]
+        self.assertEqual(PRUNED, pruned["type"])
+        self.assertEqual([r["hash"] for r in lasts if r is not None],
+                         pruned["payload"]["segment_last_hashes"])
+        report = verify(self.dir, anchored=True)
+        self.assertTrue(report.ok, report.problems)
+        self.assertEqual(lasts[0]["hash"] if lasts[0] else "", report.starts_after)
+        self.assertTrue(report.pruned_at)
+
     def test_segments_deleted_without_a_prune_record_are_a_break(self) -> None:
         j = self.journal()
         self.days_of_segments(j, 3)

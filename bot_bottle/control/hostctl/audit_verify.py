@@ -13,8 +13,9 @@ alone. Reports:
   pruning them.
 
 Checking continues past a break, so one pass finds them all. A chain whose
-older segments were pruned starts from the `journal.pruned` record whose
-`last_hash` its first record's `prev` carries. Whole records cut from the end
+older segments were pruned starts from the `journal.pruned` record naming the
+hash its first record's `prev` carries: `last_hash`, or one of
+`segment_last_hashes` when a crash stopped the deletes partway. Whole records cut from the end
 of the newest segment leave a valid shorter chain; catching that needs the
 head anchored elsewhere (an exporter's cursor).
 """
@@ -81,6 +82,15 @@ def _check(record: dict[str, Any], before: dict[str, Any] | None,
     return found
 
 
+def _names(pruned: dict[str, Any], start: str) -> bool:
+    """Whether a `journal.pruned` payload names the hash `start` a chain
+    starts after: its last one, or any dropped segment's, which is where the
+    chain starts if a crash stopped the deletes partway."""
+    hashes = pruned.get("segment_last_hashes")
+    return pruned.get("last_hash") == start or (
+        isinstance(hashes, list) and start in hashes)
+
+
 def verify(directory: Path, *, anchored: bool = False) -> VerifyReport:
     """Check every segment in `directory` as one chain. `anchored`: the chain
     is a whole journal (the host's own), so a start after anything but a
@@ -119,7 +129,7 @@ def verify_segments(segments: list[Path], *, anchored: bool = False) -> VerifyRe
                 report.starts_after = str(record.get("prev", ""))
             payload = record.get("payload") or {}
             if record.get("type") == PRUNED and isinstance(payload, dict) and \
-                    report.starts_after and payload.get("last_hash") == report.starts_after:
+                    report.starts_after and _names(payload, report.starts_after):
                 report.pruned_at = f"{name}:{number}"
             if record.get("type") == "audit.truncation_detected" and \
                     isinstance(payload, dict) and payload.get("cause") == TORN_TAIL:

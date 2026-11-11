@@ -591,11 +591,13 @@ The host controller prunes at start and daily after:
 - A segment the index hasn't read, or while forwarding is set the forwarder
   hasn't sent, stays.
 - First it appends `journal.pruned`. That names the dropped segments, the
-  first and last dropped records (`epoch`, `seq`, time), their size, and the
-  last one's hash.
+  first and last dropped records (`epoch`, `seq`, time), their size, the
+  last one's hash, and each dropped segment's last hash
+  (`segment_last_hashes`).
 
-The oldest kept record's `prev` is that hash. `audit verify` starts the chain
-from the `journal.pruned` record that names it. A local journal starting
+The oldest kept record's `prev` is that last hash. A crash partway through
+the deletes leaves it one of the segments' hashes instead. `audit verify`
+starts the chain from the `journal.pruned` record that names it. A local journal starting
 anywhere else is `unrecorded-prune`, a break. An imported chain may start
 anywhere.
 

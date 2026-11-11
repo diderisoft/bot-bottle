@@ -13,8 +13,9 @@ A new segment starts once the current one reaches `SEGMENT_MAX_BYTES` or a
 record arrives on a later UTC day than the segment's name. Segment names are
 UTC start times, so they sort in chain order. `prune` drops whole old
 segments, never the current one, after appending a `journal.pruned` record
-that names the dropped range and its last hash: verification of what's left
-starts from that record.
+that names the dropped range, its last hash and each dropped segment's last
+hash: verification of what's left starts from that record, even if a crash
+stopped the deletes partway.
 """
 
 from __future__ import annotations
@@ -280,7 +281,8 @@ class AuditJournal:
 
         Appends `journal.pruned` first, naming the segments, the first and
         last dropped records and the last one's hash, which the oldest kept
-        record's `prev` carries. Returns that record, or None when nothing
+        record's `prev` carries, and each dropped segment's last hash, which
+        it carries if a crash stopped the deletes partway. Returns that record, or None when nothing
         went."""
         with self._lock:
             now = self._clock()
@@ -301,9 +303,13 @@ class AuditJournal:
                 drop.append(path)
                 total -= sizes[path]
             first = next((r for r in map(first_record, drop) if r is not None), None)
-            last = next((r for r in map(last_record, reversed(drop)) if r is not None), None)
-            if first is None or last is None:
+            # Each segment's last record: segments are deleted one at a time,
+            # oldest first, so a crash partway leaves a chain starting after
+            # any of them.
+            lasts = [r for r in map(last_record, drop) if r is not None]
+            if first is None or not lasts:
                 return None
+            last = lasts[-1]
             record = self._write(AuditEvent(
                 type=PRUNED, actor="host", action=PRUNED, outcome="success",
                 sensitivity="security", ts_event=utc_iso(now),
@@ -311,6 +317,7 @@ class AuditJournal:
                          "bytes": sum(sizes[p] for p in drop),
                          "first": _position(first), "last": _position(last),
                          "last_hash": str(last["hash"]),
+                         "segment_last_hashes": [str(r["hash"]) for r in lasts],
                          "max_age_days": max_age_days, "max_bytes": max_bytes},
             ), producer="audit")
             for path in drop:
