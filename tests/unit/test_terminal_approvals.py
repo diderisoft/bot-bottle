@@ -263,8 +263,11 @@ class Review(unittest.TestCase):
         conn = MagicMock()
         conn.user.return_value = user
         states = iter(connected)
-        patcher = patch("bot_bottle.forge_connections.get",
-                        side_effect=lambda _host: conn if next(states) else None)
+
+        def get(_host: str) -> MagicMock | None:
+            return conn if next(states) else None
+
+        patcher = patch("bot_bottle.forge_connections.get", side_effect=get)
         patcher.start()
         self.addCleanup(patcher.stop)
         nudge = patch("bot_bottle.control.hostctl.nudge.nudge_if_waited")

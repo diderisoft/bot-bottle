@@ -82,7 +82,7 @@ class Reviewer:  # pylint: disable=too-few-public-methods
     """Walks one session's pending requests, or every session's."""
 
     def __init__(self, fetch: Callable[[], Sequence[Mapping[str, object]]],
-                 client_for: Callable[[str], OrchestratorClient], session: str = "",
+                 client_for: Callable[[str], OrchestratorClient], session: str = "", *,
                  key: Callable[[], str] = read_key, out: Callable[[str], None] = print,
                  connect: Callable[[str], bool] = connect_forge) -> None:
         # Pending proposals from every orchestrator, and a client for the one

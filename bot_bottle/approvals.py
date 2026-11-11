@@ -461,6 +461,7 @@ def session_project(session: str) -> Path | None:
 
 
 __all__ = ["ALLOW_ONCE", "ALLOW_PROJECT", "DECISIONS", "DENY", "KeepTarget", "Request", "answer",
-           "bottle_text", "card_message", "forge_connected", "keep", "keep_grant", "keep_target", "manifest_route",
+           "bottle_text", "card_message", "forge_connected", "keep", "keep_grant", "keep_target",
+           "manifest_route",
            "project_bottle_path", "read_bottle", "route_lines", "save_bottle", "save_to_project",
            "session_project", "trust_project_bottle", "with_grant", "with_routes"]
