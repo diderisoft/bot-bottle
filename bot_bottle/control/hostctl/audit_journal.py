@@ -4,7 +4,7 @@ segments and restarts.
 
 On start the writer adopts the last intact record's `hash` as `prev` and `epoch
 + 1`, resets `seq`, and cuts a torn final line. `id` is the idempotency key;
-known ids are read from the journal on start. Redaction happens here:
+known ids are read from the current segment on start. Redaction happens here:
 credential-shaped keys are refused and token-shaped values in `resource`,
 `payload` and `untrusted` scrubbed. An exclusive directory lock refuses a
 second writer.
@@ -221,7 +221,14 @@ class AuditJournal:
                 last = last_record(path)
                 if last is not None:
                     break
-        self._ids = _ids(existing)
+        # Known ids, from the current segment only: reading every kept
+        # segment would read the whole journal (gigabytes on a busy host)
+        # before the host controller answers. An id repeats only when a
+        # producer retries an append whose reply it lost, seconds to minutes
+        # later, so its original is in the current segment unless the
+        # journal rotated in between. Then the record is written twice,
+        # which the index (one row per id) and verify both take.
+        self._ids = _ids(existing[-1:])
         self._seq = 0
         self._segment = ""
         if last is None:

@@ -11,6 +11,7 @@ import os
 import sqlite3
 import stat
 import tempfile
+import threading
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
@@ -175,6 +176,31 @@ class TestIndexDb(_Root):
         self.assertIn("failed its check", err)
         self.assertEqual(count, self.indexed())
         self.assertNotIn("filler", _tables(index_db_path()))
+
+    def test_the_start_checks_it_in_the_background_and_readers_wait(self) -> None:
+        self.journal()
+        release, started = threading.Event(), threading.Event()
+        real = index_db.open_for_start
+
+        def slow(db_path: Path | None = None) -> bool:
+            started.set()
+            release.wait(10)
+            return real(db_path)
+
+        got: list[object] = []
+        with mock.patch.object(index_db, "open_for_start", slow), \
+                redirect_stderr(io.StringIO()):
+            opening = index_db.open_in_background()
+            self.assertTrue(started.wait(10))
+            reader = threading.Thread(target=lambda: got.append(index_db.audit_index()))
+            reader.start()
+            reader.join(0.2)
+            self.assertEqual([], got)  # waiting on the check
+            release.set()
+            reader.join(10)
+            opening.join(10)
+        self.assertEqual(1, len(got))
+        self.assertGreater(self.indexed(), 0)  # rebuilt, the file was missing
 
     def test_a_table_no_index_owns_is_dropped(self) -> None:
         self.journal()

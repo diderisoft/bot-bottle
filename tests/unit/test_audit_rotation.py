@@ -13,7 +13,7 @@ from typing import Any
 from unittest import mock
 
 from bot_bottle.contract.audit import AuditEvent, record_hash
-from bot_bottle.control.hostctl import audit_retention
+from bot_bottle.control.hostctl import audit_journal, audit_retention
 from bot_bottle.control.hostctl.audit_events import HostAudit
 from bot_bottle.control.hostctl.audit_forward import Cursor, read_batch
 from bot_bottle.control.hostctl.audit_import import import_segment
@@ -142,6 +142,31 @@ class Rotation(_Case):
         with j.path.open("a") as f:
             f.write('{"torn')
         self.assertEqual(last, last_record(j.path, chunk=64))
+
+
+class KnownIds(_Case):
+    def test_a_restart_reads_ids_from_the_current_segment_only(self) -> None:
+        j = self.journal()
+        old = _event()
+        j.append(old, producer="egress")
+        self.now += DAY
+        current = _event()
+        j.append(current, producer="egress")
+        j.close()
+        read: list[list[Path]] = []
+        real = audit_journal._ids  # pylint: disable=protected-access
+
+        def ids(paths: list[Path]) -> set[str]:
+            read.append(list(paths))
+            return real(paths)
+
+        with mock.patch.object(audit_journal, "_ids", ids):
+            again = self.journal()
+        self.assertEqual([[segments(self.dir)[-1]]], read)
+        self.assertIsNone(again.append(current, producer="egress"))  # a retry: dropped
+        # One from before the last rotation is written again; readers take it.
+        self.assertIsNotNone(again.append(old, producer="egress"))
+        self.assertTrue(verify(self.dir, anchored=True).ok)
 
 
 class Pruning(_Case):

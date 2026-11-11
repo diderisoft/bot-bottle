@@ -253,12 +253,12 @@ def query_host_journal(bottle: str, activation: str | None,
                        limit: int) -> list[dict[str, Any]]:
     """`audit query --bottle --activation --limit` on this host's journal;
     empty without one."""
-    # pylint: disable-next=import-outside-toplevel
-    from ...paths import host_audit_dir, index_db_path
-    directory = host_audit_dir()
-    if not directory.is_dir():
+    # pylint: disable=import-outside-toplevel
+    from ...paths import host_audit_dir
+    from .index_db import audit_index
+    if not host_audit_dir().is_dir():
         return []
-    index = AuditIndex(directory, index_db_path())
+    index = audit_index()
     index.sync()
     return index.query(Query(bottle=bottle, activation=activation, limit=limit))
 

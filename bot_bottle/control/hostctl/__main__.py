@@ -110,10 +110,6 @@ def main() -> int:
     # anything here reads it, and won't start on a corrupt one.
     if not host_db.open_for_start():
         return host_db.REFUSED_EXIT_STATUS
-    # The index DB is derived: a missing or damaged one is rebuilt from the
-    # journal, which a prune and a query wait for.
-    if index_db.open_for_start():
-        index_db.rebuild_in_background()
     # Code shared with the CLI uses the stores here, not this API.
     host_access.use_stores()
     backups = host_db.DailyBackups().start()
@@ -189,6 +185,10 @@ def main() -> int:
     signal.signal(signal.SIGINT, _shutdown)
     status.update(pid=state.pid, port=state.port, build_id=state.build_id)
     info(f"host controller listening on {state.url} (pid {state.pid}, build {state.build_id})")
+    # The index DB is derived: a missing or damaged one is rebuilt from the
+    # journal. Checked once `status` answers, so a large one doesn't hold up
+    # the start; a prune and a query wait for the check.
+    index_db.open_in_background()
     try:
         server.serve_forever()
     finally:
