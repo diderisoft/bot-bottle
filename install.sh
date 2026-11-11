@@ -148,6 +148,8 @@ fi
 
 # --- no bottled agents across the upgrade -----------------------------------------
 
+# Upgrade bridge: remove once every host has upgraded past v0.1.9.
+#
 # Bottled agents are kept in the host database now, and nothing reads the
 # files older versions kept them in (`state/<id>/metadata.json`). One running
 # or kept for resume couldn't be resumed or cleaned up after the upgrade, so

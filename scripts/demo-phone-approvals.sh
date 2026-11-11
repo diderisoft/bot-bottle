@@ -37,17 +37,13 @@ fail() { printf 'demo: %s\n' "$*" >&2; exit 1; }
 bb status >/dev/null 2>&1 || fail "the bot-bottle stack isn't running; run: $repo/cli.py up --build"
 [ -f "$root/agents/pi.md" ] || fail "no pi agent; run: $repo/cli.py setup"
 if [ "$mode" = phone ]; then
-  python3 - "$root" <<'EOF' \
+  # The pairing is the host controller's (`bot-bottle status` shows it too).
+  PYTHONPATH="$repo" python3 - <<'EOF' \
     || fail "this host isn't paired; run: $repo/cli.py pair --console-url URL"
-import json, sys
-from pathlib import Path
-root = Path(sys.argv[1])
-try:
-    console = json.loads((root / "console.json").read_text())
-    remote = json.loads((root / "remote.json").read_text())
-except (OSError, ValueError):
-    sys.exit(1)
-sys.exit(0 if console.get("url") and remote.get("enabled") is True else 1)
+import sys
+from bot_bottle.cli.host_state_client import pairing
+paired, _link = pairing()
+sys.exit(0 if paired.url and paired.enabled else 1)
 EOF
 fi
 

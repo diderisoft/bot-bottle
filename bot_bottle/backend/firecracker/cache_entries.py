@@ -8,9 +8,9 @@ Under the cache dir's `rootfs/`:
   <digest>-<image>-<arch>/, other trees      publish and other base trees
   .staging-*                                 a build interrupted midway
 
-plus downloaded `.ext4.gz` artifacts (the artifact cache) and the older
-`infra-artifact/` downloads. The current pins' entries and the newest tree per
-infra role stay; `infra/` (the live VMs' disks, keys and lock) is never listed.
+plus downloaded `.ext4.gz` artifacts (the artifact cache). The current pins'
+entries and the newest tree per infra role stay; `infra/` (the live VMs'
+disks, keys and lock) is never listed.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ def _rootfs_entries(infra: InfraSettings) -> list[CacheEntry]:
 
 
 def _download_entries(infra: InfraSettings) -> list[CacheEntry]:
-    """Downloaded `.ext4.gz` artifacts, and the older `infra-artifact/` ones."""
+    """Downloaded `.ext4.gz` artifacts."""
     entries: list[CacheEntry] = []
     keep = {d.replace(":", "-") for d in _pinned_digests(infra)}
     root = host_artifact_cache_dir(infra.artifact_cache)
@@ -105,10 +105,6 @@ def _download_entries(infra: InfraSettings) -> list[CacheEntry]:
                 mtime(digest_dir / ".verified", mtime(digest_dir)),
                 _PINNED if digest_dir.name in keep else None, remove_paths(digest_dir),
                 build=False))
-    legacy = util.cache_dir() / "infra-artifact"
-    for key_dir in sorted(legacy.iterdir()) if legacy.is_dir() else []:
-        entries.append(CacheEntry(f"old infra download {key_dir.name}", disk_size(key_dir),
-                                  mtime(key_dir), None, remove_paths(key_dir), build=False))
     return entries
 
 

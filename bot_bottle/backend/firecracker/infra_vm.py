@@ -154,16 +154,14 @@ def singleton_lock() -> Generator[None, None, None]:
 
 
 def stop() -> None:
-    """Stop both infra VMs (idempotent): the recorded VMMs, any firecracker
-    still bound to an infra config (PID files drift), and a legacy combined VM.
-    Survivors would hold a link's TAP. Drops the version marker."""
+    """Stop both infra VMs (idempotent): the recorded VMMs, and any
+    firecracker still bound to an infra config (PID files drift). Survivors
+    would hold a link's TAP. Drops the version marker."""
     _kill_pidfile(_orch_dir())
     _kill_pidfile(_gw_dir())
-    _kill_pidfile(_infra_dir())  # legacy combined VM
     _kill_infra_firecrackers()
     _pid_file(_orch_dir()).unlink(missing_ok=True)
     _pid_file(_gw_dir()).unlink(missing_ok=True)
-    _pid_file(_infra_dir()).unlink(missing_ok=True)  # legacy
     _version_file().unlink(missing_ok=True)
 
 
@@ -361,13 +359,8 @@ def _kill_pidfile(run_dir: Path) -> None:
 
 def _kill_infra_firecrackers(proc_root: Path = Path("/proc")) -> None:
     """SIGKILL any firecracker whose `--config-file` is one of this host's
-    infra configs (including the legacy combined one), regardless of PID files.
-    Agent VMs are untouched."""
-    cfgs = {
-        str(_orch_dir() / "config.json"),
-        str(_gw_dir() / "config.json"),
-        str(_infra_dir() / "config.json"),  # legacy combined VM
-    }
+    infra configs, regardless of PID files. Agent VMs are untouched."""
+    cfgs = {str(_orch_dir() / "config.json"), str(_gw_dir() / "config.json")}
     for entry in proc_root.iterdir():
         if not entry.name.isdigit():
             continue
