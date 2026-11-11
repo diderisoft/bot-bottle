@@ -1,7 +1,8 @@
 """The host DB, `<root>/db/bot-bottle.db`: the host's source-of-truth state
 (ADR 0020). The host controller is its only writer. When it starts it checks
-the file (`PRAGMA quick_check`), refusing to start on a failed check, takes
-the day's backup and migrates it, without asking. The orchestrator's tables
+the file (`PRAGMA quick_check`), refusing to start on a failed check,
+migrates it without asking, dropping any table no host store owns, and takes
+the day's backup. The orchestrator's tables
 are in its own `registry.db`, and indexes derived from logs in `index.db`
 (`index_db.py`), never here.
 
@@ -28,7 +29,7 @@ from ...forge_connections import ForgeStore
 from ...infra_state import InfraStateStore
 from ...lib import log
 from ...lib.config_store import ConfigStore
-from ...lib.db_store import DbStore, connect, quick_check
+from ...lib.db_store import DbStore, connect, drop_unowned, quick_check
 from ...manifest.trust import TrustStore
 from ...paths import host_db_path
 from .audit_forward import ForwardCursors
@@ -64,10 +65,20 @@ def stores(db_path: Path | None = None) -> list[DbStore]:
             IsolationPasses(path), InfraStateStore(path)]
 
 
-def migrate(db_path: Path | None = None) -> None:
-    """Bring every host table up to date."""
-    for store in stores(db_path):
+def migrate(db_path: Path | None = None) -> list[str]:
+    """Bring every host table up to date, and drop every table no host store
+    owns: what an older version kept here (its audit index, or on Docker the
+    orchestrator's tables with their encrypted secrets and identity tokens),
+    so neither the DB nor its backups carry it. Returns the tables dropped."""
+    path = db_path or host_db_path()
+    owners = stores(path)
+    for store in owners:
         store.migrate()
+    dropped = drop_unowned(path, [t for s in owners for t in s.TABLES],
+                           [s.schema_key for s in owners])
+    if dropped:
+        log.info(f"host database: dropped tables no host store owns: {', '.join(dropped)}")
+    return dropped
 
 
 def check(db_path: Path | None = None) -> str:
@@ -233,17 +244,18 @@ class DailyBackups:
 
 
 def open_for_start() -> bool:
-    """The host controller's start: check the DB, take the day's backup,
-    migrate. False (and why, logged) when the check fails."""
+    """The host controller's start: check the DB, migrate it, take the day's
+    backup. False (and why, logged) when the check fails."""
     problem = check()
     if problem:
         log.error(refusal(problem))
         return False
+    # Migrated first, so the backup holds nothing `migrate` drops.
+    migrate()
     try:
         back_up_if_due()
     except (OSError, sqlite3.Error, HostDbError) as e:
         log.warn(f"host DB backup failed: {e}")
-    migrate()
     return True
 
 

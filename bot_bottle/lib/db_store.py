@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import stat
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import ClassVar
@@ -39,7 +39,7 @@ def connect(path: Path | str) -> sqlite3.Connection:
 
 
 @contextmanager
-def immediate(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+def immediate(conn: sqlite3.Connection) -> Generator[sqlite3.Connection]:
     """One transaction on `conn` that holds the write lock from its start
     (`BEGIN IMMEDIATE`), committed when the block ends and rolled back if it
     raises. For a read-then-write: in sqlite3's default mode a SELECT opens no
@@ -76,6 +76,34 @@ def quick_check(path: Path) -> str:
         conn.close()
     problems = [str(row[0]) for row in rows if row[0] != "ok"]
     return problems[0] if problems else ""
+
+
+def drop_unowned(path: Path, tables: Iterable[str], modules: Iterable[str]) -> list[str]:
+    """Make the database at `path` hold only what its stores own: drop every
+    table not in `tables` (with its indexes and triggers), and the
+    `schema_versions` rows of modules not in `modules`. VACUUMs once if a
+    table was dropped, so the freed pages (and what was in them) go too.
+    Returns the tables dropped, sorted."""
+    if not path.exists():
+        return []
+    owned = {"schema_versions", *tables}
+    modules = sorted(set(modules))
+    conn = connect(path)
+    try:
+        with immediate(conn):
+            tables = [str(row[0]) for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'")]
+            dropped = sorted(t for t in tables if t not in owned and not t.startswith("sqlite_"))
+            for table in dropped:
+                conn.execute(f'DROP TABLE "{table.replace(chr(34), chr(34) * 2)}"')
+            if "schema_versions" in tables:
+                conn.execute("DELETE FROM schema_versions WHERE module NOT IN "
+                             f"({', '.join('?' for _ in modules)})", modules)
+        if dropped:
+            conn.execute("VACUUM")
+    finally:
+        conn.close()
+    return dropped
 
 
 class DbVersionError(Exception):
@@ -157,7 +185,7 @@ class DbStore:
             conn.close()
 
     @contextmanager
-    def _write_connection(self) -> Iterator[sqlite3.Connection]:
+    def _write_connection(self) -> Generator[sqlite3.Connection]:
         """A connection in one `immediate` transaction, for a method that
         reads and then writes what it read."""
         conn = self._connect()
@@ -166,6 +194,12 @@ class DbStore:
                 yield conn
         finally:
             conn.close()
+
+    @property
+    def schema_key(self) -> str:
+        """The module name its migrations are recorded under in
+        `schema_versions`."""
+        return self._migrations.schema_key
 
     def is_migrated(self) -> bool:
         """True if the DB is up to date."""
@@ -189,4 +223,4 @@ class DbStore:
 
 
 __all__ = ["BUSY_TIMEOUT_MS", "MACHINE_SPECIFIC", "PORTABLE", "DbStore", "DbVersionError",
-           "connect", "immediate", "quick_check"]
+           "connect", "drop_unowned", "immediate", "quick_check"]

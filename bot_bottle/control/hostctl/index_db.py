@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Protocol
 
 from ...lib import log
-from ...lib.db_store import quick_check
+from ...lib.db_store import drop_unowned, quick_check
 from ...paths import host_audit_dir, index_db_path
 from .audit_index import AuditIndex, IndexBreak
 
@@ -30,7 +30,13 @@ class DerivedIndex(Protocol):
 
     @property
     def TABLES(self) -> Mapping[str, str]:  # pylint: disable=invalid-name
-        """Each table it creates, marked as `DbStore.TABLES` is."""
+        """Each table it creates, marked as `DbStore.TABLES` is. Any other
+        table in the index DB is dropped."""
+        ...  # pylint: disable=unnecessary-ellipsis
+
+    @property
+    def schema_key(self) -> str:
+        """Its module in `schema_versions`."""
         ...  # pylint: disable=unnecessary-ellipsis
 
     def migrate(self) -> None: ...
@@ -57,7 +63,7 @@ def _delete(path: Path) -> None:
 
 def open_for_start(db_path: Path | None = None) -> bool:
     """The host controller's start: delete the index DB if it fails its
-    check, then migrate it. True when it was missing or deleted, so its
+    check, then migrate it, dropping any table no index owns. True when it was missing or deleted, so its
     indexes need a rebuild."""
     path = db_path or index_db_path()
     missing = not path.exists()
@@ -66,8 +72,10 @@ def open_for_start(db_path: Path | None = None) -> bool:
         log.warn(f"index database {path} failed its check ({problem}); rebuilding it")
     if missing or problem:
         _delete(path)
-    for store in stores(path):
+    owners = stores(path)
+    for store in owners:
         store.migrate()
+    drop_unowned(path, [t for s in owners for t in s.TABLES], [s.schema_key for s in owners])
     return missing or bool(problem)
 
 

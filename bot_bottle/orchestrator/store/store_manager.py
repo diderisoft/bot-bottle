@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ...lib.db_store import DbStore
+from ...lib.db_store import DbStore, drop_unowned
 from .canary_store import CanaryStore
 from .queue_store import QueueStore
 from .registry_store import RegistryStore
@@ -27,9 +27,14 @@ class StoreManager:
     def is_migrated(self) -> bool:
         return all(store.is_migrated() for store in self.stores())
 
-    def migrate(self) -> None:
-        for store in self.stores():
+    def migrate(self) -> list[str]:
+        """Bring every table up to date, and drop any no store here owns.
+        Returns the tables dropped."""
+        stores = self.stores()
+        for store in stores:
             store.migrate()
+        return drop_unowned(self.db_path, [t for s in stores for t in s.TABLES],
+                            [s.schema_key for s in stores])
 
 
 __all__ = ["StoreManager"]

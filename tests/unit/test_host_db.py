@@ -67,6 +67,60 @@ class TestHostTables(_Root):
         host_db.migrate()
         self.assertTrue(all(store.is_migrated() for store in host_db.stores()))
 
+    def test_migrate_drops_nothing_a_host_store_owns(self) -> None:
+        self.assertEqual([], host_db.migrate())
+        ConfigStore(host_db_path()).set_audit_delivery("required")
+        self.assertEqual([], host_db.migrate())
+        self.assertEqual(set(_marked(host_db.stores())), _tables(host_db_path()))
+        self.assertEqual("required", ConfigStore(host_db_path()).audit_delivery())
+
+    def test_migrate_drops_what_an_older_version_left(self) -> None:
+        host_db_path().parent.mkdir(parents=True, mode=0o700)
+        with sqlite3.connect(host_db_path()) as db:
+            # An older host DB: its audit index, and on Docker the
+            # orchestrator's tables, an encrypted secret among them.
+            db.execute("CREATE TABLE audit_events (id INTEGER PRIMARY KEY, raw TEXT)")
+            db.execute("CREATE INDEX audit_events_by_raw ON audit_events (raw)")
+            db.execute("CREATE TABLE bottled_agent_secrets (bottle TEXT, ciphertext BLOB)")
+            db.execute("INSERT INTO bottled_agent_secrets VALUES ('b', ?)",
+                       (b"OLD-CIPHERTEXT" * 400,))
+            db.execute("CREATE TABLE schema_versions (module TEXT PRIMARY KEY, "
+                       "version INTEGER NOT NULL DEFAULT 0)")
+            db.execute("INSERT INTO schema_versions VALUES ('orchestrator_registry', 3)")
+        host_db.migrate()
+        ConfigStore(host_db_path()).set_audit_delivery("required")
+        dropped = host_db.migrate()
+        self.assertEqual([], dropped)  # dropped on the first start, nothing after
+        self.assertEqual(set(_marked(host_db.stores())), _tables(host_db_path()))
+        with sqlite3.connect(host_db_path()) as db:
+            indexes = {r[0] for r in db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'")}
+            modules = {r[0] for r in db.execute("SELECT module FROM schema_versions")}
+            db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        self.assertNotIn("audit_events_by_raw", indexes)
+        self.assertEqual({s.schema_key for s in host_db.stores()}, modules)
+        self.assertEqual("required", ConfigStore(host_db_path()).audit_delivery())
+        # VACUUMed: the ciphertext isn't left in a free page.
+        self.assertNotIn(b"OLD-CIPHERTEXT", host_db_path().read_bytes())
+
+    def test_migrate_says_what_it_dropped(self) -> None:
+        host_db_path().parent.mkdir(parents=True, mode=0o700)
+        with sqlite3.connect(host_db_path()) as db:
+            db.execute("CREATE TABLE orchestrator_bottles (id TEXT)")
+            db.execute("CREATE TABLE audit_index_cursor (id INTEGER)")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(["audit_index_cursor", "orchestrator_bottles"], host_db.migrate())
+
+    def test_the_first_backup_after_an_upgrade_holds_none_of_it(self) -> None:
+        host_db_path().parent.mkdir(parents=True, mode=0o700)
+        with sqlite3.connect(host_db_path()) as db:
+            db.execute("CREATE TABLE bottled_agent_secrets (bottle TEXT, ciphertext BLOB)")
+        with redirect_stderr(io.StringIO()):
+            self.assertTrue(host_db.open_for_start())
+        backup = host_db.backups()[0].path
+        self.assertNotIn("bottled_agent_secrets", _tables(backup))
+
 
 class TestIndexDb(_Root):
     """`index.db`: derived, so a missing or damaged one is rebuilt, never
@@ -122,6 +176,15 @@ class TestIndexDb(_Root):
         self.assertEqual(count, self.indexed())
         self.assertNotIn("filler", _tables(index_db_path()))
 
+    def test_a_table_no_index_owns_is_dropped(self) -> None:
+        self.journal()
+        self.start()
+        with sqlite3.connect(index_db_path()) as db:
+            db.execute("CREATE TABLE an_old_index (x TEXT)")
+        self.assertEqual((False, ""), self.start())
+        self.assertEqual({"audit_events", "audit_index_cursor"}, _tables(index_db_path()))
+        self.assertGreater(self.indexed(), 0)
+
     def test_it_isnt_backed_up_with_the_host_db(self) -> None:
         host_db.migrate()
         self.start()
@@ -138,6 +201,11 @@ class TestRegistryTables(_Root):
         self.assertTrue(manager.is_migrated())
         self.assertEqual(set(_marked(manager.stores())), _tables(path))
         self.assertNotIn("bot_bottle_config", _tables(path))
+        self.assertEqual([], manager.migrate())
+        with sqlite3.connect(path) as db:
+            db.execute("CREATE TABLE supervise_audit_entries (id INTEGER)")
+        self.assertEqual(["supervise_audit_entries"], manager.migrate())
+        self.assertEqual(set(_marked(manager.stores())), _tables(path))
 
 
 class TestEveryTableIsMarked(_Root):
@@ -234,7 +302,9 @@ class TestStart(_HostDb):
         return ok, err.getvalue()
 
     def test_a_sound_db_starts_backed_up_and_migrated(self) -> None:
-        self.assertEqual((True, ""), self.start())
+        # `filler` is no store's, so it goes.
+        self.assertEqual((True, "bot-bottle: host database: dropped tables no host store "
+                                "owns: filler\n"), self.start())
         self.assertEqual(1, len(host_db.backups()))
         self.assertTrue(all(store.is_migrated() for store in host_db.stores()))
 

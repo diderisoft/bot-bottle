@@ -206,7 +206,11 @@ Each database has one job and one writer
 
 - One helper opens every connection (`lib/db_store.connect`), in WAL mode
   with a 5 s busy timeout.
-- Each writer migrates its database when it starts, without asking.
+- Each writer migrates its database when it starts, without asking. It drops
+  any table none of its stores' `TABLES` names, such as what an older version
+  kept there, and then VACUUMs.
+- A store that reads rows and writes from them does both in one
+  `BEGIN IMMEDIATE` transaction (`db_store.immediate`).
 - The CLI reads and changes host state through the host controller's API
   ([host-controller.md](host-controller.md#host-database)). Only
   `bot-bottle uninstall` and `host restore-db` touch the file itself.
