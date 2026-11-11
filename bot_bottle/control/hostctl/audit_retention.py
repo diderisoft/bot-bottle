@@ -75,8 +75,12 @@ class JournalPruner:
         self._thread.start()
         return self
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 5.0) -> None:
+        """Stop, waiting for a prune in progress, so it never appends to the
+        journal after the host controller closes it."""
         self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout)
 
     def _run(self) -> None:
         while True:

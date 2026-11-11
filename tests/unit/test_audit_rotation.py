@@ -6,6 +6,7 @@ from __future__ import annotations
 import io
 import json
 import tempfile
+import threading
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -348,6 +349,26 @@ class Readers(_Case):
         with mock.patch.object(audit_cmd, "host_audit_dir", return_value=self.dir), \
                 redirect_stdout(io.StringIO()):
             self.assertEqual(1, audit_cmd.cmd_audit(["verify"]))
+
+
+class StoppingThePruner(unittest.TestCase):
+    def test_stop_waits_for_a_prune_in_progress(self) -> None:
+        pruning, release = threading.Event(), threading.Event()
+        done: list[bool] = []
+
+        def slow_retention() -> AuditRetention:
+            pruning.set()
+            release.wait(10)
+            done.append(True)
+            return AuditRetention()  # keeps all: nothing to prune
+
+        pruner = audit_retention.JournalPruner(
+            mock.Mock(), retention=slow_retention, index=mock.Mock(), interval=3600)
+        pruner.start()
+        self.assertTrue(pruning.wait(10))
+        threading.Timer(0.2, release.set).start()
+        pruner.stop()
+        self.assertEqual([True], done)
 
 
 class Retention(_Case):

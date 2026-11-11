@@ -320,6 +320,24 @@ class TestBackups(_HostDb):
         self.assertIsNone(host_db.back_up_if_due(self.base / "new" / "bot-bottle.db"))
 
 
+class TestDailyBackups(unittest.TestCase):
+    def test_stop_waits_for_a_backup_in_progress(self) -> None:
+        backing_up, release = threading.Event(), threading.Event()
+        done: list[bool] = []
+
+        def slow() -> None:
+            backing_up.set()
+            release.wait(10)
+            done.append(True)
+
+        with mock.patch.object(host_db, "back_up_if_due", slow):
+            daily = host_db.DailyBackups(interval=0.01).start()
+            self.assertTrue(backing_up.wait(10))
+            threading.Timer(0.2, release.set).start()
+            daily.stop()
+        self.assertEqual([True], done)
+
+
 class TestStart(_HostDb):
     def start(self) -> tuple[bool, str]:
         err = io.StringIO()
