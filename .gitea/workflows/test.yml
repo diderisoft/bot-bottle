@@ -69,9 +69,20 @@ jobs:
       # The host controller's session tests drive a real tmux (PRD 0092).
       - name: Install tmux
         run: |
+          # The runner's resolver has failed on Canonical's domains alone
+          # (2026-11-11); retry the install once through a public resolver.
+          install_tmux() {
+            $SUDO apt-get update -qq && DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq tmux
+          }
           command -v tmux || {
             SUDO=$(command -v sudo || true)
-            $SUDO apt-get update -qq && DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq tmux
+            install_tmux || {
+              $SUDO cp /etc/resolv.conf /etc/resolv.conf.ci-bak
+              echo "nameserver 1.1.1.1" | $SUDO tee /etc/resolv.conf >/dev/null
+              status=0; install_tmux || status=$?
+              $SUDO cp /etc/resolv.conf.ci-bak /etc/resolv.conf
+              [ "$status" = 0 ] || exit "$status"
+            }
           }
           tmux -V
 
