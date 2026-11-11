@@ -41,9 +41,14 @@ class TestInfraEnsureRunning(unittest.TestCase):
         self.addCleanup(matches.stop)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        root = patch("bot_bottle.backend.infra_service.bot_bottle_root", return_value=Path(tmp.name))
-        root.start()
-        self.addCleanup(root.stop)
+        # Both roots: paths' places the host DB, where infra_state (and so the
+        # recorded orchestrator) lives; unpatched, the test reads and writes
+        # the real environment's, and dies on a live orchestrator there.
+        for target in ("bot_bottle.backend.infra_service.bot_bottle_root",
+                       "bot_bottle.paths.bot_bottle_root"):
+            root = patch(target, return_value=Path(tmp.name))
+            root.start()
+            self.addCleanup(root.stop)
 
     def test_composes_networks_builds_and_brings_up_orchestrator_first(self) -> None:
         with patch(f"{_INFRA}.ensure_networks") as nets:
