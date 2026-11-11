@@ -1,7 +1,7 @@
 """Unit: canary resolution flow in OrchestratorCore (issue #997).
 
 Tests that canary_fire, canary_list_unresolved and canary_resolve work
-end-to-end through the core, and that deregister/reconcile archive canary
+end-to-end through the core, and that deregister/reconcile delete canary
 events.
 """
 
@@ -141,7 +141,7 @@ class TestDeregisterArchivesCanaryEvents(unittest.TestCase):
         self._restore()
         self._tmp.cleanup()
 
-    def test_deregister_archives_canary_events(self):
+    def test_deregister_deletes_canary_events(self):
         db = host_db_path()
         reg = RegistryStore(db)
         rec = reg.register("10.0.0.2")  # already migrated in setUp

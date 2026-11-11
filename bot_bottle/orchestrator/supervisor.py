@@ -48,9 +48,9 @@ class Supervisor:
     def read_response(self, bottle_slug: str, proposal_id: str) -> Response:
         return self._queue(bottle_slug).read_response(proposal_id)
 
-    def archive_all_proposals(self, bottle_slug: str) -> None:
-        """Archive every proposal and response for `bottle_slug`. Idempotent."""
-        self._queue(bottle_slug).archive_all()
+    def delete_proposals(self, bottle_slug: str) -> None:
+        """Delete every proposal and response for `bottle_slug`. Idempotent."""
+        self._queue(bottle_slug).delete_all()
 
     # --- Canary events ---
 
@@ -75,6 +75,6 @@ class Supervisor:
             event_id, status=status, resolved_at=resolved_at, notes=notes,
         )
 
-    def archive_canary_events(self, bottle_slug: str) -> None:
-        """Archive all canary events for `bottle_slug` (teardown/reconcile)."""
-        self._canary().archive_all_for_bottle(bottle_slug)
+    def delete_canary_events(self, bottle_slug: str) -> None:
+        """Delete all canary events for `bottle_slug` (teardown/reconcile)."""
+        self._canary().delete_all_for_bottle(bottle_slug)

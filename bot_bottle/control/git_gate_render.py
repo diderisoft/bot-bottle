@@ -408,8 +408,8 @@ PY
 import os
 import sys
 
-# Non-blocking poll over the control plane. A decided proposal is archived
-# server-side on read, so no separate archive step is needed here.
+# Non-blocking poll over the control plane. The orchestrator deletes a
+# bottle's proposals when the bottle goes, so there's nothing to clean up here.
 try:
     from bot_bottle.gateway.policy_resolver import PolicyResolver, PolicyResolveError
 except ImportError:

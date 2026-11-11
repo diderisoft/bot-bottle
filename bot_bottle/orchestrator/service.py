@@ -98,8 +98,8 @@ class OrchestratorCore:  # pylint: disable=too-many-public-methods
             return False
         self.registry.deregister(bottle_id)
         self._tokens.pop(bottle_id, None)
-        self._supervisor.archive_all_proposals(bottle_id)
-        self._supervisor.archive_canary_events(bottle_id)
+        self._supervisor.delete_proposals(bottle_id)
+        self._supervisor.delete_canary_events(bottle_id)
         return True
 
     def reconcile(
@@ -123,8 +123,8 @@ class OrchestratorCore:  # pylint: disable=too-many-public-methods
         reaped = self.registry.reap_absent(live, grace_seconds=grace_seconds)
         for rec in reaped:
             self._tokens.pop(rec.bottle_id, None)
-            self._supervisor.archive_all_proposals(rec.bottle_id)
-            self._supervisor.archive_canary_events(rec.bottle_id)
+            self._supervisor.delete_proposals(rec.bottle_id)
+            self._supervisor.delete_canary_events(rec.bottle_id)
         return [rec.bottle_id for rec in reaped]
 
     def tokens_for(self, bottle_id: str) -> dict[str, str]:

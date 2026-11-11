@@ -1,4 +1,5 @@
-"""SQLite store for supervise proposals and responses."""
+"""SQLite store for supervise proposals and responses: working state, deleted
+when the bottle goes. The journal is their record (`decision.*`)."""
 
 from __future__ import annotations
 
@@ -46,6 +47,12 @@ class QueueStore(DbStore):
                 PRIMARY KEY (queue_key, proposal_id)
             )
             """,
+            # v3-6: a gone bottle's proposals and answers are deleted, not
+            # archived: the journal records them (`decision.*`).
+            "DELETE FROM supervise_proposals WHERE archived = 1",
+            "ALTER TABLE supervise_proposals DROP COLUMN archived",
+            "DELETE FROM supervise_responses WHERE archived = 1",
+            "ALTER TABLE supervise_responses DROP COLUMN archived",
         ])
         super().__init__(db_path, migrations)
 
@@ -55,8 +62,8 @@ class QueueStore(DbStore):
                 """
                 INSERT OR REPLACE INTO supervise_proposals (
                     queue_key, id, bottle_slug, tool, proposed_file, justification,
-                    arrival_timestamp, current_file_hash, archived
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    arrival_timestamp, current_file_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     self.queue_key,
@@ -77,7 +84,7 @@ class QueueStore(DbStore):
             row = conn.execute(
                 """
                 SELECT * FROM supervise_proposals
-                WHERE queue_key = ? AND id = ? AND archived = 0
+                WHERE queue_key = ? AND id = ?
                 """,
                 (self.queue_key, proposal_id),
             ).fetchone()
@@ -92,13 +99,11 @@ class QueueStore(DbStore):
             rows = conn.execute(
                 """
                 SELECT p.* FROM supervise_proposals p
-                WHERE p.archived = 0
-                  AND p.queue_key = ?
+                WHERE p.queue_key = ?
                   AND NOT EXISTS (
                     SELECT 1 FROM supervise_responses r
                     WHERE r.queue_key = p.queue_key
                       AND r.proposal_id = p.id
-                      AND r.archived = 0
                   )
                 ORDER BY p.arrival_timestamp, p.id
                 """,
@@ -113,12 +118,10 @@ class QueueStore(DbStore):
             rows = conn.execute(
                 """
                 SELECT p.* FROM supervise_proposals p
-                WHERE p.archived = 0
-                  AND NOT EXISTS (
+                WHERE NOT EXISTS (
                     SELECT 1 FROM supervise_responses r
                     WHERE r.queue_key = p.queue_key
                       AND r.proposal_id = p.id
-                      AND r.archived = 0
                   )
                 ORDER BY p.arrival_timestamp, p.id
                 """
@@ -130,8 +133,8 @@ class QueueStore(DbStore):
             conn.execute(
                 """
                 INSERT OR REPLACE INTO supervise_responses (
-                    queue_key, proposal_id, status, notes, final_file, archived
-                ) VALUES (?, ?, ?, ?, ?, 0)
+                    queue_key, proposal_id, status, notes, final_file
+                ) VALUES (?, ?, ?, ?, ?)
                 """,
                 (
                     self.queue_key,
@@ -149,7 +152,7 @@ class QueueStore(DbStore):
             row = conn.execute(
                 """
                 SELECT * FROM supervise_responses
-                WHERE queue_key = ? AND proposal_id = ? AND archived = 0
+                WHERE queue_key = ? AND proposal_id = ?
                 """,
                 (self.queue_key, proposal_id),
             ).fetchone()
@@ -157,20 +160,16 @@ class QueueStore(DbStore):
             raise FileNotFoundError(proposal_id)
         return self._row_to_response(row)
 
-    def archive_all(self) -> None:
-        """Archive every proposal and response for this key (bottle teardown or
-        reconcile). Idempotent."""
+    def delete_all(self) -> None:
+        """Delete every proposal and response for this key (bottle teardown or
+        reconcile). The journal is their record. Idempotent."""
         if not self.db_path.is_file():
             return
         with self._connection() as conn:
-            conn.execute(
-                "UPDATE supervise_proposals SET archived = 1 WHERE queue_key = ?",
-                (self.queue_key,),
-            )
-            conn.execute(
-                "UPDATE supervise_responses SET archived = 1 WHERE queue_key = ?",
-                (self.queue_key,),
-            )
+            conn.execute("DELETE FROM supervise_proposals WHERE queue_key = ?",
+                         (self.queue_key,))
+            conn.execute("DELETE FROM supervise_responses WHERE queue_key = ?",
+                         (self.queue_key,))
 
     @staticmethod
     def _row_to_proposal(row: sqlite3.Row) -> Proposal:

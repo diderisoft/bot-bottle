@@ -495,8 +495,8 @@ def handle_check_proposal(
     identity_token: str,
 ) -> dict[str, object]:
     """Non-blocking poll of a proposal by id, attributed so a bottle reads only
-    its own. Never creates a Proposal. The orchestrator archives a decided
-    proposal on read."""
+    its own. Never creates a Proposal. The orchestrator deletes a bottle's
+    proposals when the bottle goes."""
     args_raw = params.get("arguments", {})
     if not isinstance(args_raw, dict):
         raise _RpcClientError(ERR_INVALID_PARAMS, "tools/call 'arguments' must be an object")
