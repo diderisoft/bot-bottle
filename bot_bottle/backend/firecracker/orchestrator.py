@@ -164,16 +164,19 @@ class FirecrackerOrchestrator(Orchestrator):
 
 
 def _ensure_volume(vol: Path, size: str, label: str) -> Path:
-    if vol.exists():
-        return vol
-    info(f"creating infra {label} volume {vol} ({size})")
-    proc = subprocess.run(
-        ["mke2fs", "-q", "-t", "ext4", "-F", str(vol), size],
-        capture_output=True, text=True, check=False,
-    )
-    if proc.returncode != 0:
-        vol.unlink(missing_ok=True)
-        die(f"creating {label} volume failed: {proc.stderr.strip()}")
+    """`vol`, created on first use, and 0600 either way: the registry holds
+    bottle tokens and encrypted egress secrets, and `mke2fs` follows the
+    umask."""
+    if not vol.exists():
+        info(f"creating infra {label} volume {vol} ({size})")
+        proc = subprocess.run(
+            ["mke2fs", "-q", "-t", "ext4", "-F", str(vol), size],
+            capture_output=True, text=True, check=False,
+        )
+        if proc.returncode != 0:
+            vol.unlink(missing_ok=True)
+            die(f"creating {label} volume failed: {proc.stderr.strip()}")
+    vol.chmod(0o600)
     return vol
 
 

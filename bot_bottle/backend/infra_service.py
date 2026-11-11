@@ -24,7 +24,7 @@ from ..infra_image import (
 from ..lib import log
 from ..lib.log import die, info
 from ..control.lifecycle import DEFAULT_STARTUP_TIMEOUT_SECONDS, Orchestrator
-from ..paths import bot_bottle_root
+from ..paths import bot_bottle_root, private_dir
 from ..published_artifacts import FORMAT_OCI
 from .gateway_attach import (
     AttachPolicy,
@@ -32,6 +32,11 @@ from .gateway_attach import (
     GatewayAttacher,
     reattach_running_bottles,
 )
+
+def _infra_state_dir() -> Path:
+    """`<root>/infra/`, 0700 (`paths.infra_state_dir`)."""
+    return private_dir(bot_bottle_root() / "infra")
+
 
 # How many times each thread holds each lock path. Per thread: the host
 # controller brings infra up from more than one (the architect's bottle and a
@@ -186,13 +191,12 @@ class InfraService(abc.ABC):
 
     def _ensure_running(self, *, startup_timeout: float, inherit_build: bool,
                         attach_policy: AttachPolicy) -> str:
-        env_lock = bot_bottle_root() / "infra" / "orchestrator.lock"
+        env_lock = _infra_state_dir() / "orchestrator.lock"
         with self.bring_up_lock(), _reentrant_flock(env_lock):
             self._refuse_second_orchestrator()
             self.require_infra_images(inherit_build=inherit_build)
             marker = self._reattach_pending_marker()
             pending = marker.exists()
-            marker.parent.mkdir(parents=True, exist_ok=True)
             marker.touch()
             recorded = self.recorded_infra_fingerprint()
             if (recorded is not None and recorded != self.settings.infra.fingerprint()
@@ -234,7 +238,7 @@ class InfraService(abc.ABC):
     def bring_up_lock(self) -> Generator[None]:
         """Host-wide, per-backend lock over infra bring-up and anything that
         must not race it. Re-entrant within a process."""
-        with _reentrant_flock(bot_bottle_root() / "infra" / f"{self.name}.lock"):
+        with _reentrant_flock(_infra_state_dir() / f"{self.name}.lock"):
             yield
 
     @abc.abstractmethod
@@ -258,7 +262,7 @@ class InfraService(abc.ABC):
         gateway."""
 
     def _reattach_pending_marker(self) -> Path:
-        return bot_bottle_root() / "infra" / f"{self.name}.reattach-pending"
+        return _infra_state_dir() / f"{self.name}.reattach-pending"
 
     def _record_infra_settings(self) -> None:
         """Record the `InfraSettings` this bring-up (re)started the pair with."""

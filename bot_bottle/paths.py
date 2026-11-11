@@ -91,6 +91,22 @@ def host_audit_dir() -> Path:
     return bot_bottle_root() / AUDIT_DIRNAME
 
 
+def private_dir(path: Path) -> Path:
+    """`path` as a directory only the user can open (0700), created if
+    missing and tightened if it was made looser before."""
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if stat.S_IMODE(path.stat().st_mode) != 0o700:
+        path.chmod(0o700)
+    return path
+
+
+def infra_state_dir() -> Path:
+    """`<root>/infra/`, 0700: the infra's locks and markers, and on Firecracker
+    what its VMs keep that can't be rebuilt (the registry volume, the gateway
+    CA)."""
+    return private_dir(bot_bottle_root() / "infra")
+
+
 def host_gateway_ca_dir() -> Path:
     """The gateway CA directory, created if missing. A host directory rather
     than a Docker named volume, which `docker system prune --volumes` would
@@ -205,6 +221,8 @@ __all__ = [
     "index_db_path",
     "host_gateway_ca_dir",
     "host_signing_key",
+    "infra_state_dir",
+    "private_dir",
     "host_orchestrator_token",
     "host_secrets_path",
     "SECRETS_FILENAME",

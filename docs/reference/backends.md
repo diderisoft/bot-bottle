@@ -320,6 +320,10 @@ volume `registry.ext4` and the CA in `gateway-ca/`. Run dirs, root filesystem
 copies and buildah's store (`build-store.ext4`) are rebuildable, so they stay
 in the firecracker cache.
 
+- Both `infra/` directories and `gateway-ca/` are 0700, tightened at start if
+  they were looser.
+- Each volume is 0600, since `mke2fs` follows the umask.
+
 ### Agent builds in the orchestrator VM
 
 The orchestrator VM's buildah builds every custom Dockerfile. It builds an
