@@ -10,6 +10,10 @@ bot-bottle runs each agent (Claude Code, Codex or pi) in its own microVM or cont
 
 > **Alpha.** bot-bottle works, and I run my own agents in it every day, but the bottle format and the CLI may still change between releases, and the security design hasn't had an independent review. Please report problems, and anything that gets out of a bottle privately: see [SECURITY.md](SECURITY.md).
 
+[![Demo: bot-bottle drafts a bottle for the task, the agent fixes a failing test, and a blocked host is approved from a phone](https://bot-bottle.com/assets/demo-advanced.jpg)](https://bot-bottle.com/#try)
+
+[Watch the demo](https://bot-bottle.com/#try): a bottle drafted for the task, the agent fixing a failing test, and a blocked host approved from a phone.
+
 ## Install
 
 ```sh
