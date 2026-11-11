@@ -523,6 +523,8 @@ asks over HTTP, with the `cli` role only:
 | `GET /bottled-agents` | none | `{"bottled_agents": [...]}`: every bottled agent this host records. |
 | `POST /bottled-agents` | `{"metadata": {...}}`, or `{"identity", "changes": {...}}` | Records a launch, or changes a bottled agent's `label`, `origin`, `agent_id` or `parent`. A label is checked as a rename checks it. An identity is letters, digits, `-` and `_`, since it names a directory. Answers `{"bottled_agent": ...}`, null when nothing records it. |
 | `POST /bottled-agents/remove` | `{"identity"}` | Deletes its state dir, snapshots and rows together. Answers `{"removed": bool}`. |
+| `GET /workspace-disks` | none | `{"disks": {key: {...}}}`: each Firecracker workspace disk's project, agent, bottles, owner and last user. |
+| `POST /workspace-disks/remove` | `{"key"}` | Deletes the disk, its lock file and its row unless a bottle has it. Answers `{"removed": bool}`. |
 
 A journal that doesn't chain, or a segment that won't import, is 409.
 

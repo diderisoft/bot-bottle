@@ -598,7 +598,8 @@ build dir) is then gone the next time the project is launched.
 `<state root>/workspace-disks/<hash>.ext4`, keyed on the project's real path,
 the agent, and the bottle names in launch order. A different bottle stack gets
 its own disk, so nothing an agent left there runs in a bottle with other
-permissions.
+permissions. What each disk is for, and who has it, is a row of the host
+database's `workspace_disks`.
 
 **Attached, never mounted on the host.** It's the VM's third drive
 (`/dev/vdc`), which the guest init mounts at the workspace path from

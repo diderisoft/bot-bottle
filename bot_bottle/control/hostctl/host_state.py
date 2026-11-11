@@ -1,7 +1,8 @@
 """The host DB's routes for the CLI (`HOST_CONFIG_PATH`, the audit index's,
 `FORGES_PATH`, `FORGES_REMOVE_PATH`, `TRUST_PATH`, `PAIRING_PATH`,
 `AUDIT_PASSKEYS_PATH`, `BOTTLED_AGENTS_PATH`, `BOTTLED_AGENTS_REMOVE_PATH`,
-`AGENT_PREFS_PATH`, `INFRA_STATE_PATH`).
+`AGENT_PREFS_PATH`, `INFRA_STATE_PATH`, `WORKSPACE_DISKS_PATH`,
+`WORKSPACE_DISKS_REMOVE_PATH`).
 The host controller is the host DB's only writer, so the CLI reads and
 changes host state here, never by opening the file (ADR 0020). These use the
 stores, never the routed functions shared code calls
@@ -234,7 +235,26 @@ def infra_state(body: dict[str, object]) -> dict[str, object]:
     return {"state": InfraStateStore(host_db_path()).all()}
 
 
+def workspace_disks(body: dict[str, object]) -> dict[str, object]:
+    """Each Firecracker workspace disk's row, by key."""
+    del body
+    # pylint: disable-next=import-outside-toplevel
+    from ...backend.firecracker.workspace_disk import WorkspaceDiskStore
+    return {"disks": WorkspaceDiskStore(host_db_path()).all()}
+
+
+def remove_workspace_disk(body: dict[str, object]) -> dict[str, object]:
+    """Delete `body["key"]`'s workspace disk unless a bottle has it."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...backend.firecracker import workspace_disk
+    key = body.get("key")
+    if not isinstance(key, str):
+        raise ValueError("key must name a workspace disk")
+    return {"removed": workspace_disk.remove_here(workspace_disk.disk_dir() / f"{key}.ext4")}
+
+
 __all__ = ["audit_import", "audit_query", "audit_rebuild", "config", "forge_connect",
            "forge_remove", "forges", "get_pairing", "passkeys", "set_config", "set_pairing",
            "trust", "trust_passkeys", "trusted", "bottled_agents", "record_bottled_agent",
-           "remove_bottled_agent", "agent_prefs", "remember_agent", "infra_state"]
+           "remove_bottled_agent", "agent_prefs", "remember_agent", "infra_state",
+           "workspace_disks", "remove_workspace_disk"]

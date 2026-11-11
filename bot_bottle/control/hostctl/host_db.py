@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ...backend.firecracker.workspace_disk import WorkspaceDiskStore
 from ...backend.isolation_probe import IsolationPasses
 from ...bottle_state import BottledAgentStore
 from ...forge_connections import ForgeStore
@@ -63,7 +64,8 @@ def stores(db_path: Path | None = None) -> list[DbStore]:
             PairingStore(path), PasskeyStore(path), BottledAgentStore(path), SessionStore(path),
             AuditPushStore(path),
             AgentPrefsStore(path), TranscriptStore(path), SnapshotStore(path),
-            IsolationPasses(path), InfraStateStore(path), RunManifestStore(path)]
+            IsolationPasses(path), InfraStateStore(path), RunManifestStore(path),
+            WorkspaceDiskStore(path)]
 
 
 def migrate(db_path: Path | None = None) -> list[str]:
