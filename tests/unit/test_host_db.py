@@ -421,19 +421,59 @@ class TestRestore(_HostDb):
 
 
 class TestRestoreCommand(_HostDb):
-    def run_cmd(self, *argv: str, running: bool = False) -> tuple[int, str, str]:
+    def run_cmd(self, *argv: str, running: bool = False,
+                answer: str | None = None) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
-        state = runner.HostControlState(pid=1, port=1, build_id="b") if running else None
-        with mock.patch.object(runner, "running", return_value=state), \
-                redirect_stdout(out), redirect_stderr(err):
-            code = host_cmd.cmd_host(["restore-db", *argv])
+        held = runner.hold_daemon_lock() if running else None
+        try:
+            with redirect_stdout(out), redirect_stderr(err), \
+                    mock.patch("sys.stdin.isatty", return_value=answer is not None), \
+                    mock.patch("builtins.input", return_value=answer or ""):
+                code = host_cmd.cmd_host(["restore-db", *argv])
+        finally:
+            if held is not None:
+                os.close(held)
         return code, out.getvalue(), err.getvalue()
 
     def test_refuses_while_the_host_controller_runs(self) -> None:
         host_db.back_up(now=_T0)
-        code, _, err = self.run_cmd(running=True)
+        code, _, err = self.run_cmd("--yes", running=True)
         self.assertEqual(1, code)
         self.assertIn("host controller is running", err)
+
+    def test_holds_the_daemon_lock_while_it_restores(self) -> None:
+        host_db.back_up(now=_T0)
+        held: list[bool] = []
+
+        def restore(backup: Path | None = None) -> host_db.Restored:
+            try:
+                os.close(runner.hold_daemon_lock())
+                held.append(False)
+            except runner.DaemonLockHeld:
+                held.append(True)
+            return host_db.Restored(db=host_db_path(), backup=host_db.backups()[0].path,
+                                    replaced=None)
+
+        with mock.patch.object(host_db, "restore", restore):
+            self.assertEqual(0, self.run_cmd("--yes")[0])
+        self.assertEqual([True], held)
+
+    def test_warns_and_asks_first(self) -> None:
+        host_db.back_up(now=_T0)
+        ConfigStore(host_db_path()).set_audit_delivery("best_effort")
+        code, _, err = self.run_cmd(answer="n")
+        self.assertEqual(1, code)
+        self.assertIn("Trust records, audit passkeys and forge connections come back", err)
+        self.assertIn("including any removed since", err)
+        self.assertIn("taken 2026-11-01 09:30 UTC", err)
+        self.assertEqual("best_effort", ConfigStore(host_db_path()).audit_delivery())
+        code, _, err = self.run_cmd()  # no terminal, no --yes
+        self.assertEqual(1, code)
+        self.assertIn("pass --yes", err)
+        code, out, _ = self.run_cmd(answer="y")
+        self.assertEqual(0, code)
+        self.assertIn("restored", out)
+        self.assertEqual("required", ConfigStore(host_db_path()).audit_delivery())
 
     def test_lists_then_restores_by_name(self) -> None:
         host_db.back_up(now=_T0)
@@ -443,13 +483,13 @@ class TestRestoreCommand(_HostDb):
         self.assertEqual(["bot-bottle-20261102T093000Z.db  taken 2026-11-02 09:30 UTC",
                           "bot-bottle-20261101T093000Z.db  taken 2026-11-01 09:30 UTC"],
                          out.splitlines())
-        code, out, _ = self.run_cmd("bot-bottle-20261101T093000Z.db")
+        code, out, _ = self.run_cmd("bot-bottle-20261101T093000Z.db", "--yes")
         self.assertEqual(0, code)
         self.assertIn("restored bot-bottle-20261101T093000Z.db", out)
         self.assertIn("replaced is kept at", out)
 
     def test_says_when_there_is_nothing_to_restore(self) -> None:
-        code, _, err = self.run_cmd()
+        code, _, err = self.run_cmd("--yes")
         self.assertEqual(1, code)
         self.assertIn("no backups", err)
 

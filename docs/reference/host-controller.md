@@ -543,6 +543,7 @@ The host controller won't start on a damaged host database.
 ```
 bot-bottle host restore-db --list     # the backups, newest first
 bot-bottle host restore-db [BACKUP]   # put one back: the newest, or the one named
+bot-bottle host restore-db --yes      # without asking first
 ```
 
 | When | What happens |
@@ -551,9 +552,11 @@ bot-bottle host restore-db [BACKUP]   # put one back: the newest, or the one nam
 | It starts, and the check passes | It migrates the file. Any table no host store owns is dropped, such as an older version's audit index or, on Docker, the orchestrator's old tables. |
 | It answers on its control socket, and `index.db` is missing or fails the same check | In the background, it deletes `index.db` and rebuilds it from the journal. Audit queries and the prune wait for the check. `index.db` has no backups. |
 | It has migrated, and every hour after | If the newest backup is a day old, or there is none, a new one: a `VACUUM INTO` copy in `~/.bot-bottle/db/backups/` (directory 0700, files 0600). It keeps the newest 3. |
-| `host restore-db` | Refused while the host controller runs. Otherwise it checks the backup, keeps the replaced file beside it as `bot-bottle.db.replaced-<time>`, and puts the backup in its place. |
+| `host restore-db` | Refused while the host controller runs: it takes the daemon's lifetime lock, so none starts meanwhile. It says what comes back and asks first. Then it checks the backup, keeps the replaced file beside it as `bot-bottle.db.replaced-<time>`, and puts the backup in its place. |
 
-Changes since the backup are lost on a restore. Backups stay on this host.
+Changes since the backup are lost on a restore. Trust records, audit
+passkeys and forge connections come back as the backup has them, including
+ones removed since. Backups stay on this host.
 
 ## Audit
 

@@ -5,9 +5,13 @@
                                      in bot-bottle's own directories (0 clears
                                      one). A launch that wouldn't fit is refused.
   caps                               the old name for `budget` (deprecated)
-  restore-db [BACKUP] [--list]       put a backup of the host database back,
+  restore-db [BACKUP] [--list] [--yes]
+                                     put a backup of the host database back,
                                      the newest or the one named, while the
-                                     host controller is stopped
+                                     host controller is stopped. Asks first:
+                                     trust records, passkeys and forge
+                                     connections return as the backup has
+                                     them
 
 The host controller reads the budget at each launch and each time it reports
 to the console, so a change applies at once, no restart needed. The budget
@@ -31,6 +35,9 @@ from ...control.hostctl.runner import HostControlError
 from ...lib.config_store import HostBudget, HostConfig
 from .. import host_state_client as host
 from ..constants import PROG
+
+
+_RUNNING = f"the host controller is running; stop it first (`{PROG} down`), then restore"
 
 
 def _gb(value: int) -> str:
@@ -72,20 +79,60 @@ def _restore_db(ns: argparse.Namespace) -> int:
         chosen = Path(ns.backup)
         if chosen.name == ns.backup:  # a name from --list
             chosen = host_db.backups_dir() / ns.backup
-    with runner.lock():
-        if runner.running() is not None:
-            sys.stderr.write(f"{PROG} host restore-db: the host controller is running; stop it "
-                             f"first (`{PROG} down`), then restore\n")
-            return 1
-        try:
+    if chosen is None and not host_db.backups():
+        sys.stderr.write(f"{PROG} host restore-db: no backups in {host_db.backups_dir()}\n")
+        return 1
+    if not _controller_stopped() or not _confirm_restore(chosen, ns.yes):
+        return 1
+    # The host controller's lifetime lock: none runs, and none starts while
+    # the file is replaced.
+    try:
+        with runner.lock(), runner.daemon_lock():
             restored = host_db.restore(chosen)
-        except (host_db.HostDbError, OSError) as e:
-            sys.stderr.write(f"{PROG} host restore-db: {e}\n")
-            return 1
+    except runner.DaemonLockHeld:
+        sys.stderr.write(f"{PROG} host restore-db: {_RUNNING}\n")
+        return 1
+    except (host_db.HostDbError, OSError) as e:
+        sys.stderr.write(f"{PROG} host restore-db: {e}\n")
+        return 1
     sys.stdout.write(f"restored {restored.backup.name} as {restored.db}\n")
     if restored.replaced is not None:
         sys.stdout.write(f"the database it replaced is kept at {restored.replaced}\n")
     return 0
+
+
+def _controller_stopped() -> bool:
+    """Whether no host controller runs (it holds its lifetime lock); says so
+    when one does."""
+    try:
+        with runner.daemon_lock():
+            return True
+    except runner.DaemonLockHeld:
+        sys.stderr.write(f"{PROG} host restore-db: {_RUNNING}\n")
+        return False
+
+
+def _confirm_restore(chosen: Path | None, yes: bool) -> bool:
+    """Say what a restore brings back, and ask, unless `yes`."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...control.hostctl import host_db
+    newest = next(iter(host_db.backups()), None)
+    which = (f"the backup taken {newest.taken:%Y-%m-%d %H:%M} UTC"
+             if chosen is None and newest is not None else f"{chosen}")
+    sys.stderr.write(
+        f"{PROG} host restore-db: this puts the host database back as {which} has it. "
+        "Trust records, audit passkeys and forge connections come back as they were then, "
+        "including any removed since. Anything added or changed since is lost.\n")
+    if yes:
+        return True
+    if not sys.stdin.isatty():
+        sys.stderr.write(f"{PROG} host restore-db: not restoring without a terminal to "
+                         "confirm; pass --yes\n")
+        return False
+    if input("restore it? [y/N] ").strip().lower() in ("y", "yes"):
+        return True
+    sys.stderr.write("left as it was\n")
+    return False
 
 
 def _add_budget(sub: "argparse._SubParsersAction[argparse.ArgumentParser]", name: str,
@@ -110,6 +157,8 @@ def cmd_host(argv: list[str]) -> int:
     restore.add_argument("backup", nargs="?",
                          help="a backup's name (from --list) or path; default: the newest")
     restore.add_argument("--list", action="store_true", help="list the backups, newest first")
+    restore.add_argument("--yes", "-y", action="store_true",
+                         help="don't ask before restoring (for scripts)")
     restore.set_defaults(run=_restore_db)
     ns = parser.parse_args(argv)
     try:
