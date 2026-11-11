@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import host_access
@@ -31,7 +31,7 @@ def check_stale(label: str, created_at: datetime) -> None:
     now = datetime.now(timezone.utc)
     created = created_at.astimezone(timezone.utc)
     age = now - created
-    if age.total_seconds() <= threshold_days * 86400:
+    if age <= timedelta(days=threshold_days):
         return
     raise StaleImageError(
         f"cached {label} is {age.days} day(s) old; "

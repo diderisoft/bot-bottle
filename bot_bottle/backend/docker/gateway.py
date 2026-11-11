@@ -350,18 +350,7 @@ class DockerGateway(Gateway):
         # holds only the `gateway` token, never the key.
         self._orchestrator_url = orchestrator_url
         self._gateway_token = gateway_token
-        # Without an orchestrator URL every daemon would exit; fail here
-        # instead.
-        if not self._orchestrator_url:
-            raise GatewayError(
-                "gateway requires an orchestrator URL to run "
-                "(resolver-only data plane; no single-tenant fallback)"
-            )
-        if not self._gateway_token:
-            raise GatewayError(
-                "gateway requires a pre-minted `gateway` token to run "
-                "(the orchestrator mints it; the gateway never holds the key)"
-            )
+        self._validate_orchestrator_args(orchestrator_url, gateway_token)
         # Recreate when the running container's image is stale.
         self._ensure_network()
         if (self.is_running() and self._running_image_is_current()

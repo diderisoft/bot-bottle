@@ -3,7 +3,13 @@
 
 from __future__ import annotations
 
+import subprocess
+import tempfile
+import urllib.error
 from abc import ABC, abstractmethod
+from pathlib import Path
+
+_KEYGEN_TIMEOUT_SECS = 10
 
 
 class DeployKeyCollisionError(RuntimeError):
@@ -35,6 +41,36 @@ class DeployKeyProvisioner(ABC):
     def delete(self, owner_repo: str, key_id: str) -> None:
         """Delete the key. An already-absent key is success; any other failure
         raises so teardown halts."""
+
+
+def generate_keypair() -> tuple[bytes, str]:
+    """A fresh ed25519 keypair from `ssh-keygen`: (private key, public key line).
+    Every forge kind's provisioner mints its keys with it."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        key_path = Path(tmpdir) / "key"
+        subprocess.run(
+            ["ssh-keygen", "-t", "ed25519", "-f", str(key_path), "-N", ""],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=_KEYGEN_TIMEOUT_SECS,
+        )
+        return key_path.read_bytes(), key_path.with_suffix(".pub").read_text().strip()
+
+
+def split_owner_repo(owner_repo: str) -> tuple[str, str]:
+    """`'owner/repo'` -> `('owner', 'repo')`."""
+    parts = owner_repo.split("/", 1)
+    if len(parts) != 2 or not all(parts):
+        raise ValueError(f"expected 'owner/repo' format, got {owner_repo!r}")
+    return parts[0], parts[1]
+
+
+def read_error_body(exc: urllib.error.HTTPError) -> str:
+    try:
+        return exc.read().decode("utf-8", errors="replace")
+    except Exception:  # noqa: broad-exception-caught
+        return ""
 
 
 def get_provisioner(

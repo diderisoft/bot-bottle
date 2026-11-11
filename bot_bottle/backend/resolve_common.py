@@ -20,6 +20,7 @@ from ..bottle_state import (
     write_metadata,
 )
 from ..egress import Egress, EgressPlan
+from ..env import ResolvedEnv
 from ..contract.git_trailers import trailer_value
 from ..git_gate import GitGate, GitGatePlan
 from ..git_gate.commit_hooks import hooks_env
@@ -31,6 +32,10 @@ from ..lib.log import die
 from ..manifest import Manifest, ManifestBottle
 from ..supervisor.plan import SupervisePlan
 from . import BottleSpec
+
+
+def build_guest_env(resolved_env: ResolvedEnv) -> dict[str, str]:
+    return dict(resolved_env.literals)
 
 
 def mint_slug(spec: BottleSpec) -> str:
@@ -155,6 +160,7 @@ def resolve_manifest_dockerfile(path_value: str, spec: BottleSpec) -> str:
 
 
 __all__ = [
+    "build_guest_env",
     "merge_provision_env_vars",
     "reject_nested_containers",
     "mint_slug",

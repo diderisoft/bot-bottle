@@ -6,9 +6,11 @@ registration, the gateway CA, and the agent's gateway URLs. Each backend's
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
 from contextlib import ExitStack
+from datetime import datetime
 
-from ..bottle_state import egress_state_dir, git_gate_state_dir
+from ..bottle_state import egress_state_dir, git_gate_state_dir, read_committed_image
 from ..contract.held_secrets import CANARY_KEY, HELD_ENV_PREFIX, MIN_HELD_SECRET_LEN
 from ..contract.identity import GIT_HTTP_PORT
 from ..contract.supervise import SUPERVISE_PORT
@@ -16,6 +18,7 @@ from ..egress import Egress, EgressPlan
 from ..env import is_secret_entry
 from ..git_gate import GitGate, GitGatePlan
 from ..git_gate.service import save_trailer_settings
+from ..image_cache import check_stale
 from ..lib.log import warn
 from .base import BottlePlan, BottleSpec
 
@@ -128,6 +131,28 @@ def gateway_agent_urls(
         if plan.supervise_plan is not None else ""
     )
     return git_gate_url, supervise_url
+
+
+def stale_image_checks(
+    slug: str,
+    image: str,
+    image_policy: str,
+    image_exists: Callable[[str], bool],
+    image_created_at: Callable[[str], datetime | None],
+) -> None:
+    """Raise StaleImageError if a cached agent image is past the threshold."""
+    if image_policy not in ("cached", "prefer-cached"):
+        return
+    committed = read_committed_image(slug)
+    if committed and image_exists(committed):
+        ts = image_created_at(committed)
+        if ts is not None:
+            check_stale(f"agent image {committed!r}", ts)
+        return
+    if image_exists(image):
+        ts = image_created_at(image)
+        if ts is not None:
+            check_stale(f"agent image {image!r}", ts)
 
 
 def terminal_title(spec: BottleSpec) -> str:

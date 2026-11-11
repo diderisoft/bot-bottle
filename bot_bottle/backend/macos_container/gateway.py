@@ -160,17 +160,7 @@ class MacosGateway(Gateway):
         every bottle's git-gate state. Otherwise (re)started (True)."""
         self._orchestrator_url = orchestrator_url
         self._gateway_token = gateway_token
-        # Without a policy URL and token the daemons would only crash-loop.
-        if not self._orchestrator_url:
-            raise GatewayError(
-                "gateway requires an orchestrator URL to run "
-                "(resolver-only data plane; no single-tenant fallback)"
-            )
-        if not self._gateway_token:
-            raise GatewayError(
-                "gateway requires a pre-minted `gateway` token to run "
-                "(the orchestrator mints it; the gateway never holds the key)"
-            )
+        self._validate_orchestrator_args(orchestrator_url, gateway_token)
         if self.is_running() and self._is_current(orchestrator_url, gateway_token):
             return False
         container_mod.force_remove_container(self.name)

@@ -62,16 +62,7 @@ class FirecrackerGateway(Gateway):
         orchestrator must be up first. Always a fresh boot, so returns True."""
         self._orchestrator_url = orchestrator_url
         self._gateway_token = gateway_token
-        if not self._orchestrator_url:
-            raise GatewayError(
-                "gateway requires an orchestrator URL to run "
-                "(resolver-only data plane; no single-tenant fallback)"
-            )
-        if not self._gateway_token:
-            raise GatewayError(
-                "gateway requires a pre-minted `gateway` token to run "
-                "(the orchestrator mints it; the gateway never holds the key)"
-            )
+        self._validate_orchestrator_args(orchestrator_url, gateway_token)
         orchestrator_guest_ip = urlparse(self._orchestrator_url).hostname or ""
         if not orchestrator_guest_ip:
             raise GatewayError(

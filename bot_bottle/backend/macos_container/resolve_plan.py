@@ -13,16 +13,13 @@ from ...supervisor.plan import SupervisePlan
 from ...manifest import Manifest
 from ...secret_source import SecretSource
 from .. import BottleSpec
+from ..resolve_common import build_guest_env  # noqa: F401 — re-exported for callers
 from . import util as container_mod
 from .bottle_plan import MacosContainerBottlePlan
 
 
 def preflight() -> None:
     container_mod.require_container()
-
-
-def build_guest_env(resolved_env: ResolvedEnv) -> dict[str, str]:
-    return dict(resolved_env.literals)
 
 
 def resolve_plan(
