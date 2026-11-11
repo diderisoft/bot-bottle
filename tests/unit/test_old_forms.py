@@ -139,8 +139,9 @@ class TestNewForms(unittest.TestCase):
 
 
 class TestShippedFiles(unittest.TestCase):
-    def test_example_and_demo_agents_load(self) -> None:
-        files = [*(ROOT / "examples" / "agents").glob("*.md"), ROOT / "scripts/demo/agent.md"]
+    def test_example_agents_load(self) -> None:
+        # The demo has no agent file of its own: it runs `bot-bottle setup`'s starters.
+        files = [*(ROOT / "examples" / "agents").glob("*.md")]
         self.assertTrue(files)
         for path in files:
             with self.subTest(path=path.name):
@@ -148,10 +149,14 @@ class TestShippedFiles(unittest.TestCase):
                 agent_from_frontmatter(path.stem, dict(fm), body)
 
     def test_example_demo_and_project_bottles_load(self) -> None:
-        files = [*(ROOT / "examples" / "bottles").glob("*.md"), ROOT / "scripts/demo/bottle.md",
-                 ROOT / ".bot-bottle/bottles/main.md",
-                 ROOT / "bot_bottle/manifest/builtin/basic.md"]
-        raws = {p.stem: dict(parse_frontmatter(p.read_text())[0]) for p in files}
+        files = {p.stem: p for p in (ROOT / "examples" / "bottles").glob("*.md")}
+        files |= {
+            # The demo project's `./main` (scripts/demo/fixture), apart from this repo's.
+            "demo-main": ROOT / "scripts/demo/fixture/.bot-bottle/bottles/main.md",
+            "main": ROOT / ".bot-bottle/bottles/main.md",
+            "basic": ROOT / "bot_bottle/manifest/builtin/basic.md",
+        }
+        raws = {name: dict(parse_frontmatter(p.read_text())[0]) for name, p in files.items()}
         resolve_bottles(raws)
 
 

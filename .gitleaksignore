@@ -9,7 +9,6 @@
 15f0e0b507c96f0d923955d8edfd15fd5d932073:tests/integration/test_sandbox_escape.py:slack-bot-token:55
 3f4708f970e4307e55edf4736b8d3317fd6ee675:claude-bottle.demo.json:generic-api-key:5
 3f4708f970e4307e55edf4736b8d3317fd6ee675:claude-bottle.demo.json:github-pat:5
-3f4708f970e4307e55edf4736b8d3317fd6ee675:docs/demo.tape:aws-access-token:71
 427ef96e3f33860e1ad0cb34028901553426534b:tests/integration/test_pipelock_blocks_secret_post.py:generic-api-key:34
 427ef96e3f33860e1ad0cb34028901553426534b:tests/integration/test_pipelock_blocks_secret_post.py:github-pat:34
 7644da428000afc70dc5fe58a681d2e2f08c8d85:docs/research/apple-container-transparent-egress-spike.md:generic-api-key:71
@@ -20,6 +19,4 @@ c08b09dc9f6db82e3c3d74bcbbcfa3bd4b72e483:bot-bottle.demo.json:generic-api-key:5
 c08b09dc9f6db82e3c3d74bcbbcfa3bd4b72e483:bot-bottle.demo.json:github-pat:5
 d3115ae5fdb71d449f031458dacf84afaa6ff5d2:tests/integration/test_pipelock_blocks_secret_https_post.py:generic-api-key:32
 d3115ae5fdb71d449f031458dacf84afaa6ff5d2:tests/integration/test_pipelock_blocks_secret_https_post.py:github-pat:32
-d4d34dc72fc743c1476daf630a43ba149142c3b3:scripts/demo/bottle.md:generic-api-key:20
-d4d34dc72fc743c1476daf630a43ba149142c3b3:scripts/demo/bottle.md:github-pat:20
 e2231f46a3137b57ed01341f126d889a62b27b32:tests/integration/test_sandbox_escape.py:generic-api-key:48
