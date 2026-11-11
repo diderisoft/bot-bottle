@@ -8,6 +8,7 @@ import os
 import socket
 import sqlite3
 from collections.abc import Callable, Iterable
+from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import cast
 from urllib.parse import parse_qs, urlsplit
@@ -26,6 +27,7 @@ from ...contract.hostctl import (
 )
 from ...lib import websocket as ws
 from ...lib.log import debug
+from .. import rotate_ca
 from . import host_state, orchestrator, suggest_routes
 from .attach import Viewer
 from .audit_events import AuditUnavailable, digest_request
@@ -346,7 +348,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         action = path.removeprefix(ORCHESTRATOR_PATH + "/")
         if not path.startswith(ORCHESTRATOR_PATH + "/") or \
-                action not in ("ensure", "restart", "status"):
+                action not in ("ensure", "restart", "status", "rotate-ca"):
             self._send(404, {"error": f"no route {path}"})
             return
         role = self._role()
@@ -368,11 +370,10 @@ class _Handler(BaseHTTPRequestHandler):
         if action == "status":
             self._send(200, orchestrator.status(settings))
             return
-        job = server.jobs.start(
-            f"orchestrator.{action}", role,
-            lambda: orchestrator.ensure(settings, restart=action == "restart",
-                                        allow_reattach_failures=allow),
-        )
+        work = partial(rotate_ca.rotate, settings) if action == "rotate-ca" else \
+            partial(orchestrator.ensure, settings, restart=action == "restart",
+                    allow_reattach_failures=allow)
+        job = server.jobs.start(f"orchestrator.{action}", role, work)
         self._send(202, {"job": job.id})
 
     def _json_body(self) -> dict[str, object]:

@@ -29,8 +29,9 @@ HOSTCTL_URL_ENV = "BOT_BOTTLE_HOSTCTL_URL"
 STATUS_PATH = "/status"
 # GET /jobs, /jobs/{id}, /jobs/{id}/events (streamed NDJSON).
 JOBS_PATH = "/jobs"
-# POST /orchestrator/{ensure,restart} start jobs; POST /orchestrator/status
-# answers. Each takes {"settings": Settings.to_json()}.
+# POST /orchestrator/{ensure,restart,rotate-ca} start jobs (rotate-ca's result
+# is {"rotated": bool}); POST /orchestrator/status answers. Each takes
+# {"settings": Settings.to_json()}.
 ORCHESTRATOR_PATH = "/orchestrator"
 # GET /sessions/{id}: {"running": bool, "exit": {"status", "signal"} | null}.
 # GET /sessions/{id}/attach upgrades to the attach WebSocket.

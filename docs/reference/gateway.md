@@ -492,8 +492,10 @@ A full queue drops the oldest event. It records an
 The mitmproxy CA lives in a host directory mounted at mitmproxy's confdir, so
 it survives the gateway being recreated.
 
-`python -m bot_bottle.control.rotate_ca` rotates it by running
-`gateway/ca_rollover.py` in the gateway:
+`python -m bot_bottle.control.rotate_ca` has the host controller rotate it
+(`POST /orchestrator/rotate-ca`, a job whose lines it prints), since restarting
+a gateway records infrastructure state only the host controller writes. The
+rotation runs `gateway/ca_rollover.py` in the gateway:
 
 1. It mints a new CA cross-signed by the old one.
 2. It restarts each gateway and reattaches its bottles.
