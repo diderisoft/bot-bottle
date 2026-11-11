@@ -1,6 +1,6 @@
 # ADR 0020: Each kind of host state has one place to live
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-10
 - **Deciders:** didericis
 
@@ -61,16 +61,18 @@ Each database has one job and one writer.
   (`secret:NAME`). `registry.db` keeps a bottle's egress secrets encrypted, for
   the bottle's lifetime only.
 - **Each table is portable or machine-specific.** Portable state, such as
-  settings, forge connections and passkeys, could move to another machine.
+  settings, forge connections and passkeys, could move to another machine. A
+  table holding both marks each column.
 - **Trust records are machine-specific.** Trusting a project bottle records
   this machine's forge connection (ADR 0019).
 - **No JSON state.** JSON is only generated output for another program or
   process, written fresh and never read back.
 - **`~/.cache` holds only what can be downloaded or rebuilt.** Anything else
   lives under the environment's root.
-- **Logs rotate.** Pruning old journal segments records a `journal.pruned`
-  event with the dropped range and the last hash, so the chain stays
-  verifiable.
+- **The audit journal and `hostctl.log` rotate.** Pruning old journal
+  segments records a `journal.pruned` event with the dropped range and the
+  last hash, so the chain stays verifiable. Transcripts are deleted after
+  their retention.
 
 ### No migration
 
@@ -79,8 +81,11 @@ Moving state into its store comes with no code that reads the old files.
 | Old state | On upgrade |
 | :-- | :-- |
 | Rebuildable (caches, indexes, infrastructure state) | Rebuilt. |
-| Not rebuildable (forge connections, pairing, trust, passkeys) | Redone once. The release says so. |
-| Bottled agents running or kept for resume | Can't cross the change. That release refuses to upgrade while any exist. |
+| Not rebuildable (forge connections, pairing, trust, passkeys) | Redone once, as [install.md](../reference/install.md#upgrading-to-this-release) says. |
+| Bottled agents running or kept for resume | Can't cross the change. The curl installer refuses to upgrade while any exist. A `uv` or `pipx` install skips that check, so install.md says to stop them first. |
+
+[install.md](../reference/install.md#old-files) lists the old files, and
+`bot-bottle uninstall` deletes them.
 
 ## Consequences
 
@@ -92,8 +97,15 @@ Moving state into its store comes with no code that reads the old files.
   `index.db` holds the large derived part and never needs a backup.
 - Upgrading across the change means reconnecting forges, pairing again and
   re-trusting project bottles once, with no bottled agents running.
-- Existing state that breaks these rules moves as its own change. Until then
-  it's a known exception, not a precedent.
+- The exceptions below break a rule for a named reason. None is a precedent.
+
+### Exceptions
+
+| State | Rule it breaks | Why it stays |
+| :-- | :-- | :-- |
+| git-gate's `state/<id>/git-gate/*.json` | No JSON state | The host controller reads them back to provision a bottle's git-gate again. Moving them into the registry is a follow-up. |
+| A Firecracker VM's `config.json` | No JSON state | It's Firecracker's own format. It's read back for the VM's vCPUs, TAP and guest IP. |
+| Host-wide Firecracker slice claims | State lives under the environment's root | They're lock files in `/var/lib/bot-bottle-fc/slices`, shared by every environment and user on the machine. No one environment's database can hold them. |
 
 ## Links
 
