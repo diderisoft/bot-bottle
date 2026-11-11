@@ -122,10 +122,12 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "`1` for the default size, or a size like `32G`. See backends.md.",
            "off"),
     EnvVar("BOT_BOTTLE_FC_KERNEL", "user",
-           "firecracker: the guest kernel.",
+           "firecracker: the guest kernel. Unset, `install` downloads the published one "
+           "(`ghcr.io/diderisoft/bot-bottle-fc-guest`, by digest).",
            "`vmlinux` in the firecracker cache"),
     EnvVar("BOT_BOTTLE_FC_DROPBEAR", "user",
-           "firecracker: the static dropbear put in every guest as its SSH server.",
+           "firecracker: the static dropbear put in every guest as its SSH server. Unset, "
+           "downloaded as the kernel is.",
            "`dropbear` in the firecracker cache"),
     EnvVar("BOT_BOTTLE_FC_POOL_SIZE", "user",
            "firecracker: TAP pool slots, so concurrent bottles. Must match the "

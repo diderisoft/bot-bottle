@@ -18,7 +18,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from bot_bottle.cli.commands import doctor
 from bot_bottle.control.client import OrchestratorEndpoint
@@ -358,3 +358,35 @@ class NextBlock(unittest.TestCase):
         with patch("sys.stdout", new_callable=io.StringIO) as out:
             doctor._print_next("run `bot-bottle`")  # pylint: disable=protected-access
         self.assertEqual("next: run `bot-bottle`\n", out.getvalue())
+
+
+class AppleContainer(unittest.TestCase):
+    def test_a_mac_without_it_is_told_to_install_it_before_anything_else(self) -> None:
+        from bot_bottle.cli.commands import doctor
+        found = doctor.BackendFindings(selected="docker", selected_ready=True, any_ready=True,
+                                       wants_apple_container=True)
+        with patch.object(doctor.runner, "running", return_value=None):
+            step = doctor.next_step(found)
+        self.assertIn(doctor.APPLE_CONTAINER_RELEASES, step)
+        block = doctor.next_block(step, color=False)
+        self.assertIn("Next, install Apple Container", block)
+        self.assertIn("\n    container system start\n", block)
+
+    def test_only_a_mac_whose_backend_wasnt_chosen_wants_it(self) -> None:
+        from bot_bottle.cli.commands import doctor
+        settings = MagicMock()
+        settings.operation.backend = ""
+        with patch.object(doctor, "settings_from_env", return_value=settings), \
+                patch.object(doctor, "selected_backend", return_value="docker"), \
+                patch.object(doctor, "known_backend_names", return_value=[]), \
+                patch.object(doctor.sys, "platform", "darwin"), \
+                redirect_stdout(io.StringIO()) as out:
+            self.assertTrue(doctor._check_backends().wants_apple_container)  # pylint: disable=protected-access
+        self.assertIn("Apple Container isn't installed", out.getvalue())
+        settings.operation.backend = "docker"
+        with patch.object(doctor, "settings_from_env", return_value=settings), \
+                patch.object(doctor, "selected_backend", return_value="docker"), \
+                patch.object(doctor, "known_backend_names", return_value=[]), \
+                patch.object(doctor.sys, "platform", "darwin"), \
+                redirect_stdout(io.StringIO()):
+            self.assertFalse(doctor._check_backends().wants_apple_container)  # pylint: disable=protected-access

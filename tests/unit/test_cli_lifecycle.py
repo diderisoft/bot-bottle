@@ -315,7 +315,7 @@ class TestBootstrap(unittest.TestCase):
                 redirect_stderr(err):
             self.assertEqual(3, bootstrap.cmd_bootstrap([]))
         self.assertEqual(["install"], [c[0] for c in calls])
-        self.assertIn("run `bot-bottle bootstrap` again", err.getvalue())
+        self.assertIn("then run:\n\n    bot-bottle bootstrap\n", err.getvalue())
 
 
 if __name__ == "__main__":

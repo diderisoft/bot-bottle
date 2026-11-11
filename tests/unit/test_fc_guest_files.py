@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from bot_bottle import publish_fc_guest
 from bot_bottle.backend.firecracker import guest_files
 from bot_bottle.contract.hostctl import InfraSettings
 from bot_bottle.oci_registry import OciRegistryError, Registry
@@ -103,12 +104,12 @@ class Publish(unittest.TestCase):
             kernel, dropbear = Path(tmp) / "vmlinux", Path(tmp) / "dropbear"
             kernel.write_bytes(b"k")
             dropbear.write_bytes(b"d")
-            with patch.object(guest_files, "Registry"), \
+            with patch.object(publish_fc_guest, "Registry"), \
                     patch("sys.stdout", new_callable=io.StringIO) as out:
-                self.assertEqual(0, guest_files.main(["x86_64", str(kernel), str(dropbear)]))
+                self.assertEqual(0, publish_fc_guest.main(["x86_64", str(kernel), str(dropbear)]))
             self.assertIn(f"x86_64 vmlinux {_digest(b'k')}", out.getvalue())
             with patch("sys.stderr", new_callable=io.StringIO):
-                self.assertEqual(2, guest_files.main([]))
+                self.assertEqual(2, publish_fc_guest.main([]))
 
 
 if __name__ == "__main__":

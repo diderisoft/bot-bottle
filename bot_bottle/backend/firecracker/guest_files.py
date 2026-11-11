@@ -2,7 +2,7 @@
 from GHCR by digest when the default cache doesn't have them.
 
 They're published once per architecture (`publish`, run by the
-`publish-fc-guest` workflow) as one OCI artifact, `bot-bottle-fc-guest:<arch>`,
+`publish-fc-guest` workflow, through `bot_bottle.publish_fc_guest`) as one OCI artifact, `bot-bottle-fc-guest:<arch>`,
 and pinned here by digest, so a host only ever writes the bytes this release
 names. A path set with BOT_BOTTLE_FC_KERNEL or BOT_BOTTLE_FC_DROPBEAR is the
 operator's own and is never fetched or replaced.
@@ -106,28 +106,5 @@ def publish(registry: Registry, arch: str, files: dict[str, Path]) -> dict[str, 
     return {name: sha256_file(path) for name, path in files.items()}
 
 
-def main(argv: list[str] | None = None) -> int:
-    """`python -m bot_bottle.backend.firecracker.guest_files <arch> <vmlinux> <dropbear>`:
-    publish, with BOT_BOTTLE_INFRA_ARTIFACT_USER/_TOKEN as the registry's
-    credentials."""
-    import sys  # pylint: disable=import-outside-toplevel
-    args = sys.argv[1:] if argv is None else argv
-    if len(args) != 3:
-        sys.stderr.write("usage: python -m bot_bottle.backend.firecracker.guest_files "
-                         "<arch> <vmlinux> <dropbear>\n")
-        return 2
-    arch, kernel, dropbear = args
-    registry = Registry(REGISTRY, user=os.environ.get("BOT_BOTTLE_INFRA_ARTIFACT_USER", ""),
-                        token=os.environ.get("BOT_BOTTLE_INFRA_ARTIFACT_TOKEN", ""))
-    pinned = publish(registry, arch, {KERNEL: Path(kernel), DROPBEAR: Path(dropbear)})
-    for name, digest in sorted(pinned.items()):
-        print(f"{arch} {name} {digest}")
-    return 0
-
-
-__all__ = ["DIGESTS", "GuestFilesError", "REPO", "ensure", "main", "manifest", "missing",
-           "publish"]
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+__all__ = ["DIGESTS", "DROPBEAR", "GuestFilesError", "KERNEL", "REGISTRY", "REPO", "ensure",
+           "manifest", "missing", "publish"]

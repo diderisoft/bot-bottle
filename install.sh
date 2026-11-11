@@ -596,6 +596,12 @@ fi
 # prints the sudo step for you to run. doctor ends with the one next step for
 # this host (`next: ...`), whatever it found.
 say "setting up this host ('${BOT_BOTTLE_BIN} bootstrap')"
+# Setup may download tools (Linux: firecracker) into BIN_DIR, and the host
+# controller's service keeps this PATH: have it there either way.
+case ":${PATH}:" in
+    *":${BIN_DIR}:"*) ;;
+    *) PATH="${BIN_DIR}:${PATH}"; export PATH ;;
+esac
 if [ -t 1 ] && (: </dev/tty) 2>/dev/null; then
     "${BOT_BOTTLE_BIN}" bootstrap </dev/tty && done=yes || done=no
 else

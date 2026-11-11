@@ -20,5 +20,5 @@ jobs:
           BOT_BOTTLE_INFRA_ARTIFACT_TOKEN: ${{ secrets.GHCR_TOKEN }}
           BOT_BOTTLE_INFRA_ARTIFACT_USER: ${{ vars.GHCR_USER || 'didericis' }}
         run: |
-          python3 -m bot_bottle.backend.firecracker.guest_files "$(uname -m)" \
+          python3 -m bot_bottle.publish_fc_guest "$(uname -m)" \
             /var/cache/bot-bottle-fc/vmlinux /var/cache/bot-bottle-fc/dropbear
