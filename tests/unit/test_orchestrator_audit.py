@@ -193,9 +193,9 @@ class ApiEvents(unittest.TestCase):  # pylint: disable=too-many-public-methods
         resolved = self.sink.sent_now[-1]
         self.assertEqual("decision.resolved", resolved.type)
         # Recorded before applying, it still carries the change applied.
-        assert resolved.payload is not None
-        self.assertIn("+  - host: g.com", resolved.payload["diff"])
-        self.assertIn("-routes: []", resolved.payload["diff"])
+        assert resolved.untrusted is not None
+        self.assertIn("+  - host: g.com", resolved.untrusted["diff"])
+        self.assertIn("-routes: []", resolved.untrusted["diff"])
 
     def test_an_applied_decision_carries_its_policy_diff(self) -> None:
         rec = self.register("amber-fox", "best_effort")
@@ -208,8 +208,11 @@ class ApiEvents(unittest.TestCase):  # pylint: disable=too-many-public-methods
             "proposal_id": body["proposal_id"], "bottle_slug": rec.bottle_id,
             "decision": "modify", "final_file": final})[0])
         resolved = self.sink.events[-1]
-        assert resolved.payload is not None
-        diff = resolved.payload["diff"]
+        assert resolved.payload is not None and resolved.untrusted is not None
+        # The diff's text is what the agent proposed: a claim, which an
+        # export of a restricted record drops. Its digest isn't.
+        self.assertNotIn("diff", resolved.payload)
+        diff = resolved.untrusted["diff"]
         self.assertEqual(render_diff("routes: []\n", final, label="egress",
                                      before_title="current", after_label="proposed"), diff)
         self.assertEqual((fingerprint(diff), False),
@@ -227,6 +230,7 @@ class ApiEvents(unittest.TestCase):  # pylint: disable=too-many-public-methods
         payload = self.sink.events[-1].payload
         assert payload is not None
         self.assertNotIn("diff", payload)
+        self.assertIsNone(self.sink.events[-1].untrusted)
 
     def test_no_supervise_audit_table(self) -> None:
         with sqlite3.connect(self.store.db_path) as db:
@@ -311,10 +315,10 @@ class DiffCap(unittest.TestCase):
         sink = _Sink()
         OrchestratorAudit(sink).resolved(bottle_id="b", proposal_id="p", decision="approve",
                                          notes="", diff="x" * (DIFF_MAX_BYTES + 10))
-        payload = sink.events[-1].payload
-        assert payload is not None
+        event = sink.events[-1]
+        assert event.payload is not None and event.untrusted is not None
         self.assertEqual((DIFF_MAX_BYTES, True),
-                         (len(payload["diff"]), payload["diff_truncated"]))
+                         (len(event.untrusted["diff"]), event.payload["diff_truncated"]))
 
     def test_no_diff_no_fields(self) -> None:
         self.assertEqual({}, capped_diff(""))

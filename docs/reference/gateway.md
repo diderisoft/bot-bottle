@@ -363,9 +363,9 @@ proposal id (`correlation_id`).
 | Field of `decision.resolved` | Holds |
 |---|---|
 | `operator_action`, `operator_notes` | the answer and its notes |
-| `diff` | the policy change applied, as a unified diff. Only when an approval or modification changes egress policy. |
+| `untrusted.diff` | the policy change applied, as a unified diff. Only when an approval or modification changes egress policy. It carries the agent's proposed text, so it's a claim, and an export of a restricted record drops it. |
 | `diff_truncated` | true when the diff was cut at 64 KiB |
-| `diff_digest` | the whole diff's SHA-256 prefix, so a cut diff can still be matched |
+| `diff_digest` | the whole diff's SHA-256 prefix, so a cut or dropped diff can still be matched |
 
 For a bottle with `audit.delivery: required`, the record is written before
 the change is applied. A decision that can't be recorded isn't applied.

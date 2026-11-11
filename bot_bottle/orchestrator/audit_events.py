@@ -43,6 +43,15 @@ def capped_diff(diff: str) -> dict[str, Any]:
             "diff_digest": fingerprint(diff), "diff_truncated": cut}
 
 
+def _split_diff(diff: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """`capped_diff` as (payload fields, untrusted fields). The diff's text
+    carries what the agent proposed, so it goes under `untrusted`, which an
+    export of a restricted record drops; its digest and cut flag don't."""
+    fields = capped_diff(diff)
+    text = fields.pop("diff", None)
+    return fields, ({"diff": text} if text is not None else None)
+
+
 # Registry id -> slug, remembered so late events still get a slug.
 _SLUG_CACHE_LIMIT = 10_000
 
@@ -141,15 +150,17 @@ class OrchestratorAudit:
                  notes: str, diff: str = "", required: bool = False) -> bool:
         """The operator's answer: approve or modify allows, reject blocks.
         `diff` is the policy change it applies, rendered; the journal is its
-        only record (`capped_diff`). `required` records before applying;
-        False means it wasn't recorded."""
+        only record (`capped_diff`), its text under `untrusted`. `required`
+        records before applying; False means it wasn't recorded."""
+        diff_fields, untrusted = _split_diff(diff)
         return self._record(required=required, type="decision.resolved", actor="role:cli",
                      action=f"supervise.{decision}",
                      outcome="blocked" if decision == "reject" else "allowed",
                      sensitivity="security", resource=bottle_id, bottle=bottle_id,
                      bottled_agent=bottle_id, correlation_id=proposal_id,
                      payload={"proposal_id": proposal_id, "operator_action": decision,
-                              "operator_notes": notes, **capped_diff(diff)})
+                              "operator_notes": notes, **diff_fields},
+                     untrusted=untrusted)
 
     def answered_late(self, *, bottle_id: str, proposal_id: str, decision: str,
                       notes: str, first: str) -> None:
