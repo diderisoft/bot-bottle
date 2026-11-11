@@ -74,8 +74,8 @@ def _delete(path: Path) -> None:
 
 def open_for_start(db_path: Path | None = None) -> bool:
     """The host controller's start: delete the index DB if it fails its
-    check, then migrate it, dropping any table no index owns. True when it was missing or deleted, so its
-    indexes need a rebuild."""
+    check, then migrate it, dropping any table no index owns. True when it
+    was missing or deleted, so its indexes need a rebuild."""
     path = db_path or index_db_path()
     missing = not path.exists()
     problem = quick_check(path)

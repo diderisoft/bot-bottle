@@ -217,7 +217,8 @@ HOST_SETTINGS = ("audit_delivery", "audit_forward", "firehose", "transcript_rete
                  "audit_retention", "host_budget", "github_app")
 
 
-def _columns(config: HostConfig, name: str) -> dict[str, object]:
+def _columns(  # pylint: disable=too-many-return-statements  # one per setting
+        config: HostConfig, name: str) -> dict[str, object]:
     """The `bot_bottle_config` columns that hold setting `name`, with
     `config`'s values. ValueError for an unknown setting."""
     if name == "audit_delivery":

@@ -149,7 +149,8 @@ def hold_daemon_lock(directory: Path | None = None) -> int:
         holder = os.read(fd, 32).decode(errors="replace").strip()
         os.close(fd)
         raise DaemonLockHeld(
-            f"another host controller (or `host restore-db`) holds {directory / DAEMON_LOCK_FILENAME}"
+            "another host controller (or `host restore-db`) holds "
+            f"{directory / DAEMON_LOCK_FILENAME}"
             + (f" (pid {holder})" if holder.isdigit() else "")) from None
     os.ftruncate(fd, 0)
     os.pwrite(fd, f"{os.getpid()}\n".encode(), 0)
@@ -343,7 +344,8 @@ def _stop(state: HostControlState) -> None:
 
 
 __all__ = [
-    "ConfirmRestart", "DAEMON_LOCK_FILENAME", "DaemonLockHeld", "HostControlError", "HostControlState", "StaleHostControllerError",
-    "restart", "stale_message", "cli_token", "control_socket_path", "ensure_running",
-    "daemon_lock", "hold_daemon_lock", "lock", "probe", "read_state", "running", "state_dir", "stop", "REFUSED_EXIT_STATUS",
+    "ConfirmRestart", "DAEMON_LOCK_FILENAME", "DaemonLockHeld", "HostControlError",
+    "HostControlState", "StaleHostControllerError", "restart", "stale_message", "cli_token",
+    "control_socket_path", "ensure_running", "daemon_lock", "hold_daemon_lock", "lock", "probe",
+    "read_state", "running", "state_dir", "stop", "REFUSED_EXIT_STATUS",
 ]

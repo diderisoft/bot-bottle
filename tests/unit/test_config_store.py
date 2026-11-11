@@ -140,6 +140,7 @@ class TestConfigStore(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="config-store.") as tmp:
             store = ConfigStore(Path(tmp) / "bot-bottle.db")
             store.migrate()
+            # pylint: disable-next=protected-access
             with mock.patch.object(store, "_set_columns", wraps=store._set_columns) as written:
                 store.set_host_config(HostConfig(audit_delivery="required",
                                                  transcript_retention_days=4),

@@ -446,6 +446,7 @@ class TestRestoreCommand(_HostDb):
         held: list[bool] = []
 
         def restore(backup: Path | None = None) -> host_db.Restored:
+            del backup
             try:
                 os.close(runner.hold_daemon_lock())
                 held.append(False)
