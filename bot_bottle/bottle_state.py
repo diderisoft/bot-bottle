@@ -107,7 +107,9 @@ class BottleMetadata:
 # What may change on a recorded bottled agent (`update_metadata`).
 CHANGEABLE = frozenset({"label", "origin", "agent_id", "parent"})
 # The per-bottled-agent tables its removal clears with it, beside its own.
-_ROWS_OF_A_BOTTLED_AGENT = (("sessions", "id"), ("snapshots", "session"))
+_ROWS_OF_A_BOTTLED_AGENT = (("sessions", "id"), ("snapshots", "session"),
+                            ("run_manifest_versions", "identity"),
+                            ("run_manifest_launches", "identity"))
 
 
 class BottledAgentStore(DbStore):

@@ -1365,14 +1365,16 @@ The console's Manifest tab asks for a running agent's `manifest`. The reply
 shows the agent's manifest versions, what it runs with, and what changed in
 this run.
 
-**Versions.** Each bottled agent has manifest versions, under
-`state/<bottle>/manifest/`.
+**Versions.** Each bottled agent has manifest versions. Each version's
+document is `state/<bottle>/manifest/vNNNN.yaml`. When and why it was written
+is a row of `run_manifest_versions` in the host database.
 
 - Version 1 is its whole bottle chain flattened into one document,
   recorded at launch.
 - A resume adds a version only if the files changed.
-- Each launch and resume also records `launch.json`. It holds every bottle
-  in the chain's fingerprint, and the host's bottle version then.
+- Each launch and resume also records a row of `run_manifest_launches`. It
+  holds every bottle in the chain's fingerprint, and the host's bottle
+  version then.
 - A fingerprint is a SHA-256 of the bottle's full resolution, with
   `extends` merged. It's in a canonical order, so key, route and repo order
   don't count.

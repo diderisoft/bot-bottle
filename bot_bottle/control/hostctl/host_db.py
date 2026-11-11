@@ -32,6 +32,7 @@ from ...lib.config_store import ConfigStore
 from ...lib.db_store import DbStore, connect, drop_unowned, quick_check
 from ...manifest.trust import TrustStore
 from ...paths import host_db_path
+from ...run_manifest import RunManifestStore
 from .audit_forward import ForwardCursors
 from .agent_prefs import AgentPrefsStore
 from .audit_push import AuditPushStore
@@ -62,7 +63,7 @@ def stores(db_path: Path | None = None) -> list[DbStore]:
             PairingStore(path), PasskeyStore(path), BottledAgentStore(path), SessionStore(path),
             AuditPushStore(path),
             AgentPrefsStore(path), TranscriptStore(path), SnapshotStore(path),
-            IsolationPasses(path), InfraStateStore(path)]
+            IsolationPasses(path), InfraStateStore(path), RunManifestStore(path)]
 
 
 def migrate(db_path: Path | None = None) -> list[str]:
