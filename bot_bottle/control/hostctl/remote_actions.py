@@ -766,18 +766,13 @@ async def set_secret(msg: Mapping[str, Any], _running: Mapping[str, str],
     # pylint: disable=import-outside-toplevel
     from ...errors import SecretsFileError
     from ...paths import host_secrets_path
-    from ...secret_source import write_secret
+    from ...secret_source import write_user_secret
     name = _text(msg, "name")
     reply: dict[str, Any] = {"type": "secret_set", "request_id": msg.get("request_id"),
                              "name": name}
     value = _text(msg, "value")
-    # pylint: disable-next=import-outside-toplevel
-    from ...secret_ref import reserved_problem
-    if reserved_problem(name):
-        reply["error"] = reserved_problem(name)
-        return reply
     try:
-        write_secret(host_secrets_path(), name, value)
+        write_user_secret(host_secrets_path(), name, value)  # a reserved name: refused
         log.info(f"remote: set secret {name!r} from the console")
     except SecretsFileError as e:
         reply["error"] = str(e)
