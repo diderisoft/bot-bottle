@@ -40,6 +40,18 @@ git_gate:
       host_key: ssh-ed25519 AAAA...   # pins the upstream host key
 ```
 
+The commit author is set per part. Each part comes from the first of these
+that sets it:
+
+1. the agent's `identity.git`
+2. the bottle's `git_gate.user`
+3. the agent's name. An agent named `claude` gets `claude` and
+   `claude@bot-bottle.invalid`.
+
+So a first commit works in a bottle with no `git_gate`, such as `basic`. A
+repo-local identity in the copied workspace still wins, because git reads it
+before the global one (`agent_provider.git_identity`).
+
 A long-form entry's `url` must be `ssh://user@host[:port]/path`
 (`manifest/git.py`). A one-line grant names no URL. Its forge connection
 decides how git-gate reaches it.

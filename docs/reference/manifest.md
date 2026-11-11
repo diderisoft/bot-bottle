@@ -164,7 +164,7 @@ the line and pick the bottle at launch.
 | `agent_provider.overlay` | layers onto the built-in image ([images](#images)) |
 | `agent_provider.login` | the agent's login ([login](#login)) |
 | `skills` | names of skill directories copied from the host's `~/.claude/skills/<name>/` into the agent |
-| `identity.git` | `{name, email}`: the commit author |
+| `identity.git` | `{name, email}`: the commit author, per part over the bottle's `git_gate.user`. A part neither sets comes from the agent's name ([git-gate.md](git-gate.md#manifest)). |
 | `identity.accounts` | `{<forge host>: <user>}`: which user connected on a forge the agent pushes as |
 
 Claude Code's own fields (`name`, `description`, `model`, `color`, `memory`)

@@ -18,6 +18,7 @@ from bot_bottle.agent_provider import (
     AgentProvider,
     AgentProvisionPlan,
     AgentProviderRuntime,
+    git_identity,
 )
 from bot_bottle.backend import Bottle, BottleSpec, ExecResult
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
@@ -47,6 +48,7 @@ _PROVIDER = _Provider()
 
 
 def _plan(*, git_user: dict | None = None,  # type: ignore
+          agent_git: dict | None = None,  # type: ignore
           git_repos: dict | None = None,  # type: ignore
           copy_cwd: bool = False,
           user_cwd: str = "/tmp/x",
@@ -56,9 +58,12 @@ def _plan(*, git_user: dict | None = None,  # type: ignore
         bottle_json["git_gate"] = {"user": git_user}
     if git_repos is not None:
         bottle_json.setdefault("git_gate", {})["repos"] = git_repos
+    agent_json: dict = {"skills": [], "prompt": ""}  # type: ignore
+    if agent_git is not None:
+        agent_json["identity"] = {"git": agent_git}
     index = ManifestIndex.from_json_obj({
         "bottles": {"dev": bottle_json},
-        "agents": {"demo": {"skills": [], "prompt": ""}},
+        "agents": {"demo": agent_json},
     })
     manifest = index.load_for_agent("demo", ("dev",))
     spec = BottleSpec(
@@ -126,10 +131,13 @@ class TestProvisionGitUser(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def test_noop_when_no_git_user(self):
+    def test_no_git_user_commits_as_the_agent(self):
         bottle = _make_bottle()
         _PROVIDER.provision_git(bottle, _plan(stage_dir=self.stage))
-        self.assertEqual([], _git_config_exec_calls(bottle))
+        calls = _git_config_exec_calls(bottle)
+        self.assertEqual(2, len(calls))
+        self.assertIn("user.name demo", calls[0][0])
+        self.assertIn("user.email demo@bot-bottle.invalid", calls[1][0])
 
     def test_repairs_git_xdg_directory_for_runtime_user(self):
         bottle = _make_bottle()
@@ -204,26 +212,54 @@ class TestProvisionGitUser(unittest.TestCase):
         self.assertIn("user.email", calls[1][0])
         self.assertIn("eric@dideric.is", calls[1][0])
 
-    def test_name_only_sets_only_name(self):
+    def test_name_only_fills_the_email_from_the_agent(self):
         plan = _plan(git_user={"name": "Bot"}, stage_dir=self.stage)
         bottle = _make_bottle()
         _PROVIDER.provision_git(bottle, plan)
         calls = _git_config_exec_calls(bottle)
-        self.assertEqual(1, len(calls))
-        self.assertIn("user.name", calls[0][0])
-        self.assertIn("Bot", calls[0][0])
+        self.assertEqual(2, len(calls))
+        self.assertIn("user.name Bot", calls[0][0])
+        self.assertIn("user.email demo@bot-bottle.invalid", calls[1][0])
 
-    def test_email_only_sets_only_email(self):
+    def test_email_only_fills_the_name_from_the_agent(self):
         plan = _plan(
             git_user={"email": "bot@example.com"}, stage_dir=self.stage,
         )
         bottle = _make_bottle()
         _PROVIDER.provision_git(bottle, plan)
         calls = _git_config_exec_calls(bottle)
-        self.assertEqual(1, len(calls))
-        self.assertIn("user.email", calls[0][0])
-        self.assertIn("bot@example.com", calls[0][0])
+        self.assertEqual(2, len(calls))
+        self.assertIn("user.name demo", calls[0][0])
+        self.assertIn("user.email bot@example.com", calls[1][0])
 
+    def test_agent_identity_wins_per_part_over_the_bottle(self):
+        plan = _plan(
+            git_user={"name": "Bottle", "email": "bottle@example.com"},
+            agent_git={"name": "Agent"}, stage_dir=self.stage,
+        )
+        bottle = _make_bottle()
+        _PROVIDER.provision_git(bottle, plan)
+        calls = _git_config_exec_calls(bottle)
+        self.assertIn("user.name Agent", calls[0][0])
+        self.assertIn("user.email bottle@example.com", calls[1][0])
+
+    def test_fallback_fills_only_what_agent_and_bottle_both_leave_unset(self):
+        plan = _plan(agent_git={"email": "agent@example.com"}, stage_dir=self.stage)
+        bottle = _make_bottle()
+        _PROVIDER.provision_git(bottle, plan)
+        calls = _git_config_exec_calls(bottle)
+        self.assertEqual(2, len(calls))
+        self.assertIn("user.name demo", calls[0][0])
+        self.assertIn("user.email agent@example.com", calls[1][0])
+
+
+class TestGitIdentity(unittest.TestCase):
+    def test_an_agent_name_that_isnt_an_email_local_part_is_made_one(self):
+        self.assertEqual(("my agent!", "my-agent@bot-bottle.invalid"),
+                         git_identity("", "", "my agent!"))
+
+    def test_no_agent_name_still_gives_an_identity(self):
+        self.assertEqual(("agent", "agent@bot-bottle.invalid"), git_identity("", "", ""))
 
 if __name__ == "__main__":
     unittest.main()

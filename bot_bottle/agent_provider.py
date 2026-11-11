@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import os
+import re
 import shlex
 import tempfile
 from abc import ABC, abstractmethod
@@ -36,6 +37,17 @@ BUILTIN_HARNESSES = frozenset({PROVIDER_CLAUDE, PROVIDER_CODEX, PROVIDER_PI})
 # Hosts egress injects the host ChatGPT bearer on when Codex
 # `forward_host_credentials` is enabled.
 CODEX_HOST_CREDENTIAL_HOSTS = ("api.openai.com", "chatgpt.com")
+
+
+def git_identity(name: str, email: str, agent: str) -> tuple[str, str]:
+    """The bottle's global git identity: the agent's `identity.git` over its
+    bottle's `git_gate.user`, with each part that both leave unset filled
+    from the agent's name, so a first commit works in a bottle that sets
+    none (`basic`). A repo-local identity in the workspace still wins: git
+    reads it before the global one."""
+    local = re.sub(r"[^A-Za-z0-9._-]+", "-", agent).strip("-.") or "agent"
+    return name or agent or "agent", email or f"{local}@bot-bottle.invalid"
+
 
 PromptMode = Literal[
     "append_file",
@@ -395,20 +407,16 @@ class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plug
 
         self.provision_commit_hooks(bottle, plan)
 
-        gu = manifest_bottle.git_user
-        if not gu.is_empty():
-            if gu.name:
-                info(f"git config --global user.name = {gu.name!r}")
-                bottle.exec(
-                    f"git config --global user.name {shlex.quote(gu.name)}",
-                    user="node",
-                )
-            if gu.email:
-                info(f"git config --global user.email = {gu.email!r}")
-                bottle.exec(
-                    f"git config --global user.email {shlex.quote(gu.email)}",
-                    user="node",
-                )
+        # `git_user` is already the agent's `identity.git` overlaid per field
+        # on the bottle's `git_gate.user` (manifest/index.py).
+        name, email = git_identity(
+            manifest_bottle.git_user.name, manifest_bottle.git_user.email,
+            plan.spec.agent_name,
+        )
+        info(f"git config --global user.name = {name!r}")
+        bottle.exec(f"git config --global user.name {shlex.quote(name)}", user="node")
+        info(f"git config --global user.email = {email!r}")
+        bottle.exec(f"git config --global user.email {shlex.quote(email)}", user="node")
 
     def provision_commit_hooks(self, bottle: "Bottle", plan: "BottlePlan") -> None:
         """Install the git hooks that add the `Bot-Bottle` trailer (and the
