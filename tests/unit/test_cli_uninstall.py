@@ -146,6 +146,29 @@ class TestUninstall(_Uninstall):
         self.assertFalse((self.home / ".cache" / "bot-bottle").exists())
         self.assertTrue((self.root / "agents").exists())  # kept
 
+    def test_old_versions_files_go_and_everything_else_stays(self) -> None:
+        old = [self.root / "console.json", self.root / "hostctl" / "state.json",
+               self.root / "state" / "b1" / "metadata.json",
+               self.root / "transcripts" / "s" / "a" / "x.meta.json",
+               self.home / ".bot-bottle-envs" / "dev" / "env.json"]
+        kept = [self.root / "secrets", self.root / "state" / "b1" / "claude-settings.json",
+                self.root / "transcripts" / "s" / "a" / "x.jsonl",
+                self.root / "hostctl" / "hostctl.log"]
+        for path in [*old, *kept]:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x")
+        (self.root / "audit-push").mkdir()
+        (self.root / "audit-push" / "agent.json").write_text("{}")
+        old.append(self.root / "audit-push")
+        code, out = self.run_cmd([])
+        self.assertEqual(0, code)
+        self.assertIn("6 file(s) older versions kept", out)
+        for path in old:
+            self.assertFalse(path.exists(), path)
+            self.assertIn(f"removed {path}", out)
+        for path in kept:
+            self.assertTrue(path.exists(), path)
+
     def test_purge_also_deletes_the_data_and_frozen_bottles(self) -> None:
         code, out = self.run_cmd(["--purge"])
         self.assertEqual(0, code)

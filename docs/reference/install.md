@@ -434,6 +434,8 @@ It:
    the pf firewall. `--keep-backend` skips this step.
 3. removes `~/.cache/bot-bottle` and the package itself (the installer's venv
    and shim, or `pipx`/`uv tool uninstall`).
+4. removes the files older versions left in each environment that nothing
+   reads now, printing each one. It does this without `--purge` too.
 
 Base images it pulled to build on, such as `python` or `node`, stay.
 

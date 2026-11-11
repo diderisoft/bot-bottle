@@ -16,7 +16,9 @@ Shows what it will remove, asks, then:
      pipx/uv if that's how it was installed.
 
 ~/.bot-bottle (your agents and bottles, secrets, the audit journal, frozen
-bottles, pairing keys) is kept unless --purge. --force stops running
+bottles, pairing keys) is kept unless --purge. What older versions kept
+there and nothing reads now (old JSON state files) goes either way, in each
+environment. --force stops running
 bottles; without it, uninstall refuses while any run.
 """
 
@@ -34,10 +36,11 @@ from typing import Any
 from ...backend import BottleBackend, get_bottle_backend, has_backend, known_backend_names
 from ...backend.host_resources import HostResource
 from ...control.hostctl import runner, service_unit
-from ...environment import ENV_VAR, active_name, is_live
+from ...environment import ENV_VAR, active_name, env_dir, is_live, named
 from ...paths import bot_bottle_root
 from ...util import read_tty_line
 from ..constants import PROG
+from ..old_state import old_files, remove_old_files
 from ..settings import settings_from_env
 
 # What `--purge` deletes, for the confirmation.
@@ -55,6 +58,11 @@ class _Package:
 
 def _cache_dir() -> Path:
     return Path.home() / ".cache" / "bot-bottle"
+
+
+def _roots() -> list[Path]:
+    """Every environment's state root: the live one and each named one."""
+    return [bot_bottle_root(), *(env_dir(name) for name in named())]
 
 
 def _shims(venv: Path) -> list[Path]:
@@ -118,6 +126,9 @@ def _plan(resources: dict[str, list[HostResource]], package: _Package, ns: argpa
     if _cache_dir().exists():
         _say(f"  - {_cache_dir()} (downloaded artifacts and caches)")
     _say(f"  - the package, installed with {package.how}")
+    old = sum(len(old_files(r)) for r in _roots())
+    if old and not ns.purge:
+        _say(f"  - {old} file(s) older versions kept that nothing reads now")
     root = bot_bottle_root()
     if ns.purge:
         _say(f"  - {root}: {_DATA}")
@@ -223,6 +234,9 @@ def cmd_uninstall(argv: list[str]) -> int:  # pylint: disable=too-many-branches
         shutil.rmtree(_cache_dir(), ignore_errors=True)
         _say(f"removed {_cache_dir()}")
     ok = _remove_package(package)
+    for root in _roots():
+        for path in remove_old_files(root):
+            _say(f"removed {path} (an older version's, unused)")
     if ns.purge and bot_bottle_root().exists():
         shutil.rmtree(bot_bottle_root(), ignore_errors=True)
         _say(f"removed {bot_bottle_root()}")
