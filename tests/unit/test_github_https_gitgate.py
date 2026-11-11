@@ -25,7 +25,7 @@ from bot_bottle.control.git_gate_render import (
 from bot_bottle.control.hostctl.github_git_tokens import GitTokenRenewer
 from bot_bottle.git_gate import live_grant
 from bot_bottle.git_gate.provision import (
-    _write_upstreams_snapshot, load_upstreams_snapshot, mints_key,
+    save_upstreams, saved_upstreams, mints_key,
 )
 from bot_bottle.manifest import ManifestBottle
 from bot_bottle.manifest.document import repo_document
@@ -33,6 +33,7 @@ from bot_bottle.manifest.forges import ManifestForge, forges_raw, resolve_forge
 from bot_bottle.manifest.git import ManifestGitEntry, ManifestKeyConfig, git_transport
 from bot_bottle.manifest.util import ManifestError
 from tests.unit._forges import GITHUB, connected
+from tests.unit import use_bottle_root
 
 TOKEN = "ghu_" + "x" * 36
 HTTPS = GitGateUpstream(name="design", upstream_url="https://github.com/o/design.git",
@@ -108,10 +109,11 @@ class TestTransport(unittest.TestCase):
                          (u.transport, u.upstream_url, u.identity_file, u.known_host_key,
                           u.writable, u.token_secret))
 
-    def test_the_snapshot_keeps_it(self) -> None:
+    def test_the_host_db_keeps_it(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            _write_upstreams_snapshot(Path(d), (HTTPS,))
-            (u,) = load_upstreams_snapshot(Path(d))
+            self.addCleanup(use_bottle_root(Path(d)))
+            save_upstreams("s", (HTTPS,))
+            (u,) = saved_upstreams("s")
         self.assertEqual(("https", "GITHUB_COM_TOKEN"), (u.transport, u.token_secret))
 
 
@@ -239,12 +241,16 @@ class TestPreReceive(unittest.TestCase):
 
 
 class TestLiveGrant(unittest.TestCase):
+    def setUp(self) -> None:
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))  # pylint: disable=consider-using-with
+        self.addCleanup(use_bottle_root(root))
+
     def test_an_https_grant_mints_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as d, \
                 mock.patch.object(live_grant, "_provision_dynamic_key") as mint:
             up = live_grant.provision_live(_entry(), slug="s", stage_dir=Path(d),
                                            secrets=mock.Mock(), grant="github.com/o/design")
-            (saved,) = load_upstreams_snapshot(Path(d))
+            (saved,) = saved_upstreams("s")
         mint.assert_not_called()
         self.assertEqual(("https", "https"), (up.transport, saved.transport))
 
@@ -254,19 +260,17 @@ class TestLiveGrant(unittest.TestCase):
                                       secrets=mock.Mock(), grant="github.com/o/design")
             live_grant.provision_live(_entry(), slug="s", stage_dir=Path(d),
                                       secrets=mock.Mock(), grant="github.com/o/design:write")
-            (saved,) = load_upstreams_snapshot(Path(d))
+            (saved,) = saved_upstreams("s")
         self.assertTrue(saved.writable)
 
 
 class TestRenewer(unittest.TestCase):
     def _renewer(self, tokens: list[str], transport: Any) -> tuple[GitTokenRenewer, Path]:
         stage = Path(self.enterContext(tempfile.TemporaryDirectory()))  # pylint: disable=consider-using-with
-        _write_upstreams_snapshot(stage, (HTTPS,))
+        self.addCleanup(use_bottle_root(stage))
+        save_upstreams("s1", (HTTPS,))
         bottles = SimpleNamespace(sessions=SimpleNamespace(
             records=lambda: [SimpleNamespace(id="s1")]))
-        self.enterContext(mock.patch(
-            "bot_bottle.control.hostctl.github_git_tokens.git_gate_state_dir",
-            return_value=stage))
         self.enterContext(mock.patch(
             "bot_bottle.control.hostctl.github_git_tokens.adoption.read",
             return_value=SimpleNamespace(registry_id="r1")))

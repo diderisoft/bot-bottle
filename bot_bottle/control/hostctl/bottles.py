@@ -686,7 +686,7 @@ class BottleService:
             log.warn(f"bottle {record.id}: teardown failed: {e}; run `bot-bottle cleanup bots`")
         try:
             state = git_gate_state_dir(record.id)
-            revoke_deploy_keys(adopted.deploy_keys + live_grant_refs(state), state,
+            revoke_deploy_keys(adopted.deploy_keys + live_grant_refs(record.id), state,
                                FileSecrets(self._secrets_file or host_secrets_path()))
         except Exception as e:  # pylint: disable=broad-exception-caught  # report, don't crash
             log.warn(f"bottle {record.id}: couldn't revoke its deploy keys: {e}; "

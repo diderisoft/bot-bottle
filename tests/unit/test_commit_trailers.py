@@ -16,9 +16,11 @@ import threading
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import patch
 
+from bot_bottle.backend.launch_common import provision_git_gate_keys
 from bot_bottle.backend.resolve_common import launch_trailer, with_commit_hooks_env
 from bot_bottle.contract.git_trailers import (
     TRAILER_KEY, trailer_mode, trailer_value,
@@ -34,6 +36,7 @@ from bot_bottle.git_gate.service import (
 from bot_bottle.manifest import ManifestIndex
 from bot_bottle.manifest.document import bottle_document
 from bot_bottle.manifest.util import ManifestError
+from tests.unit import use_bottle_root
 from tests.unit.test_docker_provision_git_user import _PROVIDER, _make_bottle, _plan
 from tests.unit.test_git_gate_audit import _Orchestrator
 
@@ -120,13 +123,18 @@ class TestLaunchWiring(unittest.TestCase):
                           "GIT_CONFIG_VALUE_2": "/home/node/.config/git/bot-bottle-hooks"},
                          env)
 
-    def test_prepare_saves_settings_for_reprovision(self):
+    def test_the_launch_saves_settings_for_reprovision(self):
         with tempfile.TemporaryDirectory() as tmp:
+            self.addCleanup(use_bottle_root(Path(tmp)))
             stage = Path(tmp)
             bottle = _bottles({"dev": {"git_gate": {"trailers": "warn"}}}).bottles["dev"]
             plan = GitGate().prepare(bottle, "demo-abc12", stage, trailer=VALUE)
             self.assertEqual((VALUE, "warn"), (plan.trailer, plan.trailer_mode))
-            self.assertEqual((VALUE, "warn"), load_trailer_settings(stage))
+            # Preparing (a dry run too) keeps nothing; the launch does, repos or not.
+            self.assertEqual(("", ""), load_trailer_settings("demo-abc12"))
+            provision_git_gate_keys(cast(Any, SimpleNamespace(slug="demo-abc12",
+                                                              git_gate_plan=plan)))
+            self.assertEqual((VALUE, "warn"), load_trailer_settings("demo-abc12"))
             default = GitGate().prepare(_bottles({"dev": {}}).bottles["dev"], "s", stage,
                                         trailer=VALUE)
             self.assertEqual("require", default.trailer_mode)

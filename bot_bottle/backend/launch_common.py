@@ -15,6 +15,7 @@ from ..contract.supervise import SUPERVISE_PORT
 from ..egress import Egress, EgressPlan
 from ..env import is_secret_entry
 from ..git_gate import GitGate, GitGatePlan
+from ..git_gate.service import save_trailer_settings
 from ..lib.log import warn
 from .base import BottlePlan, BottleSpec
 
@@ -29,6 +30,7 @@ class LaunchTeardown:
         self._label = label
         self._reraise = reraise
         self._bottle = plan.manifest.bottle
+        self._identity = plan.slug
         self._git_gate_dir = git_gate_state_dir(plan.slug)
         self._secrets = plan.secrets
 
@@ -39,7 +41,8 @@ class LaunchTeardown:
         except BaseException as exc:  # noqa: W0718 - teardown must continue
             failure = exc
             warn(f"teardown failed for {self._label}: {exc!r}")
-        GitGate().revoke_provisioned_keys(self._bottle, self._git_gate_dir, self._secrets)
+        GitGate().revoke_provisioned_keys(self._bottle, self._identity, self._git_gate_dir,
+                                          self._secrets)
         if failure is not None and self._reraise:
             raise failure
 
@@ -61,9 +64,12 @@ def keeps_guest(slug: str, preserve_container: bool) -> bool:
 
 
 def provision_git_gate_keys(plan: BottlePlan) -> GitGatePlan:
-    """Mint the bottle's gitea deploy keys, before its repos go into the
-    gateway."""
-    if not plan.git_gate_plan.upstreams:
+    """Keep the bottle's trailer check for a re-provision, and mint its forge
+    deploy keys, before its repos go into the gateway. Even a bottle without
+    repos keeps it: one granted while it runs gets the same check."""
+    gate = plan.git_gate_plan
+    save_trailer_settings(plan.slug, gate.trailer, gate.trailer_mode)
+    if not gate.upstreams:
         return plan.git_gate_plan
     return GitGate().provision_dynamic_keys(
         plan.manifest.bottle, plan.git_gate_plan, git_gate_state_dir(plan.slug),

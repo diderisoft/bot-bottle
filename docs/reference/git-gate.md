@@ -533,27 +533,26 @@ git rebase --rebase-merges --exec 'git -c trailer.ifexists=replace commit --amen
 
 Like other `git_gate` fields it merges through `extends`, a child's winning.
 
-The value and mode are kept in the bottle's git-gate state dir, as
-`trailer.json`, for re-provisioning. They're set on each bare repo as
-`git-gate.trailer` and `git-gate.trailers`.
+The launch keeps the value and mode for re-provisioning; a dry run keeps
+nothing. They're set on each bare repo as `git-gate.trailer` and
+`git-gate.trailers`.
 
 ### Re-provisioning state
 
-The host keeps what it needs to provision a bottle's git-gate again in the
-bottle's git-gate state dir, `~/.bot-bottle/state/<identity>/git-gate/`.
+What the host needs to provision a bottle's git-gate again is rows of the
+host database, keyed by the bottled agent's identity (`git_gate/state.py`).
 
-| File | Holds |
+| Table | Holds |
 |---|---|
-| `upstreams.json` | each repo's upstream, transport, key file and token name |
-| `live-grants.json` | the deploy keys granted while it runs, for teardown to revoke |
-| `trailer.json` | the trailer's value and mode |
+| `git_gate_upstreams` | each repo's upstream, transport, key file, known_hosts file and token name |
+| `git_gate_live_grants` | the deploy keys granted while it runs, for teardown to revoke |
+| `git_gate_trailers` | the trailer's value and mode |
 
-- Only the host controller reads them. The gateway gets keys, repos and
-  config pushed into it, so it can't take them from the orchestrator's
-  registry.
-- They're host state kept as JSON, a known exception to
-  [ADR 0020](../decisions/0020-where-host-state-lives.md) until they move to
-  `bot-bottle.db`.
+- Only the host controller reads and writes them. The gateway gets keys,
+  repos and config pushed into it.
+- They go with the bottled agent's other rows when it's removed.
+- The keys themselves stay files in the bottle's git-gate state dir,
+  `~/.bot-bottle/state/<identity>/git-gate/`.
 
 ### The baseline
 
@@ -650,9 +649,8 @@ The forge is this host's connection to it, as the user the session's agent
 pushes as. That's its `identity.accounts`, else the forge's default. A forge the host
 hasn't connected can't be granted.
 
-1. The grant records the key in the bottle's git-gate state dir, as
-   `live-grants.json`.
-2. It mints the key and adds the repo to the upstream snapshot.
+1. The grant records the key as a row of `git_gate_live_grants`.
+2. It mints the key and adds the repo to `git_gate_upstreams`.
 3. Re-provisioning the gateway then creates the repo there.
 4. `git config --add` in the guest adds its `insteadOf` rewrite.
 

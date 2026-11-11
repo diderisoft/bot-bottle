@@ -115,9 +115,9 @@ def _run_elements(identity: str, policy: str | None, declared: dict[str, Any],
     the agent provider's own routes (its login; not for copying)."""
     # pylint: disable=import-outside-toplevel,protected-access
     from ...approvals import manifest_route
-    from ...bottle_state import egress_state_dir, git_gate_state_dir
+    from ...bottle_state import egress_state_dir
     from ...gateway.egress.schema import load_config
-    from ...git_gate.provision import live_grant_refs, load_upstreams_snapshot
+    from ...git_gate.provision import live_grant_refs, saved_upstreams
     from .manifest_view import _approved_routes
     out: list[tuple[str, str, str, str, str, bool]] = []
     approved = {r.host for r in _approved_routes(identity, policy)}
@@ -137,9 +137,8 @@ def _run_elements(identity: str, policy: str | None, declared: dict[str, Any],
             out.append((key, "egress", route.host,
                         ("credential · " if route.token_env else "")
                         + _route_detail(manifest_route(route)), "agent provider", True))
-    stage = git_gate_state_dir(identity)
-    upstreams = {u.name: u for u in load_upstreams_snapshot(stage)}
-    for ref in live_grant_refs(stage):
+    upstreams = {u.name: u for u in saved_upstreams(identity)}
+    for ref in live_grant_refs(identity):
         upstream = upstreams.get(ref.name)
         if upstream is not None:
             access = "write" if upstream.writable else "read-only"
@@ -277,8 +276,7 @@ def _run_value(identity: str, policy: str | None, key: str) -> Any:
     """This run's raw value for the element `key`, as a bottle file holds it."""
     # pylint: disable=import-outside-toplevel,protected-access
     from ...approvals import manifest_route
-    from ...bottle_state import git_gate_state_dir
-    from ...git_gate.provision import live_grant_refs, load_upstreams_snapshot
+    from ...git_gate.provision import live_grant_refs, saved_upstreams
     from .manifest_view import GRANTLESS, _approved_routes
     kind, name = key.split(":", 1)
     if kind == "egress":
@@ -286,9 +284,8 @@ def _run_value(identity: str, policy: str | None, key: str) -> Any:
         if route is not None and not (route.auth_scheme or route.token_env):
             return manifest_route(route)
     if kind == "repo":
-        stage = git_gate_state_dir(identity)
-        ref = next((r for r in live_grant_refs(stage) if r.name == name), None)
-        upstream = next((u for u in load_upstreams_snapshot(stage) if u.name == name), None)
+        ref = next((r for r in live_grant_refs(identity) if r.name == name), None)
+        upstream = next((u for u in saved_upstreams(identity) if u.name == name), None)
         if ref is not None and upstream is not None:
             if not ref.grant:
                 raise ManifestViewError(f"{name} was {GRANTLESS}")

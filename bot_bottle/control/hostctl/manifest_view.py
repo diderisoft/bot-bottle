@@ -75,8 +75,7 @@ def _with_run_changes(identity: str, policy: str | None, frontmatter: dict[str, 
     `only` limits it to those change keys (`egress:<host>`, `repo:<name>`)."""
     # pylint: disable=import-outside-toplevel
     from ...approvals import with_grant, with_routes
-    from ...bottle_state import git_gate_state_dir
-    from ...git_gate.provision import live_grant_refs, load_upstreams_snapshot
+    from ...git_gate.provision import live_grant_refs, saved_upstreams
     from ...manifest.document import forge_document
     from .repo_grants import find_forge
     fm = frontmatter
@@ -94,9 +93,8 @@ def _with_run_changes(identity: str, policy: str | None, frontmatter: dict[str, 
         if after != fm:
             fm = after
             changes.append({"kind": "egress", "what": route.host, "key": key})
-    stage = git_gate_state_dir(identity)
-    upstreams = {u.name: u for u in load_upstreams_snapshot(stage)}
-    for ref in live_grant_refs(stage):
+    upstreams = {u.name: u for u in saved_upstreams(identity)}
+    for ref in live_grant_refs(identity):
         key = f"repo:{ref.name}"
         if only is not None and key not in only:
             continue
@@ -249,8 +247,7 @@ def current_manifest(identity: str, bottle: Any, policy: str | None,
     import hashlib
     from ... import run_manifest
     from ...approvals import with_routes
-    from ...bottle_state import git_gate_state_dir
-    from ...git_gate.provision import live_grant_refs, load_upstreams_snapshot
+    from ...git_gate.provision import live_grant_refs, saved_upstreams
     from ...manifest.document import bottle_document
     last = run_manifest.latest(identity)
     if last is None:
@@ -274,9 +271,8 @@ def current_manifest(identity: str, bottle: Any, policy: str | None,
         if after != doc:
             doc = after
             changes.append({"kind": "egress", "what": route.host, "key": key})
-    stage = git_gate_state_dir(identity)
-    upstreams = {u.name: u for u in load_upstreams_snapshot(stage)}
-    for ref in live_grant_refs(stage):
+    upstreams = {u.name: u for u in saved_upstreams(identity)}
+    for ref in live_grant_refs(identity):
         upstream = upstreams.get(ref.name)
         if upstream is None or (only is not None and f"repo:{ref.name}" not in only):
             continue
@@ -409,7 +405,7 @@ def remove_from_run(identity: str, policy: str | None, keys: list[str], *,
             guest = backend.attach_adopted(identity, adopted)
             transport = backend.infra_service().gateway().provisioning_transport()
             for name in repos:
-                revoke_live(name, stage_dir=git_gate_state_dir(identity),
+                revoke_live(name, identity=identity, stage_dir=git_gate_state_dir(identity),
                             secrets=FileSecrets(host_secrets_path()), transport=transport,
                             registry_id=adopted.registry_id, bottle=guest,
                             launched=tuple(r.name for r in adopted.deploy_keys))

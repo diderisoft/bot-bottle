@@ -90,7 +90,6 @@ def proposed_alias(identity: str, grant: str) -> str:
     (`skills-gitea`), numbered if that's taken too. "" when the name is free,
     the grant names its own alias, or the bottle can't be asked."""
     # pylint: disable=import-outside-toplevel
-    from ...bottle_state import git_gate_state_dir
     from ...git_gate.live_grant import grant_entry, name_taken
     from ...manifest.forges import parse_grant, split_grant_alias
     try:
@@ -99,7 +98,7 @@ def proposed_alias(identity: str, grant: str) -> str:
         forge = find_forge(identity, forge_name)
         if alias or forge is None:
             return ""
-        names = name_taken(grant_entry(bare, forge), git_gate_state_dir(identity))
+        names = name_taken(grant_entry(bare, forge), identity)
     except Exception as e:  # pylint: disable=broad-exception-caught  # granting says why
         log.debug(f"bottle {identity}: no alias for {grant}: {type(e).__name__}: {e}")
         return ""

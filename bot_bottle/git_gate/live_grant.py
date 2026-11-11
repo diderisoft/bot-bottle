@@ -1,9 +1,10 @@
 """Granting a repo to a bottle that's already running (PRD 0105): mint its
-deploy key, add it to the bottle's upstream snapshot (which re-provisioning the
+deploy key, add it to the bottle's upstreams (which re-provisioning the
 gateway reads), and point the agent's git at the gate for it.
 
-The refs of keys minted this way are kept in the bottle's git-gate state dir
-(`live-grants.json`), so teardown revokes them with the launch's own.
+The refs of keys minted this way are rows of the host DB's
+`git_gate_live_grants` (`state`), so teardown revokes them with the launch's
+own.
 """
 
 from __future__ import annotations
@@ -24,9 +25,10 @@ from ..manifest import ManifestBottle
 from ..manifest.forges import ManifestForge, parse_grant, split_grant_alias
 from ..manifest.git import ManifestGitEntry
 from ..secret_source import SecretSource
+from . import state as _state
 from .provision import (
-    DeployKeyRef, _provision_dynamic_key, _write_upstreams_snapshot, forget_live_grant,
-    live_grant_refs, load_upstreams_snapshot, record_live_grant, revoke_key,
+    DeployKeyRef, _provision_dynamic_key, forget_live_grant, live_grant_refs,
+    record_live_grant, revoke_key, saved_upstreams,
 )
 
 if TYPE_CHECKING:
@@ -50,10 +52,10 @@ def grant_entry(grant: str, forge: ManifestForge) -> ManifestGitEntry:
     return ManifestGitEntry.from_repos_entry("(live grant)", alias or repo, raw)
 
 
-def name_taken(entry: ManifestGitEntry, stage_dir: Path) -> set[str] | None:
-    """The bottle's repo names when a different repo already has `entry`'s
-    (a grant then needs an alias), else None."""
-    upstreams = load_upstreams_snapshot(stage_dir)
+def name_taken(entry: ManifestGitEntry, identity: str) -> set[str] | None:
+    """The bottled agent `identity`'s repo names when a different repo
+    already has `entry`'s (a grant then needs an alias), else None."""
+    upstreams = saved_upstreams(identity)
     current = next((u for u in upstreams if u.name == entry.Name), None)
     if current is None:
         return None
@@ -65,13 +67,13 @@ def name_taken(entry: ManifestGitEntry, stage_dir: Path) -> set[str] | None:
 
 def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
                    secrets: SecretSource, grant: str = "") -> GitGateUpstream:
-    """Mint `entry`'s deploy key and add it to the bottle's upstream snapshot.
-    The ref is recorded before minting, so a key can't outlive the bottle
-    unrevoked. Re-provisioning the gateway then picks the repo up.
+    """Mint `entry`'s deploy key and add it to the upstreams of the bottled
+    agent `slug`. The ref is recorded before minting, so a key can't outlive
+    the bottle unrevoked. Re-provisioning the gateway then picks the repo up.
 
     Granting a repo the bottle has with other access (read-only to write, or
     back) replaces it: the new key is minted, then the old one revoked."""
-    upstreams = load_upstreams_snapshot(stage_dir)
+    upstreams = saved_upstreams(slug)
     current = next((u for u in upstreams if u.name == entry.Name), None)
     writable = not entry.Key.read_only
     # The bottle's protect_default_branch, as its other repos have it.
@@ -88,8 +90,8 @@ def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
     if current is not None and current.writable == writable:
         # Already granted with this access: nothing to mint; just record the
         # grant, so it can be kept.
-        if grant and any(r.name == entry.Name for r in live_grant_refs(stage_dir)):
-            record_live_grant(stage_dir, ref)
+        if grant and any(r.name == entry.Name for r in live_grant_refs(slug)):
+            record_live_grant(slug, ref)
             return current
         raise GrantError(f"the bottle already has {entry.Name} "
                          f"({'write' if writable else 'read-only'})")
@@ -98,9 +100,8 @@ def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
     stage_dir.mkdir(parents=True, exist_ok=True)
     if upstream.transport == "https":
         # Over HTTPS with the user's token (ADR 0014): no key to mint or revoke.
-        record_live_grant(stage_dir, ref)
-        _write_upstreams_snapshot(
-            stage_dir, (*(u for u in upstreams if u.name != entry.Name), upstream))
+        record_live_grant(slug, ref)
+        _state.store().put_upstream(slug, upstream)
         return upstream
     if not entry.KnownHostKey:
         raise GrantError(f"the forge at {entry.UpstreamHost} has no SSH host key pinned; "
@@ -113,12 +114,11 @@ def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
         upstream = dataclasses.replace(upstream, known_hosts_file=known_hosts)
     id_file = stage_dir / f"{entry.Name}-deploy-key-id"
     old_key = id_file.read_text().strip() if current is not None and id_file.is_file() else ""
-    record_live_grant(stage_dir, ref)
+    record_live_grant(slug, ref)
     suffix = "" if current is None else (":write" if writable else ":read")
     identity_file = _provision_dynamic_key(entry, slug, stage_dir, secrets, title_suffix=suffix)
     upstream = dataclasses.replace(upstream, identity_file=identity_file)
-    _write_upstreams_snapshot(
-        stage_dir, (*(u for u in upstreams if u.name != entry.Name), upstream))
+    _state.store().put_upstream(slug, upstream)
     if old_key:
         revoke_key(ref, old_key, secrets)
     return upstream
@@ -171,13 +171,14 @@ def point_agent_at_gate(bottle: "Bottle", entry: ManifestGitEntry) -> None:
                          f"{(added.stderr or added.stdout or '').strip()}")
 
 
-def revoke_live(name: str, *, stage_dir: Path, secrets: SecretSource, transport: Any,
-                registry_id: str, bottle: "Bottle", launched: tuple[str, ...]) -> None:
-    """Take the repo `name`, granted while the bottle runs, away again: revoke
-    its deploy key, drop it from the snapshot and the gateway, and remove the
-    agent's rewrite for it. A repo the bottle launched with (`launched`) stays:
-    its launch key isn't this run's to revoke."""
-    ref = next((r for r in live_grant_refs(stage_dir) if r.name == name), None)
+def revoke_live(name: str, *, identity: str, stage_dir: Path, secrets: SecretSource,
+                transport: Any, registry_id: str, bottle: "Bottle",
+                launched: tuple[str, ...]) -> None:
+    """Take the repo `name`, granted while the bottled agent `identity` runs,
+    away again: revoke its deploy key, drop it from its upstreams and the
+    gateway, and remove the agent's rewrite for it. A repo the bottle launched
+    with (`launched`) stays: its launch key isn't this run's to revoke."""
+    ref = next((r for r in live_grant_refs(identity) if r.name == name), None)
     if ref is None:
         raise GrantError(f"{name} wasn't granted while the bottle runs")
     if name in launched:
@@ -186,9 +187,8 @@ def revoke_live(name: str, *, stage_dir: Path, secrets: SecretSource, transport:
     id_file = stage_dir / f"{name}-deploy-key-id"
     if id_file.is_file():
         revoke_key(ref, id_file.read_text().strip(), secrets)
-    _write_upstreams_snapshot(
-        stage_dir, tuple(u for u in load_upstreams_snapshot(stage_dir) if u.name != name))
-    forget_live_grant(stage_dir, name)
+    _state.store().drop_upstream(identity, name)
+    forget_live_grant(identity, name)
     for suffix in ("-key", "-deploy-key-id", "-known_hosts"):
         (stage_dir / f"{name}{suffix}").unlink(missing_ok=True)
     transport.exec(["rm", "-rf", f"/git/{registry_id}/{name}.git",

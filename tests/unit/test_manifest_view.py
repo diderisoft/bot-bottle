@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from bot_bottle.bottle_state import BottleMetadata, git_gate_state_dir, write_metadata
+from bot_bottle.bottle_state import BottleMetadata, write_metadata
 from bot_bottle.control.hostctl import manifest_view, remote_actions
 from bot_bottle import forge_connections
 from tests.unit._forges import record
@@ -201,9 +201,7 @@ class TestRunningBottle(TestAgentManifest):
     def grant(self, name: str, grant: str) -> None:
         from bot_bottle.git_gate.provision import (  # pylint: disable=import-outside-toplevel
             DeployKeyRef, record_live_grant)
-        stage = git_gate_state_dir("s1")
-        stage.mkdir(parents=True, exist_ok=True)
-        record_live_grant(stage, DeployKeyRef(name, "T", "", "h", f"o/{name}.git", grant=grant))
+        record_live_grant("s1", DeployKeyRef(name, "T", "", "h", f"o/{name}.git", grant=grant))
 
     def test_this_runs_changes_against_the_file(self) -> None:
         self.grant("app", "gitea.example.com/o/app:write")
@@ -236,9 +234,9 @@ class TestRunningBottle(TestAgentManifest):
         from bot_bottle.control.git_gate_render import (  # pylint: disable=import-outside-toplevel
             GitGateUpstream)
         from bot_bottle.git_gate.provision import (  # pylint: disable=import-outside-toplevel
-            _write_upstreams_snapshot)
+            save_upstreams)
         self.grant("app", "gitea.example.com/o/app")
-        _write_upstreams_snapshot(git_gate_state_dir("s1"), (GitGateUpstream(
+        save_upstreams("s1", (GitGateUpstream(
             name="app", upstream_url="ssh://git@h/o/app.git", upstream_host="h",
             upstream_port="", identity_file="", known_host_key="ssh-ed25519 K",
             writable=False),))
@@ -260,10 +258,10 @@ class TestRunningBottle(TestAgentManifest):
     def test_a_grant_shows_as_its_grant_with_its_forge(self) -> None:
         # pylint: disable=import-outside-toplevel
         from bot_bottle.control.git_gate_render import GitGateUpstream
-        from bot_bottle.git_gate.provision import _write_upstreams_snapshot
+        from bot_bottle.git_gate.provision import save_upstreams
         from bot_bottle.manifest.forges import ManifestForge
         self.grant("app", "gitea.example.com/o/app:write")
-        _write_upstreams_snapshot(git_gate_state_dir("s1"), (GitGateUpstream(
+        save_upstreams("s1", (GitGateUpstream(
             name="app", upstream_url="ssh://git@h/o/app.git", upstream_host="h",
             upstream_port="", identity_file="", known_host_key="", writable=True),))
         forge = ManifestForge("gitea.example.com", "gitea", "https://gitea.example.com",
@@ -364,8 +362,8 @@ class TestRunningBottle(TestAgentManifest):
         from bot_bottle.control.git_gate_render import (  # pylint: disable=import-outside-toplevel
             GitGateUpstream)
         from bot_bottle.git_gate.provision import (  # pylint: disable=import-outside-toplevel
-            _write_upstreams_snapshot)
-        _write_upstreams_snapshot(git_gate_state_dir("s1"), (GitGateUpstream(
+            save_upstreams)
+        save_upstreams("s1", (GitGateUpstream(
             name="app", upstream_url="ssh://git@h/o/app.git", upstream_host="h",
             upstream_port="", identity_file="", known_host_key="", writable=True),))
         with mock.patch.object(manifest_view, "_live_policy", return_value=LIVE_POLICY):
@@ -384,9 +382,9 @@ class TestRunningBottle(TestAgentManifest):
         # pylint: disable=import-outside-toplevel
         from bot_bottle.approvals import KeepTarget
         from bot_bottle.control.git_gate_render import GitGateUpstream
-        from bot_bottle.git_gate.provision import _write_upstreams_snapshot
+        from bot_bottle.git_gate.provision import save_upstreams
         self.grant("app", "")
-        _write_upstreams_snapshot(git_gate_state_dir("s1"), (GitGateUpstream(
+        save_upstreams("s1", (GitGateUpstream(
             name="app", upstream_url="ssh://git@h/o/app.git", upstream_host="h",
             upstream_port="", identity_file="", known_host_key="ssh-ed25519 K",
             writable=False),))

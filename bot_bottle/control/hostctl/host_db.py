@@ -27,6 +27,7 @@ from ...backend.firecracker.workspace_disk import WorkspaceDiskStore
 from ...backend.isolation_probe import IsolationPasses
 from ...bottle_state import BottledAgentStore
 from ...forge_connections import ForgeStore
+from ...git_gate.state import GitGateStore
 from ...infra_state import InfraStateStore
 from ...lib import log
 from ...lib.config_store import ConfigStore
@@ -65,7 +66,7 @@ def stores(db_path: Path | None = None) -> list[DbStore]:
             AuditPushStore(path),
             AgentPrefsStore(path), TranscriptStore(path), SnapshotStore(path),
             IsolationPasses(path), InfraStateStore(path), RunManifestStore(path),
-            WorkspaceDiskStore(path)]
+            WorkspaceDiskStore(path), GitGateStore(path)]
 
 
 def migrate(db_path: Path | None = None) -> list[str]:

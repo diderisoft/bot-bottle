@@ -10,8 +10,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from bot_bottle.bottle_state import BottleMetadata, egress_state_dir, git_gate_state_dir, \
-    write_metadata
+from bot_bottle.bottle_state import BottleMetadata, egress_state_dir, write_metadata
 from bot_bottle.contract.yaml_subset import parse_frontmatter
 from bot_bottle.control.hostctl import manifest_elements, manifest_view
 from bot_bottle.forge_connections import ForgeConnection, ForgeUser
@@ -127,13 +126,11 @@ class TestTransfer(_Chain):
         from bot_bottle.control.git_gate_render import (  # pylint: disable=import-outside-toplevel
             GitGateUpstream)
         from bot_bottle.git_gate.provision import (  # pylint: disable=import-outside-toplevel
-            DeployKeyRef, _write_upstreams_snapshot, record_live_grant)
-        stage = git_gate_state_dir("s1")
-        stage.mkdir(parents=True)
-        record_live_grant(stage, DeployKeyRef("app", "GITEA_TOKEN", "", "h", "acme/app.git",
+            DeployKeyRef, save_upstreams, record_live_grant)
+        record_live_grant("s1", DeployKeyRef("app", "GITEA_TOKEN", "", "h", "acme/app.git",
                                               grant="gitea.example.com/acme/app"))
-        record_live_grant(stage, DeployKeyRef("lib", "T", "", "h", "acme/lib.git"))
-        _write_upstreams_snapshot(stage, tuple(GitGateUpstream(
+        record_live_grant("s1", DeployKeyRef("lib", "T", "", "h", "acme/lib.git"))
+        save_upstreams("s1", tuple(GitGateUpstream(
             name=n, upstream_url=f"ssh://git@h/acme/{n}.git", upstream_host="h",
             upstream_port="", identity_file="", known_host_key="", writable=True)
             for n in ("app", "lib")))

@@ -109,7 +109,10 @@ CHANGEABLE = frozenset({"label", "origin", "agent_id", "parent"})
 # The per-bottled-agent tables its removal clears with it, beside its own.
 _ROWS_OF_A_BOTTLED_AGENT = (("sessions", "id"), ("snapshots", "session"),
                             ("run_manifest_versions", "identity"),
-                            ("run_manifest_launches", "identity"))
+                            ("run_manifest_launches", "identity"),
+                            ("git_gate_upstreams", "identity"),
+                            ("git_gate_live_grants", "identity"),
+                            ("git_gate_trailers", "identity"))
 
 
 class BottledAgentStore(DbStore):

@@ -20,6 +20,7 @@ from bot_bottle.cli.commands import forge as forge_cmd
 from bot_bottle.cli.commands import start as start_cmd
 from bot_bottle.control.hostctl import runner
 from bot_bottle.forge_connections import ForgeConnection, ForgeStore, ForgeUser
+from bot_bottle.git_gate.state import GitGateStore
 from bot_bottle.lib.db_store import DbStore
 from bot_bottle.manifest import ManifestIndex
 from bot_bottle.paths import host_db_path
@@ -83,6 +84,14 @@ class TestStartDryRun(_AsTheCli):
         self.assertEqual(1, len(written))
         # Recorded through the host controller, then removed through it.
         self.assertEqual([], bottle_state.all_metadata())
+        # Its git-gate trailer is the launch's to keep: a dry run keeps none.
+        trailer: list[tuple[str, str]] = []
+        reader = threading.Thread(target=lambda: trailer.append(
+            GitGateStore(host_db_path()).trailer(written[0])))
+        reader.start()
+        reader.join()
+        self.assertEqual([("", "")], trailer)
+        self.assertFalse(bottle_state.bottle_state_dir(written[0]).exists())
 
 
 class TestCleanup(_AsTheCli):

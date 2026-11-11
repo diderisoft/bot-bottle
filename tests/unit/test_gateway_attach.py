@@ -18,8 +18,13 @@ from bot_bottle.backend.gateway_attach import (
     AttachPolicy, GatewayAttachError, GatewayAttacher, RunningBottle,
 )
 from bot_bottle.backend.util import ROOT_EXEC_PATH
+from bot_bottle.bottle_state import git_gate_state_dir
 from bot_bottle.control.gateway import GatewayError
 from bot_bottle.control.client import OrchestratorClientError
+from bot_bottle.control.git_gate_render import GitGateUpstream
+from bot_bottle.git_gate.provision import save_upstreams
+from bot_bottle.git_gate.service import save_trailer_settings
+from tests.unit import use_bottle_root
 
 _A = RunningBottle(ref="ref-a", slug="a", source_ip="10.0.0.2")
 _B = RunningBottle(ref="ref-b", slug="b", source_ip="10.0.0.3")
@@ -141,28 +146,30 @@ class ReattachRunningBottles(unittest.TestCase):
 class ReprovisionGitGate(unittest.TestCase):
     transport = MagicMock()
 
-    def test_uses_the_snapshot_and_renders_current_hooks(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            state = Path(tmp)
-            (state / "upstreams.json").write_text(json.dumps([
-                {"name": "repo", "upstream_url": "ssh://git@forge/o/r.git",
-                 "upstream_host": "forge", "upstream_port": "22",
-                 "identity_file": str(state / "repo-key"), "known_host_key": "ssh-ed25519 AAA"},
-            ]))
-            (state / "git_gate_pre_receive.sh").write_text("stale hook")
-            with patch.object(ga, "git_gate_state_dir", return_value=state), \
-                 patch.object(ga, "provision_git_gate") as provision:
-                ga.reprovision_git_gate(self.transport, "id-a", "a")
-            hook_text = (state / "git_gate_pre_receive.sh").read_text()
+    def setUp(self) -> None:
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))  # pylint: disable=consider-using-with
+        self.addCleanup(use_bottle_root(root))
+
+    def test_uses_the_host_db_and_renders_current_hooks(self) -> None:
+        state = git_gate_state_dir("a")
+        state.mkdir(parents=True)
+        save_upstreams("a", (GitGateUpstream(
+            name="repo", upstream_url="ssh://git@forge/o/r.git", upstream_host="forge",
+            upstream_port="22", identity_file=str(state / "repo-key"),
+            known_host_key="ssh-ed25519 AAA"),))
+        save_trailer_settings("a", "dev/a", "warn")
+        (state / "git_gate_pre_receive.sh").write_text("stale hook")
+        with patch.object(ga, "provision_git_gate") as provision:
+            ga.reprovision_git_gate(self.transport, "id-a", "a")
+        hook_text = (state / "git_gate_pre_receive.sh").read_text()
         transport, bottle_id, plan = provision.call_args.args
         self.assertEqual((self.transport, "id-a"), (transport, bottle_id))
         self.assertEqual(str(state / "repo-key"), plan.upstreams[0].identity_file)
+        self.assertEqual(("dev/a", "warn"), (plan.trailer, plan.trailer_mode))
         self.assertNotEqual("stale hook", hook_text)  # rendered from current code
 
-    def test_no_snapshot_means_no_git_upstreams(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, \
-             patch.object(ga, "git_gate_state_dir", return_value=Path(tmp)), \
-             patch.object(ga, "provision_git_gate") as provision:
+    def test_no_rows_means_no_git_upstreams(self) -> None:
+        with patch.object(ga, "provision_git_gate") as provision:
             ga.reprovision_git_gate(self.transport, "id-a", "a")
         provision.assert_not_called()
 

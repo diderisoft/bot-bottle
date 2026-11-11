@@ -27,7 +27,7 @@ from bot_bottle.backend.macos_container import launch as mac_launch
 from bot_bottle.contract.hostctl import Settings
 from bot_bottle.control.hostctl import sessions
 from bot_bottle.control.hostctl.bottles import BottleService
-from bot_bottle.git_gate.provision import DeployKeyRef
+from bot_bottle.git_gate.provision import DeployKeyRef, record_live_grant
 from . import use_bottle_root
 
 _KEY = DeployKeyRef(name="app", forge_token_env="GITEA_TOKEN", api_url="",
@@ -119,12 +119,15 @@ class TestFinishAdopted(_Root):
     def test_saves_work_tears_down_and_revokes_keys(self) -> None:
         _bottled("b1")
         adoption.write("b1", _RECORD)
+        live = DeployKeyRef("lib", "GITEA_TOKEN", "", "h", "o/lib.git", grant="h/o/lib")
+        record_live_grant("b1", live)
         with mock.patch("bot_bottle.control.hostctl.bottles._save_work") as save, \
              mock.patch("bot_bottle.git_gate.provision.revoke_deploy_keys") as revoke:
             self._finish()
         self.assertEqual(["open b1 bot-bottle-b1", "teardown"], self.events)
         save.assert_called_once_with(self.bottle, _RECORD.workspace, "b1")
-        self.assertEqual((_KEY,), revoke.call_args.args[0])
+        # The launch's keys, and those its host DB rows say were granted since.
+        self.assertEqual((_KEY, live), revoke.call_args.args[0])
         # Keys come from the secrets file only; request secrets aren't kept.
         self.assertEqual("FileSecrets", type(revoke.call_args.args[2]).__name__)
 
