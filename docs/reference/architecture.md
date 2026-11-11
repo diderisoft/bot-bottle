@@ -317,8 +317,10 @@ fields:
   it ([host-controller.md](host-controller.md#after-a-daemon-restart)).
 - Removing a bottled agent deletes its state dir, its snapshots and its rows
   (`bottled_agents`, `sessions`, `snapshots`) in one call to the host
-  controller. Listings and `cleanup bots` read the rows, never the
-  directories.
+  controller. Listings read the rows, never the directories.
+- `cleanup` removes a bottled agent whose bottle isn't live, unless it's kept
+  for resume. It also removes one that records no backend, and a state dir
+  no row records, which nothing can resume.
 
 ### Image caches
 

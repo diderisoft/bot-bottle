@@ -303,10 +303,15 @@ def console_agent_id(identity: str) -> str:
     return current.agent_id
 
 
+def state_root() -> Path:
+    """Where every bottled agent's state dir is."""
+    return bot_bottle_root() / _STATE_SUBDIR
+
+
 def bottle_state_dir(identity: str) -> Path:
     """The bottle's state dir. Created lazily by writers; readers tolerate
     absence."""
-    return bot_bottle_root() / _STATE_SUBDIR / identity
+    return state_root() / identity
 
 
 def per_bottle_dockerfile_path(identity: str) -> Path:
@@ -465,6 +470,7 @@ __all__ = [
     "bottle_identity",
     "globalize_slug",
     "bottle_state_dir",
+    "state_root",
     "clear_preserve_marker",
     "committed_image_path",
     "committed_rootfs_path",

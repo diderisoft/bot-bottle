@@ -3,8 +3,9 @@ backend.
 
 A bottled agent is reaped when its bottle isn't live in any backend, it isn't
 preserved, and the backend it records was listed (so whether it's live is
-known). What exists is what the host DB records, not what directories there
-are; reaping one deletes its state dir and its rows together."""
+known), or it records no backend. A state dir no row records is reaped
+unless its bottle is live; reaping one deletes its state dir and its rows
+together."""
 
 from __future__ import annotations
 
@@ -36,9 +37,25 @@ class TestOrphans(unittest.TestCase):
     def test_nothing_recorded_returns_empty(self):
         self.assertEqual([], orphans(set(), _ALL))
 
-    def test_a_state_dir_without_a_row_is_not_one(self):
+    def test_a_state_dir_without_a_row_is_one_unless_live(self):
+        # Nothing can resume it without a row, preserved or not.
         bottle_state.write_per_bottle_dockerfile("stray", "FROM x\n")
-        self.assertEqual([], orphans(set(), _ALL))
+        bottle_state.write_per_bottle_dockerfile("kept-stray", "FROM x\n")
+        bottle_state.mark_preserved("kept-stray")
+        bottle_state.write_per_bottle_dockerfile("running", "FROM x\n")
+        self.assertEqual(["kept-stray", "stray"], orphans({"running"}, _ALL))
+        # With no backend listed, whether it's live isn't known.
+        self.assertEqual([], orphans(set(), set()))
+
+    def test_one_recording_no_backend_is_a_candidate(self):
+        _state("nowhere-1", "")
+        self.assertEqual(["nowhere-1"], orphans(set(), {"docker"}))
+        self.assertEqual([], orphans({"nowhere-1"}, {"docker"}))
+
+    def test_cleanup_removes_a_state_dir_without_a_row(self):
+        bottle_state.write_per_bottle_dockerfile("stray", "FROM x\n")
+        cleanup_state(StateCleanupPlan(("stray",)), Settings())
+        self.assertFalse(bottle_state.bottle_state_dir("stray").exists())
 
     def test_one_with_nothing_live_and_no_preserve_is_an_orphan(self):
         _state("solo-aaa")
