@@ -518,7 +518,8 @@ class TestDaemonLock(_Root):
             with mock.patch.object(daemon, "LogRotator") as rotator, \
                     mock.patch.object(daemon.host_db, "open_for_start") as opened, \
                     redirect_stderr(io.StringIO()) as err:
-                self.assertEqual(runner.REFUSED_EXIT_STATUS, daemon.main())
+                # Another is running: nothing failed, so nothing restarts it.
+                self.assertEqual(0, daemon.main())
         finally:
             os.close(fd)
             os.chdir(cwd)

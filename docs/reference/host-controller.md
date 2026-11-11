@@ -24,8 +24,9 @@ python -m bot_bottle.control.hostctl
   without asking ([Host database](#host-database)).
 - The CLI starts the daemon under a lock, so concurrent CLIs start only one.
 - The daemon holds `~/.bot-bottle/hostctl/daemon.lock` (`flock`) for its
-  whole life. A second one for the same root exits at once (status 78),
-  before it touches the log, the host database or the control socket.
+  whole life. A second one for the same root exits at once with status 0,
+  before it touches the log, the host database or the control socket. Nothing
+  failed, so no service manager restarts it.
 - It logs to `~/.bot-bottle/hostctl/hostctl.log`, whichever of the CLI,
   systemd or launchd started it. At 16 MiB the daemon moves it to
   `hostctl.log.1` and opens a fresh one, keeping 3 older files.
@@ -79,6 +80,10 @@ roles, `orchestrator` and `gateway`.
 
 `bot-bottle install` can add a launchd LaunchAgent or a `systemd --user`
 unit. A crash is restarted. A clean exit is not.
+
+- A refusal to start (status 78, a corrupt host database) isn't restarted by
+  systemd (`RestartPreventExitStatus`).
+- launchd retries it, at most once a minute (`ThrottleInterval`).
 
 When the CLI finds no daemon answering, it has the service manager restart
 the unit (`systemctl --user restart`, `launchctl kickstart -k`). A unit that
@@ -551,7 +556,7 @@ bot-bottle host restore-db --yes      # without asking first
 
 | When | What happens |
 |---|---|
-| It starts | `PRAGMA quick_check` on the file. On a failure it exits (status 78), naming the newest backup and when it was taken. Its systemd unit doesn't restart it. |
+| It starts | `PRAGMA quick_check` on the file. On a failure it exits (status 78), naming the newest backup and when it was taken. Its systemd unit doesn't restart it, and launchd retries at most once a minute. |
 | It starts, and the check passes | It migrates the file. Any table no host store owns is dropped, such as an older version's audit index or, on Docker, the orchestrator's old tables. |
 | It answers on its control socket, and `index.db` is missing or fails the same check | In the background, it deletes `index.db` and rebuilds it from the journal. Audit queries and the prune wait for the check. `index.db` has no backups. |
 | It has migrated, and every hour after | If the newest backup is a day old, or there is none, a new one: a `VACUUM INTO` copy in `~/.bot-bottle/db/backups/` (directory 0700, files 0600). It keeps the newest 3. |

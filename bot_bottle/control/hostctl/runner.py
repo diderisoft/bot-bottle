@@ -32,7 +32,9 @@ CONTROL_SOCKET_FILENAME = "control.sock"
 # for one root, and by `host restore-db` while it replaces the host DB.
 DAEMON_LOCK_FILENAME = "daemon.lock"
 # The daemon's exit status when it refuses to start (a host DB that fails its
-# check, `host_db.py`). Its service unit doesn't restart it.
+# check, `host_db.py`). Its systemd unit doesn't restart it, and launchd waits
+# `service_unit.THROTTLE_SECONDS` between tries. Finding another host
+# controller running for the root isn't a failure: that exits 0.
 REFUSED_EXIT_STATUS = 78
 START_TIMEOUT_SECONDS = 15.0
 STOP_TIMEOUT_SECONDS = 10.0
@@ -301,6 +303,8 @@ def _await_state(pid: int | None, timeout: float) -> HostControlState:
             return state
         if pid is not None:
             done, status = os.waitpid(pid, os.WNOHANG)
+            if done == pid and os.waitstatus_to_exitcode(status) == 0 and state is not None:
+                return state  # another host controller was running: that one
             if done == pid:
                 log_path = state_dir() / "hostctl.log"
                 why = _last_line(log_path)

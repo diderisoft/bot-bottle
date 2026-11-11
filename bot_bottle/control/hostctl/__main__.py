@@ -112,8 +112,9 @@ def main() -> int:
     try:
         lifetime = hold_daemon_lock()
     except DaemonLockHeld as e:
+        # Nothing failed: one is running. 0, so no service manager restarts this.
         error(f"not starting: {e}")
-        return host_db.REFUSED_EXIT_STATUS
+        return 0
     # Keeps hostctl.log, which its launcher opened as stdout and stderr, from
     # growing without bound.
     log_rotator = LogRotator(state_dir() / "hostctl.log").start()

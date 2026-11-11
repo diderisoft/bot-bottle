@@ -42,6 +42,8 @@ class TestRendering(_Isolated):
         self.assertEqual("/opt/bin:/usr/bin", plist["EnvironmentVariables"]["PATH"])
         self.assertEqual(str(self.root), plist["EnvironmentVariables"]["BOT_BOTTLE_ROOT"])
         self.assertEqual({"SuccessfulExit": False}, plist["KeepAlive"])
+        # A refusal (exit 78) is retried, but not in a tight loop.
+        self.assertEqual(service_unit.THROTTLE_SECONDS, plist["ThrottleInterval"])
 
     def test_systemd_quotes_and_restarts_only_on_failure(self) -> None:
         unit = service_unit.render_systemd(_SPEC)
