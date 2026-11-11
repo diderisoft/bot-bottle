@@ -8,14 +8,17 @@ starts a chain named after its first record's hash.
 
 from __future__ import annotations
 
+import filecmp
 import json
 import re
+import shutil
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .audit_index import IMPORTED_DIRNAME, AuditIndex, imported_chains
-from .audit_journal import SEGMENT_SUFFIX
+from .audit_journal import SEGMENT_SUFFIX, complete_lines
 from .audit_verify import verify, verify_segments
 
 
@@ -34,19 +37,42 @@ class ImportResult:
     already_imported: bool  # imported before
 
 
-def _records(source: Path) -> list[tuple[dict[str, Any], str]]:
+def _records(source: Path) -> Iterator[tuple[dict[str, Any], str]]:
+    """Each record with its line as stored, one at a time: a segment can be
+    gigabytes."""
+    for raw in complete_lines(source):
+        line = raw.decode("utf-8").rstrip("\n")
+        yield json.loads(line), line
+
+
+@dataclass(frozen=True)
+class _Segment:
+    first: dict[str, Any]
+    host: str
+    segment: str
+    records: int
+
+
+def _read(source: Path) -> _Segment:
     report = verify_segments([source])
     if report.problems:
         raise AuditImportError(
             f"{source.name} doesn't verify: " + "; ".join(str(p) for p in report.problems))
-    lines = source.read_text(encoding="utf-8").splitlines()
-    if not lines:
+    first: dict[str, Any] | None = None
+    hosts: set[str] = set()
+    names: set[str] = set()
+    count = 0
+    for record, _ in _records(source):
+        first = first or record
+        hosts.add(str(record.get("host", "")))
+        names.add(str(record.get("segment", "")))
+        count += 1
+    if first is None:
         raise AuditImportError(f"{source.name} is empty")
-    return [(json.loads(raw), raw) for raw in lines]
+    return _Segment(first, _single(hosts, "host"), _single(names, "segment"), count)
 
 
-def _single(records: list[tuple[dict[str, Any], str]], field: str) -> str:
-    values = {str(r.get(field, "")) for r, _ in records}
+def _single(values: set[str], field: str) -> str:
     if len(values) != 1:
         raise AuditImportError(f"a segment must have one {field}, found {sorted(values)}")
     value = values.pop()
@@ -56,10 +82,8 @@ def _single(records: list[tuple[dict[str, Any], str]], field: str) -> str:
 
 
 def import_segment(journal_dir: Path, source: Path, index: AuditIndex) -> ImportResult:
-    records = _records(source)
-    host = _single(records, "host")
-    segment = _single(records, "segment")
-    first = records[0][0]
+    read = _read(source)
+    host, segment, first = read.host, read.segment, read.first
     host_dir = journal_dir / IMPORTED_DIRNAME / host
 
     chain: Path | None = None
@@ -74,22 +98,21 @@ def import_segment(journal_dir: Path, source: Path, index: AuditIndex) -> Import
         chain = host_dir / str(first["hash"])[:16]
 
     dest = chain / f"{segment}{SEGMENT_SUFFIX}"
-    data = source.read_bytes()
     if dest.exists():
-        if dest.read_bytes() == data:
-            return ImportResult(chain, len(records), extended, already_imported=True)
+        if filecmp.cmp(dest, source, shallow=False):
+            return ImportResult(chain, read.records, extended, already_imported=True)
         raise AuditImportError(f"{dest} already holds a different segment")
     existing = sorted(p.name for p in chain.glob(f"*{SEGMENT_SUFFIX}")) if chain.is_dir() else []
     if existing and dest.name <= existing[-1]:
         raise AuditImportError(
             f"segment {segment} would sort before {existing[-1]} in its chain")
 
-    index.add_records(records)  # all or none; refuses a (host, epoch, seq) clash
+    index.add_records(_records(source))  # all or none; refuses a (host, epoch, seq) clash
     for directory in (journal_dir / IMPORTED_DIRNAME, host_dir, chain):
         directory.mkdir(mode=0o700, exist_ok=True)
-    dest.write_bytes(data)
+    shutil.copyfile(source, dest)
     dest.chmod(0o600)
-    return ImportResult(chain, len(records), extended, already_imported=False)
+    return ImportResult(chain, read.records, extended, already_imported=False)
 
 
 __all__ = ["AuditImportError", "ImportResult", "import_segment"]

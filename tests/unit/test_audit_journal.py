@@ -14,6 +14,7 @@ from bot_bottle.control.hostctl.audit_journal import (
     AuditJournal,
     AuditJournalBusy,
     AuditRedactionError,
+    complete_lines,
     redact,
 )
 
@@ -279,6 +280,15 @@ class Redaction(unittest.TestCase):
             self.assertNotIn(_FAKE_TOKEN, j.path.read_text())
             self.assertEqual(len(j.path.read_text().splitlines()), 2)
             j.close()
+
+
+class CompleteLines(unittest.TestCase):
+    def test_lines_from_an_offset_leave_out_a_torn_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "s.jsonl"
+            path.write_bytes(b"a\nbb\ncc")
+            self.assertEqual(list(complete_lines(path)), [b"a\n", b"bb\n"])
+            self.assertEqual(list(complete_lines(path, 2)), [b"bb\n"])
 
 
 if __name__ == "__main__":
