@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .db_store import PORTABLE, DbStore
+from .db_store import MACHINE_SPECIFIC, MIXED, PORTABLE, DbStore
 from .migrations import TableMigrations
 
 
@@ -250,8 +250,24 @@ def _columns(  # pylint: disable=too-many-return-statements  # one per setting
 class ConfigStore(DbStore):
     """SQLite store for host-side settings."""
 
-    # Host settings travel with the host's owner.
-    TABLES = {"bot_bottle_config": PORTABLE}
+    # Most host settings travel with the host's owner. What's sized to this
+    # machine (its budget, the journal's size cap, how stale its image cache
+    # may get) or runs its programs (exec firehose sinks) doesn't.
+    TABLES = {"bot_bottle_config": MIXED}
+    COLUMNS = {"bot_bottle_config": {
+        "id": PORTABLE,
+        "cached_image_stale_warning_days": MACHINE_SPECIFIC,
+        "audit_delivery": PORTABLE,
+        "audit_forward_url": PORTABLE, "audit_forward_secret": PORTABLE,
+        "audit_forward_format": PORTABLE,
+        "firehose_sinks": MACHINE_SPECIFIC,
+        "firehose_request_bodies": PORTABLE, "firehose_response_bodies": PORTABLE,
+        "firehose_max_body_bytes": PORTABLE,
+        "transcript_retention_days": PORTABLE,
+        "host_max_disk_gb": MACHINE_SPECIFIC, "host_max_memory_gb": MACHINE_SPECIFIC,
+        "github_app_slug": PORTABLE, "github_app_client_id": PORTABLE,
+        "audit_retention_days": PORTABLE, "audit_retention_max_gb": MACHINE_SPECIFIC,
+    }}
 
     def __init__(self, db_path: Path) -> None:
         migrations = TableMigrations("config_store", [

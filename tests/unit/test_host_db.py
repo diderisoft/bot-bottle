@@ -21,7 +21,7 @@ from unittest import mock
 from bot_bottle.cli.commands import host as host_cmd
 from bot_bottle.control.hostctl import host_db, index_db, runner, service_unit
 from bot_bottle.lib.config_store import ConfigStore
-from bot_bottle.lib.db_store import MACHINE_SPECIFIC, PORTABLE, DbStore
+from bot_bottle.lib.db_store import MACHINE_SPECIFIC, MIXED, PORTABLE, DbStore
 from bot_bottle.orchestrator.store.store_manager import StoreManager
 from bot_bottle.paths import host_audit_dir, host_db_path, index_db_path
 
@@ -247,16 +247,33 @@ class TestEveryTableIsMarked(_Root):
                 | _tables(self.base / "i" / "index.db"))
         marks = _marked(stores) | _marked(indexes)
         self.assertEqual(made, set(marks))
-        self.assertTrue(set(marks.values()) <= {PORTABLE, MACHINE_SPECIFIC})
+        self.assertTrue(set(marks.values()) <= {PORTABLE, MACHINE_SPECIFIC, MIXED})
+        # A mixed table marks each of its columns, and nothing else.
+        for store in stores:
+            mixed = {t for t, mark in store.TABLES.items() if mark == MIXED}
+            self.assertEqual(mixed, set(store.COLUMNS), type(store).__name__)
+            for table, columns in store.COLUMNS.items():
+                path = store.db_path
+                with sqlite3.connect(path) as db:
+                    made_columns = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
+                self.assertEqual(made_columns, set(columns), table)
+                self.assertTrue(set(columns.values()) <= {PORTABLE, MACHINE_SPECIFIC}, table)
 
     def test_settings_forges_and_passkeys_are_portable_and_the_rest_machine_specific(
             self) -> None:
         marks = _marked([*host_db.stores(self.base / "host.db"),
                          *StoreManager(self.base / "registry.db").stores()])
         marks |= _marked(index_db.stores(self.base / "index.db"))
-        self.assertEqual({"bot_bottle_config", "forge_connections", "forge_users",
-                          "audit_passkeys"},
+        self.assertEqual({"forge_users", "audit_passkeys"},
                          {name for name, mark in marks.items() if mark == PORTABLE})
+        self.assertEqual({"bot_bottle_config", "forge_connections"},
+                         {name for name, mark in marks.items() if mark == MIXED})
+        # What's sized to this machine doesn't travel.
+        config = ConfigStore.COLUMNS["bot_bottle_config"]
+        for setting in ("host_max_disk_gb", "host_max_memory_gb",
+                        "cached_image_stale_warning_days", "audit_retention_max_gb"):
+            self.assertEqual(MACHINE_SPECIFIC, config[setting], setting)
+        self.assertEqual(PORTABLE, config["audit_delivery"])
 
 
 _T0 = datetime(2026, 11, 1, 9, 30, tzinfo=timezone.utc)

@@ -219,13 +219,24 @@ Each database has one job and one writer
 - `index.db` has no backup. A missing or damaged one is deleted and rebuilt
   from its log at start. A new derived index goes here, never in
   `bot-bottle.db` (`index_db.py`).
-- Each store marks its tables portable or machine-specific (`TABLES`). The
-  host settings, forge connections and audit passkeys are portable, except a
-  connection's `ssh`, this machine's address for the forge. Everything else
-  is machine-specific. Nothing reads the mark yet.
+- Each store marks its tables portable, machine-specific or mixed
+  (`TABLES`), and a mixed table's columns (`COLUMNS`). Nothing reads the
+  marks yet. The [table below](#what-travels) says which is which.
 - No secret value is in `bot-bottle.db` or `index.db`. A row names a secret
   in the host secrets file (`secret:NAME`), as forge users and the pairing's
   console tokens do.
+
+#### What travels
+
+Portable state could be restored onto another machine. Machine-specific state
+couldn't.
+
+| State | Mark |
+|---|---|
+| Audit passkeys (`audit_passkeys`), forge users (`forge_users`) | portable |
+| Forge connections (`forge_connections`) | mixed: `ssh`, this machine's address for the forge, is machine-specific |
+| Host settings (`bot_bottle_config`) | mixed: the host budget, `audit_retention_max_gb`, `cached_image_stale_warning_days` and the firehose sinks (exec sinks run this machine's programs) are machine-specific |
+| Every other table | machine-specific |
 
 ### Versioned user files
 

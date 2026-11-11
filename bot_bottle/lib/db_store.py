@@ -19,9 +19,11 @@ BUSY_TIMEOUT_MS = 5000
 
 # What each table is (ADR 0020): `PORTABLE` state could be restored onto
 # another machine; `MACHINE_SPECIFIC` state couldn't. Each store names its
-# tables in `TABLES`. Nothing reads the mark yet.
+# tables in `TABLES`. A table holding both is `MIXED`, and its store marks
+# each column in `COLUMNS`. Nothing reads the marks yet.
 PORTABLE = "portable"
 MACHINE_SPECIFIC = "machine-specific"
+MIXED = "mixed"
 
 
 def connect(path: Path | str) -> sqlite3.Connection:
@@ -112,10 +114,12 @@ class DbVersionError(Exception):
 
 class DbStore:
     """Base for SQLite stores; subclasses resolve db_path, then call
-    super().__init__. `TABLES` marks each table the store creates `PORTABLE`
-    or `MACHINE_SPECIFIC`."""
+    super().__init__. `TABLES` marks each table the store creates `PORTABLE`,
+    `MACHINE_SPECIFIC` or `MIXED`; `COLUMNS` marks each column of a `MIXED`
+    one `PORTABLE` or `MACHINE_SPECIFIC`."""
 
     TABLES: ClassVar[Mapping[str, str]] = {}
+    COLUMNS: ClassVar[Mapping[str, Mapping[str, str]]] = {}
 
     def __init__(self, db_path: Path, migrations: TableMigrations) -> None:
         self.db_path = db_path
@@ -222,5 +226,5 @@ class DbStore:
             self._migrations.apply(conn)
 
 
-__all__ = ["BUSY_TIMEOUT_MS", "MACHINE_SPECIFIC", "PORTABLE", "DbStore", "DbVersionError",
+__all__ = ["BUSY_TIMEOUT_MS", "MACHINE_SPECIFIC", "MIXED", "PORTABLE", "DbStore", "DbVersionError",
            "connect", "drop_unowned", "immediate", "quick_check"]

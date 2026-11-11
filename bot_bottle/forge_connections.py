@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 
 from . import host_access, secret_ref
 from .contract.forges import FORGE_KINDS
-from .lib.db_store import PORTABLE, DbStore
+from .lib.db_store import MACHINE_SPECIFIC, MIXED, PORTABLE, DbStore
 from .lib.migrations import TableMigrations
 from .manifest.util import ManifestError
 
@@ -184,7 +184,9 @@ class ForgeStore(DbStore):
     # A connection travels with the host's owner, except its `ssh`: an
     # override is the address this machine reaches the forge on (over a VPN,
     # say), so it's machine-specific (ADR 0020).
-    TABLES = {"forge_connections": PORTABLE, "forge_users": PORTABLE}
+    TABLES = {"forge_connections": MIXED, "forge_users": PORTABLE}
+    COLUMNS = {"forge_connections": {"host": PORTABLE, "kind": PORTABLE, "url": PORTABLE,
+                                     "ssh": MACHINE_SPECIFIC, "host_key": PORTABLE}}
 
     def __init__(self, db_path: Path) -> None:
         super().__init__(db_path, TableMigrations("forge_connections", [

@@ -16,7 +16,7 @@ from bot_bottle import forge_connections
 from bot_bottle.forge_connections import (
     ForgeConnection, ForgeConnectionError, ForgeStore, ForgeUser, host_of, secret_name,
 )
-from bot_bottle.lib.db_store import PORTABLE
+from bot_bottle.lib.db_store import MACHINE_SPECIFIC, MIXED, PORTABLE
 from bot_bottle.paths import host_db_path
 from bot_bottle.secret_source import FileSecrets, write_secret
 from tests.unit import as_cli, serve_host_controller, use_bottle_root
@@ -96,8 +96,10 @@ class TestStore(unittest.TestCase):
         self.assertEqual({}, forge_connections.connections())
 
     def test_portable_tables(self) -> None:
-        self.assertEqual({"forge_connections": PORTABLE, "forge_users": PORTABLE},
+        self.assertEqual({"forge_connections": MIXED, "forge_users": PORTABLE},
                          dict(ForgeStore.TABLES))
+        # The address this machine reaches the forge on stays here.
+        self.assertEqual(MACHINE_SPECIFIC, ForgeStore.COLUMNS["forge_connections"]["ssh"])
 
     def test_add_user_and_the_default(self) -> None:
         first = self.store.add_user(GITEA, ALICE)
