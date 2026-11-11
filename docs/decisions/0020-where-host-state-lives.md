@@ -69,10 +69,10 @@ Each database has one job and one writer.
   process, written fresh and never read back.
 - **`~/.cache` holds only what can be downloaded or rebuilt.** Anything else
   lives under the environment's root.
-- **The audit journal and `hostctl.log` rotate.** Pruning old journal
-  segments records a `journal.pruned` event with the dropped range and the
-  last hash, so the chain stays verifiable. Transcripts are deleted after
-  their retention.
+- **The audit journal and `hostctl.log` rotate.** Transcripts are deleted
+  after their retention.
+- **Pruning the journal is recorded.** A `journal.pruned` event names the
+  dropped range and the last hash, so the chain stays verifiable.
 
 ### No migration
 

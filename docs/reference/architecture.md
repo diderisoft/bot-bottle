@@ -181,7 +181,7 @@ Where each kind of state lives, and what owns it.
 | Signing keys | `~/.bot-bottle/<key file>`, mode 0600, pushed to the key holder | host |
 | Gateway CA | `~/.bot-bottle/gateway-ca/`, mounted at mitmproxy's confdir (firecracker: `~/.bot-bottle/infra/gateway-ca/`, pushed into the gateway VM) | gateway |
 | Audit journal | `~/.bot-bottle/audit/` | host controller |
-| Per-bottle scratch: compose files, env and prompt files, logs, the preserve marker, git-gate's re-provisioning state ([git-gate.md](git-gate.md#re-provisioning-state)) | `~/.bot-bottle/state/<identity>/` | backend |
+| Per-bottle files: compose files, env and prompt files, logs, the preserve marker, its manifest versions' documents (`manifest/vNNNN.yaml`; their log is in `bot-bottle.db`), git-gate's re-provisioning state ([git-gate.md](git-gate.md#re-provisioning-state), an [ADR 0020 exception](../decisions/0020-where-host-state-lives.md#exceptions)) | `~/.bot-bottle/state/<identity>/` | backend |
 | Image and kernel caches, VM run dirs, firecracker's build store | `~/.cache/bot-bottle/`, and the runtime's own image store ([below](#image-caches)). Only what can be downloaded or rebuilt | backend |
 
 Paths are the live environment's. A named environment, picked by `BOT_BOTTLE_ENV`, keeps
@@ -200,7 +200,7 @@ Each database has one job and one writer
 
 | Database | Holds | Writer | Where |
 |---|---|---|---|
-| `bot-bottle.db` | the host's own state: settings (`bot_bottle_config`), forge connections (`forge_connections`, `forge_users`), trust records (`trust_records`), the console pairing and its link's state (`pairing`, `console_link`), trusted audit passkeys (`audit_passkeys`), bottled agents (`bottled_agents`) and their tmux sessions (`sessions`), each one's manifest versions and what it launched with (`run_manifest_versions`, `run_manifest_launches`), the remembered agent (`agent_prefs`), transcript copies' offsets (`transcript_runs`, `transcript_files`), snapshots (`snapshots`), isolation passes (`isolation_passes`), what infra bring-up recorded (`infra_state`), Firecracker workspace disks' owners (`workspace_disks`), the audit forwarder's and console push's cursors (`audit_push_cursors`, `audit_push_runs`) | host controller | `~/.bot-bottle/db/` |
+| `bot-bottle.db` | the host's own state: settings (`bot_bottle_config`), forge connections (`forge_connections`, `forge_users`), trust records (`trust_records`), the console pairing and its link's state (`pairing`, `console_link`), trusted audit passkeys (`audit_passkeys`), bottled agents (`bottled_agents`) and their tmux sessions (`sessions`), each one's manifest versions and what it launched with (`run_manifest_versions`, `run_manifest_launches`), the remembered agent (`agent_prefs`), transcript copies' offsets (`transcript_runs`, `transcript_files`), snapshots (`snapshots`), isolation passes (`isolation_passes`), what infra bring-up recorded (`infra_state`), Firecracker workspace disks' owners (`workspace_disks`), the audit forwarder's and console push's cursors (`audit_forward_cursor`, `audit_push_cursors`, `audit_push_runs`) | host controller | `~/.bot-bottle/db/` |
 | `index.db` | indexes derived from logs: the audit index (`audit_events`, `audit_index_cursor`) | host controller | `~/.bot-bottle/db/` |
 | `registry.db` | the orchestrator's working state: the bottle registry, encrypted egress secrets, the supervise queue and its answers, canary events | orchestrator | docker: `~/.bot-bottle/registry/` (0700), the orchestrator's only mount. macOS: a container volume. Firecracker: the orchestrator VM's `/dev/vdb` volume, `~/.bot-bottle/infra/registry.ext4` |
 
@@ -326,9 +326,9 @@ fields:
   (PRD 0106), and empty otherwise.
 - Once it runs, the row also holds how a restarted host controller finishes
   it ([host-controller.md](host-controller.md#after-a-daemon-restart)).
-- Removing a bottled agent deletes its state dir, its snapshots and its rows
-  (`bottled_agents`, `sessions`, `snapshots`) in one call to the host
-  controller. Listings read the rows, never the directories.
+- Removing a bottled agent deletes its state dir, snapshots and rows
+  (`bottled_agents`, `sessions`, `snapshots`, `run_manifest_*`) in one call
+  to the host controller. Listings read the rows, never the directories.
 - `cleanup` removes a bottled agent whose bottle isn't live, unless it's kept
   for resume. It also removes one that records no backend, and a state dir
   no row records, which nothing can resume.

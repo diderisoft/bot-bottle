@@ -24,9 +24,10 @@ python -m bot_bottle.control.hostctl
   without asking ([Host database](#host-database)).
 - The CLI starts the daemon under a lock, so concurrent CLIs start only one.
 - The daemon holds `~/.bot-bottle/hostctl/daemon.lock` (`flock`) for its
-  whole life. A second one for the same root exits at once with status 0,
-  before it touches the log, the host database or the control socket. Nothing
-  failed, so no service manager restarts it.
+  whole life.
+- A second one for the same root exits at once, before it touches the log,
+  the host database or the control socket. Its status is 0, so nothing
+  restarts it.
 - It logs to `~/.bot-bottle/hostctl/hostctl.log`, whichever of the CLI,
   systemd or launchd started it. At 16 MiB the daemon moves it to
   `hostctl.log.1` and opens a fresh one, keeping 3 older files.
@@ -503,7 +504,7 @@ asks over HTTP, with the `cli` role only:
 
 | Request | Body | Does |
 |---|---|---|
-| `GET /host/config` | none | The host's settings: `audit_delivery`, `audit_forward`, `firehose`, `transcript_retention_days`, `host_budget`, `github_app`. |
+| `GET /host/config` | none | The host's settings: `audit_delivery`, `audit_forward`, `firehose`, `transcript_retention_days`, `audit_retention`, `host_budget`, `github_app`. |
 | `POST /host/config` | any of those settings | Sets the ones given, all or none, and answers with every setting. A bad value is 400. |
 | `POST /audit/query` | the `audit query` filters | Indexes new journal records, then answers `{"records": [...]}`. |
 | `POST /audit/rebuild` | `{}` | Re-creates the audit index. Answers `{"indexed": n}`. |
@@ -528,15 +529,18 @@ asks over HTTP, with the `cli` role only:
 
 A journal that doesn't chain, or a segment that won't import, is 409.
 
-These commands use the routes: `audit query`, `export`, `rebuild`,
-`import`, `delivery`, `transcript-retention`, `retention`, `forward` and
-`firehose`,
-`host budget`, `forge connect`, `list`, `show` and `remove`, `trust`,
-`pair`, `audit passkeys`, `start --dry-run`, `bots`, `resume`, `rename`,
-`commit`, `cleanup bots`, a bare `bot-bottle`, `agents default`, the
-guided `start` and `forge connect github --app`. Each starts the host
-controller if it isn't running. `status`, home and `doctor` read the pairing
-only from a running one. `audit verify` reads only the journal's files.
+These commands use the routes, and each starts the host controller if it
+isn't running:
+
+- `audit query`, `export`, `rebuild`, `import`, `delivery`,
+  `transcript-retention`, `retention`, `forward`, `firehose` and `passkeys`
+- `host budget`, `forge connect`, `list`, `show` and `remove`, `trust`, `pair`
+- `start --dry-run`, `bots`, `resume`, `rename`, `commit`, `cleanup bots`,
+  `cleanup workspaces`, a bare `bot-bottle`, `agents default`, the guided
+  `start` and `forge connect github --app`
+
+`status`, home and `doctor` read the pairing only from a running one.
+`audit verify` reads only the journal's files.
 
 What infra bring-up recorded (`infra_state`) is read only from a running host
 controller, never starting one. Bring-up runs in the host controller, its only
@@ -610,16 +614,19 @@ The host controller prunes at start and daily after:
 - It drops only whole segments, oldest first, never the current one.
 - A segment the index hasn't read, or while forwarding is set the forwarder
   hasn't sent, stays.
-- First it appends `journal.pruned`. That names the dropped segments, the
-  first and last dropped records (`epoch`, `seq`, time), their size, the
-  last one's hash, and each dropped segment's last hash
-  (`segment_last_hashes`).
+- First it appends `journal.pruned`.
 
-The oldest kept record's `prev` is that last hash. A crash partway through
-the deletes leaves it one of the segments' hashes instead. `audit verify`
-starts the chain from the `journal.pruned` record that names it. A local journal starting
-anywhere else is `unrecorded-prune`, a break. An imported chain may start
-anywhere.
+| It names | With |
+|---|---|
+| the dropped segments | and their size |
+| the first and last dropped records | `epoch`, `seq` and time |
+| the last dropped record's hash | the oldest kept record's `prev` |
+| each dropped segment's last hash | `segment_last_hashes`, which a crash partway through the deletes leaves as the oldest kept `prev` |
+
+- `audit verify` starts the chain from the `journal.pruned` record that names
+  the oldest kept record's `prev`.
+- A local journal starting anywhere else is `unrecorded-prune`, a break.
+- An imported chain may start anywhere.
 
 ### The index
 
@@ -688,9 +695,10 @@ The entry is the masked host copy.
   re-adopted bottle never sends an entry twice.
 - An agent with no cursor on this host sends nothing until the console says
   where its chain ends. The host asks `audit_head` (`agent_id`), at most once
-  a minute. The console answers `audit_head` with the agent's `runs` from this
-  host (`run_id`, `next_seq`: its highest `seq` plus one) and its `last`
-  record (`run_id`, `seq`, `ciphertext`, `chain_hash`), or null for none.
+  a minute. The console answers with:
+  - the agent's `runs` from this host (`run_id`, and `next_seq`, its highest
+    `seq` plus one)
+  - its `last` record (`run_id`, `seq`, `ciphertext`, `chain_hash`), or null
 - The host decrypts that record for the transcript position it carried. It
   never resets a cursor itself, which would send every entry again or none.
 - A run this host keeps for another agent is ignored. A `last` outside the
@@ -771,9 +779,8 @@ The console is the first of:
 - Pairing keeps the console's URL, this host's id on it, the pinned console
   and whether the link is on in the host database (`pairing`).
 - The console's tokens for this host are in the host secrets file, as
-  `BB_HOST_CONSOLE_ACCESS_TOKEN` and `BB_HOST_CONSOLE_REFRESH_TOKEN`, names no
-  bottle can read.
-  The `pairing` row names them.
+  `BB_HOST_CONSOLE_ACCESS_TOKEN` and `BB_HOST_CONSOLE_REFRESH_TOKEN`. No bottle
+  can read those names. The `pairing` row names them.
 - The iroh key stays a key file, `~/.bot-bottle/remote.key`.
 - The link writes its state to `console_link`, for `bot-bottle status`, home
   and `doctor`. They ask a running host controller and start none.
@@ -902,10 +909,11 @@ Through the link the console can:
     for you to commit.
   - All of these are described under
     [Console link protocol](#console-link-protocol).
-- **Use the host secrets file.** List the names in it with
-  `list_secrets` -> `secrets_listed`, names only. Set a value in it with
-  `set_secret` (`name`, `value`) -> `secret_set`. The value is never echoed
-  in the reply or a log line. A reserved `BB_HOST_` name is refused.
+- **Use the host secrets file.**
+  - `list_secrets` -> `secrets_listed` lists the names in it, names only.
+  - `set_secret` (`name`, `value`) -> `secret_set` sets a value. The value is
+    never echoed in the reply or a log line. A reserved `BB_HOST_` name is
+    refused.
 
 Together these let a console point a route's credential at a host of its
 choosing. So a compromised console can send a host secret off the host
