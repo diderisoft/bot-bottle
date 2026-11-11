@@ -340,11 +340,16 @@ def remove(host: str, user: str = "") -> list[str]:
     return [str(u) for u in (removed if isinstance(removed, list) else [])]
 
 
-def secret_name(host: str, user: str, *, first: bool) -> str:
-    """The host secrets file's name for a user's token: `<HOST>_TOKEN` for the
-    first user on a forge, `<USER>_<HOST>_TOKEN` for another."""
-    key = host if first else f"{user}@{host}"
-    return re.sub(r"[^A-Z0-9]+", "_", key.upper()).strip("_") + "_TOKEN"
+def secret_name(host: str, user: str) -> str:
+    """The host secrets file's name for `user`'s token on `host`:
+    `BB_HOST_FORGE_<HOST>__<USER>_TOKEN`, under the reserved prefix no manifest
+    can read. Each part is upper-cased with every run of other characters as
+    one `_`, so `__` only ever separates the two. Two forges or users that
+    differ only in punctuation share a name; `forge_connect` refuses the
+    second."""
+    def part(s: str) -> str:
+        return re.sub(r"[^A-Z0-9]+", "_", s.upper()).strip("_")
+    return f"{secret_ref.HOST_PREFIX}FORGE_{part(host)}__{part(user)}_TOKEN"
 
 
 __all__ = ["TRANSPORTS", "ForgeConnection", "ForgeConnectionError", "ForgeStore", "ForgeUser",

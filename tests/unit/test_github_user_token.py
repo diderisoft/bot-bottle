@@ -306,7 +306,8 @@ class TestConnect(unittest.TestCase):
 
     def test_finish_records_the_connection_and_keeps_the_token(self) -> None:
         done = github_connect.finish(TokenSet("ghu_1", "ghr_1", 5), CONFIG)
-        self.assertEqual(("github.com", "didericis", "bot-bottle-dev", True, "GITHUB_COM_TOKEN"),
+        name = "BB_HOST_FORGE_GITHUB_COM__DIDERICIS_TOKEN"
+        self.assertEqual(("github.com", "didericis", "bot-bottle-dev", True, name),
                          (done.key, done.login, done.app, done.expiring, done.secret_name))
         conn = connections()["github.com"]
         user = conn.user()
@@ -314,8 +315,8 @@ class TestConnect(unittest.TestCase):
                          (conn.kind, user.app, user.name, conn.host_key))
         secrets = FileSecrets(self.secrets)
         self.assertEqual(("ghu_1", "ghr_1", "Iv1.abc"),
-                         (secrets.get("GITHUB_COM_TOKEN"), secrets.get("GITHUB_COM_TOKEN_REFRESH"),
-                          secrets.get("GITHUB_COM_TOKEN_CLIENT_ID")))
+                         (secrets.get(name), secrets.get(f"{name}_REFRESH"),
+                          secrets.get(f"{name}_CLIENT_ID")))
 
     def test_a_transport_for_the_user(self) -> None:
         github_connect.finish(TokenSet("ghu_1"), CONFIG, transport="deploy-key")

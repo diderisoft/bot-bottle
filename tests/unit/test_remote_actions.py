@@ -197,6 +197,12 @@ class TestSecretActions(unittest.TestCase):
         self.assertNotIn("error", reply)
         ws.assert_called_once_with(Path("/fake"), "ANTHROPIC_API_KEY", "sk-ant-s3cret")
 
+    def test_set_refuses_bot_bottles_own_names(self) -> None:
+        with mock.patch("bot_bottle.secret_source.write_secret") as ws:
+            reply = self.handle("set_secret", name="BB_HOST_CONSOLE_ACCESS_TOKEN", value="x")
+        self.assertIn("reserved", reply["error"])
+        ws.assert_not_called()
+
     def test_set_value_never_in_reply(self) -> None:
         with mock.patch("bot_bottle.secret_source.write_secret"), \
              mock.patch("bot_bottle.paths.host_secrets_path"):

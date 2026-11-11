@@ -76,10 +76,12 @@ class TestJson(unittest.TestCase):
             conn.user()
 
     def test_names(self) -> None:
-        self.assertEqual("GITEA_EXAMPLE_COM_TOKEN",
-                         secret_name("gitea.example.com", "bot", first=True))
-        self.assertEqual("CODEX_10_0_0_1_3000_TOKEN", secret_name("10.0.0.1:3000", "codex",
-                                                                 first=False))
+        self.assertEqual("BB_HOST_FORGE_GITEA_EXAMPLE_COM__BOT_TOKEN",
+                         secret_name("gitea.example.com", "bot"))
+        self.assertEqual("BB_HOST_FORGE_10_0_0_1_3000__CODEX_TOKEN",
+                         secret_name("10.0.0.1:3000", "codex"))
+        # `__` only separates host from user, so neither can stand in for the other.
+        self.assertNotEqual(secret_name("a.b", "c"), secret_name("a", "b.c"))
         self.assertEqual("g.example.com:3000", host_of("http://g.example.com:3000/x"))
 
 

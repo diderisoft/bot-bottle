@@ -141,8 +141,8 @@ $ bot-bottle forge show gitea.example.com
 gitea.example.com: gitea at https://gitea.example.com
   ssh       ssh://git@10.0.4.2:30009
   host key  ssh-ed25519 AAAA...
-  user      alice (token secret:GITEA_EXAMPLE_COM_TOKEN, default)
-  user      codex (token secret:CODEX_GITEA_EXAMPLE_COM_TOKEN)
+  user      alice (token secret:BB_HOST_FORGE_GITEA_EXAMPLE_COM__ALICE_TOKEN, default)
+  user      codex (token secret:BB_HOST_FORGE_GITEA_EXAMPLE_COM__CODEX_TOKEN)
 ```
 
 - `*` marks a forge's default user. A token is a name in the host secrets
@@ -205,12 +205,9 @@ records a connection (`cli/commands/forge.py`, `forge_connect.py`).
 The forge's SSH address must be reachable from the host, which a public name
 may not be. Give it with `--ssh`, or the card's SSH field.
 
-| User | Secret name |
-|---|---|
-| a forge's first user | `<HOST>_TOKEN` |
-| another user | `<USER>_<HOST>_TOKEN` |
-
-A user connected again keeps its name. The first user is the default. Another
+Each user's token is kept as `BB_HOST_FORGE_<HOST>__<USER>_TOKEN`, a name no
+bottle can read ([secrets.md](secrets.md#reserved-names)). A user connected
+again keeps its name. The first user is the default. Another
 becomes it with `--default`.
 
 Connecting again replaces the forge's `url`, `ssh` and pin.

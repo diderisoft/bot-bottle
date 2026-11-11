@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 
 from . import forge_alerts
 from .forge_connections import (
-    ForgeConnection, ForgeUser, add_user, get as get_connection, host_of,
+    ForgeConnection, ForgeUser, add_user, connections, host_of,
     secret_name as user_secret_name,
 )
 from .manifest.util import ManifestError
@@ -24,13 +24,19 @@ from .manifest.util import ManifestError
 
 def connected_secret(host: str, user: str) -> str:
     """The secret name `user`'s token on `host` is kept under: the one it
-    has if connected already, else `<HOST>_TOKEN` for a forge's first user,
-    `<USER>_<HOST>_TOKEN` for another."""
-    conn = get_connection(host)
-    for u in conn.users if conn else ():
-        if u.name == user:
-            return u.token_secret
-    return user_secret_name(host, user, first=not (conn and conn.users))
+    has if connected already, else `BB_HOST_FORGE_<HOST>__<USER>_TOKEN`.
+    ConnectError when another connection's token has that name already."""
+    name = user_secret_name(host, user)
+    for conn in connections().values():
+        for u in conn.users:
+            if (conn.host, u.name) == (host, user):
+                return u.token_secret
+            if u.token_secret == name:
+                raise ConnectError(
+                    f"{u.name} on {conn.host} keeps its token as {name}, the name "
+                    f"{user} on {host} would take; disconnect it first "
+                    f"(bot-bottle forge remove {conn.host} --user {u.name})")
+    return name
 
 
 def record(conn: ForgeConnection, user: ForgeUser, *,

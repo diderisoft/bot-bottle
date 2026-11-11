@@ -11,8 +11,9 @@ entry's value, a route's `auth.value`, an agent's `login`.
 A secret is push-scanned, masked in transcripts and listed as a secret in the
 trust prompt. Every non-literal value, secret or not, is kept out of argv,
 files and logs. A literal can't start with "secret:"; that is always a
-reference. Imports nothing from the manifest package, so the manifest can use
-it.
+reference. Names starting with `HOST_PREFIX` (`BB_HOST_`) are bot-bottle's
+own (console and forge tokens) and no manifest may name them. Imports nothing
+from the manifest package, so the manifest can use it.
 """
 
 from __future__ import annotations
@@ -26,6 +27,9 @@ STORED = "stored"
 LITERAL = "literal"
 
 SECRET_PREFIX = "secret:"
+# Every secret bot-bottle writes for itself starts with this. No manifest
+# value, route or env entry may read one: they'd reach the agent or egress.
+HOST_PREFIX = "BB_HOST_"
 STORED_PREFIX = SECRET_PREFIX
 _NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _HOST_ENV_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
@@ -98,14 +102,30 @@ def secret_looking(name: str) -> bool:
     return bool(_SECRET_LOOKING_RE.search(name))
 
 
+def is_reserved(name: str) -> bool:
+    """Whether `name` is one of bot-bottle's own secrets (`BB_HOST_...`)."""
+    return name.upper().startswith(HOST_PREFIX)
+
+
+def reserved_problem(name: str) -> str:
+    """Why a manifest can't name `name`, or "" when it can."""
+    if is_reserved(name):
+        return (f"{name} is reserved: names starting with {HOST_PREFIX} hold "
+                "bot-bottle's own tokens, which no bottle or agent may read")
+    return ""
+
+
 def problem(raw: str) -> str:
     """Why `raw` isn't a usable value, or "" when it is: a "secret:" that
-    names neither a prompt, an env var nor a valid secret name."""
+    names neither a prompt, an env var nor a valid secret name, or a
+    reference to a reserved name (`is_reserved`)."""
     ref = parse(raw)
     if ref.kind == STORED and not is_name(ref.name):
         return (f"{raw!r} names no valid secret: write secret:NAME (NAME made of "
                 "letters, digits and _, not starting with a digit), secret:? or "
                 "secret:${VAR}")
+    if ref.kind in (STORED, HOST_ENV):
+        return reserved_problem(ref.name)
     return ""
 
 
@@ -127,6 +147,7 @@ def stored(name: str) -> str:
     return f"{SECRET_PREFIX}{name}"
 
 
-__all__ = ["HOST_ENV", "LITERAL", "PROMPT", "Ref", "SECRET_PREFIX", "STORED", "STORED_PREFIX",
-           "host_var", "is_name", "is_secret", "kind", "parse", "problem", "prompt_message",
-           "secret_looking", "source_label", "stored", "stored_name"]
+__all__ = ["HOST_ENV", "HOST_PREFIX", "LITERAL", "PROMPT", "Ref", "SECRET_PREFIX", "STORED",
+           "STORED_PREFIX", "host_var", "is_name", "is_reserved", "is_secret", "kind", "parse",
+           "problem", "prompt_message", "reserved_problem", "secret_looking", "source_label",
+           "stored", "stored_name"]

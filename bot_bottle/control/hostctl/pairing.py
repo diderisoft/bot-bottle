@@ -27,9 +27,10 @@ from ...lib.migrations import TableMigrations
 from ...paths import bot_bottle_root
 
 KEY_FILE = "remote.key"
-# The console's tokens for this host, in the host secrets file.
-ACCESS_TOKEN_SECRET = "CONSOLE_ACCESS_TOKEN"
-REFRESH_TOKEN_SECRET = "CONSOLE_REFRESH_TOKEN"
+# The console's tokens for this host, in the host secrets file, under the
+# reserved prefix no manifest can read (`secret_ref.HOST_PREFIX`).
+ACCESS_TOKEN_SECRET = "BB_HOST_CONSOLE_ACCESS_TOKEN"
+REFRESH_TOKEN_SECRET = "BB_HOST_CONSOLE_REFRESH_TOKEN"
 # What a change may set: the pairing's own fields, and the tokens' values.
 TOKENS = ("access_token", "refresh_token")
 

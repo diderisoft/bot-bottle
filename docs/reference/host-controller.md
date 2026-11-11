@@ -761,7 +761,8 @@ The console is the first of:
 - Pairing keeps the console's URL, this host's id on it, the pinned console
   and whether the link is on in the host database (`pairing`).
 - The console's tokens for this host are in the host secrets file, as
-  `CONSOLE_ACCESS_TOKEN` and `CONSOLE_REFRESH_TOKEN`.
+  `BB_HOST_CONSOLE_ACCESS_TOKEN` and `BB_HOST_CONSOLE_REFRESH_TOKEN`, names no
+  bottle can read.
   The `pairing` row names them.
 - The iroh key stays a key file, `~/.bot-bottle/remote.key`.
 - The link writes its state to `console_link`, for `bot-bottle status`, home
@@ -894,7 +895,7 @@ Through the link the console can:
 - **Use the host secrets file.** List the names in it with
   `list_secrets` -> `secrets_listed`, names only. Set a value in it with
   `set_secret` (`name`, `value`) -> `secret_set`. The value is never echoed
-  in the reply or a log line.
+  in the reply or a log line. A reserved `BB_HOST_` name is refused.
 
 Together these let a console point a route's credential at a host of its
 choosing. So a compromised console can send a host secret off the host

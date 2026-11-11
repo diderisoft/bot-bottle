@@ -104,6 +104,19 @@ class TestKinds(unittest.TestCase):
                 _manifest({"K": bad})
         self.assertEqual("secret:A_1", _manifest({"K": "secret:A_1"}).bottle.env["K"])
 
+    def test_bot_bottles_own_secrets_are_refused_everywhere_a_manifest_names_one(self) -> None:
+        for env in ({"K": "secret:BB_HOST_CONSOLE_ACCESS_TOKEN"},
+                    {"K": "secret:${BB_HOST_FORGE_GITHUB_COM__BOT_TOKEN}"},
+                    {"K": "${bb_host_x}"},
+                    {"BB_HOST_CONSOLE_ACCESS_TOKEN": "?"}):
+            with self.subTest(env=env), self.assertRaisesRegex(ManifestError, "reserved"):
+                _manifest(env)
+        with self.assertRaisesRegex(ManifestError, "reserved"):
+            _manifest({}, [_auth_route({"value": "secret:BB_HOST_CONSOLE_REFRESH_TOKEN"})])
+        # bot-bottle's agent tokens are a bottle's to name.
+        self.assertEqual("secret:BOT_BOTTLE_CLAUDE_OAUTH_TOKEN", _manifest(
+            {"K": "secret:BOT_BOTTLE_CLAUDE_OAUTH_TOKEN"}).bottle.env["K"])
+
     def test_the_documented_example_loads(self) -> None:
         text = ("---\nenv:\n  NPM_TOKEN: ?Paste your npm token\n  GH_TOKEN: ${GITHUB_PAT}\n"
                 "  OPENAI_API_KEY: secret:OPENAI_API_KEY\negress:\n  routes:\n"
@@ -437,6 +450,10 @@ class TestRouteTokenResolution(unittest.TestCase):
     def test_nowhere_is_an_error(self) -> None:
         with self.assertRaises(MissingEnvVarError):
             self.resolve(self.source({}, {}, {}))
+
+    def test_a_reserved_name_is_never_read(self) -> None:
+        with self.assertRaisesRegex(MissingEnvVarError, "reserved"):
+            self.resolve(self.source({}, {}, {"BB_HOST_X": "tok"}), "BB_HOST_X")
 
     def test_a_secret_env_route_value_reads_the_environment_first(self) -> None:
         source = EgressTokenSecrets(

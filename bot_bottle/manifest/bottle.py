@@ -165,7 +165,9 @@ class ManifestBottle:
                         f"(from the secrets file); \"secret:?\" and \"secret:${{VAR}}\" "
                         f"mark the first two secret."
                     )
-                problem = secret_ref.problem(value)
+                # A prompt entry falls back to the secret saved under its
+                # own name, so the name can't be a reserved one either.
+                problem = secret_ref.reserved_problem(var) or secret_ref.problem(value)
                 if problem:
                     raise ManifestError(f"env entry {var} in bottle '{name}': {problem}")
                 _warn_unmarked(var, value)

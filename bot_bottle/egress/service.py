@@ -20,6 +20,7 @@ from ..gateway.egress.types import (
     Route,
 )
 from ..gateway.egress import full_log
+from .. import secret_ref
 from ..errors import MissingEnvVarError
 from ..lib.log import die, warn
 from ..secret_source import SecretSource
@@ -358,6 +359,9 @@ def egress_resolve_token_values(
 ) -> dict[str, str]:
     out: dict[str, str] = {}
     for token_env, token_ref in token_env_map.items():
+        reserved = secret_ref.reserved_problem(token_ref)
+        if reserved:
+            raise MissingEnvVarError(token_ref, f"egress: {reserved}")
         value = source.get(token_ref)
         if value is None:
             raise MissingEnvVarError(
