@@ -77,6 +77,22 @@ upgrade couldn't be resumed or cleaned up. The refusal lists each one:
 In a named environment, run those with `BOT_BOTTLE_ENV=<name>`. Then run the
 installer again. Installing with `uv` or `pipx` yourself skips the check.
 
+### Stopping the older host controller
+
+With no bottled agents left, the installer stops a host controller from
+v0.1.9 or older before it replaces the package. The new CLI can't find one: it
+looks on `hostctl/control.sock`, and the old one published itself in
+`hostctl/state.json`.
+
+- It runs the old `bot-bottle down`.
+- It stops each environment's service unit (`systemctl --user stop`,
+  `launchctl bootout`).
+- It stops the process `state.json` names, if that is still a host
+  controller.
+
+Installing with `uv` or `pipx` yourself skips this too: run `bot-bottle down`
+first.
+
 ### Without the installer
 
 Python-native users can skip it and pin the latest tag:

@@ -435,6 +435,68 @@ mkdir -p \
     "${HOME}/.bot-bottle/bottles" \
     "${HOME}/.bot-bottle/contrib"
 
+# --- stop an older version's host controller ---------------------------------
+
+# Upgrade bridge: remove once every host has upgraded past v0.1.9.
+#
+# Up to v0.1.9 the host controller published itself in `hostctl/state.json`.
+# The new CLI finds one only on `hostctl/control.sock`, so it wouldn't see an
+# old one still running and would start a second beside it (or, with a service
+# unit, wait on a unit that's already up). The check above left no bottled
+# agents, so stopping it loses nothing. An old daemon removes state.json when
+# it stops, so this does nothing once it's gone.
+old_controller_roots() {
+    for root in "${BOT_BOTTLE_ROOT:-}" "${HOME}/.bot-bottle" "${HOME}"/.bot-bottle-envs/*; do
+        [ -n "${root}" ] && [ -f "${root}/hostctl/state.json" ] && printf '%s\n' "${root}"
+    done
+    return 0
+}
+stop_old_host_controllers() {
+    roots="$(old_controller_roots | awk '!seen[$0]++')"
+    [ -n "${roots}" ] || return 0
+    # The old CLI's own `down`, for the environment this installer runs in.
+    old_bin="$(command -v bot-bottle 2>/dev/null || true)"
+    if [ -n "${old_bin}" ]; then
+        "${old_bin}" down </dev/null >/dev/null 2>&1 || true
+    fi
+    printf '%s\n' "${roots}" | while IFS= read -r root; do
+        # Its service unit, if it has one, so the manager doesn't start it again.
+        case "${root}" in
+            "${HOME}/.bot-bottle") unit=bot-bottle-hostctl.service label=io.bot-bottle.hostctl ;;
+            "${HOME}"/.bot-bottle-envs/*)
+                name="${root##*/}"
+                unit="bb-${name}-hostctl.service" label="io.bot-bottle.${name}.hostctl" ;;
+            *) unit="" label="" ;;
+        esac
+        if [ -n "${unit}" ] && [ -f "${HOME}/.config/systemd/user/${unit}" ] \
+            && command -v systemctl >/dev/null 2>&1; then
+            systemctl --user stop "${unit}" >/dev/null 2>&1 || true
+        fi
+        if [ -n "${label}" ] && [ -f "${HOME}/Library/LaunchAgents/${label}.plist" ] \
+            && command -v launchctl >/dev/null 2>&1; then
+            launchctl bootout "gui/$(id -u)/${label}" >/dev/null 2>&1 || true
+        fi
+        # And the process state.json names, if it's still a host controller
+        # (not a reused pid).
+        [ -f "${root}/hostctl/state.json" ] || continue
+        pid="$(sed -n 's/.*"pid": *\([0-9][0-9]*\).*/\1/p' "${root}/hostctl/state.json")"
+        [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null || continue
+        ps -p "${pid}" -o args= 2>/dev/null | grep -q 'bot_bottle\.control\.hostctl' || continue
+        say "stopping the older version's host controller (pid ${pid}, ${root})"
+        kill "${pid}" 2>/dev/null || true
+        i=0
+        while kill -0 "${pid}" 2>/dev/null && [ "${i}" -lt 50 ]; do
+            sleep 0.2
+            i=$((i + 1))
+        done
+        if kill -0 "${pid}" 2>/dev/null; then
+            say "warning: the older host controller (pid ${pid}) didn't stop; stop it"
+            say "before running bot-bottle"
+        fi
+    done
+}
+stop_old_host_controllers
+
 # --- install -----------------------------------------------------------------
 
 BIN_DIR="${HOME}/.local/bin"

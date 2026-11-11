@@ -410,6 +410,45 @@ class TestInstallRef(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertNotIn("bottled agents", proc.stderr)
 
+    def _old_controller(self, root: Path, *argv: str) -> subprocess.Popen[bytes]:
+        """A process standing in for an older version's host controller, named
+        in `root`'s `hostctl/state.json` as that version wrote it."""
+        proc = subprocess.Popen(  # pylint: disable=consider-using-with
+            [sys.executable, "-c", "import time; time.sleep(60)", *argv])
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        (root / "hostctl").mkdir(parents=True)
+        (root / "hostctl" / "state.json").write_text(
+            '{"pid": %d, "port": 1234, "build_id": "old"}' % proc.pid)
+        return proc
+
+    def test_an_older_versions_host_controller_is_stopped_before_installing(self) -> None:
+        self._page(1, _tags("v0.2.0"))
+        self._stub("bot-bottle", f'echo "$@" >> "{self.root}/bot-bottle.log"\nexit 0')
+        home = self.root / "home"
+        old = self._old_controller(home / ".bot-bottle", "-m", "bot_bottle.control.hostctl")
+        named = self._old_controller(home / ".bot-bottle-envs" / "dev",
+                                     "-m", "bot_bottle.control.hostctl")
+        # A state.json whose pid is now something else is left alone.
+        other = self._old_controller(home / ".bot-bottle-envs" / "reused", "not-a-controller")
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual(-15, old.wait(5))
+        self.assertEqual(-15, named.wait(5))
+        self.assertIsNone(other.poll())
+        self.assertIn(f"stopping the older version's host controller (pid {old.pid}",
+                      proc.stderr)
+        # Its own `down` ran first, before the package was replaced.
+        self.assertEqual("down", (self.root / "bot-bottle.log").read_text().splitlines()[0])
+
+    def test_with_no_older_host_controller_nothing_is_stopped(self) -> None:
+        self._page(1, _tags("v0.2.0"))
+        self._stub("bot-bottle", f'echo "$@" >> "{self.root}/bot-bottle.log"\nexit 0')
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertNotIn("down", (self.root / "bot-bottle.log").read_text().splitlines())
+        self.assertNotIn("host controller", proc.stderr)
+
     def test_unknown_arguments_are_refused(self) -> None:
         proc = self._run("--mian")
         self.assertNotEqual(0, proc.returncode)
