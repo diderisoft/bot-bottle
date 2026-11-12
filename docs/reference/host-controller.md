@@ -863,6 +863,10 @@ Through the link the console can:
 - **Answer supervise requests.** Allow egress. Connect a forge with a token
   it sends, through `forge_connect`. Grant repos (`add_repo_answer`). Create
   repos and launch child bottles.
+- **See this host's forges and their repos.** `forge_status` and
+  `forge_repos` ([Forges for the console](#forges-for-the-console)) report
+  connections and the repos a connected user can reach, private ones
+  included, with their permissions. Never a token or a secret's name.
 - **Widen a running bottle's egress** without a request from the agent.
   `operator_egress_allow` (`host`, optional `keep`) adds a default route for
   a host the bottle was blocked from.
@@ -931,6 +935,7 @@ An arrow shows a request and its reply.
 | `put_workspace_file`, `upload_*` | [Uploading files to a running agent](#uploading-files-to-a-running-agent) |
 | `rename` -> `renamed` | [Renaming a bottled agent](#renaming-a-bottled-agent) |
 | `github_authorize_start`, `github_status` | [GitHub through the bot-bottle app](#github-through-the-bot-bottle-app) |
+| `forge_status`, `forge_repos` | [Forges for the console](#forges-for-the-console) |
 | `bottle_suggest`, `bottle_suggest_status`, `bottle_suggestion_*` | [Bottle suggestions from the console](#bottle-suggestions-from-the-console) |
 | `library` | [Library](#library) |
 | `resolve` | [Resolving a launch](#resolving-a-launch) |
@@ -1233,6 +1238,38 @@ While any of those is shown, the host asks GitHub again every ten seconds,
 for fifteen minutes (`remote_actions.card_changed`). It raises the card
 again when that changes. So the card turns grantable once the app is
 installed.
+
+### Forges for the console
+
+The console keeps the account's forge connections from what its hosts
+report, never a token ([ADR 0021](../decisions/0021-forge-connections-belong-to-the-account.md)).
+A host that holds a connection's token answers for it (`forge_link.py`).
+
+**`forge_status`** answers `forge_status`, with `forges`: each connection's
+`host`, `kind`, `url`, `ssh` and `users`. Each user has `login`, `default`,
+`app`, `transport`, a `state` and a `message`:
+
+| `state` | Means |
+|---|---|
+| `ok` | a token is here; through the app it's also checked with GitHub, and the app is installed somewhere (`installations`) |
+| `needs_install` | authorized through the app, installed nowhere |
+| `expired` | GitHub won't renew the token; connect again |
+| `missing` | the token isn't in the host secrets file |
+| `error` | the forge couldn't be asked; `message` says why |
+
+**`forge_repos`** (`forge`, optional `login`, else the forge's default user)
+answers `forge_repos` with `forge`, `login`, `repos` and `truncated`, or
+`error`. Each repo has `full_name`, `private`, `permissions` (`pull`, `push`,
+`admin`) and `installed`: true through the GitHub App (whose token reaches
+only the repos it's installed on, so a repo where it isn't can't be listed),
+otherwise null. On Gitea it's the user's repos and those of each org the user
+is in. The list is sorted, capped at 1,000 repos and 60 seconds (`truncated`
+then), and read with the user's token, read-only.
+
+Both ask the forge page after page, so the link runs them beside its other
+traffic: a slow forge doesn't hold up an agent's input or a stop. An error
+names the HTTP status or that the forge was unreachable, never the forge's
+response.
 
 ### Bottle suggestions from the console
 

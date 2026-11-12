@@ -12,6 +12,7 @@ from typing import Any
 from ...lib import log
 from . import uploads
 from .remote_create_repo import create_repo_answer
+from .forge_link import REQUESTS as FORGE_REQUESTS, github_status
 from .suggest_link import REQUESTS as SUGGEST_REQUESTS
 
 
@@ -142,20 +143,6 @@ async def github_authorize_start(msg: Mapping[str, Any]) -> dict[str, Any]:
     except Exception as e:  # pylint: disable=broad-exception-caught  # reported to the console
         log.warn(f"remote: starting GitHub's device flow failed: {type(e).__name__}")
         reply["error"] = "starting the authorization failed; see the host controller's log"
-    return reply
-
-
-async def github_status(msg: Mapping[str, Any]) -> dict[str, Any]:
-    """The app this host's GitHub access goes through, a flow in progress, and
-    who's connected with which installations."""
-    # pylint: disable=import-outside-toplevel
-    from ...github_connect import status
-    reply: dict[str, Any] = {"type": "github_status", "request_id": msg.get("request_id")}
-    try:
-        reply.update(await asyncio.to_thread(status))
-    except Exception as e:  # pylint: disable=broad-exception-caught  # reported to the console
-        log.warn(f"remote: reading GitHub's status failed: {type(e).__name__}")
-        reply["error"] = "reading GitHub's status failed; see the host controller's log"
     return reply
 
 
@@ -838,7 +825,10 @@ ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_
            "create_repo_answer": create_repo_answer}
 # Requests about this host rather than one agent.
 HOST_REQUESTS = {"forge_connect": forge_connect, "github_authorize_start": github_authorize_start,
-                 "github_status": github_status, **SUGGEST_REQUESTS}
+                 **FORGE_REQUESTS, **SUGGEST_REQUESTS}
+# Host requests that ask a forge, page after page: run beside the link, so a
+# slow forge doesn't hold up the agents' traffic.
+BESIDE = frozenset(FORGE_REQUESTS)
 
 __all__ = ["ANSWERS", "HOST_REQUESTS", "QUERIES", "add_repo_answer", "bottle_chain",
            "create_repo_answer",
