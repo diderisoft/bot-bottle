@@ -8,6 +8,11 @@ Syntax in this record predates v0.1.9; see [manifest.md](../reference/manifest.m
 
 > **Amended 2026-11-10.** [ADR 0020](0020-where-host-state-lives.md) moves
 > `forges.md` into the host database (`forge_connections`, `forge_users`).
+>
+> **Amended 2026-11-12.** [ADR 0021](0021-forge-connections-belong-to-the-account.md)
+> makes connections the account's in the console (tokens stay on hosts) and
+> requires every runnable bottle to declare the forge of each grant: "No
+> forge bottle is needed" stands, but a grant now needs its forge declared.
 
 ## Context
 
