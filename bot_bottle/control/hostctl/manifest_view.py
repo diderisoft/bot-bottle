@@ -18,6 +18,13 @@ class ManifestViewError(Exception):
     """The manifest can't be shown; the message says why."""
 
 
+
+def _grant_forge(grant: str) -> str:
+    """The forge a grant is on, past an `alias=` prefix."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...manifest.forges import split_grant_alias
+    return split_grant_alias(grant)[1].split("/", 1)[0]
+
 def _shown(path: Path) -> str:
     home = str(Path.home())
     return "~" + str(path)[len(home):] if str(path).startswith(home + "/") else str(path)
@@ -104,7 +111,7 @@ def _with_run_changes(identity: str, policy: str | None, frontmatter: dict[str, 
                 unkept.append({"kind": "repo", "what": ref.name, "key": key,
                                "why": GRANTLESS})
             continue
-        forge = find_forge(identity, ref.grant.split("/", 1)[0])
+        forge = find_forge(identity, _grant_forge(ref.grant))
         after, what = with_grant(fm, ref.grant, forge=forge_document(forge) if forge else None), \
             ref.grant
         if after != fm:
@@ -217,7 +224,7 @@ def _granted(identity: str, doc: dict[str, object], ref: Any) -> str:
     from .repo_grants import find_forge
     if not ref.grant:
         return ""
-    forge = find_forge(identity, ref.grant.split("/", 1)[0])
+    forge = find_forge(identity, _grant_forge(ref.grant))
     if forge is None:
         return ""
     git = _dict(doc.get("git_gate"))

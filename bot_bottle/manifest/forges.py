@@ -225,14 +225,25 @@ def described_forge(forge: ManifestForge) -> dict[str, object]:
     return out
 
 
-def partial_message(undeclared: "frozenset[str] | set[str]", bottles: str) -> str:
-    """Why a bottle whose grants use undeclared forges can't launch, and the
-    fix (ADR 0021)."""
+def partial_message(undeclared: "frozenset[str] | set[str]", bottles: "list[str]") -> str:
+    """Why a launch of `bottles` (names; none for the default) can't go ahead
+    when their grants use undeclared forges, and the fix (ADR 0021)."""
+    # pylint: disable-next=import-outside-toplevel
+    from ..contract.hostctl import RUN_BOTTLE
     hosts = ", ".join(sorted(undeclared))
-    return (f"{bottles} is partial: it grants repos on {hosts} but declares no forge for "
-            f"{'it' if len(undeclared) == 1 else 'them'}. Declare it under "
-            f"`git_gate.forges` (kind, url), or run `bot-bottle bottles migrate <bottle>` to "
-            f"add it from this host's connection.")
+    one = len(undeclared) == 1
+    named = ", ".join(f"'{b}'" for b in bottles) or "the default bottle"
+    head = (f"bottle {named} is partial" if len(bottles) <= 1 else f"bottles {named} are partial")
+    what = (f"{head}: {'its' if len(bottles) <= 1 else 'their'} grants use {hosts}, and "
+            f"nothing declares {'it' if one else 'them'} under `git_gate.forges`.")
+    if RUN_BOTTLE in bottles:
+        return (f"{what} This run's suggested bottle can't be migrated: launch again so the "
+                f"architect writes {'its' if one else 'their'} declaration, or save the "
+                f"bottle to the library and migrate it there.")
+    target = bottles[-1] if bottles else "<bottle>"
+    return (f"{what} Declare {'it' if one else 'them'} (kind, url), or run "
+            f"`bot-bottle bottles migrate {target}` to add {'it' if one else 'them'} from "
+            f"this host's connections.")
 
 
 def described_connection(conn: Any) -> dict[str, object]:

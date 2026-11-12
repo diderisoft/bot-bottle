@@ -49,9 +49,7 @@ def refuse_partial(bottle: "ManifestBottle", bottle_names: Sequence[str]) -> Non
     """Die when the launch's bottle grants repos on a forge nothing in it
     declares (a partial bottle, ADR 0021)."""
     if bottle.undeclared_forges:
-        names = ", ".join(f"'{n}'" for n in bottle_names) or "the default bottle"
-        die(partial_message(bottle.undeclared_forges,
-                            f"bottle {names}" if bottle_names else names))
+        die(partial_message(bottle.undeclared_forges, list(bottle_names)))
 
 
 class BackendStatus(enum.IntEnum):

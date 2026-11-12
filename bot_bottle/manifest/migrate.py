@@ -128,18 +128,23 @@ def _declared_by_parents(doc: Mapping[str, object],
 def declare_forges(name: str, doc: dict[str, object],
                    dirs: Sequence[tuple[Path, bool]]) -> dict[str, dict[str, object]]:
     """Add to `doc` (a bottle's current-format frontmatter) a declaration for
-    each forge its grants use that neither it nor a parent declares, from this
-    host's connection; the declarations added, by host. MigrateError when
+    each forge its chain's grants use (its own, or a parent's) that nothing in
+    the chain declares, from this host's connection; the declarations added,
+    by host. A declaration here covers the whole chain. MigrateError when
     such a forge isn't connected here: migrate never invents a forge."""
     # pylint: disable=import-outside-toplevel
     from .. import forge_connections
     from .forges import described_connection, granted_forges
-    git = doc.get("git_gate")
-    if not isinstance(git, dict):
-        return {}
+    found = doc.get("git_gate")
+    git: dict[str, object] = found if isinstance(found, dict) else {}
     own = git.get("forges")
     declared = set(own) if isinstance(own, dict) else set()
-    missing = sorted(granted_forges(name, doc) - declared - _declared_by_parents(doc, dirs))
+    try:  # a parent's grants too; the bottle on disk may not load yet (old format)
+        inherited = load_bottle_chain(name, dirs)[0].undeclared_forges
+    except ManifestError:
+        inherited = frozenset()
+    missing = sorted((granted_forges(name, doc) | inherited)
+                     - declared - _declared_by_parents(doc, dirs))
     if not missing:
         return {}
     added: dict[str, object] = dict(own) if isinstance(own, dict) else {}
@@ -153,6 +158,7 @@ def declare_forges(name: str, doc: dict[str, object],
                                f"under git_gate.forges by hand")
         added[host] = new[host] = described_connection(conn)
     git["forges"] = added
+    doc["git_gate"] = git
     return new
 
 
@@ -172,7 +178,9 @@ def add_forges(declared: Mapping[str, Mapping[str, object]]) -> "Callable[[list[
         top = next((i for i, line in enumerate(out) if _content(line) and _indent(line) == 0
                     and (_key(line) or (0, "", ""))[1] in ("git_gate", "git-gate")), -1)
         if top < 0:
-            return out
+            return [*out, "git_gate:", "  forges:", *entries(4)]
+        if (_key(out[top]) or (0, "", ""))[2]:
+            return out  # written inline: the block's rewrite says it
         end = _block_end(out, top, 0)
         child = _child_indent(out, top + 1, end)
         child = child if child > 0 else 2

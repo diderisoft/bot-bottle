@@ -94,10 +94,47 @@ class Migrate(unittest.TestCase):
         with connected(GITEA), self.assertRaisesRegex(MigrateError, "already in the current"):
             prepare("dev", self.dirs)
 
+    def test_a_parents_undeclared_grant_is_declared_in_the_child(self) -> None:
+        self._bottle("base", "git_gate:\n  repos:\n    - gitea.example.com/acme/lib\n")
+        self._bottle("dev", "extends: base\nenv:\n  A: b\n")
+        with connected(GITEA):
+            m = prepare("dev", self.dirs)
+        fm = parse_frontmatter(m.after)[0]
+        self.assertEqual({"kind": "gitea"},
+                         fm["git_gate"]["forges"]["gitea.example.com"])  # type: ignore[index]
+
     def test_a_forge_this_host_hasnt_connected_isnt_invented(self) -> None:
         self._bottle("dev", "git_gate:\n  repos:\n    - github.com/octo/x\n")
         with connected(GITEA), self.assertRaisesRegex(MigrateError, "connect it first"):
             prepare("dev", self.dirs)
+
+
+class Wording(unittest.TestCase):
+    def test_the_fix_names_the_bottle_or_says_a_run_bottle_cant_migrate(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.manifest.forges import partial_message
+        one = partial_message(frozenset({"github.com"}), ["web"])
+        self.assertIn("bottle 'web' is partial", one)
+        self.assertIn("bottles migrate web", one)
+        two = partial_message(frozenset({"a.com", "b.com"}), ["base", "web"])
+        self.assertIn("bottles 'base', 'web' are partial", two)
+        self.assertIn("Declare them", two)
+        run = partial_message(frozenset({"github.com"}), ["suggested"])
+        self.assertIn("can't be migrated", run)
+        self.assertNotIn("bottles migrate suggested", run)
+        self.assertIn("the default bottle", partial_message(frozenset({"x.com"}), []))
+
+
+class AliasedGrants(unittest.TestCase):
+    def test_keeping_an_aliased_grant_finds_its_forge(self) -> None:
+        # pylint: disable=import-outside-toplevel,protected-access
+        from bot_bottle.control.hostctl import manifest_elements, manifest_view
+        self.assertEqual("gitea.example.com",
+                         manifest_view._grant_forge("skills=gitea.example.com/o/r"))
+        fm: dict[str, Any] = {}
+        with connected(GITEA):
+            manifest_elements._with_forge_for(fm, "skills=gitea.example.com/o/r")
+        self.assertIn("gitea.example.com", fm["git_gate"]["forges"])
 
 
 class Listing(unittest.TestCase):
