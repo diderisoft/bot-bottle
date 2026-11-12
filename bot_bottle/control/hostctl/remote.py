@@ -28,8 +28,8 @@ The control stream (JSON lines):
   `input`, `resize` and `history` (`lines` -> `text`, `size`, `limit`) act on them.
 - `audit_query` -> `audit_events` for the link's agents' bottles.
 - `refresh_credentials` -> `credentials_refreshed`; `manifest` (`agent_id`) -> `manifest`.
-- `forge_connect` -> `forge_connected`, `github_authorize_start` -> `github_authorize` and
-  `github_status` (`github_connect`, `remote_actions.HOST_REQUESTS`).
+- `forge_connect` -> `forge_connected`, `github_authorize_start` -> `github_authorize`;
+  `github_status`, `forge_status` and `forge_repos` (`forge_link`, ADR 0021).
 - Audit records out (`audit_record`) and passkey-unlocked reads (`audit_link`, ADR 0013).
 - `workspace_file` reads an image in the agent's bottle; `put_workspace_file` (`data` base64)
   writes under `/home/node/uploads/`, reply `workspace_file_put` (`workspace_files`).
