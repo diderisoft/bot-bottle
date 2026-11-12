@@ -236,11 +236,11 @@ def partial_message(undeclared: "frozenset[str] | set[str]", bottles: "list[str]
     head = (f"bottle {named} is partial" if len(bottles) <= 1 else f"bottles {named} are partial")
     what = (f"{head}: {'its' if len(bottles) <= 1 else 'their'} grants use {hosts}, and "
             f"nothing declares {'it' if one else 'them'} under `git_gate.forges`.")
-    if RUN_BOTTLE in bottles:
+    if bottles == [RUN_BOTTLE]:
         return (f"{what} This run's suggested bottle can't be migrated: launch again so the "
                 f"architect writes {'its' if one else 'their'} declaration, or save the "
                 f"bottle to the library and migrate it there.")
-    target = bottles[-1] if bottles else "<bottle>"
+    target = bottles[0] if len(bottles) == 1 else "<bottle>"
     return (f"{what} Declare {'it' if one else 'them'} (kind, url), or run "
             f"`bot-bottle bottles migrate {target}` to add {'it' if one else 'them'} from "
             f"this host's connections.")

@@ -152,8 +152,9 @@ def declare_forges(name: str, doc: dict[str, object],
     for host in missing:
         conn = forge_connections.get(host)
         if conn is None:
-            raise MigrateError(f"bottle '{name}' grants repos on {host}, which nothing in it "
-                               f"declares and this host hasn't connected; connect it first "
+            raise MigrateError(f"bottle '{name}' (or a bottle it extends) grants repos on "
+                               f"{host}, which nothing declares and this host hasn't "
+                               f"connected; connect it first "
                                f"(`bot-bottle forge connect https://{host}`), or declare it "
                                f"under git_gate.forges by hand")
         added[host] = new[host] = described_connection(conn)

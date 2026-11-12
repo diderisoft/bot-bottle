@@ -116,6 +116,7 @@ class Wording(unittest.TestCase):
         one = partial_message(frozenset({"github.com"}), ["web"])
         self.assertIn("bottle 'web' is partial", one)
         self.assertIn("bottles migrate web", one)
+        self.assertNotIn("migrate web", partial_message(frozenset({"x.com"}), ["base", "web"]))
         two = partial_message(frozenset({"a.com", "b.com"}), ["base", "web"])
         self.assertIn("bottles 'base', 'web' are partial", two)
         self.assertIn("Declare them", two)

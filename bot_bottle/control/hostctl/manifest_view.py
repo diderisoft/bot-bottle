@@ -18,12 +18,12 @@ class ManifestViewError(Exception):
     """The manifest can't be shown; the message says why."""
 
 
-
 def _grant_forge(grant: str) -> str:
     """The forge a grant is on, past an `alias=` prefix."""
     # pylint: disable-next=import-outside-toplevel
     from ...manifest.forges import split_grant_alias
     return split_grant_alias(grant)[1].split("/", 1)[0]
+
 
 def _shown(path: Path) -> str:
     home = str(Path.home())
