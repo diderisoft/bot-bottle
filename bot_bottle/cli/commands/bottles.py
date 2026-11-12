@@ -66,6 +66,9 @@ def _row(name: str, dirs: list[tuple[Path, bool]]) -> tuple[str, ...]:
     trusted, problem = "", ""
     try:
         bottle, sources = load_bottle_chain(name, dirs)
+        if bottle.undeclared_forges:  # loads, but can't launch alone (ADR 0021)
+            problem = ("partial: declares no forge for "
+                       + ", ".join(sorted(bottle.undeclared_forges)))
         if project:
             check(name, bottle, sources)
             trusted = "yes"

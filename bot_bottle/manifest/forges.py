@@ -5,7 +5,7 @@ grants repos on it in a line:
 
   git_gate:
     forges:
-      gitea.example.com:                 # optional: what to connect elsewhere
+      gitea.example.com:                 # required: what to connect elsewhere
         kind: gitea
         url: https://gitea.example.com
         ssh: ssh://git@gitea.example.com:2222
@@ -223,6 +223,16 @@ def described_forge(forge: ManifestForge) -> dict[str, object]:
     if ssh_host == host and forge.ssh != f"ssh://git@{host}":
         out["ssh"] = forge.ssh
     return out
+
+
+def partial_message(undeclared: "frozenset[str] | set[str]", bottles: str) -> str:
+    """Why a bottle whose grants use undeclared forges can't launch, and the
+    fix (ADR 0021)."""
+    hosts = ", ".join(sorted(undeclared))
+    return (f"{bottles} is partial: it grants repos on {hosts} but declares no forge for "
+            f"{'it' if len(undeclared) == 1 else 'them'}. Declare it under "
+            f"`git_gate.forges` (kind, url), or run `bot-bottle bottles migrate <bottle>` to "
+            f"add it from this host's connection.")
 
 
 def described_connection(conn: Any) -> dict[str, object]:

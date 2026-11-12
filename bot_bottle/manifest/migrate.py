@@ -4,7 +4,10 @@ an old format, in one pass:
 - repos in the old git-gate format (`manifest/legacy_git_gate.py`) become
   grants on forges this host connected (edited as text, so comments stay);
 - the old egress shape (`manifest/upgrade.py`) becomes the current one, each
-  top-level block that changes written afresh and the rest left as written.
+  top-level block that changes written afresh and the rest left as written;
+- a grant whose forge nothing in the bottle's chain declares gets the forge's
+  declaration (`git_gate.forges`) from this host's connection, so the bottle
+  isn't partial (ADR 0021).
 
 Other old forms are refused at load, naming their new form, for a hand edit.
 
@@ -18,7 +21,7 @@ from __future__ import annotations
 
 import difflib
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,8 +55,10 @@ class Migration:
     @property
     def what(self) -> str:
         """What it migrates to, for the version's message."""
+        declares = [c for c in self.changes if c.startswith("declares the forge ")]
         parts = (["forge grants"] if self.plan is not None else []) + (
-            ["the current format"] if self.changes else [])
+            ["the current format"] if len(declares) < len(self.changes) else []) + (
+            ["declared forges"] if declares else [])
         return " and ".join(parts)
 
     def diff(self) -> str:
@@ -89,6 +94,11 @@ def prepare(name: str, dirs: Sequence[tuple[Path, bool]]) -> Migration:
         after = rewrite(after, p, repos)
     try:
         doc, changes, edits = upgrade_bottle(_frontmatter(path, after))
+        declared = declare_forges(name, doc, dirs)
+        if declared:
+            changes += [f"declares the forge {host} (from this host's connection)"
+                        for host in declared]
+            edits.append(add_forges(declared))
         if changes:
             after = rewrite_text(after, doc, edits)
     except UpgradeError as e:
@@ -98,6 +108,85 @@ def prepare(name: str, dirs: Sequence[tuple[Path, bool]]) -> Migration:
                            f"nothing to migrate")
     return Migration(bottle=name, path=path, project=project, before=text, after=after,
                      plan=p, notes=tuple(_notes(p)) if p else (), changes=tuple(changes))
+
+
+def _declared_by_parents(doc: Mapping[str, object],
+                         dirs: Sequence[tuple[Path, bool]]) -> frozenset[str]:
+    parents = doc.get("extends")
+    names = [parents] if isinstance(parents, str) else parents if isinstance(parents, list) else []
+    declared: frozenset[str] = frozenset()
+    for parent in names:
+        if not isinstance(parent, str):
+            continue
+        try:
+            declared |= load_bottle_chain(parent, dirs)[0].declared_forges
+        except ManifestError:
+            continue  # it says so itself when it's loaded; declaring here is harmless
+    return declared
+
+
+def declare_forges(name: str, doc: dict[str, object],
+                   dirs: Sequence[tuple[Path, bool]]) -> dict[str, dict[str, object]]:
+    """Add to `doc` (a bottle's current-format frontmatter) a declaration for
+    each forge its grants use that neither it nor a parent declares, from this
+    host's connection; the declarations added, by host. MigrateError when
+    such a forge isn't connected here: migrate never invents a forge."""
+    # pylint: disable=import-outside-toplevel
+    from .. import forge_connections
+    from .forges import described_connection, granted_forges
+    git = doc.get("git_gate")
+    if not isinstance(git, dict):
+        return {}
+    own = git.get("forges")
+    declared = set(own) if isinstance(own, dict) else set()
+    missing = sorted(granted_forges(name, doc) - declared - _declared_by_parents(doc, dirs))
+    if not missing:
+        return {}
+    added: dict[str, object] = dict(own) if isinstance(own, dict) else {}
+    new: dict[str, dict[str, object]] = {}
+    for host in missing:
+        conn = forge_connections.get(host)
+        if conn is None:
+            raise MigrateError(f"bottle '{name}' grants repos on {host}, which nothing in it "
+                               f"declares and this host hasn't connected; connect it first "
+                               f"(`bot-bottle forge connect https://{host}`), or declare it "
+                               f"under git_gate.forges by hand")
+        added[host] = new[host] = described_connection(conn)
+    git["forges"] = added
+    return new
+
+
+def add_forges(declared: Mapping[str, Mapping[str, object]]) -> "Callable[[list[str]], list[str]]":
+    """A line edit adding `declared` under `git_gate.forges`, as lines in the
+    block, so the rest of it (comments included) stays as written. A
+    `forges` written inline (`forges: {...}`) is left to the block rewrite."""
+    def entries(indent: int) -> list[str]:
+        out: list[str] = []
+        for host, d in declared.items():
+            out.append(" " * indent + f"{host}:")
+            out += [" " * (indent + 2) + f"{k}: {v}" for k, v in d.items()]
+        return out
+
+    def edit(lines: list[str]) -> list[str]:
+        out = list(lines)
+        top = next((i for i, line in enumerate(out) if _content(line) and _indent(line) == 0
+                    and (_key(line) or (0, "", ""))[1] in ("git_gate", "git-gate")), -1)
+        if top < 0:
+            return out
+        end = _block_end(out, top, 0)
+        child = _child_indent(out, top + 1, end)
+        child = child if child > 0 else 2
+        at = _find_key(out, top + 1, end, child, "forges")
+        if at < 0:
+            out[end:end] = [" " * child + "forges:", *entries(child + 2)]
+            return out
+        if (_key(out[at]) or (0, "", ""))[2]:
+            return out  # inline: the block's rewrite says it
+        sub_end = _block_end(out, at, child)
+        sub = _child_indent(out, at + 1, sub_end)
+        out[sub_end:sub_end] = entries(sub if sub > child else child + 2)
+        return out
+    return edit
 
 
 def _read(path: Path) -> str:
