@@ -177,7 +177,8 @@ def _gitea_repos(conn: Any, token: str, deadline: float) -> tuple[list[dict[str,
     """The user's own and shared repos, and those of each org the user is in
     (which `/user/repos` leaves out)."""
     api = f"{conn.url.rstrip('/')}/api/v1"
-    orgs = _listed(_get("gitea", f"{api}/user/orgs?limit={_GITEA_PAGE}", token))
+    orgs, _ = _pages(lambda p: _listed(
+        _get("gitea", f"{api}/user/orgs?limit={_GITEA_PAGE}&page={p}", token)), deadline)
     bases = [f"{api}/user/repos?limit={_GITEA_PAGE}"] + [
         f"{api}/orgs/{o['username']}/repos?limit={_GITEA_PAGE}"
         for o in orgs if isinstance(o, dict) and o.get("username")]
