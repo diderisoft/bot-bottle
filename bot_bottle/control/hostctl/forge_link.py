@@ -99,7 +99,8 @@ def _get(kind: str, url: str, token: str) -> object:
 def _repo(raw: object, installed: bool | None) -> dict[str, Any] | None:
     if not isinstance(raw, dict) or not raw.get("full_name"):
         return None
-    perms = raw.get("permissions") if isinstance(raw.get("permissions"), dict) else {}
+    found = raw.get("permissions")
+    perms: dict[str, object] = found if isinstance(found, dict) else {}
     return {"full_name": str(raw["full_name"]), "private": bool(raw.get("private")),
             "permissions": {k: bool(perms.get(k)) for k in ("pull", "push", "admin")},
             "installed": installed}
@@ -144,7 +145,8 @@ def _github_repos(conn: Any, user: Any, token: str) -> tuple[list[dict[str, Any]
                 repo = _repo(raw, True)
                 if repo:
                     reached[repo["full_name"].lower()] = repo
-    mine = f"{api}/user/repos?per_page={_GITHUB_PAGE}&affiliation=owner,collaborator,organization_member"
+    mine = (f"{api}/user/repos?per_page={_GITHUB_PAGE}"
+            "&affiliation=owner,collaborator,organization_member")
     items, cut = _pages(lambda p: listed(_get("github", f"{mine}&page={p}", token)), _GITHUB_PAGE)
     truncated |= cut
     for raw in items:

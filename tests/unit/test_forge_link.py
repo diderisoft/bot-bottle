@@ -47,11 +47,12 @@ class _Forge:
 
 class Status(unittest.TestCase):
     def _status(self, conns: dict[str, ForgeConnection], token: str | None = TOKEN,
-                installations: object = ()) -> list[dict[str, Any]]:
-        inst = (mock.patch("bot_bottle.contrib.github.user_token.installations",
-                           side_effect=installations) if isinstance(installations, Exception)
-                else mock.patch("bot_bottle.contrib.github.user_token.installations",
-                                return_value=list(installations)))
+                installations: "list[dict[str, str]] | Exception | None" = None
+                ) -> list[dict[str, Any]]:
+        target = "bot_bottle.contrib.github.user_token.installations"
+        inst = (mock.patch(target, side_effect=installations)
+                if isinstance(installations, Exception)
+                else mock.patch(target, return_value=list(installations or [])))
         with mock.patch("bot_bottle.forge_connections.connections", return_value=conns), \
                 mock.patch.object(forge_link, "_token", return_value=token), inst:
             return forge_link.status()
