@@ -238,6 +238,32 @@ The CLI and the console's card both say the token each kind needs:
 | `gitea` | `<url>/user/settings/applications` | scopes `write:repository` and `read:user`, from an account that's admin on the repos |
 | `github` | `<url>/settings/personal-access-tokens/new` | a fine-grained token for the repos with Contents: read (read & write to push) and Metadata: read. Administration: read & write too, only for a user connected with `--transport deploy-key`. A classic token with `repo` also works. |
 
+#### Forges in the console
+
+The console keeps the account's forge connections
+([ADR 0021](../decisions/0021-forge-connections-belong-to-the-account.md)):
+what each paired host reports with `forge_status`
+([host-controller.md](host-controller.md#forges-for-the-console)), one entry
+per forge and login, never a token. A host that holds the token *carries*
+the connection.
+
+- **Forges page.** Lists each connection with its state and the hosts that
+  carry it. *Connect a forge* goes through an online host: GitHub's guided
+  sign-in and app install, or a Gitea or GitHub Enterprise token, which the
+  host keeps.
+- **Add a repo.** In a bottle's editor, pick a forge, then a repo from a
+  filterable list of the repos the account can reach, asked of a host that
+  carries it (`forge_repos`). Write is off for a repo the account can only
+  read. Adding a repo writes its forge's declaration into the bottle, so the
+  bottle isn't partial. A repo can still be typed by hand.
+- **Launch.** A host that hasn't connected a forge the bottle grants on can't
+  resolve the bottle. The launch page offers to connect it on that host,
+  inline, then resolves again.
+
+A new host connects each forge once: GitHub with a device code (the app's
+install is the account's, already done), Gitea with its token. Tokens aren't
+copied between hosts.
+
 #### Deploy keys
 
 Gitea always reaches its repos with deploy keys minted per launch. So does a
