@@ -166,6 +166,8 @@ class TestMigrate(_Host):
                     + "    - gitea.example.com/acme/bot-bottle:write\n"
                     + "    - gitea.example.com/acme/bot-bottle-brand:write\n"
                     + "    - gitea.example.com/acme/textorbium\n"
+                    # Its forge, declared from the host's connection (ADR 0021).
+                    + "  forges:\n    gitea.example.com:\n      kind: gitea\n"
                     + expected[end:])
         self.assertEqual(expected, m.after)
         apply(m, self.dirs, root=self.root)
@@ -217,7 +219,8 @@ class TestMigrate(_Host):
         sha = apply(prepare("dev", self.dirs), self.dirs, root=self.root)
         versions = history(path, root=self.root)
         self.assertEqual(sha, versions[0].sha)
-        self.assertEqual("bottles migrate: dev to forge grants", versions[0].message)
+        self.assertEqual("bottles migrate: dev to forge grants and declared forges",
+                         versions[0].message)
         revert(path, versions[1].sha[:9], root=self.root)
         self.assertEqual(OLD, path.read_text())
 

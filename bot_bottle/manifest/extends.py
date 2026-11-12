@@ -105,6 +105,8 @@ def _merge_two_bottles_runtime(base: "ManifestBottle", override: "ManifestBottle
         audit=_overlay_audit(base, override),
         resources=base.resources.overlay(override.resources),
         forges=_union_forges(base, override),
+        granted_forges=base.granted_forges | override.granted_forges,
+        declared_forges=base.declared_forges | override.declared_forges,
         declared_fields=base.declared_fields | override.declared_fields,
     )
 
@@ -158,6 +160,12 @@ def _chain_forges(name: str, chain_cache: ChainCache) -> tuple[ManifestForge, ..
     return tuple(resolve_forge(h, forges.get(h), name) for h in hosts)
 
 
+def _chain_marks(name: str, chain_cache: ChainCache) -> dict[str, frozenset[str]]:
+    """The forges the chain grants on and those it declares (ADR 0021)."""
+    forges, used = chain_cache[name]
+    return {"granted_forges": frozenset(used), "declared_forges": frozenset(forges)}
+
+
 def _resolve_one_bottle(
     name: str,
     raws: dict[str, dict[str, object]],
@@ -182,7 +190,8 @@ def _resolve_one_bottle(
     if parent_name_raw is None:
         child_raw = _with_chain(name, child_raw, [], chain_cache)
         bottle = dataclasses.replace(ManifestBottle.from_dict(name, child_raw),
-                                     forges=_chain_forges(name, chain_cache))
+                                     forges=_chain_forges(name, chain_cache),
+                                     **_chain_marks(name, chain_cache))
         cache[name] = bottle
         repos_cache[name] = _resolve_repos_raw({}, child_raw)
         return bottle
@@ -226,7 +235,7 @@ def _resolve_one_bottle(
     merged_repos_raw = _resolve_repos_raw(combined_repos_raw, child_raw)
     bottle = dataclasses.replace(
         _merge_bottles(combined_parent, child_raw, merged_repos_raw, name),
-        forges=_chain_forges(name, chain_cache))
+        forges=_chain_forges(name, chain_cache), **_chain_marks(name, chain_cache))
     cache[name] = bottle
     repos_cache[name] = merged_repos_raw
     return bottle

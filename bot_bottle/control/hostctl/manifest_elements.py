@@ -299,8 +299,8 @@ def _with_forge_for(fm: dict[str, Any], grant: str) -> None:
     connected it."""
     # pylint: disable=import-outside-toplevel
     from ...forge_connections import get
-    from ...manifest.forges import described_connection, parse_grant
-    host = parse_grant(grant, "a grant")[0]
+    from ...manifest.forges import described_connection, parse_grant, split_grant_alias
+    host = parse_grant(split_grant_alias(grant)[1], "a grant")[0]
     git = dict(fm.get("git_gate") or {})
     forges = dict(git.get("forges") or {})
     if host in forges:

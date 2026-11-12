@@ -243,12 +243,17 @@ Any bottle then grants repos in a line, with nothing to extend:
 
 ```yaml
 git_gate:
+  forges:
+    gitea.example.com: { kind: gitea }
   repos: [gitea.example.com/acme/app:write]
 ```
 
 - Each grant is read-only unless `:write`.
-- A bottle may describe the forge (`git_gate.forges`), so it says what to
-  connect on another machine.
+- The grant's forge must be declared (`git_gate.forges`) somewhere in the
+  bottle's chain, so the bottle says what to connect on another machine.
+  Without it the bottle is *partial*: it loads and can be extended, but
+  can't be launched alone. `bot-bottle bottles migrate <name>` adds the
+  declaration from this host's connection.
 - A bottle never carries a token.
 
 Details are in [git-gate.md](git-gate.md#forges-and-one-line-grants) and

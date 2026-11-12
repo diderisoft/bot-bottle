@@ -107,9 +107,20 @@ class ManifestBottle:
     # Forges declared in the bottle's chain (`git_gate.forges`), set while
     # `extends` is resolved.
     forges: tuple[ManifestForge, ...] = ()
+    # The forges the chain's grants name, and those the chain declares
+    # (`git_gate.forges`). A grant's forge must be declared for the bottle to
+    # launch (ADR 0021): one that isn't makes the bottle partial.
+    granted_forges: frozenset[str] = frozenset()
+    declared_forges: frozenset[str] = frozenset()
     # Fields the source declared, so an explicit `false` survives extends
     # merging.
     declared_fields: frozenset[str] = frozenset()
+
+    @property
+    def undeclared_forges(self) -> frozenset[str]:
+        """The forges its grants use that nothing in its chain declares: a
+        bottle with any is partial, and can't be launched by itself."""
+        return self.granted_forges - self.declared_forges
 
     @classmethod
     def from_dict(cls, name: str, raw: object) -> "ManifestBottle":

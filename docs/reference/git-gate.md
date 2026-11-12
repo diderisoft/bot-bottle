@@ -104,15 +104,16 @@ A headless launch without a `host_key` refuses to start.
 
 ### Forges and one-line grants
 
-A bottle grants repos on a forge in one line each, and may describe the forge
+A bottle grants repos on a forge in one line each, and declares the forge
 they're on. The host connects it
-([ADR 0019](../decisions/0019-forges-are-described-in-bottles-connected-on-hosts.md)).
+([ADR 0019](../decisions/0019-forges-are-described-in-bottles-connected-on-hosts.md),
+[ADR 0021](../decisions/0021-forge-connections-belong-to-the-account.md)).
 
 ```yaml
 # any bottle
 extends: basic
 git_gate:
-  forges:                             # optional: what to connect elsewhere
+  forges:                             # required for the grants' forges
     gitea.example.com:                # the forge's host
       kind: gitea                     # url and ssh only when not the defaults
   repos:
@@ -134,7 +135,15 @@ A description never carries a token, a user or a transport. A bottle with
 `credentials:`, or with `token`, `account`, `app` or `transport` in a forge,
 fails to load, pointing at `forge connect`.
 
-No bottle needs to describe a forge for its grants to load.
+**A grant's forge must be declared** somewhere in the bottle's resolved
+chain: the bottle itself, a parent, or another bottle launched with it. A
+bottle whose grants use an undeclared forge still loads and can be extended,
+but it's *partial*: a launch of it alone is refused, naming the forge, and
+`bot-bottle bottles` lists it as `partial: declares no forge for <host>`.
+`bot-bottle bottles migrate <name>` adds the missing declarations from this
+host's connections; with no connection for a forge, it says to connect it
+first rather than invent one. The bottle architect, supervise `add-repo` and
+the console write the declaration with the grant.
 
 #### Host connections
 

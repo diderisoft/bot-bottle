@@ -27,6 +27,7 @@ from ..lib import log
 from ..lib.log import die, info, warn
 from ..util import expand_tilde
 from ..manifest import Manifest
+from ..manifest.forges import partial_message
 from ..secret_source import SecretSource
 from ..supervisor.plan import SupervisePlan
 from ..workspace import (LARGE_WORKSPACE_BYTES, DiskInfo, pack_workspace,
@@ -36,10 +37,19 @@ from .plan import BottlePlan, BottleSpec
 from .util import host_skill_dir
 
 if TYPE_CHECKING:
+    from ..manifest.bottle import ManifestBottle
     from .cache_entries import CacheEntry
     from .host_resources import HostResource
     from .adoption import AdoptionRecord
     from .infra_service import InfraService
+
+
+
+def refuse_partial(bottle: "ManifestBottle", bottle_names: Sequence[str]) -> None:
+    """Die when the launch's bottle grants repos on a forge nothing in it
+    declares (a partial bottle, ADR 0021)."""
+    if bottle.undeclared_forges:
+        die(partial_message(bottle.undeclared_forges, list(bottle_names)))
 
 
 class BackendStatus(enum.IntEnum):
@@ -233,6 +243,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):  # pylint: disable=too-many-
         skills exist and every git IdentityFile resolves. Returns the Manifest.
         Overrides call `super()._validate(spec)` first."""
         manifest = spec.manifest.load_for_agent(spec.agent_name, spec.bottle_names)
+        refuse_partial(manifest.bottle, spec.bottle_names)
         self._validate_skills(manifest.agent.skills)
         self._validate_agent_provider_dockerfile(spec, manifest)
         return manifest
