@@ -1251,7 +1251,7 @@ A host that holds a connection's token answers for it (`forge_link.py`).
 
 | `state` | Means |
 |---|---|
-| `ok` | the token works (through the app: and the app is installed somewhere, listed in `installations`) |
+| `ok` | a token is here; through the app it's also checked with GitHub, and the app is installed somewhere (`installations`) |
 | `needs_install` | authorized through the app, installed nowhere |
 | `expired` | GitHub won't renew the token; connect again |
 | `missing` | the token isn't in the host secrets file |
@@ -1260,10 +1260,16 @@ A host that holds a connection's token answers for it (`forge_link.py`).
 **`forge_repos`** (`forge`, optional `login`, else the forge's default user)
 answers `forge_repos` with `forge`, `login`, `repos` and `truncated`, or
 `error`. Each repo has `full_name`, `private`, `permissions` (`pull`, `push`,
-`admin`) and `installed`: through the GitHub App, whether the app reaches it
-(a repo the user can reach where it isn't installed is listed with `false`);
-otherwise null. The list is sorted, capped at 1,000 (`truncated` then), and
-read with the user's token, read-only.
+`admin`) and `installed`: true through the GitHub App (whose token reaches
+only the repos it's installed on, so a repo where it isn't can't be listed),
+otherwise null. On Gitea it's the user's repos and those of each org the user
+is in. The list is sorted, capped at 1,000 repos and 60 seconds (`truncated`
+then), and read with the user's token, read-only.
+
+Both ask the forge page after page, so the link runs them beside its other
+traffic: a slow forge doesn't hold up an agent's input or a stop. An error
+names the HTTP status or that the forge was unreachable, never the forge's
+response.
 
 ### Bottle suggestions from the console
 

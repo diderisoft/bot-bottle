@@ -826,6 +826,9 @@ ANSWERS = {"forge_connect_answer": forge_connect_answer, "add_repo_answer": add_
 # Requests about this host rather than one agent.
 HOST_REQUESTS = {"forge_connect": forge_connect, "github_authorize_start": github_authorize_start,
                  **FORGE_REQUESTS, **SUGGEST_REQUESTS}
+# Host requests that ask a forge, page after page: run beside the link, so a
+# slow forge doesn't hold up the agents' traffic.
+BESIDE = frozenset(FORGE_REQUESTS)
 
 __all__ = ["ANSWERS", "HOST_REQUESTS", "QUERIES", "add_repo_answer", "bottle_chain",
            "create_repo_answer",

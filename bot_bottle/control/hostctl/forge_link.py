@@ -8,9 +8,14 @@ leaves the host.
   (`ok`, `needs_install`, `expired`, `missing`, `error`) with a `message`,
   and on the GitHub App its installations).
 - `forge_repos` (`forge`, `login`?) -> `forge_repos` (`repos`: `full_name`,
-  `private`, `permissions` {`pull`, `push`, `admin`}, `installed` (GitHub
-  App: whether the App reaches it; null otherwise), `truncated`), or `error`.
-  `login` picks a connected user, else the forge's default.
+  `private`, `permissions` {`pull`, `push`, `admin`}, `installed` (true
+  through the GitHub App, which reaches only repos it's installed on; null
+  otherwise), `truncated`), or `error`. `login` picks a connected user, else
+  the forge's default.
+
+Both ask the forge, page after page, so the link runs them beside its other
+traffic (`remote_actions.BESIDE`). An error says only what went wrong (an
+HTTP status, unreachable), never the forge's response body.
 - `github_status` -> `github_status`: the host page's GitHub App steps
   (`github_connect.status`).
 """
@@ -18,6 +23,8 @@ leaves the host.
 from __future__ import annotations
 
 import asyncio
+import re
+import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -25,12 +32,22 @@ from ...lib import log
 
 # Enough for an account's repos, without paging a large org's forever.
 MAX_REPOS = 1000
+# A repo list stops here, marked truncated, however many pages are left.
+MAX_SECONDS = 60.0
 _GITHUB_PAGE = 100
 _GITEA_PAGE = 50
 
 
 class ForgeLinkError(Exception):
     """A connection or its token couldn't be used; the message says why."""
+
+
+def _brief(e: Exception) -> str:
+    """A forge error as the console may see it: the status, not the body."""
+    m = re.search(r"HTTP (\d{3})", str(e))
+    if m and m.group(1) == "401":
+        return "the forge rejected the token; connect it again"
+    return f"the forge answered HTTP {m.group(1)}" if m else "couldn't reach the forge"
 
 
 def _secrets() -> Any:
@@ -70,7 +87,7 @@ def _user_state(conn: Any, user: Any) -> dict[str, Any]:
     except ReauthorizeError as e:
         out.update(state="expired", message=str(e))
     except ForgeApiError as e:
-        out.update(state="error", message=str(e))
+        out.update(state="error", message=_brief(e))
     return out
 
 
@@ -106,65 +123,75 @@ def _repo(raw: object, installed: bool | None) -> dict[str, Any] | None:
             "installed": installed}
 
 
-def _pages(fetch: Callable[[int], list[object]], size: int) -> tuple[list[object], bool]:
-    """Pages from 1 until a short one, up to MAX_REPOS; and whether it stopped short."""
+def _pages(fetch: Callable[[int], list[object]], deadline: float) -> tuple[list[object], bool]:
+    """Pages from 1 until an empty one (a server may send fewer per page than
+    asked), up to MAX_REPOS or the deadline; and whether it stopped early."""
     items: list[object] = []
     page = 1
     while len(items) < MAX_REPOS:
+        if time.monotonic() > deadline:
+            return items, True
         batch = fetch(page)
-        items += batch
-        if len(batch) < size:
+        if not batch:
             return items, False
+        items += batch
         page += 1
     return items[:MAX_REPOS], True
 
 
-def _github_repos(conn: Any, user: Any, token: str) -> tuple[list[dict[str, Any]], bool]:
+def _listed(body: object, key: str = "") -> list[object]:
+    if key:
+        body = body.get(key) if isinstance(body, dict) else None
+    return body if isinstance(body, list) else []
+
+
+def _github_repos(conn: Any, user: Any, token: str,
+                  deadline: float) -> tuple[list[dict[str, Any]], bool]:
+    """Through the App: the repos of its installations the user reaches (a
+    user token reaches no other). Otherwise the user's own and shared repos."""
     # pylint: disable-next=import-outside-toplevel
     from ...contrib.github.forge_api import api_base
     api = api_base(conn.url)
-
-    def listed(body: object, key: str = "") -> list[object]:
-        if key:
-            body = body.get(key) if isinstance(body, dict) else None
-        return body if isinstance(body, list) else []
-
-    reached: dict[str, dict[str, Any]] = {}
+    found: dict[str, dict[str, Any]] = {}
     truncated = False
     if user.app:
-        insts = listed(_get("github", f"{api}/user/installations?per_page=100", token),
-                       "installations")
-        for inst in insts:
-            if not isinstance(inst, dict) or not inst.get("id"):
-                continue
-            base = f"{api}/user/installations/{inst['id']}/repositories?per_page={_GITHUB_PAGE}"
-            items, cut = _pages(lambda p, b=base: listed(_get("github", f"{b}&page={p}", token),
-                                                         "repositories"), _GITHUB_PAGE)
-            truncated |= cut
-            for raw in items:
-                repo = _repo(raw, True)
-                if repo:
-                    reached[repo["full_name"].lower()] = repo
-    mine = (f"{api}/user/repos?per_page={_GITHUB_PAGE}"
-            "&affiliation=owner,collaborator,organization_member")
-    items, cut = _pages(lambda p: listed(_get("github", f"{mine}&page={p}", token)), _GITHUB_PAGE)
-    truncated |= cut
-    for raw in items:
-        repo = _repo(raw, False if user.app else None)
-        if repo and repo["full_name"].lower() not in reached:
-            reached[repo["full_name"].lower()] = repo
-    return list(reached.values()), truncated
+        insts = _listed(_get("github", f"{api}/user/installations?per_page=100", token),
+                        "installations")
+        sources = [(f"{api}/user/installations/{i['id']}/repositories?per_page={_GITHUB_PAGE}",
+                    "repositories", True) for i in insts if isinstance(i, dict) and i.get("id")]
+    else:
+        sources = [(f"{api}/user/repos?per_page={_GITHUB_PAGE}"
+                    "&affiliation=owner,collaborator,organization_member", "", None)]
+    for base, key, installed in sources:
+        items, cut = _pages(lambda p, b=base, k=key: _listed(
+            _get("github", f"{b}&page={p}", token), k), deadline)
+        truncated |= cut
+        for raw in items:
+            repo = _repo(raw, installed)
+            if repo:
+                found.setdefault(repo["full_name"].lower(), repo)
+    return list(found.values()), truncated
 
 
-def _gitea_repos(conn: Any, token: str) -> tuple[list[dict[str, Any]], bool]:
-    base = f"{conn.url.rstrip('/')}/api/v1/user/repos?limit={_GITEA_PAGE}"
-
-    def fetch(page: int) -> list[object]:
-        body = _get("gitea", f"{base}&page={page}", token)
-        return body if isinstance(body, list) else []
-
-    items, truncated = _pages(fetch, _GITEA_PAGE)
-    return [r for r in (_repo(raw, None) for raw in items) if r], truncated
+def _gitea_repos(conn: Any, token: str, deadline: float) -> tuple[list[dict[str, Any]], bool]:
+    """The user's own and shared repos, and those of each org the user is in
+    (which `/user/repos` leaves out)."""
+    api = f"{conn.url.rstrip('/')}/api/v1"
+    orgs = _listed(_get("gitea", f"{api}/user/orgs?limit={_GITEA_PAGE}", token))
+    bases = [f"{api}/user/repos?limit={_GITEA_PAGE}"] + [
+        f"{api}/orgs/{o['username']}/repos?limit={_GITEA_PAGE}"
+        for o in orgs if isinstance(o, dict) and o.get("username")]
+    found: dict[str, dict[str, Any]] = {}
+    truncated = False
+    for base in bases:
+        items, cut = _pages(lambda p, b=base: _listed(_get("gitea", f"{b}&page={p}", token)),
+                            deadline)
+        truncated |= cut
+        for raw in items:
+            repo = _repo(raw, None)
+            if repo:
+                found.setdefault(repo["full_name"].lower(), repo)
+    return list(found.values()), truncated
 
 
 def repos(forge: str, login: str = "") -> dict[str, Any]:
@@ -189,15 +216,16 @@ def repos(forge: str, login: str = "") -> dict[str, Any]:
         if not token:
             raise ForgeLinkError(f"this host has no token for {user.name} on {forge}; "
                                  "connect it again")
-        found, truncated = (_github_repos(conn, user, token) if conn.kind == "github"
-                            else _gitea_repos(conn, token))
+        deadline = time.monotonic() + MAX_SECONDS
+        found, truncated = (_github_repos(conn, user, token, deadline) if conn.kind == "github"
+                            else _gitea_repos(conn, token, deadline))
     except ReauthorizeError as e:
         raise ForgeLinkError(str(e)) from e
     except ForgeApiError as e:
-        raise ForgeLinkError(str(e)) from e
-    return {"forge": conn.host, "login": user.name,
-            "repos": sorted(found, key=lambda r: r["full_name"].lower()),
-            "truncated": truncated}
+        raise ForgeLinkError(_brief(e)) from e
+    ordered = sorted(found, key=lambda r: r["full_name"].lower())
+    return {"forge": conn.host, "login": user.name, "repos": ordered[:MAX_REPOS],
+            "truncated": truncated or len(ordered) > MAX_REPOS}
 
 
 async def forge_status(msg: Mapping[str, Any]) -> dict[str, Any]:
@@ -245,5 +273,5 @@ async def github_status(msg: Mapping[str, Any]) -> dict[str, Any]:
 REQUESTS = {"forge_status": forge_status, "forge_repos": forge_repos,
             "github_status": github_status}
 
-__all__ = ["ForgeLinkError", "MAX_REPOS", "REQUESTS", "forge_repos", "forge_status",
+__all__ = ["ForgeLinkError", "MAX_REPOS", "MAX_SECONDS", "REQUESTS", "forge_repos", "forge_status",
            "github_status", "repos", "status"]

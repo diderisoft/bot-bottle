@@ -230,9 +230,10 @@ class ConsoleLink:
     SLOW = frozenset({"launch", "resume", "stop"})
 
     async def take(self, msg: dict[str, Any]) -> None:
-        """Handle `msg` off the link: a slow one in its agent's turn, beside it."""
-        if msg.get("type") in self.SLOW:
-            self.turns.submit(str(msg.get("agent_id", "")), lambda: self.handle(msg))
+        """Handle `msg` off the link: a slow one in its agent's turn (or the forge's), beside it."""
+        kind = msg.get("type")
+        if kind in self.SLOW or kind in remote_actions.BESIDE:
+            self.turns.submit(str(msg.get("agent_id") or f"host:{kind}"), lambda: self.handle(msg))
         else:
             await self.handle(msg)
 

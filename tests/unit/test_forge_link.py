@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import unittest
+from dataclasses import replace
 from typing import Any
 from unittest import mock
 
@@ -83,44 +84,63 @@ class Status(unittest.TestCase):
 
 
 class Repos(unittest.TestCase):
-    def _repos(self, conn: ForgeConnection, forge: _Forge, login: str = "") -> dict[str, Any]:
+    def _repos(self, conn: ForgeConnection, forge: Any, login: str = "") -> dict[str, Any]:
         with mock.patch("bot_bottle.forge_connections.get", return_value=conn), \
                 mock.patch.object(forge_link, "_token", return_value=TOKEN), \
                 mock.patch.object(forge_link, "_get", side_effect=forge):
             return forge_link.repos(conn.host, login)
 
-    def test_github_app_marks_what_the_app_reaches(self) -> None:
+    def test_github_app_lists_its_installations_repos(self) -> None:
         forge = _Forge({
             "/user/installations?": {"installations": [{"id": 7}]},
-            "/user/installations/7/repositories": {"repositories": [
+            "/user/installations/7/repositories?per_page=100&page=1": {"repositories": [
                 _repo("octo/app", True), _repo("acme/lib", False)]},
-            "/user/repos": [_repo("octo/app", True), _repo("other/thing", True, private=False)],
         })
         got = self._repos(GITHUB, forge)
         self.assertEqual(("github.com", "octo", False), (got["forge"], got["login"],
                                                          got["truncated"]))
         by = {r["full_name"]: r for r in got["repos"]}
-        self.assertEqual(["acme/lib", "octo/app", "other/thing"], list(by))  # sorted
+        self.assertEqual(["acme/lib", "octo/app"], list(by))  # sorted
         self.assertTrue(by["octo/app"]["installed"])
         self.assertFalse(by["acme/lib"]["permissions"]["push"])  # read-only: no Write
-        self.assertIs(False, by["other/thing"]["installed"])  # reachable, App not installed
+        # A user token reaches only installed repos: no second listing.
+        self.assertFalse(any("/user/repos" in u for u in forge.asked))
         self.assertNotIn(TOKEN, json.dumps(got))
 
-    def test_gitea_pages_until_a_short_page(self) -> None:
-        full = [_repo(f"me/r{i}", True) for i in range(forge_link._GITEA_PAGE)]  # pylint: disable=protected-access
-        forge = _Forge({"page=1": full, "page=2": [_repo("me/last", False)]})
+    def test_github_without_the_app_lists_the_users_repos(self) -> None:
+        pat = replace(GITHUB, users=(ForgeUser(name="octo", token_secret="GH_PAT",
+                                               default=True),))
+        forge = _Forge({"/user/repos?per_page=100&affiliation=owner,collaborator,"
+                        "organization_member&page=1": [_repo("octo/x", True)]})
+        got = self._repos(pat, forge, login="OCTO")  # a login matches regardless of case
+        self.assertEqual([("octo/x", None)],
+                         [(r["full_name"], r["installed"]) for r in got["repos"]])
+
+    def test_gitea_adds_org_repos_and_pages_until_an_empty_page(self) -> None:
+        forge = _Forge({
+            "/user/orgs": [{"username": "acme"}],
+            "/user/repos?limit=50&page=1": [_repo("me/a", True), _repo("acme/shared", True)],
+            "/user/repos?limit=50&page=2": [_repo("me/b", False)],  # a short page isn't the end
+            "/orgs/acme/repos?limit=50&page=1": [_repo("acme/shared", True), _repo("acme/c", False)],
+        })
         got = self._repos(GITEA, forge)
-        self.assertEqual(forge_link._GITEA_PAGE + 1, len(got["repos"]))  # pylint: disable=protected-access
+        self.assertEqual(["acme/c", "acme/shared", "me/a", "me/b"],
+                         [r["full_name"] for r in got["repos"]])
         self.assertTrue(all(r["installed"] is None for r in got["repos"]))
-        self.assertTrue(forge.asked[0].startswith("https://gitea.example.com/api/v1/user/repos"))
+        self.assertFalse(got["truncated"])
 
-    def test_a_cap_marks_the_list_truncated(self) -> None:
-        page = [_repo(f"me/r{i}", True) for i in range(forge_link._GITEA_PAGE)]  # pylint: disable=protected-access
+    def test_a_cap_or_the_deadline_marks_the_list_truncated(self) -> None:
+        def page(url: str) -> list[dict[str, Any]]:
+            n = url.rsplit("page=", 1)[1]
+            return [_repo(f"me/p{n}r{i}", True) for i in range(50)]
         with mock.patch.object(forge_link, "MAX_REPOS", 120):
-            got = self._repos(GITEA, _Forge({"user/repos": page}))
+            got = self._repos(GITEA, _Forge({"/user/orgs": [], "user/repos": page}))
         self.assertEqual((120, True), (len(got["repos"]), got["truncated"]))
+        with mock.patch.object(forge_link, "MAX_SECONDS", -1.0):
+            got = self._repos(GITEA, _Forge({"/user/orgs": [], "user/repos": page}))
+        self.assertEqual((0, True), (len(got["repos"]), got["truncated"]))
 
-    def test_errors_say_why(self) -> None:
+    def test_errors_say_why_without_the_forges_response(self) -> None:
         with mock.patch("bot_bottle.forge_connections.get", return_value=None), \
                 self.assertRaisesRegex(forge_link.ForgeLinkError, "isn't connected"):
             forge_link.repos("nope.example.com")
@@ -131,10 +151,17 @@ class Repos(unittest.TestCase):
                 self.assertRaisesRegex(forge_link.ForgeLinkError, "no token"):
             forge_link.repos(GITEA.host)
 
-        def boom(*_a: object) -> object:
-            raise ForgeApiError("HTTP 502")
-        with self.assertRaisesRegex(forge_link.ForgeLinkError, "502"):
-            self._repos(GITEA, boom)  # type: ignore[arg-type]
+        def answering(status: int) -> Any:
+            def fail(*_a: object) -> object:
+                raise ForgeApiError(f"HTTP {status} from https://x/api: echo {TOKEN} GITEA_ME")
+            return fail
+        for status, said in ((502, "the forge answered HTTP 502"),
+                             (401, "rejected the token; connect it again")):
+            with self.assertRaises(forge_link.ForgeLinkError) as ctx:
+                self._repos(GITEA, answering(status))
+            self.assertIn(said, str(ctx.exception))
+            self.assertNotIn(TOKEN, str(ctx.exception))
+            self.assertNotIn("GITEA_ME", str(ctx.exception))
 
 
 class Messages(unittest.TestCase):
@@ -156,10 +183,17 @@ class Messages(unittest.TestCase):
         with mock.patch.object(forge_link, "status", side_effect=OSError(TOKEN)):
             self.assertNotIn(TOKEN, asyncio.run(forge_link.forge_status({}))["error"])
 
+    def test_a_status_error_keeps_the_forges_response_out(self) -> None:
+        found = Status()._status({"g": GITHUB},  # pylint: disable=protected-access
+                                 installations=ForgeApiError(f"HTTP 500 body {TOKEN}"))
+        self.assertEqual("the forge answered HTTP 500", found[0]["users"][0]["message"])
+
     def test_the_link_routes_them(self) -> None:
         from bot_bottle.control.hostctl.remote_actions import HOST_REQUESTS
+        from bot_bottle.control.hostctl.remote_actions import BESIDE
         for kind in ("forge_status", "forge_repos", "github_status"):
             self.assertIn(kind, HOST_REQUESTS)
+            self.assertIn(kind, BESIDE)  # beside the link's other traffic
 
 
 if __name__ == "__main__":
