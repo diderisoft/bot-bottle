@@ -188,10 +188,33 @@ class Messages(unittest.TestCase):
                                  installations=ForgeApiError(f"HTTP 500 body {TOKEN}"))
         self.assertEqual("the forge answered HTTP 500", found[0]["users"][0]["message"])
 
+    def test_remove_takes_one_login_off_this_host(self) -> None:
+        with mock.patch("bot_bottle.forge_connections.remove", return_value=["me"]) as remove:
+            reply = asyncio.run(forge_link.forge_remove(
+                {"request_id": "r1", "forge": "Gitea.Example.com", "login": "me"}))
+        self.assertEqual({"type": "forge_removed", "request_id": "r1", "removed": ["me"]}, reply)
+        remove.assert_called_once_with("gitea.example.com", "me")
+        # Never every user by omission.
+        for msg in ({"forge": "gitea.example.com"}, {"login": "me"}, {}):
+            with mock.patch("bot_bottle.forge_connections.remove") as remove:
+                self.assertIn("error", asyncio.run(forge_link.forge_remove(msg)))
+            remove.assert_not_called()
+
+    def test_remove_says_why_not(self) -> None:
+        from bot_bottle.forge_connections import ForgeConnectionError
+        with mock.patch("bot_bottle.forge_connections.remove",
+                        side_effect=ForgeConnectionError("gitea.example.com isn't connected")):
+            reply = asyncio.run(forge_link.forge_remove({"forge": "gitea.example.com",
+                                                         "login": "me"}))
+        self.assertEqual("gitea.example.com isn't connected", reply["error"])
+        with mock.patch("bot_bottle.forge_connections.remove", side_effect=OSError(TOKEN)):
+            reply = asyncio.run(forge_link.forge_remove({"forge": "x", "login": "me"}))
+        self.assertNotIn(TOKEN, reply["error"])
+
     def test_the_link_routes_them(self) -> None:
         from bot_bottle.control.hostctl.remote_actions import HOST_REQUESTS
         from bot_bottle.control.hostctl.remote_actions import BESIDE
-        for kind in ("forge_status", "forge_repos", "github_status"):
+        for kind in ("forge_status", "forge_repos", "forge_remove", "github_status"):
             self.assertIn(kind, HOST_REQUESTS)
             self.assertIn(kind, BESIDE)  # beside the link's other traffic
 

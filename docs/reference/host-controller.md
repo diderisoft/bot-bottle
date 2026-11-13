@@ -867,6 +867,7 @@ Through the link the console can:
   `forge_repos` ([Forges for the console](#forges-for-the-console)) report
   connections and the repos a connected user can reach, private ones
   included, with their permissions. Never a token or a secret's name.
+  `forge_remove` disconnects a user's connection on this host.
 - **Widen a running bottle's egress** without a request from the agent.
   `operator_egress_allow` (`host`, optional `keep`) adds a default route for
   a host the bottle was blocked from.
@@ -935,7 +936,7 @@ An arrow shows a request and its reply.
 | `put_workspace_file`, `upload_*` | [Uploading files to a running agent](#uploading-files-to-a-running-agent) |
 | `rename` -> `renamed` | [Renaming a bottled agent](#renaming-a-bottled-agent) |
 | `github_authorize_start`, `github_status` | [GitHub through the bot-bottle app](#github-through-the-bot-bottle-app) |
-| `forge_status`, `forge_repos` | [Forges for the console](#forges-for-the-console) |
+| `forge_status`, `forge_repos`, `forge_remove` | [Forges for the console](#forges-for-the-console) |
 | `bottle_suggest`, `bottle_suggest_status`, `bottle_suggestion_*` | [Bottle suggestions from the console](#bottle-suggestions-from-the-console) |
 | `library` | [Library](#library) |
 | `resolve` | [Resolving a launch](#resolving-a-launch) |
@@ -1266,8 +1267,15 @@ otherwise null. On Gitea it's the user's repos and those of each org the user
 is in. The list is sorted, capped at 1,000 repos and 60 seconds (`truncated`
 then), and read with the user's token, read-only.
 
-Both ask the forge page after page, so the link runs them beside its other
-traffic: a slow forge doesn't hold up an agent's input or a stop. An error
+**`forge_remove`** (`forge`, `login`) answers `forge_removed` with `removed`,
+or `error`: the console's Disconnect for this host. It drops that user's
+connection and token here, as `bot-bottle forge remove <forge> --user
+<login>` does; a forge goes with its last user. Both fields are required, so
+a message can't remove every user by leaving one out. Bottles already
+running keep what they were given until they stop.
+
+`forge_status` and `forge_repos` ask the forge page after page, so the link
+runs them beside its other traffic: a slow forge doesn't hold up an agent's input or a stop. An error
 names the HTTP status or that the forge was unreachable, never the forge's
 response.
 

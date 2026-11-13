@@ -16,6 +16,11 @@ leaves the host.
 Both ask the forge, page after page, so the link runs them beside its other
 traffic (`remote_actions.BESIDE`). An error says only what went wrong (an
 HTTP status, unreachable), never the forge's response body.
+- `forge_remove` (`forge`, `login`) -> `forge_removed` (`removed`: the users
+  removed), or `error`: the console's Disconnect for this host. It drops the
+  user's row and its token (with an expiring token's companions) from this
+  host, as `bot-bottle forge remove <forge> --user <login>` does. Bottles
+  already running keep what they were given until they stop.
 - `github_status` -> `github_status`: the host page's GitHub App steps
   (`github_connect.status`).
 """
@@ -257,6 +262,27 @@ async def forge_repos(msg: Mapping[str, Any]) -> dict[str, Any]:
     return reply
 
 
+async def forge_remove(msg: Mapping[str, Any]) -> dict[str, Any]:
+    reply: dict[str, Any] = {"type": "forge_removed", "request_id": msg.get("request_id")}
+    forge = str(msg.get("forge") or "").strip().lower()
+    login = str(msg.get("login") or "").strip()
+    if not forge or not login:
+        reply["error"] = "which forge and login?"  # never every user by omission
+        return reply
+    # pylint: disable-next=import-outside-toplevel
+    from ...forge_connections import ForgeConnectionError, remove
+    try:
+        reply["removed"] = await asyncio.to_thread(remove, forge, login)
+    except ForgeConnectionError as e:
+        reply["error"] = str(e)
+    except Exception as e:  # pylint: disable=broad-exception-caught  # reported to the console
+        log.warn(f"remote: removing {forge} failed: {type(e).__name__}")
+        reply["error"] = "removing it failed; see the host controller's log"
+    else:
+        log.info(f"remote: removed {login} from {forge}")
+    return reply
+
+
 async def github_status(msg: Mapping[str, Any]) -> dict[str, Any]:
     """The app this host's GitHub access goes through, a flow in progress, and
     who's connected with which installations."""
@@ -272,7 +298,8 @@ async def github_status(msg: Mapping[str, Any]) -> dict[str, Any]:
 
 
 REQUESTS = {"forge_status": forge_status, "forge_repos": forge_repos,
-            "github_status": github_status}
+            "forge_remove": forge_remove, "github_status": github_status}
 
-__all__ = ["ForgeLinkError", "MAX_REPOS", "MAX_SECONDS", "REQUESTS", "forge_repos", "forge_status",
+__all__ = ["ForgeLinkError", "MAX_REPOS", "MAX_SECONDS", "REQUESTS", "forge_remove", "forge_repos",
+           "forge_status",
            "github_status", "repos", "status"]
