@@ -960,6 +960,7 @@ by a passkey this host trusts ([ADR 0022](../decisions/0022-console-upgrades-hos
   version must be a release (`X.Y.Z`) newer than this host's, which must be
   known. The challenge is
   single use, lasts two minutes, and is bound to the session and the version.
+  At most eight are outstanding at once; more are refused.
 - `upgrade` (`session`, `assertion`) -> `upgrade_started` (`version`) or
   `error`. The host checks the passkey's signature itself, with user
   verification, that the version is still newer, that no upgrade is running,

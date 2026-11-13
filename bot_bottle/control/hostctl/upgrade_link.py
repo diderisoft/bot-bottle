@@ -45,6 +45,9 @@ from .webauthn import b64url_encode
 
 REPO = "diderisoft/bot-bottle"
 CHALLENGE_SECONDS = 120.0
+# Outstanding challenges at once: a console asking for more is refused, so
+# it can't fill this host's memory with them.
+MAX_CHALLENGES = 8
 _VERSION = re.compile(r"\d+\.\d+\.\d+", re.ASCII)
 # What the installer installs: set here, never taken from this process's env
 # (a SPEC there would install something other than the release).
@@ -197,6 +200,8 @@ class UpgradeLink:
         now = self._clock()
         with self._lock:
             self._challenges = {n: v for n, v in self._challenges.items() if v[0] > now}
+            if len(self._challenges) >= MAX_CHALLENGES:
+                raise UpgradeError("too many upgrade requests at once; try again in a minute")
             self._challenges[nonce] = (now + CHALLENGE_SECONDS, session, version)
         return {"challenge": nonce, "rp_id": trust.rp_id,
                 "credential_ids": [p.id for p in trust.passkeys],

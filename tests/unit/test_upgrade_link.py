@@ -108,6 +108,14 @@ class Upgrades(_Tmp):
             self.link.upgrade("s1", self.pk.assertion(str(ch["challenge"]), flags=0x01))
         self.assertEqual([], self.started)
 
+    def test_outstanding_challenges_are_capped(self) -> None:
+        for _ in range(upgrade_link.MAX_CHALLENGES):
+            self.link.challenge("s1", "0.1.15")
+        with self.assertRaisesRegex(UpgradeError, "too many"):
+            self.link.challenge("s1", "0.1.15")
+        self.now += upgrade_link.CHALLENGE_SECONDS + 1  # they expire, and make room
+        self.link.challenge("s1", "0.1.15")
+
     def test_refusals(self) -> None:
         with self.assertRaisesRegex(UpgradeError, "no console session"):
             self.link.challenge("", "0.1.15")
