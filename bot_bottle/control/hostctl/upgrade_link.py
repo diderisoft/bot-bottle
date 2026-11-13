@@ -115,6 +115,19 @@ def start(version: str) -> dict[str, Any]:
     return record
 
 
+def _alive(pid: object) -> bool:
+    """Whether the installer's process is still running."""
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # someone else's: not ours any more
+        return False
+    return True
+
+
 def status() -> dict[str, Any]:
     """The last upgrade: none, running, done or failed (with its log's end)."""
     try:
@@ -127,8 +140,11 @@ def status() -> dict[str, Any]:
         code = Path(str(record.get("exit", ""))).read_text(encoding="utf-8").strip()
     except OSError:
         code = ""
-    if not code:
+    if not code and _alive(record.get("pid")):
         out["state"] = "running"
+    elif not code:  # gone without a status: a reboot, or killed
+        out["state"] = "failed"
+        out["log"] = "The upgrade was interrupted before it finished."
     elif code == "0":
         out["state"] = "done"
     else:

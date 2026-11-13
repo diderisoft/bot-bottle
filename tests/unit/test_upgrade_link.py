@@ -165,7 +165,7 @@ class Running(_Tmp):
     def test_status_follows_the_installer(self) -> None:
         self.assertEqual({"state": "none"}, upgrade_link.status())
         with mock.patch("subprocess.Popen") as popen:
-            popen.return_value.pid = 42
+            popen.return_value.pid = os.getpid()  # alive
             record = upgrade_link.start("0.1.15")
         self.assertEqual("running", upgrade_link.status()["state"])
         Path(record["log"]).write_text("fetching\nerror: no network\n", encoding="utf-8")
@@ -175,3 +175,11 @@ class Running(_Tmp):
         self.assertIn("no network", failed["log"])
         Path(record["exit"]).write_text("0\n", encoding="utf-8")
         self.assertEqual("done", upgrade_link.status()["state"])
+
+    def test_an_interrupted_upgrade_doesnt_block_the_next(self) -> None:
+        with mock.patch("subprocess.Popen") as popen:
+            popen.return_value.pid = 2 ** 22 + 7  # no such process
+            upgrade_link.start("0.1.15")
+        state = upgrade_link.status()
+        self.assertEqual("failed", state["state"])
+        self.assertIn("interrupted", state["log"])
