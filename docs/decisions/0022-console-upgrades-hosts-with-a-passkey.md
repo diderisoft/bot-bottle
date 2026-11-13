@@ -26,8 +26,8 @@ enforces:
   `diderisoft/bot-bottle` repo. The console can't name a branch, a commit,
   an older release, or a source.
 - **Nothing of the console's runs.** The host fetches that release's own
-  `install.sh` from the tag and runs it with its own environment, minus any
-  `BOT_BOTTLE_INSTALL_*` settings. The console sends no code, arguments or
+  `install.sh` from the tag and runs it with its own environment, minus
+  `BOT_BOTTLE_INSTALL_SPEC` and `BOT_BOTTLE_INSTALL_REF` (it sets the ref). The console sends no code, arguments or
   environment.
 - **A passkey per upgrade.** As for audit reads (ADR 0013): the host issues a
   single-use challenge bound to the console session and the version; the

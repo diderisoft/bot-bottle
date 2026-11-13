@@ -55,6 +55,8 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("backend/docker/bottle.py", "os.environ"): _CHILD_ENV,
     ("backend/macos_container/pty_forward.py", "os.environ"): _CHILD_ENV,
     ("backend/docker/gateway.py", "os.environ"): _CHILD_ENV,
+    ("control/hostctl/upgrade_link.py", "os.environ"):
+        f"{_CHILD_ENV}: the installer an upgrade runs, less what it installs (ADR 0022)",
     ("backend/docker/orchestrator.py", "os.environ"): _CHILD_ENV,
     ("backend/macos_container/gateway.py", "os.environ"): _CHILD_ENV,
     ("backend/macos_container/orchestrator.py", "os.environ"): _CHILD_ENV,

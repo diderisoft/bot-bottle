@@ -46,8 +46,9 @@ from .webauthn import b64url_encode
 REPO = "diderisoft/bot-bottle"
 CHALLENGE_SECONDS = 120.0
 _VERSION = re.compile(r"\d+\.\d+\.\d+", re.ASCII)
-# The installer's own environment knobs, never the console's to set.
-_INSTALL_ENV = "BOT_BOTTLE_INSTALL_"
+# What the installer installs: set here, never taken from this process's env
+# (a SPEC there would install something other than the release).
+_INSTALL_ENV = ("BOT_BOTTLE_INSTALL_SPEC", "BOT_BOTTLE_INSTALL_REF")
 _TAIL_LINES = 30
 
 
@@ -97,7 +98,7 @@ def start(version: str) -> dict[str, Any]:
     log_path, script, code = (logs / f"upgrade-{stamp}.log", logs / f"upgrade-{stamp}.sh",
                               logs / f"upgrade-{stamp}.exit")
     url = f"https://raw.githubusercontent.com/{REPO}/v{version}/install.sh"
-    env = {k: v for k, v in os.environ.items() if not k.startswith(_INSTALL_ENV)}
+    env = {k: v for k, v in os.environ.items() if k not in _INSTALL_ENV}
     # The release's own installer, fetched to a file first so a failed fetch
     # isn't an empty script that "succeeds"; then the restart that adopts
     # running bottles (the installer's own can't stop a controller holding
