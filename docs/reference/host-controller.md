@@ -1278,9 +1278,8 @@ they were given until they stop.
 
 `forge_status` and `forge_repos` ask the forge page after page, so the link
 runs them beside its other traffic: a slow forge doesn't hold up an agent's
-input or a stop. An error
-names the HTTP status or that the forge was unreachable, never the forge's
-response.
+input or a stop. An error names the HTTP status or that the forge was
+unreachable, never the forge's response.
 
 ### Bottle suggestions from the console
 
