@@ -141,13 +141,48 @@ class WhatRan(unittest.TestCase):
         self.assertEqual("[secret:TOK]", content["bottle"]["env"]["KEY"])
         self.assertNotIn("s3cr3t-value-1234", canonical(content))
 
+    def test_a_credential_written_in_is_left_out(self) -> None:
+        # pi's settings.api_key is the key itself; an env named like a
+        # password holds one. A reference under such a key is kept.
+        content = manifest_content(_manifest(
+            {"env": {"DB_PASSWORD": "hunter2hunter2", "API_TOKEN": "secret:TOK",
+                     "ASKED_SECRET": "secret:?the db password"}},
+            {"agent_provider": {"harness": "pi", "settings": {
+                "provider": "acme", "api_key": "my-private-provider-key-123"}}}))
+        text = canonical(content)
+        self.assertNotIn("hunter2hunter2", text)
+        self.assertNotIn("my-private-provider-key-123", text)
+        env = content["bottle"]["env"]
+        self.assertEqual("[redacted]", env["DB_PASSWORD_redacted"])
+        self.assertEqual("secret:TOK", env["API_TOKEN_ref"])
+        # Asked at launch: a reference too.
+        self.assertEqual("secret:?the db password", env["ASKED_SECRET_ref"])
+        self.assertEqual("[redacted]",
+                         content["agent"]["agent_provider"]["settings"]["api_key_redacted"])
+
+    def test_the_stored_record_matches_its_digest(self) -> None:
+        # A token-shaped value is scrubbed before hashing, as the journal
+        # scrubs it, so the record checks against its own digest.
+        content = manifest_content(_manifest({"env": {"GH": "ghp_" + "a" * 36}}))
+        self.assertNotIn("ghp_" + "a" * 36, canonical(content))
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = AuditJournal(Path(tmp), host="h", engine="e")
+            try:
+                HostAudit(journal).bottled_agent_start(
+                    bottle="b1", activation="a1", manifest_digest=digest_content(content),
+                    backend="docker", agent="demo", manifest=content)
+                record = json.loads(journal.path.read_text().splitlines()[-1])
+            finally:
+                journal.close()
+        self.assertEqual(digest_content(record["payload"]["manifest"]), record["manifest_digest"])
+
     def test_the_journal_takes_it(self) -> None:
         # A credential-shaped key (the agent's auth_token, a secret's name)
         # is written <key>_ref, or the journal would refuse the whole start.
         content = manifest_content(_manifest(
             {"egress": {"routes": [_ROUTE]}},
             {"agent_provider": {"harness": "claude", "login": {"oauth_token": "secret:OAUTH"}}}))
-        self.assertIn("auth_token_ref", content["agent"]["agent_provider"])
+        self.assertEqual("secret:OAUTH", content["agent"]["agent_provider"]["auth_token_ref"])
         with tempfile.TemporaryDirectory() as tmp:
             journal = AuditJournal(Path(tmp), host="h", engine="e")
             try:

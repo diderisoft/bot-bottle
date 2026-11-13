@@ -28,33 +28,77 @@ def manifest_content(manifest: "Manifest") -> dict[str, Any]:
     """What a bottle runs under, kept with its start so the trail says what
     ran even after the files change: the resolved bottle as one document
     (`manifest.document`, its whole `extends` chain, secrets by name as the
-    files have them) and the resolved agent. A value from the host secrets
-    file, pasted in where a name belongs, is kept out as `[secret:NAME]`, and
-    a key the journal reads as a credential's (`auth_token`, which holds a
-    secret's name) is written `<key>_ref`. Empty (logged) if it can't be
-    rendered."""
+    files have them) and the resolved agent. Kept out of it:
+
+    - a value from the host secrets file, wherever it appears, as
+      `[secret:NAME]`;
+    - a token-shaped string, as the journal scrubs one, so the record holds
+      exactly what was hashed;
+    - under a key the journal reads as a credential's: a reference
+      (`secret:NAME`, `${VAR}`) is kept, as `<key>_ref`; anything else is a
+      value written in (pi's `settings.api_key`, a `DB_PASSWORD` env), as
+      `<key>_redacted: [redacted]`.
+
+    Empty (logged) if it can't be rendered."""
     # pylint: disable=import-outside-toplevel
     from dataclasses import asdict
     from ...manifest.document import bottle_document
     from ...manifest.versions import secret_values
     try:
+        agent = asdict(manifest.agent)
+        provider = agent.get("agent_provider")
+        if isinstance(provider, dict) and provider.get("auth_token"):
+            # A secret's bare name: as the agent file writes it.
+            provider["auth_token"] = f"secret:{provider['auth_token']}"
         content = json.loads(json.dumps(
-            {"bottle": bottle_document(manifest.bottle), "agent": asdict(manifest.agent)},
-            default=str))
-        return _redacted(_refs(content), secret_values())
+            {"bottle": bottle_document(manifest.bottle), "agent": agent}, default=str))
+        return _scrubbed(_redacted(_refs(content), secret_values()))
     except Exception as e:  # pylint: disable=broad-exception-caught
         warn(f"audit: couldn't record the manifest: {e}")
         return {}
 
 
+def _is_ref(value: Any) -> bool:
+    """A reference to a secret (`secret:NAME`, `${VAR}`, `secret:${VAR}`, or
+    `?message`, asked at launch), or nothing: what a credential-shaped key may
+    hold in what's recorded."""
+    # pylint: disable-next=import-outside-toplevel
+    from ... import secret_ref
+    if value in ("", None):
+        return True
+    return isinstance(value, str) and secret_ref.kind(value) in (
+        secret_ref.STORED, secret_ref.HOST_ENV, secret_ref.PROMPT)
+
+
 def _refs(value: Any) -> Any:
-    """`value` with each credential-shaped key renamed `<key>_ref`: its value
-    is a reference (a secret's name), and the journal refuses the bare key."""
+    """`value` with each credential-shaped key, which the journal refuses,
+    renamed: `<key>_ref` when it holds a reference, else `<key>_redacted`
+    with its value left out."""
     if isinstance(value, dict):
-        return {(f"{k}_ref" if credential_shaped(k) else k): _refs(v) for k, v in value.items()}
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            if not credential_shaped(k):
+                out[k] = _refs(v)
+            elif _is_ref(v):
+                out[f"{k}_ref"] = v
+            else:
+                out[f"{k}_redacted"] = "[redacted]"
+        return out
     if isinstance(value, list):
         return [_refs(v) for v in value]
     return value
+
+
+def _scrubbed(value: Any) -> Any:
+    """`value` with token-shaped strings scrubbed, as the journal does to a
+    payload: the digest is of what's stored."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...gateway.egress.dlp_detectors import redact_tokens
+    if isinstance(value, dict):
+        return {k: _scrubbed(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrubbed(v) for v in value]
+    return redact_tokens(value) if isinstance(value, str) else value
 
 
 def _redacted(value: Any, secrets: Mapping[str, str]) -> Any:

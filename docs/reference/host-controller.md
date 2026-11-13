@@ -572,15 +572,29 @@ keeps what it runs under in its payload, as `manifest`, so the journal says
 what ran even after the files change or the bottle is removed:
 
 - `bottle`: its whole bottle chain resolved into one document, as a bottle
-  file writes it (`manifest/document.py`; secrets by name).
+  file writes it (`manifest/document.py`).
 - `agent`: the resolved agent definition.
-- A value from the host secrets file pasted where a name belongs is written
-  `[secret:NAME]`. A key the journal reads as a credential's (the agent's
-  `auth_token`, which holds a secret's name) is written `<key>_ref`.
+
+Values are recorded as the files hold them, so a reference (`secret:NAME`,
+`${VAR}`) stays a name. What's kept out:
+
+- a value from the host secrets file, wherever it appears, as
+  `[secret:NAME]`;
+- a token-shaped string, scrubbed as the journal scrubs any payload;
+- under a key the journal reads as a credential's (`*_password`, `api_key`,
+  the agent's `oauth_token`, …): a reference is kept as `<key>_ref`, and a
+  value written in (pi's `settings.api_key`, a literal `DB_PASSWORD`) is
+  replaced, as `<key>_redacted: [redacted]`.
+
+A literal value under any other key (`MODE: fast`, or a secret pasted into an
+ordinary env name) is recorded as written: write `secret:NAME` for anything
+secret.
 
 `manifest_digest`, on the start and on its stop or crash, is the SHA-256 of
-that content's canonical form, so it changes with any change to what runs,
-and anyone holding the record can check it.
+that recorded content's canonical form, so it changes with any change to what
+runs and the record checks against it. Since the secrets file's values are
+kept out wherever they appear, rotating a secret that also appears in the
+bottle's text changes the digest.
 
 A journal that can't be written is logged, and the launch or teardown still
 goes ahead. Where a bottle sets `audit.delivery: required`, egress and
