@@ -107,7 +107,8 @@ class AuditUnlock:
             return t.credential_id
 
 
-def verify_passkey(assertion: dict[str, object], nonce: str, db_path: Path | None = None) -> str:
+def verify_passkey(assertion: dict[str, object], nonce: str, db_path: Path | None = None,
+                   *, require_uv: bool = False) -> str:
     """Check `assertion` is a trusted passkey's signature over the challenge
     `nonce` (base64url) this host issued: the passkey's id, or UnlockError.
     Shared by every action a passkey authorizes (audit reads, upgrades)."""
@@ -119,7 +120,7 @@ def verify_passkey(assertion: dict[str, object], nonce: str, db_path: Path | Non
         verified = verify_assertion(
             assertion, public_key=key.key_bytes, credential_id=key.id,
             challenge=b64url_decode(nonce), rp_id=trust.rp_id, origin=trust.origin,
-            stored_sign_count=key.sign_count)
+            stored_sign_count=key.sign_count, require_uv=require_uv)
     except WebAuthnError as e:
         raise UnlockError(str(e)) from e
     audit_trust.record_sign_count(key.id, verified.sign_count, db_path)

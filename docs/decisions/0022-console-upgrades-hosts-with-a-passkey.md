@@ -21,7 +21,8 @@ The console can ask a host to upgrade bot-bottle, within limits the host
 enforces:
 
 - **A newer release only.** The target is a version (`X.Y.Z`) newer than the
-  host's, and the host checks that its `v<version>` tag exists on the
+  host's (never when the host's own version is unknown), and the host checks
+  that its `v<version>` tag exists on the
   `diderisoft/bot-bottle` repo. The console can't name a branch, a commit,
   an older release, or a source.
 - **Nothing of the console's runs.** The host fetches that release's own
@@ -30,13 +31,15 @@ enforces:
   environment.
 - **A passkey per upgrade.** As for audit reads (ADR 0013): the host issues a
   single-use challenge bound to the console session and the version; the
-  user signs it with a passkey the host trusted at pairing; the host checks
-  the signature itself. A compromised console can't upgrade a host on its
-  own.
+  user signs it with a passkey the host trusted at pairing, with user
+  verification (biometric or PIN); the host checks the signature itself. A
+  compromised console can't upgrade a host on its own.
 - **Journalled.** Each upgrade, and each refused signature, is a
   `hostctl.upgrade` event naming the passkey.
-- **Running bottles keep running.** The installer restarts the host
-  controller, which adopts them, as on a manual upgrade.
+- **Running bottles keep running.** After the installer, the host runs
+  `bot-bottle up --restart --yes`, which restarts the host controller and
+  adopts them, as `up --restart` does by hand. The upgrade fails if either
+  step fails.
 - **Not from a source checkout.** A host running bot-bottle from a checkout
   refuses: it's upgraded there.
 

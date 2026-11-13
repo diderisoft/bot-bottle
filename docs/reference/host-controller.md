@@ -957,20 +957,24 @@ by a passkey this host trusts ([ADR 0022](../decisions/0022-console-upgrades-hos
 
 - `upgrade_challenge` (`session`, `version`) -> `upgrade_challenge`
   (`challenge`, `rp_id`, `credential_ids`, `expires_in`) or `error`. The
-  version must be a release (`X.Y.Z`) newer than this host's. The challenge is
+  version must be a release (`X.Y.Z`) newer than this host's, which must be
+  known. The challenge is
   single use, lasts two minutes, and is bound to the session and the version.
 - `upgrade` (`session`, `assertion`) -> `upgrade_started` (`version`) or
-  `error`. The host checks the passkey's signature itself, that the version is
-  still newer, and that its `v<version>` tag exists on GitHub. It then fetches
-  that tag's `install.sh` and runs it in its own session, with
+  `error`. The host checks the passkey's signature itself, with user
+  verification, that the version is still newer, that no upgrade is running,
+  and that its `v<version>` tag exists on GitHub. It then fetches that tag's
+  `install.sh` and runs it in its own session, with
   `BOT_BOTTLE_INSTALL_REF=v<version>` and none of the caller's other
-  `BOT_BOTTLE_INSTALL_*` settings.
+  `BOT_BOTTLE_INSTALL_*` settings, followed by `bot-bottle up --restart
+  --yes`.
 - `upgrade_status` -> `upgrade_status` (`state`: `none`, `running`, `done` or
   `failed`; `version`, `started`; the log's last lines when it failed).
 
 The installer's output is `~/.bot-bottle/logs/upgrade-<time>.log`, its exit
-status beside it, and the last upgrade is `logs/upgrade.json`. It restarts
-the host controller, which adopts running bottles. Each upgrade, and each
+status beside it, and the last upgrade is `logs/upgrade.json`. The restart
+adopts running bottles; the upgrade fails if the installer or the restart
+does. Each upgrade, and each
 refused signature, is journalled as `hostctl.upgrade`, with the passkey as
 its actor. A host running from a source checkout refuses, as does one that
 trusts no passkey yet (`bot-bottle audit passkeys --trust`).

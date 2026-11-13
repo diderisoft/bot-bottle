@@ -9,10 +9,10 @@ over a challenge bound to the version.
   (`challenge`, `rp_id`, `credential_ids`, `expires_in`) or `error`: the
   version must be a release (`X.Y.Z`) newer than this host's.
 - `upgrade` (`session`, `assertion`) -> `upgrade_started` (`version`) or
-  `error`: the host checks the signature, checks the release's tag exists,
-  and runs that release's own `install.sh` in the background. The installer
-  restarts the host controller; running bottles are adopted, as on any
-  upgrade.
+  `error`: the host checks the signature (with user verification), checks
+  the release's tag exists, and runs that release's own `install.sh` in the
+  background, then `bot-bottle up --restart --yes`, which restarts the host
+  controller and adopts running bottles.
 - `upgrade_status` -> `upgrade_status` (`state`: none, running, done or
   failed; `version`, `started`, and the log's last lines when it failed).
 
@@ -45,7 +45,7 @@ from .webauthn import b64url_encode
 
 REPO = "diderisoft/bot-bottle"
 CHALLENGE_SECONDS = 120.0
-_VERSION = re.compile(r"^\d+\.\d+\.\d+$")
+_VERSION = re.compile(r"\d+\.\d+\.\d+", re.ASCII)
 # The installer's own environment knobs, never the console's to set.
 _INSTALL_ENV = "BOT_BOTTLE_INSTALL_"
 _TAIL_LINES = 30
@@ -56,14 +56,17 @@ class UpgradeError(Exception):
 
 
 def _parts(version: str) -> tuple[int, ...] | None:
-    m = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+    m = re.match(r"(\d+)\.(\d+)\.(\d+)", version, re.ASCII)
     return tuple(int(p) for p in m.groups()) if m else None
 
 
 def newer(target: str, current: str) -> bool:
-    """Whether release `target` (X.Y.Z) is newer than `current`."""
+    """Whether release `target` (exactly X.Y.Z) is newer than `current`. Never
+    when `current` is unknown: that could be a downgrade."""
+    if not _VERSION.fullmatch(target):
+        return False
     t, c = _parts(target), _parts(current)
-    return bool(t and _VERSION.match(target) and (c is None or t > c))
+    return t is not None and c is not None and t > c
 
 
 def tag_exists(version: str, timeout: float = 10.0) -> bool:
@@ -96,9 +99,12 @@ def start(version: str) -> dict[str, Any]:
     url = f"https://raw.githubusercontent.com/{REPO}/v{version}/install.sh"
     env = {k: v for k, v in os.environ.items() if not k.startswith(_INSTALL_ENV)}
     # The release's own installer, fetched to a file first so a failed fetch
-    # isn't an empty script that "succeeds".
+    # isn't an empty script that "succeeds"; then the restart that adopts
+    # running bottles (the installer's own can't stop a controller holding
+    # them). Its status is the whole run's.
     command = ['/bin/sh', '-c',
-               'curl -fsSL "$1" -o "$2" && BOT_BOTTLE_INSTALL_REF="$3" sh "$2"; echo $? > "$4"',
+               'curl -fsSL "$1" -o "$2" && BOT_BOTTLE_INSTALL_REF="$3" sh "$2" '
+               '&& PATH="$HOME/.local/bin:$PATH" bot-bottle up --restart --yes; echo $? > "$4"',
                'upgrade', url, str(script), f"v{version}", str(code)]
     with open(log_path, "ab") as out:  # pylint: disable=consider-using-with
         proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out,  # pylint: disable=consider-using-with
@@ -192,7 +198,7 @@ class UpgradeLink:
             raise UpgradeError("that challenge was issued to another session")
         version, current = issued[2], install_version()[0]
         try:
-            credential = verify_passkey(assertion, nonce, self._db_path)
+            credential = verify_passkey(assertion, nonce, self._db_path, require_uv=True)
         except UnlockError as e:
             self._journal(version, current, "", str(e))
             raise UpgradeError(str(e)) from e
@@ -200,7 +206,10 @@ class UpgradeLink:
             raise UpgradeError(f"this host already runs {version} or newer")
         if not self._tag_exists(version):
             raise UpgradeError(f"v{version} isn't a bot-bottle release")
-        record = self._start(version)
+        with self._lock:  # two signed upgrades never run two installers
+            if status().get("state") == "running":
+                raise UpgradeError("an upgrade is already running on this host")
+            record = self._start(version)
         self._journal(version, current, credential)
         log.info(f"remote: upgrading to {version} (authorized by passkey {credential[:12]}…); "
                  f"log {record.get('log', '')}")

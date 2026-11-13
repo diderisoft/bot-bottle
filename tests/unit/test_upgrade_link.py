@@ -19,8 +19,9 @@ class Versions(_Tmp):
     def test_only_a_newer_release(self) -> None:
         self.assertTrue(newer("0.1.15", "0.1.14"))
         self.assertTrue(newer("0.2.0", "0.1.99"))
-        self.assertTrue(newer("0.1.15", "unknown"))
-        for target in ("0.1.14", "0.1.13", "main", "v0.1.15", "0.1.15-rc1", "0.1", ""):
+        self.assertFalse(newer("0.1.15", "unknown"))  # could be a downgrade
+        for target in ("0.1.14", "0.1.13", "main", "v0.1.15", "0.1.15-rc1", "0.1", "",
+                       "0.1.15\n", "0.1.\u0661\u0665"):
             self.assertFalse(newer(target, "0.1.14"), target)
 
 
@@ -92,6 +93,21 @@ class Upgrades(_Tmp):
             self.link.upgrade("s1", self._signed())
         self.assertEqual([], self.started)
 
+    def test_a_second_signed_upgrade_waits_for_the_first(self) -> None:
+        first, second = self._signed(), self._signed()
+        self.link.upgrade("s1", first)
+        with mock.patch("bot_bottle.control.hostctl.upgrade_link.status",
+                        return_value={"state": "running"}):
+            with self.assertRaisesRegex(UpgradeError, "already running"):
+                self.link.upgrade("s1", second)
+        self.assertEqual(["0.1.15"], self.started)
+
+    def test_the_passkey_must_verify_the_user(self) -> None:
+        ch = self.link.challenge("s1", "0.1.15")
+        with self.assertRaises(UpgradeError):
+            self.link.upgrade("s1", self.pk.assertion(str(ch["challenge"]), flags=0x01))
+        self.assertEqual([], self.started)
+
     def test_refusals(self) -> None:
         with self.assertRaisesRegex(UpgradeError, "no console session"):
             self.link.challenge("", "0.1.15")
@@ -140,6 +156,7 @@ class Running(_Tmp):
         self.assertIn("https://raw.githubusercontent.com/diderisoft/bot-bottle/v0.1.15/install.sh",
                       command)
         self.assertIn("v0.1.15", command)
+        self.assertIn("bot-bottle up --restart --yes", command[2])  # adopts running bottles
         self.assertTrue(kwargs["start_new_session"])
         self.assertNotIn("BOT_BOTTLE_INSTALL_SPEC", kwargs["env"])
         self.assertEqual("1", kwargs["env"]["KEEP"])
