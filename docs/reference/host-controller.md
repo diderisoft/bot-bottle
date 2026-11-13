@@ -582,9 +582,9 @@ Values are recorded as the files hold them, so a reference (`secret:NAME`,
   `[secret:NAME]`;
 - a token-shaped string, scrubbed as the journal scrubs any payload;
 - under a key the journal reads as a credential's (`*_password`, `api_key`,
-  the agent's `oauth_token`, …): a reference is kept as `<key>_ref`, and a
-  value written in (pi's `settings.api_key`, a literal `DB_PASSWORD`) is
-  replaced, as `<key>_redacted: [redacted]`.
+  the agent's `auth_token`, from `login.oauth_token`, …): a reference is kept
+  as `<key>_ref`, and a value written in (pi's `settings.api_key`, a literal
+  `DB_PASSWORD`) is replaced, as `<key>_redacted: [redacted]`.
 
 A literal value under any other key (`MODE: fast`, or a secret pasted into an
 ordinary env name) is recorded as written: write `secret:NAME` for anything
