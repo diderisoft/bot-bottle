@@ -128,7 +128,8 @@ def status() -> dict[str, Any]:
     else:
         out["state"] = "failed"
         try:
-            lines = Path(str(record.get("log", ""))).read_text(encoding="utf-8", errors="replace").splitlines()
+            text = Path(str(record.get("log", ""))).read_text(encoding="utf-8", errors="replace")
+            lines = text.splitlines()
             out["log"] = "\n".join(lines[-_TAIL_LINES:])
         except OSError:
             pass
