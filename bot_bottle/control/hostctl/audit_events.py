@@ -7,6 +7,7 @@ blocking a launch or teardown.
 from __future__ import annotations
 
 import hashlib
+import json
 import socket
 import time
 from collections.abc import Callable, Mapping
@@ -14,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from ...contract.audit import AuditEvent, canonical, utc_iso
 from ...lib.log import warn
-from .audit_journal import AuditJournal, AuditJournalBusy
+from .audit_journal import AuditJournal, AuditJournalBusy, credential_shaped
 
 if TYPE_CHECKING:
     from ...manifest import Manifest
@@ -23,16 +24,66 @@ PRODUCER = "hostctl"
 ACTOR = "hostctl"
 
 
-def digest_manifest(manifest: "Manifest") -> str:
-    """The sealed manifest a bottle runs under (its policy); "" (logged) if it
-    can't be rendered."""
-    from ...manifest.preview import manifest_to_yaml  # pylint: disable=import-outside-toplevel
+def manifest_content(manifest: "Manifest") -> dict[str, Any]:
+    """What a bottle runs under, kept with its start so the trail says what
+    ran even after the files change: the resolved bottle as one document
+    (`manifest.document`, its whole `extends` chain, secrets by name as the
+    files have them) and the resolved agent. A value from the host secrets
+    file, pasted in where a name belongs, is kept out as `[secret:NAME]`, and
+    a key the journal reads as a credential's (`auth_token`, which holds a
+    secret's name) is written `<key>_ref`. Empty (logged) if it can't be
+    rendered."""
+    # pylint: disable=import-outside-toplevel
+    from dataclasses import asdict
+    from ...manifest.document import bottle_document
+    from ...manifest.versions import secret_values
     try:
-        rendered = manifest_to_yaml(manifest)
+        content = json.loads(json.dumps(
+            {"bottle": bottle_document(manifest.bottle), "agent": asdict(manifest.agent)},
+            default=str))
+        return _redacted(_refs(content), secret_values())
     except Exception as e:  # pylint: disable=broad-exception-caught
-        warn(f"audit: couldn't digest the manifest: {e}")
+        warn(f"audit: couldn't record the manifest: {e}")
+        return {}
+
+
+def _refs(value: Any) -> Any:
+    """`value` with each credential-shaped key renamed `<key>_ref`: its value
+    is a reference (a secret's name), and the journal refuses the bare key."""
+    if isinstance(value, dict):
+        return {(f"{k}_ref" if credential_shaped(k) else k): _refs(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_refs(v) for v in value]
+    return value
+
+
+def _redacted(value: Any, secrets: Mapping[str, str]) -> Any:
+    """`value` with each secret's value, wherever it appears in a string,
+    replaced by `[secret:NAME]`."""
+    if isinstance(value, dict):
+        return {k: _redacted(v, secrets) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redacted(v, secrets) for v in value]
+    if isinstance(value, str):
+        # The longest first, so one secret holding another is kept out whole.
+        for name, secret in sorted(secrets.items(), key=lambda s: -len(s[1])):
+            value = value.replace(secret, f"[secret:{name}]")
+    return value
+
+
+def digest_content(content: Mapping[str, Any]) -> str:
+    """`manifest_content`'s fingerprint (the policy a bottle runs under):
+    the SHA-256 of its canonical form, so it changes with any change to what
+    runs and anyone holding the content can check it. "" for none."""
+    if not content:
         return ""
-    return "sha256:" + hashlib.sha256(rendered.encode("utf-8")).hexdigest()
+    return "sha256:" + hashlib.sha256(canonical(content).encode("utf-8")).hexdigest()
+
+
+def digest_manifest(manifest: "Manifest") -> str:
+    """The digest of what `manifest` runs under; "" (logged) if it can't be
+    rendered."""
+    return digest_content(manifest_content(manifest))
 
 
 def digest_request(body: Mapping[str, Any]) -> str:
@@ -120,16 +171,19 @@ class HostAudit:
 
     def bottled_agent_start(self, *, bottle: str, activation: str, manifest_digest: str,
                             backend: str, agent: str,
-                            bottle_versions: Mapping[str, object] | None = None) -> None:
+                            bottle_versions: Mapping[str, object] | None = None,
+                            manifest: Mapping[str, Any] | None = None) -> None:
         """`bottle_versions`: the bottle files' versions it launched from
-        (`manifest.versions.launch_versions`)."""
+        (`manifest.versions.launch_versions`). `manifest`: what it runs
+        under (`manifest_content`), whose digest is `manifest_digest`."""
         self.record(AuditEvent(
             type="lifecycle.bottled_agent_start", actor=ACTOR,
             action="lifecycle.bottled_agent_start", outcome="success", sensitivity="normal",
             ts_event=self._now(), resource=bottle, bottle=bottle, bottled_agent=bottle,
             activation=activation, manifest_digest=manifest_digest, correlation_id=activation,
             payload={"manifest_digest": manifest_digest, "backend": backend, "agent": agent,
-                     **({"bottle_versions": dict(bottle_versions)} if bottle_versions else {})},
+                     **({"bottle_versions": dict(bottle_versions)} if bottle_versions else {}),
+                     **({"manifest": dict(manifest)} if manifest else {})},
         ))
 
     def bottled_agent_exit(self, *, bottle: str, activation: str, manifest_digest: str,
@@ -248,4 +302,5 @@ class HostAudit:
         ))
 
 
-__all__ = ["AuditUnavailable", "HostAudit", "PRODUCER", "digest_manifest", "digest_request"]
+__all__ = ["AuditUnavailable", "HostAudit", "PRODUCER", "digest_content", "digest_manifest",
+           "digest_request", "manifest_content"]

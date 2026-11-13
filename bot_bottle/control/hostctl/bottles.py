@@ -36,7 +36,7 @@ from ...backend.bottle_size import memory_bytes, recorded_memory
 from ...lib.config_store import ConfigStore, HostBudget
 from . import bottle_metrics, budget, relabel
 from .build import RESTART_NEEDED
-from .audit_events import HostAudit, digest_manifest, digest_request
+from .audit_events import HostAudit, digest_content, digest_request, manifest_content
 from .credential_refresh import CredentialRefresher
 from .sessions import ExitStatus, SessionManager, SessionRecord
 from .transcripts import TranscriptFollower, close_stale
@@ -408,7 +408,8 @@ class BottleService:
         is_ready = threading.Event()
         held = _Held(identity, backend.name)
         harness = str(getattr(plan, "harness", "claude"))
-        policy = digest_manifest(plan.manifest)
+        ran = manifest_content(plan.manifest)  # what it runs under, for the audit trail
+        policy = digest_content(ran)
 
         warnings: list[str] = []  # the launch's, for the session's status bar
 
@@ -464,7 +465,8 @@ class BottleService:
                     log.info(f"agent running in session {identity}")
                     self.audit.bottled_agent_start(
                         bottle=identity, activation=activation, manifest_digest=policy,
-                        backend=backend.name, agent=request.agent, bottle_versions=versions)
+                        backend=backend.name, agent=request.agent, bottle_versions=versions,
+                        manifest=ran)
                     ready.put(("ready", {"bottle": identity, "session": identity,
                                          "activation": activation}))
                     is_ready.set()

@@ -567,6 +567,21 @@ The producers are:
 | `audit_ocsf.py` | maps a journal record to OCSF 1.9.0. `restricted` records ship only the envelope and chain fields. |
 | `audit_import.py` | stores segments from another host verbatim under `imported/<host>/<chain>/`, never joined to the local chain |
 
+**What ran.** A bottled agent's start (`lifecycle.bottled_agent_start`)
+keeps what it runs under in its payload, as `manifest`, so the journal says
+what ran even after the files change or the bottle is removed:
+
+- `bottle`: its whole bottle chain resolved into one document, as a bottle
+  file writes it (`manifest/document.py`; secrets by name).
+- `agent`: the resolved agent definition.
+- A value from the host secrets file pasted where a name belongs is written
+  `[secret:NAME]`. A key the journal reads as a credential's (the agent's
+  `auth_token`, which holds a secret's name) is written `<key>_ref`.
+
+`manifest_digest`, on the start and on its stop or crash, is the SHA-256 of
+that content's canonical form, so it changes with any change to what runs,
+and anyone holding the record can check it.
+
 A journal that can't be written is logged, and the launch or teardown still
 goes ahead. Where a bottle sets `audit.delivery: required`, egress and
 git-gate refuse the action they couldn't record (see

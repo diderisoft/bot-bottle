@@ -94,6 +94,12 @@ def _secret_values(secrets_file: Path) -> Mapping[str, str]:
             if len(value) >= _MIN_SECRET_LEN}
 
 
+def secret_values(secrets_file: Path | None = None) -> Mapping[str, str]:
+    """The host secrets file's values long enough to look for in text, by
+    name: what must never be written where a name belongs."""
+    return _secret_values(secrets_file or host_secrets_path())
+
+
 def _check_staged(root: Path, secrets_file: Path) -> None:
     values = _secret_values(secrets_file)
     if not values:
@@ -240,5 +246,6 @@ def launch_versions(cwd: str, *, root: Path | None = None) -> dict[str, object]:
 __all__ = [
     "SecretInManifestError", "TRACKED", "Version", "VersionError", "committed_at", "history",
     "is_dirty",
-    "launch_versions", "record", "record_hand_edits", "record_or_warn", "revert", "show",
+    "launch_versions", "record", "record_hand_edits", "record_or_warn", "revert", "secret_values",
+    "show",
 ]

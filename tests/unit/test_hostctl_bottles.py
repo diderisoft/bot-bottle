@@ -30,7 +30,7 @@ from bot_bottle.contract.hostctl import (
     ROLE_ORCHESTRATOR, SESSIONS_PATH, InfraSettings, LaunchRequest, Settings, bearer, exit_code,
 )
 from bot_bottle.control.hostctl import localsock, sessions
-from bot_bottle.control.hostctl.audit_events import HostAudit
+from bot_bottle.control.hostctl.audit_events import HostAudit, digest_content
 from bot_bottle.control.hostctl.audit_journal import AuditJournal
 from bot_bottle.control.hostctl.bottles import BottleService, ConfirmationNeeded
 from bot_bottle.control.hostctl.jobs import JobRegistry
@@ -637,8 +637,11 @@ class TestLifecycleAudit(_Root):
         self.local = localsock.serve(sessions.control_socket_path(), self.manager)
         self.addCleanup(self.local.close)
 
+    RAN = {"bottle": {"supervise": True}, "agent": {"prompt": "go"}}
+
     def launch(self, label: str) -> None:
-        with mock.patch("bot_bottle.manifest.preview.manifest_to_yaml", return_value="agent:"):
+        with mock.patch("bot_bottle.control.hostctl.bottles.manifest_content",
+                        return_value=self.RAN):
             self.service.launch(LaunchRequest(agent="demo", label=label, assume_yes=True))
 
     def test_an_agent_that_exits_non_zero_crashed(self) -> None:
@@ -656,6 +659,9 @@ class TestLifecycleAudit(_Root):
         self.assertEqual(start["activation"], crash["activation"])
         self.assertTrue(start["manifest_digest"].startswith("sha256:"))
         self.assertEqual(start["manifest_digest"], crash["manifest_digest"])
+        # What ran is kept with the start, and the digest is its fingerprint.
+        self.assertEqual(self.RAN, start["payload"]["manifest"])
+        self.assertEqual(digest_content(self.RAN), start["manifest_digest"])
         self.assertEqual((4, "failure"), (crash["payload"]["exit"], crash["outcome"]))
 
     def test_a_requested_stop_is_a_stop(self) -> None:

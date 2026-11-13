@@ -237,7 +237,8 @@ Each database has one job and one writer
 - bot-bottle commits its own writes.
 - Hand edits are committed as "edited by hand" before a launch reads them.
 - It refuses a commit holding a value from the secrets file.
-- The launch audit event records the version (`bottle_versions`).
+- The launch audit event records the version (`bottle_versions`) and what
+  ran, resolved (`manifest`; [host-controller.md](host-controller.md#audit)).
 - `bot-bottle bottles history` and `revert` read and restore versions.
 - `bottles migrate` ([`manifest/migrate.py`](../../bot_bottle/manifest/migrate.py)) rewrites an old-format bottle as
   forge grants, as a version.

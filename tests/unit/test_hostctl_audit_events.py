@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
 
-from bot_bottle.contract.audit import AuditEvent
+from bot_bottle.contract.audit import AuditEvent, canonical
 from bot_bottle.control.hostctl.audit_events import (
-    AuditUnavailable, HostAudit, digest_manifest, digest_request,
+    AuditUnavailable, HostAudit, digest_content, digest_manifest, digest_request,
+    manifest_content,
 )
 from bot_bottle.control.hostctl.audit_journal import AuditJournal, AuditJournalBusy
+from bot_bottle.manifest.agent import ManifestAgent
+from bot_bottle.manifest.bottle import ManifestBottle
+from bot_bottle.manifest.index import Manifest
 
 
 class HostAuditTest(unittest.TestCase):
@@ -92,10 +97,68 @@ class Digests(unittest.TestCase):
 
     def test_an_unrenderable_manifest_digests_to_empty(self) -> None:
         err = io.StringIO()
-        with mock.patch("bot_bottle.manifest.preview.manifest_to_yaml",
-                        side_effect=AttributeError("no agent")), redirect_stderr(err):
-            self.assertEqual("", digest_manifest(mock.Mock()))
-        self.assertIn("couldn't digest", err.getvalue())
+        with redirect_stderr(err):
+            self.assertEqual("", digest_manifest(mock.Mock(spec=[])))
+        self.assertIn("couldn't record the manifest", err.getvalue())
+
+
+def _manifest(bottle: dict[str, object], agent: dict[str, object] | None = None) -> Manifest:
+    return Manifest(agent=ManifestAgent.from_dict("demo", agent or {}),
+                    bottle=ManifestBottle.from_dict("dev", bottle))
+
+
+_ROUTE = {"host": "api.example", "auth": {"type": "bearer", "value": "secret:TOK"}}
+
+
+class WhatRan(unittest.TestCase):
+    """A launch keeps what it ran: the whole resolved bottle and agent."""
+
+    def setUp(self) -> None:
+        self.enterContext(mock.patch("bot_bottle.manifest.versions.secret_values",
+                                     return_value={"TOK": "s3cr3t-value-1234"}))
+
+    def test_the_content_is_the_whole_bottle_and_agent(self) -> None:
+        content = manifest_content(_manifest(
+            {"egress": {"routes": [{**_ROUTE, "methods": ["GET", "POST"]}]},
+             "env": {"MODE": "fast"}},
+            {"prompt": "Do the work."}))
+        self.assertEqual("api.example", content["bottle"]["egress"]["routes"][0]["host"])
+        self.assertEqual("secret:TOK", content["bottle"]["egress"]["routes"][0]["auth"]["value"])
+        self.assertEqual("Do the work.", content["agent"]["prompt"])
+
+    def test_the_digest_follows_any_change_to_the_policy(self) -> None:
+        read = digest_manifest(_manifest({"egress": {"routes": [_ROUTE]}}))
+        write = digest_manifest(_manifest({"egress": {"routes": [
+            {**_ROUTE, "methods": ["GET", "HEAD", "POST"]}]}}))
+        self.assertTrue(read.startswith("sha256:"))
+        self.assertNotEqual(read, write)  # the old preview digest missed this
+        self.assertEqual(read, digest_manifest(_manifest({"egress": {"routes": [_ROUTE]}})))
+        self.assertEqual(read, digest_content(manifest_content(
+            _manifest({"egress": {"routes": [_ROUTE]}}))))
+
+    def test_a_pasted_secret_value_is_kept_out(self) -> None:
+        content = manifest_content(_manifest({"env": {"KEY": "s3cr3t-value-1234"}}))
+        self.assertEqual("[secret:TOK]", content["bottle"]["env"]["KEY"])
+        self.assertNotIn("s3cr3t-value-1234", canonical(content))
+
+    def test_the_journal_takes_it(self) -> None:
+        # A credential-shaped key (the agent's auth_token, a secret's name)
+        # is written <key>_ref, or the journal would refuse the whole start.
+        content = manifest_content(_manifest(
+            {"egress": {"routes": [_ROUTE]}},
+            {"agent_provider": {"harness": "claude", "login": {"oauth_token": "secret:OAUTH"}}}))
+        self.assertIn("auth_token_ref", content["agent"]["agent_provider"])
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = AuditJournal(Path(tmp), host="h", engine="e")
+            try:
+                HostAudit(journal).bottled_agent_start(
+                    bottle="b1", activation="a1", manifest_digest=digest_content(content),
+                    backend="docker", agent="demo", manifest=content)
+                record = json.loads(journal.path.read_text().splitlines()[-1])
+            finally:
+                journal.close()
+        self.assertEqual(content, record["payload"]["manifest"])
+        self.assertEqual(digest_content(record["payload"]["manifest"]), record["manifest_digest"])
 
 
 if __name__ == "__main__":

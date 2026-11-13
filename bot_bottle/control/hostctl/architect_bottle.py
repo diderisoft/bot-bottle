@@ -194,7 +194,7 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
         from ...bottle_state import settle_state
         from ...paths import host_secrets_path
         from ...secret_source import FileSecrets
-        from .audit_events import digest_manifest
+        from .audit_events import digest_content, manifest_content
 
         stage = Path(tempfile.mkdtemp(prefix="bot-bottle-stage."))
         workspace = tempfile.mkdtemp(prefix="bottle-architect.")
@@ -206,11 +206,12 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
             identity = str(getattr(plan, "slug", ""))
             with backend.launch(plan) as bottle:
                 activation = bottle.registry_id or str(uuid.uuid4())
-                policy = digest_manifest(plan.manifest)
+                ran = manifest_content(plan.manifest)
+                policy = digest_content(ran)
                 if self._audit is not None:
                     self._audit.bottled_agent_start(
                         bottle=identity, activation=activation, manifest_digest=policy,
-                        backend=backend.name, agent=ARCHITECT_AGENT)
+                        backend=backend.name, agent=ARCHITECT_AGENT, manifest=ran)
                 with self._cond:
                     self._bottle, self._plan, self._state = bottle, plan, "ready"
                     self._last_used = self._clock()

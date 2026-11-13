@@ -62,11 +62,17 @@ class AuditRedactionError(ValueError):
     never the value."""
 
 
+def credential_shaped(key: object) -> bool:
+    """Whether a key's name only ever holds a credential, so an event with
+    it is refused."""
+    name = str(key).lower()
+    return name in _DENIED_KEYS or name.endswith(_DENIED_SUFFIXES)
+
+
 def _check_keys(value: Any, where: str) -> None:
     if isinstance(value, Mapping):
         for key, inner in value.items():
-            name = str(key).lower()
-            if name in _DENIED_KEYS or name.endswith(_DENIED_SUFFIXES):
+            if credential_shaped(key):
                 raise AuditRedactionError(f"credential-shaped key {where}.{key}")
             _check_keys(inner, f"{where}.{key}")
     elif isinstance(value, list):
