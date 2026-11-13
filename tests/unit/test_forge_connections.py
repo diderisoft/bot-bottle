@@ -165,6 +165,30 @@ class TestStore(unittest.TestCase):
         with self.assertRaisesRegex(ForgeConnectionError, "isn't connected"):
             forge_connections.remove("gitea.example.com")
 
+    def test_removing_the_default_makes_the_earliest_left_it(self) -> None:
+        bob = ForgeUser("bob", "BOB_GITEA_EXAMPLE_COM_TOKEN")
+        for user in (ALICE, CODEX, bob):
+            self.store.add_user(GITEA, user)
+        forge_connections.remove("gitea.example.com", "alice")
+        users = self.store.connections()["gitea.example.com"].users
+        self.assertEqual([("codex", True), ("bob", False)], [(u.name, u.default) for u in users])
+        forge_connections.remove("gitea.example.com", "bob")  # not the default: no change
+        self.assertTrue(self.store.connections()["gitea.example.com"].users[0].default)
+
+    def test_removing_a_user_clears_their_alert_and_companion_secrets(self) -> None:
+        from bot_bottle import forge_alerts
+        from bot_bottle.contrib.github.user_token import REFRESH_SUFFIX
+        self.addCleanup(forge_alerts.reset)
+        secrets = self.root / "secrets"
+        write_secret(secrets, "GITEA_EXAMPLE_COM_TOKEN", "v")
+        write_secret(secrets, "GITEA_EXAMPLE_COM_TOKEN" + REFRESH_SUFFIX, "r")
+        self.store.add_user(GITEA, ALICE)
+        forge_alerts.raise_alert("GITEA_EXAMPLE_COM_TOKEN", kind=forge_alerts.GITEA_TOKEN_REFUSED,
+                                 forge="gitea.example.com", message="expired")
+        forge_connections.remove("gitea.example.com", "alice")
+        self.assertEqual([], forge_alerts.current())
+        self.assertIsNone(FileSecrets(secrets).get("GITEA_EXAMPLE_COM_TOKEN" + REFRESH_SUFFIX))
+
 
 class TestThroughTheHostController(unittest.TestCase):
     """The CLI's side: the same calls, asked of the host controller."""

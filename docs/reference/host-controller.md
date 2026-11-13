@@ -1270,12 +1270,15 @@ then), and read with the user's token, read-only.
 **`forge_remove`** (`forge`, `login`) answers `forge_removed` with `removed`,
 or `error`: the console's Disconnect for this host. It drops that user's
 connection and token here, as `bot-bottle forge remove <forge> --user
-<login>` does; a forge goes with its last user. Both fields are required, so
-a message can't remove every user by leaving one out. Bottles already
-running keep what they were given until they stop.
+<login>` does; a forge goes with its last user, and when the default user
+goes, the earliest connected user left becomes the default. The login
+matches regardless of case. Both fields are required, so a message can't
+remove every user by leaving one out. Bottles already running keep what
+they were given until they stop.
 
 `forge_status` and `forge_repos` ask the forge page after page, so the link
-runs them beside its other traffic: a slow forge doesn't hold up an agent's input or a stop. An error
+runs them beside its other traffic: a slow forge doesn't hold up an agent's
+input or a stop. An error
 names the HTTP status or that the forge was unreachable, never the forge's
 response.
 

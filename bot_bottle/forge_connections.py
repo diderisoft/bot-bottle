@@ -258,7 +258,8 @@ class ForgeStore(DbStore):
 
     def remove(self, host: str, user: str = "") -> list[ForgeUser]:
         """Disconnect `user` from `host`, or the whole forge when no user is
-        named; a forge goes with its last user. The users removed."""
+        named; a forge goes with its last user, and when the default goes the
+        earliest connected user left becomes it. The users removed."""
         with self._write_connection() as db:
             before = self._read(db).get(host)
             if before is None:
@@ -268,6 +269,10 @@ class ForgeStore(DbStore):
                 db.execute("DELETE FROM forge_users WHERE host = ? AND user = ?", (host, u.name))
             if len(removed) == len(before.users):
                 db.execute("DELETE FROM forge_connections WHERE host = ?", (host,))
+            elif any(u.default for u in removed):
+                left = [u for u in before.users if u not in removed]
+                db.execute("UPDATE forge_users SET is_default = 1 WHERE host = ? AND user = ?",
+                           (host, left[0].name))
         self._chmod()
         return removed
 
@@ -321,6 +326,7 @@ def forget(host: str, user: str = "") -> list[str]:
     """The host controller's `remove`: drop the rows, then the removed users'
     tokens from the host secrets file. The users' names."""
     # pylint: disable=import-outside-toplevel
+    from . import forge_alerts
     from .contrib.github.user_token import CLIENT_ID_SUFFIX, EXPIRES_SUFFIX, REFRESH_SUFFIX
     from .paths import host_secrets_path
     from .secret_source import remove_secret
@@ -328,6 +334,7 @@ def forget(host: str, user: str = "") -> list[str]:
     for u in removed:
         for suffix in ("", REFRESH_SUFFIX, EXPIRES_SUFFIX, CLIENT_ID_SUFFIX):
             remove_secret(host_secrets_path(), u.token_secret + suffix)
+        forge_alerts.clear(u.token_secret)  # an alert for a user who's gone
     return [u.name for u in removed]
 
 

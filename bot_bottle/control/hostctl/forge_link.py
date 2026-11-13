@@ -270,9 +270,16 @@ async def forge_remove(msg: Mapping[str, Any]) -> dict[str, Any]:
         reply["error"] = "which forge and login?"  # never every user by omission
         return reply
     # pylint: disable-next=import-outside-toplevel
-    from ...forge_connections import ForgeConnectionError, remove
+    from ...forge_connections import ForgeConnectionError, get, remove
+
+    def removing() -> list[str]:
+        # The login as stored, matched regardless of case (as forge_repos does).
+        conn = get(forge)
+        stored = next((u.name for u in conn.users if u.name.lower() == login.lower()),
+                      login) if conn else login
+        return remove(forge, stored)
     try:
-        reply["removed"] = await asyncio.to_thread(remove, forge, login)
+        reply["removed"] = await asyncio.to_thread(removing)
     except ForgeConnectionError as e:
         reply["error"] = str(e)
     except Exception as e:  # pylint: disable=broad-exception-caught  # reported to the console

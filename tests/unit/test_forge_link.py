@@ -14,6 +14,7 @@ from bot_bottle.contrib.github.user_token import ReauthorizeError
 from bot_bottle.control.hostctl import forge_link
 from bot_bottle.forge_connections import ForgeConnection, ForgeUser
 from bot_bottle.forge_kinds import ForgeApiError
+from tests.unit._forges import connected
 
 TOKEN = "ghu_SECRET_VALUE"
 GITHUB = ForgeConnection(host="github.com", kind="github", url="https://github.com",
@@ -164,6 +165,7 @@ class Repos(unittest.TestCase):
             self.assertNotIn("GITEA_ME", str(ctx.exception))
 
 
+@connected()
 class Messages(unittest.TestCase):
     def test_replies_carry_the_request_id_and_errors(self) -> None:
         with mock.patch.object(forge_link, "status", return_value=[]):
@@ -193,6 +195,11 @@ class Messages(unittest.TestCase):
             reply = asyncio.run(forge_link.forge_remove(
                 {"request_id": "r1", "forge": "Gitea.Example.com", "login": "me"}))
         self.assertEqual({"type": "forge_removed", "request_id": "r1", "removed": ["me"]}, reply)
+        remove.assert_called_once_with("gitea.example.com", "me")
+        # The login as stored, whatever its case in the message.
+        with connected(GITEA), \
+                mock.patch("bot_bottle.forge_connections.remove", return_value=["me"]) as remove:
+            asyncio.run(forge_link.forge_remove({"forge": "gitea.example.com", "login": "ME"}))
         remove.assert_called_once_with("gitea.example.com", "me")
         # Never every user by omission.
         for msg in ({"forge": "gitea.example.com"}, {"login": "me"}, {}):
