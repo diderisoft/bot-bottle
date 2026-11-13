@@ -321,6 +321,19 @@ class HostAudit:
             payload={"run_id": run_id, "records": count},
         ))
 
+    def host_upgrade(self, *, version: str, current: str, credential_id: str,
+                     error: str = "") -> None:
+        """`hostctl.upgrade`: the console asked this host to install release
+        `version` over `current`, signed by the passkey `credential_id` (""
+        when the signature didn't check). `error` is why it was refused."""
+        self.record(AuditEvent(
+            type="hostctl.upgrade",
+            actor=f"passkey:{credential_id}" if credential_id else "console",
+            action="hostctl.upgrade", outcome="failure" if error else "success",
+            sensitivity="security", ts_event=self._now(), resource=f"bot-bottle {version}",
+            payload={"version": version, "from": current, **({"error": error} if error else {})},
+        ))
+
     # --- hostctl.* ---
 
     def brokered(self, kind: str, op: str, *, role: str, success: bool,

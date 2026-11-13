@@ -925,8 +925,10 @@ Together these let a console point a route's credential at a host of its
 choosing. So a compromised console can send a host secret off the host
 through a bottle.
 
-There is no action that runs a command on the host itself. What the
-console starts runs in a bottle.
+Beyond those, the one thing it can run on the host itself is an upgrade of
+bot-bottle to a newer release, and only with a passkey this host trusts
+([Upgrading from the console](#upgrading-from-the-console), ADR 0022).
+Everything else the console starts runs in a bottle.
 
 What it can't do:
 
@@ -946,6 +948,32 @@ What it can't do:
     host secret values and token shapes masked.
 - **Connect to the host.** The link is dial-out only, to the node id pinned
   at login.
+
+### Upgrading from the console
+
+The console can upgrade bot-bottle on this host to a newer release, signed
+by a passkey this host trusts ([ADR 0022](../decisions/0022-console-upgrades-hosts-with-a-passkey.md),
+`upgrade_link.py`).
+
+- `upgrade_challenge` (`session`, `version`) -> `upgrade_challenge`
+  (`challenge`, `rp_id`, `credential_ids`, `expires_in`) or `error`. The
+  version must be a release (`X.Y.Z`) newer than this host's. The challenge is
+  single use, lasts two minutes, and is bound to the session and the version.
+- `upgrade` (`session`, `assertion`) -> `upgrade_started` (`version`) or
+  `error`. The host checks the passkey's signature itself, that the version is
+  still newer, and that its `v<version>` tag exists on GitHub. It then fetches
+  that tag's `install.sh` and runs it in its own session, with
+  `BOT_BOTTLE_INSTALL_REF=v<version>` and none of the caller's other
+  `BOT_BOTTLE_INSTALL_*` settings.
+- `upgrade_status` -> `upgrade_status` (`state`: `none`, `running`, `done` or
+  `failed`; `version`, `started`; the log's last lines when it failed).
+
+The installer's output is `~/.bot-bottle/logs/upgrade-<time>.log`, its exit
+status beside it, and the last upgrade is `logs/upgrade.json`. It restarts
+the host controller, which adopts running bottles. Each upgrade, and each
+refused signature, is journalled as `hostctl.upgrade`, with the passkey as
+its actor. A host running from a source checkout refuses, as does one that
+trusts no passkey yet (`bot-bottle audit passkeys --trust`).
 
 ## Console link protocol
 

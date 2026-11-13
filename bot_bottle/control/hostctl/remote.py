@@ -31,6 +31,7 @@ The control stream (JSON lines):
 - `forge_connect` -> `forge_connected`, `github_authorize_start` -> `github_authorize`;
   `github_status`, `forge_status` and `forge_repos` (`forge_link`, ADR 0021).
 - Audit records out (`audit_record`) and passkey-unlocked reads (`audit_link`, ADR 0013).
+- Upgrading bot-bottle to a newer release, signed by a passkey (`upgrade_link`, ADR 0022).
 - `workspace_file` reads an image in the agent's bottle; `put_workspace_file` (`data` base64)
   writes under `/home/node/uploads/`, reply `workspace_file_put` (`workspace_files`).
 - `metrics_watch` (`bottles`) -> `bottle_metrics` every 3 s for those running (`live_metrics`).
@@ -70,6 +71,7 @@ from ...lib import log
 from ...util import same_instant
 from .audit_index import query_host_journal
 from .audit_link import AuditLink, audit_events
+from .upgrade_link import UpgradeLink
 from .block_link import BlockLink
 from .canary_link import CanaryLink
 from .console_terminal import HISTORY_LINES, session_terminals, type_into, valid_size
@@ -222,6 +224,7 @@ class ConsoleLink:
                                     getattr(bottles, "live_metrics", None))
         self.audit_link = AuditLink(self._send, lambda: {  # console agents' records only
             a: b for a, b in self.running.items() if a not in self.present}, bottles)
+        self.upgrades = UpgradeLink(self._send, audit=lambda: getattr(bottles, "audit", None))
         self._last_stats: float = 0.0
         self.canaries = CanaryLink(self._send, lambda: self._orchestrator(""),
                                    lambda: self.running)
@@ -260,10 +263,10 @@ class ConsoleLink:
         elif kind == "history":
             await self._history(str(msg.get("agent_id", "")), msg.get("request_id"),
                                 msg.get("lines"))
-        elif kind in AuditLink.REQUESTS:
-            await self.audit_link.handle(msg)
+        elif kind in AuditLink.REQUESTS | UpgradeLink.REQUESTS:  # passkey-gated (ADR 0013, 0022)
+            await (self.audit_link if kind in AuditLink.REQUESTS else self.upgrades).handle(msg)
         elif kind == "audit_query":
-            await self._audit_query(msg)
+            await self._send(await audit_events(msg, self.launched, self._audit))
         elif kind == "metrics_watch":
             self.metrics.watch(msg.get("bottles"))
         elif kind in TranscriptLink.REQUESTS:
@@ -472,9 +475,6 @@ class ConsoleLink:
 
     async def push_working(self) -> None:
         await self.transcripts.push_working(list(self.running))
-
-    async def _audit_query(self, msg: dict[str, Any]) -> None:
-        await self._send(await audit_events(msg, self.launched, self._audit))
 
     async def _stop(self, agent_id: str, stop_children: bool = False) -> None:
         bottle = self.running.pop(agent_id, "")

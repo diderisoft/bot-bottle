@@ -73,7 +73,7 @@ class AuditUnlock:
         `session`) and issue an unlock token for that session."""
         response = assertion.get("response")
         client = response.get("clientDataJSON") if isinstance(response, dict) else None
-        nonce = _challenge_of(str(client or ""))
+        nonce = challenge_of(str(client or ""))
         now = self._clock()
         with self._lock:
             issued = self._challenges.pop(nonce, None)  # single use, even if it fails below
@@ -81,21 +81,10 @@ class AuditUnlock:
             raise UnlockError("that challenge expired or was used; try again")
         if issued[1] != session:
             raise UnlockError("that challenge was issued to another session")
-        trust = audit_trust.load(self._db_path)
-        key = trust.find(str(assertion.get("id", "")))
-        if key is None:
-            raise UnlockError("that passkey isn't trusted by this host")
-        try:
-            verified = verify_assertion(
-                assertion, public_key=key.key_bytes, credential_id=key.id,
-                challenge=b64url_decode(nonce), rp_id=trust.rp_id, origin=trust.origin,
-                stored_sign_count=key.sign_count)
-        except WebAuthnError as e:
-            raise UnlockError(str(e)) from e
-        audit_trust.record_sign_count(key.id, verified.sign_count, self._db_path)
+        credential = verify_passkey(assertion, nonce, self._db_path)
         token = secrets.token_urlsafe(32)
         with self._lock:
-            self._tokens[token] = _Token(session, key.id, now, now)
+            self._tokens[token] = _Token(session, credential, now, now)
         return {"token": token, "expires_in": int(TOKEN_MAX_SECONDS),
                 "idle_seconds": int(TOKEN_IDLE_SECONDS)}
 
@@ -118,7 +107,26 @@ class AuditUnlock:
             return t.credential_id
 
 
-def _challenge_of(client_data_b64: str) -> str:
+def verify_passkey(assertion: dict[str, object], nonce: str, db_path: Path | None = None) -> str:
+    """Check `assertion` is a trusted passkey's signature over the challenge
+    `nonce` (base64url) this host issued: the passkey's id, or UnlockError.
+    Shared by every action a passkey authorizes (audit reads, upgrades)."""
+    trust = audit_trust.load(db_path)
+    key = trust.find(str(assertion.get("id", "")))
+    if key is None:
+        raise UnlockError("that passkey isn't trusted by this host")
+    try:
+        verified = verify_assertion(
+            assertion, public_key=key.key_bytes, credential_id=key.id,
+            challenge=b64url_decode(nonce), rp_id=trust.rp_id, origin=trust.origin,
+            stored_sign_count=key.sign_count)
+    except WebAuthnError as e:
+        raise UnlockError(str(e)) from e
+    audit_trust.record_sign_count(key.id, verified.sign_count, db_path)
+    return key.id
+
+
+def challenge_of(client_data_b64: str) -> str:
     """The challenge a client data JSON carries ("" if it doesn't)."""
     try:
         return str(json.loads(b64url_decode(client_data_b64)).get("challenge", ""))
@@ -127,4 +135,4 @@ def _challenge_of(client_data_b64: str) -> str:
 
 
 __all__ = ["AuditUnlock", "UnlockError", "READS_PER_MINUTE", "TOKEN_IDLE_SECONDS",
-           "TOKEN_MAX_SECONDS"]
+           "TOKEN_MAX_SECONDS", "challenge_of", "verify_passkey"]
