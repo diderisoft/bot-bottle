@@ -6,12 +6,17 @@ leaves the host.
 - `forge_status` -> `forge_status` (`forges`: each connection's host, kind,
   url, ssh and users, each user's login, default, app, transport, `state`
   (`ok`, `needs_install`, `expired`, `missing`, `error`) with a `message`,
-  and on the GitHub App its installations).
+  and on the GitHub App its installations; and `keys`, an SSH server's
+  (ADR 0023): each key's `repo` (null for the default), `default`, `write`,
+  `fingerprint` and `state` (`ok`, `changed`, `missing`, `unusable`) with a
+  `message`. Never a key's path or its contents).
 - `forge_repos` (`forge`, `login`?) -> `forge_repos` (`repos`: `full_name`,
   `private`, `permissions` {`pull`, `push`, `admin`}, `installed` (true
   through the GitHub App, which reaches only repos it's installed on; null
   otherwise), `truncated`), or `error`. `login` picks a connected user, else
-  the forge's default.
+  the forge's default. An SSH server can't be asked: its repos are those
+  this host holds a key for, `push` as the key was added, `private` null,
+  and `default_key` (`write`, `fingerprint`, or null) for the rest.
 
 Both ask the forge, page after page, so the link runs them beside its other
 traffic (`remote_actions.BESIDE`). An error says only what went wrong (an
@@ -96,8 +101,32 @@ def _user_state(conn: Any, user: Any) -> dict[str, Any]:
     return out
 
 
+def _key_state(key: Any) -> dict[str, Any]:
+    """One SSH server key's reportable state: names and its fingerprint, never
+    its path (which a message of `check_file`'s would carry)."""
+    # pylint: disable-next=import-outside-toplevel
+    from ...forge_keys import KeyFileError, check_file
+    out: dict[str, Any] = {"repo": key.repo or None, "default": not key.repo,
+                           "write": key.write, "fingerprint": key.fingerprint,
+                           "state": "ok", "message": ""}
+    try:
+        now = check_file(key.path)
+    except KeyFileError as e:
+        gone = "isn't there" in str(e)
+        out.update(state="missing" if gone else "unusable",
+                   message="its key file isn't on this host" if gone else
+                   "its key file can't be used here; see `bot-bottle forge key list` on the host")
+        return out
+    if now != key.fingerprint:
+        out.update(state="changed", fingerprint=now,
+                   message=f"the key file changed since it was added (was {key.fingerprint}); "
+                           f"the next launch uses it")
+    return out
+
+
 def status() -> list[dict[str, Any]]:
-    """Every connection on this host, with its users' states."""
+    """Every connection on this host, with its users' states (an SSH
+    server's: its keys')."""
     # pylint: disable-next=import-outside-toplevel
     from ...forge_connections import ForgeConnectionError, connections
     try:
@@ -105,8 +134,23 @@ def status() -> list[dict[str, Any]]:
     except ForgeConnectionError as e:
         raise ForgeLinkError(str(e)) from e
     return [{"host": c.host, "kind": c.kind, "url": c.url, "ssh": c.ssh,
-             "users": [_user_state(c, u) for u in c.users]}
+             "users": [_user_state(c, u) for u in c.users],
+             **({"keys": [_key_state(k) for k in c.keys]} if c.kind == "ssh" else {})}
             for c in sorted(found.values(), key=lambda c: c.host)]
+
+
+def _ssh_repos(conn: Any) -> dict[str, Any]:
+    """An SSH server's repos, as this host's keys name them: it has no API."""
+    keyed = [k for k in conn.keys if k.repo]
+    default = next((k for k in conn.keys if not k.repo), None)
+    return {"forge": conn.host, "login": "",
+            "repos": [{"full_name": k.repo, "private": None,
+                       "permissions": {"pull": True, "push": k.write, "admin": False},
+                       "installed": None}
+                      for k in sorted(keyed, key=lambda k: k.repo.lower())],
+            "truncated": False,
+            "default_key": ({"write": default.write, "fingerprint": default.fingerprint}
+                            if default else None)}
 
 
 def _get(kind: str, url: str, token: str) -> object:
@@ -213,6 +257,8 @@ def repos(forge: str, login: str = "") -> dict[str, Any]:
         raise ForgeLinkError(str(e)) from e
     if conn is None:
         raise ForgeLinkError(f"{forge} isn't connected on this host")
+    if conn.kind == "ssh":
+        return _ssh_repos(conn)
     users = [u for u in conn.users if not login or u.name.lower() == login.lower()]
     user = next((u for u in users if u.default), users[0] if users else None)
     if user is None:

@@ -120,6 +120,10 @@ def plan(session: str, proposed: str) -> tuple[NewRepo, "ManifestForge"]:
     if forge is None:
         raise CreateRepoError(f"this host hasn't connected {new.forge}; ask for it with "
                               f"forge-connect (https://{new.forge}) first")
+    if forge.kind == "ssh":
+        raise CreateRepoError(f"{new.forge} is an SSH server: creating a repo needs a forge's "
+                              f"API, so the operator creates it there; then ask for it with "
+                              f"add-repo")
     token = _token(forge)
     try:
         if forge.kind == "github" and forge.app:

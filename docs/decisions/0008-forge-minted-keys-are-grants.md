@@ -3,7 +3,9 @@
 Syntax in this record predates v0.1.9; see [manifest.md](../reference/manifest.md).
 
 - **Status:** Accepted; partly superseded by ADR 0019 (forges are described
-  in bottles and connected on hosts; the grants-only rule stands)
+  in bottles and connected on hosts; the grants-only rule stands) and ADR 0023
+  (the `static` long form is gone too: a plain SSH server is a forge of kind
+  `ssh`, and every repo in a bottle file is a grant)
 - **Date:** 2026-10-27
 - **Deciders:** didericis
 

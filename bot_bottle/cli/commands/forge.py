@@ -6,6 +6,9 @@
   bot-bottle forge remove <host> [--user U]
                                            disconnect a user, or the whole forge,
                                            and drop their tokens
+  bot-bottle forge connect ssh://user@host[:port] [--host-key KEY]
+                                           a plain SSH git server (ADR 0023)
+  bot-bottle forge key add|list|remove …   its keys (`forge key --help`)
 
 `connect` checks a token for the forge, pins its SSH host key, and records
 the connection in the host database under the user the token belongs to
@@ -26,7 +29,14 @@ Flags:
   --token-stdin   read the token from stdin instead of asking
   --no-browser    print the token page instead of opening it
 
-Gitea and GitHub (github.com, or a GitHub Enterprise Server's URL).
+Gitea and GitHub (github.com, or a GitHub Enterprise Server's URL), and a
+plain SSH git server: `connect ssh://git@git.example.com:2222` pins its host
+key and records it as a forge of kind `ssh`, keyed by its host
+(`git.example.com`); `--host-key '<type> <base64>'` pins that key instead
+of asking the server. It has no API and mints no keys; add the key files this
+host holds for it with `forge key add`. Bottles declare it as
+`git_gate.forges.<host>: {kind: ssh, ssh: <address>}` and grant its repos
+like any forge's.
 
 github.com connects through the bot-bottle GitHub App (ADR 0012): install the
 app on the accounts and orgs whose repos bottles will grant, then authorize
@@ -57,7 +67,7 @@ import webbrowser
 from urllib.parse import urlparse
 
 from ...contract.forges import unsupported_forge
-from ...forge_connect import ConnectError, connect as connect_forge, normalize_url
+from ...forge_connect import ConnectError, connect as connect_forge, connect_ssh, normalize_url
 from ...forge_connections import (
     ForgeConnection, ForgeConnectionError, ForgeUser, connections, remove,
 )
@@ -199,7 +209,29 @@ def _install_step(config: object, token: str, *, owner: str, wait: bool,
         info(f"installed on {describe(token, inst)}")
 
 
+def _connect_server(argv: list[str]) -> int:
+    host_key, argv = _take(argv, "--host-key")
+    if len(argv) != 1:
+        die(f"usage: {PROG} forge connect ssh://user@host[:port] [--host-key KEY]")
+    try:
+        conn = connect_ssh(argv[0], host_key)
+    except ConnectError as e:
+        die(str(e))
+    info(f"pinned the SSH host key of {conn.ssh}: {conn.host_key.split()[0]} "
+         f"…{conn.host_key.split()[-1][-12:]}")
+    info(f"connected the SSH server {conn.host} ({len(conn.keys)} keys)")
+    if not conn.keys:
+        info(f"add the key files this host holds for it: `{PROG} forge key add {conn.host} "
+             f"<owner/repo> <path> [--write]`, or `--default` for one key for every repo")
+    info("declare it and grant its repos from any bottle:")
+    info(f"  git_gate:\n    forges:\n      {conn.host}: {{kind: ssh, ssh: {conn.ssh}}}\n"
+         f"    repos: [{conn.host}/<owner>/<repo>:write]")
+    return 0
+
+
 def connect(argv: list[str]) -> int:
+    if argv and argv[0].startswith("ssh://"):
+        return _connect_server(argv)
     app_slug, argv = _take(argv, "--app")
     client_id, argv = _take(argv, "--client-id")
     owner, argv = _take(argv, "--owner")
@@ -266,6 +298,8 @@ def list_forges(argv: list[str]) -> int:
         print(f"no forges connected on this host (`{PROG} forge connect <url>` connects one)")
     for host, conn in found.items():
         users = ", ".join(u.name + ("*" if u.default else "") for u in conn.users)
+        if conn.kind == "ssh":
+            users = f"{len(conn.keys)} key{'' if len(conn.keys) == 1 else 's'}"
         print(f"{host:<28} {conn.kind:<7} {users or 'no users'}")
     return 0
 
@@ -276,11 +310,15 @@ def show_forge(argv: list[str]) -> int:
     conn = _connections().get(argv[0])
     if conn is None:
         die(f"{argv[0]} isn't connected on this host (`{PROG} forge list` lists them)")
-    print(f"{conn.host}: {conn.kind} at {conn.url}")
+    print(f"{conn.host}: SSH server" if conn.kind == "ssh" else
+          f"{conn.host}: {conn.kind} at {conn.url}")
     print(f"  ssh       {conn.ssh}")
     print(f"  host key  {conn.host_key or 'not pinned'}")
     for user in conn.users:
         print(f"  user      {_user_line(user)}")
+    for key in conn.keys:
+        print(f"  key       {key.repo or '(default)'}: {key.path} ({key.fingerprint}, "
+              f"{'write' if key.write else 'read'})")
     return 0
 
 
@@ -292,12 +330,22 @@ def remove_forge(argv: list[str]) -> int:
         removed = remove(argv[0], user)
     except ForgeConnectionError as e:
         die(str(e))
+    if not removed:  # an SSH server: its keys' files stay
+        info(f"disconnected {argv[0]}; its key files stay where they are")
+        return 0
     info(f"disconnected {', '.join(removed)} from {argv[0]}, and dropped "
          f"{'its token' if len(removed) == 1 else 'their tokens'} from {host_secrets_path()}")
     return 0
 
 
-_ACTIONS = {"connect": connect, "list": list_forges, "show": show_forge, "remove": remove_forge}
+def _key(argv: list[str]) -> int:
+    # pylint: disable-next=import-outside-toplevel
+    from .forge_key import cmd_forge_key
+    return cmd_forge_key(argv)
+
+
+_ACTIONS = {"connect": connect, "list": list_forges, "show": show_forge, "remove": remove_forge,
+            "key": _key}
 
 
 def cmd_forge(argv: list[str]) -> int:

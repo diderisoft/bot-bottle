@@ -60,7 +60,10 @@ ENV_NAME = "demo"
 STATE = Path.home() / ".bot-bottle-envs" / ENV_NAME
 WORK = Path.home() / ".cache" / "bot-bottle-demo"
 PROJECT = WORK / "slugs"
-UPSTREAM = "ssh://git@upstream.invalid/slugs.git"
+UPSTREAM = "ssh://git@upstream.invalid/demo/slugs.git"
+# What `./main` pins for it; the server doesn't exist to be asked.
+UPSTREAM_HOST_KEY = ("ssh-ed25519 "
+                     "AAAAC3NzaC1lZDI1NTE5AAAAIDemoHostKeyNotARealOneJustAPlaceholder0")
 BIN = WORK / "bin"
 LOGS = WORK / "logs"
 RECORDINGS = WORK / "recordings"
@@ -158,11 +161,6 @@ def fresh_project() -> None:
     if PROJECT.exists():
         shutil.rmtree(PROJECT)
     shutil.copytree(FIXTURE, PROJECT)
-    # `./main` names the fake key by its home path; a static key path is used
-    # as written (no `~` expansion), so give it this host's real one.
-    bottle = PROJECT / ".bot-bottle" / "bottles" / "main.md"
-    bottle.write_text(bottle.read_text(encoding="utf-8").replace(
-        "~/.cache/bot-bottle-demo/fake-key", str(WORK / "fake-key")), encoding="utf-8")
     stamp = "2026-01-01T00:00:00Z"
     env = dict(os.environ, GIT_AUTHOR_NAME="demo", GIT_AUTHOR_EMAIL="demo@example.invalid",
                GIT_COMMITTER_NAME="demo", GIT_COMMITTER_EMAIL="demo@example.invalid",
@@ -178,13 +176,18 @@ def fresh_project() -> None:
 
 
 def fake_key() -> None:
-    """The SSH key `./main` names for its upstream. Never used: the upstream
-    doesn't exist, and the gate refuses the demo's push before dialling it."""
-    if (WORK / "fake-key").exists():
-        return
-    WORK.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C",
-                    "bot-bottle demo (unused)", "-f", str(WORK / "fake-key")], check=True)
+    """The upstream `./main` grants, an SSH server the demo environment
+    connects (pinning the host key `./main` pins, since it can't be asked),
+    and the key it holds for it. Never used: the upstream doesn't exist, and
+    the gate refuses the demo's push before dialling it."""
+    if not (WORK / "fake-key").exists():
+        WORK.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C",
+                        "bot-bottle demo (unused)", "-f", str(WORK / "fake-key")], check=True)
+    bb("forge", "connect", "ssh://git@upstream.invalid", "--host-key", UPSTREAM_HOST_KEY,
+       capture=True)
+    bb("forge", "key", "add", "upstream.invalid", "demo/slugs", str(WORK / "fake-key"),
+       "--write", capture=True)
 
 
 def fake_token() -> str:

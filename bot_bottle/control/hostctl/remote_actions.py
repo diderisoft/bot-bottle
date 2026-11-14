@@ -180,6 +180,9 @@ def forge_attention(request: Any, kind: str = "") -> tuple[list[str], list[str]]
         return [*lines, unsupported_forge(host or url)], []
     if host not in _connected_hosts():
         lines.append("new to this host")
+    if kind == "ssh":  # its keys are files on the host: nothing to paste here
+        return [*lines, f"kind: {label(kind)}", "connected already; its keys are added on "
+                "the host (bot-bottle forge key add)"], []
     if kind == "github" and host in GITHUB_HOSTS:
         # The bot-bottle GitHub App's device flow (ADR 0012), not a pasted token.
         from ...contrib.github.user_token import app_config

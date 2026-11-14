@@ -5,9 +5,9 @@ route's auth written with `scheme`, `header` or `token_ref`).
   bot-bottle bottles history <name>             its versions, newest first
   bot-bottle bottles history <name> <version>   what that version changed
   bot-bottle bottles revert <name> <version>    make it what it was then
-  bot-bottle bottles migrate <name> [--yes]     rewrite its old-format repos
-                                                as grants on a forge bottle,
-                                                and old-format route auth as
+  bot-bottle bottles migrate <name> [--yes]     rewrite its long-form repos
+                                                as grants on forges, and
+                                                old-format route auth as
                                                 type and value
 
 Every change to a host bottle (`~/.bot-bottle/bottles/`) is a version, hand
@@ -15,13 +15,16 @@ edits included. A project bottle's versions are the project's commits; a
 revert there is left for you to commit. A revert takes effect at the next
 launch, and is itself a version you can revert.
 
-`migrate` turns repos whose keys a forge mints, written in long form (`url`,
-`key: {provider: gitea, ...}`, `host_key`), into one-line grants on a forge
-bottle (`bot-bottle forge connect` writes one), adding it to `extends`, and
-a route's old-format auth into `type` and `value`: `scheme: Bearer` (or
-`token`) becomes `type: bearer` (or `token`), `header: X` becomes `type:
-header, name: X`, and `token_ref: NAME` becomes `value: secret:NAME` (a
-`header` with a `scheme` is left for you to rewrite). It shows the change and
+`migrate` turns repos written in long form (`url`, `key`, `host_key`) into
+one-line grants: a key a forge mints (`provider: gitea`) onto that forge,
+once it's connected, and a `static` key file onto its server, declared as a
+forge of kind `ssh` (ADR 0023; the bottle stays partial until `forge connect
+ssh://…` and `forge key add`). It also declares each grant's forge from this
+host's connections, and rewrites a route's old-format auth into `type` and
+`value`: `scheme: Bearer` (or `token`) becomes `type: bearer` (or `token`),
+`header: X` becomes `type: header, name: X`, and `token_ref: NAME` becomes
+`value: secret:NAME` (a `header` with a `scheme` is left for you to
+rewrite). It shows the change and
 asks first (`--yes` doesn't), and writes it as a new version, so
 `revert` undoes it. Everything else in the file stays as it is.
 """

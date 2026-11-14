@@ -20,6 +20,7 @@ from bot_bottle.control.git_gate_render import GitGateUpstream
 from bot_bottle.git_gate import GitGatePlan
 from bot_bottle.manifest import ManifestIndex
 from bot_bottle.supervisor.plan import SupervisePlan
+from tests.unit._forges import long_form_index
 
 
 SLUG = "demo-abc12"
@@ -42,7 +43,7 @@ def _manifest(*, supervise: bool, with_git: bool, with_egress: bool) -> Manifest
         bottle["git_gate"] = {"repos": {
             "upstream": {
                 "url": "ssh://git@example.com:22/x/y.git",
-                "key": {"provider": "static", "path": "/etc/hostname"},
+                "key": {"provider": "ssh", "path": "/etc/hostname"},
             },
         }}
     if with_egress:
@@ -52,7 +53,7 @@ def _manifest(*, supervise: bool, with_git: bool, with_egress: bool) -> Manifest
                 "auth": {"type": "bearer", "value": "secret:TOK"},
             }],
         }
-    return ManifestIndex.from_json_obj({
+    return long_form_index({
         "bottles": {"dev": bottle},
         "agents": {"demo": {"skills": [], "prompt": ""}},
     })

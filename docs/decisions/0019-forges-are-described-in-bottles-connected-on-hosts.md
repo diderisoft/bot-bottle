@@ -13,6 +13,10 @@ Syntax in this record predates v0.1.9; see [manifest.md](../reference/manifest.m
 > makes connections the account's in the console (tokens stay on hosts) and
 > requires every runnable bottle to declare the forge of each grant: "No
 > forge bottle is needed" stands, but a grant now needs its forge declared.
+>
+> **Amended 2026-11-14.** [ADR 0023](0023-ssh-servers-are-forges.md) adds the
+> forge kind `ssh`, a plain SSH server whose connection holds key files
+> instead of users and tokens.
 
 ## Context
 

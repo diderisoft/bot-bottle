@@ -158,11 +158,7 @@ class GitGate:
         `identity`."""
         _provision.revoke_git_gate_provisioned_keys(bottle, identity, stage_dir, secrets)
 
-    def preflight_host_keys(
-        self, manifest: Manifest, *, headless: bool, home_md: Path | None,
-    ) -> Manifest:
+    def preflight_host_keys(self, manifest: Manifest, *, headless: bool) -> Manifest:
         """Ensure every upstream has a host key (fetching, or failing
         headless). Returns the possibly updated manifest."""
-        return _host_key.preflight_host_keys(
-            manifest, headless=headless, home_md=home_md,
-        )
+        return _host_key.preflight_host_keys(manifest, headless=headless)

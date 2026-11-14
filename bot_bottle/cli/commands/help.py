@@ -29,7 +29,8 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w("  doctor    check host prerequisites (Python, backends, tmux, config dir)\n")
     w("  down      stop the orchestrator, gateway and host controller\n")
     w("  envs      list environments (BOT_BOTTLE_ENV); remove one (rm NAME)\n")
-    w("  forge     connect, list or remove the forges bottles grant repos on\n")
+    w("  forge     connect, list or remove the forges bottles grant repos on,\n"
+      "            and an SSH server's keys (forge key add|list|remove)\n")
     w("  help      show this command list\n")
     w("  host      this host's settings: the storage and memory caps the console shows (caps)\n")
     w("  install   set up this host: backend prerequisites, tmux, autostart (--undo)\n")

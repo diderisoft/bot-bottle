@@ -93,10 +93,13 @@ def route_document(route: ManifestEgressRoute) -> dict[str, object]:
 
 
 def repo_document(entry: ManifestGitEntry) -> dict[str, object]:
-    """One git-gate repo in long form."""
+    """One git-gate repo in long form. An `ssh` forge's key is named by its
+    fingerprint: its path is this host's (and documents reach the console)."""
     key: dict[str, object] = {"provider": entry.Key.provider}
-    if entry.Key.provider == "static":
-        key["path"] = entry.Key.path
+    if entry.Key.provider == "ssh":
+        key["fingerprint"] = entry.Key.fingerprint
+        if entry.Key.read_only:
+            key["read_only"] = True
     else:
         key["forge_token_env"] = entry.Key.forge_token_env
         if entry.Key.api_url:

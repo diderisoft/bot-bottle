@@ -321,6 +321,10 @@ def _forge_lines(files: list[_File]) -> list[Line]:
                                              f"`bot-bottle forge connect https://{host}`",
                               tone="warn"))
             continue
+        if conn.kind == "ssh":  # no users: the keys this host holds for it
+            lines.append(Line("forge", host, f"SSH server, {len(conn.keys)} key"
+                                             f"{'' if len(conn.keys) == 1 else 's'} here"))
+            continue
         try:
             user = conn.user()
         except forge_connections.ForgeConnectionError as e:

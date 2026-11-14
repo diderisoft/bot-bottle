@@ -5,14 +5,16 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from ..contract.forges import FORGE_KINDS
+from ..contract.forges import API_KINDS
 from ..contract.git_trailers import TRAILER_MODES
 from .util import ManifestError, as_json_object
 
 # Shell-safe repo names (they appear in generated scripts, also quoted).
 _GIT_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
-_KEY_PROVIDERS = {"static", *FORGE_KINDS}
+# A grant expands to one of these (`manifest.forges.expand_grants`); a bottle
+# file never writes a long form itself (ADR 0023).
+_KEY_PROVIDERS = {"ssh", *API_KINDS}
 
 
 def _opt_str(value: object, label: str) -> str:
@@ -70,11 +72,12 @@ def validate_unique_git_names(bottle_name: str, git: tuple[ManifestGitEntry, ...
 
 @dataclass(frozen=True)
 class ManifestKeyConfig:
-    """A repo's SSH key: `provider` `static` (`path`, a host key file) or a
-    forge kind, `gitea` or `github` (a deploy key via the forge's API;
+    """A repo's SSH key: `provider` `ssh` (`path`, a key file this host's
+    connection to an `ssh` forge holds, and its `fingerprint` as connected)
+    or an API kind, `gitea` or `github` (a deploy key via the forge's API;
     `forge_token_env` names the token's host var, read at provision time;
-    `api_url` defaults from the upstream host; `read_only` mints a key that
-    can't push)."""
+    `api_url` defaults from the upstream host). `read_only`: the gate refuses
+    pushes (and a minted key can't push)."""
 
     provider: str
     path: str = ""
@@ -85,6 +88,7 @@ class ManifestKeyConfig:
     # GitHub token over HTTPS, ADR 0014) or "deploy-key" (a key minted per
     # launch). Other forges always use deploy keys.
     transport: str = ""
+    fingerprint: str = ""
 
 
 GIT_TRANSPORTS = ("https", "deploy-key")
@@ -104,8 +108,8 @@ class ManifestGitEntry:
     gate hosts `/git/<Name>.git` and pushes upstream with `IdentityFile` after
     the scans. The URL is parsed once into the `Upstream*` fields.
 
-    From `git_gate.repos.<Name>`. `IdentityFile` comes from `key.path` for
-    `static`, or at provision time for a forge kind."""
+    From a grant's expansion. `IdentityFile` comes from `key.path` for an
+    `ssh` forge's key, or at provision time for an API kind."""
 
     Name: str
     Upstream: str
@@ -153,7 +157,7 @@ class ManifestGitEntry:
             )
         key_config = _parse_key_config(bottle_name, label, d["key"])
 
-        ident = key_config.path if key_config.provider == "static" else ""
+        ident = key_config.path if key_config.provider == "ssh" else ""
 
         khk = _opt_str(
             d.get("host_key"),
@@ -192,7 +196,7 @@ def _parse_key_config(
             f"allowed: {', '.join(sorted(_KEY_PROVIDERS))}"
         )
 
-    if provider in FORGE_KINDS:
+    if provider in API_KINDS:
         for k in d:
             if k not in {"provider", "forge_token_env", "api_url", "read_only", "transport"}:
                 raise ManifestError(
@@ -231,20 +235,27 @@ def _parse_key_config(
             transport=str(transport),
         )
 
-    # provider == "static"
+    # provider == "ssh": a key file an `ssh` forge's connection holds
     for k in d:
-        if k not in {"provider", "path"}:
+        if k not in {"provider", "path", "fingerprint", "read_only"}:
             raise ManifestError(
                 f"bottle '{bottle_name}' {label}.key has unknown key {k!r} "
-                f"for provider 'static'; allowed: provider, path"
+                f"for provider 'ssh'; allowed: provider, path, fingerprint, read_only"
             )
     path = d.get("path")
     if not isinstance(path, str) or not path:
         raise ManifestError(
             f"bottle '{bottle_name}' {label}.key missing required "
-            f"string field 'path' for provider 'static'"
+            f"string field 'path' for provider 'ssh'"
         )
-    return ManifestKeyConfig(provider=provider, path=path)
+    fingerprint = _opt_str(d.get("fingerprint"), f"bottle '{bottle_name}' {label}.key fingerprint")
+    read_only = d.get("read_only", False)
+    if not isinstance(read_only, bool):
+        raise ManifestError(
+            f"bottle '{bottle_name}' {label}.key 'read_only' must be true or false"
+        )
+    return ManifestKeyConfig(provider=provider, path=path, fingerprint=fingerprint,
+                             read_only=read_only)
 
 
 @dataclass(frozen=True)

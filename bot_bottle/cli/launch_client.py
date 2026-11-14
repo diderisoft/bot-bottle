@@ -102,13 +102,13 @@ def resolve_secrets(manifest: Manifest, source: SecretSource) -> dict[str, str]:
     return values
 
 
-def confirm_host_keys(manifest: Manifest, index: ManifestIndex) -> dict[str, str]:
+def confirm_host_keys(manifest: Manifest) -> dict[str, str]:
     """Fetch and confirm on the tty each upstream host key the manifest lacks;
     returns them by repo name."""
     missing = {e.Name for e in manifest.bottle.git if not e.KnownHostKey}
     if not missing:
         return {}
-    updated = preflight_host_keys(manifest, headless=False, home_md=index.home_md)
+    updated = preflight_host_keys(manifest, headless=False)
     return {e.Name: e.KnownHostKey for e in updated.bottle.git
             if e.Name in missing and e.KnownHostKey}
 
@@ -119,7 +119,7 @@ def prepare_request(request: LaunchRequest, index: ManifestIndex, *,
     keys and the values the person typed (`env.ask_env`: every `?`, and a
     `secret:NAME` the store lacks)."""
     manifest = load_trusting(index, request.agent, request.bottles, interactive=interactive)
-    host_keys = confirm_host_keys(manifest, index) if interactive else {}
+    host_keys = confirm_host_keys(manifest) if interactive else {}
     source = secrets_from_env()
     secrets = resolve_secrets(manifest, source)
     answers = ask_env(manifest, source) if interactive else {}

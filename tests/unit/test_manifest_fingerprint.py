@@ -8,6 +8,7 @@ from pathlib import Path
 
 from bot_bottle.manifest.fingerprint import bottle_hash
 from bot_bottle.manifest.loader import load_bottle_chain
+from tests.unit._forges import SSH, connected
 
 ORDERED = """---
 env:
@@ -19,24 +20,16 @@ egress:
     - host: api.example.com
 git_gate:
   repos:
-    app:
-      url: "ssh://git@h/acme/app.git"
-      key: {provider: static, path: /keys/app}
-    lib:
-      url: "ssh://git@h/acme/lib.git"
-      key: {provider: static, path: /keys/lib}
+    app: git.example.com/acme/app
+    lib: git.example.com/org/lib
 ---
 """
 # The same bottle, every key, route and repo in another order.
 REORDERED = """---
 git_gate:
   repos:
-    lib:
-      url: "ssh://git@h/acme/lib.git"
-      key: {provider: static, path: /keys/lib}
-    app:
-      url: "ssh://git@h/acme/app.git"
-      key: {provider: static, path: /keys/app}
+    lib: git.example.com/org/lib
+    app: git.example.com/acme/app
 egress:
   routes:
     - host: api.example.com
@@ -48,6 +41,7 @@ env:
 """
 
 
+@connected(SSH)
 class TestBottleHash(unittest.TestCase):
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with

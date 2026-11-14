@@ -83,7 +83,6 @@ class BottlePreparationPlanner:
         manifest = GitGate().preflight_host_keys(
             with_host_keys(manifest, dict(spec.host_keys)),
             headless=spec.headless,
-            home_md=spec.manifest.home_md,
         )
 
         bottle = manifest.bottle

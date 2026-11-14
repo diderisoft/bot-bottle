@@ -24,7 +24,7 @@ from bot_bottle.backend import Bottle, BottleSpec, ExecResult
 from bot_bottle.backend.docker.bottle_plan import DockerBottlePlan
 from bot_bottle.egress import EgressPlan
 from bot_bottle.git_gate import GitGatePlan
-from bot_bottle.manifest import ManifestIndex
+from tests.unit._forges import long_form_index
 
 
 class _Provider(AgentProvider):
@@ -61,7 +61,7 @@ def _plan(*, git_user: dict | None = None,  # type: ignore
     agent_json: dict = {"skills": [], "prompt": ""}  # type: ignore
     if agent_git is not None:
         agent_json["identity"] = {"git": agent_git}
-    index = ManifestIndex.from_json_obj({
+    index = long_form_index({
         "bottles": {"dev": bottle_json},
         "agents": {"demo": agent_json},
     })
@@ -167,7 +167,7 @@ class TestProvisionGitUser(unittest.TestCase):
             git_repos={
                 "repo": {
                     "url": "ssh://git@example.com/repo.git",
-                    "key": {"provider": "static", "path": "/dev/null"},
+                    "key": {"provider": "ssh", "path": "/dev/null"},
                     "host_key": "ssh-ed25519 AAAA",
                 },
             },

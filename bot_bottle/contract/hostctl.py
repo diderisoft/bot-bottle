@@ -71,9 +71,16 @@ AUDIT_IMPORT_PATH = "/audit/import"
 # connection without users, "user": `ForgeUser.to_json()`, "make_default"}
 # connects that user and answers {"forge": the connection}. POST
 # /forges/remove {"host", "user"?} disconnects the user, or the whole forge,
-# and drops their tokens: {"removed": [user names]}.
+# and drops their tokens: {"removed": [user names]}. POST {"forge"} alone
+# connects an SSH server (kind `ssh`, ADR 0023), keeping its keys.
+# POST /forges/keys {"host", "key": `ForgeKey.to_json()`} adds an SSH server's
+# key: {"forge"}; {"path", "fingerprint"} records a key file's new
+# fingerprint: {"changed": n}. POST /forges/keys/remove {"host", "repo"}
+# drops one ("" repo: the default): {"key"}.
 FORGES_PATH = "/forges"
 FORGES_REMOVE_PATH = "/forges/remove"
+FORGE_KEYS_PATH = "/forges/keys"
+FORGE_KEYS_REMOVE_PATH = "/forges/keys/remove"
 # GET: {"trusted": [`Trusted.to_json()`]}, oldest first. POST a record: keeps
 # it, replacing the one for its path; answers like GET.
 TRUST_PATH = "/trust"
@@ -463,6 +470,7 @@ __all__ = [
     "AGENT_PREFS_PATH", "AUDIT_PASSKEYS_PATH", "AUDIT_REBUILD_PATH", "BOTTLED_AGENTS_PATH",
     "BOTTLED_AGENTS_REMOVE_PATH", "INFRA_STATE_PATH", "WORKSPACE_DISKS_PATH",
     "WORKSPACE_DISKS_REMOVE_PATH", "ARCHITECT_WARM_PATH", "FORGES_PATH",
+    "FORGE_KEYS_PATH", "FORGE_KEYS_REMOVE_PATH",
     "FORGES_REMOVE_PATH", "HOST_CONFIG_PATH", "PAIRING_PATH", "PROJECTS_PATH",
     "PROJECTS_REMOVE_PATH", "TRUST_PATH",
     "AUTH_HEADER", "AUTH_SCHEME", "BOTTLES_PATH", "BOTTLE_COLORS", "CONFIRM_ERROR",

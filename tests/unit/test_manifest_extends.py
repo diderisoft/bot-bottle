@@ -13,6 +13,7 @@ from __future__ import annotations
 import unittest
 
 from bot_bottle.manifest import ManifestError, ManifestIndex
+from tests.unit._forges import SSH, connected
 
 
 def _error_message(callable_, *args, **kwargs) -> str:  # type: ignore
@@ -25,13 +26,15 @@ def _error_message(callable_, *args, **kwargs) -> str:  # type: ignore
 
 
 def _build(**bottles) -> Manifest:  # type: ignore
-    """Build a manifest with the given bottles and one trivial agent."""
-    return ManifestIndex.from_json_obj({
-        "bottles": bottles,
-        "agents": {
-            "demo": {"skills": [], "prompt": ""},
-        },
-    })
+    """Build a manifest with the given bottles and one trivial agent; repos
+    are grants on the SSH server `SSH`."""
+    with connected(SSH):
+        return ManifestIndex.from_json_obj({
+            "bottles": bottles,
+            "agents": {
+                "demo": {"skills": [], "prompt": ""},
+            },
+        })
 
 
 class TestExtendsBasic(unittest.TestCase):
@@ -131,8 +134,8 @@ class TestExtendsGitMerge(unittest.TestCase):
     """git_gate.user overlays by field; git_gate.repos merges by name,
     with same-name child entries merging field-by-field (child wins)."""
 
-    _GIT_ENTRY_A = {"url": "ssh://git@host-a/a.git", "key": {"provider": "static", "path": "/dev/null"}}
-    _GIT_ENTRY_B = {"url": "ssh://git@host-b/b.git", "key": {"provider": "static", "path": "/dev/null"}}
+    _GIT_ENTRY_A = "git.example.com/host-a/a"
+    _GIT_ENTRY_B = "git.example.com/host-b/b"
 
     def test_child_git_repos_merge_with_parent(self):
         m = _build(
@@ -148,7 +151,7 @@ class TestExtendsGitMerge(unittest.TestCase):
     def test_child_git_repo_different_name_same_host_coexists(self):
         # Repos are keyed by Name, not UpstreamHost: two repos with
         # different names on the same host both survive the merge.
-        same_host_b = {"url": "ssh://git@host-a/b.git", "key": {"provider": "static", "path": "/dev/null"}}
+        same_host_b = "git.example.com/host-a/b"
         m = _build(
             base={"git_gate": {"repos": {"a": self._GIT_ENTRY_A}}},
             child={
@@ -181,66 +184,46 @@ class TestExtendsGitMerge(unittest.TestCase):
         )
         self.assertEqual((), m.bottles["child"].git)
 
-    def test_child_same_name_repo_merges_key_field(self):
-        # Issue #237: child repo with same name as parent should merge
-        # field-by-field. Child overrides only `key`; parent's url and
-        # host_key are preserved.
-        parent_entry = {
-            "url": "ssh://git@host-a/repo.git",
-            "host_key": "ecdsa-sha2-nistp256 AAAA",
-            "key": {"provider": "static", "path": "/keys/id_rsa"},
-        }
+    def test_child_same_name_repo_replaces_the_parents(self):
+        # A same-name grant in the child is the child's (its access too).
         m = _build(
-            base={"git_gate": {"repos": {"repo": parent_entry}}},
+            base={"git_gate": {"repos": {"repo": "git.example.com/host-a/repo"}}},
             child={
                 "extends": "base",
-                "git_gate": {"repos": {"repo": {
-                    "key": {"provider": "static", "path": "/keys/child"},
-                }}},
+                "git_gate": {"repos": {"repo": "git.example.com/host-a/repo:write"}},
             },
         )
         entries = m.bottles["child"].git
         self.assertEqual(1, len(entries))
         e = entries[0]
         self.assertEqual("repo", e.Name)
-        self.assertEqual("ssh://git@host-a/repo.git", e.Upstream)
-        self.assertEqual("ecdsa-sha2-nistp256 AAAA", e.KnownHostKey)
-        self.assertEqual("/keys/child", e.Key.path)
+        self.assertEqual("ssh://git@git.example.com:2222/host-a/repo.git", e.Upstream)
+        self.assertEqual("ssh-ed25519 SSH", e.KnownHostKey)
+        self.assertEqual(("/keys/default", False), (e.Key.path, e.Key.read_only))
 
     def test_child_same_name_repo_overrides_url(self):
         # Child can override url on a same-name repo; other parent fields
         # fall through.
-        parent_entry = {
-            "url": "ssh://git@host-a/old.git",
-            "key": {"provider": "static", "path": "/keys/id_rsa"},
-        }
         m = _build(
-            base={"git_gate": {"repos": {"repo": parent_entry}}},
+            base={"git_gate": {"repos": {"repo": "git.example.com/host-a/old"}}},
             child={
                 "extends": "base",
-                "git_gate": {"repos": {"repo": {
-                    "url": "ssh://git@host-b/new.git",
-                    "key": {"provider": "static", "path": "/keys/id_rsa"},
-                }}},
+                "git_gate": {"repos": {"repo": "git.example.com/host-b/new"}},
             },
         )
         entries = m.bottles["child"].git
         self.assertEqual(1, len(entries))
-        self.assertEqual("ssh://git@host-b/new.git", entries[0].Upstream)
+        self.assertEqual("ssh://git@git.example.com:2222/host-b/new.git", entries[0].Upstream)
 
     def test_child_same_name_plus_new_repo(self):
         # Same-name repo is field-merged; a distinct new name in child
         # is appended.
-        parent_entry = {
-            "url": "ssh://git@host-a/repo.git",
-            "key": {"provider": "static", "path": "/keys/id_rsa"},
-        }
         m = _build(
-            base={"git_gate": {"repos": {"repo": parent_entry}}},
+            base={"git_gate": {"repos": {"repo": "git.example.com/org/repo"}}},
             child={
                 "extends": "base",
                 "git_gate": {"repos": {
-                    "repo": {"key": {"provider": "static", "path": "/keys/child"}},
+                    "repo": "git.example.com/org/lib",
                     "other": self._GIT_ENTRY_B,
                 }},
             },
@@ -249,7 +232,7 @@ class TestExtendsGitMerge(unittest.TestCase):
         names = {e.Name for e in child.git}
         self.assertEqual({"repo", "other"}, names)
         repo_entry = next(e for e in child.git if e.Name == "repo")
-        self.assertEqual("/keys/child", repo_entry.Key.path)
+        self.assertEqual("/keys/lib", repo_entry.Key.path)
 
     def test_child_git_user_inherits_parent_repos(self):
         m = _build(
@@ -458,8 +441,8 @@ class TestExtendsErrors(unittest.TestCase):
 class TestExtendsMultiParent(unittest.TestCase):
     """extends: [p1, p2, ...] — multi-parent composition (issue #268)."""
 
-    _GIT_A = {"url": "ssh://git@host-a/a.git", "key": {"provider": "static", "path": "/k"}}
-    _GIT_B = {"url": "ssh://git@host-b/b.git", "key": {"provider": "static", "path": "/k"}}
+    _GIT_A = "git.example.com/host-a/a"
+    _GIT_B = "git.example.com/host-b/b"
 
     def test_single_element_list_same_as_string(self):
         m = _build(
@@ -559,28 +542,17 @@ class TestExtendsMultiParent(unittest.TestCase):
         self.assertEqual({"a", "b"}, names)
 
     def test_two_parents_git_same_name_later_wins_per_field(self):
-        # Both parents declare the same repo name. p2's `key` wins; p1's
-        # `host_key` is preserved because p2 doesn't override it.
-        p1_entry = {
-            "url": "ssh://git@host-a/repo.git",
-            "host_key": "ecdsa AAAA",
-            "key": {"provider": "static", "path": "/k1"},
-        }
-        p2_entry = {
-            "url": "ssh://git@host-a/repo.git",  # required, same url
-            "key": {"provider": "static", "path": "/k2"},
-        }
+        # Both parents grant the same repo name: p2's wins.
         m = _build(
-            p1={"git_gate": {"repos": {"repo": p1_entry}}},
-            p2={"git_gate": {"repos": {"repo": p2_entry}}},
+            p1={"git_gate": {"repos": {"repo": "git.example.com/org/repo"}}},
+            p2={"git_gate": {"repos": {"repo": "git.example.com/org/lib"}}},
             child={"extends": ["p1", "p2"]},
         )
         entries = m.bottles["child"].git
         self.assertEqual(1, len(entries))
         e = entries[0]
-        self.assertEqual("ssh://git@host-a/repo.git", e.Upstream)
-        self.assertEqual("ecdsa AAAA", e.KnownHostKey)
-        self.assertEqual("/k2", e.Key.path)
+        self.assertEqual("ssh://git@git.example.com:2222/org/lib.git", e.Upstream)
+        self.assertEqual("/keys/lib", e.Key.path)
 
     def test_p1_repos_preserved_when_p2_has_none(self):
         m = _build(

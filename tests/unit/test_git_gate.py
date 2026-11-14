@@ -29,7 +29,7 @@ from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.manifest import ManifestIndex
 from tests.fixtures import fixture_minimal, fixture_with_git
 from tests.unit import use_bottle_root
-from tests.unit._forges import GITEA, connected
+from tests.unit._forges import GITEA, connected, long_form_index
 
 
 def _trailer_kwargs(bottle_id: str) -> dict[str, str]:
@@ -468,11 +468,11 @@ class TestPrepare(unittest.TestCase):
         self.assertEqual(0o600, os.stat(upstream.known_hosts_file).st_mode & 0o777)
 
     def test_prepare_skips_known_hosts_file_when_key_missing(self):
-        manifest = ManifestIndex.from_json_obj({
+        manifest = long_form_index({
             "bottles": {"dev": {"git_gate": {"repos": {
                 "foo": {
                     "url": "ssh://git@github.com/didericis/foo.git",
-                    "key": {"provider": "static", "path": "/dev/null"},
+                    "key": {"provider": "ssh", "path": "/dev/null"},
                 },
             }}}},
             "agents": {"demo": {"skills": [], "prompt": ""}},
@@ -502,7 +502,7 @@ class TestDynamicKeyProvisioning(unittest.TestCase):
                 "agents": {"demo": {"skills": [], "prompt": ""}},
             })
 
-    def test_resolve_identity_file_static_uses_entry_path(self):
+    def test_resolve_identity_file_ssh_uses_entry_path(self):
         entry = fixture_with_git().bottles["dev"].git[0]
         self.assertEqual(entry.IdentityFile, _resolve_identity_file(
                 entry, "demo", self.stage, MappingSecrets({})))

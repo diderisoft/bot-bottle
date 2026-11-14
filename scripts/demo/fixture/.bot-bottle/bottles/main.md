@@ -11,16 +11,16 @@ egress:
       dlp:
         on_match: block
 git_gate:
-  repos:
-    # The project's remote. Pushes go through the gate, whose gitleaks hook
-    # refuses a secret before the upstream is ever dialled; the upstream
-    # doesn't exist, so nothing leaves even if one got past.
-    slugs:
-      url: ssh://git@upstream.invalid/slugs.git
-      key:
-        provider: static
-        path: ~/.cache/bot-bottle-demo/fake-key
+  # The project's remote, a plain SSH server (the demo connects it and adds
+  # its key on the host). Pushes go through the gate, whose gitleaks hook
+  # refuses a secret before the upstream is ever dialled; the upstream
+  # doesn't exist, so nothing leaves even if one got past.
+  forges:
+    upstream.invalid:
+      kind: ssh
       host_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDemoHostKeyNotARealOneJustAPlaceholder0
+  repos:
+    - upstream.invalid/demo/slugs:write
 ---
 
 The slugs project: a tiny library, its tests, and one API.

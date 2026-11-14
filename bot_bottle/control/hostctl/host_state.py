@@ -20,7 +20,7 @@ import dataclasses
 from pathlib import Path
 
 from ... import bottle_state, forge_connections
-from ...forge_connections import ForgeConnection, ForgeConnectionError, ForgeStore
+from ...forge_connections import ForgeConnection, ForgeConnectionError, ForgeKey, ForgeStore
 from ...errors import SecretsFileError
 from ...infra_state import InfraStateStore
 from ...lib.config_store import ConfigStore, HostConfig
@@ -105,6 +105,9 @@ def forge_connect(body: dict[str, object]) -> dict[str, object]:
         raise ValueError("make_default must be true or false")
     raw = body.get("forge")
     try:
+        if "user" not in body:  # an SSH server: no user, its keys kept
+            conn = ForgeConnection.from_json(raw)
+            return {"forge": ForgeStore(host_db_path()).connect_server(conn).to_json()}
         conn = ForgeConnection.from_json({**raw, "users": [body.get("user")]}
                                          if isinstance(raw, dict) else raw)
         stored = ForgeStore(host_db_path()).add_user(
@@ -112,6 +115,35 @@ def forge_connect(body: dict[str, object]) -> dict[str, object]:
     except ForgeConnectionError as e:
         raise ValueError(str(e)) from e
     return {"forge": stored.to_json()}
+
+
+def forge_key(body: dict[str, object]) -> dict[str, object]:
+    """Add `body["key"]` to the SSH server `body["host"]`, or record a key
+    file's new fingerprint (`path`, `fingerprint`)."""
+    store = ForgeStore(host_db_path())
+    try:
+        if "key" not in body:
+            path, fingerprint = body.get("path"), body.get("fingerprint")
+            if not isinstance(path, str) or not isinstance(fingerprint, str):
+                raise ValueError("path and fingerprint must be strings")
+            return {"changed": store.refingerprint(path, fingerprint)}
+        host = body.get("host")
+        if not isinstance(host, str) or not host:
+            raise ValueError("host must name a forge")
+        return {"forge": store.add_key(host, ForgeKey.from_json(host, body["key"])).to_json()}
+    except ForgeConnectionError as e:
+        raise ValueError(str(e)) from e
+
+
+def forge_key_remove(body: dict[str, object]) -> dict[str, object]:
+    """Drop the SSH server `body["host"]`'s key for `body["repo"]`."""
+    host, repo = body.get("host"), body.get("repo", "")
+    if not isinstance(host, str) or not host or not isinstance(repo, str):
+        raise ValueError("host must name a forge, and repo a repo on it")
+    try:
+        return {"key": ForgeStore(host_db_path()).remove_key(host, repo).to_json()}
+    except ForgeConnectionError as e:
+        raise ValueError(str(e)) from e
 
 
 def forge_remove(body: dict[str, object]) -> dict[str, object]:

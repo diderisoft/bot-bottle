@@ -96,8 +96,8 @@ class TestStore(unittest.TestCase):
         self.assertEqual({}, forge_connections.connections())
 
     def test_portable_tables(self) -> None:
-        self.assertEqual({"forge_connections": MIXED, "forge_users": PORTABLE},
-                         dict(ForgeStore.TABLES))
+        self.assertEqual({"forge_connections": MIXED, "forge_users": PORTABLE,
+                          "forge_keys": MACHINE_SPECIFIC}, dict(ForgeStore.TABLES))
         # The address this machine reaches the forge on stays here.
         self.assertEqual(MACHINE_SPECIFIC, ForgeStore.COLUMNS["forge_connections"]["ssh"])
 

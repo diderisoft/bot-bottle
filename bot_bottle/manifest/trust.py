@@ -31,7 +31,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .. import host_access, secret_ref
-from ..contract.forges import FORGE_KINDS
+from ..contract.forges import API_KINDS
 from ..lib.db_store import MACHINE_SPECIFIC, DbStore
 from ..lib.migrations import TableMigrations
 from .agent import ManifestAgentProvider
@@ -67,10 +67,14 @@ def grants(bottle: ManifestBottle) -> list[str]:
         lines.append(f"reach   {route.Host:<30} {what}")
     for repo in bottle.git:
         line = f"{'fetch' if repo.Key.read_only else 'push':<7} {repo.Upstream}"
-        if repo.Key.provider in FORGE_KINDS:
+        if repo.Key.provider in API_KINDS:
             # The forge token goes to the API that mints the key.
             api = repo.Key.api_url or f"https://{repo.UpstreamHost}"
             line += f" (key minted at {api} with ${repo.Key.forge_token_env})"
+        elif repo.Key.provider == "ssh":
+            # This host's key file, named by fingerprint: a path is this
+            # machine's, and the prompt may be shown in the console.
+            line += f" (this host's key {repo.Key.fingerprint})"
         lines.append(line)
     for where in bottle.git_create:
         lines.append(f"create  repos at {where}")
@@ -101,9 +105,22 @@ def _fingerprint(host_key: str) -> str:
 def forge_lines(bottle: ManifestBottle) -> list[str]:
     """This host's connection to each forge `bottle`'s repos are on, one line
     each: what trusting a project bottle records of it."""
-    used = {r.Key.api_url for r in bottle.git if r.Key.provider in FORGE_KINDS}
+    used = {r.Key.api_url for r in bottle.git if r.Key.provider in API_KINDS}
+    servers: dict[str, set[str]] = {}
+    for r in bottle.git:
+        if r.Key.provider == "ssh":
+            servers.setdefault(r.UpstreamHost, set()).add(r.Key.fingerprint)
     lines: list[str] = []
     for forge in bottle.forges:
+        if forge.kind == "ssh":
+            # The keys it pushes with are the connection's, named by
+            # fingerprint: a rotated key asks again.
+            if forge.name in servers:
+                lines.append(f"forge   {forge.name}: SSH server at {forge.ssh}"
+                             + (f", host key {_fingerprint(forge.host_key)}"
+                                if forge.host_key else "")
+                             + f", keys {', '.join(sorted(servers[forge.name]))}")
+            continue
         if forge.url not in used:
             continue
         line = f"forge   {forge.name}: {forge.kind} at {forge.url}, ssh {forge.ssh}"

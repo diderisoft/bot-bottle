@@ -13,6 +13,8 @@ from bot_bottle.manifest import ManifestError, ManifestIndex
 from bot_bottle.manifest.agent import ManifestAgent, agent_from_frontmatter
 from bot_bottle.manifest.extends import resolve_bottles
 from bot_bottle.manifest.util import OldFormError
+from bot_bottle.forge_connections import ForgeConnection, ForgeKey
+from tests.unit._forges import connected
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = "(see docs/reference/manifest.md)"
@@ -157,7 +159,15 @@ class TestShippedFiles(unittest.TestCase):
             "basic": ROOT / "bot_bottle/manifest/builtin/basic.md",
         }
         raws = {name: dict(parse_frontmatter(p.read_text())[0]) for name, p in files.items()}
-        resolve_bottles(raws)
+        # The demo connects its upstream, an SSH server, and adds its key.
+        demo = ForgeConnection(
+            host="upstream.invalid", kind="ssh", url="", ssh="ssh://git@upstream.invalid",
+            host_key="ssh-ed25519 "
+                     "AAAAC3NzaC1lZDI1NTE5AAAAIDemoHostKeyNotARealOneJustAPlaceholder0",
+            keys=(ForgeKey(repo="demo/slugs", path="/demo/fake-key", fingerprint="SHA256:x",
+                           write=True),))
+        with connected(demo):
+            resolve_bottles(raws)
 
 
 if __name__ == "__main__":

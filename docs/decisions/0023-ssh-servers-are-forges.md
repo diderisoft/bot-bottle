@@ -1,6 +1,6 @@
 # ADR 0023: Plain SSH servers are forges; bottle files hold no long-form repos
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-14
 - **Deciders:** didericis
 

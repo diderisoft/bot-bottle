@@ -151,7 +151,7 @@ class TestHook(unittest.TestCase):
 def _entry(name: str = "r") -> ManifestGitEntry:
     return ManifestGitEntry.from_repos_entry("b", name, {
         "url": f"ssh://git@forge.example/o/{name}.git",
-        "key": {"provider": "static", "path": "/k"}})
+        "key": {"provider": "ssh", "path": "/k"}})
 
 
 class TestManifest(unittest.TestCase):

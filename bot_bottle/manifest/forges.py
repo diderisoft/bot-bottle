@@ -20,23 +20,34 @@ never overrides them. It's the hint for connecting the forge on a machine
 that hasn't, and its `kind` (and `host_key`, if pinned) must match the
 connection's. A bottle never carries a token.
 
-Each grant expands, while `extends` is resolved, into today's long-form repo
-entry: a deploy key minted per launch through the forge, read-only unless
-`:write`. Everything downstream sees only the long form. A bottle file can't
-write that long form itself for a forge-minted key (ADR 0008). The long form
-stays for a `static` key, an operator's own key file.
+A plain SSH git server is a forge of kind `ssh` (ADR 0023): no API, so no
+minted keys. The host's connection to it holds key files, one per repo or a
+default (`bot-bottle forge key add`), and a grant uses its repo's key, else
+the default.
+
+Each grant expands, while `extends` is resolved, into the long-form repo
+entry: a deploy key minted per launch through the forge, or an `ssh` forge's
+key file, read-only unless `:write`. Everything downstream sees only the
+long form. A bottle file never writes the long form itself, whatever its key
+(ADR 0008, ADR 0023).
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from ..contract.forges import FORGE_KINDS
-from .legacy_git_gate import OldGitGateFormatError, old_repos
+from .legacy_git_gate import OldGitGateFormatError
 from .util import ManifestError, as_json_object
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from ..forge_connections import ForgeKey
+    from .legacy_git_gate import ForgeHome
 
 _FORGE_KEYS = {"kind", "url", "ssh", "host_key"}
 # Connection settings that live on the host now (ADR 0019), not in a bottle.
@@ -44,6 +55,7 @@ _HOST_KEYS = {"token", "account", "app", "transport"}
 # A forge's key: its host, with a port if it has one.
 _FORGE_NAME_RE = re.compile(r"^[A-Za-z0-9.-]+(?::[0-9]+)?$")
 _CONNECT = "bot-bottle forge connect"
+_KEY_ADD = "bot-bottle forge key add"
 _REPO_PART_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _LABEL_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
@@ -67,14 +79,56 @@ class ManifestForge:
     # GitHub only: "deploy-key" opts its repos into a key minted per launch
     # instead of HTTPS with the token (ADR 0014). Empty is the default.
     transport: str = ""
+    # An `ssh` forge's keys on this host (ADR 0023).
+    keys: "tuple[ForgeKey, ...]" = ()
 
-    def key(self, writable: bool) -> dict[str, object]:
-        """The long-form `key` block a grant on this forge expands to."""
+    def key(self, writable: bool, repo: str = "", where: str = "") -> dict[str, object]:
+        """The long-form `key` block a grant on `repo` (`<owner>/<repo>`) on
+        this forge expands to. An `ssh` forge's is the repo's key, else its
+        default; MissingKeyError (naming `where`) when it has neither, or only
+        a read-only one for a `:write` grant."""
+        if self.kind == "ssh":
+            found = {k.repo: k for k in self.keys}
+            chosen = found.get(repo) or found.get("")
+            if chosen is None or (writable and not chosen.write):
+                raise MissingKeyError(self.name, repo, writable, where,
+                                      read_only=chosen is not None)
+            return {"provider": "ssh", "path": chosen.path, "fingerprint": chosen.fingerprint,
+                    "read_only": not writable}
         key: dict[str, object] = {"provider": self.kind, "forge_token_env": self.token_secret,
                                   "api_url": self.url, "read_only": not writable}
         if self.transport:
             key["transport"] = self.transport
         return key
+
+
+class NotConnectedError(ManifestError):
+    """A grant on a forge this host hasn't connected; the message names the
+    `forge connect` that does."""
+
+    def __init__(self, forge: str, message: str) -> None:
+        self.forge = forge
+        super().__init__(message)
+
+
+class MissingKeyError(ManifestError):
+    """A grant on an `ssh` forge this host holds no usable key for (ADR
+    0023): none for its repo and no default, or only a read-only one for a
+    `:write` grant. The message names the `forge key add` that fixes it."""
+
+    def __init__(self, forge: str, repo: str, writable: bool, where: str = "", *,
+                 read_only: bool = False) -> None:
+        self.forge, self.repo, self.writable = forge, repo, writable
+        grant = f"{forge}/{repo}"
+        fix = f"`{_KEY_ADD} {forge} {repo} <path>{' --write' if writable else ''}`"
+        prefix = f"{where}: " if where else ""
+        if read_only:
+            what = (f"{prefix}this host's key for {grant} is read-only, and the grant is "
+                    f":write; add a write key with {fix}")
+        else:
+            what = (f"{prefix}this host holds no key for {grant}; add one with {fix} "
+                    f"(or `{_KEY_ADD} {forge} --default <path>` for every repo there)")
+        super().__init__(what)
 
 
 def _str(d: dict[str, object], key: str, label: str, *, required: bool = False) -> str:
@@ -129,6 +183,11 @@ def forges_raw(bottle_name: str, raw: dict[str, object]) -> dict[str, object]:
         if kind not in FORGE_KINDS:
             raise ManifestError(f"{where}: kind {kind!r} isn't supported yet; "
                                 f"supported: {', '.join(FORGE_KINDS)}")
+        for key in ("ssh", "host_key"):
+            _str(d, key, where)
+        if kind == "ssh":
+            _ssh_described(name, d, where)
+            continue
         url = _url(name, d)
         try:
             # urlparse refuses a bad IPv6 host, `.port` a port that isn't one.
@@ -142,12 +201,33 @@ def forges_raw(bottle_name: str, raw: dict[str, object]) -> dict[str, object]:
         if host != name:
             raise ManifestError(f"{where}.url must be on {name}, the forge it names "
                                 f"(was {url!r})")
-        for key in ("ssh", "host_key"):
-            _str(d, key, where)
     return forges
 
 
+_SSH_RE = re.compile(r"^ssh://[^@/\s]+@([A-Za-z0-9.-]+)(?::[0-9]+)?$")
+
+
+def _ssh_described(name: str, d: dict[str, object], where: str) -> None:
+    """An `ssh` forge's description: no `url` (it has no web side), and an
+    `ssh` address on the host it names, the port its own."""
+    if "url" in d:
+        raise ManifestError(f"{where}: an SSH server has no url; give its address as "
+                            f"ssh: ssh://git@{name}[:port]")
+    if ":" in name:
+        raise ManifestError(f"{where}: an SSH server is named by its host alone; its port "
+                            f"goes in ssh: ssh://git@<host>:<port>")
+    ssh = str(d.get("ssh") or "")
+    m = _SSH_RE.match(ssh) if ssh else None
+    if ssh and (m is None or m.group(1).lower() != name.lower()):
+        raise ManifestError(f"{where}.ssh must be ssh://user@{name}[:port] (was {ssh!r})")
+
+
 def _url(name: str, d: dict[str, object]) -> str:
+    """Where `forge connect` connects a forge described as `d`: an SSH
+    server's `ssh` address, else its url."""
+    if d.get("kind") == "ssh":
+        ssh = d.get("ssh")
+        return ssh if isinstance(ssh, str) and ssh else f"ssh://git@{name}"
     url = d.get("url")
     return (url if isinstance(url, str) and url else f"https://{name}").rstrip("/")
 
@@ -181,8 +261,8 @@ def resolve_forge(name: str, described: object, bottle_name: str,
     where = f"bottle '{bottle_name}'" if bottle_name else "this launch"
     conn = forge_connections.get(name)
     if conn is None:
-        raise ManifestError(f"{where}: the forge {name} isn't connected on this host; "
-                            f"connect it with `{_CONNECT} {_url(name, d)}`")
+        raise NotConnectedError(name, f"{where}: the forge {name} isn't connected on this "
+                                      f"host; connect it with `{_CONNECT} {_url(name, d)}`")
     kind = str(d.get("kind") or conn.kind)
     if kind != conn.kind:
         raise ManifestError(f"{where} describes {name} as {kind}, but this host connected it "
@@ -192,6 +272,12 @@ def resolve_forge(name: str, described: object, bottle_name: str,
         raise ManifestError(f"{where} pins a host key for {name} that isn't the one this host "
                             f"pinned when it connected it; check the forge, then connect it "
                             f"again or fix the bottle's host_key")
+    if conn.kind == "ssh":
+        if user:
+            raise ManifestError(f"{name} is an SSH server: it has keys, not users; take it "
+                                f"out of the agent's identity.accounts")
+        return ManifestForge(name=name, kind="ssh", url="", ssh=conn.ssh, token_secret="",
+                             host_key=conn.host_key, keys=conn.keys)
     chosen = conn.user(user)
     return ManifestForge(name=name, kind=conn.kind, url=conn.url, ssh=conn.ssh,
                          token_secret=chosen.token_secret, account=chosen.name,
@@ -220,10 +306,10 @@ def described_forge(forge: ManifestForge) -> dict[str, object]:
     """What a bottle written from `forge` describes it as: its kind, and its
     URL and SSH address unless they're the defaults. The SSH address only
     when it's on the forge's own host (an address over a VPN is this
-    machine's, not the forge's)."""
+    machine's, not the forge's). An SSH server has no URL."""
     out: dict[str, object] = {"kind": forge.kind}
     host = forge.name.split(":", 1)[0]
-    if forge.url != f"https://{forge.name}":
+    if forge.kind != "ssh" and forge.url != f"https://{forge.name}":
         out["url"] = forge.url
     ssh_host = forge.ssh.removeprefix("ssh://").split("@", 1)[-1].split(":", 1)[0]
     if ssh_host == host and forge.ssh != f"ssh://git@{host}":
@@ -308,12 +394,15 @@ def normalize_repos(bottle_name: str, raw: dict[str, object]) -> dict[str, objec
     return {**raw, "git_gate": {**git_d, "repos": mapped}}
 
 
-def refuse_minted_long_form(bottle_name: str, repos: dict[str, object]) -> None:
-    """A bottle file's own repos, as written: a key a forge mints is declared
-    as a grant on that forge, never in long form (ADR 0008). The error names
-    every such repo and how to convert them (`manifest/legacy_git_gate.py`)."""
-    if old_repos(repos, FORGE_KINDS):
-        raise OldGitGateFormatError(bottle_name, repos, FORGE_KINDS)
+def refuse_long_form(bottle_name: str, repos: "Mapping[str, object]", *,
+                     homes: "Mapping[str, ForgeHome] | None" = None) -> None:
+    """A bottle file's own repos, as written: each is a grant, never the long
+    form, whatever its key (ADR 0008, ADR 0023). The error names every such
+    repo, the grant it becomes and the commands that connect it
+    (`manifest/legacy_git_gate.py`). `homes`: the connections to plan with,
+    {} to ask none (a check that mustn't depend on this host)."""
+    if any(not isinstance(v, str) for v in repos.values()):
+        raise OldGitGateFormatError(bottle_name, repos, homes=homes)
 
 
 def granted_forges(bottle_name: str, raw: dict[str, object]) -> set[str]:
@@ -338,7 +427,7 @@ def expand_grants(bottle_name: str, raw: dict[str, object],
     git_d = as_json_object(git, f"bottle '{bottle_name}' git_gate")
     repos = git_d.get("repos")
     if isinstance(repos, dict):
-        refuse_minted_long_form(bottle_name, repos)
+        refuse_long_form(bottle_name, repos)
     if not isinstance(repos, dict) or not any(isinstance(v, str) for v in repos.values()):
         return raw
     expanded: dict[str, object] = {}
@@ -353,11 +442,27 @@ def expand_grants(bottle_name: str, raw: dict[str, object],
                                 f"agent pushes as is its `identity.accounts`, not the grant's")
         forge = resolve_forge(forge_name, forges.get(forge_name), bottle_name)
         long_form: dict[str, object] = {
-            "url": f"{forge.ssh}/{owner}/{repo}.git", "key": forge.key(writable)}
+            "url": f"{forge.ssh}/{owner}/{repo}.git",
+            "key": forge.key(writable, f"{owner}/{repo}", f"bottle '{bottle_name}'")}
         if forge.host_key:
             long_form["host_key"] = forge.host_key
         expanded[name] = long_form
     return {**raw, "git_gate": {**git_d, "repos": expanded}}
+
+
+def refuse_ssh_create(bottle_name: str, raw: dict[str, object],
+                      forges: dict[str, object]) -> None:
+    """`git_gate.actions.create` on a forge the chain describes as an SSH
+    server is refused: creating a repo needs a forge API (ADR 0023)."""
+    git = raw.get("git_gate")
+    actions = git.get("actions") if isinstance(git, dict) else None
+    create = actions.get("create") if isinstance(actions, dict) else None
+    for pattern in create if isinstance(create, list) else []:
+        forge = str(pattern).split("/", 1)[0]
+        described = forges.get(forge)
+        if isinstance(described, dict) and described.get("kind") == "ssh":
+            raise ManifestError(f"bottle '{bottle_name}' git_gate.actions.create: {forge} is "
+                                f"an SSH server, and creating a repo needs a forge's API")
 
 
 def strip_chain_keys(raw: dict[str, object]) -> dict[str, object]:
@@ -371,9 +476,8 @@ def strip_chain_keys(raw: dict[str, object]) -> dict[str, object]:
 
 
 __all__ = [
-    "FORGE_KINDS", "ManifestForge", "credentials_raw", "described_connection", "described_forge",
-    "expand_grants", "forges_raw", "granted_forges", "merge_named", "normalize_repos",
-    "parse_grant",
-    "refuse_minted_long_form", "resolve_forge", "split_grant_alias", "strip_chain_keys",
-    "with_forge_users",
+    "FORGE_KINDS", "ManifestForge", "MissingKeyError", "NotConnectedError", "credentials_raw",
+    "described_connection", "described_forge", "expand_grants", "forges_raw", "granted_forges",
+    "merge_named", "normalize_repos", "parse_grant", "refuse_long_form", "refuse_ssh_create",
+    "resolve_forge", "split_grant_alias", "strip_chain_keys", "with_forge_users",
 ]

@@ -3,6 +3,10 @@ an old format, in one pass:
 
 - repos in the old git-gate format (`manifest/legacy_git_gate.py`) become
   grants on forges this host connected (edited as text, so comments stay);
+  a static key's repos become grants on an `ssh` forge declared from their
+  `url` and `host_key` (ADR 0023), connected or not: a server this host
+  hasn't connected, or holds no key for, leaves the bottle partial until
+  `forge connect` and `forge key add`;
 - the old egress shape (`manifest/upgrade.py`) becomes the current one, each
   top-level block that changes written afresh and the rest left as written;
 - a grant whose forge nothing in the bottle's chain declares gets the forge's
@@ -12,9 +16,10 @@ an old format, in one pass:
 Other old forms are refused at load, naming their new form, for a hand edit.
 
 The result is checked by parsing it back before it's written, and written as
-a new version. Running it again finds nothing to do. The forge must already be
-connected; connecting needs a token typed by the operator, so `migrate` never
-does it.
+a new version. Running it again finds nothing to do. A forge with minted keys
+must already be connected; connecting needs a token typed by the operator, so
+`migrate` never does it. Nor does it connect an SSH server or add its keys:
+the key file a static repo named is a path on the host that wrote it.
 """
 
 from __future__ import annotations
@@ -26,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
-from .forges import FORGE_KINDS
+from .forges import MissingKeyError, NotConnectedError
 from .legacy_git_gate import Plan, connected_homes, explain, list_form, old_repos, plan
 from .loader import find_bottle, load_bottle_chain
 from .upgrade import UpgradeError, rewrite_text, upgrade_bottle
@@ -51,6 +56,9 @@ class Migration:
     notes: tuple[str, ...]
     # What else changed, a line each.
     changes: tuple[str, ...] = ()
+    # SSH servers declared from static repos: the bottle may be partial
+    # here until they're connected and hold keys.
+    servers: tuple[str, ...] = ()
 
     @property
     def what(self) -> str:
@@ -82,18 +90,26 @@ def prepare(name: str, dirs: Sequence[tuple[Path, bool]]) -> Migration:
     fm = _frontmatter(path, text)
     git = fm.get(_git_key(fm))
     repos = git.get("repos") if isinstance(git, dict) else None
-    old = old_repos(repos, FORGE_KINDS) if isinstance(repos, dict) else []
+    old = old_repos(repos) if isinstance(repos, dict) else []
     after = text
     p: Plan | None = None
+    servers: dict[str, dict[str, object]] = {}
     if isinstance(repos, dict) and old:
         p = plan(name, old, connected_homes())
-        if p.missing or p.unconvertible:
-            why = (f"the forge {', '.join(p.missing)} isn't connected on this host yet; "
-                   f"connect it first" if p.missing else "some repos can't be converted")
+        minted = [h for h, rs in p.missing.items() if not rs[0].static]
+        if minted or p.unconvertible:
+            why = (f"the forge {', '.join(minted)} isn't connected on this host yet; "
+                   f"connect it first" if minted else "some repos can't be converted")
             raise MigrateError(f"{why}.\n{explain(p, repos)}")
         after = rewrite(after, p, repos)
+        servers = p.declarations()
     try:
         doc, changes, edits = upgrade_bottle(_frontmatter(path, after))
+        servers = _declare_servers(doc, servers)
+        if servers:
+            changes += [f"declares the SSH server {host} (from its repos' url and host_key)"
+                        for host in servers]
+            edits.append(add_forges(servers))
         declared = declare_forges(name, doc, dirs)
         if declared:
             changes += [f"declares the forge {host} (from this host's connection)"
@@ -107,7 +123,25 @@ def prepare(name: str, dirs: Sequence[tuple[Path, bool]]) -> Migration:
         raise MigrateError(f"bottle '{name}' is already in the current format; "
                            f"nothing to migrate")
     return Migration(bottle=name, path=path, project=project, before=text, after=after,
-                     plan=p, notes=tuple(_notes(p)) if p else (), changes=tuple(changes))
+                     plan=p, notes=tuple(_notes(p)) if p else (), changes=tuple(changes),
+                     servers=tuple(p.servers()) if p else ())
+
+
+def _declare_servers(doc: dict[str, object],
+                     servers: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
+    """Add to `doc`'s `git_gate.forges` the SSH servers it doesn't declare
+    yet; those added."""
+    if not servers:
+        return {}
+    found = doc.get("git_gate")
+    git: dict[str, object] = found if isinstance(found, dict) else {}
+    own = git.get("forges")
+    forges: dict[str, object] = dict(own) if isinstance(own, dict) else {}
+    added = {h: d for h, d in servers.items() if h not in forges}
+    if added:
+        git["forges"] = {**forges, **added}
+        doc["git_gate"] = git
+    return added
 
 
 def _declared_by_parents(doc: Mapping[str, object],
@@ -214,7 +248,15 @@ def _frontmatter(path: Path, text: str) -> dict[str, object]:
 
 def _notes(p: Plan) -> list[str]:
     notes: list[str] = []
+    for host in p.servers():
+        if host in p.missing:
+            notes.append(f"{host} isn't connected on this host; the bottle is partial here "
+                         f"until `{p.connect_command(host)}`")
+    notes += [f"no key for it here yet; the bottle is partial here until `{cmd}`"
+              for cmd in p.key_commands()]
     for host, home in p.homes.items():
+        if home.kind == "ssh":
+            continue
         repos = [r for r in p.repos if r.forge_host == host]
         envs = sorted({r.token_env for r in repos if r.token_env})
         if envs and home.token_secrets and not set(envs) <= set(home.token_secrets):
@@ -243,7 +285,7 @@ def apply(m: Migration, dirs: Sequence[tuple[Path, bool]], *,
         record_hand_edits(root=root)
     m.path.write_text(m.after)
     try:
-        load_bottle_chain(m.bottle, dirs)
+        _loads(m, dirs)
     except ManifestError as e:
         m.path.write_text(m.before)
         raise MigrateError(f"the migrated bottle doesn't load, so it was left as it "
@@ -251,6 +293,22 @@ def apply(m: Migration, dirs: Sequence[tuple[Path, bool]], *,
     if m.project:
         return ""
     return record(f"bottles migrate: {m.bottle} to {m.what}", root=root)
+
+
+def _loads(m: Migration, dirs: Sequence[tuple[Path, bool]]) -> None:
+    """Raise unless the migrated bottle loads. One that's partial only for an
+    SSH server it declared, not connected here or holding no key for its
+    repo, is fine once the file itself parses (ADR 0021, ADR 0023)."""
+    try:
+        load_bottle_chain(m.bottle, dirs)
+    except (NotConnectedError, MissingKeyError) as e:
+        if e.forge not in m.servers:
+            raise
+        # pylint: disable-next=import-outside-toplevel
+        from .parse_check import problem
+        why = problem(f"bottles/{m.path.name}", m.after)
+        if why:
+            raise ManifestError(why) from e
 
 
 # --- Text rewriting -------------------------------------------------------

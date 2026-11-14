@@ -52,6 +52,17 @@ def refuse_partial(bottle: "ManifestBottle", bottle_names: Sequence[str]) -> Non
         die(partial_message(bottle.undeclared_forges, list(bottle_names)))
 
 
+def check_ssh_keys(bottle: "ManifestBottle") -> None:
+    """Die when a repo's `ssh` forge key file is missing or unusable here
+    (ADR 0023), naming the fix; a rotated key is used and recorded."""
+    # pylint: disable-next=import-outside-toplevel
+    from ..forge_keys import KeyFileError, check_launch
+    try:
+        check_launch(bottle.git)
+    except KeyFileError as e:
+        die(str(e))
+
+
 class BackendStatus(enum.IntEnum):
     """Return codes for `BottleBackend.status()`; READY is 0."""
     READY = 0
@@ -244,6 +255,7 @@ class BottleBackend(ABC, Generic[PlanT, CleanupT]):  # pylint: disable=too-many-
         Overrides call `super()._validate(spec)` first."""
         manifest = spec.manifest.load_for_agent(spec.agent_name, spec.bottle_names)
         refuse_partial(manifest.bottle, spec.bottle_names)
+        check_ssh_keys(manifest.bottle)
         self._validate_skills(manifest.agent.skills)
         self._validate_agent_provider_dockerfile(spec, manifest)
         return manifest

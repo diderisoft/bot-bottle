@@ -16,6 +16,7 @@ from bot_bottle.forge_connections import ForgeUser
 from bot_bottle.manifest.extends import merge_bottles_runtime, resolve_bottles
 from bot_bottle.manifest.forges import with_forge_users
 from bot_bottle.manifest.index import ManifestIndex
+from bot_bottle.manifest.legacy_git_gate import OldGitGateFormatError
 from bot_bottle.manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
 from bot_bottle.manifest.trust import (
     UntrustedBottleError, check as trust_check, forge_lines, grants, prompt_text, trust,
@@ -65,14 +66,19 @@ class TestGrants(unittest.TestCase):
             "gitea.example.com/acme/app"]}}})
         self.assertEqual("ssh://git@10.0.0.1:30009/acme/app.git", bottle.git[0].Upstream)
 
-    def test_mapping_names_a_grant_and_mixes_with_the_long_form(self) -> None:
+    def test_mapping_names_a_grant_but_holds_no_long_form(self) -> None:
         bottle = _resolve({"dev": {"git_gate": {"repos": {
-            "site": "gitea.example.com/acme/app",
-            "static": {"url": "ssh://git@h/x.git", "key": {"provider": "static", "path": "/k"}},
+            "site": "gitea.example.com/acme/app", "other": "gitea.example.com/acme/lib:write",
         }}}})
-        self.assertEqual(["site", "static"], [e.Name for e in bottle.git])
+        self.assertEqual(["site", "other"], [e.Name for e in bottle.git])
         self.assertTrue(bottle.git[0].Key.read_only)
         self.assertFalse(bottle.git[1].Key.read_only)
+        with self.assertRaises(OldGitGateFormatError):
+            _resolve({"dev": {"git_gate": {"repos": {
+                "site": "gitea.example.com/acme/app",
+                "static": {"url": "ssh://git@h/o/x.git",
+                           "key": {"provider": "static", "path": "/k"}},
+            }}}})
 
     def test_runtime_merge_keeps_forges(self) -> None:
         raws: Any = {"dev": {"git_gate": {"repos": ["gitea.example.com/a/b"]}}, "basic": {}}

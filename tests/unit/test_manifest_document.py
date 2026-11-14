@@ -12,7 +12,7 @@ from bot_bottle.forge_connections import ForgeConnection, ForgeUser
 from bot_bottle.manifest.document import bottle_document
 from bot_bottle.manifest.extends import resolve_bottles
 from bot_bottle.manifest.loader import BUILTIN_BOTTLES_DIR
-from tests.unit._forges import connected
+from tests.unit._forges import SSH, connected
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -108,16 +108,22 @@ class TestRoundTrip(unittest.TestCase):
                          git["forges"]["gitea.example.com"])
         self.assertNotIn("credentials", doc)
 
-    def test_a_read_only_grant_and_a_long_form_repo(self) -> None:
+    def test_a_read_only_grant_and_an_ssh_servers(self) -> None:
         raws = {"parent": parse_frontmatter(PARENT)[0], "child": parse_frontmatter(CHILD.replace(
             "    - gitea.example.com/acme/app:write\n",
             "    app: gitea.example.com/acme/app\n"
-            "    other:\n      url: ssh://git@elsewhere.example/o/r.git\n"
-            "      key: {provider: static, path: /keys/r}\n"))[0]}
-        self.round_trip(raws, "child")
-        git: Any = bottle_document(resolve_bottles(raws)["child"])["git_gate"]
+            "    other: git.example.com/org/lib\n"))[0]}
+        child: Any = raws["child"]
+        child["git_gate"]["forges"] = {"git.example.com": {
+            "kind": "ssh", "ssh": "ssh://git@git.example.com:2222"}}
+        with connected(CONN, SSH):
+            self.round_trip(raws, "child")
+            git: Any = bottle_document(resolve_bottles(raws)["child"])["git_gate"]
         self.assertEqual("gitea.example.com/acme/app", git["repos"]["app"])
-        self.assertEqual("ssh://git@elsewhere.example/o/r.git", git["repos"]["other"]["url"])
+        # A grant again: never the key's path, which is this host's.
+        self.assertEqual("git.example.com/org/lib", git["repos"]["other"])
+        self.assertEqual({"kind": "ssh", "ssh": "ssh://git@git.example.com:2222"},
+                         git["forges"]["git.example.com"])
 
     def test_examples_and_builtins(self) -> None:
         files = [*BUILTIN_BOTTLES_DIR.glob("*.md"), *(ROOT / "examples" / "bottles").glob("*.md")]

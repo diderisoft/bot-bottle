@@ -485,8 +485,10 @@ asks over HTTP, with the `cli` role only:
 | `POST /audit/rebuild` | `{}` | Re-creates the audit index. Answers `{"indexed": n}`. |
 | `POST /audit/import` | `{"segment": <absolute path>}` | Imports a segment as its own chain. Answers `chain`, `records`, `extended` and `already_imported`. |
 | `GET /forges` | none | `{"forges": [...]}`: each connection with its users. |
-| `POST /forges` | `{"forge", "user", "make_default"}` | Records the user connected on the forge. Answers `{"forge": ...}`. A malformed connection is 400. |
-| `POST /forges/remove` | `{"host", "user"?}` | Disconnects the user, or the whole forge, and drops their tokens from the secrets file. Answers `{"removed": [...]}`. |
+| `POST /forges` | `{"forge", "user", "make_default"}` | Records the user connected on the forge. Answers `{"forge": ...}`. A malformed connection is 400. With `forge` alone, records an SSH server (kind `ssh`), keeping its keys. |
+| `POST /forges/remove` | `{"host", "user"?}` | Disconnects the user, or the whole forge, and drops their tokens from the secrets file. Answers `{"removed": [...]}`. An SSH server goes with its key references; the files stay. |
+| `POST /forges/keys` | `{"host", "key": {"repo", "path", "fingerprint", "write"}}` | Adds an SSH server's key (`repo` "" is its default). Answers `{"forge": ...}`. With `{"path", "fingerprint"}` instead, records a key file's new fingerprint on every reference to it: `{"changed": n}`. |
+| `POST /forges/keys/remove` | `{"host", "repo"}` | Drops one key reference. Answers `{"key": ...}`. |
 | `GET /trust` | none | `{"trusted": [...]}`: the trust records, oldest first. |
 | `POST /trust` | a record: `hash`, `bottle`, `path`, `grants`, `trusted_at` | Keeps it, replacing the record for its path. Answers like `GET`. |
 | `GET /pairing` | none | `{"pairing": ..., "link": ...}`: the pairing, with its tokens' secret names, and the link's last state. |
@@ -1801,6 +1803,20 @@ A host that holds a connection's token answers for it (`forge_link.py`).
 | `missing` | the token isn't in the host secrets file |
 | `error` | the forge couldn't be asked; `message` says why |
 
+An SSH server ([git-gate.md](git-gate.md#ssh-servers)) has no `url` (`""`)
+and no users. It has `keys` instead, each with `repo` (`<owner>/<repo>`, or
+null for the default), `default`, `write`, `fingerprint` (`SHA256:…`), a
+`state` and a `message`. Never a key's path or contents:
+
+| `state` | Means |
+|---|---|
+| `ok` | the file is here and has the fingerprint recorded |
+| `changed` | the file was replaced; `fingerprint` is the new one, which the next launch uses and records |
+| `missing` | the file isn't here |
+| `unusable` | it's here but can't be used (readable by others, or not a key) |
+
+Two forges with the same `fingerprint` share a key.
+
 **`forge_repos`** (`forge`, optional `login`, else the forge's default user)
 answers `forge_repos` with `forge`, `login`, `repos` and `truncated`, or
 `error`. Each repo has `full_name`, `private`, `permissions` (`pull`, `push`,
@@ -1810,13 +1826,19 @@ otherwise null. On Gitea it's the user's repos and those of each org the user
 is in. The list is sorted, capped at 1,000 repos and 60 seconds (`truncated`
 then), and read with the user's token, read-only.
 
+An SSH server can't be asked: its `repos` are those this host holds a key
+for, `private` null, `push` as the key was added, `login` `""`, with
+`default_key` (`write`, `fingerprint`, or null) for the repos its default key
+reaches.
+
 **`forge_remove`** (`forge`, `login`) answers `forge_removed` with `removed`,
 or `error`: the console's Disconnect for this host. It drops that user's
 connection and token here, as `bot-bottle forge remove <forge> --user
 <login>` does; a forge goes with its last user, and when the default user
 goes, the earliest connected user left becomes the default. The login
 matches regardless of case. Both fields are required, so a message can't
-remove every user by leaving one out. Bottles already running keep what
+remove every user by leaving one out. An SSH server has no users to
+remove this way; its keys are removed on the host. Bottles already running keep what
 they were given until they stop.
 
 `forge_status` and `forge_repos` ask the forge page after page, so the link

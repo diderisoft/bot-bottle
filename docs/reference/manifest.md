@@ -70,21 +70,22 @@ Where `env` entries and `auth.value` find their values: see [secrets.md](secrets
 The grant `github.com/acme/app:write` is read-only without `:write`. It needs
 this host to have connected the forge ([Forges](#forges)).
 
-A repo on a forge bot-bottle doesn't support yet takes the long form instead,
-with its own `url`, a `static` key file and the pinned `host_key`:
+A repo on a plain SSH git server is a grant too, on a forge of kind `ssh`
+whose keys are this host's (`bot-bottle forge key add`):
 
 ```yaml
 git_gate:
+  forges:
+    git.example.com:
+      kind: ssh
+      ssh: ssh://git@git.example.com:2222
   repos:
-    app:
-      url: ssh://git@git.example.com/acme/app.git
-      key:
-        provider: static
-        path: /path/to/app_deploy_key
-      host_key: ssh-ed25519 AAAA...
+    - git.example.com/acme/app:write
 ```
 
-This one pushes to `app` over SSH.
+This one pushes to `acme/app` over SSH with the key this host holds for it
+([SSH servers](git-gate.md#ssh-servers)). A bottle file never names a key
+file: every repo in it is a grant.
 
 The whole `git_gate` block, including forges and one-line repo grants, is in
 [git-gate.md](git-gate.md#manifest).
@@ -275,8 +276,9 @@ git_gate:
 Details are in [git-gate.md](git-gate.md#forges-and-one-line-grants) and
 [ADR 0019](../decisions/0019-forges-are-described-in-bottles-connected-on-hosts.md).
 
-A bottle written before forges no longer loads. That is one with each repo's
-own `url`, `key: {provider: gitea, ...}` and `host_key`.
+A bottle with a repo in long form no longer loads. That is one with a
+repo's own `url`, `key` (`provider: gitea`, `github`, `static` or `ssh`) and
+`host_key` ([ADR 0023](../decisions/0023-ssh-servers-are-forges.md)).
 
 Its error says how to convert it. `bot-bottle bottles migrate <name>` does it
 as a new version. See
@@ -291,7 +293,7 @@ edits included.
 |---|---|
 | `bot-bottle bottles history <name>` | lists them. Add a version to see what it changed |
 | `bot-bottle bottles revert <name> <version>` | restores one as a new version, taking effect at the next launch |
-| `bot-bottle bottles migrate <name>` | rewrites a bottle's old forms as a new version: `git-gate` as `git_gate`, old-format repos as forge grants, and the old route, auth and `log` forms ([git-gate.md](git-gate.md#migrating-from-the-old-format)) |
+| `bot-bottle bottles migrate <name>` | rewrites a bottle's old forms as a new version: `git-gate` as `git_gate`, long-form repos as forge grants (a static key's as an SSH server's), and the old route, auth and `log` forms ([git-gate.md](git-gate.md#migrating-from-the-old-format)) |
 
 A repo's bottles are versioned by the repo itself. Where versions are kept is
 in [architecture.md](architecture.md#state).

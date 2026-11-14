@@ -30,14 +30,14 @@ git_gate:
   protect_default_branch: true  # optional: refuse deleting or rewriting it (default off)
   actions:                    # optional: what the agent may do on a forge without a card
     create: [github.com/acme/*]   # create-repo under acme, no card (below)
+  forges:                     # what each grant's forge is (below)
+    gitea.example.com: {kind: gitea}
+    git.example.com:          # a plain SSH git server (below)
+      kind: ssh
+      ssh: ssh://git@git.example.com:2222
   repos:                      # local name: the gate's bare repo
     bot-bottle: gitea.example.com/org/bot-bottle:write   # a grant on a forge (below)
-    lib:
-      url: ssh://git@git.example.com/org/lib.git
-      key:
-        provider: static
-        path: /host/keys/lib  # a key file already on the host
-      host_key: ssh-ed25519 AAAA...   # pins the upstream host key
+    lib: git.example.com/org/lib                         # read-only
 ```
 
 The commit author is set per part. Each part comes from the first of these
@@ -52,14 +52,22 @@ So a first commit works in a bottle with no `git_gate`, such as `basic`. A
 repo-local identity in the copied workspace still wins, because git reads it
 before the global one (`agent_provider.git_identity`).
 
-A long-form entry's `url` must be `ssh://user@host[:port]/path`
-(`manifest/git.py`). A one-line grant names no URL. Its forge connection
-decides how git-gate reaches it.
+Every repo in a bottle file is a one-line grant, which names no URL or key.
+Its forge connection decides how git-gate reaches it
+([ADR 0023](../decisions/0023-ssh-servers-are-forges.md)).
 
-| Key provider | Key | Declared as |
-|---|---|---|
-| `static` | a key file already on the host | the long form above. It's for repos on a forge bot-bottle doesn't support yet. |
-| `gitea` | a fresh ed25519 deploy key, added through the forge API at launch and revoked at teardown | only a [grant on a forge](#forges-and-one-line-grants) |
+| Forge kind | Key |
+|---|---|
+| `gitea` (and `github` with `--transport deploy-key`) | a fresh ed25519 deploy key, added through the forge API at launch and revoked at teardown |
+| `github` | none: its user's token over HTTPS ([Transports](#github-transports)) |
+| `ssh` | a key file this host holds for the server ([SSH servers](#ssh-servers)) |
+
+A bottle file with a repo written out in long form, with its own `url`, `key`
+and `host_key`, fails to load, whatever its key: `gitea`, `github`, `ssh`, or
+the old `static` key file. The error lists each such repo, the grant it
+becomes and the commands that connect it ([Migrating](#migrating-from-the-old-format)).
+The long form is only what a grant expands into after loading
+(`manifest/git.py`, [How a grant loads](#how-a-grant-loads)).
 
 For `gitea` keys (see also [Deploy keys](#deploy-keys)):
 
@@ -70,8 +78,9 @@ For `gitea` keys (see also [Deploy keys](#deploy-keys)):
   environment is named outside `live`.
 - The code is `git_gate/provision.py` and
   `contrib/gitea/deploy_key_provisioner.py`.
-- A bottle file with a long-form `provider: gitea` repo fails to load
+- A bottle file with a long-form repo fails to load
   ([ADR 0008](../decisions/0008-forge-minted-keys-are-grants.md),
+  [ADR 0023](../decisions/0023-ssh-servers-are-forges.md),
   [migrating](#migrating-from-the-old-format)).
 
 **Default branch.** `protect_default_branch: true` makes git-gate refuse a push
@@ -94,13 +103,14 @@ answered without asking (`manifest/git.py`).
 | `<forge>/<owner>/<name>` | one repo |
 
 Lists from every bottle are joined. A request anywhere else gets a card (see
-[Created repos](#created-repos)).
+[Created repos](#created-repos)). A pattern on a forge the chain declares as
+an SSH server fails to load: creating a repo needs a forge API.
 
-**Host keys.** Without a `host_key`, an interactive launch fetches one with
-`ssh-keyscan`. It asks the operator to confirm it, and can save it to the
-bottle file (`git_gate/host_key.py`).
-
-A headless launch without a `host_key` refuses to start.
+**Host keys.** A repo's host key is its forge connection's pin; `forge
+connect` pins one. Should a connection have none, an interactive launch
+fetches one with `ssh-keyscan` and asks the operator to confirm it, for that
+launch only (`git_gate/host_key.py`). A headless launch refuses to start,
+saying to connect the forge again.
 
 ### Forges and one-line grants
 
@@ -219,6 +229,7 @@ records a connection (`cli/commands/forge.py`, `forge_connect.py`).
 | github.com | `github`, without asking |
 | Gitea | `/api/v1/version`, five seconds |
 | GitHub Enterprise Server | `/api/v3/meta`, five seconds |
+| `ssh://user@host[:port]` | an SSH server, kind `ssh` ([SSH servers](#ssh-servers)) |
 | any other | refused, naming the kinds it takes |
 
 The forge's SSH address must be reachable from the host, which a public name
@@ -238,6 +249,71 @@ The CLI and the console's card both say the token each kind needs:
 | `gitea` | `<url>/user/settings/applications` | scopes `write:repository` and `read:user`, from an account that's admin on the repos |
 | `github` | `<url>/settings/personal-access-tokens/new` | a fine-grained token for the repos with Contents: read (read & write to push) and Metadata: read. Administration: read & write too, only for a user connected with `--transport deploy-key`. A classic token with `repo` also works. |
 
+#### SSH servers
+
+A plain SSH git server is a forge of kind `ssh`
+([ADR 0023](../decisions/0023-ssh-servers-are-forges.md)). It's declared like
+any forge, and its repos are grants:
+
+```yaml
+git_gate:
+  forges:
+    git.example.com:
+      kind: ssh                     # an SSH git server: no API, no minted keys
+      ssh: ssh://git@git.example.com:2222   # when it isn't ssh://git@<host>
+      host_key: ssh-ed25519 AAAA...  # optional, as for any forge
+  repos:
+    - git.example.com/org/lib:write
+```
+
+It's named by its host, without the port, which goes in `ssh`. It has no
+`url`, and a description with one fails to load.
+
+The host connects it and holds its keys (`cli/commands/forge_key.py`,
+`forge_keys.py`):
+
+```sh
+bot-bottle forge connect ssh://git@git.example.com:2222        # pins the host key
+bot-bottle forge key add git.example.com org/lib ~/.ssh/lib_deploy --write
+bot-bottle forge key add git.example.com --default ~/.ssh/id_ed25519
+bot-bottle forge key list [git.example.com]
+bot-bottle forge key remove git.example.com org/lib     # or --default
+```
+
+- `connect` pins the host key `ssh-keyscan` finds, as connecting any forge
+  does, or the one `--host-key '<type> <base64>'` gives (a server this host
+  can't reach yet). Connecting again re-pins and keeps the keys. A forge
+  connected as another kind has to be removed first.
+- A key is for one repo (a deploy key) or the forge's default (a user key
+  that reaches many repos). A grant uses its repo's key, else the default.
+- A key is kept by reference in the host database (`forge_keys`): its path
+  and its fingerprint (`ssh-keygen -lf`), never a copy. The file must be
+  readable by its owner alone, as ssh requires.
+- `--write` says the key can push. There's no API to ask, so it's stated.
+  git-gate still enforces each grant's read or write; a key that can do less
+  than it says fails at the server's push.
+- Two forges may name the same file. Removing a key drops only that forge's
+  reference to it; the file stays. `forge remove <host>` drops the forge and
+  all its references.
+
+At launch:
+
+| Case | What happens |
+|---|---|
+| no key for the repo, and no default | the bottle doesn't load: "this host holds no key for `<forge>/<owner>/<repo>`", naming the `forge key add` that adds one |
+| a `:write` grant whose key is read-only | the bottle doesn't load, naming `forge key add … --write` |
+| the server isn't connected | the bottle doesn't load, naming `bot-bottle forge connect ssh://…` from the declaration |
+| the key file is missing or open to others | the launch fails, naming the grant and the `forge key add` that replaces it |
+| the key's fingerprint changed (rotated in place) | it's used, logged once, and the new fingerprint recorded, so `forge key list` shows it |
+
+The key reaches git-gate as a static key file always did: the repo's
+`IdentityFile`, copied into the gateway at registration. An agent's
+`add-repo` on an SSH server is granted the same way, with nothing minted.
+`create-repo` and `actions.create` are refused there.
+
+Trusting a project bottle records the server's address and pinned host key,
+and names each repo's key by its fingerprint, never its path.
+
 #### Forges in the console
 
 The console keeps the account's forge connections
@@ -245,7 +321,9 @@ The console keeps the account's forge connections
 what each paired host reports with `forge_status`
 ([host-controller.md](host-controller.md#forges-for-the-console)), one entry
 per forge and login, never a token. A host that holds the token *carries*
-the connection.
+the connection. An SSH server's connection reports, per key, the repo (or
+the default), read or write and the fingerprint, never a path; its repo list
+is the repos some host holds a key for.
 
 - **Forges page.** Lists each connection with its state and the hosts that
   carry it. *Connect a forge* goes through an online host: GitHub's guided
@@ -687,7 +765,8 @@ hasn't connected can't be granted.
 
 Keeping the grant writes it into the bottle with the forge's description.
 
-- Only forge grants can be added this way.
+- Only forge grants can be added this way. On an SSH server the grant uses
+  the host's key for the repo, as a launch does; nothing is minted.
 - Teardown revokes live-granted keys with the launch's own.
 - On a gateway restart, they are provisioned again (see
   [backends.md](backends.md#gateway-restarts)).
@@ -701,6 +780,7 @@ It's private unless the agent asks for a public one
 | Case | What happens |
 |---|---|
 | The forge isn't connected here | refused before any card. The agent is told to `forge-connect`. |
+| The forge is an SSH server | refused: it has no API to create a repo with |
 | The repo exists already | refused before any card. The agent is told to `add-repo`. |
 | The GitHub App isn't ready on the repo's owner | the card waits (below) |
 | The bottle's `actions.create` allows it | the host creates it at once |
@@ -787,14 +867,26 @@ It matches by value, so it catches secrets gitleaks has no rule for.
 
 ## Migrating from the old format
 
-A bottle whose repos carry their own forge settings, written before forges,
-no longer loads. Its error lists each such repo and shows the replacement
-(`manifest/legacy_git_gate.py`).
+A bottle whose repos are written in long form, with their own `url`, `key`
+and `host_key`, no longer loads, whatever the key. Its error lists each such
+repo and shows the replacement (`manifest/legacy_git_gate.py`). The library's
+parse check (a hand edit on a host, a save in the console) refuses it the
+same way.
 
 1. Connect the forge once with `bot-bottle forge connect <url>`, unless the
    error says it's connected already.
 2. Run `bot-bottle bottles migrate <bottle>` (`manifest/migrate.py`). It shows
    the diff and asks first, or doesn't with `--yes`.
+
+A repo with a `static` key file becomes a grant on an SSH server
+([SSH servers](#ssh-servers)): `migrate` declares the server as a forge of kind
+`ssh`, from the repo's `url` (its address) and `host_key`, and grants the repo
+with `:write`, as the key could push. It does this whether or not the server
+is connected here. Until `bot-bottle forge connect ssh://…` and `bot-bottle
+forge key add <host> <owner>/<repo> <path> --write`, which the error and
+`migrate` both print, the bottle is partial on this host: it doesn't load
+where the server isn't connected or holds no key for the repo. A static repo on a host connected as Gitea or
+GitHub becomes a grant on that forge instead.
 
 A forge with `credentials:` or a `token` also fails to load. Connect it again
 with `forge connect`, then remove those lines (ADR 0019).

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from types import ModuleType
 from urllib.parse import urlparse
 
-from .contract.forges import FORGE_KINDS, FORGE_LABELS, GITHUB_HOSTS, known_unsupported
+from .contract.forges import API_KINDS, FORGE_LABELS, GITHUB_HOSTS, known_unsupported
 
 # Recognizing a forge asks it over the network; an agent's request waits on it.
 DETECT_TIMEOUT_SECS = 5.0
@@ -42,8 +42,9 @@ def ssh_base(ssh_url: str) -> str:
 
 def forge_api(kind: str) -> ModuleType:
     """`contrib.<kind>.forge_api`: `token_page(url)`, `TOKEN_HELP`,
-    `check_token(url, token)`. ValueError for a kind bot-bottle doesn't know."""
-    if kind not in FORGE_KINDS:
+    `check_token(url, token)`. ValueError for a kind without one (`ssh`, or
+    one bot-bottle doesn't know)."""
+    if kind not in API_KINDS:
         raise ValueError(f"unknown forge kind {kind!r}")
     return importlib.import_module(f"bot_bottle.contrib.{kind}.forge_api")
 
@@ -56,7 +57,7 @@ def detect(url: str, timeout: float = DETECT_TIMEOUT_SECS) -> str:
         return "github"
     if not host or known_unsupported(host):
         return ""
-    for kind in FORGE_KINDS:
+    for kind in API_KINDS:
         if forge_api(kind).answers(url, timeout):
             return kind
     return ""

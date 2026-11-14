@@ -85,7 +85,10 @@ def grant_forge(grant: str) -> str:
 
 
 def connect_url(host: str, desc: dict[str, Any]) -> str:
-    """The URL `forge connect` takes for `host`."""
+    """The URL `forge connect` takes for `host`: an SSH server's address."""
+    if desc.get("kind") == "ssh":
+        ssh = desc.get("ssh")
+        return ssh if isinstance(ssh, str) and ssh else f"ssh://git@{host}"
     url = desc.get("url")
     return (url if isinstance(url, str) and url else f"https://{host}").rstrip("/")
 

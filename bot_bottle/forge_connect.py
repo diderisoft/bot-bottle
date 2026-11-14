@@ -10,14 +10,15 @@ without stacking anything.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from . import forge_alerts
 from .forge_connections import (
-    ForgeConnection, ForgeUser, add_user, connections, host_of,
-    secret_name as user_secret_name,
+    ForgeConnection, ForgeUser, add_user, connect_server, connections, host_of,
+    secret_name as user_secret_name, ssh_host,
 )
 from .manifest.util import ManifestError
 
@@ -111,6 +112,10 @@ def connect(url: str, token: str, *, ssh: str = "", kind: str = "",
     from .secret_source import write_secret
 
     url = normalize_url(url)
+    if url.startswith("ssh://"):
+        raise ConnectError(f"an SSH server is connected on its host, with the key files "
+                           f"there: `bot-bottle forge connect {url}`, then `bot-bottle forge "
+                           f"key add`")
     if not url.startswith("https://") and not url.startswith("http://"):
         raise ConnectError(f"{url} isn't an http(s) URL")
     if ssh and not ssh.startswith("ssh://"):
@@ -152,5 +157,38 @@ def connect(url: str, token: str, *, ssh: str = "", kind: str = "",
                      host_key=host_key, secret_name=secret, warnings=tuple(warnings))
 
 
-__all__ = ["ConnectError", "Connected", "SshUnreachable", "connect", "connected_secret",
-           "normalize_url", "record", "ssh_host_port"]
+_SSH_URL = re.compile(r"^ssh://[^@/\s:]+@[A-Za-z0-9.-]+(?::[0-9]{1,5})?$")
+
+
+def connect_ssh(ssh: str, host_key: str = "") -> ForgeConnection:
+    """`bot-bottle forge connect ssh://user@host[:port]`: a plain SSH git
+    server, a forge of kind `ssh` (ADR 0023), keyed by its host. Pins the
+    host key it finds, as connecting any forge does (or `host_key`, given
+    instead: a server this host can't reach yet), and keeps the keys already
+    added; they're added with `forge key add`. ConnectError saying what's
+    wrong."""
+    # pylint: disable-next=import-outside-toplevel
+    from .git_gate.host_key import fetch_host_key
+    ssh = ssh.strip().rstrip("/")
+    if not _SSH_URL.match(ssh):
+        raise ConnectError(f"an SSH server is ssh://user@host[:port], with no path "
+                           f"(was {ssh!r})")
+    if host_key and len(host_key.split()) != 2:
+        raise ConnectError("a host key is `<type> <base64>`, as a known_hosts line has it")
+    try:
+        host_key = host_key or fetch_host_key(*ssh_host_port(ssh))
+    except RuntimeError as e:
+        raise SshUnreachable(ssh, str(e)) from e
+    found = connections().get(ssh_host(ssh))
+    if found is not None and found.kind != "ssh":
+        raise ConnectError(f"{found.host} is connected as a {found.kind} forge; remove it "
+                           f"first (bot-bottle forge remove {found.host})")
+    try:
+        return connect_server(ForgeConnection(host=ssh_host(ssh), kind="ssh", url="",
+                                              ssh=ssh, host_key=host_key))
+    except (ManifestError, OSError) as e:
+        raise ConnectError(f"couldn't record the connection: {e}") from e
+
+
+__all__ = ["ConnectError", "Connected", "SshUnreachable", "connect", "connect_ssh",
+           "connected_secret", "normalize_url", "record", "ssh_host_port"]

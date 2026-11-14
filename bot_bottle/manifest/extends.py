@@ -8,7 +8,7 @@ from .bottle import ManifestAudit, ManifestBottle
 from .egress import ManifestEgressConfig, overlay_egress, validate_egress_routes
 from .forges import (
     ManifestForge, credentials_raw, expand_grants, forges_raw, granted_forges, merge_named,
-    resolve_forge, strip_chain_keys,
+    refuse_ssh_create, resolve_forge, strip_chain_keys,
 )
 from .git import ManifestGitUser, parse_git_gate_config
 from .util import ManifestError, OldFormError, as_json_object
@@ -145,6 +145,7 @@ def _with_chain(name: str, raw: dict[str, object], parent_names: list[str],
         forges = merge_named(forges, parent_forges, "forge")
         used |= parent_used
     forges = {**forges, **forges_raw(name, raw)}
+    refuse_ssh_create(name, raw, forges)
     chain_cache[name] = (forges, used | granted_forges(name, raw))
     return strip_chain_keys(expand_grants(name, raw, forges))
 

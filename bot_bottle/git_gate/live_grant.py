@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 from typing import TYPE_CHECKING, Any
 
 from ..contract.forges import FORGE_KINDS
+from ..forge_keys import KeyFileError, check_launch
 from ..contract.identity import GIT_HTTP_PORT, IDENTITY_HEADER
 from ..control.git_gate_render import (
     GitGateUpstream, git_gate_known_hosts_line, git_gate_upstreams_for_bottle,
@@ -40,13 +41,14 @@ class GrantError(Exception):
 
 def grant_entry(grant: str, forge: ManifestForge) -> ManifestGitEntry:
     """`<forge>/<owner>/<repo>[:write]` on `forge` as a repo entry, the way a
-    grant in a bottle file expands (`manifest.forges.expand_grants`).
+    grant in a bottle file expands (`manifest.forges.expand_grants`): on an
+    `ssh` forge, with the host's key for it (MissingKeyError without one).
     Supports `<alias>=<grant>` to mount the repo under a different local name,
     letting two repos with the same upstream repo name coexist."""
     alias, bare_grant = split_grant_alias(grant)
     _, owner, repo, writable = parse_grant(bare_grant, "the grant")
     raw: dict[str, object] = {"url": f"{forge.ssh}/{owner}/{repo}.git",
-                              "key": forge.key(writable)}
+                              "key": forge.key(writable, f"{owner}/{repo}", "the grant")}
     if forge.host_key:
         raw["host_key"] = forge.host_key
     return ManifestGitEntry.from_repos_entry("(live grant)", alias or repo, raw)
@@ -112,6 +114,16 @@ def provision_live(entry: ManifestGitEntry, *, slug: str, stage_dir: Path,
             upstream.upstream_host, upstream.upstream_port, upstream.known_host_key))
         known_hosts.chmod(0o600)
         upstream = dataclasses.replace(upstream, known_hosts_file=known_hosts)
+    if entry.Key.provider == "ssh":
+        # An SSH server's key is the host's file (ADR 0023): nothing to mint
+        # or revoke.
+        try:
+            check_launch([entry])
+        except KeyFileError as e:
+            raise GrantError(str(e)) from e
+        record_live_grant(slug, ref)
+        _state.store().put_upstream(slug, upstream)
+        return upstream
     id_file = stage_dir / f"{entry.Name}-deploy-key-id"
     old_key = id_file.read_text().strip() if current is not None and id_file.is_file() else ""
     record_live_grant(slug, ref)

@@ -1,5 +1,6 @@
 """git-gate deploy keys for forge (`gitea`, `github`) upstreams: minted
-through the forge's API at launch and revoked at teardown. The forge client is imported lazily."""
+through the forge's API at launch and revoked at teardown. The forge client is imported lazily.
+An `ssh` forge's repos use the host's key file as it is (ADR 0023)."""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..bottle_state import globalize_slug
-from ..contract.forges import FORGE_KINDS
+from ..contract.forges import API_KINDS
 from ..errors import MissingEnvVarError
 from ..lib.log import info, warn
 from ..manifest import ManifestBottle, ManifestGitEntry
@@ -96,9 +97,10 @@ class DeployKeyRef:
 
 
 def mints_key(key: ManifestKeyConfig) -> bool:
-    """Whether a repo's key is a deploy key minted per launch: a forge kind
-    reached over SSH (a GitHub repo over HTTPS uses the user's token)."""
-    return key.provider in FORGE_KINDS and git_transport(key) == "ssh"
+    """Whether a repo's key is a deploy key minted per launch: an API kind
+    reached over SSH (a GitHub repo over HTTPS uses the user's token, and an
+    `ssh` forge's key is a file the host holds)."""
+    return key.provider in API_KINDS and git_transport(key) == "ssh"
 
 
 def deploy_key_refs(bottle: ManifestBottle) -> tuple[DeployKeyRef, ...]:

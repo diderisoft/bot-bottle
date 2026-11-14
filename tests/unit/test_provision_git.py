@@ -10,8 +10,8 @@ from bot_bottle.control.git_gate_render import (
     _gitconfig_validate_value,
     git_gate_render_gitconfig,
 )
-from bot_bottle.manifest import ManifestIndex
 from tests.fixtures import fixture_minimal, fixture_with_git
+from tests.unit._forges import long_form_index
 
 
 class TestGitGateGitconfigRender(unittest.TestCase):
@@ -61,11 +61,11 @@ class TestGitGateGitconfigRender(unittest.TestCase):
     def test_ip_upstream_emits_single_insteadof(self):
         # In the new format the dict key is the repo name, not a host
         # alias, so there is only one insteadOf rule — for the IP URL.
-        m = ManifestIndex.from_json_obj({
+        m = long_form_index({
             "bottles": {"dev": {"git_gate": {"repos": {
                 "bot-bottle": {
                     "url": "ssh://git@192.0.2.10:30009/didericis/bot-bottle.git",
-                    "key": {"provider": "static", "path": "/dev/null"},
+                    "key": {"provider": "ssh", "path": "/dev/null"},
                 },
             }}}},
             "agents": {"demo": {"skills": [], "prompt": ""}},
@@ -103,11 +103,11 @@ class TestGitconfigRenderRejectsNewlineInUpstream(unittest.TestCase):
     """git_gate_render_gitconfig raises on Upstream values with newlines."""
 
     def test_newline_in_upstream_raises(self):
-        m = ManifestIndex.from_json_obj({
+        m = long_form_index({
             "bottles": {"dev": {"git_gate": {"repos": {
                 "evil": {
                     "url": "ssh://git@github.com/owner/\nfake-key = injected\nrepo.git",
-                    "key": {"provider": "static", "path": "/dev/null"},
+                    "key": {"provider": "ssh", "path": "/dev/null"},
                 },
             }}}},
             "agents": {"demo": {"skills": [], "prompt": ""}},

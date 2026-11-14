@@ -16,7 +16,7 @@ from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
 from .agent import agent_from_frontmatter
 from .bottle import ManifestBottle
 from .forges import (credentials_raw, forges_raw, granted_forges, normalize_repos,
-                     strip_chain_keys)
+                     refuse_long_form, strip_chain_keys)
 from .schema import (entity_name_from_path, validate_agent_frontmatter_keys,
                      validate_bottle_frontmatter_keys)
 from .util import ManifestError
@@ -72,8 +72,10 @@ def _bottle(name: str, path: Path, raw: dict[str, object]) -> None:
     raw = strip_chain_keys(normalize_repos(name, raw))
     git = raw.get("git_gate")
     if isinstance(git, dict) and isinstance(git.get("repos"), dict):
-        raw["git_gate"] = {**git, "repos": {k: v for k, v in git["repos"].items()
-                                            if not isinstance(v, str)}}
+        # Every repo is a grant (ADR 0023), as a launch says; planned without
+        # this host's connections, so the answer is the same everywhere.
+        refuse_long_form(name, git["repos"], homes={})
+        raw["git_gate"] = {**git, "repos": {}}
     ManifestBottle.from_dict(name, raw)
 
 

@@ -7,11 +7,12 @@ import io
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
 from bot_bottle.cli.commands import bottle as bottle_cmd
-from bot_bottle.forge_connections import ForgeConnection, ForgeUser
+from bot_bottle.forge_connections import ForgeConnection, ForgeKey, ForgeUser
 from bot_bottle.manifest import ManifestError, ManifestIndex
 from bot_bottle.manifest.legacy_git_gate import OldGitGateFormatError
 from bot_bottle.manifest.loader import BUILTIN_BOTTLES_DIR, load_bottle_chain
@@ -148,9 +149,11 @@ class TestTheError(_Host):
                 "agents": {"demo": {"skills": [], "prompt": ""}},
             })
         msg = str(ctx.exception)
-        self.assertIn("(a, b)", msg)
-        self.assertIn("a: git.example.com/org/a:write", msg)
-        self.assertIn("lib as they are", msg)
+        self.assertIn("(a, b, lib)", msg)
+        self.assertIn("- git.example.com/org/a:write", msg)
+        # A static key's server is an SSH server now (ADR 0023).
+        self.assertIn("- github.com/org/lib:write", msg)
+        self.assertIn("bot-bottle forge key add github.com org/lib /dev/null --write", msg)
 
 
 class TestMigrate(_Host):
@@ -195,7 +198,8 @@ class TestMigrate(_Host):
         self.write("dev", text)
         self.connect()
         after = prepare("dev", self.dirs).after
-        self.assertIn("    lib:\n      url: ssh://git@github.com/o/lib.git\n", after)
+        self.assertIn("    lib: github.com/o/lib:write\n", after)
+        self.assertIn("    github.com:\n      kind: ssh\n", after)
         self.assertIn("    bot-bottle: gitea.example.com/acme/bot-bottle:write\n", after)
         self.assertIn("    orb: gitea.example.com/acme/textorbium\n", after)
         self.assertIn("    # the brand repo\n", after)
@@ -231,6 +235,102 @@ class TestMigrate(_Host):
                          versions[0].message)
         revert(path, versions[1].sha[:9], root=self.root)
         self.assertEqual(OLD, path.read_text())
+
+
+STATIC = ("---\n"
+          "extends: basic\n"
+          "git_gate:\n"
+          "  repos:\n"
+          "    # the library\n"
+          "    lib:\n"
+          "      url: ssh://git@git.example.com:2222/org/lib.git\n"
+          "      key:\n"
+          "        provider: static\n"
+          "        path: /keys/lib\n"
+          f"      host_key: {HOST_KEY}\n"
+          "---\n")
+
+SERVER = ForgeConnection(host="git.example.com", kind="ssh", url="",
+                         ssh="ssh://git@git.example.com:2222", host_key=HOST_KEY)
+
+
+class TestStaticBecomesAnSshForge(_Host):
+    """ADR 0023: a static key's repos become grants on an `ssh` forge."""
+
+    def test_the_load_error_names_the_commands(self) -> None:
+        self.write("dev", STATIC)
+        msg = self.load_error()
+        self.assertIn("1. Connect the SSH server once:  "
+                      "bot-bottle forge connect ssh://git@git.example.com:2222", msg)
+        self.assertIn("2. Add its key:  bot-bottle forge key add git.example.com org/lib "
+                      "/keys/lib --write", msg)
+        self.assertIn("3. Convert this bottle:      bot-bottle bottles migrate dev", msg)
+        self.assertIn("- git.example.com/org/lib:write", msg)
+
+    def test_migrates_unconnected_and_is_partial_until_its_key(self) -> None:
+        path = self.write("dev", STATIC)
+        m = prepare("dev", self.dirs)
+        self.assertEqual(("git.example.com",), m.servers)
+        self.assertEqual(
+            "---\nextends: basic\ngit_gate:\n  repos:\n"
+            "    - git.example.com/org/lib:write\n"
+            "  forges:\n    git.example.com:\n      kind: ssh\n"
+            "      ssh: ssh://git@git.example.com:2222\n"
+            f"      host_key: {HOST_KEY}\n---\n", m.after)
+        self.assertTrue(any("bot-bottle forge connect ssh://git@git.example.com:2222" in n
+                            for n in m.notes))
+        self.assertTrue(any("bot-bottle forge key add git.example.com org/lib /keys/lib --write"
+                            in n for n in m.notes))
+        apply(m, self.dirs, root=self.root)
+        self.assertEqual(m.after, path.read_text())
+        # Partial here: the server isn't connected...
+        with self.assertRaisesRegex(ManifestError, "isn't connected on this host; connect it "
+                                    "with `bot-bottle forge connect ssh://git@git.example.com"
+                                    ":2222`"):
+            load_bottle_chain("dev", self.dirs)
+        # ...then holds no key for the repo...
+        store = record(self.root, SERVER)
+        with self.assertRaisesRegex(ManifestError, "this host holds no key for "
+                                    "git.example.com/org/lib; add one with `bot-bottle forge "
+                                    "key add git.example.com org/lib <path> --write`"):
+            load_bottle_chain("dev", self.dirs)
+        # ...and loads once it does.
+        store.add_key("git.example.com", ForgeKey(repo="org/lib", path="/keys/lib",
+                                                  fingerprint="SHA256:x", write=True))
+        bottle, _ = load_bottle_chain("dev", self.dirs)
+        entry = bottle.git[0]
+        self.assertEqual(("lib", "ssh", "/keys/lib", "/keys/lib", False, HOST_KEY),
+                         (entry.Name, entry.Key.provider, entry.Key.path, entry.IdentityFile,
+                          entry.Key.read_only, entry.KnownHostKey))
+        self.assertEqual("ssh://git@git.example.com:2222/org/lib.git", entry.Upstream)
+
+    def test_a_connected_server_with_its_key_loads_at_once(self) -> None:
+        self.write("dev", STATIC)
+        record(self.root, replace(SERVER, keys=(
+            ForgeKey(repo="", path="/keys/me", fingerprint="SHA256:me", write=True),)))
+        m = prepare("dev", self.dirs)
+        self.assertFalse(any("partial" in n for n in m.notes))
+        apply(m, self.dirs, root=self.root)
+        self.assertEqual("/keys/me", load_bottle_chain("dev", self.dirs)[0].git[0].Key.path)
+
+    def test_a_pin_that_differs_from_the_connections_is_refused_at_load(self) -> None:
+        self.write("dev", STATIC)
+        apply(prepare("dev", self.dirs), self.dirs, root=self.root)
+        record(self.root, replace(SERVER, host_key="ssh-ed25519 OTHER"))
+        with self.assertRaisesRegex(ManifestError, "pins a host key for git.example.com"):
+            load_bottle_chain("dev", self.dirs)
+
+    def test_a_second_run_finds_nothing_to_do(self) -> None:
+        self.write("dev", STATIC)
+        apply(prepare("dev", self.dirs), self.dirs, root=self.root)
+        with self.assertRaisesRegex(MigrateError, "nothing to migrate"):
+            prepare("dev", self.dirs)
+
+    def test_a_static_repo_on_a_connected_gitea_is_a_gitea_grant(self) -> None:
+        self.write("dev", STATIC.replace("git.example.com:2222", "10.0.0.5:30009"))
+        self.connect()
+        msg = self.load_error()
+        self.assertIn("- 10.0.0.5/org/lib:write", msg)
 
 
 class TestMigrateCommand(_Host):

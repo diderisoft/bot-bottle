@@ -46,12 +46,12 @@ def fixture_with_git_dict() -> dict[str, Any]:
                     "repos": {
                         "bot-bottle": {
                             "url": "ssh://git@gitea.dideric.is:30009/didericis/bot-bottle.git",
-                            "key": {"provider": "static", "path": "/dev/null"},
+                            "key": {"provider": "ssh", "path": "/dev/null"},
                             "host_key": "ssh-ed25519 AAAA...",
                         },
                         "foo": {
                             "url": "ssh://git@github.com/didericis/foo.git",
-                            "key": {"provider": "static", "path": "/dev/null"},
+                            "key": {"provider": "ssh", "path": "/dev/null"},
                             "host_key": "ssh-ed25519 BBBB...",
                         },
                     },
@@ -71,7 +71,9 @@ def fixture_with_egress() -> ManifestIndex:
 
 
 def fixture_with_git() -> ManifestIndex:
-    return ManifestIndex.from_json_obj(fixture_with_git_dict())
+    # pylint: disable-next=import-outside-toplevel
+    from tests.unit._forges import long_form_index
+    return long_form_index(fixture_with_git_dict())
 
 
 def write_fixture(fn: Callable[[], dict[str, Any]]) -> Path:
