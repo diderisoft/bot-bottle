@@ -36,8 +36,7 @@ The control stream (JSON lines):
   writes under `/home/node/uploads/`, reply `workspace_file_put` (`workspace_files`).
 - `metrics_watch` (`bottles`) -> `bottle_metrics` every 3 s for those running (`live_metrics`).
 - `snapshot` -> `snapshot_taken`: workspace patch and conversation position (`snapshots`).
-- Conversations: `transcript`, `transcript_search`, `transcript_appended` and
-  `agent_working` (`transcript_serve`).
+- `transcript`, `transcript_search`, `transcript_appended`, `agent_working` (`transcript_serve`).
 - `library_sync`, `library_moved`, `library_conflict`, `library_pushed` (`library_link`).
 
 Pairing on disk is `pairing.py`; `iroh` (`bot-bottle[remote]`) is imported only when needed.
@@ -402,6 +401,7 @@ class ConsoleLink:
 
     def close(self) -> None:
         """The console left: detach every relay (agents keep running)."""
+        self.library.close()
         for agent_id in list(self.terminals):
             self._close_terminal(agent_id)
 

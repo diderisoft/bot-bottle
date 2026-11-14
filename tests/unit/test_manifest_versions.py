@@ -8,6 +8,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from bot_bottle.manifest import versions
@@ -80,6 +81,30 @@ class TestRecord(_Root):
         self.addCleanup(os.environ.pop, "GIT_DIR")
         record("first", root=self.root)
         self.assertTrue((self.root / ".git").is_dir())
+
+
+class TestWriting(_Root):
+    def test_commits_hand_edits_first_and_holds_the_lock(self) -> None:
+        self.write("a\n")
+        record("first", root=self.root)
+        self.write("b\n")
+        with versions.writing(self.root) as head:
+            self.assertEqual(_git(self.root, "rev-parse", "HEAD").strip(), head)
+            self.assertEqual("edited by hand", _git(self.root, "log", "-1", "--format=%s").strip())
+            fd = os.open(self.root / ".versions.lock", os.O_RDWR)
+            try:  # another writer waits
+                with self.assertRaises(BlockingIOError):
+                    versions.fcntl.flock(fd, versions.fcntl.LOCK_EX | versions.fcntl.LOCK_NB)
+            finally:
+                os.close(fd)
+
+    def test_git_env_leaves_out_the_callers_git_settings(self) -> None:
+        with unittest.mock.patch.dict(os.environ, {"GIT_DIR": "/elsewhere",
+                                                   "GIT_ASKPASS": "x"}):
+            env = versions.git_env()
+        self.assertNotIn("GIT_DIR", env)
+        self.assertNotIn("GIT_ASKPASS", env)
+        self.assertEqual("0", env["GIT_TERMINAL_PROMPT"])
 
 
 class TestHistoryAndRevert(_Root):

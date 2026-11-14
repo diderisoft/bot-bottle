@@ -1028,20 +1028,42 @@ account's library on the console while the console says so (PRD 0131,
 The host syncs when enabled, after each new local commit (it watches the
 repo's refs), on `library_moved`, and before a CLI launch: the CLI asks the
 host controller (`POST /library/sync`), which waits two seconds at most and
-otherwise launches the local copy, saying so. Bursts are one sync.
+otherwise launches the local copy, saying so. Bursts are one sync, and
+launches meanwhile wait on the same one.
 
-A sync commits hand edits ("edited by hand"), fetches the library's `main`,
-then either fast-forwards to it, or pushes this host's commits to its branch,
+A sync fetches the library's `main` (by name: the library serves git's
+protocol v0 only), commits hand edits ("edited by hand"), then either
+fast-forwards to `main`, or pushes this host's commits to its branch,
 `hosts/<host id>`, and waits for the console to merge them. The host never
-merges. Git talks smart HTTPS to the library URL with a short-lived token
-from the console (`POST /api/v1/hosts/library-token`, with the host's access
-token), handed to git by an inline credential helper that reads it from the
-child's environment: no remote or token is written to the repo's config.
+merges. The commit and the fast-forward hold the lock bot-bottle's own writes
+take, so a CLI write never lands between them; uncommitted work is committed
+first, and a fast-forward that would overwrite a file changed since stops
+instead. A symlink in the library checks out as a plain file holding its
+target, so nothing synced points bot-bottle outside `~/.bot-bottle`.
+
+Git talks smart HTTPS to the library URL (only HTTPS, or HTTP to this
+machine) with a short-lived token from the console (`POST
+/api/v1/hosts/library-token`, with the host's access token), handed to git by
+an inline credential helper, for the library's host only, that reads it from
+the child's environment: no remote or token is written to the repo's config,
+and none of the user's credential helpers, hooks or fsmonitor run. Redirects
+aren't followed, fetched objects are checked (`fetch.fsckObjects`), and a
+fetch or push is stopped after a minute. A token the library refuses is
+replaced once at once; otherwise a new one is fetched shortly before it
+expires.
+
+A failed sync is logged once (until its reason changes) and tried again
+after 30 seconds, doubling to ten minutes, or at once on a new commit or
+`library_moved`; a CLI launch meanwhile uses the local copy without waiting.
+A refusal that won't pass by itself waits an hour: the library refusing the
+host (403, a deleted account), a push past the library's size limits (413),
+a push its checks reject, or a console whose library is off.
 
 Every fast-forward is journalled as `library.updated` (sensitivity
-`security`): the old and new commit, the agent and bottle files that changed,
-and who made the commits. The library's history is the console's to write;
-the journal is this host's record of every policy change that reached it.
+`security`): the old and new commit, the agent and bottle files that changed
+(and which were `added` and `deleted`), and who made the commits. The
+library's history is the console's to write; the journal is this host's
+record of every policy change that reached it.
 
 ### Host stats
 

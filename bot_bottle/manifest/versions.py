@@ -51,10 +51,18 @@ class Version:
     message: str
 
 
+def git_env() -> dict[str, str]:
+    """The environment bot-bottle runs git in on this repo: no GIT_* from a
+    caller's shell (GIT_DIR, GIT_ASKPASS), and never a prompt."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     # The user's git config and environment stay out of it: no hooks, no
     # signing, no GIT_DIR from a caller's shell.
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env = git_env()
     env.update(_AUTHOR)
     result = subprocess.run(
         ["git", "-C", str(repo), "-c", "core.hooksPath=/dev/null",
@@ -148,6 +156,17 @@ def record_or_warn(message: str, *, root: Path | None = None) -> str:
 def record_hand_edits(*, root: Path | None = None) -> str:
     """Version whatever changed since bot-bottle last looked."""
     return record("edited by hand", root=root)
+
+
+@contextmanager
+def writing(root: Path | None = None) -> Generator[str, None, None]:
+    """Hold the lock `record` takes, with hand edits committed first, for a
+    caller that moves HEAD itself (the library's fast-forward): no bot-bottle
+    write lands meanwhile. Yields HEAD ("" for none). The lock isn't
+    re-entrant: don't `record` while holding it."""
+    root = root or bot_bottle_root()
+    with _locked(root):
+        yield _commit(root, "edited by hand", host_secrets_path())
 
 
 def adopt_builtin_agents(names: Iterable[str], *, root: Path | None = None) -> list[str]:
@@ -292,8 +311,8 @@ def launch_versions(cwd: str, *, root: Path | None = None) -> dict[str, object]:
 
 __all__ = [
     "SecretInManifestError", "TRACKED", "Version", "VersionError", "adopt_builtin_agents",
-    "committed_at", "history",
+    "committed_at", "git_env", "history",
     "is_dirty",
     "launch_versions", "record", "record_hand_edits", "record_or_warn", "revert", "secret_values",
-    "show",
+    "show", "writing",
 ]
