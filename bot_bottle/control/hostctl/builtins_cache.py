@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -32,6 +33,9 @@ SOURCE_DIRS = {"agents": "bot_bottle/manifest/builtin_agents",
                "bottles": "bot_bottle/manifest/builtin"}
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", re.ASCII)
 _MAX_BYTES = 256 * 1024
+# After GitHub couldn't be reached, how long before it's tried again (syncs
+# come often, and each would wait out the timeout).
+RETRY_SECONDS = 600.0
 
 
 class BuiltinUnavailable(Exception):
@@ -80,6 +84,8 @@ def fetch(kind: str, name: str, version: str, timeout: float = 10.0) -> str | No
     """Built-in `name` of `kind` at release `version`, from its tag on
     GitHub; None if the release has none. BuiltinUnavailable if it can't be
     reached."""
+    if kind not in SOURCE_DIRS or not _NAME.fullmatch(name) or not is_release(version):
+        raise ValueError(f"not a built-in: {kind}/{name}@{version}")
     url = (f"https://raw.githubusercontent.com/{REPO}/v{version}/"
            f"{SOURCE_DIRS[kind]}/{name}.md")
     try:
@@ -104,10 +110,13 @@ class Builtins:
     the cache, else fetched (and kept)."""
 
     def __init__(self, root: Path | None = None,
-                 fetcher: Callable[[str, str, str], str | None] = fetch) -> None:
+                 fetcher: Callable[[str, str, str], str | None] = fetch,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         self._root = root
         self._fetch = fetcher
+        self._clock = clock
         self._missing: set[tuple[str, str, str]] = set()  # fetched: the release has none
+        self._down: tuple[float, str] = (0.0, "")  # GitHub unreachable until, and why
 
     def at(self, kind: str, name: str, version: str) -> str | None:
         """Built-in `name` of `kind` at release `version`; None if it has none.
@@ -125,7 +134,13 @@ class Builtins:
             raise BuiltinUnavailable(f"couldn't read {path}: {e}") from e
         if (kind, name, version) in self._missing:
             return None
-        text = self._fetch(kind, name, version)
+        if self._clock() < self._down[0]:
+            raise BuiltinUnavailable(self._down[1])
+        try:
+            text = self._fetch(kind, name, version)
+        except BuiltinUnavailable as e:
+            self._down = (self._clock() + RETRY_SECONDS, str(e))
+            raise
         if text is None:
             self._missing.add((kind, name, version))
             return None
@@ -136,5 +151,5 @@ class Builtins:
         return text
 
 
-__all__ = ["BuiltinUnavailable", "Builtins", "CACHE_DIR", "SOURCE_DIRS", "fetch", "fill",
-           "installed_release"]
+__all__ = ["BuiltinUnavailable", "Builtins", "CACHE_DIR", "RETRY_SECONDS", "SOURCE_DIRS",
+           "fetch", "fill", "installed_release"]

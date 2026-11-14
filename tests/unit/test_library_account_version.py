@@ -136,6 +136,18 @@ class Cache(unittest.TestCase):
                                     ("bottles", "basic", "main")):
             self.assertIsNone(builtins.at(kind, name, version))
 
+    def test_github_out_of_reach_is_tried_again_later(self) -> None:
+        now = [0.0]
+        builtins = bc.Builtins(self.root, self.fetch, clock=lambda: now[0])
+        with self.assertRaisesRegex(bc.BuiltinUnavailable, "offline"):
+            builtins.at("bottles", "basic", OLD)
+        self.remote[("bottles", "basic", OLD)] = BASIC_OLD
+        with self.assertRaisesRegex(bc.BuiltinUnavailable, "offline"):
+            builtins.at("bottles", "basic", OLD)  # not asked again yet
+        self.assertEqual(1, len(self.fetched))
+        now[0] += bc.RETRY_SECONDS
+        self.assertEqual(BASIC_OLD, builtins.at("bottles", "basic", OLD))
+
     def test_fetching_a_release_from_its_tag(self) -> None:
         def answer(body: bytes) -> mock.MagicMock:
             resp = mock.MagicMock()
@@ -160,6 +172,11 @@ class Cache(unittest.TestCase):
                             return_value=answer(body)), \
                     self.assertRaisesRegex(bc.BuiltinUnavailable, why):
                 bc.fetch("bottles", "basic", OLD)
+        for kind, name, version in (("nope", "basic", OLD), ("bottles", "../x", OLD),
+                                    ("bottles", "basic", "0.1.16/../../x")):
+            with mock.patch("urllib.request.urlopen") as get, self.assertRaises(ValueError):
+                bc.fetch(kind, name, version)
+            get.assert_not_called()
 
     def test_installed_release(self) -> None:
         with mock.patch.object(bc.resources, "is_source_checkout", return_value=True):
@@ -330,6 +347,16 @@ class Upstream(_Account):
         source.sync()
         self.merge_as_console("delos")
         self.assertEqual("", source.sync().pushed)
+
+    def test_a_copy_of_a_newer_release_isnt_merged_backwards(self) -> None:
+        delphi = self.on("delphi")
+        self.account(delphi)
+        self.console({"bottles/basic.md": mark(BASIC_NEW, "basic", "0.1.18")},
+                     "copied basic from bot-bottle 0.1.18")
+        synced = delphi.sync()
+        self.assertTrue(synced.moved)
+        self.assertEqual("", synced.pushed)
+        self.assertEqual((), delphi.upstream_notes)
 
     def test_copies_that_cant_merge_say_why_and_wait(self) -> None:
         delphi = self.on("delphi")

@@ -26,7 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...manifest import parse_check
-from ...manifest.account_version import LOCK_FILE, copied_from, lock_version, mark, packaged
+from ...manifest.account_version import (LOCK_FILE, copied_from, lock_version, mark, packaged,
+                                         release_key)
 from ...manifest.versions import TRACKED
 from .builtins_cache import BuiltinUnavailable, Builtins
 
@@ -66,11 +67,13 @@ class Upstream:
 
 def _run(repo: Repo, args: tuple[str, ...], stdin: bytes | None = None,
          env: dict[str, str] | None = None) -> subprocess.CompletedProcess[bytes]:
-    # As library_git runs git: no hooks or signing, and UTF-8 messages (an
-    # encoding header would change U's sha).
+    # As library_git runs git: no hooks, signing or fsmonitor; UTF-8
+    # messages (an encoding header would change U's sha); and no signatures
+    # in what `log` prints, whatever the user's config says.
     return subprocess.run(
         ["git", "-C", str(repo.root), "-c", "core.hooksPath=/dev/null",
-         "-c", "commit.gpgsign=false", "-c", "i18n.commitEncoding=UTF-8", *args],
+         "-c", "commit.gpgsign=false", "-c", "core.fsmonitor=false",
+         "-c", "i18n.commitEncoding=UTF-8", "-c", "log.showSignature=false", *args],
         input=stdin, capture_output=True, env={**repo.env, **(env or {})}, check=False)
 
 
@@ -102,7 +105,7 @@ def account_version(repo: Repo, main: str) -> str:
 
 def copies(repo: Repo, main: str) -> list[str]:
     """The library files at `main` that may be copies of built-ins."""
-    found = _git(repo, "grep", "-l", "--full-name", "-e", "^copied_from:", main, "--",
+    found = _git(repo, "grep", "-l", "-G", "--full-name", "-e", "^copied_from:", main, "--",
                  *TRACKED, check=False)
     prefix = f"{main}:"
     return sorted(p.removeprefix(prefix) for p in found.splitlines()
@@ -148,7 +151,8 @@ def _contains(repo: Repo, newer: str, older: str) -> bool:
 def next_upstream(repo: Repo, main: str, installed: str, builtins: Builtins) -> Upstream:
     """The next copy's proposal at `main`, for a host running release
     `installed`: only when the lock at `main` names exactly that release,
-    whose built-ins this host has. One that `main` already holds (merged, or
+    whose built-ins this host has, and only for copies of an older release.
+    One that `main` already holds (merged, or
     resolved in the console) isn't proposed again."""
     version = account_version(repo, main)
     if not version or version != installed:
@@ -160,6 +164,8 @@ def next_upstream(repo: Repo, main: str, installed: str, builtins: Builtins) -> 
         if marker is None or marker[1] == version:
             continue
         name, old = marker
+        if release_key(old) > release_key(version):
+            continue  # copied from a newer release: never merged backwards
         kind = rel.split("/", 1)[0]
         new = packaged(kind, name)
         if new is None:  # not a built-in any more: the copy is the user's now

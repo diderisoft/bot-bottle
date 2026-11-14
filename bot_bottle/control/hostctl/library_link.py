@@ -449,7 +449,8 @@ class LibraryLink:
         """One sync, from any thread. A failure is logged once (until it
         changes) and sets when the next try is due. A pending conflict clears
         once the fetched `main` contains the commit this host's branch had
-        then, or this host's own work replaced a proposal that conflicted."""
+        then, or this host's push replaced what its branch held (a proposal
+        that conflicted, say)."""
         sync = self.syncer()
         try:
             synced = sync.sync()

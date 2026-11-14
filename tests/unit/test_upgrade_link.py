@@ -194,6 +194,18 @@ class Batch(_Linked):
             self.link.upgrade("s1", signed, challenges)
         self.assertEqual([], self.started)
 
+    def test_a_batch_holding_two_of_this_hosts_challenges_is_refused(self) -> None:
+        first = str(self.link.challenge("s1", "0.1.15")["challenge"])
+        second = str(self.link.challenge("s1", "0.1.15")["challenge"])
+        challenges = [first, second]
+        signed = self.pk.assertion(upgrade_link.batch_digest(challenges))
+        with self.assertRaisesRegex(UpgradeError, "expired or was used"):
+            self.link.upgrade("s1", signed, challenges)
+        for one in challenges:  # both spent
+            with self.assertRaisesRegex(UpgradeError, "expired or was used"):
+                self.link.upgrade("s1", self.pk.assertion(one))
+        self.assertEqual([], self.started)
+
     def test_a_forged_batch_signature_is_refused(self) -> None:
         challenges, _ = self._batch()
         forged = self.pk.assertion(upgrade_link.batch_digest(challenges), tamper=True)

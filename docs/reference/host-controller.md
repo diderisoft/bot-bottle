@@ -1098,7 +1098,11 @@ merges. The commit and the fast-forward hold the lock bot-bottle's own writes
 take, so a CLI write never lands between them; uncommitted work is committed
 first, and a fast-forward that would overwrite a file changed since stops
 instead. A symlink in the library checks out as a plain file holding its
-target, so nothing synced points bot-bottle outside `~/.bot-bottle`.
+target, so nothing synced points bot-bottle outside `~/.bot-bottle`. A push
+the branch refuses as not a fast-forward (its history isn't this repo's: the
+repo was made anew, reset, or re-paired onto an earlier host's branch) is made
+again forced: the branch is this host's alone, and what it pushes was checked
+first. That clears a conflict pending on what the branch held.
 
 Git talks smart HTTPS to the library URL (only HTTPS, or HTTP to this
 machine) with a short-lived token from the console (`POST
@@ -1205,8 +1209,9 @@ unterminated ...)`, after the conflict's line if one is pending too.
 `bot-bottle.lock`, at the library's root, names the account's bot-bottle
 release (PRD 0131): `version = "0.1.17"` on one line. Only the console writes
 it, after an account upgrade. A host tracks it (it's committed past the
-library's ignore file, `git add -f`, so hand edits of it sync like any) and
-never writes it. Launches don't read it: a host launches on its own installed
+library's ignore file, `git add -f`, so a hand edit of it is committed and
+pushed like any, but the console's merge keeps `main`'s lock, so the next
+fast-forward puts it back) and never writes it. Launches don't read it: a host launches on its own installed
 built-ins, and the start event's `bottle_versions.builtins` records which
 release that was.
 
@@ -1232,7 +1237,8 @@ release that was.
 
 When a sync leaves this host's `main` at the library's, and the lock there
 names exactly the release this host runs, the host looks at each copy whose
-marker names an older release V. For the first that can merge, it builds a
+marker names an older release V (a copy of a newer release than the lock's
+waits; it's never merged backwards). For the first that can merge, it builds a
 commit U, without the working tree, and pushes it as its branch, forced:
 
 - **K**, U's parent: the newest commit in `main`'s history whose copy is
@@ -1253,7 +1259,7 @@ it clears here as any conflict does.
   holds isn't proposed again, so a conflict resolved as the library's version
   stays resolved.
 - **The host's own work comes first:** its next push replaces a U on its
-  branch (forced, the one case a host's own push is), which clears a conflict
+  branch (forced), which clears a conflict
   pending on the U; the U is proposed again, the same commit, once that's
   merged. The host's `main` never moves to a U.
 - **The built-in at V** is the installed package's when V is installed, else
@@ -1261,7 +1267,7 @@ it clears here as any conflict does.
   it runs there, on start), else fetched from the release's tag on GitHub
   (`raw.githubusercontent.com/diderisoft/bot-bottle/v<V>/...`, where releases
   are published) and kept. If neither works, the copy waits for the next
-  sync, and `bot-bottle status` says why (`link.library.upstream`), as it
+  sync (GitHub out of reach is tried again after 10 minutes), and `bot-bottle status` says why (`link.library.upstream`), as it
   does for a copy no commit holds as made.
 
 ### Launching at a library commit

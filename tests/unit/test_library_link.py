@@ -93,6 +93,21 @@ class Syncing(_Library):
         self.assertEqual(ll.Synced(pushed=head), synced)
         self.assertEqual(head, _git(self.bare, "rev-parse", "refs/heads/hosts/delphi"))
 
+    def test_a_branch_holding_history_this_repo_lacks_is_replaced(self) -> None:
+        # The repo made anew (or reset, or re-paired onto an earlier host's
+        # branch): its branch holds commits this `main` doesn't build on.
+        self.host("before", {"bottles/old.md": "---\n---\n"}).sync()
+        anew = self.host("anew", {"bottles/dev.md": "---\n---\n"})
+        anew.host_id = "before"
+        synced = anew.sync()
+        head = _git(anew.root, "rev-parse", "HEAD")
+        self.assertEqual(head, synced.pushed)
+        self.assertTrue(synced.replaced)
+        self.assertEqual(head, _git(self.bare, "rev-parse", "refs/heads/hosts/before"))
+        # A refusal for any other reason isn't forced past.
+        self.assertFalse(lg._not_ahead(
+            " ! [remote rejected] x -> hosts/before (pre-receive hook declined)"))
+
     def test_nothing_to_do_once_main_has_it(self) -> None:
         delphi = self.host("delphi", {"bottles/dev.md": "---\n---\n"})
         delphi.sync()

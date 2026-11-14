@@ -14,7 +14,10 @@ it's held back.
 
 Once this host's branch is merged and its `main` is the library's, it may
 propose a release's changes to a copy of a built-in as its branch instead
-(`library_upstream.py`): pushed forced, as is its own next push over it.
+(`library_upstream.py`): pushed forced, as is its own next push over it. A
+push of its own `main` that the branch refuses as not a fast-forward (the
+repo made anew, a reset) is made again forced: the branch is this host's
+alone, and what it pushes was checked first.
 
 A console launch's commit is copied out of the repo (`tree_at`), so its
 working tree and `main` are untouched.
@@ -178,6 +181,12 @@ def _failure(verb: str, stderr: str) -> LibraryError:
     return LibraryError(f"git {verb}: {text}")
 
 
+def _not_ahead(stderr: str) -> bool:
+    """Whether git refused a push only for not being a fast-forward."""
+    return "[rejected]" in stderr and ("(non-fast-forward)" in stderr
+                                       or "(fetch first)" in stderr)
+
+
 def _auth_failed(stderr: str) -> bool:
     return "Authentication failed" in stderr or "error: 401" in stderr
 
@@ -223,7 +232,8 @@ class Synced:
     `stamp`: `head_stamp` once it had, so its own commits don't look like new
     ones. `held`: what it didn't push because it doesn't parse (None: not
     checked), and `tell_held` whether the console should hear of it.
-    `replaced`: the push replaced a proposal this host's branch held."""
+    `replaced`: the push replaced what this host's branch held (a proposal,
+    or history its `main` doesn't build on), forced."""
 
     pushed: str = ""
     moved: bool = False
@@ -333,9 +343,17 @@ class LibrarySync:
                 # proposal, which is recomputed from `main` once this merges.
                 proposal = self._rev(UPSTREAM_REF)
                 replaced = bool(proposal) and not self.contains(local, proposal)
-                _token, pushed = self._remote(
-                    "push", "-q", token.url,
-                    f"{'+' if replaced else ''}{local}:refs/heads/hosts/{self.host_id}")
+                spec = f"{local}:refs/heads/hosts/{self.host_id}"
+                _token, pushed = self._remote("push", "-q", token.url,
+                                              f"+{spec}" if replaced else spec)
+                if pushed.returncode != 0 and not replaced and _not_ahead(pushed.stderr):
+                    # The branch holds history this repo doesn't build on (a
+                    # repo made anew, a reset, a re-pair onto another host's
+                    # branch): this host's checked `main` replaces it.
+                    log.info(f"library: replacing this host's branch, which holds history "
+                             f"its main doesn't ({local[:12]})")
+                    _token, pushed = self._remote("push", "-q", token.url, f"+{spec}")
+                    replaced = True  # and any conflict on what it held goes with it
                 if pushed.returncode != 0:
                     raise _failure("push", pushed.stderr or pushed.stdout)
                 self._git("update-ref", PUSHED_REF, local)
