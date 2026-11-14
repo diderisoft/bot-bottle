@@ -16,7 +16,7 @@ from __future__ import annotations
 import fcntl
 import os
 import subprocess
-from collections.abc import Generator, Mapping
+from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -145,6 +145,34 @@ def record_hand_edits(*, root: Path | None = None) -> str:
     return record("edited by hand", root=root)
 
 
+def adopt_builtin_agents(names: Iterable[str], *, root: Path | None = None) -> list[str]:
+    """Remove each host agent in `names` that's still exactly what `bot-bottle
+    setup` wrote, by this repo's history, so the built-in of that name takes
+    over and upgrades with bot-bottle (PRD 0131). One changed since stays, as
+    yours. The names removed."""
+    root = root or bot_bottle_root()
+    if not (root / ".git").is_dir():
+        return []
+    record_hand_edits(root=root)
+    gone = []
+    for name in names:
+        rel = f"agents/{name}.md"
+        path = root / rel
+        if not path.is_file():
+            continue
+        text = path.read_text()
+        written = _git(root, "log", "--format=%H", "--fixed-strings",
+                       f"--grep=setup: write agents/{name}", "--", rel,
+                       check=False).stdout.split()
+        if any(_git(root, "show", f"{sha}:{rel}", check=False).stdout == text
+               for sha in written):
+            path.unlink()
+            gone.append(name)
+    if gone:
+        record("built in now: " + ", ".join(f"agents/{n}" for n in gone), root=root)
+    return gone
+
+
 def _repo_of(path: Path, root: Path) -> tuple[Path, bool]:
     """The repo holding `path`, and whether it's the host's own."""
     path = path.resolve()
@@ -244,7 +272,8 @@ def launch_versions(cwd: str, *, root: Path | None = None) -> dict[str, object]:
 
 
 __all__ = [
-    "SecretInManifestError", "TRACKED", "Version", "VersionError", "committed_at", "history",
+    "SecretInManifestError", "TRACKED", "Version", "VersionError", "adopt_builtin_agents",
+    "committed_at", "history",
     "is_dirty",
     "launch_versions", "record", "record_hand_edits", "record_or_warn", "revert", "secret_values",
     "show",

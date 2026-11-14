@@ -11,11 +11,13 @@ from collections.abc import Sequence
 from typing import Mapping
 
 from .util import ManifestError, as_json_object
+from ..agent_provider import harness_ready
 from .agent import ManifestAgent, agent_from_frontmatter
 from .bottle import ManifestBottle
 from .extends import merge_bottles_runtime, resolve_bottles
 from .git import ManifestGitUser
 from .loader import (
+    BUILTIN_AGENTS_DIR,
     BUILTIN_BOTTLES_DIR,
     BottleSource,
     bottle_ref,
@@ -236,14 +238,24 @@ class ManifestIndex:
 
     @property
     def all_agent_names(self) -> list[str]:
-        """Sorted agent names (filenames in lazy mode)."""
+        """Sorted agent names (filenames in lazy mode), built-ins included."""
         if self.home_md is not None:
-            home_names = set(scan_agent_names(self.home_md / "agents").keys())
-            cwd_names: set[str] = set()
-            if self.cwd_md is not None:
-                cwd_names = set(scan_agent_names(self.cwd_md / "agents").keys())
-            return sorted(home_names | cwd_names)
+            return sorted(self._agent_files(listing=True))
         return sorted(self.agents.keys())
+
+    def _agent_files(self, *, listing: bool = False) -> dict[str, Path]:
+        """Each agent name's file, lazy mode: a project's over the host's over
+        the built-ins (`BUILTIN_AGENTS_DIR`). A built-in is named by its
+        harness; `listing` keeps only those whose harness is ready here, so
+        what's offered can run (one named outright still resolves)."""
+        assert self.home_md is not None
+        builtins = scan_agent_names(BUILTIN_AGENTS_DIR)
+        if listing:
+            builtins = {n: p for n, p in builtins.items() if harness_ready(n)}
+        files = {**builtins, **scan_agent_names(self.home_md / "agents")}
+        if self.cwd_md is not None:
+            files.update(scan_agent_names(self.cwd_md / "agents"))
+        return files
 
     def load_for_agent(
         self,
@@ -278,12 +290,12 @@ class ManifestIndex:
     ) -> "Manifest":
         """Lazy path: read and parse the agent file and its bottle chain."""
         assert self.home_md is not None  # set by load_for_agent's dispatch
-        # cwd wins over home on a name clash.
+        # cwd wins over home, and home over the built-ins, on a name clash.
         home_agents = scan_agent_names(self.home_md / "agents")
         cwd_agents: dict[str, Path] = {}
         if self.cwd_md is not None:
             cwd_agents = scan_agent_names(self.cwd_md / "agents")
-        merged_agents = {**home_agents, **cwd_agents}
+        merged_agents = self._agent_files()
 
         if agent_name not in merged_agents:
             available = ", ".join(sorted(merged_agents.keys())) or "(none)"
@@ -309,7 +321,8 @@ class ManifestIndex:
             # and its prompt directs whatever the user's bottle allows.
             trust_check_agent(
                 agent_name, agent_path, agent.agent_provider,
-                home_agent=home_agents.get(agent_name),
+                home_agent=(home_agents.get(agent_name)
+                            or scan_agent_names(BUILTIN_AGENTS_DIR).get(agent_name)),
                 bottle_name="+".join(bottle_names) or DEFAULT_BOTTLE,
                 bottle=raw_bottle, sources=bottle_sources,
                 source_root=self.cwd_md.parent if self.cwd_md else None,
@@ -324,15 +337,8 @@ class ManifestIndex:
         """Whether `name` is a discoverable agent, without parsing it."""
         if self.has_agent(name):
             return
-        if self.home_md is not None:
-            # Lazy mode: check the file exists.
-            home_path = self.home_md / "agents" / f"{name}.md"
-            cwd_path = (
-                self.cwd_md / "agents" / f"{name}.md"
-                if self.cwd_md else None
-            )
-            if home_path.is_file() or (cwd_path and cwd_path.is_file()):
-                return
+        if self.home_md is not None and name in self._agent_files():
+            return  # lazy mode: the file exists
         available = ", ".join(self.all_agent_names) or "(none)"
         raise ManifestError(
             f"agent '{name}' not defined. Available: {available}"

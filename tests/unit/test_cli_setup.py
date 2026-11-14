@@ -104,6 +104,8 @@ class ClaudeAndCodex(_Host):
         self.codex_login()
         self.setup().run()
         for name in ("claude", "codex"):
+            # Built in (PRD 0131): nothing written, and they load.
+            self.assertFalse(self.starter("agents", name).exists())
             manifest = self.load(name)
             self.assertEqual(name, manifest.agent.agent_provider.harness)
             self.assertTrue(manifest.agent.agent_provider.forward_host_credentials)
@@ -130,26 +132,25 @@ class ClaudeAndCodex(_Host):
         self.assertFalse(self.starter("agents", "claude").exists())
         self.assertFalse(any("claude" in line for line in self.lines))
 
-    def test_never_clobbers_without_force_and_restores_deleted_files(self) -> None:
+    def test_your_own_claude_agent_is_never_touched(self) -> None:
+        # A host agent named like a built-in is yours; it shadows the
+        # built-in, and setup leaves it alone even with --force.
         self.install("claude")
         self.claude_login()
-        self.install("codex")
-        self.codex_login()
-        self.setup().run()
-        self.starter("agents", "claude").write_text("mine")
-        self.starter("agents", "codex").unlink()
-        self.setup().run()
-        self.assertEqual("mine", self.starter("agents", "claude").read_text())
-        self.assertTrue(self.starter("agents", "codex").exists())
+        mine = "---\nagent_provider:\n  harness: claude\n  login: host\n---\n\nMine.\n"
+        self.starter("agents", "claude").parent.mkdir(parents=True)
+        self.starter("agents", "claude").write_text(mine)
         self.setup(force=True).run()
-        self.assertNotEqual("mine", self.starter("agents", "claude").read_text())
+        self.assertEqual(mine, self.starter("agents", "claude").read_text())
+        self.assertEqual("Mine.", self.load("claude").agent.prompt.strip())
 
     def test_starters_name_no_bottle_and_get_none_written(self) -> None:
         # Agents don't name a bottle (ADR 0011); a launch picks one, else `basic`.
         self.install("claude")
         self.claude_login()
         self.setup().run()
-        self.assertNotIn("bottle:", self.starter("agents", "claude").read_text())
+        from bot_bottle.manifest.loader import BUILTIN_AGENTS_DIR  # pylint: disable=import-outside-toplevel
+        self.assertNotIn("bottle:", (BUILTIN_AGENTS_DIR / "claude.md").read_text())
         self.assertFalse(self.starter("bottles", "claude").exists())
 
     def test_a_starter_bottle_already_on_disk_is_left_alone(self) -> None:

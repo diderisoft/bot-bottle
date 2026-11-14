@@ -27,7 +27,7 @@ from ...contract.identity import IDENTITY_HEADER
 from ...egress import CLAUDE_HOST_CREDENTIAL_TOKEN_REF, EgressRoute
 from ...gateway.egress.types import ANY_REQUEST
 from ...lib.log import die, info, warn
-from ...starter import GENERAL_PROMPT, starter_agent
+from ...manifest.loader import BUILTIN_AGENTS_DIR
 from ...transcript import TranscriptEntry
 from . import transcript
 from ...util import slugify
@@ -124,9 +124,10 @@ class ClaudeAgentProvider(AgentProvider):
         )
 
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
+        """The built-in `claude` agent: the same on every host, so `setup` writes
+        no copy of it (PRD 0131)."""
         del detection
-        return starter_agent(GENERAL_PROMPT,
-                             {"harness": "claude", "login": "host"})
+        return (BUILTIN_AGENTS_DIR / "claude.md").read_text(encoding="utf-8")
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
         # The base installs from a committed lock; a bump has none, so npm

@@ -42,7 +42,7 @@ Intel Macs get no `remote` extra, since iroh has no build for them.
 | Command | Does |
 |---|---|
 | `install` | the backend's host setup, tmux, autostart |
-| `setup` | starter agents, then an offer to pair your phone with a console. The default console is the hosted one at <https://bot-bottle.app>. Pairing is optional, and `--no-pair` skips it. |
+| `setup` | the pi and bottle-architect starter agents (`claude` and `codex` are built in), then an offer to pair your phone with a console. The default console is the hosted one at <https://bot-bottle.app>. Pairing is optional, and `--no-pair` skips it. |
 | `doctor` | checks the host |
 
 The installer is idempotent and never runs `sudo` on its own. The backend's one

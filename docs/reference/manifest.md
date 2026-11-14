@@ -104,6 +104,15 @@ The built-in `basic` bottle (`manifest/builtin/basic.md`) allows downloads from
 the common package registries. The agent picks its own harness, so one bottle
 serves Claude, Codex and pi agents alike.
 
+**Built-in agents.** `claude` and `codex` come with bot-bottle
+(`manifest/builtin_agents/`), so they upgrade with it. An agent is found in the
+project's `.bot-bottle/agents/`, then `~/.bot-bottle/agents/`, then the
+built-ins, so a file of the same name in either replaces one: copy it there to
+change it. A built-in is listed (by `bot-bottle agents`, the console, `start`)
+only where its harness is installed and logged in; named outright, it resolves
+anywhere. A copy an earlier `setup` wrote, unchanged since, is removed so the
+built-in takes over: by `setup`, and when the host controller starts.
+
 What `extends` resolves to is the sealed bottle
 ([glossary](glossary.md#sealed-bottle)).
 

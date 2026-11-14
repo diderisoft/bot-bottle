@@ -205,8 +205,9 @@ their place.
 Every non-local viewer starts read-only. It can type only if the agent's
 manifest sets `remote.writable`.
 
-The starter agents that `bot-bottle setup` writes set it, so a paired phone
-can talk to them. An agent written by hand is view-only unless it says so.
+The built-in agents and the starters that `bot-bottle setup` writes set it, so
+a paired phone can talk to them. An agent written by hand is view-only unless
+it says so.
 
 ## Transcripts
 

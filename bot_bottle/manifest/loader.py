@@ -69,6 +69,10 @@ def scan_agent_names(agents_dir: Path) -> dict[str, Path]:
 
 # Built-in bottles (`basic`).
 BUILTIN_BOTTLES_DIR = Path(__file__).parent / "builtin"
+# Built-in agents (`claude`, `codex`): the starters every host gets the same,
+# read from the installed bot-bottle so they upgrade with it (PRD 0131). A
+# host or project agent of the same name shadows one.
+BUILTIN_AGENTS_DIR = Path(__file__).parent / "builtin_agents"
 
 
 @dataclass(frozen=True)

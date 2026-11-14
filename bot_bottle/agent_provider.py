@@ -13,6 +13,7 @@ import os
 import re
 import shlex
 import tempfile
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from datetime import datetime
@@ -492,6 +493,29 @@ def get_provider(harness: str) -> AgentProvider:
         from .contrib.pi.agent_provider import PiAgentProvider
         return PiAgentProvider()
     raise ValueError(f"unknown agent provider harness: {harness!r}")
+
+
+# harness -> (when checked, ready), for `harness_ready`.
+_READY: dict[str, tuple[float, bool]] = {}
+_READY_FOR = 30.0  # seconds
+
+
+def harness_ready(harness: str) -> bool:
+    """Whether `harness` is installed and logged in on this host, as `setup`
+    checks it: a built-in agent is listed only where its harness is ready
+    (PRD 0131). Checked at most every `_READY_FOR` seconds."""
+    now = time.monotonic()
+    cached = _READY.get(harness)
+    if cached is not None and now - cached[0] < _READY_FOR:
+        return cached[1]
+    try:
+        detection = get_provider(harness).detect_host(os.environ)
+    except ValueError:
+        ready = False
+    else:
+        ready = detection.installed and detection.logged_in
+    _READY[harness] = (now, ready)
+    return ready
 
 
 def runtime_for(harness: str) -> AgentProviderRuntime:

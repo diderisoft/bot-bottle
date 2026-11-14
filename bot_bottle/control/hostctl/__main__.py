@@ -104,6 +104,22 @@ def start_firehose() -> FirehoseHub:
                        sinks=SinkSet(FileSecrets(host_secrets_path()).get))
 
 
+def adopt_builtin_starters() -> None:
+    """A starter an earlier `setup` wrote that's built in now, and unchanged,
+    gives way to the built-in, so upgrading bot-bottle reaches it (PRD 0131).
+    Best effort: the copy stays if it can't be checked."""
+    # pylint: disable=import-outside-toplevel
+    from ...manifest.loader import BUILTIN_AGENTS_DIR, scan_agent_names
+    from ...manifest.versions import VersionError, adopt_builtin_agents
+    try:
+        gone = adopt_builtin_agents(scan_agent_names(BUILTIN_AGENTS_DIR))
+    except (VersionError, OSError) as e:
+        warn(f"couldn't check for built-in agents: {e}")
+        return
+    for name in gone:
+        info(f"agent {name} is built in now; removed the unchanged copy setup wrote")
+
+
 def main() -> int:
     leave_callers_directory()
     # Held for this process's life: a second host controller for this root
@@ -124,6 +140,7 @@ def main() -> int:
         return host_db.REFUSED_EXIT_STATUS
     # Code shared with the CLI uses the stores here, not this API.
     host_access.use_stores()
+    adopt_builtin_starters()
     backups = host_db.DailyBackups().start()
     port = int(os.environ.get(PORT_ENV, "0") or "0")
     sessions = SessionManager({})

@@ -39,7 +39,8 @@ from ...control.hostctl.runner import HostControlError
 from . import login
 from ...errors import SecretsFileError
 from ...lib import log, prompt
-from ...manifest.versions import record_or_warn
+from ...manifest.loader import BUILTIN_AGENTS_DIR, scan_agent_names
+from ...manifest.versions import VersionError, adopt_builtin_agents, record_or_warn
 from ...paths import bot_bottle_root, host_secrets_path
 from ...secret_source import write_secret
 from ...starter import STARTER_MARKER
@@ -93,6 +94,17 @@ class Setup:
         self.say(f"  wrote {path}")
         record_or_warn(f"setup: write {kind}/{name}", root=self.manifests)
 
+    def adopt_builtins(self) -> None:
+        """A starter an earlier `setup` wrote that's built in now, and that
+        nobody changed, gives way to the built-in (PRD 0131)."""
+        try:
+            gone = adopt_builtin_agents(scan_agent_names(BUILTIN_AGENTS_DIR), root=self.manifests)
+        except VersionError as e:
+            self.say(f"warn: couldn't check for built-in agents: {e}")
+            return
+        for name in gone:
+            self.say(f"  {name} agent: built in now (removed the unchanged copy setup wrote)")
+
     def starter_exists(self, name: str) -> bool:
         return (self.manifests / "agents" / f"{name}.md").exists()
 
@@ -100,6 +112,7 @@ class Setup:
 
     def run(self) -> int:
         ready: list[str] = []  # each harness's starter agent, in order
+        self.adopt_builtins()
         for name in PROVIDERS:
             provider = get_provider(name)
             detection = provider.detect_host(self.host_env)
@@ -116,7 +129,11 @@ class Setup:
             self.say(f"{name}: {detection.login_location or 'ready'}")
             # The agent carries the provider, so pi's model refresh rewrites it.
             agent = provider.create_default_agent_manifest(detection)
-            self.write("agents", name, agent, replace=name == "pi" and self.refresh_model)
+            if (BUILTIN_AGENTS_DIR / f"{name}.md").is_file():
+                # The same on every host: built into bot-bottle, not copied.
+                self.say(f"  {name} agent: built in")
+            else:
+                self.write("agents", name, agent, replace=name == "pi" and self.refresh_model)
             ready.append(agent)
         if ready:
             self._write_bottle_architect(ready[0])

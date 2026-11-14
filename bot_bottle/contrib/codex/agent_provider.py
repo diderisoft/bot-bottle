@@ -25,7 +25,7 @@ from ...agent_provider import (
     AgentProvisionPlan,
     provider_startup_args,
 )
-from ...starter import GENERAL_PROMPT, starter_agent
+from ...manifest.loader import BUILTIN_AGENTS_DIR
 from ...transcript import TranscriptEntry
 from . import transcript
 from .codex_auth import (
@@ -120,9 +120,10 @@ class CodexAgentProvider(AgentProvider):
         )
 
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
+        """The built-in `codex` agent: the same on every host, so `setup` writes
+        no copy of it (PRD 0131)."""
         del detection
-        return starter_agent(GENERAL_PROMPT,
-                             {"harness": "codex", "login": "host"})
+        return (BUILTIN_AGENTS_DIR / "codex.md").read_text(encoding="utf-8")
 
     def harness_overlay_lines(self, version: str) -> tuple[str, ...] | None:
         # As the Dockerfile's standalone install. A bump's checksum list comes
