@@ -97,3 +97,18 @@ A checkout must be in a git work tree with a remote (`origin`, or its only
 one) on a forge: its repo is that URL, normalized, so the SSH and HTTPS forms
 are one project. A checkout that's gone from disk drops off. Hiding a project
 is the console's; the host still keeps and reports it.
+
+### Launching a project from the console
+
+You pick a project, a host with a checkout, a branch and a bottle. The host
+runs the commit the console showed in a worktree of the checkout, under
+`~/.bot-bottle/project-worktrees/`, so the checkout you work in is never
+switched. The launch resolves as a CLI launch from the checkout would, and
+the worktree is removed when the bottle is torn down (a resume makes it
+again).
+
+Trust is the same as the CLI's. A bottle or agent this host hasn't trusted
+is asked about in the console, all at once, with what each grants or what
+changed. Trusting records it as `bot-bottle trust` would, for the checkout's
+file, so the CLI sees it too. Not answered within 30 minutes, the launch
+doesn't start ([host-controller.md](host-controller.md#launching-a-project)).

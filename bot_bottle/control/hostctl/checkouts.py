@@ -253,11 +253,13 @@ def report(checkouts: CheckoutStore) -> dict[str, object]:
     return {"type": "projects", "checkouts": rows[:MAX_CHECKOUTS]}
 
 
-def learn_launch(cwd: str, checkouts: CheckoutStore | None = None) -> None:
+def learn_launch(cwd: str, checkouts: CheckoutStore | None = None, *,
+                 project: bool = False) -> None:
     """A launch from `cwd`: when it's a project with a repo, keep it as used
-    now. Never fails the launch."""
+    now. `project`: it is one (a console launch ran in its worktree), whatever
+    the checkout has checked out. Never fails the launch."""
     try:
-        if project_manifest_dir(cwd) is None:
+        if not project and project_manifest_dir(cwd) is None:
             return
         path = resolved(cwd)
         found = inspect(Path(path))

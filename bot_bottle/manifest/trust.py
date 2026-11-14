@@ -23,7 +23,9 @@ import hashlib
 import json
 import os
 import time
-from collections.abc import Sequence
+from collections.abc import Generator, Iterable, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -244,6 +246,26 @@ def _ask(body: dict[str, object] | None = None) -> dict[str, object]:
         raise ManifestError(f"this host's trust records: {getattr(e, 'error', '') or e}") from e
 
 
+# Hashes taken as trusted while resolving, never recorded: how the host finds
+# every item a console launch needs trusted before asking about them all
+# (PRD 0131).
+_ACCEPTED: ContextVar[frozenset[str]] = ContextVar("trust_accepted", default=frozenset())
+
+
+@contextmanager
+def accepting(hashes: Iterable[str]) -> Generator[None]:
+    """Within the block, `hashes` count as trusted (in memory only)."""
+    token = _ACCEPTED.set(frozenset(hashes))
+    try:
+        yield
+    finally:
+        _ACCEPTED.reset(token)
+
+
+def _trusted(entries: Sequence[Trusted], digest: str) -> bool:
+    return digest in _ACCEPTED.get() or any(e.hash == digest for e in entries)
+
+
 def load_trusted() -> list[Trusted]:
     """What this host trusts, oldest first."""
     if host_access.in_host_controller():
@@ -266,7 +288,7 @@ def check(bottle_name: str, bottle: ManifestBottle, sources: Sequence[BottleSour
     if connected:
         digest = hashlib.sha256("\0".join([digest, *connected]).encode()).hexdigest()
     entries = load_trusted()
-    if any(e.hash == digest for e in entries):
+    if _trusted(entries, digest):
         return
     top = str(project[0].path)
     previous = next((e for e in reversed(entries) if e.path == top), None)
@@ -355,7 +377,7 @@ def check_agent(name: str, path: Path, provider: ManifestAgentProvider, *,
     root = source_root if source_root is not None else path.parent.parent.parent
     digest = agent_hash(name, path, context, build_digest(provider, root))
     entries = load_trusted()
-    if any(e.hash == digest for e in entries):
+    if _trusted(entries, digest):
         return
     previous = next((e for e in reversed(entries) if e.path == str(path)), None)
     raise UntrustedBottleError(name, path, digest=digest, granted=granted,
@@ -402,8 +424,8 @@ def prompt_text(error: UntrustedBottleError) -> str:
     return "\n".join([*lines, "", f"{question} [y/N] "])
 
 
-__all__ = ["TrustStore", "Trusted", "UntrustedBottleError", "agent_hash", "beyond_basic",
-           "bottle_hash", "build_digest", "check",
+__all__ = ["TrustStore", "Trusted", "UntrustedBottleError", "accepting", "agent_hash",
+           "beyond_basic", "bottle_hash", "build_digest", "check",
            "check_agent", "forge_lines", "grants", "host_context", "load_trusted",
            "prompt_parts", "prompt_text",
            "provider_grants", "trust"]

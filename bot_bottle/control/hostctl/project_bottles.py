@@ -67,7 +67,7 @@ def fetch(top: Path, remote: str, timeout: float = FETCH_SECONDS) -> bool:
         return False
 
 
-def _valid_branch(cwd: Path, branch: str) -> bool:
+def valid_branch(cwd: Path, branch: str) -> bool:
     if branch.startswith("-") or len(branch) > MAX_BRANCH:
         return False
     out = git(cwd, "check-ref-format", "--branch", branch)
@@ -197,7 +197,7 @@ def _answer(msg: dict[str, Any], checkouts: CheckoutStore) -> dict[str, Any]:
     checkout = Path(kept.path)
     if not checkout.is_dir():
         raise _Refused(f"{path} is gone from this host")
-    if branch and not _valid_branch(checkout, branch):
+    if branch and not valid_branch(checkout, branch):
         raise _Refused(f"{branch!r} isn't a branch name")
     top_out = git(checkout, "rev-parse", "--show-toplevel")
     if top_out.returncode != 0 or not top_out.stdout.strip():

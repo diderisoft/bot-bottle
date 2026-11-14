@@ -12,12 +12,15 @@ from typing import Any
 
 from ...contract.hostctl import LIBRARY_COMMIT, LaunchRequest
 from ...lib import log
+from . import project_worktrees
 
 # Bounds on a console launch.
 MAX_PROMPT_CHARS = 20_000
 MAX_BOTTLES = 8
 MAX_LABEL_CHARS = 128
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+# A project bottle, named as the CLI's `-b` names one (PRD 0131).
+_PROJECT_BOTTLE = re.compile(r"^\./[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _IDENTITY = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _BAD_COMMIT = "library_commit must be a 40-character commit sha"
 
@@ -43,24 +46,27 @@ def local_agents() -> list[str]:
         return []
 
 
-def agent_allowed(name: object, agents: Callable[[], Iterable[str]], commit: str) -> bool:
+def agent_allowed(name: object, agents: Callable[[], Iterable[str]], commit: str, *,
+                  project: bool = False) -> bool:
     """Whether a console launch may name the agent `name`: one of this host's,
-    or with a library commit, any name (the launch resolves it at that
-    commit, and refuses one it lacks)."""
+    or with a library commit or in a project, any name (the launch resolves
+    it there, and refuses one it lacks)."""
     if not isinstance(name, str) or not _NAME.fullmatch(name):
         return False
-    return bool(commit) or name in agents()
+    return bool(commit) or project or name in agents()
 
 
-def launch_extras(msg: dict[str, Any]) -> dict[str, Any] | str:
+def launch_extras(msg: dict[str, Any], *, project: bool = False) -> dict[str, Any] | str:
     """A console launch's prompt, bottles, label and library commit, as
-    `LaunchRequest` fields, or why they're refused."""
+    `LaunchRequest` fields, or why they're refused. A launch in a `project`
+    may name its bottles too, as `./<name>`."""
     prompt = msg.get("prompt", "")
     if not isinstance(prompt, str) or len(prompt) > MAX_PROMPT_CHARS:
         return f"the prompt must be text of at most {MAX_PROMPT_CHARS} characters"
     bottles = msg.get("bottles", [])
     if (not isinstance(bottles, list) or len(bottles) > MAX_BOTTLES
-            or not all(isinstance(b, str) and _NAME.match(b) for b in bottles)):
+            or not all(isinstance(b, str) and (_NAME.match(b) or (
+                project and _PROJECT_BOTTLE.match(b))) for b in bottles)):
         return f"bottles must be a list of at most {MAX_BOTTLES} bottle names"
     label = msg.get("label", "")
     if not isinstance(label, str) or len(label) > MAX_LABEL_CHARS:
@@ -89,7 +95,8 @@ def resume_request(agent_id: str, bottle: object, *, agents: Callable[[], Iterab
     metadata = read_metadata(bottle)
     if metadata is None:
         return f"this host has no saved state for {bottle}; start it fresh instead"
-    if not agent_allowed(metadata.agent_name, agents, library):
+    if not agent_allowed(metadata.agent_name, agents, library,
+                         project=project_worktrees.is_worktree(metadata.cwd)):
         return f"this host no longer has the agent {metadata.agent_name!r}"
     # The console click is the launch confirmation.
     return LaunchRequest(agent=metadata.agent_name, bottles=tuple(metadata.bottle_names),

@@ -1038,6 +1038,7 @@ An arrow shows a request and its reply.
 | `library_sync`, `library_moved`, `library_conflict`, `library_pushed`, `library_held` | [Library sync](#library-sync) |
 | `library_builtins` | [The account's version](#the-accounts-version) |
 | `projects`, `project_bottles` | [Projects](#projects) |
+| `launch` with `project`, `launch_trust`, `launch_trust_answer` | [Launching a project](#launching-a-project) |
 | `github_authorize_start`, `github_status` | [GitHub through the bot-bottle app](#github-through-the-bot-bottle-app) |
 | `forge_status`, `forge_repos`, `forge_remove` | [Forges for the console](#forges-for-the-console) |
 | `bottle_suggest`, `bottle_suggest_status`, `bottle_suggestion_*` | [Bottle suggestions from the console](#bottle-suggestions-from-the-console) |
@@ -1391,6 +1392,95 @@ in all (bottles first), so a reply stays well under the link's 16 MiB line. `bra
 the remote's, without its `HEAD`, at most 200. A refusal is `error`, one line
 of at most 300 characters. The request is answered beside the link, two at a
 time, so a slow fetch holds up nothing else.
+
+### Launching a project
+
+A console `launch` may name a `project`: run at a commit of a checkout this
+host reported, as a CLI launch from that checkout would (PRD 0131). The code
+is `project_launch.py` and `project_worktrees.py`.
+
+```json
+{"type": "launch", "agent_id": "6f1c…", "definition": {"name": "claude"},
+ "bottles": ["./dev"], "library_commit": "<40 hex>",
+ "project": {"repo": "github.com/acme/app", "path": "/home/eric/code/app",
+             "branch": "feat/x", "commit": "<40 hex>"}}
+```
+
+- `path` must be a checkout the host reported, exactly as reported, with
+  that `repo`. `branch` is shown and recorded only (`""`: the checkout's
+  `HEAD`); one starting with `-`, or that `git check-ref-format --branch`
+  refuses, is refused. The launch runs `commit`, the one the console showed,
+  wherever the branch is now. A commit the checkout lacks is fetched for as
+  `project_bottles` fetches; still missing, the launch is refused.
+- `bottles` may name the project's bottles as `./<name>`, and
+  `definition.name` a project agent (it wins a name clash, as in the CLI).
+- A refusal is `agent_errored`, before anything is made.
+
+**The worktree.** The host makes a detached, locked worktree of the checkout
+at `commit`, under `<bot_bottle_root>/project-worktrees/<agent_id>/`
+(`git worktree add --detach --lock`). The checkout you work in is never
+switched; `git worktree prune` there leaves it. The launch runs from the
+checkout's place in the worktree, with `copy_cwd` off, as console launches
+are. It records the project's commit as any project launch does, and keeps
+the **checkout** (never the worktree) as used, so `projects` is sent again.
+
+The host database's `project_launches` keeps one row per project launch:
+the checkout, repo, branch, commit, worktree and state (`starting`, `trust`,
+`running`). The worktree is removed (`worktree unlock`, `remove --force`,
+`prune`; just the directory if the checkout is gone):
+
+- when its bottle is torn down: wherever `agent_stopped` is sent for it (the
+  console's `stop`, the agent exiting, `bot-bottle stop`);
+- when the launch fails, its trust is declined, or the trust prompt times
+  out;
+- on host controller start, for every bottle that isn't running. A launch
+  still starting or waiting on trust then is reported to the next console
+  connect, after `agents_running`, as `agent_errored`: "the host restarted
+  before this launch finished; try again".
+
+The row stays while the bottle's saved state does. A resume (console or CLI)
+makes the worktree again from it, at the same commit; with the row gone, or
+the checkout lacking the commit, the resume fails: "its project checkout is
+gone; start fresh instead".
+
+**Trust, asked in the console.** Trust is the CLI's ([projects.md](projects.md#project-bottles)):
+per host and per content hash, so a bottle trusted in the checkout is
+trusted in its worktrees too. When the launch needs project bottles or
+agents the host hasn't trusted, it finds every one (each found one counts as
+trusted, in memory only, to find the next), keeps the launch waiting with its
+worktree, and sends:
+
+```json
+{"type": "launch_trust", "agent_id": "6f1c…",
+ "since": "2026-11-14T12:00:00.123456+00:00",
+ "repo": "github.com/acme/app", "path": "/home/eric/code/app",
+ "branch": "feat/x", "commit": "<40 hex>",
+ "items": [{"kind": "bottle", "name": "dev", "file": ".bot-bottle/bottles/dev.md",
+            "hash": "<64 hex>", "grants": ["reach   api.stripe.com  GET, POST"],
+            "previous": null}]}
+```
+
+- `items` (at most 16): `kind` (`bottle` or `agent`), `name` (the file's
+  stem), `file` (relative to the repo's top, never the worktree's path),
+  `hash`, `grants` as the CLI's prompt lists them, and `previous`
+  (`{trusted_at, grants}`): the record for the checkout's copy of the file,
+  or null.
+- It's sent again, with the same `since`, on each connect until answered.
+  Unanswered for 30 minutes, the launch ends: `agent_errored`, "not started:
+  trust wasn't answered in 30 minutes".
+
+**`launch_trust_answer`** (`agent_id`, `since`, `decision`, `hashes`), from
+the console. It needs only the signed-in session, as an approval's answer
+does. The host acts only on the pending prompt with that exact `since`;
+anything else is ignored.
+
+- `decline` ends the launch: `agent_errored`, "not started: ./dev stays
+  untrusted on this host (`bot-bottle trust ./dev` in <path> to review it)".
+- `trust` with `hashes` exactly the pending items' records each as the
+  CLI's y/N does, with the checkout's path of the file, so `bot-bottle
+  trust --list` and a CLI launch from the checkout see it. The launch then
+  goes on: `agent_stage`s, then `agent_started` or `agent_errored`. Other
+  `hashes` are ignored.
 
 ### Host stats
 
@@ -1958,6 +2048,6 @@ Paths are under `bot_bottle/control/hostctl/` unless shown otherwise.
 | Renaming | `relabel.py` |
 | GitHub | `bot_bottle/github_connect.py` |
 | Library | `library.py` |
-| Projects | `checkouts.py`, `project_bottles.py`, `project_link.py`, `bot_bottle/cli/commands/project.py` |
+| Projects | `checkouts.py`, `project_bottles.py`, `project_link.py`, `project_launch.py`, `project_worktrees.py`, `bot_bottle/cli/commands/project.py` |
 | Manifest tab | `manifest_view.py`, `bot_bottle/run_manifest.py`, `bot_bottle/manifest/document.py`, `bot_bottle/manifest/fingerprint.py`, `manifest_elements.py` |
 | Bottle tab | `bottle_chain.py` |

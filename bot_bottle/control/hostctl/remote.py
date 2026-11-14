@@ -39,7 +39,8 @@ The control stream (JSON lines):
 - `snapshot` -> `snapshot_taken`: workspace patch and conversation position (`snapshots`).
 - `transcript`, `transcript_search`, `transcript_appended`, `agent_working` (`transcript_serve`).
 - `library_sync`, `library_moved`, `library_conflict`, `library_pushed`, `library_held`,
-  `library_builtins` (`library_link`); `projects` and `project_bottles` (`project_link`).
+  `library_builtins` (`library_link`); `projects` and `project_bottles` (`project_link`);
+  a `launch` with `project`, `launch_trust`, `launch_trust_answer` (`project_launch`).
 
 Pairing on disk is `pairing.py`; `iroh` (`bot-bottle[remote]`) is imported only when needed.
 """
@@ -65,6 +66,7 @@ from .live_metrics import MetricsWatch
 from ...lib import log
 from ...util import same_instant
 from .audit_index import query_host_journal
+from .agent_turns import AgentTurns
 from .audit_link import AuditLink, audit_events
 from .upgrade_link import UpgradeLink
 from .block_link import BlockLink
@@ -126,34 +128,6 @@ class Terminal(Protocol):
 TerminalFactory = Callable[[str, str], Awaitable["Terminal | None"]]
 
 
-class AgentTurns:
-    """Runs each agent's slow requests (launch, resume, stop) in turn, beside
-    the caller, so a wedged teardown holds up only its own agent."""
-
-    def __init__(self) -> None:
-        # agent id -> its latest request, still running
-        self.pending: dict[str, asyncio.Task[None]] = {}
-
-    def submit(self, agent_id: str, work: Callable[[], Awaitable[None]]) -> None:
-        """Start `work` once `agent_id`'s previous request is done."""
-        before = self.pending.get(agent_id)
-
-        async def in_turn() -> None:
-            if before is not None:
-                await asyncio.wait({before})
-            await work()
-
-        task = asyncio.create_task(in_turn())
-        self.pending[agent_id] = task
-        task.add_done_callback(lambda t: self._done(agent_id, t))
-
-    def _done(self, agent_id: str, task: "asyncio.Task[None]") -> None:
-        if self.pending.get(agent_id) is task:
-            del self.pending[agent_id]
-        if not task.cancelled() and task.exception() is not None:
-            log.warn(f"remote: {agent_id}: {task.exception()}")
-
-
 @dataclass
 class LinkState:
     """What survives reconnects: running agents (console id -> bottle id),
@@ -211,13 +185,13 @@ class ConsoleLink:
             a: b for a, b in self.running.items() if a not in self.present}, bottles)
         self.upgrades = UpgradeLink(self._send, audit=lambda: getattr(bottles, "audit", None))
         self.library = LibraryLink(self._send, audit=lambda: getattr(bottles, "audit", None))
-        self.projects = ProjectLink(self._send)
+        self.projects = ProjectLink(self._send, start=self._start, running=lambda: self.running)
         self._last_stats: float = 0.0
         self.canaries = CanaryLink(self._send, lambda: self._orchestrator(""),
                                    lambda: self.running)
 
     # Wait on the bottle: minutes for a launch, for good if a teardown wedges.
-    SLOW = frozenset({"launch", "resume", "stop"})
+    SLOW = frozenset({"launch", "resume", "stop", "launch_trust_answer"})
 
     async def take(self, msg: dict[str, Any]) -> None:
         """Handle `msg` off the link: a slow one in its agent's turn (or the forge's), beside it."""
@@ -277,6 +251,9 @@ class ConsoleLink:
 
     async def _launch(self, agent_id: str, definition: object, msg: dict[str, Any]) -> None:
         if not agent_id:
+            return
+        if "project" in msg:  # in a worktree of a checkout here (PRD 0131)
+            await self.projects.launches.launch(agent_id, msg)
             return
         definition = definition if isinstance(definition, dict) else {}
         if "content" in definition:
@@ -484,6 +461,7 @@ class ConsoleLink:
         finally:
             self._stopping.discard(bottle)
         await self._send({"type": "agent_stopped", "agent_id": agent_id, "exit_code": exit_code})
+        await self.projects.launches.ended(agent_id)
         for child_id in child_ids:
             await self._stop(child_id)
 
@@ -623,6 +601,7 @@ class ConsoleLink:
             self.running.pop(agent_id, None)
             self.present.pop(agent_id, None)
             self._close_terminal(agent_id)
+            await self.projects.launches.ended(agent_id)
             exit_info = state.get("exit")
             code = int(exit_info.get("status", 0) or 0) if isinstance(exit_info, dict) else 0  # type: ignore[arg-type]
             started = self._started_at.pop(agent_id, None)

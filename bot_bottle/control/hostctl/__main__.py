@@ -26,7 +26,7 @@ from .runner import (
     DaemonLockHeld, HostControlState, control_socket_path, hold_daemon_lock,
     leave_callers_directory, state_dir,
 )
-from . import budget, builtins_cache, host_db, index_db, localsock
+from . import budget, builtins_cache, host_db, index_db, localsock, project_worktrees
 from .github_git_tokens import GitTokenRenewer
 from .audit_events import HostAudit
 from .architect_bottle import ArchitectBottle, install as install_architect
@@ -155,6 +155,10 @@ def main() -> int:
     pruner = JournalPruner(audit).start()
     # Registers the `bottle` finisher, so it must exist before adopting.
     bottles = BottleService(sessions, audit=audit)
+    # Project launches' worktrees whose bottle isn't running (PRD 0131), before
+    # the console link can launch another.
+    project_worktrees.sweep({r.id for r in sessions.records() if sessions.exists(r.id)}
+                            if tmux_version() is not None else set())
     # The console link (ADR 0007), while remote access is enabled.
     remote_link = Supervisor(bottles)
     remote_link.start()
