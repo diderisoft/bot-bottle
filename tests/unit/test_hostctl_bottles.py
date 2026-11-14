@@ -68,7 +68,8 @@ class TestLaunchRequestSchema(unittest.TestCase):
     def test_cli_only_fields_are_refused_from_other_roles(self) -> None:
         for name in LAUNCH_CLI_ONLY:
             value = {"cwd": "/w", "copy_cwd": False, "secrets": {}, "answers": {},
-                     "host_keys": {}, "run_bottle": "---\n---\n"}[name]
+                     "host_keys": {}, "run_bottle": "---\n---\n",
+                     "library_commit": "a" * 40}[name]
             with self.subTest(name), self.assertRaises(PermissionError):
                 LaunchRequest.from_json({"agent": "demo", name: value}, ROLE_ORCHESTRATOR)
         LaunchRequest.from_json({"agent": "demo", "prompt": "hi"}, ROLE_ORCHESTRATOR)

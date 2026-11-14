@@ -22,16 +22,16 @@ after a longer wait for a refusal that won't pass by itself: a deleted account
 
 A console launch names the library commit it runs (`library_commit`): the
 host fetches `main` if it lacks that commit, then resolves library bottles and
-agents from a copy of that commit's `agents/` and `bottles/` (`tree_at`), so
-the repo's working tree and `main` are untouched, and a host whose `main`
-diverged still launches the console's version.
+agents from a copy of that commit's `agents/` and `bottles/` (`tree_at`)
+first, its own copy only for names the commit lacks. The repo's working tree
+and `main` are untouched, and a host whose `main` diverged still launches the
+console's version.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import dataclasses
 import json
 import os
 import shutil
@@ -64,9 +64,12 @@ REMOTE_REF = "refs/remotes/library/main"
 LAUNCH_SYNC_SECONDS = 2.0
 _TOKEN_SLACK = 60.0  # seconds before expiry a token is replaced
 # Where launches' commit copies are kept (under the root, outside the
-# tracked directories), and how many.
+# tracked directories), and how many. One used within the grace period stays
+# too: a launch may still be reading it.
 TREES_DIR = "library-commits"
 KEEP_TREES = 8
+TREE_GRACE_SECONDS = 3600.0
+_TREE_MODES = ("100644", "100755", "120000")  # a symlink is a file holding its target
 # The longest a fetch or push may take, and how long before git gives up on a
 # transfer slower than a kilobyte a second.
 NETWORK_SECONDS = 60.0
@@ -320,51 +323,71 @@ class LibrarySync:
             return Synced(stamp=stamp)
 
     def ensure_commit(self, sha: str) -> None:
-        """Have the commit `sha`, fetching the library's `main` for it if it's
-        missing here (only the remote ref moves). LibraryError if it's still
-        missing."""
+        """Have the commit `sha`, in the library's `main` or this host's
+        history, fetching `main` for it if it isn't (only the remote ref
+        moves). LibraryError if it's still not there: the console names
+        commits of `main`, never any other object."""
         if not LIBRARY_COMMIT.fullmatch(sha):
             raise LibraryError(f"{sha!r} isn't a commit sha")
         with self._lock:
             if not (self.root / ".git").is_dir():
                 raise LibraryError(f"this host has no library repo at {self.root}")
-            if self._rev(sha) == sha:
+            if self._reachable(sha):
                 return
             try:
                 self._fetch_main()
             except pairing.RemoteError as e:
                 raise LibraryError(f"couldn't get a library token: {e}") from e
-            if self._rev(sha) != sha:
+            except LibraryError as e:
+                raise LibraryError(f"couldn't fetch library commit {sha[:12]}: {e}") from e
+            if not self._reachable(sha):
                 raise LibraryError(f"library commit {sha[:12]} isn't on this host or in the "
                                    "account's main; refresh the console and launch again")
+
+    def _reachable(self, sha: str) -> bool:
+        return self._rev(sha) == sha and any(
+            self._rev(ref) and self._contains(ref, sha) for ref in (REMOTE_REF, "HEAD"))
 
     def tree_at(self, sha: str) -> Path:
         """The library's `agents/` and `bottles/` as of commit `sha` (fetched
         if missing), copied into a directory of their own: what a launch at
         that commit resolves library bottles and agents from."""
         self.ensure_commit(sha)
-        trees = private_dir(self.root / TREES_DIR)
-        tree = trees / sha
-        if not tree.is_dir():
-            staging = Path(tempfile.mkdtemp(dir=trees, prefix=".new-"))
-            for entry in self._git("ls-tree", "-r", "-z", sha, *TRACKED).stdout.split("\0"):
+        with _TREES:
+            trees = private_dir(self.root / TREES_DIR)
+            tree = trees / sha
+            if not tree.is_dir():
+                self._copy_tree(sha, trees, tree)
+            os.utime(tree)
+            _prune(trees, keep=tree)
+        return tree
+
+    def _copy_tree(self, sha: str, trees: Path, tree: Path) -> None:
+        """Write `sha`'s tracked files into `tree`, whole or not at all. Only
+        files: no symlinks (as `_fast_forward` checks them out), no
+        submodules, and nothing outside it."""
+        staging = Path(tempfile.mkdtemp(dir=trees, prefix=".new-"))
+        try:
+            listed = self._git("ls-tree", "-r", "-z", sha, "--", *TRACKED).stdout
+            for entry in listed.split("\0"):
                 meta, _, rel = entry.partition("\t")
-                if meta.split(" ")[:2] in (["100644", "blob"], ["100755", "blob"]):
-                    target = staging / rel
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_bytes(self._blob(meta.split(" ")[2]))
+                mode, kind, oid = (meta.split(" ") + ["", "", ""])[:3]
+                parts = rel.split("/")
+                if mode not in _TREE_MODES or kind != "blob" or parts[0] not in TRACKED \
+                        or any(p in ("", ".", "..") or p.lower() == ".git" for p in parts):
+                    continue
+                target = staging.joinpath(*parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(self._blob(oid))
             for directory in TRACKED:
                 (staging / directory).mkdir(exist_ok=True)
             try:
                 staging.rename(tree)
-            except OSError:  # another launch got there first: same content
-                shutil.rmtree(staging, ignore_errors=True)
-        os.utime(tree)
-        others = (p for p in trees.iterdir() if p != tree and not p.name.startswith("."))
-        for old in sorted(others, key=lambda p: p.stat().st_mtime,
-                          reverse=True)[KEEP_TREES - 1:]:
-            shutil.rmtree(old, ignore_errors=True)
-        return tree
+            except OSError:
+                if not tree.is_dir():
+                    raise
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
 
     def _blob(self, oid: str) -> bytes:
         """A blob's bytes, exactly (`_git` reads text)."""
@@ -404,6 +427,22 @@ class LibrarySync:
                 deleted=[path for how, path in changes if how == "D"])
 
 
+_TREES = threading.Lock()  # making and pruning commit copies
+
+
+def _prune(trees: Path, *, keep: Path) -> None:
+    """Remove all but `keep` and the newest copies (`KEEP_TREES` in all),
+    sparing any used within `TREE_GRACE_SECONDS`, and staging left behind by
+    a crash."""
+    recent = time.time() - TREE_GRACE_SECONDS
+    found = [(p.stat().st_mtime, p) for p in trees.iterdir() if p != keep]
+    copies = sorted(((m, p) for m, p in found if not p.name.startswith(".")), reverse=True)
+    stale = [p for m, p in found if p.name.startswith(".") and m < recent]
+    stale += [p for m, p in copies[KEEP_TREES - 1:] if m < recent]
+    for old in stale:
+        shutil.rmtree(old, ignore_errors=True)
+
+
 class _Attempt:
     """A sync a launch waits on; later launches wait on the same one."""
 
@@ -432,12 +471,17 @@ def _launch_sync() -> LibrarySync:
     return LibrarySync(host_id="")
 
 
-def commit_home(request: LaunchRequest) -> Path | None:
-    """Where a launch's library bottles and agents resolve from: its library
-    commit's copy (`LibrarySync.tree_at`), or None for `~/.bot-bottle` as
-    it is."""
+def commit_tree(request: LaunchRequest) -> Path | None:
+    """Where `tree_at` copied a launch's library commit (no git; for its
+    launch record, once it started), or None."""
     commit = request.library_commit
-    return _launch_sync().tree_at(commit) if commit else None
+    if not commit:
+        return None
+    try:
+        root = _launch_sync().root
+    except pairing.RemoteError:  # unpaired since: the same default root
+        root = bot_bottle_root()
+    return root / TREES_DIR / commit
 
 
 def launch_index(request: LaunchRequest, cwd: str,
@@ -446,13 +490,15 @@ def launch_index(request: LaunchRequest, cwd: str,
     """A launch's bottle versions, for its audit, and the manifest index it
     resolves from. Without a library commit, hand edits become a version
     first (PRD 0103). With one, library bottles and agents come from that
-    commit and it's the host version; project bottles and built-ins resolve
-    as ever."""
-    home = commit_home(request)
-    versions = launch_versions(cwd, host=request.library_commit)
+    commit, else this host's copy (a host whose first sync hasn't merged
+    keeps its own), and it's the host version; project bottles and
+    built-ins resolve as ever."""
+    commit = request.library_commit
+    tree = _launch_sync().tree_at(commit) if commit else None
+    versions = launch_versions(cwd, host=commit)
     index = manifest_for(cwd)
-    if home is not None:
-        index = dataclasses.replace(index, home_md=home)
+    if tree is not None:
+        index = index.with_library(tree)
     return run_bottle.with_content(versions, request.run_bottle), index
 
 
@@ -617,5 +663,6 @@ class LibraryLink:
 
 
 __all__ = ["KEEP_TREES", "LAUNCH_SYNC_SECONDS", "LibraryError", "LibraryLink", "LibrarySync",
-           "NETWORK_SECONDS", "RETRY_SECONDS", "Synced", "TREES_DIR", "Token", "commit_home",
-           "console_token", "head_stamp", "launch_index", "sync_for_launch"]
+           "NETWORK_SECONDS", "RETRY_SECONDS", "Synced", "TREES_DIR", "TREE_GRACE_SECONDS",
+           "Token", "commit_tree", "console_token", "head_stamp", "launch_index",
+           "sync_for_launch"]

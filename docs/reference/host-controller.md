@@ -1073,24 +1073,31 @@ retry or a duplicate is a `launch`) carry `library_commit`: the 40-character
 sha of the account's `main` the user was looking at. Anything else is refused
 with `agent_errored`. The host then:
 
-1. Makes sure it has the commit. If `~/.bot-bottle` lacks it, the host
-   fetches the library's `main` as a sync does (only `refs/remotes/library/main`
-   moves). Still missing, the launch fails, saying so.
+1. Makes sure it has the commit, in the library's `main` or its own
+   history: never any other object. If not, the host fetches the library's
+   `main` as a sync does (only `refs/remotes/library/main` moves). Still
+   missing (or the library unreachable), the launch fails, saying so.
 2. Resolves library bottles and agents from that commit: its `agents/` and
-   `bottles/` are copied into `~/.bot-bottle/library-commits/<sha>/` (the last
-   eight are kept) and resolved from there. The working tree and `main` are
-   untouched, and no hand edits are committed, so a host whose `main` has
-   diverged still launches the console's version. Project bottles and
-   built-ins resolve as ever. An agent is checked at that commit, not
-   against the host's own list.
+   `bottles/` are copied into `~/.bot-bottle/library-commits/<sha>/` and
+   resolved from there first. Only files are copied: a symlink becomes a file
+   holding its target, as in the working tree. The last eight copies are kept,
+   and any used in the last hour. The working tree and `main` are untouched,
+   and no hand edits are committed, so a host whose `main` has diverged (a
+   pending conflict) still launches the console's version. A name the commit
+   lacks resolves from the host's own copy, so a host whose first sync hasn't
+   merged still launches the bottles it had. Project bottles and built-ins
+   resolve as ever. An agent named is looked for there too, not only in the
+   host's own list.
 3. Records the commit as the launch's host version: the start event's
    `bottle_versions.host`, and what the console's "changed since launch"
    marker compares. Each bottle's launch fingerprint is taken at the commit
    too.
 
-Without `library_commit` (CLI launches, the library off, older consoles),
-launches resolve from `~/.bot-bottle` as it is. `POST /bottles` takes the same
-`library_commit` field, checked the same way.
+A `resume` resolves at the commit it names (the console's `main` then), as a
+CLI resume reads the files as they are now. Without `library_commit` (CLI
+launches and resumes, the library off or down, older consoles), launches
+resolve from `~/.bot-bottle` as it is. `POST /bottles` takes the same
+`library_commit` field, checked the same way, from the `cli` role only.
 
 ### Host stats
 

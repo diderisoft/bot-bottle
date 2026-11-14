@@ -33,7 +33,7 @@ def agent_allowed(name: object, agents: Callable[[], Iterable[str]], commit: str
     """Whether a console launch may name the agent `name`: one of this host's,
     or with a library commit, any name (the launch resolves it at that
     commit, and refuses one it lacks)."""
-    if not isinstance(name, str) or not _NAME.match(name):
+    if not isinstance(name, str) or not _NAME.fullmatch(name):
         return False
     return bool(commit) or name in agents()
 

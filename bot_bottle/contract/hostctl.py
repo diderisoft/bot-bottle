@@ -414,7 +414,9 @@ class LaunchRequest:
             raise ValueError("launch: headless needs a prompt")
 
 
-LAUNCH_CLI_ONLY = ("cwd", "copy_cwd", "secrets", "answers", "host_keys", "run_bottle")
+# `library_commit`: an orchestrator can't pick an older library commit's bottles.
+LAUNCH_CLI_ONLY = ("cwd", "copy_cwd", "secrets", "answers", "host_keys", "run_bottle",
+                   "library_commit")
 # A run's unsaved bottle's name in `LaunchRequest.bottles`, and its size cap.
 RUN_BOTTLE = "suggested"
 RUN_BOTTLE_MAX_BYTES = 64 * 1024

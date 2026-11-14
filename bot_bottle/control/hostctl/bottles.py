@@ -441,7 +441,7 @@ class BottleService:
                     run_manifest.record_launch(
                         identity, plan.manifest.bottle, names=_chain(request), cwd=request.cwd,
                         host_version=str(versions.get("host", "")),
-                        home=library_link.commit_home(request))
+                        library=library_link.commit_tree(request))
                     if record.credentials is not None:
                         self.credentials.add(
                             identity, record.credentials, registry_id=bottle.registry_id,

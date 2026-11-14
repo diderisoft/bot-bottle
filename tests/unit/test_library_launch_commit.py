@@ -127,7 +127,8 @@ class TreeAt(_Hosts):
         first = delphi.tree_at(shas[0])
         (first / "bottles/marker").write_text("")
         self.assertTrue((delphi.tree_at(shas[0]) / "bottles/marker").exists())  # reused
-        with mock.patch.object(ll, "KEEP_TREES", 2):
+        with mock.patch.object(ll, "KEEP_TREES", 2), \
+                mock.patch.object(ll, "TREE_GRACE_SECONDS", 0.0):
             for sha in shas[1:]:
                 delphi.tree_at(sha)
         kept = sorted(p.name for p in (delphi.root / ll.TREES_DIR).iterdir())
@@ -146,6 +147,79 @@ class TreeAt(_Hosts):
             tree = delphi.tree_at(sha)
         self.assertEqual(["theirs"], [p.name for p in tree.iterdir()])
         self.assertEqual([sha], [p.name for p in (delphi.root / ll.TREES_DIR).iterdir()])
+
+    def test_a_commit_in_no_history_is_refused(self) -> None:
+        delphi = self.host("delphi", "v0")
+        self.publish(delphi)
+        self.edit(delphi, "dropped")
+        dangling = _git(delphi.root, "rev-parse", "HEAD")
+        _git(delphi.root, "reset", "-q", "--hard", "HEAD~1")  # still an object here
+        with self.assertRaisesRegex(ll.LibraryError, "isn't on this host or in the account"):
+            delphi.tree_at(dangling)
+        self.assertEqual(1, self.tokens)  # it looked in the library's main first
+        self.assertFalse((delphi.root / ll.TREES_DIR / dangling).exists())
+
+    def test_a_failed_fetch_says_which_commit(self) -> None:
+        delphi = self.host("delphi", "v0")
+        delphi.token_source = lambda: ll.Token(url=str(self.tmp / "gone.git"), username="h",
+                                               token="t", expires=time.time() + 900)
+        with self.assertRaisesRegex(ll.LibraryError, "couldn't fetch library commit aaaaaaaaaaaa"):
+            delphi.tree_at("a" * 40)
+
+    def test_only_files_are_copied(self) -> None:
+        delphi = self.host("delphi", "v0")
+        os.symlink("/etc/passwd", delphi.root / "bottles/link.md")
+        blob = _git(delphi.root, "hash-object", "-w", "--stdin")  # empty
+        head = _git(delphi.root, "rev-parse", "HEAD")
+        record("a link", root=delphi.root)
+        # A tree git's own checks would refuse, made locally: a `..` entry
+        # and a submodule, beside the link.
+        bottles = _git(delphi.root, "rev-parse", "HEAD:bottles")
+        listing = _git(delphi.root, "ls-tree", bottles) + (
+            f"\n100644 blob {blob}\t..\n160000 commit {head}\tmod\n")
+        odd = subprocess.run(["git", "-C", str(delphi.root), "mktree"], input=listing,
+                             capture_output=True, text=True, check=True).stdout.strip()
+        top = subprocess.run(["git", "-C", str(delphi.root), "mktree"],
+                             input=_git(delphi.root, "ls-tree", "HEAD").replace(
+                                 bottles, odd), capture_output=True, text=True,
+                             check=True).stdout.strip()
+        sha = _git(delphi.root, "-c", "user.name=t", "-c", "user.email=t@t", "commit-tree",
+                   top, "-p", "HEAD", "-m", "odd")
+        _git(delphi.root, "update-ref", "HEAD", sha)
+        tree = delphi.tree_at(sha)
+        link = tree / "bottles/link.md"
+        self.assertFalse(link.is_symlink())
+        self.assertEqual("/etc/passwd", link.read_text())
+        self.assertEqual(["link.md", "work.md"],
+                         sorted(p.name for p in (tree / "bottles").iterdir()))
+
+    def test_a_failed_copy_leaves_nothing(self) -> None:
+        delphi = self.host("delphi", "v0")
+        sha = self.publish(delphi)
+        with mock.patch.object(ll.LibrarySync, "_blob", side_effect=ll.LibraryError("boom")), \
+                self.assertRaisesRegex(ll.LibraryError, "boom"):
+            delphi.tree_at(sha)
+        self.assertEqual([], list((delphi.root / ll.TREES_DIR).iterdir()))
+
+    def test_a_copy_in_use_and_staging_left_by_a_crash(self) -> None:
+        delphi = self.host("delphi", "v0")
+        shas = [self.publish(delphi)]
+        for n in range(1, 3):
+            self.edit(delphi, f"v{n}")
+            shas.append(self.publish(delphi))
+        trees = delphi.root / ll.TREES_DIR
+        delphi.tree_at(shas[0])
+        crashed = trees / ".new-crashed"
+        crashed.mkdir()
+        old = time.time() - 2 * ll.TREE_GRACE_SECONDS
+        with mock.patch.object(ll, "KEEP_TREES", 1):
+            delphi.tree_at(shas[1])  # the first was used just now: kept
+            self.assertEqual(sorted([".new-crashed", *shas[:2]]),
+                             sorted(p.name for p in trees.iterdir()))
+            for path in (crashed, trees / shas[0]):
+                os.utime(path, (old, old))
+            delphi.tree_at(shas[2])
+        self.assertEqual(sorted(shas[1:]), sorted(p.name for p in trees.iterdir()))
 
     def test_refusals(self) -> None:
         delphi = self.host("delphi", "v0")
@@ -195,7 +269,22 @@ class LaunchIndex(_Hosts):
         self.assertIn("You are base.", manifest.agent.prompt)
         self.assertEqual(head, _git(self.delphi.root, "rev-parse", "HEAD"))  # no hand-edit commit
         self.assertEqual(self.delphi.root / ll.TREES_DIR / sha,
-                         ll.commit_home(LaunchRequest(agent="dev", library_commit=sha)))
+                         ll.commit_tree(LaunchRequest(agent="dev", library_commit=sha)))
+
+    def test_names_the_commit_lacks_resolve_from_the_hosts_copy(self) -> None:
+        sha = self.publish(self.delphi)
+        (self.delphi.root / "agents/mine.md").write_text(_AGENT.format("mine"))
+        (self.delphi.root / "bottles/mine.md").write_text(_BOTTLE.format("mine"))
+        self.edit(self.delphi, "later")
+        _versions, index = self.index(LaunchRequest(agent="dev", library_commit=sha))
+        index.require_agent("mine")
+        self.assertIn("You are mine.", index.load_for_agent("mine", ("mine",)).agent.prompt)
+        self.assertEqual({"WHO": "base"}, dict(index.load_for_agent("dev", ("work",)).bottle.env))
+        tree = self.delphi.root / ll.TREES_DIR / sha
+        self.assertEqual(tree / "agents/dev.md", index.host_agent("dev"))
+        self.assertEqual(self.delphi.root / "agents/mine.md", index.host_agent("mine"))
+        self.assertIsNone(index.host_agent("nobody"))
+        self.assertIn("mine", index.all_agent_names)
 
     def test_without_a_commit_nothing_changes(self) -> None:
         self.edit(self.delphi, "hand", commit=False)
@@ -205,7 +294,7 @@ class LaunchIndex(_Hosts):
         self.assertIn("edited by hand", _git(self.delphi.root, "log", "-1", "--format=%s"))
         self.assertEqual("---\n---\n", versions["run_bottle"])
         self.assertEqual(self.delphi.root, index.home_md)
-        self.assertIsNone(ll.commit_home(LaunchRequest(agent="dev")))
+        self.assertIsNone(ll.commit_tree(LaunchRequest(agent="dev")))
 
     def test_the_launch_fingerprint_is_taken_at_the_commit(self) -> None:
         sha = self.publish(self.delphi)
@@ -214,7 +303,7 @@ class LaunchIndex(_Hosts):
                 mock.patch.dict(os.environ, {"HOME": str(self.tmp)}):
             run_manifest.record_launch("s1", ManifestBottle(), names=("work",),
                                        cwd=str(self.tmp), host_version=sha,
-                                       home=self.delphi.tree_at(sha))
+                                       library=self.delphi.tree_at(sha))
             at_commit = run_manifest.launch_record("s1")["bottles"]["work"]
             run_manifest.record_launch("s2", ManifestBottle(), names=("work",),
                                        cwd=str(self.tmp))
@@ -230,6 +319,17 @@ class LaunchSync(unittest.TestCase):
         link = ll.LibraryLink(mock.AsyncMock(), make_sync=lambda: sync)
         with mock.patch.object(ll, "_active", link):
             self.assertIs(sync, ll._launch_sync())  # pylint: disable=protected-access
+
+
+class CommitTree(unittest.TestCase):
+    def test_unpaired_since_the_launch_is_the_default_root(self) -> None:
+        link = ll.LibraryLink(mock.AsyncMock())
+        with mock.patch.object(ll, "_active", link), \
+                mock.patch.object(pairing, "load_pairing",
+                                  side_effect=pairing.RemoteError("not paired")), \
+                mock.patch.object(ll, "bot_bottle_root", return_value=Path("/r")):
+            self.assertEqual(Path("/r") / ll.TREES_DIR / ("a" * 40),
+                             ll.commit_tree(LaunchRequest(agent="dev", library_commit="a" * 40)))
 
 
 class Contract(unittest.TestCase):

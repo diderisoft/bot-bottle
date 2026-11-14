@@ -153,6 +153,8 @@ class ManifestIndex:
     # Bottles only this launch sees, searched first: the architect's own
     # bottle, or a run's unsaved one. Never part of the library.
     extra_bottle_dirs: tuple[Path, ...] = field(default=())
+    # Agents searched before the host's: a library commit's (`with_library`).
+    extra_agent_dirs: tuple[Path, ...] = field(default=())
 
     @classmethod
     def resolve(cls, cwd: str, *, missing_ok: bool = False) -> "ManifestIndex":
@@ -217,6 +219,14 @@ class ManifestIndex:
         }
         return cls(bottles=bottles, agents=agents)
 
+    def with_library(self, tree: Path) -> "ManifestIndex":
+        """This index resolving library bottles and agents from `tree` (a
+        library commit's `agents/` and `bottles/`) before the host's own,
+        which then answers only for names `tree` lacks."""
+        return replace(
+            self, extra_bottle_dirs=(*self.extra_bottle_dirs, tree / "bottles"),
+            extra_agent_dirs=(tree / "agents", *self.extra_agent_dirs))
+
     @property
     def all_bottle_names(self) -> list[str]:
         """Sorted bottle names (filenames in lazy mode)."""
@@ -250,6 +260,8 @@ class ManifestIndex:
         what's offered can run (one named outright still resolves)."""
         assert self.home_md is not None
         files = scan_agent_names(self.home_md / "agents")
+        for directory in reversed(self.extra_agent_dirs):
+            files.update(scan_agent_names(directory))
         if self.cwd_md is not None:
             files.update(scan_agent_names(self.cwd_md / "agents"))
         builtins = {n: p for n, p in scan_agent_names(BUILTIN_AGENTS_DIR).items()
@@ -257,11 +269,14 @@ class ManifestIndex:
         return {**builtins, **files}
 
     def host_agent(self, name: str) -> Path | None:
-        """The agent a project agent `name` replaces: the host's, else the
-        built-in. Lazy mode."""
+        """The agent a project agent `name` replaces: the library commit's,
+        else the host's, else the built-in. Lazy mode."""
         assert self.home_md is not None
-        return (scan_agent_names(self.home_md / "agents").get(name)
-                or scan_agent_names(BUILTIN_AGENTS_DIR).get(name))
+        for directory in (*self.extra_agent_dirs, self.home_md / "agents", BUILTIN_AGENTS_DIR):
+            found = scan_agent_names(directory).get(name)
+            if found is not None:
+                return found
+        return None
 
     def load_for_agent(
         self,
