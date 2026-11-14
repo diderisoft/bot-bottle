@@ -23,7 +23,9 @@ from unittest import mock
 
 from bot_bottle.control.hostctl import library_link as ll
 from bot_bottle.manifest import versions
+from bot_bottle.control.hostctl.library_conflict import LibraryConflictStore
 from bot_bottle.manifest.versions import record
+from tests.unit import use_bottle_root
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -266,6 +268,12 @@ class _FakeSync:
             raise self.error
         return self.results[min(self.calls, len(self.results)) - 1]
 
+    def heads(self) -> tuple[str, str]:
+        return "tip", ""
+
+    def contains(self, newer: str, older: str) -> bool:
+        return newer == older
+
 
 class Link(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
@@ -277,7 +285,8 @@ class Link(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         self.addCleanup(self.tmp.cleanup)
         self.link = ll.LibraryLink(send, make_sync=lambda: self.fake,  # type: ignore[arg-type,return-value]
-                                   root=Path(self.tmp.name))
+                                   root=Path(self.tmp.name), conflicts=LibraryConflictStore(
+                                       Path(self.tmp.name) / "db" / "host.db"))
         self.addCleanup(setattr, ll, "_active", None)
 
     async def settle(self) -> None:
@@ -354,6 +363,9 @@ class BeforeALaunch(unittest.IsolatedAsyncioTestCase):
             self.sent.append(msg)
         self.send = send
         self.addCleanup(setattr, ll, "_active", None)
+        tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
+        self.addCleanup(tmp.cleanup)
+        self.addCleanup(use_bottle_root(Path(tmp.name)))  # the host DB's conflict
 
     def link(self, fake: _FakeSync) -> ll.LibraryLink:
         link = ll.LibraryLink(self.send, make_sync=lambda: fake)  # type: ignore[arg-type,return-value]

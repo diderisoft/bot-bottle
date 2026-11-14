@@ -4,8 +4,10 @@ account's repo in the console's library app, while the console says so.
 - `library_sync` (`enabled`), on each connect: sync only while enabled. (Not
   `library`, which is PRD 0109's request for the host's agents and bottles.)
 - `library_moved` (`head`): the account's `main` moved; fetch and fast-forward.
-- `library_conflict` (`files`): this host's branch didn't merge; it keeps its
-  own version until the conflict is resolved in the console.
+- `library_conflict` (`files`): this host's branch didn't merge. It keeps its
+  own version, and keeps pushing, until a fetched `main` contains the commit
+  it had then (`library_conflict.py`, in the host DB); CLI launches and
+  `bot-bottle status` say a conflict is pending meanwhile.
 - `library_pushed` (`head`, from the host): this host pushed its branch.
 
 The host pushes its `main` to `hosts/<host id>` and fetches `main` by name; it
@@ -36,6 +38,8 @@ import json
 import os
 import shutil
 import signal
+import socket
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -52,8 +56,9 @@ from ... import run_bottle
 from ...contract.hostctl import LIBRARY_COMMIT, LaunchRequest
 from ...lib import log
 from ...manifest.versions import TRACKED, VersionError, git_env, launch_versions, writing
-from ...paths import bot_bottle_root, private_dir
+from ...paths import bot_bottle_root, host_db_path, private_dir
 from . import pairing
+from .library_conflict import Conflict, LibraryConflictStore
 
 if TYPE_CHECKING:
     from ...manifest import ManifestIndex
@@ -229,11 +234,13 @@ def head_stamp(root: Path) -> float:
 @dataclass
 class Synced:
     """What a sync did: the head pushed (to wait on the console's merge), and
-    whether `main` moved here. `stamp`: `head_stamp` once it had, so its own
-    commits don't look like new ones."""
+    whether `main` moved here. `main`: the library's `main` it fetched.
+    `stamp`: `head_stamp` once it had, so its own commits don't look like new
+    ones."""
 
     pushed: str = ""
     moved: bool = False
+    main: str = field(default="", compare=False)
     stamp: float = field(default=0.0, compare=False)
 
 
@@ -307,20 +314,29 @@ class LibrarySync:
             try:
                 with writing(self.root) as local:
                     remote = self._rev(REMOTE_REF)
-                    if remote and remote != local and (not local or self._contains(remote, local)):
+                    if remote and remote != local and (not local or self.contains(remote, local)):
                         self._fast_forward(local, remote)
-                        return Synced(moved=True, stamp=head_stamp(self.root))
+                        return Synced(moved=True, main=remote, stamp=head_stamp(self.root))
                     stamp = head_stamp(self.root)
             except VersionError as e:
                 raise LibraryError(str(e)) from e
             if local and local != remote:
                 # The commit, not HEAD: one made since is the next sync's.
+                # Also while a conflict is pending: the console merges the
+                # branch whole once it's resolved.
                 _token, pushed = self._remote("push", "-q", token.url,
                                               f"{local}:refs/heads/hosts/{self.host_id}")
                 if pushed.returncode != 0:
                     raise _failure("push", pushed.stderr or pushed.stdout)
-                return Synced(pushed=local, stamp=stamp)
-            return Synced(stamp=stamp)
+                return Synced(pushed=local, main=remote, stamp=stamp)
+            return Synced(main=remote, stamp=stamp)
+
+    def heads(self) -> tuple[str, str]:
+        """This host's `main` and the library's as last fetched ("" for
+        none)."""
+        if not (self.root / ".git").is_dir():
+            return "", ""
+        return self._rev("HEAD"), self._rev(REMOTE_REF)
 
     def ensure_commit(self, sha: str) -> None:
         """Have the commit `sha`, in the library's `main` or this host's
@@ -346,7 +362,7 @@ class LibrarySync:
 
     def _reachable(self, sha: str) -> bool:
         return self._rev(sha) == sha and any(
-            self._rev(ref) and self._contains(ref, sha) for ref in (REMOTE_REF, "HEAD"))
+            self._rev(ref) and self.contains(ref, sha) for ref in (REMOTE_REF, "HEAD"))
 
     def tree_at(self, sha: str) -> Path:
         """The library's `agents/` and `bottles/` as of commit `sha` (fetched
@@ -397,7 +413,7 @@ class LibrarySync:
             raise LibraryError(f"git cat-file: {result.stderr.decode(errors='replace').strip()}")
         return result.stdout
 
-    def _contains(self, newer: str, older: str) -> bool:
+    def contains(self, newer: str, older: str) -> bool:
         return self._git("merge-base", "--is-ancestor", older, newer,
                          check=False).returncode == 0
 
@@ -456,11 +472,67 @@ _active: "LibraryLink | None" = None
 
 def sync_for_launch(timeout: float = LAUNCH_SYNC_SECONDS) -> str:
     """Sync before a CLI launch, waiting at most `timeout`: "" when the
-    library is current (or not synced on this host), else a one-line note."""
+    library is current (or not synced on this host), else a one-line note: a
+    conflict still pending after the sync, or that it used the local copy."""
+    note = _launch_sync_note(timeout)
+    conflict = pending_conflict()
+    return conflict_note(conflict) if conflict is not None else note
+
+
+def _launch_sync_note(timeout: float) -> str:
     link = _active
     if link is None or not link.enabled:
         return ""
     return link.sync_for_launch(timeout)
+
+
+def _conflicts() -> LibraryConflictStore:
+    return _active.conflicts() if _active is not None else LibraryConflictStore(host_db_path())
+
+
+def pending_conflict() -> Conflict | None:
+    """The conflict this host waits on, while it syncs or stays paired (a
+    restarted host controller whose link hasn't connected yet still has
+    it)."""
+    try:
+        on = (_active is not None and _active.enabled) or pairing.load_config().enabled
+        return _conflicts().pending() if on else None
+    except (OSError, sqlite3.Error):
+        return None
+
+
+def _names(files: tuple[str, ...]) -> str:
+    """`bottles/dev.md` as `dev`, `agents/x.md` as `agent x`, others as is."""
+    names = [f"agent {f[7:-3]}" if f.startswith("agents/") and f.endswith(".md")
+             else f[8:-3] if f.startswith("bottles/") and f.endswith(".md") else f
+             for f in files]
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def conflict_note(conflict: Conflict) -> str:
+    """The line a CLI launch shows while a conflict is pending."""
+    host = socket.gethostname().split(".")[0] or "this host"
+    what = (f"{_names(conflict.files)} {'has' if len(conflict.files) == 1 else 'have'}"
+            if conflict.files else "this host's library changes have")
+    return f"library: {what} a conflict waiting in the console; launching {host}'s version"
+
+
+def report() -> dict[str, object]:
+    """The library here, for `bot-bottle status`: `state` "conflict" (with
+    `files` and `since`), "off", or "synced" or "syncing" (with `head` and
+    the library's `main` as last fetched)."""
+    conflict = pending_conflict()
+    if conflict is not None:
+        return {"state": "conflict", "files": list(conflict.files), "since": conflict.since}
+    link = _active
+    if link is None or not link.enabled:
+        return {"state": "off"}
+    try:
+        head, main = link.syncer().heads()
+    except (pairing.RemoteError, OSError):
+        head, main = "", ""
+    return {"state": "synced" if head and head == main else "syncing",
+            "head": head, "main": main}
 
 
 def _launch_sync() -> LibrarySync:
@@ -510,7 +582,8 @@ class LibraryLink:
     def __init__(self, send: Callable[[dict[str, Any]], Awaitable[None]], *,
                  audit: Callable[[], Any] = lambda: None,
                  make_sync: Callable[[], LibrarySync] | None = None,
-                 root: Path | None = None) -> None:
+                 root: Path | None = None,
+                 conflicts: LibraryConflictStore | None = None) -> None:
         self._send = send
         self._audit = audit
         self._make_sync = make_sync
@@ -522,13 +595,24 @@ class LibraryLink:
         self._seen: float = 0.0
         self._launch: _Attempt | None = None
         self._launch_lock = threading.Lock()
+        self._conflicts = conflicts
         self.enabled = False
-        self.conflict: list[str] = []
         # The last sync's failure ("" once one succeeds), the wait before the
         # next try, and when that is (time.monotonic(); 0: none due).
         self.error = ""
         self._backoff = 0.0
         self.retry_at = 0.0
+
+    def conflicts(self) -> LibraryConflictStore:
+        if self._conflicts is None:
+            self._conflicts = LibraryConflictStore(host_db_path())
+        return self._conflicts
+
+    @property
+    def conflict(self) -> list[str]:
+        """The files of the conflict pending on the console, if one is."""
+        pending = self.conflicts().pending()
+        return list(pending.files) if pending is not None else []
 
     def syncer(self) -> LibrarySync:
         if self._sync is None:
@@ -548,14 +632,26 @@ class LibraryLink:
             _active = self if self.enabled else (None if _active is self else _active)
             if self.enabled:
                 self.schedule()
+            else:  # off: nothing to resolve (on again, the console says anew)
+                await asyncio.to_thread(self.conflicts().clear)
         elif kind == "library_moved" and self.enabled:
             self.schedule()
         elif kind == "library_conflict":
             files = msg.get("files")
-            self.conflict = [str(f) for f in files] if isinstance(files, list) else []
-            log.warn("library: this host's changes conflict with the library "
-                     f"({', '.join(self.conflict) or 'files unknown'}); resolve it in the "
-                     "console. This host keeps its own version meanwhile.")
+            await asyncio.to_thread(
+                self._record_conflict, [str(f) for f in files] if isinstance(files, list) else [])
+
+    def _record_conflict(self, files: list[str]) -> None:
+        """Keep the conflict, and the commit this host had, which `main`
+        contains once it's resolved."""
+        try:
+            tip = self.syncer().heads()[0]
+        except (pairing.RemoteError, OSError):
+            tip = ""
+        self.conflicts().report(files, tip)
+        log.warn("library: this host's changes conflict with the library "
+                 f"({', '.join(files) or 'files unknown'}); resolve it in the "
+                 "console. This host keeps its own version meanwhile.")
 
     def close(self) -> None:
         """The link closed: nothing syncs through it any more (a launch
@@ -603,17 +699,25 @@ class LibraryLink:
 
     def sync_now(self) -> Synced:
         """One sync, from any thread. A failure is logged once (until it
-        changes) and sets when the next try is due."""
+        changes) and sets when the next try is due. A pending conflict clears
+        once the fetched `main` contains the commit this host had then."""
+        sync = self.syncer()
         try:
-            synced = self.syncer().sync()
+            synced = sync.sync()
         except (LibraryError, pairing.RemoteError, OSError) as e:
             self._failed(e)
             raise
-        if synced.moved:
-            self.conflict = []
         if self.error:
             log.info("library: synced again")
         self.error, self._backoff, self.retry_at = "", 0.0, 0.0
+        try:
+            pending = self.conflicts().pending()
+            if pending is not None and (synced.moved or (
+                    synced.main and pending.tip and sync.contains(synced.main, pending.tip))):
+                self.conflicts().clear()
+                log.info("library: the conflict was resolved in the console")
+        except (OSError, sqlite3.Error) as e:
+            log.warn(f"library: couldn't check the pending conflict: {e}")
         return synced
 
     def _failed(self, e: Exception) -> None:
@@ -664,5 +768,5 @@ class LibraryLink:
 
 __all__ = ["KEEP_TREES", "LAUNCH_SYNC_SECONDS", "LibraryError", "LibraryLink", "LibrarySync",
            "NETWORK_SECONDS", "RETRY_SECONDS", "Synced", "TREES_DIR", "TREE_GRACE_SECONDS",
-           "Token", "commit_tree", "console_token", "head_stamp", "launch_index",
-           "sync_for_launch"]
+           "Token", "commit_tree", "conflict_note", "console_token", "head_stamp",
+           "launch_index", "pending_conflict", "report", "sync_for_launch"]

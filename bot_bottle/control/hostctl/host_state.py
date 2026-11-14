@@ -137,8 +137,12 @@ def trust(body: dict[str, object]) -> dict[str, object]:
     return trusted({})
 
 
-def _pairing_reply(store: pairing.PairingStore) -> dict[str, object]:
+def _pairing_reply(store: pairing.PairingStore, *, library: bool = False) -> dict[str, object]:
     link = store.status()
+    if library:
+        # pylint: disable-next=import-outside-toplevel  # only on a paired host
+        from .library_link import report
+        link["library"] = report()
     # Console agents whose records wait on the console saying where their
     # chain is (`audit_push`).
     waiting = audit_push.WAITING.count()
@@ -148,9 +152,10 @@ def _pairing_reply(store: pairing.PairingStore) -> dict[str, object]:
 
 
 def get_pairing(body: dict[str, object]) -> dict[str, object]:
-    """This host's pairing with a console, and the link's last state."""
+    """This host's pairing with a console, and the link's last state, with
+    the library's (`library`, for `bot-bottle status`)."""
     del body
-    return _pairing_reply(pairing.store())
+    return _pairing_reply(pairing.store(), library=True)
 
 
 def set_pairing(body: dict[str, object]) -> dict[str, object]:

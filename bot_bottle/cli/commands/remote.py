@@ -121,8 +121,9 @@ def _disable() -> int:
 
 
 def link_line() -> str:
-    """One line on the console link, for `bot-bottle status`. It asks a
-    running host controller and starts none: the link runs only there."""
+    """A line on the console link, for `bot-bottle status`, and one on the
+    library when the host controller reports it. It asks a running host
+    controller and starts none: the link runs only there."""
     try:
         found = running_pairing()
     except HostControlError as e:
@@ -131,11 +132,37 @@ def link_line() -> str:
         return "console link: the host controller isn't running, so neither is the link"
     config, status = found[0].config, found[1]
     waiting = status.pop("audit_waiting", 0)
+    library = status.pop("library", None)
     line = _link_state(config, status)
     if waiting:
         line += (f"; audit push waiting for the console for {waiting} "
                  f"agent{'' if waiting == 1 else 's'}")
-    return line
+    return line + (f"\n{library_line(library)}" if isinstance(library, dict) else "")
+
+
+def _ago(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds >= size:
+            return f"{seconds // size}{unit} ago"
+    return f"{seconds}s ago"
+
+
+def library_line(library: dict[str, Any]) -> str:
+    """The library's line (PRD 0131): off, in sync, syncing, or a conflict
+    waiting in the console."""
+    state = library.get("state")
+    if state == "conflict":
+        files = ", ".join(str(f) for f in library.get("files") or ()) or "files unknown"
+        since = _ago(time.time() - float(library.get("since") or time.time()))
+        return f"library: conflict pending in the console ({files}) since {since}"
+    head, main = str(library.get("head") or "")[:7], str(library.get("main") or "")[:7]
+    if state == "synced":
+        return f"library: in sync at {head}"
+    if state == "syncing":
+        return (f"library: at {head or 'no commits yet'}, syncing with the console"
+                + (f" (its main is at {main})" if main else ""))
+    return "library: off"
 
 
 def _link_state(config: pairing.RemoteConfig, status: dict[str, Any]) -> str:
