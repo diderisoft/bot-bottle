@@ -130,10 +130,16 @@ def forges_raw(bottle_name: str, raw: dict[str, object]) -> dict[str, object]:
             raise ManifestError(f"{where}: kind {kind!r} isn't supported yet; "
                                 f"supported: {', '.join(FORGE_KINDS)}")
         url = _url(name, d)
-        parsed = urlparse(url)
+        try:
+            # urlparse refuses a bad IPv6 host, `.port` a port that isn't one.
+            parsed = urlparse(url)
+            host = _host(url)
+        except ValueError:
+            raise ManifestError(f"{where}.url must be an http(s) URL with a valid "
+                                f"host and port (was {url!r})") from None
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
             raise ManifestError(f"{where}.url must be an http(s) URL (was {url!r})")
-        if _host(url) != name:
+        if host != name:
             raise ManifestError(f"{where}.url must be on {name}, the forge it names "
                                 f"(was {url!r})")
         for key in ("ssh", "host_key"):

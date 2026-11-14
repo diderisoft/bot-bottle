@@ -5,7 +5,7 @@ actually use, and every rejection case the PRD enumerates."""
 import textwrap
 import unittest
 
-from bot_bottle.contract.yaml_subset import YamlSubsetError
+from bot_bottle.contract.yaml_subset import MAX_DEPTH, YamlSubsetError
 from bot_bottle.contract.yaml_subset import parse_frontmatter, parse_yaml_subset, serialize_yaml_subset
 
 
@@ -118,6 +118,16 @@ class TestMapping(unittest.TestCase):
               other: 5
         """)
         self.assertEqual({"outer": {"inner": "hello", "other": 5}}, out)
+
+    def test_nesting_is_capped(self):
+        def nested(depth: int, item: str = "") -> str:
+            return "".join(f"{'  ' * i}{item if i else ''}k{i}:\n" for i in range(depth)) \
+                + f"{'  ' * depth}leaf: 1\n"
+        self.assertIn("leaf", str(parse_yaml_subset(nested(MAX_DEPTH - 1))))
+        # Deep enough to have hit Python's recursion limit before the cap.
+        for text in (nested(MAX_DEPTH), nested(2000), nested(2000, "- ")):
+            with self.assertRaisesRegex(YamlSubsetError, "nested deeper"):
+                parse_yaml_subset(text)
 
     def test_duplicate_key_dies(self):
         with self.assertRaises(YamlSubsetError):

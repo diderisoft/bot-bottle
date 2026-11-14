@@ -317,6 +317,19 @@ class ParseCheck(unittest.TestCase):
         self.assertIn("extends", parse_check.problem("bottles/dev.md", "---\nextends: 3\n---\n"))
         self.assertIn("filename", parse_check.problem("bottles/Dev.md", GOOD))
 
+    def test_bad_forge_urls_are_errors(self) -> None:
+        def forge(url: str, name: str = "gitea.x") -> str:
+            return parse_check.problem("bottles/dev.md", f"---\ngit_gate:\n  forges:\n"
+                                       f"    \"{name}\":\n      url: \"{url}\"\n---\n")
+        self.assertEqual("", forge("https://gitea.x:3000", "gitea.x:3000"))
+        for url in ("https://gitea.x:x", "https://gitea.x:99999", "https://gitea.x:-1",
+                    "https://[::1"):
+            self.assertIn("valid host and port", forge(url), url)
+
+    def test_deep_nesting_is_an_error(self) -> None:
+        text = "---\nenv:\n" + "".join(f"{'  ' * i}k{i}:\n" for i in range(1, 2000)) + "---\n"
+        self.assertIn("nested deeper", parse_check.problem("bottles/dev.md", text))
+
     def test_agents(self) -> None:
         self.assertEqual("", parse_check.problem("agents/x.md", "---\nskills: []\n---\nHi.\n"))
         self.assertIn("skills", parse_check.problem("agents/x.md", "---\nskills: 3\n---\n"))

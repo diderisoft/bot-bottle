@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urlparse
 
 from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
 from .util import ManifestError
@@ -59,8 +59,8 @@ def old_repos(repos: Mapping[str, object], kinds: Sequence[str]) -> list[OldRepo
         if not isinstance(key, dict) or key.get("provider") not in kinds:
             continue
         upstream = str(entry.get("url") or "")
-        parsed = urlparse(upstream)
-        api = urlparse(str(key.get("api_url") or ""))
+        parsed = _urlparse(upstream)
+        api = _urlparse(str(key.get("api_url") or ""))
         # The old default: the API on the upstream's host (git_gate/provision.py).
         forge_url = (f"{api.scheme}://{api.netloc}" if api.scheme and api.netloc
                      else f"https://{parsed.hostname or ''}")
@@ -74,6 +74,15 @@ def old_repos(repos: Mapping[str, object], kinds: Sequence[str]) -> list[OldRepo
             token_env=str(key.get("forge_token_env") or ""),
             host_key=str(entry.get("host_key") or "")))
     return out
+
+
+def _urlparse(url: str) -> ParseResult:
+    """`url` parsed, or nothing for one urlparse refuses (a bad IPv6 host):
+    the repo is still old form, just one to rewrite by hand."""
+    try:
+        return urlparse(url)
+    except ValueError:
+        return urlparse("")
 
 
 @dataclass(frozen=True)

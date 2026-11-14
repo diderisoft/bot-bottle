@@ -119,6 +119,14 @@ class TestTheError(_Host):
         self.assertIn("gitea.example.com is connected already", msg)
         self.assertNotIn("forge connect", msg)
 
+    def test_a_url_urlparse_refuses_is_rewritten_by_hand(self) -> None:
+        self.write("dev", OLD.replace("ssh://git@10.0.0.5:30009/acme/textorbium.git",
+                                      "ssh://git@[10.0.0.5/acme/textorbium.git"))
+        msg = self.load_error()
+        self.assertIn("textorbium: ssh://git@[10.0.0.5/acme/textorbium.git isn't "
+                      "<owner>/<repo>", msg)
+        self.assertIn("bot-bottle: gitea.example.com/acme/bot-bottle:write", msg)
+
     def test_no_secret_values(self) -> None:
         self.write("dev", OLD)
         msg = self.load_error()

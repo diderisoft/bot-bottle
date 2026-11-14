@@ -525,6 +525,24 @@ def _preprocess_block_scalars(text: str) -> str:
 # --- Public API ---
 
 
+# Deeper block nesting is refused: the parser recurses once per level.
+MAX_DEPTH = 64
+
+
+def _check_depth(lines: list[_Line]) -> None:
+    """Refuse blocks nested deeper than MAX_DEPTH. Each nested block starts
+    further in than every block it's inside, so the indents of the blocks
+    still open at a line bound the parser's recursion."""
+    open_: list[int] = []
+    for line in lines:
+        while open_ and open_[-1] >= line.indent:
+            open_.pop()
+        open_.append(line.indent)
+        if len(open_) > MAX_DEPTH:
+            raise YamlSubsetError(f"yaml-subset: line {line.lineno} is nested deeper than "
+                                  f"{MAX_DEPTH} levels")
+
+
 def parse_yaml_subset(text: str) -> dict[str, object]:
     """Parse a YAML-subset document; the top level must be a mapping."""
     text = _preprocess_block_scalars(text)
@@ -561,6 +579,7 @@ def parse_yaml_subset(text: str) -> dict[str, object]:
     lines = _tokenize(text)
     if not lines:
         return {}
+    _check_depth(lines)
     base_indent = lines[0].indent
     if base_indent != 0:
         raise YamlSubsetError(
