@@ -55,9 +55,9 @@ def untrusted(request: LaunchRequest) -> list[UntrustedBottleError]:
     # pylint: disable-next=import-outside-toplevel
     from ...manifest import ManifestIndex
     index = ManifestIndex.resolve(request.cwd)
-    home = library_link.commit_home(request)
-    if home is not None:
-        index = dataclasses.replace(index, home_md=home)
+    tree = library_link.library_tree(request)
+    if tree is not None:
+        index = index.with_library(tree)
     found: list[UntrustedBottleError] = []
     while True:
         try:

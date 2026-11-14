@@ -240,6 +240,13 @@ def _launch_sync() -> LibrarySync:
     return LibrarySync(host_id="")
 
 
+def library_tree(request: LaunchRequest) -> Path | None:
+    """A launch's library commit, copied (`LibrarySync.tree_at`), for
+    `ManifestIndex.with_library`; None without one."""
+    commit = request.library_commit
+    return _launch_sync().tree_at(commit) if commit else None
+
+
 def commit_tree(request: LaunchRequest) -> Path | None:
     """Where `tree_at` copied a launch's library commit (no git; for its
     launch record, once it started), or None."""
@@ -265,7 +272,7 @@ def launch_index(request: LaunchRequest, cwd: str,
     (`checkouts`); a resume in a console project launch's worktree makes it
     again if it's gone."""
     commit = request.library_commit
-    tree = _launch_sync().tree_at(commit) if commit else None
+    tree = library_tree(request)
     checkout = project_worktrees.restore(cwd)
     versions = launch_versions(cwd, host=commit)
     if checkout is not None:  # the checkout, never its worktree
@@ -556,5 +563,5 @@ class LibraryLink:
 __all__ = ["KEEP_TREES", "LAUNCH_SYNC_SECONDS", "LibraryError", "LibraryLink", "LibrarySync",
            "MAX_BUILTINS", "MAX_BUILTIN_BYTES", "PUSHED_REF", "RETRY_SECONDS", "Synced",
            "TREES_DIR", "Token", "builtins_message", "commit_tree", "conflict_files",
-           "conflict_note", "console_token", "head_stamp", "label", "launch_index", "on_host",
-           "pending_conflict", "pending_held", "report", "sync_for_launch"]
+           "conflict_note", "console_token", "head_stamp", "label", "launch_index", "library_tree",
+           "on_host", "pending_conflict", "pending_held", "report", "sync_for_launch"]

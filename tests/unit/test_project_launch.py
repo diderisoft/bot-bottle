@@ -289,6 +289,9 @@ class TestRefusals(_Launches):
         self.assertIsInstance(remote_requests.launch_extras({"bottles": ["./dev"]}), str)
         self.assertIsInstance(
             remote_requests.launch_extras({"bottles": ["./dev", "basic"]}, project=True), dict)
+        for name in ("./dev\n", "basic\n"):  # `$` would let a trailing newline through
+            self.assertIsInstance(
+                remote_requests.launch_extras({"bottles": [name]}, project=True), str)
         self.assertFalse(remote_requests.agent_allowed("reviewer", lambda: [], ""))
         self.assertTrue(remote_requests.agent_allowed("reviewer", lambda: [], "", project=True))
 

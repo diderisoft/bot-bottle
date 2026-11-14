@@ -65,8 +65,8 @@ def launch_extras(msg: dict[str, Any], *, project: bool = False) -> dict[str, An
         return f"the prompt must be text of at most {MAX_PROMPT_CHARS} characters"
     bottles = msg.get("bottles", [])
     if (not isinstance(bottles, list) or len(bottles) > MAX_BOTTLES
-            or not all(isinstance(b, str) and (_NAME.match(b) or (
-                project and _PROJECT_BOTTLE.match(b))) for b in bottles)):
+            or not all(isinstance(b, str) and (_NAME.fullmatch(b) or (
+                project and _PROJECT_BOTTLE.fullmatch(b))) for b in bottles)):
         return f"bottles must be a list of at most {MAX_BOTTLES} bottle names"
     label = msg.get("label", "")
     if not isinstance(label, str) or len(label) > MAX_LABEL_CHARS:
@@ -85,7 +85,7 @@ def resume_request(agent_id: str, bottle: object, *, agents: Callable[[], Iterab
     why it can't be. `commit`: the library commit the console names."""
     # pylint: disable-next=import-outside-toplevel
     from ...bottle_state import read_metadata
-    if not isinstance(bottle, str) or not _IDENTITY.match(bottle):
+    if not isinstance(bottle, str) or not _IDENTITY.fullmatch(bottle):
         return "resume needs the bottle it ran as"
     library = library_commit({"library_commit": commit})
     if library is None:
