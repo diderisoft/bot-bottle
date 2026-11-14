@@ -62,6 +62,7 @@ from ...manifest.versions import VersionError, launch_versions, set_author
 from ...paths import bot_bottle_root, host_db_path
 from . import pairing
 from .builtins_cache import installed_release
+from .checkouts import learn_launch
 from .library_conflict import Conflict, LibraryConflictStore
 from .library_git import (KEEP_TREES, PUSHED_REF, TREES_DIR, LibraryError, LibrarySync, Synced,
                           Token, console_token, head_stamp)
@@ -260,10 +261,13 @@ def launch_index(request: LaunchRequest, cwd: str,
     first (PRD 0103). With one, library bottles and agents come from that
     commit, else this host's copy (a host whose first sync hasn't merged
     keeps its own), and it's the host version; project bottles and
-    built-ins resolve as ever."""
+    built-ins resolve as ever. A project's checkout is kept as used
+    (`checkouts`)."""
     commit = request.library_commit
     tree = _launch_sync().tree_at(commit) if commit else None
     versions = launch_versions(cwd, host=commit)
+    if "project" in versions:  # the console lists the checkouts launched from
+        learn_launch(cwd)
     index = manifest_for(cwd)
     if tree is not None:
         index = index.with_library(tree)

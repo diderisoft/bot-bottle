@@ -39,7 +39,7 @@ The control stream (JSON lines):
 - `snapshot` -> `snapshot_taken`: workspace patch and conversation position (`snapshots`).
 - `transcript`, `transcript_search`, `transcript_appended`, `agent_working` (`transcript_serve`).
 - `library_sync`, `library_moved`, `library_conflict`, `library_pushed`, `library_held`,
-  `library_builtins` (`library_link`).
+  `library_builtins` (`library_link`); `projects` and `project_bottles` (`project_link`).
 
 Pairing on disk is `pairing.py`; `iroh` (`bot-bottle[remote]`) is imported only when needed.
 """
@@ -55,7 +55,6 @@ import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
@@ -74,7 +73,8 @@ from .library_link import LibraryLink
 from .console_terminal import HISTORY_LINES, session_terminals, type_into, valid_size
 from .pairing import (RemoteConfig, RemoteError, import_iroh, load_config, secret_key,
                       write_status)
-from .remote_requests import agent_allowed, launch_extras, resume_request
+from .project_link import ProjectLink
+from .remote_requests import agent_allowed, launch_extras, local_agents, resume_request
 from .transcript_serve import TranscriptLink
 
 if TYPE_CHECKING:
@@ -107,18 +107,6 @@ def terminal_agent_id(bottle: str, activation: str) -> str:
     and run, so a reconnect or restart names it the same, storing nothing."""
     digest = hashlib.sha256(f"{bottle}\0{activation}".encode()).hexdigest()[:32]
     return f"t-{digest}"
-
-
-def local_agents() -> list[str]:
-    """The agents a remote launch may name: those under `~/.bot-bottle/`."""
-    # pylint: disable=import-outside-toplevel
-    from ...manifest import ManifestError, ManifestIndex
-    try:
-        # From $HOME, so only home agents.
-        return ManifestIndex.resolve(str(Path.home()), missing_ok=True).all_agent_names
-    except (ManifestError, OSError) as e:
-        log.warn(f"remote: can't list local agents: {e}")
-        return []
 
 
 class Terminal(Protocol):
@@ -223,6 +211,7 @@ class ConsoleLink:
             a: b for a, b in self.running.items() if a not in self.present}, bottles)
         self.upgrades = UpgradeLink(self._send, audit=lambda: getattr(bottles, "audit", None))
         self.library = LibraryLink(self._send, audit=lambda: getattr(bottles, "audit", None))
+        self.projects = ProjectLink(self._send)
         self._last_stats: float = 0.0
         self.canaries = CanaryLink(self._send, lambda: self._orchestrator(""),
                                    lambda: self.running)
@@ -263,8 +252,8 @@ class ConsoleLink:
                                 msg.get("lines"))
         elif kind in AuditLink.REQUESTS | UpgradeLink.REQUESTS:  # passkey-gated (ADR 0013, 0022)
             await (self.audit_link if kind in AuditLink.REQUESTS else self.upgrades).handle(msg)
-        elif kind in LibraryLink.REQUESTS:
-            await self.library.handle(msg)
+        elif kind in LibraryLink.REQUESTS | ProjectLink.REQUESTS:
+            await (self.library if kind in LibraryLink.REQUESTS else self.projects).handle(msg)
         elif kind == "audit_query":
             await self._send(await audit_events(msg, self.launched, self._audit))
         elif kind == "metrics_watch":
@@ -403,6 +392,7 @@ class ConsoleLink:
         self.library.close()
         for agent_id in list(self.terminals):
             self._close_terminal(agent_id)
+        self.projects.close()
 
     async def _input(self, agent_id: str, data: object) -> None:
         terminal = await self._live_terminal(agent_id)
@@ -511,6 +501,7 @@ class ConsoleLink:
         await self._send({"type": "agents_running", "agent_ids": sorted(self.running)})
         await self.push_host_stats()
         await self.library.connected()
+        await self.projects.connected()
 
     async def discover(self) -> None:
         """Present each running session the console didn't launch (#717): the
@@ -717,6 +708,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
             await link.push_working()
             await link.audit_link.push()
             await link.library.tick()
+            await link.projects.tick()
             await link.push_host_stats_if_due()
 
     watcher, sampler = asyncio.create_task(watch()), asyncio.create_task(link.metrics.run())

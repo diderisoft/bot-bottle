@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable
+from pathlib import Path
 from typing import Any
 
 from ...contract.hostctl import LIBRARY_COMMIT, LaunchRequest
+from ...lib import log
 
 # Bounds on a console launch.
 MAX_PROMPT_CHARS = 20_000
@@ -27,6 +29,18 @@ def library_commit(msg: dict[str, Any]) -> str | None:
     if commit in ("", None):
         return ""
     return commit if isinstance(commit, str) and LIBRARY_COMMIT.fullmatch(commit) else None
+
+
+def local_agents() -> list[str]:
+    """The agents a remote launch may name: those under `~/.bot-bottle/`."""
+    # pylint: disable=import-outside-toplevel
+    from ...manifest import ManifestError, ManifestIndex
+    try:
+        # From $HOME, so only home agents.
+        return ManifestIndex.resolve(str(Path.home()), missing_ok=True).all_agent_names
+    except (ManifestError, OSError) as e:
+        log.warn(f"remote: can't list local agents: {e}")
+        return []
 
 
 def agent_allowed(name: object, agents: Callable[[], Iterable[str]], commit: str) -> bool:
@@ -85,4 +99,4 @@ def resume_request(agent_id: str, bottle: object, *, agents: Callable[[], Iterab
 
 
 __all__ = ["MAX_BOTTLES", "MAX_LABEL_CHARS", "MAX_PROMPT_CHARS", "agent_allowed",
-           "launch_extras", "library_commit", "resume_request"]
+           "launch_extras", "library_commit", "local_agents", "resume_request"]

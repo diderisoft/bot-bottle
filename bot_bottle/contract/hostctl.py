@@ -99,6 +99,13 @@ AGENT_PREFS_PATH = "/agent-prefs"
 # POST {}: sync a paired host's library before a CLI launch (PRD 0131), waiting
 # about two seconds at most: {"note": ""}, or a line saying it used the local copy.
 LIBRARY_SYNC_PATH = "/library/sync"
+# GET: {"checkouts": [...]}, the project checkouts this host keeps (PRD 0131),
+# each `path`, `repo`, `branch`, `added`, `last_used`. POST {"path"} (absolute)
+# keeps that checkout: {"checkout": it, "note": "" or why it has no bottles
+# yet}; 400 when it isn't in a git work tree or has no repo. POST
+# /projects/remove {"path"} forgets it: {"removed": bool}.
+PROJECTS_PATH = "/projects"
+PROJECTS_REMOVE_PATH = "/projects/remove"
 # GET: {"state": {name: value}}, what infra bring-up recorded (`infra_state`).
 INFRA_STATE_PATH = "/infra/state"
 # GET: {"disks": {key: {project, agent, bottles, owner, last_slug}}}, each
@@ -456,7 +463,8 @@ __all__ = [
     "AGENT_PREFS_PATH", "AUDIT_PASSKEYS_PATH", "AUDIT_REBUILD_PATH", "BOTTLED_AGENTS_PATH",
     "BOTTLED_AGENTS_REMOVE_PATH", "INFRA_STATE_PATH", "WORKSPACE_DISKS_PATH",
     "WORKSPACE_DISKS_REMOVE_PATH", "ARCHITECT_WARM_PATH", "FORGES_PATH",
-    "FORGES_REMOVE_PATH", "HOST_CONFIG_PATH", "PAIRING_PATH", "TRUST_PATH",
+    "FORGES_REMOVE_PATH", "HOST_CONFIG_PATH", "PAIRING_PATH", "PROJECTS_PATH",
+    "PROJECTS_REMOVE_PATH", "TRUST_PATH",
     "AUTH_HEADER", "AUTH_SCHEME", "BOTTLES_PATH", "BOTTLE_COLORS", "CONFIRM_ERROR",
     "DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS", "DEFAULT_DOCKER_AGENT_SUBNETS",
     "DOCKER_AGENT_SUBNET_PREFIX", "IMAGE_POLICIES", "LAUNCH_CLI_ONLY",

@@ -501,6 +501,9 @@ asks over HTTP, with the `cli` role only:
 | `POST /bottled-agents/remove` | `{"identity"}` | Deletes its state dir, snapshots and rows together. Answers `{"removed": bool}`. |
 | `GET /workspace-disks` | none | `{"disks": {key: {...}}}`: each Firecracker workspace disk's project, agent, bottles, owner and last user. |
 | `POST /workspace-disks/remove` | `{"key"}` | Deletes the disk, its lock file and its row unless a bottle has it. Answers `{"removed": bool}`. |
+| `GET /projects` | none | `{"checkouts": [...]}`: the project checkouts this host keeps, each `path`, `repo`, `branch`, `added` and `last_used` ([Projects](#projects)). |
+| `POST /projects` | `{"path"}` (absolute) | Keeps the checkout there, or refreshes its repo and branch. Answers `{"checkout", "note"}`; `note` says when it has no `.bot-bottle/` yet. A path not in a git work tree, or with no repo, is 400, saying why. |
+| `POST /projects/remove` | `{"path"}` | Forgets the checkout. Answers `{"removed": bool}`. |
 
 A journal that doesn't chain, or a segment that won't import, is 409.
 
@@ -509,7 +512,8 @@ isn't running:
 
 - `audit query`, `export`, `rebuild`, `import`, `delivery`,
   `transcript-retention`, `retention`, `forward`, `firehose` and `passkeys`
-- `host budget`, `forge connect`, `list`, `show` and `remove`, `trust`, `pair`
+- `host budget`, `forge connect`, `list`, `show` and `remove`, `trust`, `pair`,
+  `project add`, `list` and `remove`
 - `start --dry-run`, `bots`, `resume`, `rename`, `commit`, `cleanup bots`,
   `cleanup workspaces`, a bare `bot-bottle`, `agents default`, the guided
   `start` and `forge connect github --app`
@@ -1033,6 +1037,7 @@ An arrow shows a request and its reply.
 | `rename` -> `renamed` | [Renaming a bottled agent](#renaming-a-bottled-agent) |
 | `library_sync`, `library_moved`, `library_conflict`, `library_pushed`, `library_held` | [Library sync](#library-sync) |
 | `library_builtins` | [The account's version](#the-accounts-version) |
+| `projects`, `project_bottles` | [Projects](#projects) |
 | `github_authorize_start`, `github_status` | [GitHub through the bot-bottle app](#github-through-the-bot-bottle-app) |
 | `forge_status`, `forge_repos`, `forge_remove` | [Forges for the console](#forges-for-the-console) |
 | `bottle_suggest`, `bottle_suggest_status`, `bottle_suggestion_*` | [Bottle suggestions from the console](#bottle-suggestions-from-the-console) |
@@ -1302,6 +1307,86 @@ CLI resume reads the files as they are now. Without `library_commit` (CLI
 launches and resumes, the library off or down, older consoles), launches
 resolve from `~/.bot-bottle` as it is. `POST /bottles` takes the same
 `library_commit` field, checked the same way, from the `cli` role only.
+
+### Projects
+
+The console lists a project for each repo its hosts keep a checkout of, and
+can list a checkout's bottles at any branch (PRD 0131). Projects don't need
+the library: a host reports its checkouts, and answers, whether or not
+library sync is on. The code is `checkouts.py`, `project_bottles.py` and
+`project_link.py`.
+
+**A checkout** is a directory holding a project's `.bot-bottle/` (where a
+project launch runs), in a git work tree. Its repo is its remote's URL
+(`origin`, else the only remote), normalized to `host/owner/repo`: the host
+lowercased, without user, password or port, and the path without `.git`, so
+`git@github.com:acme/app.git` and `https://github.com/acme/app` agree. GitLab
+subgroups keep their segments. A local path, a `file://` URL or a path with
+one segment names no repo.
+
+The host keeps checkouts in the host database (`project_checkouts`): the
+resolved path, repo, current branch (`""` when detached), when it was added
+and when it was last launched from. It learns one two ways, never by
+scanning the disk:
+
+- `bot-bottle project add [path]` (default: here), through `POST /projects`.
+  It refuses a path that isn't in a git work tree or has no repo, saying why.
+  A path without `.bot-bottle/` is kept with a note. `project list` shows
+  them, and `project remove [path]` forgets one.
+- A launch from a project's directory, from the CLI or the console, keeps
+  its checkout as used now. One with no repo isn't kept.
+
+On each connect and each minute, the host re-reads every checkout: one gone
+from disk, out of a work tree or with no repo now is dropped; the rest get
+their repo and branch.
+
+**`projects`**, from the host: every checkout, the full list each time, on
+each connect and within two seconds of a change (an add or remove, a launch,
+or a re-read that dropped one or saw a new repo or branch):
+
+```json
+{"type": "projects",
+ "checkouts": [{"path": "/home/eric/code/app", "repo": "github.com/acme/app",
+                "branch": "feat/x", "added": "2026-11-14T10:00:00Z",
+                "last_used": "2026-11-14T12:30:05Z"}]}
+```
+
+`last_used` is null until a launch there. At most 500, most recently used
+first; one the console wouldn't take (a path over 1024 characters, a branch
+over 255) is left out.
+
+**`project_bottles`** (`request_id`, `repo`, `path`, `branch`) -> a reply of
+the same type: a checkout's bottles and agents at a branch.
+
+- `path` must be a checkout the host reported, exactly as reported, with
+  that `repo`. The host never reads another path the console names.
+- `branch` is a branch name, or `""` for the checkout's `HEAD`. One starting
+  with `-`, or that `git check-ref-format --branch` refuses, is refused.
+- The host fetches the remote first, with the user's own git credentials,
+  never prompting, killed after ten seconds. A failed fetch isn't an error:
+  the reply says `"fetched": false`.
+- The branch resolves locally (`refs/heads/<branch>`), else from the remote
+  (`refs/remotes/<remote>/<branch>`); neither is an error.
+- The files are read at that commit with `git ls-tree` and `git show`
+  (no textconv): the `<name>.md` files right in the project's
+  `.bot-bottle/bottles/` and `agents/` (under its directory in the repo).
+  Nothing is checked out, committed or stored, so the working tree is
+  untouched.
+
+```json
+{"type": "project_bottles", "request_id": "0123456789abcdef",
+ "repo": "github.com/acme/app", "path": "/home/eric/code/app",
+ "branch": "main", "commit": "<40 hex>", "fetched": true,
+ "bottles": [{"name": "dev", "file": ".bot-bottle/bottles/dev.md",
+              "content": "..."}],
+ "agents": [], "branches": ["feat/x", "main"]}
+```
+
+At most 200 bottles and 200 agents, sorted by name; a file over 256 KiB has
+`"content": null, "too_large": true`. `branches` are the local branches and
+the remote's, without its `HEAD`, at most 200. A refusal is `error`, one line
+of at most 300 characters. The request is answered beside the link, so a slow
+fetch holds up nothing else.
 
 ### Host stats
 
@@ -1869,5 +1954,6 @@ Paths are under `bot_bottle/control/hostctl/` unless shown otherwise.
 | Renaming | `relabel.py` |
 | GitHub | `bot_bottle/github_connect.py` |
 | Library | `library.py` |
+| Projects | `checkouts.py`, `project_bottles.py`, `project_link.py`, `bot_bottle/cli/commands/project.py` |
 | Manifest tab | `manifest_view.py`, `bot_bottle/run_manifest.py`, `bot_bottle/manifest/document.py`, `bot_bottle/manifest/fingerprint.py`, `manifest_elements.py` |
 | Bottle tab | `bottle_chain.py` |

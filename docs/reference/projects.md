@@ -77,3 +77,23 @@ Editing any of these files asks again. So does a missing input appearing.
 
 Trust records from before builds were covered have no `scheme`. They re-prompt
 once for agents that build, and the prompt says why.
+
+## Projects in the console
+
+The console lists a project for each repo whose checkout a paired host
+keeps, and shows a checkout's bottles and agents at any branch, read from git
+without touching the working tree
+([host-controller.md](host-controller.md#projects)).
+
+A host keeps a checkout once you launch from it, or when you add it:
+
+| Command | |
+|---|---|
+| `bot-bottle project add [path]` | keep the checkout at `path` (default: here) |
+| `bot-bottle project list` | the checkouts kept: path, repo, branch, last used |
+| `bot-bottle project remove [path]` | forget the checkout at `path` (default: here) |
+
+A checkout must be in a git work tree with a remote (`origin`, or its only
+one) on a forge: its repo is that URL, normalized, so the SSH and HTTPS forms
+are one project. A checkout that's gone from disk drops off. Hiding a project
+is the console's; the host still keeps and reports it.

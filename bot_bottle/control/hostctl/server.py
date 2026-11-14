@@ -22,13 +22,14 @@ from ...contract.hostctl import (
     AUDIT_REBUILD_PATH, AUTH_HEADER, AUTH_SCHEME, BOTTLES_PATH, FORGES_PATH, FORGES_REMOVE_PATH,
     HOST_CONFIG_PATH, HOST_CONTROL, JOBS_PATH, PAIRING_PATH, TRUST_PATH,
     LIVE_BOTTLES_PATH, ORCHESTRATOR_PATH, ROLE_ORCHESTRATOR, SESSIONS_PATH, STATUS_PATH,
-    WORKSPACE_DISKS_PATH, WORKSPACE_DISKS_REMOVE_PATH, LIBRARY_SYNC_PATH,
+    WORKSPACE_DISKS_PATH, WORKSPACE_DISKS_REMOVE_PATH, LIBRARY_SYNC_PATH, PROJECTS_PATH,
+    PROJECTS_REMOVE_PATH,
     ARCHITECT_WARM_PATH, SUGGEST_PATH, LaunchRequest, Settings, status_body,
 )
 from ...lib import websocket as ws
 from ...lib.log import debug
 from .. import rotate_ca
-from . import host_state, orchestrator, suggest_routes
+from . import checkouts, host_state, orchestrator, suggest_routes
 from .attach import Viewer
 from .audit_events import AuditUnavailable, digest_request
 from .audit_import import AuditImportError
@@ -56,13 +57,14 @@ _HOST_STATE: dict[str, _HostRoute] = {
     AGENT_PREFS_PATH: host_state.remember_agent,
     WORKSPACE_DISKS_REMOVE_PATH: host_state.remove_workspace_disk,
     LIBRARY_SYNC_PATH: host_state.library_sync,
+    PROJECTS_PATH: checkouts.add, PROJECTS_REMOVE_PATH: checkouts.remove,
 }
 _HOST_STATE_READS: dict[str, _HostRoute] = {
     HOST_CONFIG_PATH: lambda _body: host_state.config(), FORGES_PATH: host_state.forges,
     TRUST_PATH: host_state.trusted, PAIRING_PATH: host_state.get_pairing,
     AUDIT_PASSKEYS_PATH: host_state.passkeys, BOTTLED_AGENTS_PATH: host_state.bottled_agents,
     AGENT_PREFS_PATH: host_state.agent_prefs, INFRA_STATE_PATH: host_state.infra_state,
-    WORKSPACE_DISKS_PATH: host_state.workspace_disks,
+    WORKSPACE_DISKS_PATH: host_state.workspace_disks, PROJECTS_PATH: checkouts.listed,
 }
 
 

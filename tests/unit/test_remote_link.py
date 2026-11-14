@@ -602,7 +602,7 @@ class TestConsoleSession(unittest.TestCase):
         again, _bottles, sent = self._link(state=state, bottles=bottles)
         asyncio.run(again.resume())
         non_stats = [m for m in sent if m["type"] != "host_stats"]
-        self.assertEqual([("agent_stopped", "a1"), ("agents_running", None)],
+        self.assertEqual([("agent_stopped", "a1"), ("agents_running", None), ("projects", None)],
                          [(m["type"], m.get("agent_id")) for m in non_stats])
         agents_running = next(m for m in sent if m["type"] == "agents_running")
         self.assertEqual([], agents_running["agent_ids"])

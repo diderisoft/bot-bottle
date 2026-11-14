@@ -34,6 +34,7 @@ def cmd_help(argv: list[str] | None = None) -> int:
     w("  host      this host's settings: the storage and memory caps the console shows (caps)\n")
     w("  install   set up this host: backend prerequisites, tmux, autostart (--undo)\n")
     w("  pair      link this host to a console and your phone (on|off, --password)\n")
+    w("  project   the project checkouts the console lists (add|list|remove)\n")
     w("  rename    give a bottled agent a new label (its identity stays)\n")
     w("  resume    start a stopped bottled agent again (continues its saved state)\n")
     w("  setup     write starter agents for Claude, Codex and pi (then offers pair)\n")

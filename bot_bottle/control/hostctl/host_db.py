@@ -37,6 +37,7 @@ from ...paths import host_db_path
 from ...run_manifest import RunManifestStore
 from .audit_forward import ForwardCursors
 from .agent_prefs import AgentPrefsStore
+from .checkouts import CheckoutStore
 from .library_conflict import LibraryConflictStore
 from .library_held import LibraryHeldStore
 from .audit_push import AuditPushStore
@@ -69,7 +70,7 @@ def stores(db_path: Path | None = None) -> list[DbStore]:
             AgentPrefsStore(path), TranscriptStore(path), SnapshotStore(path),
             IsolationPasses(path), InfraStateStore(path), RunManifestStore(path),
             WorkspaceDiskStore(path), GitGateStore(path), LibraryConflictStore(path),
-            LibraryHeldStore(path)]
+            LibraryHeldStore(path), CheckoutStore(path)]
 
 
 def migrate(db_path: Path | None = None) -> list[str]:
