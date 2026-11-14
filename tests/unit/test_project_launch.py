@@ -231,6 +231,26 @@ class TestWorktree(_Launches):
         self.assertEqual(second, _git(wt.worktree_for("a1"), "rev-parse", "HEAD"))
         self.assertEqual(1, len(self.worktrees()))
 
+    def test_a_worktree_whose_checkout_moved_leaves_no_entry(self) -> None:
+        self.drive(lambda: self.link.launch("a1", self.msg()))
+        moved = self.tmp / "moved"
+        self.work.rename(moved)
+        _git(moved, "worktree", "repair")  # the user moved it with git's help
+        wt.remove(str(self.work), wt.worktree_for("a1"))
+        self.assertFalse(wt.worktree_for("a1").exists())
+        listed = _git(moved, "worktree", "list", "--porcelain")
+        self.assertNotIn("project-worktrees", listed)
+
+    def test_an_unexpected_failure_is_still_an_answer(self) -> None:
+        with mock.patch.object(wt, "make", side_effect=RuntimeError("odd")):
+            self.drive(lambda: self.link.launch("a1", self.msg()))
+        self.assertIn("couldn't make a worktree of", only(self.sent.messages)["message"])
+        self.assertIsNone(self.launches.get("a1"))
+        self.sent.messages.clear()
+        with mock.patch.object(pl, "prepare", side_effect=ValueError("odd")):
+            self.drive(lambda: self.link.launch("a1", self.msg()))
+        self.assertEqual("couldn't read the project: odd", only(self.sent.messages)["message"])
+
     def test_the_host_db_owns_the_table(self) -> None:
         self.assertIn("project_launches",
                       [t for s in host_db.stores(host_db_path()) for t in s.TABLES])
@@ -450,6 +470,41 @@ class TestTrust(_Trust):
         self.assertEqual("couldn't record the trust: read-only", self.sent.messages[0]["message"])
         self.assertIsNone(self.launches.get("a1"))
 
+    def test_hashes_that_arent_text_are_ignored(self) -> None:
+        asked = self.ask()
+        self.answer(asked, hashes=[{}])
+        self.answer(asked, hashes=[[asked["items"][0]["hash"]]])
+        self.assertEqual([], self.started)
+        self.assertEqual(wt.TRUST, self.launches.get("a1").state)  # type: ignore[union-attr]
+
+    def test_a_prompt_that_cant_be_made_ends_the_launch(self) -> None:
+        with mock.patch.object(pl, "ask", side_effect=ValueError("outside")):
+            self.drive(lambda: self.link.launch("a1", self.msg()))
+        self.assertEqual("couldn't ask for trust: outside", only(self.sent.messages)["message"])
+        self.assertFalse(wt.worktree_for("a1").exists())
+        self.assertIsNone(self.launches.get("a1"))
+
+    def test_long_grants_are_cut_visibly(self) -> None:
+        shown = pl._shown(["x" * 400, *(f"reach h{i}" for i in range(300))])
+        self.assertEqual(pl.MAX_GRANTS, len(shown))
+        self.assertEqual("x" * (pl.MAX_GRANT_CHARS - 1) + "…", shown[0])
+        self.assertTrue(all(len(g) <= pl.MAX_GRANT_CHARS for g in shown))
+        self.assertEqual("… and 102 more (`bot-bottle trust` lists them)", shown[-1])
+        self.assertEqual(["a", "b"], pl._shown(["a", "b"]))
+
+    def test_a_timeout_even_when_checkouts_cant_be_read(self) -> None:
+        self.ask()
+        link = ProjectLink(self.sent, store=lambda: self.store)
+        link.launches = self.link
+        later = self.launches.get("a1")
+        assert later is not None
+        with mock.patch.object(pl.time, "time", return_value=time_of(later.since) + 30 * 60), \
+                mock.patch("bot_bottle.control.hostctl.checkouts.report",
+                           side_effect=OSError("no db")):
+            self.drive(link.tick)
+        self.assertEqual(["agent_errored"], [m["type"] for m in self.sent.messages])
+        self.assertIsNone(self.launches.get("a1"))
+
     def test_too_many_untrusted_items(self) -> None:
         with mock.patch.object(pl, "MAX_ITEMS", 1):
             self.drive(lambda: self.link.launch("a1", self.msg()))
@@ -486,6 +541,15 @@ class TestSweep(_Trust):
         self.assertEqual([("a1", wt.INTERRUPTED), ("a4", wt.INTERRUPTED)],
                          sorted((m["agent_id"], m["message"]) for m in self.sent.messages))
         self.assertEqual(["a2"], [r.agent_id for r in self.launches.all()])
+
+    def test_a_worktree_with_no_row_loses_its_entry_too(self) -> None:
+        self.drive(lambda: self.link.launch("a1", {**self.msg(), "definition": {"name": "pi"},
+                                                 "bottles": []}))
+        self.launches.delete("a1")  # its row lost, say
+        self.assertEqual(1, len(self.worktrees()))
+        wt.sweep(set(), self.launches)
+        self.assertEqual([], list(wt.root().iterdir()))
+        self.assertEqual([], self.worktrees())  # locked, so prune alone would keep it
 
     def test_a_sweep_that_cant_read(self) -> None:
         broken = mock.Mock()

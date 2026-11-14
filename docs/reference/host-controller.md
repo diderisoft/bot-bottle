@@ -1426,17 +1426,19 @@ the **checkout** (never the worktree) as used, so `projects` is sent again.
 
 The host database's `project_launches` keeps one row per project launch:
 the checkout, repo, branch, commit, worktree and state (`starting`, `trust`,
-`running`). The worktree is removed (`worktree unlock`, `remove --force`,
-`prune`; just the directory if the checkout is gone):
+`running`, or `errored` until a console hears a restart ended it). The
+worktree is removed (`worktree unlock`, `remove --force`, `prune`, git run
+from the worktree itself so a checkout moved since keeps no locked entry):
 
 - when its bottle is torn down: wherever `agent_stopped` is sent for it (the
   console's `stop`, the agent exiting, `bot-bottle stop`);
 - when the launch fails, its trust is declined, or the trust prompt times
   out;
-- on host controller start, for every bottle that isn't running. A launch
-  still starting or waiting on trust then is reported to the next console
-  connect, after `agents_running`, as `agent_errored`: "the host restarted
-  before this launch finished; try again".
+- on host controller start, for every bottle that isn't running, and any
+  directory there with no row. A launch still starting or waiting on trust
+  then is reported to the next console connect, after `agents_running`, as
+  `agent_errored`: "the host restarted before this launch finished; try
+  again".
 
 The row stays while the bottle's saved state does. A resume (console or CLI)
 makes the worktree again from it, at the same commit; with the row gone, or
@@ -1464,7 +1466,8 @@ worktree, and sends:
   stem), `file` (relative to the repo's top, never the worktree's path),
   `hash`, `grants` as the CLI's prompt lists them, and `previous`
   (`{trusted_at, grants}`): the record for the checkout's copy of the file,
-  or null.
+  or null. Grants are cut to 200 lines of 300 characters, never silently: a
+  cut line ends in `…`, and the last says how many more there are.
 - It's sent again, with the same `since`, on each connect until answered.
   Unanswered for 30 minutes, the launch ends: `agent_errored`, "not started:
   trust wasn't answered in 30 minutes".
@@ -1476,11 +1479,14 @@ anything else is ignored.
 
 - `decline` ends the launch: `agent_errored`, "not started: ./dev stays
   untrusted on this host (`bot-bottle trust ./dev` in <path> to review it)".
-- `trust` with `hashes` exactly the pending items' records each as the
-  CLI's y/N does, with the checkout's path of the file, so `bot-bottle
-  trust --list` and a CLI launch from the checkout see it. The launch then
-  goes on: `agent_stage`s, then `agent_started` or `agent_errored`. Other
-  `hashes` are ignored.
+- `trust`, with `hashes` exactly the pending items' (as a set), records
+  each as the CLI's y/N does, with the checkout's path of the file, so
+  `bot-bottle trust --list` and a CLI launch from the checkout see it. The
+  launch then resolves again and goes on: `agent_stage`s, then
+  `agent_started` or `agent_errored` (or a new `launch_trust`, with a new
+  `since`, if a file changed since it asked). Other `hashes` are ignored.
+  What was trusted is what was asked about: the records are the host's own,
+  kept from when it asked, never taken from the answer.
 
 ### Host stats
 

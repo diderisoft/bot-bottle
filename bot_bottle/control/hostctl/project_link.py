@@ -88,21 +88,23 @@ class ProjectLink:
 
     async def tick(self) -> None:
         """On the link's watch loop: start a re-read of every checkout each
-        minute (beside the loop: it's a few gits per checkout), and send the
-        report when it isn't what the console has."""
+        minute (beside the loop: it's a few gits per checkout), send the
+        report when it isn't what the console has, and end trust prompts
+        unanswered too long."""
         idle = self._refreshing is None or self._refreshing.done()
         if idle and time.monotonic() - self._refreshed >= REFRESH_SECONDS:
             self._refreshed = time.monotonic()
             self._refreshing = asyncio.create_task(self._refresh())
         try:
-            message = await asyncio.to_thread(checkouts.report, self.store())
+            message: dict[str, object] | None = await asyncio.to_thread(
+                checkouts.report, self.store())
         except (OSError, sqlite3.Error) as e:
             log.debug(f"projects: couldn't read this host's checkouts: {e}")
-            return
-        if message != self._told:
+            message = None
+        if message is not None and message != self._told:
             await self._send(message)
             self._told = message
-        try:
+        try:  # trust prompts time out whether or not the report could be read
             await self.launches.tick()
         except (OSError, sqlite3.Error) as e:
             log.debug(f"projects: couldn't read this host's project launches: {e}")

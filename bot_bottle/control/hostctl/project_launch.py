@@ -20,9 +20,8 @@ import asyncio
 import dataclasses
 import json
 import re
-import subprocess
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -77,6 +76,16 @@ def _relative(path: Path, base: Path) -> str:
         return path.resolve().relative_to(base.resolve()).as_posix()
 
 
+def _shown(lines: Sequence[str]) -> list[str]:
+    """`lines` within the prompt's bounds, never cut silently: a long line
+    ends in "…", and past the limit the last line says how many more."""
+    shown = [g if len(g) <= MAX_GRANT_CHARS else g[:MAX_GRANT_CHARS - 1] + "…" for g in lines]
+    if len(shown) > MAX_GRANTS:
+        more = len(shown) - MAX_GRANTS + 1
+        shown = [*shown[:MAX_GRANTS - 1], f"… and {more} more (`bot-bottle trust` lists them)"]
+    return shown
+
+
 def ask(launch: wt.Launch, request: LaunchRequest,
         found: list[UntrustedBottleError]) -> wt.Launch:
     """`launch` waiting on trust for `found`: the prompt's items, and what
@@ -91,10 +100,9 @@ def ask(launch: wt.Launch, request: LaunchRequest,
         items.append({
             "kind": error.kind, "name": error.bottle.removeprefix("./"), "hash": error.hash,
             "file": (launch.prefix + here)[:MAX_FILE_CHARS],
-            "grants": [g[:MAX_GRANT_CHARS] for g in error.grants[:MAX_GRANTS]],
+            "grants": _shown(error.grants),
             "previous": previous and {"trusted_at": previous.trusted_at,
-                                      "grants": [g[:MAX_GRANT_CHARS]
-                                                 for g in previous.grants[:MAX_GRANTS]]}})
+                                      "grants": _shown(previous.grants)}})
         records.append({"kind": error.kind, "name": error.bottle, "hash": error.hash,
                         "path": path, "grants": list(error.grants)})
     pending = {"items": items, "records": records, "request": request.to_json()}
@@ -182,10 +190,11 @@ def prepare(agent_id: str, msg: dict[str, Any], running: dict[str, str],
     launches.put(launch)  # first, so a restart mid-make sweeps it
     try:
         wt.make(launch)
-    except wt.WorktreeError as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         wt.remove(launch.checkout, Path(launch.worktree))
         launches.delete(agent_id)
-        raise _Refused(str(e)) from e
+        raise _Refused(str(e) if isinstance(e, wt.WorktreeError)
+                       else f"couldn't make a worktree of {path}: {e}") from e
     # The console click is the launch confirmation.
     request = LaunchRequest(agent=str(name), assume_yes=True, headless=False,
                             agent_id=agent_id, cwd=str(launch.cwd()), **extras)
@@ -227,7 +236,7 @@ class ProjectLaunches:
         except _Refused as e:
             await self._errored(agent_id, str(e))
             return
-        except (OSError, subprocess.SubprocessError) as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught  # never left waiting
             await self._errored(agent_id, f"couldn't read the project: {e}")
             return
         await self._go(launch, request)
@@ -240,9 +249,13 @@ class ProjectLaunches:
             await self._end(launch, f"launch failed: {getattr(e, 'message', '') or e}")
             return
         if found:
-            launch = await asyncio.to_thread(ask, launch, request, found)
-            await asyncio.to_thread(self._store().put, launch)
-            await self._send(prompt(launch))
+            try:
+                asking = await asyncio.to_thread(ask, launch, request, found)
+                await asyncio.to_thread(self._store().put, asking)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                await self._end(launch, f"couldn't ask for trust: {e}")
+                return
+            await self._send(prompt(asking))
             return
         await self._start(launch.agent_id, request)
         bottle = self._running().get(launch.agent_id)
@@ -264,7 +277,8 @@ class ProjectLaunches:
             return
         if decision == "trust":
             wanted = {r["hash"] for r in json.loads(launch.pending)["records"]}
-            if not isinstance(hashes, list) or set(hashes) != wanted:
+            if (not isinstance(hashes, list) or not all(isinstance(h, str) for h in hashes)
+                    or set(hashes) != wanted):
                 log.info(f"remote: ignoring a trust answer for {agent_id} that isn't "
                          "for what's pending")
                 return

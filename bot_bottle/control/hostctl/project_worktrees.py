@@ -173,17 +173,23 @@ def make(launch: Launch) -> None:
                             f"{launch.commit[:12]}: {why}")
 
 
-def remove(checkout: str, worktree: Path) -> None:
-    """Remove the worktree and its entry in the checkout; with the checkout
-    gone, just the directory. Never raises."""
-    if Path(checkout).is_dir():
-        try:
-            git(Path(checkout), "worktree", "unlock", str(worktree))
-            git(Path(checkout), "worktree", "remove", "--force", str(worktree),
-                timeout=_GIT_SECONDS)
+def remove(checkout: str | None, worktree: Path) -> None:
+    """Remove the worktree and its entry in its repo, then the directory.
+    git runs from the worktree while it's there, so a checkout moved or gone
+    since leaves no locked entry behind (`git worktree prune` keeps locked
+    ones); `checkout` is pruned too when it's still there. Never raises."""
+    if (worktree / ".git").is_file():
+        at: Path | None = worktree
+    else:
+        at = Path(checkout) if checkout and Path(checkout).is_dir() else None
+    try:
+        if at is not None:
+            git(at, "worktree", "unlock", str(worktree))
+            git(at, "worktree", "remove", "--force", str(worktree), timeout=_GIT_SECONDS)
+        if checkout and Path(checkout).is_dir():
             git(Path(checkout), "worktree", "prune")
-        except (OSError, subprocess.SubprocessError) as e:
-            log.warn(f"projects: couldn't remove the worktree {worktree}: {e}")
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warn(f"projects: couldn't remove the worktree {worktree}: {e}")
     if worktree.exists():
         shutil.rmtree(worktree, ignore_errors=True)
 
@@ -213,8 +219,8 @@ def sweep(running: Collection[str], launches: ProjectLaunchStore | None = None) 
             elif launch.state == RUNNING:
                 ended(launch, launches)
         for worktree in root().iterdir() if root().is_dir() else ():
-            if worktree.name not in live:
-                shutil.rmtree(worktree, ignore_errors=True)
+            if worktree.name not in live:  # with no row: its entry goes too
+                remove(None, worktree)
     except (OSError, sqlite3.Error) as e:
         log.warn(f"projects: couldn't sweep the project worktrees: {e}")
 
