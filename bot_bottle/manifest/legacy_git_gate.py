@@ -18,6 +18,7 @@ server's keys), then `bot-bottle bottles migrate <bottle>`
 
 from __future__ import annotations
 
+import re
 import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -29,6 +30,8 @@ from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
 from .util import ManifestError
 
 DOCS = "docs/reference/git-gate.md#migrating-from-the-old-format"
+# A host a grant can name its forge by (`manifest/forges.py`'s forge names).
+_HOST_RE = re.compile(r"[A-Za-z0-9.-]+")
 
 
 @dataclass(frozen=True)
@@ -92,7 +95,8 @@ def old_repos(repos: Mapping[str, object]) -> list[OldRepo]:
         out.append(OldRepo(
             name=name, upstream=upstream, forge_url=forge_url,
             ssh=f"{parsed.scheme}://{parsed.netloc}" if parsed.netloc else "",
-            path=_grant_path(parsed, provider, bool(key.get("path"))),
+            path=_grant_path(parsed, provider, bool(key.get("path")),
+                             named=provider not in API_KINDS or not (api.scheme and api.netloc)),
             writable=key.get("read_only") is not True,
             token_env=str(key.get("forge_token_env") or ""),
             host_key=str(d.get("host_key") or ""), provider=provider,
@@ -100,12 +104,19 @@ def old_repos(repos: Mapping[str, object]) -> list[OldRepo]:
     return out
 
 
-def _grant_path(parsed: ParseResult, provider: str, has_path: bool) -> str:
+def _grant_path(parsed: ParseResult, provider: str, has_path: bool, *, named: bool) -> str:
     """What a repo's grant names after its forge, or "" when it can't: a
     minted key's `<owner>/<repo>` (two segments, `.git` dropped), a static
-    key's path on the server verbatim (an `ssh` forge's grant, ADR 0023)."""
+    key's path on the server verbatim (an `ssh` forge's grant, ADR 0023).
+    `named`: the grant's forge is the upstream's host, so a forge name must
+    fit it."""
     path = parsed.path.removeprefix("/")
-    if parsed.scheme != "ssh" or not parsed.hostname or not repo_path_ok(path):
+    try:
+        port_ok = parsed.port is None or parsed.port > 0
+    except ValueError:  # a port that isn't one
+        port_ok = False
+    host_ok = bool(parsed.hostname) and (not named or bool(_HOST_RE.fullmatch(parsed.hostname)))
+    if parsed.scheme != "ssh" or not host_ok or not port_ok or not repo_path_ok(path):
         return ""
     if provider in API_KINDS:
         return f"{path.split('/')[0]}/{repo_name(path)}" if path.count("/") == 1 else ""

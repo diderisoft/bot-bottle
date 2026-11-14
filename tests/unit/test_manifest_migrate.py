@@ -386,6 +386,14 @@ class TestStaticBecomesAnSshForge(_Host):
         with self.assertRaisesRegex(MigrateError, "can't be converted"):
             prepare("dev", self.dirs)
 
+    def test_a_url_whose_host_no_grant_can_name_is_by_hand(self) -> None:
+        for url in ("ssh://git@h_x/o/r", "ssh://git@[::1]/o/r", "ssh://git@h:x/o/r"):
+            with self.subTest(url=url):
+                self.write("dev", ("---\ngit_gate:\n  repos:\n    app:\n"
+                                   f"      url: \"{url}\"\n"
+                                   "      key: {provider: static, path: /keys/app}\n---\n"))
+                self.assertIn("rewrite it by hand", self.load_error())
+
     def test_a_deep_static_path_on_a_connected_gitea_is_by_hand(self) -> None:
         self.write("dev", STATIC.replace("git.example.com:2222/org/lib.git",
                                          "gitea.example.com/org/sub/lib.git"))
