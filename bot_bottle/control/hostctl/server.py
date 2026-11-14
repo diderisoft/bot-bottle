@@ -22,7 +22,7 @@ from ...contract.hostctl import (
     AUDIT_REBUILD_PATH, AUTH_HEADER, AUTH_SCHEME, BOTTLES_PATH, FORGES_PATH, FORGES_REMOVE_PATH,
     HOST_CONFIG_PATH, HOST_CONTROL, JOBS_PATH, PAIRING_PATH, TRUST_PATH,
     LIVE_BOTTLES_PATH, ORCHESTRATOR_PATH, ROLE_ORCHESTRATOR, SESSIONS_PATH, STATUS_PATH,
-    WORKSPACE_DISKS_PATH, WORKSPACE_DISKS_REMOVE_PATH,
+    WORKSPACE_DISKS_PATH, WORKSPACE_DISKS_REMOVE_PATH, LIBRARY_SYNC_PATH,
     ARCHITECT_WARM_PATH, SUGGEST_PATH, LaunchRequest, Settings, status_body,
 )
 from ...lib import websocket as ws
@@ -55,6 +55,7 @@ _HOST_STATE: dict[str, _HostRoute] = {
     BOTTLED_AGENTS_REMOVE_PATH: host_state.remove_bottled_agent,
     AGENT_PREFS_PATH: host_state.remember_agent,
     WORKSPACE_DISKS_REMOVE_PATH: host_state.remove_workspace_disk,
+    LIBRARY_SYNC_PATH: host_state.library_sync,
 }
 _HOST_STATE_READS: dict[str, _HostRoute] = {
     HOST_CONFIG_PATH: lambda _body: host_state.config(), FORGES_PATH: host_state.forges,

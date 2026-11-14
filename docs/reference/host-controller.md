@@ -998,6 +998,7 @@ An arrow shows a request and its reply.
 | `workspace_file` | [Workspace images](#workspace-images) |
 | `put_workspace_file`, `upload_*` | [Uploading files to a running agent](#uploading-files-to-a-running-agent) |
 | `rename` -> `renamed` | [Renaming a bottled agent](#renaming-a-bottled-agent) |
+| `library_sync`, `library_moved`, `library_conflict`, `library_pushed` | [Library sync](#library-sync) |
 | `github_authorize_start`, `github_status` | [GitHub through the bot-bottle app](#github-through-the-bot-bottle-app) |
 | `forge_status`, `forge_repos`, `forge_remove` | [Forges for the console](#forges-for-the-console) |
 | `bottle_suggest`, `bottle_suggest_status`, `bottle_suggestion_*` | [Bottle suggestions from the console](#bottle-suggestions-from-the-console) |
@@ -1007,6 +1008,40 @@ An arrow shows a request and its reply.
 | `bottle_chain`, `bottle_write` | [Bottle tab](#bottle-tab) |
 | `audit_record`, `audit_head`, `audit_unlock_challenge`, `audit_unlock`, `decrypt_audit_records` | [Audit records on the console](#audit-records-on-the-console) |
 | `list_secrets`, `set_secret`, `operator_egress_allow` | [What pairing lets the console do](#what-pairing-lets-the-console-do) |
+
+### Library sync
+
+A paired host's `~/.bot-bottle` repo (`agents/`, `bottles/`) syncs with the
+account's library on the console while the console says so (PRD 0131,
+`library_link.py`):
+
+- `library_sync` (`enabled`), from the console on each connect. A host syncs
+  only while enabled; one with no console never does. (`library` is the
+  console's request for the host's agents and bottles: [Library](#library).)
+- `library_moved` (`head`), from the console: the account's `main` moved. The
+  host fetches it and fast-forwards.
+- `library_conflict` (`files`), from the console: this host's branch didn't
+  merge. The host keeps its own version, logs that a conflict is pending, and
+  keeps pushing new commits until it's resolved in the console.
+- `library_pushed` (`head`), from the host, after it pushed its branch.
+
+The host syncs when enabled, after each new local commit (it watches the
+repo's refs), on `library_moved`, and before a CLI launch: the CLI asks the
+host controller (`POST /library/sync`), which waits two seconds at most and
+otherwise launches the local copy, saying so. Bursts are one sync.
+
+A sync commits hand edits ("edited by hand"), fetches the library's `main`,
+then either fast-forwards to it, or pushes this host's commits to its branch,
+`hosts/<host id>`, and waits for the console to merge them. The host never
+merges. Git talks smart HTTPS to the library URL with a short-lived token
+from the console (`POST /api/v1/hosts/library-token`, with the host's access
+token), handed to git by an inline credential helper that reads it from the
+child's environment: no remote or token is written to the repo's config.
+
+Every fast-forward is journalled as `library.updated` (sensitivity
+`security`): the old and new commit, the agent and bottle files that changed,
+and who made the commits. The library's history is the console's to write;
+the journal is this host's record of every policy change that reached it.
 
 ### Host stats
 

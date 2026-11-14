@@ -36,14 +36,9 @@ The control stream (JSON lines):
   writes under `/home/node/uploads/`, reply `workspace_file_put` (`workspace_files`).
 - `metrics_watch` (`bottles`) -> `bottle_metrics` every 3 s for those running (`live_metrics`).
 - `snapshot` -> `snapshot_taken`: workspace patch and conversation position (`snapshots`).
-- `transcript` (`agent_id`, `before` or `around`, `limit`) ->
-  `transcript_entries` (`entries`, `first`, `last`, `available`): a page of the agent's
-  conversation from its host copy, masked (`transcript_serve`), running or
-  stopped. `transcript_appended` (`agent_id`, `last`): new entries landed.
-  `agent_working` (`agent_id`, `working`): a prompt started or stopped, as its harness
-  decides (`AgentProvider.working`), on each (re)connect, start and change.
-  `agent_started`/`agent_present` carry `transcript` when the harness keeps
-  one. `transcript_search` (`query`, `kinds`) -> `transcript_matches`.
+- Conversations: `transcript`, `transcript_search`, `transcript_appended` and
+  `agent_working` (`transcript_serve`).
+- `library_sync`, `library_moved`, `library_conflict`, `library_pushed` (`library_link`).
 
 Pairing on disk is `pairing.py`; `iroh` (`bot-bottle[remote]`) is imported only when needed.
 """
@@ -74,6 +69,7 @@ from .audit_link import AuditLink, audit_events
 from .upgrade_link import UpgradeLink
 from .block_link import BlockLink
 from .canary_link import CanaryLink
+from .library_link import LibraryLink
 from .console_terminal import HISTORY_LINES, session_terminals, type_into, valid_size
 from .pairing import (RemoteConfig, RemoteError, import_iroh, load_config, secret_key,
                       write_status)
@@ -225,6 +221,7 @@ class ConsoleLink:
         self.audit_link = AuditLink(self._send, lambda: {  # console agents' records only
             a: b for a, b in self.running.items() if a not in self.present}, bottles)
         self.upgrades = UpgradeLink(self._send, audit=lambda: getattr(bottles, "audit", None))
+        self.library = LibraryLink(self._send, audit=lambda: getattr(bottles, "audit", None))
         self._last_stats: float = 0.0
         self.canaries = CanaryLink(self._send, lambda: self._orchestrator(""),
                                    lambda: self.running)
@@ -265,6 +262,8 @@ class ConsoleLink:
                                 msg.get("lines"))
         elif kind in AuditLink.REQUESTS | UpgradeLink.REQUESTS:  # passkey-gated (ADR 0013, 0022)
             await (self.audit_link if kind in AuditLink.REQUESTS else self.upgrades).handle(msg)
+        elif kind in LibraryLink.REQUESTS:
+            await self.library.handle(msg)
         elif kind == "audit_query":
             await self._send(await audit_events(msg, self.launched, self._audit))
         elif kind == "metrics_watch":
@@ -717,6 +716,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
             await link.push_transcripts()
             await link.push_working()
             await link.audit_link.push()
+            await link.library.tick()
             await link.push_host_stats_if_due()
 
     watcher, sampler = asyncio.create_task(watch()), asyncio.create_task(link.metrics.run())

@@ -96,6 +96,9 @@ BOTTLED_AGENTS_REMOVE_PATH = "/bottled-agents/remove"
 # GET: {"default": agent or "", "dirs": {directory: agent}}. POST {"dir",
 # "agent"} remembers `agent` for `dir` ("" for the default); answers like GET.
 AGENT_PREFS_PATH = "/agent-prefs"
+# POST {}: sync a paired host's library before a CLI launch (PRD 0131), waiting
+# about two seconds at most: {"note": ""}, or a line saying it used the local copy.
+LIBRARY_SYNC_PATH = "/library/sync"
 # GET: {"state": {name: value}}, what infra bring-up recorded (`infra_state`).
 INFRA_STATE_PATH = "/infra/state"
 # GET: {"disks": {key: {project, agent, bottles, owner, last_slug}}}, each

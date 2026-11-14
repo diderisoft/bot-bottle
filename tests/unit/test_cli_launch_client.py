@@ -121,6 +121,8 @@ def _client(finals: list[Any], states: list[Any]) -> mock.MagicMock:
 class TestLaunch(unittest.TestCase):
     def setUp(self) -> None:
         self.enterContext(mock.patch.object(launch_client.runner, "ensure_running"))
+        # The library sync before a launch has its own tests (test_library_link).
+        self.enterContext(mock.patch.object(launch_client, "library_sync", return_value=""))
         self.enterContext(mock.patch.object(launch_client.runner, "cli_token", return_value="t"))
         self.run_attach = self.enterContext(mock.patch.object(launch_client.subprocess, "run"))
         self.enterContext(mock.patch.object(launch_client, "tmux_attach",

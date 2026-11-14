@@ -229,6 +229,14 @@ def remember_agent(body: dict[str, object]) -> dict[str, object]:
     return AgentPrefsStore(host_db_path()).remember(agent, directory).to_json()
 
 
+def library_sync(body: dict[str, object]) -> dict[str, object]:
+    """Sync the library before a CLI launch (PRD 0131)."""
+    del body
+    # pylint: disable-next=import-outside-toplevel  # only on a paired host
+    from .library_link import sync_for_launch
+    return {"note": sync_for_launch()}
+
+
 def infra_state(body: dict[str, object]) -> dict[str, object]:
     """What infra bring-up recorded."""
     del body

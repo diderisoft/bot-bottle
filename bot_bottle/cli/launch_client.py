@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..contract.hostctl import (
-    BOTTLES_PATH, CONFIRM_ERROR, SESSIONS_PATH, LaunchRequest, exit_code,
+    BOTTLES_PATH, CONFIRM_ERROR, LIBRARY_SYNC_PATH, SESSIONS_PATH, LaunchRequest, exit_code,
 )
 from ..control.hostctl import runner
 from ..control.hostctl.client import HostControlClient
@@ -183,6 +183,15 @@ def _never(held: list[str]) -> bool:
     return False
 
 
+def library_sync(client: HostControlClient) -> str:
+    """Sync a paired host's library first (PRD 0131); the host controller waits
+    a couple of seconds at most. A line to show when it used the local copy."""
+    try:
+        return str(client.post(LIBRARY_SYNC_PATH, {}, timeout=5).get("note") or "")
+    except runner.HostControlError:
+        return ""  # an older host controller, say: launch as before
+
+
 def launch(request: LaunchRequest, *, verbose: bool = False, view: "Screen | None" = None,
            lead: "list[Step] | None" = None) -> int:
     """Launch through the host controller and attach. Returns the agent's exit
@@ -195,6 +204,8 @@ def launch(request: LaunchRequest, *, verbose: bool = False, view: "Screen | Non
         confirm = _never if request.headless else confirm_controller_restart
         client = HostControlClient(runner.ensure_running(confirm_restart=confirm),
                                    runner.cli_token())
+        if note := library_sync(client):
+            warn(note)
         while True:
             job = str(client.post(BOTTLES_PATH, request.to_json())["job"])
             final = client.follow(job, progress.line, progress.stage)

@@ -334,6 +334,21 @@ class HostAudit:
             payload={"version": version, "from": current, **({"error": error} if error else {})},
         ))
 
+    def library_updated(self, *, old: str, new: str, changed: list[str],
+                        authors: list[str]) -> None:
+        """`library.updated`: this host fast-forwarded its library to the
+        account's `main` (PRD 0131), from `old` ("" when it had none) to `new`.
+        `changed` is the agent and bottle files that differ; `authors`, who
+        made the commits (a host's label, or the console and its device). A
+        library change is a policy change on this host, so it's journalled
+        here as well as in the library's history, which the console writes."""
+        self.record(AuditEvent(
+            type="library.updated", actor="console", action="library.update",
+            outcome="success", sensitivity="security", ts_event=self._now(),
+            resource=f"library {new[:12]}",
+            payload={"from": old, "to": new, "changed": changed, "authors": authors},
+        ))
+
     # --- hostctl.* ---
 
     def brokered(self, kind: str, op: str, *, role: str, success: bool,
