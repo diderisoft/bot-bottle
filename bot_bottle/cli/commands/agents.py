@@ -3,6 +3,9 @@
 
     bot-bottle agents                   list them (the default marked)
     bot-bottle agents default <agent>   start <agent> where none was used last
+
+On a terminal, agents marked `listed: false` (tools such as bottle-architect,
+which bot-bottle runs itself) follow, marked as tools.
 """
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ import os
 import sys
 
 from ...manifest import ManifestIndex
+from ...manifest.loader import agent_listed
 from ..constants import PROG
 
 
@@ -27,8 +31,13 @@ def cmd_agents(argv: list[str]) -> int:
         return 2
     default = default_agent()
     tty = sys.stdout.isatty()
-    for name in ManifestIndex.resolve(os.getcwd()).all_agent_names:
+    index = ManifestIndex.resolve(os.getcwd())
+    for name in index.all_agent_names:
         print(f"{name}  (default)" if tty and name == default else name)
+    if tty:
+        for name, path in sorted(index.agent_files().items()):
+            if not agent_listed(path):
+                print(f"{name}  (tool)")
     return 0
 
 

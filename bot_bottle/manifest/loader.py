@@ -67,11 +67,24 @@ def scan_agent_names(agents_dir: Path) -> dict[str, Path]:
     return result
 
 
+def agent_listed(path: Path) -> bool:
+    """Whether the agent file at `path` is offered in lists for picking one
+    to launch: all but those whose frontmatter says `listed: false` (a tool
+    such as bottle-architect). A file that doesn't parse is listed, so its
+    launch says what's wrong."""
+    try:
+        fm, _body = parse_frontmatter(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, YamlSubsetError):
+        return True
+    return fm.get("listed") is not False
+
+
 # Built-in bottles (`basic`).
 BUILTIN_BOTTLES_DIR = Path(__file__).parent / "builtin"
-# Built-in agents (`claude`, `codex`): the starters every host gets the same,
-# read from the installed bot-bottle so they upgrade with it (PRD 0131). A
-# host or project agent of the same name shadows one.
+# Built-in agents (`claude`, `codex`, and the unlisted `bottle-architect`):
+# the starters every host gets the same, read from the installed bot-bottle so
+# they upgrade with it (PRD 0131). A host or project agent of the same name
+# shadows one.
 BUILTIN_AGENTS_DIR = Path(__file__).parent / "builtin_agents"
 
 

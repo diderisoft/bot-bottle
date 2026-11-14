@@ -11,6 +11,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from bot_bottle.suggest.architect import (
     Architect,
@@ -21,7 +22,14 @@ from bot_bottle.suggest.architect import (
     load_architect,
 )
 from bot_bottle.suggest.proposal import OPTION_REUSE, OPTION_STACK_ADDITIONS
-from bot_bottle.suggest.starter import ARCHITECT_STARTER, starter_for
+from bot_bottle.manifest.loader import BUILTIN_AGENTS_DIR
+
+
+def _ready(*harnesses: str):
+    """`harness_ready` true for exactly `harnesses`."""
+    def ready(harness: str) -> bool:
+        return harness in harnesses
+    return patch("bot_bottle.agent_provider.harness_ready", side_effect=ready)
 
 
 def write_agent(root: Path, frontmatter: str, prompt: str = "You are the architect.") -> Path:
@@ -124,27 +132,24 @@ class TestLoadArchitect(unittest.TestCase):
         self.assertEqual((path, "Propose tiny bottles.", "claude", "claude-sonnet-5"),
                          (got.path, got.prompt, got.harness, got.model))
 
-    def test_the_setup_starter_loads(self) -> None:
-        path = self.root / "agents" / "bottle-architect.md"
-        path.parent.mkdir(parents=True)
-        path.write_text(ARCHITECT_STARTER, encoding="utf-8")
-        got = load_architect(self.root)
-        self.assertEqual(("claude", ""), (got.harness, got.model))
-        self.assertIn('"option"', got.prompt)
-
-    def test_the_starter_takes_the_first_harness_setup_wrote(self) -> None:
-        path = self.root / "agents" / "bottle-architect.md"
-        path.parent.mkdir(parents=True)
-        for agent, harness in (("---\nagent_provider:\n  harness: codex\n"
-                                "  login: host\n---\n\nx\n", "codex"),
-                               ("---\nagent_provider:\n  harness: pi\n  settings:\n"
-                                "    models: [some/model]\n---\n\nx\n", "pi"),
-                               ("---\nname: no provider block\n---\n\nx\n", "claude")):
-            with self.subTest(harness=harness):
-                path.write_text(starter_for(agent), encoding="utf-8")
+    def test_without_a_host_copy_the_built_in_runs(self) -> None:
+        # Built in (PRD 0131): `harness: auto`, the first ready of claude, codex.
+        for ready, harness in ((("claude", "codex"), "claude"), (("codex",), "codex")):
+            with self.subTest(harness=harness), _ready(*ready):
                 got = load_architect(self.root)
-                self.assertEqual(harness, got.harness)
+                self.assertEqual((BUILTIN_AGENTS_DIR / "bottle-architect.md", harness, ""),
+                                 (got.path, got.harness, got.model))
                 self.assertIn('"option"', got.prompt)
+
+    def test_with_no_harness_ready_the_built_in_says_so(self) -> None:
+        with _ready("pi"), self.assertRaisesRegex(ArchitectError, "no harness is ready here"):
+            load_architect(self.root)
+
+    def test_a_host_copy_replaces_the_built_in(self) -> None:
+        path = write_agent(self.root, "agent_provider:\n  harness: codex\n", "Mine.")
+        with _ready("claude"):
+            got = load_architect(self.root)
+        self.assertEqual((path, "codex", "Mine."), (got.path, got.harness, got.prompt))
 
     def test_any_harness_can_be_the_architect(self) -> None:
         for harness in ("claude", "codex", "pi"):
@@ -152,9 +157,7 @@ class TestLoadArchitect(unittest.TestCase):
                 write_agent(self.root, f"agent_provider:\n  harness: {harness}\n")
                 self.assertEqual(harness, load_architect(self.root).harness)
 
-    def test_missing_unloadable_promptless_or_odd_model_is_an_error(self) -> None:
-        with self.assertRaisesRegex(ArchitectError, "bot-bottle setup"):
-            load_architect(self.root)
+    def test_unloadable_promptless_or_odd_model_is_an_error(self) -> None:
         cases = (("agent_provider:\n  harness: claude\n  bogus: 1\n", "x", "doesn't load"),
                  ("agent_provider:\n  harness: my-harness\n", "x", "doesn't load"),
                  ("agent_provider: claude\n", "", "no prompt"),

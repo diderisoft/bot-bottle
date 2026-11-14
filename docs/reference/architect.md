@@ -92,14 +92,23 @@ instead, and stops it after `BOT_BOTTLE_ARCHITECT_IDLE` seconds idle (default
 
 ## Customizing it
 
-`bot-bottle setup` writes the architect to
-`~/.bot-bottle/agents/bottle-architect.md`. Edit it like any agent:
+The architect is a built-in agent (`manifest/builtin_agents/bottle-architect.md`),
+so it upgrades with bot-bottle. It runs on `harness: auto`: claude where it's
+installed and logged in, else codex. With neither, suggestions use the rules
+path and say why. It's marked `listed: false`, so it isn't offered as an agent
+to launch ([manifest.md](manifest.md#composing-bottles)).
+
+To change it, copy it to `~/.bot-bottle/agents/bottle-architect.md` (or Copy
+to library in the console), which replaces the built-in. Edit it like any
+agent:
 
 - its body is the prompt
-- `agent_provider.harness` picks the harness
+- `agent_provider.harness` picks the harness (pi needs a copy that names it)
 - `model:` picks the model
 
-Only your own copy is read, never a project's.
+Only your own copy is read, never a project's. A copy an earlier `setup`
+wrote is removed if it's unchanged and on claude or codex, so the built-in
+takes over.
 
 ## What it may propose
 

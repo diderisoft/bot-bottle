@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import cast
 
-from ..agent_provider import BUILTIN_HARNESSES
+from ..agent_provider import AUTO_HARNESS, AUTO_HARNESSES, BUILTIN_HARNESSES, auto_harness
 from .. import secret_ref
 from .util import ManifestError, OldFormError, as_json_object
 from .git import ManifestGitUser
@@ -121,6 +121,11 @@ class ManifestAgentProvider:
     is Claude's OAuth token (`auth_token`); `{api_key: secret:NAME}` an API
     key (`settings["api_key_env"]`). Each is injected by the provider's
     egress route while the agent gets a placeholder.
+
+    `harness: auto` is whichever of `AUTO_HARNESSES` is ready on the host
+    when the agent loads (`resolved`), so it takes only what all of them
+    take: `login: host`, `settings.startup_args`, an overlay without a
+    harness version.
     """
 
     harness: str = "claude"
@@ -163,12 +168,13 @@ class ManifestAgentProvider:
             )
         forward_host_credentials, auth_token, api_key_env = _parse_login(
             agent_name, d["login"]) if "login" in d else (False, "", "")
+        _check_auto(agent_name, harness, d, auth_token or api_key_env)
         if (forward_host_credentials or auth_token or api_key_env) \
-                and harness not in BUILTIN_HARNESSES:
+                and harness not in BUILTIN_HARNESSES | {AUTO_HARNESS}:
             raise ManifestError(
                 f"agent '{agent_name}' agent_provider.login is only supported for built-in "
                 f"harnesses ({', '.join(sorted(BUILTIN_HARNESSES))})")
-        if forward_host_credentials and harness not in {"codex", "claude"}:
+        if forward_host_credentials and harness not in {"codex", "claude", AUTO_HARNESS}:
             raise ManifestError(
                 f"agent '{agent_name}' agent_provider.login: host is only supported for "
                 "harnesses 'codex' and 'claude'")
@@ -197,7 +203,7 @@ class ManifestAgentProvider:
                 "default image, so use one or the other (an overlay's own "
                 "Dockerfile goes in overlay.dockerfile)"
             )
-        if not overlay.is_empty() and harness not in BUILTIN_HARNESSES:
+        if not overlay.is_empty() and harness not in BUILTIN_HARNESSES | {AUTO_HARNESS}:
             raise ManifestError(
                 f"agent '{agent_name}' agent_provider.overlay is only "
                 f"supported for built-in harnesses "
@@ -212,6 +218,34 @@ class ManifestAgentProvider:
             settings=settings,
             overlay=overlay,
         )
+
+    def resolved(self, agent_name: str) -> "ManifestAgentProvider":
+        """This provider with `harness: auto` made the harness ready here;
+        ManifestError when none is."""
+        if self.harness != AUTO_HARNESS:
+            return self
+        harness = auto_harness()
+        if harness is None:
+            raise ManifestError(
+                f"agent '{agent_name}' runs on agent_provider.harness: auto, and no harness "
+                f"is ready here: install and log in to {' or '.join(AUTO_HARNESSES)} (`bot-bottle "
+                "doctor` checks), or copy the agent and name its harness")
+        return replace(self, harness=harness)
+
+
+def _check_auto(agent: str, harness: str, d: dict[str, object], key_login: str) -> None:
+    """Refuse what `harness: auto` can't promise: anything one of
+    `AUTO_HARNESSES` doesn't take."""
+    if harness != AUTO_HARNESS:
+        return
+    where = f"agent '{agent}' agent_provider"
+    if "dockerfile_path" in d:
+        raise ManifestError(f"{where}.dockerfile_path needs a named harness, not auto")
+    if key_login:
+        raise ManifestError(f"{where}.login with harness auto must be host")
+    overlay = d.get("overlay")
+    if isinstance(overlay, dict) and "harness_version" in overlay:
+        raise ManifestError(f"{where}.overlay.harness_version needs a named harness, not auto")
 
 
 @dataclass(frozen=True)
@@ -231,6 +265,14 @@ class ManifestAgent:
     # forge this agent pushes as; a forge it doesn't name uses its default
     # (ADR 0019).
     forge_users: tuple[tuple[str, str], ...] = ()
+    # `listed: false`: left out of lists for picking an agent to launch (a
+    # tool such as bottle-architect); named outright it still runs.
+    listed: bool = True
+
+    def resolved(self, name: str) -> "ManifestAgent":
+        """This agent as it runs here: `harness: auto` made a harness."""
+        provider = self.agent_provider.resolved(name)
+        return self if provider is self.agent_provider else replace(self, agent_provider=provider)
 
     @classmethod
     def from_dict(cls, name: str, raw: object) -> "ManifestAgent":
@@ -316,10 +358,14 @@ class ManifestAgent:
             ManifestAgentProvider.from_dict(name, d["agent_provider"])
             if "agent_provider" in d else ManifestAgentProvider()
         )
+        listed = d.get("listed", True)
+        if not isinstance(listed, bool):
+            raise ManifestError(
+                f"agent '{name}' listed must be true or false (was {type(listed).__name__})")
 
         return cls(skills=skills, prompt=prompt, git_user=git_user,
                    remote_writable=remote_writable, agent_provider=agent_provider,
-                   forge_users=forge_users)
+                   forge_users=forge_users, listed=listed)
 
 
 # Old agent_provider keys and their new forms.
@@ -433,7 +479,7 @@ def _parse_provider_settings(
     elif harness == "claude":
         # `api_key_env`: the host secret holding an Anthropic API key.
         allowed = common_allowed | {"api_key_env"}
-    elif harness == "codex":
+    elif harness in ("codex", AUTO_HARNESS):
         allowed = common_allowed
     elif harness not in BUILTIN_HARNESSES:
         return dict(settings)

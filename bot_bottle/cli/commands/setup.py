@@ -111,7 +111,9 @@ class Setup:
     # --- providers ---
 
     def run(self) -> int:
-        ready: list[str] = []  # each harness's starter agent, in order
+        # Built-ins need no file, but the host's manifest root is how
+        # bot-bottle knows it's set up.
+        (self.manifests / "agents").mkdir(parents=True, exist_ok=True)
         self.adopt_builtins()
         for name in PROVIDERS:
             provider = get_provider(name)
@@ -127,25 +129,15 @@ class Setup:
                          f"`{detection.login_command}`, then `{PROG} setup`")
                 continue
             self.say(f"{name}: {detection.login_location or 'ready'}")
-            # The agent carries the provider, so pi's model refresh rewrites it.
-            agent = provider.create_default_agent_manifest(detection)
             if (BUILTIN_AGENTS_DIR / f"{name}.md").is_file():
                 # The same on every host: built into bot-bottle, not copied.
                 self.say(f"  {name} agent: built in")
             else:
-                self.write("agents", name, agent, replace=name == "pi" and self.refresh_model)
-            ready.append(agent)
-        if ready:
-            self._write_bottle_architect(ready[0])
+                # The agent carries the provider, so pi's model refresh rewrites it.
+                self.write("agents", name, provider.create_default_agent_manifest(detection),
+                           replace=name == "pi" and self.refresh_model)
+        # bottle-architect is built in too (`harness: auto`), so nothing to write.
         return 0
-
-    def _write_bottle_architect(self, agent: str) -> None:
-        """Write the bottle-architect agent starter on the harness of `agent`,
-        the first one set up here. The suggester reads this file for its
-        prompt, harness and model, and runs it in its own bottle."""
-        # pylint: disable-next=import-outside-toplevel
-        from ...suggest.starter import ARCHITECT_AGENT, starter_for
-        self.write("agents", ARCHITECT_AGENT, starter_for(agent))
 
     def pi_detection(  # pylint: disable=too-many-return-statements  # one per outcome
             self, detection: HostDetection) -> HostDetection | None:

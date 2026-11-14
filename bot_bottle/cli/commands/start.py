@@ -227,7 +227,7 @@ def cmd_start(argv: list[str]) -> int:  # pylint: disable=too-many-return-statem
 
 def _split_task(args: argparse.Namespace, manifest: ManifestIndex) -> None:
     """`start "<task>"`: a first argument that isn't an agent is the task."""
-    if args.name and args.task is None and args.name not in manifest.all_agent_names \
+    if args.name and args.task is None and not manifest.has_agent_named(args.name) \
             and (" " in args.name or args.auto):
         args.name, args.task = None, args.name
     if args.task is not None:

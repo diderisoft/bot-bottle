@@ -1224,7 +1224,8 @@ built-ins, and the start event's `bottle_versions.builtins` records which
 release that was.
 
 - **`library_builtins`**, from the host on each connect: the installed
-  release's built-ins, packaged, whether or not their harness is ready here,
+  release's built-ins, packaged (`bottle-architect` included), whether or not
+  their harness is ready here,
   so the console can list them and say what a release changed in them. Not
   sent from a source checkout or an unknown version, and kept within what the
   console takes (32 files, 64 KiB each).
@@ -1927,6 +1928,10 @@ read-only, and keeps the last copy for while the host is offline.
 - It holds each home agent and bottle under `~/.bot-bottle/`.
 - It holds the built-in bottles a home one doesn't shadow, and the built-in
   agents too where their harness is set up. Each says whether it's `builtin`.
+- Agents marked `listed: false` (the built-in `bottle-architect`) aren't in
+  it, nor in the agents a console launch may name without a library commit:
+  both are for picking an agent to launch. The console still lists the
+  built-in architect from `library_builtins`.
 - Each comes with its text, cut at 64 KiB.
 - Project bottles aren't sent.
 

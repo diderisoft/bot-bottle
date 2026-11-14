@@ -58,7 +58,8 @@ class _Home(unittest.TestCase):
 
 class Resolving(_Home):
     def test_listed_where_their_harness_is_ready(self) -> None:
-        self.assertEqual({"claude", "codex"}, set(scan_agent_names(BUILTIN_AGENTS_DIR)))
+        self.assertEqual({"bottle-architect", "claude", "codex"},
+                         set(scan_agent_names(BUILTIN_AGENTS_DIR)))
         with patch("bot_bottle.manifest.index.harness_ready", side_effect=_only_claude):
             names = self.index().all_agent_names
         self.assertIn("claude", names)

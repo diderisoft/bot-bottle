@@ -112,13 +112,21 @@ class ClaudeAndCodex(_Host):
             # A paired phone can talk to a starter agent.
             self.assertTrue(manifest.agent.remote_writable)
 
-    def test_the_bottle_architect_starter_uses_the_first_harness_set_up(self) -> None:
-        from bot_bottle.suggest.architect import load_architect  # pylint: disable=import-outside-toplevel
+    def test_the_bottle_architect_is_built_in_on_the_first_harness_ready(self) -> None:
+        # pylint: disable=import-outside-toplevel
+        from bot_bottle import agent_provider
+        from bot_bottle.suggest.architect import load_architect
         self.install("codex")
         self.codex_login()
         self.setup().run()
-        architect = load_architect(self.starter("agents", "bottle-architect").parents[1])
+        self.assertFalse(self.starter("agents", "bottle-architect").exists())
+        agent_provider._READY.clear()  # pylint: disable=protected-access
+        self.addCleanup(agent_provider._READY.clear)  # pylint: disable=protected-access
+        with patch.dict(os.environ, {"PATH": str(self.bin)}):
+            architect = load_architect(self.root)
         self.assertEqual("codex", architect.harness)
+        self.assertEqual("bottle-architect", ManifestIndex.resolve(
+            str(self.home)).host_agent("bottle-architect").stem)  # type: ignore[union-attr]
 
     def test_installed_but_not_logged_in_warns_and_writes_nothing(self) -> None:
         self.install("claude")

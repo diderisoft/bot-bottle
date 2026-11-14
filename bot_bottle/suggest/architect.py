@@ -1,9 +1,11 @@
 """bottle-architect: the `bottle-architect` agent, run in its own bottle,
 produces a typed proposal (PRD 0117).
 
-The agent is the file `setup` writes, `~/.bot-bottle/agents/bottle-architect.md`:
-its body is the system prompt, `agent_provider.harness` picks the harness and
-`model:` the model. Only the host's agent is read; a project can't replace it.
+The agent is the host's `~/.bot-bottle/agents/bottle-architect.md` (the
+library's), else the built-in one (`manifest/builtin_agents/`): its body is
+the system prompt, `agent_provider.harness` picks the harness (the built-in's
+`auto` is the first one ready here) and `model:` the model. A project can't
+replace it.
 
 It runs in the `bottle-architect` bottle (`suggest/bottles/`): its model API
 and nothing else, no repos, no secrets, an empty workspace. That bottle, not
@@ -61,25 +63,26 @@ class Architect:
 
 
 def load_architect(host_root: Path) -> Architect:
-    """The host's `bottle-architect` agent. ArchitectError when it's missing
-    or doesn't load (an unknown harness doesn't load)."""
+    """The host's `bottle-architect` agent, else the built-in one.
+    ArchitectError when it doesn't load (an unknown harness doesn't load, nor
+    `auto` with no harness ready)."""
     # pylint: disable=import-outside-toplevel
     from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
     from ..manifest.agent import ManifestAgent
+    from ..manifest.loader import BUILTIN_AGENTS_DIR
     from ..manifest.schema import validate_agent_frontmatter_keys
     from ..manifest.util import ManifestError
 
     path = host_root / "agents" / f"{ARCHITECT_AGENT}.md"
+    if not path.is_file():
+        path = BUILTIN_AGENTS_DIR / f"{ARCHITECT_AGENT}.md"
     try:
         fm, body = parse_frontmatter(path.read_text(encoding="utf-8"))
         validate_agent_frontmatter_keys(path, fm.keys())
         raw: dict[str, object] = {"prompt": body.strip()}
         if "agent_provider" in fm:
             raw["agent_provider"] = fm["agent_provider"]
-        agent = ManifestAgent.from_dict(ARCHITECT_AGENT, raw)
-    except FileNotFoundError as e:
-        raise ArchitectError(f"there's no {ARCHITECT_AGENT} agent at {path}; "
-                             "`bot-bottle setup` writes it") from e
+        agent = ManifestAgent.from_dict(ARCHITECT_AGENT, raw).resolved(ARCHITECT_AGENT)
     except (OSError, YamlSubsetError, ManifestError) as e:
         raise ArchitectError(f"{path} doesn't load: {e}") from e
     if not agent.prompt:

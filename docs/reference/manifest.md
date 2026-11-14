@@ -109,7 +109,8 @@ The built-in `basic` bottle (`manifest/builtin/basic.md`) allows downloads from
 the common package registries. The agent picks its own harness, so one bottle
 serves Claude, Codex and pi agents alike.
 
-**Built-in agents.** `claude` and `codex` come with bot-bottle
+**Built-in agents.** `claude`, `codex` and `bottle-architect`
+([architect.md](architect.md)) come with bot-bottle
 (`manifest/builtin_agents/`), so they upgrade with it. An agent is found in the
 project's `.bot-bottle/agents/`, then `~/.bot-bottle/agents/`, then the
 built-ins, so a file of the same name in either replaces one: copy it there to
@@ -118,7 +119,15 @@ only where its harness is installed and logged in; named outright
 (`bot-bottle codex`), it resolves anywhere. A copy an earlier `setup` wrote,
 byte for byte as a `setup` commit in the versions repo holds it, is removed
 so the built-in takes over: by `setup`, and when the host controller starts.
-Any other copy stays, as yours.
+Any other copy stays, as yours, and so does one on a harness the built-in
+wouldn't pick (a `bottle-architect` setup wrote on pi).
+
+**Unlisted agents.** `listed: false` leaves an agent out of every list for
+picking one to launch: `bot-bottle agents` (on a terminal it follows the
+others, marked `(tool)`), `start`'s picker, the CLI's "Available" agents, and
+what the host offers the console's launch pages. Named outright it still
+resolves and runs. The built-in `bottle-architect` sets it, since bot-bottle
+runs it itself; a copy of it keeps whatever the copy says.
 
 What `extends` resolves to is the sealed bottle
 ([glossary](glossary.md#sealed-bottle)).
@@ -183,7 +192,8 @@ merge into the copy ([host-controller.md](host-controller.md#a-releases-changes-
 
 | Field | Does |
 |---|---|
-| `agent_provider.harness` | `claude`, `codex` or `pi` ([images](#images)) |
+| `agent_provider.harness` | `claude`, `codex`, `pi` ([images](#images)), or `auto` |
+| `listed` | `false` leaves the agent out of lists for picking one ([unlisted agents](#composing-bottles)) |
 | `agent_provider.dockerfile_path` | the agent's own Dockerfile, a custom image |
 | `agent_provider.overlay` | layers onto the built-in image ([images](#images)) |
 | `agent_provider.login` | the agent's login ([login](#login)) |
@@ -193,6 +203,14 @@ merge into the copy ([host-controller.md](host-controller.md#a-releases-changes-
 
 Claude Code's own fields (`name`, `description`, `model`, `color`, `memory`)
 are ignored; `model` warns.
+
+`harness: auto` runs on the first harness ready on the host when the agent
+loads: `claude`, then `codex`, each installed and logged in (as `setup` and
+`bot-bottle doctor` find them). With neither, the launch fails and says so.
+Since either may run it, an `auto` agent takes only what both do: `login:
+host`, `settings.startup_args`, and an overlay without `harness_version`; no
+`dockerfile_path`. The library's load check takes it on every host, without
+asking which harness is ready.
 
 A forge `identity.accounts` doesn't name uses its default user
 ([git-gate.md](git-gate.md#forges-and-one-line-grants)). Grants name no user,

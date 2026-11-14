@@ -34,6 +34,10 @@ PROVIDER_CLAUDE = "claude"
 PROVIDER_CODEX = "codex"
 PROVIDER_PI = "pi"
 BUILTIN_HARNESSES = frozenset({PROVIDER_CLAUDE, PROVIDER_CODEX, PROVIDER_PI})
+# `harness: auto` runs on the first of these that's ready on the host at
+# launch (`auto_harness`), as `setup` used to pick the architect's harness.
+AUTO_HARNESS = "auto"
+AUTO_HARNESSES = (PROVIDER_CLAUDE, PROVIDER_CODEX)
 
 # Hosts egress injects the host ChatGPT bearer on when Codex
 # `forward_host_credentials` is enabled.
@@ -521,6 +525,12 @@ def harness_ready(harness: str) -> bool:
         ready = False
     _READY[harness] = (now, ready)
     return ready
+
+
+def auto_harness() -> str | None:
+    """What `harness: auto` runs on here: the first of `AUTO_HARNESSES` that's
+    ready, or None."""
+    return next((h for h in AUTO_HARNESSES if harness_ready(h)), None)
 
 
 def runtime_for(harness: str) -> AgentProviderRuntime:

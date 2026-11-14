@@ -24,7 +24,7 @@ BOTTLE_KEYS = frozenset(
 )
 AGENT_KEYS_REQUIRED: frozenset[str] = frozenset()
 # `git-gate` and `forge_users` are old forms, refused with their new one.
-AGENT_KEYS_OPTIONAL = frozenset({"skills", "identity", "remote", "agent_provider",
+AGENT_KEYS_OPTIONAL = frozenset({"skills", "identity", "remote", "agent_provider", "listed",
                                  "git-gate", "forge_users"})
 
 # The bottle a launch runs in when none is selected. Agents don't name a
