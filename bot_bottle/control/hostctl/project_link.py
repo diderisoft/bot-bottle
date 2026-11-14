@@ -3,10 +3,12 @@
 - `projects` (`checkouts`, from the host): every checkout this host keeps
   (`checkouts.py`), the full list each time. Sent on each connect, and
   whenever it changes: an add or remove, a launch, or a refresh (each
-  minute) that dropped a checkout or saw a new repo or branch.
+  minute, beside the link: it runs git in every checkout) that dropped a
+  checkout or saw a new repo or branch.
 - `project_bottles` (`repo`, `path`, `branch`, `request_id`): a reported
   checkout's bottles and agents at a branch (`project_bottles.py`), replied
-  to as `project_bottles`. Answered beside the link, since it fetches.
+  to as `project_bottles`. Answered beside the link, since it fetches, a
+  couple at a time.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from . import checkouts, project_bottles
 from .checkouts import CheckoutStore
 
 REFRESH_SECONDS = 60.0
+MAX_ANSWERING = 2  # `project_bottles` read at once; more wait their turn
 
 
 class ProjectLink:
@@ -36,7 +39,9 @@ class ProjectLink:
         self._store: CheckoutStore | None = None
         self._told: dict[str, object] | None = None  # the report the console has
         self._refreshed = 0.0
+        self._refreshing: asyncio.Task[None] | None = None
         self._asked: set[asyncio.Task[None]] = set()
+        self._answering = asyncio.Semaphore(MAX_ANSWERING)
 
     def store(self) -> CheckoutStore:
         if self._store is None:
@@ -50,25 +55,30 @@ class ProjectLink:
         task.add_done_callback(self._asked.discard)
 
     async def _answer(self, msg: dict[str, Any]) -> None:
-        try:
-            reply = await asyncio.to_thread(project_bottles.answer, msg, self.store())
-        except (OSError, sqlite3.Error) as e:
-            reply = {"type": "project_bottles", "request_id": msg.get("request_id"),
-                     "error": f"couldn't read this host's checkouts: {e}"[:300]}
+        async with self._answering:
+            try:
+                reply = await asyncio.to_thread(project_bottles.answer, msg, self.store())
+            except (OSError, sqlite3.Error) as e:
+                reply = {"type": "project_bottles", "request_id": msg.get("request_id"),
+                         "error": f"couldn't read this host's checkouts: {e}"[:300]}
         await self._send(reply)
 
     async def connected(self) -> None:
-        """A (re)connected console hears every checkout."""
+        """A (re)connected console hears every checkout at once, and again
+        once they're re-read if that changed anything."""
         self._told = None
-        await self.tick(refresh=True)
+        self._refreshed = 0.0
+        await self.tick()
 
-    async def tick(self, *, refresh: bool = False) -> None:
-        """On the link's watch loop: refresh each minute, and send the
+    async def tick(self) -> None:
+        """On the link's watch loop: start a re-read of every checkout each
+        minute (beside the loop: it's a few gits per checkout), and send the
         report when it isn't what the console has."""
+        idle = self._refreshing is None or self._refreshing.done()
+        if idle and time.monotonic() - self._refreshed >= REFRESH_SECONDS:
+            self._refreshed = time.monotonic()
+            self._refreshing = asyncio.create_task(self._refresh())
         try:
-            if refresh or time.monotonic() - self._refreshed >= REFRESH_SECONDS:
-                self._refreshed = time.monotonic()
-                await asyncio.to_thread(checkouts.refresh, self.store())
             message = await asyncio.to_thread(checkouts.report, self.store())
         except (OSError, sqlite3.Error) as e:
             log.debug(f"projects: couldn't read this host's checkouts: {e}")
@@ -77,9 +87,15 @@ class ProjectLink:
             await self._send(message)
             self._told = message
 
+    async def _refresh(self) -> None:
+        try:
+            await asyncio.to_thread(checkouts.refresh, self.store())
+        except (OSError, sqlite3.Error) as e:
+            log.debug(f"projects: couldn't re-read this host's checkouts: {e}")
+
     def close(self) -> None:
-        for task in list(self._asked):
+        for task in [*self._asked, *filter(None, [self._refreshing])]:
             task.cancel()
 
 
-__all__ = ["ProjectLink", "REFRESH_SECONDS"]
+__all__ = ["MAX_ANSWERING", "ProjectLink", "REFRESH_SECONDS"]

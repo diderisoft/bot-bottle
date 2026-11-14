@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -68,8 +69,7 @@ class _Checkouts(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()  # pylint: disable=consider-using-with
         self.addCleanup(use_bottle_root(self.tmp / "root"))
-        # git looks no higher than the test's directory (another test may
-        # leave a repo in /tmp).
+        # git looks no higher than the test's directory.
         env = {**versions.git_env(), "GIT_CEILING_DIRECTORIES": str(self.tmp.parent)}
         for module in (checkouts, pb):
             self.enterContext(mock.patch.object(module, "git_env", return_value=env))
@@ -113,6 +113,11 @@ class TestCheckouts(_Checkouts):
         self.assertIn("isn't a directory", checkouts.inspect(self.tmp / "nope").reason)  # type: ignore[union-attr]
         _git(self.work, "remote", "set-url", "origin", "/srv/git/app.git")
         self.assertIn("names no forge repo", checkouts.inspect(self.work).reason)  # type: ignore[union-attr]
+        # A URL's password (a token) isn't repeated.
+        _git(self.work, "remote", "set-url", "origin", "https://u:tok@example.com/app")
+        reason = checkouts.inspect(self.work).reason  # type: ignore[union-attr]
+        self.assertIn("(https://example.com/app)", reason)
+        self.assertNotIn("tok", reason)
         _git(self.work, "remote", "remove", "origin")
         self.assertIn("no `origin` remote", checkouts.inspect(self.work).reason)  # type: ignore[union-attr]
 
@@ -217,6 +222,10 @@ class TestRoutes(_Checkouts):
         sub = self.work / "sub"
         sub.mkdir()
         self.assertIn("no bottles there yet", str(checkouts.add({"path": str(sub)})["note"]))
+        # A bot-bottle root's `.bot-bottle/` holds no project's bottles.
+        with mock.patch.object(checkouts, "project_manifest_dir", return_value=None):
+            self.assertIn("no bottles there yet",
+                          str(checkouts.add({"path": str(self.work)})["note"]))
 
     def test_add_refuses_saying_why(self) -> None:
         plain = self.tmp / "plain"
@@ -360,7 +369,31 @@ class TestProjectBottles(_Checkouts):
         self.assertIn("isn't a branch name", self.ask(branch="-x")["error"])
         self.assertIn("isn't a branch name", self.ask(branch="a..b")["error"])
         self.assertIn("isn't a branch name", self.ask(branch="@{-1}")["error"])
+        self.assertIn("isn't a branch name", self.ask(branch="b" * 256)["error"])
         self.assertIn("no branch nope in", self.ask(branch="nope")["error"])
+
+    def test_a_fetch_runs_none_of_the_checkouts_hooks(self) -> None:
+        ran = self.tmp / "ran"
+        hook = self.work / ".git" / "hooks" / "reference-transaction"
+        hook.write_text(f"#!/bin/sh\ntouch '{ran}'\n")
+        hook.chmod(0o755)
+        _git(self.work, "config", "core.fsmonitor", f"touch '{ran}'; false")
+        reply = self.ask(branch="feat/x")
+        self.assertTrue(reply["fetched"])
+        self.assertFalse(ran.exists())
+
+    def test_the_reply_stays_within_its_size(self) -> None:
+        # Past the budget a file is listed without its text, as one over the
+        # per-file cap is; what fits is kept, in order.
+        with mock.patch.object(pb, "MAX_CONTENT_BYTES", len(json.dumps(BOTTLE))):
+            reply = self.ask(branch="feat/x")
+        self.assertEqual([("big", None), ("dev", BOTTLE)],
+                         [(b["name"], b["content"]) for b in reply["bottles"]])
+        (reviewer,) = reply["agents"]
+        self.assertEqual((None, True), (reviewer["content"], reviewer["too_large"]))
+        with mock.patch.object(pb, "MAX_CONTENT_BYTES", 0):
+            reply = self.ask(branch="feat/x")
+        self.assertTrue(all(b["too_large"] for b in reply["bottles"] + reply["agents"]))
 
     def test_a_failed_fetch_carries_on(self) -> None:
         _git(self.work, "config", "core.sshCommand", "false")
@@ -388,11 +421,11 @@ class TestProjectBottles(_Checkouts):
             self.assertEqual("couldn't list x", self.ask()["error"])
         with mock.patch.object(pb, "git", side_effect=OSError("no git")):
             self.assertIn("couldn't read the project: no git", self.ask(branch="x")["error"])
-        commit = _git(self.work, "rev-parse", "HEAD")
-        with self.assertRaises(pb._Refused):
-            pb.manifests(self.work, "0" * 40, ".bot-bottle/bottles/")
-        with self.assertRaises(pb._Refused):
-            pb._show(self.work, commit, "nope.md")
+        with self.assertRaisesRegex(pb._Refused, "git ls-tree failed"):
+            pb.manifests(self.work, "0" * 40, ".bot-bottle/bottles/", ".bot-bottle/agents/")
+        with self.assertRaisesRegex(pb._Refused, "couldn't read " + "1" * 40):
+            pb._blobs(self.work, ["1" * 40])
+        self.assertEqual({}, pb._blobs(self.work, []))
 
 
 class _Sent:
@@ -408,14 +441,23 @@ class TestProjectLink(_Checkouts):
         sent = _Sent()
         link = ProjectLink(sent, store=lambda: self.store)
 
+        async def refreshed() -> None:
+            assert link._refreshing is not None
+            await link._refreshing
+            await link.tick()
+
         async def run() -> None:
             await link.connected()
-            await link.tick()  # nothing changed: nothing sent
+            await refreshed()  # the re-read changed nothing: nothing more sent
             self.keep()
             await link.tick()
             shutil.rmtree(self.work)
-            await link.tick(refresh=True)
+            await link.tick()  # not re-read yet
+            link._refreshed -= project_link.REFRESH_SECONDS
+            await link.tick()
+            await refreshed()
             await link.connected()  # a reconnect hears it all again
+            link.close()
 
         asyncio.run(run())
         self.assertEqual([[], [str(self.work)], [], []],
@@ -450,6 +492,8 @@ class TestProjectLink(_Checkouts):
 
         async def run() -> None:
             await link.tick()
+            assert link._refreshing is not None
+            await link._refreshing  # logged, not raised
             await link.handle({"type": "project_bottles", "request_id": "r"})
             await asyncio.gather(*link._asked)
 

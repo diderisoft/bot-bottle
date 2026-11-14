@@ -1336,12 +1336,13 @@ scanning the disk:
 - A launch from a project's directory, from the CLI or the console, keeps
   its checkout as used now. One with no repo isn't kept.
 
-On each connect and each minute, the host re-reads every checkout: one gone
-from disk, out of a work tree or with no repo now is dropped; the rest get
-their repo and branch.
+On each connect and each minute, the host re-reads every checkout (beside
+the link, so a slow disk holds up nothing else): one gone from disk, out of a
+work tree or with no repo now is dropped; the rest get their repo and branch.
 
 **`projects`**, from the host: every checkout, the full list each time, on
-each connect and within two seconds of a change (an add or remove, a launch,
+each connect (at once, from the database; again once the re-read changes
+anything) and within two seconds of a change (an add or remove, a launch,
 or a re-read that dropped one or saw a new repo or branch):
 
 ```json
@@ -1363,15 +1364,17 @@ the same type: a checkout's bottles and agents at a branch.
 - `branch` is a branch name, or `""` for the checkout's `HEAD`. One starting
   with `-`, or that `git check-ref-format --branch` refuses, is refused.
 - The host fetches the remote first, with the user's own git credentials,
-  never prompting, killed after ten seconds. A failed fetch isn't an error:
-  the reply says `"fetched": false`.
+  never prompting (no terminal, no ssh or credential-manager window), killed
+  after ten seconds. A failed fetch isn't an error: the reply says
+  `"fetched": false`. The checkout's own config runs nothing for it: git runs
+  there with no hooks and no fsmonitor.
 - The branch resolves locally (`refs/heads/<branch>`), else from the remote
   (`refs/remotes/<remote>/<branch>`); neither is an error.
-- The files are read at that commit with `git ls-tree` and `git show`
-  (no textconv): the `<name>.md` files right in the project's
-  `.bot-bottle/bottles/` and `agents/` (under its directory in the repo).
-  Nothing is checked out, committed or stored, so the working tree is
-  untouched.
+- The files are read at that commit with `git ls-tree` and `git cat-file`,
+  as committed (no filter or textconv): the regular `<name>.md` files right
+  in the project's `.bot-bottle/bottles/` and `agents/` (under its directory
+  in the repo), never a symlink. Nothing is checked out, committed or
+  stored, so the working tree is untouched.
 
 ```json
 {"type": "project_bottles", "request_id": "0123456789abcdef",
@@ -1383,10 +1386,11 @@ the same type: a checkout's bottles and agents at a branch.
 ```
 
 At most 200 bottles and 200 agents, sorted by name; a file over 256 KiB has
-`"content": null, "too_large": true`. `branches` are the local branches and
+`"content": null, "too_large": true`, and so do the files past 8 MiB of text
+in all (bottles first), so a reply stays well under the link's 16 MiB line. `branches` are the local branches and
 the remote's, without its `HEAD`, at most 200. A refusal is `error`, one line
-of at most 300 characters. The request is answered beside the link, so a slow
-fetch holds up nothing else.
+of at most 300 characters. The request is answered beside the link, two at a
+time, so a slow fetch holds up nothing else.
 
 ### Host stats
 

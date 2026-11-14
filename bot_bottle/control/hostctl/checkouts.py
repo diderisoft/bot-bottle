@@ -35,6 +35,9 @@ REPO_RE = re.compile(
 _SCHEMES = frozenset({"ssh", "git", "http", "https", "git+ssh", "ssh+git"})
 _SCP = re.compile(r"(?:[^@/]+@)?(\[[^\]/]+\]|[^:/\[\]@]+):(.*)", re.DOTALL)
 _GIT_SECONDS = 10.0
+# A checkout's own config runs nothing for the host: no hooks (a fetch runs
+# `reference-transaction`), no fsmonitor.
+SAFE = ("-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false")
 
 
 def normalize_repo_url(url: str) -> str | None:
@@ -70,7 +73,8 @@ def normalize_repo_url(url: str) -> str | None:
 def git(cwd: Path, *args: str, timeout: float = _GIT_SECONDS) -> subprocess.CompletedProcess[str]:
     """git in `cwd`, as the host runs it for itself (no prompts). Raises
     OSError or TimeoutExpired when git can't run."""
-    return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True,
+    return subprocess.run(["git", "-C", str(cwd), *SAFE, *args], capture_output=True,
+                          text=True, errors="replace", stdin=subprocess.DEVNULL,
                           env=git_env(), check=False, timeout=timeout)
 
 
@@ -78,6 +82,15 @@ def remote_name(cwd: Path) -> str:
     """The checkout's remote: `origin`, else the only one, else ""."""
     names = git(cwd, "remote").stdout.split()
     return "origin" if "origin" in names else (names[0] if len(names) == 1 else "")
+
+
+def _shown(url: str) -> str:
+    """`url` without a user or password (it may hold a token), to show."""
+    scheme, sep, rest = url.partition("://")
+    if not sep:
+        return url
+    authority, slash, path = rest.partition("/")
+    return f"{scheme}://{authority.rpartition('@')[2]}{slash}{path}"
 
 
 @dataclass(frozen=True)
@@ -105,7 +118,7 @@ def inspect(path: Path) -> Found | Refused:
     url = git(path, "remote", "get-url", remote).stdout.strip() if remote else ""
     repo = normalize_repo_url(url) if url else None
     if repo is None:
-        why = (f"its remote's URL ({url}) names no forge repo" if url else
+        why = (f"its remote's URL ({_shown(url)}) names no forge repo" if url else
                "it has no `origin` remote (or only remote)")
         return Refused(f"{path} has no repo: {why}")
     branch = git(path, "symbolic-ref", "--short", "-q", "HEAD").stdout.strip()
@@ -280,7 +293,7 @@ def add(body: dict[str, object]) -> dict[str, object]:
     if isinstance(found, Refused):
         raise ValueError(found.reason)
     checkout = store().keep(path, found)
-    note = "" if (Path(path) / ".bot-bottle").is_dir() else (
+    note = "" if project_manifest_dir(path) is not None else (
         f"no bottles there yet: they go in {Path(path) / '.bot-bottle' / 'bottles'}")
     return {"checkout": checkout.to_json(), "note": note}
 
@@ -291,6 +304,6 @@ def remove(body: dict[str, object]) -> dict[str, object]:
 
 
 __all__ = ["Checkout", "CheckoutStore", "Found", "MAX_BRANCH", "MAX_CHECKOUTS", "MAX_PATH",
-           "REPO_RE", "Refused", "add", "git", "inspect", "iso", "learn_launch", "listed",
+           "REPO_RE", "Refused", "SAFE", "add", "git", "inspect", "iso", "learn_launch", "listed",
            "normalize_repo_url", "refresh", "remote_name", "remove", "report", "resolved",
            "store"]
