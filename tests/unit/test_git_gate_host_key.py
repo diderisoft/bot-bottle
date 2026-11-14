@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -252,6 +254,16 @@ git_gate:
 # ---------------------------------------------------------------------------
 
 
+@contextmanager
+def _bottles_dir() -> Generator[str]:
+    """A `bottles/` directory in a fresh one: a host key written there is
+    committed in its parent (the root), never in the system temp dir."""
+    with tempfile.TemporaryDirectory() as root:
+        bottles = Path(root) / "bottles"
+        bottles.mkdir()
+        yield str(bottles)
+
+
 class TestFindAndUpdateBottleFile(unittest.TestCase):
     def _write_bottle(self, d: str, name: str, content: str) -> Path:
         path = Path(d) / f"{name}.md"
@@ -259,7 +271,7 @@ class TestFindAndUpdateBottleFile(unittest.TestCase):
         return path
 
     def test_updates_file_with_matching_repo(self) -> None:
-        with tempfile.TemporaryDirectory() as d:
+        with _bottles_dir() as d:
             content = """\
 ---
 git_gate:
@@ -278,7 +290,7 @@ git_gate:
             self.assertIn("host_key: ssh-ed25519 AAAA", updated)
 
     def test_returns_false_when_no_matching_file(self) -> None:
-        with tempfile.TemporaryDirectory() as d:
+        with _bottles_dir() as d:
             content = """\
 ---
 git_gate:
@@ -295,7 +307,7 @@ git_gate:
             self.assertFalse(result)
 
     def test_skips_file_that_already_has_host_key(self) -> None:
-        with tempfile.TemporaryDirectory() as d:
+        with _bottles_dir() as d:
             content = """\
 ---
 git_gate:
@@ -320,19 +332,19 @@ git_gate:
         self.assertFalse(result)
 
     def test_skips_file_without_git_gate_section(self) -> None:
-        with tempfile.TemporaryDirectory() as d:
+        with _bottles_dir() as d:
             self._write_bottle(d, "plain", "---\nenv:\n  FOO: bar\n---\n")
             result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
             self.assertFalse(result)
 
     def test_skips_file_with_non_dict_repos(self) -> None:
-        with tempfile.TemporaryDirectory() as d:
+        with _bottles_dir() as d:
             self._write_bottle(d, "bad", "---\ngit_gate:\n  repos:\n    - item\n---\n")
             result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
             self.assertFalse(result)
 
     def test_skips_invalid_utf8_file(self) -> None:
-        with tempfile.TemporaryDirectory() as d:
+        with _bottles_dir() as d:
             path = Path(d) / "broken.md"
             path.write_bytes(b"\xff\xfe")  # invalid UTF-8
             result = find_and_update_bottle_file(Path(d), "myrepo", "ssh-ed25519 AAAA")
@@ -340,7 +352,7 @@ git_gate:
 
     def test_skips_unreadable_file(self) -> None:
         import os
-        with tempfile.TemporaryDirectory() as d:
+        with _bottles_dir() as d:
             path = Path(d) / "unreadable.md"
             path.write_text("---\n---\n")
             os.chmod(path, 0o000)
@@ -364,7 +376,7 @@ git_gate:
         path: /dev/null
 ---
 """
-        with tempfile.TemporaryDirectory() as d:
+        with _bottles_dir() as d:
             path = self._write_bottle(d, "dev", content)
             with patch(
                 "bot_bottle.git_gate.host_key.find_repo_bottle_file",
@@ -388,7 +400,7 @@ git_gate:
         path: /dev/null
 ---
 """
-        with tempfile.TemporaryDirectory() as d:
+        with _bottles_dir() as d:
             path = self._write_bottle(d, "dev", content)
             with patch(
                 "bot_bottle.git_gate.host_key.add_host_key_to_frontmatter",
