@@ -26,12 +26,13 @@ def _read(path: Path) -> str:
 
 
 def host_library() -> dict[str, list[dict[str, Any]]]:
-    """`{"agents": [...], "bottles": [...]}`, each `{name, content}` (a
-    bottle also `builtin`), sorted by name. A file that can't be read is left
-    out with a warning."""
+    """`{"agents": [...], "bottles": [...]}`, each `{name, content,
+    builtin}`, sorted by name. Built-in agents are those offered here (their
+    harness is set up). A file that can't be read is left out with a
+    warning."""
     # pylint: disable=import-outside-toplevel
     from ...manifest import ManifestError, ManifestIndex
-    from ...manifest.loader import BUILTIN_BOTTLES_DIR, scan_agent_names, scan_bottle_names
+    from ...manifest.loader import BUILTIN_AGENTS_DIR, BUILTIN_BOTTLES_DIR, scan_bottle_names
     try:
         index = ManifestIndex.resolve(str(Path.home()), missing_ok=True)
     except (ManifestError, OSError) as e:
@@ -40,9 +41,10 @@ def host_library() -> dict[str, list[dict[str, Any]]]:
     out: dict[str, list[dict[str, Any]]] = {"agents": [], "bottles": []}
     if index.home_md is None:
         return out
-    for name, path in sorted(scan_agent_names(index.home_md / "agents").items()):
+    for name, path in sorted(index.agent_files(listing=True).items()):
         try:
-            out["agents"].append({"name": name, "content": _read(path)})
+            out["agents"].append({"name": name, "content": _read(path),
+                                  "builtin": path.parent == BUILTIN_AGENTS_DIR})
         except OSError as e:
             log.warn(f"remote: can't read agent {name}: {e}")
     seen: set[str] = set()

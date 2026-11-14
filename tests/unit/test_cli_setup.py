@@ -263,6 +263,17 @@ class PiFromTheLocalConfig(_Host):
 
 
 class Doctor(_Host):
+    def test_a_built_in_agent_is_no_missing_starter(self) -> None:
+        from bot_bottle.cli.commands import doctor  # pylint: disable=import-outside-toplevel
+        self.install("claude")
+        self.claude_login()
+        with patch.dict(os.environ, {"PATH": str(self.bin)}), \
+                patch("builtins.print") as out:
+            doctor._check_providers()  # pylint: disable=protected-access
+        printed = "\n".join(str(c.args[0]) for c in out.call_args_list)
+        self.assertIn("ok:   claude: built in", printed)
+        self.assertNotIn("warn: claude", printed)
+
     def test_warns_when_the_pi_model_left_the_free_list(self) -> None:
         from bot_bottle.cli.commands import doctor  # pylint: disable=import-outside-toplevel
 

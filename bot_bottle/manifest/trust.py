@@ -35,7 +35,7 @@ from ..lib.migrations import TableMigrations
 from .agent import ManifestAgentProvider
 from .bottle import ManifestBottle
 from .egress import DEFAULT_METHODS
-from .loader import BUILTIN_BOTTLES_DIR, BottleSource, load_bottle_chain
+from .loader import BUILTIN_AGENTS_DIR, BUILTIN_BOTTLES_DIR, BottleSource, load_bottle_chain
 from .util import ManifestError
 
 def bottle_hash(sources: Sequence[BottleSource]) -> str:
@@ -323,12 +323,15 @@ def host_context(name: str, *, home_agent: Path | None = None, bottle_name: str 
                  bottle: ManifestBottle | None = None,
                  sources: Sequence[BottleSource] = ()) -> list[str]:
     """What a project agent gets from the host beyond its provider: the user's
-    bottle it runs on, and the user's agent it replaces."""
+    bottle it runs on, and the user's (or built-in) agent it replaces."""
     lines: list[str] = []
     if bottle is not None and _host_bottle(sources):
         lines += [f"use     your bottle {bottle_name}: {g}"
                   for g in beyond_basic(grants(bottle))]
-    if home_agent is not None:
+    if home_agent is not None and home_agent.parent == BUILTIN_AGENTS_DIR:
+        # Not its path: that moves with the install, and this is hashed.
+        lines.append(f"replace the built-in agent {name}")
+    elif home_agent is not None:
         lines.append(f"replace your agent {name} ({home_agent})")
     return lines
 

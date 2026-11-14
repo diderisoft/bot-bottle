@@ -1421,7 +1421,8 @@ The console's Library asks for the host's `library`. The console mirrors it
 read-only, and keeps the last copy for while the host is offline.
 
 - It holds each home agent and bottle under `~/.bot-bottle/`.
-- It holds the built-in bottles a home one doesn't shadow.
+- It holds the built-in bottles a home one doesn't shadow, and the built-in
+  agents too where their harness is set up. Each says whether it's `builtin`.
 - Each comes with its text, cut at 64 KiB.
 - Project bottles aren't sent.
 

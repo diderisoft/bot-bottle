@@ -26,7 +26,7 @@ from pathlib import Path
 from ...manifest import ManifestIndex, trust
 from ...manifest.agent import ManifestAgentProvider
 from ...contract.yaml_subset import parse_frontmatter
-from ...manifest.loader import PROJECT_PREFIX, load_bottle_chain, scan_agent_names
+from ...manifest.loader import PROJECT_PREFIX, load_bottle_chain
 from ...util import read_tty_line
 from ..constants import PROG
 
@@ -47,7 +47,7 @@ def _project_agent(
     provider = ManifestAgentProvider.from_dict(name, fm.get("agent_provider", {}))
     context: dict[str, Any] = {}
     if index.home_md is not None:
-        context["home_agent"] = scan_agent_names(index.home_md / "agents").get(name)
+        context["home_agent"] = index.host_agent(name)
     return path, provider, context
 
 

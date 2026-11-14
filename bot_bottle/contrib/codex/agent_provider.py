@@ -119,6 +119,9 @@ class CodexAgentProvider(AgentProvider):
             login_command="codex login --device-auth",
         )
 
+    def ready_here(self) -> bool:
+        return shutil.which("codex") is not None and bool(codex_login_location())
+
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
         """The built-in `codex` agent: the same on every host, so `setup` writes
         no copy of it (PRD 0131)."""

@@ -34,7 +34,7 @@ from pathlib import Path
 
 from ...contract.hostctl import LaunchRequest
 from ...lib.log import die, info
-from ...manifest import ManifestIndex
+from ...manifest import ManifestError, ManifestIndex
 from ...manifest.loader import PROJECT_BOTTLE, bottle_ref
 from ...manifest.schema import DEFAULT_BOTTLE
 from ...util import read_tty_line
@@ -130,7 +130,9 @@ def cmd_quick(argv: list[str]) -> int:
     manifest = ManifestIndex.resolve(str(cwd))
     if names:
         agent: str | None = names[0]
-        if names[0] not in manifest.all_agent_names:
+        try:
+            manifest.require_agent(names[0])
+        except ManifestError:
             die(f"unknown command or agent: {names[0]} (`{PROG} help` lists commands, "
                 f"`{PROG} agents` lists agents)")
     else:

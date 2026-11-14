@@ -123,6 +123,9 @@ class ClaudeAgentProvider(AgentProvider):
             login_command="claude login",
         )
 
+    def ready_here(self) -> bool:
+        return shutil.which("claude") is not None and bool(claude_login_location())
+
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
         """The built-in `claude` agent: the same on every host, so `setup` writes
         no copy of it (PRD 0131)."""

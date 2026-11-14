@@ -241,16 +241,28 @@ class TestDoctorSelectedBackend(unittest.TestCase):
         self.assertIn("next: set up a backend", out)
 
 
+def _only_codex(harness: str) -> bool:
+    return harness == "codex"
+
+
 class TestHasAgents(unittest.TestCase):
     def test_the_architect_alone_is_no_agent(self):
         with tempfile.TemporaryDirectory() as tmp, \
-                patch.object(doctor, "bot_bottle_root", return_value=Path(tmp)):
+                patch.object(doctor, "bot_bottle_root", return_value=Path(tmp)), \
+                patch.object(doctor, "harness_ready", return_value=False):
             self.assertFalse(doctor._has_agents())  # pylint: disable=protected-access
             agents = Path(tmp) / "agents"
             agents.mkdir()
             (agents / "bottle-architect.md").write_text("x")
             self.assertFalse(doctor._has_agents())  # pylint: disable=protected-access
             (agents / "claude.md").write_text("x")
+            self.assertTrue(doctor._has_agents())  # pylint: disable=protected-access
+
+    def test_a_built_in_agent_counts_where_its_harness_is_set_up(self):
+        # PRD 0131: `setup` writes no claude or codex agent any more.
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(doctor, "bot_bottle_root", return_value=Path(tmp)), \
+                patch.object(doctor, "harness_ready", side_effect=_only_codex):
             self.assertTrue(doctor._has_agents())  # pylint: disable=protected-access
 
 

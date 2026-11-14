@@ -194,6 +194,12 @@ class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plug
         del host_env
         return HostDetection()
 
+    def ready_here(self) -> bool:
+        """Whether this harness is installed and logged in for this process
+        (its own PATH and home), as `detect_host` would find it: whether its
+        built-in agent is listed (PRD 0131). Must not read secrets or prompt."""
+        return False
+
     def create_default_agent_manifest(self, detection: HostDetection) -> str:
         """Starter agent manifest (`agents/<harness>.md`)."""
         raise NotImplementedError(f"{type(self).__name__} has no starter agent")
@@ -503,17 +509,16 @@ _READY_FOR = 30.0  # seconds
 def harness_ready(harness: str) -> bool:
     """Whether `harness` is installed and logged in on this host, as `setup`
     checks it: a built-in agent is listed only where its harness is ready
-    (PRD 0131). Checked at most every `_READY_FOR` seconds."""
+    (PRD 0131). Checked at most every `_READY_FOR` seconds, since listing
+    agents is on the host controller's request path."""
     now = time.monotonic()
     cached = _READY.get(harness)
     if cached is not None and now - cached[0] < _READY_FOR:
         return cached[1]
     try:
-        detection = get_provider(harness).detect_host(os.environ)
+        ready = get_provider(harness).ready_here()
     except ValueError:
         ready = False
-    else:
-        ready = detection.installed and detection.logged_in
     _READY[harness] = (now, ready)
     return ready
 

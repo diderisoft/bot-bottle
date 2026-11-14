@@ -14,6 +14,10 @@ from unittest import mock
 from bot_bottle.control.hostctl import library, remote_actions
 
 
+def _only_claude(harness: str) -> bool:
+    return harness == "claude"
+
+
 class TestHostLibrary(unittest.TestCase):
     def setUp(self) -> None:
         self.home = Path(tempfile.mkdtemp())
@@ -29,9 +33,10 @@ class TestHostLibrary(unittest.TestCase):
         (root / "bottles" / "big.md").write_text("x" * (library.MAX_BYTES + 10))
 
     def test_home_files_and_unshadowed_builtins(self) -> None:
-        with mock.patch.object(Path, "home", return_value=self.home):
+        with mock.patch.object(Path, "home", return_value=self.home), \
+                mock.patch("bot_bottle.manifest.index.harness_ready", return_value=False):
             got = library.host_library()
-        self.assertEqual([{"name": "helper", "content": "---\n---\nHelps.\n"}],
+        self.assertEqual([{"name": "helper", "content": "---\n---\nHelps.\n", "builtin": False}],
                          got["agents"])
         bottles = {b["name"]: b for b in got["bottles"]}
         self.assertEqual(("---\nsupervise: true\n---\nWork.\n", False),
@@ -39,6 +44,17 @@ class TestHostLibrary(unittest.TestCase):
         self.assertTrue(bottles["big"]["content"].endswith("over 64 KiB)\n"))
         self.assertTrue(any(b["builtin"] for b in got["bottles"]))  # e.g. basic
         self.assertEqual(sorted(bottles), [b["name"] for b in got["bottles"]])
+
+    def test_built_in_agents_offered_here(self) -> None:
+        # PRD 0131: `setup` no longer copies claude and codex, so the console
+        # learns of them as built-ins, where their harness is set up.
+        with mock.patch.object(Path, "home", return_value=self.home), \
+                mock.patch("bot_bottle.manifest.index.harness_ready",
+                           side_effect=_only_claude):
+            agents = {a["name"]: a for a in library.host_library()["agents"]}
+        self.assertEqual({"claude", "helper"}, set(agents))
+        self.assertTrue(agents["claude"]["builtin"])
+        self.assertIn("harness: claude", agents["claude"]["content"])
 
     def test_no_home_dir_is_empty(self) -> None:
         empty = Path(tempfile.mkdtemp())

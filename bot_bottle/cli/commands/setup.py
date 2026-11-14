@@ -99,7 +99,7 @@ class Setup:
         nobody changed, gives way to the built-in (PRD 0131)."""
         try:
             gone = adopt_builtin_agents(scan_agent_names(BUILTIN_AGENTS_DIR), root=self.manifests)
-        except VersionError as e:
+        except (VersionError, OSError, ValueError) as e:
             self.say(f"warn: couldn't check for built-in agents: {e}")
             return
         for name in gone:

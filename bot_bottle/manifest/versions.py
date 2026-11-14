@@ -121,14 +121,19 @@ def record(message: str, *, root: Path | None = None,
     current version (the repo's HEAD), or "" when there's nothing yet."""
     root = root or bot_bottle_root()
     with _locked(root):
-        _ensure_repo(root)
-        _git(root, "add", "-A", "--", ".gitignore",
-             *(d for d in TRACKED if (root / d).exists()))
-        if _git(root, "diff", "--cached", "--quiet", check=False).returncode != 0:
-            _check_staged(root, secrets_file or host_secrets_path())
-            _git(root, "commit", "-q", "--no-verify", "-m", message)
-        head = _git(root, "rev-parse", "--verify", "-q", "HEAD", check=False)
-        return head.stdout.strip()
+        return _commit(root, message, secrets_file or host_secrets_path())
+
+
+def _commit(root: Path, message: str, secrets_file: Path) -> str:
+    """`record`'s commit; the caller holds `_locked(root)`."""
+    _ensure_repo(root)
+    _git(root, "add", "-A", "--", ".gitignore",
+         *(d for d in TRACKED if (root / d).exists()))
+    if _git(root, "diff", "--cached", "--quiet", check=False).returncode != 0:
+        _check_staged(root, secrets_file)
+        _git(root, "commit", "-q", "--no-verify", "-m", message)
+    head = _git(root, "rev-parse", "--verify", "-q", "HEAD", check=False)
+    return head.stdout.strip()
 
 
 def record_or_warn(message: str, *, root: Path | None = None) -> str:
@@ -146,31 +151,45 @@ def record_hand_edits(*, root: Path | None = None) -> str:
 
 
 def adopt_builtin_agents(names: Iterable[str], *, root: Path | None = None) -> list[str]:
-    """Remove each host agent in `names` that's still exactly what `bot-bottle
-    setup` wrote, by this repo's history, so the built-in of that name takes
-    over and upgrades with bot-bottle (PRD 0131). One changed since stays, as
-    yours. The names removed."""
+    """Remove each host agent in `names` that's still, byte for byte, a version
+    `bot-bottle setup` wrote, by this repo's history, so the built-in of that
+    name takes over and upgrades with bot-bottle (PRD 0131). Anything else
+    stays, as yours. The names removed; what they held stays in history."""
     root = root or bot_bottle_root()
-    if not (root / ".git").is_dir():
+    names = [n for n in names if (root / "agents" / f"{n}.md").is_file()]
+    if not names or not (root / ".git").is_dir():
         return []
-    record_hand_edits(root=root)
+    secrets_file = host_secrets_path()
     gone = []
-    for name in names:
-        rel = f"agents/{name}.md"
-        path = root / rel
-        if not path.is_file():
-            continue
-        text = path.read_text()
-        written = _git(root, "log", "--format=%H", "--fixed-strings",
-                       f"--grep=setup: write agents/{name}", "--", rel,
-                       check=False).stdout.split()
-        if any(_git(root, "show", f"{sha}:{rel}", check=False).stdout == text
-               for sha in written):
-            path.unlink()
-            gone.append(name)
-    if gone:
-        record("built in now: " + ", ".join(f"agents/{n}" for n in gone), root=root)
+    # Locked throughout, so no bot-bottle write lands between the check and
+    # the removal; hand edits are committed first, so nothing unversioned goes.
+    with _locked(root):
+        _commit(root, "edited by hand", secrets_file)
+        for name in names:
+            if _as_setup_wrote(root, name):
+                (root / "agents" / f"{name}.md").unlink()
+                gone.append(name)
+        if gone:
+            _commit(root, "built in now: " + ", ".join(f"agents/{n}" for n in gone),
+                    secrets_file)
     return gone
+
+
+def _as_setup_wrote(root: Path, name: str) -> bool:
+    """Whether `agents/<name>.md` is exactly what a `setup: write
+    agents/<name>` commit holds."""
+    rel = f"agents/{name}.md"
+    current = _git(root, "hash-object", "--", rel, check=False).stdout.strip()
+    if not current:
+        return False
+    for line in _git(root, "log", "--format=%H %s", "--", rel,
+                     check=False).stdout.splitlines():
+        sha, _, subject = line.partition(" ")
+        if subject == f"setup: write agents/{name}" and _git(
+                root, "rev-parse", "-q", "--verify", f"{sha}:{rel}",
+                check=False).stdout.strip() == current:
+            return True
+    return False
 
 
 def _repo_of(path: Path, root: Path) -> tuple[Path, bool]:

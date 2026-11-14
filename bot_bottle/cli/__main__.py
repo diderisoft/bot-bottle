@@ -19,10 +19,13 @@ from .commands.help import cmd_help
 
 
 def _is_agent(name: str) -> bool:
+    # Named outright, so a built-in counts even where its harness isn't set
+    # up: the launch then says what to run.
     try:
-        return name in ManifestIndex.resolve(os.getcwd()).all_agent_names
+        ManifestIndex.resolve(os.getcwd()).require_agent(name)
     except ManifestError:
         return False
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-return-statements

@@ -12,7 +12,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from ...agent_provider import get_provider
+from ...agent_provider import get_provider, harness_ready
 from ...backend import (
     backend_os_requirement, docker_isolation_summary, is_backend_ready, known_backend_names,
 )
@@ -26,6 +26,7 @@ from .. import openrouter
 from ...control.hostctl import runner
 from ...control.hostctl.build import RESTART_NEEDED
 from ...control.hostctl.sessions import MIN_TMUX_VERSION, tmux_version
+from ...manifest.loader import BUILTIN_AGENTS_DIR, scan_agent_names
 from ...paths import bot_bottle_root
 from ..constants import PROG
 from ..settings import settings_from_env
@@ -264,6 +265,8 @@ def _check_providers() -> None:
             continue
         if name != "pi" and not detection.logged_in:
             _warn(name, f"installed but not logged in; run `{detection.login_command}`")
+        elif (BUILTIN_AGENTS_DIR / f"{name}.md").is_file():
+            _ok(name, f"built in ({detection.login_location or 'ready'})")
         elif written:
             _ok(name, f"starter in {manifests} ({detection.login_location or 'ready'})")
         else:
@@ -301,10 +304,12 @@ def _check_pi_model(agent: Path) -> None:
 
 
 def _has_agents() -> bool:
-    """Whether this host has an agent to start (the architect doesn't count)."""
+    """Whether this host has an agent to start (the architect doesn't count):
+    one of its own, or a built-in whose harness is set up."""
     agents = bot_bottle_root() / "agents"
-    return any(p.stem != "bottle-architect" for p in agents.glob("*.md")) \
-        if agents.is_dir() else False
+    if agents.is_dir() and any(p.stem != "bottle-architect" for p in agents.glob("*.md")):
+        return True
+    return any(harness_ready(n) for n in scan_agent_names(BUILTIN_AGENTS_DIR))
 
 
 def next_step(found: BackendFindings) -> str:  # pylint: disable=too-many-return-statements

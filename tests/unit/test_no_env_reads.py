@@ -42,9 +42,6 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("backend/macos_container/launch.py", "os.environ"): _FORWARDED_BASE,
     ("contrib/claude/claude_auth.py", "os.environ"): _CREDENTIAL_PATHS,
     ("contrib/codex/codex_auth.py", "os.environ"): _CREDENTIAL_PATHS,
-    # Whether a harness is set up here (its CLI on PATH, its login under HOME),
-    # which decides if its built-in agent is listed (PRD 0131).
-    ("agent_provider.py", "os.environ"): _CREDENTIAL_PATHS,
     # Process plumbing.
     ("paths.py", "BOT_BOTTLE_ROOT"): "process plumbing: relocates the state root",
     ("paths.py", "BOT_BOTTLE_FC_CACHE"): "process plumbing: relocates the firecracker cache root",

@@ -54,8 +54,8 @@ A project agent needs trust when its `agent_provider` grants something:
 - an image build
 
 It also needs trust when it runs on one of your bottles that grants more than
-`basic`. A project agent with the same name as one of yours replaces it, and
-the trust prompt says so.
+`basic`. A project agent with the same name as one of yours, or a built-in
+(`claude`, `codex`), replaces it, and the trust prompt says so.
 
 ### What an agent's trust covers
 

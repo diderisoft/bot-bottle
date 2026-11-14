@@ -113,7 +113,7 @@ def adopt_builtin_starters() -> None:
     from ...manifest.versions import VersionError, adopt_builtin_agents
     try:
         gone = adopt_builtin_agents(scan_agent_names(BUILTIN_AGENTS_DIR))
-    except (VersionError, OSError) as e:
+    except (VersionError, OSError, ValueError) as e:  # ValueError: undecodable git output
         warn(f"couldn't check for built-in agents: {e}")
         return
     for name in gone:

@@ -6,6 +6,7 @@ wrote gives way to the built-in."""
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 import tomllib
 import unittest
@@ -25,15 +26,14 @@ def _only_claude(harness: str) -> bool:
 
 
 class _FakeProvider:
-    """A provider whose host detection is given, counting the checks."""
+    """A provider whose readiness is given, counting the checks."""
 
-    def __init__(self, installed: bool, logged_in: bool) -> None:
-        self.installed, self.logged_in, self.calls = installed, logged_in, 0
+    def __init__(self, ready: bool) -> None:
+        self.ready, self.calls = ready, 0
 
-    def detect_host(self, _env: object) -> object:
-        from bot_bottle.agent_provider import HostDetection  # pylint: disable=import-outside-toplevel
+    def ready_here(self) -> bool:
         self.calls += 1
-        return HostDetection(installed=self.installed, logged_in=self.logged_in)
+        return self.ready
 
 
 class _Home(unittest.TestCase):
@@ -102,27 +102,83 @@ class HarnessReady(unittest.TestCase):
         self.ap._READY.clear()  # pylint: disable=protected-access
         self.addCleanup(self.ap._READY.clear)  # pylint: disable=protected-access
 
-    def provider(self, installed: bool, logged_in: bool) -> "_FakeProvider":
-        return _FakeProvider(installed, logged_in)
-
-    def test_ready_means_installed_and_logged_in(self) -> None:
-        for installed, logged_in, ready in ((True, True, True), (True, False, False),
-                                            (False, False, False)):
+    def test_ready_is_the_providers_answer(self) -> None:
+        for ready in (True, False):
             self.ap._READY.clear()  # pylint: disable=protected-access
-            with patch.object(self.ap, "get_provider",
-                              return_value=self.provider(installed, logged_in)):
+            with patch.object(self.ap, "get_provider", return_value=_FakeProvider(ready)):
                 self.assertEqual(ready, self.ap.harness_ready("claude"))
 
     def test_checked_at_most_every_half_minute(self) -> None:
-        p = self.provider(True, True)
-        with patch.object(self.ap, "get_provider", return_value=p):
+        p = _FakeProvider(True)
+        with patch.object(self.ap, "get_provider", return_value=p), \
+                patch.object(self.ap.time, "monotonic", side_effect=[100.0, 129.0, 131.0]):
             self.ap.harness_ready("codex")
             self.ap.harness_ready("codex")
-        self.assertEqual(1, p.calls)
+            self.assertEqual(1, p.calls)
+            self.ap.harness_ready("codex")
+        self.assertEqual(2, p.calls)
+
+    def test_installed_and_logged_in_for_this_process(self) -> None:
+        # claude and codex: their CLI on PATH and a login under HOME.
+        from bot_bottle.agent_provider import get_provider  # pylint: disable=import-outside-toplevel
+        with tempfile.TemporaryDirectory() as tmp:
+            home, bin_dir = Path(tmp) / "home", Path(tmp) / "bin"
+            bin_dir.mkdir()
+            for name in ("claude", "codex"):
+                (bin_dir / name).write_text("#!/bin/sh\n")
+                (bin_dir / name).chmod(0o755)
+            env = {"HOME": str(home), "PATH": str(bin_dir)}
+            with patch.dict(os.environ, env), patch(
+                    "bot_bottle.contrib.claude.claude_auth._keychain_item_exists",
+                    return_value=False):
+                os.environ.pop("CODEX_HOME", None)
+                self.assertFalse(get_provider("claude").ready_here())
+                self.assertFalse(get_provider("codex").ready_here())
+                (home / ".claude").mkdir(parents=True)
+                (home / ".claude" / ".credentials.json").write_text("{}")
+                (home / ".codex").mkdir()
+                (home / ".codex" / "auth.json").write_text(
+                    '{"auth_mode": "chatgpt", "tokens": {"access_token": "x"}}')
+                self.assertTrue(get_provider("claude").ready_here())
+                self.assertTrue(get_provider("codex").ready_here())
+                self.assertFalse(get_provider("pi").ready_here())  # no built-in agent
 
     def test_an_unknown_harness_isnt_ready(self) -> None:
         with patch.object(self.ap, "get_provider", side_effect=ValueError("unknown")):
             self.assertFalse(self.ap.harness_ready("nope"))
+
+
+class NamedOutright(_Home):
+    def test_the_cli_takes_a_built_in_whose_harness_isnt_set_up(self) -> None:
+        from bot_bottle.cli.__main__ import _is_agent  # pylint: disable=import-outside-toplevel
+        with patch("bot_bottle.manifest.index.harness_ready", return_value=False), \
+                patch("os.getcwd", return_value=str(self.home)):
+            self.assertTrue(_is_agent("codex"))  # the launch says what to run
+            self.assertFalse(_is_agent("nope"))
+
+
+class ProjectAgentTrust(_Home):
+    def test_replacing_a_built_in_is_named_without_its_path(self) -> None:
+        from bot_bottle.manifest import trust  # pylint: disable=import-outside-toplevel
+        builtin = BUILTIN_AGENTS_DIR / "claude.md"
+        self.assertEqual(["replace the built-in agent claude"],
+                         trust.host_context("claude", home_agent=builtin))
+        self.assertEqual(builtin, self.index().host_agent("claude"))
+        mine = self.agent("claude", "---\n---\nMine.\n")
+        self.assertEqual(mine, self.index().host_agent("claude"))
+        self.assertIsNone(self.index().host_agent("nope"))
+
+    def test_the_trust_command_sees_what_a_launch_does(self) -> None:
+        # Both hash the same context, so trusting the agent lets it launch.
+        from bot_bottle.cli.commands import trust as trust_cmd  # pylint: disable=import-outside-toplevel
+        project = self.home / "proj" / ".bot-bottle" / "agents"
+        project.mkdir(parents=True)
+        (project / "claude.md").write_text(
+            "---\nagent_provider:\n  harness: claude\n---\n\nProject.\n")
+        index = ManifestIndex.resolve(str(project.parent.parent))
+        found = trust_cmd._project_agent(index, "claude")  # pylint: disable=protected-access
+        assert found is not None
+        self.assertEqual(BUILTIN_AGENTS_DIR / "claude.md", found[2]["home_agent"])
 
 
 class AtHostControllerStart(_Home):
@@ -172,6 +228,37 @@ class Adopting(_Home):
         record("edited by hand", root=self.root)
         self.assertEqual([], adopt_builtin_agents(["claude"], root=self.root))
         self.assertTrue(path.exists())
+
+    def test_an_older_setup_version_gives_way_too(self) -> None:
+        path = self.written_by_setup("claude")
+        path.write_text("an older starter\n")
+        record("setup: write agents/claude", root=self.root)  # `setup --force`
+        path.write_text(starter_agent(GENERAL_PROMPT, {"harness": "claude", "login": "host"}))
+        self.assertEqual(["claude"], adopt_builtin_agents(["claude"], root=self.root))
+
+    def test_only_setups_own_commit_counts(self) -> None:
+        # The same text committed under another name's setup message isn't it.
+        path = self.agent("claude", starter_agent(GENERAL_PROMPT,
+                                                  {"harness": "claude", "login": "host"}))
+        record("setup: write agents/claude-old", root=self.root)
+        self.assertEqual([], adopt_builtin_agents(["claude"], root=self.root))
+        self.assertTrue(path.exists())
+
+    def test_compared_byte_for_byte(self) -> None:
+        path = self.written_by_setup("codex")
+        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+        self.assertEqual([], adopt_builtin_agents(["codex"], root=self.root))
+        path.write_bytes(b"\xff\xfe not text")
+        self.assertEqual([], adopt_builtin_agents(["codex"], root=self.root))
+        self.assertEqual(b"\xff\xfe not text", path.read_bytes())
+
+    def test_with_no_copy_nothing_is_committed(self) -> None:
+        self.written_by_setup("codex")
+        (self.root / "agents" / "helper.md").write_text("hand edit\n")
+        self.assertEqual([], adopt_builtin_agents(["claude"], root=self.root))
+        log = subprocess.run(["git", "-C", str(self.root), "log", "-1", "--format=%s"],
+                             capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual("setup: write agents/codex", log)
 
     def test_without_history_nothing_goes(self) -> None:
         path = self.agent("claude", "anything")

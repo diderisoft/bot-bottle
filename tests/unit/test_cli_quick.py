@@ -13,11 +13,18 @@ from tests.unit import serve_host_controller
 from bot_bottle.cli.commands import quick
 from bot_bottle.contract.hostctl import LaunchRequest
 from bot_bottle.lib.log import Die
+from bot_bottle.manifest import ManifestError
 
 
 def _manifest(agents: list[str]) -> MagicMock:
     manifest = MagicMock()
     manifest.all_agent_names = sorted(agents)
+
+    def require_agent(name: str) -> None:
+        if name not in agents:
+            raise ManifestError(f"agent '{name}' not defined")
+
+    manifest.require_agent.side_effect = require_agent
     return manifest
 
 

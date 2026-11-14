@@ -240,22 +240,28 @@ class ManifestIndex:
     def all_agent_names(self) -> list[str]:
         """Sorted agent names (filenames in lazy mode), built-ins included."""
         if self.home_md is not None:
-            return sorted(self._agent_files(listing=True))
+            return sorted(self.agent_files(listing=True))
         return sorted(self.agents.keys())
 
-    def _agent_files(self, *, listing: bool = False) -> dict[str, Path]:
+    def agent_files(self, *, listing: bool = False) -> dict[str, Path]:
         """Each agent name's file, lazy mode: a project's over the host's over
         the built-ins (`BUILTIN_AGENTS_DIR`). A built-in is named by its
         harness; `listing` keeps only those whose harness is ready here, so
         what's offered can run (one named outright still resolves)."""
         assert self.home_md is not None
-        builtins = scan_agent_names(BUILTIN_AGENTS_DIR)
-        if listing:
-            builtins = {n: p for n, p in builtins.items() if harness_ready(n)}
-        files = {**builtins, **scan_agent_names(self.home_md / "agents")}
+        files = scan_agent_names(self.home_md / "agents")
         if self.cwd_md is not None:
             files.update(scan_agent_names(self.cwd_md / "agents"))
-        return files
+        builtins = {n: p for n, p in scan_agent_names(BUILTIN_AGENTS_DIR).items()
+                    if n not in files and (not listing or harness_ready(n))}
+        return {**builtins, **files}
+
+    def host_agent(self, name: str) -> Path | None:
+        """The agent a project agent `name` replaces: the host's, else the
+        built-in. Lazy mode."""
+        assert self.home_md is not None
+        return (scan_agent_names(self.home_md / "agents").get(name)
+                or scan_agent_names(BUILTIN_AGENTS_DIR).get(name))
 
     def load_for_agent(
         self,
@@ -291,11 +297,10 @@ class ManifestIndex:
         """Lazy path: read and parse the agent file and its bottle chain."""
         assert self.home_md is not None  # set by load_for_agent's dispatch
         # cwd wins over home, and home over the built-ins, on a name clash.
-        home_agents = scan_agent_names(self.home_md / "agents")
         cwd_agents: dict[str, Path] = {}
         if self.cwd_md is not None:
             cwd_agents = scan_agent_names(self.cwd_md / "agents")
-        merged_agents = self._agent_files()
+        merged_agents = self.agent_files()
 
         if agent_name not in merged_agents:
             available = ", ".join(sorted(merged_agents.keys())) or "(none)"
@@ -321,8 +326,7 @@ class ManifestIndex:
             # and its prompt directs whatever the user's bottle allows.
             trust_check_agent(
                 agent_name, agent_path, agent.agent_provider,
-                home_agent=(home_agents.get(agent_name)
-                            or scan_agent_names(BUILTIN_AGENTS_DIR).get(agent_name)),
+                home_agent=self.host_agent(agent_name),
                 bottle_name="+".join(bottle_names) or DEFAULT_BOTTLE,
                 bottle=raw_bottle, sources=bottle_sources,
                 source_root=self.cwd_md.parent if self.cwd_md else None,
@@ -337,7 +341,7 @@ class ManifestIndex:
         """Whether `name` is a discoverable agent, without parsing it."""
         if self.has_agent(name):
             return
-        if self.home_md is not None and name in self._agent_files():
+        if self.home_md is not None and name in self.agent_files():
             return  # lazy mode: the file exists
         available = ", ".join(self.all_agent_names) or "(none)"
         raise ManifestError(

@@ -109,9 +109,11 @@ serves Claude, Codex and pi agents alike.
 project's `.bot-bottle/agents/`, then `~/.bot-bottle/agents/`, then the
 built-ins, so a file of the same name in either replaces one: copy it there to
 change it. A built-in is listed (by `bot-bottle agents`, the console, `start`)
-only where its harness is installed and logged in; named outright, it resolves
-anywhere. A copy an earlier `setup` wrote, unchanged since, is removed so the
-built-in takes over: by `setup`, and when the host controller starts.
+only where its harness is installed and logged in; named outright
+(`bot-bottle codex`), it resolves anywhere. A copy an earlier `setup` wrote,
+byte for byte as a `setup` commit in the versions repo holds it, is removed
+so the built-in takes over: by `setup`, and when the host controller starts.
+Any other copy stays, as yours.
 
 What `extends` resolves to is the sealed bottle
 ([glossary](glossary.md#sealed-bottle)).
