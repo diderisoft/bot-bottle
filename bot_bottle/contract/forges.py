@@ -5,6 +5,8 @@ an `ssh` forge is a plain SSH git server, with no API (ADR 0023)."""
 
 from __future__ import annotations
 
+import re
+
 # The kinds with an API: it mints keys (or lends the token), lists repos and
 # creates them.
 API_KINDS = ("gitea", "github")
@@ -20,6 +22,25 @@ UNSUPPORTED_HOSTS = frozenset({
     "gitlab.com", "bitbucket.org", "dev.azure.com", "ssh.dev.azure.com",
     "sr.ht", "git.sr.ht", "sourceforge.net", "gitee.com",
 })
+
+# One segment of a repo's path in a grant: an owner's or repo's name.
+_SEGMENT_RE = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def repo_name(path: str) -> str:
+    """The gate's local name for the repo at `path`: its last segment
+    without a trailing `.git`."""
+    return path.rsplit("/", 1)[-1].removesuffix(".git")
+
+
+def repo_path_ok(path: str) -> bool:
+    """Whether `path` is a repo's path as a grant names it on an `ssh` forge
+    (ADR 0023): its path on the server, one or more segments of letters,
+    digits, `.`, `_` and `-`, none empty, `.` or `..`, and a last segment
+    that names something without its `.git`. A gitea or github grant's
+    path is one of these with exactly two segments, `<owner>/<repo>`."""
+    return (all(_SEGMENT_RE.fullmatch(s) and s not in (".", "..") for s in path.split("/"))
+            and repo_name(path) not in ("", ".", ".."))
 
 
 def supported() -> str:
@@ -39,4 +60,4 @@ def unsupported_forge(host: str) -> str:
 
 
 __all__ = ["API_KINDS", "FORGE_KINDS", "FORGE_LABELS", "GITHUB_HOSTS", "UNSUPPORTED_HOSTS",
-           "known_unsupported", "supported", "unsupported_forge"]
+           "known_unsupported", "repo_name", "repo_path_ok", "supported", "unsupported_forge"]

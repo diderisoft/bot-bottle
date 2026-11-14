@@ -52,6 +52,23 @@ git_gate:
     - git.example.com/org/lib:write
 ```
 
+**A grant on an `ssh` forge names the repo's path on the server,
+verbatim.** Plain SSH servers keep repos at any path (`/srv/git/app.git`,
+`/throwaway.git`), so on an `ssh` forge only, everything after the forge's
+name is that path, one segment or more:
+`git.example.com/srv/git/app.git:write` is
+`ssh://<user>@git.example.com[:port]/srv/git/app.git`, and
+`git.example.com/throwaway.git` is `/throwaway.git`.
+
+- Nothing is added or taken off, so `.git` is in the URL exactly when the
+  grant has it.
+- Each segment uses the characters an owner or repo name may (letters,
+  digits, `.`, `_`, `-`); none is empty, `.` or `..`.
+- The gate's local name is the last segment without a trailing `.git`. Two
+  grants with the same one need the mapping form to name them apart, as
+  for any forge.
+- A gitea or github grant stays exactly `<owner>/<repo>`.
+
 **The host's connection to an `ssh` forge holds its keys.** A key is either
 for one repo (a deploy key) or the forge's default (a user key that reaches
 many repos):
@@ -64,7 +81,10 @@ bot-bottle forge key list|remove …
 ```
 
 - A grant uses its repo's key, else the forge's default. With neither, the
-  launch is refused, naming the `forge key add` that fixes it.
+  launch is refused, naming the `forge key add` that fixes it. A repo's
+  key is keyed by the same verbatim path as its grants: `forge key add
+  <forge> <path> <key file>`, where `<path>` is what the grant names after
+  the forge.
 - **A key is stored by reference:** its path and its fingerprint, never a
   copy. Rotating a key in place is picked up; a changed fingerprint is used
   and logged once, and `forge key list` shows it. A missing file fails the
@@ -98,7 +118,11 @@ everything after it. `provider: static` goes away with it; its connection is
 an `ssh` forge's key.
 
 `bottles migrate` rewrites a bottle's static entries: a forge declaration per
-server (from the `url` and `host_key`) and a grant per repo. It never
+server (from the `url` and `host_key`) and a grant per repo, naming its
+path from the `url` verbatim, whatever its depth, so no static repo is
+left to rewrite by hand (short of a path whose characters no grant can
+name). Where the long form's name differs from the one the grant gives,
+the mapping form keeps it. It never
 connects a server or adds a key: a server declared but not connected here,
 or holding no key for a repo, leaves the bottle not loading on this host,
 its error naming `forge connect` (with the bottle's pinned host key) and
@@ -113,6 +137,9 @@ its error naming `forge connect` (with the bottle's pinned host key) and
 - **Lost on `ssh` forges:** anything that needs a forge API. `create-repo`
   and `actions.create` refuse an `ssh` forge, and the repo picker lists only
   repos some host holds a key for.
+- A grant on an `ssh` forge isn't always `<owner>/<repo>`: anything that
+  shows or matches grants (the console's load check and repo picker
+  among them) takes a path of any depth there.
 - **Read or write isn't checked against the server.** A `--write` key that
   can only read fails on the agent's first push, not at launch.
 - Existing static bottles stop loading until migrated. The error lists every

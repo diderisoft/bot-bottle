@@ -169,7 +169,11 @@ class TestValidation(unittest.TestCase):
     def test_add_repo_wants_a_grant(self):
         validate_proposed_file(_sv.TOOL_ADD_REPO, "gitea.example.com/acme/app:write")
         validate_proposed_file(_sv.TOOL_ADD_REPO, "me@gitea.example.com:3000/acme/app")
-        for bad in ("acme/app", "gitea.example.com/acme/app:admin", "a/b/c/d", "a/b c/d"):
+        # An SSH server's grant names its path there, one segment or more.
+        validate_proposed_file(_sv.TOOL_ADD_REPO, "git.example.com/srv/git/app.git:write")
+        validate_proposed_file(_sv.TOOL_ADD_REPO, "git.example.com/app.git")
+        for bad in ("gitea.example.com", "gitea.example.com/acme/app:admin", "a/b c/d",
+                    "gitea.example.com/acme//app", "gitea.example.com/acme/"):
             with self.assertRaises(_RpcError):
                 validate_proposed_file(_sv.TOOL_ADD_REPO, bad)
 

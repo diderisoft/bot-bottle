@@ -335,10 +335,11 @@ def decide(proposal: Proposal, dirs: Dirs, *, take: bool) -> tuple[Proposal, str
 
 
 def _repo_name(grant: str) -> str:
-    """`owner/repo` of a grant (its alias's grant), else the grant as given."""
+    """`owner/repo` of a grant (its alias's grant; an SSH server's path), else
+    the grant as given."""
     bare = grant.split("=", 1)[1] if "=" in grant.split("/", 1)[0] else grant
     parts = bare.removesuffix(":write").split("/")
-    return "/".join(parts[1:]) if len(parts) == 3 else grant
+    return "/".join(parts[1:]) if len(parts) >= 2 and all(parts) else grant
 
 
 def summary(edit: ProposalEdit) -> str:

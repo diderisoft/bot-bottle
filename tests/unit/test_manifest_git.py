@@ -374,10 +374,10 @@ class TestForgeMintedKeysAreGrants(unittest.TestCase):
         msg = str(ctx.exception)
         self.assertIn("(lib)", msg)
         self.assertIn("bot-bottle forge connect ssh://git@git.example.com:2222", msg)
-        self.assertIn("bot-bottle forge key add git.example.com org/lib /keys/lib --write", msg)
+        self.assertIn("bot-bottle forge key add git.example.com org/lib.git /keys/lib --write", msg)
         self.assertIn("          kind: ssh\n          ssh: ssh://git@git.example.com:2222\n"
                       "          host_key: ssh-ed25519 AAAA\n", msg)
-        self.assertIn("- git.example.com/org/lib:write", msg)
+        self.assertIn("- git.example.com/org/lib.git:write", msg)
 
     def test_an_internal_long_form_in_a_file_is_refused_too(self):
         with self.assertRaises(OldGitGateFormatError):

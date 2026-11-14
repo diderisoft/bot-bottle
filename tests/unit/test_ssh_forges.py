@@ -88,9 +88,12 @@ class TestConnectionJson(unittest.TestCase):
                 ({"users": [{"name": "a", "token": "secret:T"}]}, "no URL and no users"),
                 ({"ssh": "ssh://git@other.example.com"}, "ssh must be"),
                 ({"ssh": "https://git.example.com"}, "ssh must be"),
-                ({"keys": [{"repo": "x", "path": "/k", "fingerprint": "f"}]}, "<owner>/<repo>"),
+                ({"keys": [{"repo": "o/../r", "path": "/k", "fingerprint": "f"}]},
+                 "its path on the server"),
                 ({"keys": [{"repo": "o/r\n", "path": "/k", "fingerprint": "f"}]},
-                 "<owner>/<repo>"),
+                 "its path on the server"),
+                ({"keys": [{"repo": "/srv/r", "path": "/k", "fingerprint": "f"}]},
+                 "its path on the server"),
                 ({"ssh": "ssh://git@git.example.com\n"}, "ssh must be"),
                 ({"keys": [{"repo": "", "path": "k", "fingerprint": "f"}]}, "absolute"),
                 ({"keys": [{"repo": "", "path": "/k", "fingerprint": ""}]}, "no fingerprint"),
@@ -238,7 +241,7 @@ class TestKeyFiles(unittest.TestCase):
     def _entry(self, fingerprint: str, path: str = "", read_only: bool = False
                ) -> ManifestGitEntry:
         return ManifestGitEntry.from_repos_entry("dev", "lib", {
-            "url": "ssh://git@git.example.com:2222/org/lib.git",
+            "url": "ssh://git@git.example.com:2222/org/lib",
             "key": {"provider": "ssh", "path": path or str(self.key),
                     "fingerprint": fingerprint, "read_only": read_only}})
 
@@ -333,7 +336,8 @@ class TestGrants(unittest.TestCase):
                          (lib.Key.provider, lib.Key.path, lib.Key.fingerprint, lib.Key.read_only,
                           lib.IdentityFile))
         self.assertEqual(("/keys/default", False), (app.Key.path, app.Key.read_only))
-        self.assertEqual("ssh://git@git.example.com:2222/org/app.git", app.Upstream)
+        # The path as the grant names it: nothing added (ADR 0023).
+        self.assertEqual("ssh://git@git.example.com:2222/org/app", app.Upstream)
         self.assertEqual("ssh-ed25519 SSH", app.KnownHostKey)
         self.assertEqual(frozenset(), bottle.undeclared_forges)
 
@@ -379,7 +383,7 @@ class TestGrants(unittest.TestCase):
 
     def test_trust_names_the_key_by_fingerprint(self) -> None:
         bottle = self._git("git.example.com/org/lib")
-        self.assertIn("fetch   ssh://git@git.example.com:2222/org/lib.git "
+        self.assertIn("fetch   ssh://git@git.example.com:2222/org/lib "
                       "(this host's key SHA256:lib)", grants(bottle))
         self.assertEqual(["forge   git.example.com: SSH server at "
                           "ssh://git@git.example.com:2222, host key ssh-ed25519 SSH, "
@@ -409,6 +413,141 @@ class TestNoLongFormInFiles(unittest.TestCase):
                 "url": "ssh://git@git.example.com/org/lib.git",
                 "key": {"provider": "ssh", "path": "/k"}}}}}})
         self.assertIn("- git.example.com/org/lib", str(ctx.exception))
+
+
+# An SSH server whose repos aren't <owner>/<repo>: keys for a deep path and
+# a one-segment one, and no default.
+PATHS = replace(SSH, keys=(
+    ForgeKey(repo="srv/git/app.git", path="/keys/app", fingerprint="SHA256:app", write=True),
+    ForgeKey(repo="throwaway.git", path="/keys/t", fingerprint="SHA256:t")))
+
+
+class TestServerPaths(unittest.TestCase):
+    """An `ssh` forge's grant names the repo's path on the server, verbatim,
+    one segment or more; gitea and github grants stay <owner>/<repo>."""
+
+    def test_the_rules(self) -> None:
+        ok = contract_forges.repo_path_ok
+        for path in ("org/lib", "srv/git/app.git", "throwaway.git", "a", "a.b/c_d/e-f"):
+            with self.subTest(path=path):
+                self.assertTrue(ok(path))
+        for path in ("", "/srv/app", "srv//app", "srv/app/", "srv/../app", "./app", "srv/.",
+                     "app/.git", "app/..git", "a b", "a\n", "~me/app", "a:b"):
+            with self.subTest(path=path):
+                self.assertFalse(ok(path))
+        self.assertEqual("app", contract_forges.repo_name("srv/git/app.git"))
+        self.assertEqual("throwaway", contract_forges.repo_name("throwaway.git"))
+        self.assertEqual("lib", contract_forges.repo_name("org/lib"))
+
+    def _git(self, *wanted: object) -> Any:
+        raw: dict[str, object] = {"git_gate": {**DECLARED["git_gate"], "repos": list(wanted)}}
+        return resolve_bottles({"dev": raw})["dev"]
+
+    @connected(PATHS)
+    def test_a_path_is_used_as_written(self) -> None:
+        app, t = self._git("git.example.com/srv/git/app.git:write",
+                           "git.example.com/throwaway.git").git
+        self.assertEqual(("app", "ssh://git@git.example.com:2222/srv/git/app.git", "/keys/app",
+                          False), (app.Name, app.Upstream, app.Key.path, app.Key.read_only))
+        self.assertEqual(("throwaway", "ssh://git@git.example.com:2222/throwaway.git",
+                          "/keys/t", True), (t.Name, t.Upstream, t.Key.path, t.Key.read_only))
+
+    @connected(PATHS)
+    def test_the_key_is_the_one_for_that_exact_path(self) -> None:
+        # Nothing is taken off: `srv/git/app` isn't `srv/git/app.git`.
+        with self.assertRaises(MissingKeyError) as ctx:
+            self._git("git.example.com/srv/git/app:write")
+        self.assertIn("this host holds no key for git.example.com/srv/git/app; add one with "
+                      "`bot-bottle forge key add git.example.com srv/git/app <path> --write`",
+                      str(ctx.exception))
+        with self.assertRaisesRegex(MissingKeyError, "key for git.example.com/throwaway.git is "
+                                    "read-only"):
+            self._git("git.example.com/throwaway.git:write")
+
+    @connected(PATHS)
+    def test_two_with_one_last_segment_need_the_mapping_form(self) -> None:
+        with self.assertRaisesRegex(ManifestError, "two grants for repos named 'app'"):
+            self._git("git.example.com/srv/git/app.git", "git.example.com/app")
+        conn = replace(PATHS, keys=(*PATHS.keys, ForgeKey("", "/keys/d", "SHA256:d")))
+        raw: dict[str, object] = {"git_gate": {**DECLARED["git_gate"], "repos": {
+            "app": "git.example.com/srv/git/app.git", "other": "git.example.com/app"}}}
+        with connected(conn):
+            names = [e.Name for e in resolve_bottles({"dev": raw})["dev"].git]
+        self.assertEqual(["app", "other"], names)
+
+    def test_bad_paths_are_refused(self) -> None:
+        for grant in ("git.example.com/srv/../app", "git.example.com/./app",
+                      "git.example.com/srv//app", "git.example.com/.git"):
+            with self.subTest(grant=grant), connected(PATHS), \
+                    self.assertRaises(ManifestError):
+                self._git(grant)
+
+    def test_gitea_and_github_grants_stay_owner_repo(self) -> None:
+        for grant in ("gitea.example.com/acme/sub/app", "gitea.example.com/app"):
+            with self.subTest(grant=grant):
+                # Declared as a Gitea: refused before asking the connection...
+                with self.assertRaisesRegex(ManifestError, "a Gitea repo grant is "
+                                            "<forge>/<owner>/<repo>"):
+                    resolve_bottles({"dev": {"git_gate": {
+                        "forges": {"gitea.example.com": {"kind": "gitea"}},
+                        "repos": [grant]}}})
+                # ...and undeclared, once the connection says it's one.
+                with connected(GITEA), self.assertRaisesRegex(ManifestError, "a Gitea repo"):
+                    resolve_bottles({"dev": {"git_gate": {"repos": [grant]}}})
+                self.assertIn("a Gitea repo grant", problem("bottles/dev.md", (
+                    "---\ngit_gate:\n  forges:\n    gitea.example.com: {kind: gitea}\n"
+                    f"  repos:\n    - {grant}\n---\n")))
+        # An alias doesn't hide the path from the check.
+        self.assertIn("a Gitea repo grant", problem("bottles/dev.md", (
+            "---\ngit_gate:\n  forges:\n    gitea.example.com: {kind: gitea}\n"
+            "  repos:\n    - a=gitea.example.com/srv/x/app\n---\n")))
+        with connected(GITEA):
+            (entry,) = resolve_bottles({"dev": {"git_gate": {"repos": [
+                "gitea.example.com/acme/app.git"]}}})["dev"].git
+        self.assertEqual("ssh://git@10.0.0.1:30009/acme/app.git", entry.Upstream)
+
+    def test_the_parse_check_takes_a_servers_path(self) -> None:
+        self.assertEqual("", problem("bottles/dev.md", (
+            "---\ngit_gate:\n  forges:\n    git.example.com: {kind: ssh}\n"
+            "  repos:\n    - git.example.com/srv/git/app.git:write\n"
+            "    - git.example.com/throwaway.git\n---\n")))
+        # A forge the file doesn't describe is a parent's or the host's to say.
+        self.assertEqual("", problem("bottles/dev.md", (
+            "---\ngit_gate:\n  repos:\n    - git.example.com/srv/git/app.git\n---\n")))
+        self.assertIn("invalid owner or repo name", problem("bottles/dev.md", (
+            "---\ngit_gate:\n  repos:\n    - git.example.com/srv/../app.git\n---\n")))
+
+    def test_a_document_writes_the_path_back(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.manifest.document import bottle_document
+        with connected(PATHS):
+            bottle = self._git("git.example.com/srv/git/app.git:write",
+                               "git.example.com/throwaway.git")
+        git: Any = bottle_document(bottle)["git_gate"]
+        self.assertEqual({"app": "git.example.com/srv/git/app.git:write",
+                          "throwaway": "git.example.com/throwaway.git"}, git["repos"])
+
+    def test_a_live_grant_too(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.git_gate.live_grant import grant_entry
+        with connected(PATHS):
+            forge = resolve_forge("git.example.com", None, "")
+        entry = grant_entry("git.example.com/srv/git/app.git:write", forge)
+        self.assertEqual(("app", "ssh://git@git.example.com:2222/srv/git/app.git", "/keys/app"),
+                         (entry.Name, entry.Upstream, entry.Key.path))
+        entry = grant_entry("mine=git.example.com/throwaway.git", forge)
+        self.assertEqual(("mine", "ssh://git@git.example.com:2222/throwaway.git"),
+                         (entry.Name, entry.Upstream))
+        with connected(GITEA):
+            gitea_forge = resolve_forge("gitea.example.com", None, "")
+        with self.assertRaisesRegex(ManifestError, "a Gitea repo grant"):
+            grant_entry("gitea.example.com/a/b/c", gitea_forge)
+
+    def test_the_forge_reports_keys_by_path(self) -> None:
+        with connected(PATHS):
+            listed = forge_link.repos("git.example.com")
+        self.assertEqual(["srv/git/app.git", "throwaway.git"],
+                         [r["full_name"] for r in listed["repos"]])
 
 
 class _Cli(unittest.TestCase):
@@ -506,6 +645,17 @@ class TestKeyCommand(_Cli):
         self.assertTrue(self.key.exists())
         self.assertEqual(1, len(self.store().connections()["git.example.com"].keys))
 
+    def test_a_key_for_a_path_on_the_server(self) -> None:
+        out = self.run_cmd("key", "add", "git.example.com", "srv/git/app.git", str(self.key),
+                           "--write")
+        self.assertIn("for srv/git/app.git, read and write", out)
+        self.run_cmd("key", "add", "git.example.com", "throwaway.git", str(self.key))
+        conn = self.store().connections()["git.example.com"]
+        self.assertEqual(["srv/git/app.git", "throwaway.git"], [k.repo for k in conn.keys])
+        self.run_cmd("key", "remove", "git.example.com", "srv/git/app.git")
+        self.assertEqual(["throwaway.git"],
+                         [k.repo for k in self.store().connections()["git.example.com"].keys])
+
     def test_two_forges_may_share_a_key(self) -> None:
         self.store().connect_server(replace(SSH, host="other.example.com", keys=(),
                                             ssh="ssh://git@other.example.com"))
@@ -527,7 +677,8 @@ class TestKeyCommand(_Cli):
         self.key.chmod(0o644)
         for argv, why in ((("git.example.com", "org/lib", str(self.key)), "readable by others"),
                           (("nowhere.example.com", "org/lib", str(self.key)), "isn't an SSH"),
-                          (("git.example.com", "lib", str(self.key)), "isn't <owner>/<repo>"),
+                          (("git.example.com", "org/../lib", str(self.key)),
+                           "isn't a repo's path"),
                           (("git.example.com", str(self.key)), "usage"),
                           (("git.example.com", "--default", "org/lib", str(self.key)), "usage")):
             with self.subTest(argv=argv), self.assertRaises(Die), \

@@ -84,7 +84,11 @@ git_gate:
 ```
 
 This one pushes to `acme/app` over SSH with the key this host holds for it
-([SSH servers](git-gate.md#ssh-servers)). A bottle file never names a key
+([SSH servers](git-gate.md#ssh-servers)). On an SSH server the part after
+the forge is the repo's path there, verbatim and of any depth
+(`git.example.com/srv/git/app.git:write` is
+`ssh://git@git.example.com:2222/srv/git/app.git`, local name `app`); on
+Gitea and GitHub it's `<owner>/<repo>`. A bottle file never names a key
 file: every repo in it is a grant.
 
 The whole `git_gate` block, including forges and one-line repo grants, is in

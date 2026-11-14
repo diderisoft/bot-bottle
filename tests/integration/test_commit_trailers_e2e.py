@@ -60,6 +60,7 @@ from bot_bottle.manifest import ManifestIndex
 from bot_bottle.paths import host_audit_dir
 from bot_bottle.trust_domain import HostControlProvisioning, HostLink
 from tests._backend import selected_backend, skip_unless_selected_backend_available
+from tests.integration._ssh_forge import ssh_forge
 
 _OPERATOR = ("Op Erator", "op@example.com")
 
@@ -303,6 +304,7 @@ class TestCommitTrailersEndToEnd(unittest.TestCase):
     _upstream: _Upstream | None = None
     _hostctl: _HostControl | None = None
     _env: Any = None
+    _forge: Any = None
     agent_sha: str = ""
 
     @classmethod
@@ -386,14 +388,15 @@ class TestCommitTrailersEndToEnd(unittest.TestCase):
     @classmethod
     def _launch(cls) -> None:
         assert cls._upstream is not None
+        # The upstream is an SSH server this host connected, with the
+        # test's key for the repo's path (ADR 0023).
+        git_gate, cls._forge = ssh_forge(cls._upstream.url, str(cls._key),
+                                         cls._upstream.host_key)
+        cls._forge.start()
         manifest = ManifestIndex.from_json_obj({
             "bottles": {"dev": {"git_gate": {
                 "user": {"name": "agent-bot", "email": "agent@example.com"},
-                "repos": {"app": {
-                    "url": cls._upstream.url,
-                    "key": {"provider": "static", "path": str(cls._key)},
-                    "host_key": cls._upstream.host_key,
-                }},
+                **git_gate,
             }}},
             "agents": {"trailer-tester": {"skills": [], "prompt": ""}},
         })
@@ -437,6 +440,9 @@ class TestCommitTrailersEndToEnd(unittest.TestCase):
         if cls._env is not None:
             cls._env.stop()
             cls._env = None
+        if cls._forge is not None:
+            cls._forge.stop()
+            cls._forge = None
         shutil.rmtree(cls._tmp, ignore_errors=True)
 
     # ---- helpers -------------------------------------------------------

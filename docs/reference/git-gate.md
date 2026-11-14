@@ -269,6 +269,28 @@ git_gate:
 It's named by its host, without the port, which goes in `ssh`. It has no
 `url`, and a description with one fails to load.
 
+A grant on an SSH server names the repo's path on the server, verbatim,
+after the forge's name. Plain servers keep repos anywhere, so it isn't held
+to `<owner>/<repo>` as a Gitea or GitHub grant is:
+
+| Grant | Upstream | Local name |
+|---|---|---|
+| `git.example.com/org/lib` | `ssh://git@git.example.com:2222/org/lib` | `lib` |
+| `git.example.com/srv/git/app.git:write` | `ssh://git@git.example.com:2222/srv/git/app.git` | `app` |
+| `git.example.com/throwaway.git` | `ssh://git@git.example.com:2222/throwaway.git` | `throwaway` |
+
+- The path is one or more segments of letters, digits, `.`, `_` and `-`.
+  No segment is empty, `.` or `..`, and it has no leading or trailing `/`.
+- Nothing is added or taken off: `.git` is in the URL only when the grant
+  has it, and `org/lib` and `org/lib.git` are two grants, each with its own
+  key.
+- The gate's local name is the last segment without a trailing `.git`.
+  Two grants with the same one need the mapping form to name them apart,
+  as for any forge.
+- A Gitea or GitHub grant is still exactly `<forge>/<owner>/<repo>` (a
+  trailing `.git` dropped). Any other path on a forge the bottle declares
+  as one, or that this host connected as one, fails to load.
+
 The host connects it and holds its keys (`cli/commands/forge_key.py`,
 `forge_keys.py`):
 
@@ -286,6 +308,9 @@ bot-bottle forge key remove git.example.com org/lib     # or --default
   connected as another kind has to be removed first.
 - A key is for one repo (a deploy key) or the forge's default (a user key
   that reaches many repos). A grant uses its repo's key, else the default.
+  A repo's key is added under the path its grants name, exactly as they
+  name it: `forge key add git.example.com srv/git/app.git <path>` for
+  `git.example.com/srv/git/app.git`.
 - A key is kept by reference in the host database (`forge_keys`): its path
   and its fingerprint (OpenSSH's `SHA256:…` of the public key `ssh-keygen
   -y` derives from it, never a `.pub` beside it), never a copy. The file
@@ -302,7 +327,7 @@ At launch:
 
 | Case | What happens |
 |---|---|
-| no key for the repo, and no default | the bottle doesn't load: "this host holds no key for `<forge>/<owner>/<repo>`", naming the `forge key add` that adds one |
+| no key for the repo, and no default | the bottle doesn't load: "this host holds no key for `<forge>/<path>`", naming the `forge key add` that adds one |
 | a `:write` grant whose key is read-only | the bottle doesn't load, naming `forge key add … --write` |
 | the server isn't connected | the bottle doesn't load, naming `bot-bottle forge connect ssh://…` from the declaration |
 | the key file is missing or unusable (open to others, another user's, a passphrase) | the launch fails, naming the grant and the `forge key add` that replaces it, never the file's path |
@@ -884,13 +909,19 @@ same way.
 A repo with a `static` key file becomes a grant on an SSH server
 ([SSH servers](#ssh-servers)): `migrate` declares the server as a forge of kind
 `ssh`, from the repo's `url` (its address) and `host_key`, and grants the repo
-with `:write`, as the key could push. It does this whether or not the server
-is connected here. Until `bot-bottle forge connect ssh://…` and `bot-bottle
-forge key add <host> <owner>/<repo> <path> --write`, which the error and
-`migrate` both print, the bottle doesn't load on this host. The connect
+with `:write`, as the key could push. The grant names the repo's path from
+the `url` verbatim (`ssh://git@h:22/srv/git/app.git` becomes
+`h/srv/git/app.git:write`), whatever its depth, so a static repo needs no
+hand edit. Where the long form's name isn't the one the grant gives (its
+path's last segment without `.git`), the mapping form keeps it. It does this
+whether or not the server is connected here. Until `bot-bottle forge connect
+ssh://…` and `bot-bottle forge key add <host> <path> <key file> --write`,
+which the error and `migrate` both print, the bottle doesn't load on this
+host. The connect
 command passes the repo's pinned `host_key` as `--host-key`, so the pin
 carries over. A static repo on a host connected as Gitea or GitHub becomes
-a grant on that forge instead.
+a grant on that forge instead, so its path must be `<owner>/<repo>`; only a
+path no grant can name (a `~`, say) is left to rewrite by hand.
 
 A forge with `credentials:` or a `token` also fails to load. Connect it again
 with `forge connect`, then remove those lines (ADR 0019).

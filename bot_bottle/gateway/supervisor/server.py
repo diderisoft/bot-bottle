@@ -270,8 +270,10 @@ PROPOSED_FILE_FIELD: dict[str, str] = {
 # `<forge>/<owner>/<name>`, a repo to create (no alias, no access suffix).
 _NEW_REPO_RE = re.compile(r"^([A-Za-z0-9._-]+(?::[0-9]+)?)/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 PUBLIC_SUFFIX = ":public"
-# `[<alias>=]<forge>/<owner>/<repo>[:write]`, as `manifest.forges` reads it.
-_GRANT_RE = re.compile(r"^(?:([A-Za-z0-9._-]+)=)?([A-Za-z0-9._@:-]+)/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(:write)?$")
+# `[<alias>=]<forge>/<owner>/<repo>[:write]`, as `manifest.forges` reads it
+# (on an SSH server, `<forge>/<path>`: one or more segments, ADR 0023).
+_GRANT_RE = re.compile(
+    r"^(?:([A-Za-z0-9._-]+)=)?([A-Za-z0-9._@:-]+)(?:/[A-Za-z0-9._-]+)+(:write)?$")
 
 
 # --- Validation ---

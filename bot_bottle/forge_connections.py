@@ -29,7 +29,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from . import host_access, secret_ref
-from .contract.forges import FORGE_KINDS
+from .contract.forges import FORGE_KINDS, repo_path_ok
 from .lib.db_store import MACHINE_SPECIFIC, MIXED, PORTABLE, DbStore
 from .lib.migrations import TableMigrations
 from .manifest.util import ManifestError
@@ -37,8 +37,6 @@ from .manifest.util import ManifestError
 TRANSPORTS = ("https", "deploy-key")
 _HOST_RE = re.compile(r"^[A-Za-z0-9.-]+(?::[0-9]+)?$")
 _USER_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-# A key's repo: `<owner>/<repo>`, or "" for the forge's default key.
-REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 _SSH_RE = re.compile(r"^ssh://[^@/\s]+@[A-Za-z0-9.-]+(?::[0-9]+)?$")
 
 
@@ -70,8 +68,9 @@ class ForgeUser:
 class ForgeKey:
     """A key file an `ssh` forge's connection holds, by reference (ADR 0023):
     its `path` on this host, never a copy, and its `fingerprint`
-    (OpenSSH's `SHA256:…` of its public half) as last seen. `repo` is `<owner>/<repo>`, or "" for
-    the forge's default key. `write` is stated when it's added: there's no
+    (OpenSSH's `SHA256:…` of its public half) as last seen. `repo` is the
+    repo's path on the server as its grants name it (`repo_path_ok`), or ""
+    for the forge's default key. `write` is stated when it's added: there's no
     API to ask the server."""
 
     repo: str
@@ -88,8 +87,9 @@ class ForgeKey:
         body = _object(raw, f"forge {host}: a key")
         repo = _str(body, "repo", f"forge {host}: a key")
         where = f"forge {host}: the key for {repo or 'every repo'}"
-        if repo and not REPO_RE.fullmatch(repo):
-            raise ForgeConnectionError(f"{where}: a key's repo is <owner>/<repo>")
+        if repo and not repo_path_ok(repo):
+            raise ForgeConnectionError(f"{where}: a key's repo is its path on the server, "
+                                       f"as a grant names it")
         path = _str(body, "path", where)
         if not path.startswith("/"):
             raise ForgeConnectionError(f"{where}: path must be absolute")
@@ -116,7 +116,7 @@ class ForgeConnection:
     keys: tuple[ForgeKey, ...] = field(default_factory=tuple)
 
     def key_for(self, repo: str) -> ForgeKey | None:
-        """The key a grant on `repo` (`<owner>/<repo>`) uses: its own, else the
+        """The key a grant on `repo` (its path) uses: its own, else the
         forge's default, else None."""
         found = {k.repo: k for k in self.keys}
         return found.get(repo) or found.get("")
@@ -298,7 +298,7 @@ class ForgeStore(DbStore):
                 PRIMARY KEY (host, user)
             )
             """,
-            # An `ssh` forge's keys: `repo` is <owner>/<repo>, or '' for the
+            # An `ssh` forge's keys: `repo` is a grant's path, or '' for the
             # forge's default. A path, never the key.
             """
             CREATE TABLE forge_keys (
@@ -570,7 +570,7 @@ def secret_name(host: str, user: str) -> str:
     return f"{secret_ref.HOST_PREFIX}FORGE_{part(host)}__{part(user)}_TOKEN"
 
 
-__all__ = ["REPO_RE", "TRANSPORTS", "ForgeConnection", "ForgeConnectionError", "ForgeKey",
+__all__ = ["TRANSPORTS", "ForgeConnection", "ForgeConnectionError", "ForgeKey",
            "ForgeStore", "ForgeUser", "add_key", "add_user", "connect_server", "connections",
            "default_ssh", "forget", "get", "host_of", "refingerprint", "remove", "remove_key",
            "secret_name", "ssh_host"]

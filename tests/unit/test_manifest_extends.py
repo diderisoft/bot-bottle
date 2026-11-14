@@ -197,7 +197,7 @@ class TestExtendsGitMerge(unittest.TestCase):
         self.assertEqual(1, len(entries))
         e = entries[0]
         self.assertEqual("repo", e.Name)
-        self.assertEqual("ssh://git@git.example.com:2222/host-a/repo.git", e.Upstream)
+        self.assertEqual("ssh://git@git.example.com:2222/host-a/repo", e.Upstream)
         self.assertEqual("ssh-ed25519 SSH", e.KnownHostKey)
         self.assertEqual(("/keys/default", False), (e.Key.path, e.Key.read_only))
 
@@ -213,7 +213,7 @@ class TestExtendsGitMerge(unittest.TestCase):
         )
         entries = m.bottles["child"].git
         self.assertEqual(1, len(entries))
-        self.assertEqual("ssh://git@git.example.com:2222/host-b/new.git", entries[0].Upstream)
+        self.assertEqual("ssh://git@git.example.com:2222/host-b/new", entries[0].Upstream)
 
     def test_child_same_name_plus_new_repo(self):
         # Same-name repo is field-merged; a distinct new name in child
@@ -551,7 +551,7 @@ class TestExtendsMultiParent(unittest.TestCase):
         entries = m.bottles["child"].git
         self.assertEqual(1, len(entries))
         e = entries[0]
-        self.assertEqual("ssh://git@git.example.com:2222/org/lib.git", e.Upstream)
+        self.assertEqual("ssh://git@git.example.com:2222/org/lib", e.Upstream)
         self.assertEqual("/keys/lib", e.Key.path)
 
     def test_p1_repos_preserved_when_p2_has_none(self):

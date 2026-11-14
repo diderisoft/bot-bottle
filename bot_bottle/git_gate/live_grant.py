@@ -16,14 +16,14 @@ from pathlib import Path
 from urllib.parse import urlparse
 from typing import TYPE_CHECKING, Any
 
-from ..contract.forges import FORGE_KINDS
+from ..contract.forges import FORGE_KINDS, repo_name
 from ..forge_keys import KeyFileError, check_launch
 from ..contract.identity import GIT_HTTP_PORT, IDENTITY_HEADER
 from ..control.git_gate_render import (
     GitGateUpstream, git_gate_known_hosts_line, git_gate_upstreams_for_bottle,
 )
 from ..manifest import ManifestBottle
-from ..manifest.forges import ManifestForge, parse_grant, split_grant_alias
+from ..manifest.forges import ManifestForge, grant_path, kind_path, repo_url, split_grant_alias
 from ..manifest.git import ManifestGitEntry
 from ..secret_source import SecretSource
 from . import state as _state
@@ -40,18 +40,20 @@ class GrantError(Exception):
 
 
 def grant_entry(grant: str, forge: ManifestForge) -> ManifestGitEntry:
-    """`<forge>/<owner>/<repo>[:write]` on `forge` as a repo entry, the way a
-    grant in a bottle file expands (`manifest.forges.expand_grants`): on an
-    `ssh` forge, with the host's key for it (MissingKeyError without one).
-    Supports `<alias>=<grant>` to mount the repo under a different local name,
-    letting two repos with the same upstream repo name coexist."""
+    """`<forge>/<owner>/<repo>[:write]` (on an `ssh` forge, `<forge>/<path>`)
+    on `forge` as a repo entry, the way a grant in a bottle file expands
+    (`manifest.forges.expand_grants`): on an `ssh` forge, with the host's key
+    for it (MissingKeyError without one). Supports `<alias>=<grant>` to mount
+    the repo under a different local name, letting two repos with the same
+    upstream repo name coexist."""
     alias, bare_grant = split_grant_alias(grant)
-    _, owner, repo, writable = parse_grant(bare_grant, "the grant")
-    raw: dict[str, object] = {"url": f"{forge.ssh}/{owner}/{repo}.git",
-                              "key": forge.key(writable, f"{owner}/{repo}", "the grant")}
+    _, path, writable = grant_path(bare_grant, "the grant")
+    path = kind_path(forge.kind, path, bare_grant, "the grant")
+    raw: dict[str, object] = {"url": repo_url(forge, path),
+                              "key": forge.key(writable, path, "the grant")}
     if forge.host_key:
         raw["host_key"] = forge.host_key
-    return ManifestGitEntry.from_repos_entry("(live grant)", alias or repo, raw)
+    return ManifestGitEntry.from_repos_entry("(live grant)", alias or repo_name(path), raw)
 
 
 def name_taken(entry: ManifestGitEntry, identity: str) -> set[str] | None:

@@ -15,8 +15,8 @@ from pathlib import Path
 from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
 from .agent import agent_from_frontmatter
 from .bottle import ManifestBottle
-from .forges import (credentials_raw, forges_raw, granted_forges, normalize_repos,
-                     refuse_long_form, strip_chain_keys)
+from .forges import (check_grant_paths, credentials_raw, forges_raw, granted_forges,
+                     normalize_repos, refuse_long_form, strip_chain_keys)
 from .schema import (entity_name_from_path, validate_agent_frontmatter_keys,
                      validate_bottle_frontmatter_keys)
 from .util import ManifestError
@@ -65,7 +65,7 @@ def _bottle(name: str, path: Path, raw: dict[str, object]) -> None:
             isinstance(parents, list) and all(isinstance(p, str) for p in parents))):
         raise ManifestError(f"bottle '{name}' extends: a bottle's name, or a list of them")
     credentials_raw(name, raw)
-    forges_raw(name, raw)
+    forges = forges_raw(name, raw)
     granted_forges(name, raw)
     # Grants expand through this host's forge connections, so the parser
     # reads the rest without them.
@@ -75,6 +75,9 @@ def _bottle(name: str, path: Path, raw: dict[str, object]) -> None:
         # Every repo is a grant (ADR 0023), as a launch says; planned without
         # this host's connections, so the answer is the same everywhere.
         refuse_long_form(name, git["repos"], homes={})
+        # A grant on a forge this file describes fits its kind; one it
+        # doesn't describe is a parent's or the connection's to say.
+        check_grant_paths(name, raw, forges)
         raw["git_gate"] = {**git, "repos": {}}
     ManifestBottle.from_dict(name, raw)
 

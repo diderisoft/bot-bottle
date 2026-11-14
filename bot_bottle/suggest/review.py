@@ -159,14 +159,14 @@ def _secret(route: dict[str, Any]) -> str:
 
 def _repo(name: object, value: object) -> _Repo | None:
     # pylint: disable-next=import-outside-toplevel
-    from ..manifest.forges import parse_grant
+    from ..manifest.forges import grant_path
     from ..manifest.util import ManifestError  # pylint: disable=import-outside-toplevel
     if isinstance(value, str):
         try:
-            forge, owner, repo, write = parse_grant(value, "a grant")
+            forge, path, write = grant_path(value, "a grant")
         except ManifestError:
             return None
-        return _Repo(f"{owner}/{repo}", forge, write)
+        return _Repo(path, forge, write)
     if isinstance(value, dict):
         key = value.get("key")
         read_only = isinstance(key, dict) and key.get("read_only") is True

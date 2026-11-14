@@ -143,7 +143,9 @@ def key_path(path: str, cwd: str) -> str:
 
 
 def _grant(entry: "ManifestGitEntry") -> tuple[str, str]:
-    return entry.UpstreamHost, entry.UpstreamPath.removesuffix(".git")
+    """The forge and the repo's path as its grant (and its key) names them:
+    an `ssh` forge's repo path is the server's, as written (ADR 0023)."""
+    return entry.UpstreamHost, entry.UpstreamPath
 
 
 def check_launch(entries: "Iterable[ManifestGitEntry]") -> None:

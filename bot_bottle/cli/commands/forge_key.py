@@ -1,14 +1,17 @@
 """bot-bottle forge key: an SSH server's keys (ADR 0023).
 
-  bot-bottle forge key add <forge> [<owner/repo> | --default] <path> [--write]
+  bot-bottle forge key add <forge> [<repo> | --default] <path> [--write]
   bot-bottle forge key list [<forge>]
-  bot-bottle forge key remove <forge> [<owner/repo> | --default]
+  bot-bottle forge key remove <forge> [<repo> | --default]
 
 A plain SSH git server is a forge of kind `ssh`, connected with
 `bot-bottle forge connect ssh://user@host[:port]`. It has no API, so it mints
 no keys: this host's connection holds key files instead, one for a repo (a
 deploy key) or the forge's default (a user key that reaches many repos). A
-grant uses its repo's key, else the default.
+grant uses its repo's key, else the default. `<repo>` is the repo's path on
+the server exactly as the grant names it after the forge: the grant
+`git.example.com/srv/git/app.git:write` uses the key added for
+`srv/git/app.git`, not `srv/git/app`.
 
 A key is kept by reference, its path and fingerprint, never a copy. One
 rotated in place is used, and its new fingerprint recorded at the next
@@ -25,15 +28,16 @@ from __future__ import annotations
 import os
 import sys
 
+from ...contract.forges import repo_path_ok
 from ...forge_connections import (
-    REPO_RE, ForgeConnection, ForgeConnectionError, ForgeKey, add_key, connections, remove_key,
+    ForgeConnection, ForgeConnectionError, ForgeKey, add_key, connections, remove_key,
 )
 from ...forge_keys import KeyFileError, check_file, key_path
 from ...lib.log import die, info
 from ..constants import PROG
 
-_ADD = f"usage: {PROG} forge key add <forge> [<owner/repo> | --default] <path> [--write]"
-_REMOVE = f"usage: {PROG} forge key remove <forge> [<owner/repo> | --default]"
+_ADD = f"usage: {PROG} forge key add <forge> [<repo> | --default] <path> [--write]"
+_REMOVE = f"usage: {PROG} forge key remove <forge> [<repo> | --default]"
 
 
 def _connections() -> dict[str, ForgeConnection]:
@@ -48,11 +52,13 @@ def _servers() -> dict[str, ForgeConnection]:
 
 
 def _repo(args: list[str], default: bool, usage: str) -> str:
-    """The `<owner/repo>` among `args`, or "" with `--default`."""
+    """The `<repo>` among `args` (its path on the server, as a grant names
+    it), or "" with `--default`."""
     if default == bool(args):
         die(usage)
-    if args and not REPO_RE.fullmatch(args[0]):
-        die(f"{args[0]!r} isn't <owner>/<repo>")
+    if args and not repo_path_ok(args[0]):
+        die(f"{args[0]!r} isn't a repo's path on the server, as a grant names it after the "
+            f"forge (such as org/lib or srv/git/app.git)")
     return args[0] if args else ""
 
 
@@ -105,7 +111,7 @@ def list_keys(argv: list[str]) -> int:
     for host, conn in shown.items():
         print(f"{host} ({conn.ssh})")
         if not conn.keys:
-            print(f"  no keys (`{PROG} forge key add {host} <owner/repo> <path>`)")
+            print(f"  no keys (`{PROG} forge key add {host} <repo> <path>`)")
         for key in conn.keys:
             print(f"  {key.repo or '(default)':<30} {'write' if key.write else 'read':<5} "
                   f"{key.fingerprint}  {key.path}  {_state(key)}")

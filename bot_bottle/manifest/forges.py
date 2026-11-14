@@ -13,17 +13,19 @@ grants repos on it in a line:
       - gitea.example.com/acme/app:write
       - gitea.example.com/acme/lib
 
-A grant's prefix is the forge's real host. The host's connection to it
-(`forge_connections`, written by `bot-bottle forge connect`) supplies the URL,
-SSH address, pinned host key and token a launch uses; a bottle's description
-never overrides them. It's the hint for connecting the forge on a machine
+A grant's prefix is the forge's real host. On a gitea or github forge the
+rest is `<owner>/<repo>`; on an `ssh` forge it's the repo's path on the
+server as written, one or more segments (`git.example.com/srv/git/app.git`).
+The host's connection to it (`forge_connections`, written by `bot-bottle
+forge connect`) supplies the URL, SSH address, pinned host key and token a
+launch uses; a bottle's description never overrides them. It's the hint for connecting the forge on a machine
 that hasn't, and its `kind` (and `host_key`, if pinned) must match the
 connection's. A bottle never carries a token.
 
 A plain SSH git server is a forge of kind `ssh` (ADR 0023): no API, so no
 minted keys. The host's connection to it holds key files, one per repo or a
-default (`bot-bottle forge key add`), and a grant uses its repo's key, else
-the default.
+default (`bot-bottle forge key add`), each keyed by the path its grants
+name, and a grant uses its repo's key, else the default.
 
 Each grant expands, while `extends` is resolved, into the long-form repo
 entry: a deploy key minted per launch through the forge, or an `ssh` forge's
@@ -39,7 +41,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from ..contract.forges import FORGE_KINDS
+from ..contract.forges import FORGE_KINDS, FORGE_LABELS, repo_name, repo_path_ok
 from .legacy_git_gate import OldGitGateFormatError
 from .util import ManifestError, as_json_object
 
@@ -83,8 +85,8 @@ class ManifestForge:
     keys: "tuple[ForgeKey, ...]" = ()
 
     def key(self, writable: bool, repo: str = "", where: str = "") -> dict[str, object]:
-        """The long-form `key` block a grant on `repo` (`<owner>/<repo>`) on
-        this forge expands to. An `ssh` forge's is the repo's key, else its
+        """The long-form `key` block a grant on `repo` (its path, as
+        `kind_path` gives it) on this forge expands to. An `ssh` forge's is the repo's key, else its
         default; MissingKeyError (naming `where`) when it has neither, or only
         a read-only one for a `:write` grant."""
         if self.kind == "ssh":
@@ -354,20 +356,66 @@ def split_grant_alias(grant: str) -> tuple[str | None, str]:
     return None, grant
 
 
-def parse_grant(grant: str, where: str) -> tuple[str, str, str, bool]:
-    """`<forge>/<owner>/<repo>[:write]` as (forge, owner, repo, writable)."""
+def grant_path(grant: str, where: str) -> tuple[str, str, bool]:
+    """`<forge>/<path>[:write]` as (forge, path, writable), the path as
+    written. Any forge's grant reads this way; `kind_path` then holds a
+    gitea or github grant to `<owner>/<repo>` (ADR 0023)."""
     body, writable = grant, False
     if grant.endswith(":write"):
         body, writable = grant[:-len(":write")], True
     parts = body.split("/")
-    if len(parts) != 3 or not all(parts):
-        raise ManifestError(f"{where}: a repo grant is <forge>/<owner>/<repo>[:write] "
-                            f"(was {grant!r})")
-    forge, owner, repo = parts
-    repo = repo.removesuffix(".git")
-    if not (_REPO_PART_RE.fullmatch(owner) and _REPO_PART_RE.fullmatch(repo)):
+    if len(parts) < 2 or not all(parts):
+        raise ManifestError(f"{where}: a repo grant is <forge>/<owner>/<repo>[:write], or "
+                            f"<forge>/<path>[:write] on an SSH server (was {grant!r})")
+    path = "/".join(parts[1:])
+    if not repo_path_ok(path):
         raise ManifestError(f"{where}: {grant!r} has an invalid owner or repo name")
-    return forge, owner, repo, writable
+    return parts[0], path, writable
+
+
+def parse_grant(grant: str, where: str) -> tuple[str, str, str, bool]:
+    """A grant as (forge, owner, repo, writable): `repo` is the gate's local
+    name (the path's last segment without `.git`), `owner` the segments
+    before it ("" for a one-segment path on an SSH server)."""
+    forge, path, writable = grant_path(grant, where)
+    return forge, path.rpartition("/")[0], repo_name(path), writable
+
+
+def kind_path(kind: str, path: str, grant: str, where: str) -> str:
+    """The path a grant's repo has on a forge of `kind`, as its key and URL
+    use it: an `ssh` forge's as written (nothing added or taken off); a
+    gitea or github forge's `<owner>/<repo>` without `.git`, refused when
+    `path` isn't two segments."""
+    if kind == "ssh":
+        return path
+    if path.count("/") != 1:
+        raise ManifestError(f"{where}: a {FORGE_LABELS.get(kind, kind)} repo grant is "
+                            f"<forge>/<owner>/<repo>[:write]; only an SSH server's (kind: ssh) "
+                            f"names any other path (was {grant!r})")
+    return f"{path.split('/')[0]}/{repo_name(path)}"
+
+
+def repo_url(forge: ManifestForge, path: str) -> str:
+    """The upstream URL of the repo at `path` (`kind_path`'s) on `forge`."""
+    return f"{forge.ssh}/{path}" if forge.kind == "ssh" else f"{forge.ssh}/{path}.git"
+
+
+def check_grant_paths(bottle_name: str, raw: dict[str, object],
+                      forges: "Mapping[str, object]") -> None:
+    """Each grant on a forge `forges` describes as a gitea or github one (the
+    default kind) names `<owner>/<repo>`; an `ssh` forge's may name any path.
+    A grant on an undescribed forge is checked once its connection says."""
+    git = normalize_repos(bottle_name, raw).get("git_gate")
+    repos = git.get("repos") if isinstance(git, dict) else None
+    for name, entry in (repos.items() if isinstance(repos, dict) else ()):
+        if not isinstance(entry, str):
+            continue
+        where = f"bottle '{bottle_name}' git_gate.repos[{name!r}]"
+        forge, path, _ = grant_path(split_grant_alias(entry)[1], where)
+        described = forges.get(forge)
+        if isinstance(described, dict):
+            kind = described.get("kind") or "gitea"
+            kind_path(kind if isinstance(kind, str) else "gitea", path, entry, where)
 
 
 def normalize_repos(bottle_name: str, raw: dict[str, object]) -> dict[str, object]:
@@ -385,7 +433,8 @@ def normalize_repos(bottle_name: str, raw: dict[str, object]) -> dict[str, objec
         where = f"bottle '{bottle_name}' git_gate.repos[{i}]"
         if not isinstance(item, str):
             raise ManifestError(f"{where}: a list of repos holds grants, "
-                                f"<forge>/<owner>/<repo>[:write]")
+                                f"<forge>/<owner>/<repo>[:write] (<forge>/<path> on an SSH "
+                                f"server)")
         repo = parse_grant(item, where)[2]
         if repo in mapped:
             raise ManifestError(f"{where}: two grants for repos named {repo!r}; use the "
@@ -428,6 +477,7 @@ def expand_grants(bottle_name: str, raw: dict[str, object],
     repos = git_d.get("repos")
     if isinstance(repos, dict):
         refuse_long_form(bottle_name, repos)
+        check_grant_paths(bottle_name, raw, forges)
     if not isinstance(repos, dict) or not any(isinstance(v, str) for v in repos.values()):
         return raw
     expanded: dict[str, object] = {}
@@ -436,14 +486,15 @@ def expand_grants(bottle_name: str, raw: dict[str, object],
             expanded[name] = entry
             continue
         where = f"bottle '{bottle_name}' git_gate.repos[{name!r}]"
-        forge_name, owner, repo, writable = parse_grant(entry, where)
+        forge_name, path, writable = grant_path(entry, where)
         if "@" in forge_name:
             raise ManifestError(f"{where}: a grant names its forge by host; the account an "
                                 f"agent pushes as is its `identity.accounts`, not the grant's")
         forge = resolve_forge(forge_name, forges.get(forge_name), bottle_name)
+        path = kind_path(forge.kind, path, entry, where)
         long_form: dict[str, object] = {
-            "url": f"{forge.ssh}/{owner}/{repo}.git",
-            "key": forge.key(writable, f"{owner}/{repo}", f"bottle '{bottle_name}'")}
+            "url": repo_url(forge, path),
+            "key": forge.key(writable, path, f"bottle '{bottle_name}'")}
         if forge.host_key:
             long_form["host_key"] = forge.host_key
         expanded[name] = long_form
@@ -476,8 +527,9 @@ def strip_chain_keys(raw: dict[str, object]) -> dict[str, object]:
 
 
 __all__ = [
-    "FORGE_KINDS", "ManifestForge", "MissingKeyError", "NotConnectedError", "credentials_raw",
-    "described_connection", "described_forge", "expand_grants", "forges_raw", "granted_forges",
-    "merge_named", "normalize_repos", "parse_grant", "refuse_long_form", "refuse_ssh_create",
-    "resolve_forge", "split_grant_alias", "strip_chain_keys", "with_forge_users",
+    "FORGE_KINDS", "ManifestForge", "MissingKeyError", "NotConnectedError", "check_grant_paths",
+    "credentials_raw", "described_connection", "described_forge", "expand_grants", "forges_raw",
+    "grant_path", "granted_forges", "kind_path", "merge_named", "normalize_repos", "parse_grant",
+    "refuse_long_form", "refuse_ssh_create", "repo_url", "resolve_forge", "split_grant_alias",
+    "strip_chain_keys", "with_forge_users",
 ]

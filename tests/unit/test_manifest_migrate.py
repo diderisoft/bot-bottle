@@ -152,8 +152,8 @@ class TestTheError(_Host):
         self.assertIn("(a, b, lib)", msg)
         self.assertIn("- git.example.com/org/a:write", msg)
         # A static key's server is an SSH server now (ADR 0023).
-        self.assertIn("- github.com/org/lib:write", msg)
-        self.assertIn("bot-bottle forge key add github.com org/lib /dev/null --write", msg)
+        self.assertIn("- github.com/org/lib.git:write", msg)
+        self.assertIn("bot-bottle forge key add github.com org/lib.git /dev/null --write", msg)
 
 
 class TestMigrate(_Host):
@@ -200,7 +200,7 @@ class TestMigrate(_Host):
         self.write("dev", text)
         self.connect()
         after = prepare("dev", self.dirs).after
-        self.assertIn("    lib: github.com/o/lib:write\n", after)
+        self.assertIn("    lib: github.com/o/lib.git:write\n", after)
         self.assertIn("    github.com:\n      kind: ssh\n", after)
         self.assertIn("    bot-bottle: gitea.example.com/acme/bot-bottle:write\n", after)
         self.assertIn("    orb: gitea.example.com/acme/textorbium\n", after)
@@ -266,10 +266,10 @@ class TestStaticBecomesAnSshForge(_Host):
         self.assertIn("1. Connect the SSH server once:  "
                       "bot-bottle forge connect ssh://git@git.example.com:2222 "
                       f"--host-key '{HOST_KEY}'", msg)
-        self.assertIn("2. Add its key:  bot-bottle forge key add git.example.com org/lib "
+        self.assertIn("2. Add its key:  bot-bottle forge key add git.example.com org/lib.git "
                       "/keys/lib --write", msg)
         self.assertIn("3. Convert this bottle:      bot-bottle bottles migrate dev", msg)
-        self.assertIn("- git.example.com/org/lib:write", msg)
+        self.assertIn("- git.example.com/org/lib.git:write", msg)
 
     def test_migrates_unconnected_and_is_partial_until_its_key(self) -> None:
         path = self.write("dev", STATIC)
@@ -277,13 +277,13 @@ class TestStaticBecomesAnSshForge(_Host):
         self.assertEqual(("git.example.com",), m.servers)
         self.assertEqual(
             "---\nextends: basic\ngit_gate:\n  repos:\n    # the library\n"
-            "    - git.example.com/org/lib:write\n"
+            "    - git.example.com/org/lib.git:write\n"
             "  forges:\n    git.example.com:\n      kind: ssh\n"
             "      ssh: ssh://git@git.example.com:2222\n"
             f"      host_key: {HOST_KEY}\n---\n", m.after)
         self.assertTrue(any("bot-bottle forge connect ssh://git@git.example.com:2222" in n
                             for n in m.notes))
-        self.assertTrue(any("bot-bottle forge key add git.example.com org/lib /keys/lib --write"
+        self.assertTrue(any("bot-bottle forge key add git.example.com org/lib.git /keys/lib --write"
                             in n for n in m.notes))
         apply(m, self.dirs, root=self.root)
         self.assertEqual(m.after, path.read_text())
@@ -295,11 +295,11 @@ class TestStaticBecomesAnSshForge(_Host):
         # ...then holds no key for the repo...
         store = record(self.root, SERVER)
         with self.assertRaisesRegex(ManifestError, "this host holds no key for "
-                                    "git.example.com/org/lib; add one with `bot-bottle forge "
-                                    "key add git.example.com org/lib <path> --write`"):
+                                    "git.example.com/org/lib.git; add one with `bot-bottle forge "
+                                    "key add git.example.com org/lib.git <path> --write`"):
             load_bottle_chain("dev", self.dirs)
         # ...and loads once it does.
-        store.add_key("git.example.com", ForgeKey(repo="org/lib", path="/keys/lib",
+        store.add_key("git.example.com", ForgeKey(repo="org/lib.git", path="/keys/lib",
                                                   fingerprint="SHA256:x", write=True))
         bottle, _ = load_bottle_chain("dev", self.dirs)
         entry = bottle.git[0]
@@ -330,11 +330,73 @@ class TestStaticBecomesAnSshForge(_Host):
         with self.assertRaisesRegex(MigrateError, "nothing to migrate"):
             prepare("dev", self.dirs)
 
+    def test_any_path_on_the_server_converts_as_written(self) -> None:
+        # ADR 0023: an `ssh` forge's grant is the repo's path on the server,
+        # verbatim, so no static repo is left to rewrite by hand.
+        path = self.write("dev", (
+            "---\ngit_gate:\n  repos:\n"
+            "    app:\n      url: ssh://git@trailers-upstream.test:22/srv/git/app.git\n"
+            "      key: {provider: static, path: /keys/app}\n"
+            "    scratch:\n      url: ssh://git@unreachable.invalid:22/throwaway.git\n"
+            "      key: {provider: static, path: /keys/t}\n"
+            "      host_key: ssh-ed25519 AAAA\n---\n"))
+        msg = self.load_error()
+        self.assertNotIn("by hand;", msg)
+        self.assertIn("bot-bottle forge key add trailers-upstream.test srv/git/app.git "
+                      "/keys/app --write", msg)
+        self.assertIn("bot-bottle forge key add unreachable.invalid throwaway.git /keys/t "
+                      "--write", msg)
+        m = prepare("dev", self.dirs)
+        # `scratch` isn't the name its grant gives it (throwaway): the
+        # mapping form keeps it.
+        self.assertIn("    app: trailers-upstream.test/srv/git/app.git:write\n", m.after)
+        self.assertIn("    scratch: unreachable.invalid/throwaway.git:write\n", m.after)
+        self.assertIn("    trailers-upstream.test:\n      kind: ssh\n"
+                      "      ssh: ssh://git@trailers-upstream.test:22\n", m.after)
+        apply(m, self.dirs, root=self.root)
+        record(self.root, replace(SERVER, host="trailers-upstream.test",
+                                  ssh="ssh://git@trailers-upstream.test:22", host_key="",
+                                  keys=(ForgeKey("srv/git/app.git", "/keys/app", "SHA256:a",
+                                                 write=True),)),
+               replace(SERVER, host="unreachable.invalid", host_key="ssh-ed25519 AAAA",
+                       ssh="ssh://git@unreachable.invalid:22",
+                       keys=(ForgeKey("throwaway.git", "/keys/t", "SHA256:t", write=True),)))
+        app, scratch = load_bottle_chain("dev", self.dirs)[0].git
+        self.assertEqual(("app", "ssh://git@trailers-upstream.test:22/srv/git/app.git"),
+                         (app.Name, app.Upstream))
+        self.assertEqual(("scratch", "ssh://git@unreachable.invalid:22/throwaway.git"),
+                         (scratch.Name, scratch.Upstream))
+        self.assertIn("scratch: unreachable.invalid/throwaway.git:write", path.read_text())
+
+    def test_a_named_like_its_grant_is_a_list(self) -> None:
+        self.write("dev", (
+            "---\ngit_gate:\n  repos:\n"
+            "    app:\n      url: ssh://git@h.example.com/srv/git/app.git\n"
+            "      key: {provider: static, path: /keys/app}\n---\n"))
+        self.assertIn("    - h.example.com/srv/git/app.git:write\n",
+                      prepare("dev", self.dirs).after)
+
+    def test_a_path_no_grant_can_name_is_still_by_hand(self) -> None:
+        self.write("dev", (
+            "---\ngit_gate:\n  repos:\n"
+            "    app:\n      url: ssh://git@h.example.com/~me/app.git\n"
+            "      key: {provider: static, path: /keys/app}\n---\n"))
+        self.assertIn("app: ssh://git@h.example.com/~me/app.git isn't an ssh:// URL with a key "
+                      "file and a path a grant can name", self.load_error())
+        with self.assertRaisesRegex(MigrateError, "can't be converted"):
+            prepare("dev", self.dirs)
+
+    def test_a_deep_static_path_on_a_connected_gitea_is_by_hand(self) -> None:
+        self.write("dev", STATIC.replace("git.example.com:2222/org/lib.git",
+                                         "gitea.example.com/org/sub/lib.git"))
+        self.connect()
+        self.assertIn("isn't <owner>/<repo> on the forge", self.load_error())
+
     def test_a_static_repo_on_a_connected_gitea_is_a_gitea_grant(self) -> None:
         self.write("dev", STATIC.replace("git.example.com:2222", "10.0.0.5:30009"))
         self.connect()
         msg = self.load_error()
-        self.assertIn("- 10.0.0.5/org/lib:write", msg)
+        self.assertIn("- 10.0.0.5/org/lib.git:write", msg)
 
 
 class TestMigrateCommand(_Host):

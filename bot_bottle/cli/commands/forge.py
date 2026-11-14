@@ -228,10 +228,11 @@ def _connect_server(argv: list[str]) -> int:
     info(f"connected the SSH server {conn.host} ({len(conn.keys)} keys)")
     if not conn.keys:
         info(f"add the key files this host holds for it: `{PROG} forge key add {conn.host} "
-             f"<owner/repo> <path> [--write]`, or `--default` for one key for every repo")
+             f"<repo> <path> [--write]` (<repo> is its path on the server, as grants name "
+             f"it), or `--default` for one key for every repo")
     info("declare it and grant its repos from any bottle:")
     info(f"  git_gate:\n    forges:\n      {conn.host}: {{kind: ssh, ssh: {conn.ssh}}}\n"
-         f"    repos: [{conn.host}/<owner>/<repo>:write]")
+         f"    repos: [{conn.host}/<path on the server>:write]")
     return 0
 
 

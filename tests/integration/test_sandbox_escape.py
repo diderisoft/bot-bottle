@@ -29,9 +29,11 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from bot_bottle.backend import BottleSpec, get_bottle_backend
 from bot_bottle.bottle_state import remove_bottled_agent
@@ -41,6 +43,7 @@ from bot_bottle.egress.service import _CANARY_ENV_WORDS  # pyright: ignore[repor
 from bot_bottle.manifest import ManifestIndex
 from bot_bottle.secret_source import ChainSecrets, MappingSecrets
 from tests._backend import skip_unless_selected_backend_available
+from tests.integration._ssh_forge import ssh_forge
 
 
 # Secrets planted in the bottle env as literals (agents substitute via
@@ -90,6 +93,7 @@ class TestSandboxEscape(unittest.TestCase):
     bottle via `bottle.exec(script)`."""
 
     _key_path: Path = None  # type: ignore[assignment]
+    _forge: Any = None
     _stage_dir: Path = None  # type: ignore[assignment]
     _launch_cm = None  # backend.launch context manager
     _bottle = None
@@ -103,14 +107,19 @@ class TestSandboxEscape(unittest.TestCase):
         # the shared gateway and therefore does not require host Docker.
         cls._backend_name = os.environ.get("BOT_BOTTLE_BACKEND", "docker")
 
-        # Throwaway static key for the git-gate fixture. It need not
-        # be a real SSH key: test 5 reaches gitleaks before any SSH
-        # attempt anyway.
-        fd, kp = tempfile.mkstemp(prefix="sandbox-test-key.")
-        os.close(fd)
-        cls._key_path = Path(kp)
-        cls._key_path.write_text("placeholder\n")
-        cls._key_path.chmod(0o600)
+        # Throwaway key for the git-gate fixture, connected on this host
+        # for the (unreachable) SSH server's repo (ADR 0023). Never used:
+        # test 5 reaches gitleaks before any SSH attempt. It must be a
+        # real key, as a launch checks it.
+        key_dir = Path(tempfile.mkdtemp(prefix="sandbox-test-key."))
+        cls._key_path = key_dir / "id_ed25519"
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f",
+                        str(cls._key_path)], check=True, capture_output=True)
+        # A preset `host_key` keeps the host-key preflight from
+        # ssh-keyscanning `unreachable.invalid` (which fails with no DNS).
+        git_gate, cls._forge = ssh_forge("ssh://git@unreachable.invalid:22/throwaway.git",
+                                         str(cls._key_path), _DUMMY_HOST_KEY)
+        cls._forge.start()
 
         manifest = ManifestIndex.from_json_obj({
             "bottles": {
@@ -129,20 +138,8 @@ class TestSandboxEscape(unittest.TestCase):
                     # git-gate daemon so attack 5 can push. Upstream
                     # is intentionally unreachable — the pre-receive
                     # gitleaks hook must reject BEFORE git-gate
-                    # attempts the upstream push. A preset `host_key`
-                    # keeps the host-key preflight from ssh-keyscanning
-                    # `unreachable.invalid` (which fails with no DNS);
-                    # the key is never used since the push is rejected.
-                    "git_gate": {"repos": {
-                        "throwaway": {
-                            "url": "ssh://git@unreachable.invalid:22/throwaway.git",
-                            "key": {
-                                "provider": "static",
-                                "path": str(cls._key_path),
-                            },
-                            "host_key": _DUMMY_HOST_KEY,
-                        },
-                    }},
+                    # attempts the upstream push.
+                    "git_gate": git_gate,
                 },
             },
             "agents": {
@@ -217,11 +214,11 @@ class TestSandboxEscape(unittest.TestCase):
             shutil.rmtree(cls._stage_dir, ignore_errors=True)
             cls._stage_dir = None  # type: ignore[assignment]
         if cls._key_path is not None:  # type: ignore
-            try:
-                cls._key_path.unlink()
-            except OSError:
-                pass
+            shutil.rmtree(cls._key_path.parent, ignore_errors=True)
             cls._key_path = None  # type: ignore[assignment]
+        if cls._forge is not None:
+            cls._forge.stop()
+            cls._forge = None
 
     # ---- attack 1: non-allowlisted hostname --------------------------
 

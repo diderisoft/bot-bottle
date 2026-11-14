@@ -11,6 +11,7 @@ Secrets appear by name only, as in any bottle file: env values as written
 
 from __future__ import annotations
 
+from ..contract.forges import repo_path_ok
 from ..secret_ref import stored
 from .bottle import ManifestBottle
 from .egress import (
@@ -117,10 +118,12 @@ def repo_document(entry: ManifestGitEntry) -> dict[str, object]:
 def grant_for(entry: ManifestGitEntry, forges: tuple[ManifestForge, ...] | list[ManifestForge],
               ) -> str:
     """The grant `entry` was expanded from (`manifest.forges.expand_grants`),
-    if it matches one of `forges`, else ""."""
+    if it matches one of `forges`, else "". An `ssh` forge's grant names the
+    repo's path as the URL has it; an API forge's, `<owner>/<repo>` before
+    `.git`."""
     for forge in forges:
         prefix = f"{forge.ssh}/"
-        if not (entry.Upstream.startswith(prefix) and entry.Upstream.endswith(".git")):
+        if not entry.Upstream.startswith(prefix):
             continue
         if (entry.Key.provider, entry.Key.forge_token_env, entry.Key.api_url,
                 entry.Key.transport) != (forge.kind, forge.token_secret, forge.url,
@@ -128,9 +131,13 @@ def grant_for(entry: ManifestGitEntry, forges: tuple[ManifestForge, ...] | list[
             continue
         if (entry.KnownHostKey or "") != forge.host_key:
             continue
-        path = entry.Upstream[len(prefix):-len(".git")]
-        if path.count("/") != 1:
+        path = entry.Upstream[len(prefix):]
+        if forge.kind == "ssh" and not repo_path_ok(path):
             continue
+        if forge.kind != "ssh":
+            path = path.removesuffix(".git")
+            if not entry.Upstream.endswith(".git") or path.count("/") != 1:
+                continue
         return f"{forge.name}/{path}" + ("" if entry.Key.read_only else ":write")
     return ""
 

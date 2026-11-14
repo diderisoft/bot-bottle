@@ -1804,7 +1804,8 @@ A host that holds a connection's token answers for it (`forge_link.py`).
 | `error` | the forge couldn't be asked; `message` says why |
 
 An SSH server ([git-gate.md](git-gate.md#ssh-servers)) has no `url` (`""`)
-and no users. It has `keys` instead, each with `repo` (`<owner>/<repo>`, or
+and no users. It has `keys` instead, each with `repo` (the repo's path on
+the server as grants name it, verbatim: `org/lib`, `srv/git/app.git`; or
 null for the default), `default`, `write`, `fingerprint` (`SHA256:…`), a
 `state` and a `message`. Never a key's path or contents:
 
@@ -1827,9 +1828,10 @@ is in. The list is sorted, capped at 1,000 repos and 60 seconds (`truncated`
 then), and read with the user's token, read-only.
 
 An SSH server can't be asked: its `repos` are those this host holds a key
-for, `private` null, `push` as the key was added, `login` `""`, with
-`default_key` (`write`, `fingerprint`, or null) for the repos its default key
-reaches.
+for (`full_name` is the key's path, verbatim, which may not be
+`<owner>/<repo>`), `private` null, `push` as the key was added, `login`
+`""`, with `default_key` (`write`, `fingerprint`, or null) for the repos its
+default key reaches.
 
 **`forge_remove`** (`forge`, `login`) answers `forge_removed` with `removed`,
 or `error`: the console's Disconnect for this host. It drops that user's
