@@ -287,8 +287,10 @@ bot-bottle forge key remove git.example.com org/lib     # or --default
 - A key is for one repo (a deploy key) or the forge's default (a user key
   that reaches many repos). A grant uses its repo's key, else the default.
 - A key is kept by reference in the host database (`forge_keys`): its path
-  and its fingerprint (`ssh-keygen -lf`), never a copy. The file must be
-  readable by its owner alone, as ssh requires.
+  and its fingerprint (OpenSSH's `SHA256:…` of the public key `ssh-keygen
+  -y` derives from it, never a `.pub` beside it), never a copy. The file
+  must be this user's and readable by its owner alone, as ssh requires,
+  and a private key without a passphrase (git-gate can't type one).
 - `--write` says the key can push. There's no API to ask, so it's stated.
   git-gate still enforces each grant's read or write; a key that can do less
   than it says fails at the server's push.
@@ -303,7 +305,7 @@ At launch:
 | no key for the repo, and no default | the bottle doesn't load: "this host holds no key for `<forge>/<owner>/<repo>`", naming the `forge key add` that adds one |
 | a `:write` grant whose key is read-only | the bottle doesn't load, naming `forge key add … --write` |
 | the server isn't connected | the bottle doesn't load, naming `bot-bottle forge connect ssh://…` from the declaration |
-| the key file is missing or open to others | the launch fails, naming the grant and the `forge key add` that replaces it |
+| the key file is missing or unusable (open to others, another user's, a passphrase) | the launch fails, naming the grant and the `forge key add` that replaces it, never the file's path |
 | the key's fingerprint changed (rotated in place) | it's used, logged once, and the new fingerprint recorded, so `forge key list` shows it |
 
 The key reaches git-gate as a static key file always did: the repo's
@@ -312,7 +314,8 @@ The key reaches git-gate as a static key file always did: the repo's
 `create-repo` and `actions.create` are refused there.
 
 Trusting a project bottle records the server's address and pinned host key,
-and names each repo's key by its fingerprint, never its path.
+and names each repo's key by its fingerprint, never its path. A key rotated
+in place asks again, at the launch that will use it.
 
 #### Forges in the console
 
@@ -884,9 +887,10 @@ A repo with a `static` key file becomes a grant on an SSH server
 with `:write`, as the key could push. It does this whether or not the server
 is connected here. Until `bot-bottle forge connect ssh://…` and `bot-bottle
 forge key add <host> <owner>/<repo> <path> --write`, which the error and
-`migrate` both print, the bottle is partial on this host: it doesn't load
-where the server isn't connected or holds no key for the repo. A static repo on a host connected as Gitea or
-GitHub becomes a grant on that forge instead.
+`migrate` both print, the bottle doesn't load on this host. The connect
+command passes the repo's pinned `host_key` as `--host-key`, so the pin
+carries over. A static repo on a host connected as Gitea or GitHub becomes
+a grant on that forge instead.
 
 A forge with `credentials:` or a `token` also fails to load. Connect it again
 with `forge connect`, then remove those lines (ADR 0019).

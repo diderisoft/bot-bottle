@@ -57,7 +57,7 @@ for one repo (a deploy key) or the forge's default (a user key that reaches
 many repos):
 
 ```sh
-bot-bottle forge connect ssh://git@git.example.com:2222          # pins the host key
+bot-bottle forge connect ssh://git@git.example.com:2222   # pins the host key, or --host-key
 bot-bottle forge key add git.example.com org/lib ~/.ssh/lib_deploy --write
 bot-bottle forge key add git.example.com --default ~/.ssh/id_ed25519
 bot-bottle forge key list|remove …
@@ -69,13 +69,21 @@ bot-bottle forge key list|remove …
   copy. Rotating a key in place is picked up; a changed fingerprint is used
   and logged once, and `forge key list` shows it. A missing file fails the
   launch with the fix. A key file readable by group or others is refused, as
-  ssh refuses it.
+  ssh refuses it, and so is one owned by another user or protected by a
+  passphrase (git-gate can't type one). The fingerprint is of the public key
+  derived from the private one, never a `.pub` beside it, which may be
+  stale. A launch's error names the grant and the fix, never the file's
+  path: launch errors reach the console and the agent.
 - **Two forges may point at the same key file** (a machine-wide key). Nothing
   ties a key to one forge; removing it from one forge only drops that
   reference.
 - **Read or write is stated when the key is added** (`--write`), since there's
   no API to ask. git-gate still enforces each grant's read or write at push
   time. A key that can do less than its grant fails at the server's push.
+- **Trust names keys by fingerprint.** Trusting a project bottle records the
+  server's address and pinned host key and the fingerprints of the keys its
+  repos use (ADR 0019's trust covers the connection). A rotated key asks
+  again, at the launch that will use it.
 - Keys stay on the host. Under ADR 0021 the host reports, per `ssh` forge,
   which repos it holds keys for, read or write, and each key's fingerprint:
   names only. The console's repo picker lists those repos (it can't ask the
@@ -90,9 +98,11 @@ everything after it. `provider: static` goes away with it; its connection is
 an `ssh` forge's key.
 
 `bottles migrate` rewrites a bottle's static entries: a forge declaration per
-server (from the `url` and `host_key`) and a grant per repo. A forge it can't
-connect yet is left declared, so the bottle is partial until `forge key add`
-(ADR 0021).
+server (from the `url` and `host_key`) and a grant per repo. It never
+connects a server or adds a key: a server declared but not connected here,
+or holding no key for a repo, leaves the bottle not loading on this host,
+its error naming `forge connect` (with the bottle's pinned host key) and
+`forge key add`.
 
 ## Consequences
 
