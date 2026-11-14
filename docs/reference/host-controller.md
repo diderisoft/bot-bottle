@@ -999,7 +999,7 @@ An arrow shows a request and its reply.
 | `workspace_file` | [Workspace images](#workspace-images) |
 | `put_workspace_file`, `upload_*` | [Uploading files to a running agent](#uploading-files-to-a-running-agent) |
 | `rename` -> `renamed` | [Renaming a bottled agent](#renaming-a-bottled-agent) |
-| `library_sync`, `library_moved`, `library_conflict`, `library_pushed` | [Library sync](#library-sync) |
+| `library_sync`, `library_moved`, `library_conflict`, `library_pushed`, `library_held` | [Library sync](#library-sync) |
 | `github_authorize_start`, `github_status` | [GitHub through the bot-bottle app](#github-through-the-bot-bottle-app) |
 | `forge_status`, `forge_repos`, `forge_remove` | [Forges for the console](#forges-for-the-console) |
 | `bottle_suggest`, `bottle_suggest_status`, `bottle_suggestion_*` | [Bottle suggestions from the console](#bottle-suggestions-from-the-console) |
@@ -1026,12 +1026,32 @@ account's library on the console while the console says so (PRD 0131,
   keeps pushing new commits until it's resolved in the console (see
   [A pending conflict](#a-pending-conflict)).
 - `library_pushed` (`head`), from the host, after it pushed its branch.
+- `library_held` (`files`), from the host: files it committed but holds back
+  from sync because they don't parse (see [Held back](#held-back)).
 
 The host syncs when enabled, after each new local commit (it watches the
 repo's refs), on `library_moved`, and before a CLI launch: the CLI asks the
 host controller (`POST /library/sync`), which waits two seconds at most and
 otherwise launches the local copy, saying so. Bursts are one sync, and
 launches meanwhile wait on the same one.
+
+**Hand edits** are committed as they settle: on the link's watch loop (every
+two seconds) the host controller looks at `git status` for `agents/` and
+`bottles/`, with each changed file's modification time, and once that has
+stayed the same for two seconds (`library_watch.QUIET_SECONDS`) commits it as
+"edited by hand", then syncs. Editors save in bursts: each save, even of the
+same text, starts the wait again, so a burst is one commit. A commit refused
+for holding a secret's value is logged, and not tried again until the files
+change.
+
+**Authorship:** while the library is on, the host names itself in the repo's
+config (`botbottle.author`), and every commit bot-bottle makes there, the
+CLI's writes and hand edits alike, carries that name as its git author, so
+the library's history reads "edited on delphi". The name is the label the
+host was paired as (`bot-bottle pair --label`, by default the hostname),
+kept with the pairing; a pairing from before that was kept uses the short
+hostname. `library_sync` with `enabled` false removes it, and a host that was
+never paired authors as `bot-bottle`, as before.
 
 A sync fetches the library's `main` (by name: the library serves git's
 protocol v0 only), commits hand edits ("edited by hand"), then either
@@ -1106,6 +1126,37 @@ ignored.
   in sync at abc1234`, `library: at abc1234, syncing with the console (its
   main is at def5678)` or `library: off`, plus `; last sync failed (…), next
   try in 9m`.
+
+### Held back
+
+Only bottles that parse sync. Before a push, the host checks every `*.md`
+directly under `agents/` and `bottles/` that a commit since its last push
+changed (commits not in the fetched `main` nor at or under
+`refs/library/pushed`), as it is at `HEAD`: its frontmatter, keys and values,
+as the loaders read them (`manifest/parse_check.py`). What depends on the host
+(an `extends:` parent, forge connections, trust) isn't checked here. A file
+deleted since is fine.
+
+If any doesn't parse, the host keeps the commit but doesn't push, keeps the
+files in the host DB (`library_held`), and tells the console:
+
+```json
+{"type": "library_held", "files": [{"path": "bottles/dev.md", "error": "yaml-subset: unterminated `[` on line 1"}]}
+```
+
+`error` is the parser's message on one line, at most 300 characters. Because
+the check is of everything since the last push, an older bad commit under
+newer good ones is still held, unless a newer one fixed the file. Once they
+all parse, the host pushes as usual and sends `{"type": "library_held",
+"files": []}`. It sends `library_held` when the held files change, and once
+on each connection's first sync whatever they are, so a reconnecting console
+learns the state. A fast-forward to `main` (nothing of the host's left to
+push) clears it too, as does `library_sync` with `enabled` false.
+
+`bot-bottle status` shows it from `GET /pairing`'s `link.library.held`
+(`{"files": [{"path", "error"}], "since"}`), instead of the sync line:
+`library: dev doesn't parse; not synced (bottles/dev.md: yaml-subset:
+unterminated ...)`, after the conflict's line if one is pending too.
 
 ### Launching at a library commit
 

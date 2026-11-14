@@ -38,7 +38,8 @@ The control stream (JSON lines):
 - `metrics_watch` (`bottles`) -> `bottle_metrics` every 3 s for those running (`live_metrics`).
 - `snapshot` -> `snapshot_taken`: workspace patch and conversation position (`snapshots`).
 - `transcript`, `transcript_search`, `transcript_appended`, `agent_working` (`transcript_serve`).
-- `library_sync`, `library_moved`, `library_conflict`, `library_pushed` (`library_link`).
+- `library_sync`, `library_moved`, `library_conflict`, `library_pushed`, `library_held`
+  (`library_link`).
 
 Pairing on disk is `pairing.py`; `iroh` (`bot-bottle[remote]`) is imported only when needed.
 """

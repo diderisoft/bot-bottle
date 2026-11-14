@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from bot_bottle.control.hostctl import library_link as ll
+from bot_bottle.control.hostctl import library_git as lg, library_link as ll
 from bot_bottle.manifest import versions
 from bot_bottle.control.hostctl.library_conflict import LibraryConflictStore
 from bot_bottle.manifest.versions import record
@@ -145,7 +145,7 @@ class Syncing(_Library):
         @contextlib.contextmanager
         def no_commit(_root: Path) -> Generator[str]:  # no .gitignore of bot-bottle's yet
             yield ""
-        with mock.patch.object(ll, "writing", no_commit):
+        with mock.patch.object(lg, "writing", no_commit):
             self.assertEqual(ll.Synced(moved=True), sync.sync())
         self.assertEqual("a\n", (fresh / "bottles/dev.md").read_text())
         kw = audit.library_updated.call_args.kwargs
@@ -195,7 +195,7 @@ class ConsoleToken(unittest.TestCase):
         reply = {"url": "https://lib/1.git", "username": "host", "token": "tok",
                  "expires_at": "2030-01-01T00:00:00Z"}
         with mock.patch.object(ll.pairing, "load_pairing", return_value=self.paired()), \
-                mock.patch.object(ll, "_post", return_value=reply) as post:
+                mock.patch.object(lg, "_post", return_value=reply) as post:
             token = ll.console_token()
         self.assertEqual(("https://lib/1.git", "tok"), (token.url, token.token))
         self.assertEqual(("https://console.example/api/v1/hosts/library-token", {}, "access"),
@@ -215,7 +215,7 @@ class ConsoleToken(unittest.TestCase):
         store = mock.Mock()
         with mock.patch.object(ll.pairing, "load_pairing", return_value=self.paired()), \
                 mock.patch.object(ll.pairing, "store", return_value=store), \
-                mock.patch.object(ll, "_post", side_effect=post):
+                mock.patch.object(lg, "_post", side_effect=post):
             token = ll.console_token()
         store.update.assert_called_once_with({"access_token": "new"})
         self.assertEqual("t", token.token)
@@ -226,21 +226,21 @@ class ConsoleToken(unittest.TestCase):
             paired = self.paired()
             paired.tokens.return_value = ("access", "")
             with mock.patch.object(ll.pairing, "load_pairing", return_value=paired), \
-                    mock.patch.object(ll, "_post", side_effect=refused):
+                    mock.patch.object(lg, "_post", side_effect=refused):
                 with self.assertRaises(ll.LibraryError) as caught:
                     ll.console_token()
             self.assertTrue(caught.exception.lasting)
 
     def test_a_url_that_isnt_https_is_refused(self) -> None:
         with mock.patch.object(ll.pairing, "load_pairing", return_value=self.paired()), \
-                mock.patch.object(ll, "_post", return_value={"url": "--upload-pack=id",
+                mock.patch.object(lg, "_post", return_value={"url": "--upload-pack=id",
                                                              "token": "t"}):
             with self.assertRaises(ll.LibraryError):
                 ll.console_token()
 
     def test_a_refusal_is_a_library_error(self) -> None:
         with mock.patch.object(ll.pairing, "load_pairing", return_value=self.paired()), \
-                mock.patch.object(ll, "_post", side_effect=urllib.error.URLError("down")):
+                mock.patch.object(lg, "_post", side_effect=urllib.error.URLError("down")):
             with self.assertRaises(ll.LibraryError):
                 ll.console_token()
 
@@ -248,7 +248,7 @@ class ConsoleToken(unittest.TestCase):
         resp = mock.MagicMock()
         resp.__enter__.return_value = io.BytesIO(json.dumps({"ok": 1}).encode())
         with mock.patch("urllib.request.urlopen", return_value=resp) as urlopen:
-            self.assertEqual({"ok": 1}, ll._post("https://x/y", {"a": 1}, "tok"))  # pylint: disable=protected-access
+            self.assertEqual({"ok": 1}, lg._post("https://x/y", {"a": 1}, "tok"))  # pylint: disable=protected-access
         req = urlopen.call_args.args[0]
         self.assertEqual("Bearer tok", req.get_header("Authorization"))
 
@@ -508,17 +508,17 @@ class Safety(_Library):
 
 class Failures(unittest.TestCase):
     def test_git_refusals_are_told_apart(self) -> None:
-        deleted = ll._failure("fetch", "fatal: unable to access 'u': "  # pylint: disable=protected-access
+        deleted = lg._failure("fetch", "fatal: unable to access 'u': "  # pylint: disable=protected-access
                               "The requested URL returned error: 403")
         self.assertTrue(deleted.lasting)
         self.assertIn("deleted", str(deleted))
-        big = ll._failure("push", "error: RPC failed; HTTP 413 curl 22 The requested "  # pylint: disable=protected-access
+        big = lg._failure("push", "error: RPC failed; HTTP 413 curl 22 The requested "  # pylint: disable=protected-access
                           "URL returned error: 413")
         self.assertTrue(big.lasting)
         self.assertIn("too large", str(big))
-        fsck = ll._failure("push", " ! [remote rejected] abc -> hosts/h (unpacker error)")  # pylint: disable=protected-access
+        fsck = lg._failure("push", " ! [remote rejected] abc -> hosts/h (unpacker error)")  # pylint: disable=protected-access
         self.assertTrue(fsck.lasting)
-        down = ll._failure("fetch", "fatal: unable to access 'u': Could not resolve host")  # pylint: disable=protected-access
+        down = lg._failure("fetch", "fatal: unable to access 'u': Could not resolve host")  # pylint: disable=protected-access
         self.assertFalse(down.lasting)
 
     def test_a_refused_token_is_replaced_once(self) -> None:
@@ -532,17 +532,17 @@ class Failures(unittest.TestCase):
         self.assertEqual(("b", 128), (token.token, result.returncode))
         self.assertEqual(["a", "b"], [c.kwargs["token"].token for c in git.call_args_list])
         self.assertIsNone(sync._token)  # pylint: disable=protected-access
-        self.assertEqual(ll.NETWORK_SECONDS, git.call_args.kwargs["timeout"])
+        self.assertEqual(lg.NETWORK_SECONDS, git.call_args.kwargs["timeout"])
 
     def test_a_stuck_git_is_killed_with_what_it_started(self) -> None:
         started = time.monotonic()
         with self.assertRaises(ll.LibraryError) as caught:
-            ll._run(["sh", "-c", "sleep 30 & sleep 30"], {}, 0.2)  # pylint: disable=protected-access
+            lg._run(["sh", "-c", "sleep 30 & sleep 30"], {}, 0.2)  # pylint: disable=protected-access
         self.assertLess(time.monotonic() - started, 5)
         self.assertIn("no answer", str(caught.exception))
 
     def test_the_helper_answers_only_the_librarys_host(self) -> None:
-        config = ll._credential_config("https://lib.example:8443/1.git")  # pylint: disable=protected-access
+        config = lg._credential_config("https://lib.example:8443/1.git")  # pylint: disable=protected-access
         env = {**versions.git_env(), "BB_LIBRARY_USER": "host", "BB_LIBRARY_TOKEN": "tok",
                "HOME": tempfile.gettempdir()}
 
@@ -556,11 +556,11 @@ class Failures(unittest.TestCase):
 
     def test_only_an_https_library_url_is_taken(self) -> None:
         for good in ("https://library.bot-bottle.app/1.git", "http://localhost:8080/1.git"):
-            self.assertEqual(good, ll._library_url(good))  # pylint: disable=protected-access
+            self.assertEqual(good, lg._library_url(good))  # pylint: disable=protected-access
         for bad in ("--upload-pack=touch /tmp/x", "ext::sh -c id", "file:///etc",
                     "http://library.example/1.git", "/srv/1.git"):
             with self.assertRaises(ll.LibraryError):
-                ll._library_url(bad)  # pylint: disable=protected-access
+                lg._library_url(bad)  # pylint: disable=protected-access
 
 
 class Retrying(unittest.IsolatedAsyncioTestCase):

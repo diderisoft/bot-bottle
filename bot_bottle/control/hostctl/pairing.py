@@ -3,7 +3,7 @@ host's iroh identity. The link itself is `remote.py`.
 
 In the host DB (ADR 0020), both machine-specific:
 
-- `pairing`: the console's URL, this host's id on it, the console identity
+- `pairing`: the console's URL, this host's id and label on it, the console identity
   the link pins, whether the link runs, and the names of the host's console
   tokens in the host secrets file. The token values are only there.
 - `console_link`: the link's state as it last was, for `bot-bottle status`.
@@ -60,6 +60,7 @@ class Pairing:
     enabled: bool = False
     access_token_secret: str = ""
     refresh_token_secret: str = ""
+    label: str = ""  # what the host was paired as
 
     @property
     def config(self) -> RemoteConfig:
@@ -129,6 +130,8 @@ class PairingStore(DbStore):
                 console_node_id TEXT NOT NULL DEFAULT ''
             )
             """,
+            # The label it was paired as: its library commits' author (PRD 0131).
+            "ALTER TABLE pairing ADD COLUMN label TEXT NOT NULL DEFAULT ''",
         ]))
         self.migrate()
 
@@ -145,7 +148,8 @@ class PairingStore(DbStore):
                        console_node_id=row["console_node_id"],
                        console_ticket=row["console_ticket"], enabled=bool(row["enabled"]),
                        access_token_secret=row["access_token_secret"],
-                       refresh_token_secret=row["refresh_token_secret"])
+                       refresh_token_secret=row["refresh_token_secret"],
+                       label=row["label"])
 
     def update(self, changes: dict[str, object], *, new: bool = False,
                secrets_path: Path | None = None) -> Pairing:

@@ -219,7 +219,7 @@ class Launching(_Root):
         self.assertIn("bottles/sub/x.md and dev have a conflict the console can't resolve "
                       "(bottles/sub/x.md: fix it on this host)", note)
         note = ll.conflict_note(Conflict(("bottles/a.txt", "agents/.x.md"), 0.0, ""))
-        self.assertIn("(bottles/a.txt and agents/.x.md: fix them on this host)", note)
+        self.assertIn("(bottles/a.txt and agent .x: fix them on this host)", note)
 
     def test_a_failed_sync_and_a_conflict_both_say_so(self) -> None:
         self.link(_FakeSync(error=ll.LibraryError("refused")))

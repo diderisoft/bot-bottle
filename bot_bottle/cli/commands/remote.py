@@ -20,6 +20,7 @@ import urllib.request
 from typing import Any
 
 from ...control.hostctl import pairing
+from ...manifest import parse_check
 from ...control.hostctl.runner import HostControlError
 from ..constants import PROG
 from ..host_state_client import pairing as current_pairing, running_pairing, set_pairing
@@ -152,9 +153,31 @@ def _ago(seconds: float) -> str:
     return f"{_span(seconds)} ago"
 
 
+def _held_line(held: object) -> str:
+    """What doesn't parse, so isn't synced (PRD 0131)."""
+    files = [f for f in (held.get("files") if isinstance(held, dict) else None) or ()
+             if isinstance(f, dict)]
+    if not files:
+        return ""
+    paths = [str(f.get("path", "")) for f in files]
+    why = "; ".join(f"{f.get('path', '')}: {f.get('error', '')}" for f in files)
+    return (f"library: {parse_check.names(paths)} "
+            f"{'does' if len(paths) == 1 else 'do'}n't parse; not synced ({why})")
+
+
 def library_line(library: dict[str, Any]) -> str:
     """The library's line (PRD 0131): off, in sync, syncing, or a conflict
-    waiting in the console; and a failing sync, with when it's tried again."""
+    waiting in the console, with a failing sync and when it's tried again;
+    or what's held back because it doesn't parse, after a conflict's line if
+    there's one."""
+    held = _held_line(library.get("held"))
+    if not held:
+        return _library_state(library)
+    return (f"{_library_state(library)}\n{held}" if library.get("state") == "conflict"
+            else held)
+
+
+def _library_state(library: dict[str, Any]) -> str:
     state = library.get("state")
     error = str(library.get("error") or "")
     failing = (f"; last sync failed ({error}), next try in "

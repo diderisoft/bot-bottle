@@ -4,11 +4,17 @@ version you can list and revert to.
 Host files (`~/.bot-bottle/agents/`, `bottles/`) live in a git repo bot-bottle
 keeps in `~/.bot-bottle/`, tracking only those two directories, and commits
 every change itself: its own writes as it makes them, and hand edits as
-"edited by hand" the next time a launch (or `bottles history`) looks. A project
+"edited by hand" the next time a launch (or `bottles history`) looks, or,
+while the library syncs, once they're quiet (PRD 0131). A project
 bottle's history is the project's own repo; bot-bottle never commits there.
 
 A commit is refused while a tracked file holds a value from the host secrets
 file: these files carry names of secrets, never values.
+
+On a paired host whose library syncs (PRD 0131), the host controller names
+the host in the repo's config (`AUTHOR_KEY`, `set_author`), and every commit
+here, the CLI's too, carries that name as its author, so the library's
+history says which host a change came from.
 """
 
 from __future__ import annotations
@@ -32,6 +38,8 @@ GITIGNORE = (
 )
 _AUTHOR = {"GIT_AUTHOR_NAME": "bot-bottle", "GIT_AUTHOR_EMAIL": "bot-bottle@localhost",
            "GIT_COMMITTER_NAME": "bot-bottle", "GIT_COMMITTER_EMAIL": "bot-bottle@localhost"}
+# The repo's config key naming the author of its commits, while it's set.
+AUTHOR_KEY = "botbottle.author"
 # Shortest secret value checked for: shorter ones match ordinary text.
 _MIN_SECRET_LEN = 8
 
@@ -59,11 +67,14 @@ def git_env() -> dict[str, str]:
     return env
 
 
-def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+def _git(repo: Path, *args: str, check: bool = True,
+         author: str = "") -> subprocess.CompletedProcess[str]:
     # The user's git config and environment stay out of it: no hooks, no
     # signing, no GIT_DIR from a caller's shell.
     env = git_env()
     env.update(_AUTHOR)
+    if author:
+        env["GIT_AUTHOR_NAME"] = author
     result = subprocess.run(
         ["git", "-C", str(repo), "-c", "core.hooksPath=/dev/null",
          "-c", "commit.gpgsign=false", *args],
@@ -139,9 +150,33 @@ def _commit(root: Path, message: str, secrets_file: Path) -> str:
          *(d for d in TRACKED if (root / d).exists()))
     if _git(root, "diff", "--cached", "--quiet", check=False).returncode != 0:
         _check_staged(root, secrets_file)
-        _git(root, "commit", "-q", "--no-verify", "-m", message)
+        author = _git(root, "config", "--get", AUTHOR_KEY, check=False).stdout.strip()
+        _git(root, "commit", "-q", "--no-verify", "-m", message, author=author)
     head = _git(root, "rev-parse", "--verify", "-q", "HEAD", check=False)
     return head.stdout.strip()
+
+
+def set_author(name: str, *, root: Path | None = None) -> None:
+    """Author this repo's commits as `name` from now on ("": as bot-bottle,
+    as an unpaired host's are)."""
+    root = root or bot_bottle_root()
+    with _locked(root):
+        _ensure_repo(root)
+        if name:
+            _git(root, "config", AUTHOR_KEY, name)
+        else:
+            _git(root, "config", "--unset-all", AUTHOR_KEY, check=False)
+
+
+def pending_edits(*, root: Path | None = None) -> list[str]:
+    """What changed under the tracked directories since the last version, as
+    `git status --porcelain` lines; [] without a repo."""
+    root = root or bot_bottle_root()
+    if not (root / ".git").is_dir():
+        return []
+    out = _git(root, "status", "--porcelain", "-z", "--untracked-files=all", "--",
+               *TRACKED, check=False).stdout
+    return [entry for entry in out.split("\0") if entry]
 
 
 def record_or_warn(message: str, *, root: Path | None = None) -> str:
@@ -312,9 +347,9 @@ def launch_versions(cwd: str, *, root: Path | None = None,
 
 
 __all__ = [
-    "SecretInManifestError", "TRACKED", "Version", "VersionError", "adopt_builtin_agents",
-    "committed_at", "git_env", "history",
+    "AUTHOR_KEY", "SecretInManifestError", "TRACKED", "Version", "VersionError",
+    "adopt_builtin_agents", "committed_at", "git_env", "history",
     "is_dirty",
-    "launch_versions", "record", "record_hand_edits", "record_or_warn", "revert", "secret_values",
-    "show", "writing",
+    "launch_versions", "pending_edits", "record", "record_hand_edits", "record_or_warn",
+    "revert", "secret_values", "set_author", "show", "writing",
 ]

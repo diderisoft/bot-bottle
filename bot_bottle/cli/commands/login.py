@@ -75,12 +75,15 @@ def _get(url: str) -> tuple[int, dict[str, Any]]:
         return e.code, {}
 
 
-def _save_credentials(console_url: str, result: dict[str, Any]) -> None:
+def _save_credentials(console_url: str, result: dict[str, Any], label: str = "") -> None:
     """A new pairing from an approved device flow: what the console said,
-    with its iroh identity, which the link pins, when it sent one."""
+    with its iroh identity, which the link pins, when it sent one, and the
+    label it was paired as."""
     tokens = {k: str(result[k]) for k in ("access_token", "refresh_token") if result.get(k)}
     iroh = {k: str(result[k]) for k in ("console_node_id", "console_ticket") if result.get(k)}
-    set_pairing(new=True, url=console_url, host_id=str(result["host_id"]), **tokens, **iroh)
+    named = {"label": label} if label else {}
+    set_pairing(new=True, url=console_url, host_id=str(result["host_id"]), **tokens, **iroh,
+                **named)
 
 
 def cmd_login(argv: list[str]) -> int:
@@ -149,7 +152,7 @@ def run_device_flow(
         if st == "approved":
             sys.stderr.write("\n\nApproved.\n")
             try:
-                _save_credentials(console_url, result)
+                _save_credentials(console_url, result, label)
             except HostControlError as e:
                 sys.stderr.write(f"{prog}: couldn't keep the pairing: "
                                  f"{getattr(e, 'error', '') or e}\n")

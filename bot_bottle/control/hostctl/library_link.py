@@ -9,18 +9,21 @@ account's repo in the console's library app, while the console says so.
   it had then (`library_conflict.py`, in the host DB); CLI launches and
   `bot-bottle status` say a conflict is pending meanwhile.
 - `library_pushed` (`head`, from the host): this host pushed its branch.
+- `library_held` (`files`: `path` and `error` each, from the host): files
+  changed since this host last pushed that don't parse, so it commits but
+  doesn't push (`library_held.py`, in the host DB); `files: []` once they
+  parse and it pushed. Sent when that changes, and on each connect's first
+  sync.
 
-The host pushes its `main` to `hosts/<host id>` and fetches `main` by name; it
-never merges, only fast-forwards, under the lock bot-bottle's own commits take
-(`versions.writing`). Git runs against the library URL with a short-lived
-token from the console (`POST /api/v1/hosts/library-token`), handed to git by
-an inline credential helper, for the library's host only, that reads it from
-the child's environment, so no remote or token is written to the repo's
-config. Every fast-forward is a `library.updated` journal event.
+While the library syncs, hand edits are committed once quiet
+(`library_watch.py`), and the repo's commits are authored as the label this
+host was paired as (`versions.set_author`).
 
-A failed sync is tried again later (sooner on a new commit or `library_moved`),
-after a longer wait for a refusal that won't pass by itself: a deleted account
-(403) or a push past the library's size limits (413).
+The host pushes its `main` to `hosts/<host id>` and fetches `main`; it never
+merges, only fast-forwards (`library_git.py`). A failed sync is tried again
+later (sooner on a new commit or `library_moved`), after a longer wait for a
+refusal that won't pass by itself: a deleted account (403) or a push past the
+library's size limits (413).
 
 A console launch names the library commit it runs (`library_commit`): the
 host fetches `main` if it lacks that commit, then resolves library bottles and
@@ -33,437 +36,42 @@ console's version.
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import json
-import os
 import re
-import shutil
-import signal
 import socket
 import sqlite3
-import subprocess
-import tempfile
 import threading
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
 
 from ... import run_bottle
-from ...contract.hostctl import LIBRARY_COMMIT, LaunchRequest
+from ...contract.hostctl import LaunchRequest
 from ...lib import log
-from ...manifest.versions import TRACKED, VersionError, git_env, launch_versions, writing
-from ...paths import bot_bottle_root, host_db_path, private_dir
+from ...manifest import parse_check
+from ...manifest.versions import VersionError, launch_versions, set_author
+from ...paths import bot_bottle_root, host_db_path
 from . import pairing
 from .library_conflict import Conflict, LibraryConflictStore
+from .library_git import (KEEP_TREES, PUSHED_REF, TREES_DIR, LibraryError, LibrarySync, Synced,
+                          Token, console_token, head_stamp)
+from .library_held import Held, LibraryHeldStore
+from .library_watch import HandEditWatch
 
 if TYPE_CHECKING:
     from ...manifest import ManifestIndex
 
-TOKEN_PATH = "/api/v1/hosts/library-token"
-REMOTE_REF = "refs/remotes/library/main"
 # How long a CLI launch waits for a sync before it uses the local copy.
 LAUNCH_SYNC_SECONDS = 2.0
-_TOKEN_SLACK = 60.0  # seconds before expiry a token is replaced
-# Where launches' commit copies are kept (under the root, outside the
-# tracked directories), and how many. One used within the grace period stays
-# too: a launch may still be reading it.
-TREES_DIR = "library-commits"
-KEEP_TREES = 8
-TREE_GRACE_SECONDS = 3600.0
-_TREE_MODES = ("100644", "100755", "120000")  # a symlink is a file holding its target
-# The longest a fetch or push may take, and how long before git gives up on a
-# transfer slower than a kilobyte a second.
-NETWORK_SECONDS = 60.0
-_LOW_SPEED_SECONDS = 20
 # The wait before trying a failed sync again: doubling from the first to the
 # second, or the last after a refusal that won't pass by itself.
 RETRY_SECONDS = (30.0, 600.0, 3600.0)
-# Answers git's credential `get` from the child's environment, never the config.
-_HELPER = ('!f() { test "$1" = get && '
-           'printf "username=%s\\npassword=%s\\n" "$BB_LIBRARY_USER" "$BB_LIBRARY_TOKEN"; }; f')
-# Whatever the user's git config says: no hooks, signing or fsmonitor.
-_SAFE = ("-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
-         "-c", "core.fsmonitor=false")
-# And talking to the library: no redirects (so the token goes nowhere else),
-# every fetched object checked, and a stalled transfer dropped.
-_NETWORK = ("-c", "http.followRedirects=false", "-c", "fetch.fsckObjects=true",
-            "-c", "http.lowSpeedLimit=1000", "-c", f"http.lowSpeedTime={_LOW_SPEED_SECONDS}")
 # A path the library takes (its `check_path`): a conflict on any other can't
 # be resolved in the console, only by changing it here. And how many of a
 # `library_conflict`'s files are kept, of how many characters.
 _LIBRARY_ITEM = re.compile(r"(agents|bottles)/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md")
 _CONFLICT_FILES = 50
 _CONFLICT_PATH = 300
-
-
-class LibraryError(Exception):
-    """The library couldn't be reached or synced. `lasting`: a refusal that
-    won't pass by itself (a deleted account, a push too large), so it isn't
-    retried soon."""
-
-    def __init__(self, message: str, *, lasting: bool = False) -> None:
-        super().__init__(message)
-        self.lasting = lasting
-
-
-@dataclass(frozen=True)
-class Token:
-    url: str
-    username: str
-    token: str
-    expires: float  # time.time()
-
-
-def _post(url: str, body: dict[str, object], bearer: str = "",
-          timeout: float = 10.0) -> dict[str, Any]:
-    headers = {"Content-Type": "application/json"}
-    if bearer:
-        headers["Authorization"] = f"Bearer {bearer}"
-    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
-                                 headers=headers)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        reply = json.load(resp)
-    if not isinstance(reply, dict):
-        raise LibraryError("the console's reply isn't an object")
-    return reply
-
-
-def _expiry(raw: object) -> float:
-    from datetime import datetime  # pylint: disable=import-outside-toplevel
-    try:
-        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return time.time() + 300.0
-
-
-def _library_url(raw: object) -> str:
-    """The console's library URL, if it's one git should be handed: HTTPS (or
-    HTTP to this machine, for a dev console). Never an option or a transport
-    that runs a command."""
-    url = str(raw)
-    parts = urlsplit(url)
-    local = parts.hostname in ("localhost", "127.0.0.1", "::1")
-    if not parts.hostname or not (parts.scheme == "https" or (parts.scheme == "http" and local)):
-        raise LibraryError(f"the console's library URL isn't HTTPS: {url!r}", lasting=True)
-    return url
-
-
-def console_token(timeout: float = 10.0) -> Token:
-    """A library token from the console, with the host's access token,
-    refreshed once if the console says it expired."""
-    paired = pairing.load_pairing().require()
-    base = paired.url.rstrip("/")
-    access, refresh = paired.tokens()
-    try:
-        try:
-            reply = _post(base + TOKEN_PATH, {}, access, timeout)
-        except urllib.error.HTTPError as e:
-            if e.code != 401 or not refresh:
-                raise
-            access = str(_post(f"{base}/api/v1/hosts/token/refresh",
-                               {"refresh_token": refresh}, timeout=timeout)["access_token"])
-            pairing.store().update({"access_token": access})
-            reply = _post(base + TOKEN_PATH, {}, access, timeout)
-    except urllib.error.HTTPError as e:
-        # 401 once refreshed: a deleted account, or this host's pairing
-        # revoked. 404: the console's library is off. Neither passes soon.
-        raise LibraryError(f"couldn't get a library token: {e}",
-                           lasting=e.code in (401, 403, 404)) from e
-    except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
-        raise LibraryError(f"couldn't get a library token: {e}") from e
-    try:
-        return Token(url=_library_url(reply["url"]),
-                     username=str(reply.get("username") or "host"),
-                     token=str(reply["token"]), expires=_expiry(reply.get("expires_at")))
-    except KeyError as e:
-        raise LibraryError(f"the console's library token lacks {e}") from e
-
-
-def _failure(verb: str, stderr: str) -> LibraryError:
-    """What git's stderr (in the C locale) says went wrong, for the log."""
-    text = stderr.strip()
-    if "error: 403" in text:
-        return LibraryError("the library refused this host (403): was the account deleted? "
-                            f"git {verb}: {text}", lasting=True)
-    if "error: 413" in text or "HTTP 413" in text:
-        return LibraryError("too large for the library (413): remove something big from "
-                            f"agents/ or bottles/. git {verb}: {text}", lasting=True)
-    if "remote rejected" in text or "unpacker error" in text:
-        # Its own checks (`transfer.fsckObjects`, the branch hook): this
-        # history won't be taken as it is.
-        return LibraryError(f"the library rejected this host's push: {text}", lasting=True)
-    return LibraryError(f"git {verb}: {text}")
-
-
-def _auth_failed(stderr: str) -> bool:
-    return "Authentication failed" in stderr or "error: 401" in stderr
-
-
-def _credential_config(url: str) -> tuple[str, ...]:
-    """The helper, for the library's own scheme and host only (none of the
-    user's helpers): git asks no other host for it."""
-    parts = urlsplit(url)
-    scope = f"{parts.scheme}://{parts.netloc}." if parts.scheme in ("http", "https") else ""
-    return ("-c", "credential.helper=", "-c", f"credential.{scope}helper={_HELPER}")
-
-
-def _run(argv: list[str], env: dict[str, str],
-         timeout: float | None) -> subprocess.CompletedProcess[str]:
-    """`argv`, and once `timeout` passes, it and what it started (git's
-    remote helper, which would hold the pipes open) are killed."""
-    with subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, text=True, env=env,
-                          start_new_session=True) as proc:
-        try:
-            out, err = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(proc.pid, signal.SIGKILL)
-            proc.communicate()
-            raise LibraryError(f"no answer from the library in {timeout:.0f}s") from None
-    return subprocess.CompletedProcess(argv, proc.returncode, out, err)
-
-
-def head_stamp(root: Path) -> float:
-    """When the repo's refs last changed: a new local commit moves it."""
-    git = root / ".git"
-    stamps = [p.stat().st_mtime for p in (git / "HEAD", git / "refs" / "heads",
-                                          git / "packed-refs", git / "logs" / "HEAD")
-              if p.exists()]
-    return max(stamps, default=0.0)
-
-
-@dataclass
-class Synced:
-    """What a sync did: the head pushed (to wait on the console's merge), and
-    whether `main` moved here. `main`: the library's `main` it fetched.
-    `stamp`: `head_stamp` once it had, so its own commits don't look like new
-    ones."""
-
-    pushed: str = ""
-    moved: bool = False
-    main: str = field(default="", compare=False)
-    stamp: float = field(default=0.0, compare=False)
-
-
-@dataclass
-class LibrarySync:
-    """Blocking git work on the library repo, one sync at a time."""
-
-    host_id: str
-    token_source: Callable[[], Token] = console_token
-    audit: Callable[[], Any] = lambda: None
-    root: Path = field(default_factory=bot_bottle_root)
-    _token: Token | None = None
-    _lock: threading.Lock = field(default_factory=threading.Lock)
-
-    def _credential(self) -> Token:
-        if self._token is None or self._token.expires - _TOKEN_SLACK <= time.time():
-            self._token = self.token_source()
-        return self._token
-
-    def _git(self, *args: str, token: Token | None = None, check: bool = True,
-             timeout: float | None = None) -> subprocess.CompletedProcess[str]:
-        env = git_env()
-        env["LC_ALL"] = "C"  # its messages are read (`_failure`)
-        argv = ["git", "-C", str(self.root), *_SAFE]
-        if token is not None:  # the token only in this child's environment
-            env.update(BB_LIBRARY_USER=token.username, BB_LIBRARY_TOKEN=token.token)
-            argv += [*_NETWORK, *_credential_config(token.url)]
-        result = _run([*argv, *args], env, timeout)
-        if check and result.returncode != 0:
-            raise _failure(args[0], result.stderr or result.stdout)
-        return result
-
-    def _rev(self, ref: str) -> str:
-        out = self._git("rev-parse", "--verify", "-q", ref + "^{commit}", check=False)
-        return out.stdout.strip() if out.returncode == 0 else ""
-
-    def _remote(self, *args: str) -> tuple[Token, subprocess.CompletedProcess[str]]:
-        """A fetch or push, again with a new token if the library refused this
-        one (its clock, say, or a new console key)."""
-        token = self._credential()
-        result = self._git(*args, token=token, check=False, timeout=NETWORK_SECONDS)
-        if result.returncode != 0 and _auth_failed(result.stderr):
-            self._token = None
-            token = self._credential()
-            result = self._git(*args, token=token, check=False, timeout=NETWORK_SECONDS)
-            if result.returncode != 0 and _auth_failed(result.stderr):
-                self._token = None
-        return token, result
-
-    def _fetch_main(self) -> Token:
-        """The library's `main` into REMOTE_REF (none while the library has
-        no `main` yet), by name: the library serves protocol v0 only. The
-        token it used."""
-        token = self._credential()
-        token, fetched = self._remote("fetch", "-q", "--no-tags", token.url,
-                                      f"+refs/heads/main:{REMOTE_REF}")
-        if fetched.returncode != 0:
-            if "couldn't find remote ref" not in fetched.stderr:
-                raise _failure("fetch", fetched.stderr)
-            self._git("update-ref", "-d", REMOTE_REF, check=False)
-        return token
-
-    def sync(self) -> Synced:
-        """Fetch `main`, commit hand edits, then fast-forward to `main` or push
-        this host's commits to its branch. Only the fast-forward holds the
-        versions lock, so a slow library never holds up a bot-bottle write."""
-        with self._lock:
-            if not (self.root / ".git").is_dir():
-                return Synced()
-            token = self._fetch_main()
-            try:
-                with writing(self.root) as local:
-                    remote = self._rev(REMOTE_REF)
-                    if remote and remote != local and (not local or self.contains(remote, local)):
-                        self._fast_forward(local, remote)
-                        return Synced(moved=True, main=remote, stamp=head_stamp(self.root))
-                    stamp = head_stamp(self.root)
-            except VersionError as e:
-                raise LibraryError(str(e)) from e
-            if local and local != remote:
-                # The commit, not HEAD: one made since is the next sync's.
-                # Also while a conflict is pending: the console merges the
-                # branch whole once it's resolved.
-                _token, pushed = self._remote("push", "-q", token.url,
-                                              f"{local}:refs/heads/hosts/{self.host_id}")
-                if pushed.returncode != 0:
-                    raise _failure("push", pushed.stderr or pushed.stdout)
-                return Synced(pushed=local, main=remote, stamp=stamp)
-            return Synced(main=remote, stamp=stamp)
-
-    def heads(self) -> tuple[str, str]:
-        """This host's `main` and the library's as last fetched ("" for
-        none)."""
-        if not (self.root / ".git").is_dir():
-            return "", ""
-        return self._rev("HEAD"), self._rev(REMOTE_REF)
-
-    def ensure_commit(self, sha: str) -> None:
-        """Have the commit `sha`, in the library's `main` or this host's
-        history, fetching `main` for it if it isn't (only the remote ref
-        moves). LibraryError if it's still not there: the console names
-        commits of `main`, never any other object."""
-        if not LIBRARY_COMMIT.fullmatch(sha):
-            raise LibraryError(f"{sha!r} isn't a commit sha")
-        with self._lock:
-            if not (self.root / ".git").is_dir():
-                raise LibraryError(f"this host has no library repo at {self.root}")
-            if self._reachable(sha):
-                return
-            try:
-                self._fetch_main()
-            except pairing.RemoteError as e:
-                raise LibraryError(f"couldn't get a library token: {e}") from e
-            except LibraryError as e:
-                raise LibraryError(f"couldn't fetch library commit {sha[:12]}: {e}") from e
-            if not self._reachable(sha):
-                raise LibraryError(f"library commit {sha[:12]} isn't on this host or in the "
-                                   "account's main; refresh the console and launch again")
-
-    def _reachable(self, sha: str) -> bool:
-        return self._rev(sha) == sha and any(
-            self._rev(ref) and self.contains(ref, sha) for ref in (REMOTE_REF, "HEAD"))
-
-    def tree_at(self, sha: str) -> Path:
-        """The library's `agents/` and `bottles/` as of commit `sha` (fetched
-        if missing), copied into a directory of their own: what a launch at
-        that commit resolves library bottles and agents from."""
-        self.ensure_commit(sha)
-        with _TREES:
-            trees = private_dir(self.root / TREES_DIR)
-            tree = trees / sha
-            if not tree.is_dir():
-                self._copy_tree(sha, trees, tree)
-            os.utime(tree)
-            _prune(trees, keep=tree)
-        return tree
-
-    def _copy_tree(self, sha: str, trees: Path, tree: Path) -> None:
-        """Write `sha`'s tracked files into `tree`, whole or not at all. Only
-        files: no symlinks (as `_fast_forward` checks them out), no
-        submodules, and nothing outside it."""
-        staging = Path(tempfile.mkdtemp(dir=trees, prefix=".new-"))
-        try:
-            listed = self._git("ls-tree", "-r", "-z", sha, "--", *TRACKED).stdout
-            for entry in listed.split("\0"):
-                meta, _, rel = entry.partition("\t")
-                mode, kind, oid = (meta.split(" ") + ["", "", ""])[:3]
-                parts = rel.split("/")
-                if mode not in _TREE_MODES or kind != "blob" or parts[0] not in TRACKED \
-                        or any(p in ("", ".", "..") or p.lower() == ".git" for p in parts):
-                    continue
-                target = staging.joinpath(*parts)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(self._blob(oid))
-            for directory in TRACKED:
-                (staging / directory).mkdir(exist_ok=True)
-            try:
-                staging.rename(tree)
-            except OSError:
-                if not tree.is_dir():
-                    raise
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
-
-    def _blob(self, oid: str) -> bytes:
-        """A blob's bytes, exactly (`_git` reads text)."""
-        result = subprocess.run(["git", "-C", str(self.root), *_SAFE, "cat-file", "blob", oid],
-                                capture_output=True, env=git_env(), check=False)
-        if result.returncode != 0:
-            raise LibraryError(f"git cat-file: {result.stderr.decode(errors='replace').strip()}")
-        return result.stdout
-
-    def contains(self, newer: str, older: str) -> bool:
-        return self._git("merge-base", "--is-ancestor", older, newer,
-                         check=False).returncode == 0
-
-    def _fast_forward(self, old: str, new: str) -> None:
-        # Onto an unborn branch too: a repo with no commits takes the library.
-        # A symlink checks out as a file holding its target, so nothing the
-        # library holds points bot-bottle's reads and writes outside the repo.
-        self._git("-c", "core.symlinks=false", "merge", "--ff-only", "-q", new)
-        self._journal(old, new)
-
-    def _journal(self, old: str, new: str) -> None:
-        if old:
-            listed = self._git("diff", "--no-renames", "--name-status", "-z", old, new,
-                               "--", *TRACKED).stdout.split("\0")
-            changes = list(zip(listed[0::2], listed[1::2]))
-        else:
-            changes = [("A", path) for path in self._git(
-                "ls-tree", "-r", "-z", "--name-only", new, "--", *TRACKED).stdout.split("\0")
-                       if path]
-        span = f"{old}..{new}" if old else new
-        authors = sorted(set(self._git("log", "--format=%an", span).stdout.splitlines()))
-        audit = self.audit()
-        if audit is not None and hasattr(audit, "library_updated"):
-            audit.library_updated(
-                old=old, new=new, changed=[path for _, path in changes], authors=authors,
-                added=[path for how, path in changes if how == "A"],
-                deleted=[path for how, path in changes if how == "D"])
-
-
-_TREES = threading.Lock()  # making and pruning commit copies
-
-
-def _prune(trees: Path, *, keep: Path) -> None:
-    """Remove all but `keep` and the newest copies (`KEEP_TREES` in all),
-    sparing any used within `TREE_GRACE_SECONDS`, and staging left behind by
-    a crash."""
-    recent = time.time() - TREE_GRACE_SECONDS
-    found = [(p.stat().st_mtime, p) for p in trees.iterdir() if p != keep]
-    copies = sorted(((m, p) for m, p in found if not p.name.startswith(".")), reverse=True)
-    stale = [p for m, p in found if p.name.startswith(".") and m < recent]
-    stale += [p for m, p in copies[KEEP_TREES - 1:] if m < recent]
-    for old in stale:
-        shutil.rmtree(old, ignore_errors=True)
 
 
 class _Attempt:
@@ -523,41 +131,57 @@ def on_host(files: tuple[str, ...]) -> list[str]:
     return [f for f in files if not _LIBRARY_ITEM.fullmatch(f)]
 
 
-def _names(files: tuple[str, ...]) -> str:
-    """`bottles/dev.md` as `dev`, `agents/x.md` as `agent x`, others as is."""
-    names = [(f"agent {f[7:-3]}" if f.startswith("agents/") else f[8:-3])
-             if _LIBRARY_ITEM.fullmatch(f) else f for f in files]
-    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
-
-
 def conflict_note(conflict: Conflict) -> str:
     """The line a CLI launch shows while a conflict is pending."""
     host = socket.gethostname().split(".")[0] or "this host"
-    what = (f"{_names(conflict.files)} {'has' if len(conflict.files) == 1 else 'have'}"
+    what = (f"{parse_check.names(conflict.files)} {'has' if len(conflict.files) == 1 else 'have'}"
             if conflict.files else "this host's library changes have")
     here = on_host(conflict.files)
     where = ("waiting in the console" if not here else
-             f"the console can't resolve ({_names(tuple(here))}: fix "
+             f"the console can't resolve ({parse_check.names(tuple(here))}: fix "
              f"{'it' if len(here) == 1 else 'them'} on this host)")
     return f"library: {what} a conflict {where}; launching {host}'s version"
+
+
+def _held_store() -> LibraryHeldStore:
+    return _active.held_store() if _active is not None else LibraryHeldStore(host_db_path())
+
+
+def pending_held() -> Held | None:
+    """What this host holds back from sync because it doesn't parse, while
+    it syncs or stays paired."""
+    try:
+        on = (_active is not None and _active.enabled) or pairing.load_config().enabled
+        return _held_store().held() if on else None
+    except (OSError, sqlite3.Error):
+        return None
+
+
+def label() -> str:
+    """What this host was paired as: its library commits' author. An older
+    pairing kept none; it was the hostname then, unless `--label` said."""
+    return pairing.load_pairing().label or socket.gethostname().split(".")[0] or "host"
 
 
 def report() -> dict[str, object]:
     """The library here, for `bot-bottle status`: `state` "conflict" (with
     `files`, `on_host`: those to fix here, and `since`), "off", or "synced"
     or "syncing" (with `head` and the library's `main` as last fetched). While
-    the last sync failed, also its `error` and `retry_in` (seconds)."""
+    the last sync failed, also its `error` and `retry_in` (seconds). `held`
+    (`files`, each `path` and `error`, and `since`) while files that don't
+    parse are held back."""
     link = _active
-    failing: dict[str, object] = {}
+    held = pending_held()
+    failing: dict[str, object] = {"held": {
+        "files": [f.to_json() for f in held.files], "since": held.since}} if held else {}
     if link is not None and link.enabled and link.error:
-        failing = {"error": link.error,
-                   "retry_in": max(0.0, link.retry_at - time.monotonic())}
+        failing.update(error=link.error, retry_in=max(0.0, link.retry_at - time.monotonic()))
     conflict = pending_conflict()
     if conflict is not None:
         return {"state": "conflict", "files": list(conflict.files),
                 "on_host": on_host(conflict.files), "since": conflict.since, **failing}
     if link is None or not link.enabled:
-        return {"state": "off"}
+        return {"state": "off", **failing}
     try:
         head, main = link.syncer().heads()
     except (pairing.RemoteError, OSError):
@@ -614,7 +238,8 @@ class LibraryLink:
                  audit: Callable[[], Any] = lambda: None,
                  make_sync: Callable[[], LibrarySync] | None = None,
                  root: Path | None = None,
-                 conflicts: LibraryConflictStore | None = None) -> None:
+                 conflicts: LibraryConflictStore | None = None,
+                 held: LibraryHeldStore | None = None) -> None:
         self._send = send
         self._audit = audit
         self._make_sync = make_sync
@@ -627,6 +252,10 @@ class LibraryLink:
         self._launch: _Attempt | None = None
         self._launch_lock = threading.Lock()
         self._conflicts = conflicts
+        self._held = held
+        self._told_held = False  # this connection's console heard what's held
+        self._watch: HandEditWatch | None = None
+        self._authored = False
         self.enabled = False
         # The last sync's failure ("" once one succeeds), the wait before the
         # next try, and when that is (time.monotonic(); 0: none due).
@@ -638,6 +267,11 @@ class LibraryLink:
         if self._conflicts is None:
             self._conflicts = LibraryConflictStore(host_db_path())
         return self._conflicts
+
+    def held_store(self) -> LibraryHeldStore:
+        if self._held is None:
+            self._held = LibraryHeldStore(host_db_path())
+        return self._held
 
     @property
     def conflict(self) -> list[str]:
@@ -662,16 +296,33 @@ class LibraryLink:
             self.enabled = msg.get("enabled") is True
             _active = self if self.enabled else (None if _active is self else _active)
             if self.enabled:
+                await asyncio.to_thread(self._author, True)
                 self.schedule()
             else:  # off: nothing to resolve (on again, the next push hears anew)
-                await asyncio.to_thread(self._forget_conflict)
+                await asyncio.to_thread(self._off)
         elif kind == "library_moved" and self.enabled:
             self.schedule()
         elif kind == "library_conflict":
             await asyncio.to_thread(self._record_conflict, conflict_files(msg.get("files")))
 
-    def _forget_conflict(self) -> None:
+    def _off(self) -> None:
         self.conflicts().clear()
+        self.held_store().clear()
+        self._author(False)
+
+    def _author(self, on: bool) -> None:
+        """Author the repo's commits as this host while the library syncs,
+        else as bot-bottle. Once the repo exists: `tick` tries again."""
+        root = self._root or bot_bottle_root()
+        self._authored = False
+        if not (root / ".git").is_dir():
+            return
+        try:
+            set_author(label() if on else "", root=root)
+        except (VersionError, pairing.RemoteError, OSError, sqlite3.Error) as e:
+            log.warn(f"library: couldn't set this host's name on its commits: {e}")
+            return
+        self._authored = on
 
     def _record_conflict(self, files: list[str]) -> None:
         """Keep the conflict, and the commit this host had, which `main`
@@ -698,16 +349,29 @@ class LibraryLink:
             _active = None
 
     async def tick(self) -> None:
-        """On the link's watch loop: a new local commit is synced, and a
-        failed sync tried again once its wait is over."""
+        """On the link's watch loop: hand edits are committed once quiet, a
+        new local commit is synced, and a failed sync tried again once its
+        wait is over."""
         if not self.enabled:
             return
+        await asyncio.to_thread(self._hand_edits)
         stamp = await asyncio.to_thread(head_stamp, self._root or bot_bottle_root())
         due = bool(self.retry_at) and time.monotonic() >= self.retry_at
         if stamp != self._seen or due:
             self._seen = stamp
             self.retry_at = 0.0
             self.schedule()
+
+    def _hand_edits(self) -> None:
+        if not self._authored:
+            self._author(True)
+        if self._watch is None:
+            self._watch = HandEditWatch(self._root or bot_bottle_root())
+        try:
+            if self._watch.poll():
+                log.info("library: committed hand edits")
+        except VersionError as e:
+            log.warn(f"library: couldn't commit hand edits: {e}")
 
     def schedule(self) -> None:
         """Sync soon; a burst of reasons is one sync (and one more after it)."""
@@ -754,7 +418,30 @@ class LibraryLink:
                 log.info("library: the conflict was resolved in the console")
         except (OSError, sqlite3.Error) as e:
             log.warn(f"library: couldn't check the pending conflict: {e}")
+        try:
+            self._settle_held(synced)
+        except (OSError, sqlite3.Error) as e:
+            log.warn(f"library: couldn't keep what's held back: {e}")
         return synced
+
+    def _settle_held(self, synced: Synced) -> None:
+        """Keep what the sync held back, and whether the console should hear
+        of it: when that changed, or it hasn't heard on this connection."""
+        if synced.held is None:
+            return
+        store = self.held_store()
+        before = store.held()
+        if synced.held:
+            store.hold(synced.held)
+            changed = before is None or before.files != synced.held
+            if changed:
+                log.warn("library: not synced, since "
+                         + "; ".join(f"{f.path} doesn't parse ({f.error})" for f in synced.held))
+        else:
+            changed = store.clear()
+            if changed:
+                log.info("library: the held files parse now; synced")
+        synced.tell_held = changed or not self._told_held
 
     def _failed(self, e: Exception) -> None:
         first, longest, lasting = RETRY_SECONDS
@@ -794,16 +481,21 @@ class LibraryLink:
 
     def announce_soon(self, synced: Synced) -> None:
         """`_announce`, from a thread other than the link's."""
-        if synced.pushed and self._loop is not None and not self._loop.is_closed():
+        if (synced.pushed or synced.tell_held) and self._loop is not None \
+                and not self._loop.is_closed():
             asyncio.run_coroutine_threadsafe(self._announce(synced), self._loop)
 
     async def _announce(self, synced: Synced) -> None:
+        if synced.tell_held and synced.held is not None:
+            self._told_held = True
+            await self._send({"type": "library_held",
+                              "files": [f.to_json() for f in synced.held]})
         if synced.pushed:
             await self._send({"type": "library_pushed", "head": synced.pushed})
 
 
 __all__ = ["KEEP_TREES", "LAUNCH_SYNC_SECONDS", "LibraryError", "LibraryLink", "LibrarySync",
-           "NETWORK_SECONDS", "RETRY_SECONDS", "Synced", "TREES_DIR", "TREE_GRACE_SECONDS",
-           "Token", "commit_tree", "conflict_files", "conflict_note", "console_token",
-           "head_stamp", "launch_index", "on_host", "pending_conflict", "report",
+           "PUSHED_REF", "RETRY_SECONDS", "Synced", "TREES_DIR", "Token", "commit_tree",
+           "conflict_files", "conflict_note", "console_token", "head_stamp", "label",
+           "launch_index", "on_host", "pending_conflict", "pending_held", "report",
            "sync_for_launch"]

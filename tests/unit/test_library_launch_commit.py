@@ -17,7 +17,7 @@ from unittest import mock
 from bot_bottle import run_manifest
 from bot_bottle.contract.auth import ROLE_CLI
 from bot_bottle.contract.hostctl import LaunchRequest
-from bot_bottle.control.hostctl import library_link as ll
+from bot_bottle.control.hostctl import library_git as lg, library_link as ll
 from bot_bottle.control.hostctl import pairing
 from bot_bottle.control.hostctl.remote_requests import agent_allowed, library_commit
 from bot_bottle.manifest import ManifestBottle, ManifestIndex
@@ -92,7 +92,7 @@ class TreeAt(_Hosts):
         self.assertEqual(1, self.tokens)
         # Only the remote ref moved: `main` and the files are delphi's still.
         self.assertEqual(head, _git(delphi.root, "rev-parse", "HEAD"))
-        self.assertEqual(sha, _git(delphi.root, "rev-parse", ll.REMOTE_REF))
+        self.assertEqual(sha, _git(delphi.root, "rev-parse", lg.REMOTE_REF))
         self.assertEqual(_BOTTLE.format("delphi"),
                          (delphi.root / "bottles/work.md").read_text())
 
@@ -127,8 +127,8 @@ class TreeAt(_Hosts):
         first = delphi.tree_at(shas[0])
         (first / "bottles/marker").write_text("")
         self.assertTrue((delphi.tree_at(shas[0]) / "bottles/marker").exists())  # reused
-        with mock.patch.object(ll, "KEEP_TREES", 2), \
-                mock.patch.object(ll, "TREE_GRACE_SECONDS", 0.0):
+        with mock.patch.object(lg, "KEEP_TREES", 2), \
+                mock.patch.object(lg, "TREE_GRACE_SECONDS", 0.0):
             for sha in shas[1:]:
                 delphi.tree_at(sha)
         kept = sorted(p.name for p in (delphi.root / ll.TREES_DIR).iterdir())
@@ -211,8 +211,8 @@ class TreeAt(_Hosts):
         delphi.tree_at(shas[0])
         crashed = trees / ".new-crashed"
         crashed.mkdir()
-        old = time.time() - 2 * ll.TREE_GRACE_SECONDS
-        with mock.patch.object(ll, "KEEP_TREES", 1):
+        old = time.time() - 2 * lg.TREE_GRACE_SECONDS
+        with mock.patch.object(lg, "KEEP_TREES", 1):
             delphi.tree_at(shas[1])  # the first was used just now: kept
             self.assertEqual(sorted([".new-crashed", *shas[:2]]),
                              sorted(p.name for p in trees.iterdir()))
