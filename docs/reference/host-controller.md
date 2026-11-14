@@ -1073,25 +1073,39 @@ When the console says `library_conflict`, the host keeps the files it named,
 when it first said so, and the commit the host's `main` was at then, in the
 host DB (`library_conflict`), so a restarted host controller still knows. A
 repeat while one is pending replaces the files and commit and keeps the time.
+The files are checked first: text paths with no control characters, at most
+50 of 300 characters each; anything else is dropped. A message older than the
+host's last fetch (the `main` it fetched already contains its commit) is
+ignored.
 
 - **It clears on its own:** once a fetched `main` contains that commit (the
-  console merged the branch, or resolved the conflict), and `main`
-  fast-forwards here as usual. If this host committed again meanwhile, that
-  commit is pushed and merged like any other. `library_sync` with `enabled`
-  false clears it too: the console says anew once the library is back on.
-- **Pushes keep going:** new local commits are pushed to `hosts/<host id>` as
-  ever; the console merges the branch whole once it's resolved.
+  console merged the branch, or resolved the conflict with a merge of it),
+  and `main` fast-forwards here as usual. If this host committed again
+  meanwhile, that commit is pushed and merged like any other. `library_sync`
+  with `enabled` false clears it too: once the library is back on, the next
+  push hears of a conflict anew (the console answers every push of a
+  conflicting branch).
+- **Pushes keep going:** each sync pushes `main` to `hosts/<host id>` while
+  it isn't in the library's `main`, so new local commits reach the console,
+  which merges the branch whole once it's resolved, and a branch the console
+  dropped (a re-paired host folded into its first record) is pushed again.
+- **Files the library doesn't take** (anything but `agents/<name>.md` and
+  `bottles/<name>.md`) can't be resolved in the console: the host says to fix
+  them here, where changing the file to match the library's merges cleanly.
 - **CLI launches say so:** after the pre-launch sync, `POST /library/sync`
   answers with a note like `library: dev has a conflict waiting in the
   console; launching delphi's version` (bottles by name, `agent <name>` for
-  agents), and the launch uses this host's version. Also before the link
-  connects, while the host is paired with the link on.
+  agents), after the sync's own note if it has one, and the launch uses this
+  host's version. Also before the link connects, while the host is paired
+  with the link on.
 - **`bot-bottle status` says so:** `GET /pairing`'s `link.library` is
-  `{"state": "conflict", "files", "since"}`, `{"state": "synced" | "syncing",
-  "head", "main"}` or `{"state": "off"}`, shown as `library: conflict pending
-  in the console (bottles/dev.md) since 2h ago`, `library: in sync at
-  abc1234`, `library: at abc1234, syncing with the console (its main is at
-  def5678)` or `library: off`.
+  `{"state": "conflict", "files", "on_host", "since"}`, `{"state": "synced" |
+  "syncing", "head", "main"}` or `{"state": "off"}`, with `error` and
+  `retry_in` (seconds) while the last sync failed. Shown as `library:
+  conflict pending in the console (bottles/dev.md) since 2h ago`, `library:
+  in sync at abc1234`, `library: at abc1234, syncing with the console (its
+  main is at def5678)` or `library: off`, plus `; last sync failed (…), next
+  try in 9m`.
 
 ### Launching at a library commit
 

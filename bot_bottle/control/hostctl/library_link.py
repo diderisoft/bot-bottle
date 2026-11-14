@@ -36,6 +36,7 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -92,6 +93,12 @@ _SAFE = ("-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
 # every fetched object checked, and a stalled transfer dropped.
 _NETWORK = ("-c", "http.followRedirects=false", "-c", "fetch.fsckObjects=true",
             "-c", "http.lowSpeedLimit=1000", "-c", f"http.lowSpeedTime={_LOW_SPEED_SECONDS}")
+# A path the library takes (its `check_path`): a conflict on any other can't
+# be resolved in the console, only by changing it here. And how many of a
+# `library_conflict`'s files are kept, of how many characters.
+_LIBRARY_ITEM = re.compile(r"(agents|bottles)/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md")
+_CONFLICT_FILES = 50
+_CONFLICT_PATH = 300
 
 
 class LibraryError(Exception):
@@ -476,7 +483,7 @@ def sync_for_launch(timeout: float = LAUNCH_SYNC_SECONDS) -> str:
     conflict still pending after the sync, or that it used the local copy."""
     note = _launch_sync_note(timeout)
     conflict = pending_conflict()
-    return conflict_note(conflict) if conflict is not None else note
+    return "\n".join(n for n in (note, conflict_note(conflict) if conflict else "") if n)
 
 
 def _launch_sync_note(timeout: float) -> str:
@@ -501,11 +508,25 @@ def pending_conflict() -> Conflict | None:
         return None
 
 
+def conflict_files(raw: object) -> list[str]:
+    """A `library_conflict` message's files, as kept and printed: paths with
+    no control characters, at most `_CONFLICT_FILES` of `_CONFLICT_PATH`
+    characters. Anything else is dropped."""
+    files = [f for f in raw if isinstance(f, str) and 0 < len(f) <= _CONFLICT_PATH
+             and f.isprintable()] if isinstance(raw, list) else []
+    return list(dict.fromkeys(files))[:_CONFLICT_FILES]
+
+
+def on_host(files: tuple[str, ...]) -> list[str]:
+    """The conflicted files the library doesn't take, so the console can't
+    resolve: they're fixed on this host."""
+    return [f for f in files if not _LIBRARY_ITEM.fullmatch(f)]
+
+
 def _names(files: tuple[str, ...]) -> str:
     """`bottles/dev.md` as `dev`, `agents/x.md` as `agent x`, others as is."""
-    names = [f"agent {f[7:-3]}" if f.startswith("agents/") and f.endswith(".md")
-             else f[8:-3] if f.startswith("bottles/") and f.endswith(".md") else f
-             for f in files]
+    names = [(f"agent {f[7:-3]}" if f.startswith("agents/") else f[8:-3])
+             if _LIBRARY_ITEM.fullmatch(f) else f for f in files]
     return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
 
 
@@ -514,17 +535,27 @@ def conflict_note(conflict: Conflict) -> str:
     host = socket.gethostname().split(".")[0] or "this host"
     what = (f"{_names(conflict.files)} {'has' if len(conflict.files) == 1 else 'have'}"
             if conflict.files else "this host's library changes have")
-    return f"library: {what} a conflict waiting in the console; launching {host}'s version"
+    here = on_host(conflict.files)
+    where = ("waiting in the console" if not here else
+             f"the console can't resolve ({_names(tuple(here))}: fix "
+             f"{'it' if len(here) == 1 else 'them'} on this host)")
+    return f"library: {what} a conflict {where}; launching {host}'s version"
 
 
 def report() -> dict[str, object]:
     """The library here, for `bot-bottle status`: `state` "conflict" (with
-    `files` and `since`), "off", or "synced" or "syncing" (with `head` and
-    the library's `main` as last fetched)."""
+    `files`, `on_host`: those to fix here, and `since`), "off", or "synced"
+    or "syncing" (with `head` and the library's `main` as last fetched). While
+    the last sync failed, also its `error` and `retry_in` (seconds)."""
+    link = _active
+    failing: dict[str, object] = {}
+    if link is not None and link.enabled and link.error:
+        failing = {"error": link.error,
+                   "retry_in": max(0.0, link.retry_at - time.monotonic())}
     conflict = pending_conflict()
     if conflict is not None:
-        return {"state": "conflict", "files": list(conflict.files), "since": conflict.since}
-    link = _active
+        return {"state": "conflict", "files": list(conflict.files),
+                "on_host": on_host(conflict.files), "since": conflict.since, **failing}
     if link is None or not link.enabled:
         return {"state": "off"}
     try:
@@ -532,7 +563,7 @@ def report() -> dict[str, object]:
     except (pairing.RemoteError, OSError):
         head, main = "", ""
     return {"state": "synced" if head and head == main else "syncing",
-            "head": head, "main": main}
+            "head": head, "main": main, **failing}
 
 
 def _launch_sync() -> LibrarySync:
@@ -632,20 +663,25 @@ class LibraryLink:
             _active = self if self.enabled else (None if _active is self else _active)
             if self.enabled:
                 self.schedule()
-            else:  # off: nothing to resolve (on again, the console says anew)
-                await asyncio.to_thread(self.conflicts().clear)
+            else:  # off: nothing to resolve (on again, the next push hears anew)
+                await asyncio.to_thread(self._forget_conflict)
         elif kind == "library_moved" and self.enabled:
             self.schedule()
         elif kind == "library_conflict":
-            files = msg.get("files")
-            await asyncio.to_thread(
-                self._record_conflict, [str(f) for f in files] if isinstance(files, list) else [])
+            await asyncio.to_thread(self._record_conflict, conflict_files(msg.get("files")))
+
+    def _forget_conflict(self) -> None:
+        self.conflicts().clear()
 
     def _record_conflict(self, files: list[str]) -> None:
         """Keep the conflict, and the commit this host had, which `main`
-        contains once it's resolved."""
+        contains once it's resolved. Not when the `main` it last fetched
+        already contains it: the message is older than that fetch."""
         try:
-            tip = self.syncer().heads()[0]
+            sync = self.syncer()
+            tip, main = sync.heads()
+            if tip and main and sync.contains(main, tip):
+                return
         except (pairing.RemoteError, OSError):
             tip = ""
         self.conflicts().report(files, tip)
@@ -768,5 +804,6 @@ class LibraryLink:
 
 __all__ = ["KEEP_TREES", "LAUNCH_SYNC_SECONDS", "LibraryError", "LibraryLink", "LibrarySync",
            "NETWORK_SECONDS", "RETRY_SECONDS", "Synced", "TREES_DIR", "TREE_GRACE_SECONDS",
-           "Token", "commit_tree", "conflict_note", "console_token", "head_stamp",
-           "launch_index", "pending_conflict", "report", "sync_for_launch"]
+           "Token", "commit_tree", "conflict_files", "conflict_note", "console_token",
+           "head_stamp", "launch_index", "on_host", "pending_conflict", "report",
+           "sync_for_launch"]

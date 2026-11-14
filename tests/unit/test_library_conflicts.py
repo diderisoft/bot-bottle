@@ -144,6 +144,25 @@ class AcrossHosts(_Library):
         self.assertTrue(synced.pushed)
         self.assertIsNone(self.store.pending())
 
+    def test_a_message_older_than_the_last_fetch_is_ignored(self) -> None:
+        self.conflict()
+        self.resolve_as_console("theirs")
+        self.assertTrue(self.link.sync_now().moved)
+        asyncio.run(self.link.handle({"type": "library_conflict", "files": ["bottles/dev.md"]}))
+        self.assertIsNone(self.store.pending())
+
+    def test_the_files_are_checked(self) -> None:
+        with mock.patch.object(ll.log, "warn"):
+            asyncio.run(self.link.handle({"type": "library_conflict", "files": [
+                "bottles/dev.md", "bottles/dev.md", 7, {"path": "x"}, "",
+                "bottles/\x1b[2Jevil.md", "a\nb", "x" * 301, "bottles/notes.txt"]}))
+        pending = self.store.pending()
+        assert pending is not None
+        self.assertEqual(("bottles/dev.md", "bottles/notes.txt"), pending.files)
+        many = ll.conflict_files([f"bottles/b{i}.md" for i in range(80)])
+        self.assertEqual(50, len(many))
+        self.assertEqual([], ll.conflict_files("bottles/dev.md"))
+
     def test_turning_the_library_off_forgets_it(self) -> None:
         self.conflict()
         asyncio.run(self.link.handle({"type": "library_sync", "enabled": False}))
@@ -195,6 +214,21 @@ class Launching(_Root):
                          f"the console; launching {host}'s version",
                          ll.conflict_note(Conflict((), 0.0, "")))
 
+    def test_one_the_console_cannot_resolve_is_fixed_here(self) -> None:
+        note = ll.conflict_note(Conflict(("bottles/sub/x.md", "bottles/dev.md"), 0.0, ""))
+        self.assertIn("bottles/sub/x.md and dev have a conflict the console can't resolve "
+                      "(bottles/sub/x.md: fix it on this host)", note)
+        note = ll.conflict_note(Conflict(("bottles/a.txt", "agents/.x.md"), 0.0, ""))
+        self.assertIn("(bottles/a.txt and agents/.x.md: fix them on this host)", note)
+
+    def test_a_failed_sync_and_a_conflict_both_say_so(self) -> None:
+        self.link(_FakeSync(error=ll.LibraryError("refused")))
+        self.pending("bottles/dev.md")
+        note = ll.sync_for_launch().splitlines()
+        self.assertEqual(2, len(note))
+        self.assertIn("couldn't sync", note[0])
+        self.assertIn("dev has a conflict", note[1])
+
     def test_after_a_restart_before_the_link_connects(self) -> None:
         self.pending("bottles/dev.md")
         self.assertEqual("", ll.sync_for_launch())  # not paired: nothing to resolve
@@ -242,6 +276,30 @@ class Status(_Root):
         ).endswith("(files unknown) since 3d ago"))
         for seconds, said in ((5, "5s ago"), (120, "2m ago")):
             self.assertEqual(said, remote_cmd._ago(seconds))  # pylint: disable=protected-access
+
+    def test_one_to_fix_here(self) -> None:
+        self.link()
+        self.pending("bottles/dev.md", "bottles/notes.txt")
+        report = ll.report()
+        self.assertEqual(["bottles/notes.txt"], report["on_host"])
+        self.assertIn("(bottles/dev.md, bottles/notes.txt) since 0s ago; the console can't "
+                      "resolve bottles/notes.txt: fix it on this host",
+                      remote_cmd.library_line(report))
+        self.assertIn("resolve a, b: fix them on this host", remote_cmd.library_line(
+            {"state": "conflict", "files": ["a", "b"], "on_host": ["a", "b"]}))
+
+    def test_a_failing_sync_and_when_it_is_tried_again(self) -> None:
+        link = self.link()
+        link.error, link.retry_at = "the library refused", time.monotonic() + 600
+        with mock.patch.object(_FakeSync, "heads", return_value=("a" * 40, "b" * 40)):
+            report = ll.report()
+        self.assertEqual("the library refused", report["error"])
+        self.assertTrue(remote_cmd.library_line(report).endswith(
+            "; last sync failed (the library refused), next try in 9m"))
+        self.pending("bottles/dev.md")
+        self.assertIn("since 0s ago; last sync failed", remote_cmd.library_line(ll.report()))
+        self.assertTrue(remote_cmd.library_line(
+            {"state": "synced", "head": "a", "error": "x"}).endswith("next try in 0s"))
 
     def test_the_host_route_reports_it_and_status_prints_it(self) -> None:
         self.link()

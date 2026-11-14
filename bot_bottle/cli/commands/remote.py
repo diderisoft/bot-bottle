@@ -140,28 +140,41 @@ def link_line() -> str:
     return line + (f"\n{library_line(library)}" if isinstance(library, dict) else "")
 
 
-def _ago(seconds: float) -> str:
+def _span(seconds: float) -> str:
     seconds = max(0, int(seconds))
     for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
         if seconds >= size:
-            return f"{seconds // size}{unit} ago"
-    return f"{seconds}s ago"
+            return f"{seconds // size}{unit}"
+    return f"{seconds}s"
+
+
+def _ago(seconds: float) -> str:
+    return f"{_span(seconds)} ago"
 
 
 def library_line(library: dict[str, Any]) -> str:
     """The library's line (PRD 0131): off, in sync, syncing, or a conflict
-    waiting in the console."""
+    waiting in the console; and a failing sync, with when it's tried again."""
     state = library.get("state")
+    error = str(library.get("error") or "")
+    failing = (f"; last sync failed ({error}), next try in "
+               f"{_span(float(library.get('retry_in') or 0))}" if error else "")
     if state == "conflict":
-        files = ", ".join(str(f) for f in library.get("files") or ()) or "files unknown"
+        files = [str(f) for f in library.get("files") or ()]
+        here = [str(f) for f in library.get("on_host") or ()]
         since = _ago(time.time() - float(library.get("since") or time.time()))
-        return f"library: conflict pending in the console ({files}) since {since}"
+        line = (f"library: conflict pending in the console ({', '.join(files) or 'files unknown'})"
+                f" since {since}")
+        if here:
+            line += (f"; the console can't resolve {', '.join(here)}: fix "
+                     f"{'it' if len(here) == 1 else 'them'} on this host")
+        return line + failing
     head, main = str(library.get("head") or "")[:7], str(library.get("main") or "")[:7]
     if state == "synced":
-        return f"library: in sync at {head}"
+        return f"library: in sync at {head}{failing}"
     if state == "syncing":
         return (f"library: at {head or 'no commits yet'}, syncing with the console"
-                + (f" (its main is at {main})" if main else ""))
+                + (f" (its main is at {main})" if main else "") + failing)
     return "library: off"
 
 
