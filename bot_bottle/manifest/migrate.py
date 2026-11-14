@@ -5,8 +5,8 @@ an old format, in one pass:
   grants on forges this host connected (edited as text, so comments stay);
   a static key's repos become grants on an `ssh` forge declared from their
   `url` and `host_key` (ADR 0023), connected or not: a server this host
-  hasn't connected, or holds no key for, leaves the bottle partial until
-  `forge connect` and `forge key add`;
+  hasn't connected, or holds no key for, leaves the bottle not loading
+  here until `forge connect` and `forge key add`;
 - the old egress shape (`manifest/upgrade.py`) becomes the current one, each
   top-level block that changes written afresh and the rest left as written;
 - a grant whose forge nothing in the bottle's chain declares gets the forge's
@@ -56,7 +56,7 @@ class Migration:
     notes: tuple[str, ...]
     # What else changed, a line each.
     changes: tuple[str, ...] = ()
-    # SSH servers declared from static repos: the bottle may be partial
+    # SSH servers declared from static repos: the bottle may not load
     # here until they're connected and hold keys.
     servers: tuple[str, ...] = ()
 
@@ -250,9 +250,9 @@ def _notes(p: Plan) -> list[str]:
     notes: list[str] = []
     for host in p.servers():
         if host in p.missing:
-            notes.append(f"{host} isn't connected on this host; the bottle is partial here "
-                         f"until `{p.connect_command(host)}`")
-    notes += [f"no key for it here yet; the bottle is partial here until `{cmd}`"
+            notes.append(f"{host} isn't connected on this host; the bottle won't load "
+                         f"here until `{p.connect_command(host)}`")
+    notes += [f"no key for it here yet; the bottle won't load here until `{cmd}`"
               for cmd in p.key_commands()]
     for host, home in p.homes.items():
         if home.kind == "ssh":
@@ -296,7 +296,7 @@ def apply(m: Migration, dirs: Sequence[tuple[Path, bool]], *,
 
 
 def _loads(m: Migration, dirs: Sequence[tuple[Path, bool]]) -> None:
-    """Raise unless the migrated bottle loads. One that's partial only for an
+    """Raise unless the migrated bottle loads. One that doesn't only for an
     SSH server it declared, not connected here or holding no key for its
     repo, is fine once the file itself parses (ADR 0021, ADR 0023)."""
     try:
@@ -378,8 +378,9 @@ def _rewrite_repos(fm: list[str], p: Plan, repos: Mapping[str, object]) -> list[
         raise MigrateError("git-gate.repos isn't a block mapping")
     end = _block_end(fm, at, gi)
     ei = _child_indent(fm, at + 1, end)
-    if list_form(p, repos):
-        return fm[:at + 1] + [f"{' ' * ei}- {g}" for g in p.grants.values()] + fm[end:]
+    # Each converted entry's block becomes one line, a list item when every
+    # repo converts as itself; comments between entries stay where they are.
+    listed = list_form(p, repos)
     out = fm[:at + 1]
     i = at + 1
     while i < end:
@@ -388,7 +389,9 @@ def _rewrite_repos(fm: list[str], p: Plan, repos: Mapping[str, object]) -> list[
             out.append(fm[i])
             i += 1
             continue
-        out.append(f"{' ' * ei}{fm[i].strip().split(':', 1)[0]}: {p.grants[entry[1]]}")
+        grant = p.grants[entry[1]]
+        out.append(f"{' ' * ei}- {grant}" if listed else
+                   f"{' ' * ei}{fm[i].strip().split(':', 1)[0]}: {grant}")
         i = _block_end(fm, i, ei)
     return out + fm[end:]
 

@@ -17,6 +17,7 @@ server's keys), then `bot-bottle bottles migrate <bottle>`
 
 from __future__ import annotations
 
+import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -172,7 +173,10 @@ class Plan:
     def connect_command(self, host: str) -> str:
         repos = self.missing[host]
         if repos[0].static:
-            return f"bot-bottle forge connect {repos[0].ssh}"
+            # The bottle's own pin carries over, rather than a fresh scan.
+            pinned = next((r.host_key for r in repos if r.host_key), "")
+            return (f"bot-bottle forge connect {repos[0].ssh}"
+                    + (f" --host-key {shlex.quote(pinned)}" if pinned else ""))
         cmd = f"bot-bottle forge connect {repos[0].forge_url}"
         ssh = repos[0].ssh
         if ssh and ssh != f"ssh://git@{urlparse(repos[0].forge_url).hostname}":

@@ -18,8 +18,8 @@ launch, and is itself a version you can revert.
 `migrate` turns repos written in long form (`url`, `key`, `host_key`) into
 one-line grants: a key a forge mints (`provider: gitea`) onto that forge,
 once it's connected, and a `static` key file onto its server, declared as a
-forge of kind `ssh` (ADR 0023; the bottle stays partial until `forge connect
-ssh://…` and `forge key add`). It also declares each grant's forge from this
+forge of kind `ssh` (ADR 0023; the bottle won't load on this host until
+`forge connect ssh://…` and `forge key add`). It also declares each grant's forge from this
 host's connections, and rewrites a route's old-format auth into `type` and
 `value`: `scheme: Bearer` (or `token`) becomes `type: bearer` (or `token`),
 `header: X` becomes `type: header, name: X`, and `token_ref: NAME` becomes

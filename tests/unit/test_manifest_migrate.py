@@ -175,6 +175,8 @@ class TestMigrate(_Host):
         end = expected.index("\negress:")
         expected = (expected[:start]
                     + "    - gitea.example.com/acme/bot-bottle:write\n"
+                    # Comments between repos stay.
+                    + "    # the brand repo\n"
                     + "    - gitea.example.com/acme/bot-bottle-brand:write\n"
                     + "    - gitea.example.com/acme/textorbium\n"
                     # Its forge, declared from the host's connection (ADR 0021).
@@ -260,8 +262,10 @@ class TestStaticBecomesAnSshForge(_Host):
     def test_the_load_error_names_the_commands(self) -> None:
         self.write("dev", STATIC)
         msg = self.load_error()
+        # The bottle's pin carries over to the connection.
         self.assertIn("1. Connect the SSH server once:  "
-                      "bot-bottle forge connect ssh://git@git.example.com:2222", msg)
+                      "bot-bottle forge connect ssh://git@git.example.com:2222 "
+                      f"--host-key '{HOST_KEY}'", msg)
         self.assertIn("2. Add its key:  bot-bottle forge key add git.example.com org/lib "
                       "/keys/lib --write", msg)
         self.assertIn("3. Convert this bottle:      bot-bottle bottles migrate dev", msg)
@@ -272,7 +276,7 @@ class TestStaticBecomesAnSshForge(_Host):
         m = prepare("dev", self.dirs)
         self.assertEqual(("git.example.com",), m.servers)
         self.assertEqual(
-            "---\nextends: basic\ngit_gate:\n  repos:\n"
+            "---\nextends: basic\ngit_gate:\n  repos:\n    # the library\n"
             "    - git.example.com/org/lib:write\n"
             "  forges:\n    git.example.com:\n      kind: ssh\n"
             "      ssh: ssh://git@git.example.com:2222\n"
@@ -309,7 +313,7 @@ class TestStaticBecomesAnSshForge(_Host):
         record(self.root, replace(SERVER, keys=(
             ForgeKey(repo="", path="/keys/me", fingerprint="SHA256:me", write=True),)))
         m = prepare("dev", self.dirs)
-        self.assertFalse(any("partial" in n for n in m.notes))
+        self.assertFalse(any("won't load" in n for n in m.notes))
         apply(m, self.dirs, root=self.root)
         self.assertEqual("/keys/me", load_bottle_chain("dev", self.dirs)[0].git[0].Key.path)
 
