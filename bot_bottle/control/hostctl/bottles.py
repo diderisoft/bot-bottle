@@ -34,7 +34,7 @@ from ... import bottle_state, run_bottle, run_manifest
 from ...backend import adoption
 from ...backend.bottle_size import memory_bytes, recorded_memory
 from ...lib.config_store import ConfigStore, HostBudget
-from . import bottle_metrics, budget, relabel
+from . import bottle_metrics, budget, library_link, relabel
 from .build import RESTART_NEEDED
 from .audit_events import HostAudit, digest_content, digest_request, manifest_content
 from .credential_refresh import CredentialRefresher
@@ -258,7 +258,6 @@ class BottleService:
         # pylint: disable=import-outside-toplevel
         from ...backend import BottleSpec
         from ...secret_source import LaunchSecrets, MappingSecrets, host_store
-        from ...manifest.versions import launch_versions
         from .remote import ROLE_REMOTE
 
         if self._code_changed():
@@ -280,10 +279,10 @@ class BottleService:
                 request.settings, backend.name, self._recorded_infra))
             backend = self._backend_for(request.settings)
         cwd = request.cwd or str(Path.home())
-        # Hand edits become a version before the launch reads them (PRD 0103).
-        versions = run_bottle.with_content(launch_versions(cwd), request.run_bottle)
-        index = run_bottle.index_for(self._manifest_for(cwd), text=request.run_bottle,
-                                     identity=request.identity)
+        # Hand edits become a version before the launch reads them (PRD 0103);
+        # a console launch reads the library commit it names (PRD 0131).
+        versions, index = library_link.launch_index(request, cwd, self._manifest_for)
+        index = run_bottle.index_for(index, text=request.run_bottle, identity=request.identity)
         index.require_agent(request.agent)
         spec = BottleSpec(
             manifest=index, agent_name=request.agent, copy_cwd=request.copy_cwd,
@@ -440,8 +439,9 @@ class BottleService:
                         log.warn(f"bottle {identity}: has no record to keep how to finish it "
                                  "after a host controller restart")
                     run_manifest.record_launch(
-                        identity, plan.manifest.bottle, names=_chain(request),
-                        cwd=request.cwd, host_version=str(versions.get("host", "")))
+                        identity, plan.manifest.bottle, names=_chain(request), cwd=request.cwd,
+                        host_version=str(versions.get("host", "")),
+                        home=library_link.commit_home(request))
                     if record.credentials is not None:
                         self.credentials.add(
                             identity, record.credentials, registry_id=bottle.registry_id,

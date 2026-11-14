@@ -8,14 +8,15 @@ The control stream (JSON lines):
 
 - `list_local` -> `local_definitions`: the agents under `~/.bot-bottle/`.
 - `launch` -> runs a local agent by name as role `remote`, with optional
-  `prompt`, `bottles` and `label`; replies `agent_started` (bottle,
+  `prompt`, `bottles`, `label` and `library_commit`; replies `agent_started` (bottle,
   `activation`, `writable`) or `agent_errored`. Agent and bottle content from
   the console is refused. While it starts, `agent_stage` (`stage`, `title`)
   reports each launch stage, as the CLI shows them.
 - `stop` (`stop_children`) -> tears the bottle down, and with `stop_children` its running
   children too; `agent_stopped` follows for each (also when one exits itself).
-- `resume` (`agent_id`, `bottle`) -> relaunches a stopped bottle this host ran (`remote_requests`):
-  `agent_started` (also for a repeat or a CLI resume of a console bottle) or `agent_errored`.
+- `resume` (`agent_id`, `bottle`, `library_commit`) -> relaunches a stopped bottle this host
+  ran (`remote_requests`): `agent_started` (also for a repeat or a CLI resume of a console
+  bottle) or `agent_errored`. A `library_commit` resolves library bottles and agents there.
 - `hello` opens the stream; each (re)connect reports exits, reopens relays, sends
   `agents_running` and `host_stats` (each minute).
 - `agent_present` (from the host): a running session the console didn't launch, with a
@@ -72,7 +73,7 @@ from .library_link import LibraryLink
 from .console_terminal import HISTORY_LINES, session_terminals, type_into, valid_size
 from .pairing import (RemoteConfig, RemoteError, import_iroh, load_config, secret_key,
                       write_status)
-from .remote_requests import launch_extras, resume_request
+from .remote_requests import agent_allowed, launch_extras, resume_request
 from .transcript_serve import TranscriptLink
 
 if TYPE_CHECKING:
@@ -244,7 +245,7 @@ class ConsoleLink:
         elif kind == "launch":
             await self._launch(str(msg.get("agent_id", "")), msg.get("definition"), msg)
         elif kind == "resume":
-            await self._resume(str(msg.get("agent_id", "")), msg.get("bottle"))
+            await self._resume(str(msg.get("agent_id", "")), msg.get("bottle"), msg)
         elif kind == "stop":
             await self._stop(str(msg.get("agent_id", "")), bool(msg.get("stop_children")))
         elif kind == "approval":
@@ -292,22 +293,19 @@ class ConsoleLink:
             await self._errored(agent_id, "this host launches only its own agents, by name; "
                                           "console-defined agent content isn't accepted")
             return
-        name = definition.get("name")
-        if not isinstance(name, str) or name not in self._agents():
-            await self._errored(agent_id, f"no local agent named {name!r} on this host")
-            return
-        extras = launch_extras(msg)
+        name, extras = definition.get("name"), launch_extras(msg)
         if isinstance(extras, str):
             await self._errored(agent_id, extras)
             return
-        prompt, bottles, label = extras
+        if not agent_allowed(name, self._agents, extras["library_commit"]):
+            await self._errored(agent_id, f"no local agent named {name!r} on this host")
+            return
         # The console click is the launch confirmation.
-        request = LaunchRequest(agent=name, assume_yes=True, prompt=prompt,
-                                bottles=bottles, label=label, headless=False,
-                                agent_id=agent_id)
+        request = LaunchRequest(agent=str(name), assume_yes=True, headless=False,
+                                agent_id=agent_id, **extras)
         await self._start(agent_id, request)
 
-    async def _resume(self, agent_id: str, bottle: object) -> None:
+    async def _resume(self, agent_id: str, bottle: object, msg: dict[str, Any]) -> None:
         """Relaunch a stopped bottle under its own identity, its conversation
         continuing (the console's Resume)."""
         if not agent_id:
@@ -317,7 +315,7 @@ class ConsoleLink:
                 "activation", "")), await self._live_terminal(agent_id))
             return
         request = resume_request(
-            agent_id, bottle, agents=self._agents(),
+            agent_id, bottle, agents=self._agents, commit=msg.get("library_commit", ""),
             running=lambda b: b in self.running.values() or bool(
                 self._bottles.session_state(b).get("running")))
         if isinstance(request, str):

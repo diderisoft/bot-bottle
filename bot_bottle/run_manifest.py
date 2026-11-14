@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -143,12 +144,13 @@ def launch_record(identity: str) -> dict[str, Any]:
 
 
 def record_launch(identity: str, bottle: Any, *, names: tuple[str, ...] = (), cwd: str = "",
-                  host_version: str = "") -> None:
+                  host_version: str = "", home: Path | None = None) -> None:
     """Version 1 at launch. A resume keeps the history, adding a version only
     if the bottle files changed since. The fingerprints of `names` (the
-    bottles it launched in, resolved from `cwd`) and `host_version` become
-    its `launch_record`, at every launch and resume. Never raises: the launch
-    goes on."""
+    bottles it launched in, resolved from `cwd`, and from `home` for the
+    library's when it launched from a library commit) and `host_version`
+    become its `launch_record`, at every launch and resume. Never raises: the
+    launch goes on."""
     # pylint: disable=import-outside-toplevel
     from .manifest.document import bottle_document
     from .manifest.fingerprint import chain_hashes
@@ -160,7 +162,8 @@ def record_launch(identity: str, bottle: Any, *, names: tuple[str, ...] = (), cw
             record(identity, doc, "launched")
         elif document_text(last[1]) != document_text(doc):
             record(identity, doc, "resumed with the bottle files as they are now")
-        chain = chain_hashes(ManifestIndex.resolve(cwd or str(Path.home())), names)
+        index = ManifestIndex.resolve(cwd or str(Path.home()))
+        chain = chain_hashes(replace(index, home_md=home) if home else index, names)
         _store().set_launch(identity, dict(chain), host_version)
     except Exception as e:  # pylint: disable=broad-exception-caught  # the launch goes on
         # pylint: disable-next=import-outside-toplevel

@@ -300,6 +300,8 @@ _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 # A bottle may be a project's, `./<name>` (`manifest.loader.PROJECT_PREFIX`).
 _BOTTLE = re.compile(r"^(\./)?[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _IDENTITY = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+# A library commit a launch names: a full sha-1, lowercase (`fullmatch` it).
+LIBRARY_COMMIT = re.compile(r"[0-9a-f]{40}")
 _MAP_FIELDS = ("secrets", "answers", "host_keys")
 
 
@@ -341,6 +343,10 @@ class LaunchRequest:
     # A bottle for this run only, never saved to the library (ADR 0017): its
     # text, named `RUN_BOTTLE` in `bottles`.
     run_bottle: str = ""
+    # The library commit to resolve library bottles and agents from (PRD
+    # 0131): the account's `main` a console launch was looking at. Empty
+    # resolves them from `~/.bot-bottle` as it is.
+    library_commit: str = ""
 
     def to_json(self) -> dict[str, object]:
         body = dataclasses.asdict(self)
@@ -400,6 +406,8 @@ class LaunchRequest:
                                 or len(self.run_bottle.encode()) > RUN_BOTTLE_MAX_BYTES):
             raise ValueError(f"launch.run_bottle: at most {RUN_BOTTLE_MAX_BYTES} bytes, "
                              f"named {RUN_BOTTLE!r} in bottles")
+        if self.library_commit and not LIBRARY_COMMIT.fullmatch(self.library_commit):
+            raise ValueError("launch.library_commit: expected a 40-character commit sha")
         if self.copy_cwd and not self.cwd:
             raise ValueError("launch.copy_cwd needs cwd")
         if self.headless and not self.prompt:
@@ -450,7 +458,7 @@ __all__ = [
     "AUTH_HEADER", "AUTH_SCHEME", "BOTTLES_PATH", "BOTTLE_COLORS", "CONFIRM_ERROR",
     "DEFAULT_CLEANUP_COMMAND_TIMEOUT_SECONDS", "DEFAULT_DOCKER_AGENT_SUBNETS",
     "DOCKER_AGENT_SUBNET_PREFIX", "IMAGE_POLICIES", "LAUNCH_CLI_ONLY",
-    "LaunchRequest", "agent_subnet_pool", "exit_code",
+    "LIBRARY_COMMIT", "LaunchRequest", "agent_subnet_pool", "exit_code",
     "DEFAULT_EGRESS_PORT", "DEFAULT_GATEWAY_IMAGE", "DEFAULT_ORCHESTRATOR_IMAGE", "GUEST_PORT",
     "HOSTCTL_URL_ENV",
     "HOST_CONTROL", "InfraSettings", "JOBS_PATH", "LIVE_BOTTLES_PATH", "ORCHESTRATOR_PATH", "OperationSettings", "PORT_ENV",

@@ -287,14 +287,16 @@ def committed_at(sha: str, *, root: Path | None = None) -> int:
     return int(out.stdout.strip() or 0) if out.returncode == 0 else 0
 
 
-def launch_versions(cwd: str, *, root: Path | None = None) -> dict[str, object]:
+def launch_versions(cwd: str, *, root: Path | None = None,
+                    host: str = "") -> dict[str, object]:
     """What a launch records: the host's version (after versioning hand
     edits), and for a project with its own bottles, the project's commit and
-    whether its `.bot-bottle/` has uncommitted changes."""
+    whether its `.bot-bottle/` has uncommitted changes. `host`: the library
+    commit a console launch names, recorded as is, the repo left alone."""
     root = root or bot_bottle_root()
     out: dict[str, object] = {}
     try:
-        out["host"] = record_hand_edits(root=root)
+        out["host"] = host or record_hand_edits(root=root)
     except VersionError as e:
         out["host_error"] = str(e)
     project = project_manifest_dir(cwd, root=root)

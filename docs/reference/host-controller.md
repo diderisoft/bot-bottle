@@ -793,8 +793,9 @@ The console is the first of:
 ### What the console can reach
 
 The console can list local agents, launch one by name, stop one, and view
-or type into sessions. A launch takes an optional prompt, bottle names and
-label.
+or type into sessions. A launch takes an optional prompt, bottle names,
+label and library commit (`library_commit`, see
+[Launching at a library commit](#launching-at-a-library-commit)).
 
 - A launch names an agent and bottles this host already has.
 - Agent content sent with a launch is refused.
@@ -1064,6 +1065,32 @@ Every fast-forward is journalled as `library.updated` (sensitivity
 (and which were `added` and `deleted`), and who made the commits. The
 library's history is the console's to write; the journal is this host's
 record of every policy change that reached it.
+
+### Launching at a library commit
+
+While the library is on, the console's `launch` and `resume` messages (a
+retry or a duplicate is a `launch`) carry `library_commit`: the 40-character
+sha of the account's `main` the user was looking at. Anything else is refused
+with `agent_errored`. The host then:
+
+1. Makes sure it has the commit. If `~/.bot-bottle` lacks it, the host
+   fetches the library's `main` as a sync does (only `refs/remotes/library/main`
+   moves). Still missing, the launch fails, saying so.
+2. Resolves library bottles and agents from that commit: its `agents/` and
+   `bottles/` are copied into `~/.bot-bottle/library-commits/<sha>/` (the last
+   eight are kept) and resolved from there. The working tree and `main` are
+   untouched, and no hand edits are committed, so a host whose `main` has
+   diverged still launches the console's version. Project bottles and
+   built-ins resolve as ever. An agent is checked at that commit, not
+   against the host's own list.
+3. Records the commit as the launch's host version: the start event's
+   `bottle_versions.host`, and what the console's "changed since launch"
+   marker compares. Each bottle's launch fingerprint is taken at the commit
+   too.
+
+Without `library_commit` (CLI launches, the library off, older consoles),
+launches resolve from `~/.bot-bottle` as it is. `POST /bottles` takes the same
+`library_commit` field, checked the same way.
 
 ### Host stats
 

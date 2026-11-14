@@ -19,16 +19,25 @@ config. Every fast-forward is a `library.updated` journal event.
 A failed sync is tried again later (sooner on a new commit or `library_moved`),
 after a longer wait for a refusal that won't pass by itself: a deleted account
 (403) or a push past the library's size limits (413).
+
+A console launch names the library commit it runs (`library_commit`): the
+host fetches `main` if it lacks that commit, then resolves library bottles and
+agents from a copy of that commit's `agents/` and `bottles/` (`tree_at`), so
+the repo's working tree and `main` are untouched, and a host whose `main`
+diverged still launches the console's version.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import json
 import os
+import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 import urllib.error
@@ -36,19 +45,28 @@ import urllib.request
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
+from ... import run_bottle
+from ...contract.hostctl import LIBRARY_COMMIT, LaunchRequest
 from ...lib import log
-from ...manifest.versions import TRACKED, VersionError, git_env, writing
-from ...paths import bot_bottle_root
+from ...manifest.versions import TRACKED, VersionError, git_env, launch_versions, writing
+from ...paths import bot_bottle_root, private_dir
 from . import pairing
+
+if TYPE_CHECKING:
+    from ...manifest import ManifestIndex
 
 TOKEN_PATH = "/api/v1/hosts/library-token"
 REMOTE_REF = "refs/remotes/library/main"
 # How long a CLI launch waits for a sync before it uses the local copy.
 LAUNCH_SYNC_SECONDS = 2.0
 _TOKEN_SLACK = 60.0  # seconds before expiry a token is replaced
+# Where launches' commit copies are kept (under the root, outside the
+# tracked directories), and how many.
+TREES_DIR = "library-commits"
+KEEP_TREES = 8
 # The longest a fetch or push may take, and how long before git gives up on a
 # transfer slower than a kilobyte a second.
 NETWORK_SECONDS = 60.0
@@ -301,6 +319,61 @@ class LibrarySync:
                 return Synced(pushed=local, stamp=stamp)
             return Synced(stamp=stamp)
 
+    def ensure_commit(self, sha: str) -> None:
+        """Have the commit `sha`, fetching the library's `main` for it if it's
+        missing here (only the remote ref moves). LibraryError if it's still
+        missing."""
+        if not LIBRARY_COMMIT.fullmatch(sha):
+            raise LibraryError(f"{sha!r} isn't a commit sha")
+        with self._lock:
+            if not (self.root / ".git").is_dir():
+                raise LibraryError(f"this host has no library repo at {self.root}")
+            if self._rev(sha) == sha:
+                return
+            try:
+                self._fetch_main()
+            except pairing.RemoteError as e:
+                raise LibraryError(f"couldn't get a library token: {e}") from e
+            if self._rev(sha) != sha:
+                raise LibraryError(f"library commit {sha[:12]} isn't on this host or in the "
+                                   "account's main; refresh the console and launch again")
+
+    def tree_at(self, sha: str) -> Path:
+        """The library's `agents/` and `bottles/` as of commit `sha` (fetched
+        if missing), copied into a directory of their own: what a launch at
+        that commit resolves library bottles and agents from."""
+        self.ensure_commit(sha)
+        trees = private_dir(self.root / TREES_DIR)
+        tree = trees / sha
+        if not tree.is_dir():
+            staging = Path(tempfile.mkdtemp(dir=trees, prefix=".new-"))
+            for entry in self._git("ls-tree", "-r", "-z", sha, *TRACKED).stdout.split("\0"):
+                meta, _, rel = entry.partition("\t")
+                if meta.split(" ")[:2] in (["100644", "blob"], ["100755", "blob"]):
+                    target = staging / rel
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(self._blob(meta.split(" ")[2]))
+            for directory in TRACKED:
+                (staging / directory).mkdir(exist_ok=True)
+            try:
+                staging.rename(tree)
+            except OSError:  # another launch got there first: same content
+                shutil.rmtree(staging, ignore_errors=True)
+        os.utime(tree)
+        others = (p for p in trees.iterdir() if p != tree and not p.name.startswith("."))
+        for old in sorted(others, key=lambda p: p.stat().st_mtime,
+                          reverse=True)[KEEP_TREES - 1:]:
+            shutil.rmtree(old, ignore_errors=True)
+        return tree
+
+    def _blob(self, oid: str) -> bytes:
+        """A blob's bytes, exactly (`_git` reads text)."""
+        result = subprocess.run(["git", "-C", str(self.root), *_SAFE, "cat-file", "blob", oid],
+                                capture_output=True, env=git_env(), check=False)
+        if result.returncode != 0:
+            raise LibraryError(f"git cat-file: {result.stderr.decode(errors='replace').strip()}")
+        return result.stdout
+
     def _contains(self, newer: str, older: str) -> bool:
         return self._git("merge-base", "--is-ancestor", older, newer,
                          check=False).returncode == 0
@@ -351,6 +424,38 @@ def sync_for_launch(timeout: float = LAUNCH_SYNC_SECONDS) -> str:
     return link.sync_for_launch(timeout)
 
 
+def _launch_sync() -> LibrarySync:
+    """The active link's sync (one git job at a time), else one for this
+    host's pairing, whose token is asked for only if a fetch is needed."""
+    if _active is not None:
+        return _active.syncer()
+    return LibrarySync(host_id="")
+
+
+def commit_home(request: LaunchRequest) -> Path | None:
+    """Where a launch's library bottles and agents resolve from: its library
+    commit's copy (`LibrarySync.tree_at`), or None for `~/.bot-bottle` as
+    it is."""
+    commit = request.library_commit
+    return _launch_sync().tree_at(commit) if commit else None
+
+
+def launch_index(request: LaunchRequest, cwd: str,
+                 manifest_for: Callable[[str], "ManifestIndex"],
+                 ) -> "tuple[dict[str, object], ManifestIndex]":
+    """A launch's bottle versions, for its audit, and the manifest index it
+    resolves from. Without a library commit, hand edits become a version
+    first (PRD 0103). With one, library bottles and agents come from that
+    commit and it's the host version; project bottles and built-ins resolve
+    as ever."""
+    home = commit_home(request)
+    versions = launch_versions(cwd, host=request.library_commit)
+    index = manifest_for(cwd)
+    if home is not None:
+        index = dataclasses.replace(index, home_md=home)
+    return run_bottle.with_content(versions, request.run_bottle), index
+
+
 class LibraryLink:
     """The library's messages on one console link."""
 
@@ -379,7 +484,7 @@ class LibraryLink:
         self._backoff = 0.0
         self.retry_at = 0.0
 
-    def _syncer(self) -> LibrarySync:
+    def syncer(self) -> LibrarySync:
         if self._sync is None:
             if self._make_sync is not None:
                 self._sync = self._make_sync()
@@ -454,7 +559,7 @@ class LibraryLink:
         """One sync, from any thread. A failure is logged once (until it
         changes) and sets when the next try is due."""
         try:
-            synced = self._syncer().sync()
+            synced = self.syncer().sync()
         except (LibraryError, pairing.RemoteError, OSError) as e:
             self._failed(e)
             raise
@@ -511,6 +616,6 @@ class LibraryLink:
             await self._send({"type": "library_pushed", "head": synced.pushed})
 
 
-__all__ = ["LAUNCH_SYNC_SECONDS", "LibraryError", "LibraryLink", "LibrarySync",
-           "NETWORK_SECONDS", "RETRY_SECONDS", "Synced", "Token", "console_token",
-           "head_stamp", "sync_for_launch"]
+__all__ = ["KEEP_TREES", "LAUNCH_SYNC_SECONDS", "LibraryError", "LibraryLink", "LibrarySync",
+           "NETWORK_SECONDS", "RETRY_SECONDS", "Synced", "TREES_DIR", "Token", "commit_home",
+           "console_token", "head_stamp", "launch_index", "sync_for_launch"]

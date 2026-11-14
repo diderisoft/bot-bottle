@@ -744,6 +744,45 @@ class TestConsoleSession(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("tmux"), "needs tmux")
+class TestLibraryCommit(unittest.TestCase):
+    """A console launch or resume at a library commit (PRD 0131)."""
+
+    _link = TestConsoleSession._link  # pylint: disable=protected-access
+    _launch = TestConsoleSession._launch  # pylint: disable=protected-access
+
+    def test_a_library_commit_reaches_the_launch(self) -> None:
+        sha = "ab" * 20
+        link, bottles, _sent = self._link()
+        self._launch(link, library_commit=sha)
+        self.assertEqual(sha, bottles.launched[0][0].library_commit)
+        # An agent the host's copy lacks is looked for at the commit.
+        asyncio.run(link.handle({"type": "launch", "agent_id": "a2", "library_commit": sha,
+                                 "definition": {"name": "from-another-host"}}))
+        self.assertEqual("from-another-host", bottles.launched[-1][0].agent)
+        link, bottles, sent = self._link()
+        self._launch(link, library_commit="HEAD")
+        self.assertEqual([], bottles.launched)
+        self.assertIn("library_commit", sent[-1]["message"])
+        asyncio.run(link.handle({"type": "launch", "agent_id": "a3",
+                                 "definition": {"name": "from-another-host"}}))
+        self.assertIn("no local agent", sent[-1]["message"])
+
+    def test_a_resume_at_a_library_commit(self) -> None:
+        from bot_bottle.bottle_state import BottleMetadata, write_metadata  # pylint: disable=import-outside-toplevel
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))  # pylint: disable=consider-using-with
+        self.addCleanup(use_bottle_root(root))
+        write_metadata(BottleMetadata(identity="old-run", agent_name="elsewhere", cwd="",
+                                      copy_cwd=False, started_at=""))
+        link, bottles, sent = self._link()
+        asyncio.run(link.handle({"type": "resume", "agent_id": "a9", "bottle": "old-run",
+                                 "library_commit": "x"}))
+        self.assertIn("library_commit", sent[-1]["message"])
+        asyncio.run(link.handle({"type": "resume", "agent_id": "a9", "bottle": "old-run",
+                                 "library_commit": "cd" * 20}))
+        self.assertEqual(("elsewhere", "cd" * 20), (bottles.launched[-1][0].agent,
+                                                   bottles.launched[-1][0].library_commit))
+
+
 class TestRelaySize(unittest.TestCase):
     """The size the console asks for outlives the relay it was sent to."""
 
