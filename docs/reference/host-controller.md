@@ -1813,7 +1813,7 @@ null for the default), `default`, `write`, `fingerprint` (`SHA256:…`), a
 | `ok` | the file is here and has the fingerprint recorded |
 | `changed` | the file was replaced; `fingerprint` is the new one, which the next launch uses and records |
 | `missing` | the file isn't here |
-| `unusable` | it's here but can't be used (readable by others, or not a key) |
+| `unusable` | it's here but can't be used (readable by others, another user's, a passphrase, or not a private key) |
 
 Two forges with the same `fingerprint` share a key.
 

@@ -5,6 +5,7 @@ holds no long-form repo."""
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import os
 import shutil
@@ -41,6 +42,10 @@ from tests.unit import as_cli, serve_host_controller, use_bottle_root
 from tests.unit._forges import GITEA, SSH, connected
 
 HAS_KEYGEN = shutil.which("ssh-keygen") is not None
+# A well-formed ed25519 public key (a `--host-key` must be one).
+_BLOB = (len(b"ssh-ed25519").to_bytes(4, "big") + b"ssh-ed25519"
+         + (32).to_bytes(4, "big") + bytes(range(32)))
+HOST_KEY = "ssh-ed25519 " + base64.b64encode(_BLOB).decode()
 DECLARED: Any = {"git_gate": {"forges": {"git.example.com": {
     "kind": "ssh", "ssh": "ssh://git@git.example.com:2222"}}}}
 
@@ -84,6 +89,9 @@ class TestConnectionJson(unittest.TestCase):
                 ({"ssh": "ssh://git@other.example.com"}, "ssh must be"),
                 ({"ssh": "https://git.example.com"}, "ssh must be"),
                 ({"keys": [{"repo": "x", "path": "/k", "fingerprint": "f"}]}, "<owner>/<repo>"),
+                ({"keys": [{"repo": "o/r\n", "path": "/k", "fingerprint": "f"}]},
+                 "<owner>/<repo>"),
+                ({"ssh": "ssh://git@git.example.com\n"}, "ssh must be"),
                 ({"keys": [{"repo": "", "path": "k", "fingerprint": "f"}]}, "absolute"),
                 ({"keys": [{"repo": "", "path": "/k", "fingerprint": ""}]}, "no fingerprint"),
                 ({"keys": [{"repo": "", "path": "/k", "fingerprint": "f", "write": 1}]},
@@ -173,8 +181,51 @@ class TestKeyFiles(unittest.TestCase):
         junk = self.dir / "junk"
         junk.write_text("not a key")
         junk.chmod(0o600)
-        with self.assertRaisesRegex(forge_keys.KeyFileError, "isn't a key ssh-keygen can read"):
+        with self.assertRaisesRegex(forge_keys.KeyFileError,
+                                    "isn't a private key ssh-keygen can read"):
             forge_keys.check_file(str(junk))
+
+    def test_the_fingerprint_is_the_private_keys_never_a_stale_pub(self) -> None:
+        other = self.dir / "other"
+        _keygen(other)
+        shutil.copy(f"{other}.pub", f"{self.key}.pub")
+        self.assertEqual(self.fp, forge_keys.fingerprint(str(self.key)))
+
+    def test_a_public_key_or_a_passphrase_is_refused(self) -> None:
+        pub = Path(f"{self.key}.pub")
+        pub.chmod(0o600)
+        with self.assertRaisesRegex(forge_keys.KeyFileError, "isn't a private key") as ctx:
+            forge_keys.check_file(str(pub))
+        self.assertNotIn(str(self.dir), ctx.exception.reason)
+        locked = self.dir / "locked"
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "secret", "-f",
+                        str(locked)], check=True)
+        with self.assertRaisesRegex(forge_keys.KeyFileError, "passphrase") as ctx:
+            forge_keys.check_file(str(locked))
+        self.assertEqual("is protected by a passphrase, which git-gate can't type",
+                         ctx.exception.reason)
+
+    def test_another_users_key_is_refused(self) -> None:
+        with mock.patch("os.geteuid", return_value=os.getuid() + 1), \
+                self.assertRaisesRegex(forge_keys.KeyFileError, "owned by another user"):
+            forge_keys.check_file(str(self.key))
+
+    def test_ssh_keygen_runs_again_only_when_the_file_changes(self) -> None:
+        with mock.patch.object(forge_keys, "fingerprint", wraps=forge_keys.fingerprint) as read:
+            forge_keys.check_file(str(self.key))
+            forge_keys.check_file(str(self.key))
+            self.assertEqual(1, read.call_count)
+            self.key.unlink()
+            fp = _keygen(self.key)
+            self.assertEqual(fp, forge_keys.check_file(str(self.key)))
+            self.assertEqual(2, read.call_count)
+
+    def test_what_ssh_keygen_prints_is_checked(self) -> None:
+        for out in ("", "ssh-ed25519", "ssh-ed25519 !!!", "ssh-rsa " + HOST_KEY.split()[1]):
+            done = subprocess.CompletedProcess([], 0, stdout=out, stderr="")
+            with self.subTest(out=out), mock.patch("subprocess.run", return_value=done), \
+                    self.assertRaisesRegex(forge_keys.KeyFileError, "isn't a private key"):
+                forge_keys.fingerprint(str(self.key))
 
     def test_without_ssh_keygen(self) -> None:
         with mock.patch("subprocess.run", side_effect=FileNotFoundError), \
@@ -200,6 +251,7 @@ class TestKeyFiles(unittest.TestCase):
         record.assert_called_once_with(str(self.key), self.fp)
         warn.assert_called_once()
         self.assertIn("SHA256:old is now " + self.fp, warn.call_args.args[0])
+        self.assertNotIn(str(self.dir), warn.call_args.args[0])
 
     def test_a_record_that_fails_is_only_logged(self) -> None:
         with mock.patch.object(forge_connections, "refingerprint",
@@ -214,6 +266,10 @@ class TestKeyFiles(unittest.TestCase):
         self.assertIn("the key for git.example.com/org/lib can't be used", str(ctx.exception))
         self.assertIn("`bot-bottle forge key add git.example.com org/lib <path> --write`",
                       str(ctx.exception))
+        # Launch errors reach the console and the agent: never the path.
+        self.assertIn("its file isn't there", str(ctx.exception))
+        self.assertNotIn(str(self.dir), str(ctx.exception))
+        self.assertTrue(ctx.exception.missing)
         with self.assertRaises(forge_keys.KeyFileError) as ctx:
             forge_keys.check_launch([self._entry("f", str(self.dir / "gone"), read_only=True)])
         self.assertIn("org/lib <path>`", str(ctx.exception))
@@ -224,6 +280,16 @@ class TestKeyFiles(unittest.TestCase):
         bottle = mock.Mock(git=(self._entry("f", str(self.dir / "gone")),))
         with self.assertRaises(Die):
             check_ssh_keys(bottle)
+
+    def test_trust_asks_about_a_rotated_key_before_the_launch_uses_it(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from bot_bottle.manifest.bottle import ManifestBottle
+        bottle = ManifestBottle(git=(self._entry("SHA256:old"),))
+        self.assertEqual(self.fp, forge_keys.refreshed(bottle).git[0].Key.fingerprint)
+        gone = ManifestBottle(git=(self._entry("SHA256:old", str(self.dir / "gone")),))
+        self.assertEqual("SHA256:old", forge_keys.refreshed(gone).git[0].Key.fingerprint)
+        plain = ManifestBottle()
+        self.assertIs(plain, forge_keys.refreshed(plain))
 
     def test_key_path(self) -> None:
         self.assertEqual("/work/k", forge_keys.key_path("k", "/work"))
@@ -239,7 +305,8 @@ class TestDescriptions(unittest.TestCase):
         forges_raw("b", self._raw())
         for forge, why in (({"url": "https://git.example.com"}, "has no url"),
                            ({"ssh": "ssh://git@other.example.com"}, "ssh must be"),
-                           ({"ssh": "ssh://git.example.com"}, "ssh must be")):
+                           ({"ssh": "ssh://git.example.com"}, "ssh must be"),
+                           ({"ssh": "ssh://git@git.example.com\n"}, "ssh must be")):
             with self.subTest(forge=forge), self.assertRaisesRegex(ManifestError, why):
                 forges_raw("b", self._raw(**forge))
         with self.assertRaisesRegex(ManifestError, "named by its host alone"):
@@ -382,18 +449,24 @@ class TestConnectCommand(_Cli):
 
     def test_a_given_host_key_is_pinned_without_asking(self) -> None:
         with mock.patch("bot_bottle.git_gate.host_key.fetch_host_key") as scan:
-            self.run_cmd("connect", "ssh://git@upstream.invalid", "--host-key", "ssh-ed25519 K")
+            out = self.run_cmd("connect", "ssh://git@upstream.invalid", "--host-key", HOST_KEY)
         scan.assert_not_called()
-        self.assertEqual("ssh-ed25519 K",
-                         self.store().connections()["upstream.invalid"].host_key)
+        self.assertEqual(HOST_KEY, self.store().connections()["upstream.invalid"].host_key)
+        # Shown as OpenSSH's fingerprint, to check against the server's.
+        self.assertIn("ssh-ed25519 SHA256:", out)
 
     def test_refused(self) -> None:
         for url, why in (("ssh://git@h.example.com/org/r.git", "no path"),
                          ("ssh://h.example.com", "ssh://user@host")):
             with self.subTest(url=url), self.assertRaisesRegex(ConnectError, why):
                 connect_ssh(url)
-        with self.assertRaisesRegex(ConnectError, "<type> <base64>"):
-            connect_ssh("ssh://git@h.example.com", "nonsense")
+        for bad in ("nonsense", "ssh-ed25519 K", "ssh-rsa " + HOST_KEY.split()[1],
+                    HOST_KEY + " comment", HOST_KEY + "\n", "@revoked " + HOST_KEY.split()[1]):
+            with self.subTest(host_key=bad), self.assertRaisesRegex(ConnectError,
+                                                                     "<type> <base64>"):
+                connect_ssh("ssh://git@h.example.com", bad)
+        with self.assertRaisesRegex(ConnectError, "isn't a port"):
+            connect_ssh("ssh://git@h.example.com:70000", HOST_KEY)
         with mock.patch("bot_bottle.git_gate.host_key.fetch_host_key",
                         side_effect=RuntimeError("no route")), \
                 self.assertRaisesRegex(ConnectError, "no route"):
@@ -402,7 +475,7 @@ class TestConnectCommand(_Cli):
             connect("ssh://git@h.example.com", "token")
         self.store().add_user(GITEA, GITEA.users[0])
         with self.assertRaisesRegex(ConnectError, "connected as a gitea forge"):
-            connect_ssh(f"ssh://git@{GITEA.host}", "ssh-ed25519 K")
+            connect_ssh(f"ssh://git@{GITEA.host}", HOST_KEY)
 
 
 @unittest.skipUnless(HAS_KEYGEN, "needs ssh-keygen")
@@ -512,7 +585,7 @@ class TestConsole(unittest.TestCase):
         with mock.patch("bot_bottle.forge_connections.connections",
                         return_value={SSH.host: SSH}), \
                 mock.patch("bot_bottle.forge_keys.check_file", side_effect=[
-                    forge_keys.KeyFileError("/keys/default isn't there"),
+                    forge_keys.KeyFileError("/keys/default isn't there", missing=True),
                     forge_keys.KeyFileError("/keys/lib is readable by others")]):
             (status,) = forge_link.status()
         self.assertEqual(["missing", "unusable"], [k["state"] for k in status["keys"]])

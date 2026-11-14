@@ -296,6 +296,11 @@ def check(bottle_name: str, bottle: ManifestBottle, sources: Sequence[BottleSour
     project = [s for s in sources if s.project]
     if not project:
         return
+    # An SSH server's key rotated in place is asked about at the launch
+    # that will use it, not the one after (which records it).
+    # pylint: disable-next=import-outside-toplevel
+    from ..forge_keys import refreshed
+    bottle = refreshed(bottle)
     granted = beyond_basic(grants(bottle))
     if not granted:
         return  # nothing beyond basic

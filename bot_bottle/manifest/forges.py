@@ -165,7 +165,7 @@ def forges_raw(bottle_name: str, raw: dict[str, object]) -> dict[str, object]:
         if "@" in name:
             raise ManifestError(f"{where}: a forge is named by its host; the account an "
                                 f"agent pushes as is its `identity.accounts`, not the bottle's")
-        if not _FORGE_NAME_RE.match(name):
+        if not _FORGE_NAME_RE.fullmatch(name):
             raise ManifestError(f"{where}: a forge is named by its host")
         d = as_json_object(entry, where)
         on_host = sorted(set(d) & _HOST_KEYS)
@@ -217,7 +217,7 @@ def _ssh_described(name: str, d: dict[str, object], where: str) -> None:
         raise ManifestError(f"{where}: an SSH server is named by its host alone; its port "
                             f"goes in ssh: ssh://git@<host>:<port>")
     ssh = str(d.get("ssh") or "")
-    m = _SSH_RE.match(ssh) if ssh else None
+    m = _SSH_RE.fullmatch(ssh) if ssh else None
     if ssh and (m is None or m.group(1).lower() != name.lower()):
         raise ManifestError(f"{where}.ssh must be ssh://user@{name}[:port] (was {ssh!r})")
 
@@ -349,7 +349,7 @@ def split_grant_alias(grant: str) -> tuple[str | None, str]:
     `(None, grant)`. The alias becomes the repo's local name in git-gate,
     letting two repos with the same upstream name coexist in one bottle."""
     eq = grant.find("=")
-    if eq > 0 and _REPO_PART_RE.match(grant[:eq]) and "/" in grant[eq + 1:]:
+    if eq > 0 and _REPO_PART_RE.fullmatch(grant[:eq]) and "/" in grant[eq + 1:]:
         return grant[:eq], grant[eq + 1:]
     return None, grant
 
@@ -365,7 +365,7 @@ def parse_grant(grant: str, where: str) -> tuple[str, str, str, bool]:
                             f"(was {grant!r})")
     forge, owner, repo = parts
     repo = repo.removesuffix(".git")
-    if not (_REPO_PART_RE.match(owner) and _REPO_PART_RE.match(repo)):
+    if not (_REPO_PART_RE.fullmatch(owner) and _REPO_PART_RE.fullmatch(repo)):
         raise ManifestError(f"{where}: {grant!r} has an invalid owner or repo name")
     return forge, owner, repo, writable
 

@@ -112,9 +112,8 @@ def _key_state(key: Any) -> dict[str, Any]:
     try:
         now = check_file(key.path)
     except KeyFileError as e:
-        gone = "isn't there" in str(e)
-        out.update(state="missing" if gone else "unusable",
-                   message="its key file isn't on this host" if gone else
+        out.update(state="missing" if e.missing else "unusable",
+                   message="its key file isn't on this host" if e.missing else
                    "its key file can't be used here; see `bot-bottle forge key list` on the host")
         return out
     if now != key.fingerprint:

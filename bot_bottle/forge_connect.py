@@ -160,6 +160,21 @@ def connect(url: str, token: str, *, ssh: str = "", kind: str = "",
 _SSH_URL = re.compile(r"^ssh://[^@/\s:]+@[A-Za-z0-9.-]+(?::[0-9]{1,5})?$")
 
 
+def _check_host_key(host_key: str) -> None:
+    """A host key given by hand is one public key, `<type> <base64>` as a
+    known_hosts line has it, whose base64 holds a key of that type: it's
+    written into git-gate's known_hosts as it is."""
+    # pylint: disable-next=import-outside-toplevel
+    from .forge_keys import public_fingerprint
+    try:
+        if len(host_key.split()) != 2 or host_key != host_key.strip():
+            raise ValueError("not two fields")
+        public_fingerprint(host_key)
+    except ValueError as e:
+        raise ConnectError("a host key is `<type> <base64>`, one public key as a known_hosts "
+                           "line has it") from e
+
+
 def connect_ssh(ssh: str, host_key: str = "") -> ForgeConnection:
     """`bot-bottle forge connect ssh://user@host[:port]`: a plain SSH git
     server, a forge of kind `ssh` (ADR 0023), keyed by its host. Pins the
@@ -170,13 +185,16 @@ def connect_ssh(ssh: str, host_key: str = "") -> ForgeConnection:
     # pylint: disable-next=import-outside-toplevel
     from .git_gate.host_key import fetch_host_key
     ssh = ssh.strip().rstrip("/")
-    if not _SSH_URL.match(ssh):
+    if not _SSH_URL.fullmatch(ssh):
         raise ConnectError(f"an SSH server is ssh://user@host[:port], with no path "
                            f"(was {ssh!r})")
-    if host_key and len(host_key.split()) != 2:
-        raise ConnectError("a host key is `<type> <base64>`, as a known_hosts line has it")
+    host_port = ssh_host_port(ssh)
+    if not 0 < int(host_port[1]) < 65536:
+        raise ConnectError(f"{host_port[1]} isn't a port (was {ssh!r})")
+    if host_key:
+        _check_host_key(host_key)
     try:
-        host_key = host_key or fetch_host_key(*ssh_host_port(ssh))
+        host_key = host_key or fetch_host_key(*host_port)
     except RuntimeError as e:
         raise SshUnreachable(ssh, str(e)) from e
     found = connections().get(ssh_host(ssh))

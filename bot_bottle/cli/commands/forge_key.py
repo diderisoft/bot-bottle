@@ -12,7 +12,9 @@ grant uses its repo's key, else the default.
 
 A key is kept by reference, its path and fingerprint, never a copy. One
 rotated in place is used, and its new fingerprint recorded at the next
-launch. A file readable by group or others is refused, as ssh refuses it.
+launch. A file readable by group or others is refused, as ssh refuses it,
+and so are one owned by another user, a public key, and a key with a
+passphrase (git-gate can't type it).
 `--write` says the key can push: there's no API to ask, so say so when it
 can. Two forges may name the same file; removing a key drops only that
 forge's reference to it, never the file.
@@ -49,7 +51,7 @@ def _repo(args: list[str], default: bool, usage: str) -> str:
     """The `<owner/repo>` among `args`, or "" with `--default`."""
     if default == bool(args):
         die(usage)
-    if args and not REPO_RE.match(args[0]):
+    if args and not REPO_RE.fullmatch(args[0]):
         die(f"{args[0]!r} isn't <owner>/<repo>")
     return args[0] if args else ""
 

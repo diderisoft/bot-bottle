@@ -217,8 +217,14 @@ def _connect_server(argv: list[str]) -> int:
         conn = connect_ssh(argv[0], host_key)
     except ConnectError as e:
         die(str(e))
-    info(f"pinned the SSH host key of {conn.ssh}: {conn.host_key.split()[0]} "
-         f"…{conn.host_key.split()[-1][-12:]}")
+    # pylint: disable-next=import-outside-toplevel
+    from ...forge_keys import public_fingerprint
+    try:
+        shown = public_fingerprint(conn.host_key)
+    except ValueError:
+        shown = conn.host_key
+    info(f"pinned the SSH host key of {conn.ssh}: {conn.host_key.split()[0]} {shown}; "
+         f"check it against the server's own (`ssh-keygen -lf` of its host key)")
     info(f"connected the SSH server {conn.host} ({len(conn.keys)} keys)")
     if not conn.keys:
         info(f"add the key files this host holds for it: `{PROG} forge key add {conn.host} "

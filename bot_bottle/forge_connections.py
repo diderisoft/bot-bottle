@@ -70,7 +70,7 @@ class ForgeUser:
 class ForgeKey:
     """A key file an `ssh` forge's connection holds, by reference (ADR 0023):
     its `path` on this host, never a copy, and its `fingerprint`
-    (`ssh-keygen -lf`) as last seen. `repo` is `<owner>/<repo>`, or "" for
+    (OpenSSH's `SHA256:…` of its public half) as last seen. `repo` is `<owner>/<repo>`, or "" for
     the forge's default key. `write` is stated when it's added: there's no
     API to ask the server."""
 
@@ -88,7 +88,7 @@ class ForgeKey:
         body = _object(raw, f"forge {host}: a key")
         repo = _str(body, "repo", f"forge {host}: a key")
         where = f"forge {host}: the key for {repo or 'every repo'}"
-        if repo and not REPO_RE.match(repo):
+        if repo and not REPO_RE.fullmatch(repo):
             raise ForgeConnectionError(f"{where}: a key's repo is <owner>/<repo>")
         path = _str(body, "path", where)
         if not path.startswith("/"):
@@ -164,7 +164,7 @@ class ForgeConnection:
         body = _object(raw, "forge")
         host = _str(body, "host", "forge")
         where = f"forge {host}"
-        if not _HOST_RE.match(host):
+        if not _HOST_RE.fullmatch(host):
             raise ForgeConnectionError(f"{where}: a forge is keyed by its host")
         kind = _str(body, "kind", where)
         if kind not in FORGE_KINDS:
@@ -196,7 +196,7 @@ def _ssh_connection(host: str, body: dict[str, object]) -> ForgeConnection:
     if _str(body, "url", where) or body.get("users"):
         raise ForgeConnectionError(f"{where}: an SSH server has no URL and no users")
     ssh = _str(body, "ssh", where).rstrip("/")
-    if not _SSH_RE.match(ssh) or ssh_host(ssh) != host:
+    if not _SSH_RE.fullmatch(ssh) or ssh_host(ssh) != host:
         raise ForgeConnectionError(f"{where}: ssh must be ssh://user@{host}[:port] "
                                    f"(was {ssh!r})")
     keys_raw = body.get("keys") or []
@@ -243,7 +243,7 @@ def _user(host: str, kind: str, raw: object) -> ForgeUser:
     body = _object(raw, f"forge {host}: a user")
     name = _str(body, "name", f"forge {host}: a user")
     where = f"forge {host}: user {name}"
-    if not _USER_RE.match(name):
+    if not _USER_RE.fullmatch(name):
         raise ForgeConnectionError(f"{where}: a user is the forge's username")
     secret = secret_ref.stored_name(_str(body, "token", where))
     if not secret_ref.is_name(secret):
