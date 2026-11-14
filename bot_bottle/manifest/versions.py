@@ -32,6 +32,11 @@ from .util import ManifestError
 from ..paths import bot_bottle_root, host_secrets_path, project_manifest_dir
 
 TRACKED = ("agents", "bottles")
+# The account's bot-bottle version (PRD 0131, `account_version.py`): the
+# console writes it, a host only tracks it. The ignore file below predates
+# it and stays as it is (hosts' first syncs merge it as unrelated histories,
+# so every host must write the same one); the lock is added past it.
+LOCK = "bot-bottle.lock"
 GITIGNORE = (
     "# bot-bottle versions agents/ and bottles/ only (PRD 0103).\n"
     "/*\n!/.gitignore\n!/agents/\n!/bottles/\n"
@@ -167,6 +172,8 @@ def _commit(root: Path, message: str, secrets_file: Path) -> str:
     _ensure_repo(root)
     _git(root, "add", "-A", "--", ".gitignore",
          *(d for d in TRACKED if (root / d).exists()))
+    if _has_lock(root):
+        _git(root, "add", "-A", "-f", "--", LOCK)
     if _git(root, "diff", "--cached", "--quiet", check=False).returncode != 0:
         _check_staged(root, secrets_file)
         author = author_name(_git(root, "config", "--local", "--get", AUTHOR_KEY,
@@ -174,6 +181,15 @@ def _commit(root: Path, message: str, secrets_file: Path) -> str:
         _git(root, "commit", "-q", "--no-verify", "-m", message, author=author)
     head = _git(root, "rev-parse", "--verify", "-q", "HEAD", check=False)
     return head.stdout.strip()
+
+
+def _lock_tracked(root: Path) -> bool:
+    return bool(_git(root, "ls-files", "--", LOCK, check=False).stdout.strip())
+
+
+def _has_lock(root: Path) -> bool:
+    """Whether the lock is here or tracked (so a removal is a change too)."""
+    return (root / LOCK).exists() or _lock_tracked(root)
 
 
 def set_author(name: str, *, root: Path | None = None) -> None:
@@ -198,8 +214,11 @@ def pending_edits(*, root: Path | None = None) -> list[str]:
     # No optional locks: polled every few seconds, it must never hold the
     # index lock a bot-bottle commit needs.
     out = _git(root, "--no-optional-locks", "status", "--porcelain", "-z", "--no-renames",
-               "--untracked-files=all", "--", *TRACKED, check=False).stdout
-    return [entry for entry in out.split("\0") if entry]
+               "--untracked-files=all", "--", *TRACKED, LOCK, check=False).stdout
+    entries = [entry for entry in out.split("\0") if entry]
+    if (root / LOCK).exists() and not _lock_tracked(root):
+        entries.append(f"?? {LOCK}")  # ignored by the ignore file, but committed
+    return entries
 
 
 def record_or_warn(message: str, *, root: Path | None = None) -> str:
@@ -350,9 +369,12 @@ def launch_versions(cwd: str, *, root: Path | None = None,
     """What a launch records: the host's version (after versioning hand
     edits), and for a project with its own bottles, the project's commit and
     whether its `.bot-bottle/` has uncommitted changes. `host`: the library
-    commit a console launch names, recorded as is, the repo left alone."""
+    commit a console launch names, recorded as is, the repo left alone.
+    `builtins`: the installed bot-bottle whose built-ins it resolves, whatever
+    the account's version says (PRD 0131)."""
+    from ..engine import install_version  # pylint: disable=import-outside-toplevel
     root = root or bot_bottle_root()
-    out: dict[str, object] = {}
+    out: dict[str, object] = {"builtins": install_version()[0]}
     try:
         out["host"] = host or record_hand_edits(root=root)
     except VersionError as e:
@@ -370,7 +392,7 @@ def launch_versions(cwd: str, *, root: Path | None = None,
 
 
 __all__ = [
-    "AUTHOR_KEY", "SecretInManifestError", "TRACKED", "Version", "VersionError",
+    "AUTHOR_KEY", "LOCK", "SecretInManifestError", "TRACKED", "Version", "VersionError",
     "adopt_builtin_agents", "author_name", "committed_at", "git_env", "history",
     "is_dirty",
     "launch_versions", "pending_edits", "record", "record_hand_edits", "record_or_warn",

@@ -54,6 +54,19 @@ enforces:
   install: releases aren't signed. Signing them would strengthen both.
 - No automatic upgrades yet: a host setting can add them later.
 
+## Notes
+
+- **2026-11-14, several hosts at once (PRD 0131).** An account upgrade signs
+  several hosts' challenges with one passkey prompt: the passkey signs a
+  SHA-256 digest of all of them (with a fixed prefix), each host is given the
+  list, checks the signature is over that list's digest, and finds its own
+  outstanding challenge in it. Each challenge stays single use and bound on
+  its host to the session and the version, and each host still checks the
+  signature, so the limits above hold per host; a signature reaches only the
+  challenges the user's browser included. A single host is signed for as
+  before. Details: [host-controller.md: Several hosts, one passkey
+  prompt](../reference/host-controller.md#several-hosts-one-passkey-prompt).
+
 ## Links
 
 - ADR 0013 (passkey-signed audit reads), whose challenge and check this

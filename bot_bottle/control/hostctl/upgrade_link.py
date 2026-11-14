@@ -6,22 +6,31 @@ upgrade needs a passkey this host trusts (as audit reads do, ADR 0013), signed
 over a challenge bound to the version.
 
 - `upgrade_challenge` (`session`, `version`) -> `upgrade_challenge`
-  (`challenge`, `rp_id`, `credential_ids`, `expires_in`) or `error`: the
-  version must be a release (`X.Y.Z`) newer than this host's.
-- `upgrade` (`session`, `assertion`) -> `upgrade_started` (`version`) or
-  `error`: the host checks the signature (with user verification), checks
-  the release's tag exists, and runs that release's own `install.sh` in the
-  background, then `bot-bottle up --restart --yes`, which restarts the host
-  controller and adopts running bottles.
+  (`challenge`, `rp_id`, `credential_ids`, `expires_in`, `batch`) or `error`:
+  the version must be a release (`X.Y.Z`) newer than this host's. `batch: 1`
+  says this host takes a signature over several hosts' challenges.
+- `upgrade` (`session`, `assertion`, and `challenges` for a batch) ->
+  `upgrade_started` (`version`) or `error`: the host checks the signature
+  (with user verification), checks the release's tag exists, and runs that
+  release's own `install.sh` in the background, then `bot-bottle up --restart
+  --yes`, which restarts the host controller and adopts running bottles.
 - `upgrade_status` -> `upgrade_status` (`state`: none, running, done or
   failed; `version`, `started`, and the log's last lines when it failed).
 
 A host running bot-bottle from a source checkout refuses: upgrade it there.
+
+One passkey prompt upgrades several hosts (PRD 0131): the browser signs
+`batch_digest` of every host's challenge, and each host is given the list.
+A host checks the signature is over that list's digest and that one of its
+own outstanding challenges is in it, so a signature reaches only the
+challenges the user's browser included, and each still binds its host's
+session and version.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -53,6 +62,11 @@ _VERSION = re.compile(r"\d+\.\d+\.\d+", re.ASCII)
 # (a SPEC there would install something other than the release).
 _INSTALL_ENV = ("BOT_BOTTLE_INSTALL_SPEC", "BOT_BOTTLE_INSTALL_REF")
 _TAIL_LINES = 30
+# A batch's challenges: how many, and each as this host issues them (base64url).
+MAX_BATCH = 64
+_CHALLENGE = re.compile(r"[A-Za-z0-9_-]{16,128}", re.ASCII)
+# Keeps a batch's digest from ever being a single host's challenge.
+_BATCH_PREFIX = "bot-bottle upgrade batch v1\n"
 
 
 class UpgradeError(Exception):
@@ -82,6 +96,23 @@ def tag_exists(version: str, timeout: float = 10.0) -> bool:
             return resp.status == 200
     except urllib.error.HTTPError:
         return False
+
+
+def batch_digest(challenges: list[str]) -> str:
+    """What the passkey signs for a batch: SHA-256 of a fixed prefix and the
+    challenges sorted, one per line, base64url. The console's browser
+    computes the same (`passkey.js` `batchDigest`)."""
+    text = _BATCH_PREFIX + "\n".join(sorted(challenges))
+    return b64url_encode(hashlib.sha256(text.encode("utf-8")).digest())
+
+
+def _batch(raw: object) -> list[str]:
+    """A batch's challenge list, checked; UpgradeError if it's malformed."""
+    if (not isinstance(raw, list) or not 1 <= len(raw) <= MAX_BATCH
+            or not all(isinstance(c, str) and _CHALLENGE.fullmatch(c) for c in raw)
+            or len(set(raw)) != len(raw)):
+        raise UpgradeError("bad challenge list")
+    return [str(c) for c in raw]
 
 
 def _dir() -> Path:
@@ -205,15 +236,27 @@ class UpgradeLink:
             self._challenges[nonce] = (now + CHALLENGE_SECONDS, session, version)
         return {"challenge": nonce, "rp_id": trust.rp_id,
                 "credential_ids": [p.id for p in trust.passkeys],
-                "expires_in": int(CHALLENGE_SECONDS)}
+                "expires_in": int(CHALLENGE_SECONDS), "batch": 1}
 
-    def upgrade(self, session: str, assertion: dict[str, object]) -> dict[str, object]:
+    def upgrade(self, session: str, assertion: dict[str, object],
+                challenges: list[str] | None = None) -> dict[str, object]:
+        """Upgrade, given a signature over a challenge this host issued, or
+        over the digest of a batch (`challenges`) holding one."""
         response = assertion.get("response")
         client = response.get("clientDataJSON") if isinstance(response, dict) else None
         nonce = challenge_of(str(client or ""))
+        if challenges is not None:
+            signed = batch_digest(challenges)
+            if nonce != signed:
+                raise UpgradeError("that signature isn't over these challenges")
         now = self._clock()
         with self._lock:
-            issued = self._challenges.pop(nonce, None)  # single use, even if it fails below
+            if challenges is not None:
+                # Single use, even if it fails below; exactly one is this host's.
+                mine = [self._challenges.pop(c) for c in challenges if c in self._challenges]
+                issued = mine[0] if len(mine) == 1 else None
+            else:
+                issued = self._challenges.pop(nonce, None)  # single use, even if it fails below
         if issued is None or issued[0] <= now:
             raise UpgradeError("that challenge expired or was used; try again")
         if issued[1] != session:
@@ -255,8 +298,10 @@ class UpgradeLink:
                 assertion = msg.get("assertion")
                 if not isinstance(assertion, dict):
                     raise UpgradeError("no passkey assertion")
+                raw = msg.get("challenges")
+                batch = _batch(raw) if raw is not None else None
                 reply["type"] = "upgrade_started"
-                reply.update(await asyncio.to_thread(self.upgrade, session, assertion))
+                reply.update(await asyncio.to_thread(self.upgrade, session, assertion, batch))
             else:
                 reply.update(await asyncio.to_thread(status))
         except UpgradeError as e:
@@ -267,4 +312,5 @@ class UpgradeLink:
         await self._send(reply)
 
 
-__all__ = ["REPO", "UpgradeError", "UpgradeLink", "newer", "start", "status", "tag_exists"]
+__all__ = ["MAX_BATCH", "REPO", "UpgradeError", "UpgradeLink", "batch_digest", "newer", "start",
+           "status", "tag_exists"]

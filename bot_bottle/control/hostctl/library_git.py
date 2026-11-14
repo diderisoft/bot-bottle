@@ -12,6 +12,10 @@ config. Every fast-forward is a `library.updated` journal event. Before a
 push, the files it would bring to `main` must parse (`unparseable`), else
 it's held back.
 
+Once this host's branch is merged and its `main` is the library's, it may
+propose a release's changes to a copy of a built-in as its branch instead
+(`library_upstream.py`): pushed forced, as is its own next push over it.
+
 A console launch's commit is copied out of the repo (`tree_at`), so its
 working tree and `main` are untouched.
 """
@@ -36,15 +40,21 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from ...contract.hostctl import LIBRARY_COMMIT
-from ...manifest.versions import TRACKED, VersionError, git_env, writing
+from ...lib import log
+from ...manifest.versions import LOCK, TRACKED, VersionError, git_env, writing
 from ...paths import bot_bottle_root, private_dir
 from . import pairing
+from .builtins_cache import Builtins, installed_release
 from .library_held import HeldFile, unparseable
+from .library_upstream import Repo, UpstreamError, next_upstream
 
 TOKEN_PATH = "/api/v1/hosts/library-token"
 REMOTE_REF = "refs/remotes/library/main"
 # The commit this host last pushed: later ones are checked before a push.
 PUSHED_REF = "refs/library/pushed"
+# The release's merge into a copy this host last proposed (`library_upstream`),
+# while it's what the branch holds.
+UPSTREAM_REF = "refs/library/upstream"
 _TOKEN_SLACK = 60.0  # seconds before expiry a token is replaced
 # Where launches' commit copies are kept (under the root, outside the
 # tracked directories), and how many. One used within the grace period stays
@@ -212,7 +222,8 @@ class Synced:
     whether `main` moved here. `main`: the library's `main` it fetched.
     `stamp`: `head_stamp` once it had, so its own commits don't look like new
     ones. `held`: what it didn't push because it doesn't parse (None: not
-    checked), and `tell_held` whether the console should hear of it."""
+    checked), and `tell_held` whether the console should hear of it.
+    `replaced`: the push replaced a proposal this host's branch held."""
 
     pushed: str = ""
     moved: bool = False
@@ -220,6 +231,7 @@ class Synced:
     stamp: float = field(default=0.0, compare=False)
     held: tuple[HeldFile, ...] | None = field(default=None, compare=False)
     tell_held: bool = field(default=False, compare=False)
+    replaced: bool = field(default=False, compare=False)
 
 
 @dataclass
@@ -230,6 +242,10 @@ class LibrarySync:
     token_source: Callable[[], Token] = console_token
     audit: Callable[[], Any] = lambda: None
     root: Path = field(default_factory=bot_bottle_root)
+    installed: Callable[[], str] = installed_release
+    builtins: Builtins = field(default_factory=Builtins)
+    # Why copies of built-ins don't merge a release's changes yet.
+    upstream_notes: tuple[str, ...] = ()
     _token: Token | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -237,6 +253,10 @@ class LibrarySync:
         if self._token is None or self._token.expires - _TOKEN_SLACK <= time.time():
             self._token = self.token_source()
         return self._token
+
+    def repo(self) -> Repo:
+        """The repo, for `library_upstream`'s git."""
+        return Repo(self.root, git_env())
 
     def _git(self, *args: str, token: Token | None = None, check: bool = True,
              timeout: float | None = None) -> subprocess.CompletedProcess[str]:
@@ -293,27 +313,82 @@ class LibrarySync:
             try:
                 with writing(self.root) as local:
                     remote = self._rev(REMOTE_REF)
-                    if remote and remote != local and (not local or self.contains(remote, local)):
+                    moved = bool(remote) and remote != local and (
+                        not local or self.contains(remote, local))
+                    if moved:
                         self._fast_forward(local, remote)
-                        return Synced(moved=True, main=remote, stamp=head_stamp(self.root),
-                                      held=())
                     stamp = head_stamp(self.root)
             except VersionError as e:
                 raise LibraryError(str(e)) from e
+            if moved:  # a proposal, if any, once the versions lock is let go
+                return Synced(moved=True, main=remote, stamp=stamp, held=(),
+                              pushed=self._upstream(remote))
             if local and local != remote:
                 held = self.unparseable(local, remote)
                 if held:
                     return Synced(main=remote, stamp=stamp, held=held)
                 # The commit, not HEAD: one made since is the next sync's.
                 # Also while a conflict is pending: the console merges the
-                # branch whole once it's resolved.
-                _token, pushed = self._remote("push", "-q", token.url,
-                                              f"{local}:refs/heads/hosts/{self.host_id}")
+                # branch whole once it's resolved. Forced only over a
+                # proposal, which is recomputed from `main` once this merges.
+                proposal = self._rev(UPSTREAM_REF)
+                replaced = bool(proposal) and not self.contains(local, proposal)
+                _token, pushed = self._remote(
+                    "push", "-q", token.url,
+                    f"{'+' if replaced else ''}{local}:refs/heads/hosts/{self.host_id}")
                 if pushed.returncode != 0:
                     raise _failure("push", pushed.stderr or pushed.stdout)
                 self._git("update-ref", PUSHED_REF, local)
-                return Synced(pushed=local, main=remote, stamp=stamp, held=())
-            return Synced(main=remote, stamp=stamp, held=())
+                if proposal:
+                    self._git("update-ref", "-d", UPSTREAM_REF)
+                return Synced(pushed=local, main=remote, stamp=stamp, held=(), replaced=replaced)
+            return Synced(main=remote, stamp=stamp, held=(),
+                          pushed=self._upstream(remote) if remote else "")
+
+    def _upstream(self, main: str) -> str:
+        """Propose the next copy's merge of a release's built-in as this
+        host's branch, once `main` holds what the branch has: the commit
+        pushed, or "" for none."""
+        for ref in (UPSTREAM_REF, PUSHED_REF):
+            tip = self._rev(ref)
+            if tip and not self.contains(main, tip):
+                return ""  # this host's branch waits to merge first
+        try:
+            found = next_upstream(self.repo(), main, self.installed(), self.builtins)
+        except UpstreamError as e:
+            self._notes((f"couldn't merge a release's built-ins into copies: {e}",))
+            return ""
+        self._notes(found.notes)
+        if found.proposal is None:
+            return ""
+        sha = found.proposal.sha
+        try:
+            token = self._credential()
+            _token, pushed = self._remote("push", "-q", token.url,
+                                          f"+{sha}:refs/heads/hosts/{self.host_id}")
+            if pushed.returncode != 0:
+                raise _failure("push", pushed.stderr or pushed.stdout)
+        except LibraryError as e:  # a library app that takes no forced push, say
+            self._notes((*found.notes, f"{found.proposal.path}: couldn't propose bot-bottle "
+                         f"{found.proposal.version}'s changes to it ({e})"))
+            return ""
+        self._git("update-ref", UPSTREAM_REF, sha)
+        log.info(f"library: proposed bot-bottle {found.proposal.version}'s changes to "
+                 f"{found.proposal.path} ({sha[:12]})")
+        return sha
+
+    def _notes(self, notes: tuple[str, ...]) -> None:
+        if notes != self.upstream_notes:
+            for note in notes:
+                log.warn(f"library: {note}")
+        self.upstream_notes = notes
+
+    def branch_tip(self) -> str:
+        """What this host's branch holds as last pushed: a proposal, or its
+        `main` ("" for none)."""
+        if not (self.root / ".git").is_dir():
+            return ""
+        return self._rev(UPSTREAM_REF) or self._rev("HEAD")
 
     def unparseable(self, local: str, remote: str) -> tuple[HeldFile, ...]:
         """The bottle and agent files a push of `local` would bring to `main`
@@ -399,12 +474,13 @@ class LibrarySync:
         submodules, and nothing outside it."""
         staging = Path(tempfile.mkdtemp(dir=trees, prefix=".new-"))
         try:
-            listed = self._git("ls-tree", "-r", "-z", sha, "--", *TRACKED).stdout
+            listed = self._git("ls-tree", "-r", "-z", sha, "--", *TRACKED, LOCK).stdout
             for entry in listed.split("\0"):
                 meta, _, rel = entry.partition("\t")
                 mode, kind, oid = (meta.split(" ") + ["", "", ""])[:3]
                 parts = rel.split("/")
-                if mode not in _TREE_MODES or kind != "blob" or parts[0] not in TRACKED \
+                if mode not in _TREE_MODES or kind != "blob" or (
+                        parts[0] not in TRACKED and parts != [LOCK]) \
                         or any(p in ("", ".", "..") or p.lower() == ".git" for p in parts):
                     continue
                 target = staging.joinpath(*parts)
@@ -442,11 +518,12 @@ class LibrarySync:
     def _journal(self, old: str, new: str) -> None:
         if old:
             listed = self._git("diff", "--no-renames", "--name-status", "-z", old, new,
-                               "--", *TRACKED).stdout.split("\0")
+                               "--", *TRACKED, LOCK).stdout.split("\0")
             changes = list(zip(listed[0::2], listed[1::2]))
         else:
             changes = [("A", path) for path in self._git(
-                "ls-tree", "-r", "-z", "--name-only", new, "--", *TRACKED).stdout.split("\0")
+                "ls-tree", "-r", "-z", "--name-only", new, "--", *TRACKED,
+                LOCK).stdout.split("\0")
                        if path]
         span = f"{old}..{new}" if old else new
         authors = sorted(set(self._git("log", "--format=%an", span).stdout.splitlines()))
@@ -476,4 +553,4 @@ def _prune(trees: Path, *, keep: Path) -> None:
 
 __all__ = ["KEEP_TREES", "LibraryError", "LibrarySync", "NETWORK_SECONDS", "PUSHED_REF",
            "REMOTE_REF", "Synced", "TOKEN_PATH", "TREES_DIR", "TREE_GRACE_SECONDS", "Token",
-           "console_token", "head_stamp"]
+           "UPSTREAM_REF", "console_token", "head_stamp"]

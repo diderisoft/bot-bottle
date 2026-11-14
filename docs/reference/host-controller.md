@@ -958,7 +958,8 @@ by a passkey this host trusts ([ADR 0022](../decisions/0022-console-upgrades-hos
 `upgrade_link.py`).
 
 - `upgrade_challenge` (`session`, `version`) -> `upgrade_challenge`
-  (`challenge`, `rp_id`, `credential_ids`, `expires_in`) or `error`. The
+  (`challenge`, `rp_id`, `credential_ids`, `expires_in`, `batch: 1`) or
+  `error`. The
   version must be a release (`X.Y.Z`) newer than this host's, which must be
   known. The challenge is
   single use, lasts two minutes, and is bound to the session and the version.
@@ -970,7 +971,8 @@ by a passkey this host trusts ([ADR 0022](../decisions/0022-console-upgrades-hos
   `install.sh` and runs it in its own session, with
   `BOT_BOTTLE_INSTALL_REF=v<version>` and no `BOT_BOTTLE_INSTALL_SPEC`,
   whatever this process's environment holds, followed by `bot-bottle up
-  --restart --yes`.
+  --restart --yes`. With `challenges`, it's one of several hosts signed for
+  at once ([below](#several-hosts-one-passkey-prompt)).
 - `upgrade_status` -> `upgrade_status` (`state`: `none`, `running`, `done` or
   `failed`; `version`, `started`; the log's last lines when it failed).
 
@@ -981,6 +983,36 @@ does. Each upgrade, and each
 refused signature, is journalled as `hostctl.upgrade`, with the passkey as
 its actor. A host running from a source checkout refuses, as does one that
 trusts no passkey yet (`bot-bottle audit passkeys --trust`).
+
+#### Several hosts, one passkey prompt
+
+An account upgrade (PRD 0131) upgrades several hosts with one passkey prompt.
+`batch: 1` in a host's `upgrade_challenge` reply says it takes this; the
+console signs one at a time for a host without it. The browser signs, in
+place of a single challenge,
+
+```
+d = base64url( SHA-256( "bot-bottle upgrade batch v1\n" + "\n".join(sorted(challenges)) ) )
+```
+
+over every host's challenge (as issued, sorted by code point, no trailing
+newline), and the console sends each host `upgrade` with the list as
+`challenges`. The host:
+
+1. refuses a list that isn't 1 to 64 distinct base64url strings of 16 to 128
+   characters (`bad challenge list`);
+2. checks the assertion's challenge is `d` for that list (`that signature
+   isn't over these challenges`);
+3. finds its own outstanding challenge in the list: exactly one, which is
+   spent even if a later check fails, issued to the same session; the
+   version is the one bound to it;
+4. verifies the signature over `d` as for a single challenge, then carries
+   on as above.
+
+So a signature reaches only challenges the user's browser included, each
+still single use and bound on its own host to the session and version, and
+each host checks the signature itself. The prefix keeps a batch's digest from
+ever being a single challenge. Each host keeps its own sign count.
 
 ## Console link protocol
 
@@ -1000,6 +1032,7 @@ An arrow shows a request and its reply.
 | `put_workspace_file`, `upload_*` | [Uploading files to a running agent](#uploading-files-to-a-running-agent) |
 | `rename` -> `renamed` | [Renaming a bottled agent](#renaming-a-bottled-agent) |
 | `library_sync`, `library_moved`, `library_conflict`, `library_pushed`, `library_held` | [Library sync](#library-sync) |
+| `library_builtins` | [The account's version](#the-accounts-version) |
 | `github_authorize_start`, `github_status` | [GitHub through the bot-bottle app](#github-through-the-bot-bottle-app) |
 | `forge_status`, `forge_repos`, `forge_remove` | [Forges for the console](#forges-for-the-console) |
 | `bottle_suggest`, `bottle_suggest_status`, `bottle_suggestion_*` | [Bottle suggestions from the console](#bottle-suggestions-from-the-console) |
@@ -1166,6 +1199,70 @@ push) clears it too, as does `library_sync` with `enabled` false.
 (`{"files": [{"path", "error"}], "since"}`), instead of the sync line:
 `library: dev doesn't parse; not synced (bottles/dev.md: yaml-subset:
 unterminated ...)`, after the conflict's line if one is pending too.
+
+### The account's version
+
+`bot-bottle.lock`, at the library's root, names the account's bot-bottle
+release (PRD 0131): `version = "0.1.17"` on one line. Only the console writes
+it, after an account upgrade. A host tracks it (it's committed past the
+library's ignore file, `git add -f`, so hand edits of it sync like any) and
+never writes it. Launches don't read it: a host launches on its own installed
+built-ins, and the start event's `bottle_versions.builtins` records which
+release that was.
+
+- **`library_builtins`**, from the host on each connect: the installed
+  release's built-ins, packaged, whether or not their harness is ready here,
+  so the console can list them and say what a release changed in them. Not
+  sent from a source checkout or an unknown version, and kept within what the
+  console takes (32 files, 64 KiB each).
+
+  ```json
+  {"type": "library_builtins", "version": "0.1.17",
+   "files": {"bottles/basic.md": "...", "agents/claude.md": "...", "agents/codex.md": "..."}}
+  ```
+
+- **Behind:** a host on a release older than the lock's says so in `bot-bottle
+  status` (`library: this host is behind the account's bot-bottle 0.1.17; ...`,
+  from `link.library.behind`).
+- **Copies of built-ins** carry `copied_from: <name>@<X.Y.Z>` as their
+  frontmatter's first line (the console's Copy to library writes it). The key
+  is accepted in bottles and agents and means nothing at launch.
+
+#### A release's changes reaching a copy
+
+When a sync leaves this host's `main` at the library's, and the lock there
+names exactly the release this host runs, the host looks at each copy whose
+marker names an older release V. For the first that can merge, it builds a
+commit U, without the working tree, and pushes it as its branch, forced:
+
+- **K**, U's parent: the newest commit in `main`'s history whose copy is
+  exactly the built-in at V with the marker (where Copy made it). None: the
+  copy wasn't made by Copy, and is left alone.
+- U's tree: K's, with the copy as the built-in at the lock's release, marked
+  with it. Author and committer `bot-bottle <release> <bot-bottle@localhost>`,
+  both dated as K was committed, message `bot-bottle 0.1.17: bottle basic`.
+  Every host on the release builds the same U.
+
+The console merges U like any host branch, three-way with base K: the
+release's changes and the copy's own combine, and the marker moves on. An
+overlap is a conflict, resolved in the console; its resolution contains U, so
+it clears here as any conflict does.
+
+- **One at a time,** and only while `main` holds this host's branch (its own
+  pushes and any earlier U merged, no conflict pending). A U `main` already
+  holds isn't proposed again, so a conflict resolved as the library's version
+  stays resolved.
+- **The host's own work comes first:** its next push replaces a U on its
+  branch (forced, the one case a host's own push is), which clears a conflict
+  pending on the U; the U is proposed again, the same commit, once that's
+  merged. The host's `main` never moves to a U.
+- **The built-in at V** is the installed package's when V is installed, else
+  from `~/.bot-bottle/builtins/<V>/` (the host controller keeps each release
+  it runs there, on start), else fetched from the release's tag on GitHub
+  (`raw.githubusercontent.com/diderisoft/bot-bottle/v<V>/...`, where releases
+  are published) and kept. If neither works, the copy waits for the next
+  sync, and `bot-bottle status` says why (`link.library.upstream`), as it
+  does for a copy no commit holds as made.
 
 ### Launching at a library commit
 

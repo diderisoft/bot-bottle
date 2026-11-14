@@ -38,8 +38,8 @@ The control stream (JSON lines):
 - `metrics_watch` (`bottles`) -> `bottle_metrics` every 3 s for those running (`live_metrics`).
 - `snapshot` -> `snapshot_taken`: workspace patch and conversation position (`snapshots`).
 - `transcript`, `transcript_search`, `transcript_appended`, `agent_working` (`transcript_serve`).
-- `library_sync`, `library_moved`, `library_conflict`, `library_pushed`, `library_held`
-  (`library_link`).
+- `library_sync`, `library_moved`, `library_conflict`, `library_pushed`, `library_held`,
+  `library_builtins` (`library_link`).
 
 Pairing on disk is `pairing.py`; `iroh` (`bot-bottle[remote]`) is imported only when needed.
 """
@@ -499,8 +499,8 @@ class ConsoleLink:
 
     async def resume(self) -> None:
         """A (re)connected console: report agents that exited, reopen running
-        ones' relays, present the sessions it didn't launch, and send
-        `agents_running` so the console can stop the rest."""
+        ones' relays, present the sessions it didn't launch, send
+        `agents_running` so the console can stop the rest, and the built-ins."""
         await self.reap()
         for agent_id in list(self.running):
             await self._live_terminal(agent_id)
@@ -510,6 +510,7 @@ class ConsoleLink:
         await self.discover()
         await self._send({"type": "agents_running", "agent_ids": sorted(self.running)})
         await self.push_host_stats()
+        await self.library.connected()
 
     async def discover(self) -> None:
         """Present each running session the console didn't launch (#717): the

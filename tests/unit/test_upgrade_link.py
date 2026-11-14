@@ -25,7 +25,7 @@ class Versions(_Tmp):
             self.assertFalse(newer(target, "0.1.14"), target)
 
 
-class Upgrades(_Tmp):
+class _Linked(_Tmp):
     def setUp(self) -> None:
         super().setUp()
         self.now = 1000.0
@@ -55,6 +55,8 @@ class Upgrades(_Tmp):
         ch = self.link.challenge(session, version)
         return self.pk.assertion(str(ch["challenge"]))
 
+
+class Upgrades(_Linked):
     def test_a_signed_upgrade_starts_the_release_and_is_journalled(self) -> None:
         self.assertEqual({"version": "0.1.15"}, self.link.upgrade("s1", self._signed()))
         self.assertEqual(["0.1.15"], self.started)
@@ -144,6 +146,72 @@ class Upgrades(_Tmp):
         self.assertEqual("no passkey assertion", self.sent[-1]["error"])
         asyncio.run(self.link.handle({"type": "upgrade_status", "request_id": "r4"}))
         self.assertEqual("none", self.sent[-1]["state"])
+
+
+class Batch(_Linked):
+    """One passkey prompt for several hosts (PRD 0131): the passkey signs a
+    digest of every host's challenge; each host finds its own in the list."""
+
+    OTHERS = ["zz_Q-abcdefghijklmnop", "Aa0-abcdefghijklmnopq"]
+
+    def test_the_digest_matches_the_consoles(self) -> None:
+        self.assertEqual("iL7yMrWgunkKEFbb2sF3r0ixxsV7f_ABLy97KkIhQJ0", upgrade_link.batch_digest(
+            ["zz_Q-abcdefghijklmnop", "Aa0-abcdefghijklmnopq", "m_x-abcdefghijklmnop"]))
+        # A single challenge's digest is never that challenge.
+        self.assertNotEqual("m_x-abcdefghijklmnop",
+                            upgrade_link.batch_digest(["m_x-abcdefghijklmnop"]))
+
+    def _batch(self, session: str = "s1") -> tuple[list[str], dict[str, Any]]:
+        ch = self.link.challenge(session, "0.1.15")
+        assert ch["batch"] == 1
+        challenges = [*self.OTHERS, str(ch["challenge"])]
+        return challenges, self.pk.assertion(upgrade_link.batch_digest(challenges))
+
+    def test_a_batch_holding_this_hosts_challenge_upgrades(self) -> None:
+        challenges, signed = self._batch()
+        self.assertEqual({"version": "0.1.15"}, self.link.upgrade("s1", signed, challenges))
+        self.assertEqual(["0.1.15"], self.started)
+        self.audit.host_upgrade.assert_called_once_with(
+            version="0.1.15", current="0.1.14", credential_id=self.pk.id, error="")
+        with self.assertRaisesRegex(UpgradeError, "expired or was used"):
+            self.link.upgrade("s1", signed, challenges)  # single use
+
+    def test_the_signature_must_be_over_the_list_given(self) -> None:
+        challenges, signed = self._batch()
+        with self.assertRaisesRegex(UpgradeError, "isn't over these challenges"):
+            self.link.upgrade("s1", signed, challenges[1:])
+        with self.assertRaisesRegex(UpgradeError, "isn't over these challenges"):
+            self.link.upgrade("s1", signed, [*challenges, "Bb0-abcdefghijklmnopq"])
+        self.assertEqual({"version": "0.1.15"}, self.link.upgrade("s1", signed, challenges))
+
+    def test_a_batch_without_this_hosts_challenge_is_refused(self) -> None:
+        self.link.challenge("s1", "0.1.15")
+        signed = self.pk.assertion(upgrade_link.batch_digest(self.OTHERS))
+        with self.assertRaisesRegex(UpgradeError, "expired or was used"):
+            self.link.upgrade("s1", signed, self.OTHERS)
+        challenges, signed = self._batch(session="s2")
+        with self.assertRaisesRegex(UpgradeError, "another session"):
+            self.link.upgrade("s1", signed, challenges)
+        self.assertEqual([], self.started)
+
+    def test_a_forged_batch_signature_is_refused(self) -> None:
+        challenges, _ = self._batch()
+        forged = self.pk.assertion(upgrade_link.batch_digest(challenges), tamper=True)
+        with self.assertRaises(UpgradeError):
+            self.link.upgrade("s1", forged, challenges)
+        self.assertEqual([], self.started)
+
+    def test_the_link_checks_the_list(self) -> None:
+        challenges, signed = self._batch()
+        for bad in ([], "x", [1], ["short"], ["a" * 129], [challenges[0]] * 2,
+                    [f"{i:04d}-abcdefghijklmnop" for i in range(upgrade_link.MAX_BATCH + 1)]):
+            asyncio.run(self.link.handle({"type": "upgrade", "request_id": "r", "session": "s1",
+                                          "assertion": signed, "challenges": bad}))
+            self.assertEqual("bad challenge list", self.sent[-1]["error"], bad)
+        asyncio.run(self.link.handle({"type": "upgrade", "request_id": "r", "session": "s1",
+                                      "assertion": signed, "challenges": challenges}))
+        self.assertEqual({"type": "upgrade_started", "request_id": "r", "version": "0.1.15"},
+                         self.sent[-1])
 
 
 class Running(_Tmp):

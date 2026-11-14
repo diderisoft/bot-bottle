@@ -171,6 +171,11 @@ uses the repo's `./main` bottle when it has one, else `basic`.
 An agent file that still has `bottle:` fails to load. The error says to remove
 the line and pick the bottle at launch.
 
+A bottle or agent copied from a built-in by the console's Copy to library
+starts with `copied_from: <name>@<release>`. It's ignored at launch; when the
+account's bot-bottle version moves, that release's changes to the built-in
+merge into the copy ([host-controller.md](host-controller.md#a-releases-changes-reaching-a-copy)).
+
 | Field | Does |
 |---|---|
 | `agent_provider.harness` | `claude`, `codex` or `pi` ([images](#images)) |

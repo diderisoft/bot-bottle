@@ -26,7 +26,7 @@ from .runner import (
     DaemonLockHeld, HostControlState, control_socket_path, hold_daemon_lock,
     leave_callers_directory, state_dir,
 )
-from . import budget, host_db, index_db, localsock
+from . import budget, builtins_cache, host_db, index_db, localsock
 from .github_git_tokens import GitTokenRenewer
 from .audit_events import HostAudit
 from .architect_bottle import ArchitectBottle, install as install_architect
@@ -141,6 +141,9 @@ def main() -> int:
     # Code shared with the CLI uses the stores here, not this API.
     host_access.use_stores()
     adopt_builtin_starters()
+    # This release's built-ins, kept for merging the next release's changes
+    # into copies of them once this one is the old one (PRD 0131).
+    builtins_cache.fill()
     backups = host_db.DailyBackups().start()
     port = int(os.environ.get(PORT_ENV, "0") or "0")
     sessions = SessionManager({})

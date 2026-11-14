@@ -22,6 +22,7 @@ from typing import Any
 from unittest import mock
 
 from bot_bottle.control.hostctl import library_git as lg, library_link as ll
+from bot_bottle.control.hostctl import library_upstream as lu
 from bot_bottle.manifest import versions
 from bot_bottle.control.hostctl.library_conflict import LibraryConflictStore
 from bot_bottle.manifest.versions import record
@@ -268,8 +269,16 @@ class _FakeSync:
             raise self.error
         return self.results[min(self.calls, len(self.results)) - 1]
 
+    upstream_notes: tuple[str, ...] = ()
+
+    def repo(self) -> lu.Repo:
+        return lu.Repo(Path("/nonexistent"), {})
+
     def heads(self) -> tuple[str, str]:
         return "tip", ""
+
+    def branch_tip(self) -> str:
+        return "tip"
 
     def contains(self, newer: str, older: str) -> bool:
         return newer == older
@@ -319,8 +328,27 @@ class Link(unittest.IsolatedAsyncioTestCase):
     async def test_a_conflict_is_kept_until_main_moves_here(self) -> None:
         await self.link.handle({"type": "library_conflict", "files": ["bottles/dev.md"]})
         self.assertEqual(["bottles/dev.md"], self.link.conflict)
-        self.fake.results = [ll.Synced(moved=True)]
+        self.fake.results = [ll.Synced(moved=True, main="tip")]
         self.link.enabled = True
+        self.link.sync_now()
+        self.assertEqual([], self.link.conflict)
+
+    async def test_a_conflicting_proposal_is_kept_until_merged_or_replaced(self) -> None:
+        # The branch holds a proposal (PRD 0131): `main` moving here doesn't
+        # resolve it; `main` holding it, or this host's own push over it, does.
+        self.fake.branch_tip = lambda: "proposal"  # type: ignore[method-assign]
+        await self.link.handle({"type": "library_conflict", "files": ["bottles/basic.md"]})
+        self.link.enabled = True
+        self.fake.results = [ll.Synced(moved=True, main="other")]
+        self.link.sync_now()
+        self.assertEqual(["bottles/basic.md"], self.link.conflict)
+        self.fake.results = [ll.Synced(main="proposal")]
+        self.fake.calls = 0
+        self.link.sync_now()
+        self.assertEqual([], self.link.conflict)
+        await self.link.handle({"type": "library_conflict", "files": ["bottles/basic.md"]})
+        self.fake.results = [ll.Synced(pushed="mine", main="other", replaced=True)]
+        self.fake.calls = 0
         self.link.sync_now()
         self.assertEqual([], self.link.conflict)
 

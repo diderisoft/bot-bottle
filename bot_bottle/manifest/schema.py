@@ -11,12 +11,15 @@ _FILENAME_RX = re.compile(r"^[a-z][a-z0-9-]*$")
 
 
 # Accepted frontmatter keys; anything else dies with a "did you mean".
+# A copy of a built-in names the release it came from (PRD 0131,
+# `account_version.py`): accepted in bottles and agents, and ignored at launch.
+COPIED_FROM_KEY = "copied_from"
 BOTTLE_KEYS = frozenset(
     {
         # `git-gate` is the old spelling, refused with the new one.
         "env", "extends", "agent_provider", "git_gate", "git-gate", "egress",
         "supervise", "nested_containers", "preserve_container", "audit", "credentials",
-        "resources",
+        "resources", COPIED_FROM_KEY,
     }
 )
 AGENT_KEYS_REQUIRED: frozenset[str] = frozenset()
@@ -35,6 +38,7 @@ CLAUDE_CODE_AGENT_PASSTHROUGH_KEYS = frozenset({
 })
 AGENT_KEYS = (
     AGENT_KEYS_REQUIRED | AGENT_KEYS_OPTIONAL | CLAUDE_CODE_AGENT_PASSTHROUGH_KEYS
+    | {COPIED_FROM_KEY}
 )
 AGENT_MODEL_KEYS = AGENT_KEYS | frozenset({"prompt"})
 

@@ -14,6 +14,14 @@ account's repo in the console's library app, while the console says so.
   doesn't push (`library_held.py`, in the host DB); `files: []` once they
   parse and it pushed. Sent when that changes, and on each connect's first
   sync.
+- `library_builtins` (`version`, `files`, from the host): on each connect,
+  the installed release's built-ins, so the console can list them and say
+  what an upgrade changed in them. Not sent from a source checkout.
+
+The account's version is `bot-bottle.lock` in the library, which only the
+console writes; launches don't read it. When it names the release this host
+runs, the host proposes that release's changes to copies of built-ins
+(`library_upstream.py`).
 
 While the library syncs, hand edits are committed once quiet
 (`library_watch.py`), and the repo's commits are authored as the label this
@@ -49,13 +57,16 @@ from ... import run_bottle
 from ...contract.hostctl import LaunchRequest
 from ...lib import log
 from ...manifest import parse_check
+from ...manifest.account_version import packaged_files, release_key
 from ...manifest.versions import VersionError, launch_versions, set_author
 from ...paths import bot_bottle_root, host_db_path
 from . import pairing
+from .builtins_cache import installed_release
 from .library_conflict import Conflict, LibraryConflictStore
 from .library_git import (KEEP_TREES, PUSHED_REF, TREES_DIR, LibraryError, LibrarySync, Synced,
                           Token, console_token, head_stamp)
 from .library_held import Held, LibraryHeldStore
+from .library_upstream import Repo, account_version
 from .library_watch import HandEditWatch
 
 if TYPE_CHECKING:
@@ -72,6 +83,10 @@ RETRY_SECONDS = (30.0, 600.0, 3600.0)
 _LIBRARY_ITEM = re.compile(r"(agents|bottles)/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md")
 _CONFLICT_FILES = 50
 _CONFLICT_PATH = 300
+# What the console keeps of `library_builtins`.
+MAX_BUILTINS = 32
+MAX_BUILTIN_BYTES = 64 * 1024
+_BUILTIN_PATH = re.compile(r"(agents|bottles)/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md", re.ASCII)
 
 
 class _Attempt:
@@ -183,11 +198,37 @@ def report() -> dict[str, object]:
     if link is None or not link.enabled:
         return {"state": "off", **failing}
     try:
-        head, main = link.syncer().heads()
+        sync = link.syncer()
+        head, main = sync.heads()
+        if sync.upstream_notes:
+            failing["upstream"] = list(sync.upstream_notes)
+        failing.update(_behind(sync.repo(), main))
     except (pairing.RemoteError, OSError):
         head, main = "", ""
     return {"state": "synced" if head and head == main else "syncing",
             "head": head, "main": main, **failing}
+
+
+def _behind(repo: Repo, main: str) -> dict[str, object]:
+    """`behind`: the account's version, when this host runs an older
+    release (it launches on its own built-ins meanwhile)."""
+    installed = installed_release()
+    version = account_version(repo, main) if main and installed else ""
+    return {"behind": version} if version and release_key(installed) < release_key(
+        version) else {}
+
+
+def builtins_message() -> dict[str, object] | None:
+    """`library_builtins` for the installed release, within what the console
+    keeps (it drops a larger message whole); None for a source checkout or
+    an unknown version."""
+    version = installed_release()
+    if not version:
+        return None
+    files = {rel: text for rel, text in packaged_files().items()
+             if _BUILTIN_PATH.fullmatch(rel) and len(text.encode()) <= MAX_BUILTIN_BYTES}
+    return {"type": "library_builtins", "version": version,
+            "files": dict(sorted(files.items())[:MAX_BUILTINS])}
 
 
 def _launch_sync() -> LibrarySync:
@@ -305,6 +346,12 @@ class LibraryLink:
         elif kind == "library_conflict":
             await asyncio.to_thread(self._record_conflict, conflict_files(msg.get("files")))
 
+    async def connected(self) -> None:
+        """A (re)connected console hears this host's built-ins."""
+        message = await asyncio.to_thread(builtins_message)
+        if message is not None:
+            await self._send(message)
+
     def _off(self) -> None:
         self.conflicts().clear()
         self.held_store().clear()
@@ -331,7 +378,7 @@ class LibraryLink:
         already contains it: the message is older than that fetch."""
         try:
             sync = self.syncer()
-            tip, main = sync.heads()
+            tip, main = sync.branch_tip(), sync.heads()[1]
             if tip and main and sync.contains(main, tip):
                 return
         except (pairing.RemoteError, OSError):
@@ -401,7 +448,8 @@ class LibraryLink:
     def sync_now(self) -> Synced:
         """One sync, from any thread. A failure is logged once (until it
         changes) and sets when the next try is due. A pending conflict clears
-        once the fetched `main` contains the commit this host had then."""
+        once the fetched `main` contains the commit this host's branch had
+        then, or this host's own work replaced a proposal that conflicted."""
         sync = self.syncer()
         try:
             synced = sync.sync()
@@ -413,8 +461,9 @@ class LibraryLink:
         self.error, self._backoff, self.retry_at = "", 0.0, 0.0
         try:
             pending = self.conflicts().pending()
-            if pending is not None and (synced.moved or (
-                    synced.main and pending.tip and sync.contains(synced.main, pending.tip))):
+            if pending is not None and (synced.replaced or (
+                    bool(synced.main) and sync.contains(synced.main, pending.tip)
+                    if pending.tip else synced.moved)):
                 self.conflicts().clear()
                 log.info("library: the conflict was resolved in the console")
         except (OSError, sqlite3.Error) as e:
@@ -496,7 +545,7 @@ class LibraryLink:
 
 
 __all__ = ["KEEP_TREES", "LAUNCH_SYNC_SECONDS", "LibraryError", "LibraryLink", "LibrarySync",
-           "PUSHED_REF", "RETRY_SECONDS", "Synced", "TREES_DIR", "Token", "commit_tree",
-           "conflict_files", "conflict_note", "console_token", "head_stamp", "label",
-           "launch_index", "on_host", "pending_conflict", "pending_held", "report",
-           "sync_for_launch"]
+           "MAX_BUILTINS", "MAX_BUILTIN_BYTES", "PUSHED_REF", "RETRY_SECONDS", "Synced",
+           "TREES_DIR", "Token", "builtins_message", "commit_tree", "conflict_files",
+           "conflict_note", "console_token", "head_stamp", "label", "launch_index", "on_host",
+           "pending_conflict", "pending_held", "report", "sync_for_launch"]

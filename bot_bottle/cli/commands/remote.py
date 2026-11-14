@@ -169,12 +169,21 @@ def library_line(library: dict[str, Any]) -> str:
     """The library's line (PRD 0131): off, in sync, syncing, or a conflict
     waiting in the console, with a failing sync and when it's tried again;
     or what's held back because it doesn't parse, after a conflict's line if
-    there's one."""
+    there's one. Then any about the account's version."""
     held = _held_line(library.get("held"))
-    if not held:
-        return _library_state(library)
-    return (f"{_library_state(library)}\n{held}" if library.get("state") == "conflict"
-            else held)
+    first = _library_state(library) if not held else (
+        f"{_library_state(library)}\n{held}" if library.get("state") == "conflict" else held)
+    return "\n".join([first, *_version_lines(library)])
+
+
+def _version_lines(library: dict[str, Any]) -> list[str]:
+    """The account's version (PRD 0131): this host behind it, and copies of
+    built-ins that can't merge a release's changes yet."""
+    behind = library.get("behind")
+    lines = [f"library: this host is behind the account's bot-bottle {behind}; it launches "
+             f"on its own built-ins until it's upgraded"] if behind else []
+    return lines + [f"library: {note}" for note in library.get("upstream") or ()
+                    if isinstance(note, str)]
 
 
 def _library_state(library: dict[str, Any]) -> str:

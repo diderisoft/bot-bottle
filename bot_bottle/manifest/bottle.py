@@ -17,7 +17,7 @@ from .git import (
     ManifestGitEntry, ManifestGitUser, parse_git_gate_actions, parse_git_gate_config,
     parse_git_gate_protect_default_branch, parse_git_gate_trailers,
 )
-from .schema import BOTTLE_KEYS
+from .schema import BOTTLE_KEYS, COPIED_FROM_KEY
 
 __all__ = ["ManifestBottle"]
 
@@ -125,6 +125,8 @@ class ManifestBottle:
     @classmethod
     def from_dict(cls, name: str, raw: object) -> "ManifestBottle":
         d = as_json_object(raw, f"bottle '{name}'")
+        # Where a copy came from is the library's business, not the bottle's.
+        d = {k: v for k, v in d.items() if k != COPIED_FROM_KEY}
 
         if "runtime" in d:
             raise ManifestError(

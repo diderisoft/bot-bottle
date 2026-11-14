@@ -17,6 +17,7 @@ from unittest import mock
 from bot_bottle import run_manifest
 from bot_bottle.contract.auth import ROLE_CLI
 from bot_bottle.contract.hostctl import LaunchRequest
+from bot_bottle.engine import install_version
 from bot_bottle.control.hostctl import library_git as lg, library_link as ll
 from bot_bottle.control.hostctl import pairing
 from bot_bottle.control.hostctl.remote_requests import agent_allowed, library_commit
@@ -365,7 +366,7 @@ class Versions(unittest.TestCase):
         root = Path(self.enterContext(tempfile.TemporaryDirectory())) / ".bot-bottle"  # pylint: disable=consider-using-with
         (root / "bottles").mkdir(parents=True)
         (root / "bottles/a.md").write_text("a\n")
-        self.assertEqual({"host": "c" * 40},
+        self.assertEqual({"host": "c" * 40, "builtins": install_version()[0]},
                          launch_versions(str(root.parent), root=root, host="c" * 40))
         self.assertFalse((root / ".git").exists())
 

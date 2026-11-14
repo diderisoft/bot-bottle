@@ -175,7 +175,8 @@ class TestProjectBottles(_Root):
         self.assertTrue(launch_versions(str(self.project), root=self.root)["project_dirty"])
 
     def test_launch_without_a_project(self) -> None:
-        self.assertEqual({"host"}, set(launch_versions(str(self.root.parent), root=self.root)))
+        self.assertEqual({"host", "builtins"},
+                         set(launch_versions(str(self.root.parent), root=self.root)))
 
     def test_launch_survives_a_refused_commit(self) -> None:
         versions_record = versions.record
