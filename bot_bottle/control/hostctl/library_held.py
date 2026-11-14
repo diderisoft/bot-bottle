@@ -20,8 +20,10 @@ from ...lib.db_store import MACHINE_SPECIFIC, DbStore
 from ...lib.migrations import TableMigrations
 from ...manifest import parse_check
 
-# The longest error kept for a file: the console shows it on one line.
+# The longest error kept for a file: the console shows it on one line. And
+# the most files named (the console keeps as many): more are held all the same.
 MAX_ERROR = 300
+MAX_FILES = 50
 
 
 @dataclass(frozen=True)
@@ -39,20 +41,29 @@ class Held:
     since: float  # time.time() when the hold began
 
 
-def unparseable(paths: list[str], read: Callable[[str], str | None]) -> tuple[HeldFile, ...]:
+def _shown(text: str) -> str:
+    """`text` safe to print: control characters escaped."""
+    return text if text.isprintable() else text.encode("unicode_escape").decode("ascii")
+
+
+def unparseable(paths: list[str], read: Callable[[str], bytes | None]) -> tuple[HeldFile, ...]:
     """The bottle and agent files among `paths` that don't parse, as `read`
-    gives them (None: deleted, which is fine)."""
+    gives them (None: deleted, which is fine), with one-line printable
+    errors; the first `MAX_FILES` named if there are more."""
     held = []
     for rel in sorted(set(paths)):
         if not parse_check.checked(rel):
             continue
-        text = read(rel)
-        error = parse_check.problem(rel, text) if text is not None else ""
+        data = read(rel)
+        try:
+            error = parse_check.problem(rel, data.decode()) if data is not None else ""
+        except UnicodeDecodeError:
+            error = "not UTF-8 text"
         if error:
-            short = " ".join(error.split())
-            held.append(HeldFile(rel, short if len(short) <= MAX_ERROR
+            short = _shown(" ".join(error.split()))
+            held.append(HeldFile(_shown(rel), short if len(short) <= MAX_ERROR
                                  else short[:MAX_ERROR - 1] + "…"))
-    return tuple(held)
+    return tuple(held[:MAX_FILES])
 
 
 class LibraryHeldStore(DbStore):
@@ -104,4 +115,4 @@ class LibraryHeldStore(DbStore):
         return cleared
 
 
-__all__ = ["Held", "HeldFile", "LibraryHeldStore", "MAX_ERROR", "unparseable"]
+__all__ = ["Held", "HeldFile", "LibraryHeldStore", "MAX_ERROR", "MAX_FILES", "unparseable"]

@@ -9,7 +9,7 @@ token from the console (`POST /api/v1/hosts/library-token`), handed to git by
 an inline credential helper, for the library's host only, that reads it from
 the child's environment, so no remote or token is written to the repo's
 config. Every fast-forward is a `library.updated` journal event. Before a
-push, the files changed since the last one must parse (`unparseable`), else
+push, the files it would bring to `main` must parse (`unparseable`), else
 it's held back.
 
 A console launch's commit is copied out of the repo (`tree_at`), so its
@@ -316,17 +316,35 @@ class LibrarySync:
             return Synced(main=remote, stamp=stamp, held=())
 
     def unparseable(self, local: str, remote: str) -> tuple[HeldFile, ...]:
-        """The bottle and agent files changed since this host last pushed (or
-        `main` had them) that don't parse at `local`: an older commit's
-        under newer ones too, unless a newer one fixed it."""
-        since = [ref for ref in (remote, self._rev(PUSHED_REF)) if ref]
-        changed = self._git("-c", "core.quotePath=false", "log", "--format=", "--name-only",
-                            local, *(["--not", *since] if since else []), "--", *TRACKED)
-        return unparseable(changed.stdout.splitlines(), lambda rel: self._show(local, rel))
+        """The bottle and agent files a push of `local` would bring to `main`
+        that don't parse there: every file that differs from where it and
+        `main` part (all of them, with no `main` or nothing shared), but one
+        that's as it was in the last commit pushed, which was checked then.
+        By content, not by commits: so an older bad commit under newer ones
+        is held, and a reset or rewritten history can't skip one."""
+        base = self._git("merge-base", local, remote, check=False).stdout.strip() \
+            if remote else ""
+        changed = (self._changed(base, local) if base
+                   else self._paths("ls-tree", "-r", "-z", "--name-only", local))
+        pushed = self._rev(PUSHED_REF)
+        if pushed and changed:
+            changed &= self._changed(pushed, local)
+        return unparseable(sorted(changed), lambda rel: self._show(local, rel))
 
-    def _show(self, sha: str, rel: str) -> str | None:
-        shown = self._git("show", f"{sha}:{rel}", check=False)
-        return shown.stdout if shown.returncode == 0 else None
+    def _changed(self, older: str, newer: str) -> set[str]:
+        return self._paths("diff", "--no-renames", "--name-only", "-z", older, newer)
+
+    def _paths(self, *args: str) -> set[str]:
+        """The tracked paths a `diff` or `ls-tree` lists (`-z`)."""
+        listed = self._git(*args, "--", *TRACKED).stdout
+        return {path for path in listed.split("\0") if path}
+
+    def _show(self, sha: str, rel: str) -> bytes | None:
+        """`rel`'s bytes at `sha`; None when it isn't there (deleted)."""
+        try:
+            return self._blob(f"{sha}:{rel}")
+        except LibraryError:
+            return None
 
     def heads(self) -> tuple[str, str]:
         """This host's `main` and the library's as last fetched ("" for

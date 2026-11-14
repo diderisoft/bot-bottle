@@ -1042,7 +1042,9 @@ stayed the same for two seconds (`library_watch.QUIET_SECONDS`) commits it as
 "edited by hand", then syncs. Editors save in bursts: each save, even of the
 same text, starts the wait again, so a burst is one commit. A commit refused
 for holding a secret's value is logged, and not tried again until the files
-change.
+change. Editors' temporary files beside them (swap, lock, backup and autosave
+files such as `.dev.md.swp`, `dev.md~`, `.#dev.md`, `#dev.md#`) are never
+versioned: bot-bottle lists them in the repo's `.git/info/exclude`.
 
 **Authorship:** while the library is on, the host names itself in the repo's
 config (`botbottle.author`), and every commit bot-bottle makes there, the
@@ -1050,8 +1052,10 @@ CLI's writes and hand edits alike, carries that name as its git author, so
 the library's history reads "edited on delphi". The name is the label the
 host was paired as (`bot-bottle pair --label`, by default the hostname),
 kept with the pairing; a pairing from before that was kept uses the short
-hostname. `library_sync` with `enabled` false removes it, and a host that was
-never paired authors as `bot-bottle`, as before.
+hostname. It's kept to one line of printable text, without `<` or `>`, at
+most 64 characters. `library_sync` with `enabled` false removes it, and a host
+that was never paired authors as `bot-bottle`, as before (so commits it made
+before pairing read as `bot-bottle` in the library's history).
 
 A sync fetches the library's `main` (by name: the library serves git's
 protocol v0 only), commits hand edits ("edited by hand"), then either
@@ -1130,12 +1134,15 @@ ignored.
 ### Held back
 
 Only bottles that parse sync. Before a push, the host checks every `*.md`
-directly under `agents/` and `bottles/` that a commit since its last push
-changed (commits not in the fetched `main` nor at or under
-`refs/library/pushed`), as it is at `HEAD`: its frontmatter, keys and values,
-as the loaders read them (`manifest/parse_check.py`). What depends on the host
-(an `extends:` parent, forge connections, trust) isn't checked here. A file
-deleted since is fine.
+directly under `agents/` and `bottles/` that the push would bring to `main`:
+each that differs at `HEAD` from where `HEAD` and the fetched `main` part (all
+of them when they share nothing, as on a first sync), except one that's as it
+was in the last commit pushed (`refs/library/pushed`), which was checked then.
+The check is by content, not by commits, so a reset or a rewritten history
+can't skip a file. It reads the file as the loaders do: UTF-8, its
+frontmatter, keys and values (`manifest/parse_check.py`). What depends on the
+host (an `extends:` parent, forge connections, trust) isn't checked here. A
+file deleted since is fine.
 
 If any doesn't parse, the host keeps the commit but doesn't push, keeps the
 files in the host DB (`library_held`), and tells the console:
@@ -1144,9 +1151,11 @@ files in the host DB (`library_held`), and tells the console:
 {"type": "library_held", "files": [{"path": "bottles/dev.md", "error": "yaml-subset: unterminated `[` on line 1"}]}
 ```
 
-`error` is the parser's message on one line, at most 300 characters. Because
-the check is of everything since the last push, an older bad commit under
-newer good ones is still held, unless a newer one fixed the file. Once they
+`error` is the parser's message on one printable line, at most 300
+characters, and at most 50 files are named (more are held all the same). An
+older bad commit under newer good ones is still held, unless a newer one fixed
+the file (its bad version is then in the pushed history, but never at a tip
+any host checks out). Once they
 all parse, the host pushes as usual and sends `{"type": "library_held",
 "files": []}`. It sends `library_held` when the held files change, and once
 on each connection's first sync whatever they are, so a reconnecting console

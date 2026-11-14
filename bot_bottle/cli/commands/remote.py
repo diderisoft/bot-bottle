@@ -20,8 +20,8 @@ import urllib.request
 from typing import Any
 
 from ...control.hostctl import pairing
-from ...manifest import parse_check
 from ...control.hostctl.runner import HostControlError
+from ...manifest import parse_check
 from ..constants import PROG
 from ..host_state_client import pairing as current_pairing, running_pairing, set_pairing
 

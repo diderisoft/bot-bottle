@@ -312,17 +312,18 @@ class LibraryLink:
 
     def _author(self, on: bool) -> None:
         """Author the repo's commits as this host while the library syncs,
-        else as bot-bottle. Once the repo exists: `tick` tries again."""
+        else as bot-bottle. Before the repo exists, `tick` tries again once
+        it does; a failure is logged, and tried again on the next
+        `library_sync`, not on every tick."""
         root = self._root or bot_bottle_root()
         self._authored = False
         if not (root / ".git").is_dir():
             return
+        self._authored = on
         try:
             set_author(label() if on else "", root=root)
         except (VersionError, pairing.RemoteError, OSError, sqlite3.Error) as e:
             log.warn(f"library: couldn't set this host's name on its commits: {e}")
-            return
-        self._authored = on
 
     def _record_conflict(self, files: list[str]) -> None:
         """Keep the conflict, and the commit this host had, which `main`

@@ -40,6 +40,13 @@ _AUTHOR = {"GIT_AUTHOR_NAME": "bot-bottle", "GIT_AUTHOR_EMAIL": "bot-bottle@loca
            "GIT_COMMITTER_NAME": "bot-bottle", "GIT_COMMITTER_EMAIL": "bot-bottle@localhost"}
 # The repo's config key naming the author of its commits, while it's set.
 AUTHOR_KEY = "botbottle.author"
+# Editors' temporary files (swap, lock, backup and autosave files) beside an
+# agent or bottle: never versioned, so never synced (PRD 0131). In the repo's
+# own `info/exclude`, so existing repos get them without a commit.
+_EXCLUDE_MARK = "# bot-bottle: editors' temporary files\n"
+_EXCLUDE = _EXCLUDE_MARK + "".join(f"{p}\n" for p in (
+    "*.sw[a-p]", "*~", ".#*", "\\#*\\#", "4913", "*.kate-swp", "*___jb_tmp___",
+    "*___jb_old___", ".DS_Store"))
 # Shortest secret value checked for: shorter ones match ordinary text.
 _MIN_SECRET_LEN = 8
 
@@ -98,10 +105,22 @@ def _locked(root: Path) -> Generator[None, None, None]:
 
 
 def _ensure_repo(root: Path) -> None:
-    if (root / ".git").is_dir():
-        return
-    _git(root, "init", "-q")
-    (root / ".gitignore").write_text(GITIGNORE)
+    if not (root / ".git").is_dir():
+        _git(root, "init", "-q")
+        (root / ".gitignore").write_text(GITIGNORE)
+    exclude = root / ".git" / "info" / "exclude"
+    had = exclude.read_text() if exclude.is_file() else ""
+    if _EXCLUDE_MARK not in had:
+        exclude.parent.mkdir(exist_ok=True)
+        exclude.write_text(had + ("\n" if had and not had.endswith("\n") else "") + _EXCLUDE)
+
+
+def author_name(raw: str) -> str:
+    """`raw` as a commit's author name: one line of printable text, with no
+    `<` or `>`, at most 64 characters; "" when that leaves no letter or digit
+    (git refuses an empty name, and a commit must never fail over it)."""
+    name = "".join(c for c in " ".join(raw.split()) if c.isprintable() and c not in "<>")[:64]
+    return name if any(c.isalnum() for c in name) else ""
 
 
 def _secret_values(secrets_file: Path) -> Mapping[str, str]:
@@ -150,22 +169,24 @@ def _commit(root: Path, message: str, secrets_file: Path) -> str:
          *(d for d in TRACKED if (root / d).exists()))
     if _git(root, "diff", "--cached", "--quiet", check=False).returncode != 0:
         _check_staged(root, secrets_file)
-        author = _git(root, "config", "--get", AUTHOR_KEY, check=False).stdout.strip()
+        author = author_name(_git(root, "config", "--local", "--get", AUTHOR_KEY,
+                                  check=False).stdout)
         _git(root, "commit", "-q", "--no-verify", "-m", message, author=author)
     head = _git(root, "rev-parse", "--verify", "-q", "HEAD", check=False)
     return head.stdout.strip()
 
 
 def set_author(name: str, *, root: Path | None = None) -> None:
-    """Author this repo's commits as `name` from now on ("": as bot-bottle,
-    as an unpaired host's are)."""
+    """Author this repo's commits as `name` (`author_name`) from now on ("":
+    as bot-bottle, as an unpaired host's are)."""
     root = root or bot_bottle_root()
+    name = author_name(name)
     with _locked(root):
         _ensure_repo(root)
-        if name:
-            _git(root, "config", AUTHOR_KEY, name)
+        if name:  # the value after the key is never read as an option
+            _git(root, "config", "--local", AUTHOR_KEY, name)
         else:
-            _git(root, "config", "--unset-all", AUTHOR_KEY, check=False)
+            _git(root, "config", "--local", "--unset-all", AUTHOR_KEY, check=False)
 
 
 def pending_edits(*, root: Path | None = None) -> list[str]:
@@ -174,8 +195,10 @@ def pending_edits(*, root: Path | None = None) -> list[str]:
     root = root or bot_bottle_root()
     if not (root / ".git").is_dir():
         return []
-    out = _git(root, "status", "--porcelain", "-z", "--untracked-files=all", "--",
-               *TRACKED, check=False).stdout
+    # No optional locks: polled every few seconds, it must never hold the
+    # index lock a bot-bottle commit needs.
+    out = _git(root, "--no-optional-locks", "status", "--porcelain", "-z", "--no-renames",
+               "--untracked-files=all", "--", *TRACKED, check=False).stdout
     return [entry for entry in out.split("\0") if entry]
 
 
@@ -348,7 +371,7 @@ def launch_versions(cwd: str, *, root: Path | None = None,
 
 __all__ = [
     "AUTHOR_KEY", "SecretInManifestError", "TRACKED", "Version", "VersionError",
-    "adopt_builtin_agents", "committed_at", "git_env", "history",
+    "adopt_builtin_agents", "author_name", "committed_at", "git_env", "history",
     "is_dirty",
     "launch_versions", "pending_edits", "record", "record_hand_edits", "record_or_warn",
     "revert", "secret_values", "set_author", "show", "writing",

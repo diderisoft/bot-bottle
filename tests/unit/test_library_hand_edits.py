@@ -21,11 +21,11 @@ from bot_bottle.control.hostctl import (host_db, host_state, library_git as lg,
                                         library_link as ll, pairing)
 from bot_bottle.control.hostctl.library_conflict import LibraryConflictStore
 from bot_bottle.control.hostctl.library_held import (HeldFile, LibraryHeldStore, MAX_ERROR,
-                                                     unparseable)
+                                                     MAX_FILES, unparseable)
 from bot_bottle.control.hostctl.library_watch import QUIET_SECONDS, HandEditWatch
 from bot_bottle.manifest import parse_check
-from bot_bottle.manifest.versions import (AUTHOR_KEY, VersionError, pending_edits, record,
-                                          set_author)
+from bot_bottle.manifest.versions import (AUTHOR_KEY, VersionError, author_name,
+                                          pending_edits, record, set_author)
 from bot_bottle.paths import host_db_path
 from tests.unit import use_bottle_root
 from tests.unit.test_library_link import _FakeSync, _git, _Library
@@ -132,6 +132,30 @@ class QuietPeriod(_Repo):
     def test_no_repo_no_edits(self) -> None:
         self.assertEqual([], pending_edits(root=self.root / "nowhere"))
 
+    def test_editors_temporary_files_are_never_edits(self) -> None:
+        for rel in ("bottles/.dev.md.swp", "bottles/dev.md~", "bottles/#dev.md#",
+                    "agents/4913", "bottles/dev.md.kate-swp"):
+            (self.root / rel).parent.mkdir(exist_ok=True)
+            (self.root / rel).write_text("half typed")
+        os.symlink("someone@host.123", self.root / "bottles/.#dev.md")  # emacs' lock
+        self.assertEqual([], pending_edits(root=self.root))
+        self.assertFalse(self.watch.poll())
+        self.clock.now += QUIET_SECONDS
+        self.assertFalse(self.watch.poll())
+        self.assertEqual(["setup"], self.log())
+
+    def test_a_repo_made_before_gets_the_exclusions_on_its_next_commit(self) -> None:
+        exclude = self.root / ".git/info/exclude"
+        exclude.write_text("# mine\n*.log")
+        (self.root / "bottles/.dev.md.swp").write_text("x")
+        self.assertEqual(["?? bottles/.dev.md.swp"], pending_edits(root=self.root))
+        self.save("bottles/dev.md", GOOD + "z\n")
+        record("edit", root=self.root)
+        self.assertEqual([], pending_edits(root=self.root))
+        self.assertTrue(exclude.read_text().startswith("# mine\n*.log\n# bot-bottle"))
+        record("again", root=self.root)  # written once
+        self.assertEqual(1, exclude.read_text().count("# bot-bottle"))
+
 
 class Authorship(_Repo):
     def commit(self, text: str) -> str:
@@ -149,6 +173,17 @@ class Authorship(_Repo):
         set_author("", root=self.root)
         self.assertEqual("bot-bottle|bot-bottle", self.commit("b\n"))
         set_author("", root=self.root)  # unsetting twice is fine
+
+    def test_a_label_is_one_safe_line(self) -> None:
+        self.assertEqual("evil x name", author_name("<evil>\n\tx  name\x1b"))
+        self.assertEqual("", author_name("<> ..."))  # git would refuse it as empty
+        self.assertEqual(64, len(author_name("a" * 100)))
+        set_author("--global", root=self.root)  # a value, never an option
+        self.assertEqual("--global|bot-bottle", self.commit("a\n"))
+        set_author("<>", root=self.root)  # nothing left: as bot-bottle
+        self.assertEqual("bot-bottle|bot-bottle", self.commit("b\n"))
+        _git(self.root, "config", AUTHOR_KEY, "\u202e")  # set by hand, unprintable
+        self.assertEqual("bot-bottle|bot-bottle", self.commit("c\n"))
 
 
 class LinkAuthorship(unittest.IsolatedAsyncioTestCase):
@@ -197,11 +232,12 @@ class LinkAuthorship(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_failure_to_name_it_is_logged(self) -> None:
         record("init", root=self.root)
-        with mock.patch.object(ll, "set_author", side_effect=VersionError("locked")), \
+        with mock.patch.object(ll, "set_author", side_effect=VersionError("locked")) as named, \
                 mock.patch.object(ll.log, "warn") as warn:
             await self.link.handle({"type": "library_sync", "enabled": True})
-        self.assertIn("couldn't set", warn.call_args.args[0])
-        self.assertFalse(self.link._authored)
+            self.assertIn("couldn't set", warn.call_args.args[0])
+            self.link._hand_edits()  # not again on every tick
+            self.assertEqual(1, named.call_count)
 
     async def test_a_tick_commits_hand_edits_once_quiet_and_syncs(self) -> None:
         record("init", root=self.root)
@@ -293,13 +329,24 @@ class ParseCheck(unittest.TestCase):
                          parse_check.names(("bottles/dev.md", "agents/x.md", "README")))
 
     def test_unparseable_reads_each_once_and_shortens_errors(self) -> None:
-        texts = {"bottles/dev.md": "---\n" + "k" * 1000 + ": 1\n---\n",
-                 "bottles/ok.md": GOOD, "agents/gone.md": None, "bottles/a.txt": BAD}
+        texts = {"bottles/dev.md": b"---\n" + b"k" * 1000 + b": 1\n---\n",
+                 "bottles/ok.md": GOOD.encode(), "agents/gone.md": None,
+                 "bottles/a.txt": BAD.encode()}
         held = unparseable(["bottles/dev.md", "bottles/dev.md", "bottles/ok.md",
                             "agents/gone.md", "bottles/a.txt", ""], texts.get)
         self.assertEqual(["bottles/dev.md"], [f.path for f in held])
         self.assertEqual(MAX_ERROR, len(held[0].error))
         self.assertTrue(held[0].error.endswith("…"))
+
+    def test_unparseable_is_printable_capped_and_needs_utf8(self) -> None:
+        bad = {f"bottles/b{i:02}.md": BAD.encode() for i in range(MAX_FILES + 5)}
+        self.assertEqual(MAX_FILES, len(unparseable(list(bad), bad.get)))
+        texts = {"bottles/x\x1b[2J.md": GOOD.encode(), "bottles/latin.md": b"---\nk: \xe9\n---\n"}
+        held = unparseable(list(texts), texts.get)
+        self.assertEqual([("bottles/latin.md", "not UTF-8 text"),
+                          ("bottles/x\\x1b[2J.md", held[1].error)],
+                         [(f.path, f.error) for f in held])
+        self.assertTrue(held[1].error.isprintable())
 
 
 class HeldBack(_Library):
@@ -362,6 +409,25 @@ class HeldBack(_Library):
             self.assertTrue(self.delphi.sync().pushed)
         self.assertEqual(["bottles/dev.md"],
                          [p for p in check.call_args.args[0] if p])
+
+    def test_a_reset_to_a_bad_commit_is_held(self) -> None:
+        bad = self.edit("bottles/dev.md", BAD)
+        self.edit("bottles/dev.md", GOOD + "fixed\n")
+        self.assertTrue(self.delphi.sync().pushed)
+        # Every commit since is one the last push had, but the file isn't.
+        _git(self.delphi.root, "reset", "-q", "--hard", bad)
+        self.assertEqual(["bottles/dev.md"], [f.path for f in self.delphi.sync().held or ()])
+        self.edit("bottles/ci.md", GOOD + "other\n")
+        self.assertEqual(["bottles/dev.md"], [f.path for f in self.delphi.sync().held or ()])
+
+    def test_a_first_sync_checks_everything(self) -> None:
+        delos = self.host("delos", {"bottles/old.md": BAD})
+        record("more", root=delos.root)
+        (delos.root / "bottles/new.md").write_text(GOOD)
+        record("new", root=delos.root)
+        synced = delos.sync()  # main has none of it
+        self.assertEqual(["bottles/old.md"], [f.path for f in synced.held or ()])
+        self.assertEqual("", synced.pushed)
 
     def test_a_fast_forward_clears_it(self) -> None:
         self.edit("bottles/dev.md", BAD)
