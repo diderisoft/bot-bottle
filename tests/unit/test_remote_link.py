@@ -246,6 +246,29 @@ class TestSlowRequests(unittest.TestCase):
         self.assertEqual("agent_stopped", sent[-1]["type"])
 
 
+    def test_a_child_launch_doesnt_hold_the_links_other_requests(self) -> None:
+        link, sent = _link(_Bottles())
+        release = asyncio.Event()
+
+        async def launching(msg: Any, *_args: Any) -> dict[str, Any]:
+            await release.wait()
+            return {"type": "launch_bottle_answered", "agent_id": msg["agent_id"]}
+
+        async def scenario() -> None:
+            with mock.patch.dict(remote.remote_actions.ANSWERS,
+                                 {"launch_bottle_answer": launching}):
+                # Handed off, not awaited: inline, this would wait for the launch.
+                await asyncio.wait_for(
+                    link.take({"type": "launch_bottle_answer", "agent_id": "a1"}), 2)
+                await link.take({"type": "list_local", "request_id": "r1"})
+                self.assertEqual(["local_definitions"], [m["type"] for m in sent])
+                release.set()
+                await asyncio.gather(*link.turns.pending.values())
+
+        asyncio.run(scenario())
+        self.assertEqual("launch_bottle_answered", sent[-1]["type"])
+
+
 class TestApprovals(unittest.TestCase):
     """Pending requests raised as the console's `attention`, answered by `approval`."""
 

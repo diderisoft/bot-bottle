@@ -195,7 +195,8 @@ class ConsoleLink:
                                    lambda: self.running)
 
     # Wait on the bottle: minutes for a launch, for good if a teardown wedges.
-    SLOW = frozenset({"launch", "resume", "stop", "launch_trust_answer"})
+    SLOW = frozenset({"launch", "resume", "stop", "launch_trust_answer",
+                      "launch_bottle_answer"})
     # The types `handle` dispatches itself; `handles()` adds its links'.
     OWN = frozenset({"hello", "ping", "list_local", "launch", "resume", "stop", "approval",
                      "resolve_canary", "input", "resize", "history", "audit_query",
