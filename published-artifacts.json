@@ -2,156 +2,156 @@
   "bot-bottle-claude": {
     "artifacts": {
       "ext4_linux-amd64": {
-        "digest": "sha256:0ff56f06d5d1a9f3d3de42f7c2aedbccd31dcf5fe0f561673927582807da7529",
+        "digest": "sha256:c3e9b57573ce4290b5f65a898e4b340d94a03f9cd181ec420852253d3cfee170",
         "platform": "linux-amd64",
         "type": "ext4",
-        "url": "ghcr.io/diderisoft/bot-bottle-claude-rootfs:0.1.17-amd64"
+        "url": "ghcr.io/diderisoft/bot-bottle-claude-rootfs:0.1.18-amd64"
       },
       "ext4_linux-arm64": {
-        "digest": "sha256:ac47f9e467a17e7671230482b6f5db603a849de6a808793ee49e6cf63ea576e3",
+        "digest": "sha256:9623a9f3fac43e52358db4607c9e5598b2df3bbbc64f616a3e04c6a2f2595e1d",
         "platform": "linux-arm64",
         "type": "ext4",
-        "url": "ghcr.io/diderisoft/bot-bottle-claude-rootfs:0.1.17-arm64"
+        "url": "ghcr.io/diderisoft/bot-bottle-claude-rootfs:0.1.18-arm64"
       },
       "oci_linux-amd64": {
-        "digest": "sha256:f110770223f9872a80c8b07599571cb57cd172a5aca4d0e31ce57697caf62a78",
+        "digest": "sha256:c68b0d3b7a396ca2bc48b1d5ee9ea5dcd634febb29ca2b8e40ef8f5db7bd640a",
         "platform": "linux-amd64",
         "type": "oci",
-        "url": "ghcr.io/diderisoft/bot-bottle-claude:0.1.17-amd64"
+        "url": "ghcr.io/diderisoft/bot-bottle-claude:0.1.18-amd64"
       },
       "oci_linux-arm64": {
-        "digest": "sha256:3be84678458a0fcd56d507c73daf9bfb8531d4d6475b17529194c2c1e3f49128",
+        "digest": "sha256:76932eaa7af58a488d25ea26010d6fcaa13ee9196120a6559597e8a1821e8fca",
         "platform": "linux-arm64",
         "type": "oci",
-        "url": "ghcr.io/diderisoft/bot-bottle-claude:0.1.17-arm64"
+        "url": "ghcr.io/diderisoft/bot-bottle-claude:0.1.18-arm64"
       }
     },
-    "inputs_hash": "ed9749301f5a6f6c",
+    "inputs_hash": "acc3961d27e2b390",
     "protocol": 1,
-    "version": "0.1.17"
+    "version": "0.1.18"
   },
   "bot-bottle-codex": {
     "artifacts": {
       "ext4_linux-amd64": {
-        "digest": "sha256:91c3afc92248630e9e15583b6ca04050c1e2c42a5dd1ac06fea1be6e3efb5c51",
+        "digest": "sha256:519befb8fcfb394f68337d7070f15d8985f5ac0ebc982b85cc752a4daf9d8239",
         "platform": "linux-amd64",
         "type": "ext4",
-        "url": "ghcr.io/diderisoft/bot-bottle-codex-rootfs:0.1.17-amd64"
+        "url": "ghcr.io/diderisoft/bot-bottle-codex-rootfs:0.1.18-amd64"
       },
       "ext4_linux-arm64": {
-        "digest": "sha256:78568ca0009b47cae3a785eb8f6d1513222b02519e761ca8616a5e4158023237",
+        "digest": "sha256:31994f5a7bc806b0710873ebd44e89110bdb1b9ef237374412db4be006a05478",
         "platform": "linux-arm64",
         "type": "ext4",
-        "url": "ghcr.io/diderisoft/bot-bottle-codex-rootfs:0.1.17-arm64"
+        "url": "ghcr.io/diderisoft/bot-bottle-codex-rootfs:0.1.18-arm64"
       },
       "oci_linux-amd64": {
-        "digest": "sha256:526f5264eef926557d703b74e6a31bc113ee9740018cba4f2512a8dd7aed749e",
+        "digest": "sha256:3ce89ea4a20d093ae805fa6681191576d1fec300599a3f3f45d414da5ed61b00",
         "platform": "linux-amd64",
         "type": "oci",
-        "url": "ghcr.io/diderisoft/bot-bottle-codex:0.1.17-amd64"
+        "url": "ghcr.io/diderisoft/bot-bottle-codex:0.1.18-amd64"
       },
       "oci_linux-arm64": {
-        "digest": "sha256:4ed3cd798eac50a9952b0de1267f46a5044b34014f7ec180d8a1131a76524f87",
+        "digest": "sha256:e7bd35c110bb60be3f934d8769821ff77a3fea1cf2f34cf709cd2a9da1d08b66",
         "platform": "linux-arm64",
         "type": "oci",
-        "url": "ghcr.io/diderisoft/bot-bottle-codex:0.1.17-arm64"
+        "url": "ghcr.io/diderisoft/bot-bottle-codex:0.1.18-arm64"
       }
     },
-    "inputs_hash": "69adadf7eec89508",
+    "inputs_hash": "a232693c0933ce38",
     "protocol": 1,
-    "version": "0.1.17"
+    "version": "0.1.18"
   },
   "bot-bottle-gateway": {
     "artifacts": {
       "ext4_linux-amd64": {
-        "digest": "sha256:4400d99906b1592dc14918e16231ce4915fc110d0621aea3faa6e28183c9ac92",
+        "digest": "sha256:2a4f498be6c89fc91a0a4f87909c148d68a986c1a11005ea6db39947b3c628b9",
         "platform": "linux-amd64",
         "type": "ext4",
-        "url": "ghcr.io/diderisoft/bot-bottle-gateway-rootfs:0.1.17-amd64"
+        "url": "ghcr.io/diderisoft/bot-bottle-gateway-rootfs:0.1.18-amd64"
       },
       "ext4_linux-arm64": {
-        "digest": "sha256:7ecb4df16ea31690e814ad3e6b5418b70d0b96a3f94bc5d612f37bce12d94ed8",
+        "digest": "sha256:1fe9ce58a04959a6a196eb7485d49551019964125a276ca6f7980f7b6ba6b973",
         "platform": "linux-arm64",
         "type": "ext4",
-        "url": "ghcr.io/diderisoft/bot-bottle-gateway-rootfs:0.1.17-arm64"
+        "url": "ghcr.io/diderisoft/bot-bottle-gateway-rootfs:0.1.18-arm64"
       },
       "oci_linux-amd64": {
-        "digest": "sha256:fa1e44d5e4e4077a49e178886ecc034bd489af1110e7bcabd04bde0b4c875580",
+        "digest": "sha256:d0988f159dd70837e54dcac809b42440be20d0712a94ab61473d1d3c33131463",
         "platform": "linux-amd64",
         "type": "oci",
-        "url": "ghcr.io/diderisoft/bot-bottle-gateway:0.1.17-amd64"
+        "url": "ghcr.io/diderisoft/bot-bottle-gateway:0.1.18-amd64"
       },
       "oci_linux-arm64": {
-        "digest": "sha256:6582e380f41eb6f8d749edf9a52149956f48501e0e6f9749b2c6466bd08c46c2",
+        "digest": "sha256:013cf6ae492f47c2f3fce1d323451901d44333b660badbd7ba87d0065bcaa6c0",
         "platform": "linux-arm64",
         "type": "oci",
-        "url": "ghcr.io/diderisoft/bot-bottle-gateway:0.1.17-arm64"
+        "url": "ghcr.io/diderisoft/bot-bottle-gateway:0.1.18-arm64"
       }
     },
-    "inputs_hash": "641838178cc29708",
+    "inputs_hash": "350aa872d73cc1ff",
     "protocol": 1,
-    "version": "0.1.17"
+    "version": "0.1.18"
   },
   "bot-bottle-orchestrator": {
     "artifacts": {
       "ext4_linux-amd64": {
-        "digest": "sha256:22bec72b35cbf26d90a14df59f0992b2e8acd3e63b06b9039158f4b078ebaa4a",
+        "digest": "sha256:3849ae86f1cca2a2de0d412a9725396f685ca1d9644f6f008878ba7289413946",
         "platform": "linux-amd64",
         "type": "ext4",
-        "url": "ghcr.io/diderisoft/bot-bottle-orchestrator-rootfs:0.1.17-amd64"
+        "url": "ghcr.io/diderisoft/bot-bottle-orchestrator-rootfs:0.1.18-amd64"
       },
       "ext4_linux-arm64": {
-        "digest": "sha256:185e2086a86e44e96317a8ed1f4d35ea89cdd5fc5b28df1b6f67cabe2ac529c0",
+        "digest": "sha256:551739dc988a6bcf44859ad2ed9810de98c407301371de86b3489048663c2d32",
         "platform": "linux-arm64",
         "type": "ext4",
-        "url": "ghcr.io/diderisoft/bot-bottle-orchestrator-rootfs:0.1.17-arm64"
+        "url": "ghcr.io/diderisoft/bot-bottle-orchestrator-rootfs:0.1.18-arm64"
       },
       "oci_linux-amd64": {
-        "digest": "sha256:65b6923d63c8658bd991b9a0c40df9b26937590db764e9bd93ed15befcd7f5e8",
+        "digest": "sha256:d9d33c4b76f693742e294e6c2c380c19b73dc07afb695a755e5baff5b6a35199",
         "platform": "linux-amd64",
         "type": "oci",
-        "url": "ghcr.io/diderisoft/bot-bottle-orchestrator:0.1.17-amd64"
+        "url": "ghcr.io/diderisoft/bot-bottle-orchestrator:0.1.18-amd64"
       },
       "oci_linux-arm64": {
-        "digest": "sha256:61e053732d37563ab901edaa9138cf7812bc8fa093ca2927c90ae8174719abc3",
+        "digest": "sha256:3935799e36e3f9f4a56bb5928c3628b5ea3f9d1510c398de8b88baa1d7125e43",
         "platform": "linux-arm64",
         "type": "oci",
-        "url": "ghcr.io/diderisoft/bot-bottle-orchestrator:0.1.17-arm64"
+        "url": "ghcr.io/diderisoft/bot-bottle-orchestrator:0.1.18-arm64"
       }
     },
-    "inputs_hash": "6f9d3f0e7f38f3a1",
+    "inputs_hash": "a0d441f7328504ea",
     "protocol": 1,
-    "version": "0.1.17"
+    "version": "0.1.18"
   },
   "bot-bottle-pi": {
     "artifacts": {
       "ext4_linux-amd64": {
-        "digest": "sha256:e8b8884f9ea86cb3982ba00700cc963d70ec9f84b8aaa0c890b8747c85e713b9",
+        "digest": "sha256:cc52429fd48328ffd9412c21999ddd60f5a0847cc8d43d0250aa0b6832a7790e",
         "platform": "linux-amd64",
         "type": "ext4",
-        "url": "ghcr.io/diderisoft/bot-bottle-pi-rootfs:0.1.17-amd64"
+        "url": "ghcr.io/diderisoft/bot-bottle-pi-rootfs:0.1.18-amd64"
       },
       "ext4_linux-arm64": {
-        "digest": "sha256:92180a7ec43a7787e8245cdfe7c2b6dbab9f5840457ce085713322213ec077a4",
+        "digest": "sha256:af429fd54a9ff1140a8205129c3a2f9534c5269bbf27ea4cd90c461282d67f7f",
         "platform": "linux-arm64",
         "type": "ext4",
-        "url": "ghcr.io/diderisoft/bot-bottle-pi-rootfs:0.1.17-arm64"
+        "url": "ghcr.io/diderisoft/bot-bottle-pi-rootfs:0.1.18-arm64"
       },
       "oci_linux-amd64": {
-        "digest": "sha256:36ac6c3a46cc94e9f6ed9b0ebffcda879006a0b34c560f10ecca60e4b376383f",
+        "digest": "sha256:459ff82a64a1cb673de68923350b73c6e382ec15e8d12aaa25773ec4fd82c2df",
         "platform": "linux-amd64",
         "type": "oci",
-        "url": "ghcr.io/diderisoft/bot-bottle-pi:0.1.17-amd64"
+        "url": "ghcr.io/diderisoft/bot-bottle-pi:0.1.18-amd64"
       },
       "oci_linux-arm64": {
-        "digest": "sha256:9d9133f780dc556e0b4f0fbad23d6df232dc49b6b580df9c7ce189838280abe9",
+        "digest": "sha256:cb6f714d88f50b17ecbc8ef0694dec6108b0194557f2fcb6e8a94051ab3f0458",
         "platform": "linux-arm64",
         "type": "oci",
-        "url": "ghcr.io/diderisoft/bot-bottle-pi:0.1.17-arm64"
+        "url": "ghcr.io/diderisoft/bot-bottle-pi:0.1.18-arm64"
       }
     },
-    "inputs_hash": "96d6b5422e66dcc7",
+    "inputs_hash": "c6beef8794628b2c",
     "protocol": 1,
-    "version": "0.1.17"
+    "version": "0.1.18"
   }
 }
