@@ -246,16 +246,16 @@ def _only_codex(harness: str) -> bool:
 
 
 class TestHasAgents(unittest.TestCase):
-    def test_the_architect_alone_is_no_agent(self):
+    def test_any_agent_file_is_an_agent_even_an_old_architect(self):
+        # The architect reads no file now: a kept copy is an agent like any other.
         with tempfile.TemporaryDirectory() as tmp, \
                 patch.object(doctor, "bot_bottle_root", return_value=Path(tmp)), \
                 patch.object(doctor, "harness_ready", return_value=False):
             self.assertFalse(doctor._has_agents())  # pylint: disable=protected-access
             agents = Path(tmp) / "agents"
             agents.mkdir()
-            (agents / "bottle-architect.md").write_text("x")
             self.assertFalse(doctor._has_agents())  # pylint: disable=protected-access
-            (agents / "claude.md").write_text("x")
+            (agents / "bottle-architect.md").write_text("x")
             self.assertTrue(doctor._has_agents())  # pylint: disable=protected-access
 
     def test_a_built_in_agent_counts_where_its_harness_is_set_up(self):

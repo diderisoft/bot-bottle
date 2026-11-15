@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .architect_values import (
+    AUTO, LOCAL, check_connection, check_local_host, valid_account_host, valid_connection,
+    valid_local_host,
+)
 from .db_store import MACHINE_SPECIFIC, MIXED, PORTABLE, DbStore
 from .migrations import TableMigrations
 
@@ -99,6 +103,16 @@ class GitHubApp:
 
 
 @dataclass(frozen=True)
+class ArchitectValues:
+    """The bottle architect's `host` and `connection`, and that host's
+    `label` when the console said it: the account's, or this host's own."""
+
+    host: str
+    connection: str
+    label: str = ""
+
+
+@dataclass(frozen=True)
 class HostConfig:
     """Every host setting the CLI shows or sets, as the host controller serves
     them (`HOST_CONFIG_PATH`)."""
@@ -110,6 +124,10 @@ class HostConfig:
     audit_retention: AuditRetention = AuditRetention()
     host_budget: HostBudget = HostBudget()
     github_app: GitHubApp = GitHubApp()
+    # This host's own `bottle-architect.host` and `.connection`: in force
+    # while it's unpaired; once paired, the account's are (`ConfigStore.architect`).
+    architect_host: str = LOCAL
+    architect_connection: str = AUTO
 
     def to_json(self) -> dict[str, object]:
         forward = self.audit_forward
@@ -128,6 +146,8 @@ class HostConfig:
                             "memory_gb": self.host_budget.memory_gb},
             "github_app": {"slug": self.github_app.slug,
                            "client_id": self.github_app.client_id},
+            "architect_host": self.architect_host,
+            "architect_connection": self.architect_connection,
         }
 
     @classmethod
@@ -170,6 +190,10 @@ class HostConfig:
             if not isinstance(slug, str) or not isinstance(client_id, str):
                 raise ValueError("github_app's slug and client_id are text")
             return replace(self, github_app=GitHubApp(slug=slug, client_id=client_id))
+        if name == "architect_host":
+            return replace(self, architect_host=check_local_host(value))
+        if name == "architect_connection":
+            return replace(self, architect_connection=check_connection(value))
         raise ValueError(f"unknown host setting {name!r}")
 
 
@@ -214,7 +238,8 @@ def _firehose(raw: object) -> FirehoseSettings:
 
 # The settings `HostConfig` carries, as `HOST_CONFIG_PATH` names them.
 HOST_SETTINGS = ("audit_delivery", "audit_forward", "firehose", "transcript_retention_days",
-                 "audit_retention", "host_budget", "github_app")
+                 "audit_retention", "host_budget", "github_app", "architect_host",
+                 "architect_connection")
 
 
 def _columns(  # pylint: disable=too-many-return-statements  # one per setting
@@ -244,6 +269,8 @@ def _columns(  # pylint: disable=too-many-return-statements  # one per setting
     if name == "github_app":
         return {"github_app_slug": config.github_app.slug,
                 "github_app_client_id": config.github_app.client_id}
+    if name in ("architect_host", "architect_connection"):
+        return {name: getattr(config, name)}
     raise ValueError(f"unknown host setting {name!r}")
 
 
@@ -267,6 +294,12 @@ class ConfigStore(DbStore):
         "host_max_disk_gb": MACHINE_SPECIFIC, "host_max_memory_gb": MACHINE_SPECIFIC,
         "github_app_slug": PORTABLE, "github_app_client_id": PORTABLE,
         "audit_retention_days": PORTABLE, "audit_retention_max_gb": MACHINE_SPECIFIC,
+        # This host's own architect settings, and the account's as its
+        # console link last sent them: what this machine is and is paired to.
+        "architect_host": MACHINE_SPECIFIC, "architect_connection": MACHINE_SPECIFIC,
+        "architect_account_host": MACHINE_SPECIFIC,
+        "architect_account_connection": MACHINE_SPECIFIC,
+        "architect_account_label": MACHINE_SPECIFIC,
     }}
 
     def __init__(self, db_path: Path) -> None:
@@ -346,16 +379,41 @@ class ConfigStore(DbStore):
             ALTER TABLE bot_bottle_config
             ADD COLUMN audit_retention_max_gb INTEGER NOT NULL DEFAULT 0
             """,
+            # v17-21: the bottle architect: this host's own host and
+            # connection, and the account's as the console last sent them
+            # (host "" = none declared) with that host's label
+            """
+            ALTER TABLE bot_bottle_config
+            ADD COLUMN architect_host TEXT NOT NULL DEFAULT 'local'
+            """,
+            """
+            ALTER TABLE bot_bottle_config
+            ADD COLUMN architect_connection TEXT NOT NULL DEFAULT 'auto'
+            """,
+            """
+            ALTER TABLE bot_bottle_config
+            ADD COLUMN architect_account_host TEXT NOT NULL DEFAULT ''
+            """,
+            """
+            ALTER TABLE bot_bottle_config
+            ADD COLUMN architect_account_connection TEXT NOT NULL DEFAULT 'auto'
+            """,
+            """
+            ALTER TABLE bot_bottle_config
+            ADD COLUMN architect_account_label TEXT NOT NULL DEFAULT ''
+            """,
         ])
         super().__init__(db_path, migrations)
 
     def host_config(self) -> HostConfig:
         """Every setting `HostConfig` carries."""
+        own = self.architect()[0]
         return HostConfig(audit_delivery=self.audit_delivery(), audit_forward=self.audit_forward(),
                           firehose=self.firehose(),
                           transcript_retention_days=self.transcript_retention_days(),
                           audit_retention=self.audit_retention(),
-                          host_budget=self.host_budget(), github_app=self.github_app())
+                          host_budget=self.host_budget(), github_app=self.github_app(),
+                          architect_host=own.host, architect_connection=own.connection)
 
     def set_host_config(self, config: HostConfig, names: Iterable[str] | None = None) -> None:
         """Store the settings `names` (default: every one) as `config` has
@@ -538,6 +596,37 @@ class ConfigStore(DbStore):
     def set_github_app(self, app: GitHubApp) -> Path:
         return self._set_columns(_columns(HostConfig(github_app=app), "github_app"))
 
+    def architect(self) -> tuple[ArchitectValues, ArchitectValues]:
+        """The bottle architect's settings: this host's own (`label` "") and
+        the account's as the console last sent them (host "" when none was).
+        A stored value that isn't valid reads as its default."""
+        local, account = ArchitectValues(LOCAL, AUTO), ArchitectValues("", AUTO)
+        if not self.db_path.is_file():
+            return local, account
+        try:
+            with self._connection() as conn:
+                row = conn.execute(
+                    "SELECT architect_host, architect_connection, architect_account_host, "
+                    "architect_account_connection, architect_account_label "
+                    "FROM bot_bottle_config WHERE id = 1").fetchone()
+        except sqlite3.OperationalError:
+            return local, account  # not migrated yet
+        if row is None:
+            return local, account
+        def valid_or(name: str, valid: Callable[[object], bool], default: str) -> str:
+            return str(row[name]) if valid(row[name]) else default
+        return (ArchitectValues(valid_or("architect_host", valid_local_host, LOCAL),
+                                valid_or("architect_connection", valid_connection, AUTO)),
+                ArchitectValues(valid_or("architect_account_host", valid_account_host, ""),
+                                valid_or("architect_account_connection", valid_connection, AUTO),
+                                str(row["architect_account_label"])))
+
+    def set_architect_account(self, account: ArchitectValues) -> Path:
+        self.migrate()
+        return self._set_columns({"architect_account_host": account.host,
+                                  "architect_account_connection": account.connection,
+                                  "architect_account_label": account.label})
+
     def set_audit_delivery(self, delivery: str) -> Path:
         return self._set_columns(
             _columns(HostConfig(audit_delivery=delivery), "audit_delivery"))
@@ -549,6 +638,7 @@ class ConfigStore(DbStore):
 __all__ = [
     "AUDIT_DELIVERIES",
     "AuditForward",
+    "ArchitectValues",
     "AuditRetention",
     "GitHubApp",
     "HostBudget",

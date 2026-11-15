@@ -63,7 +63,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from ...contract.console_link import CONSOLE_MESSAGES
 from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
-from . import approval_answer, host_stats, link_protocol, remote_actions
+from . import approval_answer, architect_setting, host_stats, link_protocol, remote_actions
 from .children import child_agent_ids
 from .link_refusal import refused_delay
 from .live_metrics import MetricsWatch
@@ -191,6 +191,7 @@ class ConsoleLink:
         self.library = LibraryLink(self._send, audit=lambda: getattr(bottles, "audit", None))
         self.projects = ProjectLink(self._send, start=self._start, running=lambda: self.running)
         self._last_stats: float = 0.0
+        self.architect = architect_setting.LinkArchitect(self._send, self.push_host_stats)
         self.canaries = CanaryLink(self._send, lambda: self._orchestrator(""),
                                    lambda: self.running)
 
@@ -200,7 +201,7 @@ class ConsoleLink:
     # The types `handle` dispatches itself; `handles()` adds its links'.
     OWN = frozenset({"hello", "ping", "list_local", "launch", "resume", "stop", "approval",
                      "resolve_canary", "input", "resize", "history", "audit_query",
-                     "metrics_watch", "snapshot"})
+                     "metrics_watch", "snapshot", architect_setting.MESSAGE})
 
     @classmethod
     def handles(cls) -> frozenset[str]:
@@ -257,6 +258,8 @@ class ConsoleLink:
             await (self.library if kind in LibraryLink.REQUESTS else self.projects).handle(msg)
         elif kind == "audit_query":
             await self._send(await audit_events(msg, self.launched, self._audit))
+        elif kind == architect_setting.MESSAGE:  # and architect.set (architect_setting)
+            await self.architect.handle(msg)
         elif kind == "metrics_watch":
             self.metrics.watch(msg.get("bottles"))
         elif kind in TranscriptLink.REQUESTS:
@@ -715,6 +718,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
             await link.push_host_stats_if_due()
 
     watcher, sampler = asyncio.create_task(watch()), asyncio.create_task(link.metrics.run())
+    architect_link = architect_setting.attach(send)  # for `config set` (architect.set)
     try:
         async for line in _read_lines(control.recv()):
             try:
@@ -725,6 +729,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
             if isinstance(msg, dict):
                 await link.take(msg)
     finally:
+        architect_setting.detach(architect_link)
         watcher.cancel()
         sampler.cancel()
         link.close()

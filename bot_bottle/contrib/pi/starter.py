@@ -111,13 +111,20 @@ def _int(value: object) -> int:
 def read_local_model(host_env: Mapping[str, str]) -> LocalPiModel | None:
     """The host pi config's default provider and model if a bottle can reach
     them and the key is an env name or literal; else None."""
-    agent_dir = pi_agent_dir(host_env)
-    settings = _read_json(agent_dir / "settings.json")
+    settings = _read_json(pi_agent_dir(host_env) / "settings.json")
     provider = settings.get("defaultProvider")
     model = settings.get("defaultModel")
     if not isinstance(provider, str) or not isinstance(model, str) or not model:
         return None
-    providers = _read_json(agent_dir / "models.json").get("providers")
+    found = provider_model(host_env, provider, model)
+    return found if isinstance(found, LocalPiModel) else None
+
+
+def provider_model(host_env: Mapping[str, str], provider: str,
+                   model: str) -> LocalPiModel | str:
+    """`model` on the host pi config's `provider` (its models.json entry,
+    else pi's built-in one of that name), or why a bottle can't use it."""
+    providers = _read_json(pi_agent_dir(host_env) / "models.json").get("providers")
     entry = providers.get(provider) if isinstance(providers, dict) else None
     if isinstance(entry, dict):
         base_url, key = entry.get("baseUrl"), entry.get("apiKey")
@@ -128,11 +135,13 @@ def read_local_model(host_env: Mapping[str, str]) -> LocalPiModel | None:
         base_url, key = BUILTIN_PROVIDERS[provider]
         api, model_entry = "openai-completions", {}
     else:
-        return None
+        return f"pi has no provider {provider} (not in ~/.pi/agent/models.json, nor built in)"
     if not isinstance(base_url, str) or not reachable_from_bottle(base_url):
-        return None
-    if api != "openai-completions" or not isinstance(key, str) or not key:
-        return None
+        return f"pi's {provider} isn't a public HTTPS endpoint a bottle can reach"
+    if api != "openai-completions":
+        return f"pi's {provider} isn't OpenAI-compatible (api: {api})"
+    if not isinstance(key, str) or not key:
+        return f"pi's {provider} has no apiKey in ~/.pi/agent/models.json"
     literal = not _ENV_NAME.match(key)
     key_name = (f"PI_{re.sub(r'[^A-Z0-9]', '_', provider.upper())}_API_KEY"
                 if literal else key)

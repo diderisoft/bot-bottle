@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ...contract.hostctl import Settings
+from . import architect_setting
 from .architect_bottle import current, runner
 from .suggest_link import project_dir
 
@@ -39,7 +40,9 @@ def suggest(task: str, cwd: Path | None, rules: bool, settings: Settings,
     conversation so far (PRD 0118)."""
     # pylint: disable-next=import-outside-toplevel
     from ...suggest.flow import suggest as flow_suggest
-    proposal = flow_suggest(task, cwd, rules=rules, run=runner(settings), turns=turns)
+    provider, not_here = architect_setting.suggest_args()
+    proposal = flow_suggest(task, cwd, rules=rules, run=runner(settings),
+                            provider=provider, turns=turns, not_here=not_here)
     return {"proposal": proposal.to_dict()}
 
 

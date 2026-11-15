@@ -451,7 +451,9 @@ The CLI asks over HTTP, with the `cli` role only:
 | Request | Body | Does |
 |---|---|---|
 | `POST /suggest` | `task`, optional `cwd`, `rules`, `settings`, and `turns` | Starts a `bottle.suggest` job whose `result` is `{"proposal": ...}`. |
-| `POST /architect/warm` | `settings` | Boots the warm bottle in the background and answers its `state`: `booting`, `ready`, `down` or `unavailable`. |
+| `POST /architect/warm` | `settings` | Boots the warm bottle in the background and answers its `state`: `booting`, `ready`, `down` or `unavailable`. Nothing boots unless this is the architect host and its connection is ready; `error` says why. |
+| `GET /architect` | none | The architect here, as `host_stats.architect` has it (see [The bottle architect's host](#the-bottle-architects-host)), plus `label` (`this host, auto → claude`, `delphi`, `off`, `none`), for `bot-bottle status`. |
+| `POST /architect` | `{host?, connection?}`, or `{unset: "host" \| "connection"}` | `bot-bottle config set\|unset`. Unpaired, it sets this host's own values. Paired, it sends `architect.set` and answers once the console sends the account's values back, within 10 seconds; it's 409 when the link isn't up or nothing comes back, and `unset` is 400. Answers as `GET /architect`. |
 
 `turns` is the conversation so far, after a reply.
 
@@ -463,7 +465,10 @@ The warm bottle:
   it starts. The bottle stays up `BOT_BOTTLE_ARCHITECT_IDLE` seconds after
   its last suggestion, 600 by default.
 - Either way, the host controller tears it down when it stops.
-- It replaces one removed from under it on the next suggestion.
+- It replaces one removed from under it on the next suggestion, and one on
+  another connection once `bottle-architect.connection` changes.
+- Its agent is written for the connection into the boot's stage directory, so
+  no agent file in `~/.bot-bottle/agents/` is read for it.
 - Its start and stop are audited like any bottle's, with agent
   `bottle-architect`.
 
@@ -479,7 +484,7 @@ asks over HTTP, with the `cli` role only:
 
 | Request | Body | Does |
 |---|---|---|
-| `GET /host/config` | none | The host's settings: `audit_delivery`, `audit_forward`, `firehose`, `transcript_retention_days`, `audit_retention`, `host_budget`, `github_app`. |
+| `GET /host/config` | none | The host's settings: `audit_delivery`, `audit_forward`, `firehose`, `transcript_retention_days`, `audit_retention`, `host_budget`, `github_app`, `architect_host` and `architect_connection` (this host's own `bottle-architect.host` and `.connection`, in force while it's unpaired). |
 | `POST /host/config` | any of those settings | Sets the ones given, all or none, and answers with every setting. A bad value is 400. |
 | `POST /audit/query` | the `audit query` filters | Indexes new journal records, then answers `{"records": [...]}`. |
 | `POST /audit/rebuild` | `{}` | Re-creates the audit index. Answers `{"indexed": n}`. |
@@ -1046,6 +1051,7 @@ An arrow shows a request and its reply.
 | `rename` -> `renamed` | [Renaming a bottled agent](#renaming-a-bottled-agent) |
 | `library_sync`, `library_moved`, `library_conflict`, `library_pushed`, `library_held` | [Library sync](#library-sync) |
 | `library_builtins` | [The account's version](#the-accounts-version) |
+| `architect`, `architect.set` | [The bottle architect's host](#the-bottle-architects-host) |
 | `projects`, `project_bottles` | [Projects](#projects) |
 | `launch` with `project`, `launch_trust`, `launch_trust_answer` | [Launching a project](#launching-a-project) |
 | `github_authorize_start`, `github_status` | [GitHub through the bot-bottle app](#github-through-the-bot-bottle-app) |
@@ -1251,8 +1257,7 @@ built-ins, and the start event's `bottle_versions.builtins` records which
 release that was.
 
 - **`library_builtins`**, from the host on each connect: the installed
-  release's built-ins, packaged (`bottle-architect` included), whether or not
-  their harness is ready here,
+  release's built-ins, packaged, whether or not their harness is ready here,
   so the console can list them and say what a release changed in them. Not
   sent from a source checkout or an unknown version, and kept within what the
   console takes (32 files, 64 KiB each).
@@ -1533,7 +1538,8 @@ on each connect and every 60 seconds.
                "categories": {"vm_disks", "images", "workspaces", "transcripts"},
                "unmeasured": ["<runtime>: <why>"]}},
  "about": {"os", "backend", "version", "commit", "restart_needed"},
- "forge_alerts": [{"key", "kind", "forge", "message", "since"}]}
+ "forge_alerts": [{"key", "kind", "forge", "message", "since"}],
+ "architect": {"host", "connection", "is_architect", "ready", "runs_on" | "reason"}}
 ```
 
 It covers the host as a whole, and the bottles against their budget (see
@@ -1551,6 +1557,55 @@ It covers the host as a whole, and the bottles against their budget (see
 **`about`** holds the OS (`macOS`, or a Linux's `NAME` from
 `/etc/os-release`), the backend its last bring-up recorded (`""` before one),
 and this install's version and short commit.
+
+**`architect`** is the bottle architect as this host has it (see
+[The bottle architect's host](#the-bottle-architects-host)).
+
+### The bottle architect's host
+
+One host per account runs the bottle architect
+([architect.md](architect.md#choosing-its-host-and-model)), on a connection
+(`architect_setting.py`, `lib/architect_values.py`):
+
+- `bottle-architect.host`: the account's is a host id (as pairing gives it,
+  matching `^[A-Za-z0-9][A-Za-z0-9._-]*$`) or `off`. An unpaired host's own
+  is `local` (the default) or `off`.
+- `bottle-architect.connection`: `auto` (the default), `claude`, `codex` or
+  `pi:<provider>/<model>`, matching
+  `^(auto|claude|codex|pi:[A-Za-z0-9._-]+/[A-Za-z0-9._:/@+-]+)$`.
+
+Each is at most 200 characters. The link carries the account's:
+
+| Message | Direction | Fields |
+|---|---|---|
+| `architect` | console -> host | `host` (an id, `off`, or `""` when the account has none), `connection`, and optionally `label` (that host's name). Sent on each connect and whenever they change. An invalid `host` is `""`, an invalid `connection` `auto`. |
+| `architect.set` | host -> console | `host` and/or `connection`: a change for the account. The console answers with its next `architect`. |
+
+- **Kept.** The host keeps the account's values in the host DB, so they hold
+  across restarts and while offline. A change is reported at once in a
+  `host_stats`.
+- **In force.** Paired, the account's: the host is the architect only when
+  `host` is its own id. Unpaired, its own: `local` is the architect.
+- **Set.** `bot-bottle config set` on a paired host sends `architect.set`
+  and waits for the console's `architect`; it never writes the account's
+  values itself. Without the link it fails ("can't reach the console; the
+  architect setting is the account's"), and nothing is queued.
+- **Adoption.** A paired host sent `host: ""` whose own `host` is `local`
+  sends `architect.set` with its id and its own connection, once per
+  connect. The console takes the first offer.
+
+**`host_stats.architect`** reports it: `host` and `connection` in force,
+`is_architect`, `ready`, and either `runs_on` (the harness: `claude` or
+`codex`, which for `auto` is the one it picked, or `pi`) when ready, or
+`reason` when not. A host that isn't the architect is never ready, and its
+`reason` is one of:
+
+- `the bottle architect is off`
+- ``No architect host: choose one in Settings, or `bot-bottle config set bottle-architect.host <host>`.``
+- `The architect host is <label or id>; suggestions from other hosts reach it once routing ships.`
+
+Suggestions there take the rules path, and say why. On the architect host a
+connection that isn't ready isn't swapped for another (only `auto` picks).
 
 **Bottle CPU and memory.** Each running bottle's `cpu_pct` and `mem_used`
 (bytes) are left out when they can't be read. CPU % is a share of the
@@ -1955,10 +2010,6 @@ read-only, and keeps the last copy for while the host is offline.
 - It holds each home agent and bottle under `~/.bot-bottle/`.
 - It holds the built-in bottles a home one doesn't shadow, and the built-in
   agents too where their harness is set up. Each says whether it's `builtin`.
-- Agents marked `listed: false` (the built-in `bottle-architect`) aren't in
-  it, nor in the agents a console launch may name without a library commit:
-  both are for picking an agent to launch. The console still lists the
-  built-in architect from `library_builtins`.
 - Each comes with its text, cut at 64 KiB.
 - Project bottles aren't sent.
 
@@ -2098,7 +2149,7 @@ Paths are under `bot_bottle/control/hostctl/` unless shown otherwise.
 | Transcripts | `transcripts.py`, `transcript_retention.py`, `bot_bottle/transcript.py` |
 | Bottles' budget | `bot_bottle/backend/bottle_size.py`, `bot_bottle/backend/runtime_store.py`, `budget.StorageMeter`, `BottleService._launch` |
 | Forwarded host logins | `credential_refresh.py`, `AgentProvider.refresh_credentials` |
-| Bottle suggestions | `architect_bottle.py`, `suggest_link.py` |
+| Bottle suggestions | `architect_bottle.py`, `architect_setting.py`, `suggest_link.py` |
 | Firehose | `firehose.py`, `firehose_sinks.py` |
 | Remote access | `remote.py`, `pairing.py`, `link_refusal.py` |
 | Host stats | `host_stats.py`, `bot_bottle/forge_alerts.py`, `bottle_metrics.py` |

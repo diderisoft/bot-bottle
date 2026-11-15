@@ -277,6 +277,10 @@ def _check_providers() -> None:
             _check_pi_model(manifests / "agents" / "pi.md")
     if missing:
         print(f"      run `{PROG} setup` to write starters for: {', '.join(missing)}")
+    # pylint: disable-next=import-outside-toplevel
+    from ...suggest.architect_agent import ARCHITECT_AGENT, ARCHITECT_NOTE
+    if (manifests / "agents" / f"{ARCHITECT_AGENT}.md").exists():
+        _note(ARCHITECT_AGENT, ARCHITECT_NOTE)
 
 
 def _check_pi_model(agent: Path) -> None:
@@ -304,10 +308,10 @@ def _check_pi_model(agent: Path) -> None:
 
 
 def _has_agents() -> bool:
-    """Whether this host has an agent to start (the architect doesn't count):
-    one of its own, or a built-in whose harness is set up."""
+    """Whether this host has an agent to start: one of its own, or a
+    built-in whose harness is set up."""
     agents = bot_bottle_root() / "agents"
-    if agents.is_dir() and any(p.stem != "bottle-architect" for p in agents.glob("*.md")):
+    if agents.is_dir() and any(agents.glob("*.md")):
         return True
     return any(harness_ready(n) for n in scan_agent_names(BUILTIN_AGENTS_DIR))
 

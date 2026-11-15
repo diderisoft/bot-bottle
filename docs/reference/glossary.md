@@ -38,8 +38,10 @@ or VM that runs it.
 
 The agent behind `bot-bottle bottles suggest` and `bot-bottle start`. Given a
 task, it proposes the bottle the task needs, which you review before it runs.
-`start --auto` skips the review. It runs in its own tiny bottle with only its
-model API ([architect.md](architect.md)).
+`start --auto` skips the review. It's part of bot-bottle, not an agent file:
+it runs in its own tiny bottle with only its model API, on the one
+architect host of the account (`bottle-architect.host`) and the model
+`bottle-architect.connection` picks ([architect.md](architect.md)).
 
 ## Bottle / Bottle Definition
 

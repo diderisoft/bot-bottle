@@ -112,21 +112,17 @@ class ClaudeAndCodex(_Host):
             # A paired phone can talk to a starter agent.
             self.assertTrue(manifest.agent.remote_writable)
 
-    def test_the_bottle_architect_is_built_in_on_the_first_harness_ready(self) -> None:
-        # pylint: disable=import-outside-toplevel
-        from bot_bottle import agent_provider
-        from bot_bottle.suggest.architect import load_architect
+    def test_no_bottle_architect_agent_is_written(self) -> None:
+        # It's part of bot-bottle; `setup` still makes agents/ (set up).
         self.install("codex")
         self.codex_login()
         self.setup().run()
         self.assertFalse(self.starter("agents", "bottle-architect").exists())
-        agent_provider._READY.clear()  # pylint: disable=protected-access
-        self.addCleanup(agent_provider._READY.clear)  # pylint: disable=protected-access
-        with patch.dict(os.environ, {"PATH": str(self.bin)}):
-            architect = load_architect(self.root)
-        self.assertEqual("codex", architect.harness)
-        self.assertEqual("bottle-architect", ManifestIndex.resolve(
-            str(self.home)).host_agent("bottle-architect").stem)  # type: ignore[union-attr]
+        self.assertTrue((self.root / "agents").is_dir())
+        self.assertFalse(any("bottle-architect" in line for line in self.lines))
+        # An unpaired host runs it itself (`bottle-architect.host` local).
+        self.assertTrue(any(line.startswith("bottle architect: this host is the bottle "
+                                            "architect host") for line in self.lines))
 
     def test_installed_but_not_logged_in_warns_and_writes_nothing(self) -> None:
         self.install("claude")

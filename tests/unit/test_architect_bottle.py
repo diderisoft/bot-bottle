@@ -79,9 +79,9 @@ class FakeBackend:
             self.down.set()
 
 
-def _architect(harness: str = "claude", model: str = "") -> Architect:
-    return Architect(path=Path("/h/agents/bottle-architect.md"), prompt="p",
-                     harness=harness, model=model)
+def _architect(harness: str = "claude", provider: str = "") -> Architect:
+    return Architect(provider=provider or harness, harness=harness,
+                     agent_provider={"harness": harness, "login": "host"})
 
 
 class TestArchitectBottle(unittest.TestCase):
@@ -98,23 +98,22 @@ class TestArchitectBottle(unittest.TestCase):
 
     def _bottle(self, backend: FakeBackend, idle: float = 60.0) -> ArchitectBottle:
         warm = ArchitectBottle(host_root=self.root, backend_for=lambda _s: backend,  # type: ignore[arg-type,return-value]
-                               secrets_file=self.root / "secrets", idle=idle)
+                               secrets_file=self.root / "secrets", idle=idle,
+                               configured=_architect)
         self.addCleanup(warm.stop)
         return warm
 
     def test_boots_once_and_runs_a_fresh_headless_call_per_suggestion(self) -> None:
         backend = FakeBackend()
         warm = self._bottle(backend)
-        self.assertEqual('{"option": "reuse"}', warm.run(_architect(model="m1"), "task one"))
+        self.assertEqual('{"option": "reuse"}', warm.run(_architect(), "task one"))
         warm.run(_architect(), "task two")
         self.assertEqual(1, backend.launches)
         self.assertEqual(2, len(backend.argv))
         first, second = backend.argv[0], backend.argv[1]
         self.assertIn("--fast", first)
-        at = first.index("--model")
-        self.assertEqual(["--model", "m1"], first[at:at + 2])
+        self.assertNotIn("--model", first)  # the harness's own default model
         self.assertTrue(first[-1].startswith("task one\n\n<!-- bot-bottle-architect-call-"))
-        self.assertNotIn("--model", second)
         self.assertTrue(second[-1].startswith("task two\n"))
         self.assertEqual(architect_bottle.TIMEOUT_SECONDS,
                          self.subprocess_run.call_args.kwargs["timeout"])
@@ -138,7 +137,28 @@ class TestArchitectBottle(unittest.TestCase):
                          spec.manifest.extra_bottle_dirs)  # type: ignore[attr-defined]
         self.assertTrue((architect_bottle.ARCHITECT_BOTTLES_DIR / "bottle-architect.md").is_file())
 
-    def test_any_harness_runs_there(self) -> None:
+    def test_its_agent_is_written_for_its_provider_not_read_from_the_host(self) -> None:
+        # A copy in the host's agents is an agent like any other: the
+        # architect's own, written into the boot's stage, comes first.
+        (self.root / "agents").mkdir()
+        (self.root / "agents" / "bottle-architect.md").write_text(
+            "---\nagent_provider:\n  harness: claude\n---\n\nYou are my own.\n")
+        seen: list[str] = []
+
+        class Recording(FakeBackend):
+            def prepare(self, spec: object, *, stage_dir: Path, secrets: object) -> object:
+                manifest = spec.manifest.load_for_agent(  # type: ignore[attr-defined]
+                    "bottle-architect", ("bottle-architect",))
+                seen.append(manifest.agent.agent_provider.harness)
+                seen.append(manifest.agent.prompt)
+                return super().prepare(spec, stage_dir=stage_dir, secrets=secrets)
+
+        self._bottle(Recording("codex")).run(_architect("codex"), "t")
+        self.assertEqual("codex", seen[0])
+        self.assertIn("You are bottle-architect", seen[1])
+        self.assertNotIn("my own", seen[1])
+
+    def test_any_harness_runs_there(self) -> None:  # pi's own login: tested in test_architect_setting
         for harness in ("codex", "pi"):
             with self.subTest(harness=harness):
                 backend = FakeBackend(harness)
@@ -239,7 +259,7 @@ class TestArchitectBottle(unittest.TestCase):
 
     def test_a_claude_call_is_one_shot_without_tools(self) -> None:
         backend = FakeBackend()
-        self._bottle(backend).run(_architect(model="m1"), "t")
+        self._bottle(backend).run(_architect(), "t")
         argv = backend.argv[0]
         at = argv.index("--tools")
         self.assertEqual("", argv[at + 1])  # no tools at all
@@ -250,13 +270,41 @@ class TestArchitectBottle(unittest.TestCase):
         self.assertLess(at, argv.index("-p"))  # before the prompt
         self.assertEqual([], architect_bottle.one_shot_args("codex"))
 
-    def test_a_changed_harness_restarts_the_bottle(self) -> None:
+    def test_a_changed_provider_replaces_the_bottle_and_answers(self) -> None:
         backend = FakeBackend("claude")
         warm = self._bottle(backend)
         warm.run(_architect(), "t")
-        with self.assertRaisesRegex(ArchitectError, "now names codex"):
-            warm.run(_architect("codex"), "t")
+        self.assertEqual("ok", self._answered(warm, _architect("codex")))
         self.assertTrue(backend.down.wait(5))
+        self.assertEqual(2, backend.launches)
+
+    def _answered(self, warm: ArchitectBottle, architect: Architect) -> str:
+        self.subprocess_run.return_value = mock.Mock(returncode=0, stdout="ok")
+        return warm.run(architect, "t")
+
+    def test_a_provider_whose_bottle_wont_go_is_an_architect_error(self) -> None:
+        backend = FakeBackend("claude")
+        warm = self._bottle(backend)
+        warm.run(_architect(), "t")
+        with mock.patch.object(architect_bottle, "STOP_SECONDS", 0.0), \
+             mock.patch.object(warm, "_done_locked", return_value=False), \
+             self.assertRaisesRegex(ArchitectError, "runs claude, not pi:openrouter/m \\(pi\\)"):
+            warm.run(_architect("pi", "pi:openrouter/m"), "t")
+
+    def test_warm_boots_nothing_while_it_is_off_or_not_ready(self) -> None:
+        backend = FakeBackend()
+
+        def off() -> Architect:
+            raise ArchitectError("turned off")
+
+        warm = ArchitectBottle(host_root=self.root, backend_for=lambda _s: backend,  # type: ignore[arg-type,return-value]
+                               configured=off)
+        self.addCleanup(warm.stop)
+        warm.warm()
+        warm.boot_if_always_on()
+        self.assertEqual(("down", "turned off"),
+                         (warm.status()["state"], warm.status()["error"]))
+        self.assertEqual(0, backend.launches)
 
     def test_the_idle_time_comes_from_the_settings(self) -> None:
         # pylint: disable-next=import-outside-toplevel
@@ -266,15 +314,16 @@ class TestArchitectBottle(unittest.TestCase):
         self.assertNotIn("architect_idle_seconds",
                          architect_bottle.Settings().to_json()["operation"])  # type: ignore[operator]
         warm = ArchitectBottle(host_root=self.root,
-                               backend_for=lambda _s: FakeBackend())  # type: ignore[arg-type,return-value]
+                               backend_for=lambda _s: FakeBackend(),  # type: ignore[arg-type,return-value]
+                               configured=_architect)
         self.addCleanup(warm.stop)
         warm.warm(settings)
         self.assertEqual(30.0, warm.status()["idle_seconds"])
-        self.assertEqual([], architect_bottle.model_args(""))
 
     def _always_on(self, backend: FakeBackend, now: list[float]) -> ArchitectBottle:
         warm = ArchitectBottle(host_root=self.root, backend_for=lambda _s: backend,  # type: ignore[arg-type,return-value]
-                               secrets_file=self.root / "secrets", clock=lambda: now[0])
+                               secrets_file=self.root / "secrets", clock=lambda: now[0],
+                               configured=_architect)
         self.addCleanup(warm.stop)
         return warm
 
@@ -318,7 +367,7 @@ class TestArchitectBottle(unittest.TestCase):
         warm.warm(off)  # wakes the holder
         self.assertTrue(backend.down.wait(5))
         idle = ArchitectBottle(host_root=self.root, backend_for=lambda _s: FakeBackend(),  # type: ignore[arg-type,return-value]
-                               idle=60.0)
+                               idle=60.0, configured=_architect)
         idle.boot_if_always_on()
         self.assertEqual("down", idle.status()["state"])
 

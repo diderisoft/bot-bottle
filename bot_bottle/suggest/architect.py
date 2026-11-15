@@ -1,11 +1,12 @@
-"""bottle-architect: the `bottle-architect` agent, run in its own bottle,
-produces a typed proposal (PRD 0117).
+"""bottle-architect: bot-bottle's own agent, run in its own bottle on the
+connection `bottle-architect.connection` names, produces a typed proposal
+(PRD 0117).
 
-The agent is the host's `~/.bot-bottle/agents/bottle-architect.md` (the
-library's), else the built-in one (`manifest/builtin_agents/`): its body is
-the system prompt, `agent_provider.harness` picks the harness (the built-in's
-`auto` is the first one ready here) and `model:` the model. A project can't
-replace it.
+Its prompt is part of bot-bottle (`suggest.architect_agent`); what it runs
+on is a setting (`suggest.architect_provider`): claude or codex with the
+host's login, pi on a model of the host's pi config, or `auto` (claude, then
+codex). Only the architect host runs it (`bottle-architect.host`). No agent
+file is read, the host's or a project's.
 
 It runs in the `bottle-architect` bottle (`suggest/bottles/`): its model API
 and nothing else, no repos, no secrets, an empty workspace. That bottle, not
@@ -27,21 +28,18 @@ Any reason the architect can't answer raises `ArchitectError`; the caller
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from ..paths import bot_bottle_root
 from .proposal import Proposal
-from .starter import ARCHITECT_AGENT
+from .architect_agent import PROMPT, agent_file
+from .architect_provider import AUTO, CONNECTION_SETTING, resolve
 from .turns import Turn, prompt_lines
 
 TIMEOUT_SECONDS = 120
-
-# A model name goes on the harness's command line; keep it to a plain id.
-_MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@-]{0,99}")
 
 # Runs the architect on a prompt and returns its answer's text; the host
 # controller's warm bottle is the one runner (`ArchitectBottle.run`).
@@ -54,50 +52,26 @@ class ArchitectError(Exception):
 
 @dataclass(frozen=True)
 class Architect:
-    """The `bottle-architect` agent as the suggester runs it."""
+    """The architect on one provider, as the warm bottle runs it:
+    `agent_provider` is its agent's block (`architect_provider.resolve`)."""
 
-    path: Path
-    prompt: str
+    provider: str
     harness: str
-    model: str = ""
+    agent_provider: dict[str, object] = field(default_factory=dict)
+    prompt: str = PROMPT
+
+    def agent_file(self) -> str:
+        return agent_file(self.agent_provider)
 
 
-def load_architect(host_root: Path) -> Architect:
-    """The host's `bottle-architect` agent, else the built-in one.
-    ArchitectError when it doesn't load (an unknown harness doesn't load, nor
-    `auto` with no harness ready)."""
-    # pylint: disable=import-outside-toplevel
-    from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
-    from ..manifest.agent import ManifestAgent
-    from ..manifest.loader import BUILTIN_AGENTS_DIR
-    from ..manifest.schema import validate_agent_frontmatter_keys
-    from ..manifest.util import ManifestError
-
-    path = host_root / "agents" / f"{ARCHITECT_AGENT}.md"
-    if not path.is_file():
-        path = BUILTIN_AGENTS_DIR / f"{ARCHITECT_AGENT}.md"
-    try:
-        fm, body = parse_frontmatter(path.read_text(encoding="utf-8"))
-        validate_agent_frontmatter_keys(path, fm.keys())
-        raw: dict[str, object] = {"prompt": body.strip()}
-        if "agent_provider" in fm:
-            raw["agent_provider"] = fm["agent_provider"]
-        agent = ManifestAgent.from_dict(ARCHITECT_AGENT, raw).resolved(ARCHITECT_AGENT)
-    except (OSError, YamlSubsetError, ManifestError) as e:
-        raise ArchitectError(f"{path} doesn't load: {e}") from e
-    if not agent.prompt:
-        raise ArchitectError(f"{path} has no prompt")
-    model = fm.get("model", "")
-    if not isinstance(model, str) or (model and not _MODEL_RE.fullmatch(model)):
-        raise ArchitectError(f"{path}: model must be a plain model name")
-    harness = agent.agent_provider.harness
-    try:
-        # pylint: disable-next=import-outside-toplevel
-        from ..agent_provider import get_provider
-        get_provider(harness)  # a built-in harness or a user plugin
-    except ValueError as e:
-        raise ArchitectError(f"{path} doesn't load: {e}") from e
-    return Architect(path=path, prompt=agent.prompt, harness=harness, model=model)
+def load_architect(provider: str) -> Architect:
+    """The architect on `provider` (a `bottle-architect.connection` value).
+    ArchitectError, saying why, when it's not ready here."""
+    resolved = resolve(provider)
+    if not resolved.ready:
+        raise ArchitectError(f"{resolved.reason}; {CONNECTION_SETTING} is {provider}")
+    return Architect(provider=provider, harness=resolved.harness,
+                     agent_provider=resolved.agent_provider)
 
 
 def _host_library(host_root: Path, dirs: list[tuple[Path, bool]]) -> list[dict[str, Any]]:
@@ -311,19 +285,20 @@ def architect_suggest(
     cwd: Path | None,
     *,
     run: Runner,
+    provider: str = AUTO,
     host_root: Path | None = None,
     described: dict[str, dict[str, Any]] | None = None,
     turns: list[Turn] | None = None,
 ) -> Proposal:
-    """The host's `bottle-architect` agent's proposal for `task`, not yet
-    validated. `cwd` is the project directory, or None when there's none to
-    look at; `run` asks the architect (its warm bottle); `described` are the
+    """The architect's proposal for `task` on `provider`, not yet validated.
+    `cwd` is the project directory, or None when there's none to look at;
+    `run` asks the architect (its warm bottle); `described` are the
     forges it may grant on that aren't connected (`suggest.forges`); `turns`
     the conversation so far (`suggest.turns`). ArchitectError when the
     architect can't answer."""
     if host_root is None:
         host_root = bot_bottle_root()
-    architect = load_architect(host_root)
+    architect = load_architect(provider)
 
     host_bottles = host_root / "bottles"
     # pylint: disable-next=import-outside-toplevel

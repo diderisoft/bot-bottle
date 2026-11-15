@@ -1,5 +1,6 @@
-"""Tests for bottle-architect (PRD 0117): loading the host's agent (any
-harness: its bottle contains it), what it's asked, and parsing its answer.
+"""Tests for bottle-architect (PRD 0117): the architect on its provider
+(any harness: its bottle contains it), what it's asked, and parsing its
+answer.
 
 The architect's bottle is faked by the `run` callable it's given, so no
 bottle boots and no real CLI runs.
@@ -11,7 +12,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest import mock
 
 from bot_bottle.suggest.architect import (
     Architect,
@@ -21,15 +22,9 @@ from bot_bottle.suggest.architect import (
     architect_suggest,
     load_architect,
 )
+from bot_bottle.suggest.architect_agent import PROMPT
+from bot_bottle.suggest.architect_provider import Resolved
 from bot_bottle.suggest.proposal import OPTION_REUSE, OPTION_STACK_ADDITIONS
-from bot_bottle.manifest.loader import BUILTIN_AGENTS_DIR
-
-
-def _ready(*harnesses: str):
-    """`harness_ready` true for exactly `harnesses`."""
-    def ready(harness: str) -> bool:
-        return harness in harnesses
-    return patch("bot_bottle.agent_provider.harness_ready", side_effect=ready)
 
 
 def write_agent(root: Path, frontmatter: str, prompt: str = "You are the architect.") -> Path:
@@ -37,6 +32,11 @@ def write_agent(root: Path, frontmatter: str, prompt: str = "You are the archite
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"---\n{frontmatter}---\n\n{prompt}\n", encoding="utf-8")
     return path
+
+
+def _ready(provider: str) -> Resolved:
+    harness = "claude" if provider == "auto" else provider
+    return Resolved(provider, harness, {"harness": harness, "login": "host"})
 
 
 class TestExtractJson(unittest.TestCase):
@@ -120,53 +120,32 @@ class TestParseAndRepair(unittest.TestCase):
 
 
 class TestLoadArchitect(unittest.TestCase):
-    def setUp(self) -> None:
-        tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
-        self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
+    def test_its_prompt_is_bot_bottles_on_the_provider_resolved(self) -> None:
+        with mock.patch("bot_bottle.suggest.architect.resolve", side_effect=_ready):
+            got = load_architect("codex")
+        self.assertEqual(("codex", "codex", PROMPT), (got.provider, got.harness, got.prompt))
+        self.assertIn('"option"', got.prompt)
+        text = got.agent_file()
+        self.assertIn("harness: codex", text)
+        self.assertIn("login: host", text)
+        self.assertIn("You are bottle-architect", text)
 
-    def test_reads_the_prompt_harness_and_model_from_the_agent_file(self) -> None:
-        path = write_agent(self.root, "model: claude-sonnet-5\nagent_provider: claude\n",
-                           "Propose tiny bottles.")
-        got = load_architect(self.root)
-        self.assertEqual((path, "Propose tiny bottles.", "claude", "claude-sonnet-5"),
-                         (got.path, got.prompt, got.harness, got.model))
+    def test_a_connection_not_ready_or_invalid_is_an_error_saying_why(self) -> None:
+        with mock.patch("bot_bottle.suggest.architect.resolve",
+                        return_value=Resolved("claude", reason="claude isn't logged in")), \
+             self.assertRaisesRegex(ArchitectError, "claude isn't logged in; "
+                                                    "bottle-architect.connection is claude"):
+            load_architect("claude")
+        with self.assertRaisesRegex(ArchitectError, "isn't a bottle-architect.connection value"):
+            load_architect("off")
 
-    def test_without_a_host_copy_the_built_in_runs(self) -> None:
-        # Built in (PRD 0131): `harness: auto`, the first ready of claude, codex.
-        for ready, harness in ((("claude", "codex"), "claude"), (("codex",), "codex")):
-            with self.subTest(harness=harness), _ready(*ready):
-                got = load_architect(self.root)
-                self.assertEqual((BUILTIN_AGENTS_DIR / "bottle-architect.md", harness, ""),
-                                 (got.path, got.harness, got.model))
-                self.assertIn('"option"', got.prompt)
-
-    def test_with_no_harness_ready_the_built_in_says_so(self) -> None:
-        with _ready("pi"), self.assertRaisesRegex(ArchitectError, "no harness is ready here"):
-            load_architect(self.root)
-
-    def test_a_host_copy_replaces_the_built_in(self) -> None:
-        path = write_agent(self.root, "agent_provider:\n  harness: codex\n", "Mine.")
-        with _ready("claude"):
-            got = load_architect(self.root)
-        self.assertEqual((path, "codex", "Mine."), (got.path, got.harness, got.prompt))
-
-    def test_any_harness_can_be_the_architect(self) -> None:
-        for harness in ("claude", "codex", "pi"):
-            with self.subTest(harness=harness):
-                write_agent(self.root, f"agent_provider:\n  harness: {harness}\n")
-                self.assertEqual(harness, load_architect(self.root).harness)
-
-    def test_unloadable_promptless_or_odd_model_is_an_error(self) -> None:
-        cases = (("agent_provider:\n  harness: claude\n  bogus: 1\n", "x", "doesn't load"),
-                 ("agent_provider:\n  harness: my-harness\n", "x", "doesn't load"),
-                 ("agent_provider: claude\n", "", "no prompt"),
-                 ("model: --dangerous\n", "x", "plain model name"))
-        for frontmatter, prompt, why in cases:
-            with self.subTest(why=why):
-                write_agent(self.root, frontmatter, prompt)
-                with self.assertRaisesRegex(ArchitectError, why):
-                    load_architect(self.root)
+    def test_a_host_agent_file_is_never_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            write_agent(Path(tmp), "agent_provider: pi\n", "my own prompt")
+            with mock.patch("bot_bottle.suggest.architect.resolve", side_effect=_ready):
+                got = load_architect("auto")
+        self.assertEqual(("auto", "claude"), (got.provider, got.harness))
+        self.assertNotIn("my own prompt", got.prompt)
 
 
 class TestArchitectSuggest(unittest.TestCase):
@@ -180,9 +159,7 @@ class TestArchitectSuggest(unittest.TestCase):
         (self.root / "bottles").mkdir(parents=True)
 
     def _ask(self, answer: str | BaseException, cwd: Path | None = None,
-             frontmatter: str = "model: claude-sonnet-5\nagent_provider: claude\n",
              ) -> dict[str, object]:
-        write_agent(self.root, frontmatter, "The agent file's prompt.")
         seen: dict[str, object] = {}
 
         def run(arch: Architect, prompt: str) -> str:
@@ -192,7 +169,9 @@ class TestArchitectSuggest(unittest.TestCase):
             return answer
 
         try:
-            seen["proposal"] = architect_suggest("task", cwd, run=run, host_root=self.root)
+            with mock.patch("bot_bottle.suggest.architect.resolve", side_effect=_ready):
+                seen["proposal"] = architect_suggest("task", cwd, run=run, provider="codex",
+                                                     host_root=self.root)
         except ArchitectError as e:
             seen["error"] = str(e)
         return seen
@@ -201,8 +180,7 @@ class TestArchitectSuggest(unittest.TestCase):
         seen = self._ask('{"option": "reuse"}')
         arch = seen["architect"]
         assert isinstance(arch, Architect)
-        self.assertEqual(("claude", "claude-sonnet-5", "The agent file's prompt."),
-                         (arch.harness, arch.model, arch.prompt))
+        self.assertEqual(("codex", PROMPT), (arch.harness, arch.prompt))
         self.assertIsNotNone(seen.get("proposal"))
         self.assertIn("Respond with a single JSON object", str(seen["prompt"]))
 

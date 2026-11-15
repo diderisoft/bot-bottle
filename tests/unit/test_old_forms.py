@@ -135,8 +135,9 @@ class TestNewForms(unittest.TestCase):
                 mock.patch("bot_bottle.lib.log.warn") as warn:
             _agent({"model": "opus"})
             _agent({"model": "opus"})
+            # The architect reads no agent file now: a copy of it is an agent.
             ManifestAgent.from_dict("bottle-architect", {"model": "haiku"})
-        self.assertEqual(1, warn.call_count)
+        self.assertEqual(2, warn.call_count)
         self.assertIn("model is ignored", warn.call_args.args[0])
 
 

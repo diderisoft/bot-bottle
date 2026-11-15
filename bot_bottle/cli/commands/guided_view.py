@@ -65,7 +65,6 @@ if TYPE_CHECKING:
     from ...suggest.turns import Turn
 
 _T = TypeVar("_T")
-ARCHITECT = "bottle-architect"
 HARNESS_NAMES = {"claude": "Claude Code", "codex": "Codex", "pi": "pi"}
 REVIEW_KEYS = "enter run · s save as… · e edit · r reply · d details · q cancel"
 BLOCKED_KEYS = "e edit · r reply · d details · q cancel"
@@ -255,7 +254,7 @@ class StartView:  # pylint: disable=too-many-instance-attributes
     # --- agent ---
 
     def agents(self) -> list[str]:
-        return [a for a in self.manifest.all_agent_names if a != ARCHITECT]
+        return self.manifest.all_agent_names
 
     def agent_step(self) -> str:
         if not self.agents():
