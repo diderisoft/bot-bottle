@@ -17,8 +17,11 @@ The control stream (JSON lines):
 - `resume` (`agent_id`, `bottle`, `library_commit`) -> relaunches a stopped bottle this host
   ran (`remote_requests`): `agent_started` (also for a repeat or a CLI resume of a console
   bottle) or `agent_errored`. A `library_commit` resolves library bottles and agents there.
-- `hello` opens the stream; each (re)connect reports exits, reopens relays, sends
-  `agents_running` and `host_stats` (each minute).
+- `hello` opens the stream, from both ends: each says its link `protocol`
+  (`contract/console_link.py`, ADR 0024), and the host its `version`. Each
+  (re)connect reports exits, reopens relays, sends `agents_running` and
+  `host_stats` (each minute). `ping` -> `pong`.
+- A type not in `CONSOLE_MESSAGES` -> `unsupported` (`message_type`, `error`).
 - `agent_present` (from the host): a running session the console didn't launch, with a
   host-made `agent_id`, `bottle`, `parent`, `activation`, `label`, `definition`, `writable`
   and `origin`, on every (re)connect and start; from then on it's one of the link's agents.
@@ -58,8 +61,9 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ...contract.console_link import CONSOLE_MESSAGES
 from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
-from . import host_stats, remote_actions
+from . import host_stats, link_protocol, remote_actions
 from .children import child_agent_ids
 from .link_refusal import refused_delay
 from .live_metrics import MetricsWatch
@@ -192,6 +196,22 @@ class ConsoleLink:
 
     # Wait on the bottle: minutes for a launch, for good if a teardown wedges.
     SLOW = frozenset({"launch", "resume", "stop", "launch_trust_answer"})
+    # The types `handle` dispatches itself; `handles()` adds its links'.
+    OWN = frozenset({"hello", "ping", "list_local", "launch", "resume", "stop", "approval",
+                     "resolve_canary", "input", "resize", "history", "audit_query",
+                     "metrics_watch", "snapshot"})
+
+    @classmethod
+    def handles(cls) -> frozenset[str]:
+        """Every message type `handle` acts on: the contract's `CONSOLE_MESSAGES`."""
+        return (cls.OWN | AuditLink.REQUESTS | UpgradeLink.REQUESTS | LibraryLink.REQUESTS
+                | ProjectLink.REQUESTS | frozenset(TranscriptLink.REQUESTS)
+                | frozenset(remote_actions.QUERIES) | frozenset(remote_actions.HOST_REQUESTS)
+                | frozenset(remote_actions.ANSWERS))
+
+    async def hello(self) -> None:
+        """Open the stream from this end, before anything else is sent."""
+        await self._send(link_protocol.hello())
 
     async def take(self, msg: dict[str, Any]) -> None:
         """Handle `msg` off the link: a slow one in its agent's turn (or the forge's), beside it."""
@@ -203,7 +223,13 @@ class ConsoleLink:
 
     async def handle(self, msg: dict[str, Any]) -> None:
         kind = msg.get("type")
-        if kind == "list_local":
+        if kind not in CONSOLE_MESSAGES:
+            await self._send(link_protocol.unsupported(msg))
+        elif kind == "hello":
+            link_protocol.console_hello(msg)
+        elif kind == "ping":
+            await self._send({"type": "pong", "request_id": msg.get("request_id")})
+        elif kind == "list_local":
             await self._send({"type": "local_definitions", "request_id": msg.get("request_id"),
                               "definitions": [{"name": n} for n in self._agents()]})
         elif kind == "launch":
@@ -243,8 +269,8 @@ class ConsoleLink:
                 msg, self._asking, self._orchestrator, self._bottles))
         elif kind == "snapshot":
             await self._snapshot(msg)
-        elif kind != "hello":  # hello only opens the stream
-            log.debug(f"remote: ignoring console message {kind!r}")
+        else:  # in the contract, but nothing here handles it
+            await self._send(link_protocol.unsupported(msg))
 
     async def _errored(self, agent_id: str, message: str) -> None:
         await self._send({"type": "agent_errored", "agent_id": agent_id, "message": message})
@@ -672,6 +698,7 @@ async def serve_connection(conn: "iroh.Connection", bottles: Bottles,
     sessions = getattr(bottles, "sessions", None)
     link = ConsoleLink(bottles, send, agents, state=state,
                        terminals=session_terminals(conn, sessions) if sessions else None)
+    await link.hello()
     await link.resume()
     blocks = BlockLink(send, lambda: link.running)
 

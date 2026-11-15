@@ -785,6 +785,13 @@ The console is the first of:
 
 - The host dials the console it logged in to, over ALPN `bb-console/1`.
 - It refuses a console whose node id isn't the one pinned at login.
+- The link has its own protocol version (`contract/console_link.py`,
+  [ADR 0024](../decisions/0024-console-link-is-versioned.md)). The host's
+  first message is `hello` with its `protocol` and `version`. The console
+  marks a host outside its range outdated, and sends it only the hello,
+  heartbeat (`ping` → `pong`) and upgrade messages until it's upgraded. A
+  message type the host doesn't accept gets `unsupported`, and a warning in
+  the host controller's log.
 - Pairing keeps the console's URL, this host's id on it, the pinned console
   and whether the link is on in the host database (`pairing`).
 - The console's tokens for this host are in the host secrets file, as
