@@ -126,6 +126,10 @@ class BottlePlan(ABC):
     # Key for the agent's stored egress secrets, delivered without touching
     # disk.
     env_var_secret: str = ""
+    # Minted values for `__cred__<label>` token-refs: populated by the host
+    # controller between prepare() and launch(), after calling mint() on each
+    # `credentials:` block entry whose source is not `secret`.
+    minted_cred_values: dict[str, str] = field(default_factory=dict, repr=False)
 
     @property
     def container_name(self) -> str:
@@ -169,13 +173,13 @@ class BottlePlan(ABC):
     @property
     def egress_secrets(self) -> SecretSource:
         """Where egress token_refs resolve (`EgressTokenSecrets`): the
-        provider's provisioned values, then the store for the bottle's own
-        routes, else `secrets`."""
+        provider's provisioned values (plus any `credentials:` block minted
+        values), then the store for the bottle's own routes, else `secrets`."""
         routes = self.manifest.bottle.egress.routes
         refs = frozenset(r.TokenRef for r in routes if r.TokenRef and not r.TokenFromEnv)
         env_refs = frozenset(r.TokenRef for r in routes if r.TokenRef and r.TokenFromEnv)
-        return EgressTokenSecrets(
-            MappingSecrets(self.agent_provision.provisioned_env), self.secrets, refs, env_refs)
+        provisioned = {**self.agent_provision.provisioned_env, **self.minted_cred_values}
+        return EgressTokenSecrets(MappingSecrets(provisioned), self.secrets, refs, env_refs)
 
     def print(self) -> None:
         """Print the y/N preflight summary to stderr."""

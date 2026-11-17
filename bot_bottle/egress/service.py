@@ -28,6 +28,7 @@ from .plan import EgressPlan, EgressRoute
 
 if TYPE_CHECKING:
     from ..manifest import ManifestBottle
+    from ..manifest.credentials import ManifestCredential
 
 
 CODEX_HOST_CREDENTIAL_TOKEN_REF = "BOT_BOTTLE_CODEX_HOST_ACCESS_TOKEN"
@@ -108,12 +109,22 @@ def egress_manifest_routes(
             # Read-only, said explicitly: a gateway from before methods were
             # explicit would otherwise let an authed route write.
             core_matches.append(CoreMatchEntry(methods=READ_METHODS))
+
+        # Resolve a `$label` credential ref to the token_ref the egress plan uses.
+        # For `source: secret` / `kind: token` this is the existing secret name
+        # (backward-compatible). For everything else it is `__cred__<label>`, a
+        # synthetic name the host controller populates at mint time.
+        token_ref = r.TokenRef
+        if r.CredLabel:
+            cred = bottle.credentials.get(r.CredLabel)
+            token_ref = cred_token_ref(r.CredLabel, cred) if cred else r.CredLabel
+
         out.append(EgressRoute(
             host=r.Host,
             matches=tuple(core_matches),
             auth_scheme=r.AuthScheme,
             auth_header=r.AuthHeader,
-            token_ref=r.TokenRef,
+            token_ref=token_ref,
             roles=r.Role,
             git_fetch=r.GitFetch,
             outbound_detectors=r.OutboundDetectors,
@@ -123,6 +134,20 @@ def egress_manifest_routes(
             inspect=r.Inspect,
         ))
     return tuple(out)
+
+
+def cred_token_ref(label: str, cred: "ManifestCredential | None") -> str:
+    """The `token_ref` name for a `$label` credential route.
+
+    For `source: secret, kind: token` this is the existing secret name so the
+    gateway behaviour is identical to `auth.value: secret:NAME`. For every
+    other source (prompt, host_login, assume_role, …) it is `__cred__<label>`,
+    a synthetic key the host controller writes into the EgressTokenSecrets at
+    launch from the minted value.
+    """
+    if cred is not None and cred.source == "secret" and cred.kind == "token":
+        return str(cred.settings.get("secret", label))
+    return f"__cred__{label}"
 
 
 def egress_routes_for_bottle(

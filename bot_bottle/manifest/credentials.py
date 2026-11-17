@@ -15,10 +15,9 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import cast
 
 from ..credentials import (
-    AUTH_AWS_KINDS, AUTH_BEARER_KINDS, ENV_KINDS, KIND_TOKEN,
+    ENV_KINDS, KIND_TOKEN,
     KNOWN_KINDS, CredentialRegistry, default_registry,
 )
 from .util import ManifestError, as_json_object
@@ -44,6 +43,7 @@ _SOURCE_SETTINGS: dict[str, frozenset[str]] = {
     "secret": frozenset({"kind", "secret", "access_key_id", "secret_access_key",
                          "session_token", "private_key", "public_key"}),
     "prompt": frozenset({"message"}),
+    "host_login": frozenset({"harness"}),
     # Remaining sources are future chunks; their settings are unchecked in
     # chunk 1 to avoid breaking manifests written against the PRD.
 }
