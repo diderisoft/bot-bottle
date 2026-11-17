@@ -43,6 +43,7 @@ _SOURCE_SETTINGS: dict[str, frozenset[str]] = {
     "secret": frozenset({"kind", "secret", "access_key_id", "secret_access_key",
                          "session_token", "private_key", "public_key"}),
     "prompt": frozenset({"message"}),
+    "host_login": frozenset({"harness"}),
     # Remaining sources are future chunks; their settings are unchecked in
     # chunk 1 to avoid breaking manifests written against the PRD.
 }

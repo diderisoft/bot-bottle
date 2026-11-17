@@ -331,6 +331,15 @@ class AgentProvider(ABC):  # pylint: disable=too-many-public-methods  # the plug
         the host login is missing or expired."""
         raise NotImplementedError(f"{spec.harness} forwards no host login to refresh")
 
+    def read_host_login(self, host_env: Mapping[str, str] | None = None,
+                        ) -> tuple[str, "datetime | None"]:  # type: ignore[name-defined]
+        """The current host login token and when it expires, without a bottle.
+
+        Used by the `host_login` credential source at mint time. Raises
+        `HostLoginError` when the login is missing or expired. The default
+        raises `NotImplementedError` for providers that forward no host login."""
+        raise NotImplementedError(f"{type(self).__name__} forwards no host login")
+
     def provision_ca(self, bottle: "Bottle", plan: "BottlePlan") -> None:
         """Install the egress CA into the agent's trust store (Debian-style by
         default)."""
