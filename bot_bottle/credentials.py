@@ -201,9 +201,55 @@ class _PromptProvider(CredentialProvider):
                      starts_from=f"asks: {message}" if message else "asks at launch")
 
 
+class _HostLoginProvider(CredentialProvider):
+    """The host's own login for a named agent harness (e.g. Codex, Claude).
+
+    `harness: codex` reads `~/.codex/auth.json` via the Codex agent provider,
+    returning a short-lived JWT the renewal loop keeps current. Requires the
+    host CLI to be logged in; raises `HostLoginError` if not.
+
+    Not `project_definable`: it spends your personal login.
+    """
+
+    source = "host_login"
+    kinds = (KIND_TOKEN,)
+    project_definable = False
+
+    def mint(self, label: str, bottle_id: str,
+             settings: Mapping[str, object], secrets: SecretSource) -> MintedCredential:
+        harness = str(settings.get("harness", ""))
+        if not harness:
+            raise ValueError(f"credential {label!r}: source 'host_login' requires 'harness: NAME'")
+        # Deferred to avoid import-time circularity with agent_provider, which
+        # imports from secret_source.
+        from .agent_provider import get_provider  # pylint: disable=import-outside-toplevel
+        from .errors import HostLoginError  # pylint: disable=import-outside-toplevel
+        try:
+            provider = get_provider(harness)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            raise ValueError(f"credential {label!r}: unknown harness {harness!r}: {e}") from e
+        try:
+            token, expires_at = provider.read_host_login()
+        except (NotImplementedError, HostLoginError) as e:
+            raise ValueError(
+                f"credential {label!r}: harness {harness!r} host login: {e}"
+            ) from e
+        return MintedCredential(KIND_TOKEN, {"token": token}, expires_at,
+                                f"host_login:{harness}")
+
+    def describe(self, settings: Mapping[str, object]) -> Grant:
+        harness = str(settings.get("harness", ""))
+        return Grant(
+            acts_as="", authority="", scope="",
+            lifetime="until the host login expires",
+            starts_from=f"host login ({harness})" if harness else "host login",
+        )
+
+
 _BUILTIN_PROVIDERS: tuple[CredentialProvider, ...] = (
     _SecretProvider(),
     _PromptProvider(),
+    _HostLoginProvider(),
 )
 
 

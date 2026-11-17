@@ -338,6 +338,12 @@ class ClaudeAgentProvider(AgentProvider):
     def host_login_paths(self, host_env: Mapping[str, str] | None = None) -> tuple[Path, ...]:
         return (claude_auth_path(host_env),)
 
+    def read_host_login(self, host_env: Mapping[str, str] | None = None,
+                        ) -> tuple[str, "datetime"]:
+        """The host's current Claude access token and its expiry."""
+        token, expires_at = read_claude_host_login(host_env)
+        return token, expires_at
+
     def refresh_credentials(self, spec: CredentialRefreshSpec, bottle: "Bottle",
                             host_env: Mapping[str, str] | None = None) -> CredentialRefresh:
         """The host's Claude token, which `claude` on the host keeps fresh. The
