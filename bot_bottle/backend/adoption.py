@@ -45,6 +45,26 @@ class AdoptedCredentials:
 
 
 @dataclass(frozen=True)
+class AdoptedCredEntry:
+    """One `credentials:` block entry persisted for restart re-minting."""
+
+    label: str
+    source: str
+    kind: str
+    settings: dict  # JSON-serializable source-specific settings
+    # Maps kind field name ("token") to the EGRESS_TOKEN_N slots that carry it.
+    slots: dict[str, list[str]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AdoptedCredBlock:
+    """The `credentials:` block entries that need live minted values, persisted
+    so a restarted host controller can re-mint and re-register them."""
+
+    entries: tuple[AdoptedCredEntry, ...]
+
+
+@dataclass(frozen=True)
 class AdoptionRecord:
     container: str
     registry_id: str
@@ -54,6 +74,8 @@ class AdoptionRecord:
     # The bottle's `preserve_container`: its teardown keeps the guest when the
     # bottled agent is kept for resume.
     preserve_container: bool = False
+    # `credentials:` block entries that need live minted values on restart.
+    cred_block: AdoptedCredBlock | None = None
 
 
 def record_for(plan: "BottlePlan", bottle: "Bottle") -> AdoptionRecord:
@@ -68,7 +90,32 @@ def record_for(plan: "BottlePlan", bottle: "Bottle") -> AdoptionRecord:
         deploy_keys=deploy_key_refs(plan.manifest.bottle),
         credentials=credentials_for(plan),
         preserve_container=getattr(plan.manifest.bottle, "preserve_container", False) is True,
+        cred_block=cred_block_for(plan),
     )
+
+
+def cred_block_for(plan: "BottlePlan") -> AdoptedCredBlock | None:
+    """The `credentials:` block entries that need live values on restart."""
+    # pylint: disable-next=import-outside-toplevel
+    from ..egress.service import cred_token_ref
+    credentials = getattr(plan.manifest.bottle, "credentials", {})
+    if not credentials:
+        return None
+    entries: list[AdoptedCredEntry] = []
+    for label, cred in credentials.items():
+        if cred.source == "secret":
+            continue
+        token_ref = cred_token_ref(label, cred)
+        matching = [slot for slot, ref in plan.egress_plan.token_env_map.items()
+                    if ref == token_ref]
+        if not matching:
+            continue
+        entries.append(AdoptedCredEntry(
+            label=label, source=cred.source, kind=cred.kind,
+            settings=dict(cred.settings),
+            slots={"token": matching} if cred.kind == "token" else {},
+        ))
+    return AdoptedCredBlock(tuple(entries)) if entries else None
 
 
 def credentials_for(plan: "BottlePlan") -> AdoptedCredentials | None:
@@ -104,6 +151,7 @@ def read(identity: str) -> AdoptionRecord | None:
             deploy_keys=tuple(DeployKeyRef(**k) for k in raw["deploy_keys"]),
             credentials=_credentials(raw["credentials"]),
             preserve_container=raw["preserve_container"] is True,
+            cred_block=_cred_block(raw.get("cred_block")),
         )
     except (ValueError, KeyError, TypeError):
         return None
@@ -118,5 +166,24 @@ def _credentials(raw: Any) -> AdoptedCredentials | None:
         slots={str(k): tuple(v) for k, v in raw["slots"].items()})
 
 
-__all__ = ["AdoptedCredentials", "AdoptedWorkspace", "AdoptionRecord", "credentials_for",
-           "read", "record_for", "write"]
+def _cred_block(raw: Any) -> AdoptedCredBlock | None:
+    if not isinstance(raw, dict):
+        return None
+    entries = []
+    for e in raw.get("entries", []):
+        try:
+            entries.append(AdoptedCredEntry(
+                label=str(e["label"]), source=str(e["source"]), kind=str(e["kind"]),
+                settings=dict(e.get("settings") or {}),
+                slots={str(k): list(v) for k, v in (e.get("slots") or {}).items()},
+            ))
+        except (KeyError, TypeError):
+            continue
+    return AdoptedCredBlock(tuple(entries)) if entries else None
+
+
+__all__ = [
+    "AdoptedCredBlock", "AdoptedCredEntry", "AdoptedCredentials", "AdoptedWorkspace",
+    "AdoptionRecord", "cred_block_for", "credentials_for",
+    "read", "record_for", "write",
+]

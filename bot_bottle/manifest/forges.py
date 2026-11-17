@@ -143,14 +143,21 @@ def _str(d: dict[str, object], key: str, label: str, *, required: bool = False) 
 
 
 def credentials_raw(bottle_name: str, raw: dict[str, object]) -> dict[str, object]:
-    """A bottle's `credentials:`, which only carried forge tokens: those are
-    the host's now (ADR 0019), so the block is refused."""
-    if "credentials" in raw:
-        raise ManifestError(
-            f"bottle '{bottle_name}' credentials: a forge's token is the host's "
-            f"connection now, not the bottle's; connect the forge with `{_CONNECT} <url>` "
-            f"and remove this block and the forge's token")
-    return {}
+    """A bottle's `credentials:` block: the old forge-token format is refused;
+    the new PRD 0097 format (entries with `source:`) is accepted and passes
+    through to `ManifestBottle.from_dict`."""
+    creds = raw.get("credentials")
+    if creds is None:
+        return {}
+    # New format: empty block, or every entry is a dict with a `source` key.
+    if isinstance(creds, dict) and (
+            not creds or all(isinstance(v, dict) and "source" in v
+                             for v in creds.values())):
+        return {}
+    raise ManifestError(
+        f"bottle '{bottle_name}' credentials: a forge's token is the host's "
+        f"connection now, not the bottle's; connect the forge with `{_CONNECT} <url>` "
+        f"and remove this block and the forge's token")
 
 
 def forges_raw(bottle_name: str, raw: dict[str, object]) -> dict[str, object]:
@@ -517,9 +524,10 @@ def refuse_ssh_create(bottle_name: str, raw: dict[str, object],
 
 
 def strip_chain_keys(raw: dict[str, object]) -> dict[str, object]:
-    """`raw` without `credentials` and `git_gate.forges`, which `extends`
-    resolves and the bottle parser doesn't read."""
-    out = {k: v for k, v in raw.items() if k != "credentials"}
+    """`raw` without `git_gate.forges`, which `extends` resolves and the bottle
+    parser doesn't read. `credentials:` (the PRD 0097 provider block) passes
+    through to `ManifestBottle.from_dict`."""
+    out = dict(raw)
     git = out.get("git_gate")
     if isinstance(git, dict) and "forges" in git:
         out["git_gate"] = {k: v for k, v in git.items() if k != "forges"}
