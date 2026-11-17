@@ -140,7 +140,8 @@ class TestErrors(unittest.TestCase):
         _resolve(grant(host_key="ssh-ed25519 AAAA"))
 
     def test_a_token_is_the_hosts(self) -> None:
-        self.assert_fails({"dev": {"credentials": {"x": {"source": "secret", "secret": "S"}}}},
+        # Old-style forge tokens had no `source:` key — rejected as the host's connection.
+        self.assert_fails({"dev": {"credentials": {"x": {"token": "secret:S"}}}},
                           "a forge's token is the host's connection now")
         entry = {**FORGE["git_gate"]["forges"]["gitea.example.com"], "token": "$x"}
         self.assert_fails({"dev": {"git_gate": {"forges": {"gitea.example.com": entry}}}},
