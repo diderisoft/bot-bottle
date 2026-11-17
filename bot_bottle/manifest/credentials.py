@@ -15,10 +15,9 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import cast
 
 from ..credentials import (
-    AUTH_AWS_KINDS, AUTH_BEARER_KINDS, ENV_KINDS, KIND_TOKEN,
+    ENV_KINDS, KIND_TOKEN,
     KNOWN_KINDS, CredentialRegistry, default_registry,
 )
 from .util import ManifestError, as_json_object
