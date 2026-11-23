@@ -412,5 +412,80 @@ class TestHostLoginProvider(unittest.TestCase):
         self.assertEqual(prov.source, "host_login")  # type: ignore[union-attr]
 
 
+# ── readable_push on renewal ───────────────────────────────────────────────────
+
+class TestReadablePush(unittest.TestCase):
+    """CredentialRenewer calls readable_push when a readable credential renews."""
+
+    def _near_expiry(self) -> MintedCredential:
+        return MintedCredential(KIND_TOKEN, {"token": "old-tok"},
+                                NOW + timedelta(minutes=2), "fake")
+
+    def test_readable_push_called_on_renewal(self) -> None:
+        readable_calls: list[tuple] = []
+        renewer, _ = _make_renewer(readable_push=lambda *a: readable_calls.append(a))
+        prov = _FakeProvider(tokens=["new-tok"])
+        minted = self._near_expiry()
+        renewer.add("b1", "reg1", "evsec",
+                    [("lbl", minted, prov, {}, None, {})],  # type: ignore[arg-type]
+                    readable_labels=frozenset({"lbl"}))
+        renewer.renew_all()
+        self.assertEqual(len(readable_calls), 1)
+        bottle_id, label, values = readable_calls[0]
+        self.assertEqual(bottle_id, "b1")
+        self.assertEqual(label, "lbl")
+        self.assertEqual(values.get("token"), "new-tok")
+
+    def test_readable_push_not_called_when_not_readable(self) -> None:
+        readable_calls: list[tuple] = []
+        renewer, _ = _make_renewer(readable_push=lambda *a: readable_calls.append(a))
+        prov = _FakeProvider(tokens=["new-tok"])
+        minted = self._near_expiry()
+        renewer.add("b1", "reg1", "evsec",
+                    [("lbl", minted, prov, {}, None, {})],  # type: ignore[arg-type]
+                    readable_labels=frozenset())  # not readable
+        renewer.renew_all()
+        self.assertEqual(readable_calls, [])
+
+    def test_readable_push_not_called_when_no_callback(self) -> None:
+        renewer, _ = _make_renewer()  # no readable_push
+        prov = _FakeProvider(tokens=["new-tok"])
+        minted = self._near_expiry()
+        renewer.add("b1", "reg1", "evsec",
+                    [("lbl", minted, prov, {}, None, {})],  # type: ignore[arg-type]
+                    readable_labels=frozenset({"lbl"}))
+        # Should not raise even with no callback.
+        renewer.renew_all()
+
+    def test_readable_push_error_does_not_stop_renewal(self) -> None:
+        def bad_push(*_: object) -> None:
+            raise RuntimeError("push failed")
+
+        renewer, pushed = _make_renewer(readable_push=bad_push)
+        prov = _FakeProvider(tokens=["new-tok"])
+        minted = self._near_expiry()
+        renewer.add("b1", "reg1", "evsec",
+                    [("lbl", minted, prov, {}, None, {"token": ("SLOT0",)})],  # type: ignore[arg-type]
+                    readable_labels=frozenset({"lbl"}))
+        # Renew should complete; the egress push still happens.
+        renewer.renew_all()
+        # egress push still happened
+        self.assertEqual(len(pushed), 1)
+        self.assertEqual(pushed[0][1], "SLOT0")
+
+    def test_unchanged_value_does_not_trigger_readable_push(self) -> None:
+        readable_calls: list[tuple] = []
+        renewer, _ = _make_renewer(readable_push=lambda *a: readable_calls.append(a))
+        prov = _FakeProvider(tokens=["same-tok"])
+        minted = MintedCredential(KIND_TOKEN, {"token": "same-tok"},
+                                  NOW + timedelta(minutes=2), "fake")
+        renewer.add("b1", "reg1", "evsec",
+                    [("lbl", minted, prov, {}, None, {})],  # type: ignore[arg-type]
+                    readable_labels=frozenset({"lbl"}))
+        renewer.renew_all()
+        # No change → no push.
+        self.assertEqual(readable_calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()

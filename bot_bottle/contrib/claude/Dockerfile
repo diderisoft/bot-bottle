@@ -46,6 +46,11 @@ RUN cd /opt/claude \
 # suppress bot-bottle's git-gate insteadOf rules.
 RUN install -d -o node -g node -m 755 /home/node/.config /home/node/.config/git
 
+# bb-credential: agent CLI for fetching readable credentials from the gateway.
+COPY bot_bottle/agent_scripts/bb_credential.py /usr/local/bin/bb-credential
+RUN chmod +x /usr/local/bin/bb-credential \
+  && ln -s /usr/local/bin/bb-credential /usr/local/bin/docker-credential-bb
+
 # Run as the image's non-root `node` user (uid 1000).
 USER node
 WORKDIR /home/node

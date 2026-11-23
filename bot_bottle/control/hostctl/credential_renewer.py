@@ -42,6 +42,8 @@ RENEW_BEFORE_FRACTION = 0.20
 
 # (registry_id, slot, value, env_var_secret) → pushed, or raises.
 Push = Callable[[str, str, str, str], None]
+# (bottle_id, label, values) → pushed for agent_can_read credentials.
+ReadablePush = Callable[[str, str, "dict[str, str]"], None]
 
 
 def _renew_before(issued_at: datetime, expires_at: datetime) -> timedelta:
@@ -77,6 +79,7 @@ class _BottleEntry:
     env_var_secret: str
     creds: dict[str, _CredEntry] = field(default_factory=dict)
     warned: dict[str, str] = field(default_factory=dict)
+    readable_labels: frozenset[str] = frozenset()
 
 
 class CredentialRenewer:
@@ -88,10 +91,12 @@ class CredentialRenewer:
         *,
         audit: object | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        readable_push: "ReadablePush | None" = None,
     ) -> None:
         self._push = push
         self._audit = audit
         self._clock = clock
+        self._readable_push = readable_push
         self._bottles: dict[str, _BottleEntry] = {}
         self._lock = threading.Lock()
         self._renewing = threading.Lock()
@@ -110,13 +115,18 @@ class CredentialRenewer:
             "SecretSource",
             dict[str, tuple[str, ...]],  # slots: field → EGRESS_TOKEN_N names
         ]],
+        *,
+        readable_labels: frozenset[str] = frozenset(),
     ) -> None:
         """Register a bottle's credentials for renewal. `credentials` is a list
         of (label, minted, provider, settings, secrets, slots) tuples, one per
-        credential entry in the bottle's `credentials:` block."""
+        credential entry in the bottle's `credentials:` block.
+        `readable_labels` names any `agent_can_read: true` credentials so the
+        renewer can push fresh values via `readable_push` on renewal."""
         now = self._clock()
         entry = _BottleEntry(bottle_id=bottle_id, registry_id=registry_id,
-                             env_var_secret=env_var_secret)
+                             env_var_secret=env_var_secret,
+                             readable_labels=readable_labels)
         for label, minted, provider, settings, secrets, slots in credentials:
             entry.creds[label] = _CredEntry(
                 label=label, cred=minted, issued_at=now,
@@ -190,6 +200,12 @@ class CredentialRenewer:
         for field_name, new_value in changed.items():
             for slot in ce.slots.get(field_name, ()):
                 self._push(entry.registry_id, slot, new_value, entry.env_var_secret)
+        if ce.label in entry.readable_labels and self._readable_push is not None:
+            try:
+                self._readable_push(entry.bottle_id, ce.label, dict(fresh.values))
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                log.warn(f"bottle {entry.bottle_id}: couldn't push renewed readable "
+                         f"credential {ce.label!r}: {e}")
         log.info(f"bottle {entry.bottle_id}: renewed credential {ce.label!r}"
                  + (f" (valid until {fresh.expires_at:%Y-%m-%d %H:%M} UTC)"
                     if fresh.expires_at else ""))
@@ -217,5 +233,6 @@ class CredentialRenewer:
 
 
 __all__ = [
-    "CredentialRenewer", "RENEW_CHECK_SECONDS", "MIN_RENEW_BEFORE", "RENEW_BEFORE_FRACTION",
+    "CredentialRenewer", "ReadablePush",
+    "RENEW_CHECK_SECONDS", "MIN_RENEW_BEFORE", "RENEW_BEFORE_FRACTION",
 ]

@@ -50,6 +50,7 @@ _GATEWAY_ROUTES = frozenset({
     ("POST", "/supervise/propose"),
     ("POST", "/supervise/poll"),
     ("POST", "/canary/events"),
+    ("POST", "/credentials/fetch"),
 })
 
 
@@ -91,6 +92,16 @@ class SecretBody(_StrictModel):
     name: StrictStr
     value: StrictStr
     env_var_secret: StrictStr
+
+
+class ReadableCredentialBody(_StrictModel):
+    values: dict[StrictStr, StrictStr]
+
+
+class CredentialFetchBody(_StrictModel):
+    source_ip: StrictStr
+    identity_token: StrictStr
+    label: StrictStr
 
 
 class ReconcileBody(_StrictModel):
@@ -470,6 +481,16 @@ def create_app(
             return {"updated": True}
         raise HTTPException(404, "no such bottle")
 
+    @app.put("/bottles/{bottle_id}/readable-credential/{label}")
+    def store_readable_credential(
+        bottle_id: str, label: str, body: ReadableCredentialBody,
+    ) -> dict[str, object]:
+        # Host controller pushes the current values of an `agent_can_read`
+        # credential so the gateway can serve them to the agent. cli-only.
+        if orch.store_readable_credential(bottle_id, label, dict(body.values)):
+            return {"stored": True}
+        raise HTTPException(404, "no such bottle")
+
     @app.delete("/bottles/{bottle_id}")
     def deregister(bottle_id: str) -> dict[str, object]:
         if orch.deregister_bottle(bottle_id):
@@ -704,6 +725,21 @@ def create_app(
             "audit_delivery": orch.audit_delivery(rec.bottle_id),
             "tokens": orch.tokens_for(rec.bottle_id),
         }
+
+    @app.post("/credentials/fetch")
+    def fetch_credential(body: CredentialFetchBody) -> dict[str, object]:
+        # Gateway-auth: the supervisor server calls this after attributing the
+        # agent request by (source_ip, identity_token). Returns the current
+        # values of an `agent_can_read` credential, or 403 if unattributed or
+        # 404 if the label is absent / agent_can_read is not set.
+        source_ip = _required(body.source_ip, "source_ip")
+        label = _required(body.label, "label")
+        values = orch.fetch_readable_credential_attributed(
+            source_ip, body.identity_token, label,
+        )
+        if values is None:
+            raise HTTPException(404, "credential not found or not readable")
+        return {"values": values}
 
     return app
 
