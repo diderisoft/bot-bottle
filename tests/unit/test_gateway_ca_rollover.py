@@ -30,7 +30,9 @@ from cryptography.x509.oid import NameOID
 
 from bot_bottle.gateway import ca_rollover
 
-_NOW = dt.datetime(2026, 10, 19, tzinfo=dt.timezone.utc)
+# Today, not a fixed date: the handshakes check validity against the real
+# clock, so certificates minted around a fixed day expire under the tests.
+_NOW = dt.datetime.now(dt.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def _name(cn: str) -> "x509.Name":
