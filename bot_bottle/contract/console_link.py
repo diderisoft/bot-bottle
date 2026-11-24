@@ -18,7 +18,9 @@ upgraded.
 
 from __future__ import annotations
 
-LINK_PROTOCOL = 1
+# 2: `approval` with a `request_id` is answered with `approval_answered`
+# (`message`, or `error` when it wasn't applied), so the console can say why.
+LINK_PROTOCOL = 2
 
 # Messages no protocol may change: the hello, the heartbeat and the upgrade,
 # so a console can still reach and upgrade a host of any protocol.

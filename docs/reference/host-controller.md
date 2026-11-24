@@ -1057,6 +1057,26 @@ An arrow shows a request and its reply.
 | `bottle_chain`, `bottle_write` | [Bottle tab](#bottle-tab) |
 | `audit_record`, `audit_head`, `audit_unlock_challenge`, `audit_unlock`, `decrypt_audit_records` | [Audit records on the console](#audit-records-on-the-console) |
 | `list_secrets`, `set_secret`, `operator_egress_allow` | [What pairing lets the console do](#what-pairing-lets-the-console-do) |
+| `approval` -> `approval_answered` | [Answering a card](#answering-a-card) |
+
+### Answering a card
+
+A raised request shows on the console as an `attention` card. Its plain
+Allow, Allow for project or Deny comes back as `approval` (`agent_id`,
+`decision`, `since`). A card whose option is in `CARD_ANSWERS`
+(`contract/console_link.py`) takes that message instead, and `approval`
+only to deny it.
+
+- From link protocol 2, the console sends `approval` with a `request_id`.
+  The host replies `approval_answered` with a `message` once it's applied,
+  or an `error` when it wasn't. The console shows either on the card.
+- When it wasn't applied, the request stays waiting and its card is raised
+  again. The host controller's log names the bottle, the tool and the
+  decision.
+- A plain allow on a card that takes its own answer (`add-repo`,
+  `launch-bottle`) is refused with an error that the console may need
+  updating.
+- A console of protocol 1 sends no `request_id` and gets no reply.
 
 ### Library sync
 

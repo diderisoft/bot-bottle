@@ -63,7 +63,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from ...contract.console_link import CONSOLE_MESSAGES
 from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
-from . import host_stats, link_protocol, remote_actions
+from . import approval_answer, host_stats, link_protocol, remote_actions
 from .children import child_agent_ids
 from .link_refusal import refused_delay
 from .live_metrics import MetricsWatch
@@ -241,7 +241,7 @@ class ConsoleLink:
             await self._stop(str(msg.get("agent_id", "")), bool(msg.get("stop_children")))
         elif kind == "approval":
             await self._approval(str(msg.get("agent_id", "")), str(msg.get("decision", "")),
-                                 str(msg.get("since", "")))
+                                 str(msg.get("since", "")), msg.get("request_id"))
         elif kind == "resolve_canary":
             await self.canaries.resolve(msg)
         elif kind == "input":
@@ -590,29 +590,25 @@ class ConsoleLink:
                               "since": request.arrived, "message": card_message(lines),
                               "options": options})
 
-    async def _approval(self, agent_id: str, decision: str, since: str) -> None:
+    async def _approval(self, agent_id: str, decision: str, since: str,
+                        request_id: object = None) -> None:
         """The console's answer to `agent_id`'s raised approval. `since` must
-        match the request still shown."""
-        # pylint: disable=import-outside-toplevel  # the link's only approvals use
-        from ...approvals import ALLOW_ONCE, ALLOW_PROJECT, DENY
-        from ..client import AlreadyAnswered
+        match the request still shown. A console that sent a `request_id`
+        is told what happened (`approval_answer.reply`)."""
         request = self._asking.get(agent_id)
-        chosen = {"allow": ALLOW_ONCE, "allow_project": ALLOW_PROJECT, "deny": DENY}.get(decision)
-        if request is None or chosen is None or not same_instant(since, request.arrived):
+        if (request is None or decision not in approval_answer.DECISIONS
+                or not same_instant(since, request.arrived)):
             log.warn(f"remote: ignoring a stale or unknown approval for {agent_id}")
+            if (stale := approval_answer.reply(
+                    request_id, agent_id, error="That request is no longer waiting.")):
+                await self._send(stale)
             return
-        try:
-            client = self._orchestrator(request.orchestrator)
-            message = await remote_actions.answer(client, request, chosen, self._bottles,
-                                                  via="the phone")
-            log.info(f"remote: {request.session}: {message}")
-        except AlreadyAnswered as e:
-            # Answered in the terminal first; it stands. The push clears the phone's.
-            log.info(f"remote: {request.session}: already answered ({e.decided_as}); "
-                     "the phone's answer wasn't applied")
-        except Exception as e:  # pylint: disable=broad-exception-caught  # logged; still pending
-            log.warn(f"remote: couldn't answer {request.session}'s request: {e}")
+        message, error = await approval_answer.answer(request, decision, self._orchestrator,
+                                                      self._bottles)
+        if error:
             self._asking.pop(agent_id, None)  # still waiting: raise its card again
+        if answered := approval_answer.reply(request_id, agent_id, message=message, error=error):
+            await self._send(answered)
         await self.push_attention()
 
     async def reap(self) -> None:
