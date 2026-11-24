@@ -664,7 +664,7 @@ _CRED_KEY_INDEX = {
                                    "private_key": "PRIV", "public_key": "PUB"}},
         "git_gate": {"repos": {"app": {
             "url": "ssh://git@git.example.com/org/app.git",
-            "key": "$my-key",
+            "key": "@my-key",
             "host_key": "ssh-ed25519 AAAA...",
         }}},
     }},
@@ -706,7 +706,7 @@ class TestCredentialKeyEntry(unittest.TestCase):
             "credentials": {"tok": {"source": "secret", "secret": "X"}},
             "git_gate": {"repos": {"app": {
                 "url": "ssh://git@git.example.com/org/app.git",
-                "key": "$tok",
+                "key": "@tok",
             }}},
         }}}
         with self.assertRaisesRegex(ManifestError, "ssh-key"):

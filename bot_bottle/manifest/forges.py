@@ -454,7 +454,7 @@ def normalize_repos(bottle_name: str, raw: dict[str, object]) -> dict[str, objec
 def refuse_long_form(bottle_name: str, repos: "Mapping[str, object]", *,
                      homes: "Mapping[str, ForgeHome] | None" = None) -> None:
     """A bottle file's own repos, as written: each is a grant string, or a
-    credential-backed long form (a dict whose `key:` is a `$label` credential
+    credential-backed long form (a dict whose `key:` is an `@label` credential
     reference). The old long form with an inline key block is refused (ADR 0008,
     ADR 0023). `homes`: the connections to plan with, {} to ask none."""
     bad = {k: v for k, v in repos.items()

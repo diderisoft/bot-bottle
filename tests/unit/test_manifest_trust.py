@@ -471,7 +471,7 @@ class CredentialGrants(unittest.TestCase):
         bottle = self._bottle({
             "credentials": {"my-login": {"source": "host_login", "harness": "codex"}},
             "egress": {"routes": [{"host": "api.example.com", "methods": ["GET"],
-                                   "auth": {"type": "bearer", "value": "$my-login"}}]},
+                                   "auth": {"type": "bearer", "value": "@my-login"}}]},
         })
         lines = trust.grants(bottle)
         route_line = next(l for l in lines if "api.example.com" in l)
@@ -531,7 +531,7 @@ class CredentialGrants(unittest.TestCase):
                 }},
                 "git_gate": {"repos": {"app": {
                     "url": "ssh://git@github.com/owner/repo.git",
-                    "key": "$my-key",
+                    "key": "@my-key",
                 }}},
             }},
             "agents": {"demo": {"skills": [], "prompt": ""}},

@@ -143,7 +143,7 @@ class TestErrors(unittest.TestCase):
         # Old-style forge tokens had no `source:` key — rejected as the host's connection.
         self.assert_fails({"dev": {"credentials": {"x": {"token": "secret:S"}}}},
                           "a forge's token is the host's connection now")
-        entry = {**FORGE["git_gate"]["forges"]["gitea.example.com"], "token": "$x"}
+        entry = {**FORGE["git_gate"]["forges"]["gitea.example.com"], "token": "@x"}
         self.assert_fails({"dev": {"git_gate": {"forges": {"gitea.example.com": entry}}}},
                           "bot-bottle forge connect")
 

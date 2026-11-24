@@ -9,10 +9,10 @@ from bot_bottle.manifest.bottle import ManifestBottle
 from bot_bottle.manifest.credentials import (
     ManifestCredential,
     check_cred_refs,
+    cred_label,
     is_cred_ref,
     parse_cred_label,
     parse_credentials_block,
-    unescape_dollar,
 )
 from bot_bottle.manifest.util import ManifestError
 
@@ -27,42 +27,37 @@ def _creds(d: dict[str, Any], **kw: Any) -> dict[str, ManifestCredential]:
     return parse_credentials_block("test", d, **kw)
 
 
-# ─── is_cred_ref / parse_cred_label ─────────────────────────────────────────
+# ─── is_cred_ref / cred_label ───────────────────────────────────────────────
 
 class TestCredRefDetection(unittest.TestCase):
-    def test_bare_dollar_label(self):
-        self.assertTrue(is_cred_ref("$my-token"))
-        self.assertTrue(is_cred_ref("$a"))
-        self.assertTrue(is_cred_ref("$my-cred-123"))
+    def test_at_label_is_cred_ref(self) -> None:
+        self.assertTrue(is_cred_ref("@my-token"))
+        self.assertTrue(is_cred_ref("@a"))
+        self.assertTrue(is_cred_ref("@my-cred-123"))
 
-    def test_braced_is_not_cred_ref(self):
+    def test_dollar_forms_are_not_cred_refs(self) -> None:
         self.assertFalse(is_cred_ref("${MY_VAR}"))
-        self.assertFalse(is_cred_ref("${my-token}"))
+        self.assertFalse(is_cred_ref("$my-token"))
 
-    def test_double_dollar_is_not_cred_ref(self):
-        self.assertFalse(is_cred_ref("$$literal"))
+    def test_double_at_escape_is_not_cred_ref(self) -> None:
+        self.assertFalse(is_cred_ref("@@literal"))
 
-    def test_literal_is_not_cred_ref(self):
+    def test_literal_is_not_cred_ref(self) -> None:
         self.assertFalse(is_cred_ref("secret:NAME"))
         self.assertFalse(is_cred_ref("?message"))
         self.assertFalse(is_cred_ref("plain-string"))
         self.assertFalse(is_cred_ref(""))
 
-    def test_uppercase_label_is_not_cred_ref(self):
-        self.assertFalse(is_cred_ref("$MY_TOKEN"))
+    def test_uppercase_label_is_not_cred_ref(self) -> None:
+        self.assertFalse(is_cred_ref("@MY_TOKEN"))
 
-    def test_parse_cred_label_happy(self):
-        self.assertEqual(parse_cred_label("$my-token"), "my-token")
-        self.assertEqual(parse_cred_label("$a"), "a")
+    def test_cred_label_happy(self) -> None:
+        self.assertEqual(cred_label("@my-token"), "my-token")
+        self.assertEqual(parse_cred_label("@a"), "a")
 
-    def test_parse_cred_label_non_ref(self):
-        self.assertEqual(parse_cred_label("${VAR}"), "")
-        self.assertEqual(parse_cred_label("literal"), "")
-
-    def test_unescape_dollar(self):
-        self.assertEqual(unescape_dollar("$$literal"), "$literal")
-        self.assertEqual(unescape_dollar("$label"), "$label")
-        self.assertEqual(unescape_dollar("hello"), "hello")
+    def test_cred_label_non_ref(self) -> None:
+        self.assertEqual(cred_label("${VAR}"), "")
+        self.assertEqual(cred_label("literal"), "")
 
 
 # ─── parse_credentials_block ────────────────────────────────────────────────
@@ -210,7 +205,7 @@ class TestCheckCredRefs(unittest.TestCase):
 # ─── ManifestBottle integration ─────────────────────────────────────────────
 
 class TestSettingsCredRefs(unittest.TestCase):
-    """`$label` in a credential's settings: it must name a credential, and the
+    """`@label` in a credential's settings: it must name a credential, and the
     references must not form a cycle."""
 
     def _check(self, creds: dict[str, Any]) -> None:
@@ -221,22 +216,39 @@ class TestSettingsCredRefs(unittest.TestCase):
         self._check({
             "api": {"source": "secret", "secret": "GITEA_TOKEN"},
             "deploy": {"source": "gitea_deploy_key", "api_url": "https://g.example.com",
-                       "token": "$api", "repo": "o/r"},
+                       "token": "@api", "repo": "o/r"},
         })
 
     def test_reference_to_undeclared_credential(self) -> None:
         with self.assertRaises(ManifestError) as cm:
             self._check({"deploy": {"source": "gitea_deploy_key", "api_url": "https://g",
-                                    "token": "$missing", "repo": "o/r"}})
-        self.assertIn("$missing names no declared credential", str(cm.exception))
+                                    "token": "@missing", "repo": "o/r"}})
+        self.assertIn("@missing names no declared credential", str(cm.exception))
 
     def test_cycle(self) -> None:
         with self.assertRaises(ManifestError) as cm:
             self._check({
-                "a": {"source": "host_login", "harness": "$b"},
-                "b": {"source": "host_login", "harness": "$a"},
+                "a": {"source": "host_login", "harness": "@b"},
+                "b": {"source": "host_login", "harness": "@a"},
             })
         self.assertIn("credential cycle", str(cm.exception))
+
+
+class TestSettingsValueForms(unittest.TestCase):
+    """A non-secret source's string settings are checked as value forms."""
+
+    def test_malformed_at_refused(self) -> None:
+        with self.assertRaisesRegex(ManifestError, "'@' must be followed by a credential label"):
+            _creds({"k": {"source": "prompt", "message": "@BadLabel"}})
+
+    def test_double_at_kept_as_written(self) -> None:
+        # Unescaped where the value is used (`sigil_ref.literal`), not at load.
+        creds = _creds({"k": {"source": "prompt", "message": "@@not-a-ref"}})
+        self.assertEqual(creds["k"].settings["message"], "@@not-a-ref")
+
+    def test_reserved_secret_name_refused(self) -> None:
+        with self.assertRaisesRegex(ManifestError, "reserved"):
+            _creds({"k": {"source": "assume_role", "role": "secret:BB_HOST_TOKEN"}})
 
 
 class TestFileSettings(unittest.TestCase):
@@ -271,14 +283,14 @@ class TestManifestBottleCredentials(unittest.TestCase):
             "credentials": {
                 "my-token": {"source": "secret", "secret": "MY_TOKEN"},
             },
-            "env": {"MY_API_KEY": "$my-token"},
+            "env": {"MY_API_KEY": "@my-token"},
             "egress": {"routes": [{
                 "host": "api.example.com",
-                "auth": {"type": "bearer", "value": "$my-token"},
+                "auth": {"type": "bearer", "value": "@my-token"},
             }]},
         })
         self.assertIn("my-token", b.credentials)
-        self.assertEqual(b.env["MY_API_KEY"], "$my-token")
+        self.assertEqual(b.env["MY_API_KEY"], "@my-token")
 
     def test_cred_ref_in_env_without_egress_route_raises(self):
         with self.assertRaises(ManifestError):
@@ -286,16 +298,16 @@ class TestManifestBottleCredentials(unittest.TestCase):
                 "credentials": {
                     "my-token": {"source": "secret", "secret": "MY_TOKEN"},
                 },
-                "env": {"MY_API_KEY": "$my-token"},
+                "env": {"MY_API_KEY": "@my-token"},
             })
 
     def test_undefined_cred_in_env_raises(self):
         with self.assertRaises(ManifestError):
             _bottle({
-                "env": {"MY_API_KEY": "$ghost"},
+                "env": {"MY_API_KEY": "@ghost"},
                 "egress": {"routes": [{
                     "host": "api.example.com",
-                    "auth": {"type": "bearer", "value": "$ghost"},
+                    "auth": {"type": "bearer", "value": "@ghost"},
                 }]},
             })
 
@@ -306,7 +318,7 @@ class TestManifestBottleCredentials(unittest.TestCase):
             },
             "egress": {"routes": [{
                 "host": "api.example.com",
-                "auth": {"type": "bearer", "value": "$my-token"},
+                "auth": {"type": "bearer", "value": "@my-token"},
             }]},
         })
         self.assertIn("my-token", b.credentials)
@@ -325,7 +337,7 @@ class TestManifestBottleCredentials(unittest.TestCase):
             },
             "egress": {"routes": [{
                 "host": "api.example.com",
-                "auth": {"type": "bearer", "value": "$my-token"},
+                "auth": {"type": "bearer", "value": "@my-token"},
             }]},
         })
         route = b.egress.routes[0]
@@ -350,7 +362,7 @@ class TestManifestBottleCredentials(unittest.TestCase):
             },
             "egress": {"routes": [{
                 "host": "api.example.com",
-                "auth": {"type": "bearer", "value": "$api-key"},
+                "auth": {"type": "bearer", "value": "@api-key"},
             }]},
         })
         self.assertEqual(b.credentials["api-key"].source, "prompt")
@@ -362,7 +374,7 @@ class TestManifestBottleCredentials(unittest.TestCase):
             },
             "egress": {"routes": [{
                 "host": "api.example.com",
-                "auth": {"type": "token", "value": "$my-token"},
+                "auth": {"type": "token", "value": "@my-token"},
             }]},
         })
         route = b.egress.routes[0]
@@ -376,7 +388,7 @@ class TestManifestBottleCredentials(unittest.TestCase):
             },
             "egress": {"routes": [{
                 "host": "api.example.com",
-                "auth": {"type": "header", "name": "X-Api-Key", "value": "$my-token"},
+                "auth": {"type": "header", "name": "X-Api-Key", "value": "@my-token"},
             }]},
         })
         route = b.egress.routes[0]

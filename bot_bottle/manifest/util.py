@@ -21,6 +21,22 @@ class OldFormError(ManifestError):
         super().__init__(f"{where}: {change} (see {MANIFEST_DOCS})")
 
 
+def as_value_dict(value: object, label: str) -> dict[str, object]:
+    """Like `as_json_object`, but validates every string value as a valid
+    sigil-ref expression (secret:NAME, ${VAR}, ?message, @label, literal).
+    Non-string values pass through unchanged. Used for settings dicts where
+    any value field may carry a sigil reference."""
+    # pylint: disable-next=import-outside-toplevel
+    from .. import sigil_ref
+    d = as_json_object(value, label)
+    for k, v in d.items():
+        if isinstance(v, str):
+            p = sigil_ref.problem(v)
+            if p:
+                raise ManifestError(f"{label} {k!r}: {p}")
+    return d
+
+
 def as_json_object(value: object, label: str) -> dict[str, object]:
     """`value` as a `dict[str, object]`; raises unless it's a str-keyed dict."""
     if not isinstance(value, dict):

@@ -355,7 +355,7 @@ class TestCredBlockForSshKey(unittest.TestCase):
             }},
             "git_gate": {"repos": {"app": {
                 "url": "ssh://git@github.com/owner/repo.git",
-                "key": "$my-key",
+                "key": "@my-key",
             }}},
         })
         result = cred_block_for(plan)
@@ -375,8 +375,8 @@ class TestCredBlockForSshKey(unittest.TestCase):
                 "private_key_path": "/priv", "public_key_path": "/pub",
             }},
             "git_gate": {"repos": {
-                "app": {"url": "ssh://git@github.com/owner/app.git", "key": "$shared-key"},
-                "docs": {"url": "ssh://git@github.com/owner/docs.git", "key": "$shared-key"},
+                "app": {"url": "ssh://git@github.com/owner/app.git", "key": "@shared-key"},
+                "docs": {"url": "ssh://git@github.com/owner/docs.git", "key": "@shared-key"},
             }},
         })
         result = cred_block_for(plan)
@@ -795,13 +795,13 @@ class TestLabelResolution(unittest.TestCase):
                             registry=_registry_with(prov))
 
     def test_dollar_label_in_settings_resolved(self) -> None:
-        """A later credential's `$first` setting is the minted token of `first`
+        """A later credential's `@first` setting is the minted token of `first`
         by the time it is minted. (`harness` is the one setting host_login
         accepts, so the manifest takes it.)"""
         prov = _TrackingProvider()
         self._mint({
             "first": {"source": _FAKE_SOURCE},
-            "second": {"source": _FAKE_SOURCE, "harness": "$first"},
+            "second": {"source": _FAKE_SOURCE, "harness": "@first"},
         }, prov)
         self.assertEqual(prov.received["second"].get("harness"), "first-token")
 
@@ -809,9 +809,14 @@ class TestLabelResolution(unittest.TestCase):
         prov = _TrackingProvider()
         self._mint({
             "api": {"source": "secret", "secret": "TOK"},
-            "second": {"source": _FAKE_SOURCE, "harness": "$api"},
+            "second": {"source": _FAKE_SOURCE, "harness": "@api"},
         }, prov)
         self.assertEqual(prov.received["second"].get("harness"), "secret-tok")
+
+    def test_double_at_setting_is_a_literal_at(self) -> None:
+        prov = _TrackingProvider()
+        self._mint({"first": {"source": _FAKE_SOURCE, "harness": "@@claude"}}, prov)
+        self.assertEqual(prov.received["first"].get("harness"), "@claude")
 
 
 class TestAgentCanRead(unittest.TestCase):
