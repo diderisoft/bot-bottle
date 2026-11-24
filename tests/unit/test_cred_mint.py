@@ -814,5 +814,34 @@ class TestLabelResolution(unittest.TestCase):
         self.assertEqual(prov.received["second"].get("harness"), "secret-tok")
 
 
+class TestAgentCanRead(unittest.TestCase):
+    """`agent_can_read: true` puts the minted values in `readable_cred_values`."""
+
+    def setUp(self) -> None:
+        import tempfile, shutil
+        self.stage = Path(tempfile.mkdtemp(prefix="readable-test."))
+        self.addCleanup(shutil.rmtree, self.stage, ignore_errors=True)
+        self.addCleanup(use_bottle_root(self.stage / "root"))
+
+    def _mint(self, cred: dict[str, Any]) -> FirecrackerBottlePlan:
+        from bot_bottle.control.hostctl.cred_mint import mint_cred_block
+        plan = FirecrackerBottlePlan(**_stage_fields(self.stage, {"credentials": {"mylogin": cred}}))
+        plan = dataclasses.replace(plan, egress_plan=dataclasses.replace(
+            plan.egress_plan, token_env_map={"EGRESS_TOKEN_0": "__cred__mylogin"}))
+        with mock.patch("bot_bottle.secret_source.FileSecrets", _no_file_secrets):
+            updated, _ = mint_cred_block(plan, _SLUG, MappingSecrets({}),
+                                         registry=_registry_with(_FakeMintProvider(token="tok")))
+        assert isinstance(updated, FirecrackerBottlePlan)
+        return updated
+
+    def test_agent_can_read_populates_readable_cred_values(self) -> None:
+        updated = self._mint({"source": _FAKE_SOURCE, "agent_can_read": True})
+        self.assertEqual(updated.readable_cred_values["mylogin"].get("token"), "tok")
+
+    def test_agent_can_read_false_not_in_readable(self) -> None:
+        updated = self._mint({"source": _FAKE_SOURCE})
+        self.assertNotIn("mylogin", updated.readable_cred_values)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -636,7 +636,8 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
         if not orch_url:
             self._write_json(503, {"error": "orchestrator not configured"})
             return
-        import urllib.request  # noqa: PLC0415 — stdlib, deferred to keep top-level clean
+        import urllib.error  # noqa: PLC0415 — stdlib, deferred to keep top-level clean
+        import urllib.request  # noqa: PLC0415
         try:
             payload = json.dumps({
                 "source_ip": source_ip,

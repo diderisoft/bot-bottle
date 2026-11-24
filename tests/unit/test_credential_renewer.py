@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import unittest
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest import mock
@@ -79,6 +79,13 @@ def _make_renewer(**kw: Any) -> tuple[CredentialRenewer, list[tuple[Any, ...]]]:
 
     kw.setdefault("clock", lambda: NOW)
     return CredentialRenewer(push, **kw), pushed
+
+
+def _recorder(calls: list[tuple[Any, ...]]) -> Callable[..., None]:
+    """A callback that records each call's arguments in `calls`."""
+    def record(*a: Any) -> None:
+        calls.append(a)
+    return record
 
 
 # ── _renew_before ──────────────────────────────────────────────────────────────
@@ -422,8 +429,8 @@ class TestReadablePush(unittest.TestCase):
                                 NOW + timedelta(minutes=2), "fake")
 
     def test_readable_push_called_on_renewal(self) -> None:
-        readable_calls: list[tuple] = []
-        renewer, _ = _make_renewer(readable_push=lambda *a: readable_calls.append(a))
+        readable_calls: list[tuple[Any, ...]] = []
+        renewer, _ = _make_renewer(readable_push=_recorder(readable_calls))
         prov = _FakeProvider(tokens=["new-tok"])
         minted = self._near_expiry()
         renewer.add("b1", "reg1", "evsec",
@@ -437,8 +444,8 @@ class TestReadablePush(unittest.TestCase):
         self.assertEqual(values.get("token"), "new-tok")
 
     def test_readable_push_not_called_when_not_readable(self) -> None:
-        readable_calls: list[tuple] = []
-        renewer, _ = _make_renewer(readable_push=lambda *a: readable_calls.append(a))
+        readable_calls: list[tuple[Any, ...]] = []
+        renewer, _ = _make_renewer(readable_push=_recorder(readable_calls))
         prov = _FakeProvider(tokens=["new-tok"])
         minted = self._near_expiry()
         renewer.add("b1", "reg1", "evsec",
@@ -474,8 +481,8 @@ class TestReadablePush(unittest.TestCase):
         self.assertEqual(pushed[0][1], "SLOT0")
 
     def test_unchanged_value_does_not_trigger_readable_push(self) -> None:
-        readable_calls: list[tuple] = []
-        renewer, _ = _make_renewer(readable_push=lambda *a: readable_calls.append(a))
+        readable_calls: list[tuple[Any, ...]] = []
+        renewer, _ = _make_renewer(readable_push=_recorder(readable_calls))
         prov = _FakeProvider(tokens=["same-tok"])
         minted = MintedCredential(KIND_TOKEN, {"token": "same-tok"},
                                   NOW + timedelta(minutes=2), "fake")

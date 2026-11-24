@@ -39,7 +39,7 @@ from .build import RESTART_NEEDED
 from .audit_events import HostAudit, digest_content, digest_request, manifest_content
 from .cred_mint import CredEntry, audit_cred_entries, mint_cred_block, recredential, recredential_block
 from .credential_refresh import CredentialRefresher
-from .credential_renewer import CredentialRenewer, ReadablePush
+from .credential_renewer import CredentialRenewer
 from .sessions import ExitStatus, SessionManager, SessionRecord
 from .transcripts import TranscriptFollower, close_stale
 from .transcript_serve import masking_plan as masking
@@ -462,14 +462,15 @@ class BottleService:
                             identity, record.credentials, registry_id=bottle.registry_id,
                             bottle=bottle, env_var_secret=bottle.env_var_secret,
                             current=plan.agent_provision.provisioned_env)
+                    readable = getattr(plan, "readable_cred_values", {})
                     if cred_entries:
-                        readable_labels = frozenset(plan.readable_cred_values.keys())
+                        readable_labels = frozenset(readable)
                         self.cred_renewer.add(
                             identity, bottle.registry_id, bottle.env_var_secret, cred_entries,
                             readable_labels=readable_labels)
                         audit_cred_entries(cred_entries, self.audit, identity, activation)
-                    if plan.readable_cred_values:
-                        for lbl, vals in plan.readable_cred_values.items():
+                    if readable:
+                        for lbl, vals in readable.items():
                             try:
                                 _push_readable_credential(bottle.registry_id, lbl, vals)
                             except Exception as e:  # pylint: disable=broad-exception-caught

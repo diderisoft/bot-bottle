@@ -134,6 +134,10 @@ class BottlePlan(ABC):
     # Keyed by credential label; values are the `MintedCredential.values` dict
     # (private_key, public_key). Written to stage-dir files at provision time.
     minted_ssh_keys: dict[str, dict[str, str]] = field(default_factory=dict, repr=False)
+    # Readable credential values for credentials with `agent_can_read: true`:
+    # {label: {field: value}}. Pushed to the orchestrator at launch so the
+    # gateway's /bb-credential endpoint can serve them.
+    readable_cred_values: dict[str, dict[str, str]] = field(default_factory=dict, repr=False)
 
     @property
     def container_name(self) -> str:

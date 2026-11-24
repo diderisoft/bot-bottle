@@ -60,6 +60,8 @@ def mint_cred_block(
     - Settings values of the form `$label` are resolved to the value of the
       credential named `label`, which must come earlier in the block
       (declaration order; unknown labels and cycles fail at manifest load).
+    - `agent_can_read` credentials' values go into `plan.readable_cred_values`
+      (with a warning), for the gateway's `/bb-credential` endpoint.
     - The returned `cred_entries` list is passed to `CredentialRenewer.add()`
       after the bottle is running.
     - `launch_secrets` (the launch-time `LaunchSecrets` with `request.answers`)
@@ -80,6 +82,7 @@ def mint_cred_block(
 
     minted_values: dict[str, str] = {}
     minted_ssh_keys: dict[str, dict[str, str]] = {}
+    readable: dict[str, dict[str, str]] = {}  # label -> fields, for agent_can_read
     cred_entries: list[CredEntry] = []
 
     for label, cred in credentials.items():
@@ -105,6 +108,13 @@ def mint_cred_block(
         elif cred.kind == KIND_SSH_KEY:
             minted_ssh_keys[label] = dict(minted.values)
 
+        if cred.agent_can_read:
+            readable[label] = dict(minted.values)
+            log.warn(
+                f"credential {label!r}: agent_can_read is set; "
+                "the real credential value will be readable inside the bottle"
+            )
+
         slots = _build_slots(plan.egress_plan.token_env_map, token_ref, minted)
         cred_entries.append((label, minted, provider, settings, renewal_secrets, slots))
 
@@ -115,6 +125,7 @@ def mint_cred_block(
         plan,
         minted_cred_values={**plan.minted_cred_values, **minted_values},
         minted_ssh_keys={**plan.minted_ssh_keys, **minted_ssh_keys},
+        readable_cred_values={**plan.readable_cred_values, **readable},
     )
     return updated, cred_entries
 
